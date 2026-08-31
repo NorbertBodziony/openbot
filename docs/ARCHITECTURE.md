@@ -67,6 +67,15 @@ schema used for new databases. Never remove or rewrite a migration that may have
 
 ## Team API compatibility boundary
 
+Current remote connections use Team API protocol v2 over three ordered WebRTC DataChannels: `rpc`,
+`events`, and `files`. A sandboxed hidden Chromium page owns each `RTCPeerConnection`. Electron main
+uses a `MessagePort` and transfers binary data as `ArrayBuffer`. Signal carries SDP and ICE only.
+Cloudflare issues short ES256 connection tickets and stores the logical session. Signal issues a
+longer resume token, so a Signal update does not end an active WebRTC connection.
+
+Protocol v1 remains frozen for compatibility fixtures, but its public HTTP, WebSocket, and Cloudflare
+Tunnel transport is retired. The old public endpoints return `host_update_required`.
+
 The desktop client starts each remote connection with `GET /v1/compatibility`. The response contains the host application version, the minimum and maximum Team API protocol versions, and host capabilities. The client selects the highest protocol in the shared range. Application SemVer does not select or reject a protocol.
 
 The first released Team API protocol is `1`. All later HTTP requests include `OpenBot-Protocol-Version` and `OpenBot-App-Version`. The event socket uses the `openbot-team-v1` WebSocket subprotocol. A host without the compatibility endpoint is treated as an old host and is blocked. A request without the required protocol headers is treated as an old client and is blocked.

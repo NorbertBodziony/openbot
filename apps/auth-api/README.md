@@ -45,9 +45,10 @@ EMAIL_SMTP_PASSWORD=<PRIVATE_EMAIL_APP_PASSWORD>
 EMAIL_FROM=hello@openbot.run
 ```
 
-For a deployed Worker, `bun run api:deploy` decrypts `.env.production`, sends
-`EMAIL_SMTP_PASSWORD`, `CLOUDFLARE_API_TOKEN`, and `SKILLS_ADMIN_TOKEN` to
-`wrangler secret put` through standard input, builds the Worker, and deploys it.
+For a deployed Worker, `bun run api:deploy` decrypts `.env.production`. It sends
+`EMAIL_SMTP_PASSWORD`, `SKILLS_ADMIN_TOKEN`, `REMOTE_TICKET_PRIVATE_JWK`,
+`REMOTE_TICKET_PUBLIC_JWKS`, and `REMOTE_AUTH_WEBHOOK_SECRET` to
+`wrangler secret put` through standard input. It then builds and deploys the Worker.
 Secrets are never passed as process arguments. The other values are Worker
 variables. The SMTP connection uses TLS from the start and accepts only port 465.
 
@@ -100,22 +101,15 @@ the Cloudflare scheduled-handler test route:
 curl "http://127.0.0.1:3100/cdn-cgi/handler/scheduled?cron=17+3+*+*+*"
 ```
 
-## Named team tunnels
+## Remote control plane
 
-The Auth API provisions one remotely managed Cloudflare Tunnel for each OpenBot
-team server. Each server receives stable API and Remote Mac hostnames under
-`openbot.run`. The desktop app receives only the connector token for its tunnel.
-It never receives the Cloudflare account API token.
+The Auth API stores remote hosts, memberships, invitations, and logical sessions.
+It issues short-lived ES256 connection tickets. `/.well-known/jwks.json` publishes
+the public key so the separate Signal service can verify tickets without a D1
+request. The old Team Tunnel provisioning endpoint returns `426` and does not
+create a Cloudflare Tunnel.
 
-Each OpenBot account can own one team server. The D1 database enforces this
-limit with a unique user constraint, including concurrent provisioning requests.
-Deleting the owned server releases the account so it can create a replacement.
-
-Create a scoped Cloudflare API token with these permissions:
-
-- Account · Cloudflare Tunnel · Edit for the OpenBot account.
-- Zone · DNS · Edit for `openbot.run`.
-
-Set `CLOUDFLARE_API_TOKEN` in the encrypted production environment. The deploy
-script sends it to `wrangler secret put` through standard input. The account ID,
-zone ID, and domain are non-secret Worker variables in `wrangler.jsonc`.
+Set the private JWK, public JWKS, active key ID, Signal URL, and webhook secret in
+the encrypted environment. The private and public keys must use ES256. The Signal
+URL must point to a DNS-only host. Cloudflare carries only account and configuration
+requests. It does not carry Team API or Remote Desktop data.

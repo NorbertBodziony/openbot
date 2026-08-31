@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppPreviewRouteImport } from './routes/app-preview'
 import { Route as JoinRouteImport } from './routes/join'
 import { Route as DotwellKnownAppleAppSiteAssociationRouteImport } from './routes/[.]well-known/apple-app-site-association'
+import { Route as DotwellKnownJwksDotjsonRouteImport } from './routes/[.]well-known/jwks[.]json'
 import { Route as DownloadMacosRouteImport } from './routes/download/macos'
 import { Route as DownloadWindowsRouteImport } from './routes/download/windows'
 import { Route as HealthLiveRouteImport } from './routes/health/live'
@@ -39,15 +40,28 @@ import { Route as V1SkillsSkillIdContentRouteImport } from './routes/v1/skills/$
 import { Route as V1SkillsSkillIdIconRouteImport } from './routes/v1/skills/$skillId/icon'
 import { Route as V1SkillsSkillIdInstallRouteImport } from './routes/v1/skills/$skillId/install'
 import { Route as V1SkillsAdminSubmissionsRouteImport } from './routes/v1/skills/admin/submissions'
+import { Route as V2RemoteHostsIndexRouteImport } from './routes/v2/remote/hosts/index'
+import { Route as V2RemoteHostsRegisterRouteImport } from './routes/v2/remote/hosts/register'
+import { Route as V2RemoteInvitesInviteIdRouteImport } from './routes/v2/remote/invites/$inviteId'
+import { Route as V2RemoteInvitesAcceptRouteImport } from './routes/v2/remote/invites/accept'
+import { Route as V2RemoteInvitesPreviewRouteImport } from './routes/v2/remote/invites/preview'
+import { Route as V2RemoteSessionsIndexRouteImport } from './routes/v2/remote/sessions/index'
 import { Route as V1MarketplaceAgentsAgentIdAvatarRouteImport } from './routes/v1/marketplace/agents/$agentId/avatar'
 import { Route as V1MarketplaceAgentsAgentIdInstallRouteImport } from './routes/v1/marketplace/agents/$agentId/install'
 import { Route as V1MarketplaceAgentsAdminSubmissionsRouteImport } from './routes/v1/marketplace/agents/admin/submissions'
 import { Route as V1SkillsSkillIdVersionsVersionIdRouteImport } from './routes/v1/skills/$skillId/versions/$versionId'
 import { Route as V1SkillsAdminFeaturedSkillIdRouteImport } from './routes/v1/skills/admin/featured/$skillId'
 import { Route as V1SkillsAdminSubmissionsVersionIdRouteImport } from './routes/v1/skills/admin/submissions/$versionId'
+import { Route as V2RemoteHostsHostIdInvitesRouteImport } from './routes/v2/remote/hosts/$hostId/invites'
+import { Route as V2RemoteHostsHostIdLogoRouteImport } from './routes/v2/remote/hosts/$hostId/logo'
+import { Route as V2RemoteHostsHostIdTicketRouteImport } from './routes/v2/remote/hosts/$hostId/ticket'
+import { Route as V2RemoteSessionsSessionIdEndRouteImport } from './routes/v2/remote/sessions/$sessionId/end'
+import { Route as V2RemoteSessionsSessionIdTicketRouteImport } from './routes/v2/remote/sessions/$sessionId/ticket'
 import { Route as V1MarketplaceAgentsAdminFeaturedAgentIdRouteImport } from './routes/v1/marketplace/agents/admin/featured/$agentId'
 import { Route as V1MarketplaceAgentsAdminSubmissionsVersionIdRouteImport } from './routes/v1/marketplace/agents/admin/submissions/$versionId'
 import { Route as V1SkillsSkillIdVersionsVersionIdContentRouteImport } from './routes/v1/skills/$skillId/versions/$versionId/content'
+import { Route as V2RemoteHostsHostIdMembersIndexRouteImport } from './routes/v2/remote/hosts/$hostId/members/index'
+import { Route as V2RemoteHostsHostIdMembersMembershipIdRouteImport } from './routes/v2/remote/hosts/$hostId/members/$membershipId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -70,6 +84,11 @@ const DotwellKnownAppleAppSiteAssociationRoute =
     path: '/.well-known/apple-app-site-association',
     getParentRoute: () => rootRouteImport,
   } as any)
+const DotwellKnownJwksDotjsonRoute = DotwellKnownJwksDotjsonRouteImport.update({
+  id: '/.well-known/jwks.json',
+  path: '/.well-known/jwks.json',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DownloadMacosRoute = DownloadMacosRouteImport.update({
   id: '/download/macos',
   path: '/download/macos',
@@ -203,6 +222,36 @@ const V1SkillsAdminSubmissionsRoute =
     path: '/v1/skills/admin/submissions',
     getParentRoute: () => rootRouteImport,
   } as any)
+const V2RemoteHostsIndexRoute = V2RemoteHostsIndexRouteImport.update({
+  id: '/v2/remote/hosts/',
+  path: '/v2/remote/hosts/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const V2RemoteHostsRegisterRoute = V2RemoteHostsRegisterRouteImport.update({
+  id: '/v2/remote/hosts/register',
+  path: '/v2/remote/hosts/register',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const V2RemoteInvitesInviteIdRoute = V2RemoteInvitesInviteIdRouteImport.update({
+  id: '/v2/remote/invites/$inviteId',
+  path: '/v2/remote/invites/$inviteId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const V2RemoteInvitesAcceptRoute = V2RemoteInvitesAcceptRouteImport.update({
+  id: '/v2/remote/invites/accept',
+  path: '/v2/remote/invites/accept',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const V2RemoteInvitesPreviewRoute = V2RemoteInvitesPreviewRouteImport.update({
+  id: '/v2/remote/invites/preview',
+  path: '/v2/remote/invites/preview',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const V2RemoteSessionsIndexRoute = V2RemoteSessionsIndexRouteImport.update({
+  id: '/v2/remote/sessions/',
+  path: '/v2/remote/sessions/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const V1MarketplaceAgentsAgentIdAvatarRoute =
   V1MarketplaceAgentsAgentIdAvatarRouteImport.update({
     id: '/avatar',
@@ -239,6 +288,35 @@ const V1SkillsAdminSubmissionsVersionIdRoute =
     path: '/$versionId',
     getParentRoute: () => V1SkillsAdminSubmissionsRoute,
   } as any)
+const V2RemoteHostsHostIdInvitesRoute =
+  V2RemoteHostsHostIdInvitesRouteImport.update({
+    id: '/v2/remote/hosts/$hostId/invites',
+    path: '/v2/remote/hosts/$hostId/invites',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const V2RemoteHostsHostIdLogoRoute = V2RemoteHostsHostIdLogoRouteImport.update({
+  id: '/v2/remote/hosts/$hostId/logo',
+  path: '/v2/remote/hosts/$hostId/logo',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const V2RemoteHostsHostIdTicketRoute =
+  V2RemoteHostsHostIdTicketRouteImport.update({
+    id: '/v2/remote/hosts/$hostId/ticket',
+    path: '/v2/remote/hosts/$hostId/ticket',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const V2RemoteSessionsSessionIdEndRoute =
+  V2RemoteSessionsSessionIdEndRouteImport.update({
+    id: '/v2/remote/sessions/$sessionId/end',
+    path: '/v2/remote/sessions/$sessionId/end',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const V2RemoteSessionsSessionIdTicketRoute =
+  V2RemoteSessionsSessionIdTicketRouteImport.update({
+    id: '/v2/remote/sessions/$sessionId/ticket',
+    path: '/v2/remote/sessions/$sessionId/ticket',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const V1MarketplaceAgentsAdminFeaturedAgentIdRoute =
   V1MarketplaceAgentsAdminFeaturedAgentIdRouteImport.update({
     id: '/v1/marketplace/agents/admin/featured/$agentId',
@@ -257,12 +335,25 @@ const V1SkillsSkillIdVersionsVersionIdContentRoute =
     path: '/content',
     getParentRoute: () => V1SkillsSkillIdVersionsVersionIdRoute,
   } as any)
+const V2RemoteHostsHostIdMembersIndexRoute =
+  V2RemoteHostsHostIdMembersIndexRouteImport.update({
+    id: '/v2/remote/hosts/$hostId/members/',
+    path: '/v2/remote/hosts/$hostId/members/',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const V2RemoteHostsHostIdMembersMembershipIdRoute =
+  V2RemoteHostsHostIdMembersMembershipIdRouteImport.update({
+    id: '/v2/remote/hosts/$hostId/members/$membershipId',
+    path: '/v2/remote/hosts/$hostId/members/$membershipId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app-preview': typeof AppPreviewRoute
   '/join': typeof JoinRoute
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
+  '/.well-known/jwks.json': typeof DotwellKnownJwksDotjsonRoute
   '/download/macos': typeof DownloadMacosRoute
   '/download/windows': typeof DownloadWindowsRoute
   '/health/live': typeof HealthLiveRoute
@@ -288,22 +379,36 @@ export interface FileRoutesByFullPath {
   '/v1/skills/$skillId/icon': typeof V1SkillsSkillIdIconRoute
   '/v1/skills/$skillId/install': typeof V1SkillsSkillIdInstallRoute
   '/v1/skills/admin/submissions': typeof V1SkillsAdminSubmissionsRouteWithChildren
+  '/v2/remote/hosts/register': typeof V2RemoteHostsRegisterRoute
+  '/v2/remote/invites/$inviteId': typeof V2RemoteInvitesInviteIdRoute
+  '/v2/remote/invites/accept': typeof V2RemoteInvitesAcceptRoute
+  '/v2/remote/invites/preview': typeof V2RemoteInvitesPreviewRoute
   '/v1/marketplace/agents/': typeof V1MarketplaceAgentsIndexRoute
+  '/v2/remote/hosts/': typeof V2RemoteHostsIndexRoute
+  '/v2/remote/sessions/': typeof V2RemoteSessionsIndexRoute
   '/v1/marketplace/agents/$agentId/avatar': typeof V1MarketplaceAgentsAgentIdAvatarRoute
   '/v1/marketplace/agents/$agentId/install': typeof V1MarketplaceAgentsAgentIdInstallRoute
   '/v1/marketplace/agents/admin/submissions': typeof V1MarketplaceAgentsAdminSubmissionsRouteWithChildren
   '/v1/skills/$skillId/versions/$versionId': typeof V1SkillsSkillIdVersionsVersionIdRouteWithChildren
   '/v1/skills/admin/featured/$skillId': typeof V1SkillsAdminFeaturedSkillIdRoute
   '/v1/skills/admin/submissions/$versionId': typeof V1SkillsAdminSubmissionsVersionIdRoute
+  '/v2/remote/hosts/$hostId/invites': typeof V2RemoteHostsHostIdInvitesRoute
+  '/v2/remote/hosts/$hostId/logo': typeof V2RemoteHostsHostIdLogoRoute
+  '/v2/remote/hosts/$hostId/ticket': typeof V2RemoteHostsHostIdTicketRoute
+  '/v2/remote/sessions/$sessionId/end': typeof V2RemoteSessionsSessionIdEndRoute
+  '/v2/remote/sessions/$sessionId/ticket': typeof V2RemoteSessionsSessionIdTicketRoute
   '/v1/marketplace/agents/admin/featured/$agentId': typeof V1MarketplaceAgentsAdminFeaturedAgentIdRoute
   '/v1/marketplace/agents/admin/submissions/$versionId': typeof V1MarketplaceAgentsAdminSubmissionsVersionIdRoute
   '/v1/skills/$skillId/versions/$versionId/content': typeof V1SkillsSkillIdVersionsVersionIdContentRoute
+  '/v2/remote/hosts/$hostId/members/$membershipId': typeof V2RemoteHostsHostIdMembersMembershipIdRoute
+  '/v2/remote/hosts/$hostId/members/': typeof V2RemoteHostsHostIdMembersIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/app-preview': typeof AppPreviewRoute
   '/join': typeof JoinRoute
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
+  '/.well-known/jwks.json': typeof DotwellKnownJwksDotjsonRoute
   '/download/macos': typeof DownloadMacosRoute
   '/download/windows': typeof DownloadWindowsRoute
   '/health/live': typeof HealthLiveRoute
@@ -329,16 +434,29 @@ export interface FileRoutesByTo {
   '/v1/skills/$skillId/icon': typeof V1SkillsSkillIdIconRoute
   '/v1/skills/$skillId/install': typeof V1SkillsSkillIdInstallRoute
   '/v1/skills/admin/submissions': typeof V1SkillsAdminSubmissionsRouteWithChildren
+  '/v2/remote/hosts/register': typeof V2RemoteHostsRegisterRoute
+  '/v2/remote/invites/$inviteId': typeof V2RemoteInvitesInviteIdRoute
+  '/v2/remote/invites/accept': typeof V2RemoteInvitesAcceptRoute
+  '/v2/remote/invites/preview': typeof V2RemoteInvitesPreviewRoute
   '/v1/marketplace/agents': typeof V1MarketplaceAgentsIndexRoute
+  '/v2/remote/hosts': typeof V2RemoteHostsIndexRoute
+  '/v2/remote/sessions': typeof V2RemoteSessionsIndexRoute
   '/v1/marketplace/agents/$agentId/avatar': typeof V1MarketplaceAgentsAgentIdAvatarRoute
   '/v1/marketplace/agents/$agentId/install': typeof V1MarketplaceAgentsAgentIdInstallRoute
   '/v1/marketplace/agents/admin/submissions': typeof V1MarketplaceAgentsAdminSubmissionsRouteWithChildren
   '/v1/skills/$skillId/versions/$versionId': typeof V1SkillsSkillIdVersionsVersionIdRouteWithChildren
   '/v1/skills/admin/featured/$skillId': typeof V1SkillsAdminFeaturedSkillIdRoute
   '/v1/skills/admin/submissions/$versionId': typeof V1SkillsAdminSubmissionsVersionIdRoute
+  '/v2/remote/hosts/$hostId/invites': typeof V2RemoteHostsHostIdInvitesRoute
+  '/v2/remote/hosts/$hostId/logo': typeof V2RemoteHostsHostIdLogoRoute
+  '/v2/remote/hosts/$hostId/ticket': typeof V2RemoteHostsHostIdTicketRoute
+  '/v2/remote/sessions/$sessionId/end': typeof V2RemoteSessionsSessionIdEndRoute
+  '/v2/remote/sessions/$sessionId/ticket': typeof V2RemoteSessionsSessionIdTicketRoute
   '/v1/marketplace/agents/admin/featured/$agentId': typeof V1MarketplaceAgentsAdminFeaturedAgentIdRoute
   '/v1/marketplace/agents/admin/submissions/$versionId': typeof V1MarketplaceAgentsAdminSubmissionsVersionIdRoute
   '/v1/skills/$skillId/versions/$versionId/content': typeof V1SkillsSkillIdVersionsVersionIdContentRoute
+  '/v2/remote/hosts/$hostId/members/$membershipId': typeof V2RemoteHostsHostIdMembersMembershipIdRoute
+  '/v2/remote/hosts/$hostId/members': typeof V2RemoteHostsHostIdMembersIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -346,6 +464,7 @@ export interface FileRoutesById {
   '/app-preview': typeof AppPreviewRoute
   '/join': typeof JoinRoute
   '/.well-known/apple-app-site-association': typeof DotwellKnownAppleAppSiteAssociationRoute
+  '/.well-known/jwks.json': typeof DotwellKnownJwksDotjsonRoute
   '/download/macos': typeof DownloadMacosRoute
   '/download/windows': typeof DownloadWindowsRoute
   '/health/live': typeof HealthLiveRoute
@@ -371,16 +490,29 @@ export interface FileRoutesById {
   '/v1/skills/$skillId/icon': typeof V1SkillsSkillIdIconRoute
   '/v1/skills/$skillId/install': typeof V1SkillsSkillIdInstallRoute
   '/v1/skills/admin/submissions': typeof V1SkillsAdminSubmissionsRouteWithChildren
+  '/v2/remote/hosts/register': typeof V2RemoteHostsRegisterRoute
+  '/v2/remote/invites/$inviteId': typeof V2RemoteInvitesInviteIdRoute
+  '/v2/remote/invites/accept': typeof V2RemoteInvitesAcceptRoute
+  '/v2/remote/invites/preview': typeof V2RemoteInvitesPreviewRoute
   '/v1/marketplace/agents/': typeof V1MarketplaceAgentsIndexRoute
+  '/v2/remote/hosts/': typeof V2RemoteHostsIndexRoute
+  '/v2/remote/sessions/': typeof V2RemoteSessionsIndexRoute
   '/v1/marketplace/agents/$agentId/avatar': typeof V1MarketplaceAgentsAgentIdAvatarRoute
   '/v1/marketplace/agents/$agentId/install': typeof V1MarketplaceAgentsAgentIdInstallRoute
   '/v1/marketplace/agents/admin/submissions': typeof V1MarketplaceAgentsAdminSubmissionsRouteWithChildren
   '/v1/skills/$skillId/versions/$versionId': typeof V1SkillsSkillIdVersionsVersionIdRouteWithChildren
   '/v1/skills/admin/featured/$skillId': typeof V1SkillsAdminFeaturedSkillIdRoute
   '/v1/skills/admin/submissions/$versionId': typeof V1SkillsAdminSubmissionsVersionIdRoute
+  '/v2/remote/hosts/$hostId/invites': typeof V2RemoteHostsHostIdInvitesRoute
+  '/v2/remote/hosts/$hostId/logo': typeof V2RemoteHostsHostIdLogoRoute
+  '/v2/remote/hosts/$hostId/ticket': typeof V2RemoteHostsHostIdTicketRoute
+  '/v2/remote/sessions/$sessionId/end': typeof V2RemoteSessionsSessionIdEndRoute
+  '/v2/remote/sessions/$sessionId/ticket': typeof V2RemoteSessionsSessionIdTicketRoute
   '/v1/marketplace/agents/admin/featured/$agentId': typeof V1MarketplaceAgentsAdminFeaturedAgentIdRoute
   '/v1/marketplace/agents/admin/submissions/$versionId': typeof V1MarketplaceAgentsAdminSubmissionsVersionIdRoute
   '/v1/skills/$skillId/versions/$versionId/content': typeof V1SkillsSkillIdVersionsVersionIdContentRoute
+  '/v2/remote/hosts/$hostId/members/$membershipId': typeof V2RemoteHostsHostIdMembersMembershipIdRoute
+  '/v2/remote/hosts/$hostId/members/': typeof V2RemoteHostsHostIdMembersIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -389,6 +521,7 @@ export interface FileRouteTypes {
     | '/app-preview'
     | '/join'
     | '/.well-known/apple-app-site-association'
+    | '/.well-known/jwks.json'
     | '/download/macos'
     | '/download/windows'
     | '/health/live'
@@ -414,22 +547,36 @@ export interface FileRouteTypes {
     | '/v1/skills/$skillId/icon'
     | '/v1/skills/$skillId/install'
     | '/v1/skills/admin/submissions'
+    | '/v2/remote/hosts/register'
+    | '/v2/remote/invites/$inviteId'
+    | '/v2/remote/invites/accept'
+    | '/v2/remote/invites/preview'
     | '/v1/marketplace/agents/'
+    | '/v2/remote/hosts/'
+    | '/v2/remote/sessions/'
     | '/v1/marketplace/agents/$agentId/avatar'
     | '/v1/marketplace/agents/$agentId/install'
     | '/v1/marketplace/agents/admin/submissions'
     | '/v1/skills/$skillId/versions/$versionId'
     | '/v1/skills/admin/featured/$skillId'
     | '/v1/skills/admin/submissions/$versionId'
+    | '/v2/remote/hosts/$hostId/invites'
+    | '/v2/remote/hosts/$hostId/logo'
+    | '/v2/remote/hosts/$hostId/ticket'
+    | '/v2/remote/sessions/$sessionId/end'
+    | '/v2/remote/sessions/$sessionId/ticket'
     | '/v1/marketplace/agents/admin/featured/$agentId'
     | '/v1/marketplace/agents/admin/submissions/$versionId'
     | '/v1/skills/$skillId/versions/$versionId/content'
+    | '/v2/remote/hosts/$hostId/members/$membershipId'
+    | '/v2/remote/hosts/$hostId/members/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/app-preview'
     | '/join'
     | '/.well-known/apple-app-site-association'
+    | '/.well-known/jwks.json'
     | '/download/macos'
     | '/download/windows'
     | '/health/live'
@@ -455,22 +602,36 @@ export interface FileRouteTypes {
     | '/v1/skills/$skillId/icon'
     | '/v1/skills/$skillId/install'
     | '/v1/skills/admin/submissions'
+    | '/v2/remote/hosts/register'
+    | '/v2/remote/invites/$inviteId'
+    | '/v2/remote/invites/accept'
+    | '/v2/remote/invites/preview'
     | '/v1/marketplace/agents'
+    | '/v2/remote/hosts'
+    | '/v2/remote/sessions'
     | '/v1/marketplace/agents/$agentId/avatar'
     | '/v1/marketplace/agents/$agentId/install'
     | '/v1/marketplace/agents/admin/submissions'
     | '/v1/skills/$skillId/versions/$versionId'
     | '/v1/skills/admin/featured/$skillId'
     | '/v1/skills/admin/submissions/$versionId'
+    | '/v2/remote/hosts/$hostId/invites'
+    | '/v2/remote/hosts/$hostId/logo'
+    | '/v2/remote/hosts/$hostId/ticket'
+    | '/v2/remote/sessions/$sessionId/end'
+    | '/v2/remote/sessions/$sessionId/ticket'
     | '/v1/marketplace/agents/admin/featured/$agentId'
     | '/v1/marketplace/agents/admin/submissions/$versionId'
     | '/v1/skills/$skillId/versions/$versionId/content'
+    | '/v2/remote/hosts/$hostId/members/$membershipId'
+    | '/v2/remote/hosts/$hostId/members'
   id:
     | '__root__'
     | '/'
     | '/app-preview'
     | '/join'
     | '/.well-known/apple-app-site-association'
+    | '/.well-known/jwks.json'
     | '/download/macos'
     | '/download/windows'
     | '/health/live'
@@ -496,16 +657,29 @@ export interface FileRouteTypes {
     | '/v1/skills/$skillId/icon'
     | '/v1/skills/$skillId/install'
     | '/v1/skills/admin/submissions'
+    | '/v2/remote/hosts/register'
+    | '/v2/remote/invites/$inviteId'
+    | '/v2/remote/invites/accept'
+    | '/v2/remote/invites/preview'
     | '/v1/marketplace/agents/'
+    | '/v2/remote/hosts/'
+    | '/v2/remote/sessions/'
     | '/v1/marketplace/agents/$agentId/avatar'
     | '/v1/marketplace/agents/$agentId/install'
     | '/v1/marketplace/agents/admin/submissions'
     | '/v1/skills/$skillId/versions/$versionId'
     | '/v1/skills/admin/featured/$skillId'
     | '/v1/skills/admin/submissions/$versionId'
+    | '/v2/remote/hosts/$hostId/invites'
+    | '/v2/remote/hosts/$hostId/logo'
+    | '/v2/remote/hosts/$hostId/ticket'
+    | '/v2/remote/sessions/$sessionId/end'
+    | '/v2/remote/sessions/$sessionId/ticket'
     | '/v1/marketplace/agents/admin/featured/$agentId'
     | '/v1/marketplace/agents/admin/submissions/$versionId'
     | '/v1/skills/$skillId/versions/$versionId/content'
+    | '/v2/remote/hosts/$hostId/members/$membershipId'
+    | '/v2/remote/hosts/$hostId/members/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -513,6 +687,7 @@ export interface RootRouteChildren {
   AppPreviewRoute: typeof AppPreviewRoute
   JoinRoute: typeof JoinRoute
   DotwellKnownAppleAppSiteAssociationRoute: typeof DotwellKnownAppleAppSiteAssociationRoute
+  DotwellKnownJwksDotjsonRoute: typeof DotwellKnownJwksDotjsonRoute
   DownloadMacosRoute: typeof DownloadMacosRoute
   DownloadWindowsRoute: typeof DownloadWindowsRoute
   HealthLiveRoute: typeof HealthLiveRoute
@@ -533,10 +708,23 @@ export interface RootRouteChildren {
   V1MarketplaceAgentsAgentIdRoute: typeof V1MarketplaceAgentsAgentIdRouteWithChildren
   V1MarketplaceAgentsMineRoute: typeof V1MarketplaceAgentsMineRoute
   V1SkillsAdminSubmissionsRoute: typeof V1SkillsAdminSubmissionsRouteWithChildren
+  V2RemoteHostsRegisterRoute: typeof V2RemoteHostsRegisterRoute
+  V2RemoteInvitesInviteIdRoute: typeof V2RemoteInvitesInviteIdRoute
+  V2RemoteInvitesAcceptRoute: typeof V2RemoteInvitesAcceptRoute
+  V2RemoteInvitesPreviewRoute: typeof V2RemoteInvitesPreviewRoute
   V1MarketplaceAgentsIndexRoute: typeof V1MarketplaceAgentsIndexRoute
+  V2RemoteHostsIndexRoute: typeof V2RemoteHostsIndexRoute
+  V2RemoteSessionsIndexRoute: typeof V2RemoteSessionsIndexRoute
   V1MarketplaceAgentsAdminSubmissionsRoute: typeof V1MarketplaceAgentsAdminSubmissionsRouteWithChildren
   V1SkillsAdminFeaturedSkillIdRoute: typeof V1SkillsAdminFeaturedSkillIdRoute
+  V2RemoteHostsHostIdInvitesRoute: typeof V2RemoteHostsHostIdInvitesRoute
+  V2RemoteHostsHostIdLogoRoute: typeof V2RemoteHostsHostIdLogoRoute
+  V2RemoteHostsHostIdTicketRoute: typeof V2RemoteHostsHostIdTicketRoute
+  V2RemoteSessionsSessionIdEndRoute: typeof V2RemoteSessionsSessionIdEndRoute
+  V2RemoteSessionsSessionIdTicketRoute: typeof V2RemoteSessionsSessionIdTicketRoute
   V1MarketplaceAgentsAdminFeaturedAgentIdRoute: typeof V1MarketplaceAgentsAdminFeaturedAgentIdRoute
+  V2RemoteHostsHostIdMembersMembershipIdRoute: typeof V2RemoteHostsHostIdMembersMembershipIdRoute
+  V2RemoteHostsHostIdMembersIndexRoute: typeof V2RemoteHostsHostIdMembersIndexRoute
 }
 
 declare module '@tanstack/solid-router' {
@@ -567,6 +755,13 @@ declare module '@tanstack/solid-router' {
       path: '/.well-known/apple-app-site-association'
       fullPath: '/.well-known/apple-app-site-association'
       preLoaderRoute: typeof DotwellKnownAppleAppSiteAssociationRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/.well-known/jwks.json': {
+      id: '/.well-known/jwks.json'
+      path: '/.well-known/jwks.json'
+      fullPath: '/.well-known/jwks.json'
+      preLoaderRoute: typeof DotwellKnownJwksDotjsonRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/download/macos': {
@@ -751,6 +946,48 @@ declare module '@tanstack/solid-router' {
       preLoaderRoute: typeof V1SkillsAdminSubmissionsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/v2/remote/hosts/': {
+      id: '/v2/remote/hosts/'
+      path: '/v2/remote/hosts'
+      fullPath: '/v2/remote/hosts/'
+      preLoaderRoute: typeof V2RemoteHostsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/v2/remote/hosts/register': {
+      id: '/v2/remote/hosts/register'
+      path: '/v2/remote/hosts/register'
+      fullPath: '/v2/remote/hosts/register'
+      preLoaderRoute: typeof V2RemoteHostsRegisterRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/v2/remote/invites/$inviteId': {
+      id: '/v2/remote/invites/$inviteId'
+      path: '/v2/remote/invites/$inviteId'
+      fullPath: '/v2/remote/invites/$inviteId'
+      preLoaderRoute: typeof V2RemoteInvitesInviteIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/v2/remote/invites/accept': {
+      id: '/v2/remote/invites/accept'
+      path: '/v2/remote/invites/accept'
+      fullPath: '/v2/remote/invites/accept'
+      preLoaderRoute: typeof V2RemoteInvitesAcceptRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/v2/remote/invites/preview': {
+      id: '/v2/remote/invites/preview'
+      path: '/v2/remote/invites/preview'
+      fullPath: '/v2/remote/invites/preview'
+      preLoaderRoute: typeof V2RemoteInvitesPreviewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/v2/remote/sessions/': {
+      id: '/v2/remote/sessions/'
+      path: '/v2/remote/sessions'
+      fullPath: '/v2/remote/sessions/'
+      preLoaderRoute: typeof V2RemoteSessionsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/v1/marketplace/agents/$agentId/avatar': {
       id: '/v1/marketplace/agents/$agentId/avatar'
       path: '/avatar'
@@ -793,6 +1030,41 @@ declare module '@tanstack/solid-router' {
       preLoaderRoute: typeof V1SkillsAdminSubmissionsVersionIdRouteImport
       parentRoute: typeof V1SkillsAdminSubmissionsRoute
     }
+    '/v2/remote/hosts/$hostId/invites': {
+      id: '/v2/remote/hosts/$hostId/invites'
+      path: '/v2/remote/hosts/$hostId/invites'
+      fullPath: '/v2/remote/hosts/$hostId/invites'
+      preLoaderRoute: typeof V2RemoteHostsHostIdInvitesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/v2/remote/hosts/$hostId/logo': {
+      id: '/v2/remote/hosts/$hostId/logo'
+      path: '/v2/remote/hosts/$hostId/logo'
+      fullPath: '/v2/remote/hosts/$hostId/logo'
+      preLoaderRoute: typeof V2RemoteHostsHostIdLogoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/v2/remote/hosts/$hostId/ticket': {
+      id: '/v2/remote/hosts/$hostId/ticket'
+      path: '/v2/remote/hosts/$hostId/ticket'
+      fullPath: '/v2/remote/hosts/$hostId/ticket'
+      preLoaderRoute: typeof V2RemoteHostsHostIdTicketRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/v2/remote/sessions/$sessionId/end': {
+      id: '/v2/remote/sessions/$sessionId/end'
+      path: '/v2/remote/sessions/$sessionId/end'
+      fullPath: '/v2/remote/sessions/$sessionId/end'
+      preLoaderRoute: typeof V2RemoteSessionsSessionIdEndRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/v2/remote/sessions/$sessionId/ticket': {
+      id: '/v2/remote/sessions/$sessionId/ticket'
+      path: '/v2/remote/sessions/$sessionId/ticket'
+      fullPath: '/v2/remote/sessions/$sessionId/ticket'
+      preLoaderRoute: typeof V2RemoteSessionsSessionIdTicketRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/v1/marketplace/agents/admin/featured/$agentId': {
       id: '/v1/marketplace/agents/admin/featured/$agentId'
       path: '/v1/marketplace/agents/admin/featured/$agentId'
@@ -813,6 +1085,20 @@ declare module '@tanstack/solid-router' {
       fullPath: '/v1/skills/$skillId/versions/$versionId/content'
       preLoaderRoute: typeof V1SkillsSkillIdVersionsVersionIdContentRouteImport
       parentRoute: typeof V1SkillsSkillIdVersionsVersionIdRoute
+    }
+    '/v2/remote/hosts/$hostId/members/': {
+      id: '/v2/remote/hosts/$hostId/members/'
+      path: '/v2/remote/hosts/$hostId/members'
+      fullPath: '/v2/remote/hosts/$hostId/members/'
+      preLoaderRoute: typeof V2RemoteHostsHostIdMembersIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/v2/remote/hosts/$hostId/members/$membershipId': {
+      id: '/v2/remote/hosts/$hostId/members/$membershipId'
+      path: '/v2/remote/hosts/$hostId/members/$membershipId'
+      fullPath: '/v2/remote/hosts/$hostId/members/$membershipId'
+      preLoaderRoute: typeof V2RemoteHostsHostIdMembersMembershipIdRouteImport
+      parentRoute: typeof rootRouteImport
     }
   }
 }
@@ -917,6 +1203,7 @@ const rootRouteChildren: RootRouteChildren = {
   JoinRoute: JoinRoute,
   DotwellKnownAppleAppSiteAssociationRoute:
     DotwellKnownAppleAppSiteAssociationRoute,
+  DotwellKnownJwksDotjsonRoute: DotwellKnownJwksDotjsonRoute,
   DownloadMacosRoute: DownloadMacosRoute,
   DownloadWindowsRoute: DownloadWindowsRoute,
   HealthLiveRoute: HealthLiveRoute,
@@ -937,12 +1224,26 @@ const rootRouteChildren: RootRouteChildren = {
   V1MarketplaceAgentsAgentIdRoute: V1MarketplaceAgentsAgentIdRouteWithChildren,
   V1MarketplaceAgentsMineRoute: V1MarketplaceAgentsMineRoute,
   V1SkillsAdminSubmissionsRoute: V1SkillsAdminSubmissionsRouteWithChildren,
+  V2RemoteHostsRegisterRoute: V2RemoteHostsRegisterRoute,
+  V2RemoteInvitesInviteIdRoute: V2RemoteInvitesInviteIdRoute,
+  V2RemoteInvitesAcceptRoute: V2RemoteInvitesAcceptRoute,
+  V2RemoteInvitesPreviewRoute: V2RemoteInvitesPreviewRoute,
   V1MarketplaceAgentsIndexRoute: V1MarketplaceAgentsIndexRoute,
+  V2RemoteHostsIndexRoute: V2RemoteHostsIndexRoute,
+  V2RemoteSessionsIndexRoute: V2RemoteSessionsIndexRoute,
   V1MarketplaceAgentsAdminSubmissionsRoute:
     V1MarketplaceAgentsAdminSubmissionsRouteWithChildren,
   V1SkillsAdminFeaturedSkillIdRoute: V1SkillsAdminFeaturedSkillIdRoute,
+  V2RemoteHostsHostIdInvitesRoute: V2RemoteHostsHostIdInvitesRoute,
+  V2RemoteHostsHostIdLogoRoute: V2RemoteHostsHostIdLogoRoute,
+  V2RemoteHostsHostIdTicketRoute: V2RemoteHostsHostIdTicketRoute,
+  V2RemoteSessionsSessionIdEndRoute: V2RemoteSessionsSessionIdEndRoute,
+  V2RemoteSessionsSessionIdTicketRoute: V2RemoteSessionsSessionIdTicketRoute,
   V1MarketplaceAgentsAdminFeaturedAgentIdRoute:
     V1MarketplaceAgentsAdminFeaturedAgentIdRoute,
+  V2RemoteHostsHostIdMembersMembershipIdRoute:
+    V2RemoteHostsHostIdMembersMembershipIdRoute,
+  V2RemoteHostsHostIdMembersIndexRoute: V2RemoteHostsHostIdMembersIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

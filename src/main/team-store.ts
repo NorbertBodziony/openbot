@@ -101,6 +101,10 @@ export class TeamStore {
   readonly #path: string;
   readonly #logoRoot: string;
   #state: StoredTeam | null = null;
+  readonly #remoteSessions = new Map<
+    string,
+    { member: TeamMemberSummary; sessionId: string; sessionExpiresAt: string }
+  >();
   #writeChain = Promise.resolve();
 
   constructor(path: string) {
@@ -315,7 +319,43 @@ export class TeamStore {
   }
 
   listMembers(): TeamMemberSummary[] {
-    return this.#requireState().members.map(publicMember);
+    const members = this.#requireState().members.map(publicMember);
+    const known = new Set(members.map((member) => member.id));
+    for (const remote of this.#remoteSessions.values()) {
+      if (!known.has(remote.member.id) && Date.parse(remote.sessionExpiresAt) > Date.now()) {
+        members.push(structuredClone(remote.member));
+        known.add(remote.member.id);
+      }
+    }
+    return members;
+  }
+
+  openRemoteSession(input: {
+    sessionId: string;
+    membershipId: string;
+    userId: string;
+    role: TeamRole;
+    expiresAt?: number;
+  }): AuthenticatedMember {
+    const sessionToken = randomBytes(32).toString("base64url");
+    const sessionExpiresAt = new Date(input.expiresAt ?? Date.now() + SESSION_TTL_MS).toISOString();
+    const member: TeamMemberSummary = {
+      id: input.membershipId,
+      username: input.userId,
+      email: null,
+      name: null,
+      role: input.role,
+      createdAt: new Date().toISOString(),
+      disabled: false,
+    };
+    this.#remoteSessions.set(hashToken(sessionToken), { member, sessionId: input.sessionId, sessionExpiresAt });
+    return { member: structuredClone(member), sessionToken, sessionExpiresAt };
+  }
+
+  closeRemoteSession(sessionId: string): void {
+    for (const [tokenHash, session] of this.#remoteSessions) {
+      if (session.sessionId === sessionId) this.#remoteSessions.delete(tokenHash);
+    }
   }
 
   getMember(memberId: string): TeamMemberSummary | null {
@@ -492,6 +532,11 @@ export class TeamStore {
   ): { member: TeamMemberSummary; sessionId: string; sessionExpiresAt: string } | null {
     if (!this.#state || !token) return null;
     const tokenHash = hashToken(token);
+    const remote = this.#remoteSessions.get(tokenHash);
+    if (remote) {
+      if (Date.parse(remote.sessionExpiresAt) > Date.now()) return structuredClone(remote);
+      this.#remoteSessions.delete(tokenHash);
+    }
     const session = this.#state.sessions.find(
       (candidate) => Date.parse(candidate.expiresAt) > Date.now() && safeTextEqual(candidate.tokenHash, tokenHash),
     );

@@ -526,6 +526,8 @@ export class RemoteScreenGateway {
   }
 
   #viewerAuthorized(request: IncomingMessage, session: ManagedRemoteScreenSession): boolean {
+    const remoteSession = request.headers["x-openbot-webrtc-session"];
+    if (remoteSession === session.teamSessionId) return true;
     const cookie = parseCookie(request.headers.cookie, VIEWER_COOKIE);
     return Boolean(cookie && session.viewerCookieHash && safeHashEqual(secretHash(cookie), session.viewerCookieHash));
   }

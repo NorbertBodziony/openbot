@@ -15,10 +15,6 @@ async function main(): Promise<void> {
   if (!smtpPassword?.trim()) {
     throw new Error("EMAIL_SMTP_PASSWORD is missing from the decrypted production environment.");
   }
-  const cloudflareApiToken = process.env.CLOUDFLARE_API_TOKEN;
-  if (!cloudflareApiToken?.trim()) {
-    throw new Error("CLOUDFLARE_API_TOKEN is missing from the decrypted production environment.");
-  }
   const skillsAdminToken = process.env.SKILLS_ADMIN_TOKEN;
   if (!skillsAdminToken?.trim()) {
     throw new Error("SKILLS_ADMIN_TOKEN is missing from the decrypted production environment.");
@@ -27,14 +23,13 @@ async function main(): Promise<void> {
     input: `${smtpPassword}\n`,
     label: "Cloudflare SMTP secret",
   });
-  await run(wranglerExecutable, ["secret", "put", "CLOUDFLARE_API_TOKEN", ...environmentArgs], {
-    input: `${cloudflareApiToken}\n`,
-    label: "Cloudflare tunnel API secret",
-  });
   await run(wranglerExecutable, ["secret", "put", "SKILLS_ADMIN_TOKEN", ...environmentArgs], {
     input: `${skillsAdminToken}\n`,
     label: "Skills marketplace admin secret",
   });
+  await putRequiredSecret("REMOTE_TICKET_PRIVATE_JWK");
+  await putRequiredSecret("REMOTE_TICKET_PUBLIC_JWKS");
+  await putRequiredSecret("REMOTE_AUTH_WEBHOOK_SECRET");
   await run(wranglerExecutable, ["d1", "migrations", "apply", "DB", "--remote", ...environmentArgs], {
     label: "Remote D1 migrations",
   });
@@ -47,6 +42,15 @@ async function main(): Promise<void> {
   });
 }
 
+async function putRequiredSecret(name: string): Promise<void> {
+  const value = process.env[name];
+  if (!value?.trim()) throw new Error(`${name} is missing from the decrypted production environment.`);
+  await run(wranglerExecutable, ["secret", "put", name, ...environmentArgs], {
+    input: `${value}\n`,
+    label: `${name} secret`,
+  });
+}
+
 async function run(
   executable: string,
   args: string[],
@@ -54,7 +58,6 @@ async function run(
 ): Promise<void> {
   await new Promise<void>((resolveProcess, rejectProcess) => {
     const environment = { ...process.env, ...options.env };
-    if (executable === wranglerExecutable) delete environment.CLOUDFLARE_API_TOKEN;
     const child = spawn(executable, args, {
       cwd: apiRoot,
       env: environment,

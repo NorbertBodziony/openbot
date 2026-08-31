@@ -1,0 +1,628 @@
+import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
+import { importJWK, type JWK, SignJWT } from "jose";
+import type { AuthUser, WorkerBindings } from "./types";
+
+const TICKET_AUDIENCE = "openbot-remote";
+const TICKET_TTL_SECONDS = 180;
+const SESSION_TTL_SECONDS = 24 * 60 * 60;
+const HOST_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+export type RemoteMemberRole = "owner" | "admin" | "member";
+
+export class RemoteControlPlaneError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+interface RemoteHostRow {
+  host_id: string;
+  owner_user_id: string;
+  name: string;
+  logo_key: string | null;
+  auth_epoch: number;
+  machine_token_hash: string | null;
+}
+
+interface RemoteMembershipRow {
+  membership_id: string;
+  host_id: string;
+  user_id: string;
+  role: RemoteMemberRole;
+  status: "active" | "revoked";
+}
+
+interface RemoteSessionRow extends RemoteMembershipRow {
+  session_id: string;
+  expires_at: number;
+  ended_at: number | null;
+  auth_epoch: number;
+}
+
+interface RemoteInviteRow {
+  invite_id: string;
+  host_id: string;
+  email: string | null;
+  role: Exclude<RemoteMemberRole, "owner">;
+  expires_at: number;
+  used_at: number | null;
+  revoked_at: number | null;
+}
+
+interface TicketSignerConfig {
+  privateJwk: string;
+  publicJwks: string;
+  keyId: string;
+}
+
+interface RemotePublicJwk extends DynamicRecord {
+  kid: string;
+  kty: string;
+}
+
+interface RemotePublicJwks {
+  keys: RemotePublicJwk[];
+}
+
+export class RemoteTicketSigner {
+  readonly #keyId: string;
+  readonly #publicJwks: RemotePublicJwks;
+  readonly #key: ReturnType<typeof importJWK>;
+
+  constructor(config: TicketSignerConfig) {
+    this.#keyId = requiredIdentifier(config.keyId, "ticket key ID");
+    this.#publicJwks = parseJwks(config.publicJwks, this.#keyId);
+    this.#key = importJWK(parseJwk(config.privateJwk), "ES256");
+  }
+
+  publicJwks(): RemotePublicJwks {
+    return this.#publicJwks;
+  }
+
+  async issue(input: {
+    sessionId: string;
+    hostId: string;
+    userId: string;
+    membershipId: string;
+    role: RemoteMemberRole | "host";
+    authEpoch: number;
+    sessionExpiresAt: number;
+    now: number;
+  }): Promise<{ ticket: string; expiresAt: number }> {
+    const issuedAt = Math.floor(input.now / 1_000);
+    const expiresAt = Math.min(issuedAt + TICKET_TTL_SECONDS, Math.floor(input.sessionExpiresAt / 1_000));
+    const ticket = await new SignJWT({
+      sessionId: input.sessionId,
+      hostId: input.hostId,
+      userId: input.userId,
+      membershipId: input.membershipId,
+      role: input.role,
+      authEpoch: input.authEpoch,
+      protocolMinimum: 2,
+      protocolMaximum: 2,
+      sessionExpiresAt: Math.floor(input.sessionExpiresAt / 1_000),
+    })
+      .setProtectedHeader({ alg: "ES256", typ: "JWT", kid: this.#keyId })
+      .setJti(crypto.randomUUID())
+      .setIssuedAt(issuedAt)
+      .setExpirationTime(expiresAt)
+      .setAudience(TICKET_AUDIENCE)
+      .sign(await this.#key);
+    return { ticket, expiresAt: expiresAt * 1_000 };
+  }
+}
+
+export class RemoteControlPlane {
+  readonly #database: D1Database;
+  readonly #signer: RemoteTicketSigner;
+  readonly #webhookUrl: string | null;
+  readonly #webhookSecret: string | null;
+  readonly #fetch: typeof fetch;
+  readonly #now: () => number;
+
+  constructor(
+    bindings: Pick<
+      WorkerBindings,
+      | "DB"
+      | "REMOTE_TICKET_PRIVATE_JWK"
+      | "REMOTE_TICKET_PUBLIC_JWKS"
+      | "REMOTE_TICKET_KEY_ID"
+      | "REMOTE_AUTH_WEBHOOK_URL"
+      | "REMOTE_AUTH_WEBHOOK_SECRET"
+    >,
+    options: { fetch?: typeof fetch; now?: () => number } = {},
+  ) {
+    if (!bindings.REMOTE_TICKET_PRIVATE_JWK || !bindings.REMOTE_TICKET_PUBLIC_JWKS || !bindings.REMOTE_TICKET_KEY_ID) {
+      throw new RemoteControlPlaneError(503, "remote_not_configured", "Remote ticket signing is not configured.");
+    }
+    this.#database = bindings.DB;
+    this.#signer = new RemoteTicketSigner({
+      privateJwk: bindings.REMOTE_TICKET_PRIVATE_JWK,
+      publicJwks: bindings.REMOTE_TICKET_PUBLIC_JWKS,
+      keyId: bindings.REMOTE_TICKET_KEY_ID,
+    });
+    this.#webhookUrl = bindings.REMOTE_AUTH_WEBHOOK_URL?.trim() || null;
+    this.#webhookSecret = bindings.REMOTE_AUTH_WEBHOOK_SECRET?.trim() || null;
+    this.#fetch = options.fetch ?? fetch;
+    this.#now = options.now ?? Date.now;
+  }
+
+  publicJwks(): RemotePublicJwks {
+    return this.#signer.publicJwks();
+  }
+
+  async registerHost(user: AuthUser, input: { hostId: string; name: string; devicePublicKey?: string | null }) {
+    const hostId = requiredIdentifier(input.hostId, "host ID");
+    const name = requiredText(input.name, 120, "host name");
+    const existing = await this.#host(hostId);
+    if (existing && existing.owner_user_id !== user.id) {
+      throw new RemoteControlPlaneError(403, "host_owner_mismatch", "This host belongs to another account.");
+    }
+    const now = this.#now();
+    const machineToken = randomToken();
+    const machineTokenHash = await sha256(machineToken);
+    const membershipId = `${hostId}:owner`;
+    await this.#database.batch([
+      this.#database
+        .prepare(
+          `INSERT INTO remote_hosts(
+             host_id, owner_user_id, name, device_public_key, machine_token_hash, auth_epoch, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+           ON CONFLICT(host_id) DO UPDATE SET
+             name = excluded.name,
+             device_public_key = excluded.device_public_key,
+             machine_token_hash = excluded.machine_token_hash,
+             updated_at = excluded.updated_at`,
+        )
+        .bind(hostId, user.id, name, input.devicePublicKey ?? null, machineTokenHash, now, now),
+      this.#database
+        .prepare(
+          `INSERT INTO remote_memberships(
+             membership_id, host_id, user_id, role, status, created_at, updated_at
+           ) VALUES (?, ?, ?, 'owner', 'active', ?, ?)
+           ON CONFLICT(host_id, user_id) DO UPDATE SET role = 'owner', status = 'active', updated_at = excluded.updated_at`,
+        )
+        .bind(membershipId, hostId, user.id, now, now),
+    ]);
+    return { hostId, name, membershipId, authEpoch: existing?.auth_epoch ?? 1, machineToken };
+  }
+
+  async listHosts(userId: string) {
+    const result = await this.#database
+      .prepare(
+        `SELECT h.host_id, h.name, h.logo_key, h.device_public_key, h.auth_epoch, m.membership_id, m.role
+         FROM remote_memberships m
+         JOIN remote_hosts h ON h.host_id = m.host_id
+         WHERE m.user_id = ? AND m.status = 'active'
+         ORDER BY h.name, h.host_id`,
+      )
+      .bind(userId)
+      .all<{
+        host_id: string;
+        name: string;
+        logo_key: string | null;
+        device_public_key: string | null;
+        auth_epoch: number;
+        membership_id: string;
+        role: RemoteMemberRole;
+      }>();
+    return (result.results ?? []).map((row) => ({
+      hostId: row.host_id,
+      name: row.name,
+      logoKey: row.logo_key,
+      devicePublicKey: row.device_public_key,
+      authEpoch: row.auth_epoch,
+      membershipId: row.membership_id,
+      role: row.role,
+    }));
+  }
+
+  async createInvite(
+    user: AuthUser,
+    input: {
+      hostId: string;
+      role: Exclude<RemoteMemberRole, "owner">;
+      email?: string | null;
+      expiresInSeconds?: number;
+    },
+  ) {
+    await this.#requireRole(input.hostId, user.id, ["owner", "admin"]);
+    if (input.role !== "admin" && input.role !== "member") throw invalid("invite role");
+    const now = this.#now();
+    const ttl = input.expiresInSeconds ?? 7 * 24 * 60 * 60;
+    if (!Number.isSafeInteger(ttl) || ttl < 300 || ttl > 30 * 24 * 60 * 60) throw invalid("invite lifetime");
+    const email = input.email?.trim().toLowerCase() || null;
+    const inviteId = crypto.randomUUID();
+    const token = randomToken();
+    await this.#database
+      .prepare(
+        `INSERT INTO remote_invites(
+           invite_id, host_id, token_hash, email, role, created_by_user_id, expires_at, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(inviteId, input.hostId, await sha256(token), email, input.role, user.id, now + ttl * 1_000, now)
+      .run();
+    return { inviteId, token, expiresAt: now + ttl * 1_000 };
+  }
+
+  async listInvites(userId: string, hostId: string) {
+    await this.#requireRole(hostId, userId, ["owner", "admin"]);
+    const result = await this.#database
+      .prepare(
+        `SELECT invite_id, email, role, expires_at, used_at, revoked_at
+         FROM remote_invites WHERE host_id = ? ORDER BY created_at DESC`,
+      )
+      .bind(hostId)
+      .all<{
+        invite_id: string;
+        email: string | null;
+        role: "admin" | "member";
+        expires_at: number;
+        used_at: number | null;
+        revoked_at: number | null;
+      }>();
+    return (result.results ?? []).map((invite) => ({
+      inviteId: invite.invite_id,
+      email: invite.email,
+      role: invite.role,
+      expiresAt: invite.expires_at,
+      usedAt: invite.used_at,
+      revokedAt: invite.revoked_at,
+    }));
+  }
+
+  async listMembers(userId: string, hostId: string) {
+    await this.#requireRole(hostId, userId, ["owner", "admin", "member"]);
+    const result = await this.#database
+      .prepare(
+        `SELECT m.membership_id, m.role, m.status, m.created_at,
+                u.email, u.name, u.avatar_url
+         FROM remote_memberships m
+         JOIN users u ON u.id = m.user_id
+         WHERE m.host_id = ?
+         ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, m.created_at`,
+      )
+      .bind(hostId)
+      .all<{
+        membership_id: string;
+        role: RemoteMemberRole;
+        status: "active" | "revoked";
+        created_at: number;
+        email: string;
+        name: string | null;
+        avatar_url: string | null;
+      }>();
+    return (result.results ?? []).map((member) => ({
+      membershipId: member.membership_id,
+      role: member.role,
+      status: member.status,
+      createdAt: member.created_at,
+      email: member.email,
+      name: member.name,
+      avatarUrl: member.avatar_url,
+    }));
+  }
+
+  async hostAsset(userId: string, hostId: string): Promise<{ logoKey: string | null }> {
+    await this.#requireRole(hostId, userId, ["owner", "admin", "member"]);
+    const host = await this.#host(hostId);
+    if (!host) throw new RemoteControlPlaneError(404, "host_not_found", "The remote host does not exist.");
+    return { logoKey: host.logo_key };
+  }
+
+  async assertHostOwner(userId: string, hostId: string): Promise<void> {
+    await this.#requireRole(hostId, userId, ["owner"]);
+  }
+
+  async setHostLogo(userId: string, hostId: string, logoKey: string | null): Promise<string | null> {
+    await this.#requireRole(hostId, userId, ["owner"]);
+    const host = await this.#host(hostId);
+    if (!host) throw new RemoteControlPlaneError(404, "host_not_found", "The remote host does not exist.");
+    await this.#database
+      .prepare("UPDATE remote_hosts SET logo_key = ?, updated_at = ? WHERE host_id = ?")
+      .bind(logoKey, this.#now(), hostId)
+      .run();
+    return host.logo_key;
+  }
+
+  async previewInvite(token: string) {
+    const now = this.#now();
+    const invite = await this.#database
+      .prepare(
+        `SELECT i.invite_id, i.host_id, i.email, i.role, i.expires_at, i.used_at, i.revoked_at, h.name
+         FROM remote_invites i JOIN remote_hosts h ON h.host_id = i.host_id
+         WHERE i.token_hash = ? LIMIT 1`,
+      )
+      .bind(await sha256(requiredText(token, 512, "invite token")))
+      .first<RemoteInviteRow & { name: string }>();
+    if (!invite || invite.used_at || invite.revoked_at || invite.expires_at <= now) {
+      throw new RemoteControlPlaneError(404, "invite_invalid", "The invitation is invalid or expired.");
+    }
+    return {
+      inviteId: invite.invite_id,
+      hostId: invite.host_id,
+      hostName: invite.name,
+      role: invite.role,
+      expiresAt: invite.expires_at,
+      emailBound: Boolean(invite.email),
+    };
+  }
+
+  async acceptInvite(user: AuthUser, token: string) {
+    const now = this.#now();
+    const tokenHash = await sha256(requiredText(token, 512, "invite token"));
+    const invite = await this.#database
+      .prepare(
+        `SELECT invite_id, host_id, email, role, expires_at, used_at, revoked_at
+         FROM remote_invites WHERE token_hash = ? LIMIT 1`,
+      )
+      .bind(tokenHash)
+      .first<RemoteInviteRow>();
+    if (!invite || invite.used_at || invite.revoked_at || invite.expires_at <= now) {
+      throw new RemoteControlPlaneError(404, "invite_invalid", "The invitation is invalid or expired.");
+    }
+    if (invite.email && invite.email !== user.email.trim().toLowerCase()) {
+      throw new RemoteControlPlaneError(403, "invite_email_mismatch", "The invitation is for another account.");
+    }
+    const membershipId = crypto.randomUUID();
+    const accepted = await this.#database.batch([
+      this.#database
+        .prepare(
+          `INSERT INTO remote_memberships(
+             membership_id, host_id, user_id, role, status, created_at, updated_at
+           ) SELECT ?, ?, ?, ?, 'active', ?, ?
+             FROM remote_invites
+            WHERE invite_id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?
+           ON CONFLICT(host_id, user_id) DO UPDATE SET role = excluded.role, status = 'active', updated_at = excluded.updated_at`,
+        )
+        .bind(membershipId, invite.host_id, user.id, invite.role, now, now, invite.invite_id, now),
+      this.#database
+        .prepare(
+          "UPDATE remote_invites SET used_at = ? WHERE invite_id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?",
+        )
+        .bind(now, invite.invite_id, now),
+    ]);
+    if ((accepted[0].meta.changes ?? 0) !== 1 || (accepted[1].meta.changes ?? 0) !== 1) {
+      throw new RemoteControlPlaneError(409, "invite_already_used", "The invitation was already used.");
+    }
+    const membership = await this.#database
+      .prepare(
+        "SELECT membership_id FROM remote_memberships WHERE host_id = ? AND user_id = ? AND status = 'active' LIMIT 1",
+      )
+      .bind(invite.host_id, user.id)
+      .first<{ membership_id: string }>();
+    if (!membership) {
+      throw new RemoteControlPlaneError(500, "membership_missing", "The accepted membership could not be loaded.");
+    }
+    return { hostId: invite.host_id, membershipId: membership.membership_id, role: invite.role };
+  }
+
+  async revokeInvite(userId: string, inviteId: string): Promise<void> {
+    const invite = await this.#database
+      .prepare("SELECT host_id FROM remote_invites WHERE invite_id = ? LIMIT 1")
+      .bind(inviteId)
+      .first<{ host_id: string }>();
+    if (!invite) throw new RemoteControlPlaneError(404, "invite_not_found", "The invitation does not exist.");
+    await this.#requireRole(invite.host_id, userId, ["owner", "admin"]);
+    await this.#database
+      .prepare("UPDATE remote_invites SET revoked_at = ? WHERE invite_id = ? AND used_at IS NULL")
+      .bind(this.#now(), inviteId)
+      .run();
+  }
+
+  async changeMembership(
+    actorUserId: string,
+    input: { hostId: string; membershipId: string; role?: Exclude<RemoteMemberRole, "owner">; revoke?: boolean },
+  ): Promise<void> {
+    await this.#requireRole(input.hostId, actorUserId, ["owner"]);
+    const membership = await this.#database
+      .prepare("SELECT membership_id, host_id, user_id, role, status FROM remote_memberships WHERE membership_id = ?")
+      .bind(input.membershipId)
+      .first<RemoteMembershipRow>();
+    if (!membership || membership.host_id !== input.hostId) {
+      throw new RemoteControlPlaneError(404, "membership_not_found", "The membership does not exist.");
+    }
+    if (membership.role === "owner") {
+      throw new RemoteControlPlaneError(409, "owner_membership_protected", "The owner membership cannot be changed.");
+    }
+    const role = input.role ?? membership.role;
+    if (role !== "admin" && role !== "member") throw invalid("member role");
+    const now = this.#now();
+    await this.#database.batch([
+      this.#database
+        .prepare("UPDATE remote_memberships SET role = ?, status = ?, updated_at = ? WHERE membership_id = ?")
+        .bind(role, input.revoke ? "revoked" : "active", now, input.membershipId),
+      this.#database
+        .prepare("UPDATE remote_hosts SET auth_epoch = auth_epoch + 1, updated_at = ? WHERE host_id = ?")
+        .bind(now, input.hostId),
+      this.#database
+        .prepare("UPDATE remote_sessions SET ended_at = ? WHERE host_id = ? AND user_id = ? AND ended_at IS NULL")
+        .bind(now, input.hostId, membership.user_id),
+    ]);
+    const host = await this.#host(input.hostId);
+    if (host) await this.#sendAuthEvent(host.host_id, host.auth_epoch);
+  }
+
+  async startSession(userId: string, hostId: string) {
+    const membership = await this.#requireRole(hostId, userId, ["owner", "admin", "member"]);
+    const now = this.#now();
+    const sessionId = crypto.randomUUID();
+    const expiresAt = now + SESSION_TTL_SECONDS * 1_000;
+    await this.#database
+      .prepare(
+        `INSERT INTO remote_sessions(session_id, host_id, user_id, membership_id, started_at, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(sessionId, hostId, userId, membership.membership_id, now, expiresAt)
+      .run();
+    return { sessionId, hostId, expiresAt };
+  }
+
+  async endSession(userId: string, sessionId: string): Promise<void> {
+    await this.#database
+      .prepare("UPDATE remote_sessions SET ended_at = ? WHERE session_id = ? AND user_id = ? AND ended_at IS NULL")
+      .bind(this.#now(), sessionId, userId)
+      .run();
+  }
+
+  async issueSessionTicket(userId: string, sessionId: string) {
+    const now = this.#now();
+    const session = await this.#database
+      .prepare(
+        `SELECT s.session_id, s.expires_at, s.ended_at, m.membership_id, m.host_id, m.user_id, m.role, m.status,
+                h.auth_epoch
+         FROM remote_sessions s
+         JOIN remote_memberships m ON m.membership_id = s.membership_id
+         JOIN remote_hosts h ON h.host_id = s.host_id
+         WHERE s.session_id = ? AND s.user_id = ? LIMIT 1`,
+      )
+      .bind(sessionId, userId)
+      .first<RemoteSessionRow>();
+    if (!session || session.ended_at || session.expires_at <= now || session.status !== "active") {
+      throw new RemoteControlPlaneError(403, "session_inactive", "The remote session is not active.");
+    }
+    return this.#signer.issue({
+      sessionId,
+      hostId: session.host_id,
+      userId,
+      membershipId: session.membership_id,
+      role: session.role,
+      authEpoch: session.auth_epoch,
+      sessionExpiresAt: session.expires_at,
+      now,
+    });
+  }
+
+  async issueHostTicket(hostId: string, machineToken: string) {
+    const host = await this.#host(hostId);
+    if (!host?.machine_token_hash || host.machine_token_hash !== (await sha256(machineToken))) {
+      throw new RemoteControlPlaneError(401, "host_unauthorized", "The host credential is invalid.");
+    }
+    return this.#signer.issue({
+      sessionId: `host-${hostId}`,
+      hostId,
+      userId: host.owner_user_id,
+      membershipId: `${hostId}:host`,
+      role: "host",
+      authEpoch: host.auth_epoch,
+      sessionExpiresAt: this.#now() + HOST_SESSION_TTL_SECONDS * 1_000,
+      now: this.#now(),
+    });
+  }
+
+  async #requireRole(hostId: string, userId: string, roles: RemoteMemberRole[]): Promise<RemoteMembershipRow> {
+    const membership = await this.#database
+      .prepare(
+        `SELECT membership_id, host_id, user_id, role, status
+         FROM remote_memberships WHERE host_id = ? AND user_id = ? AND status = 'active' LIMIT 1`,
+      )
+      .bind(hostId, userId)
+      .first<RemoteMembershipRow>();
+    if (!membership || !roles.includes(membership.role)) {
+      throw new RemoteControlPlaneError(
+        403,
+        "remote_permission_denied",
+        "The account cannot perform this remote operation.",
+      );
+    }
+    return membership;
+  }
+
+  #host(hostId: string): Promise<RemoteHostRow | null> {
+    return this.#database
+      .prepare(
+        `SELECT host_id, owner_user_id, name, logo_key, auth_epoch, machine_token_hash
+         FROM remote_hosts WHERE host_id = ? LIMIT 1`,
+      )
+      .bind(hostId)
+      .first<RemoteHostRow>();
+  }
+
+  async #sendAuthEvent(hostId: string, authEpoch: number): Promise<void> {
+    if (!this.#webhookUrl || !this.#webhookSecret) return;
+    const timestamp = Math.floor(this.#now() / 1_000).toString();
+    const body = JSON.stringify({ type: "remote-auth-changed", hostId, authEpoch });
+    const signature = await hmacSha256(this.#webhookSecret, `${timestamp}.${body}`);
+    const response = await this.#fetch(this.#webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "OpenBot-Timestamp": timestamp, "OpenBot-Signature": signature },
+      body,
+    });
+    if (!response.ok)
+      throw new RemoteControlPlaneError(
+        502,
+        "remote_webhook_failed",
+        "Remote access was changed, but Signal did not confirm the event.",
+      );
+  }
+}
+
+function requiredIdentifier(value: string, name: string): string {
+  if (!/^[A-Za-z0-9:_-]{1,128}$/u.test(value)) throw invalid(name);
+  return value;
+}
+
+function requiredText(value: string, maximum: number, name: string): string {
+  const text = value.trim();
+  if (!text || text.length > maximum) throw invalid(name);
+  return text;
+}
+
+function invalid(name: string): RemoteControlPlaneError {
+  return new RemoteControlPlaneError(400, "invalid_remote_request", `The ${name} is invalid.`);
+}
+
+function randomToken(): string {
+  return bytesToBase64Url(crypto.getRandomValues(new Uint8Array(32)));
+}
+
+async function sha256(value: string): Promise<string> {
+  return bytesToBase64Url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))));
+}
+
+async function hmacSha256(secret: string, value: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  return bytesToBase64Url(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value))));
+}
+
+function bytesToBase64Url(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
+}
+
+function parseJwk(value: string): JWK {
+  const parsed = JSON.parse(value);
+  if (!isDynamicRecord(parsed) || parsed.kty !== "EC") {
+    throw new Error("REMOTE_TICKET_PRIVATE_JWK is invalid.");
+  }
+  return { ...parsed, kty: "EC" };
+}
+
+function parseJwks(value: string, keyId: string): RemotePublicJwks {
+  const parsed = JSON.parse(value);
+  if (!isDynamicRecord(parsed) || !Array.isArray(parsed.keys)) {
+    throw new Error("REMOTE_TICKET_PUBLIC_JWKS is invalid.");
+  }
+  const keys = parsed.keys.map(parsePublicJwk);
+  if (!keys.some((key) => key.kid === keyId && key.kty === "EC"))
+    throw new Error("The public JWKS does not contain the active key.");
+  return { keys };
+}
+
+function parsePublicJwk(value: unknown): RemotePublicJwk {
+  if (!isDynamicRecord(value) || !isString(value.kid) || !isString(value.kty)) {
+    throw new Error("REMOTE_TICKET_PUBLIC_JWKS is invalid.");
+  }
+  return { ...value, kid: value.kid, kty: value.kty };
+}

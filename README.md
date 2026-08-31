@@ -129,6 +129,9 @@ Use `bun run dev:seed --dry-run` to inspect the target and fixture counts withou
 | `bun run api:migrate:local` | Apply D1 migrations to the local development database. |
 | `bun run api:migrate:remote` | Apply D1 migrations to the configured remote database. |
 | `bun run api:deploy` | Build and deploy the account API to Cloudflare Workers. |
+| `bun run remote:up` | Build and start the self-hosted Signal, coturn, and ACME stack. |
+| `bun run remote:check` | Check the Remote API and both Docker Compose configurations. |
+| `bun run remote:update` | Update Signal, then drain and update the single coturn instance. |
 | `bun run dev:all` | Start the API and the single local Electron instance. |
 | `bun run dev:test-client` | Start the API, the local instance, and an isolated second client for team testing. |
 | `bun run dev:seed` | Replace only the app development profile with deterministic showcase data. |
@@ -149,11 +152,11 @@ Use `bun run dev:seed --dry-run` to inspect the target and fixture counts withou
 | `bun run test:imagegen` | **Online/manual:** run a real full-access image-generation turn. |
 | `bun run test:storage-live` | **Online/manual:** verify isolated Codex and Claude turns in a temporary SQLite database. |
 
-Publishing never creates a second OpenBot instance. The publishing controls start an authenticated
-local Team API and expose it through a Cloudflare Tunnel; agents, conversations, files, and browser
-state continue to come from the same local app. Only invited people can sign in through the public
-address. A public instance is republished automatically on its next launch until the owner makes it
-private.
+Publishing never creates a second OpenBot instance. The host keeps its Team API on loopback. A hidden,
+sandboxed Electron page connects it to invited clients through WebRTC. Signal carries only connection
+setup messages. Team data uses direct DataChannels when possible and the project coturn service when
+direct ICE fails. Cloudflare stores accounts, configuration, memberships, invitations, logical session
+records, and public assets. It does not carry chats, files, commands, or remote desktop media.
 
 For manual team testing, `bun run dev:test-client` starts a complete two-client harness. The second
 client uses the isolated `OpenBot Dev Test Client` profile and renderer port 5174. `dev:reset` also
@@ -219,9 +222,9 @@ OpenBot keeps one stable local conversation when an agent changes between Codex,
 provider session identifiers stay private and are used only to resume provider runtime state.
 
 The Electron renderer is never exposed as a public website. It communicates with local CLI processes
-over stdio. When the owner publishes OpenBot, its authenticated Team API binds to localhost and a
-Cloudflare Tunnel exposes only that API. The optional account flow connects to the configured HTTPS
-account API. The client stores only an encrypted OpenBot session token. One-time codes expire after
+over stdio. When the owner publishes OpenBot, its authenticated Team API stays on localhost. WebRTC
+protocol v2 carries RPC, events, and binary files to the remote client. The account flow connects to
+the configured HTTPS Cloudflare API. The client stores only an encrypted OpenBot session token. One-time codes expire after
 10 minutes and are stored only as hashes. A daily maintenance task removes expired or consumed
 authentication records from D1. The embedded browser uses a separate sandboxed Electron session and
 cannot access `window.openbot` or managed local attachments.

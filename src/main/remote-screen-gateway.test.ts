@@ -299,7 +299,7 @@ function createGateway(
     runtimeStateDirectory: "/tmp/openbot-test-runtime",
     getRuntimeCredentials: async () => ({ username: "openbot", password: "secret" }),
     getDisplays: () => displays,
-    getIceServers: async () => [{ urls: "stun:stun.cloudflare.com:3478" }],
+    getIceServers: async () => [{ urls: "stun:127.0.0.1:3478" }],
     ...(options.now ? { now: options.now } : {}),
     createRuntime: () => {
       const runtime = new FakeRuntime(options.runtimeBaseUrl, options.selectDisplay);

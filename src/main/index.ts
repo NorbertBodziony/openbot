@@ -68,7 +68,6 @@ import { readAnalyticsPreference, writeAnalyticsPreference } from "./analytics-p
 import { readAppVariant, resolveAppIconPath } from "./app-icon";
 import { BrowserPictureInPicture } from "./browser-picture-in-picture";
 import { CentralAuthManager, readCentralAuthApiUrl } from "./central-auth-manager";
-import { resolveOpenBotCloudflaredExecutable } from "./cloudflared-artifact";
 import { buildContentSecurityPolicy } from "./content-security-policy";
 import {
   developmentUserDataName,
@@ -168,6 +167,8 @@ import { canCheckRendererPermission, canRequestRendererPermission } from "./rend
 import { readSetupState, writeSetupState } from "./setup-store";
 import { SkillMarketplaceService } from "./skill-marketplace-service";
 import { TeamStore } from "./team-store";
+import { TeamWebRtcBridge } from "./team-webrtc-bridge";
+import { TeamWebRtcClientTransport } from "./team-webrtc-client-transport";
 import { handleTrusted, handleTrustedWithEvent } from "./trusted-ipc";
 import { isTrustedRendererUrl } from "./trusted-renderer";
 import { supportsInstalledUpdates, UpdateService } from "./update-service";
@@ -259,6 +260,7 @@ let remoteDesktopManager: RemoteDesktopManager | null = null;
 let remoteServerManager: RemoteServerManager | null = null;
 let centralAuthManager: CentralAuthManager | null = null;
 let hostAnalytics: HostAnalytics | null = null;
+let teamWebRtcBridge: TeamWebRtcBridge | null = null;
 let voiceTranscriptionService: VoiceTranscriptionService | null = null;
 let dynamicIslandController: DynamicIslandWindowController | null = null;
 const macHapticFeedback = new MacHapticFeedback();
@@ -1454,6 +1456,9 @@ function forwardDirectTyping(
 
 function forwardCentralAuth(state: CentralAuthState): void {
   if (state.status === "signed_in") {
+    void remoteServerManager?.syncRemoteHosts().catch((error) => {
+      console.error("Unable to synchronize remote hosts:", error);
+    });
     const host = hostService;
     if (host) {
       void host
@@ -1575,6 +1580,7 @@ if (!hasSingleInstanceLock) {
         decrypt: (value) => safeStorage.decryptString(value),
       });
       centralAuthManager.on("changed", forwardCentralAuth);
+      const centralAuth = centralAuthManager;
       const centralAuthInitialization = centralAuthManager.initialize();
       const store = new BotStore(app.getPath("userData"), homedir());
       await store.initialize();
@@ -1584,6 +1590,7 @@ if (!hasSingleInstanceLock) {
       mailboxStore = new MailboxStore(app.getPath("userData"), store.sharedRoot, store.database);
       await mailboxStore.initialize();
       configureApplicationProtocol();
+      teamWebRtcBridge = new TeamWebRtcBridge({ developmentUrl: process.env.ELECTRON_RENDERER_URL });
       browserHost = new BrowserHost(mainWindow, store.downloadsRoot, join(app.getPath("userData"), BROWSER_STATE_FILE));
       await browserHost.restore();
       browserPictureInPicture = new BrowserPictureInPicture({
@@ -1672,6 +1679,23 @@ if (!hasSingleInstanceLock) {
         mailbox: mailboxStore,
         browser: browserHost,
         chat: teamChatStore,
+        teamWebRtcBridge,
+        registerRemoteHost: (input) => {
+          if (!centralAuthManager) throw new Error("The account service is not ready.");
+          return centralAuthManager.registerRemoteHost(input);
+        },
+        issueRemoteHostTicket: (hostId) => {
+          if (!centralAuthManager) throw new Error("The account service is not ready.");
+          return centralAuthManager.issueRemoteHostTicket(hostId);
+        },
+        remoteControlPlaneUrl: centralAuth.resolveApiUrl("/"),
+        createRemoteInvite: (hostId, input) => centralAuth.createRemoteInvite(hostId, input),
+        listRemoteInvites: (hostId) => centralAuth.listRemoteInvites(hostId),
+        revokeRemoteInvite: (inviteId) => centralAuth.revokeRemoteInvite(inviteId),
+        listRemoteMembers: (hostId) => centralAuth.listRemoteMembers(hostId),
+        updateRemoteMember: (hostId, membershipId, role) => centralAuth.updateRemoteMember(hostId, membershipId, role),
+        removeRemoteMember: (hostId, membershipId) => centralAuth.removeRemoteMember(hostId, membershipId),
+        updateRemoteHostLogo: (hostId, image, version) => centralAuth.updateRemoteHostLogo(hostId, image, version),
         allowLocalDevelopmentInvites: developmentRemoteRole === "host",
         logDirectory: join(app.getPath("userData"), "logs", "remote"),
         removeLegacyRemoteDesktopCredential: async () => {
@@ -1692,13 +1716,6 @@ if (!hasSingleInstanceLock) {
         },
         platform: process.platform === "darwin" || process.platform === "win32" ? process.platform : "linux",
         unattended: false,
-        resolveCloudflared: () =>
-          resolveOpenBotCloudflaredExecutable({
-            isPackaged: app.isPackaged,
-            resourcesPath: process.resourcesPath,
-            sourceRoot: resolve(__dirname, "../.."),
-            overridePath: process.env.OPENBOT_CLOUDFLARED_PATH,
-          }),
         remoteDesktopRuntimePaths: remoteDesktopRuntime,
         remoteDesktopStateDirectory: join(app.getPath("userData"), "remote-desktop-runtime"),
         getRemoteDesktopRuntimeCredentials: () => {
@@ -1724,12 +1741,10 @@ if (!hasSingleInstanceLock) {
         getRemoteDesktopIceServers: () => {
           if (developmentRemoteRole === "host") return Promise.resolve([]);
           const identity = teamStore.getIdentity();
-          if (!identity || !centralAuthManager) throw new Error("The account service is not ready.");
-          return centralAuthManager.getTeamHostIceServers(identity.serverId);
-        },
-        provisionTeamTunnel: (input) => {
-          if (!centralAuthManager) throw new Error("The account service is not ready.");
-          return centralAuthManager.provisionTeamTunnel(input);
+          if (!identity) throw new Error("The remote host identity is unavailable.");
+          const iceServers = teamWebRtcBridge?.getIceServers(identity.serverId) ?? [];
+          if (iceServers.length === 0) throw new Error("Remote Signal has not supplied ICE servers yet.");
+          return Promise.resolve(iceServers);
         },
       });
       const signedInState = centralAuthManager.getState();
@@ -1782,6 +1797,61 @@ if (!hasSingleInstanceLock) {
         {
           allowLocalDevelopmentInvites: developmentRemoteRole !== null,
           appVersion: app.getVersion(),
+          localHostId: teamStore.getIdentity()?.serverId ?? null,
+          webrtcTransport: new TeamWebRtcClientTransport({
+            bridge: teamWebRtcBridge,
+            listHosts: () => {
+              if (!centralAuthManager) throw new Error("The account service is not ready.");
+              return centralAuthManager.listRemoteHosts();
+            },
+            startSession: (hostId) => {
+              if (!centralAuthManager) throw new Error("The account service is not ready.");
+              return centralAuthManager.startRemoteSession(hostId);
+            },
+            issueTicket: (sessionId) => {
+              if (!centralAuthManager) throw new Error("The account service is not ready.");
+              return centralAuthManager.issueRemoteSessionTicket(sessionId);
+            },
+            endSession: (sessionId) => {
+              if (!centralAuthManager) return Promise.resolve();
+              return centralAuthManager.endRemoteSession(sessionId);
+            },
+            createInvite: (hostId, input) => {
+              if (!centralAuthManager) throw new Error("The account service is not ready.");
+              return centralAuthManager.createRemoteInvite(hostId, input);
+            },
+            listInvites: (hostId) => {
+              if (!centralAuthManager) throw new Error("The account service is not ready.");
+              return centralAuthManager.listRemoteInvites(hostId);
+            },
+            previewInvite: (token) => {
+              if (!centralAuthManager) throw new Error("The account service is not ready.");
+              return centralAuthManager.previewRemoteInvite(token);
+            },
+            acceptInvite: (token) => {
+              if (!centralAuthManager) throw new Error("The account service is not ready.");
+              return centralAuthManager.acceptRemoteInvite(token);
+            },
+            revokeInvite: (inviteId) => {
+              if (!centralAuthManager) throw new Error("The account service is not ready.");
+              return centralAuthManager.revokeRemoteInvite(inviteId);
+            },
+            listMembers: (hostId) => {
+              if (!centralAuthManager) throw new Error("The account service is not ready.");
+              return centralAuthManager.listRemoteMembers(hostId);
+            },
+            updateMember: (hostId, membershipId, role) => {
+              if (!centralAuthManager) throw new Error("The account service is not ready.");
+              return centralAuthManager.updateRemoteMember(hostId, membershipId, role);
+            },
+            removeMember: (hostId, membershipId) => {
+              if (!centralAuthManager) throw new Error("The account service is not ready.");
+              return centralAuthManager.removeRemoteMember(hostId, membershipId);
+            },
+            controlPlaneUrl: centralAuth.resolveApiUrl("/"),
+            downloadHostLogo: (hostId, version) => centralAuth.downloadRemoteHostLogo(hostId, version),
+            transferDirectory: join(app.getPath("userData"), "remote-transfers"),
+          }),
         },
       );
       await remoteServerManager.initialize();
@@ -2039,6 +2109,7 @@ async function prepareForShutdown(browserAlreadyDestroyed = false): Promise<void
   voiceTranscriptionService?.shutdown();
   await (remoteDesktopManager?.stop() ?? Promise.resolve());
   await (hostService?.shutdown() ?? Promise.resolve());
+  await (teamWebRtcBridge?.stop() ?? Promise.resolve());
   await (agentService?.stop() ?? Promise.resolve());
 }
 

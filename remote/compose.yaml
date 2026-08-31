@@ -1,0 +1,89 @@
+name: openbot-remote
+
+services:
+  acme:
+    image: goacme/lego:v5.3.1
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/opt/openbot/renew.sh"]
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL is required}
+      SIGNAL_DOMAIN: ${SIGNAL_DOMAIN:?SIGNAL_DOMAIN is required}
+      TURN_DOMAIN: ${TURN_DOMAIN:?TURN_DOMAIN is required}
+      CF_DNS_API_TOKEN: ${CLOUDFLARE_DNS_API_TOKEN:?CLOUDFLARE_DNS_API_TOKEN is required}
+    volumes:
+      - acme-data:/acme
+      - ./acme/renew.sh:/opt/openbot/renew.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /acme/certificates/$${SIGNAL_DOMAIN}.crt && test -s /acme/certificates/$${SIGNAL_DOMAIN}.key"]
+      interval: 10s
+      timeout: 3s
+      retries: 30
+
+  remote-api:
+    build:
+      context: ..
+      dockerfile: remote/api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      acme:
+        condition: service_healthy
+    environment:
+      REMOTE_SIGNAL_HOST: 0.0.0.0
+      REMOTE_SIGNAL_PORT: ${REMOTE_SIGNAL_PORT:-8443}
+      REMOTE_HEALTH_PORT: 8080
+      REMOTE_TLS_DISABLED: ${REMOTE_TLS_DISABLED:-false}
+      REMOTE_TLS_CERT_PATH: /acme/certificates/${SIGNAL_DOMAIN}.crt
+      REMOTE_TLS_KEY_PATH: /acme/certificates/${SIGNAL_DOMAIN}.key
+      REMOTE_TICKET_JWKS_URL: ${REMOTE_TICKET_JWKS_URL:?REMOTE_TICKET_JWKS_URL is required}
+      REMOTE_SESSION_SECRET: ${REMOTE_SESSION_SECRET:?REMOTE_SESSION_SECRET is required}
+      REMOTE_AUTH_WEBHOOK_SECRET: ${REMOTE_AUTH_WEBHOOK_SECRET:?REMOTE_AUTH_WEBHOOK_SECRET is required}
+      REMOTE_METRICS_TOKEN: ${REMOTE_METRICS_TOKEN:?REMOTE_METRICS_TOKEN is required}
+      REMOTE_MAX_CONNECTIONS_PER_USER: ${REMOTE_MAX_CONNECTIONS_PER_USER:-8}
+      REMOTE_MAX_CONNECTIONS_PER_IP: ${REMOTE_MAX_CONNECTIONS_PER_IP:-32}
+      REMOTE_MAX_MESSAGES_PER_MINUTE: ${REMOTE_MAX_MESSAGES_PER_MINUTE:-600}
+      REMOTE_TRUST_PROXY: ${REMOTE_TRUST_PROXY:-false}
+      TURN_SHARED_SECRET: ${TURN_SHARED_SECRET:?TURN_SHARED_SECRET is required}
+      TURN_HOST: ${TURN_DOMAIN}
+      TURN_PORT: 3478
+      TURN_TLS_PORT: 5349
+    ports:
+      - "${REMOTE_SIGNAL_BIND_ADDRESS:-0.0.0.0}:${REMOTE_SIGNAL_PUBLIC_PORT:-443}:${REMOTE_SIGNAL_PORT:-8443}/tcp"
+    volumes:
+      - acme-data:/acme:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+
+  coturn:
+    build:
+      context: ..
+      dockerfile: remote/coturn/Dockerfile
+    container_name: openbot-coturn
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      acme:
+        condition: service_healthy
+    environment:
+      TURN_PUBLIC_IP: ${TURN_PUBLIC_IP:?TURN_PUBLIC_IP is required}
+      TURN_REALM: ${TURN_DOMAIN}
+      TURN_SHARED_SECRET: ${TURN_SHARED_SECRET:?TURN_SHARED_SECRET is required}
+      TURN_TLS_CERT_PATH: /acme/certificates/${SIGNAL_DOMAIN}.crt
+      TURN_TLS_KEY_PATH: /acme/certificates/${SIGNAL_DOMAIN}.key
+    volumes:
+      - acme-data:/acme:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "turnutils_stunclient 127.0.0.1 -p 3478 >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  acme-data:

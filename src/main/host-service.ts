@@ -1,7 +1,8 @@
-import { type ChildProcess, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { join } from "node:path";
 import { createInviteUrl } from "@openbot/contracts/invite-links";
 import type {
+  AvatarImageInput,
   CentralAuthUser,
   ConfigureHostInput,
   ConversationPage,
@@ -39,12 +40,13 @@ import type { BrowserHost } from "../backend/browser-host";
 import type { MailboxStore } from "../backend/mailbox-store";
 import type { SidebarLayoutStore } from "../backend/sidebar-layout-store";
 import type { TeamChatStore } from "../backend/team-chat-store";
-import type { ProvisionedTeamTunnel } from "./central-auth-manager";
-import { appendDiagnosticLog, resolveCloudflaredExecutable, stopOwnedProcess } from "./host-tunnel-runtime";
 import type { RemoteDesktopRuntimePaths } from "./remote-desktop-runtime-artifact";
+import { appendRemoteDiagnosticLog } from "./remote-diagnostics";
 import { RemoteScreenGateway } from "./remote-screen-gateway";
 import { TeamApiServer } from "./team-api-server";
 import type { AuthenticatedMember, TeamStore } from "./team-store";
+import type { TeamWebRtcBridge } from "./team-webrtc-bridge";
+import { TeamWebRtcHostGateway } from "./team-webrtc-host-gateway";
 
 export const DEVELOPMENT_REMOTE_CLIENT_USERNAME = "openbot-dev-client";
 
@@ -63,10 +65,6 @@ interface HostServiceOptions {
   mailbox: MailboxStore;
   browser: BrowserHost;
   chat?: TeamChatStore;
-  resolveCloudflared?: () => Promise<string | null>;
-  spawnProcess?: typeof spawn;
-  tunnelTimeoutMs?: number;
-  publicReadyTimeoutMs?: number;
   allowLocalDevelopmentInvites?: boolean;
   logDirectory?: string;
   removeLegacyRemoteDesktopCredential?: () => Promise<void>;
@@ -85,35 +83,50 @@ interface HostServiceOptions {
   getRemoteDesktopIceServers?: () => Promise<RemoteDesktopIceServer[]>;
   platform?: "darwin" | "win32" | "linux";
   unattended?: boolean;
-  provisionTeamTunnel: (input: {
-    serverId: string;
-    serverName: string;
-    apiPort?: number | null;
-  }) => Promise<ProvisionedTeamTunnel>;
-}
-
-export function buildNamedTunnelArgs(): string[] {
-  return ["tunnel", "--protocol", "quic", "run"];
-}
-
-export function buildNamedTunnelEnvironment(token: string, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  return { ...base, TUNNEL_TOKEN: token };
+  teamWebRtcBridge?: TeamWebRtcBridge;
+  registerRemoteHost?: (input: { hostId: string; name: string; devicePublicKey?: string | null }) => Promise<unknown>;
+  issueRemoteHostTicket?: (hostId: string) => Promise<{ ticket: string; signalUrl: string; expiresAt: number }>;
+  remoteControlPlaneUrl?: string;
+  createRemoteInvite?: (
+    hostId: string,
+    input: { role: "admin" | "member"; email?: string },
+  ) => Promise<{ inviteId: string; token: string; expiresAt: number }>;
+  listRemoteInvites?: (hostId: string) => Promise<
+    Array<{
+      inviteId: string;
+      role: "admin" | "member";
+      email: string | null;
+      expiresAt: number;
+      usedAt: number | null;
+    }>
+  >;
+  revokeRemoteInvite?: (inviteId: string) => Promise<void>;
+  listRemoteMembers?: (hostId: string) => Promise<
+    Array<{
+      membershipId: string;
+      email: string;
+      name: string | null;
+      avatarUrl: string | null;
+      role: "owner" | "admin" | "member";
+      status: "active" | "revoked";
+      createdAt: number;
+    }>
+  >;
+  updateRemoteMember?: (hostId: string, membershipId: string, role: "admin" | "member") => Promise<void>;
+  removeRemoteMember?: (hostId: string, membershipId: string) => Promise<void>;
+  updateRemoteHostLogo?: (
+    hostId: string,
+    image: AvatarImageInput | null,
+    version?: string | null,
+  ) => Promise<string | null>;
 }
 
 export class HostService extends EventEmitter<HostEvents> {
-  readonly #options: Required<
-    Pick<
-      HostServiceOptions,
-      "spawnProcess" | "tunnelTimeoutMs" | "publicReadyTimeoutMs" | "allowLocalDevelopmentInvites"
-    >
-  > &
-    Omit<
-      HostServiceOptions,
-      "spawnProcess" | "tunnelTimeoutMs" | "publicReadyTimeoutMs" | "allowLocalDevelopmentInvites"
-    >;
+  readonly #options: Required<Pick<HostServiceOptions, "allowLocalDevelopmentInvites">> &
+    Omit<HostServiceOptions, "allowLocalDevelopmentInvites">;
   readonly #api: TeamApiServer;
   readonly #remoteScreen: RemoteScreenGateway;
-  #tunnel: ChildProcess | null = null;
+  readonly #webrtcGateway: TeamWebRtcHostGateway | null;
   #status: HostStatus;
   #legacyCredentialRemoved = false;
 
@@ -121,9 +134,6 @@ export class HostService extends EventEmitter<HostEvents> {
     super();
     this.#options = {
       ...options,
-      spawnProcess: options.spawnProcess ?? spawn,
-      tunnelTimeoutMs: options.tunnelTimeoutMs ?? 30_000,
-      publicReadyTimeoutMs: options.publicReadyTimeoutMs ?? 30_000,
       allowLocalDevelopmentInvites: options.allowLocalDevelopmentInvites ?? false,
     };
     const identity = options.store.getIdentity();
@@ -152,17 +162,21 @@ export class HostService extends EventEmitter<HostEvents> {
         options.getRemoteDesktopRuntimeCredentials ??
         (async () => ({ username: "openbot", password: "development-runtime-not-for-release" })),
       getDisplays: options.getRemoteDesktopDisplays,
-      getIceServers: options.getRemoteDesktopIceServers ?? (async () => [{ urls: "stun:stun.cloudflare.com:3478" }]),
+      getIceServers:
+        options.getRemoteDesktopIceServers ??
+        (async () => {
+          throw new Error("Remote Signal has not supplied ICE servers.");
+        }),
       ...(logDirectory
         ? {
             onDiagnostic: (source: "sunshine" | "moonlight", message: string) => {
-              void appendDiagnosticLog(logDirectory, `remote-screen-${source}`, message);
+              void appendRemoteDiagnosticLog(logDirectory, `remote-screen-${source}`, message);
             },
           }
         : {}),
       audit: (event) => {
         if (options.logDirectory) {
-          void appendDiagnosticLog(options.logDirectory, "remote-screen", `${JSON.stringify(event)}\n`);
+          void appendRemoteDiagnosticLog(options.logDirectory, "remote-screen", `${JSON.stringify(event)}\n`);
         }
         if (
           event.event === "started" &&
@@ -191,6 +205,14 @@ export class HostService extends EventEmitter<HostEvents> {
       onDirectTyping: (event) => this.emit("directTyping", event),
       createInvite: (input) => this.createInvite(input),
     });
+    this.#webrtcGateway = options.teamWebRtcBridge
+      ? new TeamWebRtcHostGateway({
+          bridge: options.teamWebRtcBridge,
+          store: options.store,
+          appVersion: options.appVersion,
+          transferDirectory: join(options.logDirectory ?? ".openbot-remote", "transfers"),
+        })
+      : null;
   }
 
   getStatus(): HostStatus {
@@ -227,13 +249,17 @@ export class HostService extends EventEmitter<HostEvents> {
     this.#api.refreshPresence();
     this.#api.refreshIdentity();
     try {
-      const tunnel = await this.#options.provisionTeamTunnel({
-        serverId: identity.serverId,
-        serverName: identity.serverName,
+      await this.#options.registerRemoteHost?.({
+        hostId: identity.serverId,
+        name: identity.serverName,
+        devicePublicKey: identity.publicKey,
       });
+      if (input.logo !== undefined) {
+        await this.#options.updateRemoteHostLogo?.(identity.serverId, input.logo ?? null, identity.logoVersion);
+      }
       this.#setStatus({
-        apiUrl: tunnel.apiUrl,
-        message: `Reserved ${new URL(tunnel.apiUrl).hostname}.`,
+        apiUrl: null,
+        message: "Registered this OpenBot for WebRTC access.",
       });
     } catch (error) {
       this.#setStatus({
@@ -253,6 +279,14 @@ export class HostService extends EventEmitter<HostEvents> {
       message: "Server identity updated.",
     });
     this.#api.refreshIdentity();
+    await this.#options.registerRemoteHost?.({
+      hostId: identity.serverId,
+      name: identity.serverName,
+      devicePublicKey: identity.publicKey,
+    });
+    if (input.logo !== undefined) {
+      await this.#options.updateRemoteHostLogo?.(identity.serverId, input.logo ?? null, identity.logoVersion);
+    }
     return this.getStatus();
   }
 
@@ -264,41 +298,31 @@ export class HostService extends EventEmitter<HostEvents> {
     const signedInUser = this.#options.getSignedInUser();
     this.#options.store.assertOwnerAccount(signedInUser);
     await this.syncSignedInAccount(signedInUser);
-    this.#setStatus({ phase: "starting", message: "Starting the secure public API…" });
-    const executable = await (this.#options.resolveCloudflared?.() ?? resolveCloudflaredExecutable());
-    if (!executable) {
-      this.#setStatus({
-        phase: "error",
-        message: "The bundled cloudflared executable is unavailable. Reinstall or update OpenBot.",
-      });
-      return this.getStatus();
-    }
+    this.#setStatus({ phase: "starting", message: "Starting the WebRTC host…" });
 
     try {
       const apiPort = await this.#api.start();
-      this.#setStatus({ message: "Provisioning a stable openbot.run address…" });
       const identity = this.#options.store.getIdentity();
       if (!identity) throw new Error("Name this OpenBot before publishing it.");
-      const provisioned = await this.#options.provisionTeamTunnel({
-        serverId: identity.serverId,
-        serverName: identity.serverName,
-        apiPort,
-      });
-      const tunnel = this.#spawnTunnel(executable, provisioned.token);
-      this.#tunnel = tunnel;
-      if (!(await waitForNamedTunnelConnection(tunnel, this.#options.tunnelTimeoutMs))) {
-        throw new Error("The named Cloudflare Tunnel did not connect.");
+      if (!this.#webrtcGateway || !this.#options.registerRemoteHost || !this.#options.issueRemoteHostTicket) {
+        throw new Error("The WebRTC host service is not configured.");
       }
-      this.#setStatus({
-        apiUrl: provisioned.apiUrl,
-        message: "Publishing this OpenBot through its secure address…",
+      await this.#options.registerRemoteHost({
+        hostId: identity.serverId,
+        name: identity.serverName,
+        devicePublicKey: identity.publicKey,
       });
-      if (!(await waitForPublicApi(provisioned.apiUrl, this.#options.publicReadyTimeoutMs))) {
-        throw new Error("Cloudflare did not publish the named tunnel address. Try again.");
-      }
+      const bootstrap = await this.#options.issueRemoteHostTicket(identity.serverId);
+      await this.#webrtcGateway.start({
+        hostId: identity.serverId,
+        signalUrl: bootstrap.signalUrl,
+        ticket: bootstrap.ticket,
+        localApiPort: apiPort,
+      });
       this.#setStatus({
+        apiUrl: bootstrap.signalUrl,
         apiOnline: true,
-        message: "This OpenBot and WebRTC remote control are publicly reachable.",
+        message: "This OpenBot is ready for WebRTC connections.",
       });
       await this.#options.store.setEnabledOnLaunch(true);
       this.#setStatus({ phase: "online", enabledOnLaunch: true });
@@ -375,7 +399,22 @@ export class HostService extends EventEmitter<HostEvents> {
     return this.getStatus();
   }
 
-  listMembers(): TeamMemberSummary[] {
+  listMembers(): TeamMemberSummary[] | Promise<TeamMemberSummary[]> {
+    const hostId = this.#options.store.getIdentity()?.serverId;
+    if (hostId && this.#options.listRemoteMembers) {
+      return this.#options.listRemoteMembers(hostId).then((members) =>
+        members.map((member) => ({
+          id: member.membershipId,
+          username: member.email,
+          email: member.email,
+          name: member.name,
+          avatarUrl: member.avatarUrl,
+          role: member.role,
+          createdAt: new Date(member.createdAt).toISOString(),
+          disabled: member.status !== "active",
+        })),
+      );
+    }
     return this.#options.store.listMembers();
   }
 
@@ -441,7 +480,19 @@ export class HostService extends EventEmitter<HostEvents> {
     this.#api.setLocalDirectTyping(this.#currentMemberId(), input.memberId, input.typing);
   }
 
-  listInvites(): TeamInviteSummary[] {
+  listInvites(): TeamInviteSummary[] | Promise<TeamInviteSummary[]> {
+    const hostId = this.#options.store.getIdentity()?.serverId;
+    if (hostId && this.#options.listRemoteInvites) {
+      return this.#options.listRemoteInvites(hostId).then((invites) =>
+        invites.map((invite) => ({
+          id: invite.inviteId,
+          role: invite.role,
+          email: invite.email,
+          expiresAt: new Date(invite.expiresAt).toISOString(),
+          usedAt: invite.usedAt === null ? null : new Date(invite.usedAt).toISOString(),
+        })),
+      );
+    }
     return this.#options.store.listInvites();
   }
 
@@ -450,6 +501,34 @@ export class HostService extends EventEmitter<HostEvents> {
   }
 
   async updateMember(input: UpdateTeamMemberInput): Promise<TeamMemberSummary> {
+    const hostId = this.#options.store.getIdentity()?.serverId;
+    if (
+      hostId &&
+      this.#options.updateRemoteMember &&
+      this.#options.removeRemoteMember &&
+      this.#options.listRemoteMembers
+    ) {
+      const current = (await this.#options.listRemoteMembers(hostId)).find(
+        (member) => member.membershipId === input.memberId,
+      );
+      if (!current || current.role === "owner") throw new Error("The remote member does not exist.");
+      if (input.disabled) await this.#options.removeRemoteMember(hostId, input.memberId);
+      else await this.#options.updateRemoteMember(hostId, input.memberId, input.role ?? current.role);
+      const updated = (await this.#options.listRemoteMembers(hostId)).find(
+        (member) => member.membershipId === input.memberId,
+      );
+      if (!updated) throw new Error("The remote member does not exist.");
+      return {
+        id: updated.membershipId,
+        username: updated.email,
+        email: updated.email,
+        name: updated.name,
+        avatarUrl: updated.avatarUrl,
+        role: updated.role,
+        createdAt: new Date(updated.createdAt).toISOString(),
+        disabled: updated.status !== "active",
+      };
+    }
     const member = await this.#options.store.updateMember(input.memberId, {
       ...(input.role ? { role: input.role } : {}),
       ...(input.disabled === undefined ? {} : { disabled: input.disabled }),
@@ -460,6 +539,11 @@ export class HostService extends EventEmitter<HostEvents> {
   }
 
   async removeMember(memberId: string): Promise<void> {
+    const hostId = this.#options.store.getIdentity()?.serverId;
+    if (hostId && this.#options.removeRemoteMember) {
+      await this.#options.removeRemoteMember(hostId, memberId);
+      return;
+    }
     await this.#options.store.removeMember(memberId);
     await this.#remoteScreen.revokeMember(memberId);
     this.#api.refreshPresence();
@@ -472,13 +556,45 @@ export class HostService extends EventEmitter<HostEvents> {
   }
 
   revokeInvite(inviteId: string): Promise<void> {
+    if (this.#options.revokeRemoteInvite) return this.#options.revokeRemoteInvite(inviteId);
     return this.#options.store.revokeInvite(inviteId);
   }
 
   async createInvite(input: CreateTeamInviteInput): Promise<InviteSummary> {
-    if (!this.#status.apiUrl) throw new Error("Make this OpenBot public before creating an invite.");
     const identity = this.#options.store.getIdentity();
     if (!identity) throw new Error("Name this OpenBot before publishing it.");
+    if (this.#options.createRemoteInvite && this.#options.remoteControlPlaneUrl) {
+      const invite = await this.#options.createRemoteInvite(identity.serverId, input);
+      const inviteUrl = createInviteUrl({
+        apiUrl: this.#options.remoteControlPlaneUrl,
+        serverId: identity.serverId,
+        fingerprint: identity.fingerprint,
+        token: invite.token,
+      });
+      const result: InviteSummary = {
+        id: invite.inviteId,
+        role: input.role,
+        expiresAt: new Date(invite.expiresAt).toISOString(),
+        usedAt: null,
+        inviteUrl,
+        email: input.email ?? null,
+      };
+      if (input.email) {
+        try {
+          await this.#options.sendTeamInviteEmail({
+            email: input.email,
+            serverName: identity.serverName,
+            inviteUrl,
+            role: input.role,
+          });
+        } catch (error) {
+          await this.#options.revokeRemoteInvite?.(invite.inviteId);
+          throw error;
+        }
+      }
+      return result;
+    }
+    if (!this.#status.apiUrl) throw new Error("Make this OpenBot public before creating an invite.");
     const invite = await this.#options.store.createInvite(input.role, input.email);
     const inviteUrl = createInviteUrl(
       {
@@ -517,33 +633,8 @@ export class HostService extends EventEmitter<HostEvents> {
     await this.stop(false);
   }
 
-  #spawnTunnel(executable: string, token: string): ChildProcess {
-    const child = this.#options.spawnProcess(executable, buildNamedTunnelArgs(), {
-      shell: false,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: buildNamedTunnelEnvironment(token),
-    });
-    child.once("exit", () => {
-      if (this.#status.phase === "stopping" || this.#status.phase === "idle") return;
-      this.#setStatus({
-        phase: "error",
-        apiOnline: false,
-        message: "The named Cloudflare Tunnel stopped unexpectedly.",
-      });
-    });
-    const logDirectory = this.#options.logDirectory;
-    if (logDirectory) {
-      child.stdout?.on("data", (chunk) => void appendDiagnosticLog(logDirectory, "host-tunnel", chunk));
-      child.stderr?.on("data", (chunk) => void appendDiagnosticLog(logDirectory, "host-tunnel", chunk));
-    }
-    return child;
-  }
-
   async #stopRuntime(): Promise<void> {
-    const tunnel = this.#tunnel;
-    this.#tunnel = null;
-    if (tunnel) await stopOwnedProcess(tunnel);
+    await this.#webrtcGateway?.stop();
     await this.#api.stop();
   }
 
@@ -589,49 +680,4 @@ export function serverLogoUrl(version: string): string {
 function normalizeRemoteDesktopPlatform(platform: NodeJS.Platform): "darwin" | "win32" | "linux" {
   if (platform === "darwin" || platform === "win32") return platform;
   return "linux";
-}
-
-export async function waitForPublicApi(apiUrl: string, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(new URL("/v1/compatibility", apiUrl), {
-        signal: AbortSignal.timeout(Math.min(5_000, Math.max(1, timeoutMs))),
-      });
-      if (response.ok) return true;
-    } catch {
-      // A named tunnel can need a short configuration propagation delay.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-  return false;
-}
-
-export function waitForNamedTunnelConnection(
-  child: {
-    stdout: { on: (event: string, listener: (chunk: Buffer) => void) => unknown } | null;
-    stderr: { on: (event: string, listener: (chunk: Buffer) => void) => unknown } | null;
-    once(event: string, listener: (...args: unknown[]) => unknown): unknown;
-  },
-  timeoutMs: number,
-): Promise<boolean> {
-  return new Promise((resolve) => {
-    let buffer = "";
-    let settled = false;
-    const finish = (connected: boolean) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(connected);
-    };
-    const onData = (chunk: Buffer) => {
-      buffer = `${buffer}${chunk.toString("utf8")}`.slice(-16_000);
-      if (/Registered tunnel connection|Connection .* registered/iu.test(buffer)) finish(true);
-    };
-    child.stdout?.on("data", onData);
-    child.stderr?.on("data", onData);
-    child.once("error", () => finish(false));
-    child.once("exit", () => finish(false));
-    const timer = setTimeout(() => finish(false), timeoutMs);
-  });
 }

@@ -1,0 +1,37 @@
+name: openbot-remote-dev
+
+services:
+  remote-api:
+    build:
+      context: ..
+      dockerfile: remote/api/Dockerfile
+    environment:
+      REMOTE_SIGNAL_HOST: 0.0.0.0
+      REMOTE_SIGNAL_PORT: 8081
+      REMOTE_HEALTH_PORT: 8080
+      REMOTE_TLS_DISABLED: "true"
+      REMOTE_TICKET_PUBLIC_KEYS: ${REMOTE_TICKET_PUBLIC_KEYS:?REMOTE_TICKET_PUBLIC_KEYS is required}
+      REMOTE_SESSION_SECRET: ${REMOTE_SESSION_SECRET:?REMOTE_SESSION_SECRET is required}
+      REMOTE_AUTH_WEBHOOK_SECRET: ${REMOTE_AUTH_WEBHOOK_SECRET:?REMOTE_AUTH_WEBHOOK_SECRET is required}
+      REMOTE_MAX_CONNECTIONS_PER_USER: ${REMOTE_MAX_CONNECTIONS_PER_USER:-8}
+      REMOTE_MAX_CONNECTIONS_PER_IP: ${REMOTE_MAX_CONNECTIONS_PER_IP:-32}
+      REMOTE_MAX_MESSAGES_PER_MINUTE: ${REMOTE_MAX_MESSAGES_PER_MINUTE:-600}
+      TURN_SHARED_SECRET: ${TURN_SHARED_SECRET:?TURN_SHARED_SECRET is required}
+      TURN_HOST: 127.0.0.1
+    ports:
+      - "8081:8081/tcp"
+
+  coturn:
+    build:
+      context: ..
+      dockerfile: remote/coturn/Dockerfile
+    environment:
+      TURN_PUBLIC_IP: ${TURN_PUBLIC_IP:-127.0.0.1}
+      TURN_REALM: localhost
+      TURN_SHARED_SECRET: ${TURN_SHARED_SECRET:?TURN_SHARED_SECRET is required}
+      TURN_MIN_PORT: 49152
+      TURN_MAX_PORT: 49252
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "49152-49252:49152-49252/udp"
