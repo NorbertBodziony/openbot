@@ -523,9 +523,9 @@ export interface ImportAttachmentsInput {
 }
 
 export type AttachmentImportEvent =
-  | { type: "started"; requestId: string }
-  | { type: "completed"; requestId: string; attachments: DraftAttachment[] }
-  | { type: "error"; requestId: string; message: string };
+  | { type: "started"; requestId: string; serverId: string }
+  | { type: "completed"; requestId: string; serverId: string; attachments: DraftAttachment[] }
+  | { type: "error"; requestId: string; serverId: string; message: string };
 
 export interface OpenAttachmentInput {
   attachmentId: string;
