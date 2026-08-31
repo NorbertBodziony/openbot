@@ -6,6 +6,11 @@ const MANAGED_SKILL_SLUG = "openbot-site-hosting";
 const OWNERSHIP_MARKER = ".openbot-managed.json";
 const OWNERSHIP_CONTENT = `${JSON.stringify({ managedBy: "openbot", slug: MANAGED_SKILL_SLUG, version: 1 })}\n`;
 
+interface SyncTargetsResult {
+  collisions: string[];
+  failures: { target: string; error: unknown }[];
+}
+
 export class ManagedSkillService {
   #content: string | null = null;
 
@@ -14,17 +19,36 @@ export class ManagedSkillService {
     private readonly reportCollision: (target: string) => void = (target) => {
       console.warn(`OpenBot preserved an unowned managed-skill collision at ${target}.`);
     },
+    private readonly reportFailure: (target: string, error: unknown) => void = (target, error) => {
+      console.error(`OpenBot could not synchronize the managed skill at ${target}.`, error);
+    },
   ) {}
 
   async syncAll(bots: BotSummary[]): Promise<void> {
-    const content = await this.content();
-    const collisions = (await Promise.all(bots.map((bot) => syncTargets(bot.workspacePath, content)))).flat();
-    for (const target of collisions) this.reportCollision(target);
+    let content: string;
+    try {
+      content = await this.content();
+    } catch (error) {
+      this.reportFailure(this.sourcePath, error);
+      return;
+    }
+    const results = await Promise.allSettled(bots.map((bot) => syncTargets(bot.workspacePath, content)));
+    for (let index = 0; index < results.length; index += 1) {
+      const result = results[index];
+      if (result.status === "fulfilled") {
+        this.reportResult(result.value);
+      } else {
+        this.reportFailure(bots[index]?.workspacePath ?? "unknown workspace", result.reason);
+      }
+    }
   }
 
   async syncBot(bot: BotSummary): Promise<void> {
-    const collisions = await syncTargets(bot.workspacePath, await this.content());
-    for (const target of collisions) this.reportCollision(target);
+    try {
+      this.reportResult(await syncTargets(bot.workspacePath, await this.content()));
+    } catch (error) {
+      this.reportFailure(bot.workspacePath, error);
+    }
   }
 
   private async content(): Promise<string> {
@@ -36,15 +60,29 @@ export class ManagedSkillService {
     this.#content = content;
     return content;
   }
+
+  private reportResult(result: SyncTargetsResult): void {
+    for (const target of result.collisions) this.reportCollision(target);
+    for (const failure of result.failures) this.reportFailure(failure.target, failure.error);
+  }
 }
 
-async function syncTargets(workspacePath: string, content: string): Promise<string[]> {
+async function syncTargets(workspacePath: string, content: string): Promise<SyncTargetsResult> {
   const targets = [
     join(workspacePath, ".agents", "skills", MANAGED_SKILL_SLUG, "SKILL.md"),
     join(workspacePath, ".claude", "skills", MANAGED_SKILL_SLUG, "SKILL.md"),
   ];
-  const results = await Promise.all(targets.map((target) => syncTarget(target, content)));
-  return targets.filter((_, index) => results[index] === "collision");
+  const results = await Promise.allSettled(targets.map((target) => syncTarget(target, content)));
+  const collisions: string[] = [];
+  const failures: SyncTargetsResult["failures"] = [];
+  for (let index = 0; index < results.length; index += 1) {
+    const result = results[index];
+    const target = targets[index];
+    if (!result || !target) continue;
+    if (result.status === "rejected") failures.push({ target, error: result.reason });
+    else if (result.value === "collision") collisions.push(target);
+  }
+  return { collisions, failures };
 }
 
 async function syncTarget(target: string, content: string): Promise<"synced" | "collision"> {

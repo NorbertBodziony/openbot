@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { JSON_BODY_LIMIT, readJsonObject, readMultipartFormData } from "../src/server/json-body";
+import { JSON_BODY_LIMIT, readJsonObject, readMultipartFormData, readRequestBytes } from "../src/server/json-body";
 
 describe("readJsonObject", () => {
   it("reads a JSON object within the request limit", async () => {
@@ -57,6 +57,21 @@ describe("readMultipartFormData", () => {
     });
 
     await expect(readMultipartFormData(request, 8)).rejects.toMatchObject({
+      status: 413,
+      code: "request_too_large",
+    });
+  });
+});
+
+describe("readRequestBytes", () => {
+  it("cancels an undeclared streamed body above a custom limit", async () => {
+    const request = new Request("https://openbot.run/v1/sites/reports", {
+      method: "POST",
+      body: "x".repeat(4_097),
+    });
+    expect(request.headers.get("Content-Length")).toBeNull();
+
+    await expect(readRequestBytes(request, 4_096)).rejects.toMatchObject({
       status: 413,
       code: "request_too_large",
     });

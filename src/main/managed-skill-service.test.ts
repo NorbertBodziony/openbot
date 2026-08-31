@@ -59,6 +59,37 @@ describe("managed site hosting skill", () => {
     ).resolves.toBe(content);
     expect(collisions).toEqual([userTarget]);
   });
+
+  it("continues synchronization when one workspace target is inaccessible", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-managed-skill-"));
+    roots.push(root);
+    const source = join(root, "SKILL.md");
+    const content = "---\nname: openbot-site-hosting\ndescription: Host static sites.\n---\n\nRules\n";
+    await writeFile(source, content);
+    const blockedWorkspace = join(root, "blocked-workspace");
+    const healthyWorkspace = join(root, "healthy-workspace");
+    await mkdir(blockedWorkspace, { recursive: true });
+    await writeFile(join(blockedWorkspace, ".agents"), "This path is not a directory.");
+    const failures: string[] = [];
+    const service = new ManagedSkillService(
+      source,
+      () => undefined,
+      (target) => failures.push(target),
+    );
+
+    await expect(service.syncAll([bot(blockedWorkspace), bot(healthyWorkspace)])).resolves.toBeUndefined();
+
+    await expect(
+      readFile(join(blockedWorkspace, ".claude", "skills", "openbot-site-hosting", "SKILL.md"), "utf8"),
+    ).resolves.toBe(content);
+    await expect(
+      readFile(join(healthyWorkspace, ".agents", "skills", "openbot-site-hosting", "SKILL.md"), "utf8"),
+    ).resolves.toBe(content);
+    await expect(
+      readFile(join(healthyWorkspace, ".claude", "skills", "openbot-site-hosting", "SKILL.md"), "utf8"),
+    ).resolves.toBe(content);
+    expect(failures).toEqual([join(blockedWorkspace, ".agents", "skills", "openbot-site-hosting", "SKILL.md")]);
+  });
 });
 
 function bot(workspacePath: string): BotSummary {
