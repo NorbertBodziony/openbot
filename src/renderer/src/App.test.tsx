@@ -3299,13 +3299,51 @@ describe("OpenBot connected desktop shell", () => {
         reasoningEffort: "medium",
       }),
     );
-    expect(screen.queryByRole("dialog", { name: "Choose agent model" })).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Choose agent model" })).toBeInTheDocument();
     const claudeTrigger = await screen.findByRole("button", {
       name: "Agent model: Claude Opus 5",
     });
     expect(claudeTrigger).toBeEnabled();
     expect(claudeTrigger.querySelector(".provider-model-mark-claude")).toBeInTheDocument();
     expect(claudeTrigger.querySelector(".provider-model-mark-codex")).not.toBeInTheDocument();
+  });
+
+  it("changes reasoning effort from the header model picker without closing it", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    const effort = within(picker).getByRole("button", { name: /Agent reasoning effort/ });
+    expect(effort).toHaveTextContent("Medium");
+
+    await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
+    await fireEvent.click(screen.getByRole("option", { name: "High" }));
+
+    await waitFor(() =>
+      expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
+        botId: "chief",
+        reasoningEffort: "high",
+      }),
+    );
+    expect(effort).toHaveTextContent("High");
+    expect(picker).toBeInTheDocument();
+  });
+
+  it("rolls back a failed header effort change and reports the error", async () => {
+    vi.mocked(window.openbot.agent.updateBot).mockRejectedValueOnce(new Error("Effort failed"));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    const effort = within(picker).getByRole("button", { name: /Agent reasoning effort/ });
+    await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
+    await fireEvent.click(screen.getByRole("option", { name: "High" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not change effort. Try again.");
+    expect(effort).toHaveTextContent("Medium");
+    expect(picker).toBeInTheDocument();
   });
 
   it("shows unavailable providers without allowing their models", async () => {
