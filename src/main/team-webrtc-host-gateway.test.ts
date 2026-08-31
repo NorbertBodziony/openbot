@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { isString } from "@openbot/contracts/runtime-values";
 import {
   decodeTeamProtocolV2AuthFrame,
+  decodeTeamProtocolV2RpcFrame,
   encodeTeamProtocolV2Frame,
   teamProtocolV2AuthenticationTranscript,
 } from "@openbot/contracts/team-protocol/v2";
@@ -92,7 +93,7 @@ describe("TeamWebRtcHostGateway", () => {
       hostId: "host-1",
       signalUrl: "wss://signal.example.test/v1/signal",
       ticket: "initial",
-      localApiPort: 0,
+      localApiPort: 43_210,
     });
     await vi.waitFor(() => expect(bridge.connections).toHaveLength(1));
     bridge.emit("signalReady", "host-1");
@@ -174,6 +175,34 @@ describe("TeamWebRtcHostGateway", () => {
         }),
       ).toBe(true),
     );
+    let resolveFetch!: (response: Response) => void;
+    const fetchRequest = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(() => new Promise<Response>((resolve) => (resolveFetch = resolve)));
+    const duplicateRequest = encodeTeamProtocolV2Frame({
+      version: 2,
+      type: "request",
+      requestId: "duplicate-request",
+      operation: "http.request",
+      payload: { method: "POST", path: "/v1/mutation", body: { value: 1 } },
+    });
+    bridge.emit("data", "host-1", "rpc", duplicateRequest);
+    bridge.emit("data", "host-1", "rpc", duplicateRequest);
+    await vi.waitFor(() => expect(fetchRequest).toHaveBeenCalledOnce());
+    resolveFetch(Response.json({ ok: true }));
+    await vi.waitFor(() =>
+      expect(
+        bridge.sent.filter((message) => {
+          if (message.channel !== "rpc" || !isString(message.data)) return false;
+          try {
+            return decodeTeamProtocolV2RpcFrame(message.data).type === "response";
+          } catch {
+            return false;
+          }
+        }),
+      ).toHaveLength(2),
+    );
+    fetchRequest.mockRestore();
     bridge.emit("incoming", "host-1", {
       connectionId: "connection-2",
       sessionId: "session-1",

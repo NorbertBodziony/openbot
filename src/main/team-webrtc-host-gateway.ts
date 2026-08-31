@@ -60,6 +60,7 @@ export class TeamWebRtcHostGateway {
   readonly #closeSession: (sessionId: string) => Promise<void>;
   readonly #verifyClientTicket: ((ticket: string) => Promise<VerifiedRemoteSessionTicket>) | null;
   readonly #responses = new Map<string, TeamProtocolV2RpcFrame>();
+  readonly #responsesInFlight = new Map<string, Promise<TeamProtocolV2RpcFrame>>();
   readonly #events = new Map<number, string>();
   #peerId: string | null = null;
   #localApiPort: number | null = null;
@@ -375,16 +376,39 @@ export class TeamWebRtcHostGateway {
       await this.#bridge.send(peerId, "rpc", encodeTeamProtocolV2Frame(cached));
       return;
     }
-    let response: TeamProtocolV2RpcFrame;
+    const sessionId = this.#localSessionId;
+    const inFlightKey = `${sessionId}\0${request.requestId}`;
+    let responseOperation = this.#responsesInFlight.get(inFlightKey);
+    if (!responseOperation) {
+      responseOperation = this.#createRpcResponse(request).then((response) => {
+        if (this.#localSessionId === sessionId) {
+          this.#responses.set(request.requestId, response);
+          while (this.#responses.size > 1_000) deleteOldest(this.#responses);
+        }
+        return response;
+      });
+      this.#responsesInFlight.set(inFlightKey, responseOperation);
+      void responseOperation.finally(() => {
+        if (this.#responsesInFlight.get(inFlightKey) === responseOperation) this.#responsesInFlight.delete(inFlightKey);
+      });
+    }
+    const response = await responseOperation;
+    if (this.#peerId !== peerId || this.#localSessionId !== sessionId) return;
+    await this.#bridge.send(peerId, "rpc", encodeTeamProtocolV2Frame(response));
+  }
+
+  async #createRpcResponse(
+    request: Extract<TeamProtocolV2RpcFrame, { type: "request" }>,
+  ): Promise<TeamProtocolV2RpcFrame> {
     try {
       if (request.operation !== "http.request" || !isHttpRequest(request.payload)) {
         throw new GatewayError(400, "unsupported_operation", "The Team API operation is not supported.");
       }
       const result = await this.#dispatchHttp(request.payload);
-      response = decodeTeamProtocolV2RpcFrame({ version: 2, type: "response", requestId: request.requestId, result });
+      return decodeTeamProtocolV2RpcFrame({ version: 2, type: "response", requestId: request.requestId, result });
     } catch (error) {
       const status = error instanceof GatewayError ? error.status : 500;
-      response = decodeTeamProtocolV2RpcFrame({
+      return decodeTeamProtocolV2RpcFrame({
         version: 2,
         type: "response",
         requestId: request.requestId,
@@ -396,9 +420,6 @@ export class TeamWebRtcHostGateway {
         },
       });
     }
-    this.#responses.set(request.requestId, response);
-    while (this.#responses.size > 1_000) deleteOldest(this.#responses);
-    await this.#bridge.send(peerId, "rpc", encodeTeamProtocolV2Frame(response));
   }
 
   async #dispatchHttp(input: HttpRequestPayload): Promise<TeamProtocolV2Json> {

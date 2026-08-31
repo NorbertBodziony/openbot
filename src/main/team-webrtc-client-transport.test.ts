@@ -136,6 +136,10 @@ describe("TeamWebRtcClientTransport", () => {
       downloadHostLogo: async () => ({ bytes: new Uint8Array(), mimeType: "image/png" }),
       transferDirectory: join(tmpdir(), "openbot-webrtc-client-test"),
     });
+    await transport.listHosts();
+    await expect(transport.connect("host-1")).rejects.toThrow("pinned device key");
+    expect(startSession).not.toHaveBeenCalled();
+    transport.pinHostKey("host-1", hostKeys.publicKey);
     const protocolError = vi.fn();
     transport.on("error", protocolError);
 
@@ -240,6 +244,7 @@ describe("TeamWebRtcClientTransport", () => {
       downloadHostLogo: async () => ({ bytes: new Uint8Array(), mimeType: "image/png" }),
       transferDirectory: join(tmpdir(), "openbot-webrtc-client-cancel-test"),
     });
+    transport.pinHostKey("host-1", hostKeys.publicKey);
 
     const connection = transport.connect("host-1");
     await vi.waitFor(() => expect(startSession).toHaveBeenCalledOnce());
@@ -296,6 +301,7 @@ describe("TeamWebRtcClientTransport", () => {
       downloadHostLogo: async () => ({ bytes: new Uint8Array(), mimeType: "image/png" }),
       transferDirectory: join(tmpdir(), "openbot-webrtc-client-principal-test"),
     });
+    transport.pinHostKey("host-1", hostKeys.publicKey);
 
     await transport.connect("host-1");
     principalId = "user-2";
@@ -354,6 +360,7 @@ describe("TeamWebRtcClientTransport", () => {
       downloadHostLogo: async () => ({ bytes: new Uint8Array(), mimeType: "image/png" }),
       transferDirectory: join(tmpdir(), "openbot-webrtc-client-expiration-test"),
     });
+    transport.pinHostKey("host-1", hostKeys.publicKey);
 
     await transport.connect("host-1");
     bridge.emit("disconnected", "host-1");
@@ -414,6 +421,7 @@ describe("TeamWebRtcClientTransport", () => {
       downloadHostLogo: async () => ({ bytes: new Uint8Array(), mimeType: "image/png" }),
       transferDirectory: join(tmpdir(), "openbot-webrtc-client-failure-test"),
     });
+    transport.pinHostKey("host-1", hostKeys.publicKey);
 
     const first = transport.connect("host-1");
     await vi.waitFor(() => expect(connectBridge).toHaveBeenCalledOnce());

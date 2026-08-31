@@ -380,7 +380,7 @@ export class SignalService {
       membershipId: client.claims.membershipId,
       role: memberRole(client.claims.role),
       sessionExpiresAt: client.claims.sessionExpiresAt,
-      resumed: client.resumed,
+      resumed: host.resumed || client.resumed,
     });
   }
 

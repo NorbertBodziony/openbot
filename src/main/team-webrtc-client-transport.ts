@@ -112,13 +112,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
   }
 
   async listHosts(): Promise<RemoteHostSummary[]> {
-    const hosts = await this.#options.listHosts();
-    for (const host of hosts) {
-      if (host.devicePublicKey && !this.#hostPublicKeys.has(host.hostId)) {
-        this.#hostPublicKeys.set(host.hostId, host.devicePublicKey);
-      }
-    }
-    return hosts;
+    return this.#options.listHosts();
   }
 
   pinHostKey(hostId: string, publicKey: string): void {
@@ -314,11 +308,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
   }
 
   async #connect(hostId: string, active: ActiveHost, existingSessionId: string | null): Promise<void> {
-    let hostPublicKey = this.#hostPublicKeys.get(hostId);
-    if (!hostPublicKey) {
-      const host = (await this.listHosts()).find((candidate) => candidate.hostId === hostId);
-      hostPublicKey = host?.devicePublicKey ?? undefined;
-    }
+    const hostPublicKey = this.#hostPublicKeys.get(hostId);
     if (!hostPublicKey) throw new Error("The remote host does not have a pinned device key.");
     const clientKeys = generateKeyPairSync("ed25519", {
       publicKeyEncoding: { type: "spki", format: "pem" },

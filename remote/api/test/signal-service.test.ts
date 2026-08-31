@@ -100,6 +100,7 @@ describe("SignalService", () => {
     const connectionId = ready?.match(/"connectionId":"([A-Za-z0-9_-]+)"/u)?.[1];
     expect(connectionId).toBeTruthy();
     expect(resumedHost.messages.some((message) => message.includes('"type":"peer-ready"'))).toBe(true);
+    expect(resumedHost.messages.at(-1)).toContain('"resumed":true');
 
     await service.receive(
       client,
