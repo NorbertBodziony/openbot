@@ -1,6 +1,6 @@
 import type { CentralAuthUser } from "@openbot/contracts/ipc";
 import { createMemo, Show } from "solid-js";
-import { UserAvatar } from "./ui";
+import { Gauge, UserAvatar } from "./ui";
 
 interface StaticAccountDockProps {
   account: CentralAuthUser;
@@ -48,6 +48,7 @@ export function StaticAccountDock(props: StaticAccountDockProps) {
           </div>
           <span class="account-dock-usage-trigger" aria-hidden="true">
             <span class="account-dock-usage-chip">
+              <Gauge aria-hidden="true" />
               <strong>—</strong>
             </span>
           </span>
