@@ -757,13 +757,15 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const server = this.#requireServer(serverId);
     if (server.transport === "webrtc-v2" && this.#webrtcTransport) {
       return this.#webrtcTransport.listInvites(serverId).then((invites) =>
-        invites.map((invite) => ({
-          id: invite.inviteId,
-          role: invite.role,
-          expiresAt: new Date(invite.expiresAt).toISOString(),
-          usedAt: invite.usedAt === null ? null : new Date(invite.usedAt).toISOString(),
-          email: invite.email,
-        })),
+        invites
+          .filter((invite) => invite.revokedAt === null)
+          .map((invite) => ({
+            id: invite.inviteId,
+            role: invite.role,
+            expiresAt: new Date(invite.expiresAt).toISOString(),
+            usedAt: invite.usedAt === null ? null : new Date(invite.usedAt).toISOString(),
+            email: invite.email,
+          })),
       );
     }
     return this.request("/v1/team/invites", {}, serverId, decodeTeamInvites);

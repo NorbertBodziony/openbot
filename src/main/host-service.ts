@@ -103,6 +103,7 @@ interface HostServiceOptions {
       email: string | null;
       expiresAt: number;
       usedAt: number | null;
+      revokedAt: number | null;
     }>
   >;
   revokeRemoteInvite?: (inviteId: string) => Promise<void>;
@@ -503,13 +504,15 @@ export class HostService extends EventEmitter<HostEvents> {
     const hostId = this.#options.store.getIdentity()?.serverId;
     if (hostId && this.#options.listRemoteInvites) {
       return this.#options.listRemoteInvites(hostId).then((invites) =>
-        invites.map((invite) => ({
-          id: invite.inviteId,
-          role: invite.role,
-          email: invite.email,
-          expiresAt: new Date(invite.expiresAt).toISOString(),
-          usedAt: invite.usedAt === null ? null : new Date(invite.usedAt).toISOString(),
-        })),
+        invites
+          .filter((invite) => invite.revokedAt === null)
+          .map((invite) => ({
+            id: invite.inviteId,
+            role: invite.role,
+            email: invite.email,
+            expiresAt: new Date(invite.expiresAt).toISOString(),
+            usedAt: invite.usedAt === null ? null : new Date(invite.usedAt).toISOString(),
+          })),
       );
     }
     return this.#options.store.listInvites();

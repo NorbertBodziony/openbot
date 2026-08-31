@@ -15,6 +15,7 @@ if [ ! -f "/acme/certificates/${SIGNAL_DOMAIN}.crt" ]; then
 fi
 make_certificates_readable
 while true; do
+  # lego v5 uses `run` for both initial issuance and renewal. `--renew-days` is the v5 renewal threshold flag.
   # shellcheck disable=SC2086
   /lego run $lego_args --renew-days 30
   make_certificates_readable

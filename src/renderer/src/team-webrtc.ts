@@ -207,6 +207,9 @@ async function handleSignal(state: PeerState, message: SignalMessage): Promise<v
     return;
   }
   if (message.type === "ready") {
+    const shouldRestartWithRefreshedTurn = Boolean(
+      message.iceServers && state.role === "client" && state.connectionId && state.peerConnection,
+    );
     state.resumeToken = message.resumeToken ?? state.resumeToken;
     state.connectionId = message.connectionId ?? state.connectionId;
     state.iceServers = message.iceServers ?? state.iceServers;
@@ -215,7 +218,8 @@ async function handleSignal(state: PeerState, message: SignalMessage): Promise<v
     scheduleTurnRefresh(state);
     post({ type: "ice-servers", peerId: state.id, iceServers: state.iceServers });
     post({ type: "signal-ready", peerId: state.id });
-    if (state.iceRestartPending) void retryPendingIceRestart(state);
+    if (shouldRestartWithRefreshedTurn) state.iceRestartPending = true;
+    if (state.iceRestartPending) await retryPendingIceRestart(state);
     if (state.role === "client" && state.connectionId && !state.peerConnection) {
       const connection = createPeerConnection(state, state.iceServers);
       createDataChannel(state, connection, "rpc");

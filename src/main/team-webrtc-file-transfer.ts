@@ -394,6 +394,15 @@ export class TeamWebRtcFileTransfer {
           "files",
           encodeTeamProtocolV2Frame({ version: 2, type: "file-complete", transferId: transfer.transferId }),
         );
+        await this.#waitUntil(
+          () =>
+            Boolean(transfer.cancelled) ||
+            transfer.acknowledged === transfer.bytes.byteLength ||
+            !this.#connectedPeers.has(transfer.peerId),
+          deadline,
+        );
+        if (transfer.cancelled) throw transfer.cancelled;
+        if (!this.#connectedPeers.has(transfer.peerId)) continue;
         return;
       } catch {
         if (Date.now() >= deadline) break;

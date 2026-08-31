@@ -127,7 +127,7 @@ describe("TeamWebRtcFileTransfer", () => {
 
     expect(bridge.openTransferIds).toEqual([transferId, transferId]);
     expect(bridge.firstOffsetAfterReconnect).toBe(bridge.resumeAcknowledged);
-    expect(bridge.acknowledged).toBeGreaterThan(0);
+    expect(bridge.acknowledged).toBe(bytes.byteLength);
     await transfers.stop();
   });
 
@@ -200,6 +200,19 @@ class ResumingBridge extends TeamWebRtcBridge {
       throw new Error("simulated network change");
     }
     this.acknowledged = Math.max(this.acknowledged, chunk.offset + chunk.bytes.byteLength);
+    if (this.#disconnected && chunk.bytes.byteLength < 60 * 1024) {
+      this.emit(
+        "data",
+        peerId,
+        "files",
+        encodeTeamProtocolV2Frame({
+          version: 2,
+          type: "file-ack",
+          transferId: this.#transferId,
+          receivedThrough: this.acknowledged,
+        }),
+      );
+    }
     if (!this.#disconnected && this.acknowledged >= 1024 * 1024) {
       this.emit(
         "data",
