@@ -2253,7 +2253,7 @@ export function createAppController(props: AppProps = {}) {
       try {
         await markAgentMessagesRead(botId, receipt.deliveries[0]?.id ?? receipt.messageId, serverId);
       } catch (error) {
-        appendUiError(botId, error, "Read state failed");
+        appendUiError(botId, error, "Read state failed", serverId);
       }
       return true;
     } catch (error) {

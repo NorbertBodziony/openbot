@@ -1825,8 +1825,11 @@ function createConversationViewScope(props: ConversationProps) {
       const target = { botId, serverId };
       const draft = copyComposerDraft(drafts()[composerDraftKey(target)] ?? EMPTY_DRAFT);
       const deliveryId = editingBotId() === botId && editingServerId() === serverId ? editingDeliveryId() : null;
-      const delivery = deliveryId ? props.queue?.deliveries.find((item) => item.id === deliveryId) : undefined;
-      if (deliveryId && delivery?.status !== "queued") {
+      const activeTarget = currentTarget();
+      const targetIsActive = activeTarget?.botId === target.botId && activeTarget.serverId === target.serverId;
+      const delivery =
+        deliveryId && targetIsActive ? props.queue?.deliveries.find((item) => item.id === deliveryId) : undefined;
+      if (deliveryId && targetIsActive && delivery?.status !== "queued") {
         setComposerError("This queued message is no longer available.");
         cancelQueuedMessageEdit();
         return;
@@ -1835,13 +1838,14 @@ function createConversationViewScope(props: ConversationProps) {
         botId,
         serverId,
         draft,
-        queuedEdit:
-          deliveryId && delivery
-            ? {
-                deliveryId,
-                originalAttachmentIds: delivery.attachments.map((attachment) => attachment.id),
-              }
-            : undefined,
+        queuedEdit: deliveryId
+          ? {
+              deliveryId,
+              originalAttachmentIds: delivery
+                ? delivery.attachments.map((attachment) => attachment.id)
+                : [...editingOriginalAttachmentIds()],
+            }
+          : undefined,
       };
       stopVoiceRecording();
       return;
