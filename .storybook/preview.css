@@ -368,6 +368,18 @@
   color: var(--openbot-text-secondary);
 }
 
+.routine-event-context-grid {
+  width: min(1200px, 100%);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+  align-items: start;
+  gap: var(--openbot-space-6);
+}
+
+.routine-event-context-grid .chat-primitives-stage {
+  width: 100%;
+}
+
 .question-prompt-story-stage {
   min-height: 100vh;
   display: grid;
@@ -463,6 +475,10 @@
   .chat-primitives-gallery,
   .question-prompt-story-stage {
     padding: var(--openbot-space-4);
+  }
+
+  .routine-event-context-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .question-prompt-story-stage:has(.question-prompt-chat-preview) {

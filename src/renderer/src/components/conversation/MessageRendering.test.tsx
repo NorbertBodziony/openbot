@@ -643,10 +643,11 @@ describe("MessageBody", () => {
     ));
 
     expect(screen.getByRole("heading", { level: 2, name: "Plan" })).toBeInTheDocument();
-    expect(screen.getByText("Use **Kobal")).toBeInTheDocument();
+    expect(screen.getByText("Use Kobal")).toBeInTheDocument();
     const messageContent = container.querySelector<HTMLElement>(".message-content-blocks");
     const messageResize = container.querySelector<HTMLElement>(".message-content-resize");
     if (!messageContent || !messageResize) throw new Error("Streaming resize elements are missing.");
+    expect(messageContent).not.toHaveTextContent("**");
     let contentHeight = 40;
     vi.spyOn(messageContent, "getBoundingClientRect").mockImplementation(() =>
       DOMRect.fromRect({ height: contentHeight, width: 640, x: 0, y: 0 }),
@@ -671,8 +672,386 @@ describe("MessageBody", () => {
     expect(messageContent).not.toHaveTextContent("Resize the row");
     await waitFor(() => expect(messageContent).toHaveTextContent("Resize the row"));
     expect(screen.getByText("Parse Markdown")).toBeInTheDocument();
-    expect(screen.queryByText("Use **Kobal")).toBeNull();
+    expect(screen.queryByText("Use Kobal")).toBeNull();
     expect(container.querySelector(".message-content-blocks")).toBe(messageContent);
+  });
+
+  it("hides a punctuation-adjacent strong marker while streaming", async () => {
+    const [body, setBody] = createSignal("Use (**Kobal");
+    const [streaming, setStreaming] = createSignal(true);
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: "message-streaming-punctuation",
+          author: "bot",
+          body: body(),
+          time: "10:00",
+          streaming: streaming(),
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(screen.getByText("Use (Kobal")).toBeInTheDocument();
+    expect(container).not.toHaveTextContent("**");
+
+    setBody("Use (**Kobalte**).");
+    setStreaming(false);
+
+    await waitFor(() => expect(screen.getByText("Kobalte").tagName).toBe("STRONG"));
+    expect(container).toHaveTextContent("Use (Kobalte).");
+    expect(container).not.toHaveTextContent("**");
+  });
+
+  it("hides a valid underscore strong marker but preserves an intraword delimiter", async () => {
+    const [body, setBody] = createSignal("Use __Kobal, but keep a__literal");
+    const [streaming, setStreaming] = createSignal(true);
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: "message-streaming-underscore",
+          author: "bot",
+          body: body(),
+          time: "10:00",
+          streaming: streaming(),
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(container).toHaveTextContent("Use Kobal, but keep a__literal");
+    expect(container).not.toHaveTextContent("Use __Kobal");
+
+    setBody("Use __Kobalte__, but keep a__literal");
+    setStreaming(false);
+
+    await waitFor(() => expect(screen.getByText("Kobalte").tagName).toBe("STRONG"));
+    expect(container).toHaveTextContent("Use Kobalte, but keep a__literal");
+  });
+
+  it.each([
+    ["*", "asterisk italic", "em"],
+    ["_", "underscore italic", "em"],
+    ["***", "asterisk bold italic", "em strong, strong em"],
+    ["___", "underscore bold italic", "em strong, strong em"],
+    ["****", "nested asterisk bold", "strong strong"],
+    ["____", "nested underscore bold", "strong strong"],
+  ])("hides an incomplete %s marker while streaming", async (marker, name, selector) => {
+    const [body, setBody] = createSignal(`Use ${marker}Kobal`);
+    const [streaming, setStreaming] = createSignal(true);
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: `message-streaming-combined-${name}`,
+          author: "bot",
+          body: body(),
+          time: "10:00",
+          streaming: streaming(),
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(container).toHaveTextContent("Use Kobal");
+    expect(container).not.toHaveTextContent(marker);
+
+    setBody(`Use ${marker}Kobalte${marker}`);
+    setStreaming(false);
+
+    await waitFor(() => expect(container.querySelector(selector)).toHaveTextContent("Kobalte"));
+    expect(container).not.toHaveTextContent(marker);
+  });
+
+  it("hides every incomplete nested emphasis opener while streaming", async () => {
+    const [body, setBody] = createSignal("Use **bold [link](https://example.com) and _italic");
+    const [streaming, setStreaming] = createSignal(true);
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: "message-streaming-nested-emphasis",
+          author: "bot",
+          body: body(),
+          time: "10:00",
+          streaming: streaming(),
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(container).toHaveTextContent("Use bold link and italic");
+    expect(container).not.toHaveTextContent("**");
+    expect(container).not.toHaveTextContent("_italic");
+    expect(screen.getByRole("link", { name: "link" })).toBeInTheDocument();
+
+    setBody("Use **bold [link](https://example.com) and _italic_**");
+    setStreaming(false);
+
+    await waitFor(() => expect(container.querySelector("strong em")).toHaveTextContent("italic"));
+    expect(container.querySelector("strong a")).toHaveTextContent("link");
+  });
+
+  it("cleans an opener before a completed inline token without changing its contents", () => {
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: "message-streaming-link",
+          author: "bot",
+          body: "Use **[Kobal](https://example.com), keep [label **literal](https://example.com/label)",
+          time: "10:00",
+          streaming: true,
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(container).toHaveTextContent("Use Kobal, keep label **literal");
+    expect(container).not.toHaveTextContent("Use **");
+    expect(screen.getByRole("link", { name: "Kobal" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "label **literal" })).toBeInTheDocument();
+  });
+
+  it.each(["Use *", "Use _", "Use **", "Use __", "Use ***", "Use ___", "Use ****", "Use ____"])(
+    "hides an emphasis marker at the end of a streaming chunk",
+    (body) => {
+      const { container } = render(() => (
+        <MessageBody
+          message={{
+            id: `message-streaming-marker-${body.at(-1)}`,
+            author: "bot",
+            body,
+            time: "10:00",
+            streaming: true,
+          }}
+          bots={bots}
+          onSelectAgent={vi.fn()}
+          onOpenLink={vi.fn()}
+          onPreview={vi.fn()}
+          onAttachmentAction={vi.fn()}
+        />
+      ));
+
+      expect(container).toHaveTextContent("Use");
+      expect(container).not.toHaveTextContent(body.trim().slice(4));
+    },
+  );
+
+  it.each(["value*", "value_", "value**", "value__", "value***", "value___"])(
+    "preserves a literal trailing delimiter while streaming",
+    (body) => {
+      const { container } = render(() => (
+        <MessageBody
+          message={{
+            id: `message-streaming-literal-${body.at(-1)}`,
+            author: "bot",
+            body,
+            time: "10:00",
+            streaming: true,
+          }}
+          bots={bots}
+          onSelectAgent={vi.fn()}
+          onOpenLink={vi.fn()}
+          onPreview={vi.fn()}
+          onAttachmentAction={vi.fn()}
+        />
+      ));
+
+      expect(container).toHaveTextContent(body);
+    },
+  );
+
+  it.each([
+    ["closed paragraph", "Earlier **literal\n\n"],
+    ["closed heading", "# Heading **literal\n"],
+  ])("preserves markers in a %s while another block can stream", (name, body) => {
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: `message-streaming-${name.replaceAll(" ", "-")}`,
+          author: "bot",
+          body,
+          time: "10:00",
+          streaming: true,
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(container).toHaveTextContent("**literal");
+  });
+
+  it("keeps earlier text unchanged while a structured block streams", () => {
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-streaming-code",
+          author: "bot",
+          body: "Earlier **literal\n\n```js\nconst answer = 4",
+          time: "10:00",
+          streaming: true,
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(screen.getByText("Earlier **literal")).toBeInTheDocument();
+    expect(screen.getByText("const answer = 4")).toBeInTheDocument();
+  });
+
+  it("hides an incomplete marker in the final cell of a nested streaming table", async () => {
+    const [body, setBody] = createSignal("> | A | B |\n> | --- | --- |\n> | x | **bold");
+    const [streaming, setStreaming] = createSignal(true);
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: "message-streaming-nested-table",
+          author: "bot",
+          body: body(),
+          time: "10:00",
+          streaming: streaming(),
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(container).toHaveTextContent("bold");
+    expect(container).not.toHaveTextContent("**");
+
+    setBody("> | A | B |\n> | --- | --- |\n> | x | **bold**");
+    setStreaming(false);
+
+    await waitFor(() => expect(screen.getByText("bold").tagName).toBe("STRONG"));
+  });
+
+  it("hides an incomplete marker in an unpadded source cell", async () => {
+    const [body, setBody] = createSignal("> | A | B |\n> | --- | --- |\n> | **bold");
+    const [streaming, setStreaming] = createSignal(true);
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: "message-streaming-short-table-row",
+          author: "bot",
+          body: body(),
+          time: "10:00",
+          streaming: streaming(),
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(container).toHaveTextContent("bold");
+    expect(container).not.toHaveTextContent("**");
+
+    setBody("> | A | B |\n> | --- | --- |\n> | **bold**");
+    setStreaming(false);
+
+    await waitFor(() => expect(screen.getByText("bold").tagName).toBe("STRONG"));
+  });
+
+  it.each([
+    ["closing pipe", "> | A | B |\n> | --- | --- |\n> | x | **literal |"],
+    ["newline", "> | A | B |\n> | --- | --- |\n> | x | **literal\n"],
+  ])("preserves markers in a table cell closed by a %s", (_boundary, body) => {
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: "message-streaming-closed-table-cell",
+          author: "bot",
+          body,
+          time: "10:00",
+          streaming: true,
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(container).toHaveTextContent("**literal");
+  });
+
+  it.each([
+    ["list", "- | A | B |\n  | --- | --- |\n  | x | **literal\n"],
+    ["list in a blockquote", "> - | A | B |\n>   | --- | --- |\n>   | x | **literal\n"],
+  ])("preserves markers in a closed table nested through a %s", (_containerName, body) => {
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: "message-streaming-closed-nested-table",
+          author: "bot",
+          body,
+          time: "10:00",
+          streaming: true,
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(container).toHaveTextContent("**literal");
+  });
+
+  it("preserves literal markers in a completed streaming table header", () => {
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: "message-streaming-table-header",
+          author: "bot",
+          body: "| A | **literal |\n| --- | --- |",
+          time: "10:00",
+          streaming: true,
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(container).toHaveTextContent("**literal");
   });
 
   it("keeps Markdown tables in user messages as plain text", () => {
