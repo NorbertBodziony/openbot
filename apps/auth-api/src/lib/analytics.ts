@@ -4,7 +4,7 @@ import { OPENBOT_DOWNLOAD_LINKS, OPENBOT_LINKS } from "./landing-links";
 
 export const OPENPANEL_API_URL = "https://analytics.openbot.run/api";
 const OPENPANEL_CLIENT_ID = "6c989975-87ef-4f0c-857e-ab449a65b5c2";
-const ANALYTICS_SCHEMA_VERSION = 2;
+const ANALYTICS_SCHEMA_VERSION = 3;
 
 export type LandingAcquisitionSource = "direct" | "search" | "social" | "github" | "other";
 
@@ -34,7 +34,7 @@ type LandingDestination =
   | "codex"
   | "claude";
 
-type OpenPanelClient = Pick<OpenPanel, "setGlobalProperties" | "track">;
+type OpenPanelClient = Pick<OpenPanel, "screenView" | "setGlobalProperties" | "track">;
 
 type ClientFactory = (options: OpenPanelOptions) => OpenPanelClient;
 
@@ -68,6 +68,7 @@ export class LandingAnalytics {
   readonly #createClient: ClientFactory;
   readonly #productionBuild: boolean;
   #client: OpenPanelClient | null = null;
+  #lastScreenPath: "/" | "/join" | null = null;
   readonly #clickCleanup = new WeakMap<Document, () => void>();
 
   constructor(
@@ -82,6 +83,7 @@ export class LandingAnalytics {
     if (isLikelyAutomation(document.defaultView?.navigator)) return () => undefined;
     if (!this.#ensureClient(hostname)) return () => undefined;
     this.#client?.setGlobalProperties({ acquisition_source: landingAcquisitionSource(document) });
+    this.#screenView("/");
     this.#track("landing_viewed", {});
     const handleClick = (event: MouseEvent) => this.#handleClick(event);
     return this.#replaceClickListener(document, handleClick);
@@ -95,6 +97,7 @@ export class LandingAnalytics {
     if (isLikelyAutomation(document.defaultView?.navigator)) return () => undefined;
     if (!this.#ensureClient(hostname)) return () => undefined;
     this.#client?.setGlobalProperties({ acquisition_source: landingAcquisitionSource(document) });
+    this.#screenView("/join");
     this.#track("join_page_action", { action: "view", valid_invite: options.validInvite });
     const handleClick = (event: MouseEvent) => {
       const target = event.target;
@@ -166,6 +169,16 @@ export class LandingAnalytics {
     }
     const destination = LINK_DESTINATIONS.get(href);
     if (destination) this.#track("landing_link_clicked", { destination, placement });
+  }
+
+  #screenView(path: "/" | "/join"): void {
+    if (this.#lastScreenPath === path) return;
+    try {
+      this.#client?.screenView(path);
+      this.#lastScreenPath = path;
+    } catch {
+      // Analytics must never change landing-page behavior.
+    }
   }
 
   #track<Name extends LandingEventName>(name: Name, properties: LandingAnalyticsEvents[Name]): void {
