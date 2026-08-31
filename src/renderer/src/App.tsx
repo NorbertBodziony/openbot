@@ -1161,10 +1161,15 @@ export function createAppController(props: AppProps = {}) {
       ...(snapshot.attentionComplete ? {} : current),
       ...Object.fromEntries(snapshot.pendingApprovals.map((approval) => [approval.botId, approval])),
     }));
+    for (const botId of new Set(snapshot.latestMessages.map((message) => message.botId))) {
+      deleteAgentMessageBodies(rawAgentMessageBodies, botId);
+    }
+    for (const message of snapshot.latestMessages) {
+      rawAgentMessageBodies.set(agentMessageKey(message.botId, message.id), message.text);
+    }
     setLiveMessages((current) => {
       const next = { ...current };
       for (const message of snapshot.latestMessages) {
-        rawAgentMessageBodies.set(agentMessageKey(message.botId, message.id), message.text);
         const messages = next[message.botId] ?? [];
         if (messages.some((candidate) => candidate.id === message.id)) continue;
         next[message.botId] = [

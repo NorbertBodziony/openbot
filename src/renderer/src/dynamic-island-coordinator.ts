@@ -64,11 +64,16 @@ export class DynamicIslandCoordinator {
     for (const botId of lastRecordedMessageIds.keys()) if (!botIds.has(botId)) lastRecordedMessageIds.delete(botId);
     const receivedConversations = [...(previous?.receivedConversations ?? [])].filter((botId) => botIds.has(botId));
     const rawMessageBodies = new Map(previous?.rawMessageBodies);
+    const retainedMessageKeys = new Set<string>();
     for (const [botId, messages] of Object.entries(input.liveMessages)) {
       for (const message of messages) {
         const key = dynamicIslandMessageKey(botId, message.id);
+        retainedMessageKeys.add(key);
         if (!rawMessageBodies.has(key)) rawMessageBodies.set(key, message.body);
       }
+    }
+    for (const key of rawMessageBodies.keys()) {
+      if (!retainedMessageKeys.has(key)) rawMessageBodies.delete(key);
     }
     this.#servers.set(input.serverId, {
       ...input,
@@ -104,6 +109,7 @@ export class DynamicIslandCoordinator {
         return;
       case "conversation": {
         runtime.activeTurns[event.snapshot.botId] = event.snapshot.activeTurnId;
+        deleteDynamicIslandMessageBodies(runtime.rawMessageBodies, event.snapshot.botId);
         for (const message of event.snapshot.messages) {
           const key = dynamicIslandMessageKey(event.snapshot.botId, message.id);
           if (message.author !== "user" && message.status === "streaming") {
@@ -300,6 +306,9 @@ export class DynamicIslandCoordinator {
   ): void {
     const liveMessages: Record<string, DynamicIslandMessageSource[]> = {};
     const incomingMessageAnchors = new Map(runtime.incomingMessageAnchors);
+    for (const botId of new Set(snapshot.latestMessages.map((message) => message.botId))) {
+      deleteDynamicIslandMessageBodies(runtime.rawMessageBodies, botId);
+    }
     for (const message of snapshot.latestMessages) {
       runtime.rawMessageBodies.set(dynamicIslandMessageKey(message.botId, message.id), message.text);
       const converted = {
@@ -350,6 +359,13 @@ export class DynamicIslandCoordinator {
 
 function dynamicIslandMessageKey(botId: string, messageId: string): string {
   return `${botId}\0${messageId}`;
+}
+
+function deleteDynamicIslandMessageBodies(messages: Map<string, string>, botId: string): void {
+  const prefix = `${botId}\0`;
+  for (const key of messages.keys()) {
+    if (key.startsWith(prefix)) messages.delete(key);
+  }
 }
 
 function compactLiveMessages(
