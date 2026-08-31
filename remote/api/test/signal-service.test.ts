@@ -48,14 +48,28 @@ describe("SignalService", () => {
     expect(host.messages.at(-1)).toContain('"code":"authentication_required"');
     expect(host.closed).toBe(true);
   });
+
+  it("rejects a second logical client session while the host is in use", async () => {
+    const service = new SignalService(fakeTokens(), 8);
+    await hello(service, socket("host"), "host-ticket", "host");
+    await hello(service, socket("first-client"), "client-ticket", "client");
+    const second = socket("second-client");
+    await hello(service, second, "second-client-ticket", "client");
+    expect(second.messages.at(-1)).toContain('"code":"host_busy"');
+    expect(second.closed).toBe(true);
+  });
 });
 
 function fakeTokens() {
   const now = Math.floor(Date.now() / 1_000);
-  const claims = (role: "host" | "owner" | "member", jti: string): RemoteTicketClaims => ({
+  const claims = (
+    role: "host" | "owner" | "member",
+    jti: string,
+    sessionId = role === "host" ? "host-session" : "client-session",
+  ): RemoteTicketClaims => ({
     aud: "openbot-remote",
     jti,
-    sessionId: role === "host" ? "host-session" : "client-session",
+    sessionId,
     hostId: "host-1",
     userId: role === "host" ? "owner-1" : "user-1",
     membershipId: role === "host" ? "host-1:host" : "member-1",
@@ -71,6 +85,7 @@ function fakeTokens() {
     verifyTicket: async (token: string) => {
       if (token === "host-ticket") return claims("host", "host-jti");
       if (token === "client-ticket") return claims("member", "client-jti");
+      if (token === "second-client-ticket") return claims("member", "second-client-jti", "second-client-session");
       if (token === "owner-ticket") return claims("owner", "owner-jti");
       throw new Error("not an initial ticket");
     },

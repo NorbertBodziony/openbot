@@ -190,7 +190,8 @@ async function handleSignal(state: PeerState, message: SignalMessage): Promise<v
     if (
       message.code === "session_revoked" ||
       message.code === "authentication_required" ||
-      message.code === "permission_denied"
+      message.code === "permission_denied" ||
+      message.code === "host_busy"
     ) {
       disconnect(state.id);
     }

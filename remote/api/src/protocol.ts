@@ -67,6 +67,7 @@ export type SignalErrorCode =
   | "authentication_required"
   | "invalid_message"
   | "host_unavailable"
+  | "host_busy"
   | "permission_denied"
   | "rate_limited"
   | "session_revoked"

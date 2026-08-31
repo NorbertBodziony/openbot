@@ -62,3 +62,7 @@ Aktualizacja Signal może zamknąć WebSocket. Aktywne WebRTC pozostaje połącz
 coturn w drain i czeka na zakończenie alokacji. Jedna instancja coturn nie chroni przed awarią maszyny.
 Wymuszony restart coturn kończy aktywne sesje relay. Klient wykona ICE restart i wznowi transfer pliku
 od ostatniego potwierdzonego offsetu po powrocie usługi.
+
+Pierwsza wersja obsługuje jedną aktywną logiczną sesję klienta na host. Ponowne połączenie tej samej
+sesji zastępuje stary socket Signal. Druga sesja dostaje błąd `host_busy` i może spróbować ponownie po
+zakończeniu pierwszej sesji.

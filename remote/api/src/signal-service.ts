@@ -229,6 +229,14 @@ export class SignalService {
       this.#fail(socket, "host_unavailable", "The host is offline.", 1013);
       return;
     }
+    const existing = this.#connectionForHost(claims.hostId);
+    if (existing && existing.sessionId !== claims.sessionId) {
+      this.#peers.delete(socket.id);
+      this.#metrics.activeSockets = this.#peers.size;
+      this.#fail(socket, "host_busy", "The host already has an active remote session.", 1013);
+      return;
+    }
+    if (existing) this.#replaceClientSignal(existing);
     const connectionId = randomIdentifier();
     peer.connectionId = connectionId;
     this.#connections.set(connectionId, {
@@ -264,6 +272,20 @@ export class SignalService {
       if (peer) return peer;
     }
     return null;
+  }
+
+  #connectionForHost(hostId: string): ActiveConnection | null {
+    for (const connection of this.#connections.values()) if (connection.hostId === hostId) return connection;
+    return null;
+  }
+
+  #replaceClientSignal(connection: ActiveConnection): void {
+    this.#connections.delete(connection.id);
+    const previous = this.#peers.get(connection.client.id);
+    if (previous) {
+      this.#peers.delete(connection.client.id);
+      previous.socket.close(4000, "Remote session resumed");
+    }
   }
 
   #dropConnection(connectionId: string, sourceSocketId: string): void {
