@@ -384,6 +384,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       getPresentation: async () => clone(dynamicIslandPresentation),
       onPreference: () => () => undefined,
       onPresentation: () => () => undefined,
+      onGeometry: () => () => undefined,
       performAction: async () => undefined,
       performHaptic: async () => undefined,
       onAction: () => () => undefined,

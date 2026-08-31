@@ -4,12 +4,16 @@ import { EventEmitter } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DynamicIslandAction, DynamicIslandPreference, DynamicIslandPresentation } from "@openbot/contracts/ipc";
+import {
+  type DynamicIslandAction,
+  type DynamicIslandPreference,
+  type DynamicIslandPresentation,
+  IPC_CHANNELS,
+} from "@openbot/contracts/ipc";
 import type { BrowserWindow, Display, Rectangle } from "electron";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as preferenceStore from "./dynamic-island-preference-store";
 import {
-  DEFAULT_DYNAMIC_ISLAND_NOTCH_SIZE,
   DynamicIslandWindowController,
   dynamicIslandNotchSize,
   dynamicIslandWindowBounds,
@@ -121,10 +125,6 @@ describe("dynamic island window geometry", () => {
     });
   });
 
-  it("keeps a safe fallback for an unscaled renderer", () => {
-    expect(DEFAULT_DYNAMIC_ISLAND_NOTCH_SIZE).toEqual({ width: 192, height: 32 });
-  });
-
   it("centers the overlay at each display top edge", () => {
     expect(dynamicIslandWindowBounds(display({ bounds: { x: 200, y: -20, width: 1512, height: 982 } }))).toEqual({
       x: 649,
@@ -188,7 +188,7 @@ describe("dynamic island window geometry", () => {
     expect(windows[1]?.setBounds).toHaveBeenCalledWith({ x: 1793, y: 20, width: 614, height: 380 }, false);
   });
 
-  it("reloads an existing overlay when display scaling changes its notch geometry", async () => {
+  it("publishes updated geometry without reloading an existing overlay", async () => {
     const root = await temporaryRoot();
     const windows: FakeWindow[] = [];
     const loadWindow = vi.fn(async () => undefined);
@@ -214,10 +214,15 @@ describe("dynamic island window geometry", () => {
 
     displays = [display({ id: 1, bounds: { x: 0, y: 0, width: 1800, height: 1169 } })];
     await controller.reconcileWindow();
-    expect(loadWindow).toHaveBeenCalledTimes(2);
+    expect(loadWindow).toHaveBeenCalledOnce();
+    expect(windows[0]?.webContents.send).toHaveBeenCalledWith(IPC_CHANNELS.dynamicIslandGeometry, {
+      width: 220,
+      height: 38,
+    });
 
     await controller.reconcileWindow();
-    expect(loadWindow).toHaveBeenCalledTimes(2);
+    expect(loadWindow).toHaveBeenCalledOnce();
+    expect(windows[0]?.webContents.send).toHaveBeenCalledTimes(1);
   });
 
   it("continues loading other displays when one overlay fails", async () => {

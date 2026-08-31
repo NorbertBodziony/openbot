@@ -1,5 +1,10 @@
 import { isDeepStrictEqual } from "node:util";
-import type { DynamicIslandAction, DynamicIslandPreference, DynamicIslandPresentation } from "@openbot/contracts/ipc";
+import type {
+  DynamicIslandAction,
+  DynamicIslandNotchSize,
+  DynamicIslandPreference,
+  DynamicIslandPresentation,
+} from "@openbot/contracts/ipc";
 import {
   DEFAULT_DYNAMIC_ISLAND_PREFERENCE,
   IDLE_DYNAMIC_ISLAND_PRESENTATION,
@@ -9,8 +14,6 @@ import type { BrowserWindow, Display, Rectangle } from "electron";
 import { readDynamicIslandPreference, writeDynamicIslandPreference } from "./dynamic-island-preference-store";
 
 export const DYNAMIC_ISLAND_WINDOW_SIZE = { width: 614, height: 380 } as const;
-
-export const DEFAULT_DYNAMIC_ISLAND_NOTCH_SIZE = { width: 192, height: 32 } as const;
 
 const MACBOOK_NOTCH_REFERENCE = {
   displayWidth: 1512,
@@ -169,13 +172,9 @@ export class DynamicIslandWindowController {
       if (current && !current.isDestroyed()) {
         current.setBounds(bounds, false);
         if (notchSizeChanged(this.#notchSizes.get(display.id), notchSize)) {
-          try {
-            await this.#options.loadWindow(current, display);
-            if (notchSize) this.#notchSizes.set(display.id, notchSize);
-            else this.#notchSizes.delete(display.id);
-          } catch (error) {
-            console.error(`Unable to reload Dynamic Island on display ${display.id}:`, error);
-          }
+          if (notchSize) current.webContents.send(IPC_CHANNELS.dynamicIslandGeometry, notchSize);
+          if (notchSize) this.#notchSizes.set(display.id, notchSize);
+          else this.#notchSizes.delete(display.id);
         }
         current.showInactive();
         continue;
@@ -202,6 +201,8 @@ export class DynamicIslandWindowController {
       window.showInactive();
       window.webContents.send(IPC_CHANNELS.dynamicIslandPresentation, this.#presentation);
       window.webContents.send(IPC_CHANNELS.dynamicIslandPreference, this.#preference);
+      const notchSize = notchSizeForDisplay(display);
+      if (notchSize) window.webContents.send(IPC_CHANNELS.dynamicIslandGeometry, notchSize);
     });
     window.on("blur", () => this.setInteractive(window.webContents.id, false));
     window.on("closed", () => {
@@ -243,9 +244,7 @@ export class DynamicIslandWindowController {
   }
 }
 
-function notchSizeForDisplay(
-  display: Pick<Display, "bounds" | "internal">,
-): { width: number; height: number } | undefined {
+function notchSizeForDisplay(display: Pick<Display, "bounds" | "internal">): DynamicIslandNotchSize | undefined {
   return display.internal ? dynamicIslandNotchSize(display) : undefined;
 }
 
@@ -278,7 +277,7 @@ export function dynamicIslandWindowBounds(display: Pick<Display, "bounds">): Rec
  * measured 14-inch reference therefore covers the 13-inch Air, 14-inch Pro,
  * 15-inch Air, and 16-inch Pro without a model-name lookup.
  */
-export function dynamicIslandNotchSize(display: Pick<Display, "bounds">): { width: number; height: number } {
+export function dynamicIslandNotchSize(display: Pick<Display, "bounds">): DynamicIslandNotchSize {
   const displayScale = display.bounds.width / MACBOOK_NOTCH_REFERENCE.displayWidth;
   return {
     width: Math.max(16, Math.round(MACBOOK_NOTCH_REFERENCE.notchWidth * displayScale)),

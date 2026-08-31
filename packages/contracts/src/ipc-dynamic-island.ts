@@ -135,6 +135,11 @@ export interface SetDynamicIslandInteractiveInput {
   interactive: boolean;
 }
 
+export interface DynamicIslandNotchSize {
+  width: number;
+  height: number;
+}
+
 export const IDLE_DYNAMIC_ISLAND_PRESENTATION: DynamicIslandPresentation = { serverId: "local", mode: "idle" };
 
 export function isDynamicIslandPreference(value: unknown): value is DynamicIslandPreference {
@@ -149,6 +154,10 @@ export function isDynamicIslandPreference(value: unknown): value is DynamicIslan
 
 export function isDynamicIslandInteractive(value: unknown): value is SetDynamicIslandInteractiveInput {
   return isDynamicRecord(value) && isBoolean(value.interactive);
+}
+
+export function isDynamicIslandNotchSize(value: unknown): value is DynamicIslandNotchSize {
+  return isDynamicRecord(value) && isPositiveFiniteNumber(value.width) && isPositiveFiniteNumber(value.height);
 }
 
 export function isDynamicIslandPresentation(value: unknown): value is DynamicIslandPresentation {
@@ -181,6 +190,10 @@ export function isDynamicIslandAction(value: unknown): value is DynamicIslandAct
   return (
     value.type === "answer-prompt" && isDynamicIslandRequestId(value.requestId) && isDynamicIslandAnswers(value.answers)
   );
+}
+
+function isPositiveFiniteNumber(value: unknown): value is number {
+  return isNumber(value) && Number.isFinite(value) && value > 0;
 }
 
 function isSafeCount(value: unknown): value is number {
