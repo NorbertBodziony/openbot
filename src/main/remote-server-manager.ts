@@ -1035,6 +1035,15 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     void this.#remoteViewerProxy?.stop();
   }
 
+  async disconnectRemoteSessions(): Promise<void> {
+    if (!this.#webrtcTransport) return;
+    await Promise.all(
+      this.#state.servers
+        .filter((server) => server.transport === "webrtc-v2")
+        .map((server) => this.#webrtcTransport?.disconnect(server.id)),
+    );
+  }
+
   async #syncWebRtcHosts(): Promise<void> {
     if (!this.#webrtcTransport) return;
     const hosts = await this.#webrtcTransport.listHosts();

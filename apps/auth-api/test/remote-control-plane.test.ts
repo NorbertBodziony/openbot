@@ -4,6 +4,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { exportJWK, generateKeyPair, importJWK, jwtVerify } from "jose";
 import { describe, expect, it } from "vitest";
 import {
+  deliverPendingRemoteAuthEvents,
   RemoteControlPlane,
   RemoteTicketSigner,
   verifyRemoteServiceSignature,
@@ -33,6 +34,7 @@ describe("remote control plane migration", () => {
     `);
 
     database.exec(readFileSync(new URL("../migrations/0012_remote_control_plane.sql", import.meta.url), "utf8"));
+    database.exec(readFileSync(new URL("../migrations/0013_remote_session_lifecycle.sql", import.meta.url), "utf8"));
 
     expect(database.prepare("SELECT host_id, owner_user_id, auth_epoch FROM remote_hosts").all()).toEqual([
       { host_id: "host-1", owner_user_id: "owner", auth_epoch: 1 },
@@ -150,6 +152,7 @@ describe("RemoteControlPlane", () => {
       ) VALUES ('host-1', 'owner', 'Studio Mac', 'old.example.test', 'active', 100, 200, 'machine-hash');
     `);
     database.exec(readFileSync(new URL("../migrations/0012_remote_control_plane.sql", import.meta.url), "utf8"));
+    database.exec(readFileSync(new URL("../migrations/0013_remote_session_lifecycle.sql", import.meta.url), "utf8"));
     database
       .prepare(
         `INSERT INTO remote_memberships(
@@ -208,27 +211,28 @@ describe("RemoteControlPlane", () => {
       ) VALUES ('host-1', 'owner', 'Studio Mac', 'old.example.test', 'active', 100, 200, 'machine-hash');
     `);
     database.exec(readFileSync(new URL("../migrations/0012_remote_control_plane.sql", import.meta.url), "utf8"));
+    database.exec(readFileSync(new URL("../migrations/0013_remote_session_lifecycle.sql", import.meta.url), "utf8"));
     const pair = await generateKeyPair("ES256", { extractable: true });
     const privateJwk = await exportJWK(pair.privateKey);
     const publicJwk = { ...(await exportJWK(pair.publicKey)), kid: "test-key", use: "sig", alg: "ES256" };
     const webhookBodies: string[] = [];
-    const controlPlane = new RemoteControlPlane(
-      {
-        DB: sqliteD1(database),
-        REMOTE_TICKET_PRIVATE_JWK: JSON.stringify({ ...privateJwk, kid: "test-key", alg: "ES256" }),
-        REMOTE_TICKET_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
-        REMOTE_TICKET_KEY_ID: "test-key",
-        REMOTE_AUTH_WEBHOOK_URL: "https://signal.example.test/internal/auth-events",
-        REMOTE_AUTH_WEBHOOK_SECRET: "s".repeat(32),
-      },
-      {
-        now: () => 1_000,
-        fetch: async (_input, init) => {
-          webhookBodies.push(String(init?.body ?? ""));
-          return new Response(null, { status: 204 });
-        },
-      },
-    );
+    let webhookAvailable = true;
+    const webhookFetch = async (_input: string | URL | Request, init?: RequestInit) => {
+      webhookBodies.push(String(init?.body ?? ""));
+      return new Response(null, { status: webhookAvailable ? 204 : 503 });
+    };
+    const bindings = {
+      DB: sqliteD1(database),
+      REMOTE_TICKET_PRIVATE_JWK: JSON.stringify({ ...privateJwk, kid: "test-key", alg: "ES256" }),
+      REMOTE_TICKET_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
+      REMOTE_TICKET_KEY_ID: "test-key",
+      REMOTE_AUTH_WEBHOOK_URL: "https://signal.example.test/internal/auth-events",
+      REMOTE_AUTH_WEBHOOK_SECRET: "s".repeat(32),
+    };
+    const controlPlane = new RemoteControlPlane(bindings, {
+      now: () => 1_000,
+      fetch: webhookFetch,
+    });
     const owner = { id: "owner", email: "owner@example.com", name: null, avatarUrl: null };
     await controlPlane.registerHost(owner, {
       hostId: "host-1",
@@ -247,6 +251,7 @@ describe("RemoteControlPlane", () => {
     });
 
     const session = await controlPlane.startSession(owner.id, "host-1");
+    await expect(controlPlane.startSession(owner.id, "host-1")).resolves.toEqual(session);
     const claims = {
       sessionId: session.sessionId,
       hostId: "host-1",
@@ -257,8 +262,13 @@ describe("RemoteControlPlane", () => {
       sessionExpiresAt: session.expiresAt / 1_000,
     };
     await expect(controlPlane.validateResumeClaims(claims)).resolves.toBe(true);
+    webhookAvailable = false;
     await controlPlane.endSession(owner.id, session.sessionId);
     await expect(controlPlane.validateResumeClaims(claims)).resolves.toBe(false);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM remote_auth_events").get()).toEqual({ count: 1 });
+    webhookAvailable = true;
+    await deliverPendingRemoteAuthEvents(bindings, 61_001, webhookFetch);
+    expect(database.prepare("SELECT COUNT(*) AS count FROM remote_auth_events").get()).toEqual({ count: 0 });
     expect(webhookBodies).toContain(
       JSON.stringify({ type: "remote-session-ended", hostId: "host-1", sessionId: session.sessionId }),
     );

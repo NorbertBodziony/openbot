@@ -20,6 +20,7 @@ describe("auth data retention", () => {
     expect(ids(database, "auth_sessions", "id")).toEqual(["active"]);
     expect(ids(database, "auth_rate_limits", "key_hash")).toEqual(["current"]);
     expect(ids(database, "team_auth_tickets", "ticket_hash")).toEqual(["active"]);
+    expect(ids(database, "remote_sessions", "session_id")).toEqual(["active"]);
     expect(ids(database, "users", "id")).toEqual(["user"]);
     expect(ids(database, "team_tunnels", "server_id")).toEqual(["server"]);
   });
@@ -40,6 +41,9 @@ describe("auth data retention", () => {
     database
       .prepare("INSERT INTO team_auth_tickets(ticket_hash, user_id, expires_at, consumed_at) VALUES (?, ?, ?, NULL)")
       .run("boundary", "user", now);
+    database
+      .prepare("INSERT INTO remote_sessions(session_id, user_id, expires_at, ended_at) VALUES (?, ?, ?, NULL)")
+      .run("boundary", "user", now - 10 * 60_000);
 
     runRetention(database, now);
 
@@ -47,6 +51,7 @@ describe("auth data retention", () => {
     expect(count(database, "auth_sessions")).toBe(0);
     expect(count(database, "auth_rate_limits")).toBe(0);
     expect(count(database, "team_auth_tickets")).toBe(0);
+    expect(count(database, "remote_sessions")).toBe(0);
   });
 });
 
@@ -81,6 +86,12 @@ function createDatabase(): DatabaseSync {
       server_id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
     );
+    CREATE TABLE remote_sessions (
+      session_id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at INTEGER NOT NULL,
+      ended_at INTEGER
+    );
   `);
   return database;
 }
@@ -109,6 +120,12 @@ function insertFixtures(database: DatabaseSync, now: number): void {
   ticket.run("active", "user", now + 1, null);
   ticket.run("expired", "user", now - 1, null);
   ticket.run("consumed", "user", now + 1, now - 1);
+  const remoteSession = database.prepare(
+    "INSERT INTO remote_sessions(session_id, user_id, expires_at, ended_at) VALUES (?, ?, ?, ?)",
+  );
+  remoteSession.run("active", "user", now + 1, null);
+  remoteSession.run("expired", "user", now - 10 * 60_000 - 1, null);
+  remoteSession.run("ended", "user", now + 1, now - 10 * 60_000 - 1);
 }
 
 function runRetention(database: DatabaseSync, now: number): void {

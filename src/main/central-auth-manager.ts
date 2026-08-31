@@ -2,15 +2,8 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type {
-  AvatarImageInput,
-  CentralAuthIssue,
-  CentralAuthState,
-  CentralAuthUser,
-  RemoteDesktopIceServer,
-} from "@openbot/contracts/ipc";
+import type { AvatarImageInput, CentralAuthIssue, CentralAuthState, CentralAuthUser } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
-import { isOpenBotTeamApiHostname } from "@openbot/contracts/validation";
 
 interface CentralAuthEvents {
   changed: [state: CentralAuthState];
@@ -41,14 +34,6 @@ const STARTUP_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000] as const;
 const RESEND_FALLBACK_DELAY_MS = 60_000;
 const AUTH_API_UNAVAILABLE_MESSAGE =
   "OpenBot could not reach the account service. Check that the API is running, then try again.";
-
-export interface ProvisionedTeamTunnel {
-  tunnelId: string;
-  tunnelName: string;
-  apiUrl: string;
-  token: string;
-  machineToken: string;
-}
 
 export interface RegisteredRemoteHost {
   hostId: string;
@@ -371,53 +356,6 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     );
   }
 
-  async provisionTeamTunnel(input: {
-    serverId: string;
-    serverName: string;
-    apiPort?: number | null;
-  }): Promise<ProvisionedTeamTunnel> {
-    const result = await this.#authorizedRequest(
-      "/v1/team-tunnels/provision",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
-      },
-      decodeProvisionedTeamTunnel,
-      60_000,
-    );
-    if (
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(result.tunnelId) ||
-      !/^openbot-[0-9a-f]{32}$/u.test(result.tunnelName) ||
-      !isOpenBotHostUrl(result.apiUrl) ||
-      result.token.length < 40 ||
-      !/^[0-9a-f]{64}$/u.test(result.machineToken)
-    ) {
-      throw new Error("The account service returned invalid team tunnel details.");
-    }
-    this.#teamHostTokens.set(input.serverId.toLowerCase(), result.machineToken);
-    await this.#writeStoredSession();
-    return result;
-  }
-
-  async getTeamHostIceServers(serverId: string): Promise<RemoteDesktopIceServer[]> {
-    const machineToken = this.#teamHostTokens.get(serverId.toLowerCase());
-    if (!machineToken) throw new Error("The team host token is unavailable. Restart the host service.");
-    const result = await this.#request(
-      "/v1/team-hosts/ice-servers",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${machineToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ serverId }),
-      },
-      decodeIceServerResponse,
-    );
-    return result.iceServers;
-  }
-
   initialize(): Promise<CentralAuthState> {
     if (this.#initializationPromise) return this.#initializationPromise;
     const pending = this.#initialize().catch((error) => this.#setInitializationError(error));
@@ -736,21 +674,6 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   }
 }
 
-function isOpenBotHostUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return (
-      url.protocol === "https:" &&
-      url.pathname === "/" &&
-      url.search === "" &&
-      url.hash === "" &&
-      isOpenBotTeamApiHostname(url.hostname)
-    );
-  } catch {
-    return false;
-  }
-}
-
 export function readCentralAuthApiUrl(value: string | undefined, fallback = "http://127.0.0.1:3100"): string {
   const url = new URL(value ?? fallback);
   const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost";
@@ -854,17 +777,6 @@ function decodeTicketResponse(value: unknown): { ticket: string; expiresAt: numb
   const record = decodeRecord(value, "team ticket");
   if (!isNumber(record.expiresAt)) throw new Error("Invalid team ticket expiration.");
   return { ticket: requiredString(record, "ticket"), expiresAt: record.expiresAt };
-}
-
-function decodeProvisionedTeamTunnel(value: unknown): ProvisionedTeamTunnel {
-  const record = decodeRecord(value, "team tunnel");
-  return {
-    tunnelId: requiredString(record, "tunnelId"),
-    tunnelName: requiredString(record, "tunnelName"),
-    apiUrl: requiredString(record, "apiUrl"),
-    token: requiredString(record, "token"),
-    machineToken: requiredString(record, "machineToken"),
-  };
 }
 
 function decodeRegisteredRemoteHost(value: unknown): RegisteredRemoteHost {
@@ -1011,29 +923,6 @@ function decodeRemoteMembers(value: unknown): RemoteMemberRecord[] {
   const record = decodeRecord(value, "remote member list");
   if (!Array.isArray(record.members)) throw new Error("Invalid remote member list.");
   return record.members.map(decodeRemoteMember);
-}
-
-function decodeIceServerResponse(value: unknown): { iceServers: RemoteDesktopIceServer[] } {
-  const record = decodeRecord(value, "ICE server response");
-  if (!Array.isArray(record.iceServers)) throw new Error("Invalid ICE server list.");
-  return { iceServers: record.iceServers.map(decodeIceServer) };
-}
-
-function decodeIceServer(value: unknown): RemoteDesktopIceServer {
-  const record = decodeRecord(value, "ICE server");
-  const urls = record.urls;
-  if (!(isString(urls) || (Array.isArray(urls) && urls.length > 0 && urls.every(isString)))) {
-    throw new Error("Invalid ICE server URLs.");
-  }
-  const username = record.username;
-  const credential = record.credential;
-  if (username !== undefined && !isString(username)) throw new Error("Invalid ICE server username.");
-  if (credential !== undefined && !isString(credential)) throw new Error("Invalid ICE server credential.");
-  return {
-    urls,
-    ...(username === undefined ? {} : { username }),
-    ...(credential === undefined ? {} : { credential }),
-  };
 }
 
 function decodeEmailChallenge(value: unknown): {

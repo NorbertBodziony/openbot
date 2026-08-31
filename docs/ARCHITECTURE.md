@@ -7,7 +7,7 @@ packages for code that has more than one consumer.
 
 ```text
 apps/
-  auth-api/          Cloudflare Worker, account login, invitations, and tunnel provisioning
+  auth-api/          Cloudflare Worker, account login, remote membership, and connection tickets
 packages/
   contracts/         Process and network boundary types, limits, and pure validation
 src/
@@ -46,8 +46,8 @@ renderer ──► @openbot/contracts ◄── preload ◄── main ──►
   attachments, and provider-session bindings.
 - `~/.codex`, `~/.claude`, and `~/.grok` are provider-owned login and resume state. They are not OpenBot
   conversation storage.
-- D1 is the source of truth for central accounts and the one-server-per-owner rule.
-- A local team host owns team membership, invitations, and host sessions.
+- D1 is the source of truth for central accounts, remote membership, invitations, and logical sessions.
+- A local team host owns conversations, files, agents, and the local member projection used by Team API.
 - Renderer signals are projections for the current screen only. They are not durable state.
 
 ## Change rules
@@ -75,6 +75,9 @@ Cloudflare issues short ES256 connection tickets and stores the logical session.
 validates a trusted, non-expired resume token locally. After a Signal restart, the first use of a token
 checks the durable control plane once. An expired token also needs one durable check before Signal issues
 a replacement. Later reconnects use the in-memory trust cache. This is not a heartbeat.
+Session endings and access changes use a durable D1 outbox. Cloudflare sends each revocation to Signal
+immediately and retries failed deliveries from a scheduled task. This keeps reconnect validation local
+without losing revocations when Signal is temporarily unavailable.
 
 Protocol v1 remains frozen for compatibility fixtures, but its public HTTP, WebSocket, and Cloudflare
 Tunnel transport is retired. The old public endpoints return `host_update_required`.

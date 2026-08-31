@@ -46,6 +46,7 @@ interface TeamWebRtcClientTransportOptions {
   listMembers: (hostId: string) => Promise<RemoteMemberRecord[]>;
   updateMember: (hostId: string, membershipId: string, role: "admin" | "member") => Promise<void>;
   removeMember: (hostId: string, membershipId: string) => Promise<void>;
+  getPrincipalId: () => string;
   controlPlaneUrl: string;
   downloadHostLogo: (hostId: string, version: string) => Promise<{ bytes: Uint8Array; mimeType: string }>;
   transferDirectory: string;
@@ -53,8 +54,10 @@ interface TeamWebRtcClientTransportOptions {
 
 interface ActiveHost {
   sessionId: string;
+  principalId: string;
   connected: boolean;
   connecting: Promise<void> | null;
+  cancelled: boolean;
 }
 
 export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTransportEvents> {
@@ -207,9 +210,10 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
 
   async disconnect(hostId: string): Promise<void> {
     const active = this.#active.get(hostId);
+    if (active) active.cancelled = true;
     this.#active.delete(hostId);
     await this.#options.bridge.disconnect(hostId);
-    if (active) await this.#options.endSession(active.sessionId).catch(() => undefined);
+    if (active?.sessionId) await this.#options.endSession(active.sessionId).catch(() => undefined);
   }
 
   async stop(): Promise<void> {
@@ -223,46 +227,67 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
   }
 
   async #ensureConnected(hostId: string): Promise<void> {
-    const current = this.#active.get(hostId);
+    const principalId = this.#options.getPrincipalId();
+    let current = this.#active.get(hostId);
+    if (current && current.principalId !== principalId) {
+      await this.disconnect(hostId);
+      current = undefined;
+    }
     if (current?.connected) return;
     if (current?.connecting) return current.connecting;
-    const operation = this.#connect(hostId, current?.sessionId || null).catch((error) => {
-      this.#active.delete(hostId);
+    const active: ActiveHost = {
+      sessionId: current?.sessionId ?? "",
+      principalId,
+      connected: false,
+      connecting: null,
+      cancelled: false,
+    };
+    const operation = this.#connect(hostId, active, current?.sessionId || null).catch((error) => {
+      if (this.#active.get(hostId) === active) this.#active.delete(hostId);
       throw error;
     });
-    this.#active.set(hostId, { sessionId: current?.sessionId ?? "", connected: false, connecting: operation });
+    active.connecting = operation;
+    this.#active.set(hostId, active);
     return operation;
   }
 
-  async #connect(hostId: string, existingSessionId: string | null): Promise<void> {
+  async #connect(hostId: string, active: ActiveHost, existingSessionId: string | null): Promise<void> {
     let sessionId = existingSessionId;
     let startedNewSession = false;
     let bootstrap: RemoteConnectionBootstrap;
     try {
       if (!sessionId) {
         sessionId = (await this.#options.startSession(hostId)).sessionId;
+        active.sessionId = sessionId;
         startedNewSession = true;
+        await this.#assertCurrent(hostId, active, sessionId);
       }
       try {
         bootstrap = await this.#options.issueTicket(sessionId);
+        await this.#assertCurrent(hostId, active, sessionId);
       } catch (error) {
         if (!existingSessionId) throw error;
         await this.#options.endSession(existingSessionId).catch(() => undefined);
         sessionId = (await this.#options.startSession(hostId)).sessionId;
+        active.sessionId = sessionId;
         startedNewSession = true;
+        await this.#assertCurrent(hostId, active, sessionId);
         bootstrap = await this.#options.issueTicket(sessionId);
+        await this.#assertCurrent(hostId, active, sessionId);
       }
     } catch (error) {
       if (sessionId) await this.#options.endSession(sessionId).catch(() => undefined);
       throw error;
     }
     if (startedNewSession) this.#lastEventSequence.delete(hostId);
+    let cleanupConnectionWait: () => void = () => undefined;
     const connected = new Promise<void>((resolve, reject) => {
       const cleanup = () => {
         clearTimeout(timer);
         this.off("connected", onConnected);
         this.off("error", onError);
       };
+      cleanupConnectionWait = cleanup;
       const timer = setTimeout(() => {
         cleanup();
         reject(new Error("The WebRTC host did not connect."));
@@ -280,7 +305,8 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       this.on("connected", onConnected);
       this.on("error", onError);
     });
-    this.#active.set(hostId, { sessionId, connected: false, connecting: connected });
+    active.sessionId = sessionId;
+    active.connecting = connected;
     try {
       await this.#options.bridge.connect({
         peerId: hostId,
@@ -288,20 +314,32 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
         token: bootstrap.ticket,
         peer: "client",
       });
+      await this.#assertCurrent(hostId, active, sessionId);
       await connected;
     } catch (error) {
-      this.#active.delete(hostId);
+      cleanupConnectionWait();
+      if (this.#active.get(hostId) === active) this.#active.delete(hostId);
+      await this.#options.bridge.disconnect(hostId).catch(() => undefined);
       await this.#options.endSession(sessionId).catch(() => undefined);
       throw error;
     }
   }
 
+  async #assertCurrent(hostId: string, active: ActiveHost, sessionId: string): Promise<void> {
+    if (!active.cancelled && this.#active.get(hostId) === active) return;
+    await this.#options.bridge.disconnect(hostId).catch(() => undefined);
+    await this.#options.endSession(sessionId).catch(() => undefined);
+    throw new Error("The remote connection was cancelled.");
+  }
+
   readonly #onConnected = (hostId: string): void => {
     const active = this.#active.get(hostId);
-    if (active) {
-      active.connected = true;
-      active.connecting = null;
+    if (!active || active.cancelled) {
+      void this.#options.bridge.disconnect(hostId);
+      return;
     }
+    active.connected = true;
+    active.connecting = null;
     void this.#options.bridge.send(
       hostId,
       "events",

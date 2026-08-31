@@ -42,6 +42,7 @@ describe("TeamWebRtcClientTransport", () => {
       listMembers: async () => [],
       updateMember: async () => undefined,
       removeMember: async () => undefined,
+      getPrincipalId: () => "user-1",
       controlPlaneUrl: "https://api.example.test",
       downloadHostLogo: async () => ({ bytes: new Uint8Array(), mimeType: "image/png" }),
       transferDirectory: join(tmpdir(), "openbot-webrtc-client-test"),
@@ -55,6 +56,114 @@ describe("TeamWebRtcClientTransport", () => {
     expect(issueTicket).toHaveBeenCalledTimes(2);
     expect(issueTicket).toHaveBeenNthCalledWith(2, "session-1");
     expect(endSession).not.toHaveBeenCalled();
+    await transport.stop();
+  });
+
+  it("cancels a connection before a delayed session start can restore it", async () => {
+    const bridge = new TeamWebRtcBridge();
+    const connectBridge = vi.spyOn(bridge, "connect").mockResolvedValue();
+    vi.spyOn(bridge, "send").mockResolvedValue();
+    vi.spyOn(bridge, "disconnect").mockResolvedValue();
+    let resolveSession!: (value: { sessionId: string; hostId: string; expiresAt: number }) => void;
+    const startSession = vi.fn(
+      () =>
+        new Promise<{ sessionId: string; hostId: string; expiresAt: number }>((resolve) => {
+          resolveSession = resolve;
+        }),
+    );
+    const endSession = vi.fn().mockResolvedValue(undefined);
+    const transport = new TeamWebRtcClientTransport({
+      bridge,
+      listHosts: async () => [],
+      startSession,
+      issueTicket: async () => ({
+        ticket: "ticket",
+        expiresAt: 2_000,
+        signalUrl: "wss://signal.example.test/v1/signal",
+      }),
+      endSession,
+      createInvite: async () => ({ inviteId: "invite", token: "token", expiresAt: 2_000 }),
+      listInvites: async () => [],
+      previewInvite: async () => ({
+        inviteId: "invite",
+        hostId: "host-1",
+        hostName: "Host",
+        role: "member",
+        expiresAt: 2_000,
+        emailBound: false,
+      }),
+      acceptInvite: async () => ({ hostId: "host-1", membershipId: "member-1", role: "member" }),
+      revokeInvite: async () => undefined,
+      listMembers: async () => [],
+      updateMember: async () => undefined,
+      removeMember: async () => undefined,
+      getPrincipalId: () => "user-1",
+      controlPlaneUrl: "https://api.example.test",
+      downloadHostLogo: async () => ({ bytes: new Uint8Array(), mimeType: "image/png" }),
+      transferDirectory: join(tmpdir(), "openbot-webrtc-client-cancel-test"),
+    });
+
+    const connection = transport.connect("host-1");
+    await vi.waitFor(() => expect(startSession).toHaveBeenCalledOnce());
+    await transport.disconnect("host-1");
+    resolveSession({ sessionId: "session-1", hostId: "host-1", expiresAt: 2_000 });
+
+    await expect(connection).rejects.toThrow("cancelled");
+    expect(connectBridge).not.toHaveBeenCalled();
+    expect(endSession).toHaveBeenCalledWith("session-1");
+    await transport.stop();
+  });
+
+  it("does not reuse a remote session after the signed-in principal changes", async () => {
+    const bridge = new TeamWebRtcBridge();
+    vi.spyOn(bridge, "connect").mockImplementation(async ({ peerId }) => {
+      queueMicrotask(() => bridge.emit("connected", peerId));
+    });
+    vi.spyOn(bridge, "send").mockResolvedValue();
+    vi.spyOn(bridge, "disconnect").mockResolvedValue();
+    const startSession = vi
+      .fn()
+      .mockResolvedValueOnce({ sessionId: "session-1", hostId: "host-1", expiresAt: 2_000 })
+      .mockResolvedValueOnce({ sessionId: "session-2", hostId: "host-1", expiresAt: 2_000 });
+    const endSession = vi.fn().mockResolvedValue(undefined);
+    let principalId = "user-1";
+    const transport = new TeamWebRtcClientTransport({
+      bridge,
+      listHosts: async () => [],
+      startSession,
+      issueTicket: async () => ({
+        ticket: "ticket",
+        expiresAt: 2_000,
+        signalUrl: "wss://signal.example.test/v1/signal",
+      }),
+      endSession,
+      createInvite: async () => ({ inviteId: "invite", token: "token", expiresAt: 2_000 }),
+      listInvites: async () => [],
+      previewInvite: async () => ({
+        inviteId: "invite",
+        hostId: "host-1",
+        hostName: "Host",
+        role: "member",
+        expiresAt: 2_000,
+        emailBound: false,
+      }),
+      acceptInvite: async () => ({ hostId: "host-1", membershipId: "member-1", role: "member" }),
+      revokeInvite: async () => undefined,
+      listMembers: async () => [],
+      updateMember: async () => undefined,
+      removeMember: async () => undefined,
+      getPrincipalId: () => principalId,
+      controlPlaneUrl: "https://api.example.test",
+      downloadHostLogo: async () => ({ bytes: new Uint8Array(), mimeType: "image/png" }),
+      transferDirectory: join(tmpdir(), "openbot-webrtc-client-principal-test"),
+    });
+
+    await transport.connect("host-1");
+    principalId = "user-2";
+    await transport.connect("host-1");
+
+    expect(startSession).toHaveBeenCalledTimes(2);
+    expect(endSession).toHaveBeenCalledWith("session-1");
     await transport.stop();
   });
 });

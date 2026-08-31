@@ -259,6 +259,8 @@ let hostService: HostService | null = null;
 let remoteDesktopManager: RemoteDesktopManager | null = null;
 let remoteServerManager: RemoteServerManager | null = null;
 let centralAuthManager: CentralAuthManager | null = null;
+let activeRemotePrincipalId: string | null = null;
+let remoteAccountSync = Promise.resolve();
 let hostAnalytics: HostAnalytics | null = null;
 let teamWebRtcBridge: TeamWebRtcBridge | null = null;
 let voiceTranscriptionService: VoiceTranscriptionService | null = null;
@@ -1455,24 +1457,25 @@ function forwardDirectTyping(
 }
 
 function forwardCentralAuth(state: CentralAuthState): void {
-  if (state.status === "signed_in") {
-    void remoteServerManager?.syncRemoteHosts().catch((error) => {
-      console.error("Unable to synchronize remote hosts:", error);
+  remoteAccountSync = remoteAccountSync
+    .then(async () => {
+      const nextPrincipalId = state.status === "signed_in" ? state.user.id : null;
+      if (activeRemotePrincipalId && activeRemotePrincipalId !== nextPrincipalId) {
+        await remoteServerManager?.disconnectRemoteSessions();
+      }
+      activeRemotePrincipalId = nextPrincipalId;
+      if (state.status !== "signed_in") return;
+      await remoteServerManager?.syncRemoteHosts();
+      const host = hostService;
+      if (!host) return;
+      await host.syncSignedInAccount(state.user);
+      hostAnalytics?.flushPending();
+      const status = host.getStatus();
+      if (shouldAutoStartHost(status)) await host.start();
+    })
+    .catch((error) => {
+      console.error("Unable to synchronize the signed-in account:", error);
     });
-    const host = hostService;
-    if (host) {
-      void host
-        .syncSignedInAccount(state.user)
-        .then(async () => {
-          hostAnalytics?.flushPending();
-          const status = host.getStatus();
-          if (shouldAutoStartHost(status)) await host.start();
-        })
-        .catch((error) => {
-          console.error("Unable to synchronize or republish this OpenBot:", error);
-        });
-    }
-  }
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(IPC_CHANNELS.authEvent, state);
 }
@@ -1847,6 +1850,10 @@ if (!hasSingleInstanceLock) {
             removeMember: (hostId, membershipId) => {
               if (!centralAuthManager) throw new Error("The account service is not ready.");
               return centralAuthManager.removeRemoteMember(hostId, membershipId);
+            },
+            getPrincipalId: () => {
+              if (!centralAuthManager) throw new Error("The account service is not ready.");
+              return centralAuthManager.getSignedInUser().id;
             },
             controlPlaneUrl: centralAuth.resolveApiUrl("/"),
             downloadHostLogo: (hostId, version) => centralAuth.downloadRemoteHostLogo(hostId, version),

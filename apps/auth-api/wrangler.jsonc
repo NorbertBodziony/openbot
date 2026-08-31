@@ -11,7 +11,7 @@
     "cross_version_cache": false
   },
   "triggers": {
-    "crons": ["17 3 * * *"]
+    "crons": ["* * * * *"]
   },
   "routes": [
     {

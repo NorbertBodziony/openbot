@@ -6,6 +6,7 @@ const TICKET_AUDIENCE = "openbot-remote";
 const TICKET_TTL_SECONDS = 180;
 const SESSION_TTL_SECONDS = 24 * 60 * 60;
 const HOST_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+const AUTH_EVENT_RETRY_MS = 60_000;
 
 export type RemoteMemberRole = "owner" | "admin" | "member";
 
@@ -70,6 +71,15 @@ interface TicketSignerConfig {
 }
 
 type RemoteFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+type RemoteAuthEvent =
+  | { type: "remote-auth-changed"; hostId: string; authEpoch: number }
+  | { type: "remote-session-ended"; hostId: string; sessionId: string };
+
+interface RemoteAuthEventRow {
+  event_id: string;
+  payload: string;
+  attempts: number;
+}
 
 interface RemotePublicJwk extends DynamicRecord {
   kid: string;
@@ -463,36 +473,62 @@ export class RemoteControlPlane {
     const role = input.role ?? membership.role;
     if (role !== "admin" && role !== "member") throw invalid("member role");
     const now = this.#now();
+    const host = await this.#host(input.hostId);
+    if (!host) throw new RemoteControlPlaneError(404, "host_not_found", "The remote host does not exist.");
+    const authEpoch = host.auth_epoch + 1;
+    const authEvent = { type: "remote-auth-changed" as const, hostId: input.hostId, authEpoch };
     await this.#database.batch([
       this.#database
         .prepare("UPDATE remote_memberships SET role = ?, status = ?, updated_at = ? WHERE membership_id = ?")
         .bind(role, input.revoke ? "revoked" : "active", now, input.membershipId),
       this.#database
-        .prepare("UPDATE remote_hosts SET auth_epoch = auth_epoch + 1, updated_at = ? WHERE host_id = ?")
-        .bind(now, input.hostId),
+        .prepare("UPDATE remote_hosts SET auth_epoch = ?, updated_at = ? WHERE host_id = ?")
+        .bind(authEpoch, now, input.hostId),
       this.#database
         .prepare("UPDATE remote_sessions SET ended_at = ? WHERE host_id = ? AND user_id = ? AND ended_at IS NULL")
         .bind(now, input.hostId, membership.user_id),
+      this.#authEventStatement(authEvent, now),
     ]);
-    const host = await this.#host(input.hostId);
-    if (host) {
-      await this.#sendAuthEvent({ type: "remote-auth-changed", hostId: host.host_id, authEpoch: host.auth_epoch });
-    }
+    await this.#flushAuthEvents();
   }
 
   async startSession(userId: string, hostId: string) {
     const membership = await this.#requireRole(hostId, userId, ["owner", "admin", "member"]);
     const now = this.#now();
+    await this.#database
+      .prepare(
+        "UPDATE remote_sessions SET ended_at = ? WHERE host_id = ? AND user_id = ? AND ended_at IS NULL AND expires_at <= ?",
+      )
+      .bind(now, hostId, userId, now)
+      .run();
+    const existing = await this.#database
+      .prepare(
+        `SELECT session_id, expires_at FROM remote_sessions
+         WHERE host_id = ? AND user_id = ? AND membership_id = ? AND ended_at IS NULL AND expires_at > ?
+         ORDER BY started_at DESC LIMIT 1`,
+      )
+      .bind(hostId, userId, membership.membership_id, now)
+      .first<{ session_id: string; expires_at: number }>();
+    if (existing) return { sessionId: existing.session_id, hostId, expiresAt: existing.expires_at };
     const sessionId = crypto.randomUUID();
     const expiresAt = now + SESSION_TTL_SECONDS * 1_000;
     await this.#database
       .prepare(
-        `INSERT INTO remote_sessions(session_id, host_id, user_id, membership_id, started_at, expires_at)
+        `INSERT OR IGNORE INTO remote_sessions(session_id, host_id, user_id, membership_id, started_at, expires_at)
          VALUES (?, ?, ?, ?, ?, ?)`,
       )
       .bind(sessionId, hostId, userId, membership.membership_id, now, expiresAt)
       .run();
-    return { sessionId, hostId, expiresAt };
+    const active = await this.#database
+      .prepare(
+        `SELECT session_id, expires_at FROM remote_sessions
+         WHERE host_id = ? AND user_id = ? AND ended_at IS NULL AND expires_at > ?
+         ORDER BY started_at DESC LIMIT 1`,
+      )
+      .bind(hostId, userId, now)
+      .first<{ session_id: string; expires_at: number }>();
+    if (!active) throw new RemoteControlPlaneError(503, "session_unavailable", "The remote session could not start.");
+    return { sessionId: active.session_id, hostId, expiresAt: active.expires_at };
   }
 
   async endSession(userId: string, sessionId: string): Promise<void> {
@@ -501,13 +537,15 @@ export class RemoteControlPlane {
       .bind(sessionId, userId)
       .first<{ host_id: string }>();
     if (!session) return;
-    const result = await this.#database
-      .prepare("UPDATE remote_sessions SET ended_at = ? WHERE session_id = ? AND user_id = ? AND ended_at IS NULL")
-      .bind(this.#now(), sessionId, userId)
-      .run();
-    if ((result.meta.changes ?? 0) === 1) {
-      await this.#sendAuthEvent({ type: "remote-session-ended", hostId: session.host_id, sessionId });
-    }
+    const now = this.#now();
+    const event = { type: "remote-session-ended" as const, hostId: session.host_id, sessionId };
+    await this.#database.batch([
+      this.#database
+        .prepare("UPDATE remote_sessions SET ended_at = ? WHERE session_id = ? AND user_id = ? AND ended_at IS NULL")
+        .bind(now, sessionId, userId),
+      this.#authEventStatement(event, now),
+    ]);
+    await this.#flushAuthEvents();
   }
 
   async validateResumeClaims(claims: RemoteResumeClaims): Promise<boolean> {
@@ -621,26 +659,75 @@ export class RemoteControlPlane {
       .first<RemoteHostRow>();
   }
 
-  async #sendAuthEvent(
-    event:
-      | { type: "remote-auth-changed"; hostId: string; authEpoch: number }
-      | { type: "remote-session-ended"; hostId: string; sessionId: string },
-  ): Promise<void> {
-    if (!this.#webhookUrl || !this.#webhookSecret) return;
-    const timestamp = Math.floor(this.#now() / 1_000).toString();
-    const body = JSON.stringify(event);
-    const signature = await hmacSha256(this.#webhookSecret, `${timestamp}.${body}`);
-    const response = await this.#fetch(this.#webhookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "OpenBot-Timestamp": timestamp, "OpenBot-Signature": signature },
-      body,
+  #authEventStatement(event: RemoteAuthEvent, now: number): D1PreparedStatement {
+    return this.#database
+      .prepare(
+        "INSERT INTO remote_auth_events(event_id, payload, created_at, attempts, next_attempt_at) VALUES (?, ?, ?, 0, ?)",
+      )
+      .bind(crypto.randomUUID(), JSON.stringify(event), now, now);
+  }
+
+  async #flushAuthEvents(): Promise<void> {
+    await deliverRemoteAuthEvents({
+      database: this.#database,
+      webhookUrl: this.#webhookUrl,
+      webhookSecret: this.#webhookSecret,
+      fetch: this.#fetch,
+      now: this.#now(),
     });
-    if (!response.ok)
-      throw new RemoteControlPlaneError(
-        502,
-        "remote_webhook_failed",
-        "Remote access was changed, but Signal did not confirm the event.",
-      );
+  }
+}
+
+export async function deliverPendingRemoteAuthEvents(
+  bindings: Pick<WorkerBindings, "DB" | "REMOTE_AUTH_WEBHOOK_URL" | "REMOTE_AUTH_WEBHOOK_SECRET">,
+  now: number,
+  fetcher: RemoteFetch = fetch,
+): Promise<void> {
+  await deliverRemoteAuthEvents({
+    database: bindings.DB,
+    webhookUrl: bindings.REMOTE_AUTH_WEBHOOK_URL?.trim() || null,
+    webhookSecret: bindings.REMOTE_AUTH_WEBHOOK_SECRET?.trim() || null,
+    fetch: fetcher,
+    now,
+  });
+}
+
+async function deliverRemoteAuthEvents(input: {
+  database: D1Database;
+  webhookUrl: string | null;
+  webhookSecret: string | null;
+  fetch: RemoteFetch;
+  now: number;
+}): Promise<void> {
+  if (!input.webhookUrl || !input.webhookSecret) return;
+  const result = await input.database
+    .prepare(
+      "SELECT event_id, payload, attempts FROM remote_auth_events WHERE next_attempt_at <= ? ORDER BY created_at LIMIT 50",
+    )
+    .bind(input.now)
+    .all<RemoteAuthEventRow>();
+  for (const event of result.results ?? []) {
+    try {
+      const timestamp = Math.floor(input.now / 1_000).toString();
+      const signature = await hmacSha256(input.webhookSecret, `${timestamp}.${event.payload}`);
+      const response = await input.fetch(input.webhookUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "OpenBot-Timestamp": timestamp,
+          "OpenBot-Signature": signature,
+        },
+        body: event.payload,
+      });
+      if (!response.ok) throw new Error("Remote Signal rejected the authorization event.");
+      await input.database.prepare("DELETE FROM remote_auth_events WHERE event_id = ?").bind(event.event_id).run();
+    } catch {
+      const delay = Math.min(AUTH_EVENT_RETRY_MS * 2 ** Math.min(event.attempts, 6), 60 * 60_000);
+      await input.database
+        .prepare("UPDATE remote_auth_events SET attempts = attempts + 1, next_attempt_at = ? WHERE event_id = ?")
+        .bind(input.now + delay, event.event_id)
+        .run();
+    }
   }
 }
 

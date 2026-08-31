@@ -23,6 +23,10 @@ potrzebne po wygaśnięciu tokenu. Control plane sprawdza sesję, członkostwo i
 wydaje nowy token. Kolejne reconnecty znów są lokalne. Nie ma heartbeatów ani okresowego odświeżania
 przez Cloudflare.
 
+Zakończenie sesji i zmiana dostępu zapisują zdarzenie unieważnienia w trwałym outboxie D1. Worker próbuje
+wysłać je do Signal od razu. Jeżeli Signal jest niedostępny, Worker ponawia wysyłkę z crona. Zwykły reconnect
+nadal nie pyta Cloudflare. Zakończone i wygasłe sesje są usuwane po 10-minutowym oknie walidacji.
+
 ## Wymagania produkcyjne
 
 - Linux z Docker Engine i Docker Compose.

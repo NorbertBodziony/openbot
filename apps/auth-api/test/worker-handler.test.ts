@@ -32,10 +32,17 @@ describe("worker handler", () => {
 
   it("uses the scheduled time and logs only aggregate deletion counts", async () => {
     const database = fakeDatabase();
-    const result: AuthRetentionResult = { challenges: 3, sessions: 2, rateLimits: 1, teamTickets: 4 };
+    const result: AuthRetentionResult = {
+      challenges: 3,
+      sessions: 2,
+      rateLimits: 1,
+      teamTickets: 4,
+      remoteSessions: 5,
+    };
     let receivedDatabase: D1Database | null = null;
     let receivedTime: number | null = null;
     let logged: AuthRetentionResult | null = null;
+    let deliveredAt: number | null = null;
     const handler = createWorkerHandler(
       () => new Response("ok"),
       async (value, now) => {
@@ -46,6 +53,9 @@ describe("worker handler", () => {
       (value) => {
         logged = value;
       },
+      async (_bindings, now) => {
+        deliveredAt = now;
+      },
     );
 
     await handler.scheduled({ scheduledTime: 1_234 }, { DB: database });
@@ -53,6 +63,7 @@ describe("worker handler", () => {
     expect(receivedDatabase).toBe(database);
     expect(receivedTime).toBe(1_234);
     expect(logged).toEqual(result);
+    expect(deliveredAt).toBe(1_234);
   });
 });
 
