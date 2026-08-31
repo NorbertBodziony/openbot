@@ -63,9 +63,10 @@ export class DynamicIslandCoordinator {
     for (const botId of completedBots) if (!botIds.has(botId)) completedBots.delete(botId);
     for (const botId of lastRecordedMessageIds.keys()) if (!botIds.has(botId)) lastRecordedMessageIds.delete(botId);
     const receivedConversations = [...(previous?.receivedConversations ?? [])].filter((botId) => botIds.has(botId));
+    const liveMessages = compactLiveMessages(input.liveMessages);
     const rawMessageBodies = new Map(previous?.rawMessageBodies);
     const retainedMessageKeys = new Set<string>();
-    for (const [botId, messages] of Object.entries(input.liveMessages)) {
+    for (const [botId, messages] of Object.entries(liveMessages)) {
       for (const message of messages) {
         const key = dynamicIslandMessageKey(botId, message.id);
         retainedMessageKeys.add(key);
@@ -79,7 +80,7 @@ export class DynamicIslandCoordinator {
       ...input,
       pendingApprovals,
       pendingPrompts,
-      liveMessages: compactLiveMessages(input.liveMessages),
+      liveMessages,
       incomingMessageAnchors,
       completedBots,
       lastRecordedMessageIds,
