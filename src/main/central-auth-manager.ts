@@ -352,8 +352,12 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
           },
           decodeCentralAuthUser,
         );
-    if (this.#sessionToken !== sessionToken) return this.getState();
-    return this.#setState({ status: "signed_in", user: this.#resolveUserAvatar(user) });
+    if (this.#sessionToken !== sessionToken || this.#state.status !== "signed_in") return this.getState();
+    const resolvedUser = this.#resolveUserAvatar(user);
+    return this.#setState({
+      status: "signed_in",
+      user: { ...this.#state.user, avatarUrl: resolvedUser.avatarUrl },
+    });
   }
 
   async updateName(name: string): Promise<CentralAuthState> {
@@ -368,8 +372,11 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
       },
       decodeCentralAuthUser,
     );
-    if (this.#sessionToken !== sessionToken) return this.getState();
-    return this.#setState({ status: "signed_in", user: this.#resolveUserAvatar(user) });
+    if (this.#sessionToken !== sessionToken || this.#state.status !== "signed_in") return this.getState();
+    return this.#setState({
+      status: "signed_in",
+      user: { ...this.#state.user, name: user.name },
+    });
   }
 
   async #request<T>(path: string, init: RequestInit, decoder: (value: unknown) => T, timeoutMs = 10_000): Promise<T> {

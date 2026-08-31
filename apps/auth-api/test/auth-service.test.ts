@@ -176,6 +176,9 @@ describe("email one-time codes", () => {
     });
     expect(session.user.email).toBe("person@example.com");
     expect(await service.authenticate(session.sessionToken)).toEqual(session.user);
+    await expect(service.updateName(session.sessionToken, "👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦")).resolves.toMatchObject({
+      name: "👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦",
+    });
     await expect(service.updateName(session.sessionToken, "  No\u0308rbert\u00a0\u00a0Bot  ")).resolves.toMatchObject({
       name: "Nörbert Bot",
     });
@@ -196,6 +199,10 @@ describe("email one-time codes", () => {
       code: "invalid_profile_name",
     });
     await expect(service.updateName(session.sessionToken, "Nor\nbert")).rejects.toMatchObject({
+      status: 400,
+      code: "invalid_profile_name",
+    });
+    await expect(service.updateName(session.sessionToken, "\u200d\u200d\u200d")).rejects.toMatchObject({
       status: 400,
       code: "invalid_profile_name",
     });

@@ -242,6 +242,28 @@ describe("SettingsModal", () => {
     expect(input).toHaveValue("Nöra Bot");
   });
 
+  it("does not mark a normalized legacy display name as changed", async () => {
+    render(() => (
+      <SettingsModal
+        open
+        onOpenChange={() => undefined}
+        value={DEFAULT_GENERAL_SETTINGS}
+        onValueChange={() => undefined}
+        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
+        updateStatus={idleUpdateStatus}
+        onUpdateAction={vi.fn(async () => undefined)}
+        account={{ ...account, name: "Jose\u0301" }}
+        onUpdateAccountName={vi.fn(async () => undefined)}
+        onUpdateAccountAvatar={vi.fn(async () => undefined)}
+      />
+    ));
+
+    await fireEvent.click(screen.getByRole("tab", { name: "Profile" }));
+
+    expect(screen.getByRole("textbox", { name: "Display name" })).toHaveValue("Jose\u0301");
+    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+  });
+
   it("keeps an invalid display name focused and does not save it", async () => {
     const onUpdateAccountName = vi.fn(async () => undefined);
     render(() => (

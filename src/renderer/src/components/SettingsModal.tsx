@@ -8,7 +8,7 @@ import type {
   ProviderRuntimeStatus,
   UpdateStatus,
 } from "@openbot/contracts/ipc";
-import { hasUnsafeAccountNameCharacters, normalizeAccountName } from "@openbot/contracts/validation";
+import { normalizeAccountName, validateProfileName } from "@openbot/contracts/validation";
 import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import type { GeneralSettingsValue } from "../app-settings";
 import { normalizeAvatarFile } from "../avatar-image";
@@ -101,26 +101,28 @@ export function SettingsModal(props: SettingsModalProps) {
     () => props.account.name,
     () => {
       const name = accountName();
-      setSavedProfileName(name);
+      setSavedProfileName(normalizeAccountName(name));
       setProfileName(name);
       setProfileNameTouched(false);
       setProfileSaveError(null);
     },
   );
 
-  const normalizedProfileName = () => normalizeAccountName(profileName());
+  const profileNameValidation = createMemo(() => validateProfileName(profileName()));
+  const normalizedProfileName = () => profileNameValidation().name;
   const profileNameError = () => {
-    if (hasUnsafeAccountNameCharacters(profileName())) {
-      return "Remove line breaks and hidden or control characters.";
+    switch (profileNameValidation().error) {
+      case "unsafe":
+        return "Remove line breaks and hidden or control characters.";
+      case "required":
+        return "Enter a display name.";
+      case "too-short":
+        return `Use at least ${INPUT_LIMITS.profileNameMin} characters.`;
+      case "too-long":
+        return `Use no more than ${INPUT_LIMITS.profileName} characters.`;
+      case null:
+        return null;
     }
-    if (!normalizedProfileName()) return "Enter a display name.";
-    if (normalizedProfileName().length < INPUT_LIMITS.profileNameMin) {
-      return `Use at least ${INPUT_LIMITS.profileNameMin} characters.`;
-    }
-    if (normalizedProfileName().length > INPUT_LIMITS.profileName) {
-      return `Use no more than ${INPUT_LIMITS.profileName} characters.`;
-    }
-    return null;
   };
   const visibleProfileNameError = () => profileSaveError() ?? (profileNameTouched() ? profileNameError() : null);
   const profileNameDirty = () => normalizedProfileName() !== savedProfileName();
@@ -229,13 +231,7 @@ export function SettingsModal(props: SettingsModalProps) {
   function updateProfileName(value: string): void {
     setProfileName(value);
     setProfileSaveError(null);
-    const normalized = normalizeAccountName(value);
-    if (
-      hasUnsafeAccountNameCharacters(value) ||
-      normalized.length < INPUT_LIMITS.profileNameMin ||
-      normalized.length > INPUT_LIMITS.profileName
-    )
-      return;
+    if (validateProfileName(value).error) return;
     setProfileNameTouched(false);
   }
 
@@ -496,8 +492,6 @@ export function SettingsModal(props: SettingsModalProps) {
                     class="settings-identity-name-input"
                     id="settings-profile-name"
                     size="md"
-                    minlength={INPUT_LIMITS.profileNameMin}
-                    maxlength={INPUT_LIMITS.profileName}
                     value={profileName()}
                     aria-labelledby="settings-profile-name-label"
                     aria-describedby={

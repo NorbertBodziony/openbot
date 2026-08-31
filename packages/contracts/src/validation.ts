@@ -11,6 +11,15 @@ const TEAM_HOST_SLUG_MAX_LENGTH = 44;
 const ACCOUNT_NAME_UNSAFE_CHARACTER_PATTERN = /[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u;
 const ACCOUNT_NAME_FORMAT_CHARACTER_PATTERN = /\p{Cf}/u;
 const ACCOUNT_NAME_ALLOWED_FORMAT_CHARACTERS = new Set(["\u200c", "\u200d"]);
+const ACCOUNT_NAME_JOINER_NEIGHBOR_PATTERN = /[\p{L}\p{M}\p{N}\p{S}]/u;
+const ACCOUNT_NAME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+export type ProfileNameValidationError = "required" | "unsafe" | "too-short" | "too-long";
+
+export interface ProfileNameValidationResult {
+  name: string;
+  error: ProfileNameValidationError | null;
+}
 
 export function normalizeAccountName(value: string): string {
   return value
@@ -21,10 +30,31 @@ export function normalizeAccountName(value: string): string {
 
 export function hasUnsafeAccountNameCharacters(value: string): boolean {
   if (ACCOUNT_NAME_UNSAFE_CHARACTER_PATTERN.test(value)) return true;
-  return [...value].some(
-    (character) =>
-      ACCOUNT_NAME_FORMAT_CHARACTER_PATTERN.test(character) && !ACCOUNT_NAME_ALLOWED_FORMAT_CHARACTERS.has(character),
-  );
+  const characters = [...value];
+  return characters.some((character, index) => {
+    if (!ACCOUNT_NAME_FORMAT_CHARACTER_PATTERN.test(character)) return false;
+    if (!ACCOUNT_NAME_ALLOWED_FORMAT_CHARACTERS.has(character)) return true;
+    const previous = characters[index - 1];
+    const next = characters[index + 1];
+    return (
+      previous === undefined ||
+      next === undefined ||
+      !ACCOUNT_NAME_JOINER_NEIGHBOR_PATTERN.test(previous) ||
+      !ACCOUNT_NAME_JOINER_NEIGHBOR_PATTERN.test(next)
+    );
+  });
+}
+
+export function validateProfileName(value: string): ProfileNameValidationResult {
+  const name = normalizeAccountName(value);
+  if (hasUnsafeAccountNameCharacters(value)) return { name, error: "unsafe" };
+  const length = [...ACCOUNT_NAME_SEGMENTER.segment(name)].length;
+  if (length === 0) return { name, error: "required" };
+  if (length < INPUT_LIMITS.profileNameMin) return { name, error: "too-short" };
+  if (length > INPUT_LIMITS.profileName || name.length > INPUT_LIMITS.accountName) {
+    return { name, error: "too-long" };
+  }
+  return { name, error: null };
 }
 
 export function isValidHostname(value: string, requireDot = true): boolean {

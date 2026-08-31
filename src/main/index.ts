@@ -31,7 +31,7 @@ import {
   type VoiceTranscriptionResult,
 } from "@openbot/contracts/ipc";
 import { isNumber, isString } from "@openbot/contracts/runtime-values";
-import { hasUnsafeAccountNameCharacters, normalizeAccountName } from "@openbot/contracts/validation";
+import { validateProfileName } from "@openbot/contracts/validation";
 import {
   app,
   BrowserWindow,
@@ -427,18 +427,14 @@ function registerIpcHandlers(
     );
   });
   handleTrusted(IPC_CHANNELS.authUpdateName, (input: unknown) => {
-    const rawName = requireString(input, "name", INPUT_LIMITS.profileName);
-    const name = normalizeAccountName(rawName);
-    if (
-      hasUnsafeAccountNameCharacters(rawName) ||
-      name.length < INPUT_LIMITS.profileNameMin ||
-      name.length > INPUT_LIMITS.profileName
-    ) {
+    const rawName = requireString(input, "name", INPUT_LIMITS.accountName);
+    const validation = validateProfileName(rawName);
+    if (validation.error) {
       throw new Error(
         `name must contain ${INPUT_LIMITS.profileNameMin} to ${INPUT_LIMITS.profileName} safe characters.`,
       );
     }
-    return centralAuth.updateName(name);
+    return centralAuth.updateName(validation.name);
   });
   handleTrusted(IPC_CHANNELS.authUpdateAvatar, (input: unknown) => centralAuth.updateAvatar(parseAvatarImage(input)));
   handleTrusted(IPC_CHANNELS.authLogout, () => centralAuth.logout());

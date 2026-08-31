@@ -529,6 +529,80 @@ describe("CentralAuthManager", () => {
     await expect(requests.at(-1)?.json()).resolves.toEqual({ name: "Norbert" });
   });
 
+  it("keeps concurrent name and avatar updates in local state", async () => {
+    const root = await createRoot();
+    let finishAvatar: () => void = () => undefined;
+    let finishName: () => void = () => undefined;
+    const avatarResponse = new Promise<void>((resolve) => {
+      finishAvatar = resolve;
+    });
+    const nameResponse = new Promise<void>((resolve) => {
+      finishName = resolve;
+    });
+    const manager = new CentralAuthManager({
+      apiUrl: "https://api.openbot.run",
+      storagePath: join(root, "session.bin"),
+      encrypt: (value) => Buffer.from(value),
+      decrypt: (value) => value.toString(),
+      fetch: vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const path = new URL(input.toString()).pathname;
+        if (path.endsWith("/start")) {
+          return Response.json({ challengeId: "challenge-1", expiresAt: 10_000 });
+        }
+        if (path.endsWith("/verify")) {
+          return Response.json({
+            sessionToken: "session-secret",
+            user: {
+              id: "user-1",
+              email: "person@example.com",
+              name: "Old name",
+              avatarUrl: "/v1/avatars/user-1?v=old",
+            },
+          });
+        }
+        if (path === "/v1/me/avatar" && init?.method === "PUT") {
+          await avatarResponse;
+          return Response.json({
+            id: "user-1",
+            email: "person@example.com",
+            name: "Old name",
+            avatarUrl: "/v1/avatars/user-1?v=new",
+          });
+        }
+        if (path === "/v1/me/profile") {
+          await nameResponse;
+          return Response.json({
+            id: "user-1",
+            email: "person@example.com",
+            name: "New name",
+            avatarUrl: "/v1/avatars/user-1?v=old",
+          });
+        }
+        return new Response(null, { status: 404 });
+      }),
+    });
+    await manager.requestEmailCode("person@example.com");
+    await manager.verifyEmailCode("challenge-1", "ABCD-EFGH");
+
+    const nameUpdate = manager.updateName("New name");
+    const avatarUpdate = manager.updateAvatar({
+      mimeType: "image/png",
+      bytes: Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    });
+    finishAvatar();
+    await avatarUpdate;
+    finishName();
+    await nameUpdate;
+
+    expect(manager.getState()).toMatchObject({
+      status: "signed_in",
+      user: {
+        name: "New name",
+        avatarUrl: "https://api.openbot.run/v1/avatars/user-1?v=new",
+      },
+    });
+  });
+
   it("does not restore a signed-in state when an avatar request finishes after logout", async () => {
     const root = await createRoot();
     let finishAvatar: (() => void) | undefined;
