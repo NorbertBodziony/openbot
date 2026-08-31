@@ -43,7 +43,7 @@ describe("ComputerUseMacSetupWindowController", () => {
     const openExternal = vi.fn(async () => undefined);
     const loadWindow = vi.fn(async () => undefined);
     const revealPath = vi.fn();
-    const service = new ComputerUseMacSetupService({ platform: "darwin", codexHome: root });
+    const service = createService(root);
     const controller = new ComputerUseMacSetupWindowController({
       service,
       createWindow,
@@ -90,7 +90,7 @@ describe("ComputerUseMacSetupWindowController", () => {
       throw new Error("The helper window should not be created.");
     });
     const openExternal = vi.fn(() => opening);
-    const service = new ComputerUseMacSetupService({ platform: "darwin", codexHome: root });
+    const service = createService(root);
     const controller = new ComputerUseMacSetupWindowController({
       service,
       createWindow,
@@ -122,4 +122,16 @@ async function writeHelper(root: string): Promise<void> {
     </dict></plist>`,
   );
   await writeFile(join(contents, "MacOS", "SkyComputerUseService"), "helper");
+}
+
+function createService(root: string): ComputerUseMacSetupService {
+  return new ComputerUseMacSetupService({
+    platform: "darwin",
+    codexHome: root,
+    readPlist: async () => ({
+      CFBundleIdentifier: COMPUTER_USE_HELPER_BUNDLE_ID,
+      CFBundleName: "Codex Computer Use",
+      CFBundleExecutable: "SkyComputerUseService",
+    }),
+  });
 }

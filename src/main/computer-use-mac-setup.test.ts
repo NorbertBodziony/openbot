@@ -22,7 +22,12 @@ describe("ComputerUseMacSetupService", () => {
   it("returns the validated Computer Use helper and its icon", async () => {
     await writeHelper(root, COMPUTER_USE_HELPER_BUNDLE_ID);
     const getIconDataUrl = vi.fn(async () => "data:image/png;base64,icon");
-    const service = new ComputerUseMacSetupService({ platform: "darwin", codexHome: root, getIconDataUrl });
+    const service = new ComputerUseMacSetupService({
+      platform: "darwin",
+      codexHome: root,
+      readPlist: async () => helperPlist(COMPUTER_USE_HELPER_BUNDLE_ID),
+      getIconDataUrl,
+    });
 
     await expect(service.getState()).resolves.toEqual({
       status: "available",
@@ -34,12 +39,25 @@ describe("ComputerUseMacSetupService", () => {
   });
 
   it("fails closed when the helper is missing or has another bundle identifier", async () => {
-    const service = new ComputerUseMacSetupService({ platform: "darwin", codexHome: root });
+    const service = new ComputerUseMacSetupService({
+      platform: "darwin",
+      codexHome: root,
+      readPlist: async () => helperPlist("example.untrusted.helper"),
+    });
     await expect(service.getState()).resolves.toMatchObject({ status: "unavailable" });
 
     await writeHelper(root, "example.untrusted.helper");
     await expect(service.requireHelper()).rejects.toThrow("unexpected bundle identifier");
     await expect(service.getState()).resolves.toMatchObject({ status: "unavailable" });
+  });
+
+  it("accepts a binary Info.plist through the macOS plist reader", async () => {
+    await writeHelper(root, COMPUTER_USE_HELPER_BUNDLE_ID, Buffer.from("bplist00binary fixture"));
+    const readPlist = vi.fn(async () => helperPlist(COMPUTER_USE_HELPER_BUNDLE_ID));
+    const service = new ComputerUseMacSetupService({ platform: "darwin", codexHome: root, readPlist });
+
+    await expect(service.requireHelper()).resolves.toMatchObject({ name: "Codex Computer Use" });
+    expect(readPlist).toHaveBeenCalledWith(join(root, COMPUTER_USE_HELPER_RELATIVE_PATH, "Contents", "Info.plist"));
   });
 
   it("reports the setup as unsupported away from macOS", async () => {
@@ -48,16 +66,25 @@ describe("ComputerUseMacSetupService", () => {
   });
 });
 
-async function writeHelper(root: string, bundleId: string): Promise<void> {
-  const contents = join(root, COMPUTER_USE_HELPER_RELATIVE_PATH, "Contents");
-  await mkdir(join(contents, "MacOS"), { recursive: true });
-  await writeFile(
-    join(contents, "Info.plist"),
-    `<?xml version="1.0"?><plist><dict>
+async function writeHelper(
+  root: string,
+  bundleId: string,
+  plistContents: string | Uint8Array = `<?xml version="1.0"?><plist><dict>
       <key>CFBundleIdentifier</key><string>${bundleId}</string>
       <key>CFBundleName</key><string>Codex Computer Use</string>
       <key>CFBundleExecutable</key><string>SkyComputerUseService</string>
     </dict></plist>`,
-  );
+): Promise<void> {
+  const contents = join(root, COMPUTER_USE_HELPER_RELATIVE_PATH, "Contents");
+  await mkdir(join(contents, "MacOS"), { recursive: true });
+  await writeFile(join(contents, "Info.plist"), plistContents);
   await writeFile(join(contents, "MacOS", "SkyComputerUseService"), "helper");
+}
+
+function helperPlist(bundleId: string) {
+  return {
+    CFBundleIdentifier: bundleId,
+    CFBundleName: "Codex Computer Use",
+    CFBundleExecutable: "SkyComputerUseService",
+  };
 }

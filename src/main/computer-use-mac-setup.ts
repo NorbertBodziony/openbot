@@ -1,7 +1,18 @@
-import { readFile, stat } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import type { ComputerUseMacSetupState } from "@openbot/contracts/ipc";
+import { z } from "zod";
+
+const execFileAsync = promisify(execFile);
+const helperPlistSchema = z.object({
+  CFBundleIdentifier: z.string().optional(),
+  CFBundleName: z.string().optional(),
+  CFBundleExecutable: z.string().optional(),
+});
+type ComputerUseHelperPlist = z.infer<typeof helperPlistSchema>;
 
 export const COMPUTER_USE_HELPER_NAME = "Codex Computer Use";
 export const COMPUTER_USE_HELPER_BUNDLE_ID = "com.openai.sky.CUAService";
@@ -15,7 +26,7 @@ export interface ComputerUseMacHelper {
 interface ComputerUseMacSetupOptions {
   platform?: NodeJS.Platform;
   codexHome?: string;
-  readTextFile?: (path: string) => Promise<string>;
+  readPlist?: (path: string) => Promise<ComputerUseHelperPlist>;
   statPath?: typeof stat;
   getIconDataUrl?: (path: string) => Promise<string | null>;
 }
@@ -23,14 +34,14 @@ interface ComputerUseMacSetupOptions {
 export class ComputerUseMacSetupService {
   readonly #platform: NodeJS.Platform;
   readonly #codexHome: string;
-  readonly #readTextFile: (path: string) => Promise<string>;
+  readonly #readPlist: (path: string) => Promise<ComputerUseHelperPlist>;
   readonly #statPath: typeof stat;
   readonly #getIconDataUrl: (path: string) => Promise<string | null>;
 
   constructor(options: ComputerUseMacSetupOptions = {}) {
     this.#platform = options.platform ?? process.platform;
     this.#codexHome = options.codexHome ?? (process.env.CODEX_HOME?.trim() || join(homedir(), ".codex"));
-    this.#readTextFile = options.readTextFile ?? ((path) => readFile(path, "utf8"));
+    this.#readPlist = options.readPlist ?? readPlistWithPlutil;
     this.#statPath = options.statPath ?? stat;
     this.#getIconDataUrl = options.getIconDataUrl ?? (async () => null);
   }
@@ -71,25 +82,31 @@ export class ComputerUseMacSetupService {
     if (!helperInfo.isDirectory()) throw new Error("Computer Use helper is not an application bundle.");
 
     const plistPath = join(helperPath, "Contents", "Info.plist");
-    const plist = await this.#readTextFile(plistPath);
-    if (readPlistString(plist, "CFBundleIdentifier") !== COMPUTER_USE_HELPER_BUNDLE_ID) {
+    const plist = await this.#readPlist(plistPath);
+    if (normalizedString(plist.CFBundleIdentifier) !== COMPUTER_USE_HELPER_BUNDLE_ID) {
       throw new Error("Computer Use helper has an unexpected bundle identifier.");
     }
 
-    const executable = readPlistString(plist, "CFBundleExecutable");
+    const executable = normalizedString(plist.CFBundleExecutable);
     if (!executable) throw new Error("Computer Use helper has no executable.");
     const executableInfo = await this.#statPath(join(helperPath, "Contents", "MacOS", executable));
     if (!executableInfo.isFile()) throw new Error("Computer Use helper executable is missing.");
 
     return {
       path: helperPath,
-      name: readPlistString(plist, "CFBundleName") ?? COMPUTER_USE_HELPER_NAME,
+      name: normalizedString(plist.CFBundleName) ?? COMPUTER_USE_HELPER_NAME,
     };
   }
 }
 
-function readPlistString(plist: string, key: string): string | null {
-  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = new RegExp(`<key>\\s*${escapedKey}\\s*</key>\\s*<string>\\s*([^<]+?)\\s*</string>`).exec(plist);
-  return match?.[1]?.trim() ?? null;
+async function readPlistWithPlutil(path: string): Promise<ComputerUseHelperPlist> {
+  const { stdout } = await execFileAsync("/usr/bin/plutil", ["-convert", "json", "-o", "-", path], {
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024,
+  });
+  return helperPlistSchema.parse(JSON.parse(stdout));
+}
+
+function normalizedString(value: string | undefined): string | null {
+  return value?.trim() || null;
 }
