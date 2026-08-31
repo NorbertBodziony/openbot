@@ -38,6 +38,7 @@ interface ViewerStream {
   opened: boolean;
   pending: Array<{ data: Ws.RawData; binary: boolean }>;
   pendingBytes: number;
+  forwarding: Promise<void>;
 }
 
 export class RemoteViewerProxy {
@@ -61,8 +62,10 @@ export class RemoteViewerProxy {
 
   async stop(): Promise<void> {
     this.#options.transport.off("desktopData", this.#onDesktopData);
-    for (const stream of this.#streams.values()) stream.socket.close(1001, "Remote viewer stopped");
+    const streams = [...this.#streams.values()];
+    for (const stream of streams) stream.socket.close(1001, "Remote viewer stopped");
     this.#streams.clear();
+    await Promise.allSettled(streams.map((stream) => stream.forwarding));
     this.#webSockets.close();
     const server = this.#server;
     this.#server = null;
@@ -142,7 +145,14 @@ export class RemoteViewerProxy {
 
   #openStream(serverId: string, upstreamPath: string, socket: Ws.WebSocket): void {
     const streamId = crypto.randomUUID();
-    const stream: ViewerStream = { serverId, socket, opened: false, pending: [], pendingBytes: 0 };
+    const stream: ViewerStream = {
+      serverId,
+      socket,
+      opened: false,
+      pending: [],
+      pendingBytes: 0,
+      forwarding: Promise.resolve(),
+    };
     this.#streams.set(streamId, stream);
     socket.on("message", (data, binary) => {
       if (!stream.opened) {
@@ -154,7 +164,7 @@ export class RemoteViewerProxy {
         stream.pending.push({ data, binary });
         return;
       }
-      void this.#sendFrame(streamId, stream, data, binary);
+      this.#queueFrame(streamId, stream, data, binary);
     });
     socket.once("close", (code, reason) => {
       this.#streams.delete(streamId);
@@ -200,6 +210,20 @@ export class RemoteViewerProxy {
     }
   }
 
+  #queueFrame(streamId: string, stream: ViewerStream, data: Ws.RawData, binary: boolean): void {
+    stream.forwarding = stream.forwarding
+      .then(async () => {
+        if (this.#streams.get(streamId) !== stream || stream.socket.readyState !== webSockets.WebSocket.OPEN) return;
+        await this.#sendFrame(streamId, stream, data, binary);
+      })
+      .catch(() => {
+        if (this.#streams.get(streamId) === stream) {
+          this.#streams.delete(streamId);
+          stream.socket.close(1011, "Remote desktop signal failed");
+        }
+      });
+  }
+
   readonly #onDesktopData = (serverId: string, data: string | ArrayBuffer): void => {
     try {
       if (!isString(data)) {
@@ -216,7 +240,7 @@ export class RemoteViewerProxy {
       if (control.type === "opened") {
         stream.opened = true;
         for (const frame of stream.pending.splice(0))
-          void this.#sendFrame(control.streamId, stream, frame.data, frame.binary);
+          this.#queueFrame(control.streamId, stream, frame.data, frame.binary);
         stream.pendingBytes = 0;
       } else if (control.type === "text" && stream.socket.readyState === webSockets.WebSocket.OPEN) {
         stream.socket.send(control.data);

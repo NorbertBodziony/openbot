@@ -2116,7 +2116,7 @@ async function prepareForShutdown(browserAlreadyDestroyed = false): Promise<void
   if (!browserAlreadyDestroyed) await destroyBrowserForShutdown();
   browserPictureInPicture?.destroy();
   await (providerRuntimeManager?.stop() ?? Promise.resolve());
-  remoteServerManager?.stop();
+  await (remoteServerManager?.stop() ?? Promise.resolve());
   voiceTranscriptionService?.shutdown();
   await (remoteDesktopManager?.stop() ?? Promise.resolve());
   await (hostService?.shutdown() ?? Promise.resolve());

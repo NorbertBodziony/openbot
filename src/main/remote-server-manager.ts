@@ -392,9 +392,16 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     if (this.#webrtcTransport && !isLocalDevelopmentApi(invite.apiUrl)) {
       const preview = await this.#webrtcTransport.previewInvite(invite.token);
       if (preview.hostId !== invite.serverId) throw new Error("The invitation host does not match its token.");
+      if (!preview.devicePublicKey || fingerprint(preview.devicePublicKey) !== invite.fingerprint) {
+        throw new Error("The invitation host identity does not match its token.");
+      }
       const accepted = await this.#webrtcTransport.acceptInvite(invite.token);
       if (accepted.hostId !== invite.serverId) throw new Error("The account service accepted a different host.");
       await this.#syncWebRtcHosts();
+      const synchronized = this.#state.servers.find((server) => server.id === accepted.hostId);
+      if (!synchronized || synchronized.fingerprint !== invite.fingerprint) {
+        throw new Error("The invitation host identity changed while it was accepted.");
+      }
       this.#state.activeServerId = accepted.hostId;
       this.#states.set(accepted.hostId, "connecting");
       await this.#persist();
@@ -474,6 +481,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     if (this.#webrtcTransport && !isLocalDevelopmentApi(invite.apiUrl)) {
       const preview = await this.#webrtcTransport.previewInvite(invite.token);
       if (preview.hostId !== invite.serverId) throw new Error("The invitation host does not match its token.");
+      if (!preview.devicePublicKey || fingerprint(preview.devicePublicKey) !== invite.fingerprint) {
+        throw new Error("The invitation host identity does not match its token.");
+      }
       return {
         serverId: preview.hostId,
         serverName: preview.hostName,
@@ -1036,7 +1046,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     };
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.#eventsEnabled = false;
     for (const controller of this.#eventControllers.values()) controller.abort();
     this.#eventControllers.clear();
@@ -1048,8 +1058,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#conversationRefreshRequests.clear();
     this.#queueRefreshRequests.clear();
     this.#compatibilityRequests.clear();
-    void this.#webrtcTransport?.stop();
-    void this.#remoteViewerProxy?.stop();
+    await this.#remoteViewerProxy?.stop().catch(() => undefined);
+    await this.#webrtcTransport?.stop().catch(() => undefined);
   }
 
   async disconnectRemoteSessions(): Promise<void> {
@@ -1069,19 +1079,30 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       : [];
     const servers = hosts
       .filter((host) => host.hostId !== this.#getLocalHostId())
-      .map<StoredRemoteServer>((host) => ({
-        id: host.hostId,
-        name: host.name,
-        apiUrl: `webrtc://${host.hostId}`,
-        fingerprint: host.devicePublicKey ? fingerprint(host.devicePublicKey) : "",
-        ...(host.devicePublicKey ? { publicKey: host.devicePublicKey } : {}),
-        username: this.#centralAccount.getEmail().trim().toLowerCase(),
-        encryptedToken: "",
-        remoteDesktopAvailable: true,
-        logoVersion: host.logoKey,
-        role: host.role,
-        transport: "webrtc-v2",
-      }));
+      .map<StoredRemoteServer>((host) => {
+        const existing = this.#state.servers.find((server) => server.id === host.hostId);
+        const advertisedFingerprint = host.devicePublicKey ? fingerprint(host.devicePublicKey) : "";
+        const pinnedFingerprint = existing?.transport === "webrtc-v2" ? existing.fingerprint : "";
+        const publicKey =
+          existing?.transport === "webrtc-v2" && existing.publicKey
+            ? existing.publicKey
+            : !pinnedFingerprint || pinnedFingerprint === advertisedFingerprint
+              ? host.devicePublicKey
+              : null;
+        return {
+          id: host.hostId,
+          name: host.name,
+          apiUrl: `webrtc://${host.hostId}`,
+          fingerprint: pinnedFingerprint || advertisedFingerprint,
+          ...(publicKey ? { publicKey } : {}),
+          username: this.#centralAccount.getEmail().trim().toLowerCase(),
+          encryptedToken: "",
+          remoteDesktopAvailable: true,
+          logoVersion: host.logoKey,
+          role: host.role,
+          transport: "webrtc-v2",
+        };
+      });
     this.#state.servers = [...legacyDevelopment, ...servers];
     if (
       this.#state.activeServerId !== "local" &&

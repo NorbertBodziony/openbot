@@ -15,6 +15,8 @@ import {
   remoteAttachmentPreviewUrl,
 } from "./remote-server-manager";
 import { fingerprint } from "./team-store";
+import { TeamWebRtcBridge } from "./team-webrtc-bridge";
+import { TeamWebRtcClientTransport } from "./team-webrtc-client-transport";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -96,6 +98,65 @@ describe("remote server links", () => {
     const preview = remoteAttachmentPreviewUrl("00000000-0000-4000-8000-000000000000", "draft 1");
     expect(preview).toBe("openbot-remote-attachment://00000000-0000-4000-8000-000000000000/draft%201");
     expect(preview).not.toContain("token");
+  });
+
+  it("rejects a WebRTC invitation whose pinned host key does not match the control plane", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-webrtc-invite-key-"));
+    const statePath = join(directory, "servers.json");
+    const hostId = "00000000-0000-4000-8000-000000000000";
+    const acceptInvite = vi.fn();
+    const bridge = new TeamWebRtcBridge();
+    vi.spyOn(bridge, "disconnect").mockResolvedValue();
+    const transport = new TeamWebRtcClientTransport({
+      bridge,
+      listHosts: async () => [],
+      startSession: async () => ({ sessionId: "session-1", hostId, expiresAt: Date.now() + 60_000 }),
+      issueTicket: async () => ({
+        ticket: "ticket",
+        expiresAt: Date.now() + 60_000,
+        signalUrl: "wss://signal.openbot.run/v1/signal",
+      }),
+      endSession: async () => undefined,
+      createInvite: async () => ({ inviteId: "invite-1", token: "token", expiresAt: Date.now() + 60_000 }),
+      listInvites: async () => [],
+      previewInvite: async () => ({
+        inviteId: "invite-1",
+        hostId,
+        hostName: "Studio Mac",
+        role: "member" as const,
+        expiresAt: Date.now() + 60_000,
+        emailBound: false,
+        devicePublicKey: "trusted-host-public-key",
+      }),
+      acceptInvite,
+      revokeInvite: async () => undefined,
+      listMembers: async () => [],
+      updateMember: async () => undefined,
+      removeMember: async () => undefined,
+      getPrincipalId: () => "person-1",
+      controlPlaneUrl: "https://api.openbot.run",
+      downloadHostLogo: async () => ({ bytes: new Uint8Array(), mimeType: "image/png" }),
+      transferDirectory: join(directory, "transfers"),
+    });
+    const manager = new RemoteServerManager(
+      statePath,
+      { encrypt: (value) => Buffer.from(value), decrypt: (value) => value.toString() },
+      { createTeamAuthTicket: async () => "ticket", getEmail: () => "person@example.com" },
+      { webrtcTransport: transport },
+    );
+    const inviteUrl = new URL("https://openbot.run/join");
+    inviteUrl.searchParams.set("api", "https://api.openbot.run");
+    inviteUrl.searchParams.set("server", hostId);
+    inviteUrl.searchParams.set("fingerprint", fingerprint("attacker-public-key"));
+    inviteUrl.searchParams.set("invite", "b".repeat(43));
+    try {
+      await manager.initialize();
+      await expect(manager.join({ inviteUrl: inviteUrl.toString() })).rejects.toThrow("identity");
+      expect(acceptInvite).not.toHaveBeenCalled();
+    } finally {
+      await manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
 

@@ -229,12 +229,18 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
     if (active) active.cancelled = true;
     if (active?.expirationTimer) clearTimeout(active.expirationTimer);
     this.#active.delete(hostId);
-    await this.#options.bridge.disconnect(hostId);
+    let disconnectError: unknown;
+    try {
+      await this.#options.bridge.disconnect(hostId);
+    } catch (error) {
+      disconnectError = error;
+    }
     if (active?.sessionId) await this.#options.endSession(active.sessionId).catch(() => undefined);
+    if (disconnectError) throw disconnectError;
   }
 
   async stop(): Promise<void> {
-    await Promise.all([...this.#active.keys()].map((hostId) => this.disconnect(hostId)));
+    await Promise.allSettled([...this.#active.keys()].map((hostId) => this.disconnect(hostId)));
     this.#options.bridge.off("connected", this.#onConnected);
     this.#options.bridge.off("disconnected", this.#onDisconnected);
     this.#options.bridge.off("data", this.#onData);

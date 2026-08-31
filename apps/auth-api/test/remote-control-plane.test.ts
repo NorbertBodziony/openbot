@@ -183,6 +183,11 @@ describe("RemoteControlPlane", () => {
       },
       { now: () => 1_000 },
     );
+    database.prepare("UPDATE remote_hosts SET device_public_key = 'host-public-key' WHERE host_id = 'host-1'").run();
+    await expect(controlPlane.previewInvite(token)).resolves.toMatchObject({
+      hostId: "host-1",
+      devicePublicKey: "host-public-key",
+    });
 
     await expect(
       controlPlane.acceptInvite({ id: "member", email: "member@example.com", name: null, avatarUrl: null }, token),

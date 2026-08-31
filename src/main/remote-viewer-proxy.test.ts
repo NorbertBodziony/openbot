@@ -42,6 +42,22 @@ describe("RemoteViewerProxy", () => {
     socket.close();
     await proxy.stop();
   });
+
+  it("closes only the affected viewer when desktop forwarding fails", async () => {
+    const transport = new FailingFrameTransport();
+    const proxy = new RemoteViewerProxy({ transport, fetchResource: async () => new Response() });
+    const viewerUrl = await proxy.viewerUrl("host-1", "/v1/remote-screen/sessions/session-1/viewer");
+    const socketUrl = new URL(viewerUrl);
+    socketUrl.protocol = "ws:";
+    socketUrl.pathname = socketUrl.pathname.replace(/\/viewer$/u, "/stream");
+    const socket = new WebSocket(socketUrl);
+    await once(socket, "open");
+    await transport.opened;
+    socket.send("offer-text");
+    const [code] = await once(socket, "close");
+    expect(code).toBe(1011);
+    await proxy.stop();
+  });
 });
 
 class FakeTransport extends EventEmitter {
@@ -65,5 +81,19 @@ class FakeTransport extends EventEmitter {
     queueMicrotask(() =>
       this.emit("desktopData", hostId, encodeRemoteDesktopSignalBinary(frame.streamId, frame.bytes)),
     );
+  }
+}
+
+class FailingFrameTransport extends FakeTransport {
+  readonly opened = new Promise<void>((resolve) => {
+    this.once("opened", resolve);
+  });
+
+  override async sendDesktop(hostId: string, data: string | ArrayBuffer): Promise<void> {
+    if (isString(data) && decodeRemoteDesktopSignalControl(data).type === "text") {
+      throw new Error("The desktop channel closed.");
+    }
+    await super.sendDesktop(hostId, data);
+    if (isString(data) && decodeRemoteDesktopSignalControl(data).type === "open") this.emit("opened");
   }
 }

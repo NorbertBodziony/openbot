@@ -75,6 +75,7 @@ export interface RemoteInvitePreview {
   role: "admin" | "member";
   expiresAt: number;
   emailBound: boolean;
+  devicePublicKey: string | null;
 }
 
 export interface RemoteMemberRecord {
@@ -885,6 +886,8 @@ function decodeRemoteInvitePreview(value: unknown): RemoteInvitePreview {
   if (record.role !== "admin" && record.role !== "member") throw new Error("Invalid remote invitation role.");
   if (!isNumber(record.expiresAt) || !isBoolean(record.emailBound))
     throw new Error("Invalid remote invitation preview.");
+  if (record.devicePublicKey !== null && !isString(record.devicePublicKey))
+    throw new Error("Invalid remote invitation host key.");
   return {
     inviteId: requiredString(record, "inviteId"),
     hostId: requiredString(record, "hostId"),
@@ -892,6 +895,7 @@ function decodeRemoteInvitePreview(value: unknown): RemoteInvitePreview {
     role: record.role,
     expiresAt: record.expiresAt,
     emailBound: record.emailBound,
+    devicePublicKey: record.devicePublicKey,
   };
 }
 

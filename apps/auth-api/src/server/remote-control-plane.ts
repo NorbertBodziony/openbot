@@ -381,12 +381,13 @@ export class RemoteControlPlane {
     const now = this.#now();
     const invite = await this.#database
       .prepare(
-        `SELECT i.invite_id, i.host_id, i.email, i.role, i.expires_at, i.used_at, i.revoked_at, h.name
+        `SELECT i.invite_id, i.host_id, i.email, i.role, i.expires_at, i.used_at, i.revoked_at,
+                h.name, h.device_public_key
          FROM remote_invites i JOIN remote_hosts h ON h.host_id = i.host_id
          WHERE i.token_hash = ? LIMIT 1`,
       )
       .bind(await sha256(requiredText(token, 512, "invite token")))
-      .first<RemoteInviteRow & { name: string }>();
+      .first<RemoteInviteRow & { name: string; device_public_key: string | null }>();
     if (!invite || invite.used_at || invite.revoked_at || invite.expires_at <= now) {
       throw new RemoteControlPlaneError(404, "invite_invalid", "The invitation is invalid or expired.");
     }
@@ -397,6 +398,7 @@ export class RemoteControlPlane {
       role: invite.role,
       expiresAt: invite.expires_at,
       emailBound: Boolean(invite.email),
+      devicePublicKey: invite.device_public_key,
     };
   }
 
