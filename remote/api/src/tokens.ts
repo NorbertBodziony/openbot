@@ -75,6 +75,10 @@ export class RemoteTokenService {
     return decodeTicketClaims(payload, now);
   }
 
+  validateClaims(claims: RemoteTicketClaims): Promise<boolean> {
+    return this.#validateResumeClaims(claims);
+  }
+
   async verifyResumeToken(token: string, now = new Date()): Promise<RemoteTicketClaims> {
     const nowSeconds = Math.floor(now.getTime() / 1_000);
     this.#pruneTrustedResumeTokens(nowSeconds);

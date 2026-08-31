@@ -12,6 +12,7 @@ import {
 export interface RemoteTokenProvider {
   verifyTicket(token: string): Promise<RemoteTicketClaims>;
   verifyResumeToken(token: string): Promise<RemoteTicketClaims>;
+  validateClaims(claims: RemoteTicketClaims): Promise<boolean>;
   issueResumeToken(claims: RemoteTicketClaims): Promise<string>;
   iceServers(claims: RemoteTicketClaims): IceServer[];
   revokeHost?(hostId: string, authEpoch: number): void;
@@ -52,6 +53,7 @@ export interface SignalMetrics {
 const MAXIMUM_RATE_WINDOWS = 100_000;
 const RATE_WINDOW_MILLISECONDS = 60_000;
 const SIGNAL_RECONNECT_GRACE_MILLISECONDS = 30_000;
+const INITIAL_TICKET_TTL_MILLISECONDS = 3 * 60_000;
 
 export class SignalService {
   readonly #tokens: RemoteTokenProvider;
@@ -67,6 +69,7 @@ export class SignalService {
   readonly #revokedEpochs = new Map<string, number>();
   readonly #revokedSessions = new Map<string, number>();
   readonly #rateWindows = new Map<string, { startedAt: number; count: number }>();
+  readonly #validateInitialTicketsUntil = Date.now() + INITIAL_TICKET_TTL_MILLISECONDS;
   #lastRatePruneAt = 0;
   readonly #metrics: SignalMetrics = {
     acceptedConnections: 0,
@@ -231,6 +234,9 @@ export class SignalService {
     try {
       try {
         claims = await this.#tokens.verifyTicket(message.token);
+        if (Date.now() < this.#validateInitialTicketsUntil && !(await this.#tokens.validateClaims(claims))) {
+          throw new Error("The remote session is not active.");
+        }
       } catch {
         usedInitialTicket = false;
         claims = await this.#tokens.verifyResumeToken(message.token);

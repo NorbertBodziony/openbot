@@ -350,6 +350,40 @@ describe("RemoteControlPlane", () => {
       JSON.stringify({ type: "remote-auth-changed", hostId: "host-1", authEpoch: currentAuthEpoch + 2 }),
     );
 
+    database.prepare("INSERT INTO users(id) VALUES ('competing-owner')").run();
+    const competingOwner = {
+      id: "competing-owner",
+      email: "competing@example.com",
+      name: null,
+      avatarUrl: null,
+    };
+    const registrations = await Promise.allSettled([
+      controlPlane.registerHost(owner, {
+        hostId: "race-host",
+        name: "Owner host",
+        ownerMembershipId: "race-owner-membership",
+      }),
+      controlPlane.registerHost(competingOwner, {
+        hostId: "race-host",
+        name: "Competing host",
+        ownerMembershipId: "race-competing-membership",
+      }),
+    ]);
+    expect(registrations.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(registrations.filter((result) => result.status === "rejected")).toHaveLength(1);
+    const successfulRegistration = registrations.find((result) => result.status === "fulfilled");
+    if (successfulRegistration?.status !== "fulfilled") {
+      throw new Error("Concurrent host registration did not produce a winner.");
+    }
+    await expect(
+      controlPlane.issueHostTicket("race-host", successfulRegistration.value.machineToken),
+    ).resolves.toMatchObject({ ticket: expect.any(String) });
+    expect(
+      database
+        .prepare("SELECT COUNT(*) AS count FROM remote_memberships WHERE host_id = 'race-host' AND role = 'owner'")
+        .get(),
+    ).toEqual({ count: 1 });
+
     const insertInvite = database.prepare(
       `INSERT INTO remote_invites(
          invite_id, host_id, token_hash, email, role, created_by_user_id, expires_at, created_at

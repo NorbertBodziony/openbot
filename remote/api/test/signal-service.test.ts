@@ -24,6 +24,17 @@ describe("SignalService", () => {
     expect(host.messages.filter((message) => message.includes('"type":"peer-ready"'))).toHaveLength(2);
   });
 
+  it("validates initial tickets while a restarted Signal can have missed revocations", async () => {
+    const tokens = fakeTokens();
+    tokens.validateClaims = vi.fn().mockResolvedValue(false);
+    const service = new SignalService(tokens, 8);
+    const host = socket("host");
+    await hello(service, host, "host-ticket", "host");
+    expect(tokens.validateClaims).toHaveBeenCalledOnce();
+    expect(host.messages.at(-1)).toContain('"code":"authentication_required"');
+    expect(host.closed).toBe(true);
+  });
+
   it("restores the client mapping when only the host Signal socket reconnects", async () => {
     const service = new SignalService(fakeTokens(), 8);
     const host = socket("host");
@@ -164,6 +175,7 @@ function fakeTokens() {
       if (token === "resume-host") return claims("host", "resume-host-jti");
       throw new Error("not a resume token");
     },
+    validateClaims: async () => true,
     issueResumeToken: async (value: RemoteTicketClaims) => `resume-${value.role === "host" ? "host" : "client"}`,
     iceServers: () => [{ urls: "stun:turn.example.com:3478" }],
   };

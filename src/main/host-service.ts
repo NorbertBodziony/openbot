@@ -594,7 +594,11 @@ export class HostService extends EventEmitter<HostEvents> {
   async createInvite(input: CreateTeamInviteInput): Promise<InviteSummary> {
     const identity = this.#options.store.getIdentity();
     if (!identity) throw new Error("Name this OpenBot before publishing it.");
-    if (this.#options.createRemoteInvite && this.#options.remoteControlPlaneUrl) {
+    if (
+      !this.#options.allowLocalDevelopmentInvites &&
+      this.#options.createRemoteInvite &&
+      this.#options.remoteControlPlaneUrl
+    ) {
       const invite = await this.#options.createRemoteInvite(identity.serverId, input);
       const inviteUrl = createInviteUrl({
         apiUrl: this.#options.remoteControlPlaneUrl,

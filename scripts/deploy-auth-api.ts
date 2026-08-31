@@ -58,6 +58,7 @@ async function run(
 ): Promise<void> {
   await new Promise<void>((resolveProcess, rejectProcess) => {
     const environment = { ...process.env, ...options.env };
+    if (executable === wranglerExecutable) delete environment.CLOUDFLARE_API_TOKEN;
     const child = spawn(executable, args, {
       cwd: apiRoot,
       env: environment,

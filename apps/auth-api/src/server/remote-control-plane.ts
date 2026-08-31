@@ -193,7 +193,7 @@ export class RemoteControlPlane {
     const machineToken = randomToken();
     const machineTokenHash = await sha256(machineToken);
     const membershipId = ownerMembershipId;
-    await this.#database.batch([
+    const registration = await this.#database.batch([
       this.#database
         .prepare(
           `INSERT INTO remote_hosts(
@@ -204,24 +204,36 @@ export class RemoteControlPlane {
              device_public_key = excluded.device_public_key,
              machine_token_hash = excluded.machine_token_hash,
              auth_epoch = remote_hosts.auth_epoch + 1,
-             updated_at = excluded.updated_at`,
+             updated_at = excluded.updated_at
+           WHERE remote_hosts.owner_user_id = excluded.owner_user_id`,
         )
         .bind(hostId, user.id, name, input.devicePublicKey ?? null, machineTokenHash, now, now),
       this.#database
         .prepare(
           `INSERT INTO remote_memberships(
              membership_id, host_id, user_id, role, status, created_at, updated_at
-           ) VALUES (?, ?, ?, 'owner', 'active', ?, ?)
+           )
+           SELECT ?, host_id, ?, 'owner', 'active', ?, ?
+           FROM remote_hosts WHERE host_id = ? AND owner_user_id = ?
            ON CONFLICT(host_id, user_id) DO UPDATE SET
              membership_id = excluded.membership_id,
              role = 'owner', status = 'active', updated_at = excluded.updated_at`,
         )
-        .bind(membershipId, hostId, user.id, now, now),
-      this.#authEpochEventStatement(hostId, now),
+        .bind(membershipId, user.id, now, now, hostId, user.id),
+      this.#authEpochEventStatement(hostId, now, user.id),
     ]);
+    if (registration.some((result) => (result.meta.changes ?? 0) !== 1)) {
+      throw new RemoteControlPlaneError(403, "host_owner_mismatch", "This host belongs to another account.");
+    }
     await this.#flushAuthEvents();
     const registered = await this.#host(hostId);
-    if (!registered) throw new RemoteControlPlaneError(500, "host_missing", "The registered host could not be loaded.");
+    if (!registered || registered.owner_user_id !== user.id || registered.machine_token_hash !== machineTokenHash) {
+      throw new RemoteControlPlaneError(
+        409,
+        "host_registration_superseded",
+        "A newer host registration replaced this one.",
+      );
+    }
     return { hostId, name, membershipId, authEpoch: registered.auth_epoch, machineToken };
   }
 
@@ -697,14 +709,14 @@ export class RemoteControlPlane {
       .bind(crypto.randomUUID(), JSON.stringify(event), now, now);
   }
 
-  #authEpochEventStatement(hostId: string, now: number): D1PreparedStatement {
+  #authEpochEventStatement(hostId: string, now: number, ownerUserId?: string): D1PreparedStatement {
     return this.#database
       .prepare(
         `INSERT INTO remote_auth_events(event_id, payload, created_at, attempts, next_attempt_at)
          SELECT ?, json_object('type', 'remote-auth-changed', 'hostId', host_id, 'authEpoch', auth_epoch), ?, 0, ?
-         FROM remote_hosts WHERE host_id = ?`,
+         FROM remote_hosts WHERE host_id = ? AND (? IS NULL OR owner_user_id = ?)`,
       )
-      .bind(crypto.randomUUID(), now, now, hostId);
+      .bind(crypto.randomUUID(), now, now, hostId, ownerUserId ?? null, ownerUserId ?? null);
   }
 
   async #flushAuthEvents(): Promise<void> {
