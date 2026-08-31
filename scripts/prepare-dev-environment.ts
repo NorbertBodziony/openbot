@@ -24,9 +24,6 @@ export function prepareDevelopmentEnvironment(
 
   run(executable, ["install", "--frozen-lockfile"], options);
   run(executable, ["run", "api:migrate:local"], options);
-  run(executable, ["run", "install:codex-runtime"], options);
-  run(executable, ["run", "install:claude-runtime"], options);
-  run(executable, ["run", "install:grok-runtime"], options);
 }
 
 export function assertDevelopmentSecrets(projectRoot: string): void {

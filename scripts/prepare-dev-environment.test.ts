@@ -21,7 +21,7 @@ describe("development environment preparation", () => {
     expect(() => assertDevelopmentSecrets(root)).toThrow("Missing or empty .env.keys");
   });
 
-  it("installs dependencies, migrates the local API, and prepares bundled Codex in order", () => {
+  it("installs dependencies and migrates the local API in order", () => {
     const root = createTemporaryRoot();
     writeFileSync(join(root, ".env.keys"), "DOTENV_PRIVATE_KEY_TEST=value\n");
     const calls: string[][] = [];
@@ -32,9 +32,6 @@ describe("development environment preparation", () => {
     expect(calls).toEqual([
       ["install", "--frozen-lockfile"],
       ["run", "api:migrate:local"],
-      ["run", "install:codex-runtime"],
-      ["run", "install:claude-runtime"],
-      ["run", "install:grok-runtime"],
     ]);
   });
 });
