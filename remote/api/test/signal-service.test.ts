@@ -56,6 +56,18 @@ describe("SignalService", () => {
     }
   });
 
+  it("refreshes TURN credentials while an authenticated host is idle", async () => {
+    const service = new SignalService(fakeTokens(), 8);
+    const host = socket("idle-host");
+    await hello(service, host, "host-ticket", "host");
+
+    await service.receive(host, JSON.stringify({ type: "turn-refresh", version: 1, connectionId: null }));
+
+    expect(host.messages.at(-1)).toContain('"type":"ready"');
+    expect(host.messages.at(-1)).toContain('"connectionId":null');
+    expect(host.closed).toBe(false);
+  });
+
   it("restores the client mapping when only the host Signal socket reconnects", async () => {
     const service = new SignalService(fakeTokens(), 8);
     const host = socket("host");

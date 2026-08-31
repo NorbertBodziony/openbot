@@ -178,6 +178,11 @@ export class TeamStore {
     return { ...identity, challenge, signature };
   }
 
+  signRemoteAuthentication(transcript: string): string {
+    if (!this.#state) throw new TeamStoreError("The team host is not configured.");
+    return sign(null, Buffer.from(transcript), this.#state.privateKey).toString("base64url");
+  }
+
   async configure(serverName: string, username: string, password: string): Promise<TeamIdentity> {
     if (this.#state) throw new TeamStoreError("The team server is already configured.");
     validateServerName(serverName);

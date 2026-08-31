@@ -1,31 +1,94 @@
 // @vitest-environment node
 
+import { generateKeyPairSync, sign } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isString } from "@openbot/contracts/runtime-values";
+import {
+  decodeTeamProtocolV2AuthFrame,
+  encodeTeamProtocolV2Frame,
+  type TeamProtocolV2AuthFrame,
+  teamProtocolV2AuthenticationTranscript,
+} from "@openbot/contracts/team-protocol/v2";
 import { describe, expect, it, vi } from "vitest";
 import { TeamWebRtcBridge } from "./team-webrtc-bridge";
 import { TeamWebRtcClientTransport } from "./team-webrtc-client-transport";
+
+const hostKeys = generateKeyPairSync("ed25519", {
+  publicKeyEncoding: { type: "spki", format: "pem" },
+  privateKeyEncoding: { type: "pkcs8", format: "pem" },
+});
+const channelBinding = { localFingerprint: "CLIENT-FINGERPRINT", remoteFingerprint: "HOST-FINGERPRINT" };
+const listedHost = {
+  hostId: "host-1",
+  name: "Host",
+  logoKey: null,
+  devicePublicKey: hostKeys.publicKey,
+  authEpoch: 1,
+  membershipId: "member-1",
+  role: "member" as const,
+};
+
+function mockAuthenticatedSend(bridge: TeamWebRtcBridge) {
+  return vi.spyOn(bridge, "send").mockImplementation(async (hostId, channel, data) => {
+    if (channel !== "rpc" || !isString(data)) return;
+    let frame: TeamProtocolV2AuthFrame;
+    try {
+      frame = decodeTeamProtocolV2AuthFrame(data);
+    } catch {
+      return;
+    }
+    if (frame.type !== "auth-init") return;
+    const hostNonce = "h".repeat(43);
+    const transcript = teamProtocolV2AuthenticationTranscript({
+      hostId,
+      sessionId: frame.ticket,
+      ticket: frame.ticket,
+      clientPublicKey: frame.clientPublicKey,
+      clientNonce: frame.clientNonce,
+      hostNonce,
+      clientFingerprint: channelBinding.localFingerprint,
+      hostFingerprint: channelBinding.remoteFingerprint,
+    });
+    queueMicrotask(() =>
+      bridge.emit(
+        "data",
+        hostId,
+        "rpc",
+        encodeTeamProtocolV2Frame({
+          version: 2,
+          type: "auth-ready",
+          clientNonce: frame.clientNonce,
+          hostNonce,
+          signature: sign(null, Buffer.from(transcript), hostKeys.privateKey).toString("base64url"),
+        }),
+      ),
+    );
+  });
+}
 
 describe("TeamWebRtcClientTransport", () => {
   it("reuses the logical session after a WebRTC disconnect", async () => {
     const bridge = new TeamWebRtcBridge();
     vi.spyOn(bridge, "connect").mockImplementation(async ({ peerId }) => {
-      queueMicrotask(() => bridge.emit("connected", peerId));
+      queueMicrotask(() => bridge.emit("connected", peerId, channelBinding));
     });
-    vi.spyOn(bridge, "send").mockResolvedValue();
+    mockAuthenticatedSend(bridge);
     vi.spyOn(bridge, "disconnect").mockResolvedValue();
     const startSession = vi
       .fn()
       .mockResolvedValue({ sessionId: "session-1", hostId: "host-1", expiresAt: Date.now() + 86_400_000 });
-    const issueTicket = vi.fn().mockResolvedValue({
-      ticket: "ticket",
-      expiresAt: 2_000,
-      signalUrl: "wss://signal.example.test/v1/signal",
-    });
+    const issueTicket = vi.fn((sessionId: string) =>
+      Promise.resolve({
+        ticket: sessionId,
+        expiresAt: 2_000,
+        signalUrl: "wss://signal.example.test/v1/signal",
+      }),
+    );
     const endSession = vi.fn().mockResolvedValue(undefined);
     const transport = new TeamWebRtcClientTransport({
       bridge,
-      listHosts: async () => [],
+      listHosts: async () => [listedHost],
       startSession,
       issueTicket,
       endSession,
@@ -75,7 +138,7 @@ describe("TeamWebRtcClientTransport", () => {
 
     expect(startSession).toHaveBeenCalledTimes(1);
     expect(issueTicket).toHaveBeenCalledTimes(2);
-    expect(issueTicket).toHaveBeenNthCalledWith(2, "session-1");
+    expect(issueTicket).toHaveBeenNthCalledWith(2, "session-1", expect.stringContaining("PUBLIC KEY"));
     expect(endSession).not.toHaveBeenCalled();
     expect(bridge.send).toHaveBeenLastCalledWith(
       "host-1",
@@ -107,7 +170,7 @@ describe("TeamWebRtcClientTransport", () => {
     const endSession = vi.fn().mockResolvedValue(undefined);
     const transport = new TeamWebRtcClientTransport({
       bridge,
-      listHosts: async () => [],
+      listHosts: async () => [listedHost],
       startSession,
       issueTicket: async () => ({
         ticket: "ticket",
@@ -151,9 +214,9 @@ describe("TeamWebRtcClientTransport", () => {
   it("does not reuse a remote session after the signed-in principal changes", async () => {
     const bridge = new TeamWebRtcBridge();
     vi.spyOn(bridge, "connect").mockImplementation(async ({ peerId }) => {
-      queueMicrotask(() => bridge.emit("connected", peerId));
+      queueMicrotask(() => bridge.emit("connected", peerId, channelBinding));
     });
-    vi.spyOn(bridge, "send").mockResolvedValue();
+    mockAuthenticatedSend(bridge);
     vi.spyOn(bridge, "disconnect").mockResolvedValue();
     const startSession = vi
       .fn()
@@ -163,10 +226,10 @@ describe("TeamWebRtcClientTransport", () => {
     let principalId = "user-1";
     const transport = new TeamWebRtcClientTransport({
       bridge,
-      listHosts: async () => [],
+      listHosts: async () => [listedHost],
       startSession,
-      issueTicket: async () => ({
-        ticket: "ticket",
+      issueTicket: async (sessionId) => ({
+        ticket: sessionId,
         expiresAt: 2_000,
         signalUrl: "wss://signal.example.test/v1/signal",
       }),
@@ -207,23 +270,25 @@ describe("TeamWebRtcClientTransport", () => {
     const nowSpy = vi.spyOn(Date, "now").mockReturnValue(now);
     const bridge = new TeamWebRtcBridge();
     vi.spyOn(bridge, "connect").mockImplementation(async ({ peerId }) => {
-      queueMicrotask(() => bridge.emit("connected", peerId));
+      queueMicrotask(() => bridge.emit("connected", peerId, channelBinding));
     });
-    vi.spyOn(bridge, "send").mockResolvedValue();
+    mockAuthenticatedSend(bridge);
     vi.spyOn(bridge, "disconnect").mockResolvedValue();
     const startSession = vi
       .fn()
       .mockResolvedValueOnce({ sessionId: "session-1", hostId: "host-1", expiresAt: now + 100_000 })
       .mockResolvedValueOnce({ sessionId: "session-2", hostId: "host-1", expiresAt: now + 200_000 });
-    const issueTicket = vi.fn().mockResolvedValue({
-      ticket: "ticket",
-      expiresAt: now + 60_000,
-      signalUrl: "wss://signal.example.test/v1/signal",
-    });
+    const issueTicket = vi.fn((sessionId: string) =>
+      Promise.resolve({
+        ticket: sessionId,
+        expiresAt: now + 60_000,
+        signalUrl: "wss://signal.example.test/v1/signal",
+      }),
+    );
     const endSession = vi.fn().mockResolvedValue(undefined);
     const transport = new TeamWebRtcClientTransport({
       bridge,
-      listHosts: async () => [],
+      listHosts: async () => [listedHost],
       startSession,
       issueTicket,
       endSession,
@@ -255,7 +320,7 @@ describe("TeamWebRtcClientTransport", () => {
     await transport.connect("host-1");
 
     expect(startSession).toHaveBeenCalledTimes(2);
-    expect(issueTicket).toHaveBeenNthCalledWith(2, "session-2");
+    expect(issueTicket).toHaveBeenNthCalledWith(2, "session-2", expect.stringContaining("PUBLIC KEY"));
     expect(endSession).toHaveBeenCalledWith("session-1");
     await transport.stop();
     nowSpy.mockRestore();
@@ -275,7 +340,7 @@ describe("TeamWebRtcClientTransport", () => {
     const endSession = vi.fn().mockResolvedValue(undefined);
     const transport = new TeamWebRtcClientTransport({
       bridge,
-      listHosts: async () => [],
+      listHosts: async () => [listedHost],
       startSession: async () => ({
         sessionId: "session-1",
         hostId: "host-1",

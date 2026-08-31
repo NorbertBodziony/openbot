@@ -6,6 +6,7 @@ const TICKET_AUDIENCE = "openbot-remote";
 const TICKET_TTL_SECONDS = 180;
 const SESSION_TTL_SECONDS = 24 * 60 * 60;
 const HOST_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+const LEGACY_SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/u;
 const AUTH_EVENT_RETRY_MS = 60_000;
 const MAX_OUTSTANDING_INVITES_PER_HOST = 50;
 
@@ -115,6 +116,7 @@ export class RemoteTicketSigner {
     role: RemoteMemberRole | "host";
     authEpoch: number;
     sessionExpiresAt: number;
+    clientPublicKey?: string;
     now: number;
   }): Promise<{ ticket: string; expiresAt: number }> {
     const issuedAt = Math.floor(input.now / 1_000);
@@ -129,6 +131,7 @@ export class RemoteTicketSigner {
       protocolMinimum: 2,
       protocolMaximum: 2,
       sessionExpiresAt: Math.floor(input.sessionExpiresAt / 1_000),
+      ...(input.clientPublicKey ? { clientPublicKey: input.clientPublicKey } : {}),
     })
       .setProtectedHeader({ alg: "ES256", typ: "JWT", kid: this.#keyId })
       .setJti(crypto.randomUUID())
@@ -187,6 +190,7 @@ export class RemoteControlPlane {
       ownerMembershipId: string;
       devicePublicKey?: string | null;
       rotateCredential?: boolean;
+      machineToken?: string;
     },
   ) {
     const hostId = requiredIdentifier(input.hostId, "host ID");
@@ -198,8 +202,13 @@ export class RemoteControlPlane {
     }
     const now = this.#now();
     const devicePublicKey = input.devicePublicKey ?? null;
+    const providedMachineTokenHash = input.machineToken ? await sha256(input.machineToken) : null;
     const rotateCredential =
-      !existing || input.rotateCredential !== false || existing.device_public_key !== devicePublicKey;
+      !existing ||
+      input.rotateCredential !== false ||
+      existing.device_public_key !== devicePublicKey ||
+      existing.machine_token_hash !== providedMachineTokenHash ||
+      LEGACY_SHA256_HEX_PATTERN.test(existing.machine_token_hash ?? "");
     if (!rotateCredential && existing) {
       const metadata = await this.#database.batch([
         this.#database
@@ -670,7 +679,8 @@ export class RemoteControlPlane {
     );
   }
 
-  async issueSessionTicket(userId: string, sessionId: string) {
+  async issueSessionTicket(userId: string, sessionId: string, clientPublicKey: string) {
+    const boundClientPublicKey = requiredText(clientPublicKey, 8_192, "client public key");
     const now = this.#now();
     const session = await this.#database
       .prepare(
@@ -694,6 +704,7 @@ export class RemoteControlPlane {
       role: session.role,
       authEpoch: session.auth_epoch,
       sessionExpiresAt: session.expires_at,
+      clientPublicKey: boundClientPublicKey,
       now,
     });
   }

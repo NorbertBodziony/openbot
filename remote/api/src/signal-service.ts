@@ -137,7 +137,7 @@ export class SignalService {
         this.#fail(socket, "authentication_required", "The remote session expired.", 1008);
         return;
       }
-      if (!this.#ownsConnection(peer, message.connectionId)) {
+      if (message.connectionId !== null && !this.#ownsConnection(peer, message.connectionId)) {
         this.#fail(socket, "permission_denied", "The connection does not belong to this peer.");
         return;
       }

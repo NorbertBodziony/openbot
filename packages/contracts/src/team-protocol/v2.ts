@@ -33,6 +33,18 @@ export type TeamProtocolV2RpcFrame =
   | { version: 2; type: "response"; requestId: string; result: TeamProtocolV2Json }
   | { version: 2; type: "response"; requestId: string; error: TeamProtocolV2Error };
 
+export type TeamProtocolV2AuthFrame =
+  | {
+      version: 2;
+      type: "auth-init";
+      ticket: string;
+      clientPublicKey: string;
+      clientNonce: string;
+      signature: string;
+    }
+  | { version: 2; type: "auth-ready"; clientNonce: string; hostNonce: string; signature: string }
+  | { version: 2; type: "auth-complete"; clientNonce: string; hostNonce: string };
+
 export type TeamProtocolV2EventFrame =
   | { version: 2; type: "event"; sequence: number; payload: TeamProtocolV2Json }
   | { version: 2; type: "event-ack"; throughSequence: number }
@@ -90,6 +102,50 @@ export function decodeTeamProtocolV2RpcFrame(value: string | unknown): TeamProto
       return { version: 2, type: "response", requestId: frame.requestId, error: frame.error };
   }
   throw invalid("RPC frame");
+}
+
+export function decodeTeamProtocolV2AuthFrame(value: string | unknown): TeamProtocolV2AuthFrame {
+  const frame = decodeJsonFrame(value);
+  if (!isDynamicRecord(frame) || frame.version !== 2 || !isString(frame.type)) throw invalid("auth frame");
+  if (
+    frame.type === "auth-init" &&
+    text(frame.ticket, 8_192) &&
+    text(frame.clientPublicKey, 8_192) &&
+    base64url(frame.clientNonce, 16, 128) &&
+    base64url(frame.signature, 64, 256)
+  ) {
+    return {
+      version: 2,
+      type: "auth-init",
+      ticket: frame.ticket,
+      clientPublicKey: frame.clientPublicKey,
+      clientNonce: frame.clientNonce,
+      signature: frame.signature,
+    };
+  }
+  if (
+    frame.type === "auth-ready" &&
+    base64url(frame.clientNonce, 16, 128) &&
+    base64url(frame.hostNonce, 16, 128) &&
+    base64url(frame.signature, 64, 256)
+  ) {
+    return {
+      version: 2,
+      type: "auth-ready",
+      clientNonce: frame.clientNonce,
+      hostNonce: frame.hostNonce,
+      signature: frame.signature,
+    };
+  }
+  if (frame.type === "auth-complete" && base64url(frame.clientNonce, 16, 128) && base64url(frame.hostNonce, 16, 128)) {
+    return {
+      version: 2,
+      type: "auth-complete",
+      clientNonce: frame.clientNonce,
+      hostNonce: frame.hostNonce,
+    };
+  }
+  throw invalid("auth frame");
 }
 
 export function decodeTeamProtocolV2EventFrame(value: string | unknown): TeamProtocolV2EventFrame {
@@ -175,10 +231,12 @@ export function decodeTeamProtocolV2FileControlFrame(value: string | unknown): T
 }
 
 export function encodeTeamProtocolV2Frame(
-  frame: TeamProtocolV2RpcFrame | TeamProtocolV2EventFrame | TeamProtocolV2FileControlFrame,
+  frame: TeamProtocolV2RpcFrame | TeamProtocolV2AuthFrame | TeamProtocolV2EventFrame | TeamProtocolV2FileControlFrame,
 ): string {
   let encoded: string;
-  if (frame.type === "request" || frame.type === "response")
+  if (frame.type === "auth-init" || frame.type === "auth-ready" || frame.type === "auth-complete")
+    encoded = JSON.stringify(decodeTeamProtocolV2AuthFrame(frame));
+  else if (frame.type === "request" || frame.type === "response")
     encoded = JSON.stringify(decodeTeamProtocolV2RpcFrame(frame));
   else if (
     frame.type === "event" ||
@@ -190,6 +248,29 @@ export function encodeTeamProtocolV2Frame(
   else encoded = JSON.stringify(decodeTeamProtocolV2FileControlFrame(frame));
   if (byteLength(encoded) > TEAM_PROTOCOL_V2_MAX_JSON_FRAME_BYTES) throw invalid("JSON frame size");
   return encoded;
+}
+
+export function teamProtocolV2AuthenticationTranscript(input: {
+  hostId: string;
+  sessionId: string;
+  ticket: string;
+  clientPublicKey: string;
+  clientNonce: string;
+  hostNonce?: string;
+  clientFingerprint: string;
+  hostFingerprint: string;
+}): string {
+  return JSON.stringify([
+    "openbot-team-v2-auth",
+    input.hostId,
+    input.sessionId,
+    input.ticket,
+    input.clientPublicKey,
+    input.clientNonce,
+    input.hostNonce ?? "",
+    input.clientFingerprint,
+    input.hostFingerprint,
+  ]);
 }
 
 export function encodeTeamProtocolV2FileChunk(
@@ -257,6 +338,10 @@ function operation(value: unknown): value is string {
 
 function text(value: unknown, maximum: number): value is string {
   return isString(value) && value.length > 0 && value.length <= maximum;
+}
+
+function base64url(value: unknown, minimum: number, maximum: number): value is string {
+  return isString(value) && value.length >= minimum && value.length <= maximum && /^[A-Za-z0-9_-]+$/u.test(value);
 }
 
 function sequence(value: unknown): value is number {

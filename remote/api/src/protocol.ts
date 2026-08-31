@@ -16,6 +16,7 @@ export interface RemoteTicketClaims {
   protocolMinimum: number;
   protocolMaximum: number;
   sessionExpiresAt: number;
+  clientPublicKey?: string;
   iat: number;
   exp: number;
 }
@@ -33,7 +34,7 @@ export type SignalClientMessage =
       sdpMLineIndex: number | null;
     }
   | { type: "ice-restart"; version: 1; connectionId: string; channel: SignalChannel }
-  | { type: "turn-refresh"; version: 1; connectionId: string }
+  | { type: "turn-refresh"; version: 1; connectionId: string | null }
   | { type: "disconnect"; version: 1; connectionId: string };
 
 export type SignalServerMessage =
@@ -118,7 +119,12 @@ const signalClientMessageSchema = z.discriminatedUnion("type", [
     channel: channelSchema,
   }),
   z.object({
-    type: z.enum(["turn-refresh", "disconnect"]),
+    type: z.literal("turn-refresh"),
+    version: z.literal(1),
+    connectionId: identifierSchema.nullable(),
+  }),
+  z.object({
+    type: z.literal("disconnect"),
     version: z.literal(1),
     connectionId: identifierSchema,
   }),

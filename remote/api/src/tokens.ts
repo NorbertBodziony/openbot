@@ -31,6 +31,7 @@ const remoteTicketClaimsSchema = z.object({
   protocolMinimum: z.number().int().nonnegative(),
   protocolMaximum: z.number().int().nonnegative(),
   sessionExpiresAt: z.number().int().nonnegative(),
+  clientPublicKey: z.string().min(1).max(8_192).optional(),
   iat: z.number().int().nonnegative(),
   exp: z.number().int().nonnegative(),
 });
@@ -113,6 +114,7 @@ export class RemoteTokenService {
       protocolMinimum: claims.protocolMinimum,
       protocolMaximum: claims.protocolMaximum,
       sessionExpiresAt: claims.sessionExpiresAt,
+      ...(claims.clientPublicKey ? { clientPublicKey: claims.clientPublicKey } : {}),
     })
       .setProtectedHeader({ alg: "HS256", typ: "JWT" })
       .setJti(jti)

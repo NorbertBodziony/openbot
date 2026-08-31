@@ -22,6 +22,7 @@ export const Route = createFileRoute("/v2/remote/hosts/register")({
             !isString(body.name) ||
             !isString(body.ownerMembershipId) ||
             !(body.rotateCredential === undefined || isBoolean(body.rotateCredential)) ||
+            !(body.machineToken === undefined || isString(body.machineToken)) ||
             !(body.devicePublicKey === undefined || body.devicePublicKey === null || isString(body.devicePublicKey))
           ) {
             return apiError(400, "invalid_remote_request", "The host registration is invalid.");
@@ -33,6 +34,7 @@ export const Route = createFileRoute("/v2/remote/hosts/register")({
               ownerMembershipId: body.ownerMembershipId,
               devicePublicKey: body.devicePublicKey,
               rotateCredential: body.rotateCredential,
+              machineToken: body.machineToken,
             }),
             201,
           );

@@ -40,6 +40,7 @@ import type { BrowserHost } from "../backend/browser-host";
 import type { MailboxStore } from "../backend/mailbox-store";
 import type { SidebarLayoutStore } from "../backend/sidebar-layout-store";
 import type { TeamChatStore } from "../backend/team-chat-store";
+import type { VerifiedRemoteSessionTicket } from "./central-auth-manager";
 import type { RemoteDesktopRuntimePaths } from "./remote-desktop-runtime-artifact";
 import { appendRemoteDiagnosticLog } from "./remote-diagnostics";
 import { RemoteScreenGateway } from "./remote-screen-gateway";
@@ -91,6 +92,7 @@ interface HostServiceOptions {
     devicePublicKey?: string | null;
   }) => Promise<unknown>;
   issueRemoteHostTicket?: (hostId: string) => Promise<{ ticket: string; signalUrl: string; expiresAt: number }>;
+  verifyRemoteSessionTicket?: (ticket: string) => Promise<VerifiedRemoteSessionTicket>;
   remoteControlPlaneUrl?: string;
   createRemoteInvite?: (
     hostId: string,
@@ -224,6 +226,7 @@ export class HostService extends EventEmitter<HostEvents> {
             });
           },
           closeSession: (sessionId) => this.#remoteScreen.revokeTeamSession(sessionId),
+          verifyClientTicket: options.verifyRemoteSessionTicket,
         })
       : null;
   }

@@ -3,15 +3,18 @@ import eventFixture from "./fixtures/v2/event.json";
 import fileOpenFixture from "./fixtures/v2/file-open.json";
 import requestFixture from "./fixtures/v2/request.json";
 import {
+  decodeTeamProtocolV2AuthFrame,
   decodeTeamProtocolV2EventFrame,
   decodeTeamProtocolV2FileChunk,
   decodeTeamProtocolV2FileControlFrame,
   decodeTeamProtocolV2RpcFrame,
   encodeTeamProtocolV2FileChunk,
+  encodeTeamProtocolV2Frame,
   TEAM_PROTOCOL_V2_MAX_BINARY_FRAME_BYTES,
   TEAM_PROTOCOL_V2_MAX_FILE_BYTES,
   TEAM_PROTOCOL_V2_MAX_JSON_FRAME_BYTES,
 } from "./v2";
+import { decodeTeamProtocolV2CurrentEvent } from "./v2-adapter";
 
 describe("Team protocol v2", () => {
   it("keeps the released JSON fixtures valid", () => {
@@ -47,6 +50,47 @@ describe("Team protocol v2", () => {
       type: "event-reset",
       nextSequence: 2_001,
     });
+  });
+
+  it("distinguishes unknown events from malformed known events", () => {
+    expect(
+      decodeTeamProtocolV2CurrentEvent({
+        version: 2,
+        type: "event",
+        sequence: 1,
+        payload: { type: "future-event", value: true },
+      }),
+    ).toEqual({ status: "unknown" });
+    expect(
+      decodeTeamProtocolV2CurrentEvent({
+        version: 2,
+        type: "event",
+        sequence: 1,
+        payload: { type: "runtime-snapshot" },
+      }),
+    ).toEqual({ status: "invalid" });
+  });
+
+  it("validates bounded authentication frames", () => {
+    expect(
+      decodeTeamProtocolV2AuthFrame({
+        version: 2,
+        type: "auth-ready",
+        clientNonce: "c".repeat(43),
+        hostNonce: "h".repeat(43),
+        signature: "s".repeat(86),
+      }),
+    ).toMatchObject({ type: "auth-ready" });
+    expect(
+      decodeTeamProtocolV2AuthFrame(
+        encodeTeamProtocolV2Frame({
+          version: 2,
+          type: "auth-complete",
+          clientNonce: "c".repeat(43),
+          hostNonce: "h".repeat(43),
+        }),
+      ),
+    ).toMatchObject({ type: "auth-complete" });
   });
 
   it("validates client event controls", () => {

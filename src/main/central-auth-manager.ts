@@ -4,6 +4,8 @@ import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { dirname } from "node:path";
 import type { AvatarImageInput, CentralAuthIssue, CentralAuthState, CentralAuthUser } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { createLocalJWKSet, jwtVerify } from "jose";
+import { z } from "zod";
 
 interface CentralAuthEvents {
   changed: [state: CentralAuthState];
@@ -34,6 +36,9 @@ const STARTUP_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000] as const;
 const RESEND_FALLBACK_DELAY_MS = 60_000;
 const AUTH_API_UNAVAILABLE_MESSAGE =
   "OpenBot could not reach the account service. Check that the API is running, then try again.";
+const remoteTicketJwksSchema = z.object({
+  keys: z.array(z.object({ kty: z.string() }).loose()).min(1),
+});
 
 export interface RegisteredRemoteHost {
   hostId: string;
@@ -47,6 +52,17 @@ export interface RemoteConnectionBootstrap {
   ticket: string;
   expiresAt: number;
   signalUrl: string;
+}
+
+export interface VerifiedRemoteSessionTicket {
+  sessionId: string;
+  hostId: string;
+  userId: string;
+  membershipId: string;
+  role: "owner" | "admin" | "member";
+  authEpoch: number;
+  sessionExpiresAt: number;
+  clientPublicKey: string;
 }
 
 export interface RemoteHostSummary {
@@ -93,6 +109,7 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   #state: CentralAuthState = { status: "loading" };
   #sessionToken: string | null = null;
   readonly #teamHostTokens = new Map<string, string>();
+  #remoteTicketJwks: Promise<z.infer<typeof remoteTicketJwksSchema>> | null = null;
   #initializationPromise: Promise<CentralAuthState> | null = null;
 
   constructor(options: CentralAuthManagerOptions) {
@@ -169,7 +186,11 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...input, rotateCredential: !storedMachineToken }),
+        body: JSON.stringify({
+          ...input,
+          rotateCredential: !storedMachineToken,
+          ...(storedMachineToken ? { machineToken: storedMachineToken } : {}),
+        }),
       },
       decodeRegisteredRemoteHost,
     );
@@ -200,12 +221,67 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     return this.#authorizedRequest("/v2/remote/hosts/", { method: "GET" }, decodeRemoteHosts);
   }
 
-  issueRemoteSessionTicket(sessionId: string): Promise<RemoteConnectionBootstrap> {
+  issueRemoteSessionTicket(sessionId: string, clientPublicKey: string): Promise<RemoteConnectionBootstrap> {
     return this.#authorizedRequest(
       `/v2/remote/sessions/${encodeURIComponent(sessionId)}/ticket`,
-      { method: "POST" },
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientPublicKey }),
+      },
       decodeRemoteConnectionBootstrap,
     );
+  }
+
+  async verifyRemoteSessionTicket(ticket: string): Promise<VerifiedRemoteSessionTicket> {
+    const verify = async () => {
+      if (!this.#remoteTicketJwks) this.#remoteTicketJwks = this.#fetchRemoteTicketJwks();
+      const jwks = await this.#remoteTicketJwks;
+      return jwtVerify(ticket, createLocalJWKSet(jwks), {
+        audience: "openbot-remote",
+        algorithms: ["ES256"],
+      });
+    };
+    let payload: Awaited<ReturnType<typeof verify>>["payload"];
+    try {
+      ({ payload } = await verify());
+    } catch (error) {
+      if (!isDynamicRecord(error) || error.code !== "ERR_JWKS_NO_MATCHING_KEY") throw error;
+      this.#remoteTicketJwks = null;
+      ({ payload } = await verify());
+    }
+    if (
+      !isString(payload.sessionId) ||
+      !isString(payload.hostId) ||
+      !isString(payload.userId) ||
+      !isString(payload.membershipId) ||
+      (payload.role !== "owner" && payload.role !== "admin" && payload.role !== "member") ||
+      !isNumber(payload.authEpoch) ||
+      !Number.isInteger(payload.authEpoch) ||
+      !isNumber(payload.sessionExpiresAt) ||
+      !Number.isInteger(payload.sessionExpiresAt) ||
+      !isString(payload.clientPublicKey)
+    ) {
+      throw new Error("The remote session ticket has invalid claims.");
+    }
+    return {
+      sessionId: payload.sessionId,
+      hostId: payload.hostId,
+      userId: payload.userId,
+      membershipId: payload.membershipId,
+      role: payload.role,
+      authEpoch: payload.authEpoch,
+      sessionExpiresAt: payload.sessionExpiresAt,
+      clientPublicKey: payload.clientPublicKey,
+    };
+  }
+
+  async #fetchRemoteTicketJwks(): Promise<z.infer<typeof remoteTicketJwksSchema>> {
+    const response = await this.#options.fetch(new URL("/.well-known/jwks.json", this.#options.apiUrl), {
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) throw await AuthApiError.fromResponse(response);
+    return remoteTicketJwksSchema.parse(await response.json());
   }
 
   endRemoteSession(sessionId: string): Promise<void> {

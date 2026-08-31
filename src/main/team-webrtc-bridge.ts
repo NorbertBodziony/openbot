@@ -19,7 +19,7 @@ interface TeamWebRtcBridgeEvents {
       sessionExpiresAt: number;
     },
   ];
-  connected: [peerId: string];
+  connected: [peerId: string, binding?: { localFingerprint: string; remoteFingerprint: string }];
   disconnected: [peerId: string];
   data: [peerId: string, channel: TeamWebRtcChannel, data: string | ArrayBuffer];
   path: [peerId: string, path: "p2p" | "relay"];
@@ -53,6 +53,8 @@ const bridgeMessageSchema = z
     membershipId: z.string().optional(),
     role: z.enum(["owner", "admin", "member"]).optional(),
     sessionExpiresAt: z.number().int().positive().optional(),
+    localFingerprint: z.string().min(1).max(256).optional(),
+    remoteFingerprint: z.string().min(1).max(256).optional(),
     iceServers: z.array(iceServerSchema).optional(),
   })
   .loose();
@@ -218,7 +220,11 @@ export class TeamWebRtcBridge extends EventEmitter<TeamWebRtcBridgeEvents> {
         sessionExpiresAt: message.sessionExpiresAt,
       });
     } else if (message.type === "signal-ready") this.emit("signalReady", message.peerId);
-    else if (message.type === "peer-connected") this.emit("connected", message.peerId);
+    else if (message.type === "peer-connected" && message.localFingerprint && message.remoteFingerprint)
+      this.emit("connected", message.peerId, {
+        localFingerprint: message.localFingerprint,
+        remoteFingerprint: message.remoteFingerprint,
+      });
     else if (message.type === "peer-disconnected") this.emit("disconnected", message.peerId);
     else if (message.type === "ice-path" && message.path) this.emit("path", message.peerId, message.path);
     else if (message.type === "ice-servers" && message.iceServers) {

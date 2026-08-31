@@ -30,7 +30,7 @@ describe("remote control plane migration", () => {
       INSERT INTO users(id) VALUES ('owner'), ('former-member');
       INSERT INTO team_tunnels(
         server_id, user_id, tunnel_name, api_hostname, status, created_at, updated_at, machine_token_hash
-      ) VALUES ('host-1', 'owner', 'Studio Mac', 'old.example.test', 'active', 100, 200, 'machine-hash');
+      ) VALUES ('host-1', 'owner', 'Studio Mac', 'old.example.test', 'active', 100, 200, '${"a".repeat(64)}');
     `);
 
     database.exec(readFileSync(new URL("../migrations/0012_remote_control_plane.sql", import.meta.url), "utf8"));
@@ -65,6 +65,7 @@ describe("RemoteTicketSigner", () => {
       membershipId: "member-1",
       role: "member",
       authEpoch: 3,
+      clientPublicKey: "client-public-key",
       sessionExpiresAt: 1_900_086_400_000,
       now: 1_900_000_000_000,
     });
@@ -84,6 +85,7 @@ describe("RemoteTicketSigner", () => {
       protocolMinimum: 2,
       protocolMaximum: 2,
       sessionExpiresAt: 1_900_086_400,
+      clientPublicKey: "client-public-key",
     });
     expect(result.expiresAt).toBe(1_900_000_180_000);
   });
@@ -213,7 +215,7 @@ describe("RemoteControlPlane", () => {
       INSERT INTO users(id) VALUES ('owner');
       INSERT INTO team_tunnels(
         server_id, user_id, tunnel_name, api_hostname, status, created_at, updated_at, machine_token_hash
-      ) VALUES ('host-1', 'owner', 'Studio Mac', 'old.example.test', 'active', 100, 200, 'machine-hash');
+      ) VALUES ('host-1', 'owner', 'Studio Mac', 'old.example.test', 'active', 100, 200, '${"a".repeat(64)}');
     `);
     database.exec(readFileSync(new URL("../migrations/0012_remote_control_plane.sql", import.meta.url), "utf8"));
     database.exec(readFileSync(new URL("../migrations/0013_remote_session_lifecycle.sql", import.meta.url), "utf8"));
@@ -243,6 +245,7 @@ describe("RemoteControlPlane", () => {
       hostId: "host-1",
       name: "Studio Mac",
       ownerMembershipId: "local-owner",
+      rotateCredential: false,
     });
     const registration = await controlPlane.registerHost(owner, {
       hostId: "host-1",
@@ -258,6 +261,7 @@ describe("RemoteControlPlane", () => {
       name: "Renamed Studio Mac",
       ownerMembershipId: "local-owner",
       rotateCredential: false,
+      machineToken: registration.machineToken,
     });
     expect(metadataUpdate).toMatchObject({ authEpoch: registration.authEpoch, machineToken: null });
     await expect(controlPlane.issueHostTicket("host-1", registration.machineToken)).resolves.toMatchObject({

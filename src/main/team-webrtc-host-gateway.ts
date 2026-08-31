@@ -1,16 +1,21 @@
+import { randomBytes, verify } from "node:crypto";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { encodeTeamProtocolV1ClientEvent, TEAM_PROTOCOL_V1_CAPABILITIES } from "@openbot/contracts/team-protocol/v1";
 import {
+  decodeTeamProtocolV2AuthFrame,
   decodeTeamProtocolV2EventFrame,
   decodeTeamProtocolV2Json,
   decodeTeamProtocolV2RpcFrame,
   encodeTeamProtocolV2Frame,
+  type TeamProtocolV2AuthFrame,
   type TeamProtocolV2Json,
   type TeamProtocolV2RpcFrame,
+  teamProtocolV2AuthenticationTranscript,
 } from "@openbot/contracts/team-protocol/v2";
 import type * as Ws from "ws";
+import type { VerifiedRemoteSessionTicket } from "./central-auth-manager";
 import {
   decodeRemoteDesktopSignalBinary,
   decodeRemoteDesktopSignalControl,
@@ -33,6 +38,16 @@ interface TeamWebRtcHostGatewayOptions {
   renewSignal?: (hostId: string) => Promise<{ signalUrl: string; ticket: string }>;
   onSignalRecoveryFailure?: (error: Error) => void;
   closeSession?: (sessionId: string) => Promise<void>;
+  verifyClientTicket?: (ticket: string) => Promise<VerifiedRemoteSessionTicket>;
+}
+
+interface IncomingConnection {
+  connectionId: string;
+  sessionId: string;
+  userId: string;
+  membershipId: string;
+  role: "owner" | "admin" | "member";
+  sessionExpiresAt: number;
 }
 
 export class TeamWebRtcHostGateway {
@@ -43,6 +58,7 @@ export class TeamWebRtcHostGateway {
   readonly #renewSignal: ((hostId: string) => Promise<{ signalUrl: string; ticket: string }>) | null;
   readonly #onSignalRecoveryFailure: (error: Error) => void;
   readonly #closeSession: (sessionId: string) => Promise<void>;
+  readonly #verifyClientTicket: ((ticket: string) => Promise<VerifiedRemoteSessionTicket>) | null;
   readonly #responses = new Map<string, TeamProtocolV2RpcFrame>();
   readonly #events = new Map<number, string>();
   #peerId: string | null = null;
@@ -56,6 +72,13 @@ export class TeamWebRtcHostGateway {
   #sessionExpirationTimer: ReturnType<typeof setTimeout> | null = null;
   #sessionPreparation: Promise<void> | null = null;
   #signalRecovery: Promise<void> | null = null;
+  #pendingConnection: IncomingConnection | null = null;
+  #peerBinding: { localFingerprint: string; remoteFingerprint: string } | null = null;
+  #authenticationCompletion: {
+    claims: VerifiedRemoteSessionTicket;
+    clientNonce: string;
+    hostNonce: string;
+  } | null = null;
 
   constructor(options: TeamWebRtcHostGatewayOptions) {
     this.#bridge = options.bridge;
@@ -65,12 +88,14 @@ export class TeamWebRtcHostGateway {
       options.bridge,
       options.transferDirectory,
       undefined,
-      (peerId) => peerId === this.#peerId,
+      (peerId) => peerId === this.#peerId && this.#localSessionToken !== null,
     );
     this.#renewSignal = options.renewSignal ?? null;
     this.#onSignalRecoveryFailure = options.onSignalRecoveryFailure ?? (() => undefined);
     this.#closeSession = options.closeSession ?? (() => Promise.resolve());
+    this.#verifyClientTicket = options.verifyClientTicket ?? null;
     this.#bridge.on("incoming", this.#onIncoming);
+    this.#bridge.on("connected", this.#onConnected);
     this.#bridge.on("data", this.#onData);
     this.#bridge.on("disconnected", this.#onDisconnected);
     this.#bridge.on("error", this.#onError);
@@ -105,6 +130,7 @@ export class TeamWebRtcHostGateway {
 
   dispose(): void {
     this.#bridge.off("incoming", this.#onIncoming);
+    this.#bridge.off("connected", this.#onConnected);
     this.#bridge.off("data", this.#onData);
     this.#bridge.off("disconnected", this.#onDisconnected);
     this.#bridge.off("error", this.#onError);
@@ -137,32 +163,17 @@ export class TeamWebRtcHostGateway {
     });
   }
 
-  readonly #onIncoming = (
-    peerId: string,
-    connection: {
-      connectionId: string;
-      sessionId: string;
-      userId: string;
-      membershipId: string;
-      role: "owner" | "admin" | "member";
-      sessionExpiresAt: number;
-    },
-  ): void => {
-    this.#sessionPreparation = this.#openIncomingSession(peerId, connection);
-    void this.#sessionPreparation.catch(() => this.#closeLocalSession());
+  readonly #onIncoming = (peerId: string, connection: IncomingConnection): void => {
+    if (peerId !== this.#peerId) return;
+    this.#closeLocalSession();
+    this.#pendingConnection = connection;
   };
 
-  async #openIncomingSession(
-    peerId: string,
-    connection: {
-      connectionId: string;
-      sessionId: string;
-      userId: string;
-      membershipId: string;
-      role: "owner" | "admin" | "member";
-      sessionExpiresAt: number;
-    },
-  ): Promise<void> {
+  readonly #onConnected = (peerId: string, binding?: { localFingerprint: string; remoteFingerprint: string }): void => {
+    if (peerId === this.#peerId) this.#peerBinding = binding ?? null;
+  };
+
+  async #openIncomingSession(peerId: string, connection: Omit<IncomingConnection, "connectionId">): Promise<void> {
     if (peerId !== this.#peerId) return;
     if (connection.sessionId === this.#localSessionId && this.#localSessionToken) return;
     this.#closeLocalSession();
@@ -184,6 +195,19 @@ export class TeamWebRtcHostGateway {
     data: string | ArrayBuffer,
   ): void => {
     if (peerId !== this.#peerId) return;
+    const authFrame = channel === "rpc" && isString(data) ? authenticationFrame(data) : null;
+    if (authFrame?.type === "auth-init") {
+      void this.#handleAuthentication(peerId, authFrame).catch(() => this.#failProtocol(peerId));
+      return;
+    }
+    if (authFrame?.type === "auth-complete") {
+      void this.#completeAuthentication(peerId, authFrame).catch(() => this.#failProtocol(peerId));
+      return;
+    }
+    if (!this.#localSessionToken) {
+      this.#failProtocol(peerId);
+      return;
+    }
     if (channel === "desktop") {
       void this.#handleDesktopSignal(data).catch(() => this.#closeDesktopSocket());
       return;
@@ -199,9 +223,90 @@ export class TeamWebRtcHostGateway {
   readonly #onDisconnected = (peerId: string): void => {
     if (peerId === this.#peerId) {
       this.#sessionPreparation = null;
+      this.#pendingConnection = null;
+      this.#peerBinding = null;
+      this.#authenticationCompletion = null;
       this.#closeLocalSession();
     }
   };
+
+  async #handleAuthentication(
+    peerId: string,
+    frame: Extract<TeamProtocolV2AuthFrame, { type: "auth-init" }>,
+  ): Promise<void> {
+    const pending = this.#pendingConnection;
+    const binding = this.#peerBinding;
+    const verifyClientTicket = this.#verifyClientTicket;
+    if (!pending || !binding || !verifyClientTicket || this.#authenticationCompletion || this.#sessionPreparation) {
+      throw new Error("Remote authentication is not ready.");
+    }
+    const claims = await verifyClientTicket(frame.ticket);
+    if (
+      claims.hostId !== peerId ||
+      claims.sessionId !== pending.sessionId ||
+      claims.userId !== pending.userId ||
+      claims.membershipId !== pending.membershipId ||
+      claims.role !== pending.role ||
+      claims.clientPublicKey !== frame.clientPublicKey ||
+      claims.sessionExpiresAt !== pending.sessionExpiresAt
+    ) {
+      throw new Error("The client ticket does not match the Signal connection.");
+    }
+    const transcript = teamProtocolV2AuthenticationTranscript({
+      hostId: peerId,
+      sessionId: claims.sessionId,
+      ticket: frame.ticket,
+      clientPublicKey: frame.clientPublicKey,
+      clientNonce: frame.clientNonce,
+      clientFingerprint: binding.remoteFingerprint,
+      hostFingerprint: binding.localFingerprint,
+    });
+    if (!verify(null, Buffer.from(transcript), frame.clientPublicKey, Buffer.from(frame.signature, "base64url"))) {
+      throw new Error("The client proof of possession is invalid.");
+    }
+    const hostNonce = randomBytes(32).toString("base64url");
+    const responseTranscript = teamProtocolV2AuthenticationTranscript({
+      hostId: peerId,
+      sessionId: claims.sessionId,
+      ticket: frame.ticket,
+      clientPublicKey: frame.clientPublicKey,
+      clientNonce: frame.clientNonce,
+      hostNonce,
+      clientFingerprint: binding.remoteFingerprint,
+      hostFingerprint: binding.localFingerprint,
+    });
+    this.#authenticationCompletion = { claims, clientNonce: frame.clientNonce, hostNonce };
+    await this.#bridge.send(
+      peerId,
+      "rpc",
+      encodeTeamProtocolV2Frame({
+        version: 2,
+        type: "auth-ready",
+        clientNonce: frame.clientNonce,
+        hostNonce,
+        signature: this.#store.signRemoteAuthentication(responseTranscript),
+      }),
+    );
+  }
+
+  async #completeAuthentication(
+    peerId: string,
+    frame: Extract<TeamProtocolV2AuthFrame, { type: "auth-complete" }>,
+  ): Promise<void> {
+    const completion = this.#authenticationCompletion;
+    if (
+      !completion ||
+      frame.clientNonce !== completion.clientNonce ||
+      frame.hostNonce !== completion.hostNonce ||
+      this.#sessionPreparation
+    ) {
+      throw new Error("The authentication completion is invalid.");
+    }
+    this.#authenticationCompletion = null;
+    this.#sessionPreparation = this.#openIncomingSession(peerId, completion.claims);
+    await this.#sessionPreparation;
+    this.#pendingConnection = null;
+  }
 
   readonly #onError = (peerId: string, code: string): void => {
     if (
@@ -563,6 +668,14 @@ function asJson(value: unknown): TeamProtocolV2Json {
 function deleteOldest<Key, Value>(values: Map<Key, Value>): void {
   const oldest = values.keys().next();
   if (!oldest.done) values.delete(oldest.value);
+}
+
+function authenticationFrame(data: string): TeamProtocolV2AuthFrame | null {
+  try {
+    return decodeTeamProtocolV2AuthFrame(data);
+  } catch {
+    return null;
+  }
 }
 
 class GatewayError extends Error {

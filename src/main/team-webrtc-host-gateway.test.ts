@@ -1,8 +1,14 @@
 // @vitest-environment node
 
+import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  decodeTeamProtocolV2AuthFrame,
+  encodeTeamProtocolV2Frame,
+  teamProtocolV2AuthenticationTranscript,
+} from "@openbot/contracts/team-protocol/v2";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TeamStore } from "./team-store";
 import { TeamWebRtcBridge } from "./team-webrtc-bridge";
@@ -17,6 +23,7 @@ afterEach(async () => {
 class FakeBridge extends TeamWebRtcBridge {
   readonly connections: Array<{ peerId: string; signalUrl: string; token: string; peer: "host" | "client" }> = [];
   readonly disconnectedPeers: string[] = [];
+  readonly sent: Array<{ peerId: string; channel: string; data: string | ArrayBuffer }> = [];
 
   async connect(input: { peerId: string; signalUrl: string; token: string; peer: "host" | "client" }): Promise<void> {
     this.connections.push(input);
@@ -28,7 +35,13 @@ class FakeBridge extends TeamWebRtcBridge {
     this.disconnectedPeers.push(peerId);
   }
 
-  async send(): Promise<void> {}
+  async send(
+    peerId: string,
+    channel: "rpc" | "events" | "files" | "desktop",
+    data: string | ArrayBuffer,
+  ): Promise<void> {
+    this.sent.push({ peerId, channel, data });
+  }
 }
 
 describe("TeamWebRtcHostGateway", () => {
@@ -49,6 +62,11 @@ describe("TeamWebRtcHostGateway", () => {
       .mockResolvedValue({ signalUrl: "wss://signal.example.test/v1/signal", ticket: "fresh" });
     const recoveryFailure = vi.fn();
     const closeSession = vi.fn().mockResolvedValue(undefined);
+    const clientKeys = generateKeyPairSync("ed25519", {
+      publicKeyEncoding: { type: "spki", format: "pem" },
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    });
+    const sessionExpiresAt = Math.floor(Date.now() / 1_000) + 60;
     const gateway = new TeamWebRtcHostGateway({
       bridge,
       store,
@@ -57,6 +75,16 @@ describe("TeamWebRtcHostGateway", () => {
       renewSignal,
       onSignalRecoveryFailure: recoveryFailure,
       closeSession,
+      verifyClientTicket: async () => ({
+        sessionId: "session-1",
+        hostId: "host-1",
+        userId: "member-account",
+        membershipId: "membership-1",
+        role: "member",
+        authEpoch: 1,
+        sessionExpiresAt,
+        clientPublicKey: clientKeys.publicKey,
+      }),
     });
 
     const starting = gateway.start({
@@ -82,8 +110,57 @@ describe("TeamWebRtcHostGateway", () => {
       userId: "member-account",
       membershipId: "membership-1",
       role: "member",
-      sessionExpiresAt: Math.floor(Date.now() / 1_000) + 60,
+      sessionExpiresAt,
     });
+    bridge.emit("connected", "host-1", {
+      localFingerprint: "HOST-FINGERPRINT",
+      remoteFingerprint: "CLIENT-FINGERPRINT",
+    });
+    const clientNonce = "c".repeat(43);
+    const ticket = "client-ticket";
+    bridge.emit(
+      "data",
+      "host-1",
+      "rpc",
+      encodeTeamProtocolV2Frame({
+        version: 2,
+        type: "auth-init",
+        ticket,
+        clientPublicKey: clientKeys.publicKey,
+        clientNonce,
+        signature: sign(
+          null,
+          Buffer.from(
+            teamProtocolV2AuthenticationTranscript({
+              hostId: "host-1",
+              sessionId: "session-1",
+              ticket,
+              clientPublicKey: clientKeys.publicKey,
+              clientNonce,
+              clientFingerprint: "CLIENT-FINGERPRINT",
+              hostFingerprint: "HOST-FINGERPRINT",
+            }),
+          ),
+          clientKeys.privateKey,
+        ).toString("base64url"),
+      }),
+    );
+    await vi.waitFor(() => expect(bridge.sent.some((message) => message.channel === "rpc")).toBe(true));
+    const readyMessage = bridge.sent.find((message) => message.channel === "rpc");
+    if (!readyMessage) throw new Error("Missing authentication response.");
+    const ready = decodeTeamProtocolV2AuthFrame(readyMessage.data);
+    if (ready.type !== "auth-ready") throw new Error("Unexpected authentication response.");
+    bridge.emit(
+      "data",
+      "host-1",
+      "rpc",
+      encodeTeamProtocolV2Frame({
+        version: 2,
+        type: "auth-complete",
+        clientNonce: ready.clientNonce,
+        hostNonce: ready.hostNonce,
+      }),
+    );
     bridge.emit("disconnected", "host-1");
     await vi.waitFor(() => expect(closeSession).toHaveBeenCalledWith("session-1"));
     await gateway.stop();

@@ -210,6 +210,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   #eventSockets = new Map<string, WebSocket>();
   #eventReconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
   #eventReconnectAttempts = new Map<string, number>();
+  #webrtcConnectionAttempts = new Set<string>();
   #conversationRefreshRequests = new Map<string, { revision: number }>();
   #queueRefreshRequests = new Map<string, { dirty: boolean }>();
   #eventAuthenticationPaused = new Set<string>();
@@ -242,6 +243,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         })
       : null;
     this.#webrtcTransport?.on("connected", (serverId) => {
+      const reconnectTimer = this.#eventReconnectTimers.get(serverId);
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      this.#eventReconnectTimers.delete(serverId);
+      this.#eventReconnectAttempts.delete(serverId);
       this.#states.set(serverId, "online");
       this.#compatibility.set(serverId, this.#webrtcCompatibility());
       this.#issues.delete(serverId);
@@ -252,9 +257,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this.#states.set(serverId, "offline");
       this.#setPresenceOffline(serverId);
       this.#emitChanged();
+      this.#scheduleEventReconnect(serverId);
     });
     this.#webrtcTransport?.on("event", (serverId, event) => this.#handleWebRtcEvent(serverId, event));
     this.#webrtcTransport?.on("error", (serverId, code, message) => {
+      if (code === "protocol_error") this.#eventAuthenticationPaused.add(serverId);
       this.#states.set(serverId, code === "protocol_error" ? "incompatible" : "error");
       this.#issues.set(serverId, {
         code: code === "protocol_error" ? "protocol_error" : "network_unavailable",
@@ -262,6 +269,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         retryable: code !== "protocol_error",
       });
       this.#emitChanged();
+      if (code !== "protocol_error") this.#scheduleEventReconnect(serverId);
     });
   }
 
@@ -326,10 +334,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   startEventConnections(): void {
     this.#eventsEnabled = true;
-    for (const server of this.#state.servers) {
-      if (server.transport === "webrtc-v2") void this.#webrtcTransport?.connect(server.id).catch(() => undefined);
-      else this.#ensureEventConnection(server.id);
-    }
+    for (const server of this.#state.servers) this.#ensureEventConnection(server.id);
   }
 
   refreshRuntimeSnapshots(): void {
@@ -1054,6 +1059,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     for (const timer of this.#eventReconnectTimers.values()) clearTimeout(timer);
     this.#eventReconnectTimers.clear();
     this.#eventReconnectAttempts.clear();
+    this.#webrtcConnectionAttempts.clear();
     this.#eventAuthenticationPaused.clear();
     this.#eventGenerations.clear();
     this.#conversationRefreshRequests.clear();
@@ -1090,6 +1096,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
             : !pinnedFingerprint || pinnedFingerprint === advertisedFingerprint
               ? host.devicePublicKey
               : null;
+        if (publicKey) this.#webrtcTransport?.pinHostKey(host.hostId, publicKey);
         return {
           id: host.hostId,
           name: host.name,
@@ -1641,9 +1648,23 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   #ensureEventConnection(serverId: string): void {
     const server = this.#state.servers.find((candidate) => candidate.id === serverId);
+    if (server?.transport === "webrtc-v2") {
+      if (
+        !this.#eventsEnabled ||
+        this.#eventReconnectTimers.has(serverId) ||
+        this.#eventAuthenticationPaused.has(serverId) ||
+        this.#webrtcConnectionAttempts.has(serverId)
+      )
+        return;
+      this.#webrtcConnectionAttempts.add(serverId);
+      void this.#webrtcTransport
+        ?.connect(serverId)
+        .catch(() => this.#scheduleEventReconnect(serverId))
+        .finally(() => this.#webrtcConnectionAttempts.delete(serverId));
+      return;
+    }
     if (
       !server ||
-      server.transport === "webrtc-v2" ||
       !this.#eventsEnabled ||
       this.#eventControllers.has(serverId) ||
       this.#eventReconnectTimers.has(serverId) ||

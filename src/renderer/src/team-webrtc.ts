@@ -53,7 +53,7 @@ type SignalClientMessage =
       sdpMid: string | null;
       sdpMLineIndex: number | null;
     }
-  | { type: "turn-refresh"; version: 1; connectionId: string };
+  | { type: "turn-refresh"; version: 1; connectionId: string | null };
 
 interface MainBridgeMessage {
   type: string;
@@ -70,6 +70,8 @@ interface MainBridgeMessage {
   membershipId?: string;
   role?: "owner" | "admin" | "member";
   sessionExpiresAt?: number;
+  localFingerprint?: string;
+  remoteFingerprint?: string;
   iceServers?: RTCIceServer[];
 }
 
@@ -343,7 +345,17 @@ function bindDataChannel(
   state.payloadDecoders[kind] = decoder;
   channel.onopen = () => {
     if (dataChannelNames.every((name) => state.channels[name]?.readyState === "open")) {
-      post({ type: "peer-connected", peerId: state.id, connectionId: state.connectionId });
+      try {
+        post({
+          type: "peer-connected",
+          peerId: state.id,
+          connectionId: state.connectionId,
+          localFingerprint: descriptionFingerprint(state.peerConnection?.localDescription ?? null),
+          remoteFingerprint: descriptionFingerprint(state.peerConnection?.remoteDescription ?? null),
+        });
+      } catch (error) {
+        failPeer(state, error);
+      }
     }
   };
   channel.onmessage = (event) => {
@@ -357,6 +369,12 @@ function bindDataChannel(
   };
   channel.onerror = () =>
     post({ type: "peer-error", peerId: state.id, code: "data_channel_error", message: `${kind} channel failed.` });
+}
+
+function descriptionFingerprint(description: RTCSessionDescription | null): string {
+  const fingerprint = description?.sdp.match(/^a=fingerprint:sha-256\s+([^\r\n]+)$/imu)?.[1]?.trim();
+  if (!fingerprint) throw new Error("The WebRTC DTLS fingerprint is unavailable.");
+  return fingerprint.toUpperCase();
 }
 
 async function sendChannelPayload(
@@ -460,8 +478,7 @@ function scheduleTurnRefresh(state: PeerState): void {
   if (state.turnRefreshTimer !== null) clearTimeout(state.turnRefreshTimer);
   state.turnRefreshTimer = window.setTimeout(() => {
     state.turnRefreshTimer = null;
-    if (!state.connectionId || !state.socket || state.socket.readyState !== WebSocket.OPEN)
-      return scheduleTurnRefresh(state);
+    if (!state.socket || state.socket.readyState !== WebSocket.OPEN) return scheduleTurnRefresh(state);
     try {
       sendSignal(state, { type: "turn-refresh", version: 1, connectionId: state.connectionId });
     } catch {

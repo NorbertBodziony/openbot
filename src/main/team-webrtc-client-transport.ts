@@ -1,13 +1,17 @@
+import { generateKeyPairSync, randomBytes, sign, verify } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { AgentEvent, TeamRealtimeEvent } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import {
+  decodeTeamProtocolV2AuthFrame,
   decodeTeamProtocolV2EventFrame,
   decodeTeamProtocolV2Json,
   decodeTeamProtocolV2RpcFrame,
   encodeTeamProtocolV2Frame,
+  type TeamProtocolV2AuthFrame,
   type TeamProtocolV2Json,
   type TeamProtocolV2RpcFrame,
+  teamProtocolV2AuthenticationTranscript,
 } from "@openbot/contracts/team-protocol/v2";
 import { decodeTeamProtocolV2CurrentEvent } from "@openbot/contracts/team-protocol/v2-adapter";
 import type {
@@ -35,7 +39,7 @@ interface TeamWebRtcClientTransportOptions {
   bridge: TeamWebRtcBridge;
   listHosts: () => Promise<RemoteHostSummary[]>;
   startSession: (hostId: string) => Promise<{ sessionId: string; hostId: string; expiresAt: number }>;
-  issueTicket: (sessionId: string) => Promise<RemoteConnectionBootstrap>;
+  issueTicket: (sessionId: string, clientPublicKey: string) => Promise<RemoteConnectionBootstrap>;
   endSession: (sessionId: string) => Promise<void>;
   createInvite: (
     hostId: string,
@@ -62,6 +66,16 @@ interface ActiveHost {
   connecting: Promise<void> | null;
   cancelled: boolean;
   expirationTimer: ReturnType<typeof setTimeout> | null;
+  authentication: {
+    ticket: string;
+    clientPublicKey: string;
+    clientPrivateKey: string;
+    clientNonce: string;
+    hostPublicKey: string;
+    binding: { localFingerprint: string; remoteFingerprint: string } | null;
+    started: boolean;
+    completed: boolean;
+  } | null;
 }
 
 export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTransportEvents> {
@@ -78,12 +92,16 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
     }
   >();
   readonly #lastEventSequence = new Map<string, number>();
+  readonly #hostPublicKeys = new Map<string, string>();
 
   constructor(options: TeamWebRtcClientTransportOptions) {
     super();
     this.#options = options;
-    this.#files = new TeamWebRtcFileTransfer(options.bridge, options.transferDirectory, undefined, (peerId) =>
-      this.#active.has(peerId),
+    this.#files = new TeamWebRtcFileTransfer(
+      options.bridge,
+      options.transferDirectory,
+      undefined,
+      (peerId) => this.#active.get(peerId)?.connected === true,
     );
     options.bridge.on("connected", this.#onConnected);
     options.bridge.on("disconnected", this.#onDisconnected);
@@ -92,8 +110,18 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
     options.bridge.on("error", this.#onError);
   }
 
-  listHosts(): Promise<RemoteHostSummary[]> {
-    return this.#options.listHosts();
+  async listHosts(): Promise<RemoteHostSummary[]> {
+    const hosts = await this.#options.listHosts();
+    for (const host of hosts) {
+      if (host.devicePublicKey && !this.#hostPublicKeys.has(host.hostId)) {
+        this.#hostPublicKeys.set(host.hostId, host.devicePublicKey);
+      }
+    }
+    return hosts;
+  }
+
+  pinHostKey(hostId: string, publicKey: string): void {
+    this.#hostPublicKeys.set(hostId, publicKey);
   }
 
   get controlPlaneUrl(): string {
@@ -272,6 +300,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       connecting: null,
       cancelled: false,
       expirationTimer: null,
+      authentication: null,
     };
     const operation = this.#connect(hostId, active, current?.sessionId || null).catch((error) => {
       if (this.#active.get(hostId) === active) this.#active.delete(hostId);
@@ -283,6 +312,16 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
   }
 
   async #connect(hostId: string, active: ActiveHost, existingSessionId: string | null): Promise<void> {
+    let hostPublicKey = this.#hostPublicKeys.get(hostId);
+    if (!hostPublicKey) {
+      const host = (await this.listHosts()).find((candidate) => candidate.hostId === hostId);
+      hostPublicKey = host?.devicePublicKey ?? undefined;
+    }
+    if (!hostPublicKey) throw new Error("The remote host does not have a pinned device key.");
+    const clientKeys = generateKeyPairSync("ed25519", {
+      publicKeyEncoding: { type: "spki", format: "pem" },
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    });
     let sessionId = existingSessionId;
     let startedNewSession = false;
     let bootstrap: RemoteConnectionBootstrap;
@@ -296,7 +335,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
         await this.#assertCurrent(hostId, active, sessionId);
       }
       try {
-        bootstrap = await this.#options.issueTicket(sessionId);
+        bootstrap = await this.#options.issueTicket(sessionId, clientKeys.publicKey);
         await this.#assertCurrent(hostId, active, sessionId);
       } catch (error) {
         if (!existingSessionId) throw error;
@@ -307,7 +346,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
         active.expiresAt = session.expiresAt;
         startedNewSession = true;
         await this.#assertCurrent(hostId, active, sessionId);
-        bootstrap = await this.#options.issueTicket(sessionId);
+        bootstrap = await this.#options.issueTicket(sessionId, clientKeys.publicKey);
         await this.#assertCurrent(hostId, active, sessionId);
       }
     } catch (error) {
@@ -341,6 +380,16 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       this.on("error", onError);
     });
     active.sessionId = sessionId;
+    active.authentication = {
+      ticket: bootstrap.ticket,
+      clientPublicKey: clientKeys.publicKey,
+      clientPrivateKey: clientKeys.privateKey,
+      clientNonce: randomBytes(32).toString("base64url"),
+      hostPublicKey,
+      binding: null,
+      started: false,
+      completed: false,
+    };
     try {
       await this.#options.bridge.connect({
         peerId: hostId,
@@ -393,12 +442,46 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
     active.expirationTimer.unref?.();
   }
 
-  readonly #onConnected = (hostId: string): void => {
+  readonly #onConnected = (hostId: string, binding?: { localFingerprint: string; remoteFingerprint: string }): void => {
     const active = this.#active.get(hostId);
     if (!active || active.cancelled) {
       void this.#options.bridge.disconnect(hostId).catch(() => undefined);
       return;
     }
+    const authentication = active.authentication;
+    if (!binding) {
+      this.#failProtocol(hostId, "The WebRTC channel binding is unavailable.");
+      return;
+    }
+    if (!authentication || authentication.started) return;
+    authentication.started = true;
+    authentication.binding = binding;
+    const transcript = teamProtocolV2AuthenticationTranscript({
+      hostId,
+      sessionId: active.sessionId,
+      ticket: authentication.ticket,
+      clientPublicKey: authentication.clientPublicKey,
+      clientNonce: authentication.clientNonce,
+      clientFingerprint: binding.localFingerprint,
+      hostFingerprint: binding.remoteFingerprint,
+    });
+    void this.#options.bridge
+      .send(
+        hostId,
+        "rpc",
+        encodeTeamProtocolV2Frame({
+          version: 2,
+          type: "auth-init",
+          ticket: authentication.ticket,
+          clientPublicKey: authentication.clientPublicKey,
+          clientNonce: authentication.clientNonce,
+          signature: sign(null, Buffer.from(transcript), authentication.clientPrivateKey).toString("base64url"),
+        }),
+      )
+      .catch(() => this.#failProtocol(hostId, "The client authentication handshake failed."));
+  };
+
+  #finishConnected(hostId: string, active: ActiveHost): void {
     active.connected = true;
     active.connecting = null;
     this.#sendRecoverable(
@@ -411,7 +494,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       }),
     );
     this.emit("connected", hostId);
-  };
+  }
 
   readonly #onDisconnected = (hostId: string): void => {
     const active = this.#active.get(hostId);
@@ -431,14 +514,67 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
     channel: "rpc" | "events" | "files" | "desktop",
     data: string | ArrayBuffer,
   ): void => {
+    const active = this.#active.get(hostId);
+    const authFrame = isString(data) && channel === "rpc" ? authenticationFrame(data) : null;
+    if (!active?.connected && authFrame?.type !== "auth-ready") {
+      this.#failProtocol(hostId, "The host sent data before end-to-end authentication.");
+      return;
+    }
     if (channel === "desktop") {
       this.emit("desktopData", hostId, data);
       return;
     }
     if (!isString(data)) return;
-    if (channel === "rpc") this.#handleRpc(hostId, data);
+    if (authFrame?.type === "auth-ready") void this.#handleAuthentication(hostId, authFrame);
+    else if (channel === "rpc") this.#handleRpc(hostId, data);
     else if (channel === "events") this.#handleEvent(hostId, data);
   };
+
+  async #handleAuthentication(
+    hostId: string,
+    frame: Extract<TeamProtocolV2AuthFrame, { type: "auth-ready" }>,
+  ): Promise<void> {
+    try {
+      const active = this.#active.get(hostId);
+      const authentication = active?.authentication;
+      if (!active || !authentication?.binding || active.connected || authentication.completed) {
+        throw new Error("Authentication is not pending.");
+      }
+      if (frame.clientNonce !== authentication.clientNonce) {
+        throw new Error("The host authentication response does not match the request.");
+      }
+      const transcript = teamProtocolV2AuthenticationTranscript({
+        hostId,
+        sessionId: active.sessionId,
+        ticket: authentication.ticket,
+        clientPublicKey: authentication.clientPublicKey,
+        clientNonce: authentication.clientNonce,
+        hostNonce: frame.hostNonce,
+        clientFingerprint: authentication.binding.localFingerprint,
+        hostFingerprint: authentication.binding.remoteFingerprint,
+      });
+      if (
+        !verify(null, Buffer.from(transcript), authentication.hostPublicKey, Buffer.from(frame.signature, "base64url"))
+      ) {
+        throw new Error("The host device signature is invalid.");
+      }
+      authentication.completed = true;
+      await this.#options.bridge.send(
+        hostId,
+        "rpc",
+        encodeTeamProtocolV2Frame({
+          version: 2,
+          type: "auth-complete",
+          clientNonce: authentication.clientNonce,
+          hostNonce: frame.hostNonce,
+        }),
+      );
+      if (this.#active.get(hostId) !== active || active.cancelled) return;
+      this.#finishConnected(hostId, active);
+    } catch {
+      this.#failProtocol(hostId, "The host failed end-to-end authentication.");
+    }
+  }
 
   #handleRpc(hostId: string, data: string): void {
     let frame: TeamProtocolV2RpcFrame;
@@ -494,7 +630,11 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
         return;
       }
       const decoded = decodeTeamProtocolV2CurrentEvent(frame);
-      if (decoded) this.emit("event", hostId, decoded);
+      if (decoded.status === "invalid") {
+        this.#failProtocol(hostId, "The host returned a malformed known event.");
+        return;
+      }
+      if (decoded.status === "known") this.emit("event", hostId, decoded.event);
       this.#lastEventSequence.set(hostId, frame.sequence);
       this.#sendRecoverable(
         hostId,
@@ -543,6 +683,14 @@ export class TeamWebRtcRequestError extends Error {
 function wireJson(value: unknown): TeamProtocolV2Json {
   if (value === undefined) return null;
   return decodeTeamProtocolV2Json(JSON.parse(JSON.stringify(value)));
+}
+
+function authenticationFrame(data: string): TeamProtocolV2AuthFrame | null {
+  try {
+    return decodeTeamProtocolV2AuthFrame(data);
+  } catch {
+    return null;
+  }
 }
 
 function binaryBody(value: unknown): Uint8Array | null {

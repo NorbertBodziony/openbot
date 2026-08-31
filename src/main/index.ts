@@ -1694,6 +1694,10 @@ if (!hasSingleInstanceLock) {
           if (!centralAuthManager) throw new Error("The account service is not ready.");
           return centralAuthManager.issueRemoteHostTicket(hostId);
         },
+        verifyRemoteSessionTicket: (ticket) => {
+          if (!centralAuthManager) throw new Error("The account service is not ready.");
+          return centralAuthManager.verifyRemoteSessionTicket(ticket);
+        },
         remoteControlPlaneUrl: centralAuth.resolveApiUrl("/"),
         createRemoteInvite: (hostId, input) => centralAuth.createRemoteInvite(hostId, input),
         listRemoteInvites: (hostId) => centralAuth.listRemoteInvites(hostId),
@@ -1815,9 +1819,9 @@ if (!hasSingleInstanceLock) {
               if (!centralAuthManager) throw new Error("The account service is not ready.");
               return centralAuthManager.startRemoteSession(hostId);
             },
-            issueTicket: (sessionId) => {
+            issueTicket: (sessionId, clientPublicKey) => {
               if (!centralAuthManager) throw new Error("The account service is not ready.");
-              return centralAuthManager.issueRemoteSessionTicket(sessionId);
+              return centralAuthManager.issueRemoteSessionTicket(sessionId, clientPublicKey);
             },
             endSession: (sessionId) => {
               if (!centralAuthManager) return Promise.resolve();

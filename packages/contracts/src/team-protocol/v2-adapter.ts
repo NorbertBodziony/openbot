@@ -1,5 +1,6 @@
 import { type AgentEvent, isAgentEvent } from "../ipc-conversation";
 import { isTeamRealtimeEvent, type TeamRealtimeEvent } from "../ipc-team-host";
+import { isDynamicRecord, isString } from "../runtime-values";
 import {
   decodeTeamProtocolV2EventFrame,
   decodeTeamProtocolV2Json,
@@ -36,12 +37,51 @@ export function createTeamProtocolV2Event(
 
 export function decodeTeamProtocolV2CurrentEvent(
   frame: TeamProtocolV2EventFrame,
-): AgentEvent | TeamRealtimeEvent | null {
+): { status: "known"; event: AgentEvent | TeamRealtimeEvent } | { status: "unknown" } | { status: "invalid" } {
   const decoded = decodeTeamProtocolV2EventFrame(frame);
-  if (decoded.type !== "event") return null;
-  if (isAgentEvent(decoded.payload) || isTeamRealtimeEvent(decoded.payload)) return structuredClone(decoded.payload);
-  return null;
+  if (decoded.type !== "event") return { status: "invalid" };
+  if (isAgentEvent(decoded.payload) || isTeamRealtimeEvent(decoded.payload)) {
+    return { status: "known", event: structuredClone(decoded.payload) };
+  }
+  if (
+    isDynamicRecord(decoded.payload) &&
+    isString(decoded.payload.type) &&
+    KNOWN_EVENT_TYPES.has(decoded.payload.type)
+  ) {
+    return { status: "invalid" };
+  }
+  return { status: "unknown" };
 }
+
+const KNOWN_EVENT_TYPES = new Set([
+  "status",
+  "usage-changed",
+  "bots-changed",
+  "memories-changed",
+  "routines-changed",
+  "sidebar-layout-changed",
+  "conversation",
+  "conversation-invalidated",
+  "conversation-page",
+  "conversation-delta",
+  "queue-invalidated",
+  "queue-changed",
+  "turn-started",
+  "turn-completed",
+  "prompt",
+  "agent-input-resolved",
+  "browser-takeover-requested",
+  "browser-takeover-resolved",
+  "approval",
+  "runtime-snapshot",
+  "browser-changed",
+  "browser-control-changed",
+  "error",
+  "team-identity",
+  "team-presence",
+  "team-direct-message",
+  "team-direct-typing",
+]);
 
 function wireJson(value: unknown): TeamProtocolV2Json {
   const encoded = JSON.stringify(value);
