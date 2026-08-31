@@ -3331,13 +3331,22 @@ describe("OpenBot connected desktop shell", () => {
   });
 
   it("persists rapid model and effort changes in order as complete settings", async () => {
+    const chief = BOTS.find((bot) => bot.id === "chief");
+    if (!chief) throw new Error("Chief fixture is missing");
     let resolveModelUpdate!: (bot: BotSummary) => void;
-    vi.mocked(window.openbot.agent.updateBot).mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          resolveModelUpdate = resolve;
-        }),
-    );
+    vi.mocked(window.openbot.agent.updateBot)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveModelUpdate = resolve;
+          }),
+      )
+      .mockImplementationOnce(async (input) => ({
+        ...chief,
+        ...input,
+        provider: "claude",
+        model: "claude-opus-5",
+      }));
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
 
@@ -3351,8 +3360,6 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(window.openbot.agent.updateBot).toHaveBeenCalledTimes(1);
     expect(effort).toHaveTextContent("High");
-    const chief = BOTS.find((bot) => bot.id === "chief");
-    if (!chief) throw new Error("Chief fixture is missing");
     resolveModelUpdate({
       ...chief,
       provider: "claude",
@@ -3383,17 +3390,85 @@ describe("OpenBot connected desktop shell", () => {
       reasoningEffort: "high",
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByRole("button", { name: "Agent model: Claude Opus 5" })).toBeEnabled();
     expect(effort).toHaveTextContent("High");
   });
 
-  it("orders Agent Settings effort changes after pending header model changes", async () => {
-    let resolveHeaderUpdate!: (bot: BotSummary) => void;
+  it("rolls back a queued effort when its model save fails", async () => {
+    let rejectModelUpdate!: (error: Error) => void;
+    vi.mocked(window.openbot.agent.updateBot).mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectModelUpdate = reject;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    await fireEvent.click(within(picker).getByRole("option", { name: "Sol" }));
+    const effort = within(picker).getByRole("button", { name: /Agent reasoning effort/ });
+    await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
+    await fireEvent.click(screen.getByRole("option", { name: "Extra high" }));
+
+    expect(window.openbot.agent.updateBot).toHaveBeenCalledTimes(1);
+    rejectModelUpdate(new Error("Model failed"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not change effort. Try again.");
+    expect(window.openbot.agent.updateBot).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Agent model: Luna" })).toBeEnabled();
+    expect(effort).toHaveTextContent("Medium");
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
+  });
+
+  it("reconciles a concurrent model update after an effort save succeeds", async () => {
+    let resolveEffortUpdate!: (bot: BotSummary) => void;
     vi.mocked(window.openbot.agent.updateBot).mockImplementationOnce(
       () =>
         new Promise((resolve) => {
-          resolveHeaderUpdate = resolve;
+          resolveEffortUpdate = resolve;
         }),
     );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    const effort = within(picker).getByRole("button", { name: /Agent reasoning effort/ });
+    await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
+    await fireEvent.click(screen.getByRole("option", { name: "High" }));
+
+    const chief = BOTS.find((bot) => bot.id === "chief");
+    if (!chief) throw new Error("Chief fixture is missing");
+    const concurrentBot = { ...chief, model: "gpt-5.6-sol" as const, reasoningEffort: "high" as const };
+    emitAgentEvent?.({ type: "bots-changed", bots: BOTS.map((bot) => (bot.id === "chief" ? concurrentBot : bot)) });
+    expect(screen.getByRole("button", { name: "Agent model: Luna" })).toBeEnabled();
+
+    resolveEffortUpdate(concurrentBot);
+
+    expect(await screen.findByRole("button", { name: "Agent model: Sol" })).toBeEnabled();
+    expect(effort).toHaveTextContent("High");
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Sol" }));
+  });
+
+  it("orders Agent Settings effort changes after pending header model changes", async () => {
+    const chief = BOTS.find((bot) => bot.id === "chief");
+    if (!chief) throw new Error("Chief fixture is missing");
+    let resolveHeaderUpdate!: (bot: BotSummary) => void;
+    vi.mocked(window.openbot.agent.updateBot)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveHeaderUpdate = resolve;
+          }),
+      )
+      .mockImplementationOnce(async (input) => ({
+        ...chief,
+        ...input,
+        provider: "claude",
+        model: "claude-opus-5",
+      }));
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
 
@@ -3410,8 +3485,6 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(screen.getByRole("option", { name: "High" }));
 
     expect(window.openbot.agent.updateBot).toHaveBeenCalledTimes(1);
-    const chief = BOTS.find((bot) => bot.id === "chief");
-    if (!chief) throw new Error("Chief fixture is missing");
     resolveHeaderUpdate({
       ...chief,
       provider: "claude",
@@ -3442,6 +3515,7 @@ describe("OpenBot connected desktop shell", () => {
       reasoningEffort: "high",
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(within(settings).getByRole("button", { name: "Agent model: Claude Opus 5" })).toBeEnabled();
     expect(effort).toHaveTextContent("High");
   });
 
