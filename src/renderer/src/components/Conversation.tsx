@@ -47,7 +47,7 @@ interface ConversationResources {
     | undefined;
   voiceDisposed: boolean;
   filePreviewRequestGeneration: number;
-  runtimeSettingsSaveTails: Map<string, Promise<void>>;
+  runtimeSettingsSaveTails: Map<string, Promise<boolean>>;
   runtimeSettingsAttempts: Map<
     string,
     {

@@ -160,6 +160,10 @@ function runtimeSettingsEqual(left: AgentRuntimeSettings, right: AgentRuntimeSet
   );
 }
 
+function isCompleteRuntimeSettingsPatch(updates: AgentRuntimeSettingsPatch): updates is AgentRuntimeSettings {
+  return "provider" in updates && "model" in updates;
+}
+
 function rendererDuration(property: string, fallback: number): number {
   if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return 0;
   const value = getComputedStyle(document.documentElement).getPropertyValue(property).trim();
@@ -886,17 +890,20 @@ function createConversationViewScope(props: ConversationProps) {
     if (errorMessage) setComposerError(null);
 
     const previousSave = resources.runtimeSettingsSaveTails.get(botId);
-    let releaseSave!: () => void;
-    const saveTail = new Promise<void>((resolve) => {
+    let releaseSave!: (baseValid: boolean) => void;
+    const saveTail = new Promise<boolean>((resolve) => {
       releaseSave = resolve;
     });
     resources.runtimeSettingsSaveTails.set(botId, saveTail);
     let saved: boolean;
+    let baseValid = true;
     try {
-      if (previousSave) await previousSave;
-      saved = await saveBotPatch(updates, botId);
+      if (previousSave) baseValid = await previousSave;
+      const completePatch = isCompleteRuntimeSettingsPatch(updates);
+      saved = baseValid || completePatch ? await saveBotPatch(updates, botId) : false;
+      if (completePatch) baseValid = saved;
     } finally {
-      releaseSave();
+      releaseSave(baseValid);
       if (resources.runtimeSettingsSaveTails.get(botId) === saveTail) {
         resources.runtimeSettingsSaveTails.delete(botId);
       }
@@ -904,7 +911,15 @@ function createConversationViewScope(props: ConversationProps) {
     const latestAttempt = resources.runtimeSettingsAttempts.get(botId);
     if (latestAttempt?.generation !== generation) return true;
     latestAttempt.pending = false;
-    if (saved) return true;
+    if (saved) {
+      const activeBot = props.bot;
+      if (activeBot?.id === botId) {
+        setSettingsProvider(activeBot.provider);
+        setSettingsModel(activeBot.model);
+        setSettingsReasoning(activeBot.reasoningEffort);
+      }
+      return true;
+    }
 
     const activeBot = props.bot;
     const currentSettings = {
