@@ -92,6 +92,11 @@ function FullSettingsPanelStory() {
     <main class="agent-memories-story-stage">
       <AgentSettingsPanel
         bot={STORY_BOTS[0]}
+        runtimeSettings={{
+          provider: STORY_BOTS[0].provider,
+          model: STORY_BOTS[0].model,
+          reasoningEffort: STORY_BOTS[0].reasoningEffort,
+        }}
         agentStatus={STORY_AGENT_STATUS}
         modelOptions={STORY_MODELS}
         working={false}
@@ -100,6 +105,10 @@ function FullSettingsPanelStory() {
         onWidthChange={fn()}
         onUpdateBot={async (botId, updates) => {
           await mock.api.agent.updateBot({ botId, ...updates });
+        }}
+        onUpdateRuntimeSettings={async (botId, _settings, updates) => {
+          await mock.api.agent.updateBot({ botId, ...updates });
+          return true;
         }}
         onSetAgentAvatar={async (botId, image) => {
           await mock.api.agent.setAvatar({ botId, image });

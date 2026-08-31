@@ -21,7 +21,9 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const Pill: Story = {};
+export const Pill: Story = {
+  args: { reasoningEffort: "medium", onReasoningEffortChange: fn() },
+};
 
 export const Field: Story = {
   args: { variant: "field", label: "Model" },
@@ -32,6 +34,7 @@ export const Disabled: Story = {
 };
 
 export const Opens: Story = {
+  args: { reasoningEffort: "medium", onReasoningEffortChange: fn() },
   play: async ({ canvas, userEvent }) => {
     await userEvent.click(canvas.getByRole("button", { name: /Agent model: Luna/ }));
     await canvas.findByRole("dialog", { name: "Choose agent model" });
