@@ -161,6 +161,50 @@ function serverSupportsCapability(server: ServerSummary | undefined, capability:
 type PromptEvent = Extract<AgentEvent, { type: "prompt" }>;
 type BrowserTakeoverEvent = Extract<AgentEvent, { type: "browser-takeover-requested" }>;
 
+function preserveKnownAgentUnread(
+  state: ConversationReadState,
+  boundary: string | null,
+  messages: BotMessage[],
+): ConversationReadState {
+  const throughMessageId = state.throughMessageId ?? boundary;
+  const throughIndex = throughMessageId ? messages.findIndex((message) => message.id === throughMessageId) : -1;
+  if (throughMessageId && throughIndex < 0) return state;
+  const unread = messages
+    .slice(throughIndex + 1)
+    .filter(
+      (message) =>
+        message.author !== "you" &&
+        message.itemType !== "commentary" &&
+        message.itemType !== "agent_attachment" &&
+        !message.id.startsWith("thinking:") &&
+        !message.id.startsWith("ui-"),
+    );
+  if (unread.length <= state.unreadCount) return state;
+  return {
+    ...state,
+    unreadCount: unread.length,
+    firstUnreadMessageId: unread[0]?.id ?? null,
+  };
+}
+
+function preserveKnownDirectUnread(
+  state: NonNullable<DirectConversationSnapshot["readState"]>,
+  boundary: number,
+  messages: DirectMessage[],
+  currentMemberId: string | undefined,
+): NonNullable<DirectConversationSnapshot["readState"]> {
+  const throughSequence = Math.max(state.throughSequence, boundary);
+  const unread = messages.filter(
+    (message) => message.senderMemberId !== currentMemberId && message.sequence > throughSequence,
+  );
+  if (unread.length <= state.unreadCount) return state;
+  return {
+    ...state,
+    unreadCount: unread.length,
+    firstUnreadMessageId: unread[0]?.id ?? null,
+  };
+}
+
 function promptRequestKey(turnId: string | undefined, requestId: string | number | undefined): string | null {
   if (!turnId || requestId === undefined) return null;
   return JSON.stringify([turnId, String(requestId)]);
@@ -1989,7 +2033,12 @@ export function createAppController(props: AppProps = {}) {
         if (activeServerSidebarKey() !== serverId) return;
         setDirectConversations((current) => {
           const currentSnapshot = current[memberId];
-          return currentSnapshot ? { ...current, [memberId]: { ...currentSnapshot, readState } } : current;
+          if (!currentSnapshot) return current;
+          const nextReadState =
+            appFocused() && activeDirectMemberId() === memberId
+              ? readState
+              : preserveKnownDirectUnread(readState, boundary, currentSnapshot.messages, currentTeamMember()?.id);
+          return { ...current, [memberId]: { ...currentSnapshot, readState: nextReadState } };
         });
         await refreshDirectThreads();
         const latestSequence = directConversations()[memberId]?.messages.at(-1)?.sequence ?? boundary;
@@ -2345,12 +2394,15 @@ export function createAppController(props: AppProps = {}) {
           serverId,
         );
         agentChatsToRetryRead.delete(requestKey);
-        onSuccess?.(state);
+        const nextState = isAgentChatReadable(botId)
+          ? state
+          : preserveKnownAgentUnread(state, boundary, liveMessages()[botId] ?? []);
+        onSuccess?.(nextState);
         const trackedAutoRead = autoReadAgentMessages.get(requestKey);
         const supersededByAutoRead = Boolean(trackedAutoRead && trackedAutoRead.messageId !== boundary);
         if (activeServerSidebarKey() === serverId && !supersededByAutoRead) {
-          applyConversationReadState(botId, state);
-          clearRecentReply(botId);
+          applyConversationReadState(botId, nextState);
+          if (nextState.unreadCount === 0) clearRecentReply(botId);
         }
         const latestMessageId = latestVisibleAgentMessageId(botId);
         if (
