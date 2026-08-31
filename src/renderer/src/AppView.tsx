@@ -399,7 +399,7 @@ function WorkspaceShell(props: {
           withServerRail={appInfo()?.platform === "darwin" || appInfo()?.platform === "win32"}
           onRefreshUsage={refreshAccountUsage}
           onUpdateAction={runUpdateAction}
-          onLogout={logoutCentralAccount}
+          onLogout={appProps.landingPreview ? undefined : logoutCentralAccount}
           onOpenExternal={(destination) => window.openbot.openExternal(destination)}
           onOpenPermissions={() => setPermissionsOpen(true)}
           onOpenSettings={openAppSettings}

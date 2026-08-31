@@ -1877,9 +1877,12 @@ describe("OpenBot connected desktop shell", () => {
 
     const accountButton = screen.getByRole("button", { name: "Open account actions" });
     await fireEvent.click(accountButton);
-    expect(screen.getByRole("dialog", { name: "Account actions" })).toBeInTheDocument();
+    const accountDialog = screen.getByRole("dialog", { name: "Account actions" });
+    expect(accountDialog).toBeInTheDocument();
     expect(screen.getByText("Norbert")).toBeInTheDocument();
     expect(screen.getByText("norbertbodziony@gmail.com")).toBeInTheDocument();
+    expect(within(accountDialog).queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
+    expect(window.openbot.auth.logout).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "Open computer" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /remote control/iu })).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Add remote server" }));
