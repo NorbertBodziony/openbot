@@ -1,4 +1,4 @@
-import type { AgentModelId, AgentReasoningEffort, BrowserBounds } from "@openbot/contracts/ipc";
+import type { AgentModelId, AgentProviderId, AgentReasoningEffort, BrowserBounds } from "@openbot/contracts/ipc";
 import { createContext, createSignal, onCleanup, type ParentProps, useContext } from "solid-js";
 import {
   type ComposerDraft,
@@ -47,6 +47,19 @@ interface ConversationResources {
     | undefined;
   voiceDisposed: boolean;
   filePreviewRequestGeneration: number;
+  runtimeSettingsSaveTails: Map<string, Promise<boolean>>;
+  runtimeSettingsAttempts: Map<
+    string,
+    {
+      generation: number;
+      pending: boolean;
+      settings: {
+        provider: AgentProviderId;
+        model: AgentModelId;
+        reasoningEffort: AgentReasoningEffort;
+      };
+    }
+  >;
 }
 
 /** @internal Stable owner for renderer state that must survive Conversation view HMR. */
@@ -72,6 +85,7 @@ export function createConversationController(props: Pick<ConversationProps, "onT
   const [selectionSending, setSelectionSending] = createSignal(false);
   const [dropActive, setDropActive] = createSignal(false);
   const [rightPanels, setRightPanels] = createSignal<Record<string, RightPanelMode>>({});
+  const [settingsProvider, setSettingsProvider] = createSignal<AgentProviderId>("codex");
   const [settingsModel, setSettingsModel] = createSignal<AgentModelId>("gpt-5.6-luna");
   const [settingsReasoning, setSettingsReasoning] = createSignal<AgentReasoningEffort>("medium");
   const [browserAddress, setBrowserAddress] = createSignal("https://www.google.com");
@@ -109,6 +123,8 @@ export function createConversationController(props: Pick<ConversationProps, "onT
     voiceSubmitRequest: undefined,
     voiceDisposed: false,
     filePreviewRequestGeneration: 0,
+    runtimeSettingsSaveTails: new Map(),
+    runtimeSettingsAttempts: new Map(),
   };
 
   onCleanup(() => {
@@ -160,6 +176,8 @@ export function createConversationController(props: Pick<ConversationProps, "onT
     setDropActive,
     rightPanels,
     setRightPanels,
+    settingsProvider,
+    setSettingsProvider,
     settingsModel,
     setSettingsModel,
     settingsReasoning,

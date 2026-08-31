@@ -39,8 +39,17 @@ const SETTINGS_PANEL_DEFAULT = 296;
 const SETTINGS_PANEL_MIN = 180;
 const SETTINGS_PANEL_MAX = 1600;
 
+export interface AgentRuntimeSettings {
+  provider: AgentProviderId;
+  model: AgentModelId;
+  reasoningEffort: AgentReasoningEffort;
+}
+
+export type AgentRuntimeSettingsPatch = AgentRuntimeSettings | Pick<AgentRuntimeSettings, "reasoningEffort">;
+
 interface AgentSettingsPanelProps {
   bot: BotProfile;
+  runtimeSettings: AgentRuntimeSettings;
   agentStatus: AgentStatus;
   modelOptions: AgentModelOption[];
   working: boolean;
@@ -52,6 +61,11 @@ interface AgentSettingsPanelProps {
   onClose: () => void;
   onWidthChange: (width: number) => void;
   onUpdateBot: (botId: string, updates: Omit<UpdateBotInput, "botId">) => Promise<void>;
+  onUpdateRuntimeSettings: (
+    botId: string,
+    settings: AgentRuntimeSettings,
+    updates: AgentRuntimeSettingsPatch,
+  ) => Promise<boolean>;
   onSetAgentAvatar: (botId: string, image: AvatarImageInput | null) => Promise<void>;
   routineSelectionRequest?: RoutineSelectionRequest | null;
   onRoutineSelectionRequestHandled?: (nonce: number) => void;
@@ -103,23 +117,25 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
   createEffect(
     () => {
       const bot = props.bot;
+      const runtimeSettings = props.runtimeSettings;
       return {
         bot,
+        runtimeSettings,
         signature: [
           bot.id,
           bot.name,
           bot.title,
           bot.description,
           String(bot.notifications),
-          bot.provider,
-          bot.model,
-          bot.reasoningEffort,
+          runtimeSettings.provider,
+          runtimeSettings.model,
+          runtimeSettings.reasoningEffort,
           bot.avatarSeed,
           String(bot.avatarHue),
         ].join("\u0000"),
       };
     },
-    ({ bot, signature }) => {
+    ({ bot, runtimeSettings, signature }) => {
       if (signature === lastSignature) return;
       const botChanged = bot.id !== lastBotId;
       const currentDirty = botChanged ? { name: false, title: false, description: false } : dirty();
@@ -130,9 +146,9 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
       if (!currentDirty.title) setTitle(bot.title);
       if (!currentDirty.description) setDescription(bot.description);
       setNotifications(bot.notifications);
-      setProvider(bot.provider);
-      setModel(bot.model);
-      setReasoning(bot.reasoningEffort);
+      setProvider(runtimeSettings.provider);
+      setModel(runtimeSettings.model);
+      setReasoning(runtimeSettings.reasoningEffort);
       setAvatarSeed(bot.avatarSeed);
       setAvatarHue(bot.avatarHue);
       if (botChanged) {
@@ -177,6 +193,24 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
       return true;
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Could not save agent settings.");
+      return false;
+    }
+  }
+
+  async function saveRuntimeSettings(
+    settings: AgentRuntimeSettings,
+    updates: AgentRuntimeSettingsPatch,
+    botId = props.bot.id,
+  ): Promise<boolean> {
+    setSaveError(null);
+    try {
+      const saved = await props.onUpdateRuntimeSettings(botId, settings, updates);
+      if (!saved && props.bot.id === botId) setSaveError("Could not save agent settings.");
+      return saved;
+    } catch (error) {
+      if (props.bot.id === botId) {
+        setSaveError(error instanceof Error ? error.message : "Could not save agent settings.");
+      }
       return false;
     }
   }
@@ -260,13 +294,39 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
     const previousModel = model();
     const previousProvider = provider();
     const previousReasoning = reasoning();
+    const botId = props.bot.id;
+    const settings = { provider: nextProvider, model: nextModel, reasoningEffort: nextReasoning };
     setProvider(nextProvider);
     setModel(nextModel);
     setReasoning(nextReasoning);
-    if (await saveBotPatch({ provider: nextProvider, model: nextModel, reasoningEffort: nextReasoning })) return;
+    if (await saveRuntimeSettings(settings, settings, botId)) return;
+    if (
+      props.bot.id !== botId ||
+      provider() !== settings.provider ||
+      model() !== settings.model ||
+      reasoning() !== settings.reasoningEffort
+    ) {
+      return;
+    }
     setProvider(previousProvider);
     setModel(previousModel);
     setReasoning(previousReasoning);
+  }
+
+  async function selectReasoning(nextReasoning: AgentReasoningEffort): Promise<void> {
+    const botId = props.bot.id;
+    const previousReasoning = reasoning();
+    const settings = { provider: provider(), model: model(), reasoningEffort: nextReasoning };
+    setReasoning(nextReasoning);
+    if (await saveRuntimeSettings(settings, { reasoningEffort: nextReasoning }, botId)) return;
+    if (
+      props.bot.id === botId &&
+      provider() === settings.provider &&
+      model() === settings.model &&
+      reasoning() === nextReasoning
+    ) {
+      setReasoning(previousReasoning);
+    }
   }
 
   return (
@@ -554,9 +614,8 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
                   options={reasoningOptions()}
                   value={reasoning()}
                   onChange={(nextReasoning) => {
-                    if (!nextReasoning) return;
-                    setReasoning(nextReasoning);
-                    void saveBotPatch({ reasoningEffort: nextReasoning });
+                    if (!nextReasoning || nextReasoning === reasoning()) return;
+                    void selectReasoning(nextReasoning);
                   }}
                   itemComponent={(item) => (
                     <SelectItem item={item.item}>{reasoningLabel(item.item.rawValue)}</SelectItem>

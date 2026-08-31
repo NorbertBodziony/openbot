@@ -44,6 +44,7 @@ describe("AgentSettingsPanel", () => {
     render(() => (
       <AgentSettingsPanel
         bot={bot}
+        runtimeSettings={{ provider: bot.provider, model: bot.model, reasoningEffort: bot.reasoningEffort }}
         agentStatus={STORY_AGENT_STATUS}
         modelOptions={STORY_MODELS}
         working={false}
@@ -51,6 +52,7 @@ describe("AgentSettingsPanel", () => {
         onClose={vi.fn()}
         onWidthChange={vi.fn()}
         onUpdateBot={vi.fn(async () => undefined)}
+        onUpdateRuntimeSettings={vi.fn(async () => true)}
         onSetAgentAvatar={vi.fn(async () => undefined)}
         routineSelectionRequest={{ routineId: routine.id, routineName: routine.name, nonce: 1 }}
         onRoutineSelectionRequestHandled={onRoutineSelectionRequestHandled}

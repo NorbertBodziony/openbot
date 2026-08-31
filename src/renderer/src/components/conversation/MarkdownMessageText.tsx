@@ -42,6 +42,22 @@ interface MarkdownTokenByType {
   escape: Tokens.Escape;
 }
 
+const VOID_HTML_ELEMENTS = new Set([
+  "area",
+  "base",
+  "br",
+  "col",
+  "embed",
+  "hr",
+  "img",
+  "input",
+  "link",
+  "meta",
+  "source",
+  "track",
+  "wbr",
+]);
+
 function tokenIs<K extends keyof MarkdownTokenByType>(token: Token, type: K): token is MarkdownTokenByType[K] {
   return token.type === type;
 }
@@ -291,7 +307,7 @@ function MarkdownTable(props: { token: Tokens.Table; content: MarkdownContentPro
 }
 
 function MarkdownInline(props: { tokens: Token[]; content: MarkdownContentProps; streamingTail?: boolean }) {
-  const tokens = createMemo(() => props.tokens);
+  const tokens = createMemo(() => repairEscapedLocalFileLinkTokens(props.tokens));
   const renderedTokens = createMemo(() => {
     const values = tokens();
     const lastTokenIndex = lastRenderableTokenIndex(values);
@@ -365,14 +381,14 @@ function MarkdownInline(props: { tokens: Token[]; content: MarkdownContentProps;
             ) : sharedPath && props.content.onOpenSharedFile ? (
               <LocalFileLink
                 path={sharedPath}
-                label={token.text}
+                label={markdownInlinePlainText(token.tokens) || token.text}
                 kind="shared"
                 onOpen={props.content.onOpenSharedFile}
               />
             ) : workspacePath && props.content.onOpenWorkspaceFile ? (
               <LocalFileLink
                 path={workspacePath}
-                label={token.text}
+                label={markdownInlinePlainText(token.tokens) || token.text}
                 kind="workspace"
                 onOpen={props.content.onOpenWorkspaceFile}
               />
@@ -439,6 +455,21 @@ function lastRenderableTokenIndex(tokens: Token[]): number {
   return -1;
 }
 
+function markdownInlinePlainText(tokens: Token[]): string {
+  return tokens
+    .map((token) => {
+      if (tokenIs(token, "strong")) return markdownInlinePlainText(token.tokens);
+      if (tokenIs(token, "em")) return markdownInlinePlainText(token.tokens);
+      if (tokenIs(token, "del")) return markdownInlinePlainText(token.tokens);
+      if (tokenIs(token, "link")) return markdownInlinePlainText(token.tokens);
+      if (tokenIs(token, "text")) return token.tokens ? markdownInlinePlainText(token.tokens) : token.text;
+      if (tokenIs(token, "codespan") || tokenIs(token, "escape") || tokenIs(token, "image")) return token.text;
+      if (token.type === "br") return "\n";
+      return token.raw;
+    })
+    .join("");
+}
+
 function LocalFileLink(props: {
   path: string;
   label: string;
@@ -471,6 +502,104 @@ function sharedFileTarget(value: string): string | null {
     normalized.includes("/OpenBot/Shared/")
     ? path
     : null;
+}
+
+function repairEscapedLocalFileLinkTokens(tokens: Token[]): Token[] {
+  const raw = tokens.map((token) => token.raw).join("");
+  if (!raw.includes("\\(<")) return tokens;
+  const result: Token[] = [];
+  let candidates: Token[] = [];
+  const openHtmlElements: string[] = [];
+  const flushCandidates = () => {
+    if (candidates.length === 0) return;
+    const source = candidates.map((token) => token.raw).join("");
+    const maskedSource = candidates.map(maskProtectedMarkdownToken).join("");
+    const repaired = normalizeEscapedLocalFileLinkCandidate(source, maskedSource);
+    result.push(...(repaired === source ? candidates : marked.Lexer.lexInline(repaired, { breaks: true, gfm: true })));
+    candidates = [];
+  };
+  for (const token of tokens) {
+    if (token.type === "html") {
+      flushCandidates();
+      result.push(token);
+      updateOpenHtmlElements(openHtmlElements, token.raw);
+      continue;
+    }
+    if (openHtmlElements.length > 0) {
+      flushCandidates();
+      result.push(token);
+      continue;
+    }
+    candidates.push(token);
+  }
+  flushCandidates();
+  return result;
+}
+
+function maskProtectedMarkdownToken(token: Token): string {
+  if (token.type === "html" || tokenIs(token, "codespan")) return " ".repeat(token.raw.length);
+  const children =
+    tokenIs(token, "strong") ||
+    tokenIs(token, "em") ||
+    tokenIs(token, "del") ||
+    tokenIs(token, "link") ||
+    tokenIs(token, "text")
+      ? token.tokens
+      : undefined;
+  if (!children?.length) return token.raw;
+
+  let masked = token.raw;
+  let searchStart = 0;
+  for (const child of children) {
+    const childStart = token.raw.indexOf(child.raw, searchStart);
+    if (childStart < 0) continue;
+    const protectedChild = maskProtectedMarkdownToken(child);
+    masked = `${masked.slice(0, childStart)}${protectedChild}${masked.slice(childStart + child.raw.length)}`;
+    searchStart = childStart + child.raw.length;
+  }
+  return masked;
+}
+
+function updateOpenHtmlElements(elements: string[], raw: string): void {
+  if (/^\s*<(?:!--|!|\?)/u.test(raw)) return;
+  for (const match of raw.matchAll(/<\s*(\/?)\s*([A-Za-z][\w:-]*)\b[^>]*>/gu)) {
+    const name = (match[2] ?? "").toLowerCase();
+    if (!name) continue;
+    if (match[1]) {
+      const openingIndex = elements.lastIndexOf(name);
+      if (openingIndex >= 0) elements.splice(openingIndex);
+      continue;
+    }
+    if (!match[0].endsWith("/>") && !VOID_HTML_ELEMENTS.has(name)) elements.push(name);
+  }
+}
+
+function normalizeEscapedLocalFileLinkCandidate(value: string, maskedValue = value): string {
+  const pattern = /(?<!!)(\[[^\]\r\n]+\])\\\(<([^<>\r\n]+)>(\\?\))/gu;
+  let result = "";
+  let cursor = 0;
+  for (const match of maskedValue.matchAll(pattern)) {
+    const start = match.index;
+    const labelLength = match[1]?.length ?? 0;
+    const targetLength = match[2]?.length ?? 0;
+    const targetStart = start + labelLength + 3;
+    const target = value.slice(targetStart, targetStart + targetLength);
+    if (!localFileTarget(target)) continue;
+    const label = value.slice(start, start + labelLength);
+    result += `${value.slice(cursor, start)}${label}(<${target}>)`;
+    cursor = start + match[0].length;
+  }
+  return cursor === 0 ? value : result + value.slice(cursor);
+}
+
+function localFileTarget(value: string): string | null {
+  const path = value.trim();
+  if (path.startsWith("//")) return null;
+  const workspace = workspaceFileTarget(path);
+  if (!workspace) return null;
+  const shared = sharedFileTarget(path);
+  if (shared) return shared;
+  return /^(?:~[/\\]|[/\\]|[A-Za-z]:[/\\])/u.test(path) || isFileMention(path) ? workspace : null;
 }
 
 function workspaceFileTarget(value: string): string | null {
