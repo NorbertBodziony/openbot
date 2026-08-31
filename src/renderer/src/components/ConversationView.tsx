@@ -407,8 +407,10 @@ function createConversationViewScope(props: ConversationProps) {
   } = controller;
   const [routineSettingsRequest, setRoutineSettingsRequest] = createSignal<RoutineSettingsRequest | null>(null);
   const [installedSkills, setInstalledSkills] = createSignal<InstalledSkill[]>([]);
+  const [installedSkillsRetry, setInstalledSkillsRetry] = createSignal(0);
   let installedSkillsRequest = 0;
   let installedSkillsSourceId: string | undefined;
+  let failedInstalledSkillsAttempt: { serverId: string; sourceId: string; connectionSequence: number } | undefined;
   let routineSettingsRequestNonce = 0;
   let imageAttachmentPicker: HTMLInputElement | undefined;
   let contextAttachmentPicker: HTMLInputElement | undefined;
@@ -430,13 +432,31 @@ function createConversationViewScope(props: ConversationProps) {
     const target = currentTarget();
     return target ? (conversationErrors()[composerDraftKey(target)] ?? null) : null;
   });
+  const installedSkillsSource = createMemo(() =>
+    installedSkillsRequestKey(props.bot?.id, props.server, props.globalOverlayOpen),
+  );
   createEffect(
-    () => installedSkillsRequestKey(props.bot?.id, props.server, props.globalOverlayOpen),
+    () => `${props.server?.id ?? "local"}\0${props.server?.connectionSequence ?? 0}`,
+    (source) => {
+      const [serverId, connectionSequenceText] = source.split("\0");
+      const failedAttempt = failedInstalledSkillsAttempt;
+      if (
+        failedAttempt?.serverId === serverId &&
+        failedAttempt.sourceId === `${serverId}\0${untrack(() => props.bot?.id) ?? ""}` &&
+        failedAttempt.connectionSequence !== Number(connectionSequenceText)
+      ) {
+        setInstalledSkillsRetry((retry) => retry + 1);
+      }
+    },
+  );
+  createEffect(
+    () => `${installedSkillsSource()}\0${installedSkillsRetry()}`,
     (source) => {
       const request = ++installedSkillsRequest;
       const [serverId, botId, support, visibility] = source.split("\0");
       if (!botId) {
         installedSkillsSourceId = undefined;
+        failedInstalledSkillsAttempt = undefined;
         setInstalledSkills([]);
         return;
       }
@@ -447,15 +467,22 @@ function createConversationViewScope(props: ConversationProps) {
         setInstalledSkills([]);
       }
       if (support === "unsupported") {
+        failedInstalledSkillsAttempt = undefined;
         setInstalledSkills([]);
         return;
       }
+      const connectionSequence = untrack(() => props.server?.connectionSequence) ?? 0;
+      failedInstalledSkillsAttempt = undefined;
       void window.openbot.agent
         .listInstalledSkills(botId)
         .then((skills) => {
-          if (request === installedSkillsRequest) setInstalledSkills(skills);
+          if (request !== installedSkillsRequest) return;
+          failedInstalledSkillsAttempt = undefined;
+          setInstalledSkills(skills);
         })
         .catch(() => {
+          if (request !== installedSkillsRequest) return;
+          failedInstalledSkillsAttempt = { serverId, sourceId, connectionSequence };
           // Preserve an already loaded same-agent catalog when a refresh fails.
         });
     },

@@ -5234,6 +5234,46 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("Ask @Sales Outbound to use Release Notes (skill)."));
   });
 
+  it("retries failed installed skill loading after a remote reconnect", async () => {
+    const local = testServer("local", false);
+    const remote: ServerSummary = {
+      ...testServer("remote-1", true),
+      compatibility: {
+        localAppVersion: "0.4.0",
+        hostAppVersion: "0.4.0",
+        localProtocol: { minimum: 2, maximum: 2 },
+        hostProtocol: { minimum: 2, maximum: 2 },
+        negotiatedProtocol: 2,
+        capabilities: ["installed-skills"],
+      },
+      connectionSequence: 1,
+    };
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+    vi.mocked(window.openbot.agent.listInstalledSkills)
+      .mockRejectedValueOnce(new Error("Remote request failed"))
+      .mockResolvedValueOnce([
+        {
+          skillId: "release-notes",
+          slug: "release-notes",
+          name: "Release Notes",
+          installedVersion: 1,
+          availableVersion: 1,
+          state: "installed",
+        },
+      ]);
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await waitFor(() => expect(window.openbot.agent.listInstalledSkills).toHaveBeenCalledOnce());
+
+    emitServers?.([local, { ...remote, connectionSequence: 2 }]);
+    await waitFor(() => expect(window.openbot.agent.listInstalledSkills).toHaveBeenCalledTimes(2));
+
+    emitServers?.([local, { ...remote, connectionSequence: 3 }]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(window.openbot.agent.listInstalledSkills).toHaveBeenCalledTimes(2);
+  });
+
   it("lets the user remove only their own reaction while keeping the agent reaction read-only", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
