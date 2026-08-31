@@ -432,6 +432,26 @@ describe("MessageBody", () => {
     expect(onOpenWorkspaceFile).not.toHaveBeenCalled();
   });
 
+  it("repairs an escaped local file link with inline code in its label", async () => {
+    const onOpenWorkspaceFile = vi.fn();
+    const path = String.raw`C:\tmp\report.xlsx`;
+    render(() => (
+      <MarkdownMessageText
+        body={`[Open \`report.xlsx\`]\\(<${path}>\\)`}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onOpenSharedFile={vi.fn()}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    ));
+
+    const fileLink = screen.getByRole("button", { name: "Open workspace file report.xlsx" });
+    expect(fileLink).toHaveTextContent("Open report.xlsx");
+    await fireEvent.click(fileLink);
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith(path);
+  });
+
   it("does not repair escaped Markdown delimiters around web links or images", () => {
     const onOpenSharedFile = vi.fn();
     const onOpenWorkspaceFile = vi.fn();

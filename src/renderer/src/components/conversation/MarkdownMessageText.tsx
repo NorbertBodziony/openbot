@@ -513,7 +513,8 @@ function repairEscapedLocalFileLinkTokens(tokens: Token[]): Token[] {
   const flushCandidates = () => {
     if (candidates.length === 0) return;
     const source = candidates.map((token) => token.raw).join("");
-    const repaired = normalizeEscapedLocalFileLinkCandidate(source);
+    const maskedSource = candidates.map(maskProtectedMarkdownToken).join("");
+    const repaired = normalizeEscapedLocalFileLinkCandidate(source, maskedSource);
     result.push(...(repaired === source ? candidates : marked.Lexer.lexInline(repaired, { breaks: true, gfm: true })));
     candidates = [];
   };
@@ -524,7 +525,7 @@ function repairEscapedLocalFileLinkTokens(tokens: Token[]): Token[] {
       updateOpenHtmlElements(openHtmlElements, token.raw);
       continue;
     }
-    if (openHtmlElements.length > 0 || markdownTokenContainsProtectedLiteral(token)) {
+    if (openHtmlElements.length > 0) {
       flushCandidates();
       result.push(token);
       continue;
@@ -535,13 +536,28 @@ function repairEscapedLocalFileLinkTokens(tokens: Token[]): Token[] {
   return result;
 }
 
-function markdownTokenContainsProtectedLiteral(token: Token): boolean {
-  if (token.type === "html" || tokenIs(token, "codespan")) return true;
-  if (tokenIs(token, "strong")) return token.tokens.some(markdownTokenContainsProtectedLiteral);
-  if (tokenIs(token, "em")) return token.tokens.some(markdownTokenContainsProtectedLiteral);
-  if (tokenIs(token, "del")) return token.tokens.some(markdownTokenContainsProtectedLiteral);
-  if (tokenIs(token, "link")) return token.tokens.some(markdownTokenContainsProtectedLiteral);
-  return tokenIs(token, "text") && Boolean(token.tokens?.some(markdownTokenContainsProtectedLiteral));
+function maskProtectedMarkdownToken(token: Token): string {
+  if (token.type === "html" || tokenIs(token, "codespan")) return " ".repeat(token.raw.length);
+  const children =
+    tokenIs(token, "strong") ||
+    tokenIs(token, "em") ||
+    tokenIs(token, "del") ||
+    tokenIs(token, "link") ||
+    tokenIs(token, "text")
+      ? token.tokens
+      : undefined;
+  if (!children?.length) return token.raw;
+
+  let masked = token.raw;
+  let searchStart = 0;
+  for (const child of children) {
+    const childStart = token.raw.indexOf(child.raw, searchStart);
+    if (childStart < 0) continue;
+    const protectedChild = maskProtectedMarkdownToken(child);
+    masked = `${masked.slice(0, childStart)}${protectedChild}${masked.slice(childStart + child.raw.length)}`;
+    searchStart = childStart + child.raw.length;
+  }
+  return masked;
 }
 
 function updateOpenHtmlElements(elements: string[], raw: string): void {
@@ -558,10 +574,22 @@ function updateOpenHtmlElements(elements: string[], raw: string): void {
   }
 }
 
-function normalizeEscapedLocalFileLinkCandidate(value: string): string {
-  return value.replace(/(?<!!)(\[[^\]\r\n]+\])\\\(<([^<>\r\n]+)>(\\?\))/gu, (match, label: string, target: string) =>
-    localFileTarget(target) ? `${label}(<${target}>)` : match,
-  );
+function normalizeEscapedLocalFileLinkCandidate(value: string, maskedValue = value): string {
+  const pattern = /(?<!!)(\[[^\]\r\n]+\])\\\(<([^<>\r\n]+)>(\\?\))/gu;
+  let result = "";
+  let cursor = 0;
+  for (const match of maskedValue.matchAll(pattern)) {
+    const start = match.index;
+    const labelLength = match[1]?.length ?? 0;
+    const targetLength = match[2]?.length ?? 0;
+    const targetStart = start + labelLength + 3;
+    const target = value.slice(targetStart, targetStart + targetLength);
+    if (!localFileTarget(target)) continue;
+    const label = value.slice(start, start + labelLength);
+    result += `${value.slice(cursor, start)}${label}(<${target}>)`;
+    cursor = start + match[0].length;
+  }
+  return cursor === 0 ? value : result + value.slice(cursor);
 }
 
 function localFileTarget(value: string): string | null {
