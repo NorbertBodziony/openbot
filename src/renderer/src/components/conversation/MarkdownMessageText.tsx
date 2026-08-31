@@ -128,9 +128,10 @@ function MarkdownBlocks(props: {
   const renderedTokens = createMemo(() => {
     const values = tokens();
     const lastTokenIndex = lastRenderableTokenIndex(values);
+    const streamingTokenIndex = activeStreamingBlockTokenIndex(values);
     return values.map((token, index) => ({
       token,
-      streaming: props.streaming === true && index === lastTokenIndex,
+      streaming: props.streaming === true && index === streamingTokenIndex,
       streamingTail: props.streamingTail === true && index === lastTokenIndex,
     }));
   });
@@ -599,6 +600,14 @@ function lastRenderableTokenIndex(tokens: Token[]): number {
     if (tokens[index]?.type !== "space" && tokens[index]?.type !== "def") return index;
   }
   return -1;
+}
+
+function activeStreamingBlockTokenIndex(tokens: Token[]): number {
+  const index = lastRenderableTokenIndex(tokens);
+  if (index === -1 || index !== tokens.length - 1) return -1;
+  const token = tokens[index];
+  if (tokenIs(token, "heading") && token.raw.includes("\n")) return -1;
+  return index;
 }
 
 function markdownInlinePlainText(tokens: Token[]): string {

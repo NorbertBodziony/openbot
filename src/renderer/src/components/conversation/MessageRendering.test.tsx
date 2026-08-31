@@ -847,6 +847,30 @@ describe("MessageBody", () => {
     },
   );
 
+  it.each([
+    ["closed paragraph", "Earlier **literal\n\n"],
+    ["closed heading", "# Heading **literal\n"],
+  ])("preserves markers in a %s while another block can stream", (name, body) => {
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: `message-streaming-${name.replaceAll(" ", "-")}`,
+          author: "bot",
+          body,
+          time: "10:00",
+          streaming: true,
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(container).toHaveTextContent("**literal");
+  });
+
   it("keeps earlier text unchanged while a structured block streams", () => {
     render(() => (
       <MessageBody
