@@ -9,6 +9,7 @@ import type {
   AgentModelId,
   AgentModelOption,
   AgentProviderId,
+  AgentReasoningEffort,
   AgentStatus,
   AttachmentSummary,
   AvatarImageInput,
@@ -54,6 +55,7 @@ import {
   nextAgentActivityPresentation,
   ThinkingDisclosure,
 } from "./conversation/AgentActivity";
+import type { AgentRuntimeSettings, AgentRuntimeSettingsPatch } from "./conversation/AgentSettingsPanel";
 import { AttachmentCards, fileBadge, formatFileSize } from "./conversation/AttachmentCards";
 import { attachmentReferenceTone } from "./conversation/AttachmentReference";
 import { ChatSearch } from "./conversation/ChatSearch";
@@ -150,6 +152,16 @@ interface RoutineSettingsRequest {
   routineId: string;
   routineName: string;
   nonce: number;
+}
+
+function runtimeSettingsEqual(left: AgentRuntimeSettings, right: AgentRuntimeSettings): boolean {
+  return (
+    left.provider === right.provider && left.model === right.model && left.reasoningEffort === right.reasoningEffort
+  );
+}
+
+function isCompleteRuntimeSettingsPatch(updates: AgentRuntimeSettingsPatch): updates is AgentRuntimeSettings {
+  return "provider" in updates && "model" in updates;
 }
 
 function rendererDuration(property: string, fallback: number): number {
@@ -345,6 +357,8 @@ function createConversationViewScope(props: ConversationProps) {
     setDropActive,
     rightPanels,
     setRightPanels,
+    settingsProvider,
+    setSettingsProvider,
     settingsModel,
     setSettingsModel,
     settingsReasoning,
@@ -862,6 +876,78 @@ function createConversationViewScope(props: ConversationProps) {
     }
   }
 
+  async function saveRuntimeSettings(
+    settings: AgentRuntimeSettings,
+    updates: AgentRuntimeSettingsPatch,
+    errorMessage: string | null,
+    targetBotId = props.bot?.id,
+  ): Promise<boolean> {
+    const botId = targetBotId;
+    if (!botId) return false;
+    const previousAttempt = resources.runtimeSettingsAttempts.get(botId);
+    const generation = (previousAttempt?.generation ?? 0) + 1;
+    resources.runtimeSettingsAttempts.set(botId, { generation, pending: true, settings });
+    if (errorMessage) setComposerError(null);
+
+    const previousSave = resources.runtimeSettingsSaveTails.get(botId);
+    let releaseSave!: (baseValid: boolean) => void;
+    const saveTail = new Promise<boolean>((resolve) => {
+      releaseSave = resolve;
+    });
+    resources.runtimeSettingsSaveTails.set(botId, saveTail);
+    let saved: boolean;
+    let baseValid = true;
+    try {
+      if (previousSave) baseValid = await previousSave;
+      const completePatch = isCompleteRuntimeSettingsPatch(updates);
+      saved = baseValid || completePatch ? await saveBotPatch(updates, botId) : false;
+      if (completePatch) baseValid = saved;
+    } finally {
+      releaseSave(baseValid);
+      if (resources.runtimeSettingsSaveTails.get(botId) === saveTail) {
+        resources.runtimeSettingsSaveTails.delete(botId);
+      }
+    }
+    const latestAttempt = resources.runtimeSettingsAttempts.get(botId);
+    if (latestAttempt?.generation !== generation) return true;
+    latestAttempt.pending = false;
+    if (saved) {
+      const activeBot = props.bot;
+      if (activeBot?.id === botId) {
+        setSettingsProvider(activeBot.provider);
+        setSettingsModel(activeBot.model);
+        setSettingsReasoning(activeBot.reasoningEffort);
+      }
+      return true;
+    }
+
+    const activeBot = props.bot;
+    const currentSettings = {
+      provider: settingsProvider(),
+      model: settingsModel(),
+      reasoningEffort: settingsReasoning(),
+    };
+    if (activeBot?.id !== botId || !runtimeSettingsEqual(currentSettings, settings)) return false;
+    setSettingsProvider(activeBot.provider);
+    setSettingsModel(activeBot.model);
+    setSettingsReasoning(activeBot.reasoningEffort);
+    if (errorMessage) setComposerError(errorMessage);
+    return false;
+  }
+
+  async function updateRuntimeSettings(
+    botId: string,
+    settings: AgentRuntimeSettings,
+    updates: AgentRuntimeSettingsPatch,
+  ): Promise<boolean> {
+    if (props.bot?.id === botId) {
+      setSettingsProvider(settings.provider);
+      setSettingsModel(settings.model);
+      setSettingsReasoning(settings.reasoningEffort);
+    }
+    return saveRuntimeSettings(settings, updates, null, botId);
+  }
+
   async function selectModel(
     model: AgentModelId,
     provider: AgentProviderId,
@@ -873,22 +959,33 @@ function createConversationViewScope(props: ConversationProps) {
     const reasoningEffort = option.supportedReasoningEfforts.includes(settingsReasoning())
       ? settingsReasoning()
       : option.defaultReasoningEffort;
-    const previousModel = settingsModel();
-    const previousReasoning = settingsReasoning();
+    setSettingsProvider(provider);
     setSettingsModel(model);
     setSettingsReasoning(reasoningEffort);
     if (!persist) return true;
-    if (reportComposerError) setComposerError(null);
-    const saved = await saveBotPatch({ provider, model, reasoningEffort });
-    if (saved) return true;
-    setSettingsModel(previousModel);
-    setSettingsReasoning(previousReasoning);
-    if (reportComposerError) setComposerError("Could not change model. Try again.");
-    return false;
+    return saveRuntimeSettings(
+      { provider, model, reasoningEffort },
+      { provider, model, reasoningEffort },
+      reportComposerError ? "Could not change model. Try again." : null,
+    );
   }
 
   async function selectAndConfirmModel(model: AgentModelId, provider: AgentProviderId): Promise<void> {
     await selectModel(model, provider, true, true);
+  }
+
+  async function selectAndConfirmReasoning(effort: AgentReasoningEffort): Promise<void> {
+    const option = props.modelOptions.find(
+      (candidate) => candidate.provider === settingsProvider() && candidate.id === settingsModel(),
+    );
+    if (!option?.supportedReasoningEfforts.includes(effort)) return;
+    const settings = {
+      provider: settingsProvider(),
+      model: settingsModel(),
+      reasoningEffort: effort,
+    };
+    setSettingsReasoning(effort);
+    await saveRuntimeSettings(settings, { reasoningEffort: effort }, "Could not change effort. Try again.");
   }
 
   function updateScrollFade(element = scrollElement) {
@@ -1418,14 +1515,31 @@ function createConversationViewScope(props: ConversationProps) {
       const bot = props.bot;
       if (!bot) return null;
       return {
-        signature: [bot.id, bot.model, bot.reasoningEffort].join("\u0000"),
+        signature: [bot.id, bot.provider, bot.model, bot.reasoningEffort].join("\u0000"),
+        provider: bot.provider,
         model: bot.model,
         reasoningEffort: bot.reasoningEffort,
       };
     },
     (bot) => {
-      if (!bot || bot.signature === lastRuntimeSettingsSignature) return;
+      if (!bot) return;
+      const pendingSettings = resources.runtimeSettingsAttempts.get(props.bot?.id ?? "");
+      if (
+        pendingSettings?.pending &&
+        !runtimeSettingsEqual(pendingSettings.settings, {
+          provider: bot.provider,
+          model: bot.model,
+          reasoningEffort: bot.reasoningEffort,
+        })
+      ) {
+        setSettingsProvider(pendingSettings.settings.provider);
+        setSettingsModel(pendingSettings.settings.model);
+        setSettingsReasoning(pendingSettings.settings.reasoningEffort);
+        return;
+      }
+      if (bot.signature === lastRuntimeSettingsSignature) return;
       lastRuntimeSettingsSignature = bot.signature;
+      setSettingsProvider(bot.provider);
       setSettingsModel(bot.model);
       setSettingsReasoning(bot.reasoningEffort);
     },
@@ -2358,12 +2472,14 @@ function createConversationViewScope(props: ConversationProps) {
     rightPanels,
     routineSettingsRequest,
     saveBotPatch,
+    updateRuntimeSettings,
     saveQueuedMessageEdit,
     scheduleUnreadDividerVisibilityUpdate,
     screenOpen,
     scrollElement,
     scrollResizeObserver,
     selectAndConfirmModel,
+    selectAndConfirmReasoning,
     selectModel,
     selectionSending,
     sendSelectionInstruction,
@@ -2402,6 +2518,7 @@ function createConversationViewScope(props: ConversationProps) {
     setSidebarFilePreview,
     setSettingsModel,
     setSettingsPanelWidth,
+    setSettingsProvider,
     setSettingsReasoning,
     setShowComposerActions,
     setShowScrollToLatest,
@@ -2410,6 +2527,7 @@ function createConversationViewScope(props: ConversationProps) {
     setVoiceElapsedSeconds,
     setVoicePhase,
     settingsModel,
+    settingsProvider,
     settingsOpen,
     settingsPanelWidth,
     settingsReasoning,
@@ -2463,8 +2581,11 @@ export function ConversationHeader() {
     props,
     screenOpen,
     selectAndConfirmModel,
+    selectAndConfirmReasoning,
     setActiveRightPanel,
     settingsModel,
+    settingsProvider,
+    settingsReasoning,
     showBrowserPanel,
   } = useConversationViewScope();
   return (
@@ -2491,8 +2612,9 @@ export function ConversationHeader() {
       <div class="conversation-header-actions no-drag">
         <Show when={props.bot}>
           <ProviderModelPicker
-            provider={props.bot?.provider ?? "codex"}
+            provider={settingsProvider()}
             value={settingsModel()}
+            reasoningEffort={settingsReasoning()}
             modelOptions={props.modelOptions}
             agentStatus={props.agentStatus}
             runtimeStatuses={props.providerRuntimeStatuses}
@@ -2506,6 +2628,7 @@ export function ConversationHeader() {
                 : "Models are available after an agent CLI connects."
             }
             onChange={(model, provider) => void selectAndConfirmModel(model, provider)}
+            onReasoningEffortChange={(effort) => void selectAndConfirmReasoning(effort)}
           />
         </Show>
         <Show when={props.remoteDesktopEnabled !== false && props.server?.kind === "remote" ? props.server : undefined}>
@@ -3403,6 +3526,10 @@ export function ConversationPanels() {
     sidebarFilePreview,
     settingsOpen,
     routineSettingsRequest,
+    settingsModel,
+    settingsProvider,
+    settingsReasoning,
+    updateRuntimeSettings,
   } = useConversationViewScope();
   return (
     <>
@@ -3473,6 +3600,11 @@ export function ConversationPanels() {
           <Loading>
             <AgentSettingsPanel
               bot={bot()}
+              runtimeSettings={{
+                provider: settingsProvider(),
+                model: settingsModel(),
+                reasoningEffort: settingsReasoning(),
+              }}
               agentStatus={props.agentStatus}
               providerRuntimeStatuses={props.providerRuntimeStatuses}
               onDownloadProvider={props.onDownloadProvider}
@@ -3492,6 +3624,7 @@ export function ConversationPanels() {
               onClose={() => setActiveRightPanel("none")}
               onWidthChange={setSettingsPanelWidth}
               onUpdateBot={props.onUpdateBot}
+              onUpdateRuntimeSettings={updateRuntimeSettings}
               onSetAgentAvatar={props.onSetAgentAvatar}
               routineSelectionRequest={routineSettingsRequest()?.botId === bot().id ? routineSettingsRequest() : null}
               onRoutineSelectionRequestHandled={handleRoutineSettingsRequest}

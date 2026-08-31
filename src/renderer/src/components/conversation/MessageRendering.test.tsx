@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { BotMessage, BotProfile } from "../../data";
 import { triggerResize } from "../../setupTests";
 import { ImageGeneration } from "./ImageGeneration";
+import { MarkdownMessageText } from "./MarkdownMessageText";
 import { ExchangeSystemRow, MessageBody } from "./MessageRendering";
 
 const bots: BotProfile[] = [
@@ -382,6 +383,155 @@ describe("MessageBody", () => {
     await fireEvent.click(fileLink);
     expect(onOpenSharedFile).toHaveBeenCalledWith(sharedPath);
     expect(onOpenWorkspaceFile).not.toHaveBeenCalled();
+  });
+
+  it("repairs escaped Markdown delimiters around Windows file links", async () => {
+    const onOpenSharedFile = vi.fn();
+    const onOpenWorkspaceFile = vi.fn();
+    const forwardSlashPath = "C:/Users/julia/OpenBot/Shared/Outputs/FineRite-Krakow-social-links-final.xlsx";
+    const backslashPath = String.raw`C:\Users\julia\OpenBot\Shared\Outputs\FineRite-Krakow-social-links-backslash.xlsx`;
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-windows-shared-paths",
+          author: "bot",
+          body: [
+            String.raw`[**Pobierz aktualny plik Excel**]\(<${forwardSlashPath}>)`,
+            String.raw`[Pobierz drugi plik]\(<${backslashPath}>\)`,
+          ].join("\n\n"),
+          time: "10:00",
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+        onOpenSharedFile={onOpenSharedFile}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    ));
+
+    const forwardSlashLink = screen.getByRole("button", {
+      name: "Open shared file FineRite-Krakow-social-links-final.xlsx",
+    });
+    const backslashLink = screen.getByRole("button", {
+      name: "Open shared file FineRite-Krakow-social-links-backslash.xlsx",
+    });
+    expect(forwardSlashLink).toHaveTextContent("Pobierz aktualny plik Excel");
+    expect(backslashLink).toHaveTextContent("Pobierz drugi plik");
+    expect(forwardSlashLink).not.toHaveTextContent("**");
+    expect(forwardSlashLink).not.toHaveTextContent(forwardSlashPath);
+    expect(backslashLink).not.toHaveTextContent(backslashPath);
+    expect(forwardSlashLink).not.toHaveTextContent(/[[\]\\()]/u);
+    expect(backslashLink).not.toHaveTextContent(/[[\]\\()]/u);
+
+    await fireEvent.click(forwardSlashLink);
+    await fireEvent.click(backslashLink);
+    expect(onOpenSharedFile).toHaveBeenNthCalledWith(1, forwardSlashPath);
+    expect(onOpenSharedFile).toHaveBeenNthCalledWith(2, backslashPath);
+    expect(onOpenWorkspaceFile).not.toHaveBeenCalled();
+  });
+
+  it("repairs an escaped local file link with inline code in its label", async () => {
+    const onOpenWorkspaceFile = vi.fn();
+    const path = String.raw`C:\tmp\report.xlsx`;
+    render(() => (
+      <MarkdownMessageText
+        body={`[Open \`report.xlsx\`]\\(<${path}>\\)`}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onOpenSharedFile={vi.fn()}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    ));
+
+    const fileLink = screen.getByRole("button", { name: "Open workspace file report.xlsx" });
+    expect(fileLink).toHaveTextContent("Open report.xlsx");
+    await fireEvent.click(fileLink);
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith(path);
+  });
+
+  it("does not repair escaped Markdown delimiters around web links or images", () => {
+    const onOpenSharedFile = vi.fn();
+    const onOpenWorkspaceFile = vi.fn();
+    const imagePath = String.raw`C:\tmp\preview.png`;
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: "message-escaped-web-link",
+          author: "bot",
+          body: [
+            String.raw`[OpenAI]\(<https://example.com/OpenBot/Shared/docs.xlsx>\)`,
+            String.raw`[Report]\(<//example.com/OpenBot/Shared/report.xlsx>\)`,
+            String.raw`![Preview]\(<${imagePath}>\)`,
+          ].join("\n"),
+          time: "10:00",
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+        onOpenSharedFile={onOpenSharedFile}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    ));
+
+    expect(screen.queryByRole("button", { name: /Open (?:shared|workspace) file/u })).toBeNull();
+    expect(container).toHaveTextContent("[OpenAI](");
+    expect(container).toHaveTextContent("https://example.com/OpenBot/Shared/docs.xlsx");
+    expect(container).toHaveTextContent("[Report](");
+    expect(container).toHaveTextContent("//example.com/OpenBot/Shared/report.xlsx");
+    expect(container).toHaveTextContent("![Preview](");
+    expect(container).toHaveTextContent(imagePath);
+    expect(container.querySelector(".message-markdown-image")).toBeNull();
+    expect(onOpenSharedFile).not.toHaveBeenCalled();
+    expect(onOpenWorkspaceFile).not.toHaveBeenCalled();
+  });
+
+  it("keeps code and HTML literal while repairing a later file link", async () => {
+    const inlineCode = String.raw`[inline]\(<C:\tmp\inline.txt>\)`;
+    const fencedCode = String.raw`[fenced]\(<C:\tmp\fenced.txt>\)`;
+    const html = String.raw`<code>[html]\(<C:\tmp\html.txt>\)</code>`;
+    const nestedCode = String.raw`[nested]\(<C:\tmp\nested.txt>\)`;
+    const reportPath = String.raw`C:\tmp\report.xlsx`;
+    const commentReportPath = String.raw`C:\tmp\comment-report.xlsx`;
+    const onOpenWorkspaceFile = vi.fn();
+    const { container } = render(() => (
+      <MarkdownMessageText
+        body={[
+          `Inline: \`${inlineCode}\``,
+          "",
+          "```md",
+          fencedCode,
+          "```",
+          "",
+          `${html} then ${String.raw`[report]\(<${reportPath}>\)`}`,
+          "",
+          `Before <!-- <div> --> then ${String.raw`[comment report]\(<${commentReportPath}>\)`}`,
+          "",
+          `>     ${nestedCode}`,
+        ].join("\n")}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onOpenSharedFile={vi.fn()}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    ));
+
+    expect(container).toHaveTextContent(inlineCode);
+    expect(container).toHaveTextContent(fencedCode);
+    expect(container).toHaveTextContent(String.raw`<code>[html](<C:\tmp\html.txt>)</code>`);
+    expect(container).toHaveTextContent(nestedCode);
+    const reportLink = screen.getByRole("button", { name: "Open workspace file report.xlsx" });
+    const commentReportLink = screen.getByRole("button", { name: "Open workspace file comment-report.xlsx" });
+    expect(container.querySelectorAll(".message-file-reference")).toHaveLength(2);
+    await fireEvent.click(reportLink);
+    await fireEvent.click(commentReportLink);
+    expect(onOpenWorkspaceFile).toHaveBeenNthCalledWith(1, reportPath);
+    expect(onOpenWorkspaceFile).toHaveBeenNthCalledWith(2, commentReportPath);
   });
 
   it("turns filenames listed after a Shared directory into preview references", async () => {
