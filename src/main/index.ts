@@ -77,7 +77,11 @@ import {
   shouldShowDevelopmentWindow,
 } from "./development-profile";
 import { performDynamicIslandCriticalAction } from "./dynamic-island-actions";
-import { DynamicIslandWindowController, requireDynamicIslandSender } from "./dynamic-island-window";
+import {
+  DynamicIslandWindowController,
+  dynamicIslandNotchSize,
+  requireDynamicIslandSender,
+} from "./dynamic-island-window";
 import { filePreviewFromBytes, localFilePreview, mimeTypeForName } from "./file-preview";
 import { DEVELOPMENT_REMOTE_CLIENT_USERNAME, HostService } from "./host-service";
 import {
@@ -1302,13 +1306,15 @@ async function ensureMainWindow(): Promise<BrowserWindow> {
 function loadDynamicIslandRenderer(window: BrowserWindow, display: Display): Promise<void> {
   const displayMode = display.internal ? "notch" : "island";
   const developmentUrl = process.env.ELECTRON_RENDERER_URL;
-  if (developmentUrl) {
-    const url = new URL(developmentUrl);
-    url.searchParams.set("surface", "dynamic-island");
-    url.searchParams.set("display", displayMode);
-    return window.loadURL(url.toString());
+  const url = new URL(developmentUrl ?? "openbot-app://app/index.html");
+  url.searchParams.set("surface", "dynamic-island");
+  url.searchParams.set("display", displayMode);
+  if (display.internal) {
+    const notch = dynamicIslandNotchSize(display);
+    url.searchParams.set("notch-width", String(notch.width));
+    url.searchParams.set("notch-height", String(notch.height));
   }
-  return window.loadURL(`openbot-app://app/index.html?surface=dynamic-island&display=${displayMode}`);
+  return window.loadURL(url.toString());
 }
 
 function configureApplicationMenu(service: AgentService, updater: UpdateService): void {

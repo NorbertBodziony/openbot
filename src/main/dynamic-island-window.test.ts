@@ -9,7 +9,9 @@ import type { BrowserWindow, Display, Rectangle } from "electron";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as preferenceStore from "./dynamic-island-preference-store";
 import {
+  DEFAULT_DYNAMIC_ISLAND_NOTCH_SIZE,
   DynamicIslandWindowController,
+  dynamicIslandNotchSize,
   dynamicIslandWindowBounds,
   requireDynamicIslandSender,
 } from "./dynamic-island-window";
@@ -100,6 +102,29 @@ function display(overrides: Partial<Display>): Display {
 }
 
 describe("dynamic island window geometry", () => {
+  it("scales the notch geometry for notched MacBook display sizes", () => {
+    expect(dynamicIslandNotchSize(display({ bounds: { x: 0, y: 0, width: 1470, height: 956 } }))).toEqual({
+      width: 180,
+      height: 32,
+    });
+    expect(dynamicIslandNotchSize(display({ bounds: { x: 0, y: 0, width: 1512, height: 982 } }))).toEqual({
+      width: 185,
+      height: 32,
+    });
+    expect(dynamicIslandNotchSize(display({ bounds: { x: 0, y: 0, width: 1710, height: 1112 } }))).toEqual({
+      width: 209,
+      height: 36,
+    });
+    expect(dynamicIslandNotchSize(display({ bounds: { x: 0, y: 0, width: 1800, height: 1169 } }))).toEqual({
+      width: 220,
+      height: 38,
+    });
+  });
+
+  it("keeps a safe fallback for an unscaled renderer", () => {
+    expect(DEFAULT_DYNAMIC_ISLAND_NOTCH_SIZE).toEqual({ width: 192, height: 32 });
+  });
+
   it("centers the overlay at each display top edge", () => {
     expect(dynamicIslandWindowBounds(display({ bounds: { x: 200, y: -20, width: 1512, height: 982 } }))).toEqual({
       x: 649,

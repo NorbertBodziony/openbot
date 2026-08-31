@@ -10,6 +10,14 @@ import { readDynamicIslandPreference, writeDynamicIslandPreference } from "./dyn
 
 export const DYNAMIC_ISLAND_WINDOW_SIZE = { width: 614, height: 380 } as const;
 
+export const DEFAULT_DYNAMIC_ISLAND_NOTCH_SIZE = { width: 192, height: 32 } as const;
+
+const MACBOOK_NOTCH_REFERENCE = {
+  displayWidth: 1512,
+  notchWidth: 185,
+  notchHeight: 32,
+} as const;
+
 export interface DynamicIslandWindowControllerOptions {
   platform: NodeJS.Platform;
   preferencePath: string;
@@ -227,6 +235,22 @@ export function dynamicIslandWindowBounds(display: Pick<Display, "bounds">): Rec
     x: Math.round(display.bounds.x + (display.bounds.width - DYNAMIC_ISLAND_WINDOW_SIZE.width) / 2),
     y: display.bounds.y,
     ...DYNAMIC_ISLAND_WINDOW_SIZE,
+  };
+}
+
+/**
+ * Returns the notch size in Electron's display points.
+ *
+ * Apple keeps the camera housing proportional across notched MacBooks, while
+ * the selected display scale changes the logical display width. Scaling the
+ * measured 14-inch reference therefore covers the 13-inch Air, 14-inch Pro,
+ * 15-inch Air, and 16-inch Pro without a model-name lookup.
+ */
+export function dynamicIslandNotchSize(display: Pick<Display, "bounds">): { width: number; height: number } {
+  const displayScale = display.bounds.width / MACBOOK_NOTCH_REFERENCE.displayWidth;
+  return {
+    width: Math.max(16, Math.round(MACBOOK_NOTCH_REFERENCE.notchWidth * displayScale)),
+    height: Math.max(32, Math.round(MACBOOK_NOTCH_REFERENCE.notchHeight * displayScale)),
   };
 }
 
