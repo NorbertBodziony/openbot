@@ -3591,7 +3591,7 @@ describe.sequential("AgentService", () => {
     await service.initialize();
 
     await service.sendMessage({ botId: "chief", text: "Start slowly" });
-    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "starting");
+    await waitFor(() => client.requests.some((request) => request.method === "turn/start"));
     await service.stopAgent("chief");
 
     expect(service.listQueue("chief").deliveries[0]?.status).toBe("interrupted");
@@ -3600,6 +3600,94 @@ describe.sequential("AgentService", () => {
     await service.deleteBot("chief");
     await waitFor(() => client.requests.some((request) => request.method === "turn/interrupt"));
     expect(service.listBots().some((bot) => bot.id === "chief")).toBe(false);
+  });
+
+  it("restarts the provider before stopping and deleting a turn whose start never confirms", async () => {
+    let rejectStart: ((error: Error) => void) | undefined;
+    const startPending = new Promise<void>((_resolve, reject) => {
+      rejectStart = reject;
+    });
+    const clients: FakeAgentClient[] = [];
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client =
+        clients.length === 0
+          ? new FakeAgentClient(
+              provider,
+              "",
+              false,
+              true,
+              {},
+              async (method) => {
+                if (method === "turn/start") await startPending;
+              },
+              async () => rejectStart?.(new Error("Provider stopped.")),
+            )
+          : new FakeAgentClient(provider, "", false);
+      clients.push(client);
+      return client;
+    });
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Start without confirming" });
+    await waitFor(() => clients[0]?.requests.some((request) => request.method === "turn/start"));
+
+    vi.useFakeTimers();
+    try {
+      const stopping = service.stopAgent("chief");
+      await expect(service.deleteBot("chief")).rejects.toThrow(
+        "Stop the agent and cancel its queued messages before deleting it.",
+      );
+      const initialClient = clients[0];
+      if (!initialClient) throw new Error("The initial provider client was not created.");
+      const startRequest = initialClient.requests.find((request) => request.method === "turn/start");
+      const toolResult = await callOpenBotTool(
+        initialClient,
+        stringParam(startRequest?.params, "threadId"),
+        "send_message",
+        { recipientBotIds: ["sales-outbound"], text: "Do not send this.", paths: [] },
+        "unconfirmed-turn",
+      );
+      expect(toolResult.error).toEqual({ code: -32000, message: "The turn was stopped." });
+      await vi.advanceTimersByTimeAsync(2_000);
+      await stopping;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(clients).toHaveLength(2);
+    expect(clients[0]?.running).toBe(false);
+    expect(clients[1]?.running).toBe(true);
+    expect(service.listQueue("chief").deliveries[0]?.status).toBe("interrupted");
+    await service.deleteBot("chief");
+    expect(service.listBots().some((bot) => bot.id === "chief")).toBe(false);
+  });
+
+  it("does not send a provider turn after a starting delivery is stopped during preflight", async () => {
+    let releaseVerification: (() => void) | undefined;
+    let verificationFinished = false;
+    const verificationPending = new Promise<void>((resolve) => {
+      releaseVerification = resolve;
+    });
+    const client = new FakeAgentClient("codex", "", false);
+    const { store, mailbox } = stores();
+    const verifyDeliveryAttachments = mailbox.verifyDeliveryAttachments.bind(mailbox);
+    vi.spyOn(mailbox, "verifyDeliveryAttachments").mockImplementationOnce(async (deliveryId) => {
+      await verificationPending;
+      await verifyDeliveryAttachments(deliveryId);
+      verificationFinished = true;
+    });
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", () => client);
+    await service.initialize();
+
+    await service.sendMessage({ botId: "chief", text: "Stop during preflight" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "starting");
+    await service.stopAgent("chief");
+    releaseVerification?.();
+    await waitFor(() => verificationFinished);
+
+    expect(client.requests.some((request) => request.method === "turn/start")).toBe(false);
+    expect(service.listQueue("chief").deliveries[0]?.status).toBe("interrupted");
+    await service.deleteBot("chief");
   });
 
   it("keeps a turn stopping until mailbox persistence succeeds and accepts completion after failure", async () => {
@@ -3918,6 +4006,7 @@ class FakeAgentClient extends EventEmitter implements AgentClient {
     private accountSignedIn = true,
     private readonly requestDelays: Readonly<Record<string, number>> = {},
     private readonly requestHook?: (method: string, provider: AgentProvider) => Promise<void>,
+    private readonly stopHook?: () => Promise<void>,
   ) {
     super();
   }
@@ -3928,6 +4017,7 @@ class FakeAgentClient extends EventEmitter implements AgentClient {
 
   async stop(): Promise<void> {
     this.running = false;
+    await this.stopHook?.();
   }
 
   async request<T>(method: string, params: unknown, decoder: ResponseDecoder<T>): Promise<T> {

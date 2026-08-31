@@ -214,6 +214,16 @@ interface InFlightTurnCommands {
   commands: Set<Promise<unknown>>;
 }
 
+interface PendingTurnStart {
+  botId: string;
+  deliveryId: string;
+  threadId: string;
+  client: AgentClient;
+  turnId: string | null;
+  turnIdPromise: Promise<string>;
+  resolveTurnId: (turnId: string) => void;
+}
+
 class StoppedTurnError extends Error {
   constructor() {
     super("The turn was stopped.");
@@ -366,6 +376,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #ignoredTurns = new Set<string>();
   readonly #stoppingTurns = new Set<string>();
   readonly #inFlightTurnCommands = new Map<string, InFlightTurnCommands>();
+  readonly #pendingTurnStarts = new Map<string, PendingTurnStart>();
   readonly #turnAssociations = new Map<string, Promise<void>>();
   readonly #drainingBots = new Set<string>();
   readonly #stoppingBots = new Map<string, Promise<void>>();
@@ -785,6 +796,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       .deliveries.some((delivery) => ["queued", "starting", "running"].includes(delivery.status));
     if (
       this.#stoppingBots.has(botId) ||
+      this.#pendingTurnStarts.has(botId) ||
       this.#hasInFlightTurnCommand(botId) ||
       hasPendingWork ||
       this.#snapshots.get(botId)?.activeTurnId
@@ -989,6 +1001,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#interruptedTurns.clear();
     this.#ignoredTurns.clear();
     this.#stoppingTurns.clear();
+    this.#pendingTurnStarts.clear();
     this.#setStatus({ phase: "stopped", message: null });
   }
 
@@ -1210,14 +1223,29 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (activeTurnId) turnIds.add(activeTurnId);
 
     const client = this.#clientForBot(bot);
-    if (turnIds.size > 0 && (!session || !client)) {
+    const pendingStart = this.#pendingTurnStarts.get(botId);
+    if ((turnIds.size > 0 || pendingStart) && (!session || !client)) {
       throw new Error("The provider is unavailable, so OpenBot could not confirm the stop.");
     }
 
-    const stoppingTurnKeys = session ? [...turnIds].map((turnId) => `${session.externalSessionId}:${turnId}`) : [];
+    const stoppingTurnKeys = new Set(
+      session ? [...turnIds].map((turnId) => `${session.externalSessionId}:${turnId}`) : [],
+    );
     for (const key of stoppingTurnKeys) this.#stoppingTurns.add(key);
     try {
       try {
+        let restartClient: AgentClient | null = null;
+        if (pendingStart && client) {
+          const pendingTurnId = await this.#waitForPendingTurnStart(pendingStart, 2_000);
+          if (pendingTurnId) {
+            turnIds.add(pendingTurnId);
+            const turnKey = `${pendingStart.threadId}:${pendingTurnId}`;
+            stoppingTurnKeys.add(turnKey);
+            this.#stoppingTurns.add(turnKey);
+          } else {
+            restartClient = client;
+          }
+        }
         if (session && client) {
           for (const turnId of turnIds) {
             await client.request(
@@ -1228,16 +1256,27 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             );
           }
         }
+        if (restartClient) {
+          await this.#restartProviderClient(restartClient, async () => {
+            await this.#mailbox.stopPending(
+              botId,
+              "Stopped by the user.",
+              pendingDeliveries.map((delivery) => delivery.id),
+            );
+          });
+        } else {
+          await this.#mailbox.stopPending(
+            botId,
+            "Stopped by the user.",
+            pendingDeliveries.map((delivery) => delivery.id),
+          );
+        }
       } catch (error) {
         this.#emitError("force_stop_interrupt_failed", error, botId);
         throw error;
       }
 
-      await this.#mailbox.stopPending(
-        botId,
-        "Stopped by the user.",
-        pendingDeliveries.map((delivery) => delivery.id),
-      );
+      if (pendingStart) this.#clearPendingTurnStart(pendingStart);
 
       if (session) {
         for (const turnId of turnIds) {
@@ -2073,6 +2112,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.#clients.get(client.provider) !== client || this.#stopping) return;
     this.#clients.delete(client.provider);
     void client.stop().catch(() => undefined);
+    this.#clearPendingTurnStartsForClient(client);
     this.#loadedThreads.clear();
     this.#clearCompactionRuntime();
     this.#clearPendingPrompts(client);
@@ -2127,6 +2167,28 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.#restartTimer = null;
       void this.#connect("restarting", [client.provider]);
     }, delayMs);
+  }
+
+  async #restartProviderClient(client: AgentClient, afterTeardown: () => Promise<void>): Promise<void> {
+    await this.#runProviderConnectionCommand(client.provider, async () => {
+      await client.stop();
+      if (this.#clients.get(client.provider) === client) this.#clients.delete(client.provider);
+      this.#loadedThreads.clear();
+      this.#clearCompactionRuntime();
+      this.#clearPendingPrompts(client);
+      this.#clearPendingBrowserTakeovers();
+      for (const [requestId, pending] of this.#pendingApprovals) {
+        if (pending.client === client) this.#pendingApprovals.delete(requestId);
+      }
+      this.#browser.clearControls();
+      this.#clearPendingTurnStartsForClient(client);
+      try {
+        await afterTeardown();
+      } finally {
+        await this.#connect("restarting", [client.provider]);
+      }
+      return this.getStatus();
+    });
   }
 
   async #ensureThread(bot: BotSummary, client: AgentClient): Promise<string> {
@@ -2217,7 +2279,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const threadId = getString(request.params, "threadId");
       const turnId = getString(request.params, "turnId");
       const turnKey = threadId && turnId ? `${threadId}:${turnId}` : null;
-      if (turnKey && this.#turnIsStopped(turnKey)) {
+      const requestBotId = this.#threadToBot.get(threadId ?? getString(request.params, "conversationId") ?? "");
+      if ((requestBotId && this.#stoppingBots.has(requestBotId)) || (turnKey && this.#turnIsStopped(turnKey))) {
         client.respondError(request.id, { code: -32000, message: "The turn was stopped." });
         return;
       }
@@ -2853,6 +2916,61 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return this.#memoryEpochs.get(botId) ?? 0;
   }
 
+  #registerPendingTurnStart(
+    botId: string,
+    deliveryId: string,
+    threadId: string,
+    client: AgentClient,
+  ): PendingTurnStart {
+    if (this.#pendingTurnStarts.has(botId)) throw new Error("The agent already has a pending turn start.");
+    let resolveTurnId: (turnId: string) => void = () => undefined;
+    const turnIdPromise = new Promise<string>((resolve) => {
+      resolveTurnId = resolve;
+    });
+    const pending: PendingTurnStart = {
+      botId,
+      deliveryId,
+      threadId,
+      client,
+      turnId: null,
+      turnIdPromise,
+      resolveTurnId,
+    };
+    this.#pendingTurnStarts.set(botId, pending);
+    return pending;
+  }
+
+  #resolvePendingTurnStart(pending: PendingTurnStart, turnId: string): void {
+    if (pending.turnId) return;
+    pending.turnId = turnId;
+    pending.resolveTurnId(turnId);
+  }
+
+  #clearPendingTurnStart(pending: PendingTurnStart): void {
+    if (this.#pendingTurnStarts.get(pending.botId) === pending) this.#pendingTurnStarts.delete(pending.botId);
+  }
+
+  #clearPendingTurnStartsForClient(client: AgentClient): void {
+    for (const pending of this.#pendingTurnStarts.values()) {
+      if (pending.client === client) this.#clearPendingTurnStart(pending);
+    }
+  }
+
+  async #waitForPendingTurnStart(pending: PendingTurnStart, timeoutMs: number): Promise<string | null> {
+    if (pending.turnId) return pending.turnId;
+    let timer: NodeJS.Timeout | null = null;
+    try {
+      return await Promise.race([
+        pending.turnIdPromise,
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
   #scheduleDrain(botId: string): void {
     if (
       this.#stopping ||
@@ -2905,6 +3023,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async #startDelivery(context: DeliveryContext): Promise<void> {
     const { delivery, managedAttachments } = context;
+    let pendingStart: PendingTurnStart | null = null;
     try {
       await this.#mailbox.markStarting(delivery.id);
       this.#emitQueue(delivery.recipientBotId);
@@ -3016,6 +3135,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       this.#emitConversation(snapshot);
 
+      const deliveryBeforeStart = this.#mailbox.getDelivery(delivery.id)?.delivery;
+      if (deliveryBeforeStart?.status !== "starting" || this.#stoppingBots.has(bot.id)) return;
+      pendingStart = this.#registerPendingTurnStart(bot.id, delivery.id, threadId, client);
       const response = await this.#requestWithArchivedThreadRecovery(
         bot,
         client,
@@ -3033,17 +3155,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         },
         decodeTurnResponse,
       );
+      this.#resolvePendingTurnStart(pendingStart, response.turn.id);
       const deliveryBeforeMarkRunning = this.#mailbox.getDelivery(delivery.id);
       if (!deliveryBeforeMarkRunning || !["starting", "running"].includes(deliveryBeforeMarkRunning.delivery.status)) {
         this.#ignoredTurns.add(`${threadId}:${response.turn.id}`);
-        await client
-          .request("turn/interrupt", { threadId, turnId: response.turn.id }, decodeRecordResponse, 2_000)
-          .catch((error) => this.#emitError("orphaned_turn_interrupt_failed", error, bot.id));
+        try {
+          await client.request("turn/interrupt", { threadId, turnId: response.turn.id }, decodeRecordResponse, 2_000);
+          this.#clearPendingTurnStart(pendingStart);
+        } catch (error) {
+          this.#emitError("orphaned_turn_interrupt_failed", error, bot.id);
+        }
         return;
       }
       await this.#mailbox.markRunning(delivery.id, response.turn.id);
       const currentDelivery = this.#mailbox.getDelivery(delivery.id)?.delivery;
       if (currentDelivery?.status !== "running" || currentDelivery.turnId !== response.turn.id) return;
+      this.#clearPendingTurnStart(pendingStart);
       snapshot.activeTurnId = response.turn.id;
       this.#syncDeliveryMessage(snapshot, delivery.id);
       this.#emitQueue(bot.id);
@@ -3057,6 +3184,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         );
         return;
       }
+      if (this.#stoppingBots.has(delivery.recipientBotId)) return;
+      if (pendingStart) this.#clearPendingTurnStart(pendingStart);
       await this.#mailbox.markTerminal(delivery.id, "failed", error instanceof Error ? error.message : String(error));
       this.#emitQueue(delivery.recipientBotId);
       this.#emitError("delivery_start_failed", error, delivery.recipientBotId);
@@ -3335,6 +3464,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const turn = getRecord(params, "turn");
         const turnId = getString(turn, "id");
         if (!turnId) return;
+        const pendingStart = this.#pendingTurnStarts.get(botId);
+        if (pendingStart?.client === source && pendingStart.threadId === threadId) {
+          this.#resolvePendingTurnStart(pendingStart, turnId);
+          if (this.#stoppingBots.has(botId)) return;
+        }
         const contextBudget = this.#contextBudgets.get(threadId);
         if (contextBudget?.phase === "requested" && this.#compactingBots.has(botId)) {
           contextBudget.phase = "running";
@@ -3527,6 +3661,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!delivery) return;
     try {
       await this.#mailbox.markRunning(delivery.delivery.id, turnId);
+      const pendingStart = this.#pendingTurnStarts.get(botId);
+      if (pendingStart?.deliveryId === delivery.delivery.id) this.#clearPendingTurnStart(pendingStart);
       this.#syncDeliveryMessage(snapshot, delivery.delivery.id);
       this.#emitQueue(botId);
     } catch (error) {
