@@ -598,13 +598,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#requireKnownBot(input.botId);
     const routine = this.#routines.get(input.botId, input.routineId);
     if (!routine) throw new Error("This routine no longer exists.");
-    for (const run of this.#routines.activeRuns(input.botId, input.routineId)) {
-      if (run.status !== "queued" || !run.deliveryId) continue;
-      await this.#mailbox.cancel(input.botId, run.deliveryId).catch(() => undefined);
-      this.#routines.updateRunStatus(run.id, "cancelled");
-    }
+    const activeRuns = this.#routines.activeRuns(input.botId, input.routineId);
     if (options.recordConversationEvent === false) {
-      this.#routines.delete(input.botId, input.routineId);
+      const database = this.#store.database;
+      const ownsTransaction = !database.connection.isTransaction;
+      if (ownsTransaction) database.connection.exec("BEGIN IMMEDIATE");
+      try {
+        for (const run of activeRuns) {
+          if (run.status !== "queued" || !run.deliveryId) continue;
+          if (this.#mailbox.getDelivery(run.deliveryId)?.delivery.status !== "queued") continue;
+          this.#mailbox.cancelNow(input.botId, run.deliveryId);
+          this.#routines.updateRunStatus(run.id, "cancelled");
+        }
+        this.#routines.delete(input.botId, input.routineId);
+        if (ownsTransaction) database.connection.exec("COMMIT");
+      } catch (error) {
+        if (ownsTransaction && database.connection.isTransaction) database.connection.exec("ROLLBACK");
+        this.#mailbox.restorePersistedState();
+        throw error;
+      }
     } else {
       this.#mutateRoutineWithConversation(
         input.botId,
@@ -612,6 +624,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         () => this.#routines.delete(input.botId, input.routineId),
         () => routine,
         options.turnId,
+        {
+          beforeMutate: () => {
+            for (const run of activeRuns) {
+              if (run.status !== "queued" || !run.deliveryId) continue;
+              if (this.#mailbox.getDelivery(run.deliveryId)?.delivery.status !== "queued") continue;
+              this.#mailbox.cancelNow(input.botId, run.deliveryId);
+              this.#routines.updateRunStatus(run.id, "cancelled");
+            }
+          },
+          onRollback: () => this.#mailbox.restorePersistedState(),
+        },
       );
     }
     this.#emitQueue(input.botId);
@@ -1024,10 +1047,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     memberId: string,
     anchor: ConversationPageAnchor = { type: "latest" },
     limit = 50,
+    options: { excludeRoutineEvents?: boolean } = {},
   ): Promise<ConversationPage> {
     const bot = await this.#store.getOrCreate(botId);
     this.#reconcilePersistedMailboxMessages(bot);
-    const page = this.#store.database.readConversationPage(botId, bot.threadId, anchor, limit);
+    const page = this.#store.database.readConversationPage(botId, bot.threadId, anchor, limit, options);
     return {
       ...page,
       readState: this.#conversationReads.readStateForThread(memberId, bot.threadId),
@@ -4308,6 +4332,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     mutate: () => T,
     eventRoutine: (result: T) => Pick<Routine, "id" | "name">,
     turnId?: string,
+    transactionHooks?: { beforeMutate?: () => void; onRollback?: () => void },
   ): T {
     const previousBot = this.#requireKnownBot(botId);
     const previousSnapshot = this.#snapshots.get(botId);
@@ -4321,6 +4346,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const threadId = this.#store.ensureThreadIdNow(botId);
       const nextSnapshot = structuredClone(this.#ensureSnapshot(botId, threadId));
       nextSnapshot.threadId = threadId;
+      transactionHooks?.beforeMutate?.();
       result = mutate();
       const routine = eventRoutine(result);
       const createdAt = new Date().toISOString();
@@ -4345,6 +4371,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (ownsTransaction) database.connection.exec("COMMIT");
     } catch (error) {
       if (ownsTransaction && database.connection.isTransaction) database.connection.exec("ROLLBACK");
+      transactionHooks?.onRollback?.();
       if (previousBot.threadId === null) {
         this.#store.restoreThreadIdentity(botId, previousBot.threadId, previousBot.updatedAt);
       }

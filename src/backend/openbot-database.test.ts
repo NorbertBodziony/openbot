@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { BotSummary, ConversationSnapshot } from "@openbot/contracts/ipc";
+import { routineConversationEventItemType } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it } from "vitest";
 import { OpenBotDatabase } from "./openbot-database";
@@ -289,6 +290,67 @@ describe("OpenBotDatabase", () => {
     const search = database.searchConversationMessages("pagination needle", bot.id, undefined, 100);
     expect(search.total).toBe(1);
     expect(search.results[0]?.message.id).toBe("message-00234");
+    database.close();
+  });
+
+  it("fills legacy pages after excluding routine event markers", async () => {
+    const database = await createDatabase();
+    const bot = testBot();
+    database.replaceAgents("agents-routine-history", [bot], "agents.imported");
+    const routineEvent = (id: string, createdAt: string) => ({
+      id,
+      author: "system" as const,
+      source: "system" as const,
+      text: "Morning brief",
+      createdAt,
+      status: "completed" as const,
+      itemType: routineConversationEventItemType("updated", "routine-1"),
+    });
+    database.persistConversation(
+      {
+        botId: bot.id,
+        threadId: bot.threadId,
+        activeTurnId: null,
+        revision: 0,
+        messages: [
+          {
+            id: "reply-old",
+            author: "assistant",
+            text: "Older reply",
+            createdAt: "2026-08-29T10:00:00.000Z",
+            status: "completed",
+          },
+          routineEvent("routine-event-1", "2026-08-29T10:01:00.000Z"),
+          {
+            id: "reply-new",
+            author: "assistant",
+            text: "Newer reply",
+            createdAt: "2026-08-29T10:02:00.000Z",
+            status: "completed",
+          },
+          routineEvent("routine-event-2", "2026-08-29T10:03:00.000Z"),
+          routineEvent("routine-event-3", "2026-08-29T10:04:00.000Z"),
+        ],
+      },
+      "conversation.routine-history",
+    );
+
+    const latest = database.readConversationPage(bot.id, bot.threadId, { type: "latest" }, 1, {
+      excludeRoutineEvents: true,
+    });
+    expect(latest.messages.map((message) => message.id)).toEqual(["reply-new"]);
+    expect(latest.pageInfo.hasOlder).toBe(true);
+    if (!latest.pageInfo.olderCursor) throw new Error("The older page cursor is missing.");
+
+    const older = database.readConversationPage(
+      bot.id,
+      bot.threadId,
+      { type: "before", cursor: latest.pageInfo.olderCursor },
+      1,
+      { excludeRoutineEvents: true },
+    );
+    expect(older.messages.map((message) => message.id)).toEqual(["reply-old"]);
+    expect(older.pageInfo.hasOlder).toBe(false);
     database.close();
   });
 

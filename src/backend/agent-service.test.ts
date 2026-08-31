@@ -2764,6 +2764,42 @@ describe.sequential("AgentService", () => {
     });
   });
 
+  it("restores queued routine work when a delete marker cannot persist", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    const routine = service.createRoutine({
+      botId: bot.id,
+      name: "Queued routine",
+      instruction: "Keep this queued when deletion fails.",
+      active: true,
+      timezone: "UTC",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await waitFor(() => service?.listQueue(bot.id).deliveries.some((delivery) => delivery.status === "queued"));
+    const queuedDelivery = service.listQueue(bot.id).deliveries.find((delivery) => delivery.status === "queued");
+    if (!queuedDelivery) throw new Error("The queued routine delivery is missing.");
+    vi.spyOn(store.database, "persistConversation").mockImplementationOnce(() => {
+      throw new Error("delete marker persistence failed");
+    });
+
+    await expect(service.deleteRoutine({ botId: bot.id, routineId: routine.id })).rejects.toThrow(
+      "delete marker persistence failed",
+    );
+    expect(service.listRoutines(bot.id)).toEqual([expect.objectContaining({ id: routine.id })]);
+    expect(service.listQueue(bot.id).deliveries).toContainEqual(
+      expect.objectContaining({ id: queuedDelivery.id, status: "queued" }),
+    );
+    expect(
+      service
+        .listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .filter((run) => run.status === "queued"),
+    ).toHaveLength(2);
+  });
+
   it("rejects invalid or cross-agent routine tool mutations", async () => {
     const clients = new Map<AgentProvider, FakeAgentClient>();
     const { store, mailbox } = stores();
@@ -3889,7 +3925,7 @@ function inputRecords(value: unknown): DynamicRecord[] {
 
 function stores(): { store: BotStore; mailbox: MailboxStore } {
   const store = new BotStore(join(root, "user-data"), join(root, "home"));
-  return { store, mailbox: new MailboxStore(join(root, "user-data"), store.sharedRoot) };
+  return { store, mailbox: new MailboxStore(join(root, "user-data"), store.sharedRoot, store.database) };
 }
 
 function fakeBrowser(tabs: BrowserTab[] = []) {

@@ -19,6 +19,7 @@ import { isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contrac
 import {
   TEAM_APP_VERSION_HEADER,
   TEAM_CAPABILITIES_HEADER,
+  TEAM_PROTOCOL_V1_CAPABILITIES,
   TEAM_PROTOCOL_VERSION_HEADER,
 } from "@openbot/contracts/team-protocol/v1";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -1318,7 +1319,7 @@ describe("TeamApiServer administration", () => {
       await expect(
         jsonRequest(base, "/v1/agents/chief/conversation", {
           token: login.sessionToken,
-          capabilities: ["routine-event-markers"],
+          capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
         }),
       ).resolves.toEqual({
         ...localConversation,

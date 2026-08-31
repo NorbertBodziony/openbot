@@ -8,7 +8,6 @@ import {
   AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT,
   type AgentEvent,
   type CentralAuthUser,
-  type ConversationPage,
   type ConversationPageAnchor,
   type ConversationSnapshot,
   type ConversationWithReadState,
@@ -1061,12 +1060,9 @@ export class TeamApiServer {
             member.id,
             pageAnchor(url),
             pageLimit(url),
+            { excludeRoutineEvents: !clientCapabilities.has("routine-event-markers") },
           );
-          return this.#json(
-            response,
-            200,
-            clientCapabilities.has("routine-event-markers") ? page : conversationPageWithoutRoutineEvents(page),
-          );
+          return this.#json(response, 200, page);
         }
         if (method === "POST" && action === "conversation/read") {
           const body = await readJson(request);
@@ -1614,7 +1610,8 @@ function unavailableSidebarLayout(): TeamApiSidebarLayout {
 }
 
 function requestCapabilities(request: import("node:http").IncomingMessage): Set<string> {
-  const value = firstHeaderValue(request.headers[TEAM_CAPABILITIES_HEADER.toLowerCase()]);
+  const header = request.headers[TEAM_CAPABILITIES_HEADER.toLowerCase()];
+  const value = Array.isArray(header) ? header.join(",") : header;
   if (!value || value.length > 4_096) return new Set();
   const capabilities = value.split(",").map((capability) => capability.trim());
   if (capabilities.length > 64) return new Set();
@@ -1633,18 +1630,6 @@ function conversationWithoutRoutineEvents(conversation: ConversationWithReadStat
     ...conversation,
     messages: conversation.messages.filter(
       (message) => parseRoutineConversationEventItemType(message.itemType) === null,
-    ),
-  };
-}
-
-function conversationPageWithoutRoutineEvents(page: ConversationPage): ConversationPage {
-  return {
-    ...page,
-    messages: page.messages.filter((message) => parseRoutineConversationEventItemType(message.itemType) === null),
-    references: Object.fromEntries(
-      Object.entries(page.references).filter(
-        ([, message]) => parseRoutineConversationEventItemType(message.itemType) === null,
-      ),
     ),
   };
 }
