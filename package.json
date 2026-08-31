@@ -130,8 +130,8 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.4.0",
-    "@anthropic-ai/claude-agent-sdk": "0.3.246",
-    "@anthropic-ai/sdk": "0.116.0",
+    "@anthropic-ai/claude-agent-sdk": "0.3.250",
+    "@anthropic-ai/sdk": "0.122.0",
     "@fontsource-variable/inter": "5.3.0",
     "@kobalte/core": "2.0.0-alpha.0",
     "@modelcontextprotocol/sdk": "1.30.0",
@@ -145,18 +145,18 @@
     "@tanstack/virtual-core": "3.17.8",
     "class-variance-authority": "0.7.1",
     "electron-updater": "6.8.9",
-    "fflate": "0.8.2",
-    "lucide-solid": "^1.33.0",
-    "marked": "18.0.10",
+    "fflate": "0.8.3",
+    "lucide-solid": "^1.35.0",
+    "marked": "18.0.11",
     "solid-js": "2.0.0-rc.0",
     "solid-sonner": "0.3.2",
     "ws": "8.21.3",
-    "yaml": "2.8.3",
+    "yaml": "2.9.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.9",
-    "@dotenvx/dotenvx": "^2.21.0",
+    "@biomejs/biome": "^2.5.11",
+    "@dotenvx/dotenvx": "^2.22.0",
     "@electron/fuses": "1.8.0",
     "@solidjs/testing-library": "1.0.0-beta.2",
     "@solidjs/vite-plugin": "3.0.0-next.28",
@@ -175,7 +175,7 @@
     "tsx": "^4.23.12",
     "typescript": "7.0.2",
     "vite": "7.3.6",
-    "vitest": "4.1.10"
+    "vitest": "4.1.11"
   },
   "patchedDependencies": {
     "lucide-solid@1.33.0": "patches/lucide-solid@1.33.0.patch",
