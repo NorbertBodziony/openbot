@@ -40,6 +40,7 @@ interface DeploymentRow {
   site_spa_fallback: number;
   objects_deleted_at: number | null;
   activation_authorized_at: number | null;
+  in_flight_uploads: number;
 }
 
 export interface HostedSiteSummary {
@@ -189,8 +190,8 @@ export class HostedSiteService {
                     AND (expires_at IS NULL OR expires_at > ?)) < ?
              AND (SELECT COUNT(*) FROM site_deployments
                   WHERE user_id = ? AND status = 'uploading' AND upload_expires_at > ?) < ?
-             AND (SELECT COUNT(*) FROM hosted_sites WHERE user_id = ? AND created_at > ?) < ?
-             AND (SELECT COUNT(*) FROM hosted_sites WHERE user_id = ? AND created_at > ?) < ?`,
+             AND (SELECT COUNT(*) FROM site_creation_events WHERE user_id = ? AND created_at > ?) < ?
+             AND (SELECT COUNT(*) FROM site_creation_events WHERE user_id = ? AND created_at > ?) < ?`,
         )
         .bind(
           siteId,
@@ -252,6 +253,12 @@ export class HostedSiteService {
            SELECT hostname, ? FROM hosted_sites WHERE id = ? AND user_id = ?`,
         )
         .bind(now, siteId, userId),
+      this.database
+        .prepare(
+          `INSERT INTO site_creation_events(id, user_id, created_at)
+           SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM hosted_sites WHERE id = ? AND user_id = ?)`,
+        )
+        .bind(siteId, userId, now, siteId, userId),
     ];
     let results: D1Result<unknown>[];
     try {
@@ -259,11 +266,12 @@ export class HostedSiteService {
     } catch (error) {
       return this.recoverConcurrentUpload(userId, idempotencyKey, error);
     }
-    const [siteInsert, deploymentInsert, hostnameReservation] = results;
+    const [siteInsert, deploymentInsert, hostnameReservation, creationEvent] = results;
     if (
       siteInsert.meta.changes !== 1 ||
       deploymentInsert.meta.changes !== 1 ||
-      hostnameReservation.meta.changes !== 1
+      hostnameReservation.meta.changes !== 1 ||
+      creationEvent.meta.changes !== 1
     ) {
       const currentUploads = await this.database
         .prepare(
@@ -301,27 +309,47 @@ export class HostedSiteService {
     }
     if (!request.body) throw new HostedSiteInputError(400, "missing_file", "The file body is missing.");
     const key = assetKey(deployment.site_id, deployment.id, file.path);
-    const body = await readUploadBody(request.body, file.size);
-    await this.bucket.put(key, body, { httpMetadata: { contentType: file.mimeType } });
-    const stored = await this.bucket.head(key);
-    if (!stored || stored.size !== file.size) {
-      await this.bucket.delete(key);
-      throw new HostedSiteInputError(400, "size_mismatch", "The uploaded file size is invalid.");
-    }
-    const storedDeployment = await this.requireDeployment(userId, deployment.id);
-    if (storedDeployment.status !== "uploading" || storedDeployment.upload_expires_at <= this.now()) {
-      await this.bucket.delete(key);
+    const uploadClaim = await this.database
+      .prepare(
+        `UPDATE site_deployments SET in_flight_uploads = in_flight_uploads + 1
+         WHERE id = ? AND user_id = ? AND status = 'uploading' AND upload_expires_at > ?`,
+      )
+      .bind(deployment.id, userId, this.now())
+      .run();
+    if (uploadClaim.meta.changes !== 1) {
       throw new HostedSiteInputError(409, "upload_expired", "This upload session has expired.");
     }
-    await this.database
-      .prepare(
-        `INSERT INTO site_upload_files(deployment_id, path, size, mime_type, uploaded_at)
-         VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT(deployment_id, path) DO UPDATE SET
-           size = excluded.size, mime_type = excluded.mime_type, uploaded_at = excluded.uploaded_at`,
-      )
-      .bind(deployment.id, file.path, file.size, file.mimeType, this.now())
-      .run();
+    try {
+      const body = await readUploadBody(request.body, file.size);
+      await this.bucket.put(key, body, { httpMetadata: { contentType: file.mimeType } });
+      const stored = await this.bucket.head(key);
+      if (!stored || stored.size !== file.size) {
+        await this.bucket.delete(key);
+        throw new HostedSiteInputError(400, "size_mismatch", "The uploaded file size is invalid.");
+      }
+      const storedDeployment = await this.requireDeployment(userId, deployment.id);
+      if (storedDeployment.status !== "uploading" || storedDeployment.upload_expires_at <= this.now()) {
+        await this.bucket.delete(key);
+        throw new HostedSiteInputError(409, "upload_expired", "This upload session has expired.");
+      }
+      await this.database
+        .prepare(
+          `INSERT INTO site_upload_files(deployment_id, path, size, mime_type, uploaded_at)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(deployment_id, path) DO UPDATE SET
+             size = excluded.size, mime_type = excluded.mime_type, uploaded_at = excluded.uploaded_at`,
+        )
+        .bind(deployment.id, file.path, file.size, file.mimeType, this.now())
+        .run();
+    } finally {
+      await this.database
+        .prepare(
+          `UPDATE site_deployments SET in_flight_uploads = MAX(0, in_flight_uploads - 1)
+           WHERE id = ? AND user_id = ?`,
+        )
+        .bind(deployment.id, userId)
+        .run();
+    }
   }
 
   async activate(userId: string, uploadId: string, idempotencyKey: string): Promise<HostedSiteSummary> {
@@ -524,11 +552,7 @@ export class HostedSiteService {
       if (current?.expires_at != null && current.expires_at <= now) throw inactiveSiteError("expired");
       throw new HostedSiteInputError(409, "site_not_active", "This site cannot be blocked or unblocked.");
     }
-    if (blocked) {
-      await this.bucket.put(blockKey(site.hostname), "blocked", { httpMetadata: { contentType: "text/plain" } });
-    }
-    await this.publishAuthoritativeRoute(site.id);
-    if (!blocked) await this.deleteBlockMarker(site.id, site.hostname);
+    await this.reconcileRouteAndMarker(site.id);
     for (const deploymentId of deploymentResultIds(results[1])) {
       await this.deleteDeployment(site.id, deploymentId);
     }
@@ -635,6 +659,10 @@ export class HostedSiteService {
         tombstones.results.map((site) => this.database.prepare("DELETE FROM hosted_sites WHERE id = ?").bind(site.id)),
       );
     }
+    await this.database
+      .prepare("DELETE FROM site_creation_events WHERE created_at < ?")
+      .bind(now - 2 * 24 * 60 * 60_000)
+      .run();
     await this.database
       .prepare("DELETE FROM site_operation_receipts WHERE created_at < ?")
       .bind(now - 90 * 24 * 60 * 60_000)
@@ -881,7 +909,8 @@ export class HostedSiteService {
       const retryClaim = await this.database
         .prepare(
           `UPDATE site_deployments SET status = 'activating'
-           WHERE id = ? AND user_id = ? AND status = 'uploading' AND activation_authorized_at IS NOT NULL`,
+           WHERE id = ? AND user_id = ? AND status = 'uploading' AND activation_authorized_at IS NOT NULL
+             AND in_flight_uploads = 0`,
         )
         .bind(deployment.id, userId)
         .run();
@@ -894,6 +923,7 @@ export class HostedSiteService {
         `UPDATE site_deployments SET status = 'activating', activation_authorized_at = ?
          WHERE id = ? AND user_id = ? AND status IN ('uploading', 'activating')
            AND activation_authorized_at IS NULL
+           AND in_flight_uploads = 0
            AND (
              SELECT COUNT(*) FROM site_deployments
              WHERE user_id = ? AND activation_authorized_at >= ?
@@ -910,6 +940,9 @@ export class HostedSiteService {
     }
     const current = await this.requireDeployment(userId, deployment.id);
     if (current.status === "activating" && current.activation_authorized_at !== null) return current;
+    if (current.in_flight_uploads > 0) {
+      throw new HostedSiteInputError(409, "upload_in_progress", "Wait for the file upload to finish.");
+    }
     await this.database
       .prepare(
         `UPDATE site_deployments SET status = 'uploading'
@@ -923,10 +956,10 @@ export class HostedSiteService {
   private async enforceCreationRate(userId: string, now: number): Promise<void> {
     const [hour, day] = await this.database.batch([
       this.database
-        .prepare("SELECT COUNT(*) AS count FROM hosted_sites WHERE user_id = ? AND created_at > ?")
+        .prepare("SELECT COUNT(*) AS count FROM site_creation_events WHERE user_id = ? AND created_at > ?")
         .bind(userId, now - 3_600_000),
       this.database
-        .prepare("SELECT COUNT(*) AS count FROM hosted_sites WHERE user_id = ? AND created_at > ?")
+        .prepare("SELECT COUNT(*) AS count FROM site_creation_events WHERE user_id = ? AND created_at > ?")
         .bind(userId, now - 86_400_000),
     ]);
     const hourCount = creationCount(hour.results?.[0]);

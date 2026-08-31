@@ -158,6 +158,27 @@ describe("hosted site control plane", () => {
     expect(fixture.bucket.keys()).not.toContain(`sites/${upload.site.id}/deployments/${upload.uploadId}/index.html`);
   });
 
+  it("does not activate while a duplicate upload can still mutate the asset", async () => {
+    const fixture = serviceFixture();
+    const upload = await fixture.service.createUpload("alice", uploadRequest(), "duplicate-file-upload");
+    await uploadIndex(fixture.service, "alice", upload.uploadId);
+    const asset = `sites/${upload.site.id}/deployments/${upload.uploadId}/index.html`;
+    const pause = fixture.bucket.pauseNextPutContaining(asset);
+    const duplicateUpload = uploadIndex(fixture.service, "alice", upload.uploadId);
+    await pause.started;
+
+    await expect(
+      fixture.service.activate("alice", upload.uploadId, "activate-during-file-upload"),
+    ).rejects.toMatchObject({ code: "upload_in_progress" });
+    pause.resume();
+    await duplicateUpload;
+
+    await expect(
+      fixture.service.activate("alice", upload.uploadId, "activate-after-file-upload"),
+    ).resolves.toMatchObject({ status: "active" });
+    expect(fixture.bucket.keys()).toContain(asset);
+  });
+
   it("republishes an unsynced active route before deleting the prior deployment", async () => {
     const fixture = serviceFixture();
     for (let index = 0; index < 50; index += 1) {
@@ -427,6 +448,26 @@ describe("hosted site control plane", () => {
     expect(await fixture.bucket.route(site.hostname)).toMatchObject({ status: "active" });
   });
 
+  it("finishes concurrent block and unblock operations from the latest state", async () => {
+    const fixture = serviceFixture();
+    const site = await publish(fixture.service, "alice", "block-unblock-publish", "block-unblock-activate");
+    const pause = fixture.bucket.pauseNextPutContaining(`routes/${site.hostname}.json`);
+    const blocking = fixture.service.setBlocked(site.id, true);
+    await pause.started;
+
+    await fixture.service.setBlocked(site.id, false);
+    pause.resume();
+    await blocking;
+
+    expect(fixture.bucket.keys()).not.toContain(`blocks/${site.hostname}`);
+    expect(await fixture.bucket.route(site.hostname)).toMatchObject({ status: "active" });
+    const active = await fixture.database
+      .prepare("SELECT status, route_synced_at FROM hosted_sites WHERE id = ?")
+      .bind(site.id)
+      .first<{ status: string; route_synced_at: number | null }>();
+    expect(active).toMatchObject({ status: "active", route_synced_at: expect.any(Number) });
+  });
+
   it("accepts reports only for allocated hostnames, deduplicates them, and removes old rows", async () => {
     const fixture = serviceFixture();
     await expect(
@@ -480,6 +521,11 @@ describe("hosted site control plane", () => {
       .bind(stale.site.id)
       .first<{ id: string }>();
     expect(removed).toBeNull();
+    const creationEvents = await staleFixture.database
+      .prepare("SELECT COUNT(*) AS count FROM site_creation_events WHERE user_id = ?")
+      .bind("alice")
+      .first<{ count: number }>();
+    expect(creationEvents?.count).toBe(1);
   });
 
   it("rejects a stuck activation after the upload session expires", async () => {
@@ -611,6 +657,7 @@ function serviceFixture(): {
   sqlite.exec(migration("0013_hosted_site_hostname_reservations.sql"));
   sqlite.exec(migration("0014_hosted_site_object_cleanup.sql"));
   sqlite.exec(migration("0015_hosted_site_activation_authorization.sql"));
+  sqlite.exec(migration("0016_hosted_site_concurrency.sql"));
   sqlite.prepare("INSERT INTO users(id) VALUES (?), (?)").run("alice", "bob");
   const database = new FakeD1Database(sqlite);
   const bucket = new FakeR2Bucket();
