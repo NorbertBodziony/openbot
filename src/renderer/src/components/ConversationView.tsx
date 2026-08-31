@@ -76,6 +76,7 @@ import { calculateChatScrollMargin, createChatVirtualizer } from "./conversation
 import { messageContentBlocks } from "./conversation/DataTable";
 import { ScrollToLatestButton, scrollToLatestMessage } from "./conversation/MessageNavigation";
 import { ExchangeSystemRow, MessageActions, MessageBody } from "./conversation/MessageRendering";
+import { RoutineEventMarker } from "./conversation/RoutineEventMarker";
 import { MessageSelectionActions } from "./conversation/SelectionActions";
 import {
   scrollToUnreadBoundary,
@@ -2874,6 +2875,43 @@ export function ConversationTimeline() {
                 const message = createMemo(() => props.messages[virtualRow.index]);
                 const initialMessage = untrack(message);
                 if (!initialMessage) return null;
+                const routineEvent = initialMessage.routineEvent;
+                if (initialMessage.kind === "routine-event" && routineEvent) {
+                  return (
+                    <div
+                      data-index={virtualRow.index}
+                      ref={messageVirtualizer.measureElement}
+                      class="virtual-chat-row"
+                      style={{
+                        transform: messageVirtualizer.isVirtualized()
+                          ? `translateY(${virtualRow.start - messageVirtualizer.scrollMargin()}px)`
+                          : "none",
+                      }}
+                    >
+                      <article aria-label={`${routineEvent.routineName}, ${routineEvent.action}`}>
+                        <Show
+                          when={routineEvent.action === "deleted"}
+                          fallback={
+                            <RoutineEventMarker
+                              action={routineEvent.action === "created" ? "created" : "updated"}
+                              routineId={routineEvent.routineId}
+                              routineName={routineEvent.routineName}
+                              onOpenRoutine={(routineId) =>
+                                openRoutineSettings({ routineId, name: routineEvent.routineName })
+                              }
+                            />
+                          }
+                        >
+                          <RoutineEventMarker
+                            action="deleted"
+                            routineId={routineEvent.routineId}
+                            routineName={routineEvent.routineName}
+                          />
+                        </Show>
+                      </article>
+                    </div>
+                  );
+                }
                 const displayedReactions = createMemo(() => {
                   const currentMessage = message();
                   if (currentMessage?.reactions?.length) return currentMessage.reactions;

@@ -14,6 +14,7 @@ export const TEAM_PROTOCOL_V2_CAPABILITIES = [
   "conversation-pagination",
   "direct-messages",
   "remote-desktop",
+  "routine-event-markers",
   "sidebar-layout",
   "agent-force-stop",
 ] as const;

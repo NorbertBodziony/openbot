@@ -51,6 +51,7 @@ import type {
   RespondToBrowserTakeoverInput,
   RespondToPromptInput,
   Routine,
+  RoutineConversationEventAction,
   RoutineRun,
   RoutineSchedule,
   SendMessageInput,
@@ -73,6 +74,7 @@ import {
   isMessageReaction,
   isReasoningEffort,
   isRoutineSchedule,
+  routineConversationEventItemType,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
 import type { AgentClient, AgentProvider } from "./agent-client";
@@ -228,6 +230,12 @@ class StoppedTurnError extends Error {
   constructor() {
     super("The turn was stopped.");
   }
+}
+
+export interface RoutineMutationOptions {
+  beforeCommit?: () => void;
+  recordConversationEvent?: boolean;
+  turnId?: string;
 }
 
 const MCP_ELICITATION_DECISION_ID = "mcp-elicitation-decision";
@@ -579,35 +587,86 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return this.#routines.list(botId);
   }
 
-  createRoutine(input: CreateRoutineInput): Routine {
+  createRoutine(input: CreateRoutineInput, options: RoutineMutationOptions = {}): Routine {
     this.#requireKnownBot(input.botId);
-    const routine = this.#routines.create(input);
+    options.beforeCommit?.();
+    const routine =
+      options.recordConversationEvent === false
+        ? this.#routines.create(input)
+        : this.#mutateRoutineWithConversation(
+            input.botId,
+            "created",
+            () => this.#routines.create(input),
+            (created) => created,
+            options.turnId,
+          );
     this.#routineStateChanged(input.botId);
     this.#armRoutineTimer();
     return routine;
   }
 
-  updateRoutine(input: UpdateRoutineInput): Routine {
+  updateRoutine(input: UpdateRoutineInput, options: RoutineMutationOptions = {}): Routine {
     this.#requireKnownBot(input.botId);
-    const routine = this.#routines.update(input);
+    options.beforeCommit?.();
+    const routine =
+      options.recordConversationEvent === false
+        ? this.#routines.update(input)
+        : this.#mutateRoutineWithConversation(
+            input.botId,
+            "updated",
+            () => this.#routines.update(input),
+            (updated) => updated,
+            options.turnId,
+          );
     this.#routineStateChanged(input.botId);
     this.#armRoutineTimer();
     return routine;
   }
 
-  async deleteRoutine(input: DeleteRoutineInput, beforeCommit: () => void = () => undefined): Promise<void> {
+  async deleteRoutine(input: DeleteRoutineInput, options: RoutineMutationOptions = {}): Promise<void> {
     this.#requireKnownBot(input.botId);
     const routine = this.#routines.get(input.botId, input.routineId);
     if (!routine) throw new Error("This routine no longer exists.");
-    for (const run of this.#routines.activeRuns(input.botId, input.routineId)) {
-      if (run.status !== "queued" || !run.deliveryId) continue;
-      beforeCommit();
-      await this.#mailbox.cancel(input.botId, run.deliveryId).catch(() => undefined);
-      beforeCommit();
-      this.#routines.updateRunStatus(run.id, "cancelled");
+    options.beforeCommit?.();
+    const activeRuns = this.#routines.activeRuns(input.botId, input.routineId);
+    if (options.recordConversationEvent === false) {
+      const database = this.#store.database;
+      const ownsTransaction = !database.connection.isTransaction;
+      if (ownsTransaction) database.connection.exec("BEGIN IMMEDIATE");
+      try {
+        for (const run of activeRuns) {
+          if (run.status !== "queued" || !run.deliveryId) continue;
+          if (this.#mailbox.getDelivery(run.deliveryId)?.delivery.status !== "queued") continue;
+          this.#mailbox.cancelNow(input.botId, run.deliveryId);
+          this.#routines.updateRunStatus(run.id, "cancelled");
+        }
+        this.#routines.delete(input.botId, input.routineId);
+        if (ownsTransaction) database.connection.exec("COMMIT");
+      } catch (error) {
+        if (ownsTransaction && database.connection.isTransaction) database.connection.exec("ROLLBACK");
+        this.#mailbox.restorePersistedState();
+        throw error;
+      }
+    } else {
+      this.#mutateRoutineWithConversation(
+        input.botId,
+        "deleted",
+        () => this.#routines.delete(input.botId, input.routineId),
+        () => routine,
+        options.turnId,
+        {
+          beforeMutate: () => {
+            for (const run of activeRuns) {
+              if (run.status !== "queued" || !run.deliveryId) continue;
+              if (this.#mailbox.getDelivery(run.deliveryId)?.delivery.status !== "queued") continue;
+              this.#mailbox.cancelNow(input.botId, run.deliveryId);
+              this.#routines.updateRunStatus(run.id, "cancelled");
+            }
+          },
+          onRollback: () => this.#mailbox.restorePersistedState(),
+        },
+      );
     }
-    beforeCommit();
-    this.#routines.delete(input.botId, input.routineId);
     this.#emitQueue(input.botId);
     this.#routineStateChanged(input.botId);
     this.#armRoutineTimer();
@@ -1028,10 +1087,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     memberId: string,
     anchor: ConversationPageAnchor = { type: "latest" },
     limit = 50,
+    options: { excludeRoutineEvents?: boolean } = {},
   ): Promise<ConversationPage> {
     const bot = await this.#store.getOrCreate(botId);
     this.#reconcilePersistedMailboxMessages(bot);
-    const page = this.#store.database.readConversationPage(botId, bot.threadId, anchor, limit);
+    const page = this.#store.database.readConversationPage(botId, bot.threadId, anchor, limit, options);
     return {
       ...page,
       readState: this.#conversationReads.readStateForThread(memberId, bot.threadId),
@@ -2546,20 +2606,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         args.timezone === undefined
           ? localTimezone()
           : routineToolString(args.timezone, "timezone", 128, "A routine timezone is required.");
-      this.#assertTurnActive(params.threadId, params.turnId);
-      const routine = this.createRoutine({
-        botId,
-        name: routineToolString(args.name, "name", INPUT_LIMITS.routineName, "A routine name is required."),
-        instruction: routineToolString(
-          args.instruction,
-          "instruction",
-          INPUT_LIMITS.routineInstruction,
-          "A routine instruction is required.",
-        ),
-        active,
-        timezone,
-        schedule: routineToolSchedule(args.schedule),
-      });
+      const routine = this.createRoutine(
+        {
+          botId,
+          name: routineToolString(args.name, "name", INPUT_LIMITS.routineName, "A routine name is required."),
+          instruction: routineToolString(
+            args.instruction,
+            "instruction",
+            INPUT_LIMITS.routineInstruction,
+            "A routine instruction is required.",
+          ),
+          active,
+          timezone,
+          schedule: routineToolSchedule(args.schedule),
+        },
+        {
+          beforeCommit: () => this.#assertTurnActive(params.threadId, params.turnId),
+          turnId: botId === senderBotId ? params.turnId : undefined,
+        },
+      );
       return openBotToolResult(routine);
     }
 
@@ -2600,8 +2665,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         hasUpdate = true;
       }
       if (!hasUpdate) throw new Error("At least one routine update is required.");
-      this.#assertTurnActive(params.threadId, params.turnId);
-      return openBotToolResult(this.updateRoutine(input));
+      return openBotToolResult(
+        this.updateRoutine(input, {
+          beforeCommit: () => this.#assertTurnActive(params.threadId, params.turnId),
+          turnId: input.botId === senderBotId ? params.turnId : undefined,
+        }),
+      );
     }
 
     if (params.tool === "delete_routine") {
@@ -2613,7 +2682,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         INPUT_LIMITS.identifier,
         "routineId is required.",
       );
-      await this.deleteRoutine({ botId, routineId }, () => this.#assertTurnActive(params.threadId, params.turnId));
+      await this.deleteRoutine(
+        { botId, routineId },
+        {
+          beforeCommit: () => this.#assertTurnActive(params.threadId, params.turnId),
+          turnId: botId === senderBotId ? params.turnId : undefined,
+        },
+      );
       return openBotToolResult({ deleted: true, botId, routineId });
     }
 
@@ -4649,6 +4724,64 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#emit({ type: "routines-changed", botId });
   }
 
+  #mutateRoutineWithConversation<T>(
+    botId: string,
+    action: RoutineConversationEventAction,
+    mutate: () => T,
+    eventRoutine: (result: T) => Pick<Routine, "id" | "name">,
+    turnId?: string,
+    transactionHooks?: { beforeMutate?: () => void; onRollback?: () => void },
+  ): T {
+    const previousBot = this.#requireKnownBot(botId);
+    const previousSnapshot = this.#snapshots.get(botId);
+    const previousSnapshotState = previousSnapshot ? structuredClone(previousSnapshot) : undefined;
+    const database = this.#store.database;
+    const ownsTransaction = !database.connection.isTransaction;
+    if (ownsTransaction) database.connection.exec("BEGIN IMMEDIATE");
+    let result: T;
+    let persisted: ConversationSnapshot;
+    try {
+      const threadId = this.#store.ensureThreadIdNow(botId);
+      const nextSnapshot = structuredClone(this.#ensureSnapshot(botId, threadId));
+      nextSnapshot.threadId = threadId;
+      transactionHooks?.beforeMutate?.();
+      result = mutate();
+      const routine = eventRoutine(result);
+      const createdAt = new Date().toISOString();
+      const message: ConversationMessage = {
+        id: randomUUID(),
+        ...(turnId ? { turnId } : {}),
+        author: "system",
+        source: "system",
+        text: routine.name,
+        createdAt,
+        status: "completed",
+        itemType: routineConversationEventItemType(action, routine.id),
+      };
+      nextSnapshot.messages.push(message);
+      sortConversationMessages(nextSnapshot.messages);
+      persisted = database.persistConversation(nextSnapshot, `routine.${action}`, {
+        action,
+        routineId: routine.id,
+        routineName: routine.name,
+        messageId: message.id,
+      });
+      if (ownsTransaction) database.connection.exec("COMMIT");
+    } catch (error) {
+      if (ownsTransaction && database.connection.isTransaction) database.connection.exec("ROLLBACK");
+      transactionHooks?.onRollback?.();
+      if (previousBot.threadId === null) {
+        this.#store.restoreThreadIdentity(botId, previousBot.threadId, previousBot.updatedAt);
+      }
+      if (previousSnapshotState) this.#snapshots.set(botId, previousSnapshotState);
+      else this.#snapshots.delete(botId);
+      throw error;
+    }
+    this.#snapshots.set(botId, persisted);
+    this.#publishConversation(persisted);
+    return result;
+  }
+
   #requireReadyClient(provider: AgentProvider): AgentClient {
     const client = this.#clients.get(provider);
     if (!client || this.#status.phase !== "ready") {
@@ -4688,7 +4821,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const persisted = this.#store.database.persistConversation(snapshot, eventType, detail);
       snapshot.revision = persisted.revision;
     }
-    this.#lastConversationSignatures.set(snapshot.botId, signature);
+    this.#publishConversation(snapshot);
+  }
+
+  #publishConversation(snapshot: ConversationSnapshot): void {
+    this.#lastConversationSignatures.set(snapshot.botId, conversationContentSignature(snapshot));
     this.#emit({ type: "conversation", snapshot: structuredClone(snapshot) });
   }
 

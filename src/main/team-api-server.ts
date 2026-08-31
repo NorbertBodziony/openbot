@@ -9,6 +9,8 @@ import {
   type AgentEvent,
   type CentralAuthUser,
   type ConversationPageAnchor,
+  type ConversationSnapshot,
+  type ConversationWithReadState,
   type CreateBotInput,
   type CreateTeamInviteInput,
   type DirectConversationPage,
@@ -24,6 +26,7 @@ import {
   isAvatarSeed,
   isMessageReaction,
   isReasoningEffort,
+  parseRoutineConversationEventItemType,
   type ReorderQueueInput,
   type RespondToApprovalInput,
   type RespondToBrowserTakeoverInput,
@@ -49,6 +52,7 @@ import {
 } from "@openbot/contracts/team-protocol";
 import {
   TEAM_APP_VERSION_HEADER,
+  TEAM_CAPABILITIES_HEADER,
   TEAM_PROTOCOL_V1,
   TEAM_PROTOCOL_VERSION_HEADER,
   type TeamProtocolSupportV1,
@@ -457,6 +461,7 @@ export class TeamApiServer {
       response.setHeader("X-Content-Type-Options", "nosniff");
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       const method = request.method ?? "GET";
+      const clientCapabilities = requestCapabilities(request);
       this.#responseRoutes.set(response, {
         method,
         path: url.pathname,
@@ -1053,14 +1058,24 @@ export class TeamApiServer {
           }
         }
         if (method === "GET" && action === "conversation") {
-          return this.#json(response, 200, await this.#options.agents.readConversationFor(botId, member.id));
-        }
-        if (method === "GET" && action === "conversation-page") {
+          const conversation = await this.#options.agents.readConversationFor(botId, member.id);
           return this.#json(
             response,
             200,
-            await this.#options.agents.readConversationPageFor(botId, member.id, pageAnchor(url), pageLimit(url)),
+            clientCapabilities.has("routine-event-markers")
+              ? conversation
+              : conversationWithoutRoutineEvents(conversation),
           );
+        }
+        if (method === "GET" && action === "conversation-page") {
+          const page = await this.#options.agents.readConversationPageFor(
+            botId,
+            member.id,
+            pageAnchor(url),
+            pageLimit(url),
+            { excludeRoutineEvents: !clientCapabilities.has("routine-event-markers") },
+          );
+          return this.#json(response, 200, page);
         }
         if (method === "POST" && action === "conversation/read") {
           const body = await readJson(request);
@@ -1236,6 +1251,13 @@ export class TeamApiServer {
         });
         if (!queueInvalidation) continue;
         outgoing = queueInvalidation;
+      } else if (event.type === "conversation" && !connection.capabilities.has("routine-event-markers")) {
+        const routineEventFilteredPayload = connection.adapter.encodeCurrentEvent({
+          ...event,
+          snapshot: conversationSnapshotWithoutRoutineEvents(event.snapshot),
+        });
+        if (!routineEventFilteredPayload) continue;
+        outgoing = routineEventFilteredPayload;
       } else {
         const payload = connection.adapter.encodeCurrentEvent(event);
         if (!payload) continue;
@@ -1272,8 +1294,10 @@ export class TeamApiServer {
       capabilities: new Set(
         acceptsCapabilityDeclaration
           ? []
-          : TEAM_PROTOCOL_CAPABILITIES.filter(
-              (capability) => supportsSnapshotTransport || capability !== "agent-runtime-snapshots",
+          : adapter.capabilities.filter(
+              (capability) =>
+                capability !== "routine-event-markers" &&
+                (supportsSnapshotTransport || capability !== "agent-runtime-snapshots"),
             ),
       ),
       includeConversationEvents: !supportsSnapshotTransport,
@@ -1597,6 +1621,31 @@ function unavailableSidebarLayout(): TeamApiSidebarLayout {
     }),
     on: () => undefined,
     off: () => undefined,
+  };
+}
+
+function requestCapabilities(request: import("node:http").IncomingMessage): Set<string> {
+  const header = request.headers[TEAM_CAPABILITIES_HEADER.toLowerCase()];
+  const value = Array.isArray(header) ? header.join(",") : header;
+  if (!value || value.length > 4_096) return new Set();
+  const capabilities = value.split(",").map((capability) => capability.trim());
+  if (capabilities.length > 64) return new Set();
+  return new Set(capabilities.filter(isTeamProtocolCapability));
+}
+
+function conversationSnapshotWithoutRoutineEvents(snapshot: ConversationSnapshot): ConversationSnapshot {
+  return {
+    ...snapshot,
+    messages: snapshot.messages.filter((message) => parseRoutineConversationEventItemType(message.itemType) === null),
+  };
+}
+
+function conversationWithoutRoutineEvents(conversation: ConversationWithReadState): ConversationWithReadState {
+  return {
+    ...conversation,
+    messages: conversation.messages.filter(
+      (message) => parseRoutineConversationEventItemType(message.itemType) === null,
+    ),
   };
 }
 

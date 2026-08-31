@@ -39,6 +39,7 @@ import type {
   UpdateStatus,
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
+import { parseRoutineConversationEventItemType } from "@openbot/contracts/ipc";
 import type { TeamProtocolCapability } from "@openbot/contracts/team-protocol/v2";
 import {
   createContext,
@@ -163,6 +164,10 @@ function serverSupportsCapability(server: ServerSummary | undefined, capability:
 type PromptEvent = Extract<AgentEvent, { type: "prompt" }>;
 type BrowserTakeoverEvent = Extract<AgentEvent, { type: "browser-takeover-requested" }>;
 
+function isRoutineEventItem(message: { itemType?: string }): boolean {
+  return parseRoutineConversationEventItemType(message.itemType) !== null;
+}
+
 function preserveKnownAgentUnread(
   state: ConversationReadState,
   boundary: string | null,
@@ -178,6 +183,7 @@ function preserveKnownAgentUnread(
         message.author !== "you" &&
         message.itemType !== "commentary" &&
         message.itemType !== "agent_attachment" &&
+        !isRoutineEventItem(message) &&
         !message.id.startsWith("thinking:") &&
         !message.id.startsWith("ui-"),
     );
@@ -1001,7 +1007,8 @@ export function createAppController(props: AppProps = {}) {
                 (message) =>
                   message.author !== "user" &&
                   message.itemType !== "commentary" &&
-                  message.itemType !== "agent_attachment",
+                  message.itemType !== "agent_attachment" &&
+                  !isRoutineEventItem(message),
               );
             if (latestIncomingMessage) autoMarkAgentMessageRead(botId, latestIncomingMessage.id);
           }
@@ -1073,7 +1080,8 @@ export function createAppController(props: AppProps = {}) {
                   (message) =>
                     message.author !== "user" &&
                     message.itemType !== "commentary" &&
-                    message.itemType !== "agent_attachment",
+                    message.itemType !== "agent_attachment" &&
+                    !isRoutineEventItem(message),
                 )
             : undefined;
           if (pageApplied && latestIncomingMessage) {
@@ -1346,6 +1354,7 @@ export function createAppController(props: AppProps = {}) {
             message.author !== "you" &&
             message.itemType !== "commentary" &&
             message.itemType !== "agent_attachment" &&
+            !isRoutineEventItem(message) &&
             !message.id.startsWith("thinking:") &&
             !message.id.startsWith("ui-"),
         )
@@ -1566,7 +1575,10 @@ export function createAppController(props: AppProps = {}) {
           .reverse()
           .find(
             (message) =>
-              message.author !== "user" && message.itemType !== "commentary" && message.itemType !== "agent_attachment",
+              message.author !== "user" &&
+              message.itemType !== "commentary" &&
+              message.itemType !== "agent_attachment" &&
+              !isRoutineEventItem(message),
           )
       : undefined;
     if (latestIncomingMessage) {
@@ -1630,7 +1642,10 @@ export function createAppController(props: AppProps = {}) {
         .reverse()
         .find(
           (message) =>
-            message.author !== "user" && message.itemType !== "commentary" && message.itemType !== "agent_attachment",
+            message.author !== "user" &&
+            message.itemType !== "commentary" &&
+            message.itemType !== "agent_attachment" &&
+            !isRoutineEventItem(message),
         );
       let retainedState: ConversationReadState | null = null;
       if (trackedAutoRead && trackedAutoRead.messageId === latestIncomingMessage?.id) {

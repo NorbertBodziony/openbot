@@ -128,8 +128,10 @@ function MarkdownBlocks(props: {
   const renderedTokens = createMemo(() => {
     const values = tokens();
     const lastTokenIndex = lastRenderableTokenIndex(values);
+    const streamingTokenIndex = activeStreamingBlockTokenIndex(values);
     return values.map((token, index) => ({
       token,
+      streaming: props.streaming === true && index === streamingTokenIndex,
       streamingTail: props.streamingTail === true && index === lastTokenIndex,
     }));
   });
@@ -139,7 +141,7 @@ function MarkdownBlocks(props: {
         <MarkdownBlock
           token={item.token}
           content={props.content}
-          streaming={props.streaming}
+          streaming={item.streaming}
           streamingTail={item.streamingTail}
         />
       )}
@@ -163,7 +165,12 @@ function MarkdownBlock(props: {
       const level = headingLevel(token.depth);
       return (
         <Dynamic component={`h${level}`} class="message-markdown-heading" data-level={level}>
-          <MarkdownInline tokens={token.tokens} content={props.content} streamingTail={props.streamingTail} />
+          <MarkdownInline
+            tokens={token.tokens}
+            content={props.content}
+            streaming={props.streaming}
+            streamingTail={props.streamingTail}
+          />
         </Dynamic>
       );
     }
@@ -171,7 +178,12 @@ function MarkdownBlock(props: {
       if (!tokenIs(token, "paragraph")) return token.raw;
       return (
         <p>
-          <MarkdownInline tokens={token.tokens} content={props.content} streamingTail={props.streamingTail} />
+          <MarkdownInline
+            tokens={token.tokens}
+            content={props.content}
+            streaming={props.streaming}
+            streamingTail={props.streamingTail}
+          />
         </p>
       );
     }
@@ -182,7 +194,7 @@ function MarkdownBlock(props: {
           <MarkdownBlocks
             tokens={token.tokens}
             content={props.content}
-            streaming={props.streaming}
+            streaming={props.streaming === true && !containerClosesFinalNestedTable(token)}
             streamingTail={props.streamingTail}
           />
         </blockquote>
@@ -194,7 +206,7 @@ function MarkdownBlock(props: {
         <MarkdownList
           token={token}
           content={props.content}
-          streaming={props.streaming}
+          streaming={props.streaming === true && !containerClosesFinalNestedTable(token)}
           streamingTail={props.streamingTail}
         />
       );
@@ -206,7 +218,7 @@ function MarkdownBlock(props: {
     }
     case "table": {
       if (!tokenIs(token, "table")) return token.raw;
-      return <MarkdownTable token={token} content={props.content} />;
+      return <MarkdownTable token={token} content={props.content} streaming={props.streaming} />;
     }
     case "hr":
       return <hr />;
@@ -215,13 +227,30 @@ function MarkdownBlock(props: {
     case "text": {
       if (!tokenIs(token, "text")) return token.raw;
       return token.tokens ? (
-        <MarkdownInline tokens={token.tokens} content={props.content} streamingTail={props.streamingTail} />
+        <MarkdownInline
+          tokens={token.tokens}
+          content={props.content}
+          streaming={props.streaming}
+          streamingTail={props.streamingTail}
+        />
       ) : (
-        <RichText body={token.text} content={props.content} streamingTail={props.streamingTail} />
+        <RichText
+          body={token.text}
+          content={props.content}
+          streaming={props.streaming}
+          streamingTail={props.streamingTail}
+        />
       );
     }
     default:
-      return <RichText body={token.raw} content={props.content} streamingTail={props.streamingTail} />;
+      return (
+        <RichText
+          body={token.raw}
+          content={props.content}
+          streaming={props.streaming}
+          streamingTail={props.streamingTail}
+        />
+      );
   }
 }
 
@@ -236,6 +265,7 @@ function MarkdownList(props: {
     const values = items();
     return values.map((item, index) => ({
       item,
+      streaming: props.streaming === true && index === values.length - 1,
       streamingTail: props.streamingTail === true && index === values.length - 1,
     }));
   });
@@ -254,7 +284,7 @@ function MarkdownList(props: {
           <MarkdownBlocks
             tokens={renderedItem.item.tokens.filter((child) => child.type !== "checkbox")}
             content={props.content}
-            streaming={props.streaming}
+            streaming={renderedItem.streaming}
             streamingTail={renderedItem.streamingTail}
           />
         </li>
@@ -269,9 +299,12 @@ function MarkdownList(props: {
   );
 }
 
-function MarkdownTable(props: { token: Tokens.Table; content: MarkdownContentProps }) {
+function MarkdownTable(props: { token: Tokens.Table; content: MarkdownContentProps; streaming?: boolean }) {
   const headers = createMemo(() => props.token.header);
   const rows = createMemo(() => props.token.rows);
+  const streamingCellIndex = createMemo(() =>
+    props.streaming === true ? activeStreamingTableCellIndex(props.token) : -1,
+  );
   return (
     <section class="message-markdown-table-scroll" aria-label="Data table" tabindex="0">
       <table class="message-markdown-table">
@@ -288,12 +321,16 @@ function MarkdownTable(props: { token: Tokens.Table; content: MarkdownContentPro
         </thead>
         <tbody>
           <For each={rows()}>
-            {(row) => (
+            {(row, rowIndex) => (
               <tr>
                 <For each={row}>
-                  {(cell) => (
+                  {(cell, cellIndex) => (
                     <td data-align={cell.align ?? "left"}>
-                      <MarkdownInline tokens={cell.tokens} content={props.content} />
+                      <MarkdownInline
+                        tokens={cell.tokens}
+                        content={props.content}
+                        streaming={rowIndex() === rows().length - 1 && cellIndex() === streamingCellIndex()}
+                      />
                     </td>
                   )}
                 </For>
@@ -306,13 +343,21 @@ function MarkdownTable(props: { token: Tokens.Table; content: MarkdownContentPro
   );
 }
 
-function MarkdownInline(props: { tokens: Token[]; content: MarkdownContentProps; streamingTail?: boolean }) {
+function MarkdownInline(props: {
+  tokens: Token[];
+  content: MarkdownContentProps;
+  streaming?: boolean;
+  streamingTail?: boolean;
+}) {
   const tokens = createMemo(() => repairEscapedLocalFileLinkTokens(props.tokens));
   const renderedTokens = createMemo(() => {
     const values = tokens();
     const lastTokenIndex = lastRenderableTokenIndex(values);
+    const markerTokenIndexes =
+      props.streaming === true ? incompleteEmphasisMarkerTokenIndexes(values) : new Set<number>();
     return values.map((token, index) => ({
       token,
+      streaming: markerTokenIndexes.has(index),
       streamingTail: props.streamingTail === true && index === lastTokenIndex,
     }));
   });
@@ -422,9 +467,19 @@ function MarkdownInline(props: { tokens: Token[]; content: MarkdownContentProps;
           case "text": {
             if (!tokenIs(token, "text")) return token.raw;
             return token.tokens ? (
-              <MarkdownInline tokens={token.tokens} content={props.content} streamingTail={item.streamingTail} />
+              <MarkdownInline
+                tokens={token.tokens}
+                content={props.content}
+                streaming={item.streaming}
+                streamingTail={item.streamingTail}
+              />
             ) : (
-              <RichText body={token.text} content={props.content} streamingTail={item.streamingTail} />
+              <RichText
+                body={token.text}
+                content={props.content}
+                streaming={item.streaming}
+                streamingTail={item.streamingTail}
+              />
             );
           }
           case "checkbox":
@@ -437,15 +492,108 @@ function MarkdownInline(props: { tokens: Token[]; content: MarkdownContentProps;
   );
 }
 
-function RichText(props: { body: string; content: MarkdownContentProps; streamingTail?: boolean }) {
+function RichText(props: {
+  body: string;
+  content: MarkdownContentProps;
+  streaming?: boolean;
+  streamingTail?: boolean;
+}) {
   return (
     <RichMessageText
       {...props.content}
-      body={props.body}
+      body={props.streaming ? hideIncompleteEmphasisMarker(props.body) : props.body}
       showCitationFooter={false}
       streamingTail={props.streamingTail}
     />
   );
+}
+
+function hideIncompleteEmphasisMarker(body: string): string {
+  const characters = [...body];
+  const markers = incompleteEmphasisMarkers(characters);
+  for (const marker of markers.toReversed()) characters.splice(marker.index, marker.length);
+  return characters.join("");
+}
+
+function incompleteEmphasisMarkerTokenIndexes(tokens: Token[]): Set<number> {
+  const characters: string[] = [];
+  const owners: number[] = [];
+  for (const [tokenIndex, token] of tokens.entries()) {
+    for (const character of [...token.raw]) {
+      characters.push(character);
+      owners.push(token.type === "text" ? tokenIndex : -1);
+    }
+  }
+  const markers = incompleteEmphasisMarkers(
+    characters,
+    (start, end) => owners[start] !== -1 && owners[start] === owners[end - 1],
+  );
+  return new Set(markers.map((marker) => owners[marker.index]).filter((owner) => owner !== undefined && owner !== -1));
+}
+
+function incompleteEmphasisMarkers(
+  characters: string[],
+  eligible: (start: number, end: number) => boolean = () => true,
+): Array<{ index: number; length: number }> {
+  const markers: Array<{ index: number; length: number }> = [];
+  for (let index = 0; index < characters.length; ) {
+    const delimiter = characters[index];
+    if (delimiter !== "*" && delimiter !== "_") {
+      index += 1;
+      continue;
+    }
+    let runEnd = index + 1;
+    while (characters[runEnd] === delimiter) runEnd += 1;
+    const previous = characters[index - 1];
+    const next = characters[runEnd];
+    if (eligible(index, runEnd) && canOpenEmphasisDelimiter(delimiter, previous, next)) {
+      markers.push({ index, length: runEnd - index });
+    }
+    index = runEnd;
+  }
+  return markers;
+}
+
+function canOpenEmphasisDelimiter(delimiter: "*" | "_", previous: string | undefined, next: string | undefined) {
+  if (next === undefined) {
+    return previous === undefined || isMarkdownWhitespace(previous) || isMarkdownPunctuation(previous);
+  }
+  return (
+    isLeftFlankingMarkdownDelimiter(previous, next) &&
+    (delimiter === "*" ||
+      !isRightFlankingMarkdownDelimiter(previous, next) ||
+      (previous !== undefined && isMarkdownPunctuation(previous)))
+  );
+}
+
+function isLeftFlankingMarkdownDelimiter(previous: string | undefined, next: string | undefined): boolean {
+  return (
+    next !== undefined &&
+    !isMarkdownWhitespace(next) &&
+    (!isMarkdownPunctuation(next) ||
+      previous === undefined ||
+      isMarkdownWhitespace(previous) ||
+      isMarkdownPunctuation(previous))
+  );
+}
+
+function isRightFlankingMarkdownDelimiter(previous: string | undefined, next: string | undefined): boolean {
+  return (
+    previous !== undefined &&
+    !isMarkdownWhitespace(previous) &&
+    (!isMarkdownPunctuation(previous) ||
+      next === undefined ||
+      isMarkdownWhitespace(next) ||
+      isMarkdownPunctuation(next))
+  );
+}
+
+function isMarkdownWhitespace(value: string): boolean {
+  return /\s/u.test(value);
+}
+
+function isMarkdownPunctuation(value: string): boolean {
+  return /[\p{P}\p{S}]/u.test(value);
 }
 
 function lastRenderableTokenIndex(tokens: Token[]): number {
@@ -453,6 +601,66 @@ function lastRenderableTokenIndex(tokens: Token[]): number {
     if (tokens[index]?.type !== "space" && tokens[index]?.type !== "def") return index;
   }
   return -1;
+}
+
+function activeStreamingBlockTokenIndex(tokens: Token[]): number {
+  const index = lastRenderableTokenIndex(tokens);
+  if (index === -1 || index !== tokens.length - 1) return -1;
+  const token = tokens[index];
+  if (tokenIs(token, "heading") && token.raw.includes("\n")) return -1;
+  return index;
+}
+
+function activeStreamingTableCellIndex(token: Tokens.Table): number {
+  const row = token.rows.at(-1);
+  if (!row || /\n[\t ]*$/u.test(token.raw)) return -1;
+  const sourceRow = token.raw.split("\n").at(-1)?.trimEnd();
+  if (!sourceRow) return -1;
+
+  const finalCharacterIndex = sourceRow.length - 1;
+  if (sourceRow[finalCharacterIndex] === "|" && !isEscapedMarkdownCharacter(sourceRow, finalCharacterIndex)) {
+    return -1;
+  }
+
+  let sourceIndex = sourceRow.search(/\S/u);
+  if (sourceIndex === -1) return -1;
+  if (sourceRow[sourceIndex] === "|") sourceIndex += 1;
+
+  let cellIndex = 0;
+  for (; sourceIndex < sourceRow.length; sourceIndex += 1) {
+    if (sourceRow[sourceIndex] === "|" && !isEscapedMarkdownCharacter(sourceRow, sourceIndex)) cellIndex += 1;
+  }
+  return cellIndex < row.length ? cellIndex : -1;
+}
+
+function containerClosesFinalNestedTable(token: Tokens.Blockquote | Tokens.List): boolean {
+  if (!/\n[\t ]*$/u.test(token.raw)) return false;
+  return finalNestedBlockToken(token) === "table";
+}
+
+function finalNestedBlockToken(token: Tokens.Blockquote | Tokens.List): Token["type"] | undefined {
+  if (tokenIs(token, "list")) {
+    const item = token.items.at(-1);
+    if (!item) return token.type;
+    return finalNestedTokenType(item.tokens);
+  }
+  return finalNestedTokenType(token.tokens);
+}
+
+function finalNestedTokenType(tokens: Token[]): Token["type"] | undefined {
+  const index = lastRenderableTokenIndex(tokens);
+  const token = tokens[index];
+  if (!token) return undefined;
+  if (tokenIs(token, "blockquote") || tokenIs(token, "list")) return finalNestedBlockToken(token);
+  return token.type;
+}
+
+function isEscapedMarkdownCharacter(value: string, index: number): boolean {
+  let slashCount = 0;
+  for (let slashIndex = index - 1; slashIndex >= 0 && value[slashIndex] === "\\"; slashIndex -= 1) {
+    slashCount += 1;
+  }
+  return slashCount % 2 === 1;
 }
 
 function markdownInlinePlainText(tokens: Token[]): string {

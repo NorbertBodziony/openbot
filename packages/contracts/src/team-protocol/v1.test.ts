@@ -197,10 +197,26 @@ describe("Team protocol v1", () => {
             },
           ],
         },
+        {
+          id: "routine-event-1",
+          text: "Morning brief",
+          createdAt: "2026-08-30T12:01:00.000Z",
+          author: "system",
+          source: "system",
+          status: "completed",
+          itemType: "routine-event:created:routine-1",
+        },
       ],
     });
     expect(conversation).toMatchObject({
-      messages: [{ id: "message-1", attachments: [{ id: "attachment-1" }] }],
+      messages: [
+        { id: "message-1", attachments: [{ id: "attachment-1" }] },
+        {
+          id: "routine-event-1",
+          text: "Morning brief",
+          itemType: "routine-event:created:routine-1",
+        },
+      ],
     });
     expect(JSON.stringify(conversation)).not.toContain("future");
 

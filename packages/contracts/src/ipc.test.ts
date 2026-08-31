@@ -10,6 +10,9 @@ import {
   isConversationMessage,
   isDynamicIslandAction,
   isMessageReaction,
+  parseRoutineConversationEventItemType,
+  routineConversationEvent,
+  routineConversationEventItemType,
 } from "./ipc";
 
 describe("Dynamic Island action validation", () => {
@@ -307,6 +310,38 @@ describe("conversation event validation", () => {
         },
       }),
     ).toBe(true);
+  });
+});
+
+describe("routine conversation events", () => {
+  it("encodes and decodes a valid routine marker", () => {
+    const itemType = routineConversationEventItemType("updated", "routine-1");
+    const message = {
+      id: "event-1",
+      author: "system",
+      source: "system",
+      text: "Morning brief",
+      createdAt: "2026-08-31T12:00:00.000Z",
+      status: "completed",
+      itemType,
+    } as const;
+
+    expect(itemType).toBe("routine-event:updated:routine-1");
+    expect(parseRoutineConversationEventItemType(itemType)).toEqual({ action: "updated", routineId: "routine-1" });
+    expect(routineConversationEvent(message)).toEqual({
+      action: "updated",
+      routineId: "routine-1",
+      routineName: "Morning brief",
+    });
+    expect(isConversationMessage(message)).toBe(true);
+  });
+
+  it("rejects malformed routine marker metadata", () => {
+    expect(parseRoutineConversationEventItemType("routine-event:renamed:routine-1")).toBeNull();
+    expect(parseRoutineConversationEventItemType("routine-event:created:")).toBeNull();
+    expect(() => routineConversationEventItemType("created", "x".repeat(128))).toThrow(
+      "The routine event item type is too long.",
+    );
   });
 });
 

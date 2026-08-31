@@ -786,13 +786,28 @@ export class MailboxStore {
   }
 
   async cancel(botId: string, deliveryId: string): Promise<void> {
+    this.cancelNow(botId, deliveryId);
+  }
+
+  cancelNow(botId: string, deliveryId: string): void {
     const delivery = this.#state.deliveries.find(
       (candidate) => candidate.id === deliveryId && candidate.recipientBotId === botId,
     );
     if (!delivery) throw new Error("Queued message was not found.");
     if (delivery.status !== "queued") throw new Error("Only queued messages can be cancelled.");
     delivery.status = "cancelled";
-    await this.#persist("delivery.cancelled");
+    try {
+      this.#persist("delivery.cancelled");
+    } catch (error) {
+      delivery.status = "queued";
+      throw error;
+    }
+  }
+
+  restorePersistedState(): void {
+    const persisted = this.#database.readMailboxState();
+    if (!isStoredState(persisted)) throw new Error("Stored mailbox projection is invalid.");
+    this.#state = normalizeStoredState(persisted);
   }
 
   async stopPending(botId: string, reason: string, deliveryIds?: readonly string[]): Promise<{ turnIds: string[] }> {
@@ -1340,12 +1355,12 @@ export class MailboxStore {
     }
   }
 
-  async #persist(
+  #persist(
     eventType = "mailbox.updated",
     commandId = `mailbox:${eventType}:${randomUUID()}`,
     fileDeletions: string[] = [],
     rebaseHistory = false,
-  ): Promise<void> {
+  ): void {
     this.#database.replaceMailboxState(commandId, this.#state, eventType, fileDeletions, rebaseHistory);
   }
 

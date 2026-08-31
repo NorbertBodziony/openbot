@@ -88,6 +88,7 @@ import {
   decodeTeamProtocolSupportV1,
   highestCommonTeamProtocol,
   TEAM_APP_VERSION_HEADER,
+  TEAM_CAPABILITIES_HEADER,
   TEAM_PROTOCOL_V1,
   TEAM_PROTOCOL_VERSION_HEADER,
   type TeamProtocolSupportV1,
@@ -861,10 +862,15 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     };
   }
 
-  #requestProtocol(compatibility: ServerCompatibility): { protocol?: number; appVersion?: string } {
+  #requestProtocol(compatibility: ServerCompatibility): {
+    protocol?: number;
+    appVersion?: string;
+    capabilities?: readonly TeamProtocolCapability[];
+  } {
     return {
       protocol: compatibility.negotiatedProtocol ?? undefined,
       appVersion: this.#appVersion ?? undefined,
+      capabilities: this.#appVersion ? TEAM_PROTOCOL_CAPABILITIES : undefined,
     };
   }
 
@@ -874,7 +880,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       const headers = new Headers(init.headers);
       headers.set("Authorization", `Bearer ${this.#token(server)}`);
       headers.set(TEAM_PROTOCOL_VERSION_HEADER, String(compatibility.negotiatedProtocol));
-      if (this.#appVersion) headers.set(TEAM_APP_VERSION_HEADER, this.#appVersion);
+      if (this.#appVersion) {
+        headers.set(TEAM_APP_VERSION_HEADER, this.#appVersion);
+        headers.set(TEAM_CAPABILITIES_HEADER, TEAM_PROTOCOL_CAPABILITIES.join(","));
+      }
       const response = await remoteFetch(input, { ...init, headers });
       if (!response.ok) {
         const method = init.method ?? "GET";
@@ -1540,7 +1549,14 @@ async function requestJson<T>(
   apiUrl: string,
   path: string,
   decoder: ResponseDecoder<T>,
-  options: { method?: string; body?: unknown; token?: string; protocol?: number; appVersion?: string } = {},
+  options: {
+    method?: string;
+    body?: unknown;
+    token?: string;
+    protocol?: number;
+    appVersion?: string;
+    capabilities?: readonly TeamProtocolCapability[];
+  } = {},
 ): Promise<T> {
   const method = options.method ?? (options.body === undefined ? "GET" : "POST");
   const adapter = teamProtocolAdapter(options.protocol ?? TEAM_PROTOCOL_V1);
@@ -1553,6 +1569,7 @@ async function requestJson<T>(
       ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
       ...(options.protocol ? { [TEAM_PROTOCOL_VERSION_HEADER]: String(options.protocol) } : {}),
       ...(options.appVersion ? { [TEAM_APP_VERSION_HEADER]: options.appVersion } : {}),
+      ...(options.capabilities ? { [TEAM_CAPABILITIES_HEADER]: options.capabilities.join(",") } : {}),
     },
     body: options.body === undefined ? undefined : adapter.encodeHttpRequest(method, path, options.body),
   });

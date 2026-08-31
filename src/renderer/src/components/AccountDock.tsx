@@ -507,7 +507,7 @@ export function AccountDock(props: AccountDockProps) {
             </Popover.Root>
           </Tooltip.Trigger>
           <Tooltip.Portal>
-            <Tooltip.Content class="account-dock-tooltip">Weekly usage</Tooltip.Content>
+            <Tooltip.Content class="ui-tooltip">Weekly usage</Tooltip.Content>
           </Tooltip.Portal>
         </Tooltip.Root>
 
@@ -529,7 +529,7 @@ export function AccountDock(props: AccountDockProps) {
             </Button>
           </Tooltip.Trigger>
           <Tooltip.Portal>
-            <Tooltip.Content class="account-dock-tooltip">Settings</Tooltip.Content>
+            <Tooltip.Content class="ui-tooltip">Settings</Tooltip.Content>
           </Tooltip.Portal>
         </Tooltip.Root>
       </div>

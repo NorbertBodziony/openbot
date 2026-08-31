@@ -19,6 +19,7 @@ import type {
   UpdateStatus,
   VoiceModelStatus,
 } from "@openbot/contracts/ipc";
+import { routineConversationEventItemType } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { createSignal, Show } from "solid-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -468,6 +469,7 @@ describe("OpenBot connected desktop shell", () => {
           listBots: vi.fn().mockResolvedValue(BOTS),
           listMemories: vi.fn().mockResolvedValue([]),
           listRoutines: vi.fn().mockResolvedValue([]),
+          listRoutineRuns: vi.fn().mockResolvedValue([]),
           createMemory: vi.fn().mockImplementation(async (input) => ({
             id: "memory-new",
             botId: input.botId,
@@ -863,6 +865,52 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.agent.onEvent).toHaveBeenCalledTimes(agentSubscriptionCount);
     expect(window.openbot.auth.onEvent).toHaveBeenCalledTimes(authSubscriptionCount);
     expect(window.openbot.servers.onPresence).toHaveBeenCalledTimes(presenceSubscriptionCount);
+  });
+
+  it("opens routine settings from a persisted routine event marker", async () => {
+    const routine = {
+      id: "routine-1",
+      botId: "chief",
+      name: "Morning brief",
+      instruction: "Prepare the daily brief.",
+      active: true,
+      timezone: "UTC",
+      trigger: {
+        id: "trigger-1",
+        routineId: "routine-1",
+        schedule: { kind: "daily", time: "09:00" } as const,
+        nextRunAt: "2026-09-01T09:00:00.000Z",
+        createdAt: "2026-08-31T09:00:00.000Z",
+        updatedAt: "2026-08-31T09:00:00.000Z",
+      },
+      createdAt: "2026-08-31T09:00:00.000Z",
+      updatedAt: "2026-08-31T09:00:00.000Z",
+    };
+    vi.mocked(window.openbot.agent.listRoutines).mockResolvedValue([routine]);
+    vi.mocked(window.openbot.agent.readConversation).mockResolvedValue(
+      testConversationPage("chief", [
+        {
+          id: "routine-event-1",
+          author: "system",
+          source: "system",
+          text: routine.name,
+          createdAt: "2026-08-31T10:00:00.000Z",
+          status: "completed",
+          itemType: routineConversationEventItemType("created", routine.id),
+        },
+      ]),
+    );
+
+    render(() => <App />);
+
+    const marker = await screen.findByRole("button", { name: "Open routine Morning brief" });
+    await fireEvent.click(marker);
+    expect(await screen.findByRole("textbox", { name: "Name" })).toHaveValue("Morning brief");
+    expect(window.openbot.agent.listRoutineRuns).toHaveBeenCalledWith({
+      botId: "chief",
+      routineId: routine.id,
+      limit: 10,
+    });
   });
 
   it("restores the active server before loading its workspace data", async () => {

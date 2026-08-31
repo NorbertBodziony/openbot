@@ -288,12 +288,22 @@ export class BotStore {
   }
 
   async ensureThreadId(id: string): Promise<string> {
+    return this.ensureThreadIdNow(id);
+  }
+
+  ensureThreadIdNow(id: string): string {
     const bot = this.#requireBot(id);
     if (bot.threadId) return bot.threadId;
     bot.threadId = `openbot-thread-${randomUUID()}`;
     bot.updatedAt = new Date().toISOString();
     this.#persist("thread.created");
     return bot.threadId;
+  }
+
+  restoreThreadIdentity(id: string, threadId: string | null, updatedAt: string | null): void {
+    const bot = this.#requireBot(id);
+    bot.threadId = threadId;
+    bot.updatedAt = updatedAt;
   }
 
   activeProviderSession(id: string): ProviderSession | null {

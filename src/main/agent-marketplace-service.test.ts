@@ -147,6 +147,7 @@ describe("AgentMarketplaceService", () => {
         timezone: "America/New_York",
         schedule: expect.objectContaining({ kind: "interval", anchorAt: expect.not.stringContaining("2026-01-01") }),
       }),
+      { recordConversationEvent: false },
     );
   });
 
@@ -182,7 +183,10 @@ describe("AgentMarketplaceService", () => {
 
     expect(agents.createBotProfile).not.toHaveBeenCalled();
     expect(agents.updateBot).toHaveBeenCalledWith(expect.objectContaining({ botId: bot.id, name: detail.name }));
-    expect(agents.deleteRoutine).toHaveBeenCalledWith({ botId: bot.id, routineId: "routine-old-id" });
+    expect(agents.deleteRoutine).toHaveBeenCalledWith(
+      { botId: bot.id, routineId: "routine-old-id" },
+      { recordConversationEvent: false },
+    );
     expect(skills.uninstall).toHaveBeenCalledWith({ botId: bot.id, skillId: "retired-skill" });
     expect(agents.setMarketplaceSource).toHaveBeenCalledWith(
       bot.id,

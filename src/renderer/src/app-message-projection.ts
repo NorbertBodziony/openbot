@@ -1,4 +1,5 @@
 import type { BotSummary, ConversationMessage, ConversationReadState } from "@openbot/contracts/ipc";
+import { parseRoutineConversationEventItemType, routineConversationEvent } from "@openbot/contracts/ipc";
 import { cleanAgentMessageText } from "./agent-message-text";
 import type { BotMessage, BotProfile } from "./data";
 
@@ -25,6 +26,7 @@ export function toBotProfile(stored: BotSummary): BotProfile {
 
 export function toBotMessage(message: ConversationMessage): BotMessage {
   const exchangeSenderId = message.senderBotId ?? message.exchange?.senderBotId;
+  const routineEvent = routineConversationEvent(message);
   return {
     id: message.id,
     turnId: message.turnId,
@@ -34,7 +36,7 @@ export function toBotMessage(message: ConversationMessage): BotMessage {
     createdAt: message.createdAt,
     streaming: message.status === "streaming",
     itemType: message.itemType,
-    kind: message.questionPrompt ? "question" : message.exchange ? "exchange" : "text",
+    kind: message.questionPrompt ? "question" : message.exchange ? "exchange" : routineEvent ? "routine-event" : "text",
     senderBotId: exchangeSenderId,
     replyToMessageId: message.replyToMessageId,
     attachments: message.attachments,
@@ -45,6 +47,7 @@ export function toBotMessage(message: ConversationMessage): BotMessage {
     reactions:
       message.reactions ?? (message.reaction ? [{ emoji: message.reaction, actor: { kind: "user" as const } }] : []),
     routine: message.routine,
+    routineEvent: routineEvent ?? undefined,
     status: message.exchange
       ? undefined
       : message.delivery?.status === "queued"
@@ -108,7 +111,10 @@ export function readStateForMessages(
     .slice(throughIndex + 1)
     .filter(
       (message) =>
-        message.author !== "user" && message.itemType !== "commentary" && message.itemType !== "agent_attachment",
+        message.author !== "user" &&
+        message.itemType !== "commentary" &&
+        message.itemType !== "agent_attachment" &&
+        parseRoutineConversationEventItemType(message.itemType) === null,
     );
   return {
     ...state,
@@ -176,6 +182,7 @@ export function botMessagesEqual(left: BotMessage, right: BotMessage): boolean {
     JSON.stringify(left.questionPrompt) === JSON.stringify(right.questionPrompt) &&
     JSON.stringify(left.exchange) === JSON.stringify(right.exchange) &&
     JSON.stringify(left.routine) === JSON.stringify(right.routine) &&
+    JSON.stringify(left.routineEvent) === JSON.stringify(right.routineEvent) &&
     JSON.stringify(left.items) === JSON.stringify(right.items)
   );
 }
