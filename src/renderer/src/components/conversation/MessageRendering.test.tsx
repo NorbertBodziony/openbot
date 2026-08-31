@@ -432,9 +432,10 @@ describe("MessageBody", () => {
     expect(onOpenWorkspaceFile).not.toHaveBeenCalled();
   });
 
-  it("does not repair escaped Markdown delimiters around web links", () => {
+  it("does not repair escaped Markdown delimiters around web links or images", () => {
     const onOpenSharedFile = vi.fn();
     const onOpenWorkspaceFile = vi.fn();
+    const imagePath = String.raw`C:\tmp\preview.png`;
     const { container } = render(() => (
       <MessageBody
         message={{
@@ -443,6 +444,7 @@ describe("MessageBody", () => {
           body: [
             String.raw`[OpenAI]\(<https://example.com/OpenBot/Shared/docs.xlsx>\)`,
             String.raw`[Report]\(<//example.com/OpenBot/Shared/report.xlsx>\)`,
+            String.raw`![Preview]\(<${imagePath}>\)`,
           ].join("\n"),
           time: "10:00",
         }}
@@ -461,6 +463,9 @@ describe("MessageBody", () => {
     expect(container).toHaveTextContent("https://example.com/OpenBot/Shared/docs.xlsx");
     expect(container).toHaveTextContent("[Report](");
     expect(container).toHaveTextContent("//example.com/OpenBot/Shared/report.xlsx");
+    expect(container).toHaveTextContent("![Preview](");
+    expect(container).toHaveTextContent(imagePath);
+    expect(container.querySelector(".message-markdown-image")).toBeNull();
     expect(onOpenSharedFile).not.toHaveBeenCalled();
     expect(onOpenWorkspaceFile).not.toHaveBeenCalled();
   });
@@ -471,6 +476,7 @@ describe("MessageBody", () => {
     const html = String.raw`<code>[html]\(<C:\tmp\html.txt>\)</code>`;
     const nestedCode = String.raw`[nested]\(<C:\tmp\nested.txt>\)`;
     const reportPath = String.raw`C:\tmp\report.xlsx`;
+    const commentReportPath = String.raw`C:\tmp\comment-report.xlsx`;
     const onOpenWorkspaceFile = vi.fn();
     const { container } = render(() => (
       <MarkdownMessageText
@@ -482,6 +488,8 @@ describe("MessageBody", () => {
           "```",
           "",
           `${html} then ${String.raw`[report]\(<${reportPath}>\)`}`,
+          "",
+          `Before <!-- <div> --> then ${String.raw`[comment report]\(<${commentReportPath}>\)`}`,
           "",
           `>     ${nestedCode}`,
         ].join("\n")}
@@ -498,9 +506,12 @@ describe("MessageBody", () => {
     expect(container).toHaveTextContent(String.raw`<code>[html](<C:\tmp\html.txt>)</code>`);
     expect(container).toHaveTextContent(nestedCode);
     const reportLink = screen.getByRole("button", { name: "Open workspace file report.xlsx" });
-    expect(container.querySelectorAll(".message-file-reference")).toHaveLength(1);
+    const commentReportLink = screen.getByRole("button", { name: "Open workspace file comment-report.xlsx" });
+    expect(container.querySelectorAll(".message-file-reference")).toHaveLength(2);
     await fireEvent.click(reportLink);
-    expect(onOpenWorkspaceFile).toHaveBeenCalledWith(reportPath);
+    await fireEvent.click(commentReportLink);
+    expect(onOpenWorkspaceFile).toHaveBeenNthCalledWith(1, reportPath);
+    expect(onOpenWorkspaceFile).toHaveBeenNthCalledWith(2, commentReportPath);
   });
 
   it("turns filenames listed after a Shared directory into preview references", async () => {

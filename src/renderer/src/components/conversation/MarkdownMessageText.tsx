@@ -545,6 +545,7 @@ function markdownTokenContainsProtectedLiteral(token: Token): boolean {
 }
 
 function updateOpenHtmlElements(elements: string[], raw: string): void {
+  if (/^\s*<(?:!--|!|\?)/u.test(raw)) return;
   for (const match of raw.matchAll(/<\s*(\/?)\s*([A-Za-z][\w:-]*)\b[^>]*>/gu)) {
     const name = (match[2] ?? "").toLowerCase();
     if (!name) continue;
@@ -558,7 +559,7 @@ function updateOpenHtmlElements(elements: string[], raw: string): void {
 }
 
 function normalizeEscapedLocalFileLinkCandidate(value: string): string {
-  return value.replace(/(\[[^\]\r\n]+\])\\\(<([^<>\r\n]+)>(\\?\))/gu, (match, label: string, target: string) =>
+  return value.replace(/(?<!!)(\[[^\]\r\n]+\])\\\(<([^<>\r\n]+)>(\\?\))/gu, (match, label: string, target: string) =>
     localFileTarget(target) ? `${label}(<${target}>)` : match,
   );
 }
