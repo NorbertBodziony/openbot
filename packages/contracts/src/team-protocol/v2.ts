@@ -13,6 +13,7 @@ import {
 } from "./v1";
 
 export const TEAM_PROTOCOL_V2 = 2;
+export const TEAM_PROTOCOL_V2_WEBSOCKET = "openbot-team-v2";
 export const TEAM_PROTOCOL_V2_CAPABILITIES = [...TEAM_PROTOCOL_V1_CAPABILITIES, "installed-skills"] as const;
 export type TeamProtocolV2Capability = (typeof TEAM_PROTOCOL_V2_CAPABILITIES)[number];
 

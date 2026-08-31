@@ -89,6 +89,7 @@ import {
   TEAM_PROTOCOL_VERSION_HEADER,
   type TeamProtocolSupportV1,
   type TeamProtocolV1Capability,
+  type TeamProtocolV1ClientEvent,
   teamProtocolUpdateDirection,
 } from "@openbot/contracts/team-protocol/v1";
 import {
@@ -96,8 +97,14 @@ import {
   decodeTeamProtocolV1CurrentHttpResponse,
   encodeTeamProtocolV1CurrentHttpRequest,
 } from "@openbot/contracts/team-protocol/v1-adapter";
-import { TEAM_PROTOCOL_V2, TEAM_PROTOCOL_V2_CAPABILITIES } from "@openbot/contracts/team-protocol/v2";
 import {
+  encodeTeamProtocolV2ClientEvent,
+  TEAM_PROTOCOL_V2,
+  TEAM_PROTOCOL_V2_CAPABILITIES,
+  TEAM_PROTOCOL_V2_WEBSOCKET,
+} from "@openbot/contracts/team-protocol/v2";
+import {
+  decodeTeamProtocolV2CurrentEvent,
   decodeTeamProtocolV2CurrentHttpResponse,
   encodeTeamProtocolV2CurrentHttpRequest,
 } from "@openbot/contracts/team-protocol/v2-adapter";
@@ -166,6 +173,18 @@ const REMOTE_EVENT_PAYLOAD_LIMIT = 1024 * 1024;
 const REMOTE_EVENT_INITIAL_BUFFER_LIMIT = 1_000;
 const REMOTE_EVENT_PROTOCOL = "openbot-events";
 const REMOTE_EVENT_SNAPSHOT_PROTOCOL = "openbot-events-v2";
+
+function encodeTeamClientEvent(socket: WebSocket, event: TeamProtocolV1ClientEvent): string {
+  return socket.protocol === TEAM_PROTOCOL_V2_WEBSOCKET
+    ? encodeTeamProtocolV2ClientEvent(event)
+    : encodeTeamProtocolV1ClientEvent(event);
+}
+
+function decodeTeamCurrentEvent(socket: WebSocket, value: unknown) {
+  return socket.protocol === TEAM_PROTOCOL_V2_WEBSOCKET
+    ? decodeTeamProtocolV2CurrentEvent(value)
+    : decodeTeamProtocolV1CurrentEvent(value);
+}
 const LOCAL_TEAM_PROTOCOL = { minimum: TEAM_PROTOCOL_V1, maximum: TEAM_PROTOCOL_V2 } as const;
 
 type ResponseDecoder<T> = (value: unknown) => T;
@@ -292,7 +311,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         continue;
       }
       if (this.#supportsRuntimeSnapshots(server.id, socket)) {
-        socket.send(encodeTeamProtocolV1ClientEvent({ type: "runtime-snapshot-request" }));
+        socket.send(encodeTeamClientEvent(socket, { type: "runtime-snapshot-request" }));
       } else {
         void this.#refreshAgentStateFallback(server.id).catch(() => undefined);
       }
@@ -631,7 +650,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   setTyping(input: SetTeamTypingInput, serverId = this.#state.activeServerId): void {
     const socket = this.#eventSockets.get(serverId);
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    socket.send(encodeTeamProtocolV1ClientEvent({ type: "team-typing", ...input }));
+    socket.send(encodeTeamClientEvent(socket, { type: "team-typing", ...input }));
   }
 
   listDirectThreads(serverId = this.#state.activeServerId): Promise<DirectThreadSummary[]> {
@@ -681,7 +700,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const socket = this.#eventSockets.get(serverId);
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
     socket.send(
-      encodeTeamProtocolV1ClientEvent({
+      encodeTeamClientEvent(socket, {
         type: "team-direct-typing",
         recipientMemberId: input.memberId,
         typing: input.typing,
@@ -1141,7 +1160,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       const eventsUrl = new URL("/v1/events", server.apiUrl);
       eventsUrl.protocol = eventsUrl.protocol === "https:" ? "wss:" : "ws:";
       const socketProtocols = this.#appVersion
-        ? [TEAM_PROTOCOL_V1_WEBSOCKET, `openbot-token.${this.#token(server)}`]
+        ? [
+            ...(compatibility.negotiatedProtocol === TEAM_PROTOCOL_V2 ? [TEAM_PROTOCOL_V2_WEBSOCKET] : []),
+            TEAM_PROTOCOL_V1_WEBSOCKET,
+            `openbot-token.${this.#token(server)}`,
+          ]
         : [REMOTE_EVENT_SNAPSHOT_PROTOCOL, REMOTE_EVENT_PROTOCOL, `openbot-token.${this.#token(server)}`];
       const socket = new WebSocket(eventsUrl, socketProtocols);
       let agentEventsReady = false;
@@ -1198,7 +1221,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
             return;
           }
           try {
-            const decoded = decodeTeamProtocolV1CurrentEvent(JSON.parse(message.data));
+            const decoded = decodeTeamCurrentEvent(socket, JSON.parse(message.data));
             if (decoded.kind === "unknown") return;
             if (decoded.kind === "invalid") {
               protocolFailed = true;
@@ -1302,16 +1325,18 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     if (socket.readyState !== WebSocket.OPEN) return;
     if (
       this.#appVersion
-        ? socket.protocol !== TEAM_PROTOCOL_V1_WEBSOCKET
+        ? socket.protocol !== TEAM_PROTOCOL_V1_WEBSOCKET && socket.protocol !== TEAM_PROTOCOL_V2_WEBSOCKET
         : !this.#supportsRuntimeSnapshots(serverId, socket)
     ) {
       return;
     }
+    const capabilities =
+      socket.protocol === TEAM_PROTOCOL_V2_WEBSOCKET ? TEAM_PROTOCOL_V2_CAPABILITIES : TEAM_PROTOCOL_V1_CAPABILITIES;
     socket.send(
-      encodeTeamProtocolV1ClientEvent({
+      encodeTeamClientEvent(socket, {
         type: "agent-event-scope",
         includeConversations: this.#state.activeServerId === serverId,
-        ...(this.#appVersion ? { capabilities: TEAM_PROTOCOL_V1_CAPABILITIES } : {}),
+        ...(this.#appVersion ? { capabilities } : {}),
       }),
     );
   }

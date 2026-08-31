@@ -10,8 +10,13 @@ import {
   decodeTeamProtocolV2HttpResponse,
   encodeTeamProtocolV2ClientEvent,
   TEAM_PROTOCOL_V2_CAPABILITIES,
+  TEAM_PROTOCOL_V2_WEBSOCKET,
 } from "./v2";
-import { decodeTeamProtocolV2CurrentEvent, encodeTeamProtocolV2CurrentHttpResponse } from "./v2-adapter";
+import {
+  decodeTeamProtocolV2CurrentEvent,
+  encodeTeamProtocolV2CurrentEvent,
+  encodeTeamProtocolV2CurrentHttpResponse,
+} from "./v2-adapter";
 
 describe("Team protocol v2", () => {
   it("keeps the released host and client fixtures valid", () => {
@@ -56,6 +61,7 @@ describe("Team protocol v2", () => {
   });
 
   it("accepts the v2 capability in client scope declarations", () => {
+    expect(TEAM_PROTOCOL_V2_WEBSOCKET).toBe("openbot-team-v2");
     expect(
       decodeTeamProtocolV2ClientEvent({
         type: "agent-event-scope",
@@ -67,6 +73,17 @@ describe("Team protocol v2", () => {
       includeConversations: true,
       capabilities: ["agent-runtime-snapshots", "installed-skills"],
     });
+  });
+
+  it("preserves semantic tags in v2 events", () => {
+    const encoded = encodeTeamProtocolV2CurrentEvent({
+      type: "error",
+      botId: "chief",
+      code: "test",
+      message: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
+    });
+    expect(encoded).toContain("@[Research](agent:research)");
+    expect(encoded).toContain("@[Sources](skill:sources)");
   });
 
   it("down-converts semantic tags for v1 clients", () => {

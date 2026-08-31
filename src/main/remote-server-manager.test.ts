@@ -1058,7 +1058,7 @@ describe("Team API compatibility negotiation", () => {
     }
   });
 
-  it("declares client capabilities when runtime snapshots are unavailable", async () => {
+  it("negotiates v2 events and declares v2 client capabilities", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openbot-compatibility-event-scope-"));
     const statePath = join(directory, "servers.json");
     await writeRemoteEventState(statePath, "compatibility-event-scope");
@@ -1069,8 +1069,8 @@ describe("Team API compatibility negotiation", () => {
         if (url.pathname === "/v1/compatibility") {
           return Response.json({
             appVersion: "0.3.0",
-            protocol: { minimum: 1, maximum: 1 },
-            capabilities: ["direct-messages"],
+            protocol: { minimum: 1, maximum: 2 },
+            capabilities: ["agent-runtime-snapshots", "direct-messages", "installed-skills"],
           });
         }
         if (url.pathname === "/v1/agents") return Response.json([]);
@@ -1080,7 +1080,7 @@ describe("Team API compatibility negotiation", () => {
     const sockets: CapabilityEventSocket[] = [];
     class CapabilityEventSocket extends EventTarget {
       static readonly OPEN = 1;
-      readonly protocol = "openbot-team-v1";
+      readonly protocol = "openbot-team-v2";
       readyState = CapabilityEventSocket.OPEN;
       readonly send = vi.fn();
       readonly close = vi.fn(() => {
@@ -1090,6 +1090,7 @@ describe("Team API compatibility negotiation", () => {
 
       constructor(_url: URL, protocols: string[]) {
         super();
+        expect(protocols).toContain("openbot-team-v2");
         expect(protocols).toContain("openbot-team-v1");
         sockets.push(this);
         queueMicrotask(() => this.dispatchEvent(new Event("open")));
@@ -1106,8 +1107,28 @@ describe("Team API compatibility negotiation", () => {
       expect(messages).toContainEqual({
         type: "agent-event-scope",
         includeConversations: true,
-        capabilities: expect.arrayContaining(["direct-messages"]),
+        capabilities: expect.arrayContaining(["direct-messages", "installed-skills"]),
       });
+      const onAgent = vi.fn();
+      manager.on("agent", onAgent);
+      sockets[0]?.dispatchEvent(
+        new MessageEvent("message", {
+          data: JSON.stringify({
+            type: "error",
+            botId: "chief",
+            code: "test",
+            message: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
+          }),
+        }),
+      );
+      await vi.waitFor(() =>
+        expect(onAgent).toHaveBeenCalledWith(
+          "compatibility-event-scope",
+          expect.objectContaining({
+            message: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
+          }),
+        ),
+      );
     } finally {
       manager.stop();
       await rm(directory, { recursive: true, force: true });

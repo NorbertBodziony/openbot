@@ -22,6 +22,7 @@ import {
   TEAM_PROTOCOL_V1_CAPABILITIES,
   TEAM_PROTOCOL_VERSION_HEADER,
 } from "@openbot/contracts/team-protocol/v1";
+import { TEAM_PROTOCOL_V2_CAPABILITIES, TEAM_PROTOCOL_V2_WEBSOCKET } from "@openbot/contracts/team-protocol/v2";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpenBotDatabase } from "../backend/openbot-database";
 import { SidebarLayoutStore } from "../backend/sidebar-layout-store";
@@ -231,6 +232,67 @@ describe("TeamApiServer compatibility", () => {
       });
       expect(legacyResponse.status).toBe(404);
     } finally {
+      await api.stop();
+    }
+  });
+
+  it("uses the v2 codec for v2 WebSocket scopes and events", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-v2-events-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const session = await store.login("owner", "correct horse battery");
+    const agentEvents = new EventEmitter();
+    const api = new TeamApiServer({
+      appVersion: "0.4.0",
+      store,
+      agents: createAgents({}, agentEvents),
+      mailbox: createMailbox(),
+      browser: createBrowser(),
+    });
+    const port = await api.start();
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/events`, [
+      TEAM_PROTOCOL_V2_WEBSOCKET,
+      `openbot-token.${session.sessionToken}`,
+    ]);
+
+    try {
+      const messages: TestRealtimeEvent[] = [];
+      socket.addEventListener("message", (message) => {
+        messages.push(decodeTestRealtimeEvent(JSON.parse(String(message.data))));
+      });
+      await new Promise<void>((resolve, reject) => {
+        socket.addEventListener("open", () => resolve(), { once: true });
+        socket.addEventListener("error", () => reject(new Error("WebSocket did not open.")), { once: true });
+      });
+      expect(socket.protocol).toBe(TEAM_PROTOCOL_V2_WEBSOCKET);
+      await vi.waitFor(() => expect(messages).toContainEqual(expect.objectContaining({ type: "team-presence" })));
+
+      socket.send(
+        JSON.stringify({
+          type: "agent-event-scope",
+          includeConversations: true,
+          capabilities: TEAM_PROTOCOL_V2_CAPABILITIES,
+        }),
+      );
+      await vi.waitFor(() => expect(messages).toContainEqual(expect.objectContaining({ type: "runtime-snapshot" })));
+      agentEvents.emit("event", {
+        type: "error",
+        botId: "chief",
+        code: "test",
+        message: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
+      });
+      await vi.waitFor(() =>
+        expect(messages).toContainEqual(
+          expect.objectContaining({
+            type: "error",
+            message: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
+          }),
+        ),
+      );
+    } finally {
+      socket.close();
       await api.stop();
     }
   });
