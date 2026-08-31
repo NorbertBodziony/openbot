@@ -251,6 +251,7 @@ export function createAppController(props: AppProps = {}) {
   const [botList, setBotList] = createSignal<BotProfile[]>([]);
   const [modelOptions, setModelOptions] = createSignal<AgentModelOption[]>([]);
   const [activeBotId, setActiveBotId] = createSignal("");
+  const [appFocused, setAppFocused] = createSignal(document.hasFocus());
   const [agentChatOpenRevision, setAgentChatOpenRevision] = createSignal(0);
   const [liveMessages, setLiveMessages] = createSignal<Record<string, BotMessage[]>>({});
   const [uiErrors, setUiErrors] = createSignal<Record<string, BotMessage[]>>({});
@@ -372,7 +373,6 @@ export function createAppController(props: AppProps = {}) {
     | { messageId: string; status: "succeeded"; state: ConversationReadState }
   >();
   const agentChatsToRetryRead = new Set<string>();
-  const recentReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const conversationPageRequests = new Map<string, number>();
   const conversationReadOperations = new Map<string, Promise<void>>();
   const queueSnapshotRequests = new Map<string, number>();
@@ -709,6 +709,26 @@ export function createAppController(props: AppProps = {}) {
       setGlobalSearchVisibility(!globalSearchOpen());
     };
     window.addEventListener("keydown", handleGlobalSearchShortcut);
+    const handleWindowBlur = () => flush(() => setAppFocused(false));
+    const handleWindowFocus = () => {
+      flush(() => {
+        setAppFocused(true);
+        setRecentReplies({});
+        const botId = activeBot()?.id;
+        if (botId && isAgentChatOpen(botId) && (conversationReads()[botId]?.unreadCount ?? 0) > 0) {
+          const trackingKey = agentConversationKey(activeServerSidebarKey(), botId);
+          agentChatsToMarkRead.add(trackingKey);
+          agentChatsRetriedOnOpen.delete(botId);
+          setAgentChatOpenRevision((current) => current + 1);
+        }
+        const memberId = activeDirectMemberId();
+        if (memberId && (directConversations()[memberId]?.readState?.unreadCount ?? 0) > 0) {
+          void markDirectMessagesRead(memberId).catch(() => undefined);
+        }
+      });
+    };
+    window.addEventListener("blur", handleWindowBlur);
+    window.addEventListener("focus", handleWindowFocus);
     const cleanup = () => {
       unsubscribe();
       unsubscribeScopedAgent();
@@ -723,9 +743,9 @@ export function createAppController(props: AppProps = {}) {
       unsubscribeHost();
       unsubscribeRemoteDesktop();
       window.removeEventListener("keydown", handleGlobalSearchShortcut);
+      window.removeEventListener("blur", handleWindowBlur);
+      window.removeEventListener("focus", handleWindowFocus);
       if (conversationFrame !== undefined) cancelAnimationFrame(conversationFrame);
-      for (const timer of recentReplyTimers.values()) clearTimeout(timer);
-      recentReplyTimers.clear();
       completedTurnByBot.clear();
       pendingProviderConnections.clear();
       if (authSuccessTimer !== undefined) clearTimeout(authSuccessTimer);
@@ -976,14 +996,14 @@ export function createAppController(props: AppProps = {}) {
         setSidebarLayout(event.layout);
         return;
       case "conversation":
-        scheduleConversation(event.snapshot, isAgentChatOpen(event.snapshot.botId));
+        scheduleConversation(event.snapshot, isAgentChatReadable(event.snapshot.botId));
         return;
       case "conversation-page":
         {
           const existingUnreadCount = conversationReads()[event.page.botId]?.unreadCount ?? 0;
           const trackingKey = agentConversationKey(activeServerSidebarKey(), event.page.botId);
           const markNewMessagesRead =
-            isAgentChatOpen(event.page.botId) &&
+            isAgentChatReadable(event.page.botId) &&
             (event.page.readState === undefined || event.page.readState.unreadCount > 0) &&
             (existingUnreadCount === 0 ||
               explicitlyOpenedAgentChatId === event.page.botId ||
@@ -1236,13 +1256,20 @@ export function createAppController(props: AppProps = {}) {
       const snapshots = [...pendingConversationSnapshots.values()];
       pendingConversationSnapshots.clear();
       for (const pendingSnapshot of snapshots) {
-        applyConversation(pendingSnapshot.snapshot, pendingSnapshot.markNewMessagesRead);
+        applyConversation(
+          pendingSnapshot.snapshot,
+          pendingSnapshot.markNewMessagesRead || isAgentChatReadable(pendingSnapshot.snapshot.botId),
+        );
       }
     });
   }
 
   function isAgentChatOpen(botId: string): boolean {
     return !botSetupOpen() && !activeDirectMemberId() && activeBot()?.id === botId;
+  }
+
+  function isAgentChatReadable(botId: string): boolean {
+    return appFocused() && isAgentChatOpen(botId);
   }
 
   function agentConversationKey(serverId: string, botId: string): string {
@@ -1375,7 +1402,7 @@ export function createAppController(props: AppProps = {}) {
         [event.botId]: [...(current[event.botId] ?? []), message],
       }));
       const readState = conversationReads()[event.botId];
-      if (isAgentChatOpen(event.botId)) {
+      if (isAgentChatReadable(event.botId)) {
         autoMarkAgentMessageRead(event.botId, event.messageId);
       } else if (readState) {
         applyConversationReadState(event.botId, {
@@ -1753,6 +1780,9 @@ export function createAppController(props: AppProps = {}) {
         [memberId]: snapshot,
       }));
       setDirectConversationPages((current) => ({ ...current, [memberId]: snapshot.pageInfo }));
+      if (appFocused() && (snapshot.readState?.unreadCount ?? 0) > 0) {
+        void markDirectMessagesRead(memberId, snapshot.messages.at(-1)?.sequence).catch(() => undefined);
+      }
     } catch (error) {
       if (request !== directConversationRequest) return;
       setDirectConversationError(error instanceof Error ? error.message : "The messages could not load.");
@@ -1940,6 +1970,7 @@ export function createAppController(props: AppProps = {}) {
     const markVisibleMessageRead =
       event.message.senderMemberId !== currentMemberId &&
       activeDirectMemberId() === otherMemberId &&
+      appFocused() &&
       (directConversations()[otherMemberId]?.readState?.unreadCount ?? 0) === 0;
     mergeDirectMessage(otherMemberId, event.message);
     if (markVisibleMessageRead) {
@@ -1976,7 +2007,7 @@ export function createAppController(props: AppProps = {}) {
       };
       const incomingUnread =
         message.senderMemberId !== currentTeamMember()?.id && message.sequence > readState.throughSequence;
-      const visibleIncomingMessage = incomingUnread && activeDirectMemberId() === memberId;
+      const visibleIncomingMessage = incomingUnread && activeDirectMemberId() === memberId && appFocused();
       let nextReadState = readState;
       if (visibleIncomingMessage && readState.unreadCount === 0) {
         nextReadState = {
@@ -2005,20 +2036,11 @@ export function createAppController(props: AppProps = {}) {
 
   function markReplyCompleted(botId: string) {
     clearRecentReply(botId);
+    if (appFocused()) return;
     setRecentReplies((current) => ({ ...current, [botId]: true }));
-    recentReplyTimers.set(
-      botId,
-      setTimeout(() => {
-        recentReplyTimers.delete(botId);
-        setRecentReplies((current) => ({ ...current, [botId]: false }));
-      }, 4000),
-    );
   }
 
   function clearRecentReply(botId: string) {
-    const timer = recentReplyTimers.get(botId);
-    if (timer) clearTimeout(timer);
-    recentReplyTimers.delete(botId);
     setRecentReplies((current) => (current[botId] ? { ...current, [botId]: false } : current));
   }
 
@@ -2151,9 +2173,6 @@ export function createAppController(props: AppProps = {}) {
       setQueues((current) => withoutBot(current, botId));
       setPendingPrompts((current) => withoutBot(current, botId));
       removePinnedSidebarItemEverywhere({ kind: "agent", id: botId });
-      const replyTimer = recentReplyTimers.get(botId);
-      if (replyTimer) clearTimeout(replyTimer);
-      recentReplyTimers.delete(botId);
       analytics.track("agent_action", { action: "delete", result: "succeeded", ...(properties ?? {}) });
       if (marketplaceAgent) {
         analytics.track("marketplace_action", { entity: "agent", action: "uninstall", result: "succeeded" });

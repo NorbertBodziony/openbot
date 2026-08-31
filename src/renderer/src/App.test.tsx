@@ -170,6 +170,10 @@ describe("OpenBot connected desktop shell", () => {
       value: defaultMatchMedia,
     });
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+    Object.defineProperty(document, "hasFocus", {
+      configurable: true,
+      value: vi.fn(() => true),
+    });
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
       value: { getUserMedia: vi.fn().mockRejectedValue(new DOMException("Denied", "NotAllowedError")) },
@@ -6865,6 +6869,152 @@ describe("OpenBot connected desktop shell", () => {
     expect(scrollElement.scrollTop).toBe(1080);
   });
 
+  it("keeps a reply unread while the open agent chat is in the background and clears it on focus", async () => {
+    const unreadPage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "agent-background-answer",
+          author: "assistant",
+          text: "Ready while OpenBot was in the background",
+          createdAt: "2026-08-19T09:03:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: {
+          unreadCount: 1,
+          firstUnreadMessageId: "agent-background-answer",
+          throughMessageId: null,
+        },
+      },
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+    vi.mocked(window.openbot.agent.markConversationRead).mockClear();
+    vi.mocked(window.openbot.agent.readConversationPage).mockResolvedValue(unreadPage);
+
+    window.dispatchEvent(new Event("blur"));
+    emitAgentEvent?.({ type: "conversation-page", page: unreadPage });
+
+    expect(await screen.findByText("Ready while OpenBot was in the background")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "1 new message" })).toBeInTheDocument();
+    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "message",
+        message: { messageId: "agent-background-answer" },
+      }),
+    );
+
+    window.dispatchEvent(new Event("focus"));
+
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          throughMessageId: "agent-background-answer",
+        },
+        "local",
+      ),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "idle",
+      }),
+    );
+  });
+
+  it("keeps another agent new until that agent is opened after focus returns", async () => {
+    const unreadPage = testConversationPage(
+      "sales-outbound",
+      [
+        {
+          id: "sales-background-answer",
+          author: "assistant",
+          text: "Sales result from the background",
+          createdAt: "2026-08-19T09:04:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: {
+          unreadCount: 1,
+          firstUnreadMessageId: "sales-background-answer",
+          throughMessageId: null,
+        },
+      },
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    vi.mocked(window.openbot.agent.markConversationRead).mockClear();
+
+    window.dispatchEvent(new Event("blur"));
+    emitAgentEvent?.({ type: "conversation-page", page: unreadPage });
+    window.dispatchEvent(new Event("focus"));
+
+    const sales = screen.getByRole("button", { name: /Sales Outbound/ });
+    await waitFor(() => expect(sales).toHaveTextContent("1 new reply"));
+    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "message",
+        message: { bot: { id: "sales-outbound" }, messageId: "sales-background-answer" },
+      }),
+    );
+
+    vi.mocked(window.openbot.agent.readConversationPage).mockResolvedValue(unreadPage);
+    await fireEvent.click(sales);
+
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "sales-outbound",
+          throughMessageId: "sales-background-answer",
+        },
+        "local",
+      ),
+    );
+    await waitFor(() => expect(sales).not.toHaveTextContent("1 new reply"));
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "idle",
+      }),
+    );
+  });
+
+  it("shows a completed indicator only until the background app receives focus", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const chief = screen.getByRole("button", { name: /Chief/ });
+
+    emitAgentEvent?.({
+      type: "turn-completed",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-foreground",
+      status: "completed",
+    });
+    expect(chief).not.toHaveTextContent("Responded");
+
+    window.dispatchEvent(new Event("blur"));
+    emitAgentEvent?.({
+      type: "turn-completed",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-background",
+      status: "completed",
+    });
+    expect(chief).toHaveTextContent("Responded");
+
+    window.dispatchEvent(new Event("focus"));
+    expect(chief).not.toHaveTextContent("Responded");
+  });
+
   it("keeps a message read when it arrives in the open agent chat", async () => {
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -7247,6 +7397,50 @@ describe("OpenBot connected desktop shell", () => {
     expect(scrollElement.scrollTop).toBe(840);
   });
 
+  it("keeps an open private message unread in the background and clears it on focus", async () => {
+    render(() => <App peopleEnabled />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitPresence?.({
+      serverId: "server-1",
+      updatedAt: "2026-08-19T10:00:00.000Z",
+      members: [
+        presenceMember("member-self", "person@example.com", "Person"),
+        presenceMember("member-alice", "alice@example.com", "Alice"),
+      ],
+    });
+    await fireEvent.click(await screen.findByRole("button", { name: /Alice/ }));
+    await waitFor(() => expect(window.openbot.servers.readDirectConversationPage).toHaveBeenCalled());
+    vi.mocked(window.openbot.servers.markDirectRead).mockClear();
+
+    window.dispatchEvent(new Event("blur"));
+    emitDirectMessage?.({
+      type: "team-direct-message",
+      memberIds: ["member-alice", "member-self"],
+      message: {
+        id: "direct-background",
+        threadId: "thread-member-alice",
+        senderMemberId: "member-alice",
+        recipientMemberId: "member-self",
+        text: "Private result from the background",
+        createdAt: "2026-08-19T10:01:00.000Z",
+        sequence: 1,
+      },
+    });
+
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+    expect(window.openbot.servers.markDirectRead).not.toHaveBeenCalled();
+
+    window.dispatchEvent(new Event("focus"));
+
+    await waitFor(() =>
+      expect(window.openbot.servers.markDirectRead).toHaveBeenCalledWith({
+        memberId: "member-alice",
+        throughSequence: 1,
+      }),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+  });
+
   it("shows and clears the unread boundary in a private conversation", async () => {
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -7283,6 +7477,7 @@ describe("OpenBot connected desktop shell", () => {
         presenceMember("member-alice", "alice@example.com", "Alice"),
       ],
     });
+    window.dispatchEvent(new Event("blur"));
     await fireEvent.click(await screen.findByRole("button", { name: /Alice/ }));
 
     expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
