@@ -202,6 +202,7 @@ describe("OpenBot connected desktop shell", () => {
           getPresentation: vi.fn().mockResolvedValue(null),
           onPreference: vi.fn().mockReturnValue(() => undefined),
           onPresentation: vi.fn().mockReturnValue(() => undefined),
+          onGeometry: vi.fn().mockReturnValue(() => undefined),
           performAction: vi.fn().mockResolvedValue(undefined),
           performHaptic: vi.fn().mockResolvedValue(undefined),
           onAction: vi.fn((listener) => {
