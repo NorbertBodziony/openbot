@@ -1589,10 +1589,51 @@
   line-height: 1;
 }
 
+.ui-tooltip {
+  position: relative;
+  z-index: 80;
+  border: 0;
+  border-radius: var(--openbot-radius-sm);
+  background: var(--openbot-bg-canvas);
+  box-shadow:
+    0 0 0 1px var(--openbot-border-strong),
+    var(--openbot-shadow-raised);
+  padding: var(--openbot-space-1-5) var(--openbot-space-2);
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-sm);
+  font-weight: var(--openbot-weight-semibold);
+  line-height: var(--openbot-leading-sm);
+  opacity: 1;
+  pointer-events: none;
+  transform: translateY(0) scale(1);
+  transform-origin: bottom center;
+  transition:
+    opacity var(--openbot-duration-fast) ease,
+    transform var(--openbot-duration-fast) var(--openbot-ease-out);
+
+  @starting-style {
+    opacity: 0;
+    transform: translateY(2px) scale(0.96);
+  }
+}
+
+.ui-tooltip::after {
+  position: absolute;
+  bottom: -4px;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  background: var(--openbot-bg-canvas);
+  box-shadow: 1px 1px 0 var(--openbot-border-strong);
+  content: "";
+  transform: translateX(-50%) rotate(45deg);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ui-button,
   .ui-switch,
-  .ui-switch-thumb {
+  .ui-switch-thumb,
+  .ui-tooltip {
     transition-property: background-color, border-color, color, opacity;
   }
 
@@ -1790,6 +1831,26 @@ button.ui-bubble-content {
 .ui-bubble-reaction-overflow {
   color: var(--openbot-text-primary);
   font: inherit;
+}
+
+.ui-marker {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+}
+
+.ui-marker-content {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.ui-marker-icon {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
 }
 
 .ui-message-group {
