@@ -2239,10 +2239,7 @@ export function createAppController(props: AppProps = {}) {
         attachmentDraftIds,
         ...(replyToMessageId ? { replyToMessageId } : {}),
       };
-      const receipt =
-        serverId === activeServerSidebarKey()
-          ? await window.openbot.agent.sendMessage(input)
-          : await window.openbot.agent.sendMessage(input, serverId);
+      const receipt = await window.openbot.agent.sendMessage(input, serverId);
       const errorKey = agentConversationKey(serverId, botId);
       setUiErrors((current) => ({ ...current, [errorKey]: [] }));
       analytics.track("message_send", {
@@ -2473,8 +2470,7 @@ export function createAppController(props: AppProps = {}) {
         keepAttachmentIds,
         attachmentDraftIds,
       };
-      if (serverId === activeServerSidebarKey()) await window.openbot.agent.updateQueuedMessage(input);
-      else await window.openbot.agent.updateQueuedMessage(input, serverId);
+      await window.openbot.agent.updateQueuedMessage(input, serverId);
       analytics.track("queue_action", { action: "edit", result: "succeeded" });
       return true;
     } catch (error) {

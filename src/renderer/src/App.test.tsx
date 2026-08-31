@@ -2575,11 +2575,10 @@ describe("OpenBot connected desktop shell", () => {
 
     await waitFor(() => expect(window.openbot.voice.transcribe).toHaveBeenCalledOnce());
     await waitFor(() =>
-      expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith({
-        botId: "chief",
-        text: "Voice transcript",
-        attachmentDraftIds: [],
-      }),
+      expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith(
+        { botId: "chief", text: "Voice transcript", attachmentDraftIds: [] },
+        "local",
+      ),
     );
   });
 
@@ -2610,11 +2609,10 @@ describe("OpenBot connected desktop shell", () => {
 
     resolveTranscription?.({ text: "Voice transcript" });
     await waitFor(() =>
-      expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith({
-        botId: "chief",
-        text: "Existing draft Voice transcript",
-        attachmentDraftIds: [],
-      }),
+      expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith(
+        { botId: "chief", text: "Existing draft Voice transcript", attachmentDraftIds: [] },
+        "local",
+      ),
     );
     expect(window.openbot.agent.sendMessage).toHaveBeenCalledOnce();
     await waitFor(() => expect(composer).toHaveTextContent("Later draft"));
@@ -2639,11 +2637,10 @@ describe("OpenBot connected desktop shell", () => {
 
     resolveTranscription?.({ text: "Message for Chief" });
     await waitFor(() =>
-      expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith({
-        botId: "chief",
-        text: "Message for Chief",
-        attachmentDraftIds: [],
-      }),
+      expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith(
+        { botId: "chief", text: "Message for Chief", attachmentDraftIds: [] },
+        "local",
+      ),
     );
   });
 
@@ -2834,6 +2831,43 @@ describe("OpenBot connected desktop shell", () => {
       ),
     );
     expect(window.openbot.agent.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("retains a queued-message edit only in its original conversation", async () => {
+    const local = testServer("local", true);
+    const remote = testServer("remote-1", false);
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+    vi.mocked(window.openbot.servers.select).mockImplementation(async (serverId) => [
+      { ...local, active: serverId === "local" },
+      { ...remote, active: serverId === "remote-1" },
+    ]);
+    vi.mocked(window.openbot.agent.listQueue).mockResolvedValueOnce({
+      botId: "chief",
+      deliveries: [
+        queuedDelivery("delivery-running", "Running", null, { status: "running", turnId: "turn-running" }),
+        queuedDelivery("delivery-edit", "Queued draft", 1),
+      ],
+    });
+    render(() => <App />);
+
+    const composer = await screen.findByRole("textbox", { name: "Message Chief" });
+    composer.textContent = "Personal draft";
+    await fireEvent.input(composer);
+    await fireEvent.click(await screen.findByRole("button", { name: "Edit queued message 1" }));
+    expect(composer).toHaveTextContent("Queued draft");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true"),
+    );
+    expect(screen.queryByRole("button", { name: "Save queued message" })).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Local server" }));
+    await screen.findByRole("button", { name: "Save queued message" });
+    expect(screen.getByRole("textbox", { name: "Message Chief" })).toHaveTextContent("Queued draft");
+
+    await fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.getByRole("textbox", { name: "Message Chief" })).toHaveTextContent("Personal draft");
+    expect(window.openbot.agent.updateQueuedMessage).not.toHaveBeenCalled();
   });
 
   it("shows the voice-send arrow while an agent turn is active", async () => {
@@ -4261,11 +4295,10 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.input(composer);
     await fireEvent.keyDown(composer, { key: "Enter" });
     await waitFor(() =>
-      expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith({
-        botId: "chief",
-        text: "Run this Monday",
-        attachmentDraftIds: [],
-      }),
+      expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith(
+        { botId: "chief", text: "Run this Monday", attachmentDraftIds: [] },
+        "local",
+      ),
     );
     await waitFor(() =>
       expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
@@ -4576,12 +4609,15 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.input(composer);
     await fireEvent.keyDown(composer, { key: "Enter" });
     await waitFor(() =>
-      expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith({
-        botId: "chief",
-        text: "Yes, today please",
-        attachmentDraftIds: [],
-        replyToMessageId: "assistant-1",
-      }),
+      expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          text: "Yes, today please",
+          attachmentDraftIds: [],
+          replyToMessageId: "assistant-1",
+        },
+        "local",
+      ),
     );
     await waitFor(() => expect(screen.queryByText("Replying to Agent")).not.toBeInTheDocument());
   });
@@ -4632,12 +4668,15 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.click(await screen.findByRole("button", { name: "Improve" }));
     await waitFor(() =>
-      expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith({
-        botId: "chief",
-        text: "Improve this selected text.\n\n> friendlier closing sentence",
-        attachmentDraftIds: [],
-        replyToMessageId: "assistant-selection",
-      }),
+      expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          text: "Improve this selected text.\n\n> friendlier closing sentence",
+          attachmentDraftIds: [],
+          replyToMessageId: "assistant-selection",
+        },
+        "local",
+      ),
     );
     expect(composer).toHaveTextContent("Keep this draft");
   });
@@ -4851,11 +4890,10 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByText("brief.pdf")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() =>
-      expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith({
-        botId: "chief",
-        text: "",
-        attachmentDraftIds: ["draft-1"],
-      }),
+      expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith(
+        { botId: "chief", text: "", attachmentDraftIds: ["draft-1"] },
+        "local",
+      ),
     );
   });
 

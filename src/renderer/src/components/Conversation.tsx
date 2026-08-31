@@ -56,6 +56,7 @@ export function createConversationController(props: Pick<ConversationProps, "onT
   const [editingServerId, setEditingServerId] = createSignal<string | null>(null);
   const [editingDeliveryId, setEditingDeliveryId] = createSignal<string | null>(null);
   const [editingDraftBackup, setEditingDraftBackup] = createSignal<ComposerDraft | null>(null);
+  const [editingOriginalAttachmentIds, setEditingOriginalAttachmentIds] = createSignal<string[]>([]);
   const [composerFocusRequest, setComposerFocusRequest] = createSignal(0);
   const [showComposerActions, setShowComposerActions] = createSignal(false);
   const [attachmentBusy, setAttachmentBusy] = createSignal(false);
@@ -131,6 +132,8 @@ export function createConversationController(props: Pick<ConversationProps, "onT
     setEditingDeliveryId,
     editingDraftBackup,
     setEditingDraftBackup,
+    editingOriginalAttachmentIds,
+    setEditingOriginalAttachmentIds,
     composerFocusRequest,
     setComposerFocusRequest,
     showComposerActions,
