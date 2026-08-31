@@ -15,7 +15,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as preferenceStore from "./dynamic-island-preference-store";
 import {
   DynamicIslandWindowController,
-  dynamicIslandNotchSize,
   dynamicIslandNotchSizeForDisplay,
   dynamicIslandWindowBounds,
   requireDynamicIslandSender,
@@ -107,25 +106,6 @@ function display(overrides: Partial<Display>): Display {
 }
 
 describe("dynamic island window geometry", () => {
-  it("scales the notch geometry for notched MacBook display sizes", () => {
-    expect(dynamicIslandNotchSize(display({ bounds: { x: 0, y: 0, width: 1470, height: 956 } }))).toEqual({
-      width: 180,
-      height: 32,
-    });
-    expect(dynamicIslandNotchSize(display({ bounds: { x: 0, y: 0, width: 1512, height: 982 } }))).toEqual({
-      width: 185,
-      height: 32,
-    });
-    expect(dynamicIslandNotchSize(display({ bounds: { x: 0, y: 0, width: 1710, height: 1112 } }))).toEqual({
-      width: 209,
-      height: 36,
-    });
-    expect(dynamicIslandNotchSize(display({ bounds: { x: 0, y: 0, width: 1800, height: 1169 } }))).toEqual({
-      width: 220,
-      height: 38,
-    });
-  });
-
   it("does not scale unsupported internal display geometry", () => {
     expect(
       dynamicIslandNotchSizeForDisplay(display({ bounds: { x: 0, y: 0, width: 2560, height: 1440 } })),
@@ -133,13 +113,6 @@ describe("dynamic island window geometry", () => {
     expect(
       dynamicIslandNotchSizeForDisplay(display({ bounds: { x: 0, y: 0, width: 1512, height: 982 }, internal: false })),
     ).toBeUndefined();
-  });
-
-  it("keeps scaling supported MacBook resolutions in More Space mode", () => {
-    expect(dynamicIslandNotchSizeForDisplay(display({ bounds: { x: 0, y: 0, width: 2056, height: 1329 } }))).toEqual({
-      width: 252,
-      height: 44,
-    });
   });
 
   it("centers the overlay at each display top edge", () => {

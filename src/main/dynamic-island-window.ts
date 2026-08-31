@@ -293,7 +293,7 @@ export function dynamicIslandWindowBounds(display: Pick<Display, "bounds">): Rec
  * measured 14-inch reference therefore covers the 13-inch Air, 14-inch Pro,
  * 15-inch Air, and 16-inch Pro without a model-name lookup.
  */
-export function dynamicIslandNotchSize(display: Pick<Display, "bounds">): DynamicIslandNotchSize {
+function dynamicIslandNotchSize(display: Pick<Display, "bounds">): DynamicIslandNotchSize {
   const displayScale = display.bounds.width / MACBOOK_NOTCH_REFERENCE.displayWidth;
   return {
     width: Math.max(16, Math.round(MACBOOK_NOTCH_REFERENCE.notchWidth * displayScale)),
