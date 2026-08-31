@@ -132,7 +132,7 @@ describe("Remote service authentication", () => {
 });
 
 describe("RemoteControlPlane", () => {
-  it("returns the existing membership ID when a revoked member accepts a new invite", async () => {
+  it("returns the existing membership ID and ends live sessions when a member accepts a new invite", async () => {
     const database = new DatabaseSync(":memory:");
     database.exec("PRAGMA foreign_keys = ON");
     database.exec(`
@@ -159,7 +159,14 @@ describe("RemoteControlPlane", () => {
       .prepare(
         `INSERT INTO remote_memberships(
           membership_id, host_id, user_id, role, status, created_at, updated_at
-        ) VALUES ('existing-member', 'host-1', 'member', 'member', 'revoked', 100, 100)`,
+        ) VALUES ('existing-member', 'host-1', 'member', 'admin', 'active', 100, 100)`,
+      )
+      .run();
+    database
+      .prepare(
+        `INSERT INTO remote_sessions(
+           session_id, host_id, user_id, membership_id, started_at, expires_at
+         ) VALUES ('live-session', 'host-1', 'member', 'existing-member', 100, 5000)`,
       )
       .run();
     const token = "invite-token";
@@ -170,7 +177,7 @@ describe("RemoteControlPlane", () => {
       .prepare(
         `INSERT INTO remote_invites(
           invite_id, host_id, token_hash, role, created_by_user_id, expires_at, created_at
-        ) VALUES ('invite-1', 'host-1', ?, 'admin', 'owner', 2000, 100)`,
+        ) VALUES ('invite-1', 'host-1', ?, 'member', 'owner', 2000, 100)`,
       )
       .run(tokenHash);
     const pair = await generateKeyPair("ES256", { extractable: true });
@@ -193,7 +200,16 @@ describe("RemoteControlPlane", () => {
 
     await expect(
       controlPlane.acceptInvite({ id: "member", email: "member@example.com", name: null, avatarUrl: null }, token),
-    ).resolves.toEqual({ hostId: "host-1", membershipId: "existing-member", role: "admin" });
+    ).resolves.toEqual({ hostId: "host-1", membershipId: "existing-member", role: "member" });
+    expect(
+      database.prepare("SELECT role FROM remote_memberships WHERE membership_id = 'existing-member'").get(),
+    ).toEqual({
+      role: "member",
+    });
+    expect(database.prepare("SELECT ended_at FROM remote_sessions WHERE session_id = 'live-session'").get()).toEqual({
+      ended_at: 1_000,
+    });
+    expect(database.prepare("SELECT COUNT(*) AS count FROM remote_auth_events").get()).toEqual({ count: 1 });
   });
 
   it("protects the owner and validates only an active resume session", async () => {

@@ -498,6 +498,10 @@ export class RemoteControlPlane {
         "The owner cannot accept a member invitation.",
       );
     }
+    const activeSessions = await this.#database
+      .prepare("SELECT session_id FROM remote_sessions WHERE host_id = ? AND user_id = ? AND ended_at IS NULL")
+      .bind(invite.host_id, user.id)
+      .all<{ session_id: string }>();
     const membershipId = crypto.randomUUID();
     const accepted = await this.#database.batch([
       this.#database
@@ -517,6 +521,15 @@ export class RemoteControlPlane {
           "UPDATE remote_invites SET used_at = ? WHERE invite_id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?",
         )
         .bind(now, invite.invite_id, now),
+      this.#database
+        .prepare("UPDATE remote_sessions SET ended_at = ? WHERE host_id = ? AND user_id = ? AND ended_at IS NULL")
+        .bind(now, invite.host_id, user.id),
+      ...activeSessions.results.map((session) =>
+        this.#authEventStatement(
+          { type: "remote-session-ended", hostId: invite.host_id, sessionId: session.session_id },
+          now,
+        ),
+      ),
     ]);
     if ((accepted[0].meta.changes ?? 0) !== 1 || (accepted[1].meta.changes ?? 0) !== 1) {
       throw new RemoteControlPlaneError(409, "invite_already_used", "The invitation was already used.");
@@ -530,6 +543,7 @@ export class RemoteControlPlane {
     if (!membership) {
       throw new RemoteControlPlaneError(500, "membership_missing", "The accepted membership could not be loaded.");
     }
+    await this.#flushAuthEvents();
     return { hostId: invite.host_id, membershipId: membership.membership_id, role: invite.role };
   }
 
@@ -649,6 +663,27 @@ export class RemoteControlPlane {
         .prepare("UPDATE remote_sessions SET ended_at = ? WHERE session_id = ? AND user_id = ? AND ended_at IS NULL")
         .bind(now, sessionId, userId),
       this.#authEventStatement(event, now),
+    ]);
+    await this.#flushAuthEvents();
+  }
+
+  async endUserSessions(userId: string): Promise<void> {
+    const sessions = await this.#database
+      .prepare("SELECT session_id, host_id FROM remote_sessions WHERE user_id = ? AND ended_at IS NULL")
+      .bind(userId)
+      .all<{ session_id: string; host_id: string }>();
+    if (sessions.results.length === 0) return;
+    const now = this.#now();
+    await this.#database.batch([
+      this.#database
+        .prepare("UPDATE remote_sessions SET ended_at = ? WHERE user_id = ? AND ended_at IS NULL")
+        .bind(now, userId),
+      ...sessions.results.map((session) =>
+        this.#authEventStatement(
+          { type: "remote-session-ended", hostId: session.host_id, sessionId: session.session_id },
+          now,
+        ),
+      ),
     ]);
     await this.#flushAuthEvents();
   }

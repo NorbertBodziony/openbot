@@ -58,6 +58,25 @@ describe("RemoteViewerProxy", () => {
     expect(code).toBe(1011);
     await proxy.stop();
   });
+
+  it("closes a viewer when its open desktop forwarding queue exceeds the limit", async () => {
+    const transport = new SlowFrameTransport();
+    const proxy = new RemoteViewerProxy({ transport, fetchResource: async () => new Response() });
+    const viewerUrl = await proxy.viewerUrl("host-1", "/v1/remote-screen/sessions/session-1/viewer");
+    const socketUrl = new URL(viewerUrl);
+    socketUrl.protocol = "ws:";
+    socketUrl.pathname = socketUrl.pathname.replace(/\/viewer$/u, "/stream");
+    const socket = new WebSocket(socketUrl);
+    await once(socket, "open");
+    await transport.opened;
+    const closed = once(socket, "close");
+    for (let index = 0; index < 17; index += 1) socket.send(Buffer.alloc(64 * 1024));
+
+    const [code] = await closed;
+    expect(code).toBe(1009);
+    transport.release();
+    await proxy.stop();
+  });
 });
 
 class FakeTransport extends EventEmitter {
@@ -93,6 +112,29 @@ class FailingFrameTransport extends FakeTransport {
     if (isString(data) && decodeRemoteDesktopSignalControl(data).type === "text") {
       throw new Error("The desktop channel closed.");
     }
+    await super.sendDesktop(hostId, data);
+    if (isString(data) && decodeRemoteDesktopSignalControl(data).type === "open") this.emit("opened");
+  }
+}
+
+class SlowFrameTransport extends FakeTransport {
+  readonly opened = new Promise<void>((resolve) => {
+    this.once("opened", resolve);
+  });
+  readonly #blocked: Promise<void>;
+  readonly release: () => void;
+
+  constructor() {
+    super();
+    let release!: () => void;
+    this.#blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.release = release;
+  }
+
+  override async sendDesktop(hostId: string, data: string | ArrayBuffer): Promise<void> {
+    if (!isString(data)) await this.#blocked;
     await super.sendDesktop(hostId, data);
     if (isString(data) && decodeRemoteDesktopSignalControl(data).type === "open") this.emit("opened");
   }

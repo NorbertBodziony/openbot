@@ -38,6 +38,7 @@ interface ViewerStream {
   opened: boolean;
   pending: Array<{ data: Ws.RawData; binary: boolean }>;
   pendingBytes: number;
+  forwardingBytes: number;
   forwarding: Promise<void>;
 }
 
@@ -151,6 +152,7 @@ export class RemoteViewerProxy {
       opened: false,
       pending: [],
       pendingBytes: 0,
+      forwardingBytes: 0,
       forwarding: Promise.resolve(),
     };
     this.#streams.set(streamId, stream);
@@ -211,6 +213,14 @@ export class RemoteViewerProxy {
   }
 
   #queueFrame(streamId: string, stream: ViewerStream, data: Ws.RawData, binary: boolean): void {
+    const bytes = rawDataSize(data);
+    stream.forwardingBytes += bytes;
+    if (stream.forwardingBytes > MAX_PENDING_SIGNAL_BYTES) {
+      stream.forwardingBytes -= bytes;
+      this.#streams.delete(streamId);
+      stream.socket.close(1009, "Remote desktop signal queue is too large");
+      return;
+    }
     stream.forwarding = stream.forwarding
       .then(async () => {
         if (this.#streams.get(streamId) !== stream || stream.socket.readyState !== webSockets.WebSocket.OPEN) return;
@@ -221,6 +231,9 @@ export class RemoteViewerProxy {
           this.#streams.delete(streamId);
           stream.socket.close(1011, "Remote desktop signal failed");
         }
+      })
+      .finally(() => {
+        stream.forwardingBytes -= bytes;
       });
   }
 

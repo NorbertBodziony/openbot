@@ -178,7 +178,18 @@ describe("TeamWebRtcClientTransport", () => {
     const malformedRequest = transport.request("host-1", "/v1/agents");
     const malformedRejection = expect(malformedRequest).rejects.toMatchObject({ code: "protocol_error" });
     await vi.waitFor(() => expect(bridge.send).toHaveBeenCalledWith("host-1", "rpc", expect.any(String)));
-    bridge.emit("data", "host-1", "rpc", "not-a-protocol-frame");
+    bridge.emit(
+      "data",
+      "host-1",
+      "rpc",
+      JSON.stringify({
+        version: 2,
+        type: "request",
+        requestId: "host-request",
+        operation: "GET /v1/agents",
+        payload: null,
+      }),
+    );
     await malformedRejection;
     expect(protocolError).toHaveBeenCalledWith("host-1", "protocol_error", expect.any(String));
     await vi.waitFor(() => expect(bridge.disconnect).toHaveBeenCalledWith("host-1"));

@@ -613,7 +613,10 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       this.#failProtocol(hostId, "The host returned an invalid RPC frame.");
       return;
     }
-    if (frame.type !== "response") return;
+    if (frame.type !== "response") {
+      this.#failProtocol(hostId, "The host returned a client RPC frame on the RPC channel.");
+      return;
+    }
     const pending = this.#pending.get(frame.requestId);
     if (!pending || pending.hostId !== hostId) return;
     clearTimeout(pending.timer);
@@ -644,7 +647,10 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
         );
         return;
       }
-      if (frame.type !== "event") return;
+      if (frame.type !== "event") {
+        this.#failProtocol(hostId, "The host returned a client event frame on the event channel.");
+        return;
+      }
       const lastSequence = this.#lastEventSequence.get(hostId) ?? 0;
       if (frame.sequence <= lastSequence) {
         this.#sendRecoverable(

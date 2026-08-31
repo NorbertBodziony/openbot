@@ -5,13 +5,6 @@ import { z } from "zod";
 
 const commitSchema = z.string().regex(/^[0-9a-f]{40}$/u, "Must use a complete Git commit.");
 const sha256Schema = z.string().regex(/^[0-9a-f]{64}$/u, "Must use a complete SHA-256 value.");
-const cloudflaredArtifactSchema = z.object({
-  asset: z.string().min(1),
-  assetSha256: sha256Schema,
-  binarySha256: sha256Schema,
-  executable: z.string().min(1),
-  platformDirectory: z.enum(["mac", "win"]),
-});
 const remoteDesktopReleaseArtifactSchema = z.object({
   asset: z.string().min(1),
   sha256: sha256Schema,
@@ -46,16 +39,6 @@ const sourceRuntimeSchema = z.object({
 
 const nativeRuntimeLockSchema = z.object({
   schemaVersion: z.literal(1),
-  cloudflared: z.object({
-    repository: z.url(),
-    version: z.string().min(1),
-    license: z.literal("Apache-2.0"),
-    licenseSha256: sha256Schema,
-    artifacts: z.object({
-      "darwin-arm64": cloudflaredArtifactSchema,
-      "win32-x64": cloudflaredArtifactSchema,
-    }),
-  }),
   remoteDesktop: z.object({
     recipeVersion: z.number().int().positive(),
     sunshine: sourceRuntimeSchema,

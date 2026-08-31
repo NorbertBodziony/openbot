@@ -79,28 +79,6 @@
       }
     }
   },
-  "cloudflared": {
-    "repository": "https://github.com/cloudflare/cloudflared",
-    "version": "2026.5.2",
-    "license": "Apache-2.0",
-    "licenseSha256": "58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd",
-    "artifacts": {
-      "darwin-arm64": {
-        "asset": "cloudflared-darwin-arm64.tgz",
-        "assetSha256": "ba94054c9fd4297645093d59d51442e5e546d07bb0516120e694a13d5b216d38",
-        "binarySha256": "cd9f764abfd06757b4def10ee5ba3d862381ed9fc02d6c1f06086c23d88695c6",
-        "executable": "cloudflared",
-        "platformDirectory": "mac"
-      },
-      "win32-x64": {
-        "asset": "cloudflared-windows-amd64.exe",
-        "assetSha256": "20b9638f685333d623798e733effbad2487093f15ba592f6c7752360ff3b7ab7",
-        "binarySha256": "20b9638f685333d623798e733effbad2487093f15ba592f6c7752360ff3b7ab7",
-        "executable": "cloudflared.exe",
-        "platformDirectory": "win"
-      }
-    }
-  },
   "remoteDesktop": {
     "recipeVersion": 7,
     "sunshine": {
