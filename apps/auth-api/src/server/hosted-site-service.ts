@@ -418,7 +418,7 @@ export class HostedSiteService {
     const deploymentIds = deploymentResultIds(results[1]);
     try {
       await this.publishAuthoritativeRoute(site.id);
-      await this.bucket.delete(blockKey(site.hostname));
+      await this.deleteBlockMarker(site.id, site.hostname);
     } finally {
       for (const deploymentId of deploymentIds) await this.deleteDeployment(site.id, deploymentId);
     }
@@ -462,38 +462,59 @@ export class HostedSiteService {
       await this.bucket.put(blockKey(site.hostname), "blocked", { httpMetadata: { contentType: "text/plain" } });
     }
     let status: SiteRow["status"];
+    let allowedStatuses: string;
     if (blocked) {
       status = "blocked";
+      allowedStatuses = "('active', 'blocked')";
     } else if (!site.current_deployment_id || !site.expires_at || site.expires_at <= now) {
       status = "expired";
+      allowedStatuses = "('blocked', 'active', 'expired')";
     } else {
       status = "active";
+      allowedStatuses = "('blocked', 'active')";
     }
     let results: D1Result<unknown>[];
     try {
       results = await this.database.batch([
         this.database
           .prepare(
-            "UPDATE hosted_sites SET status = ?, blocked_at = ?, route_synced_at = NULL, updated_at = ? WHERE id = ?",
+            `UPDATE hosted_sites SET status = ?, blocked_at = ?, route_synced_at = NULL, updated_at = ?
+             WHERE id = ? AND status IN ${allowedStatuses} AND (? = 0 OR expires_at > ?)`,
           )
-          .bind(status, blocked ? now : null, now, site.id),
+          .bind(status, blocked ? now : null, now, site.id, blocked ? 1 : 0, now),
         this.database
           .prepare(
             `UPDATE site_deployments SET status = 'abandoned'
              WHERE site_id = ? AND status IN ('uploading', 'activating') AND ? = 1
+               AND EXISTS (
+                 SELECT 1 FROM hosted_sites WHERE id = ? AND status = ? AND updated_at = ?
+               )
              RETURNING id`,
           )
-          .bind(site.id, blocked ? 1 : 0),
+          .bind(site.id, blocked ? 1 : 0, site.id, status, now),
         this.database
-          .prepare("INSERT INTO site_audit_log(id, user_id, site_id, operation, created_at) VALUES (?, NULL, ?, ?, ?)")
-          .bind(crypto.randomUUID(), site.id, blocked ? "block" : "unblock", now),
+          .prepare(
+            `INSERT INTO site_audit_log(id, user_id, site_id, operation, created_at)
+             SELECT ?, NULL, ?, ?, ?
+             WHERE EXISTS (
+               SELECT 1 FROM hosted_sites WHERE id = ? AND status = ? AND updated_at = ?
+             )`,
+          )
+          .bind(crypto.randomUUID(), site.id, blocked ? "block" : "unblock", now, site.id, status, now),
       ]);
     } catch (error) {
       if (blocked) await this.bucket.delete(blockKey(site.hostname)).catch(() => undefined);
       throw error;
     }
+    if (results[0].meta.changes !== 1) {
+      if (blocked) await this.bucket.delete(blockKey(site.hostname)).catch(() => undefined);
+      const current = await this.siteById(site.id);
+      if (current?.status === "deleted" || current?.status === "expired") throw inactiveSiteError(current.status);
+      if (current?.expires_at != null && current.expires_at <= now) throw inactiveSiteError("expired");
+      throw new HostedSiteInputError(409, "site_not_active", "This site cannot be blocked or unblocked.");
+    }
     await this.publishAuthoritativeRoute(site.id);
-    if (!blocked) await this.bucket.delete(blockKey(site.hostname));
+    if (!blocked) await this.deleteBlockMarker(site.id, site.hostname);
     for (const deploymentId of deploymentResultIds(results[1])) {
       await this.deleteDeployment(site.id, deploymentId);
     }
@@ -523,7 +544,8 @@ export class HostedSiteService {
     const unsyncedSites = await this.database
       .prepare(
         `SELECT id, hostname FROM hosted_sites
-         WHERE status IN ('active', 'blocked', 'deleted', 'expired') AND route_synced_at IS NULL LIMIT 50`,
+         WHERE status IN ('active', 'blocked', 'deleted', 'expired') AND route_synced_at IS NULL
+         ORDER BY updated_at, id LIMIT 50`,
       )
       .all<{ id: string; hostname: string }>();
     for (const site of unsyncedSites.results) {
@@ -533,11 +555,18 @@ export class HostedSiteService {
         await this.bucket.put(blockKey(site.hostname), "blocked", { httpMetadata: { contentType: "text/plain" } });
       }
       await this.publishAuthoritativeRoute(site.id);
+      if (current.status !== "blocked") await this.deleteBlockMarker(current.id, current.hostname);
     }
     const obsoleteDeployments = await this.database
       .prepare(
-        `SELECT id, site_id FROM site_deployments
-         WHERE status IN ('abandoned', 'superseded') AND objects_deleted_at IS NULL LIMIT 50`,
+        `SELECT deployment.id, deployment.site_id FROM site_deployments AS deployment
+         WHERE deployment.status IN ('abandoned', 'superseded')
+           AND deployment.objects_deleted_at IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM hosted_sites AS site
+             WHERE site.id = deployment.site_id AND site.route_synced_at IS NULL
+           )
+         LIMIT 50`,
       )
       .all<{ id: string; site_id: string }>();
     for (const deployment of obsoleteDeployments.results) {
@@ -577,7 +606,7 @@ export class HostedSiteService {
       try {
         await this.publishAuthoritativeRoute(site.id);
       } finally {
-        await this.bucket.delete(blockKey(site.hostname));
+        await this.deleteBlockMarker(site.id, site.hostname);
       }
       const current = await this.siteById(site.id);
       if (current?.current_deployment_id) await this.deleteDeployment(site.id, current.current_deployment_id);
@@ -598,10 +627,6 @@ export class HostedSiteService {
         tombstones.results.map((site) => this.database.prepare("DELETE FROM hosted_sites WHERE id = ?").bind(site.id)),
       );
     }
-    await this.database
-      .prepare("DELETE FROM site_publish_rate_limits WHERE window_start < ?")
-      .bind(now - 2 * 24 * 60 * 60_000)
-      .run();
     await this.database
       .prepare("DELETE FROM site_operation_receipts WHERE created_at < ?")
       .bind(now - 90 * 24 * 60 * 60_000)
@@ -1050,6 +1075,15 @@ export class HostedSiteService {
       .prepare("UPDATE site_deployments SET objects_deleted_at = ? WHERE id = ? AND site_id = ?")
       .bind(this.now(), deploymentId, siteId)
       .run();
+  }
+
+  private async deleteBlockMarker(siteId: string, hostname: string): Promise<void> {
+    try {
+      await this.bucket.delete(blockKey(hostname));
+    } catch (error) {
+      await this.database.prepare("UPDATE hosted_sites SET route_synced_at = NULL WHERE id = ?").bind(siteId).run();
+      throw error;
+    }
   }
 }
 

@@ -50,14 +50,6 @@ CREATE TABLE site_upload_files (
   PRIMARY KEY(deployment_id, path)
 );
 
-CREATE TABLE site_publish_rate_limits (
-  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  window_kind TEXT NOT NULL CHECK (window_kind IN ('hour', 'day')),
-  window_start INTEGER NOT NULL,
-  activations INTEGER NOT NULL,
-  PRIMARY KEY(user_id, window_kind, window_start)
-);
-
 CREATE TABLE site_operation_receipts (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   idempotency_key TEXT NOT NULL,

@@ -160,6 +160,24 @@ describe("hosted site control plane", () => {
 
   it("republishes an unsynced active route before deleting the prior deployment", async () => {
     const fixture = serviceFixture();
+    for (let index = 0; index < 50; index += 1) {
+      await fixture.database
+        .prepare(
+          `INSERT INTO hosted_sites(
+             id, user_id, hostname, title, description, framework, spa_fallback, status,
+             current_deployment_id, created_at, updated_at, expires_at, deleted_at, blocked_at, route_synced_at
+           ) VALUES (?, 'alice', ?, 'Deleted site', 'Deleted site backlog.', 'vanilla', 0, 'deleted',
+             NULL, ?, ?, NULL, ?, NULL, NULL)`,
+        )
+        .bind(
+          `deleted-backlog-${index}`,
+          `deleted-backlog-project-number-${index}-abcdefghij.openbot.site`,
+          fixture.now() - 2 * 24 * 60 * 60_000,
+          fixture.now() - 60_000,
+          fixture.now(),
+        )
+        .run();
+    }
     const site = await publish(fixture.service, "alice", "cleanup-route-publish", "cleanup-route-activate");
     const priorDeployment = await fixture.database
       .prepare("SELECT current_deployment_id FROM hosted_sites WHERE id = ?")
@@ -179,6 +197,13 @@ describe("hosted site control plane", () => {
     expect(await fixture.bucket.route(site.hostname)).toMatchObject({
       deploymentId: priorDeployment?.current_deployment_id,
     });
+    await fixture.service.cleanup();
+    expect(await fixture.bucket.route(site.hostname)).toMatchObject({
+      deploymentId: priorDeployment?.current_deployment_id,
+    });
+    expect(fixture.bucket.keys()).toContain(
+      `sites/${site.id}/deployments/${priorDeployment?.current_deployment_id}/index.html`,
+    );
     await fixture.service.cleanup();
     expect(await fixture.bucket.route(site.hostname)).toMatchObject({ deploymentId: replacement.uploadId });
     expect(fixture.bucket.keys()).not.toContain(
@@ -203,6 +228,25 @@ describe("hosted site control plane", () => {
       .bind(upload.uploadId)
       .first<{ status: string; objects_deleted_at: number | null }>();
     expect(deployment).toMatchObject({ status: "abandoned", objects_deleted_at: expect.any(Number) });
+  });
+
+  it("does not let blocking resurrect a site deleted during the block transition", async () => {
+    const fixture = serviceFixture();
+    const site = await publish(fixture.service, "alice", "block-delete-publish", "block-delete-activate");
+    const pause = fixture.database.pauseNextBatchContaining("UPDATE hosted_sites SET status = ?");
+    const blocking = fixture.service.setBlocked(site.id, true);
+    await pause.started;
+    await fixture.service.delete("alice", site.id, "delete-during-block");
+    pause.resume();
+
+    await expect(blocking).rejects.toMatchObject({ code: "site_deleted" });
+    expect(fixture.bucket.keys()).not.toContain(`blocks/${site.hostname}`);
+    const deleted = await fixture.database
+      .prepare("SELECT status FROM hosted_sites WHERE id = ?")
+      .bind(site.id)
+      .first<{ status: string }>();
+    expect(deleted?.status).toBe("deleted");
+    expect(await fixture.bucket.route(site.hostname)).toMatchObject({ status: "deleted" });
   });
 
   it("allows only two concurrent upload sessions", async () => {
@@ -333,7 +377,16 @@ describe("hosted site control plane", () => {
       .first<{ route_synced_at: number | null }>();
     expect(reconciled?.route_synced_at).toBe(fixture.now());
 
-    await fixture.service.setBlocked(site.id, false);
+    fixture.bucket.failNextPutContaining(`routes/${site.hostname}.json`);
+    await expect(fixture.service.setBlocked(site.id, false)).rejects.toThrow("Injected R2 put failure");
+    expect(fixture.bucket.keys()).toContain(`blocks/${site.hostname}`);
+    const unsyncedUnblock = await fixture.database
+      .prepare("SELECT status, route_synced_at FROM hosted_sites WHERE id = ?")
+      .bind(site.id)
+      .first<{ status: string; route_synced_at: number | null }>();
+    expect(unsyncedUnblock).toEqual({ status: "active", route_synced_at: null });
+
+    await fixture.service.cleanup();
     expect(fixture.bucket.keys()).not.toContain(`blocks/${site.hostname}`);
     expect(await fixture.bucket.route(site.hostname)).toMatchObject({ status: "active" });
   });
