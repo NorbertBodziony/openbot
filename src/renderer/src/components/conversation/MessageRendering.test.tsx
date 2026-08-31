@@ -557,6 +557,57 @@ describe("MessageBody", () => {
     expect(container).not.toHaveTextContent("**");
   });
 
+  it("hides a valid underscore strong marker but preserves an intraword delimiter", async () => {
+    const [body, setBody] = createSignal("Use __Kobal, but keep a__literal");
+    const [streaming, setStreaming] = createSignal(true);
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: "message-streaming-underscore",
+          author: "bot",
+          body: body(),
+          time: "10:00",
+          streaming: streaming(),
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(container).toHaveTextContent("Use Kobal, but keep a__literal");
+    expect(container).not.toHaveTextContent("Use __Kobal");
+
+    setBody("Use __Kobalte__, but keep a__literal");
+    setStreaming(false);
+
+    await waitFor(() => expect(screen.getByText("Kobalte").tagName).toBe("STRONG"));
+    expect(container).toHaveTextContent("Use Kobalte, but keep a__literal");
+  });
+
+  it("does not clean text inside a completed inline container", () => {
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-streaming-link",
+          author: "bot",
+          body: "[label **literal](https://example.com)",
+          time: "10:00",
+          streaming: true,
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(screen.getByRole("link", { name: "label **literal" })).toBeInTheDocument();
+  });
+
   it("keeps earlier text unchanged while a structured block streams", () => {
     render(() => (
       <MessageBody

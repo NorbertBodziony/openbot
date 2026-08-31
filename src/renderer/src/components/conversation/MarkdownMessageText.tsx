@@ -344,36 +344,21 @@ function MarkdownInline(props: {
             if (!tokenIs(token, "strong")) return token.raw;
             return (
               <strong>
-                <MarkdownInline
-                  tokens={token.tokens}
-                  content={props.content}
-                  streaming={item.streaming}
-                  streamingTail={item.streamingTail}
-                />
+                <MarkdownInline tokens={token.tokens} content={props.content} streamingTail={item.streamingTail} />
               </strong>
             );
           case "em":
             if (!tokenIs(token, "em")) return token.raw;
             return (
               <em>
-                <MarkdownInline
-                  tokens={token.tokens}
-                  content={props.content}
-                  streaming={item.streaming}
-                  streamingTail={item.streamingTail}
-                />
+                <MarkdownInline tokens={token.tokens} content={props.content} streamingTail={item.streamingTail} />
               </em>
             );
           case "del":
             if (!tokenIs(token, "del")) return token.raw;
             return (
               <del>
-                <MarkdownInline
-                  tokens={token.tokens}
-                  content={props.content}
-                  streaming={item.streaming}
-                  streamingTail={item.streamingTail}
-                />
+                <MarkdownInline tokens={token.tokens} content={props.content} streamingTail={item.streamingTail} />
               </del>
             );
           case "codespan": {
@@ -409,12 +394,7 @@ function MarkdownInline(props: {
                 {token.text === token.href ? (
                   token.text
                 ) : (
-                  <MarkdownInline
-                    tokens={token.tokens}
-                    content={props.content}
-                    streaming={item.streaming}
-                    streamingTail={item.streamingTail}
-                  />
+                  <MarkdownInline tokens={token.tokens} content={props.content} streamingTail={item.streamingTail} />
                 )}
               </MessageLink>
             ) : sharedPath && props.content.onOpenSharedFile ? (
@@ -432,12 +412,7 @@ function MarkdownInline(props: {
                 onOpen={props.content.onOpenWorkspaceFile}
               />
             ) : (
-              <RichText
-                body={token.text}
-                content={props.content}
-                streaming={item.streaming}
-                streamingTail={item.streamingTail}
-              />
+              <RichText body={token.text} content={props.content} streamingTail={item.streamingTail} />
             );
           }
           case "image": {
@@ -454,26 +429,14 @@ function MarkdownInline(props: {
                 referrerpolicy="no-referrer"
               />
             ) : (
-              <RichText
-                body={token.text || token.raw}
-                content={props.content}
-                streaming={item.streaming}
-                streamingTail={item.streamingTail}
-              />
+              <RichText body={token.text || token.raw} content={props.content} streamingTail={item.streamingTail} />
             );
           }
           case "html":
             return token.raw;
           case "escape": {
             if (!tokenIs(token, "escape")) return token.raw;
-            return (
-              <RichText
-                body={token.text}
-                content={props.content}
-                streaming={item.streaming}
-                streamingTail={item.streamingTail}
-              />
-            );
+            return <RichText body={token.text} content={props.content} streamingTail={item.streamingTail} />;
           }
           case "text": {
             if (!tokenIs(token, "text")) return token.raw;
@@ -496,14 +459,7 @@ function MarkdownInline(props: {
           case "checkbox":
             return null;
           default:
-            return (
-              <RichText
-                body={token.raw}
-                content={props.content}
-                streaming={item.streaming}
-                streamingTail={item.streamingTail}
-              />
-            );
+            return <RichText body={token.raw} content={props.content} streamingTail={item.streamingTail} />;
         }
       }}
     </For>
@@ -530,22 +486,21 @@ function hideIncompleteStrongMarker(body: string): string {
   const characters = [...body];
   let markerIndex: number | undefined;
   for (let index = 0; index < characters.length; ) {
-    if (characters[index] !== "*") {
+    const delimiter = characters[index];
+    if (delimiter !== "*" && delimiter !== "_") {
       index += 1;
       continue;
     }
     let runEnd = index + 1;
-    while (characters[runEnd] === "*") runEnd += 1;
+    while (characters[runEnd] === delimiter) runEnd += 1;
     const previous = characters[index - 1];
     const next = characters[runEnd];
     if (
       runEnd - index === 2 &&
-      next !== undefined &&
-      !isMarkdownWhitespace(next) &&
-      (!isMarkdownPunctuation(next) ||
-        previous === undefined ||
-        isMarkdownWhitespace(previous) ||
-        isMarkdownPunctuation(previous))
+      isLeftFlankingMarkdownDelimiter(previous, next) &&
+      (delimiter === "*" ||
+        !isRightFlankingMarkdownDelimiter(previous, next) ||
+        (previous !== undefined && isMarkdownPunctuation(previous)))
     ) {
       markerIndex = index;
     }
@@ -554,6 +509,28 @@ function hideIncompleteStrongMarker(body: string): string {
   if (markerIndex === undefined) return body;
   characters.splice(markerIndex, 2);
   return characters.join("");
+}
+
+function isLeftFlankingMarkdownDelimiter(previous: string | undefined, next: string | undefined): boolean {
+  return (
+    next !== undefined &&
+    !isMarkdownWhitespace(next) &&
+    (!isMarkdownPunctuation(next) ||
+      previous === undefined ||
+      isMarkdownWhitespace(previous) ||
+      isMarkdownPunctuation(previous))
+  );
+}
+
+function isRightFlankingMarkdownDelimiter(previous: string | undefined, next: string | undefined): boolean {
+  return (
+    previous !== undefined &&
+    !isMarkdownWhitespace(previous) &&
+    (!isMarkdownPunctuation(previous) ||
+      next === undefined ||
+      isMarkdownWhitespace(next) ||
+      isMarkdownPunctuation(next))
+  );
 }
 
 function isMarkdownWhitespace(value: string): boolean {
