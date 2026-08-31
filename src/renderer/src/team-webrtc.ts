@@ -256,7 +256,10 @@ async function handleSignal(state: PeerState, message: SignalMessage): Promise<v
     return;
   }
   if (message.type === "peer-ready" && state.role === "host" && message.connectionId) {
-    if (!message.resumed && state.peerConnection) disconnectPeerConnection(state);
+    if (!message.resumed && state.peerConnection) {
+      disconnectPeerConnection(state);
+      post({ type: "peer-disconnected", peerId: state.id });
+    }
     state.connectionId = message.connectionId;
     post({
       type: "incoming-peer",
@@ -384,6 +387,7 @@ function bindDataChannel(
     } catch (error) {
       failPeer(state, error);
       disconnectPeerConnection(state);
+      post({ type: "peer-disconnected", peerId: state.id });
     }
   };
   channel.onerror = () =>
