@@ -48,6 +48,12 @@
           "microphonePermission": false
         }
       ],
+      [
+        "expo-sensors",
+        {
+          "motionPermission": "Allow OpenBot to react to how you rotate your device."
+        }
+      ],
       "expo-notifications",
       "expo-secure-store"
     ],

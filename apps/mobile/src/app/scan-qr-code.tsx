@@ -1,0 +1,112 @@
+import { CameraView, useCameraPermissions } from "expo-camera";
+import { Link } from "expo-router";
+import { Button } from "heroui-native/button";
+import { useThemeColor } from "heroui-native/hooks";
+import { ChevronLeft, QrCode } from "lucide-react-native";
+import { useState } from "react";
+import { ActivityIndicator, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+
+function ScreenBackButton({ iconColor }: { iconColor: string }) {
+  return (
+    <Link href="/" dismissTo asChild>
+      <Button
+        size="sm"
+        variant="secondary"
+        isIconOnly
+        accessibilityLabel="Back"
+        className="rounded-full border border-border"
+      >
+        <ChevronLeft size={20} color={iconColor} strokeWidth={2} />
+      </Button>
+    </Link>
+  );
+}
+
+export default function ScanQrCode() {
+  const [permission, requestPermission] = useCameraPermissions();
+  const [scannedData, setScannedData] = useState<string | null>(null);
+  const foreground = useThemeColor("foreground");
+  const { width: windowWidth } = useWindowDimensions();
+  const scannerFrameSize = Math.min(windowWidth - 80, 280);
+
+  if (!permission) {
+    return (
+      <View className="flex-1 items-center justify-center bg-background">
+        <ActivityIndicator color={foreground} accessibilityLabel="Loading camera" />
+      </View>
+    );
+  }
+
+  if (!permission.granted) {
+    return (
+      <ScrollView
+        className="flex-1 bg-background"
+        contentContainerClassName="min-h-full flex-grow px-6 pt-safe-offset-3 pb-safe-offset-8"
+        contentInsetAdjustmentBehavior="automatic"
+      >
+        <ScreenBackButton iconColor={foreground} />
+
+        <View className="flex-1 items-center justify-center gap-6 pb-14">
+          <View className="size-20 items-center justify-center rounded-4xl border border-border bg-control">
+            <QrCode size={36} color={foreground} strokeWidth={1.5} />
+          </View>
+          <View className="max-w-sm items-center gap-2">
+            <Text
+              accessibilityRole="header"
+              className="text-center font-sans text-heading font-semibold text-foreground"
+            >
+              Camera access required
+            </Text>
+            <Text className="text-center font-sans text-body text-text-secondary">
+              OpenBot uses the camera only to scan the QR code shown in the desktop app.
+            </Text>
+          </View>
+          <Button size="md" className="w-full max-w-sm" onPress={requestPermission}>
+            <Button.Label className="font-sans">Allow camera access</Button.Label>
+          </Button>
+        </View>
+      </ScrollView>
+    );
+  }
+
+  return (
+    <View className="flex-1 bg-black">
+      <CameraView
+        style={StyleSheet.absoluteFill}
+        facing="back"
+        barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+        onBarcodeScanned={scannedData ? undefined : ({ data }) => setScannedData(data)}
+      />
+
+      <View className="absolute inset-x-0 top-0 flex-row items-center justify-between px-5 pt-safe-offset-3">
+        <ScreenBackButton iconColor={foreground} />
+        <Text className="font-sans text-body font-semibold text-white">Scan QR code</Text>
+        <View className="size-10" />
+      </View>
+
+      <View pointerEvents="none" className="absolute inset-0 items-center justify-center px-10">
+        <View
+          className="rounded-[28px] border-2 border-white"
+          style={{ borderCurve: "continuous", height: scannerFrameSize, width: scannerFrameSize }}
+        />
+        <Text className="mt-6 text-center font-sans text-body text-white">
+          Position the desktop QR code inside the frame.
+        </Text>
+      </View>
+
+      {scannedData ? (
+        <View className="absolute inset-x-5 bottom-safe-offset-5 gap-4 rounded-3xl border border-border bg-background p-5">
+          <View className="gap-1">
+            <Text className="font-sans text-body font-semibold text-foreground">QR code scanned</Text>
+            <Text numberOfLines={1} className="font-mono text-caption text-muted">
+              {scannedData}
+            </Text>
+          </View>
+          <Button size="md" variant="secondary" onPress={() => setScannedData(null)}>
+            <Button.Label className="font-sans">Scan again</Button.Label>
+          </Button>
+        </View>
+      ) : null}
+    </View>
+  );
+}

@@ -2,3 +2,156 @@
 @import "uniwind";
 
 @import "heroui-native/styles";
+
+@theme inline {
+  --color-canvas: var(--openbot-bg-canvas);
+  --color-sidebar: var(--openbot-bg-sidebar);
+  --color-control: var(--openbot-bg-control);
+  --color-control-active: var(--openbot-bg-control-active);
+  --color-raised: var(--openbot-bg-surface-raised);
+  --color-text-secondary: var(--openbot-text-secondary);
+  --color-text-dim: var(--openbot-text-dim);
+  --color-accent-text: var(--openbot-accent-text);
+  --color-brand-logo: var(--openbot-logo-production);
+  --color-action: var(--openbot-action);
+  --color-action-foreground: var(--openbot-action-foreground);
+
+  --text-display: 2rem;
+  --text-display--line-height: 2.375rem;
+  --text-title: 1.375rem;
+  --text-title--line-height: 1.75rem;
+  --text-heading: 1.5rem;
+  --text-heading--line-height: 1.875rem;
+  --text-body: 1rem;
+  --text-body--line-height: 1.5rem;
+  --text-label: 0.8125rem;
+  --text-label--line-height: 1.125rem;
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1rem;
+
+  --tracking-openbot-tight: -0.02em;
+  --tracking-openbot-wide: 0.08em;
+}
+
+@layer theme {
+  :root {
+    color-scheme: light dark;
+
+    /* HeroUI consumes these aliases; OpenBot tokens remain the source of truth. */
+    --background: var(--openbot-bg-canvas);
+    --foreground: var(--openbot-text-primary);
+    --surface: var(--openbot-bg-surface);
+    --surface-foreground: var(--openbot-text-primary);
+    --surface-secondary: var(--openbot-bg-control);
+    --surface-secondary-foreground: var(--openbot-text-primary);
+    --surface-tertiary: var(--openbot-bg-surface-raised);
+    --surface-tertiary-foreground: var(--openbot-text-primary);
+    --overlay: var(--openbot-bg-surface-raised);
+    --overlay-foreground: var(--openbot-text-primary);
+    --backdrop: var(--openbot-bg-overlay);
+    --muted: var(--openbot-text-muted);
+    --default: var(--openbot-bg-control);
+    --default-foreground: var(--openbot-text-primary);
+    --accent: var(--openbot-accent);
+    --accent-foreground: var(--openbot-text-on-accent);
+    --success: var(--openbot-success);
+    --success-foreground: var(--openbot-text-on-status);
+    --warning: var(--openbot-warning);
+    --warning-foreground: var(--openbot-text-on-status);
+    --danger: var(--openbot-danger);
+    --danger-foreground: var(--openbot-text-on-accent);
+    --border: var(--openbot-border);
+    --separator: var(--openbot-border-strong);
+    --focus: var(--openbot-accent);
+    --link: var(--openbot-accent-text);
+    --field-background: var(--openbot-bg-control);
+    --field-foreground: var(--openbot-text-primary);
+    --field-placeholder: var(--openbot-text-muted);
+    --field-border: var(--openbot-border-strong);
+
+    /* A 4 pt base produces the 8 / 12 / 16 px radius family used on desktop. */
+    --radius: 0.25rem;
+    --field-radius: 0.75rem;
+    --surface-shadow: var(--openbot-shadow-card);
+    --overlay-shadow: var(--openbot-shadow-overlay);
+    --field-shadow: 0 0 0 0 transparent inset;
+
+    --openbot-duration-fast: 120ms;
+    --openbot-duration-normal: 160ms;
+    --openbot-duration-overlay: 240ms;
+    --openbot-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+    @variant light {
+      --openbot-bg-canvas: #f5f5f7;
+      --openbot-bg-sidebar: #ffffff;
+      --openbot-bg-surface: #ffffff;
+      --openbot-bg-surface-raised: #f0f0f3;
+      --openbot-bg-control: #e9e9ed;
+      --openbot-bg-control-active: #dedee4;
+      --openbot-bg-overlay: rgba(20, 20, 20, 0.28);
+      --openbot-border: rgba(20, 20, 20, 0.1);
+      --openbot-border-strong: rgba(20, 20, 20, 0.16);
+      --openbot-text-primary: #141414;
+      --openbot-text-secondary: rgba(20, 20, 20, 0.72);
+      --openbot-text-muted: rgba(20, 20, 20, 0.52);
+      --openbot-text-dim: rgba(20, 20, 20, 0.34);
+      --openbot-text-on-accent: #ffffff;
+      --openbot-text-on-status: #07130c;
+      --openbot-action: #141414;
+      --openbot-action-foreground: #f2f2f2;
+      --openbot-accent: #6960f1;
+      --openbot-accent-text: #5b52df;
+      --openbot-logo-production: #cdadec;
+      --openbot-logo-eye: #040007;
+      --openbot-success: #32a85d;
+      --openbot-warning: #c58a23;
+      --openbot-danger: #d85f58;
+      --openbot-shadow-card: 0 1px 2px rgba(20, 20, 20, 0.05);
+      --openbot-shadow-overlay: 0 12px 32px rgba(20, 20, 20, 0.12);
+    }
+
+    @variant dark {
+      /* biome-ignore lint/suspicious/noDuplicateCustomProperties: Theme variants intentionally share semantic token names. */
+      --openbot-bg-canvas: #070707;
+      --openbot-bg-sidebar: #111111;
+      --openbot-bg-surface: #262626;
+      --openbot-bg-surface-raised: #2f2f2f;
+      --openbot-bg-control: #1b1b1b;
+      --openbot-bg-control-active: #3a3a3a;
+      --openbot-bg-overlay: rgba(7, 7, 7, 0.92);
+      --openbot-border: rgba(255, 255, 255, 0.08);
+      --openbot-border-strong: rgba(255, 255, 255, 0.14);
+      --openbot-text-primary: #f2f2f2;
+      --openbot-text-secondary: rgba(255, 255, 255, 0.72);
+      --openbot-text-muted: rgba(255, 255, 255, 0.48);
+      --openbot-text-dim: rgba(255, 255, 255, 0.32);
+      --openbot-text-on-accent: #ffffff;
+      --openbot-text-on-status: #07130c;
+      --openbot-action: #f0f0f0;
+      --openbot-action-foreground: #141414;
+      --openbot-accent: #6960f1;
+      --openbot-accent-text: #a49fff;
+      --openbot-logo-production: #d6adf2;
+      --openbot-logo-eye: #040007;
+      --openbot-success: #61c985;
+      --openbot-warning: #e3b866;
+      --openbot-danger: #e47d75;
+      --openbot-shadow-card: 0 0 0 transparent;
+      --openbot-shadow-overlay: 0 12px 32px rgba(0, 0, 0, 0.48);
+    }
+  }
+}
+
+@media ios {
+  :root {
+    --font-sans: system-ui;
+    --font-mono: ui-monospace;
+  }
+}
+
+@media android {
+  :root {
+    --font-sans: sans-serif;
+    --font-mono: monospace;
+  }
+}
