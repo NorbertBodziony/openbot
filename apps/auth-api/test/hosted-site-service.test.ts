@@ -77,6 +77,74 @@ describe("hosted site control plane", () => {
     expect(secondSite?.status).toBe("uploading");
   });
 
+  it("claims an operation key before concurrent activation and deletion", async () => {
+    const activationFixture = serviceFixture();
+    const firstUpload = await activationFixture.service.createUpload(
+      "alice",
+      uploadRequest({ title: "First concurrent activation" }),
+      "concurrent-operation-first-upload",
+    );
+    const secondUpload = await activationFixture.service.createUpload(
+      "alice",
+      uploadRequest({ title: "Second concurrent activation" }),
+      "concurrent-operation-second-upload",
+    );
+    await uploadIndex(activationFixture.service, "alice", firstUpload.uploadId);
+    await uploadIndex(activationFixture.service, "alice", secondUpload.uploadId);
+    const activationPause = activationFixture.database.pauseNextBatchContaining(
+      "UPDATE hosted_sites SET status = 'active'",
+    );
+    const firstActivation = activationFixture.service.activate(
+      "alice",
+      firstUpload.uploadId,
+      "concurrent-operation-key",
+    );
+    await activationPause.started;
+    try {
+      await expect(
+        activationFixture.service.activate("alice", secondUpload.uploadId, "concurrent-operation-key"),
+      ).rejects.toMatchObject({ code: "idempotency_conflict" });
+    } finally {
+      activationPause.resume();
+    }
+    await firstActivation;
+    const secondDeployment = await activationFixture.database
+      .prepare("SELECT status FROM site_deployments WHERE id = ?")
+      .bind(secondUpload.uploadId)
+      .first<{ status: string }>();
+    expect(secondDeployment?.status).toBe("uploading");
+
+    const deletionFixture = serviceFixture();
+    const firstSite = await publish(
+      deletionFixture.service,
+      "alice",
+      "concurrent-delete-first-upload",
+      "concurrent-delete-first-activation",
+    );
+    const secondSite = await publish(
+      deletionFixture.service,
+      "alice",
+      "concurrent-delete-second-upload",
+      "concurrent-delete-second-activation",
+    );
+    const deletionPause = deletionFixture.database.pauseNextBatchContaining("SET status = 'deleted'");
+    const firstDeletion = deletionFixture.service.delete("alice", firstSite.id, "concurrent-delete-key");
+    await deletionPause.started;
+    try {
+      await expect(
+        deletionFixture.service.delete("alice", secondSite.id, "concurrent-delete-key"),
+      ).rejects.toMatchObject({ code: "idempotency_conflict" });
+    } finally {
+      deletionPause.resume();
+    }
+    await firstDeletion;
+    const unchangedSite = await deletionFixture.database
+      .prepare("SELECT status FROM hosted_sites WHERE id = ?")
+      .bind(secondSite.id)
+      .first<{ status: string }>();
+    expect(unchangedSite?.status).toBe("active");
+  });
+
   it("charges the activation limit before a concurrent activating request can publish", async () => {
     const fixture = serviceFixture();
     const site = await publish(fixture.service, "alice", "rate-publish-0", "rate-activate-0");
@@ -330,6 +398,30 @@ describe("hosted site control plane", () => {
       .bind("alice")
       .first<{ count: number }>();
     expect(sites?.count).toBe(1);
+  });
+
+  it("rejects an upload idempotency key reused for another payload or target", async () => {
+    const payloadFixture = serviceFixture();
+    await payloadFixture.service.createUpload("alice", uploadRequest(), "upload-request-key");
+    await expect(
+      payloadFixture.service.createUpload(
+        "alice",
+        uploadRequest({ title: "A different hosted site request" }),
+        "upload-request-key",
+      ),
+    ).rejects.toMatchObject({ code: "idempotency_conflict" });
+
+    const targetFixture = serviceFixture();
+    const firstSite = await publish(targetFixture.service, "alice", "target-first-upload", "target-first-activate");
+    const secondSite = await publish(targetFixture.service, "alice", "target-second-upload", "target-second-activate");
+    await targetFixture.service.createUpload(
+      "alice",
+      uploadRequest({ siteId: firstSite.id }),
+      "replacement-request-key",
+    );
+    await expect(
+      targetFixture.service.createUpload("alice", uploadRequest({ siteId: secondSite.id }), "replacement-request-key"),
+    ).rejects.toMatchObject({ code: "idempotency_conflict" });
   });
 
   it("uses one atomic slot check for the ten-site limit", async () => {

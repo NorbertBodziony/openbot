@@ -33,6 +33,7 @@ CREATE TABLE site_deployments (
   site_framework TEXT NOT NULL CHECK (site_framework IN ('vanilla', 'astro')),
   site_spa_fallback INTEGER NOT NULL CHECK (site_spa_fallback IN (0, 1)),
   idempotency_key TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   upload_expires_at INTEGER NOT NULL,
   activated_at INTEGER,
@@ -61,8 +62,15 @@ CREATE TABLE site_operation_receipts (
   idempotency_key TEXT NOT NULL,
   operation TEXT NOT NULL,
   resource_id TEXT,
-  response_json TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'completed')),
+  claim_token TEXT,
+  response_json TEXT,
   created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  CHECK (
+    (status = 'pending' AND claim_token IS NOT NULL AND response_json IS NULL) OR
+    (status = 'completed' AND claim_token IS NULL AND response_json IS NOT NULL)
+  ),
   PRIMARY KEY(user_id, idempotency_key)
 );
 
