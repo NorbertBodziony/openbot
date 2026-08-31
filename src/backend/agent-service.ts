@@ -1169,9 +1169,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const activeDeliveries = pendingDeliveries.filter(
         (delivery) => delivery.status === "starting" || delivery.status === "running",
       );
-      if (activeDeliveries.some((delivery) => !delivery.turnId)) {
-        throw new Error("The agent is still starting. Try stopping it again after the turn starts.");
-      }
       const turnIds = new Set(
         activeDeliveries.map((delivery) => delivery.turnId).filter((turnId): turnId is string => Boolean(turnId)),
       );
@@ -1185,37 +1182,40 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const stoppingTurnKeys = session ? [...turnIds].map((turnId) => `${session.externalSessionId}:${turnId}`) : [];
       for (const key of stoppingTurnKeys) this.#stoppingTurns.add(key);
       try {
-        if (session && client) {
+        try {
+          if (session && client) {
+            for (const turnId of turnIds) {
+              await client.request(
+                "turn/interrupt",
+                { threadId: session.externalSessionId, turnId },
+                decodeRecordResponse,
+                2_000,
+              );
+            }
+          }
+        } catch (error) {
+          this.#emitError("force_stop_interrupt_failed", error, botId);
+          throw error;
+        }
+
+        await this.#mailbox.stopPending(
+          botId,
+          "Stopped by the user.",
+          pendingDeliveries.map((delivery) => delivery.id),
+        );
+
+        if (session) {
           for (const turnId of turnIds) {
-            await client.request(
-              "turn/interrupt",
-              { threadId: session.externalSessionId, turnId },
-              decodeRecordResponse,
-              2_000,
-            );
+            this.#ignoredTurns.add(`${session.externalSessionId}:${turnId}`);
+            this.#interruptImageGenerations(botId, session.externalSessionId, turnId);
+            this.#clearPendingRequestsForTurn(session.externalSessionId, turnId);
+            this.#browser.endControl(bot.threadId ?? session.externalSessionId, turnId);
           }
         }
-      } catch (error) {
-        this.#emitError("force_stop_interrupt_failed", error, botId);
-        throw error;
       } finally {
         for (const key of stoppingTurnKeys) this.#stoppingTurns.delete(key);
       }
 
-      if (session) {
-        for (const turnId of turnIds) {
-          this.#ignoredTurns.add(`${session.externalSessionId}:${turnId}`);
-          this.#interruptImageGenerations(botId, session.externalSessionId, turnId);
-          this.#clearPendingRequestsForTurn(session.externalSessionId, turnId);
-          this.#browser.endControl(bot.threadId ?? session.externalSessionId, turnId);
-        }
-      }
-
-      await this.#mailbox.stopPending(
-        botId,
-        "Stopped by the user.",
-        pendingDeliveries.map((delivery) => delivery.id),
-      );
       snapshot.activeTurnId = null;
       for (const message of snapshot.messages) {
         if (message.status !== "streaming") continue;

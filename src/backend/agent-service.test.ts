@@ -3287,7 +3287,7 @@ describe.sequential("AgentService", () => {
     expect(service.listBots().some((bot) => bot.id === "chief")).toBe(true);
   });
 
-  it("rejects stop while a delivery has no confirmed provider turn", async () => {
+  it("stops a delivery without a confirmed provider turn and interrupts a delayed orphan", async () => {
     const client = new FakeAgentClient("codex", "", false, true, { "turn/start": 50 });
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", () => client);
@@ -3295,30 +3295,60 @@ describe.sequential("AgentService", () => {
 
     await service.sendMessage({ botId: "chief", text: "Start slowly" });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "starting");
-    await expect(service.stopAgent("chief")).rejects.toThrow("The agent is still starting");
-    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+    await service.stopAgent("chief");
 
-    expect((await service.readConversation("chief")).activeTurnId).not.toBeNull();
+    expect(service.listQueue("chief").deliveries[0]?.status).toBe("interrupted");
+    expect((await service.readConversation("chief")).activeTurnId).toBeNull();
     expect(client.requests.filter((request) => request.method === "turn/start")).toHaveLength(1);
-    await expect(service.deleteBot("chief")).rejects.toThrow(
-      "Stop the agent and cancel its queued messages before deleting it.",
-    );
+    await service.deleteBot("chief");
+    await waitFor(() => client.requests.some((request) => request.method === "turn/interrupt"));
+    expect(service.listBots().some((bot) => bot.id === "chief")).toBe(false);
   });
 
-  it("interrupts a delayed provider turn when its delivery became terminal before start returned", async () => {
-    const client = new FakeAgentClient("codex", "", false, true, { "turn/start": 50 });
+  it("keeps a turn stopping until mailbox persistence succeeds and accepts completion after failure", async () => {
+    let rejectPersistence: ((error: Error) => void) | undefined;
+    let persistenceStarted = false;
+    const persistencePending = new Promise<{ turnIds: string[] }>((_resolve, reject) => {
+      rejectPersistence = reject;
+    });
+    const client = new FakeAgentClient("codex", "", false);
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", () => client);
     await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Keep working" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+    const conversation = await service.readConversation("chief");
+    if (!conversation.activeTurnId) throw new Error("The active turn did not start.");
+    const interruptRequest = client.requests.find((request) => request.method === "turn/start");
+    const externalThreadId = stringParam(interruptRequest?.params, "threadId");
+    vi.spyOn(mailbox, "stopPending").mockImplementationOnce(() => {
+      persistenceStarted = true;
+      return persistencePending;
+    });
 
-    await service.sendMessage({ botId: "chief", text: "Start slowly" });
-    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "starting");
-    const deliveryId = service.listQueue("chief").deliveries[0]?.id;
-    if (!deliveryId) throw new Error("The starting delivery was not created.");
-    await mailbox.recoverAsInterrupted(deliveryId, "Stopped concurrently.");
+    const stopping = service.stopAgent("chief");
+    const stopRejected = expect(stopping).rejects.toThrow("Persistence failed");
+    await waitFor(() => persistenceStarted);
+    const result = await callOpenBotTool(
+      client,
+      externalThreadId,
+      "send_message",
+      { recipientBotIds: ["sales-outbound"], text: "This must not be sent.", paths: [] },
+      conversation.activeTurnId,
+    );
+    expect(result.error).toEqual({ code: -32000, message: "The turn was stopped." });
 
-    await waitFor(() => client.requests.some((request) => request.method === "turn/interrupt"));
-    expect(service.listQueue("chief").deliveries[0]?.status).toBe("interrupted");
+    rejectPersistence?.(new Error("Persistence failed"));
+    await stopRejected;
+    client.emit(
+      "notification",
+      notification("turn/completed", {
+        threadId: externalThreadId,
+        turn: { id: conversation.activeTurnId, status: "interrupted" },
+      }),
+    );
+
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "interrupted");
     expect((await service.readConversation("chief")).activeTurnId).toBeNull();
   });
 
