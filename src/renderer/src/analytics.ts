@@ -14,7 +14,7 @@ import { OpenPanelBase, type OpenPanelOptions } from "@openpanel/web";
 export const OPENPANEL_API_URL = "https://analytics.openbot.run/api";
 export const OPENPANEL_CLIENT_ID = "6c989975-87ef-4f0c-857e-ab449a65b5c2";
 const MAX_PENDING_EVENTS = 100;
-export const ANALYTICS_SCHEMA_VERSION = 2;
+export const ANALYTICS_SCHEMA_VERSION = 3;
 
 export type ServerKind = "local" | "remote" | "unknown";
 export type AnalyticsResult = "succeeded" | "failed";
@@ -161,7 +161,7 @@ export type AnalyticsEventName = keyof DesktopAnalyticsEvents;
 export type OpenPanelClient = Pick<OpenPanelBase, "setGlobalProperties" | "track" | "identify" | "clear">;
 
 type ClientFactory = (options: OpenPanelOptions) => OpenPanelClient;
-type AnalyticsIdentity = Pick<CentralAuthUser, "id"> & Partial<Pick<CentralAuthUser, "email">>;
+type AnalyticsIdentity = Pick<CentralAuthUser, "id" | "email">;
 export interface DesktopAnalyticsScope {
   track<Name extends AnalyticsEventName>(name: Name, properties: DesktopAnalyticsEvents[Name]): void;
 }
@@ -480,7 +480,7 @@ export class DesktopAnalytics {
     if (previous?.id === user?.id && previous?.email === user?.email) return;
     this.#identity = user ? { ...user } : null;
     if (!this.#client || !this.#trackingEnabled) return;
-    if (previous) this.#run(() => this.#client?.clear());
+    if (previous && previous.id !== user?.id) this.#run(() => this.#client?.clear());
     if (user) this.#identifyClient(user);
   }
 
@@ -564,7 +564,7 @@ export class DesktopAnalytics {
   }
 
   #identifyClient(user: AnalyticsIdentity): void {
-    this.#run(() => this.#client?.identify({ profileId: user.id }));
+    this.#run(() => this.#client?.identify({ profileId: user.id, email: user.email }));
   }
 
   #run(operation: () => unknown): void {

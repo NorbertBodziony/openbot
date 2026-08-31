@@ -14,9 +14,9 @@ export const OPENPANEL_CLIENT_ID = "6c989975-87ef-4f0c-857e-ab449a65b5c2";
 const MAX_PENDING_EVENTS = 100;
 const MAX_ACTIVE_TURNS = 1_000;
 const ACTIVE_TURN_TTL_MS = 24 * 60 * 60 * 1_000;
-const ANALYTICS_SCHEMA_VERSION = 2;
+const ANALYTICS_SCHEMA_VERSION = 3;
 
-type AnalyticsIdentity = Pick<CentralAuthUser, "id"> & Partial<Pick<CentralAuthUser, "email">>;
+type AnalyticsIdentity = Pick<CentralAuthUser, "id" | "email">;
 type HostEventName =
   | "system_turn_started"
   | "system_turn_completed"
@@ -59,7 +59,7 @@ export class HostAnalytics {
   readonly #resolveOwner: HostAnalyticsOptions["resolveOwner"];
   readonly #resolveBot: HostAnalyticsOptions["resolveBot"];
   readonly #client: HostOpenPanelClient | null;
-  #identifiedOwnerId: string | null = null;
+  #identifiedOwner: AnalyticsIdentity | null = null;
   #trackingEnabled: boolean;
   #pending: HostPendingEvent[] = [];
   readonly #activeTurns = new Map<string, ActiveTurn>();
@@ -165,7 +165,7 @@ export class HostAnalytics {
     if (!enabled) {
       this.#pending = [];
       this.#activeTurns.clear();
-      this.#identifiedOwnerId = null;
+      this.#identifiedOwner = null;
       this.#run(() => this.#client?.clear());
       return;
     }
@@ -187,10 +187,12 @@ export class HostAnalytics {
   }
 
   #identify(owner: AnalyticsIdentity): void {
-    if (!this.#client || this.#identifiedOwnerId === owner.id) return;
-    if (this.#identifiedOwnerId) this.#run(() => this.#client?.clear());
-    this.#identifiedOwnerId = owner.id;
-    this.#run(() => this.#client?.identify({ profileId: owner.id }));
+    if (!this.#client) return;
+    const previous = this.#identifiedOwner;
+    if (previous?.id === owner.id && previous.email === owner.email) return;
+    if (previous && previous.id !== owner.id) this.#run(() => this.#client?.clear());
+    this.#identifiedOwner = { ...owner };
+    this.#run(() => this.#client?.identify({ profileId: owner.id, email: owner.email }));
   }
 
   #send(name: HostEventName, properties: HostProperties, profileId: string, timestamp?: string): void {

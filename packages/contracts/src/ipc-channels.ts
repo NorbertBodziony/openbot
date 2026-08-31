@@ -10,6 +10,7 @@ export const IPC_CHANNELS = {
   dynamicIslandGetPresentation: "dynamic-island:get-presentation",
   dynamicIslandPresentation: "dynamic-island:presentation",
   dynamicIslandPreference: "dynamic-island:preference",
+  dynamicIslandGeometry: "dynamic-island:geometry",
   dynamicIslandPerformAction: "dynamic-island:perform-action",
   dynamicIslandPerformHaptic: "dynamic-island:perform-haptic",
   dynamicIslandAction: "dynamic-island:action",

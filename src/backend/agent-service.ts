@@ -151,7 +151,7 @@ interface AgentBrowserHost {
 interface PendingPrompt {
   client: AgentClient;
   id: RequestId;
-  responseKind: "dynamic-tool" | "user-input";
+  responseKind: "dynamic-tool" | "mcp-elicitation" | "user-input";
   params: unknown;
   botId: string;
   publicThreadId: string;
@@ -208,6 +208,11 @@ interface OpenBotToolResponse {
   success: boolean;
   contentItems: Array<{ type: "inputText"; text: string }>;
 }
+
+const MCP_ELICITATION_DECISION_ID = "mcp-elicitation-decision";
+const MCP_ELICITATION_ALLOW_ONCE = "Allow once";
+const MCP_ELICITATION_ALLOW_ALWAYS = "Always allow";
+const MCP_ELICITATION_DECLINE = "Don't allow";
 
 interface PendingCodexLogin {
   client: AgentClient;
@@ -1280,9 +1285,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const result =
       pending.responseKind === "dynamic-tool"
         ? dynamicPromptResult(input.answers)
-        : {
-            answers: Object.fromEntries(Object.entries(input.answers).map(([id, values]) => [id, { answers: values }])),
-          };
+        : pending.responseKind === "mcp-elicitation"
+          ? mcpElicitationResult(pending.params, input.answers)
+          : {
+              answers: Object.fromEntries(
+                Object.entries(input.answers).map(([id, values]) => [id, { answers: values }]),
+              ),
+            };
     pending.client.respond(pending.id, result);
     this.#pendingPrompts.delete(input.requestId);
     this.#emit({ type: "agent-input-resolved", kind: "prompt", requestId: input.requestId, botId: pending.botId });
@@ -2232,11 +2241,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.#surfacePrompt(client, request);
           return;
         case "mcpServer/elicitation/request":
-          client.respond(request.id, { action: "decline", content: null, _meta: null });
-          this.#emitError(
-            "mcp_safety_handoff",
-            "A local plugin requested a security hand-off that OpenBot cannot auto-approve.",
-          );
+          this.#surfaceMcpElicitation(client, request);
           return;
         case "currentTime/read":
           client.respond(request.id, { currentTimeAt: Math.floor(Date.now() / 1_000) });
@@ -2861,6 +2866,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           .filter(Boolean)
           .join("\n");
       }
+      if (delivery.sender.kind === "routine") {
+        const routineRun = this.#routines.runForDelivery(delivery.id);
+        const runKind = routineRun?.kind === "manual" ? "manual Test run" : "scheduled run";
+        text = [
+          "Execute one run of an existing OpenBot routine now.",
+          `Routine name: ${delivery.sender.routineName}`,
+          `Run type: ${runKind}`,
+          `Scheduled for: ${delivery.sender.scheduledFor}`,
+          "The routine already exists, and its schedule is already configured.",
+          "Do not create, update, delete, list, or test routines during this run.",
+          "Perform the task below now. Do not answer only that the routine or monitoring is active.",
+          routineRun?.kind === "manual"
+            ? "This is a manual Test run. Report the action and result even when a normal scheduled run would suppress a notification because there is no change."
+            : "This is a scheduled run. Follow the notification conditions in the routine task.",
+          "--- routine task ---",
+          displayText,
+        ].join("\n");
+      }
       if (managedAttachments.length) {
         text += `\n\nAttached local files:\n${managedAttachments.map((item) => `- ${item.name}: ${item.path}`).join("\n")}`;
       }
@@ -2910,8 +2933,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         },
         decodeTurnResponse,
       );
-      const currentDelivery = this.#mailbox.getDelivery(delivery.id);
-      if (!currentDelivery || !["starting", "running"].includes(currentDelivery.delivery.status)) {
+      const deliveryBeforeMarkRunning = this.#mailbox.getDelivery(delivery.id);
+      if (!deliveryBeforeMarkRunning || !["starting", "running"].includes(deliveryBeforeMarkRunning.delivery.status)) {
         this.#ignoredTurns.add(`${threadId}:${response.turn.id}`);
         await client
           .request("turn/interrupt", { threadId, turnId: response.turn.id }, decodeRecordResponse, 2_000)
@@ -2919,6 +2942,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return;
       }
       await this.#mailbox.markRunning(delivery.id, response.turn.id);
+      const currentDelivery = this.#mailbox.getDelivery(delivery.id)?.delivery;
+      if (currentDelivery?.status !== "running" || currentDelivery.turnId !== response.turn.id) return;
       snapshot.activeTurnId = response.turn.id;
       this.#syncDeliveryMessage(snapshot, delivery.id);
       this.#emitQueue(bot.id);
@@ -3374,7 +3399,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         await this.#mailbox.markTerminal(delivery.delivery.id, terminal);
         this.#syncDeliveryMessage(snapshot, delivery.delivery.id);
       }
-      this.#emitQueue(botId);
       const relayDelivery = deliveries.find((delivery) => delivery.delivery.sender.kind === "bot");
       if (terminal === "completed" && latestAssistant && relayDelivery) {
         await this.#relayAgentResult(botId, turnId, relayDelivery, latestAssistant.text);
@@ -3385,6 +3409,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.#emit({ type: "bots-changed", bots: this.#store.list() });
     }
     this.#emitConversation(snapshot, "turn.completed", { turnId, status });
+    if (deliveries.length > 0) this.#emitQueue(botId);
     this.#emit({
       type: "turn-completed",
       botId,
@@ -3965,6 +3990,46 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       client,
       id: request.id,
       responseKind: "user-input",
+      params: request.params,
+      botId,
+      publicThreadId,
+      turnId,
+      messageId,
+      questions,
+    });
+    this.#markRoutineNeedsAttention(turnId);
+    this.#emit({
+      type: "prompt",
+      requestId: request.id,
+      botId,
+      threadId: publicThreadId,
+      turnId,
+      questions,
+    });
+  }
+
+  #surfaceMcpElicitation(client: AgentClient, request: AppServerRequest): void {
+    const threadId = getString(request.params, "threadId");
+    const turnId = getString(request.params, "turnId");
+    const botId = threadId ? this.#threadToBot.get(threadId) : undefined;
+    const publicThreadId = threadId && botId ? this.#publicThreadId(botId, threadId) : null;
+    const question = mcpElicitationQuestion(request.params);
+    if (!threadId || !turnId || !botId || !publicThreadId || !question) {
+      client.respond(request.id, { action: "decline", content: null, _meta: null });
+      this.#emitError(
+        "mcp_safety_handoff",
+        "A local plugin requested an unsupported security hand-off, so OpenBot declined it.",
+        botId,
+      );
+      return;
+    }
+
+    const questions = [question];
+    const messageId = this.#persistQuestionPrompt(botId, publicThreadId, turnId, request.id, questions);
+    this.#pendingPrompts.set(request.id, {
+      client,
+      id: request.id,
+      responseKind: "mcp-elicitation",
       params: request.params,
       botId,
       publicThreadId,
@@ -4664,7 +4729,7 @@ function developerInstructions(bot: BotSummary, sharedRoot: string, memories: Bo
     "You have full local computer, filesystem, command, and network access as requested by the user.",
     "Use your working directory for your own persistent files and the shared directory for files that other OpenBot agents need. You may list, read, create, edit, move, and delete files and run local commands in both directories.",
     `For every browser task, use ${OPENBOT_BROWSER_NAMESPACE} directly. It is OpenBot's private embedded browser and is available through its dynamic tools. Never use browser:control-in-app-browser, browser-use, Chrome, or another browser plugin inside OpenBot; those tools target a different host and can report a false unavailable state. Use the installed Computer Use plugin only for macOS GUI tasks outside the browser.`,
-    `When a browser step requires the user to log in, grant consent, solve a CAPTCHA, use a passkey, enter a one-time code, or complete another authorization step, call ${OPENBOT_BROWSER_NAMESPACE}.request_takeover for that tab. Never enter credentials or authentication secrets yourself. Wait for the takeover result; when it is completed, take a fresh snapshot and continue the original task.`,
+    `When you use ${OPENBOT_BROWSER_NAMESPACE} and a step requires the user to log in, grant consent, solve a CAPTCHA, use a passkey, enter a one-time code, or complete another authorization step, call ${OPENBOT_BROWSER_NAMESPACE}.request_takeover for that tab. Never enter credentials or authentication secrets yourself. Wait for the takeover result; when it is completed, take a fresh snapshot and continue the original task.`,
     "Use openbot.list_agents to discover other persistent OpenBot teammates.",
     "When routing work, call openbot.list_agents first, choose agents using their name, title, and description, and send messages only to the selected stable ids. Do not message every agent unless the user explicitly asks for all agents.",
     "Use openbot.update_profile with the target bot id to change a local agent's name, title, or description. The target id is required and may refer to any local agent.",
@@ -4902,6 +4967,69 @@ function promptQuestions(params: unknown): AgentPromptQuestion[] {
           }))
         : null,
     }));
+}
+
+function mcpElicitationQuestion(params: unknown): AgentPromptQuestion | null {
+  const serverName = getString(params, "serverName");
+  const mode = getString(params, "mode") ?? "form";
+  const message = getString(params, "message")?.trim();
+  const requestedSchema = getRecord(params, "requestedSchema");
+  const properties = getRecord(requestedSchema, "properties");
+  if (
+    serverName !== "computer-use" ||
+    (mode !== "form" && mode !== "openai/form") ||
+    !message ||
+    !requestedSchema ||
+    !properties ||
+    Object.keys(properties).length > 0
+  ) {
+    return null;
+  }
+
+  const persistence = getArray(getRecord(params, "_meta"), "persist").filter(isString);
+  const options = [
+    {
+      label: MCP_ELICITATION_ALLOW_ONCE,
+      description: "Allow this Computer Use request.",
+    },
+    ...(persistence.includes("always")
+      ? [
+          {
+            label: MCP_ELICITATION_ALLOW_ALWAYS,
+            description: "Remember this access for future Computer Use requests.",
+          },
+        ]
+      : []),
+    {
+      label: MCP_ELICITATION_DECLINE,
+      description: "Keep access blocked.",
+    },
+  ];
+  const question: AgentPromptQuestion = {
+    id: MCP_ELICITATION_DECISION_ID,
+    header: "Computer Use",
+    question: message.slice(0, INPUT_LIMITS.promptQuestion),
+    isSecret: false,
+    options,
+  };
+  return validPromptQuestions([question]) ? question : null;
+}
+
+function mcpElicitationResult(
+  params: unknown,
+  answers: Record<string, string[]>,
+): { action: "accept" | "cancel" | "decline"; content: DynamicRecord | null; _meta: DynamicRecord | null } {
+  const selected = answers[MCP_ELICITATION_DECISION_ID]?.[0];
+  if (selected === MCP_ELICITATION_ALLOW_ONCE) {
+    return { action: "accept", content: {}, _meta: null };
+  }
+  if (selected === MCP_ELICITATION_ALLOW_ALWAYS && getArray(getRecord(params, "_meta"), "persist").includes("always")) {
+    return { action: "accept", content: {}, _meta: { persist: "always" } };
+  }
+  if (selected === MCP_ELICITATION_DECLINE) {
+    return { action: "decline", content: null, _meta: null };
+  }
+  return { action: "cancel", content: null, _meta: null };
 }
 
 function validPromptQuestions(questions: AgentPromptQuestion[]): boolean {

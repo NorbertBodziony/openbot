@@ -1,10 +1,10 @@
 import { isBoolean, isOneOf } from "@openbot/contracts/runtime-values";
-import { OpenPanel, type OpenPanelOptions } from "@openpanel/web";
+import { OpenPanel, OpenPanelBase, type OpenPanelOptions } from "@openpanel/web";
 import { OPENBOT_DOWNLOAD_LINKS, OPENBOT_LINKS } from "./landing-links";
 
 export const OPENPANEL_API_URL = "https://analytics.openbot.run/api";
 const OPENPANEL_CLIENT_ID = "6c989975-87ef-4f0c-857e-ab449a65b5c2";
-const ANALYTICS_SCHEMA_VERSION = 2;
+const ANALYTICS_SCHEMA_VERSION = 3;
 
 export type LandingAcquisitionSource = "direct" | "search" | "social" | "github" | "other";
 
@@ -34,9 +34,22 @@ type LandingDestination =
   | "codex"
   | "claude";
 
-type OpenPanelClient = Pick<OpenPanel, "setGlobalProperties" | "track">;
+type LandingScreenPath = "/" | "/join";
+
+type OpenPanelClient = Pick<OpenPanel, "setGlobalProperties" | "track"> & {
+  trackScreenView: (path: LandingScreenPath) => ReturnType<OpenPanelBase["track"]>;
+};
 
 type ClientFactory = (options: OpenPanelOptions) => OpenPanelClient;
+
+function createOpenPanelClient(options: OpenPanelOptions): OpenPanelClient {
+  const client = new OpenPanel(options);
+  return {
+    setGlobalProperties: (properties) => client.setGlobalProperties(properties),
+    track: (name, properties) => client.track(name, properties),
+    trackScreenView: (path) => OpenPanelBase.prototype.track.call(client, "screen_view", { __path: path }),
+  };
+}
 
 const LINK_DESTINATIONS = new Map<string, LandingDestination>([
   [OPENBOT_LINKS.download, "download_section"],
@@ -68,12 +81,10 @@ export class LandingAnalytics {
   readonly #createClient: ClientFactory;
   readonly #productionBuild: boolean;
   #client: OpenPanelClient | null = null;
-  readonly #clickCleanup = new WeakMap<Document, () => void>();
+  #lastScreenPath: LandingScreenPath | null = null;
+  readonly #clickCleanup = new WeakMap<Document, (replacement: boolean) => void>();
 
-  constructor(
-    createClient: ClientFactory = (options) => new OpenPanel(options),
-    productionBuild = import.meta.env.PROD,
-  ) {
+  constructor(createClient: ClientFactory = createOpenPanelClient, productionBuild = import.meta.env.PROD) {
     this.#createClient = createClient;
     this.#productionBuild = productionBuild;
   }
@@ -82,9 +93,10 @@ export class LandingAnalytics {
     if (isLikelyAutomation(document.defaultView?.navigator)) return () => undefined;
     if (!this.#ensureClient(hostname)) return () => undefined;
     this.#client?.setGlobalProperties({ acquisition_source: landingAcquisitionSource(document) });
+    this.#screenView("/");
     this.#track("landing_viewed", {});
     const handleClick = (event: MouseEvent) => this.#handleClick(event);
-    return this.#replaceClickListener(document, handleClick);
+    return this.#replaceClickListener(document, handleClick, "/");
   }
 
   startJoin(
@@ -95,6 +107,7 @@ export class LandingAnalytics {
     if (isLikelyAutomation(document.defaultView?.navigator)) return () => undefined;
     if (!this.#ensureClient(hostname)) return () => undefined;
     this.#client?.setGlobalProperties({ acquisition_source: landingAcquisitionSource(document) });
+    this.#screenView("/join");
     this.#track("join_page_action", { action: "view", valid_invite: options.validInvite });
     const handleClick = (event: MouseEvent) => {
       const target = event.target;
@@ -111,18 +124,26 @@ export class LandingAnalytics {
         });
       }
     };
-    return this.#replaceClickListener(document, handleClick);
+    return this.#replaceClickListener(document, handleClick, "/join");
   }
 
-  #replaceClickListener(document: Document, listener: (event: MouseEvent) => void): () => void {
-    this.#clickCleanup.get(document)?.();
+  #replaceClickListener(
+    document: Document,
+    listener: (event: MouseEvent) => void,
+    screenPath: LandingScreenPath,
+  ): () => void {
+    this.#clickCleanup.get(document)?.(true);
     document.addEventListener("click", listener);
-    const cleanup = () => {
+    let cleaned = false;
+    const cleanup = (replacement: boolean) => {
+      if (cleaned) return;
+      cleaned = true;
       document.removeEventListener("click", listener);
       if (this.#clickCleanup.get(document) === cleanup) this.#clickCleanup.delete(document);
+      if (!replacement && this.#lastScreenPath === screenPath) this.#lastScreenPath = null;
     };
     this.#clickCleanup.set(document, cleanup);
-    return cleanup;
+    return () => cleanup(false);
   }
 
   #ensureClient(hostname: string): boolean {
@@ -166,6 +187,17 @@ export class LandingAnalytics {
     }
     const destination = LINK_DESTINATIONS.get(href);
     if (destination) this.#track("landing_link_clicked", { destination, placement });
+  }
+
+  #screenView(path: LandingScreenPath): void {
+    if (this.#lastScreenPath === path) return;
+    try {
+      const result = this.#client?.trackScreenView(path);
+      if (result instanceof Promise) void result.catch(() => undefined);
+      this.#lastScreenPath = path;
+    } catch {
+      // Analytics must never change landing-page behavior.
+    }
   }
 
   #track<Name extends LandingEventName>(name: Name, properties: LandingAnalyticsEvents[Name]): void {

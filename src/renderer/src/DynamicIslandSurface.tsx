@@ -2,10 +2,22 @@ import type { DynamicIslandAction, DynamicIslandPreference, DynamicIslandPresent
 import { DEFAULT_DYNAMIC_ISLAND_PREFERENCE, IDLE_DYNAMIC_ISLAND_PRESENTATION } from "@openbot/contracts/ipc";
 import { createSignal, onSettled, Show } from "solid-js";
 import { OpenBotDynamicIsland } from "./components/OpenBotDynamicIsland";
-import type { DynamicIslandStateChangeReason, DynamicIslandViewState } from "./components/ui";
+import type { DynamicIslandNotchSize, DynamicIslandStateChangeReason, DynamicIslandViewState } from "./components/ui";
+
+const DEFAULT_NOTCH_WIDTH = 192;
+const DEFAULT_NOTCH_HEIGHT = 32;
+const DEFAULT_NOTCH_SIZE: DynamicIslandNotchSize = {
+  width: DEFAULT_NOTCH_WIDTH,
+  height: DEFAULT_NOTCH_HEIGHT,
+};
 
 export function DynamicIslandSurface() {
-  const displayMode = new URLSearchParams(window.location.search).get("display") === "island" ? "island" : "notch";
+  const query = new URLSearchParams(window.location.search);
+  const displayMode = query.get("display") === "island" ? "island" : "notch";
+  const notchWidth = readPositivePixelValue(query.get("notch-width"), DEFAULT_NOTCH_WIDTH);
+  const notchHeight = readPositivePixelValue(query.get("notch-height"), DEFAULT_NOTCH_HEIGHT);
+  const initialNotchSize: DynamicIslandNotchSize = { width: notchWidth, height: notchHeight };
+  const [notchSize, setNotchSize] = createSignal<DynamicIslandNotchSize>(initialNotchSize);
   const [presentation, setPresentation] = createSignal(IDLE_DYNAMIC_ISLAND_PRESENTATION);
   const [preference, setPreference] = createSignal<DynamicIslandPreference>({
     ...DEFAULT_DYNAMIC_ISLAND_PREFERENCE,
@@ -131,6 +143,7 @@ export function DynamicIslandSurface() {
       .catch(() => undefined);
     const stopPreference = window.openbot.dynamicIsland.onPreference(applyPreference);
     const stopPresentation = window.openbot.dynamicIsland.onPresentation(applyPresentation);
+    const stopGeometry = window.openbot.dynamicIsland.onGeometry((next) => setNotchSize(next ?? DEFAULT_NOTCH_SIZE));
     const close = () => {
       pointerInside = false;
       focusInside = false;
@@ -142,6 +155,7 @@ export function DynamicIslandSurface() {
     return () => {
       stopPreference();
       stopPresentation();
+      stopGeometry();
       window.removeEventListener("blur", close);
     };
   });
@@ -162,6 +176,7 @@ export function DynamicIslandSurface() {
             presentation={presentation()}
             state={viewState()}
             displayMode={displayMode}
+            notchSize={displayMode === "notch" ? notchSize() : undefined}
             extendedHoverArea
             onStateChange={changeViewState}
             onAction={perform}
@@ -171,6 +186,11 @@ export function DynamicIslandSurface() {
       </Show>
     </main>
   );
+}
+
+function readPositivePixelValue(value: string | null, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function interactionLocksPresentation(

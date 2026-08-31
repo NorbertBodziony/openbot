@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,13 @@ import { BrowserHost } from "../src/backend/browser-host";
 import { getString } from "../src/backend/protocol";
 
 let cachedPageVersion = 1;
+
+interface PersistenceSnapshot {
+  ready: true;
+  cookie: string;
+  localStorage: string | null;
+  indexedDb: string | null;
+}
 
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -67,18 +74,30 @@ void main().catch((error) => {
 
 async function main(): Promise<void> {
   const googleLive = process.argv.includes("--google-live");
-  const temporaryRoot = await mkdtemp(join(tmpdir(), "openbot-browser-smoke-"));
+  const xLive = process.argv.includes("--x-live");
+  const configuredRoot = argumentValue("--smoke-root=");
+  const persistencePhase = argumentValue("--persistence-phase=");
+  const persistenceOrigin = argumentValue("--persistence-origin=");
+  const temporaryRoot = configuredRoot ?? (await mkdtemp(join(tmpdir(), "openbot-browser-smoke-")));
+  const userDataPath = join(temporaryRoot, "user-data");
+  await mkdir(userDataPath, { recursive: true });
   app.setName("OpenBot");
-  app.setPath("userData", join(temporaryRoot, "user-data"));
+  app.setPath("userData", userDataPath);
+  app.setPath("sessionData", userDataPath);
   const hardTimeout = setTimeout(
     () => {
       process.stderr.write("BrowserHost smoke test timed out.\n");
       app.exit(1);
     },
-    googleLive ? 60_000 : 20_000,
+    googleLive || xLive ? 60_000 : 20_000,
   );
 
   try {
+    if (persistencePhase) {
+      if (!persistenceOrigin) throw new Error("A persistence origin is required.");
+      await runPersistencePhase(temporaryRoot, persistenceOrigin, persistencePhase);
+      return;
+    }
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
       server.listen(0, "127.0.0.1", resolve);
@@ -161,6 +180,7 @@ async function main(): Promise<void> {
     }
     process.stdout.write("BrowserHost: matching Chromium page and request identity passed.\n");
     if (googleLive) await runGoogleLiveProbe(browser);
+    if (xLive) await runXLiveProbe(browser);
     await expectFailure(() => browser.act(tab.id, first.revision, { type: "click", ref: save.ref }));
 
     const child = result.elements.find((element) => element.name === "Child");
@@ -284,7 +304,19 @@ async function main(): Promise<void> {
 
     const persistedTab = await browser.open(`${origin}/cookie`, "persisted-thread", "persisted-bot");
     await browser.activate(persistedTab.id);
-    await browser.destroy();
+    const browserDestruction = browser.destroy();
+    if (browser.listTabs().length !== 0) {
+      throw new Error("BrowserHost kept views active while shutdown persistence was pending.");
+    }
+    await browserDestruction;
+    await browser
+      .open(`${origin}/cookie`, "late-thread")
+      .then(() => {
+        throw new Error("BrowserHost accepted a new tab after shutdown started.");
+      })
+      .catch((error) => {
+        if (!String(error).includes("shutting down")) throw error;
+      });
     const restoredWindow = new BrowserWindow({ show: false });
     window.destroy();
     const restoredBrowser = new BrowserHost(restoredWindow, downloadsRoot, statePath);
@@ -315,10 +347,79 @@ async function main(): Promise<void> {
     process.stdout.write("BrowserHost smoke test passed.\n");
   } finally {
     clearTimeout(hardTimeout);
-    server.close();
-    await rm(temporaryRoot, { recursive: true, force: true });
+    if (server.listening) server.close();
+    if (!configuredRoot) await rm(temporaryRoot, { recursive: true, force: true });
     app.quit();
   }
+}
+
+async function runPersistencePhase(root: string, origin: string, phase: string): Promise<void> {
+  if (!new Set(["write", "read", "clear", "verify-cleared"]).has(phase)) {
+    throw new Error(`Unknown persistence phase: ${phase}`);
+  }
+  await app.whenReady();
+  const window = new BrowserWindow({ show: false });
+  const browser = new BrowserHost(window, join(root, "downloads"), join(root, "browser-tabs.json"));
+  await browser.setVisible({ visible: true, bounds: { x: 0, y: 0, width: 800, height: 600 } });
+  try {
+    const tab = await browser.open(`${origin}/persistence?phase=${encodeURIComponent(phase)}`, "persistence-thread");
+    const snapshot = await waitForPersistenceSnapshot(browser, tab.id);
+    const expectedStored = phase === "write" || phase === "read";
+    const cookie = getString(snapshot, "cookie") ?? "";
+    const localStorageValue = getString(snapshot, "localStorage");
+    const indexedDbValue = getString(snapshot, "indexedDb");
+    // The npm macOS Electron binary does not have OpenBot's production signature or cookie-encryption fuse.
+    // Verify encrypted cookie persistence with the signed app; other platforms cover it in this process test.
+    const requireCrossProcessCookie = phase !== "read" || process.platform !== "darwin";
+    if (
+      (expectedStored &&
+        (localStorageValue !== "kept" ||
+          indexedDbValue !== "kept" ||
+          (requireCrossProcessCookie && !cookie.includes("openbot_persistence=kept")))) ||
+      (!expectedStored &&
+        (cookie.includes("openbot_persistence=kept") || localStorageValue !== null || indexedDbValue !== null))
+    ) {
+      throw new Error(`Browser persistence phase ${phase} returned invalid state: ${JSON.stringify(snapshot)}`);
+    }
+    if (expectedStored && !requireCrossProcessCookie && !cookie.includes("openbot_persistence=kept")) {
+      process.stdout.write("BrowserHost: signed macOS app must verify encrypted cookie persistence.\n");
+    }
+    await browser.flushPersistentStorage();
+  } finally {
+    try {
+      await browser.destroy();
+    } finally {
+      window.destroy();
+    }
+  }
+  process.stdout.write(`BrowserHost: persistence ${phase} phase passed.\n`);
+}
+
+async function waitForPersistenceSnapshot(browser: BrowserHost, tabId: string): Promise<PersistenceSnapshot> {
+  let latest = "";
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const snapshot = await browser.snapshot(tabId);
+    latest = snapshot.text;
+    try {
+      const parsed = JSON.parse(snapshot.text);
+      if (isDynamicRecord(parsed) && parsed.ready === true) {
+        return {
+          ready: true,
+          cookie: getString(parsed, "cookie") ?? "",
+          localStorage: getString(parsed, "localStorage"),
+          indexedDb: getString(parsed, "indexedDb"),
+        };
+      }
+    } catch {
+      // The page can still be initializing IndexedDB.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Persistence page did not become ready: ${latest}`);
+}
+
+function argumentValue(prefix: string): string | null {
+  return process.argv.find((argument) => argument.startsWith(prefix))?.slice(prefix.length) || null;
 }
 
 async function runGoogleLiveProbe(browser: BrowserHost): Promise<void> {
@@ -363,6 +464,79 @@ async function runGoogleLiveProbe(browser: BrowserHost): Promise<void> {
     throw new Error(`Google returned an unexpected identifier result: ${outcome.text.slice(0, 500)}`);
   }
   process.stdout.write("BrowserHost: Google identifier step passed without signin/rejected.\n");
+}
+
+async function runXLiveProbe(browser: BrowserHost): Promise<void> {
+  const xTab = await browser.open("https://x.com/", "x-live-smoke", "x-live-smoke", true);
+  let loginPage = await waitForXSnapshot(browser, xTab.id, (snapshot) => {
+    const normalized = snapshot.text.toLowerCase();
+    return (
+      normalized.includes("refuse non-essential cookies") ||
+      snapshot.elements.some((element) => element.name.toLowerCase() === "sign in") ||
+      normalized.includes("something went wrong") ||
+      normalized.includes("this browser is no longer supported")
+    );
+  });
+  let normalized = loginPage.text.toLowerCase();
+  if (normalized.includes("something went wrong") || normalized.includes("this browser is no longer supported")) {
+    throw new Error(`X rejected the embedded browser: ${loginPage.url} ${loginPage.text.slice(0, 500)}`);
+  }
+  let refuseCookies = loginPage.elements.find((element) =>
+    element.name.toLowerCase().includes("refuse non-essential cookies"),
+  );
+  if (!refuseCookies && normalized.includes("refuse non-essential cookies")) {
+    loginPage = await waitForXSnapshot(browser, xTab.id, (snapshot) =>
+      snapshot.elements.some((element) => element.name.toLowerCase().includes("refuse non-essential cookies")),
+    );
+    refuseCookies = loginPage.elements.find((element) =>
+      element.name.toLowerCase().includes("refuse non-essential cookies"),
+    );
+  }
+  if (refuseCookies) {
+    process.stdout.write(`BrowserHost: X cookie control ${JSON.stringify(refuseCookies)}.\n`);
+    loginPage = await browser.act(xTab.id, loginPage.revision, { type: "click", ref: refuseCookies.ref });
+    loginPage = await waitForXSnapshot(
+      browser,
+      xTab.id,
+      (snapshot) =>
+        !snapshot.text.toLowerCase().includes("refuse non-essential cookies") &&
+        snapshot.elements.some(
+          (element) => element.name.toLowerCase() === "sign in" || (element.tag === "input" && !element.disabled),
+        ),
+    );
+    normalized = loginPage.text.toLowerCase();
+  }
+  if (normalized.includes("something went wrong") || normalized.includes("this browser is no longer supported")) {
+    throw new Error(
+      `X rejected the embedded browser after cookie consent: ${loginPage.url} ${loginPage.text.slice(0, 500)}`,
+    );
+  }
+  if (!loginPage.elements.some((element) => element.tag === "input" && !element.disabled)) {
+    const signIn = loginPage.elements.find((element) => element.name.toLowerCase() === "sign in");
+    if (!signIn) throw new Error(`X did not show a sign-in control: ${loginPage.text.slice(0, 500)}`);
+    loginPage = await browser.act(xTab.id, loginPage.revision, { type: "click", ref: signIn.ref });
+    loginPage = await waitForXSnapshot(browser, xTab.id, (snapshot) =>
+      snapshot.elements.some((element) => element.tag === "input" && !element.disabled),
+    );
+  }
+  const identifier = loginPage.elements.find((element) => element.tag === "input" && !element.disabled);
+  if (!identifier) throw new Error("X did not show an account identifier field.");
+  process.stdout.write("BrowserHost: X login identifier step loaded.\n");
+}
+
+async function waitForXSnapshot(
+  browser: BrowserHost,
+  tabId: string,
+  predicate: (snapshot: Awaited<ReturnType<BrowserHost["snapshot"]>>) => boolean,
+): Promise<Awaited<ReturnType<BrowserHost["snapshot"]>>> {
+  const deadline = Date.now() + 20_000;
+  let snapshot = await browser.snapshot(tabId);
+  while (Date.now() < deadline) {
+    if (predicate(snapshot)) return snapshot;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    snapshot = await browser.snapshot(tabId);
+  }
+  throw new Error(`Timed out waiting for X: ${snapshot.url} ${snapshot.text.slice(0, 500)}`);
 }
 
 async function waitForGoogleSnapshot(

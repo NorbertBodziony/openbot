@@ -1,5 +1,10 @@
 import { isDeepStrictEqual } from "node:util";
-import type { DynamicIslandAction, DynamicIslandPreference, DynamicIslandPresentation } from "@openbot/contracts/ipc";
+import type {
+  DynamicIslandAction,
+  DynamicIslandNotchSize,
+  DynamicIslandPreference,
+  DynamicIslandPresentation,
+} from "@openbot/contracts/ipc";
 import {
   DEFAULT_DYNAMIC_ISLAND_PREFERENCE,
   IDLE_DYNAMIC_ISLAND_PRESENTATION,
@@ -9,6 +14,14 @@ import type { BrowserWindow, Display, Rectangle } from "electron";
 import { readDynamicIslandPreference, writeDynamicIslandPreference } from "./dynamic-island-preference-store";
 
 export const DYNAMIC_ISLAND_WINDOW_SIZE = { width: 614, height: 380 } as const;
+
+const MACBOOK_NOTCH_REFERENCE = {
+  displayWidth: 1512,
+  displayHeight: 982,
+  notchWidth: 185,
+  notchHeight: 32,
+} as const;
+const MACBOOK_NOTCH_ASPECT_RATIO_TOLERANCE = 0.01;
 
 export interface DynamicIslandWindowControllerOptions {
   platform: NodeJS.Platform;
@@ -30,6 +43,7 @@ export class DynamicIslandWindowController {
   #presentation = IDLE_DYNAMIC_ISLAND_PRESENTATION;
   readonly #windows = new Map<number, BrowserWindow>();
   readonly #criticalActions = new Map<string, Promise<void>>();
+  readonly #notchSizes = new Map<number, { width: number; height: number }>();
   #preferenceMutation = Promise.resolve();
   #windowReconciliation = Promise.resolve();
   #destroyed = false;
@@ -148,15 +162,22 @@ export class DynamicIslandWindowController {
     for (const [displayId, window] of this.#windows) {
       if (displayIds.has(displayId) && !window.isDestroyed()) continue;
       this.#windows.delete(displayId);
+      this.#notchSizes.delete(displayId);
       if (!window.isDestroyed()) window.destroy();
     }
 
     for (const display of displays) {
       if (this.#destroyed) return;
       const bounds = dynamicIslandWindowBounds(display);
+      const notchSize = notchSizeForDisplay(display);
       const current = this.#windows.get(display.id);
       if (current && !current.isDestroyed()) {
         current.setBounds(bounds, false);
+        if (notchSizeChanged(this.#notchSizes.get(display.id), notchSize)) {
+          current.webContents.send(IPC_CHANNELS.dynamicIslandGeometry, notchSize ?? null);
+          if (notchSize) this.#notchSizes.set(display.id, notchSize);
+          else this.#notchSizes.delete(display.id);
+        }
         current.showInactive();
         continue;
       }
@@ -182,15 +203,23 @@ export class DynamicIslandWindowController {
       window.showInactive();
       window.webContents.send(IPC_CHANNELS.dynamicIslandPresentation, this.#presentation);
       window.webContents.send(IPC_CHANNELS.dynamicIslandPreference, this.#preference);
+      const notchSize = notchSizeForDisplay(display);
+      if (notchSize) window.webContents.send(IPC_CHANNELS.dynamicIslandGeometry, notchSize);
     });
     window.on("blur", () => this.setInteractive(window.webContents.id, false));
     window.on("closed", () => {
-      if (this.#windows.get(display.id) === window) this.#windows.delete(display.id);
+      if (this.#windows.get(display.id) === window) {
+        this.#windows.delete(display.id);
+        this.#notchSizes.delete(display.id);
+      }
     });
+    const notchSize = notchSizeForDisplay(display);
+    if (notchSize) this.#notchSizes.set(display.id, notchSize);
     try {
       await this.#options.loadWindow(window, display);
     } catch (error) {
       if (this.#windows.get(display.id) === window) this.#windows.delete(display.id);
+      this.#notchSizes.delete(display.id);
       if (!window.isDestroyed()) window.destroy();
       throw error;
     }
@@ -210,10 +239,36 @@ export class DynamicIslandWindowController {
   private destroyWindows(): void {
     const windows = [...this.#windows.values()];
     this.#windows.clear();
+    this.#notchSizes.clear();
     for (const window of windows) {
       if (!window.isDestroyed()) window.destroy();
     }
   }
+}
+
+export function dynamicIslandNotchSizeForDisplay(
+  display: Pick<Display, "bounds" | "internal">,
+): DynamicIslandNotchSize | undefined {
+  if (!display.internal || !isRecognizedNotchedMacBookDisplay(display)) return undefined;
+  return dynamicIslandNotchSize(display);
+}
+
+function isRecognizedNotchedMacBookDisplay(display: Pick<Display, "bounds">): boolean {
+  const { width, height } = display.bounds;
+  if (width <= 0 || height <= 0) return false;
+  const referenceAspectRatio = MACBOOK_NOTCH_REFERENCE.displayWidth / MACBOOK_NOTCH_REFERENCE.displayHeight;
+  return Math.abs(width / height - referenceAspectRatio) <= MACBOOK_NOTCH_ASPECT_RATIO_TOLERANCE;
+}
+
+function notchSizeForDisplay(display: Pick<Display, "bounds" | "internal">): DynamicIslandNotchSize | undefined {
+  return dynamicIslandNotchSizeForDisplay(display);
+}
+
+function notchSizeChanged(
+  previous: { width: number; height: number } | undefined,
+  next: { width: number; height: number } | undefined,
+): boolean {
+  return previous?.width !== next?.width || previous?.height !== next?.height;
 }
 
 function criticalActionKey(
@@ -227,6 +282,22 @@ export function dynamicIslandWindowBounds(display: Pick<Display, "bounds">): Rec
     x: Math.round(display.bounds.x + (display.bounds.width - DYNAMIC_ISLAND_WINDOW_SIZE.width) / 2),
     y: display.bounds.y,
     ...DYNAMIC_ISLAND_WINDOW_SIZE,
+  };
+}
+
+/**
+ * Returns the notch size in Electron's display points.
+ *
+ * Apple keeps the camera housing proportional across notched MacBooks, while
+ * the selected display scale changes the logical display width. Scaling the
+ * measured 14-inch reference therefore covers the 13-inch Air, 14-inch Pro,
+ * 15-inch Air, and 16-inch Pro without a model-name lookup.
+ */
+function dynamicIslandNotchSize(display: Pick<Display, "bounds">): DynamicIslandNotchSize {
+  const displayScale = display.bounds.width / MACBOOK_NOTCH_REFERENCE.displayWidth;
+  return {
+    width: Math.max(16, Math.round(MACBOOK_NOTCH_REFERENCE.notchWidth * displayScale)),
+    height: Math.max(32, Math.round(MACBOOK_NOTCH_REFERENCE.notchHeight * displayScale)),
   };
 }
 
