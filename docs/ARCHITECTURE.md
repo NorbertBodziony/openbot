@@ -71,7 +71,9 @@ Current remote connections use Team API protocol v2 over three ordered WebRTC Da
 `events`, and `files`. A sandboxed hidden Chromium page owns each `RTCPeerConnection`. Electron main
 uses a `MessagePort` and transfers binary data as `ArrayBuffer`. Signal carries SDP and ICE only.
 Cloudflare issues short ES256 connection tickets and stores the logical session. Signal issues a
-longer resume token, so a Signal update does not end an active WebRTC connection.
+10-minute resume token, so a short Signal update does not end an active WebRTC connection. Signal
+validates a non-expired resume token locally. After it expires, Signal makes one signed control-plane
+request before it issues a new token. This is not a heartbeat.
 
 Protocol v1 remains frozen for compatibility fixtures, but its public HTTP, WebSocket, and Cloudflare
 Tunnel transport is retired. The old public endpoints return `host_update_required`.

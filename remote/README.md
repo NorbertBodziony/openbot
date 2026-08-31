@@ -16,6 +16,11 @@ Pliki, czaty, komendy i obraz nie przechodzą przez Remote API ani Cloudflare.
 Signal nie ma bazy. Nie zapisuje tokenów, SDP, ICE, nazw plików ani treści wiadomości. Dane pokoju
 i obecności istnieją tylko w pamięci procesu.
 
+`Resume token` jest ważny przez 10 minut. Signal sprawdza ważny token lokalnie. Nie wysyła wtedy
+zapytania do Cloudflare. Jeżeli token wygasł, Signal wykonuje jedno podpisane zapytanie do control plane.
+Control plane sprawdza, czy sesja i członkostwo są nadal aktywne. Następnie Signal wydaje nowy token.
+Nie ma heartbeatów ani okresowego odświeżania przez Cloudflare.
+
 ## Wymagania produkcyjne
 
 - Linux z Docker Engine i Docker Compose.

@@ -9,6 +9,7 @@ const environment = {
   TURN_PUBLIC_IP: process.env.TURN_PUBLIC_IP ?? "203.0.113.1",
   CLOUDFLARE_DNS_API_TOKEN: process.env.CLOUDFLARE_DNS_API_TOKEN ?? "remote-check-token",
   REMOTE_TICKET_JWKS_URL: process.env.REMOTE_TICKET_JWKS_URL ?? "https://api.example.com/.well-known/jwks.json",
+  REMOTE_CONTROL_PLANE_URL: process.env.REMOTE_CONTROL_PLANE_URL ?? "https://api.example.com",
   REMOTE_TICKET_PUBLIC_KEYS: process.env.REMOTE_TICKET_PUBLIC_KEYS ?? '{"keys":[{"kty":"EC"}]}',
   REMOTE_SESSION_SECRET: process.env.REMOTE_SESSION_SECRET ?? "s".repeat(32),
   REMOTE_AUTH_WEBHOOK_SECRET: process.env.REMOTE_AUTH_WEBHOOK_SECRET ?? "a".repeat(32),

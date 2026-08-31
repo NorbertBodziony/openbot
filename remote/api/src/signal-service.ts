@@ -47,17 +47,23 @@ export interface SignalMetrics {
   activePeerConnections: number;
 }
 
+const MAXIMUM_RATE_WINDOWS = 100_000;
+const RATE_WINDOW_MILLISECONDS = 60_000;
+
 export class SignalService {
   readonly #tokens: RemoteTokenProvider;
   readonly #maximumConnectionsPerUser: number;
   readonly #maximumConnectionsPerIp: number;
   readonly #maximumMessagesPerMinute: number;
+  readonly #sockets = new Map<string, SignalSocket>();
   readonly #peers = new Map<string, AuthenticatedPeer>();
   readonly #hosts = new Map<string, Set<string>>();
   readonly #connections = new Map<string, ActiveConnection>();
   readonly #usedTicketIds = new Map<string, number>();
   readonly #revokedEpochs = new Map<string, number>();
+  readonly #revokedSessions = new Map<string, number>();
   readonly #rateWindows = new Map<string, { startedAt: number; count: number }>();
+  #lastRatePruneAt = 0;
   readonly #metrics: SignalMetrics = {
     acceptedConnections: 0,
     authenticationFailures: 0,
@@ -77,6 +83,17 @@ export class SignalService {
     this.#maximumConnectionsPerUser = maximumConnectionsPerUser;
     this.#maximumConnectionsPerIp = maximumConnectionsPerIp;
     this.#maximumMessagesPerMinute = maximumMessagesPerMinute;
+  }
+
+  connect(socket: SignalSocket): boolean {
+    if (this.#sockets.has(socket.id)) return true;
+    if (this.#socketIpCount(socket.ip) >= this.#maximumConnectionsPerIp) {
+      this.#fail(socket, "rate_limited", "Too many remote connections from this address.", 1008);
+      return false;
+    }
+    this.#sockets.set(socket.id, socket);
+    this.#metrics.activeSockets = this.#sockets.size;
+    return true;
   }
 
   async receive(socket: SignalSocket, input: string | Uint8Array): Promise<void> {
@@ -135,8 +152,12 @@ export class SignalService {
   }
 
   disconnect(socket: SignalSocket): void {
+    this.#sockets.delete(socket.id);
     const peer = this.#peers.get(socket.id);
-    if (!peer) return;
+    if (!peer) {
+      this.#metrics.activeSockets = this.#sockets.size;
+      return;
+    }
     this.#peers.delete(socket.id);
     if (peer.peer === "host") {
       const hostSockets = this.#hosts.get(peer.claims.hostId);
@@ -150,7 +171,7 @@ export class SignalService {
       if (clientPeer) clientPeer.connectionId = null;
     }
     this.#metrics.activePeerConnections = this.#connections.size;
-    this.#metrics.activeSockets = this.#peers.size;
+    this.#metrics.activeSockets = this.#sockets.size;
   }
 
   revoke(hostId: string, authEpoch: number): void {
@@ -164,9 +185,18 @@ export class SignalService {
     }
   }
 
+  revokeSession(sessionId: string): void {
+    this.#revokedSessions.set(sessionId, Math.floor(Date.now() / 1_000) + 24 * 60 * 60);
+    for (const peer of [...this.#peers.values()]) {
+      if (peer.peer === "client" && peer.claims.sessionId === sessionId) {
+        this.#fail(peer.socket, "session_revoked", "The remote session ended.", 1008);
+      }
+    }
+  }
+
   metrics(): SignalMetrics {
     this.#pruneReplayCache();
-    return { ...this.#metrics, activeSockets: this.#peers.size, activePeerConnections: this.#connections.size };
+    return { ...this.#metrics, activeSockets: this.#sockets.size, activePeerConnections: this.#connections.size };
   }
 
   async #authenticate(socket: SignalSocket, message: Extract<SignalClientMessage, { type: "hello" }>): Promise<void> {
@@ -186,16 +216,13 @@ export class SignalService {
       if (claims.role !== "host" && (this.#revokedEpochs.get(claims.hostId) ?? 0) > claims.authEpoch) {
         throw new Error("Revoked ticket.");
       }
+      if (claims.role !== "host" && this.#revokedSessions.has(claims.sessionId)) throw new Error("Ended session.");
       if (message.peer === "host" && claims.role !== "host") throw new Error("Host role required.");
       if (message.peer === "client" && claims.role === "host") throw new Error("Member role required.");
       this.#pruneReplayCache();
       if (usedInitialTicket && this.#usedTicketIds.has(claims.jti)) throw new Error("Ticket was already used.");
       if (this.#userConnectionCount(claims.userId) >= this.#maximumConnectionsPerUser) {
         this.#fail(socket, "rate_limited", "Too many active remote connections.", 1008);
-        return;
-      }
-      if (this.#ipConnectionCount(socket.ip) >= this.#maximumConnectionsPerIp) {
-        this.#fail(socket, "rate_limited", "Too many remote connections from this address.", 1008);
         return;
       }
     } catch {
@@ -207,7 +234,7 @@ export class SignalService {
     const peer: AuthenticatedPeer = { socket, claims, peer: message.peer, connectionId: null };
     this.#peers.set(socket.id, peer);
     this.#metrics.acceptedConnections += 1;
-    this.#metrics.activeSockets = this.#peers.size;
+    this.#metrics.activeSockets = this.#sockets.size;
     const resumeToken = await this.#tokens.issueResumeToken(claims);
     if (message.peer === "host") {
       const hostSockets = this.#hosts.get(claims.hostId) ?? new Set<string>();
@@ -225,14 +252,14 @@ export class SignalService {
     const host = this.#firstHost(claims.hostId);
     if (!host) {
       this.#peers.delete(socket.id);
-      this.#metrics.activeSockets = this.#peers.size;
+      this.#metrics.activeSockets = this.#sockets.size;
       this.#fail(socket, "host_unavailable", "The host is offline.", 1013);
       return;
     }
     const existing = this.#connectionForHost(claims.hostId);
     if (existing && existing.sessionId !== claims.sessionId) {
       this.#peers.delete(socket.id);
-      this.#metrics.activeSockets = this.#peers.size;
+      this.#metrics.activeSockets = this.#sockets.size;
       this.#fail(socket, "host_busy", "The host already has an active remote session.", 1013);
       return;
     }
@@ -310,9 +337,9 @@ export class SignalService {
     return total;
   }
 
-  #ipConnectionCount(ip: string): number {
+  #socketIpCount(ip: string): number {
     let total = 0;
-    for (const peer of this.#peers.values()) if (peer.socket.ip === ip) total += 1;
+    for (const socket of this.#sockets.values()) if (socket.ip === ip) total += 1;
     return total;
   }
 
@@ -323,8 +350,14 @@ export class SignalService {
   }
 
   #acceptRateKey(key: string, now: number): boolean {
+    this.#pruneRateWindows(now);
     const current = this.#rateWindows.get(key);
-    if (!current || now - current.startedAt >= 60_000) {
+    if (!current || now - current.startedAt >= RATE_WINDOW_MILLISECONDS) {
+      if (!current && this.#rateWindows.size >= MAXIMUM_RATE_WINDOWS) {
+        const oldestKey = this.#rateWindows.keys().next().value;
+        if (oldestKey) this.#rateWindows.delete(oldestKey);
+      }
+      if (current) this.#rateWindows.delete(key);
       this.#rateWindows.set(key, { startedAt: now, count: 1 });
       return true;
     }
@@ -334,6 +367,17 @@ export class SignalService {
 
   #pruneReplayCache(nowSeconds = Math.floor(Date.now() / 1_000)): void {
     for (const [jti, expiresAt] of this.#usedTicketIds) if (expiresAt <= nowSeconds) this.#usedTicketIds.delete(jti);
+    for (const [sessionId, expiresAt] of this.#revokedSessions) {
+      if (expiresAt <= nowSeconds) this.#revokedSessions.delete(sessionId);
+    }
+  }
+
+  #pruneRateWindows(now: number): void {
+    if (now - this.#lastRatePruneAt < RATE_WINDOW_MILLISECONDS) return;
+    this.#lastRatePruneAt = now;
+    for (const [key, window] of this.#rateWindows) {
+      if (now - window.startedAt >= RATE_WINDOW_MILLISECONDS) this.#rateWindows.delete(key);
+    }
   }
 
   #send(socket: SignalSocket, message: SignalServerMessage): void {

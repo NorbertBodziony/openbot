@@ -1,8 +1,13 @@
+import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { exportJWK, generateKeyPair, importJWK, jwtVerify } from "jose";
 import { describe, expect, it } from "vitest";
-import { RemoteControlPlane, RemoteTicketSigner } from "../src/server/remote-control-plane";
+import {
+  RemoteControlPlane,
+  RemoteTicketSigner,
+  verifyRemoteServiceSignature,
+} from "../src/server/remote-control-plane";
 
 describe("remote control plane migration", () => {
   it("keeps each tunnel owner and does not import other members", () => {
@@ -104,6 +109,24 @@ describe("RemoteTicketSigner", () => {
   });
 });
 
+describe("Remote service authentication", () => {
+  it("accepts only a current request with a valid HMAC", async () => {
+    const secret = "s".repeat(32);
+    const body = '{"sessionId":"session-1"}';
+    const timestamp = "1900000000";
+    const signature = createHmac("sha256", secret).update(`${timestamp}.${body}`).digest("base64url");
+    await expect(verifyRemoteServiceSignature(secret, body, timestamp, signature, 1_900_000_000_000)).resolves.toBe(
+      true,
+    );
+    await expect(verifyRemoteServiceSignature(secret, body, timestamp, "invalid", 1_900_000_000_000)).resolves.toBe(
+      false,
+    );
+    await expect(verifyRemoteServiceSignature(secret, body, timestamp, signature, 1_900_001_000_000)).resolves.toBe(
+      false,
+    );
+  });
+});
+
 describe("RemoteControlPlane", () => {
   it("returns the existing membership ID when a revoked member accepts a new invite", async () => {
     const database = new DatabaseSync(":memory:");
@@ -161,6 +184,76 @@ describe("RemoteControlPlane", () => {
     await expect(
       controlPlane.acceptInvite({ id: "member", email: "member@example.com", name: null, avatarUrl: null }, token),
     ).resolves.toEqual({ hostId: "host-1", membershipId: "existing-member", role: "admin" });
+  });
+
+  it("protects the owner and validates only an active resume session", async () => {
+    const database = new DatabaseSync(":memory:");
+    database.exec("PRAGMA foreign_keys = ON");
+    database.exec(`
+      CREATE TABLE users (id TEXT PRIMARY KEY);
+      CREATE TABLE team_tunnels (
+        server_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        tunnel_id TEXT,
+        tunnel_name TEXT NOT NULL,
+        api_hostname TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        machine_token_hash TEXT
+      );
+      INSERT INTO users(id) VALUES ('owner');
+      INSERT INTO team_tunnels(
+        server_id, user_id, tunnel_name, api_hostname, status, created_at, updated_at, machine_token_hash
+      ) VALUES ('host-1', 'owner', 'Studio Mac', 'old.example.test', 'active', 100, 200, 'machine-hash');
+    `);
+    database.exec(readFileSync(new URL("../migrations/0012_remote_control_plane.sql", import.meta.url), "utf8"));
+    const pair = await generateKeyPair("ES256", { extractable: true });
+    const privateJwk = await exportJWK(pair.privateKey);
+    const publicJwk = { ...(await exportJWK(pair.publicKey)), kid: "test-key", use: "sig", alg: "ES256" };
+    const webhookBodies: string[] = [];
+    const controlPlane = new RemoteControlPlane(
+      {
+        DB: sqliteD1(database),
+        REMOTE_TICKET_PRIVATE_JWK: JSON.stringify({ ...privateJwk, kid: "test-key", alg: "ES256" }),
+        REMOTE_TICKET_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
+        REMOTE_TICKET_KEY_ID: "test-key",
+        REMOTE_AUTH_WEBHOOK_URL: "https://signal.example.test/internal/auth-events",
+        REMOTE_AUTH_WEBHOOK_SECRET: "s".repeat(32),
+      },
+      {
+        now: () => 1_000,
+        fetch: async (_input, init) => {
+          webhookBodies.push(String(init?.body ?? ""));
+          return new Response(null, { status: 204 });
+        },
+      },
+    );
+    const owner = { id: "owner", email: "owner@example.com", name: null, avatarUrl: null };
+    const invite = await controlPlane.createInvite(owner, { hostId: "host-1", role: "member" });
+    await expect(controlPlane.acceptInvite(owner, invite.token)).rejects.toMatchObject({
+      code: "owner_membership_protected",
+    });
+    expect(database.prepare("SELECT role FROM remote_memberships WHERE user_id = 'owner'").get()).toEqual({
+      role: "owner",
+    });
+
+    const session = await controlPlane.startSession(owner.id, "host-1");
+    const claims = {
+      sessionId: session.sessionId,
+      hostId: "host-1",
+      userId: owner.id,
+      membershipId: "host-1:owner",
+      role: "owner" as const,
+      authEpoch: 1,
+      sessionExpiresAt: session.expiresAt / 1_000,
+    };
+    await expect(controlPlane.validateResumeClaims(claims)).resolves.toBe(true);
+    await controlPlane.endSession(owner.id, session.sessionId);
+    await expect(controlPlane.validateResumeClaims(claims)).resolves.toBe(false);
+    expect(webhookBodies).toContain(
+      JSON.stringify({ type: "remote-session-ended", hostId: "host-1", sessionId: session.sessionId }),
+    );
   });
 });
 

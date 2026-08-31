@@ -1,12 +1,28 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { z } from "zod";
 import { createRemoteApiApp, prometheusMetrics } from "./app";
 import { readRemoteApiConfig } from "./config";
 import { SignalService } from "./signal-service";
-import { RemoteTokenService } from "./tokens";
+import { RemoteTokenService, signServiceRequest } from "./tokens";
 
 const config = readRemoteApiConfig();
-const tokens = new RemoteTokenService(config);
+const tokens = new RemoteTokenService(config, async (claims) => {
+  const body = JSON.stringify(claims);
+  const timestamp = Math.floor(Date.now() / 1_000).toString();
+  const response = await fetch(new URL("/v2/remote/resume/validate", config.controlPlaneUrl), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "OpenBot-Timestamp": timestamp,
+      "OpenBot-Signature": signServiceRequest(body, timestamp, config.authWebhookSecret),
+    },
+    body,
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!response.ok) return false;
+  return z.object({ valid: z.boolean() }).parse(await response.json()).valid;
+});
 const signal = new SignalService(
   tokens,
   config.maximumConnectionsPerUser,

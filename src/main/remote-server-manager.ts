@@ -682,6 +682,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   async refreshIdentity(serverId: string): Promise<ServerSummary> {
     const server = this.#requireServer(serverId);
+    if (server.transport === "webrtc-v2" && this.#webrtcTransport) {
+      await this.#syncWebRtcHosts();
+      this.#compatibility.set(serverId, this.#webrtcCompatibility());
+      this.#issues.delete(serverId);
+      this.#emitChanged();
+      return requiredServerSummary(this.list(), serverId);
+    }
     const identity = await this.#verifyIdentity(server.apiUrl, server.id, server.fingerprint);
     this.#compatibility.set(server.id, identity.compatibility);
     this.#issues.delete(server.id);

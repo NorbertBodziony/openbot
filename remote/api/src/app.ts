@@ -4,11 +4,18 @@ import type { RemoteApiConfig } from "./config";
 import type { SignalService, SignalSocket } from "./signal-service";
 import { verifyWebhookSignature } from "./tokens";
 
-const authEventSchema = z.object({
-  type: z.literal("remote-auth-changed"),
-  hostId: z.string().min(1),
-  authEpoch: z.number().int().positive(),
-});
+const authEventSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("remote-auth-changed"),
+    hostId: z.string().min(1),
+    authEpoch: z.number().int().positive(),
+  }),
+  z.object({
+    type: z.literal("remote-session-ended"),
+    hostId: z.string().min(1),
+    sessionId: z.string().min(1),
+  }),
+]);
 
 export function createRemoteApiApp(config: RemoteApiConfig, signal: SignalService) {
   const app = new Elysia()
@@ -27,7 +34,8 @@ export function createRemoteApiApp(config: RemoteApiConfig, signal: SignalServic
         set.status = 400;
         return { error: { code: "invalid_event", message: "The auth event is invalid." } };
       }
-      signal.revoke(event.hostId, event.authEpoch);
+      if (event.type === "remote-auth-changed") signal.revoke(event.hostId, event.authEpoch);
+      else signal.revokeSession(event.sessionId);
       set.status = 204;
       return;
     })
@@ -40,6 +48,7 @@ export function createRemoteApiApp(config: RemoteApiConfig, signal: SignalServic
       sendPings: true,
       open(ws) {
         ws.raw.data.id = crypto.randomUUID();
+        signal.connect(socketAdapter(ws, config.trustProxy));
       },
       async message(ws, message) {
         const socket = socketAdapter(ws, config.trustProxy);
@@ -92,7 +101,7 @@ export function signalClientIp(
   return forwarded || remoteAddress || "unknown";
 }
 
-function decodeAuthEvent(body: string): { hostId: string; authEpoch: number } | null {
+function decodeAuthEvent(body: string): z.infer<typeof authEventSchema> | null {
   try {
     const result = authEventSchema.safeParse(JSON.parse(body));
     return result.success ? result.data : null;

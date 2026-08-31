@@ -6,6 +6,7 @@ export interface RemoteApiConfig {
   tlsPrivateKeyPath: string | null;
   ticketJwks: string | null;
   ticketJwksUrl: string | null;
+  controlPlaneUrl: string;
   sessionSecret: string;
   authWebhookSecret: string;
   turnSecret: string;
@@ -33,6 +34,7 @@ export function readRemoteApiConfig(environment: Record<string, string | undefin
     tlsPrivateKeyPath: tlsDisabled ? null : required(environment.REMOTE_TLS_KEY_PATH, "REMOTE_TLS_KEY_PATH"),
     ticketJwks,
     ticketJwksUrl,
+    controlPlaneUrl: required(environment.REMOTE_CONTROL_PLANE_URL, "REMOTE_CONTROL_PLANE_URL"),
     sessionSecret: strongSecret(environment.REMOTE_SESSION_SECRET, "REMOTE_SESSION_SECRET"),
     authWebhookSecret: strongSecret(environment.REMOTE_AUTH_WEBHOOK_SECRET, "REMOTE_AUTH_WEBHOOK_SECRET"),
     turnSecret: strongSecret(environment.TURN_SHARED_SECRET, "TURN_SHARED_SECRET"),

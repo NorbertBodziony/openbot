@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import {
   createLocalJWKSet,
   createRemoteJWKSet,
+  decodeJwt,
   type JSONWebKeySet,
   type JWTVerifyGetKey,
   jwtVerify,
@@ -13,8 +14,8 @@ import type { IceServer, RemoteTicketClaims } from "./protocol";
 
 const TICKET_AUDIENCE = "openbot-remote";
 const RESUME_AUDIENCE = "openbot-remote-resume";
-const RESUME_TTL_SECONDS = 24 * 60 * 60;
-const HOST_RESUME_TTL_SECONDS = 30 * 24 * 60 * 60;
+export const RESUME_TTL_SECONDS = 10 * 60;
+const MAXIMUM_STALE_RESUME_SECONDS = 24 * 60 * 60;
 const TURN_TTL_SECONDS = 60 * 60;
 const jwksSchema = z.object({ keys: z.array(z.object({ kty: z.string() }).loose()).min(1) });
 const remoteTicketClaimsSchema = z.object({
@@ -40,12 +41,14 @@ export class RemoteTokenService {
   readonly #turnHost: string;
   readonly #turnPort: number;
   readonly #turnTlsPort: number;
+  readonly #validateResumeClaims: (claims: RemoteTicketClaims) => Promise<boolean>;
 
   constructor(
     config: Pick<
       RemoteApiConfig,
       "ticketJwks" | "ticketJwksUrl" | "sessionSecret" | "turnSecret" | "turnHost" | "turnPort" | "turnTlsPort"
     >,
+    validateResumeClaims: (claims: RemoteTicketClaims) => Promise<boolean> = async () => false,
   ) {
     this.#ticketKey = config.ticketJwks
       ? createLocalJWKSet(parseJwks(config.ticketJwks))
@@ -55,6 +58,7 @@ export class RemoteTokenService {
     this.#turnHost = config.turnHost;
     this.#turnPort = config.turnPort;
     this.#turnTlsPort = config.turnTlsPort;
+    this.#validateResumeClaims = validateResumeClaims;
   }
 
   async verifyTicket(token: string, now = new Date()): Promise<RemoteTicketClaims> {
@@ -67,12 +71,18 @@ export class RemoteTokenService {
   }
 
   async verifyResumeToken(token: string, now = new Date()): Promise<RemoteTicketClaims> {
-    const { payload } = await jwtVerify(token, this.#sessionSecret, {
-      audience: RESUME_AUDIENCE,
-      algorithms: ["HS256"],
-      currentDate: now,
-    });
-    return decodeTicketClaims({ ...payload, aud: TICKET_AUDIENCE }, now);
+    try {
+      const { payload } = await jwtVerify(token, this.#sessionSecret, {
+        audience: RESUME_AUDIENCE,
+        algorithms: ["HS256"],
+        currentDate: now,
+      });
+      return decodeTicketClaims({ ...payload, aud: TICKET_AUDIENCE }, now);
+    } catch (error) {
+      const claims = await this.#verifyStaleResumeToken(token, now).catch(() => null);
+      if (!claims || !(await this.#validateResumeClaims(claims))) throw error;
+      return claims;
+    }
   }
 
   async issueResumeToken(claims: RemoteTicketClaims, nowSeconds = Math.floor(Date.now() / 1_000)): Promise<string> {
@@ -91,13 +101,26 @@ export class RemoteTokenService {
       .setJti(crypto.randomUUID())
       .setIssuedAt(nowSeconds)
       .setAudience(RESUME_AUDIENCE)
-      .setExpirationTime(
-        Math.min(
-          claims.sessionExpiresAt,
-          nowSeconds + (claims.role === "host" ? HOST_RESUME_TTL_SECONDS : RESUME_TTL_SECONDS),
-        ),
-      )
+      .setExpirationTime(Math.min(claims.sessionExpiresAt, nowSeconds + RESUME_TTL_SECONDS))
       .sign(this.#sessionSecret);
+  }
+
+  async #verifyStaleResumeToken(token: string, now: Date): Promise<RemoteTicketClaims> {
+    const untrusted = decodeJwt(token);
+    const expiresAt = z.number().int().safe().parse(untrusted.exp);
+    const nowSeconds = Math.floor(now.getTime() / 1_000);
+    if (expiresAt >= nowSeconds || nowSeconds - expiresAt > MAXIMUM_STALE_RESUME_SECONDS) {
+      throw new Error("The resume token cannot be renewed.");
+    }
+    const { payload } = await jwtVerify(token, this.#sessionSecret, {
+      audience: RESUME_AUDIENCE,
+      algorithms: ["HS256"],
+      currentDate: new Date((expiresAt - 1) * 1_000),
+    });
+    const claims = decodeTicketClaims({ ...payload, aud: TICKET_AUDIENCE }, now);
+    if (claims.iat > nowSeconds || claims.exp <= claims.iat)
+      throw new Error("The resume token timestamps are invalid.");
+    return claims;
   }
 
   iceServers(claims: RemoteTicketClaims, nowSeconds = Math.floor(Date.now() / 1_000)): IceServer[] {
@@ -132,6 +155,10 @@ export function verifyWebhookSignature(
   const actualBytes = Buffer.from(signature);
   const expectedBytes = Buffer.from(expected);
   return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
+}
+
+export function signServiceRequest(body: string, timestamp: string, secret: string): string {
+  return createHmac("sha256", secret).update(`${timestamp}.${body}`).digest("base64url");
 }
 
 function parseJwks(value: string): JSONWebKeySet {

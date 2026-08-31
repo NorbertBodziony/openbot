@@ -45,6 +45,7 @@ import { Route as V2RemoteHostsRegisterRouteImport } from './routes/v2/remote/ho
 import { Route as V2RemoteInvitesInviteIdRouteImport } from './routes/v2/remote/invites/$inviteId'
 import { Route as V2RemoteInvitesAcceptRouteImport } from './routes/v2/remote/invites/accept'
 import { Route as V2RemoteInvitesPreviewRouteImport } from './routes/v2/remote/invites/preview'
+import { Route as V2RemoteResumeValidateRouteImport } from './routes/v2/remote/resume/validate'
 import { Route as V2RemoteSessionsIndexRouteImport } from './routes/v2/remote/sessions/index'
 import { Route as V1MarketplaceAgentsAgentIdAvatarRouteImport } from './routes/v1/marketplace/agents/$agentId/avatar'
 import { Route as V1MarketplaceAgentsAgentIdInstallRouteImport } from './routes/v1/marketplace/agents/$agentId/install'
@@ -247,6 +248,11 @@ const V2RemoteInvitesPreviewRoute = V2RemoteInvitesPreviewRouteImport.update({
   path: '/v2/remote/invites/preview',
   getParentRoute: () => rootRouteImport,
 } as any)
+const V2RemoteResumeValidateRoute = V2RemoteResumeValidateRouteImport.update({
+  id: '/v2/remote/resume/validate',
+  path: '/v2/remote/resume/validate',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const V2RemoteSessionsIndexRoute = V2RemoteSessionsIndexRouteImport.update({
   id: '/v2/remote/sessions/',
   path: '/v2/remote/sessions/',
@@ -383,6 +389,7 @@ export interface FileRoutesByFullPath {
   '/v2/remote/invites/$inviteId': typeof V2RemoteInvitesInviteIdRoute
   '/v2/remote/invites/accept': typeof V2RemoteInvitesAcceptRoute
   '/v2/remote/invites/preview': typeof V2RemoteInvitesPreviewRoute
+  '/v2/remote/resume/validate': typeof V2RemoteResumeValidateRoute
   '/v1/marketplace/agents/': typeof V1MarketplaceAgentsIndexRoute
   '/v2/remote/hosts/': typeof V2RemoteHostsIndexRoute
   '/v2/remote/sessions/': typeof V2RemoteSessionsIndexRoute
@@ -438,6 +445,7 @@ export interface FileRoutesByTo {
   '/v2/remote/invites/$inviteId': typeof V2RemoteInvitesInviteIdRoute
   '/v2/remote/invites/accept': typeof V2RemoteInvitesAcceptRoute
   '/v2/remote/invites/preview': typeof V2RemoteInvitesPreviewRoute
+  '/v2/remote/resume/validate': typeof V2RemoteResumeValidateRoute
   '/v1/marketplace/agents': typeof V1MarketplaceAgentsIndexRoute
   '/v2/remote/hosts': typeof V2RemoteHostsIndexRoute
   '/v2/remote/sessions': typeof V2RemoteSessionsIndexRoute
@@ -494,6 +502,7 @@ export interface FileRoutesById {
   '/v2/remote/invites/$inviteId': typeof V2RemoteInvitesInviteIdRoute
   '/v2/remote/invites/accept': typeof V2RemoteInvitesAcceptRoute
   '/v2/remote/invites/preview': typeof V2RemoteInvitesPreviewRoute
+  '/v2/remote/resume/validate': typeof V2RemoteResumeValidateRoute
   '/v1/marketplace/agents/': typeof V1MarketplaceAgentsIndexRoute
   '/v2/remote/hosts/': typeof V2RemoteHostsIndexRoute
   '/v2/remote/sessions/': typeof V2RemoteSessionsIndexRoute
@@ -551,6 +560,7 @@ export interface FileRouteTypes {
     | '/v2/remote/invites/$inviteId'
     | '/v2/remote/invites/accept'
     | '/v2/remote/invites/preview'
+    | '/v2/remote/resume/validate'
     | '/v1/marketplace/agents/'
     | '/v2/remote/hosts/'
     | '/v2/remote/sessions/'
@@ -606,6 +616,7 @@ export interface FileRouteTypes {
     | '/v2/remote/invites/$inviteId'
     | '/v2/remote/invites/accept'
     | '/v2/remote/invites/preview'
+    | '/v2/remote/resume/validate'
     | '/v1/marketplace/agents'
     | '/v2/remote/hosts'
     | '/v2/remote/sessions'
@@ -661,6 +672,7 @@ export interface FileRouteTypes {
     | '/v2/remote/invites/$inviteId'
     | '/v2/remote/invites/accept'
     | '/v2/remote/invites/preview'
+    | '/v2/remote/resume/validate'
     | '/v1/marketplace/agents/'
     | '/v2/remote/hosts/'
     | '/v2/remote/sessions/'
@@ -712,6 +724,7 @@ export interface RootRouteChildren {
   V2RemoteInvitesInviteIdRoute: typeof V2RemoteInvitesInviteIdRoute
   V2RemoteInvitesAcceptRoute: typeof V2RemoteInvitesAcceptRoute
   V2RemoteInvitesPreviewRoute: typeof V2RemoteInvitesPreviewRoute
+  V2RemoteResumeValidateRoute: typeof V2RemoteResumeValidateRoute
   V1MarketplaceAgentsIndexRoute: typeof V1MarketplaceAgentsIndexRoute
   V2RemoteHostsIndexRoute: typeof V2RemoteHostsIndexRoute
   V2RemoteSessionsIndexRoute: typeof V2RemoteSessionsIndexRoute
@@ -981,6 +994,13 @@ declare module '@tanstack/solid-router' {
       preLoaderRoute: typeof V2RemoteInvitesPreviewRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/v2/remote/resume/validate': {
+      id: '/v2/remote/resume/validate'
+      path: '/v2/remote/resume/validate'
+      fullPath: '/v2/remote/resume/validate'
+      preLoaderRoute: typeof V2RemoteResumeValidateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/v2/remote/sessions/': {
       id: '/v2/remote/sessions/'
       path: '/v2/remote/sessions'
@@ -1228,6 +1248,7 @@ const rootRouteChildren: RootRouteChildren = {
   V2RemoteInvitesInviteIdRoute: V2RemoteInvitesInviteIdRoute,
   V2RemoteInvitesAcceptRoute: V2RemoteInvitesAcceptRoute,
   V2RemoteInvitesPreviewRoute: V2RemoteInvitesPreviewRoute,
+  V2RemoteResumeValidateRoute: V2RemoteResumeValidateRoute,
   V1MarketplaceAgentsIndexRoute: V1MarketplaceAgentsIndexRoute,
   V2RemoteHostsIndexRoute: V2RemoteHostsIndexRoute,
   V2RemoteSessionsIndexRoute: V2RemoteSessionsIndexRoute,

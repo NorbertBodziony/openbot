@@ -43,6 +43,16 @@ interface RemoteSessionRow extends RemoteMembershipRow {
   auth_epoch: number;
 }
 
+export interface RemoteResumeClaims {
+  sessionId: string;
+  hostId: string;
+  userId: string;
+  membershipId: string;
+  role: "host" | RemoteMemberRole;
+  authEpoch: number;
+  sessionExpiresAt: number;
+}
+
 interface RemoteInviteRow {
   invite_id: string;
   host_id: string;
@@ -58,6 +68,8 @@ interface TicketSignerConfig {
   publicJwks: string;
   keyId: string;
 }
+
+type RemoteFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
 interface RemotePublicJwk extends DynamicRecord {
   kid: string;
@@ -121,7 +133,7 @@ export class RemoteControlPlane {
   readonly #signer: RemoteTicketSigner;
   readonly #webhookUrl: string | null;
   readonly #webhookSecret: string | null;
-  readonly #fetch: typeof fetch;
+  readonly #fetch: RemoteFetch;
   readonly #now: () => number;
 
   constructor(
@@ -134,7 +146,7 @@ export class RemoteControlPlane {
       | "REMOTE_AUTH_WEBHOOK_URL"
       | "REMOTE_AUTH_WEBHOOK_SECRET"
     >,
-    options: { fetch?: typeof fetch; now?: () => number } = {},
+    options: { fetch?: RemoteFetch; now?: () => number } = {},
   ) {
     if (!bindings.REMOTE_TICKET_PRIVATE_JWK || !bindings.REMOTE_TICKET_PUBLIC_JWKS || !bindings.REMOTE_TICKET_KEY_ID) {
       throw new RemoteControlPlaneError(503, "remote_not_configured", "Remote ticket signing is not configured.");
@@ -368,6 +380,17 @@ export class RemoteControlPlane {
     if (invite.email && invite.email !== user.email.trim().toLowerCase()) {
       throw new RemoteControlPlaneError(403, "invite_email_mismatch", "The invitation is for another account.");
     }
+    const existingMembership = await this.#database
+      .prepare("SELECT role FROM remote_memberships WHERE host_id = ? AND user_id = ? LIMIT 1")
+      .bind(invite.host_id, user.id)
+      .first<{ role: RemoteMemberRole }>();
+    if (existingMembership?.role === "owner") {
+      throw new RemoteControlPlaneError(
+        409,
+        "owner_membership_protected",
+        "The owner cannot accept a member invitation.",
+      );
+    }
     const membershipId = crypto.randomUUID();
     const accepted = await this.#database.batch([
       this.#database
@@ -377,7 +400,9 @@ export class RemoteControlPlane {
            ) SELECT ?, ?, ?, ?, 'active', ?, ?
              FROM remote_invites
             WHERE invite_id = ? AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?
-           ON CONFLICT(host_id, user_id) DO UPDATE SET role = excluded.role, status = 'active', updated_at = excluded.updated_at`,
+           ON CONFLICT(host_id, user_id) DO UPDATE SET
+             role = CASE WHEN remote_memberships.role = 'owner' THEN 'owner' ELSE excluded.role END,
+             status = 'active', updated_at = excluded.updated_at`,
         )
         .bind(membershipId, invite.host_id, user.id, invite.role, now, now, invite.invite_id, now),
       this.#database
@@ -444,7 +469,9 @@ export class RemoteControlPlane {
         .bind(now, input.hostId, membership.user_id),
     ]);
     const host = await this.#host(input.hostId);
-    if (host) await this.#sendAuthEvent(host.host_id, host.auth_epoch);
+    if (host) {
+      await this.#sendAuthEvent({ type: "remote-auth-changed", hostId: host.host_id, authEpoch: host.auth_epoch });
+    }
   }
 
   async startSession(userId: string, hostId: string) {
@@ -463,10 +490,56 @@ export class RemoteControlPlane {
   }
 
   async endSession(userId: string, sessionId: string): Promise<void> {
-    await this.#database
+    const session = await this.#database
+      .prepare("SELECT host_id FROM remote_sessions WHERE session_id = ? AND user_id = ? AND ended_at IS NULL LIMIT 1")
+      .bind(sessionId, userId)
+      .first<{ host_id: string }>();
+    if (!session) return;
+    const result = await this.#database
       .prepare("UPDATE remote_sessions SET ended_at = ? WHERE session_id = ? AND user_id = ? AND ended_at IS NULL")
       .bind(this.#now(), sessionId, userId)
       .run();
+    if ((result.meta.changes ?? 0) === 1) {
+      await this.#sendAuthEvent({ type: "remote-session-ended", hostId: session.host_id, sessionId });
+    }
+  }
+
+  async validateResumeClaims(claims: RemoteResumeClaims): Promise<boolean> {
+    const now = this.#now();
+    if (claims.sessionExpiresAt * 1_000 <= now || !Number.isSafeInteger(claims.authEpoch)) return false;
+    if (claims.role === "host") {
+      const host = await this.#host(claims.hostId);
+      return Boolean(
+        host &&
+          claims.sessionId === `host-${host.host_id}` &&
+          claims.userId === host.owner_user_id &&
+          claims.membershipId === `${host.host_id}:host` &&
+          claims.authEpoch === host.auth_epoch,
+      );
+    }
+    const session = await this.#database
+      .prepare(
+        `SELECT s.session_id, s.expires_at, s.ended_at, m.membership_id, m.host_id, m.user_id, m.role, m.status,
+                h.auth_epoch
+           FROM remote_sessions s
+           JOIN remote_memberships m ON m.membership_id = s.membership_id
+           JOIN remote_hosts h ON h.host_id = s.host_id
+          WHERE s.session_id = ? LIMIT 1`,
+      )
+      .bind(claims.sessionId)
+      .first<RemoteSessionRow>();
+    return Boolean(
+      session &&
+        !session.ended_at &&
+        session.expires_at > now &&
+        session.status === "active" &&
+        session.host_id === claims.hostId &&
+        session.user_id === claims.userId &&
+        session.membership_id === claims.membershipId &&
+        session.role === claims.role &&
+        session.auth_epoch === claims.authEpoch &&
+        Math.floor(session.expires_at / 1_000) === claims.sessionExpiresAt,
+    );
   }
 
   async issueSessionTicket(userId: string, sessionId: string) {
@@ -542,10 +615,14 @@ export class RemoteControlPlane {
       .first<RemoteHostRow>();
   }
 
-  async #sendAuthEvent(hostId: string, authEpoch: number): Promise<void> {
+  async #sendAuthEvent(
+    event:
+      | { type: "remote-auth-changed"; hostId: string; authEpoch: number }
+      | { type: "remote-session-ended"; hostId: string; sessionId: string },
+  ): Promise<void> {
     if (!this.#webhookUrl || !this.#webhookSecret) return;
     const timestamp = Math.floor(this.#now() / 1_000).toString();
-    const body = JSON.stringify({ type: "remote-auth-changed", hostId, authEpoch });
+    const body = JSON.stringify(event);
     const signature = await hmacSha256(this.#webhookSecret, `${timestamp}.${body}`);
     const response = await this.#fetch(this.#webhookUrl, {
       method: "POST",
@@ -593,6 +670,40 @@ async function hmacSha256(secret: string, value: string): Promise<string> {
     ["sign"],
   );
   return bytesToBase64Url(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value))));
+}
+
+export async function verifyRemoteServiceSignature(
+  secret: string,
+  body: string,
+  timestamp: string,
+  signature: string,
+  now = Date.now(),
+): Promise<boolean> {
+  const timestampSeconds = Number(timestamp);
+  if (!Number.isSafeInteger(timestampSeconds) || Math.abs(now - timestampSeconds * 1_000) > 5 * 60_000) return false;
+  try {
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["verify"],
+    );
+    return crypto.subtle.verify(
+      "HMAC",
+      key,
+      decodeBase64Url(signature),
+      new TextEncoder().encode(`${timestamp}.${body}`),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function decodeBase64Url(value: string): ArrayBuffer {
+  const normalized = value.replaceAll("-", "+").replaceAll("_", "/");
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+  return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0)).buffer;
 }
 
 function bytesToBase64Url(bytes: Uint8Array): string {

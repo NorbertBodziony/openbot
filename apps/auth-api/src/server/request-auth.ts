@@ -10,7 +10,7 @@ import {
   type MarketplaceMutationKind,
   MarketplaceRateLimitError,
 } from "./marketplace-request-policy";
-import { RemoteControlPlane, RemoteControlPlaneError } from "./remote-control-plane";
+import { RemoteControlPlane, RemoteControlPlaneError, verifyRemoteServiceSignature } from "./remote-control-plane";
 import { SkillMarketplace, SkillMarketplaceError } from "./skill-marketplace";
 import { requireWorkerBindings, type TeamInviteEmailDelivery } from "./types";
 
@@ -77,6 +77,17 @@ export function requestTeamInviteEmailDelivery(): TeamInviteEmailDelivery | null
 
 export function requestRemoteControlPlane(): RemoteControlPlane {
   return new RemoteControlPlane(requireWorkerBindings(env));
+}
+
+export function verifyRemoteServiceRequest(request: Request, body: string): Promise<boolean> {
+  const secret = requireWorkerBindings(env).REMOTE_AUTH_WEBHOOK_SECRET;
+  if (!secret) return Promise.resolve(false);
+  return verifyRemoteServiceSignature(
+    secret,
+    body,
+    request.headers.get("OpenBot-Timestamp") ?? "",
+    request.headers.get("OpenBot-Signature") ?? "",
+  );
 }
 
 export function remoteControlPlaneErrorResponse(error: unknown): Response {

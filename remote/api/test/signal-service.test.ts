@@ -58,6 +58,24 @@ describe("SignalService", () => {
     expect(second.messages.at(-1)).toContain('"code":"host_busy"');
     expect(second.closed).toBe(true);
   });
+
+  it("limits unauthenticated sockets and revokes one logical session", async () => {
+    const service = new SignalService(fakeTokens(), 8, 1);
+    const pending = socket("pending", "192.0.2.10");
+    const rejected = socket("rejected", "192.0.2.10");
+    expect(service.connect(pending)).toBe(true);
+    expect(service.connect(rejected)).toBe(false);
+    expect(rejected.messages.at(-1)).toContain('"code":"rate_limited"');
+
+    service.disconnect(pending);
+    const host = socket("host");
+    const client = socket("client");
+    await hello(service, host, "host-ticket", "host");
+    await hello(service, client, "client-ticket", "client");
+    service.revokeSession("client-session");
+    expect(client.messages.at(-1)).toContain('"code":"session_revoked"');
+    expect(client.closed).toBe(true);
+  });
 });
 
 function fakeTokens() {
@@ -103,11 +121,11 @@ interface TestSignalSocket extends SignalSocket {
   closed: boolean;
 }
 
-function socket(id: string): TestSignalSocket {
+function socket(id: string, ip = `192.0.2.${id.length}`): TestSignalSocket {
   const messages: string[] = [];
   const target: TestSignalSocket = {
     id,
-    ip: `192.0.2.${id.length}`,
+    ip,
     messages,
     closed: false,
     send: (message) => {
@@ -121,5 +139,6 @@ function socket(id: string): TestSignalSocket {
 }
 
 async function hello(service: SignalService, target: SignalSocket, token: string, peer: "host" | "client") {
+  service.connect(target);
   await service.receive(target, JSON.stringify({ type: "hello", version: 1, peer, token }));
 }

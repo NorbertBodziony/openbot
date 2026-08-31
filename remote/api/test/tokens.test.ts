@@ -1,7 +1,7 @@
 import { createHmac, generateKeyPairSync } from "node:crypto";
 import { exportJWK, SignJWT } from "jose";
 import { describe, expect, it } from "vitest";
-import { RemoteTokenService, verifyWebhookSignature } from "../src/tokens";
+import { RESUME_TTL_SECONDS, RemoteTokenService, verifyWebhookSignature } from "../src/tokens";
 
 const secret = "s".repeat(32);
 
@@ -29,22 +29,36 @@ describe("remote tokens", () => {
       .setIssuedAt(now)
       .setExpirationTime(now + 300)
       .sign(privateKey);
-    const service = new RemoteTokenService({
-      ticketJwks: JSON.stringify({ keys: [jwk] }),
-      ticketJwksUrl: null,
-      sessionSecret: secret,
-      turnSecret: "t".repeat(32),
-      turnHost: "turn.example.com",
-      turnPort: 3478,
-      turnTlsPort: 5349,
-    });
+    let remoteValidations = 0;
+    const service = new RemoteTokenService(
+      {
+        ticketJwks: JSON.stringify({ keys: [jwk] }),
+        ticketJwksUrl: null,
+        sessionSecret: secret,
+        turnSecret: "t".repeat(32),
+        turnHost: "turn.example.com",
+        turnPort: 3478,
+        turnTlsPort: 5349,
+      },
+      async () => {
+        remoteValidations += 1;
+        return true;
+      },
+    );
     const claims = await service.verifyTicket(token);
     const servers = service.iceServers(claims, now);
     expect(claims.sessionId).toBe("session-1");
     expect(servers[1]).toMatchObject({ username: `${now + 3_600}:session-1` });
     const resume = await service.issueResumeToken(claims, now);
     expect((await service.verifyResumeToken(resume)).hostId).toBe("host-1");
-    expect((await service.verifyResumeToken(resume, new Date((now + 600) * 1_000))).sessionId).toBe("session-1");
+    expect((await service.verifyResumeToken(resume, new Date((now + RESUME_TTL_SECONDS - 1) * 1_000))).sessionId).toBe(
+      "session-1",
+    );
+    expect(remoteValidations).toBe(0);
+    expect((await service.verifyResumeToken(resume, new Date((now + RESUME_TTL_SECONDS + 1) * 1_000))).sessionId).toBe(
+      "session-1",
+    );
+    expect(remoteValidations).toBe(1);
   });
 
   it("checks webhook timestamps and signatures", () => {
