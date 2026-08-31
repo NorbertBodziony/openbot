@@ -327,8 +327,8 @@ function createConversationViewScope(props: ConversationProps) {
     setAttachmentBusy,
     composerError,
     setComposerError,
-    voiceErrors,
-    setVoiceErrors,
+    conversationErrors,
+    setConversationErrors,
     voicePhase,
     setVoicePhase,
     voiceModelProgress,
@@ -405,9 +405,9 @@ function createConversationViewScope(props: ConversationProps) {
     const target = currentTarget();
     return target ? (drafts()[composerDraftKey(target)] ?? EMPTY_DRAFT) : EMPTY_DRAFT;
   });
-  const currentVoiceError = createMemo(() => {
+  const currentConversationError = createMemo(() => {
     const target = currentTarget();
-    return target ? (voiceErrors()[composerDraftKey(target)] ?? null) : null;
+    return target ? (conversationErrors()[composerDraftKey(target)] ?? null) : null;
   });
   const unreferencedDraftAttachments = createMemo(() => {
     const referencedIds = attachmentReferenceIds(currentDraft().text);
@@ -932,7 +932,7 @@ function createConversationViewScope(props: ConversationProps) {
   const updateCurrentDraft = (patch: Partial<ComposerDraft>) => {
     const target = currentTarget();
     if (!target) return;
-    clearVoiceError(target);
+    clearConversationError(target);
     const key = composerDraftKey(target);
     setDrafts((current) => ({
       ...current,
@@ -954,9 +954,9 @@ function createConversationViewScope(props: ConversationProps) {
     });
   }
 
-  function clearVoiceError(target: ConversationTarget): void {
+  function clearConversationError(target: ConversationTarget): void {
     const key = composerDraftKey(target);
-    setVoiceErrors((current) => {
+    setConversationErrors((current) => {
       const { [key]: _removed, ...next } = current;
       return next;
     });
@@ -977,7 +977,7 @@ function createConversationViewScope(props: ConversationProps) {
     const botId = props.bot?.id;
     const serverId = props.server?.id ?? "local";
     if (!botId || voicePhase() !== "idle") return;
-    clearVoiceError({ botId, serverId });
+    clearConversationError({ botId, serverId });
     resources.voiceSubmitRequest = undefined;
     setComposerError(null);
     setVoicePhase("preparing");
@@ -1060,7 +1060,7 @@ function createConversationViewScope(props: ConversationProps) {
       });
       if (resources.voiceDisposed) return;
       const recordingTarget = { botId: targetBotId, serverId: targetServerId };
-      clearVoiceError(recordingTarget);
+      clearConversationError(recordingTarget);
       const draft = submitRequest?.draft ?? drafts()[composerDraftKey(recordingTarget)] ?? EMPTY_DRAFT;
       const transcribedDraft = { ...draft, text: appendVoiceTranscript(draft.text, result.text) };
       if (submitRequest) {
@@ -1095,7 +1095,7 @@ function createConversationViewScope(props: ConversationProps) {
       });
       if (!resources.voiceDisposed) {
         const target = { botId: targetBotId, serverId: targetServerId };
-        setVoiceErrors((current) => ({
+        setConversationErrors((current) => ({
           ...current,
           [composerDraftKey(target)]: voiceTranscriptionError(error),
         }));
@@ -1128,16 +1128,21 @@ function createConversationViewScope(props: ConversationProps) {
     const unsubscribeImport = window.openbot.agent.onAttachmentImport((event) => {
       if (event.type === "started") {
         const target = currentTarget();
-        if (target?.serverId === event.serverId) resources.importTargetBots.set(event.requestId, target);
+        if (target?.serverId === event.serverId) {
+          resources.importTargetBots.set(event.requestId, target);
+          clearConversationError(target);
+        }
         setAttachmentBusy(true);
         setComposerError(null);
       } else if (event.type === "error") {
         const target = resources.importTargetBots.get(event.requestId);
         resources.importTargetBots.delete(event.requestId);
         setAttachmentBusy(false);
-        const activeTarget = currentTarget();
-        if (target && activeTarget && composerDraftKey(target) === composerDraftKey(activeTarget)) {
-          setComposerError(event.message);
+        if (target) {
+          setConversationErrors((current) => ({
+            ...current,
+            [composerDraftKey(target)]: event.message,
+          }));
         }
       } else {
         setAttachmentBusy(false);
@@ -1618,7 +1623,7 @@ function createConversationViewScope(props: ConversationProps) {
 
   function addAttachments(selected: DraftAttachment[], target = currentTarget()) {
     if (!target) return;
-    clearVoiceError(target);
+    clearConversationError(target);
     const key = composerDraftKey(target);
     const draft = drafts()[key] ?? EMPTY_DRAFT;
     const available = Math.max(0, 10 - draft.attachments.length);
@@ -1655,7 +1660,7 @@ function createConversationViewScope(props: ConversationProps) {
     const serverId = props.server?.id ?? "local";
     if (!botId || delivery.status !== "queued") return;
     if (editingDeliveryId()) cancelQueuedMessageEdit();
-    clearVoiceError({ botId, serverId });
+    clearConversationError({ botId, serverId });
     setEditingBotId(botId);
     setEditingServerId(serverId);
     setEditingDraftBackup({
@@ -1750,7 +1755,7 @@ function createConversationViewScope(props: ConversationProps) {
     }
     if (!saved) return false;
     const savedTarget = { botId, serverId };
-    clearVoiceError(savedTarget);
+    clearConversationError(savedTarget);
     if (submittedSnapshot) clearSubmittedDraft(savedTarget, submittedSnapshot);
     else setDrafts((current) => ({ ...current, [composerDraftKey(savedTarget)]: EMPTY_DRAFT }));
     if (editingBotId() === botId && editingServerId() === serverId && editingDeliveryId() === deliveryId) {
@@ -1809,7 +1814,7 @@ function createConversationViewScope(props: ConversationProps) {
     );
     setSubmitting(false);
     if (sent) {
-      clearVoiceError(target);
+      clearConversationError(target);
       if (submittedSnapshot) clearSubmittedDraft(target, submittedSnapshot);
       else setDrafts((current) => ({ ...current, [composerDraftKey(target)]: EMPTY_DRAFT }));
     }
@@ -2282,7 +2287,7 @@ function createConversationViewScope(props: ConversationProps) {
     copiedMessageId,
     copyMessage,
     currentDraft,
-    currentVoiceError,
+    currentConversationError,
     currentUnreadCount,
     drafts,
     dropActive,
@@ -3042,7 +3047,7 @@ export function ConversationComposer() {
     composerFocusRequest,
     composerHasContent,
     currentDraft,
-    currentVoiceError,
+    currentConversationError,
     editQueuedMessage,
     editingDeliveryId,
     openAttachmentPicker,
@@ -3115,9 +3120,9 @@ export function ConversationComposer() {
             </div>
           )}
         </Show>
-        <Show when={composerError() ?? currentVoiceError()}>
+        <Show when={composerError() ?? currentConversationError()}>
           <div class="composer-error" role="alert">
-            {composerError() ?? currentVoiceError()}
+            {composerError() ?? currentConversationError()}
           </div>
         </Show>
         <div

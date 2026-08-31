@@ -5014,6 +5014,23 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByRole("button", { name: "Remove for-chief.png" })).toBeInTheDocument();
   });
 
+  it("keeps an asynchronous attachment error with the bot that received the paste", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAttachmentImport?.({ type: "started", requestId: "paste-error", serverId: "local" });
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+    emitAttachmentImport?.({
+      type: "error",
+      requestId: "paste-error",
+      serverId: "local",
+      message: "Attachment import failed",
+    });
+
+    expect(screen.queryByText("Attachment import failed")).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Attachment import failed");
+  });
+
   it("keeps an asynchronous pasted attachment on the server that received the paste", async () => {
     const local = testServer("local", true);
     const remote = testServer("remote-1", false);
