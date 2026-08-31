@@ -36,6 +36,7 @@ export type TeamProtocolV2RpcFrame =
 export type TeamProtocolV2EventFrame =
   | { version: 2; type: "event"; sequence: number; payload: TeamProtocolV2Json }
   | { version: 2; type: "event-ack"; throughSequence: number }
+  | { version: 2; type: "event-reset"; nextSequence: number }
   | {
       version: 2;
       type: "event-control";
@@ -99,6 +100,9 @@ export function decodeTeamProtocolV2EventFrame(value: string | unknown): TeamPro
   }
   if (frame.type === "event-ack" && offset(frame.throughSequence)) {
     return { version: 2, type: "event-ack", throughSequence: frame.throughSequence };
+  }
+  if (frame.type === "event-reset" && sequence(frame.nextSequence)) {
+    return { version: 2, type: "event-reset", nextSequence: frame.nextSequence };
   }
   if (frame.type === "event-control" && isDynamicRecord(frame.control) && isString(frame.control.type)) {
     if (frame.control.type === "runtime-snapshot-request") {
@@ -176,7 +180,12 @@ export function encodeTeamProtocolV2Frame(
   let encoded: string;
   if (frame.type === "request" || frame.type === "response")
     encoded = JSON.stringify(decodeTeamProtocolV2RpcFrame(frame));
-  else if (frame.type === "event" || frame.type === "event-ack" || frame.type === "event-control")
+  else if (
+    frame.type === "event" ||
+    frame.type === "event-ack" ||
+    frame.type === "event-reset" ||
+    frame.type === "event-control"
+  )
     encoded = JSON.stringify(decodeTeamProtocolV2EventFrame(frame));
   else encoded = JSON.stringify(decodeTeamProtocolV2FileControlFrame(frame));
   if (byteLength(encoded) > TEAM_PROTOCOL_V2_MAX_JSON_FRAME_BYTES) throw invalid("JSON frame size");

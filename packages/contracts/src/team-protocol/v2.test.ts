@@ -41,6 +41,14 @@ describe("Team protocol v2", () => {
     });
   });
 
+  it("accepts an event sequence reset", () => {
+    expect(decodeTeamProtocolV2EventFrame({ version: 2, type: "event-reset", nextSequence: 2_001 })).toEqual({
+      version: 2,
+      type: "event-reset",
+      nextSequence: 2_001,
+    });
+  });
+
   it("validates client event controls", () => {
     expect(
       decodeTeamProtocolV2EventFrame({

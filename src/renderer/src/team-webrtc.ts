@@ -1,6 +1,7 @@
 import { isString } from "@openbot/contracts/runtime-values";
 import { TEAM_PROTOCOL_V2_CHANNELS } from "@openbot/contracts/team-protocol/v2";
 import { z } from "zod";
+import { encodeTeamWebRtcPayload, TeamWebRtcPayloadDecoder } from "./team-webrtc-framing";
 
 interface BridgeCommand {
   commandId: string;
@@ -83,6 +84,7 @@ interface PeerState {
   peerConnection: RTCPeerConnection | null;
   iceServers: RTCIceServer[];
   channels: Partial<Record<"rpc" | "events" | "files" | "desktop", RTCDataChannel>>;
+  payloadDecoders: Partial<Record<"rpc" | "events" | "files" | "desktop", TeamWebRtcPayloadDecoder>>;
   reconnectAttempt: number;
   reconnectTimer: number | null;
   turnRefreshTimer: number | null;
@@ -126,6 +128,7 @@ async function handleCommand(command: BridgeCommand): Promise<void> {
         peerConnection: null,
         iceServers: [],
         channels: {},
+        payloadDecoders: {},
         reconnectAttempt: 0,
         reconnectTimer: null,
         turnRefreshTimer: null,
@@ -143,10 +146,7 @@ async function handleCommand(command: BridgeCommand): Promise<void> {
       const channel = command.channel ? state.channels[command.channel] : null;
       if (channel?.readyState !== "open" || command.data === undefined)
         throw new Error("The WebRTC channel is not open.");
-      await waitForWritableChannel(channel);
-      const data = command.data;
-      if (isString(data)) channel.send(data);
-      else channel.send(data);
+      await sendChannelPayload(state, channel, command.data);
     } else if (command.type === "restart-ice") {
       await restartIce(requirePeer(command.peerId));
     } else if (command.type === "close") {
@@ -258,6 +258,8 @@ async function handleSignal(state: PeerState, message: SignalMessage): Promise<v
     state.peerConnection = null;
     state.connectionId = null;
     state.channels = {};
+    for (const decoder of Object.values(state.payloadDecoders)) decoder?.reset();
+    state.payloadDecoders = {};
     post({ type: "peer-disconnected", peerId: state.id });
     return;
   }
@@ -307,7 +309,7 @@ function createPeerConnection(state: PeerState, iceServers: RTCIceServer[]): RTC
     if (channel) bindDataChannel(state, channel, event.channel);
   };
   connection.onconnectionstatechange = () => {
-    if (connection.connectionState === "connected") void reportSelectedPath(state, connection);
+    if (connection.connectionState === "connected") void reportSelectedPath(state, connection).catch(() => undefined);
     if (connection.connectionState === "failed") {
       state.iceRestartPending = true;
       void retryPendingIceRestart(state);
@@ -334,14 +336,38 @@ function bindDataChannel(
   channel.binaryType = "arraybuffer";
   channel.bufferedAmountLowThreshold = 1024 * 1024;
   state.channels[kind] = channel;
+  state.payloadDecoders[kind]?.reset();
+  const decoder = new TeamWebRtcPayloadDecoder();
+  state.payloadDecoders[kind] = decoder;
   channel.onopen = () => {
     if (dataChannelNames.every((name) => state.channels[name]?.readyState === "open")) {
       post({ type: "peer-connected", peerId: state.id, connectionId: state.connectionId });
     }
   };
-  channel.onmessage = (event) => post({ type: "data", peerId: state.id, channel: kind, data: event.data });
+  channel.onmessage = (event) => {
+    if (state.channels[kind] !== channel) return;
+    try {
+      const data = decoder.push(event.data);
+      if (data !== undefined) post({ type: "data", peerId: state.id, channel: kind, data });
+    } catch (error) {
+      failPeer(state, error);
+    }
+  };
   channel.onerror = () =>
     post({ type: "peer-error", peerId: state.id, code: "data_channel_error", message: `${kind} channel failed.` });
+}
+
+async function sendChannelPayload(
+  state: PeerState,
+  channel: RTCDataChannel,
+  data: string | ArrayBuffer,
+): Promise<void> {
+  const maximumMessageSize = state.peerConnection?.sctp?.maxMessageSize ?? Number.POSITIVE_INFINITY;
+  for (const frame of encodeTeamWebRtcPayload(data, maximumMessageSize)) {
+    await waitForWritableChannel(channel);
+    if (isString(frame)) channel.send(frame);
+    else channel.send(frame);
+  }
 }
 
 function waitForWritableChannel(channel: RTCDataChannel): Promise<void> {
@@ -453,6 +479,7 @@ function disconnect(peerId: string): void {
   }
   state.socket?.close(1000, "Peer stopped");
   state.peerConnection?.close();
+  for (const decoder of Object.values(state.payloadDecoders)) decoder?.reset();
   peers.delete(peerId);
 }
 

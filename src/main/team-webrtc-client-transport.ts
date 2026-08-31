@@ -380,7 +380,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
     const delay = Math.max(0, active.expiresAt - Date.now() - 30_000);
     active.expirationTimer = setTimeout(() => {
       active.expirationTimer = null;
-      if (this.#active.get(hostId) === active) void this.disconnect(hostId);
+      if (this.#active.get(hostId) === active) void this.disconnect(hostId).catch(() => undefined);
     }, delay);
     active.expirationTimer.unref?.();
   }
@@ -388,12 +388,12 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
   readonly #onConnected = (hostId: string): void => {
     const active = this.#active.get(hostId);
     if (!active || active.cancelled) {
-      void this.#options.bridge.disconnect(hostId);
+      void this.#options.bridge.disconnect(hostId).catch(() => undefined);
       return;
     }
     active.connected = true;
     active.connecting = null;
-    void this.#options.bridge.send(
+    this.#sendRecoverable(
       hostId,
       "events",
       encodeTeamProtocolV2Frame({
@@ -453,10 +453,28 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
   #handleEvent(hostId: string, data: string): void {
     try {
       const frame = decodeTeamProtocolV2EventFrame(data);
+      if (frame.type === "event-reset") {
+        this.#lastEventSequence.set(hostId, frame.nextSequence - 1);
+        this.#sendRecoverable(
+          hostId,
+          "events",
+          encodeTeamProtocolV2Frame({ version: 2, type: "event-ack", throughSequence: frame.nextSequence - 1 }),
+        );
+        this.#sendRecoverable(
+          hostId,
+          "events",
+          encodeTeamProtocolV2Frame({
+            version: 2,
+            type: "event-control",
+            control: { type: "runtime-snapshot-request" },
+          }),
+        );
+        return;
+      }
       if (frame.type !== "event") return;
       const lastSequence = this.#lastEventSequence.get(hostId) ?? 0;
       if (frame.sequence <= lastSequence) {
-        void this.#options.bridge.send(
+        this.#sendRecoverable(
           hostId,
           "events",
           encodeTeamProtocolV2Frame({ version: 2, type: "event-ack", throughSequence: lastSequence }),
@@ -470,7 +488,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       const decoded = decodeTeamProtocolV2CurrentEvent(frame);
       if (decoded) this.emit("event", hostId, decoded);
       this.#lastEventSequence.set(hostId, frame.sequence);
-      void this.#options.bridge.send(
+      this.#sendRecoverable(
         hostId,
         "events",
         encodeTeamProtocolV2Frame({ version: 2, type: "event-ack", throughSequence: frame.sequence }),
@@ -486,6 +504,10 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
   readonly #onError = (hostId: string, code: string, message: string): void => {
     this.emit("error", hostId, code, message);
   };
+
+  #sendRecoverable(hostId: string, channel: "events", data: string): void {
+    void this.#options.bridge.send(hostId, channel, data).catch(() => undefined);
+  }
 }
 
 export class TeamWebRtcRequestError extends Error {

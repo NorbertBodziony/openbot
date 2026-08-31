@@ -23,6 +23,7 @@ import { TeamWebRtcFileTransfer } from "./team-webrtc-file-transfer";
 
 const requireModule = createRequire(import.meta.url);
 const webSockets: typeof Ws = requireModule(join(dirname(requireModule.resolve("ws/package.json")), "index.js"));
+const MAXIMUM_BUFFERED_EVENTS = 2_000;
 
 interface TeamWebRtcHostGatewayOptions {
   bridge: TeamWebRtcBridge;
@@ -102,7 +103,7 @@ export class TeamWebRtcHostGateway {
     this.#bridge.off("data", this.#onData);
     this.#bridge.off("disconnected", this.#onDisconnected);
     this.#bridge.off("error", this.#onError);
-    void this.#files.stop();
+    void this.#files.stop().catch(() => undefined);
   }
 
   #waitForSignal(peerId: string): Promise<void> {
@@ -355,9 +356,16 @@ export class TeamWebRtcHostGateway {
       }
       const sequence = this.#nextEventSequence++;
       const frame = encodeTeamProtocolV2Frame({ version: 2, type: "event", sequence, payload });
+      if (this.#events.size >= MAXIMUM_BUFFERED_EVENTS) {
+        this.#events.clear();
+        this.#sendRecoverable(
+          this.#peerId,
+          "events",
+          encodeTeamProtocolV2Frame({ version: 2, type: "event-reset", nextSequence: sequence }),
+        );
+      }
       this.#events.set(sequence, frame);
-      while (this.#events.size > 2_000) deleteOldest(this.#events);
-      void this.#bridge.send(this.#peerId, "events", frame);
+      this.#sendRecoverable(this.#peerId, "events", frame);
     });
   }
 
@@ -375,7 +383,16 @@ export class TeamWebRtcHostGateway {
       for (const sequence of this.#events.keys()) if (sequence <= frame.throughSequence) this.#events.delete(sequence);
       const peerId = this.#peerId;
       if (!peerId) return;
-      for (const [sequence, event] of [...this.#events].sort(([left], [right]) => left - right)) {
+      const bufferedEvents = [...this.#events].sort(([left], [right]) => left - right);
+      const firstSequence = bufferedEvents[0]?.[0];
+      if (firstSequence !== undefined && frame.throughSequence < firstSequence - 1) {
+        await this.#bridge.send(
+          peerId,
+          "events",
+          encodeTeamProtocolV2Frame({ version: 2, type: "event-reset", nextSequence: firstSequence }),
+        );
+      }
+      for (const [sequence, event] of bufferedEvents) {
         if (sequence > frame.throughSequence) await this.#bridge.send(peerId, "events", event);
       }
     } catch {
@@ -419,7 +436,7 @@ export class TeamWebRtcHostGateway {
       this.#desktopSocket = socket;
       this.#desktopStreamId = control.streamId;
       socket.once("open", () => {
-        void this.#bridge.send(
+        this.#sendRecoverable(
           peerId,
           "desktop",
           encodeRemoteDesktopSignalControl({ type: "opened", streamId: control.streamId }),
@@ -429,9 +446,9 @@ export class TeamWebRtcHostGateway {
         if (this.#desktopStreamId !== control.streamId) return;
         if (binary) {
           const bytes = rawDataBytes(message);
-          void this.#bridge.send(peerId, "desktop", encodeRemoteDesktopSignalBinary(control.streamId, bytes));
+          this.#sendRecoverable(peerId, "desktop", encodeRemoteDesktopSignalBinary(control.streamId, bytes));
         } else {
-          void this.#bridge.send(
+          this.#sendRecoverable(
             peerId,
             "desktop",
             encodeRemoteDesktopSignalControl({
@@ -446,7 +463,7 @@ export class TeamWebRtcHostGateway {
         if (this.#desktopStreamId !== control.streamId) return;
         this.#desktopSocket = null;
         this.#desktopStreamId = null;
-        void this.#bridge.send(
+        this.#sendRecoverable(
           peerId,
           "desktop",
           encodeRemoteDesktopSignalControl({
@@ -458,7 +475,7 @@ export class TeamWebRtcHostGateway {
         );
       });
       socket.once("error", () => {
-        void this.#bridge.send(
+        this.#sendRecoverable(
           peerId,
           "desktop",
           encodeRemoteDesktopSignalControl({
@@ -490,6 +507,10 @@ export class TeamWebRtcHostGateway {
     }
     this.#localSessionId = null;
     this.#localSessionToken = null;
+  }
+
+  #sendRecoverable(peerId: string, channel: "events" | "desktop", data: string | ArrayBuffer): void {
+    void this.#bridge.send(peerId, channel, data).catch(() => undefined);
   }
 
   #closeDesktopSocket(): void {

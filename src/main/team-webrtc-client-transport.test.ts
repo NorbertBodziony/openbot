@@ -51,7 +51,22 @@ describe("TeamWebRtcClientTransport", () => {
     });
 
     await transport.connect("host-1");
-    bridge.emit("data", "host-1", "events", JSON.stringify({ version: 2, type: "event", sequence: 1, payload: null }));
+    bridge.emit("data", "host-1", "events", JSON.stringify({ version: 2, type: "event-reset", nextSequence: 2_001 }));
+    bridge.emit(
+      "data",
+      "host-1",
+      "events",
+      JSON.stringify({ version: 2, type: "event", sequence: 2_001, payload: null }),
+    );
+    expect(bridge.send).toHaveBeenCalledWith(
+      "host-1",
+      "events",
+      JSON.stringify({
+        version: 2,
+        type: "event-control",
+        control: { type: "runtime-snapshot-request" },
+      }),
+    );
     bridge.emit("disconnected", "host-1");
     await transport.connect("host-1");
 
