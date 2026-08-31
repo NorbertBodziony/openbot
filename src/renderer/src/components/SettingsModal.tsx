@@ -13,6 +13,7 @@ import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import type { GeneralSettingsValue } from "../app-settings";
 import { normalizeAvatarFile } from "../avatar-image";
 import { presentUpdateStatus } from "../update-status";
+import { ComputerUseMacSetup } from "./ComputerUseMacSetup";
 import { ProviderPicker, type ProviderPickerOption } from "./ProviderPicker";
 import { SettingsDialogShell } from "./SettingsDialogShell";
 import {
@@ -26,6 +27,7 @@ import {
   ItemDescription,
   ItemGroup,
   ItemTitle,
+  MousePointer2,
   Select,
   SelectContent,
   SelectItem,
@@ -60,18 +62,23 @@ export interface SettingsModalProps {
   restoreFocusTarget?: HTMLElement | null;
 }
 
-type SettingsTab = "general" | "profile" | "updates";
+type SettingsTab = "general" | "computer-use" | "profile" | "updates";
 
 type SettingsNavItem = { value: SettingsTab; label: string; icon: typeof Settings };
 
 const navItems: ReadonlyArray<SettingsNavItem> = [
   { value: "general", label: "General", icon: Settings },
+  { value: "computer-use", label: "Computer Use", icon: MousePointer2 },
   { value: "profile", label: "Profile", icon: UserRound },
   { value: "updates", label: "Updates", icon: CircleArrowDown },
 ];
 
 const tabDetails: Record<SettingsTab, { title: string; description: string }> = {
   general: { title: "General", description: "Control how OpenBot behaves on this computer." },
+  "computer-use": {
+    title: "Computer Use",
+    description: "Allow OpenBot to see and interact with apps on this Mac.",
+  },
   profile: { title: "Profile", description: "Manage how you appear in OpenBot." },
   updates: { title: "Updates", description: "Keep OpenBot current on this computer." },
 };
@@ -195,7 +202,9 @@ export function SettingsModal(props: SettingsModalProps) {
       return activeTab();
     },
     onChange(value: string) {
-      if (value === "general" || value === "profile" || value === "updates") setActiveTab(value);
+      if (value === "general" || value === "computer-use" || value === "profile" || value === "updates") {
+        setActiveTab(value);
+      }
     },
     orientation: "vertical" as const,
     activationMode: "automatic" as const,
@@ -318,19 +327,21 @@ export function SettingsModal(props: SettingsModalProps) {
         }
         sidebar={
           <Tabs.List class="settings-modal-nav" aria-label="Settings sections">
-            {navItems.map((item) => {
-              const NavIcon = item.icon;
-              return (
-                <Tabs.Trigger
-                  class="settings-modal-nav-item"
-                  value={item.value}
-                  aria-current={activeTab() === item.value ? "page" : undefined}
-                >
-                  <NavIcon aria-hidden="true" />
-                  <span>{item.label}</span>
-                </Tabs.Trigger>
-              );
-            })}
+            {navItems
+              .filter((item) => item.value !== "computer-use" || props.appInfo?.platform === "darwin")
+              .map((item) => {
+                const NavIcon = item.icon;
+                return (
+                  <Tabs.Trigger
+                    class="settings-modal-nav-item"
+                    value={item.value}
+                    aria-current={activeTab() === item.value ? "page" : undefined}
+                  >
+                    <NavIcon aria-hidden="true" />
+                    <span>{item.label}</span>
+                  </Tabs.Trigger>
+                );
+              })}
           </Tabs.List>
         }
       >
@@ -463,6 +474,10 @@ export function SettingsModal(props: SettingsModalProps) {
               />
             </ItemGroup>
           </SettingsSection>
+        </Tabs.Content>
+
+        <Tabs.Content value="computer-use" class="settings-modal-tab-panel" data-tab="computer-use">
+          <ComputerUseMacSetup platform={props.appInfo?.platform ?? "darwin"} variant="settings" />
         </Tabs.Content>
 
         <Tabs.Content value="profile" class="settings-modal-tab-panel" data-tab="profile">

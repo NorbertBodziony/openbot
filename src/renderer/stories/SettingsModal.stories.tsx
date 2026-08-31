@@ -5,12 +5,13 @@ import type {
   ProviderRuntimeSnapshot,
   UpdateStatus,
 } from "@openbot/contracts/ipc";
-import { createSignal } from "solid-js";
+import { createSignal, onCleanup } from "solid-js";
 import { expect, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { DEFAULT_GENERAL_SETTINGS } from "../src/app-settings";
 import { SettingsModal } from "../src/components/SettingsModal";
 import { Button, Heading, Text } from "../src/components/ui";
+import { createMockOpenBot } from "./mock-openbot";
 
 const storyAppInfo = { name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" } as const;
 const storyAccount: CentralAuthUser = {
@@ -64,6 +65,13 @@ function SettingsModalStory(props: {
   mockDownloadUpdate?: boolean;
   providerDownloads?: boolean;
 }) {
+  const previousApi = window.openbot;
+  const mock = createMockOpenBot();
+  window.openbot = mock.api;
+  onCleanup(() => {
+    mock.dispose();
+    window.openbot = previousApi;
+  });
   const [open, setOpen] = createSignal(props.initialOpen);
   const [value, setValue] = createSignal({ ...DEFAULT_GENERAL_SETTINGS });
   const [updateStatus, setUpdateStatus] = createSignal<UpdateStatus>(props.initialUpdateStatus ?? storyUpdateStatus);
@@ -188,6 +196,14 @@ export const Profile: Story = {
   },
 };
 
+export const ComputerUse: Story = {
+  render: () => <SettingsModalStory initialOpen />,
+  play: async ({ userEvent }) => {
+    const body = within(document.body);
+    await userEvent.click(await body.findByRole("tab", { name: "Computer Use" }));
+  },
+};
+
 export const Updates: Story = {
   render: () => <SettingsModalStory initialOpen />,
   play: async ({ userEvent }) => {
@@ -252,6 +268,11 @@ export const Interactive: Story = {
 
     const generalTab = body.getByRole("tab", { name: "General" });
     generalTab.focus();
+    await userEvent.keyboard("{ArrowDown}");
+    const computerUseTab = body.getByRole("tab", { name: "Computer Use" });
+    await expect(computerUseTab).toHaveAttribute("aria-selected", "true");
+    await expect(body.getByRole("heading", { name: "Computer Use", level: 2 })).toBeVisible();
+
     await userEvent.keyboard("{ArrowDown}");
     const profileTab = body.getByRole("tab", { name: "Profile" });
     await expect(profileTab).toHaveAttribute("aria-selected", "true");

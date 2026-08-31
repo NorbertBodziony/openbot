@@ -1,0 +1,63 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  COMPUTER_USE_HELPER_BUNDLE_ID,
+  COMPUTER_USE_HELPER_RELATIVE_PATH,
+  ComputerUseMacSetupService,
+} from "./computer-use-mac-setup";
+
+describe("ComputerUseMacSetupService", () => {
+  let root = "";
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), "openbot-computer-use-"));
+  });
+
+  afterEach(async () => {
+    await rm(root, { force: true, recursive: true });
+  });
+
+  it("returns the validated Computer Use helper and its icon", async () => {
+    await writeHelper(root, COMPUTER_USE_HELPER_BUNDLE_ID);
+    const getIconDataUrl = vi.fn(async () => "data:image/png;base64,icon");
+    const service = new ComputerUseMacSetupService({ platform: "darwin", codexHome: root, getIconDataUrl });
+
+    await expect(service.getState()).resolves.toEqual({
+      status: "available",
+      helperName: "Codex Computer Use",
+      helperIconDataUrl: "data:image/png;base64,icon",
+      message: null,
+    });
+    expect(getIconDataUrl).toHaveBeenCalledWith(join(root, COMPUTER_USE_HELPER_RELATIVE_PATH));
+  });
+
+  it("fails closed when the helper is missing or has another bundle identifier", async () => {
+    const service = new ComputerUseMacSetupService({ platform: "darwin", codexHome: root });
+    await expect(service.getState()).resolves.toMatchObject({ status: "unavailable" });
+
+    await writeHelper(root, "example.untrusted.helper");
+    await expect(service.requireHelper()).rejects.toThrow("unexpected bundle identifier");
+    await expect(service.getState()).resolves.toMatchObject({ status: "unavailable" });
+  });
+
+  it("reports the setup as unsupported away from macOS", async () => {
+    const service = new ComputerUseMacSetupService({ platform: "linux", codexHome: root });
+    await expect(service.getState()).resolves.toMatchObject({ status: "unsupported" });
+  });
+});
+
+async function writeHelper(root: string, bundleId: string): Promise<void> {
+  const contents = join(root, COMPUTER_USE_HELPER_RELATIVE_PATH, "Contents");
+  await mkdir(join(contents, "MacOS"), { recursive: true });
+  await writeFile(
+    join(contents, "Info.plist"),
+    `<?xml version="1.0"?><plist><dict>
+      <key>CFBundleIdentifier</key><string>${bundleId}</string>
+      <key>CFBundleName</key><string>Codex Computer Use</string>
+      <key>CFBundleExecutable</key><string>SkyComputerUseService</string>
+    </dict></plist>`,
+  );
+  await writeFile(join(contents, "MacOS", "SkyComputerUseService"), "helper");
+}
