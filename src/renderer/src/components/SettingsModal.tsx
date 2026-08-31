@@ -381,7 +381,7 @@ export function SettingsModal(props: SettingsModalProps) {
                 checked={props.value.productAnalytics}
                 onChange={(checked) => updateSetting("productAnalytics", checked)}
                 label="Share product analytics"
-                description="Send privacy-safe usage and reliability metadata to OpenBot's self-hosted analytics."
+                description="Send usage and reliability metadata with your account ID and email to OpenBot's self-hosted analytics."
               />
             </ItemGroup>
           </SettingsSection>

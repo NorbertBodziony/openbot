@@ -7228,6 +7228,47 @@ describe("OpenBot connected desktop shell", () => {
     );
   });
 
+  it("removes a citation marker split across streaming deltas", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockReturnValue({ matches: true }),
+    });
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    emitAgentEvent?.({
+      type: "conversation-delta",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-live",
+      messageId: "agent-cited-answer",
+      delta: "Storms are likely.\u{e200}cite\u{e202}turn0fore",
+      createdAt: "2026-08-19T09:03:00.000Z",
+      revision: 1,
+    });
+
+    const message = await waitFor(() => {
+      const element = document.querySelector('[data-chat-search-message="agent-cited-answer"]');
+      expect(element).toHaveTextContent("Storms are likely.");
+      return element;
+    });
+    expect(message).not.toHaveTextContent("cite");
+
+    emitAgentEvent?.({
+      type: "conversation-delta",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-live",
+      messageId: "agent-cited-answer",
+      delta: "cast0\u{e201} Take care.",
+      createdAt: "2026-08-19T09:03:00.000Z",
+      revision: 2,
+    });
+
+    await waitFor(() => expect(message).toHaveTextContent("Storms are likely. Take care."));
+    expect(message).not.toHaveTextContent("turn0forecast0");
+  });
+
   it("clears unread messages when entering an agent chat", async () => {
     const unreadState = {
       unreadCount: 1,

@@ -260,6 +260,7 @@ const macHapticFeedback = new MacHapticFeedback();
 let isQuitting = false;
 let shutdownStarted = false;
 let systemSessionEnding = false;
+let systemSessionEndFlushStarted = false;
 let pendingInviteUrl: string | null = findInviteUrl(process.argv);
 let inviteReceiverReady = false;
 
@@ -273,7 +274,6 @@ const REMOTE_SERVERS_FILE = "openbot-remote-servers-v1.json";
 const CENTRAL_AUTH_FILE = "openbot-central-auth-v1.bin";
 const LEGACY_REMOTE_DESKTOP_CREDENTIAL_FILE = "openbot-remote-desktop-credential-v1.json";
 const REMOTE_DESKTOP_RUNTIME_SECRET_FILE = "openbot-remote-desktop-runtime-v1.json";
-
 const EXTERNAL_DESTINATIONS: Record<ExternalDestination, string> = {
   "agent-setup": "https://github.com/NorbertBodziony/openbot/blob/main/docs/TROUBLESHOOTING.md",
   "claude-install": "https://code.claude.com/docs",
@@ -1176,11 +1176,20 @@ function createWindow(): BrowserWindow {
     window.on("query-session-end", () => {
       systemSessionEnding = true;
       isQuitting = true;
+      if (systemSessionEndFlushStarted) return;
+      systemSessionEndFlushStarted = true;
+      updateService?.stop();
+      void browserHost
+        ?.flushPersistentStorage()
+        .catch((error) => console.error("Unable to flush browser storage before Windows session end:", error));
       void providerRuntimeManager?.stop();
     });
     window.on("session-end", () => {
       systemSessionEnding = true;
       isQuitting = true;
+      void browserHost
+        ?.flushPersistentStorage()
+        .catch((error) => console.error("Unable to flush browser storage during Windows session end:", error));
       void providerRuntimeManager?.stop();
     });
   }
@@ -1788,7 +1797,7 @@ if (!hasSingleInstanceLock) {
           app.isPackaged &&
           supportsInstalledUpdates(process.platform) &&
           existsSync(join(process.resourcesPath, "app-update.yml")),
-        beforeInstall: prepareForShutdown,
+        beforeInstall: prepareForUpdateInstall,
         platform: process.platform,
         nativeUpdater: nativeAutoUpdater,
         logDirectory: join(app.getPath("userData"), "logs", "update"),
@@ -1992,7 +2001,13 @@ app.on("before-quit", (event) => {
   void prepareForShutdown().finally(() => app.quit());
 });
 
-async function prepareForShutdown(): Promise<void> {
+async function prepareForUpdateInstall(): Promise<void> {
+  await (browserHost?.flushPersistentStorage() ?? Promise.resolve());
+  await destroyBrowserForShutdown();
+  await prepareForShutdown(true);
+}
+
+async function prepareForShutdown(browserAlreadyDestroyed = false): Promise<void> {
   if (shutdownStarted) return;
   shutdownStarted = true;
   isQuitting = true;
@@ -2000,14 +2015,18 @@ async function prepareForShutdown(): Promise<void> {
   dynamicIslandController?.destroy();
   dynamicIslandController = null;
   macHapticFeedback.destroy();
+  if (!browserAlreadyDestroyed) await destroyBrowserForShutdown();
+  browserPictureInPicture?.destroy();
   await (providerRuntimeManager?.stop() ?? Promise.resolve());
   remoteServerManager?.stop();
   voiceTranscriptionService?.shutdown();
   await (remoteDesktopManager?.stop() ?? Promise.resolve());
   await (hostService?.shutdown() ?? Promise.resolve());
-  browserPictureInPicture?.destroy();
-  await (browserHost?.destroy() ?? Promise.resolve());
   await (agentService?.stop() ?? Promise.resolve());
+}
+
+async function destroyBrowserForShutdown(): Promise<void> {
+  await (browserHost?.destroy() ?? Promise.resolve());
 }
 
 function configureRendererPermissions(): void {

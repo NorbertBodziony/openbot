@@ -1,6 +1,8 @@
 // @vitest-environment node
 
 import type { BotSummary } from "@openbot/contracts/ipc";
+import { isDynamicRecord } from "@openbot/contracts/runtime-values";
+import { OpenPanelBase } from "@openpanel/web";
 import { describe, expect, it, vi } from "vitest";
 import { HostAnalytics, type HostOpenPanelClient, sanitizeHostEvent } from "./analytics";
 
@@ -46,7 +48,7 @@ describe("host analytics", () => {
     );
 
     expect(client.setGlobalProperties).toHaveBeenCalledWith(
-      expect.objectContaining({ event_schema_version: 2, surface: "desktop_host" }),
+      expect.objectContaining({ event_schema_version: 3, surface: "desktop_host" }),
     );
 
     analytics.handleAgentEvent({
@@ -66,7 +68,7 @@ describe("host analytics", () => {
     });
 
     expect(client.identify).toHaveBeenCalledOnce();
-    expect(client.identify).toHaveBeenCalledWith({ profileId: "owner-account" });
+    expect(client.identify).toHaveBeenCalledWith({ profileId: "owner-account", email: "owner@example.com" });
     expect(client.track).toHaveBeenCalledTimes(2);
     expect(client.track).toHaveBeenNthCalledWith(1, "system_turn_started", {
       provider: "codex",
@@ -127,6 +129,72 @@ describe("host analytics", () => {
     );
   });
 
+  it("updates the email for the same owner without clearing its session", () => {
+    const client = fakeClient();
+    let owner = { id: "owner-account", email: "old@example.com" };
+    const analytics = new HostAnalytics(
+      {
+        enabled: true,
+        appVersion: "1.2.3",
+        platform: "darwin",
+        resolveOwner: () => owner,
+        resolveBot: () => BOT,
+      },
+      () => client,
+    );
+    analytics.handleAgentEvent({ type: "error", code: "first_error", message: "private" });
+    vi.mocked(client.clear).mockClear();
+    vi.mocked(client.identify).mockClear();
+
+    owner = { id: "owner-account", email: "new@example.com" };
+    analytics.handleAgentEvent({ type: "error", code: "second_error", message: "private" });
+
+    expect(client.clear).not.toHaveBeenCalled();
+    expect(client.identify).toHaveBeenCalledWith({ profileId: "owner-account", email: "new@example.com" });
+  });
+
+  it("sends the owner email through the real SDK transport", async () => {
+    const requests: unknown[] = [];
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body)));
+      return new Response(null, { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const analytics = new HostAnalytics(
+        {
+          enabled: true,
+          appVersion: "1.2.3",
+          platform: "darwin",
+          resolveOwner: () => ({ id: "owner-account", email: "owner@example.com" }),
+          resolveBot: () => BOT,
+        },
+        (options) => new OpenPanelBase(options),
+      );
+      analytics.handleAgentEvent({ type: "error", code: "provider_error", message: "private" });
+
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+      const identifyRequest = requests.find((candidate) => isDynamicRecord(candidate) && candidate.type === "identify");
+      const trackRequest = requests.find(
+        (candidate) =>
+          isDynamicRecord(candidate) &&
+          isDynamicRecord(candidate.payload) &&
+          candidate.payload.name === "system_operation_failed",
+      );
+      expect(
+        isDynamicRecord(identifyRequest) && isDynamicRecord(identifyRequest.payload) ? identifyRequest.payload : null,
+      ).toMatchObject({ profileId: "owner-account", email: "owner@example.com" });
+      expect(
+        isDynamicRecord(trackRequest) && isDynamicRecord(trackRequest.payload)
+          ? trackRequest.payload.profileId
+          : undefined,
+      ).toBe("owner-account");
+      expect(JSON.stringify(trackRequest)).not.toContain("owner@example.com");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("drops unsafe runtime fields", () => {
     expect(
       sanitizeHostEvent("system_operation_failed", {
@@ -151,7 +219,7 @@ describe("host analytics", () => {
         enabled: true,
         appVersion: "1.2.3",
         platform: "darwin",
-        resolveOwner: () => ({ id: "owner-account" }),
+        resolveOwner: () => ({ id: "owner-account", email: "owner@example.com" }),
         resolveBot: () => BOT,
       },
       () => client,
@@ -188,7 +256,7 @@ describe("host analytics", () => {
         enabled: true,
         appVersion: "1.2.3",
         platform: "darwin",
-        resolveOwner: () => ({ id: "owner-account" }),
+        resolveOwner: () => ({ id: "owner-account", email: "owner@example.com" }),
         resolveBot: () => BOT,
       },
       () => client,
@@ -213,7 +281,7 @@ describe("host analytics", () => {
         trackingEnabled: false,
         appVersion: "1.2.3",
         platform: "darwin",
-        resolveOwner: () => ({ id: "owner-account" }),
+        resolveOwner: () => ({ id: "owner-account", email: "owner@example.com" }),
         resolveBot: () => BOT,
       },
       () => client,

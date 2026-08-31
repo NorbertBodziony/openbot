@@ -1,4 +1,5 @@
 import type { BotSummary, ConversationMessage, ConversationReadState } from "@openbot/contracts/ipc";
+import { cleanAgentMessageText } from "./agent-message-text";
 import type { BotMessage, BotProfile } from "./data";
 
 export function toBotProfile(stored: BotSummary): BotProfile {
@@ -28,7 +29,7 @@ export function toBotMessage(message: ConversationMessage): BotMessage {
     id: message.id,
     turnId: message.turnId,
     author: message.author === "user" ? "you" : "bot",
-    body: message.text,
+    body: message.author === "user" ? message.text : cleanAgentMessageText(message.text),
     time: formatTime(message.createdAt),
     createdAt: message.createdAt,
     streaming: message.status === "streaming",
@@ -71,11 +72,13 @@ export function toBotMessages(messages: ConversationMessage[]): BotMessage[] {
     const key = message.turnId ?? message.id;
     const existing = thinkingByTurn.get(key);
     if (existing) {
-      if (message.text.trim()) existing.items = [...(existing.items ?? []), message.text];
+      const text = cleanAgentMessageText(message.text);
+      if (text.trim()) existing.items = [...(existing.items ?? []), text];
       existing.streaming = existing.streaming || message.status === "streaming";
       continue;
     }
 
+    const text = cleanAgentMessageText(message.text);
     const thinking: BotMessage = {
       id: `thinking:${key}`,
       turnId: message.turnId,
@@ -86,7 +89,7 @@ export function toBotMessages(messages: ConversationMessage[]): BotMessage[] {
       streaming: message.status === "streaming",
       itemType: "commentary",
       kind: "thinking",
-      items: message.text.trim() ? [message.text] : [],
+      items: text.trim() ? [text] : [],
     };
     thinkingByTurn.set(key, thinking);
     result.push(thinking);
@@ -201,7 +204,7 @@ export function withoutBot<T>(values: Record<string, T>, botId: string): Record<
 }
 
 function cleanPreview(preview: string): string {
-  const cleaned = preview
+  const cleaned = cleanAgentMessageText(preview)
     .replace(/\binbox\s+at\s+zero\b[:,]?\s*/gi, "")
     .replace(/\s{2,}/g, " ")
     .trim();
