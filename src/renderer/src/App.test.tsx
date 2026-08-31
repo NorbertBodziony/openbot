@@ -371,6 +371,10 @@ describe("OpenBot connected desktop shell", () => {
             status: "signed_in",
             user: { id: "user-1", email: "person@example.com", name: null, avatarUrl: null },
           }),
+          updateName: vi.fn().mockResolvedValue({
+            status: "signed_in",
+            user: { id: "user-1", email: "person@example.com", name: "Norbert", avatarUrl: null },
+          }),
           updateAvatar: vi.fn().mockResolvedValue({
             status: "signed_in",
             user: { id: "user-1", email: "person@example.com", name: null, avatarUrl: null },

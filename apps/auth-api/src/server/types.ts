@@ -110,6 +110,7 @@ export interface AuthRepository {
   ): Promise<{ allowed: boolean; count: number; windowStart: number }>;
   authenticate(sessionToken: string, now: number): Promise<AuthUser | null>;
   revokeSession(sessionToken: string, now: number): Promise<void>;
+  updateUserName(userId: string, name: string, now: number): Promise<AuthUser>;
   updateUserAvatar(
     userId: string,
     avatarUrl: string | null,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { INPUT_LIMITS } from "./input-limits";
 import { isTeamRealtimeEvent } from "./ipc-team-host";
 
 describe("isTeamRealtimeEvent", () => {
@@ -48,6 +49,32 @@ describe("isTeamRealtimeEvent", () => {
         senderMemberId: "member-1",
         recipientMemberId: "member-2",
         typing: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts legacy account names in presence events", () => {
+    expect(
+      isTeamRealtimeEvent({
+        type: "team-presence",
+        snapshot: {
+          serverId: "server-1",
+          updatedAt: "2026-08-19T09:00:00.000Z",
+          members: [
+            {
+              id: "member-1",
+              username: "person@example.com",
+              email: "person@example.com",
+              name: "x".repeat(INPUT_LIMITS.accountName),
+              avatarUrl: null,
+              role: "member",
+              createdAt: "2026-08-19T08:00:00.000Z",
+              disabled: false,
+              online: true,
+              typingBotId: null,
+            },
+          ],
+        },
       }),
     ).toBe(true);
   });

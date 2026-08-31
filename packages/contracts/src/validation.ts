@@ -8,6 +8,54 @@ const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}
 const TEAM_HOST_PATTERN = /^([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)-([a-z2-7]{8})-host\.openbot\.run$/u;
 const TEAM_HOST_SLUG_MIN_LENGTH = 6;
 const TEAM_HOST_SLUG_MAX_LENGTH = 44;
+const ACCOUNT_NAME_UNSAFE_CHARACTER_PATTERN = /[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u;
+const ACCOUNT_NAME_FORMAT_CHARACTER_PATTERN = /\p{Cf}/u;
+const ACCOUNT_NAME_ALLOWED_FORMAT_CHARACTERS = new Set(["\u200c", "\u200d"]);
+const ACCOUNT_NAME_JOINER_NEIGHBOR_PATTERN = /[\p{L}\p{M}\p{N}\p{S}]/u;
+const ACCOUNT_NAME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+export type ProfileNameValidationError = "required" | "unsafe" | "too-short" | "too-long";
+
+export interface ProfileNameValidationResult {
+  name: string;
+  error: ProfileNameValidationError | null;
+}
+
+export function normalizeAccountName(value: string): string {
+  return value
+    .normalize("NFC")
+    .replace(/\p{Zs}+/gu, " ")
+    .trim();
+}
+
+export function hasUnsafeAccountNameCharacters(value: string): boolean {
+  if (ACCOUNT_NAME_UNSAFE_CHARACTER_PATTERN.test(value)) return true;
+  const characters = [...value];
+  return characters.some((character, index) => {
+    if (!ACCOUNT_NAME_FORMAT_CHARACTER_PATTERN.test(character)) return false;
+    if (!ACCOUNT_NAME_ALLOWED_FORMAT_CHARACTERS.has(character)) return true;
+    const previous = characters[index - 1];
+    const next = characters[index + 1];
+    return (
+      previous === undefined ||
+      next === undefined ||
+      !ACCOUNT_NAME_JOINER_NEIGHBOR_PATTERN.test(previous) ||
+      !ACCOUNT_NAME_JOINER_NEIGHBOR_PATTERN.test(next)
+    );
+  });
+}
+
+export function validateProfileName(value: string): ProfileNameValidationResult {
+  const name = normalizeAccountName(value);
+  if (hasUnsafeAccountNameCharacters(value)) return { name, error: "unsafe" };
+  const length = [...ACCOUNT_NAME_SEGMENTER.segment(name)].length;
+  if (length === 0) return { name, error: "required" };
+  if (length < INPUT_LIMITS.profileNameMin) return { name, error: "too-short" };
+  if (length > INPUT_LIMITS.profileName || name.length > INPUT_LIMITS.accountName) {
+    return { name, error: "too-long" };
+  }
+  return { name, error: null };
+}
 
 export function isValidHostname(value: string, requireDot = true): boolean {
   if (value.length === 0 || value.length > INPUT_LIMITS.hostname || (requireDot && !value.includes("."))) {

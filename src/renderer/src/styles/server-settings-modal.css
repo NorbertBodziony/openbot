@@ -2,12 +2,6 @@
   background: var(--openbot-bg-canvas);
 }
 
-@media (min-width: 721px) {
-  .server-settings-modal-shell .settings-modal-header {
-    padding: var(--openbot-space-4) var(--openbot-space-4) var(--openbot-space-6) var(--openbot-space-8);
-  }
-}
-
 .server-settings-modal-shell .settings-modal-scroll-frame::before {
   background: linear-gradient(
     to bottom,
@@ -37,19 +31,6 @@
   gap: var(--openbot-space-3);
 }
 
-.server-settings-general-card.ui-item-group {
-  width: 100%;
-  overflow: hidden;
-  border: 0;
-  border-radius: var(--openbot-radius-lg);
-  background: var(--openbot-bg-surface);
-  box-shadow: none;
-}
-
-.server-settings-general-card > .ui-item {
-  min-height: 64px;
-}
-
 .server-settings-logo {
   width: 40px;
   height: 40px;
@@ -75,26 +56,7 @@
   outline-offset: -1px;
 }
 
-.server-settings-logo-control {
-  gap: var(--openbot-space-2);
-}
-
-.server-settings-save-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--openbot-space-1);
-}
-
-.server-settings-logo-picker {
-  position: relative;
-  display: flex;
-}
-
 .server-settings-logo-trigger {
-  position: relative;
-  width: calc(var(--openbot-control-xl) + var(--openbot-space-2));
-  height: calc(var(--openbot-control-xl) + var(--openbot-space-2));
-  overflow: hidden;
   border-radius: var(--openbot-radius-md);
   color: var(--openbot-text-muted);
 }
@@ -116,8 +78,6 @@
   color: var(--openbot-danger);
 }
 
-.server-settings-name-row.ui-item,
-.server-settings-logo-row.ui-item,
 .server-settings-readonly-name.ui-item {
   min-height: 72px;
 }
@@ -128,46 +88,6 @@
 
 .server-settings-publish-setting.ui-switch-field {
   padding: var(--openbot-space-3) var(--openbot-space-4);
-}
-
-.server-settings-name-control {
-  --server-settings-name-error-reveal-duration: 280ms;
-  --server-settings-name-shake-distance: 6px;
-  --server-settings-name-shake-overshoot: 4px;
-  --server-settings-name-shake-ease: cubic-bezier(0.22, 1, 0.36, 1);
-  position: relative;
-  width: 220px;
-  height: var(--openbot-control-md);
-}
-
-.server-settings-name-input.ui-input {
-  width: 100%;
-  transition: border-color var(--openbot-duration-normal) ease-out;
-  will-change: transform;
-}
-
-.server-settings-name-input.is-shaking {
-  animation: server-settings-name-shake 280ms linear;
-}
-
-.server-settings-name-error {
-  position: absolute;
-  top: calc(100% + var(--openbot-space-0-5));
-  right: 0;
-  left: 0;
-  opacity: 0;
-  visibility: hidden;
-  transition:
-    opacity var(--server-settings-name-error-reveal-duration) ease-out,
-    visibility 0s linear var(--server-settings-name-error-reveal-duration);
-}
-
-.server-settings-name-control[data-invalid] .server-settings-name-error {
-  opacity: 1;
-  visibility: visible;
-  transition:
-    opacity var(--server-settings-name-error-reveal-duration) ease-out,
-    visibility 0s linear;
 }
 
 .server-settings-publish-setting.ui-switch-field {
@@ -220,17 +140,6 @@
 
 .server-settings-address-control[data-copied] {
   color: var(--openbot-success);
-}
-
-.server-settings-save-bar {
-  min-height: 60px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--openbot-space-4);
-  border-top: 1px solid var(--openbot-border);
-  background: var(--openbot-bg-surface);
-  padding: var(--openbot-space-3) var(--openbot-space-6);
 }
 
 .server-settings-error-toast {
@@ -488,49 +397,13 @@
   }
 }
 
-@keyframes server-settings-name-shake {
-  0% {
-    transform: translateX(0);
-    animation-timing-function: var(--server-settings-name-shake-ease);
-  }
-
-  28.57% {
-    transform: translateX(var(--server-settings-name-shake-distance));
-    animation-timing-function: var(--server-settings-name-shake-ease);
-  }
-
-  57.14% {
-    transform: translateX(calc(var(--server-settings-name-shake-distance) * -1));
-    animation-timing-function: var(--server-settings-name-shake-ease);
-  }
-
-  78.57% {
-    transform: translateX(var(--server-settings-name-shake-overshoot));
-    animation-timing-function: var(--server-settings-name-shake-ease);
-  }
-
-  100% {
-    transform: translateX(0);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .server-settings-name-input.is-shaking {
-    animation: none;
-    transform: none;
-  }
-}
-
 @media (max-width: 720px) {
-  .server-settings-logo-row,
-  .server-settings-name-row,
   .server-settings-address-setting,
   .server-settings-readonly-name {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  .server-settings-logo-control,
   .server-settings-address-control,
   .server-settings-readonly-name .ui-item-actions {
     width: 100%;
@@ -544,27 +417,8 @@
     text-align: left;
   }
 
-  .server-settings-name-control {
-    width: min(320px, 100%);
-    max-width: 320px;
-    height: auto;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: var(--openbot-control-md) var(--openbot-leading-xs);
-    align-items: stretch;
-    row-gap: var(--openbot-space-0-5);
-  }
-
-  .server-settings-name-error {
-    position: static;
-  }
-
   .server-settings-address-control {
     width: 100%;
-  }
-
-  .server-settings-save-bar {
-    padding-inline: var(--openbot-space-4);
   }
 
   .server-settings-error-toast {
@@ -624,16 +478,6 @@
   .server-settings-invite-composer > .ui-button {
     width: 100%;
     grid-column: 1;
-  }
-
-  .server-settings-save-bar {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .server-settings-save-actions {
-    width: 100%;
-    justify-content: flex-end;
   }
 }
 
