@@ -165,6 +165,10 @@ export class TeamWebRtcHostGateway {
 
   readonly #onIncoming = (peerId: string, connection: IncomingConnection): void => {
     if (peerId !== this.#peerId) return;
+    if (connection.sessionId === this.#localSessionId && this.#localSessionToken) {
+      this.#pendingConnection = null;
+      return;
+    }
     this.#closeLocalSession();
     this.#pendingConnection = connection;
   };

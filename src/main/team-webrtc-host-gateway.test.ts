@@ -174,6 +174,15 @@ describe("TeamWebRtcHostGateway", () => {
         }),
       ).toBe(true),
     );
+    bridge.emit("incoming", "host-1", {
+      connectionId: "connection-2",
+      sessionId: "session-1",
+      userId: "member-account",
+      membershipId: "membership-1",
+      role: "member",
+      sessionExpiresAt,
+    });
+    expect(closeSession).not.toHaveBeenCalled();
     bridge.emit("disconnected", "host-1");
     await vi.waitFor(() => expect(closeSession).toHaveBeenCalledWith("session-1"));
     await gateway.stop();

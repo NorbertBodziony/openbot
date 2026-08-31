@@ -565,6 +565,10 @@ export class RemoteControlPlane {
     if (role !== "admin" && role !== "member") throw invalid("member role");
     if (input.revoke && input.reactivate) throw invalid("member status");
     const now = this.#now();
+    const activeSessions = await this.#database
+      .prepare("SELECT session_id FROM remote_sessions WHERE host_id = ? AND user_id = ? AND ended_at IS NULL")
+      .bind(input.hostId, membership.user_id)
+      .all<{ session_id: string }>();
     await this.#database.batch([
       this.#database
         .prepare("UPDATE remote_memberships SET role = ?, status = ?, updated_at = ? WHERE membership_id = ?")
@@ -575,12 +579,14 @@ export class RemoteControlPlane {
           input.membershipId,
         ),
       this.#database
-        .prepare("UPDATE remote_hosts SET auth_epoch = auth_epoch + 1, updated_at = ? WHERE host_id = ?")
-        .bind(now, input.hostId),
-      this.#database
         .prepare("UPDATE remote_sessions SET ended_at = ? WHERE host_id = ? AND user_id = ? AND ended_at IS NULL")
         .bind(now, input.hostId, membership.user_id),
-      this.#authEpochEventStatement(input.hostId, now),
+      ...activeSessions.results.map((session) =>
+        this.#authEventStatement(
+          { type: "remote-session-ended", hostId: input.hostId, sessionId: session.session_id },
+          now,
+        ),
+      ),
     ]);
     await this.#flushAuthEvents();
   }

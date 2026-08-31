@@ -329,6 +329,7 @@ describe("RemoteControlPlane", () => {
     expect(
       database.prepare("SELECT status FROM remote_memberships WHERE membership_id = 'revoked-membership'").get(),
     ).toEqual({ status: "active" });
+    const memberSession = await controlPlane.startSession("revoked-member", "host-1");
     const hostClaims = {
       sessionId: "host-host-1",
       hostId: "host-1",
@@ -338,8 +339,10 @@ describe("RemoteControlPlane", () => {
       authEpoch: registration.authEpoch,
       sessionExpiresAt: 100,
     };
-    await expect(controlPlane.validateResumeClaims(hostClaims)).resolves.toBe(false);
-    const currentAuthEpoch = registration.authEpoch + 2;
+    const currentAuthEpoch = registration.authEpoch;
+    await expect(controlPlane.validateResumeClaims({ ...hostClaims, authEpoch: currentAuthEpoch - 1 })).resolves.toBe(
+      false,
+    );
     expect(database.prepare("SELECT auth_epoch FROM remote_hosts WHERE host_id = 'host-1'").get()).toEqual({
       auth_epoch: currentAuthEpoch,
     });
@@ -358,13 +361,10 @@ describe("RemoteControlPlane", () => {
       }),
     ]);
     expect(database.prepare("SELECT auth_epoch FROM remote_hosts WHERE host_id = 'host-1'").get()).toEqual({
-      auth_epoch: currentAuthEpoch + 2,
+      auth_epoch: currentAuthEpoch,
     });
     expect(webhookBodies).toContain(
-      JSON.stringify({ type: "remote-auth-changed", hostId: "host-1", authEpoch: currentAuthEpoch + 1 }),
-    );
-    expect(webhookBodies).toContain(
-      JSON.stringify({ type: "remote-auth-changed", hostId: "host-1", authEpoch: currentAuthEpoch + 2 }),
+      JSON.stringify({ type: "remote-session-ended", hostId: "host-1", sessionId: memberSession.sessionId }),
     );
 
     database.prepare("INSERT INTO users(id) VALUES ('competing-owner')").run();
