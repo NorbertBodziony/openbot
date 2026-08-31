@@ -1042,7 +1042,7 @@ function registerIpcHandlers(
           }
           return remoteServers.request(
             `/v1/agents/${encodeURIComponent(parsed.botId)}/stop`,
-            { method: "POST" },
+            { method: "POST", body: {} },
             scoped.serverId,
             decodeVoid,
           );

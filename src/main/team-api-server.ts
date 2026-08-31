@@ -1141,6 +1141,7 @@ export class TeamApiServer {
           return this.#empty(response, 204);
         }
         if (method === "POST" && action === "stop" && requestProtocolVersion(request) === TEAM_PROTOCOL_V2) {
+          await readJson(request);
           await this.#options.agents.stopAgent(botId);
           return this.#empty(response, 204);
         }

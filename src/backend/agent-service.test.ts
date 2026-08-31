@@ -3396,9 +3396,13 @@ describe.sequential("AgentService", () => {
   });
 
   it("rejects stop and preserves deletion guards when provider interruption fails", async () => {
+    let rejectInterrupt: ((error: Error) => void) | undefined;
+    const interruptPending = new Promise<void>((_resolve, reject) => {
+      rejectInterrupt = reject;
+    });
     const { store, mailbox } = stores();
     const client = new FakeAgentClient("codex", "", false, true, {}, async (method) => {
-      if (method === "turn/interrupt") throw new Error("Runtime unavailable");
+      if (method === "turn/interrupt") await interruptPending;
     });
     service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", () => client);
     await service.initialize();
@@ -3407,11 +3411,21 @@ describe.sequential("AgentService", () => {
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
     await service.sendMessage({ botId: "chief", text: "Run later" });
 
-    await expect(service.stopAgent("chief")).rejects.toThrow("Runtime unavailable");
+    const firstStop = service.stopAgent("chief");
+    await waitFor(() => client.requests.some((request) => request.method === "turn/interrupt"));
+    const secondStop = service.stopAgent("chief");
+    expect(secondStop).toBe(firstStop);
+    const stopResults = Promise.allSettled([firstStop, secondStop]);
+    rejectInterrupt?.(new Error("Runtime unavailable"));
+    expect(await stopResults).toEqual([
+      { status: "rejected", reason: expect.objectContaining({ message: "Runtime unavailable" }) },
+      { status: "rejected", reason: expect.objectContaining({ message: "Runtime unavailable" }) },
+    ]);
 
     expect(service.listQueue("chief").deliveries.map((delivery) => delivery.status)).toEqual(["running", "queued"]);
     expect((await service.readConversation("chief")).activeTurnId).not.toBeNull();
     expect(client.requests.filter((request) => request.method === "turn/start")).toHaveLength(1);
+    expect(client.requests.filter((request) => request.method === "turn/interrupt")).toHaveLength(1);
 
     await expect(service.deleteBot("chief")).rejects.toThrow(
       "Stop the agent and cancel its queued messages before deleting it.",

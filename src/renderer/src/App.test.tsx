@@ -6669,10 +6669,7 @@ describe("OpenBot connected desktop shell", () => {
     composer.textContent = "Keep this draft";
     await fireEvent.input(composer);
 
-    const stopButtons = await screen.findAllByRole("button", { name: "Stop agent" });
-    const composerStopButton = stopButtons.at(-1);
-    if (!composerStopButton) throw new Error("The composer stop control was not rendered.");
-    await fireEvent.click(composerStopButton);
+    await fireEvent.click(await screen.findByRole("button", { name: "Stop agent" }));
 
     await waitFor(() => expect(window.openbot.agent.stop).toHaveBeenCalledWith({ botId: "chief" }));
   });
@@ -6698,13 +6695,10 @@ describe("OpenBot connected desktop shell", () => {
     });
 
     render(() => <App />);
-    const stopButtons = await screen.findAllByRole("button", { name: "Stop agent" });
-    expect(stopButtons.length).toBeGreaterThan(0);
-    for (const button of stopButtons) {
-      expect(button).toBeDisabled();
-      expect(button).toHaveAttribute("title", "Update OpenBot on the host to stop this agent.");
-      await fireEvent.click(button);
-    }
+    const stopButton = await screen.findByRole("button", { name: "Stop agent" });
+    expect(stopButton).toBeDisabled();
+    expect(stopButton).toHaveAttribute("title", "Update OpenBot on the host to stop this agent.");
+    await fireEvent.click(stopButton);
     expect(window.openbot.agent.stop).not.toHaveBeenCalled();
     expect(window.openbot.agent.interrupt).not.toHaveBeenCalled();
   });

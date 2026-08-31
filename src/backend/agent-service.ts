@@ -356,7 +356,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #stoppingTurns = new Set<string>();
   readonly #turnAssociations = new Map<string, Promise<void>>();
   readonly #drainingBots = new Set<string>();
-  readonly #stoppingBots = new Set<string>();
+  readonly #stoppingBots = new Map<string, Promise<void>>();
   readonly #scheduledDrains = new Set<string>();
   readonly #drainTasks = new Map<string, Promise<void>>();
   readonly #lastConversationSignatures = new Map<string, string>();
@@ -1159,91 +1159,96 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await client.request("turn/interrupt", { threadId: session.externalSessionId, turnId }, decodeRecordResponse);
   }
 
-  async stopAgent(botId: string): Promise<void> {
-    const bot = this.#store.list().find((candidate) => candidate.id === botId);
-    if (!bot) throw new Error(`Unknown bot: ${botId}`);
-    if (this.#stoppingBots.has(botId)) return;
-    this.#stoppingBots.add(botId);
-    try {
-      const snapshot = this.#ensureSnapshot(bot.id, bot.threadId);
-      const session = this.#store.activeProviderSession(botId);
-      const activeTurnId = snapshot.activeTurnId;
-      const pendingDeliveries = this.#mailbox
-        .listQueue(botId)
-        .deliveries.filter((delivery) => ["queued", "starting", "running"].includes(delivery.status));
-      const activeDeliveries = pendingDeliveries.filter(
-        (delivery) => delivery.status === "starting" || delivery.status === "running",
-      );
-      const turnIds = new Set(
-        activeDeliveries.map((delivery) => delivery.turnId).filter((turnId): turnId is string => Boolean(turnId)),
-      );
-      if (activeTurnId) turnIds.add(activeTurnId);
-
-      const client = this.#clientForBot(bot);
-      if (turnIds.size > 0 && (!session || !client)) {
-        throw new Error("The provider is unavailable, so OpenBot could not confirm the stop.");
-      }
-
-      const stoppingTurnKeys = session ? [...turnIds].map((turnId) => `${session.externalSessionId}:${turnId}`) : [];
-      for (const key of stoppingTurnKeys) this.#stoppingTurns.add(key);
-      try {
-        try {
-          if (session && client) {
-            for (const turnId of turnIds) {
-              await client.request(
-                "turn/interrupt",
-                { threadId: session.externalSessionId, turnId },
-                decodeRecordResponse,
-                2_000,
-              );
-            }
-          }
-        } catch (error) {
-          this.#emitError("force_stop_interrupt_failed", error, botId);
-          throw error;
-        }
-
-        await this.#mailbox.stopPending(
-          botId,
-          "Stopped by the user.",
-          pendingDeliveries.map((delivery) => delivery.id),
-        );
-
-        if (session) {
-          for (const turnId of turnIds) {
-            this.#ignoredTurns.add(`${session.externalSessionId}:${turnId}`);
-            this.#interruptImageGenerations(botId, session.externalSessionId, turnId);
-            this.#clearPendingRequestsForTurn(session.externalSessionId, turnId);
-            this.#browser.endControl(bot.threadId ?? session.externalSessionId, turnId);
-          }
-        }
-      } finally {
-        for (const key of stoppingTurnKeys) this.#stoppingTurns.delete(key);
-      }
-
-      snapshot.activeTurnId = null;
-      for (const message of snapshot.messages) {
-        if (message.status !== "streaming") continue;
-        if (turnIds.size > 0 && (!message.turnId || !turnIds.has(message.turnId))) continue;
-        message.status = "interrupted";
-        markIncompleteImageGeneration(message, "interrupted");
-      }
-      this.#syncMailboxMessages(snapshot);
-      this.#emitQueue(botId);
-      this.#emitConversation(snapshot, "agent.stopped", { turnIds: [...turnIds] });
-      for (const turnId of turnIds) {
-        this.#emit({
-          type: "turn-completed",
-          botId,
-          threadId: bot.threadId ?? session?.externalSessionId ?? "",
-          turnId,
-          status: "interrupted",
-          origin: "unknown",
-        });
-      }
-    } finally {
+  stopAgent(botId: string): Promise<void> {
+    const existing = this.#stoppingBots.get(botId);
+    if (existing) return existing;
+    const stopping = this.#stopAgent(botId).finally(() => {
+      if (this.#stoppingBots.get(botId) !== stopping) return;
       this.#stoppingBots.delete(botId);
       if (this.#mailbox.nextQueued(botId)) this.#scheduleDrain(botId);
+    });
+    this.#stoppingBots.set(botId, stopping);
+    return stopping;
+  }
+
+  async #stopAgent(botId: string): Promise<void> {
+    const bot = this.#store.list().find((candidate) => candidate.id === botId);
+    if (!bot) throw new Error(`Unknown bot: ${botId}`);
+    const snapshot = this.#ensureSnapshot(bot.id, bot.threadId);
+    const session = this.#store.activeProviderSession(botId);
+    const activeTurnId = snapshot.activeTurnId;
+    const pendingDeliveries = this.#mailbox
+      .listQueue(botId)
+      .deliveries.filter((delivery) => ["queued", "starting", "running"].includes(delivery.status));
+    const activeDeliveries = pendingDeliveries.filter(
+      (delivery) => delivery.status === "starting" || delivery.status === "running",
+    );
+    const turnIds = new Set(
+      activeDeliveries.map((delivery) => delivery.turnId).filter((turnId): turnId is string => Boolean(turnId)),
+    );
+    if (activeTurnId) turnIds.add(activeTurnId);
+
+    const client = this.#clientForBot(bot);
+    if (turnIds.size > 0 && (!session || !client)) {
+      throw new Error("The provider is unavailable, so OpenBot could not confirm the stop.");
+    }
+
+    const stoppingTurnKeys = session ? [...turnIds].map((turnId) => `${session.externalSessionId}:${turnId}`) : [];
+    for (const key of stoppingTurnKeys) this.#stoppingTurns.add(key);
+    try {
+      try {
+        if (session && client) {
+          for (const turnId of turnIds) {
+            await client.request(
+              "turn/interrupt",
+              { threadId: session.externalSessionId, turnId },
+              decodeRecordResponse,
+              2_000,
+            );
+          }
+        }
+      } catch (error) {
+        this.#emitError("force_stop_interrupt_failed", error, botId);
+        throw error;
+      }
+
+      await this.#mailbox.stopPending(
+        botId,
+        "Stopped by the user.",
+        pendingDeliveries.map((delivery) => delivery.id),
+      );
+
+      if (session) {
+        for (const turnId of turnIds) {
+          this.#ignoredTurns.add(`${session.externalSessionId}:${turnId}`);
+          this.#interruptImageGenerations(botId, session.externalSessionId, turnId);
+          this.#clearPendingRequestsForTurn(session.externalSessionId, turnId);
+          this.#browser.endControl(bot.threadId ?? session.externalSessionId, turnId);
+        }
+      }
+    } finally {
+      for (const key of stoppingTurnKeys) this.#stoppingTurns.delete(key);
+    }
+
+    snapshot.activeTurnId = null;
+    for (const message of snapshot.messages) {
+      if (message.status !== "streaming") continue;
+      if (turnIds.size > 0 && (!message.turnId || !turnIds.has(message.turnId))) continue;
+      message.status = "interrupted";
+      markIncompleteImageGeneration(message, "interrupted");
+    }
+    this.#syncMailboxMessages(snapshot);
+    this.#emitQueue(botId);
+    this.#emitConversation(snapshot, "agent.stopped", { turnIds: [...turnIds] });
+    for (const turnId of turnIds) {
+      this.#emit({
+        type: "turn-completed",
+        botId,
+        threadId: bot.threadId ?? session?.externalSessionId ?? "",
+        turnId,
+        status: "interrupted",
+        origin: "unknown",
+      });
     }
   }
 

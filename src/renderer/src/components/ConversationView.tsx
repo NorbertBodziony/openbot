@@ -2256,22 +2256,6 @@ export function ConversationHeader() {
     settingsModel,
     showBrowserPanel,
   } = useConversationViewScope();
-  const [stoppingAgent, setStoppingAgent] = createSignal(false);
-  const hasActiveWork = createMemo(
-    () =>
-      Boolean(props.activeTurnId) ||
-      Boolean(props.queue?.deliveries.some((delivery) => ["queued", "starting", "running"].includes(delivery.status))),
-  );
-
-  async function stopAgent(): Promise<void> {
-    if (stoppingAgent()) return;
-    setStoppingAgent(true);
-    try {
-      await props.onStop();
-    } finally {
-      setStoppingAgent(false);
-    }
-  }
   return (
     <header class="window-drag conversation-header">
       <div class="conversation-heading-group">
@@ -2312,21 +2296,6 @@ export function ConversationHeader() {
             }
             onChange={(model, provider) => void selectAndConfirmModel(model, provider)}
           />
-        </Show>
-        <Show when={hasActiveWork()}>
-          <Button
-            variant="ghost"
-            type="button"
-            class="header-panel-toggle"
-            aria-label={stoppingAgent() ? "Stopping agent" : "Stop agent"}
-            disabled={stoppingAgent() || props.forceStopEnabled === false}
-            title={props.forceStopEnabled === false ? props.forceStopDisabledReason : undefined}
-            onClick={() => void stopAgent()}
-          >
-            <Show when={!stoppingAgent()} fallback={<LoaderCircle aria-hidden="true" />}>
-              <StopIcon />
-            </Show>
-          </Button>
         </Show>
         <Show when={props.remoteDesktopEnabled !== false && props.server?.kind === "remote" ? props.server : undefined}>
           {(server) => {

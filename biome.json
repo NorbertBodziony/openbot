@@ -32,7 +32,6 @@
       "!tools/biome/anti-slop",
       "!coverage",
       "!.openbot-build",
-      "!.worktrees",
       "!build/whisper",
       "!.agents",
       "!src/renderer/src/vendor"

@@ -207,9 +207,21 @@ describe("TeamApiServer compatibility", () => {
       expect(v1.status).toBe(404);
       expect(stopAgent).not.toHaveBeenCalled();
 
-      const v2 = await fetch(url, { method: "POST", headers: headers("2") });
+      const v2 = await fetch(url, {
+        method: "POST",
+        headers: { ...headers("2"), "Content-Type": "application/json" },
+        body: "{}",
+      });
       expect(v2.status).toBe(204);
       expect(stopAgent).toHaveBeenCalledWith("chief");
+
+      const invalidV2 = await fetch(url, {
+        method: "POST",
+        headers: { ...headers("2"), "Content-Type": "application/json" },
+        body: JSON.stringify({ unexpected: true }),
+      });
+      expect(invalidV2.status).toBe(400);
+      expect(stopAgent).toHaveBeenCalledTimes(1);
     } finally {
       await api.stop();
     }
