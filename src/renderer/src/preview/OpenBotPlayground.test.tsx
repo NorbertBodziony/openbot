@@ -1,5 +1,6 @@
 import { render } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { STORY_UPDATE_STATUS } from "./fixtures";
 import { createLandingDemoController } from "./landing-demo";
 import { createMockOpenBot } from "./mock-openbot";
 import { OpenBotPlayground } from "./OpenBotPlayground";
@@ -36,6 +37,25 @@ describe("OpenBotPlayground", () => {
     expect(dispose).toHaveBeenCalledOnce();
     expect(window.openbot).toBe(previousMock.api);
     previousMock.dispose();
+  });
+
+  it("advances a mocked update download until it is ready", async () => {
+    vi.useFakeTimers();
+    const mock = createMockOpenBot({ updateStatus: STORY_UPDATE_STATUS });
+    const listener = vi.fn();
+    const unsubscribe = mock.api.update.onEvent(listener);
+
+    await expect(mock.api.update.download()).resolves.toMatchObject({ phase: "downloading", progress: 0 });
+    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ phase: "downloading", progress: 0 }));
+
+    vi.advanceTimersByTime(700);
+    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ phase: "downloading", progress: 64 }));
+
+    vi.advanceTimersByTime(700);
+    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ phase: "ready", progress: 100 }));
+
+    unsubscribe();
+    mock.dispose();
   });
 
   it("reports ready and accepts a same-origin start message only from its parent", async () => {

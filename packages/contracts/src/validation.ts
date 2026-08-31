@@ -8,6 +8,24 @@ const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}
 const TEAM_HOST_PATTERN = /^([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)-([a-z2-7]{8})-host\.openbot\.run$/u;
 const TEAM_HOST_SLUG_MIN_LENGTH = 6;
 const TEAM_HOST_SLUG_MAX_LENGTH = 44;
+const ACCOUNT_NAME_UNSAFE_CHARACTER_PATTERN = /[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u;
+const ACCOUNT_NAME_FORMAT_CHARACTER_PATTERN = /\p{Cf}/u;
+const ACCOUNT_NAME_ALLOWED_FORMAT_CHARACTERS = new Set(["\u200c", "\u200d"]);
+
+export function normalizeAccountName(value: string): string {
+  return value
+    .normalize("NFC")
+    .replace(/\p{Zs}+/gu, " ")
+    .trim();
+}
+
+export function hasUnsafeAccountNameCharacters(value: string): boolean {
+  if (ACCOUNT_NAME_UNSAFE_CHARACTER_PATTERN.test(value)) return true;
+  return [...value].some(
+    (character) =>
+      ACCOUNT_NAME_FORMAT_CHARACTER_PATTERN.test(character) && !ACCOUNT_NAME_ALLOWED_FORMAT_CHARACTERS.has(character),
+  );
+}
 
 export function isValidHostname(value: string, requireDot = true): boolean {
   if (value.length === 0 || value.length > INPUT_LIMITS.hostname || (requireDot && !value.includes("."))) {

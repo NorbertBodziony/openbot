@@ -850,6 +850,7 @@ const openbotApi: OpenBotDesktopApi = {
     retry: () => ipcRenderer.invoke(IPC_CHANNELS.authRetry),
     requestEmailCode: (email) => ipcRenderer.invoke(IPC_CHANNELS.authRequestEmailCode, email),
     verifyEmailCode: (challengeId, code) => ipcRenderer.invoke(IPC_CHANNELS.authVerifyEmailCode, { challengeId, code }),
+    updateName: (name) => ipcRenderer.invoke(IPC_CHANNELS.authUpdateName, name),
     updateAvatar: (image) => ipcRenderer.invoke(IPC_CHANNELS.authUpdateAvatar, image),
     logout: () => ipcRenderer.invoke(IPC_CHANNELS.authLogout),
     onEvent: (listener) => {

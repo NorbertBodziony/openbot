@@ -103,6 +103,7 @@ export interface CentralAuthDesktopApi {
   retry: () => Promise<CentralAuthState>;
   requestEmailCode: (email: string) => Promise<CentralAuthState>;
   verifyEmailCode: (challengeId: string, code: string) => Promise<CentralAuthState>;
+  updateName: (name: string) => Promise<CentralAuthState>;
   updateAvatar: (image: AvatarImageInput | null) => Promise<CentralAuthState>;
   logout: () => Promise<CentralAuthState>;
   onEvent: (listener: (state: CentralAuthState) => void) => () => void;

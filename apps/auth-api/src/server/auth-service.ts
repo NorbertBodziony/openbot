@@ -1,5 +1,8 @@
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
+  hasUnsafeAccountNameCharacters,
   isUuidV4,
+  normalizeAccountName,
   normalizeEmailAddress,
   normalizeOneTimeCode as normalizeSharedOneTimeCode,
   ONE_TIME_CODE_ALPHABET,
@@ -120,6 +123,22 @@ export class AuthService {
 
   authenticate(sessionToken: string): Promise<AuthUser | null> {
     return this.#repository.authenticate(sessionToken, this.#now());
+  }
+
+  async updateName(sessionToken: string, nameInput: string): Promise<AuthUser> {
+    const user = await this.authenticate(sessionToken);
+    if (!user) throw new AuthServiceError(401, "unauthorized", "The session is invalid.");
+    const name = normalizeAccountName(nameInput);
+    if (
+      hasUnsafeAccountNameCharacters(nameInput) ||
+      name.length < INPUT_LIMITS.accountNameMin ||
+      name.length > INPUT_LIMITS.accountName
+    ) {
+      throw new AuthServiceError(400, "invalid_profile_name", "Enter a valid display name.");
+    }
+    const now = this.#now();
+    await this.#enforceRateLimit(`profile:user:${user.id}`, 20, now);
+    return this.#repository.updateUserName(user.id, name, now);
   }
 
   async updateAvatar(

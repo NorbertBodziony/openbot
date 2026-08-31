@@ -2315,25 +2315,6 @@
   background: var(--openbot-hover);
 }
 
-.provider-picker-embedded {
-  border-bottom: 1px solid var(--openbot-border);
-}
-
-.provider-picker-embedded .provider-picker-list {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-
-.provider-picker-embedded .provider-picker-option {
-  min-height: 39px;
-  padding: 7px 12px;
-}
-
-.provider-picker-embedded .provider-picker-option + .provider-picker-option {
-  border-color: var(--openbot-border);
-}
-
 .agent-settings-model-option {
   min-width: 0;
 }

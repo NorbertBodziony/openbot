@@ -2884,6 +2884,10 @@ export function createAppController(props: AppProps = {}) {
     applyCentralAuthState(await window.openbot.auth.updateAvatar(image));
   }
 
+  async function updateAccountName(name: string): Promise<void> {
+    applyCentralAuthState(await window.openbot.auth.updateName(name));
+  }
+
   async function runUpdateAction(): Promise<void> {
     const analytics = desktopAnalytics.scope();
     const phase = updateStatus().phase;
@@ -3819,6 +3823,7 @@ export function createAppController(props: AppProps = {}) {
     updateStatus,
     refreshAccountUsage,
     runUpdateAction,
+    updateAccountName,
     updateAccountAvatar,
     setPermissionsOpen,
     appSettingsOpen,

@@ -487,6 +487,48 @@ describe("CentralAuthManager", () => {
     expect(requests.at(-1)?.method).toBe("DELETE");
   });
 
+  it("updates the signed-in account name", async () => {
+    const root = await createRoot();
+    const requests: Request[] = [];
+    const manager = new CentralAuthManager({
+      apiUrl: "https://api.openbot.run",
+      storagePath: join(root, "session.bin"),
+      encrypt: (value) => Buffer.from(value),
+      decrypt: (value) => value.toString(),
+      fetch: vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const request = new Request(input, init);
+        requests.push(request.clone());
+        const path = new URL(request.url).pathname;
+        if (path.endsWith("/start")) {
+          return Response.json({ challengeId: "challenge-1", expiresAt: 10_000 });
+        }
+        if (path.endsWith("/verify")) {
+          return Response.json({
+            sessionToken: "session-secret",
+            user: { id: "user-1", email: "person@example.com", name: null, avatarUrl: null },
+          });
+        }
+        return Response.json({
+          id: "user-1",
+          email: "person@example.com",
+          name: "Norbert",
+          avatarUrl: null,
+        });
+      }),
+    });
+    await manager.requestEmailCode("person@example.com");
+    await manager.verifyEmailCode("challenge-1", "ABCD-EFGH");
+
+    await expect(manager.updateName("Norbert")).resolves.toMatchObject({
+      status: "signed_in",
+      user: { name: "Norbert" },
+    });
+    expect(requests.at(-1)?.method).toBe("PATCH");
+    expect(requests.at(-1)?.headers.get("Content-Type")).toBe("application/json");
+    expect(requests.at(-1)?.headers.get("Authorization")).toBe("Bearer session-secret");
+    await expect(requests.at(-1)?.json()).resolves.toEqual({ name: "Norbert" });
+  });
+
   it("does not restore a signed-in state when an avatar request finishes after logout", async () => {
     const root = await createRoot();
     let finishAvatar: (() => void) | undefined;
