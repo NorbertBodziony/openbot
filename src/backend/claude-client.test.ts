@@ -3,12 +3,13 @@
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { ModelInfo, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it } from "vitest";
 import { ClaudeAgentClient } from "./claude-client";
 import {
   decodeAccountReadResult,
+  decodeModelListResponse,
   decodeRecordResponse,
   decodeThreadResponse,
   decodeTurnResponse,
@@ -165,6 +166,77 @@ fi
       ]),
     );
     await client.stop();
+  });
+
+  it("discovers each model's supported reasoning efforts from the Claude SDK", async () => {
+    const query = new TestQuery(new TestQueue<TestStreamMessage>(), [
+      {
+        value: "opus",
+        resolvedModel: "claude-opus-5",
+        displayName: "Claude Opus 5",
+        description: "Most capable",
+        supportsEffort: true,
+        supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+      },
+      {
+        value: "claude-opus-5",
+        displayName: "Claude Opus 5 duplicate",
+        description: "Duplicate alias",
+        supportsEffort: true,
+        supportedEffortLevels: ["high"],
+      },
+      {
+        value: "sonnet",
+        resolvedModel: "claude-sonnet-5",
+        displayName: "Claude Sonnet 5",
+        description: "Balanced",
+        supportsEffort: true,
+        supportedEffortLevels: ["low", "medium", "max"],
+      },
+      {
+        value: "haiku",
+        resolvedModel: "claude-haiku-5",
+        displayName: "Claude Haiku 5",
+        description: "Fast",
+        supportsEffort: false,
+      },
+    ]);
+    const client = new ClaudeAgentClient({ executable: "/bin/true", version: "2.1.251" }, () => query);
+    client.start();
+
+    await expect(client.request("model/list", {}, decodeModelListResponse)).resolves.toEqual({
+      data: [
+        {
+          model: "claude-opus-5",
+          displayName: "Claude Opus 5",
+          defaultReasoningEffort: "high",
+          supportedReasoningEfforts: [
+            { reasoningEffort: "low" },
+            { reasoningEffort: "medium" },
+            { reasoningEffort: "high" },
+            { reasoningEffort: "xhigh" },
+            { reasoningEffort: "max" },
+          ],
+        },
+        {
+          model: "claude-sonnet-5",
+          displayName: "Claude Sonnet 5",
+          defaultReasoningEffort: "low",
+          supportedReasoningEfforts: [
+            { reasoningEffort: "low" },
+            { reasoningEffort: "medium" },
+            { reasoningEffort: "max" },
+          ],
+        },
+        {
+          model: "claude-haiku-5",
+          displayName: "Claude Haiku 5",
+          defaultReasoningEffort: "medium",
+          supportedReasoningEfforts: [{ reasoningEffort: "medium" }],
+        },
+      ],
+    });
+    expect(query.closed).toBe(true);
   });
 
   it("restarts an inactive session when resumed with updated memory instructions", async () => {
@@ -398,7 +470,12 @@ class TestQueue<T> implements AsyncIterable<T> {
 }
 
 class TestQuery implements AsyncIterable<TestStreamMessage> {
-  constructor(private readonly output: TestQueue<TestStreamMessage>) {}
+  closed = false;
+
+  constructor(
+    private readonly output: TestQueue<TestStreamMessage>,
+    private readonly models: ModelInfo[] = [],
+  ) {}
 
   [Symbol.asyncIterator](): AsyncIterator<TestStreamMessage> {
     return this.output[Symbol.asyncIterator]();
@@ -406,6 +483,10 @@ class TestQuery implements AsyncIterable<TestStreamMessage> {
 
   async interrupt(): Promise<undefined> {
     return undefined;
+  }
+
+  async supportedModels(): Promise<ModelInfo[]> {
+    return this.models;
   }
 
   async setModel(_model?: string): Promise<void> {}
@@ -416,6 +497,7 @@ class TestQuery implements AsyncIterable<TestStreamMessage> {
   ): Promise<void> {}
 
   close(): void {
+    this.closed = true;
     this.output.close();
   }
 }

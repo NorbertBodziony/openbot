@@ -71,6 +71,7 @@ interface GrokModel {
   description: string;
   defaultReasoningEffort: string;
   supportedReasoningEfforts: string[];
+  usesModelReasoningEffort: boolean;
 }
 
 export class GrokAgentClient extends EventEmitter<ClientEvents> {
@@ -346,6 +347,16 @@ export class GrokAgentClient extends EventEmitter<ClientEvents> {
             modelId: value,
           });
           thread.currentModelId = value;
+        }
+        if (category === "thought_level" && thread.currentModelId) {
+          const currentModel = this.#models.find((candidate) => candidate.id === thread.currentModelId);
+          if (currentModel?.usesModelReasoningEffort && currentModel.supportedReasoningEfforts.includes(value)) {
+            await this.#requireConnection().request("session/set_model", {
+              sessionId: thread.id,
+              modelId: thread.currentModelId,
+              _meta: { reasoningEffort: value },
+            });
+          }
         }
         continue;
       }
@@ -628,15 +639,26 @@ interface SessionSetupResponse {
 
 function modelsFromSessionSetup(response: SessionSetupResponse): GrokModel[] {
   const options = sessionConfigOptions(response);
-  const discovered = legacyAvailableModels(response);
+  const discovered = availableModels(response);
   if (discovered.length === 0) return modelsFromConfig(options);
-  const reasoning = reasoningFromConfig(options);
-  return discovered.map((model) => ({
-    id: model.id,
-    name: model.name,
-    description: model.description ?? "Model discovered from Grok CLI through ACP.",
-    ...reasoning,
-  }));
+  const configReasoning = reasoningFromConfig(options);
+  return discovered.map((model) => {
+    const supportedReasoningEfforts = model.supportedReasoningEfforts ?? configReasoning.supportedReasoningEfforts;
+    const defaultReasoningEffort =
+      model.defaultReasoningEffort && supportedReasoningEfforts.includes(model.defaultReasoningEffort)
+        ? model.defaultReasoningEffort
+        : supportedReasoningEfforts.includes(configReasoning.defaultReasoningEffort)
+          ? configReasoning.defaultReasoningEffort
+          : (supportedReasoningEfforts[0] ?? "medium");
+    return {
+      id: model.id,
+      name: model.name,
+      description: model.description ?? "Model discovered from Grok CLI through ACP.",
+      defaultReasoningEffort,
+      supportedReasoningEfforts,
+      usesModelReasoningEffort: model.usesModelReasoningEffort,
+    };
+  });
 }
 
 function modelsFromConfig(options: SessionConfigOption[]): GrokModel[] {
@@ -651,6 +673,7 @@ function modelsFromConfig(options: SessionConfigOption[]): GrokModel[] {
     name: option.name,
     description: option.description ?? "Model discovered from Grok CLI through ACP.",
     ...reasoning,
+    usesModelReasoningEffort: false,
   }));
 }
 
@@ -662,8 +685,9 @@ function reasoningFromConfig(
     thought && thought.type === "select"
       ? selectValues(thought).map((option) => normalizeEffort(option.value))
       : ["medium"];
-  const supported = [...new Set(efforts.filter(Boolean))];
-  const currentEffort = thought && thought.type === "select" ? normalizeEffort(thought.currentValue) : "medium";
+  const supported = [...new Set(efforts.filter((effort): effort is string => effort !== null))];
+  const currentEffort =
+    thought && thought.type === "select" ? (normalizeEffort(thought.currentValue) ?? "medium") : "medium";
   return {
     defaultReasoningEffort: supported.includes(currentEffort) ? currentEffort : (supported[0] ?? "medium"),
     supportedReasoningEfforts: supported.length > 0 ? supported : ["medium"],
@@ -681,9 +705,14 @@ function currentModelFromSessionSetup(response: SessionSetupResponse): string | 
     : null;
 }
 
-function legacyAvailableModels(
-  response: SessionSetupResponse,
-): Array<{ id: string; name: string; description: string | null }> {
+function availableModels(response: SessionSetupResponse): Array<{
+  id: string;
+  name: string;
+  description: string | null;
+  defaultReasoningEffort: string | null;
+  supportedReasoningEfforts: string[] | null;
+  usesModelReasoningEffort: boolean;
+}> {
   if (!isRecord(response.models) || !Array.isArray(response.models.availableModels)) return [];
   const seen = new Set<string>();
   return response.models.availableModels.flatMap((value) => {
@@ -691,11 +720,33 @@ function legacyAvailableModels(
     const id = value.modelId.trim();
     if (seen.has(id)) return [];
     seen.add(id);
+    const metadata = isRecord(value._meta) ? value._meta : null;
+    const supportedReasoningEfforts = Array.isArray(metadata?.reasoningEfforts)
+      ? [
+          ...new Set(
+            metadata.reasoningEfforts
+              .filter(isRecord)
+              .map((effort) => (isString(effort.value) ? normalizeEffort(effort.value) : null))
+              .filter((effort): effort is string => effort !== null),
+          ),
+        ]
+      : null;
+    const usesModelReasoningEffort =
+      metadata?.supportsReasoningEffort === true || (supportedReasoningEfforts?.length ?? 0) > 0;
     return [
       {
         id,
         name: isString(value.name) && value.name.trim() ? value.name.trim() : id,
         description: isString(value.description) && value.description.trim() ? value.description.trim() : null,
+        defaultReasoningEffort:
+          metadata && isString(metadata.reasoningEffort) ? normalizeEffort(metadata.reasoningEffort) : null,
+        supportedReasoningEfforts:
+          metadata?.supportsReasoningEffort === false
+            ? ["medium"]
+            : supportedReasoningEfforts && supportedReasoningEfforts.length > 0
+              ? supportedReasoningEfforts
+              : null,
+        usesModelReasoningEffort,
       },
     ];
   });
@@ -705,12 +756,12 @@ function selectValues(option: Extract<SessionConfigOption, { type: "select" }>) 
   return option.options.flatMap((entry) => ("options" in entry ? entry.options : [entry]));
 }
 
-function normalizeEffort(value: string): string {
+function normalizeEffort(value: string): string | null {
   const normalized = value.toLowerCase().replaceAll("-", "_");
   if (["low", "medium", "high", "xhigh", "max"].includes(normalized)) return normalized;
   if (["minimal", "none", "off"].includes(normalized)) return "low";
   if (["extra_high", "very_high"].includes(normalized)) return "xhigh";
-  return "medium";
+  return null;
 }
 
 async function promptBlocks(params: unknown): Promise<ContentBlock[]> {
