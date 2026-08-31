@@ -25,7 +25,7 @@ function readBrowserPipBounds(): BrowserBounds | null {
 
 interface ConversationResources {
   agentActivityPresentations: Map<string, { activityId: string; presentation: AgentActivityPresentation }>;
-  controlledBrowserBotIds: Set<string>;
+  browserOpenRequests: Map<string, Promise<void>>;
   importTargetBots: Map<string, { botId: string; serverId: string }>;
   seenMessageIds: Set<string>;
   typingIdleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -108,7 +108,7 @@ export function createConversationController(props: Pick<ConversationProps, "onT
   const [browserPanelWidth, setBrowserPanelWidth] = createSignal(BROWSER_PANEL_DEFAULT);
   const resources: ConversationResources = {
     agentActivityPresentations: new Map(),
-    controlledBrowserBotIds: new Set<string>(),
+    browserOpenRequests: new Map(),
     importTargetBots: new Map<string, { botId: string; serverId: string }>(),
     seenMessageIds: new Set<string>(),
     typingIdleTimer: undefined,

@@ -3002,6 +3002,7 @@
   }
 }
 
+.computer-button-available,
 .computer-button-agent-active {
   border-color: var(--openbot-accent);
   background: var(--openbot-accent-soft);

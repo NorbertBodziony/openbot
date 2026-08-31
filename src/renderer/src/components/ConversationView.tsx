@@ -1595,33 +1595,6 @@ function createConversationViewScope(props: ConversationProps) {
   );
 
   createEffect(
-    () =>
-      new Set(
-        props.browserControlState.sessions
-          .map((session) => props.bots.find((bot) => bot.threadId === session.threadId)?.id)
-          .filter((botId): botId is string => Boolean(botId)),
-      ),
-    (controlledBotIds) => {
-      if (props.browserEnabled === false) return;
-      const newlyControlledBotIds = [...controlledBotIds].filter(
-        (botId) => !resources.controlledBrowserBotIds.has(botId),
-      );
-      resources.controlledBrowserBotIds = controlledBotIds;
-      if (newlyControlledBotIds.length === 0) return;
-      setRightPanels((current) => {
-        const next = { ...current };
-        let changed = false;
-        for (const botId of newlyControlledBotIds) {
-          if (next[botId] === "browser" || next[botId] === "browser-pip") continue;
-          next[botId] = "browser";
-          changed = true;
-        }
-        return changed ? next : current;
-      });
-    },
-  );
-
-  createEffect(
     () => ({
       botId: props.bot?.id,
       visible: browserSidebarOpen() && !props.globalOverlayOpen && !props.remoteDesktopVisible && !mediaPreview(),
@@ -2108,23 +2081,35 @@ function createConversationViewScope(props: ConversationProps) {
     setBrowserAddressEditing(false);
     const analytics = desktopAnalytics.scope();
     const url = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+    const requestKey = JSON.stringify([props.server?.id ?? "local", props.bot?.id ?? null, url]);
+    const pendingRequest = resources.browserOpenRequests.get(requestKey);
+    if (pendingRequest) return pendingRequest;
+    const request = (async () => {
+      try {
+        const tab = await window.openbot.browser.open({
+          url,
+          ownerThreadId: props.bot?.threadId ?? null,
+          ownerBotId: props.bot?.id ?? null,
+          focus: true,
+        });
+        setBrowserAddress(tab.url);
+        analytics.track("browser_action", { action: "open", result: "succeeded" });
+      } catch {
+        setBrowserAddress(url);
+        analytics.track("browser_action", {
+          action: "open",
+          result: "failed",
+          failure_code: "browser_open_failed",
+        });
+      }
+    })();
+    resources.browserOpenRequests.set(requestKey, request);
     try {
-      const tab = await window.openbot.browser.open({
-        url,
-        ownerThreadId: props.bot?.threadId ?? null,
-        ownerBotId: props.bot?.id ?? null,
-        focus: true,
-      });
-      setBrowserAddress(tab.url);
-      if (!screenOpen()) setActiveRightPanel("browser");
-      analytics.track("browser_action", { action: "open", result: "succeeded" });
-    } catch {
-      setBrowserAddress(url);
-      analytics.track("browser_action", {
-        action: "open",
-        result: "failed",
-        failure_code: "browser_open_failed",
-      });
+      await request;
+    } finally {
+      if (resources.browserOpenRequests.get(requestKey) === request) {
+        resources.browserOpenRequests.delete(requestKey);
+      }
     }
   }
 
@@ -2578,6 +2563,7 @@ export function ConversationHeader() {
     activeBrowserControl,
     agentActivity,
     browserControlBot,
+    browserTabs,
     hideBrowserPanel,
     props,
     screenOpen,
@@ -2661,7 +2647,10 @@ export function ConversationHeader() {
             type="button"
             class={[
               "header-panel-toggle computer-button",
-              { "computer-button-agent-active": Boolean(activeBrowserControl()) },
+              {
+                "computer-button-available": !screenOpen() && browserTabs().length > 0,
+                "computer-button-agent-active": Boolean(activeBrowserControl()),
+              },
             ]}
             aria-label={
               activeBrowserControl()
