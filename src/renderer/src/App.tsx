@@ -52,6 +52,7 @@ import {
   useContext,
 } from "solid-js";
 import { AppAccessGate } from "./AppView";
+import { cleanAgentMessageText } from "./agent-message-text";
 import { desktopAnalytics } from "./analytics";
 import {
   botMessagesEqual,
@@ -1158,7 +1159,7 @@ export function createAppController(props: AppProps = {}) {
           {
             id: message.id,
             author: "bot",
-            body: message.text,
+            body: cleanAgentMessageText(message.text),
             time: message.createdAt,
             createdAt: message.createdAt,
           },

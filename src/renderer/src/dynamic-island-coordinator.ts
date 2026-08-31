@@ -6,6 +6,7 @@ import type {
   QueueSnapshot,
   ScopedAgentEvent,
 } from "@openbot/contracts/ipc";
+import { cleanAgentMessageText } from "./agent-message-text";
 import {
   countDynamicIslandAttention,
   createDynamicIslandPresentation,
@@ -279,7 +280,7 @@ export class DynamicIslandCoordinator {
       const converted = {
         id: message.id,
         author: "bot",
-        body: message.text,
+        body: cleanAgentMessageText(message.text),
         time: message.createdAt,
         createdAt: message.createdAt,
       };
@@ -416,5 +417,13 @@ function toDynamicIslandMessage(
   ) {
     return [];
   }
-  return [{ id: message.id, author: "bot", body: message.text, time: message.createdAt, createdAt: message.createdAt }];
+  return [
+    {
+      id: message.id,
+      author: "bot",
+      body: cleanAgentMessageText(message.text),
+      time: message.createdAt,
+      createdAt: message.createdAt,
+    },
+  ];
 }
