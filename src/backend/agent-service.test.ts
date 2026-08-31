@@ -792,21 +792,22 @@ describe.sequential("AgentService", () => {
   it("requires user approval before an agent mutates hosted sites", async () => {
     const clients = new Map<AgentProvider, FakeAgentClient>();
     const { store, mailbox } = stores();
+    const hostedSite = {
+      id: "site-1",
+      hostname: "approved-public-site-for-students-k7m2q9tzab.openbot.site",
+      url: "https://approved-public-site-for-students-k7m2q9tzab.openbot.site",
+      title: "Approved public site",
+      description: "A public test site.",
+      framework: "vanilla" as const,
+      status: "active" as const,
+      fileCount: 1,
+      size: 20,
+      expiresAt: "2026-09-30T12:00:00.000Z",
+      updatedAt: "2026-08-31T12:00:00.000Z",
+    };
     const hostedSites = {
-      list: vi.fn(async () => []),
-      publish: vi.fn(async () => ({
-        id: "site-1",
-        hostname: "approved-public-site-for-students-k7m2q9tzab.openbot.site",
-        url: "https://approved-public-site-for-students-k7m2q9tzab.openbot.site",
-        title: "Approved public site",
-        description: "A public test site.",
-        framework: "vanilla" as const,
-        status: "active" as const,
-        fileCount: 1,
-        size: 20,
-        expiresAt: "2026-09-30T12:00:00.000Z",
-        updatedAt: "2026-08-31T12:00:00.000Z",
-      })),
+      list: vi.fn(async () => [hostedSite]),
+      publish: vi.fn(async () => hostedSite),
       replace: vi.fn(async () => ({})),
       delete: vi.fn(async () => undefined),
     };
@@ -841,6 +842,21 @@ describe.sequential("AgentService", () => {
 
     client.emit("request", {
       method: "item/tool/call",
+      id: "invalid-site-approval",
+      params: {
+        threadId,
+        turnId,
+        callId: "invalid-site-approval",
+        namespace: "openbot",
+        tool: "publish_site",
+        arguments: { title: "Hidden source", description: "This request has no source path." },
+      },
+    });
+    await waitFor(() => client.errors.some((response) => response.id === "invalid-site-approval"));
+    expect(service.getRuntimeSnapshot().pendingApprovals).toHaveLength(0);
+
+    client.emit("request", {
+      method: "item/tool/call",
       id: "publish-site-approval",
       params: {
         threadId,
@@ -859,7 +875,11 @@ describe.sequential("AgentService", () => {
     expect(hostedSites.publish).not.toHaveBeenCalled();
     expect(client.responses).toHaveLength(0);
     expect(events.find((event) => event.type === "approval")).toMatchObject({
-      approval: { kind: "permissions", reason: expect.stringContaining("publish a new public site") },
+      approval: {
+        kind: "permissions",
+        reason: 'Publish "Approved public site" as a public site on openbot.site.',
+        permissions: { fileSystem: { read: [bot.workspacePath], write: [] }, network: true },
+      },
     });
 
     const accepted = service.respondToApproval({ requestId: "publish-site-approval", decision: "accept" });
@@ -883,6 +903,9 @@ describe.sequential("AgentService", () => {
       },
     });
     await waitFor(() => service?.getRuntimeSnapshot().pendingApprovals.length === 1);
+    expect(events.findLast((event) => event.type === "approval")).toMatchObject({
+      approval: { reason: `Delete ${hostedSite.hostname} from openbot.site.` },
+    });
     await service.respondToApproval({ requestId: "delete-site-approval", decision: "decline" });
     expect(hostedSites.delete).not.toHaveBeenCalled();
     expect(client.errors.at(-1)).toMatchObject({

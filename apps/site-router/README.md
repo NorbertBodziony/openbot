@@ -19,7 +19,7 @@ R2 bindings do not have a per-binding read-only mode. The router has no mutation
 1. Keep `SITE_PUBLISH_ENABLED`, `SITE_COOKIE_ISOLATION_READY`, and `SITE_SERVE_ENABLED` absent or set to `false`.
 2. Deploy the router with `bun run sites:deploy`.
 3. Deploy the Auth API. Its deployment command applies D1 migrations `0012_hosted_sites.sql` and
-   `0013_hosted_site_hostname_reservations.sql` before the Worker update.
+   `0013_hosted_site_hostname_reservations.sql` and `0014_hosted_site_object_cleanup.sql` before the Worker update.
 4. Confirm that `openbot.site` is present in the Public Suffix List.
 5. Set all three launch flags to `true` and deploy the router and Auth API again.
 6. Check three generated hostnames over HTTPS.

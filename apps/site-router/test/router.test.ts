@@ -56,6 +56,22 @@ describe("site router", () => {
     expect(expiredResponse.headers.get("X-Robots-Tag")).toContain("noindex");
   });
 
+  it("fails closed when a block marker exists before the route is updated", async () => {
+    const hostname = "example-project-page-long-name-23456789ab.openbot.site";
+    const bucket = fakeBucket({
+      [`blocks/${hostname}`]: "blocked",
+      [`routes/${hostname}.json`]: JSON.stringify(activeRoute),
+      "sites/site-1/deployments/deployment-1/index.html": "Hello, world!",
+    });
+    const response = await routeRequest(
+      new Request(`https://${hostname}/`),
+      { SITES: bucket, SITE_SERVE_ENABLED: "true" },
+      1_000,
+    );
+    expect(response.status).toBe(451);
+    expect(response.headers.get("X-Robots-Tag")).toContain("noindex");
+  });
+
   it("keeps unknown hostnames separate from tombstones", async () => {
     const response = await routeRequest(
       new Request("https://unknown-project-page-long-name-23456789ab.openbot.site/"),

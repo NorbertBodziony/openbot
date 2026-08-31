@@ -143,6 +143,40 @@ describe("hosted site control plane", () => {
       status: "active",
       deploymentId: row?.current_deployment_id,
     });
+    const abandonedId = [first.uploadId, second.uploadId].find((id) => id !== row?.current_deployment_id);
+    expect(fixture.bucket.keys()).not.toContain(`sites/${site.id}/deployments/${abandonedId}/index.html`);
+    const abandoned = await fixture.database
+      .prepare("SELECT status, objects_deleted_at FROM site_deployments WHERE id = ?")
+      .bind(abandonedId ?? "")
+      .first<{ status: string; objects_deleted_at: number | null }>();
+    expect(abandoned).toMatchObject({ status: "abandoned", objects_deleted_at: expect.any(Number) });
+  });
+
+  it("keeps a blocked site offline when route publication fails and reconciles it during cleanup", async () => {
+    const fixture = serviceFixture();
+    const site = await publish(fixture.service, "alice", "publish-block", "activate-block");
+    fixture.bucket.failNextPutContaining(`routes/${site.hostname}.json`);
+
+    await expect(fixture.service.setBlocked(site.id, true)).rejects.toThrow("Injected R2 put failure");
+    expect(fixture.bucket.keys()).toContain(`blocks/${site.hostname}`);
+    expect(await fixture.bucket.route(site.hostname)).toMatchObject({ status: "active" });
+    const blocked = await fixture.database
+      .prepare("SELECT status, route_synced_at FROM hosted_sites WHERE id = ?")
+      .bind(site.id)
+      .first<{ status: string; route_synced_at: number | null }>();
+    expect(blocked).toEqual({ status: "blocked", route_synced_at: null });
+
+    await fixture.service.cleanup();
+    expect(await fixture.bucket.route(site.hostname)).toMatchObject({ status: "blocked" });
+    const reconciled = await fixture.database
+      .prepare("SELECT route_synced_at FROM hosted_sites WHERE id = ?")
+      .bind(site.id)
+      .first<{ route_synced_at: number | null }>();
+    expect(reconciled?.route_synced_at).toBe(fixture.now());
+
+    await fixture.service.setBlocked(site.id, false);
+    expect(fixture.bucket.keys()).not.toContain(`blocks/${site.hostname}`);
+    expect(await fixture.bucket.route(site.hostname)).toMatchObject({ status: "active" });
   });
 
   it("accepts reports only for allocated hostnames, deduplicates them, and removes old rows", async () => {
@@ -327,6 +361,7 @@ function serviceFixture(): {
   sqlite.exec("PRAGMA foreign_keys = ON; CREATE TABLE users(id TEXT PRIMARY KEY);");
   sqlite.exec(migration("0012_hosted_sites.sql"));
   sqlite.exec(migration("0013_hosted_site_hostname_reservations.sql"));
+  sqlite.exec(migration("0014_hosted_site_object_cleanup.sql"));
   sqlite.prepare("INSERT INTO users(id) VALUES (?), (?)").run("alice", "bob");
   const database = new FakeD1Database(sqlite);
   const bucket = new FakeR2Bucket();
@@ -504,6 +539,11 @@ type Bytes = Uint8Array<ArrayBuffer>;
 
 class FakeR2Bucket implements R2Bucket {
   private readonly objects = new Map<string, { bytes: Bytes; metadata?: R2HTTPMetadata }>();
+  #failPutFragment: string | null = null;
+
+  failNextPutContaining(fragment: string): void {
+    this.#failPutFragment = fragment;
+  }
 
   keys(): string[] {
     return [...this.objects.keys()];
@@ -529,6 +569,10 @@ class FakeR2Bucket implements R2Bucket {
     value: ReadableStream | ArrayBuffer | ArrayBufferView | string | null | Blob,
     options?: R2PutOptions,
   ): Promise<R2Object> {
+    if (this.#failPutFragment && key.includes(this.#failPutFragment)) {
+      this.#failPutFragment = null;
+      throw new Error("Injected R2 put failure");
+    }
     const bytes = await bodyBytes(value);
     this.objects.set(key, { bytes, ...(options?.httpMetadata ? { metadata: metadata(options.httpMetadata) } : {}) });
     return new FakeR2Object(key, bytes, options?.httpMetadata ? metadata(options.httpMetadata) : undefined);

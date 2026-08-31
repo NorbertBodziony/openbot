@@ -21,6 +21,7 @@ interface SiteRow {
   created_at: number;
   updated_at: number;
   expires_at: number | null;
+  route_synced_at: number | null;
 }
 
 interface DeploymentRow {
@@ -37,6 +38,7 @@ interface DeploymentRow {
   site_description: string;
   site_framework: "vanilla" | "astro";
   site_spa_fallback: number;
+  objects_deleted_at: number | null;
 }
 
 export interface HostedSiteSummary {
@@ -395,7 +397,8 @@ export class HostedSiteService {
     const statements = [
       this.database
         .prepare(
-          `UPDATE hosted_sites SET status = 'deleted', deleted_at = ?, expires_at = NULL, updated_at = ?
+          `UPDATE hosted_sites SET status = 'deleted', deleted_at = ?, expires_at = NULL,
+           route_synced_at = NULL, updated_at = ?
            WHERE id = ? AND user_id = ? AND status != 'deleted'`,
         )
         .bind(now, now, site.id, userId),
@@ -419,15 +422,11 @@ export class HostedSiteService {
     const results = await this.database.batch(statements);
     const deploymentIds = new Set([
       ...(site.current_deployment_id ? [site.current_deployment_id] : []),
-      ...results[1].results.map((deployment) => {
-        if (!isDynamicRecord(deployment) || !isString(deployment.id)) {
-          throw new Error("The deleted deployment result is invalid.");
-        }
-        return deployment.id;
-      }),
+      ...deploymentResultIds(results[1]),
     ]);
     try {
       await this.publishAuthoritativeRoute(site.id);
+      await this.bucket.delete(blockKey(site.hostname));
     } finally {
       for (const deploymentId of deploymentIds) await this.deleteDeployment(site.id, deploymentId);
     }
@@ -467,6 +466,9 @@ export class HostedSiteService {
     const site = await this.database.prepare("SELECT * FROM hosted_sites WHERE id = ?").bind(siteId).first<SiteRow>();
     if (!site) throw new HostedSiteInputError(409, "site_not_found", "The site was not found.");
     const now = this.now();
+    if (blocked) {
+      await this.bucket.put(blockKey(site.hostname), "blocked", { httpMetadata: { contentType: "text/plain" } });
+    }
     let status: SiteRow["status"];
     if (blocked) {
       status = "blocked";
@@ -475,21 +477,34 @@ export class HostedSiteService {
     } else {
       status = "active";
     }
-    await this.database.batch([
-      this.database
-        .prepare("UPDATE hosted_sites SET status = ?, blocked_at = ?, updated_at = ? WHERE id = ?")
-        .bind(status, blocked ? now : null, now, site.id),
-      this.database
-        .prepare(
-          `UPDATE site_deployments SET status = 'abandoned'
-           WHERE site_id = ? AND status IN ('uploading', 'activating') AND ? = 1`,
-        )
-        .bind(site.id, blocked ? 1 : 0),
-      this.database
-        .prepare("INSERT INTO site_audit_log(id, user_id, site_id, operation, created_at) VALUES (?, NULL, ?, ?, ?)")
-        .bind(crypto.randomUUID(), site.id, blocked ? "block" : "unblock", now),
-    ]);
+    let results: D1Result<unknown>[];
+    try {
+      results = await this.database.batch([
+        this.database
+          .prepare(
+            "UPDATE hosted_sites SET status = ?, blocked_at = ?, route_synced_at = NULL, updated_at = ? WHERE id = ?",
+          )
+          .bind(status, blocked ? now : null, now, site.id),
+        this.database
+          .prepare(
+            `UPDATE site_deployments SET status = 'abandoned'
+             WHERE site_id = ? AND status IN ('uploading', 'activating') AND ? = 1
+             RETURNING id`,
+          )
+          .bind(site.id, blocked ? 1 : 0),
+        this.database
+          .prepare("INSERT INTO site_audit_log(id, user_id, site_id, operation, created_at) VALUES (?, NULL, ?, ?, ?)")
+          .bind(crypto.randomUUID(), site.id, blocked ? "block" : "unblock", now),
+      ]);
+    } catch (error) {
+      if (blocked) await this.bucket.delete(blockKey(site.hostname)).catch(() => undefined);
+      throw error;
+    }
     await this.publishAuthoritativeRoute(site.id);
+    if (!blocked) await this.bucket.delete(blockKey(site.hostname));
+    for (const deploymentId of deploymentResultIds(results[1])) {
+      await this.deleteDeployment(site.id, deploymentId);
+    }
   }
 
   async cleanup(now = this.now()): Promise<{ uploads: number; expired: number; tombstones: number }> {
@@ -513,6 +528,24 @@ export class HostedSiteService {
       abandonedUploads += 1;
       await this.deleteDeployment(upload.site_id, upload.id);
     }
+    const abandoned = await this.database
+      .prepare(
+        `SELECT id, site_id FROM site_deployments
+         WHERE status = 'abandoned' AND objects_deleted_at IS NULL LIMIT 50`,
+      )
+      .all<{ id: string; site_id: string }>();
+    for (const deployment of abandoned.results) await this.deleteDeployment(deployment.site_id, deployment.id);
+    const unsyncedBlocks = await this.database
+      .prepare(
+        `SELECT id, hostname FROM hosted_sites
+         WHERE status = 'blocked' AND expires_at > ? AND route_synced_at IS NULL LIMIT 50`,
+      )
+      .bind(now)
+      .all<{ id: string; hostname: string }>();
+    for (const site of unsyncedBlocks.results) {
+      await this.bucket.put(blockKey(site.hostname), "blocked", { httpMetadata: { contentType: "text/plain" } });
+      await this.publishAuthoritativeRoute(site.id);
+    }
     await this.database
       .prepare(
         `DELETE FROM hosted_sites WHERE status = 'uploading'
@@ -531,7 +564,7 @@ export class HostedSiteService {
       const results = await this.database.batch([
         this.database
           .prepare(
-            `UPDATE hosted_sites SET status = 'expired', updated_at = ?
+            `UPDATE hosted_sites SET status = 'expired', route_synced_at = NULL, updated_at = ?
              WHERE id = ? AND status IN ('active', 'blocked') AND expires_at <= ?`,
           )
           .bind(now, site.id, now),
@@ -544,7 +577,11 @@ export class HostedSiteService {
           .bind(site.id, site.id),
       ]);
       if (results[0].meta.changes !== 1) continue;
-      await this.publishAuthoritativeRoute(site.id);
+      try {
+        await this.publishAuthoritativeRoute(site.id);
+      } finally {
+        await this.bucket.delete(blockKey(site.hostname));
+      }
       const current = await this.siteById(site.id);
       if (current?.current_deployment_id) await this.deleteDeployment(site.id, current.current_deployment_id);
     }
@@ -556,7 +593,9 @@ export class HostedSiteService {
       )
       .bind(tombstoneCutoff)
       .all<{ id: string; hostname: string }>();
-    for (const site of tombstones.results) await this.bucket.delete(routeKey(site.hostname));
+    for (const site of tombstones.results) {
+      await this.bucket.delete([routeKey(site.hostname), blockKey(site.hostname)]);
+    }
     if (tombstones.results.length) {
       await this.database.batch(
         tombstones.results.map((site) => this.database.prepare("DELETE FROM hosted_sites WHERE id = ?").bind(site.id)),
@@ -594,6 +633,7 @@ export class HostedSiteService {
       this.database
         .prepare(
           `UPDATE hosted_sites SET status = 'active', current_deployment_id = ?, expires_at = ?,
+           route_synced_at = NULL,
            updated_at = ?, title = ?, description = ?, framework = ?, spa_fallback = ?
            WHERE id = ? AND user_id = ? AND status IN ('uploading', 'active')
              AND (status = 'uploading' OR expires_at > ?)
@@ -663,7 +703,8 @@ export class HostedSiteService {
              AND EXISTS (
                SELECT 1 FROM hosted_sites WHERE id = ? AND user_id = ? AND status = 'active'
                  AND current_deployment_id = ?
-             )`,
+             )
+           RETURNING id`,
         )
         .bind(site.id, deployment.id, previousDeployment, site.id, userId, deployment.id),
     ]);
@@ -693,6 +734,9 @@ export class HostedSiteService {
     await this.saveReceipt(userId, idempotencyKey, "activate", site.id, summary, now);
     if (previousDeployment && previousDeployment !== deployment.id) {
       await this.deleteDeployment(site.id, previousDeployment);
+    }
+    for (const abandonedDeploymentId of deploymentResultIds(results[4])) {
+      await this.deleteDeployment(site.id, abandonedDeploymentId);
     }
     return summary;
   }
@@ -730,7 +774,16 @@ export class HostedSiteService {
         httpMetadata: { contentType: "application/json" },
       });
       const after = await this.siteById(siteId);
-      if (after && siteRouteIdentity(after) === siteRouteIdentity(before)) return;
+      if (after && siteRouteIdentity(after) === siteRouteIdentity(before)) {
+        await this.database
+          .prepare(
+            `UPDATE hosted_sites SET route_synced_at = ?
+             WHERE id = ? AND status = ? AND current_deployment_id IS ? AND expires_at IS ?`,
+          )
+          .bind(this.now(), before.id, before.status, before.current_deployment_id, before.expires_at)
+          .run();
+        return;
+      }
     }
     throw new Error("The site route changed too often during publication.");
   }
@@ -974,6 +1027,10 @@ export class HostedSiteService {
       if (listed.objects.length) await this.bucket.delete(listed.objects.map((object) => object.key));
       cursor = listed.truncated ? listed.cursor : undefined;
     } while (cursor);
+    await this.database
+      .prepare("UPDATE site_deployments SET objects_deleted_at = ? WHERE id = ? AND site_id = ?")
+      .bind(this.now(), deploymentId, siteId)
+      .run();
   }
 }
 
@@ -995,6 +1052,15 @@ function activationCount(value: unknown): number {
 
 function creationCount(value: unknown): number {
   return isDynamicRecord(value) && isNumber(value.count) ? value.count : 0;
+}
+
+function deploymentResultIds(result: D1Result<unknown>): string[] {
+  return result.results.map((deployment) => {
+    if (!isDynamicRecord(deployment) || !isString(deployment.id)) {
+      throw new Error("The deployment result is invalid.");
+    }
+    return deployment.id;
+  });
 }
 
 function inactiveSiteError(status: SiteRow["status"]): HostedSiteInputError {
@@ -1076,6 +1142,10 @@ function assetKey(siteId: string, deploymentId: string, path: string): string {
 
 function routeKey(hostname: string): string {
   return `routes/${hostname}.json`;
+}
+
+function blockKey(hostname: string): string {
+  return `blocks/${hostname}`;
 }
 
 const RESERVED_PREFIXES = new Set([

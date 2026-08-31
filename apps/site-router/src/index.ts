@@ -55,6 +55,8 @@ export async function routeRequest(request: Request, env: SiteRouterEnv, now: nu
       headers: secureHeaders({ Location: report.toString(), "Cache-Control": "no-store" }),
     });
   }
+  const blockMarker = await env.SITES.get(`blocks/${hostname}`);
+  if (blockMarker) return errorResponse(451, "Site unavailable");
 
   const routeObject = await env.SITES.get(`routes/${hostname}.json`);
   if (!routeObject) return errorResponse(404, "Site not found");

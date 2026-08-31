@@ -189,6 +189,11 @@ interface PendingBrowserTakeover {
   resolve: (result: DynamicToolResult) => void;
 }
 
+interface HostedSiteApprovalDetails {
+  reason: string;
+  permissions: AgentApprovalPermissions;
+}
+
 interface ComputerUsePrerequisites {
   screenRecording: boolean;
   accessibility: boolean;
@@ -2233,7 +2238,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               return;
             }
             if (isHostedSiteMutationTool(request.params.tool)) {
-              this.#surfaceHostedSiteApproval(client, request, request.params, request.params.tool);
+              await this.#surfaceHostedSiteApproval(client, request, request.params, request.params.tool);
               return;
             }
             client.respond(request.id, await this.#handleOpenBotTool(request.params));
@@ -3823,12 +3828,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#emit({ type: "approval", approval });
   }
 
-  #surfaceHostedSiteApproval(
+  async #surfaceHostedSiteApproval(
     client: AgentClient,
     request: AppServerRequest,
     params: DynamicToolCallParams,
     tool: HostedSiteMutationTool,
-  ): void {
+  ): Promise<void> {
     const threadId = params.threadId;
     const turnId = params.turnId;
     const botId = this.#threadToBot.get(threadId);
@@ -3839,6 +3844,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       });
       return;
     }
+    const details = await this.#hostedSiteApprovalDetails(params, tool);
     const approval: AgentApproval = {
       requestId: request.id,
       botId,
@@ -3847,9 +3853,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       kind: "permissions",
       command: null,
       cwd: null,
-      reason: hostedSiteApprovalReason(tool),
+      reason: details.reason,
       grantRoot: null,
-      permissions: null,
+      permissions: details.permissions,
     };
     this.#pendingApprovals.set(request.id, {
       client,
@@ -3861,6 +3867,46 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     });
     this.#markRoutineNeedsAttention(turnId);
     this.#emit({ type: "approval", approval });
+  }
+
+  async #hostedSiteApprovalDetails(
+    params: DynamicToolCallParams,
+    tool: HostedSiteMutationTool,
+  ): Promise<HostedSiteApprovalDetails> {
+    const args = params.arguments;
+    if (!isRecord(args)) throw new Error("Hosted site arguments are required.");
+    if (tool === "delete_site") {
+      const siteId = siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier);
+      const hostname = await this.#ownedHostedSiteHostname(siteId);
+      return {
+        reason: `Delete ${hostname} from openbot.site.`,
+        permissions: { fileSystem: { read: [], write: [] }, network: true },
+      };
+    }
+
+    const sourcePath = siteToolString(args.sourcePath, "sourcePath", INPUT_LIMITS.path);
+    const title = siteToolString(args.title, "title", 120);
+    siteToolString(args.description, "description", 500);
+    if (args.spaFallback !== undefined && !isBoolean(args.spaFallback)) {
+      throw new Error("spaFallback must be a boolean.");
+    }
+    const permissions = { fileSystem: { read: [sourcePath], write: [] }, network: true };
+    if (tool === "publish_site") {
+      return { reason: `Publish ${JSON.stringify(title)} as a public site on openbot.site.`, permissions };
+    }
+    const siteId = siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier);
+    const hostname = await this.#ownedHostedSiteHostname(siteId);
+    return { reason: `Replace ${hostname} with ${JSON.stringify(title)}.`, permissions };
+  }
+
+  async #ownedHostedSiteHostname(siteId: string): Promise<string> {
+    const sites = await this.#requireHostedSites().list();
+    for (const site of sites) {
+      if (!isRecord(site) || getString(site, "id") !== siteId) continue;
+      const hostname = getString(site, "hostname");
+      if (hostname) return hostname;
+    }
+    throw new Error("The hosted site was not found.");
   }
 
   #surfaceLegacyApproval(client: AgentClient, request: AppServerRequest): void {
@@ -5269,10 +5315,4 @@ function approvalPermissions(params: unknown): AgentApprovalPermissions {
 
 function isHostedSiteMutationTool(value: string): value is HostedSiteMutationTool {
   return value === "publish_site" || value === "replace_site" || value === "delete_site";
-}
-
-function hostedSiteApprovalReason(tool: HostedSiteMutationTool) {
-  if (tool === "publish_site") return "Allow this agent to publish a new public site on openbot.site.";
-  if (tool === "replace_site") return "Allow this agent to replace an existing public site on openbot.site.";
-  return "Allow this agent to delete an existing public site from openbot.site.";
 }
