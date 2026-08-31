@@ -353,10 +353,11 @@ function MarkdownInline(props: {
   const renderedTokens = createMemo(() => {
     const values = tokens();
     const lastTokenIndex = lastRenderableTokenIndex(values);
-    const markerTokenIndex = props.streaming === true ? incompleteEmphasisMarkerTokenIndex(values) : -1;
+    const markerTokenIndexes =
+      props.streaming === true ? incompleteEmphasisMarkerTokenIndexes(values) : new Set<number>();
     return values.map((token, index) => ({
       token,
-      streaming: index === markerTokenIndex,
+      streaming: markerTokenIndexes.has(index),
       streamingTail: props.streamingTail === true && index === lastTokenIndex,
     }));
   });
@@ -509,13 +510,12 @@ function RichText(props: {
 
 function hideIncompleteEmphasisMarker(body: string): string {
   const characters = [...body];
-  const marker = incompleteEmphasisMarker(characters);
-  if (!marker) return body;
-  characters.splice(marker.index, marker.length);
+  const markers = incompleteEmphasisMarkers(characters);
+  for (const marker of markers.toReversed()) characters.splice(marker.index, marker.length);
   return characters.join("");
 }
 
-function incompleteEmphasisMarkerTokenIndex(tokens: Token[]): number {
+function incompleteEmphasisMarkerTokenIndexes(tokens: Token[]): Set<number> {
   const characters: string[] = [];
   const owners: number[] = [];
   for (const [tokenIndex, token] of tokens.entries()) {
@@ -524,18 +524,18 @@ function incompleteEmphasisMarkerTokenIndex(tokens: Token[]): number {
       owners.push(token.type === "text" ? tokenIndex : -1);
     }
   }
-  const marker = incompleteEmphasisMarker(
+  const markers = incompleteEmphasisMarkers(
     characters,
     (start, end) => owners[start] !== -1 && owners[start] === owners[end - 1],
   );
-  return marker ? (owners[marker.index] ?? -1) : -1;
+  return new Set(markers.map((marker) => owners[marker.index]).filter((owner) => owner !== undefined && owner !== -1));
 }
 
-function incompleteEmphasisMarker(
+function incompleteEmphasisMarkers(
   characters: string[],
   eligible: (start: number, end: number) => boolean = () => true,
-): { index: number; length: number } | undefined {
-  let marker: { index: number; length: number } | undefined;
+): Array<{ index: number; length: number }> {
+  const markers: Array<{ index: number; length: number }> = [];
   for (let index = 0; index < characters.length; ) {
     const delimiter = characters[index];
     if (delimiter !== "*" && delimiter !== "_") {
@@ -547,11 +547,11 @@ function incompleteEmphasisMarker(
     const previous = characters[index - 1];
     const next = characters[runEnd];
     if (eligible(index, runEnd) && canOpenEmphasisDelimiter(delimiter, previous, next)) {
-      marker = { index, length: runEnd - index };
+      markers.push({ index, length: runEnd - index });
     }
     index = runEnd;
   }
-  return marker;
+  return markers;
 }
 
 function canOpenEmphasisDelimiter(delimiter: "*" | "_", previous: string | undefined, next: string | undefined) {

@@ -774,6 +774,38 @@ describe("MessageBody", () => {
     expect(container).not.toHaveTextContent(marker);
   });
 
+  it("hides every incomplete nested emphasis opener while streaming", async () => {
+    const [body, setBody] = createSignal("Use **bold [link](https://example.com) and _italic");
+    const [streaming, setStreaming] = createSignal(true);
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: "message-streaming-nested-emphasis",
+          author: "bot",
+          body: body(),
+          time: "10:00",
+          streaming: streaming(),
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(container).toHaveTextContent("Use bold link and italic");
+    expect(container).not.toHaveTextContent("**");
+    expect(container).not.toHaveTextContent("_italic");
+    expect(screen.getByRole("link", { name: "link" })).toBeInTheDocument();
+
+    setBody("Use **bold [link](https://example.com) and _italic_**");
+    setStreaming(false);
+
+    await waitFor(() => expect(container.querySelector("strong em")).toHaveTextContent("italic"));
+    expect(container.querySelector("strong a")).toHaveTextContent("link");
+  });
+
   it("cleans an opener before a completed inline token without changing its contents", () => {
     const { container } = render(() => (
       <MessageBody
