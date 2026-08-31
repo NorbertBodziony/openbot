@@ -135,6 +135,13 @@ describe("dynamic island window geometry", () => {
     ).toBeUndefined();
   });
 
+  it("keeps scaling supported MacBook resolutions in More Space mode", () => {
+    expect(dynamicIslandNotchSizeForDisplay(display({ bounds: { x: 0, y: 0, width: 2056, height: 1329 } }))).toEqual({
+      width: 252,
+      height: 44,
+    });
+  });
+
   it("centers the overlay at each display top edge", () => {
     expect(dynamicIslandWindowBounds(display({ bounds: { x: 200, y: -20, width: 1512, height: 982 } }))).toEqual({
       x: 649,

@@ -22,8 +22,6 @@ const MACBOOK_NOTCH_REFERENCE = {
   notchHeight: 32,
 } as const;
 const MACBOOK_NOTCH_ASPECT_RATIO_TOLERANCE = 0.01;
-const MACBOOK_NOTCH_MIN_DISPLAY_WIDTH = 1_000;
-const MACBOOK_NOTCH_MAX_DISPLAY_WIDTH = 2_000;
 
 export interface DynamicIslandWindowControllerOptions {
   platform: NodeJS.Platform;
@@ -257,9 +255,7 @@ export function dynamicIslandNotchSizeForDisplay(
 
 function isRecognizedNotchedMacBookDisplay(display: Pick<Display, "bounds">): boolean {
   const { width, height } = display.bounds;
-  if (height <= 0 || width < MACBOOK_NOTCH_MIN_DISPLAY_WIDTH || width > MACBOOK_NOTCH_MAX_DISPLAY_WIDTH) {
-    return false;
-  }
+  if (width <= 0 || height <= 0) return false;
   const referenceAspectRatio = MACBOOK_NOTCH_REFERENCE.displayWidth / MACBOOK_NOTCH_REFERENCE.displayHeight;
   return Math.abs(width / height - referenceAspectRatio) <= MACBOOK_NOTCH_ASPECT_RATIO_TOLERANCE;
 }
