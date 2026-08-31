@@ -9,6 +9,7 @@ import type {
   AgentModelId,
   AgentModelOption,
   AgentProviderId,
+  AgentReasoningEffort,
   AgentStatus,
   AttachmentSummary,
   AvatarImageInput,
@@ -345,6 +346,8 @@ function createConversationViewScope(props: ConversationProps) {
     setDropActive,
     rightPanels,
     setRightPanels,
+    settingsProvider,
+    setSettingsProvider,
     settingsModel,
     setSettingsModel,
     settingsReasoning,
@@ -874,13 +877,16 @@ function createConversationViewScope(props: ConversationProps) {
       ? settingsReasoning()
       : option.defaultReasoningEffort;
     const previousModel = settingsModel();
+    const previousProvider = settingsProvider();
     const previousReasoning = settingsReasoning();
+    setSettingsProvider(provider);
     setSettingsModel(model);
     setSettingsReasoning(reasoningEffort);
     if (!persist) return true;
     if (reportComposerError) setComposerError(null);
     const saved = await saveBotPatch({ provider, model, reasoningEffort });
     if (saved) return true;
+    setSettingsProvider(previousProvider);
     setSettingsModel(previousModel);
     setSettingsReasoning(previousReasoning);
     if (reportComposerError) setComposerError("Could not change model. Try again.");
@@ -889,6 +895,19 @@ function createConversationViewScope(props: ConversationProps) {
 
   async function selectAndConfirmModel(model: AgentModelId, provider: AgentProviderId): Promise<void> {
     await selectModel(model, provider, true, true);
+  }
+
+  async function selectAndConfirmReasoning(effort: AgentReasoningEffort): Promise<void> {
+    const option = props.modelOptions.find(
+      (candidate) => candidate.provider === settingsProvider() && candidate.id === settingsModel(),
+    );
+    if (!option?.supportedReasoningEfforts.includes(effort)) return;
+    const previousReasoning = settingsReasoning();
+    setSettingsReasoning(effort);
+    setComposerError(null);
+    if (await saveBotPatch({ reasoningEffort: effort })) return;
+    setSettingsReasoning(previousReasoning);
+    setComposerError("Could not change effort. Try again.");
   }
 
   function updateScrollFade(element = scrollElement) {
@@ -1418,7 +1437,8 @@ function createConversationViewScope(props: ConversationProps) {
       const bot = props.bot;
       if (!bot) return null;
       return {
-        signature: [bot.id, bot.model, bot.reasoningEffort].join("\u0000"),
+        signature: [bot.id, bot.provider, bot.model, bot.reasoningEffort].join("\u0000"),
+        provider: bot.provider,
         model: bot.model,
         reasoningEffort: bot.reasoningEffort,
       };
@@ -1426,6 +1446,7 @@ function createConversationViewScope(props: ConversationProps) {
     (bot) => {
       if (!bot || bot.signature === lastRuntimeSettingsSignature) return;
       lastRuntimeSettingsSignature = bot.signature;
+      setSettingsProvider(bot.provider);
       setSettingsModel(bot.model);
       setSettingsReasoning(bot.reasoningEffort);
     },
@@ -2364,6 +2385,7 @@ function createConversationViewScope(props: ConversationProps) {
     scrollElement,
     scrollResizeObserver,
     selectAndConfirmModel,
+    selectAndConfirmReasoning,
     selectModel,
     selectionSending,
     sendSelectionInstruction,
@@ -2402,6 +2424,7 @@ function createConversationViewScope(props: ConversationProps) {
     setSidebarFilePreview,
     setSettingsModel,
     setSettingsPanelWidth,
+    setSettingsProvider,
     setSettingsReasoning,
     setShowComposerActions,
     setShowScrollToLatest,
@@ -2410,6 +2433,7 @@ function createConversationViewScope(props: ConversationProps) {
     setVoiceElapsedSeconds,
     setVoicePhase,
     settingsModel,
+    settingsProvider,
     settingsOpen,
     settingsPanelWidth,
     settingsReasoning,
@@ -2463,8 +2487,11 @@ export function ConversationHeader() {
     props,
     screenOpen,
     selectAndConfirmModel,
+    selectAndConfirmReasoning,
     setActiveRightPanel,
     settingsModel,
+    settingsProvider,
+    settingsReasoning,
     showBrowserPanel,
   } = useConversationViewScope();
   return (
@@ -2491,8 +2518,9 @@ export function ConversationHeader() {
       <div class="conversation-header-actions no-drag">
         <Show when={props.bot}>
           <ProviderModelPicker
-            provider={props.bot?.provider ?? "codex"}
+            provider={settingsProvider()}
             value={settingsModel()}
+            reasoningEffort={settingsReasoning()}
             modelOptions={props.modelOptions}
             agentStatus={props.agentStatus}
             runtimeStatuses={props.providerRuntimeStatuses}
@@ -2506,6 +2534,7 @@ export function ConversationHeader() {
                 : "Models are available after an agent CLI connects."
             }
             onChange={(model, provider) => void selectAndConfirmModel(model, provider)}
+            onReasoningEffortChange={(effort) => void selectAndConfirmReasoning(effort)}
           />
         </Show>
         <Show when={props.remoteDesktopEnabled !== false && props.server?.kind === "remote" ? props.server : undefined}>

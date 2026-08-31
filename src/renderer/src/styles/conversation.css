@@ -2891,6 +2891,27 @@
   gap: 3px;
 }
 
+.provider-model-effort {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 9px 4px 0;
+  border-top: 1px solid var(--openbot-border);
+  padding-top: 10px;
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-sm);
+  line-height: 17px;
+}
+
+.provider-model-effort-select {
+  width: 128px;
+}
+
+.provider-model-effort-select .ui-select-trigger {
+  background: var(--openbot-bg-sidebar);
+}
+
 .provider-model-option {
   display: flex;
   width: 100%;
