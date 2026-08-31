@@ -351,6 +351,18 @@ export class TeamStore {
 
   async syncRemoteDirectory(remoteMembers: RemoteDirectoryMember[]): Promise<void> {
     const state = this.#requireState();
+    const remoteOwner = remoteMembers.find((member) => member.role === "owner");
+    const localOwner = state.members.find((member) => member.role === "owner");
+    if (remoteOwner && localOwner && remoteOwner.membershipId !== localOwner.id) {
+      if (state.members.some((member) => member.id === remoteOwner.membershipId)) {
+        throw new TeamStoreError("The control-plane owner membership conflicts with this host.");
+      }
+      const previousOwnerId = localOwner.id;
+      localOwner.id = remoteOwner.membershipId;
+      for (const session of state.sessions) {
+        if (session.memberId === previousOwnerId) session.memberId = remoteOwner.membershipId;
+      }
+    }
     const remoteIds = new Set(remoteMembers.map((member) => member.membershipId));
     for (const remote of remoteMembers) {
       const member = state.members.find((candidate) => candidate.id === remote.membershipId);

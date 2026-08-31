@@ -249,6 +249,39 @@ describe("TeamStore", () => {
     expect(restored.getMember("d1-member")).toMatchObject({ email: "alice@example.com", disabled: false });
   });
 
+  it("maps a migrated control-plane owner to the verified local owner", async () => {
+    const { store } = await createStore();
+    await store.configureWithAccount("Studio Mac", {
+      id: "owner-account",
+      email: "owner@example.com",
+      name: "Owner",
+      avatarUrl: null,
+    });
+    const ownerSession = await store.loginWithAccount({
+      id: "owner-account",
+      email: "owner@example.com",
+      name: "Owner",
+      avatarUrl: null,
+    });
+    const previousOwnerId = store.getOwnerMemberId();
+    await store.syncRemoteDirectory([
+      {
+        membershipId: "host-1:owner",
+        email: "owner@example.com",
+        name: "Owner",
+        avatarUrl: null,
+        role: "owner",
+        status: "active",
+        createdAt: 1_900_000_000_000,
+      },
+    ]);
+
+    expect(previousOwnerId).not.toBe("host-1:owner");
+    expect(store.getOwnerMemberId()).toBe("host-1:owner");
+    expect(store.getMember("host-1:owner")).toMatchObject({ email: "owner@example.com", role: "owner" });
+    expect(store.authenticateSession(ownerSession.sessionToken)?.member.id).toBe("host-1:owner");
+  });
+
   it("uses verified Signal claims when the local remote directory is stale", async () => {
     const { store } = await createStore();
     await store.configureWithAccount("Studio Mac", {

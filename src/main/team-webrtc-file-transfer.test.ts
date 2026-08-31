@@ -21,9 +21,14 @@ afterEach(async () => {
 
 class FakeBridge extends TeamWebRtcBridge {
   readonly sent: Array<{ peerId: string; channel: string; data: string | ArrayBuffer }> = [];
+  readonly disconnectedPeers: string[] = [];
 
   async send(peerId: string, channel: string, data: string | ArrayBuffer): Promise<void> {
     this.sent.push({ peerId, channel, data });
+  }
+
+  async disconnectPeer(peerId: string): Promise<void> {
+    this.disconnectedPeers.push(peerId);
   }
 }
 
@@ -95,6 +100,16 @@ describe("TeamWebRtcFileTransfer", () => {
     );
     bridge.emit("data", "host-1", "files", chunk("transfer-2", 2, new Uint8Array([1, 2])));
     await expect(waiting).rejects.toThrow("offset");
+    await transfers.stop();
+  });
+
+  it("disconnects an authenticated peer after an unidentifiable file frame", async () => {
+    const bridge = new FakeBridge();
+    const transfers = new TeamWebRtcFileTransfer(bridge, await temporaryDirectory());
+    transfers.setPeerAuthenticated("host-1", true);
+    bridge.emit("data", "host-1", "files", "not-a-file-frame");
+
+    await vi.waitFor(() => expect(bridge.disconnectedPeers).toEqual(["host-1"]));
     await transfers.stop();
   });
 

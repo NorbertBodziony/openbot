@@ -342,6 +342,7 @@ function createPeerConnection(state: PeerState, iceServers: RTCIceServer[]): RTC
     if (channel) bindDataChannel(state, channel, event.channel);
   };
   connection.onconnectionstatechange = () => {
+    if (state.peerConnection !== connection) return;
     if (connection.connectionState === "connected") void reportSelectedPath(state, connection).catch(() => undefined);
     if (connection.connectionState === "failed") {
       state.iceRestartPending = true;

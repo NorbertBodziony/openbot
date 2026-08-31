@@ -338,7 +338,11 @@ export class TeamWebRtcFileTransfer {
   }
 
   async #failFrame(peerId: string, transferId: string | null, error: unknown): Promise<void> {
-    if (!transferId) return;
+    if (!transferId) {
+      this.setPeerAuthenticated(peerId, false);
+      await this.#bridge.disconnectPeer(peerId).catch(() => undefined);
+      return;
+    }
     const failure = error instanceof Error ? error : new Error("The WebRTC file transfer failed.");
     await this.#bridge
       .send(

@@ -529,7 +529,12 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       this.emit("desktopData", hostId, data);
       return;
     }
-    if (!isString(data)) return;
+    if (!isString(data)) {
+      if (channel === "rpc" || channel === "events") {
+        this.#failProtocol(hostId, `The host returned binary data on the ${channel} channel.`);
+      }
+      return;
+    }
     if (authFrame?.type === "auth-ready") void this.#handleAuthentication(hostId, authFrame);
     else if (authFrame?.type === "auth-confirmed") this.#handleAuthenticationConfirmation(hostId, authFrame);
     else if (channel === "rpc") this.#handleRpc(hostId, data);
