@@ -5,6 +5,7 @@ import type { WorkerBindings } from "./types";
 type WorkerFetch = (request: Request) => Response | Promise<Response>;
 type AuthDataPruner = (database: D1Database, now: number) => Promise<AuthRetentionResult>;
 type RetentionLogger = (result: AuthRetentionResult) => void;
+type WorkerExecutionContext = Pick<ExecutionContext, "waitUntil">;
 
 export function createWorkerHandler(
   fetchHandler: WorkerFetch,
@@ -15,7 +16,7 @@ export function createWorkerHandler(
     async fetch(
       request: Request,
       bindings: Pick<WorkerBindings, "MARKETPLACE_INGRESS_RATE_LIMITER">,
-      _context?: ExecutionContext,
+      context?: WorkerExecutionContext,
     ) {
       try {
         await enforceMarketplaceIngress(request, bindings);
@@ -35,13 +36,26 @@ export function createWorkerHandler(
         }
         throw error;
       }
-      return fetchHandler(request);
+      const response = Promise.resolve(fetchHandler(request));
+      if (context && isEmailSignInStart(request)) {
+        context.waitUntil(
+          response.then(
+            () => undefined,
+            () => undefined,
+          ),
+        );
+      }
+      return response;
     },
     async scheduled(controller: Pick<ScheduledController, "scheduledTime">, bindings: Pick<WorkerBindings, "DB">) {
       const result = await prune(bindings.DB, controller.scheduledTime);
       log(result);
     },
   } satisfies ExportedHandler<WorkerBindings>;
+}
+
+function isEmailSignInStart(request: Request): boolean {
+  return request.method === "POST" && new URL(request.url).pathname === "/v1/auth/email/start";
 }
 
 function logRetentionResult(result: AuthRetentionResult): void {

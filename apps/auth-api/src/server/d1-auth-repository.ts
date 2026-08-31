@@ -1,5 +1,11 @@
 import { sha256 } from "./crypto";
-import type { AuthRepository, AuthUser, EmailVerificationResult } from "./types";
+import type {
+  AuthRepository,
+  AuthUser,
+  EmailChallengeDeliveryState,
+  EmailChallengeRecord,
+  EmailVerificationResult,
+} from "./types";
 
 interface UserRow {
   id: string;
@@ -15,6 +21,7 @@ interface ChallengeRow {
   failed_attempts: number;
   max_attempts: number;
   consumed_at: number | null;
+  delivery_state: EmailChallengeDeliveryState;
 }
 
 export class D1AuthRepository implements AuthRepository {
@@ -22,10 +29,39 @@ export class D1AuthRepository implements AuthRepository {
 
   async latestEmailChallengeAt(email: string): Promise<number | null> {
     const row = await this.database
-      .prepare("SELECT created_at FROM email_login_challenges WHERE email = ? ORDER BY created_at DESC LIMIT 1")
+      .prepare(
+        `SELECT created_at FROM email_login_challenges
+         WHERE email = ? AND consumed_at IS NULL AND delivery_state IN ('pending', 'sent')
+         ORDER BY created_at DESC LIMIT 1`,
+      )
       .bind(email)
       .first<{ created_at: number }>();
     return row?.created_at ?? null;
+  }
+
+  async findEmailChallenge(idHash: string): Promise<EmailChallengeRecord | null> {
+    const row = await this.database
+      .prepare(
+        `SELECT email, created_at, expires_at, consumed_at, delivery_state
+         FROM email_login_challenges WHERE id_hash = ?`,
+      )
+      .bind(idHash)
+      .first<{
+        email: string;
+        created_at: number;
+        expires_at: number;
+        consumed_at: number | null;
+        delivery_state: EmailChallengeDeliveryState;
+      }>();
+    return row
+      ? {
+          email: row.email,
+          createdAt: row.created_at,
+          expiresAt: row.expires_at,
+          consumedAt: row.consumed_at,
+          deliveryState: row.delivery_state,
+        }
+      : null;
   }
 
   async createEmailChallenge(input: {
@@ -36,12 +72,13 @@ export class D1AuthRepository implements AuthRepository {
     createdAt: number;
     expiresAt: number;
     maxAttempts: number;
-  }): Promise<void> {
-    await this.database
+  }): Promise<boolean> {
+    const result = await this.database
       .prepare(
         `INSERT INTO email_login_challenges(
-          id_hash, email, code_hash, source_ip_hash, created_at, expires_at, max_attempts
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          id_hash, email, code_hash, source_ip_hash, created_at, expires_at, max_attempts, delivery_state
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+        ON CONFLICT(id_hash) DO NOTHING`,
       )
       .bind(
         input.idHash,
@@ -53,11 +90,24 @@ export class D1AuthRepository implements AuthRepository {
         input.maxAttempts,
       )
       .run();
+    return result.meta.changes === 1;
   }
 
-  async cancelEmailChallenge(idHash: string, now: number): Promise<void> {
+  async completeEmailChallengeDelivery(idHash: string, state: "sent" | "failed", now: number): Promise<void> {
+    if (state === "sent") {
+      await this.database
+        .prepare(
+          "UPDATE email_login_challenges SET delivery_state = 'sent' WHERE id_hash = ? AND delivery_state = 'pending'",
+        )
+        .bind(idHash)
+        .run();
+      return;
+    }
     await this.database
-      .prepare("UPDATE email_login_challenges SET consumed_at = ? WHERE id_hash = ?")
+      .prepare(
+        `UPDATE email_login_challenges SET delivery_state = 'failed', consumed_at = COALESCE(consumed_at, ?)
+         WHERE id_hash = ? AND delivery_state = 'pending'`,
+      )
       .bind(now, idHash)
       .run();
   }
@@ -70,12 +120,14 @@ export class D1AuthRepository implements AuthRepository {
   }): Promise<EmailVerificationResult> {
     const challenge = await this.database
       .prepare(
-        `SELECT email, code_hash, expires_at, failed_attempts, max_attempts, consumed_at
+        `SELECT email, code_hash, expires_at, failed_attempts, max_attempts, consumed_at, delivery_state
          FROM email_login_challenges WHERE id_hash = ?`,
       )
       .bind(input.idHash)
       .first<ChallengeRow>();
-    if (!challenge || challenge.consumed_at !== null) return { status: "invalid" };
+    if (!challenge || challenge.delivery_state === "failed" || challenge.consumed_at !== null) {
+      return { status: "invalid" };
+    }
     if (challenge.expires_at <= input.now) return { status: "expired" };
     if (challenge.failed_attempts >= challenge.max_attempts) {
       return { status: "too_many_attempts" };
@@ -85,7 +137,7 @@ export class D1AuthRepository implements AuthRepository {
         .prepare(
           `UPDATE email_login_challenges
            SET failed_attempts = failed_attempts + 1
-           WHERE id_hash = ? AND consumed_at IS NULL AND failed_attempts < max_attempts`,
+           WHERE id_hash = ? AND delivery_state != 'failed' AND consumed_at IS NULL AND failed_attempts < max_attempts`,
         )
         .bind(input.idHash)
         .run();
@@ -97,7 +149,8 @@ export class D1AuthRepository implements AuthRepository {
     const consumed = await this.database
       .prepare(
         `UPDATE email_login_challenges SET consumed_at = ?
-         WHERE id_hash = ? AND consumed_at IS NULL AND expires_at > ? AND failed_attempts < max_attempts`,
+         WHERE id_hash = ? AND delivery_state != 'failed' AND consumed_at IS NULL
+           AND expires_at > ? AND failed_attempts < max_attempts`,
       )
       .bind(input.now, input.idHash, input.now)
       .run();

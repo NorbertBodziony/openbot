@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AuthRetentionResult } from "../src/server/auth-data-retention";
 import type { WorkerBindings } from "../src/server/types";
 import { createWorkerHandler } from "../src/server/worker-handler";
@@ -11,6 +11,32 @@ describe("worker handler", () => {
     const response = await handler.fetch(new Request("https://openbot.run/health/live"), fakeBindings());
 
     expect(await response.text()).toBe("ok");
+  });
+
+  it("protects email delivery work with waitUntil", async () => {
+    let finishRequest: ((response: Response) => void) | undefined;
+    const pendingResponse = new Promise<Response>((resolve) => {
+      finishRequest = resolve;
+    });
+    const fetchHandler = vi.fn(() => pendingResponse);
+    let backgroundWork: Promise<unknown> | null = null;
+    const waitUntil = vi.fn((promise: Promise<unknown>) => {
+      backgroundWork = promise;
+    });
+    const handler = createWorkerHandler(fetchHandler);
+
+    const responsePromise = handler.fetch(
+      new Request("https://openbot.run/v1/auth/email/start", { method: "POST" }),
+      fakeBindings(),
+      { waitUntil },
+    );
+
+    await vi.waitFor(() => expect(waitUntil).toHaveBeenCalledOnce());
+    if (!backgroundWork) throw new Error("Expected waitUntil to receive the delivery promise.");
+    finishRequest?.(Response.json({ challengeId: "challenge-1" }));
+    await expect(responsePromise).resolves.toBeInstanceOf(Response);
+    await expect(backgroundWork).resolves.toBeUndefined();
+    expect(fetchHandler).toHaveBeenCalledOnce();
   });
 
   it("returns a retryable 429 before marketplace requests reach the application", async () => {

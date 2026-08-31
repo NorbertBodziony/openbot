@@ -28,6 +28,13 @@ interface CentralAuthManagerOptions {
   startupRetryWindowMs?: number;
   startupRequestTimeoutMs?: number;
   startupRetryDelaysMs?: readonly number[];
+  emailCodeRequestTimeoutMs?: number;
+}
+
+interface EmailCodeRequest {
+  email: string;
+  idempotencyKey: string;
+  promise: Promise<CentralAuthState> | null;
 }
 
 interface SessionResponse {
@@ -38,7 +45,16 @@ interface SessionResponse {
 const STARTUP_RETRY_WINDOW_MS = 30_000;
 const STARTUP_REQUEST_TIMEOUT_MS = 3_000;
 const STARTUP_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000] as const;
+const EMAIL_CODE_REQUEST_TIMEOUT_MS = 35_000;
 const RESEND_FALLBACK_DELAY_MS = 60_000;
+const DEFINITIVE_EMAIL_CODE_REQUEST_FAILURES = new Set([
+  "email_delivery_failed",
+  "idempotency_conflict",
+  "idempotency_key_completed",
+  "invalid_email",
+  "invalid_idempotency_key",
+  "sign_in_code_expired",
+]);
 const AUTH_API_UNAVAILABLE_MESSAGE =
   "OpenBot could not reach the account service. Check that the API is running, then try again.";
 
@@ -56,6 +72,7 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   #sessionToken: string | null = null;
   readonly #teamHostTokens = new Map<string, string>();
   #initializationPromise: Promise<CentralAuthState> | null = null;
+  #emailCodeRequest: EmailCodeRequest | null = null;
 
   constructor(options: CentralAuthManagerOptions) {
     super();
@@ -66,6 +83,7 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
       startupRetryWindowMs: options.startupRetryWindowMs ?? STARTUP_RETRY_WINDOW_MS,
       startupRequestTimeoutMs: options.startupRequestTimeoutMs ?? STARTUP_REQUEST_TIMEOUT_MS,
       startupRetryDelaysMs: options.startupRetryDelaysMs ?? STARTUP_RETRY_DELAYS_MS,
+      emailCodeRequestTimeoutMs: options.emailCodeRequestTimeoutMs ?? EMAIL_CODE_REQUEST_TIMEOUT_MS,
     };
   }
 
@@ -246,7 +264,22 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     }
   }
 
-  async requestEmailCode(email: string): Promise<CentralAuthState> {
+  requestEmailCode(email: string): Promise<CentralAuthState> {
+    const normalizedEmail = email.trim().toLowerCase();
+    const existingRequest = this.#emailCodeRequest;
+    if (existingRequest?.email === normalizedEmail && existingRequest.promise) return existingRequest.promise;
+
+    const request: EmailCodeRequest =
+      existingRequest?.email === normalizedEmail
+        ? existingRequest
+        : { email: normalizedEmail, idempotencyKey: randomUUID(), promise: null };
+    this.#emailCodeRequest = request;
+    const pending = this.#performEmailCodeRequest(request);
+    request.promise = pending;
+    return pending;
+  }
+
+  async #performEmailCodeRequest(request: EmailCodeRequest): Promise<CentralAuthState> {
     const existingChallenge = this.#state.status === "code_sent" ? this.#state : null;
     if (existingChallenge) {
       this.#setState({ ...existingChallenge, issue: undefined });
@@ -258,24 +291,32 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
         "/v1/auth/email/start",
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email }),
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": request.idempotencyKey,
+          },
+          body: JSON.stringify({ email: request.email }),
         },
         decodeEmailChallenge,
+        this.#options.emailCodeRequestTimeoutMs,
       );
       if (!result.challengeId || !Number.isFinite(result.expiresAt)) {
         throw new Error("The account service returned an invalid sign-in challenge.");
       }
+      if (this.#emailCodeRequest === request) this.#emailCodeRequest = null;
       return this.#setState({
         status: "code_sent",
         challengeId: result.challengeId,
-        email: email.trim().toLowerCase(),
+        email: request.email,
         expiresAt: result.expiresAt,
         resendAvailableAt: result.resendAt ?? Math.min(result.expiresAt, Date.now() + RESEND_FALLBACK_DELAY_MS),
         ...(result.developmentCode ? { developmentCode: result.developmentCode } : {}),
       });
     } catch (error) {
-      const issue = centralAuthIssue(error, "email_sign_in_start_failed", "OpenBot could not send the sign-in code.");
+      if (isDefinitiveEmailCodeRequestFailure(error) && this.#emailCodeRequest === request) {
+        this.#emailCodeRequest = null;
+      }
+      const issue = emailCodeRequestIssue(error);
       if (existingChallenge) {
         return this.#setState({ ...existingChallenge, issue });
       }
@@ -283,6 +324,8 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
         status: "error",
         issue,
       });
+    } finally {
+      if (this.#emailCodeRequest === request) request.promise = null;
     }
   }
 
@@ -321,6 +364,7 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   }
 
   async logout(): Promise<CentralAuthState> {
+    this.#emailCodeRequest = null;
     if (this.#sessionToken) {
       try {
         await this.#authorizedRequest("/v1/auth/logout", { method: "POST" }, decodeVoid);
@@ -585,6 +629,34 @@ function centralAuthIssue(error: unknown, fallbackCode: string, fallbackMessage:
     };
   }
   return { code: fallbackCode, message: errorMessage(error, fallbackMessage) };
+}
+
+function emailCodeRequestIssue(error: unknown): CentralAuthIssue {
+  if (error instanceof AuthApiError) {
+    return centralAuthIssue(error, "email_sign_in_start_failed", "OpenBot could not send the sign-in code.");
+  }
+  if (error instanceof DOMException && error.name === "TimeoutError") {
+    return {
+      code: "email_delivery_timeout",
+      message:
+        "OpenBot could not confirm delivery in time. The code may still arrive; check delivery before sending again.",
+    };
+  }
+  if (error instanceof TypeError || (error instanceof DOMException && error.name === "AbortError")) {
+    return {
+      code: "email_delivery_unknown",
+      message: "The connection ended before OpenBot confirmed delivery. Check delivery to avoid sending another code.",
+    };
+  }
+  return {
+    code: "email_delivery_unknown",
+    message: "OpenBot could not confirm whether the sign-in code was sent. Check delivery before sending again.",
+  };
+}
+
+function isDefinitiveEmailCodeRequestFailure(error: unknown): boolean {
+  if (!(error instanceof AuthApiError)) return false;
+  return DEFINITIVE_EMAIL_CODE_REQUEST_FAILURES.has(error.code);
 }
 
 function parseRetryAfterSeconds(value: string | null): number | undefined {

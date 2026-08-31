@@ -85,8 +85,19 @@ export type EmailVerificationResult =
   | { status: "verified"; session: { sessionToken: string; user: AuthUser } }
   | { status: "invalid" | "expired" | "too_many_attempts" };
 
+export type EmailChallengeDeliveryState = "pending" | "sent" | "failed";
+
+export interface EmailChallengeRecord {
+  email: string;
+  createdAt: number;
+  expiresAt: number;
+  consumedAt: number | null;
+  deliveryState: EmailChallengeDeliveryState;
+}
+
 export interface AuthRepository {
   latestEmailChallengeAt(email: string): Promise<number | null>;
+  findEmailChallenge(idHash: string): Promise<EmailChallengeRecord | null>;
   createEmailChallenge(input: {
     idHash: string;
     email: string;
@@ -95,8 +106,8 @@ export interface AuthRepository {
     createdAt: number;
     expiresAt: number;
     maxAttempts: number;
-  }): Promise<void>;
-  cancelEmailChallenge(idHash: string, now: number): Promise<void>;
+  }): Promise<boolean>;
+  completeEmailChallengeDelivery(idHash: string, state: "sent" | "failed", now: number): Promise<void>;
   verifyEmailChallenge(input: {
     idHash: string;
     codeHash: string;
