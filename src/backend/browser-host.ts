@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
@@ -484,19 +484,22 @@ export class BrowserHost {
     }
   }
 
-  async destroy(): Promise<void> {
-    try {
-      await this.#persistState();
-    } finally {
-      for (const tab of this.#tabs.values()) {
-        this.#unmountView(tab.view);
-        tab.view.webContents.close();
-      }
-      this.#tabs.clear();
-      this.#listeners.clear();
-      this.clearControls();
-      this.#controlListeners.clear();
+  async destroy(options: { storageAlreadyFlushed?: boolean } = {}): Promise<void> {
+    if (!options.storageAlreadyFlushed) await this.flushPersistentStorage();
+    for (const tab of this.#tabs.values()) {
+      this.#unmountView(tab.view);
+      tab.view.webContents.close();
     }
+    this.#tabs.clear();
+    this.#listeners.clear();
+    this.clearControls();
+    this.#controlListeners.clear();
+  }
+
+  async flushPersistentStorage(): Promise<void> {
+    this.#session.flushStorageData();
+    await this.#session.cookies.flushStore();
+    await this.#persistState();
   }
 
   #createTab(id: string, requestedUrl: string, ownerThreadId: string | null, ownerBotId: string | null): InternalTab {
@@ -813,12 +816,18 @@ export class BrowserHost {
     };
     this.#persistQueue = this.#persistQueue
       .catch(() => undefined)
-      .then(() =>
-        writeFile(this.#statePath, `${JSON.stringify(state)}\n`, {
-          encoding: "utf8",
-          mode: 0o600,
-        }),
-      );
+      .then(async () => {
+        const temporaryPath = `${this.#statePath}.${randomUUID()}.tmp`;
+        try {
+          await writeFile(temporaryPath, `${JSON.stringify(state)}\n`, {
+            encoding: "utf8",
+            mode: 0o600,
+          });
+          await rename(temporaryPath, this.#statePath);
+        } finally {
+          await rm(temporaryPath, { force: true }).catch(() => undefined);
+        }
+      });
     return this.#persistQueue;
   }
 }
