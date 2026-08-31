@@ -4511,6 +4511,43 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.browser.open).toHaveBeenCalledTimes(1);
   });
 
+  it("allows a replacement when a loading browser tab is closed before its open request settles", async () => {
+    const loadingTab: BrowserTab = {
+      id: "tab-loading",
+      title: "Loading…",
+      url: "https://www.google.com/",
+      loading: true,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    let resolveFirstOpen: ((tab: BrowserTab) => void) | undefined;
+    vi.mocked(window.openbot.browser.open).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirstOpen = resolve;
+        }),
+    );
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    expect(window.openbot.browser.open).toHaveBeenCalledTimes(1);
+
+    emitAgentEvent?.({ type: "browser-changed", tabs: [loadingTab], activeTabId: loadingTab.id });
+    const tab = await screen.findByRole("tab", { name: "Loading…" });
+    await fireEvent.keyDown(tab, { key: "Delete" });
+    expect(window.openbot.browser.close).toHaveBeenCalledWith(loadingTab.id);
+
+    emitAgentEvent?.({ type: "browser-changed", tabs: [], activeTabId: null });
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument());
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    expect(window.openbot.browser.open).toHaveBeenCalledTimes(2);
+
+    resolveFirstOpen?.(loadingTab);
+  });
+
   it("reveals the requested browser tab and resumes the agent from the takeover card", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });

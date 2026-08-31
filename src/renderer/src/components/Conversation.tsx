@@ -25,7 +25,16 @@ function readBrowserPipBounds(): BrowserBounds | null {
 
 interface ConversationResources {
   agentActivityPresentations: Map<string, { activityId: string; presentation: AgentActivityPresentation }>;
-  browserOpenRequests: Map<string, Promise<void>>;
+  browserOpenRequests: Map<
+    string,
+    {
+      promise: Promise<void>;
+      serverId: string;
+      botId: string | null;
+      url: string;
+      existingTabIds: Set<string>;
+    }
+  >;
   importTargetBots: Map<string, { botId: string; serverId: string }>;
   seenMessageIds: Set<string>;
   typingIdleTimer: ReturnType<typeof setTimeout> | undefined;
