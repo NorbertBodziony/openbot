@@ -198,6 +198,13 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
         run: ./node_modules/.bin/wrangler d1 migrations apply DB --remote --config wrangler.jsonc
 
+      - name: Deploy public site router
+        working-directory: apps/site-router
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PRODUCTION_DEPLOY_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: ./node_modules/.bin/wrangler deploy --config wrangler.jsonc
+
       - name: Prepare runtime secrets
         id: runtime-secrets
         shell: bash
@@ -215,15 +222,16 @@ jobs:
             const skillsAdmin = process.env.SKILLS_ADMIN_TOKEN;
             const siteOperationsAdmin = process.env.SITE_OPERATIONS_ADMIN_TOKEN;
             const path = process.env.SECRETS_PATH;
-            if (!smtp || !tunnel || !skillsAdmin || !siteOperationsAdmin || !path) {
+            if (!smtp || !tunnel || !skillsAdmin || !path) {
               throw new Error("Required production secrets are missing.");
             }
-            await Bun.write(path, JSON.stringify({
+            const secrets = {
               EMAIL_SMTP_PASSWORD: smtp,
               CLOUDFLARE_API_TOKEN: tunnel,
               SKILLS_ADMIN_TOKEN: skillsAdmin,
-              SITE_OPERATIONS_ADMIN_TOKEN: siteOperationsAdmin,
-            }));
+              ...(siteOperationsAdmin ? { SITE_OPERATIONS_ADMIN_TOKEN: siteOperationsAdmin } : {}),
+            };
+            await Bun.write(path, JSON.stringify(secrets));
           '
           echo "path=$secrets_path" >> "$GITHUB_OUTPUT"
 
@@ -261,3 +269,11 @@ jobs:
             "$verification_dir/association.json" >/dev/null
           curl --fail --silent --show-error --retry 5 --retry-all-errors https://api.openbot.run/health/live >/dev/null
           curl --fail --silent --show-error --retry 5 --retry-all-errors https://api.openbot.run/health/ready >/dev/null
+          site_status="$(curl --silent --show-error --retry 5 --retry-all-errors \
+            --max-redirs 0 --dump-header "$verification_dir/site-router.headers" \
+            --output "$verification_dir/site-router.txt" --write-out '%{http_code}' \
+            https://deployment-smoke-check.openbot.site/)"
+          test "$site_status" = "404" || test "$site_status" = "503"
+          tr -d '\r' < "$verification_dir/site-router.headers" | grep -Eiq '^cache-control:.*no-store'
+          tr -d '\r' < "$verification_dir/site-router.headers" | grep -Eiq '^x-content-type-options:.*nosniff'
+          tr -d '\r' < "$verification_dir/site-router.headers" | grep -Eiq '^x-robots-tag:.*noindex'

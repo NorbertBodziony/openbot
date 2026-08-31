@@ -431,21 +431,31 @@ export class HostedSiteService {
   async cleanup(now = this.now()): Promise<{ uploads: number; expired: number; tombstones: number }> {
     const staleUploads = await this.database
       .prepare(
-        "SELECT id, site_id FROM site_deployments WHERE status = 'uploading' AND upload_expires_at <= ? LIMIT 50",
+        `SELECT id, site_id FROM site_deployments
+         WHERE status IN ('uploading', 'activating') AND upload_expires_at <= ? LIMIT 50`,
       )
       .bind(now)
       .all<{ id: string; site_id: string }>();
+    let abandonedUploads = 0;
     for (const upload of staleUploads.results) {
-      await this.deleteDeployment(upload.site_id, upload.id);
-      await this.database
-        .prepare("UPDATE site_deployments SET status = 'abandoned' WHERE id = ?")
-        .bind(upload.id)
+      const claim = await this.database
+        .prepare(
+          `UPDATE site_deployments SET status = 'abandoned'
+           WHERE id = ? AND status IN ('uploading', 'activating') AND upload_expires_at <= ?`,
+        )
+        .bind(upload.id, now)
         .run();
+      if (claim.meta.changes !== 1) continue;
+      abandonedUploads += 1;
+      await this.deleteDeployment(upload.site_id, upload.id);
     }
     await this.database
       .prepare(
         `DELETE FROM hosted_sites WHERE status = 'uploading'
-         AND NOT EXISTS (SELECT 1 FROM site_deployments d WHERE d.site_id = hosted_sites.id AND d.status = 'uploading')`,
+         AND NOT EXISTS (
+           SELECT 1 FROM site_deployments d
+           WHERE d.site_id = hosted_sites.id AND d.status IN ('uploading', 'activating')
+         )`,
       )
       .run();
 
@@ -501,7 +511,7 @@ export class HostedSiteService {
       .bind(now - 180 * 24 * 60 * 60_000)
       .run();
     return {
-      uploads: staleUploads.results.length,
+      uploads: abandonedUploads,
       expired: expired.results.length,
       tombstones: tombstones.results.length,
     };
@@ -788,23 +798,28 @@ export class HostedSiteService {
   private async abandonExpiredUploads(userId: string, now: number): Promise<void> {
     const stale = await this.database
       .prepare(
-        "SELECT id, site_id FROM site_deployments WHERE user_id = ? AND status = 'uploading' AND upload_expires_at <= ?",
+        `SELECT id, site_id FROM site_deployments
+         WHERE user_id = ? AND status IN ('uploading', 'activating') AND upload_expires_at <= ?`,
       )
       .bind(userId, now)
       .all<{ id: string; site_id: string }>();
-    for (const upload of stale.results) await this.deleteDeployment(upload.site_id, upload.id);
-    await this.database
-      .prepare(
-        "UPDATE site_deployments SET status = 'abandoned' WHERE user_id = ? AND status = 'uploading' AND upload_expires_at <= ?",
-      )
-      .bind(userId, now)
-      .run();
+    for (const upload of stale.results) {
+      const claim = await this.database
+        .prepare(
+          `UPDATE site_deployments SET status = 'abandoned'
+           WHERE id = ? AND user_id = ? AND status IN ('uploading', 'activating') AND upload_expires_at <= ?`,
+        )
+        .bind(upload.id, userId, now)
+        .run();
+      if (claim.meta.changes === 1) await this.deleteDeployment(upload.site_id, upload.id);
+    }
     await this.database
       .prepare(
         `DELETE FROM hosted_sites
          WHERE user_id = ? AND status = 'uploading' AND current_deployment_id IS NULL
            AND NOT EXISTS (
-             SELECT 1 FROM site_deployments d WHERE d.site_id = hosted_sites.id AND d.status = 'uploading'
+             SELECT 1 FROM site_deployments d
+             WHERE d.site_id = hosted_sites.id AND d.status IN ('uploading', 'activating')
            )`,
       )
       .bind(userId)

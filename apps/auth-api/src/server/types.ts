@@ -23,6 +23,7 @@ export interface WorkerBindings {
   CLOUDFLARE_API_TOKEN?: string;
   SKILLS_ADMIN_TOKEN?: string;
   SITE_OPERATIONS_ADMIN_TOKEN?: string;
+  SITE_COOKIE_ISOLATION_READY?: string;
   SITE_PUBLISH_ENABLED?: string;
 }
 

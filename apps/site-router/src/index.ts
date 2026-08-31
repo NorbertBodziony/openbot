@@ -20,8 +20,13 @@ interface SiteBucket {
   get(key: string): Promise<R2ObjectBody | null>;
 }
 
+interface SiteRouterEnv {
+  SITES: SiteBucket;
+  SITE_SERVE_ENABLED?: string;
+}
+
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: SiteRouterEnv): Promise<Response> {
     try {
       return await routeRequest(request, env, Date.now());
     } catch (error) {
@@ -29,13 +34,9 @@ export default {
       return errorResponse(500, "Site unavailable");
     }
   },
-} satisfies ExportedHandler<Env>;
+} satisfies ExportedHandler<SiteRouterEnv>;
 
-export async function routeRequest(
-  request: Request,
-  env: { SITES: SiteBucket; SITE_SERVE_ENABLED?: string },
-  now: number,
-): Promise<Response> {
+export async function routeRequest(request: Request, env: SiteRouterEnv, now: number): Promise<Response> {
   if (request.method !== "GET" && request.method !== "HEAD") {
     const response = errorResponse(405, "Method not allowed");
     response.headers.set("Allow", "GET, HEAD");

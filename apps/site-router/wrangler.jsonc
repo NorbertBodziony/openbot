@@ -13,7 +13,7 @@
     }
   ],
   "vars": {
-    "SITE_SERVE_ENABLED": "true"
+    "SITE_SERVE_ENABLED": "false"
   },
   "r2_buckets": [
     {

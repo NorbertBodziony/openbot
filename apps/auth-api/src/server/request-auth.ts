@@ -49,8 +49,16 @@ export function requestHostedSiteService(): HostedSiteService {
 }
 
 export function requireSitePublishingEnabled(): void {
-  if (requireWorkerBindings(env).SITE_PUBLISH_ENABLED === "false") {
+  const bindings = requireWorkerBindings(env);
+  if (bindings.SITE_PUBLISH_ENABLED !== "true") {
     throw new HostedSiteInputError(409, "publishing_disabled", "Site publishing is temporarily disabled.");
+  }
+  if (bindings.SITE_COOKIE_ISOLATION_READY !== "true") {
+    throw new HostedSiteInputError(
+      409,
+      "cookie_isolation_unavailable",
+      "Site publishing is disabled until openbot.site has public-suffix cookie isolation.",
+    );
   }
 }
 

@@ -166,6 +166,39 @@ describe("hosted site control plane", () => {
       .first<{ count: number }>();
     expect(retained?.count).toBe(0);
   });
+
+  it("keeps a live initial activation and abandons it only after its upload expires", async () => {
+    const liveFixture = serviceFixture();
+    const live = await liveFixture.service.createUpload("alice", uploadRequest(), "live-initial-upload");
+    await uploadIndex(liveFixture.service, "alice", live.uploadId);
+    await liveFixture.database
+      .prepare("UPDATE site_deployments SET status = 'activating' WHERE id = ?")
+      .bind(live.uploadId)
+      .run();
+
+    expect(await liveFixture.service.cleanup()).toMatchObject({ uploads: 0 });
+    await expect(liveFixture.service.activate("alice", live.uploadId, "finish-live-activation")).resolves.toMatchObject(
+      {
+        status: "active",
+      },
+    );
+
+    const staleFixture = serviceFixture();
+    const stale = await staleFixture.service.createUpload("alice", uploadRequest(), "stale-initial-upload");
+    await uploadIndex(staleFixture.service, "alice", stale.uploadId);
+    await staleFixture.database
+      .prepare("UPDATE site_deployments SET status = 'activating' WHERE id = ?")
+      .bind(stale.uploadId)
+      .run();
+    staleFixture.setNow(NOW + 16 * 60_000);
+
+    expect(await staleFixture.service.cleanup()).toMatchObject({ uploads: 1 });
+    const removed = await staleFixture.database
+      .prepare("SELECT id FROM hosted_sites WHERE id = ?")
+      .bind(stale.site.id)
+      .first<{ id: string }>();
+    expect(removed).toBeNull();
+  });
 });
 
 function serviceFixture(): {

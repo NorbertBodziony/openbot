@@ -24,7 +24,7 @@
     }
   ],
   "secrets": {
-    "required": ["EMAIL_SMTP_PASSWORD", "CLOUDFLARE_API_TOKEN", "SKILLS_ADMIN_TOKEN", "SITE_OPERATIONS_ADMIN_TOKEN"]
+    "required": ["EMAIL_SMTP_PASSWORD", "CLOUDFLARE_API_TOKEN", "SKILLS_ADMIN_TOKEN"]
   },
   "vars": {
     "AUTH_EXPOSE_DEVELOPMENT_CODE": "false",
@@ -35,7 +35,8 @@
     "CLOUDFLARE_ACCOUNT_ID": "1727745925da016ed083b7537389c98e",
     "CLOUDFLARE_ZONE_ID": "bac5e044ba951c390229f0e93673ebd3",
     "CLOUDFLARE_TUNNEL_DOMAIN": "openbot.run",
-    "SITE_PUBLISH_ENABLED": "true"
+    "SITE_PUBLISH_ENABLED": "false",
+    "SITE_COOKIE_ISOLATION_READY": "false"
   },
   "d1_databases": [
     {
@@ -105,7 +106,8 @@
         "CLOUDFLARE_ACCOUNT_ID": "1727745925da016ed083b7537389c98e",
         "CLOUDFLARE_ZONE_ID": "bac5e044ba951c390229f0e93673ebd3",
         "CLOUDFLARE_TUNNEL_DOMAIN": "openbot.run",
-        "SITE_PUBLISH_ENABLED": "true"
+        "SITE_PUBLISH_ENABLED": "false",
+        "SITE_COOKIE_ISOLATION_READY": "false"
       },
       "d1_databases": [
         {
@@ -161,7 +163,7 @@
         "crons": []
       },
       "secrets": {
-        "required": ["EMAIL_SMTP_PASSWORD", "CLOUDFLARE_API_TOKEN", "SKILLS_ADMIN_TOKEN", "SITE_OPERATIONS_ADMIN_TOKEN"]
+        "required": ["EMAIL_SMTP_PASSWORD", "CLOUDFLARE_API_TOKEN", "SKILLS_ADMIN_TOKEN"]
       },
       "vars": {
         "AUTH_EXPOSE_DEVELOPMENT_CODE": "false",
@@ -172,7 +174,8 @@
         "CLOUDFLARE_ACCOUNT_ID": "1727745925da016ed083b7537389c98e",
         "CLOUDFLARE_ZONE_ID": "bac5e044ba951c390229f0e93673ebd3",
         "CLOUDFLARE_TUNNEL_DOMAIN": "openbot.run",
-        "SITE_PUBLISH_ENABLED": "true"
+        "SITE_PUBLISH_ENABLED": "false",
+        "SITE_COOKIE_ISOLATION_READY": "false"
       },
       "d1_databases": [
         {
