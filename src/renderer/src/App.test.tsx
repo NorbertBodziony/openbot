@@ -2539,6 +2539,37 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledOnce());
   });
 
+  it("shows a deferred voice setup error in the original conversation", async () => {
+    const local = testServer("local", true);
+    const remote = testServer("remote-1", false);
+    let resolvePreparation: ((status: VoiceModelStatus) => void) | undefined;
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+    vi.mocked(window.openbot.servers.select).mockImplementation(async (serverId) => [
+      { ...local, active: serverId === "local" },
+      { ...remote, active: serverId === "remote-1" },
+    ]);
+    vi.mocked(window.openbot.voice.prepareModel).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePreparation = resolve;
+        }),
+    );
+    render(() => <App />);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Create prompt with voice" }));
+    await waitFor(() => expect(window.openbot.voice.prepareModel).toHaveBeenCalledOnce());
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true"),
+    );
+
+    resolvePreparation?.({ phase: "error", progress: 0, message: "Local voice setup failed" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Create prompt with voice" })).toBeEnabled());
+    expect(screen.queryByText("Local voice setup failed")).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Local server" }));
+    expect(await screen.findByText("Local voice setup failed")).toBeInTheDocument();
+  });
+
   it("shows the recording timer and stop control while capturing voice", async () => {
     class RecordingMediaRecorder extends EventTarget {
       readonly mimeType = "audio/webm";

@@ -962,6 +962,13 @@ function createConversationViewScope(props: ConversationProps) {
     });
   }
 
+  function setConversationError(target: ConversationTarget, message: string): void {
+    setConversationErrors((current) => ({
+      ...current,
+      [composerDraftKey(target)]: message,
+    }));
+  }
+
   function restoreVoiceTranscript(target: ConversationTarget, transcript: string): void {
     const key = composerDraftKey(target);
     setDrafts((current) => {
@@ -977,7 +984,8 @@ function createConversationViewScope(props: ConversationProps) {
     const botId = props.bot?.id;
     const serverId = props.server?.id ?? "local";
     if (!botId || voicePhase() !== "idle") return;
-    clearConversationError({ botId, serverId });
+    const target = { botId, serverId };
+    clearConversationError(target);
     resources.voiceSubmitRequest = undefined;
     setComposerError(null);
     setVoicePhase("preparing");
@@ -988,7 +996,7 @@ function createConversationViewScope(props: ConversationProps) {
       if (modelStatus.phase !== "ready") {
         setVoicePhase("idle");
         setVoiceModelProgress(null);
-        setComposerError(modelStatus.message ?? "Could not prepare the voice model.");
+        setConversationError(target, modelStatus.message ?? "Could not prepare the voice model.");
         return;
       }
       setVoicePhase("requesting");
@@ -1014,7 +1022,7 @@ function createConversationViewScope(props: ConversationProps) {
       resources.voiceRecordingTimer = setTimeout(stopVoiceRecording, VOICE_AUDIO_LIMITS.maximumSeconds * 1_000);
     } catch (error) {
       setVoicePhase("idle");
-      setComposerError(voiceCaptureError(error));
+      setConversationError(target, voiceCaptureError(error));
     }
   }
 
