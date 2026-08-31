@@ -3378,11 +3378,13 @@ textarea {
 }
 
 .account-dock-usage-chip > strong {
+  min-width: 4ch;
   color: inherit;
   font-size: var(--openbot-text-xs);
   font-weight: var(--openbot-weight-semibold);
   font-variant-numeric: tabular-nums;
   line-height: 14px;
+  text-align: right;
 }
 
 .account-usage-popover {
