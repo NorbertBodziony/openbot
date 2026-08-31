@@ -67,6 +67,7 @@ void main().catch((error) => {
 
 async function main(): Promise<void> {
   const googleLive = process.argv.includes("--google-live");
+  const xLive = process.argv.includes("--x-live");
   const temporaryRoot = await mkdtemp(join(tmpdir(), "openbot-browser-smoke-"));
   app.setName("OpenBot");
   app.setPath("userData", join(temporaryRoot, "user-data"));
@@ -75,7 +76,7 @@ async function main(): Promise<void> {
       process.stderr.write("BrowserHost smoke test timed out.\n");
       app.exit(1);
     },
-    googleLive ? 60_000 : 20_000,
+    googleLive || xLive ? 60_000 : 20_000,
   );
 
   try {
@@ -161,6 +162,7 @@ async function main(): Promise<void> {
     }
     process.stdout.write("BrowserHost: matching Chromium page and request identity passed.\n");
     if (googleLive) await runGoogleLiveProbe(browser);
+    if (xLive) await runXLiveProbe(browser);
     await expectFailure(() => browser.act(tab.id, first.revision, { type: "click", ref: save.ref }));
 
     const child = result.elements.find((element) => element.name === "Child");
@@ -363,6 +365,79 @@ async function runGoogleLiveProbe(browser: BrowserHost): Promise<void> {
     throw new Error(`Google returned an unexpected identifier result: ${outcome.text.slice(0, 500)}`);
   }
   process.stdout.write("BrowserHost: Google identifier step passed without signin/rejected.\n");
+}
+
+async function runXLiveProbe(browser: BrowserHost): Promise<void> {
+  const xTab = await browser.open("https://x.com/", "x-live-smoke", "x-live-smoke", true);
+  let loginPage = await waitForXSnapshot(browser, xTab.id, (snapshot) => {
+    const normalized = snapshot.text.toLowerCase();
+    return (
+      normalized.includes("refuse non-essential cookies") ||
+      snapshot.elements.some((element) => element.name.toLowerCase() === "sign in") ||
+      normalized.includes("something went wrong") ||
+      normalized.includes("this browser is no longer supported")
+    );
+  });
+  let normalized = loginPage.text.toLowerCase();
+  if (normalized.includes("something went wrong") || normalized.includes("this browser is no longer supported")) {
+    throw new Error(`X rejected the embedded browser: ${loginPage.url} ${loginPage.text.slice(0, 500)}`);
+  }
+  let refuseCookies = loginPage.elements.find((element) =>
+    element.name.toLowerCase().includes("refuse non-essential cookies"),
+  );
+  if (!refuseCookies && normalized.includes("refuse non-essential cookies")) {
+    loginPage = await waitForXSnapshot(browser, xTab.id, (snapshot) =>
+      snapshot.elements.some((element) => element.name.toLowerCase().includes("refuse non-essential cookies")),
+    );
+    refuseCookies = loginPage.elements.find((element) =>
+      element.name.toLowerCase().includes("refuse non-essential cookies"),
+    );
+  }
+  if (refuseCookies) {
+    process.stdout.write(`BrowserHost: X cookie control ${JSON.stringify(refuseCookies)}.\n`);
+    loginPage = await browser.act(xTab.id, loginPage.revision, { type: "click", ref: refuseCookies.ref });
+    loginPage = await waitForXSnapshot(
+      browser,
+      xTab.id,
+      (snapshot) =>
+        !snapshot.text.toLowerCase().includes("refuse non-essential cookies") &&
+        snapshot.elements.some(
+          (element) => element.name.toLowerCase() === "sign in" || (element.tag === "input" && !element.disabled),
+        ),
+    );
+    normalized = loginPage.text.toLowerCase();
+  }
+  if (normalized.includes("something went wrong") || normalized.includes("this browser is no longer supported")) {
+    throw new Error(
+      `X rejected the embedded browser after cookie consent: ${loginPage.url} ${loginPage.text.slice(0, 500)}`,
+    );
+  }
+  if (!loginPage.elements.some((element) => element.tag === "input" && !element.disabled)) {
+    const signIn = loginPage.elements.find((element) => element.name.toLowerCase() === "sign in");
+    if (!signIn) throw new Error(`X did not show a sign-in control: ${loginPage.text.slice(0, 500)}`);
+    loginPage = await browser.act(xTab.id, loginPage.revision, { type: "click", ref: signIn.ref });
+    loginPage = await waitForXSnapshot(browser, xTab.id, (snapshot) =>
+      snapshot.elements.some((element) => element.tag === "input" && !element.disabled),
+    );
+  }
+  const identifier = loginPage.elements.find((element) => element.tag === "input" && !element.disabled);
+  if (!identifier) throw new Error("X did not show an account identifier field.");
+  process.stdout.write("BrowserHost: X login identifier step loaded.\n");
+}
+
+async function waitForXSnapshot(
+  browser: BrowserHost,
+  tabId: string,
+  predicate: (snapshot: Awaited<ReturnType<BrowserHost["snapshot"]>>) => boolean,
+): Promise<Awaited<ReturnType<BrowserHost["snapshot"]>>> {
+  const deadline = Date.now() + 20_000;
+  let snapshot = await browser.snapshot(tabId);
+  while (Date.now() < deadline) {
+    if (predicate(snapshot)) return snapshot;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    snapshot = await browser.snapshot(tabId);
+  }
+  throw new Error(`Timed out waiting for X: ${snapshot.url} ${snapshot.text.slice(0, 500)}`);
 }
 
 async function waitForGoogleSnapshot(

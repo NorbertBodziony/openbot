@@ -16,9 +16,9 @@ import type {
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { app, type BrowserWindow, type Session, session, type WebContents, WebContentsView } from "electron";
-import { embeddedBrowserUserAgent } from "./browser-identity";
+import { embeddedBrowserUserAgent, embeddedBrowserUserAgentForUrl } from "./browser-identity";
 import { isCloseBrowserTabShortcut, isGlobalSearchShortcut, isToggleDevToolsShortcut } from "./browser-shortcuts";
-import { persistentBrowserUrl, xLoginUrlForLanding } from "./browser-state";
+import { persistentBrowserUrl } from "./browser-state";
 import type { DynamicToolCallParams, DynamicToolResult } from "./protocol";
 import { isRecord } from "./protocol";
 
@@ -35,7 +35,6 @@ interface InternalTab {
   ownerBotId: string | null;
   revision: number;
   queue: Promise<unknown>;
-  xLoginRedirected: boolean;
   focusOnVisible: boolean;
 }
 
@@ -318,12 +317,7 @@ export class BrowserHost {
 
   async navigate(tabId: string, direction: BrowserNavigationDirection): Promise<void> {
     await this.#enqueue(tabId, async (tab) => {
-      const history = tab.view.webContents.navigationHistory;
-      if (direction === "back") {
-        if (history.canGoBack()) history.goBack();
-        return;
-      }
-      if (history.canGoForward()) history.goForward();
+      navigateHistory(tab.view.webContents, direction, this.#session.getUserAgent());
     });
   }
 
@@ -382,7 +376,11 @@ export class BrowserHost {
       tab.view.webContents.focus();
       try {
         if (!wasVisible) await delay(250);
-        await withTimeout(performAction(tab.view.webContents, action), 10_000, "Browser action timed out.");
+        await withTimeout(
+          performAction(tab.view.webContents, action, this.#session.getUserAgent()),
+          10_000,
+          "Browser action timed out.",
+        );
         await delay(50);
       } finally {
         if (!wasVisible) {
@@ -503,6 +501,7 @@ export class BrowserHost {
 
   #createTab(id: string, requestedUrl: string, ownerThreadId: string | null, ownerBotId: string | null): InternalTab {
     const view = this.#createView();
+    view.webContents.setUserAgent(embeddedBrowserUserAgentForUrl(this.#session.getUserAgent(), requestedUrl));
     this.#mountView(view);
     return {
       id,
@@ -512,7 +511,6 @@ export class BrowserHost {
       ownerBotId,
       revision: 0,
       queue: Promise.resolve(),
-      xLoginRedirected: false,
       focusOnVisible: false,
     };
   }
@@ -537,12 +535,10 @@ export class BrowserHost {
     this.#session.setUserAgent(userAgent, preferredBrowserLanguageCodes());
     this.#session.webRequest.onBeforeSendHeaders((details, callback) => {
       callback({
-        requestHeaders: browserRequestHeaders(details.requestHeaders, userAgent),
+        requestHeaders: browserRequestHeaders(details.requestHeaders),
       });
     });
-    this.#session.setPermissionRequestHandler((_webContents, _permission, callback) => {
-      callback(false);
-    });
+    this.#session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
     this.#session.setPermissionCheckHandler(() => false);
     this.#session.on("will-download", (_event, item) => {
       const safeName = basename(item.getFilename()).replace(/[^a-zA-Z0-9._ -]/g, "_");
@@ -582,7 +578,6 @@ export class BrowserHost {
     contents.on("did-stop-loading", () => {
       changed();
       void this.#syncViewBackground(tab);
-      void this.#redirectXLandingToLogin(tab);
     });
     contents.on("page-title-updated", changed);
     contents.on("did-navigate", (_event, url) => {
@@ -598,7 +593,19 @@ export class BrowserHost {
       this.#schedulePersist();
     });
     contents.on("will-navigate", (event, url) => {
-      if (!isAllowedMainUrl(url)) event.preventDefault();
+      if (!isAllowedMainUrl(url)) {
+        event.preventDefault();
+        return;
+      }
+      contents.setUserAgent(embeddedBrowserUserAgentForUrl(this.#session.getUserAgent(), url));
+    });
+    contents.on("will-redirect", (event) => {
+      if (!event.isMainFrame) return;
+      if (!isAllowedMainUrl(event.url)) {
+        event.preventDefault();
+        return;
+      }
+      contents.setUserAgent(embeddedBrowserUserAgentForUrl(this.#session.getUserAgent(), event.url));
     });
     contents.setWindowOpenHandler(({ url }) => {
       if (isAllowedMainUrl(url)) void this.open(url, tab.ownerThreadId, tab.ownerBotId);
@@ -622,18 +629,6 @@ export class BrowserHost {
     } catch {
       // Navigation can replace the document before its background is read.
     }
-  }
-
-  async #redirectXLandingToLogin(tab: InternalTab): Promise<void> {
-    if (tab.xLoginRedirected) return;
-    const currentUrl = tab.view.webContents.getURL();
-    const loginUrl = xLoginUrlForLanding(currentUrl);
-    if (!loginUrl) return;
-    await delay(1_000);
-    if (tab.xLoginRedirected || tab.view.webContents.getURL() !== currentUrl) return;
-    tab.xLoginRedirected = true;
-    tab.requestedUrl = loginUrl;
-    await tab.view.webContents.loadURL(loginUrl, browserLoadOptions()).catch(() => undefined);
   }
 
   async #readSnapshot(tab: InternalTab, revision: number): Promise<BrowserSnapshot> {
@@ -701,7 +696,10 @@ export class BrowserHost {
 
   #mountView(view: WebContentsView, window = this.#window): void {
     const currentWindow = this.#mountedViews.get(view);
-    if (currentWindow === window) return;
+    if (currentWindow === window) {
+      window.contentView.addChildView(view);
+      return;
+    }
     view.setVisible(false);
     if (currentWindow && !currentWindow.isDestroyed()) currentWindow.contentView.removeChildView(view);
     view.setBounds({ x: 0, y: 0, width: 1200, height: 800 });
@@ -885,13 +883,8 @@ function browserLoadOptions(): { extraHeaders: string } {
   return { extraHeaders: "Cache-Control: no-cache\nPragma: no-cache" };
 }
 
-function browserRequestHeaders(
-  requestHeaders: Record<string, string>,
-  sessionUserAgent: string,
-): Record<string, string> {
-  const userAgent = embeddedBrowserUserAgent(sessionUserAgent);
+function browserRequestHeaders(requestHeaders: Record<string, string>): Record<string, string> {
   const headers = { ...requestHeaders };
-  setRequestHeader(headers, "User-Agent", userAgent);
   setRequestHeader(headers, "Accept-Language", preferredBrowserLanguages());
   return headers;
 }
@@ -1005,11 +998,31 @@ function currentTabUrl(tab: InternalTab): string {
 function snapshotScript(revision: number): string {
   return `(() => {
     const revision = ${revision};
+    const isHitTestVisible = (node, rect) => {
+      const left = Math.max(0, rect.left);
+      const right = Math.min(innerWidth, rect.right);
+      const top = Math.max(0, rect.top);
+      const bottom = Math.min(innerHeight, rect.bottom);
+      if (left >= right || top >= bottom) return true;
+      const insetX = Math.min(4, (right - left) / 4);
+      const insetY = Math.min(4, (bottom - top) / 4);
+      const points = [
+        [(left + right) / 2, (top + bottom) / 2],
+        [left + insetX, top + insetY],
+        [right - insetX, top + insetY],
+        [left + insetX, bottom - insetY],
+        [right - insetX, bottom - insetY],
+      ];
+      return points.some(([x, y]) => {
+        const hit = document.elementFromPoint(x, y);
+        return hit === node || (hit instanceof Node && node.contains(hit));
+      });
+    };
     const nodes = [...document.querySelectorAll('a,button,input,textarea,select,[role],[contenteditable="true"],[tabindex]')]
       .filter((node) => {
         const style = getComputedStyle(node);
         const rect = node.getBoundingClientRect();
-        return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+        return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0 && isHitTestVisible(node, rect);
       })
       .slice(0, 500);
     document.querySelectorAll('[data-openbot-ref]').forEach((node) => node.removeAttribute('data-openbot-ref'));
@@ -1034,7 +1047,7 @@ function snapshotScript(revision: number): string {
   })()`;
 }
 
-async function performAction(contents: WebContents, action: BrowserAction): Promise<void> {
+async function performAction(contents: WebContents, action: BrowserAction, sessionUserAgent: string): Promise<void> {
   switch (action.type) {
     case "click": {
       await withDevToolsDebugger(contents, async () => {
@@ -1045,9 +1058,28 @@ async function performAction(contents: WebContents, action: BrowserAction): Prom
             node.scrollIntoView({ block: 'center', inline: 'center' });
             node.focus();
             const rect = node.getBoundingClientRect();
+            const left = Math.max(0, rect.left);
+            const right = Math.min(innerWidth, rect.right);
+            const top = Math.max(0, rect.top);
+            const bottom = Math.min(innerHeight, rect.bottom);
+            if (left >= right || top >= bottom) throw new Error('Element is outside the visible page.');
+            const insetX = Math.min(4, (right - left) / 4);
+            const insetY = Math.min(4, (bottom - top) / 4);
+            const points = [
+              [(left + right) / 2, (top + bottom) / 2],
+              [left + insetX, top + insetY],
+              [right - insetX, top + insetY],
+              [left + insetX, bottom - insetY],
+              [right - insetX, bottom - insetY],
+            ];
+            const point = points.find(([x, y]) => {
+              const hit = document.elementFromPoint(x, y);
+              return hit === node || (hit instanceof Node && node.contains(hit));
+            });
+            if (!point) throw new Error('Element is covered by another page layer. Take a fresh snapshot.');
             return {
-              x: Math.round(rect.left + rect.width / 2),
-              y: Math.round(rect.top + rect.height / 2),
+              x: Math.round(point[0]),
+              y: Math.round(point[1]),
               direct: node instanceof HTMLAnchorElement && node.hasAttribute('download'),
             };
           })()`,
@@ -1121,14 +1153,24 @@ async function performAction(contents: WebContents, action: BrowserAction): Prom
       );
       return;
     case "back":
-      if (contents.navigationHistory.canGoBack()) contents.navigationHistory.goBack();
+      navigateHistory(contents, "back", sessionUserAgent);
       return;
     case "forward":
-      if (contents.navigationHistory.canGoForward()) contents.navigationHistory.goForward();
+      navigateHistory(contents, "forward", sessionUserAgent);
       return;
     case "reload":
       contents.reload();
   }
+}
+
+function navigateHistory(contents: WebContents, direction: BrowserNavigationDirection, sessionUserAgent: string): void {
+  const history = contents.navigationHistory;
+  const offset = direction === "back" ? -1 : 1;
+  if (!history.canGoToOffset(offset)) return;
+  const entry = history.getEntryAtIndex(history.getActiveIndex() + offset);
+  if (!entry?.url) return;
+  contents.setUserAgent(embeddedBrowserUserAgentForUrl(sessionUserAgent, entry.url));
+  history.goToOffset(offset);
 }
 
 function isInputPoint(value: unknown): value is { x: number; y: number; direct?: boolean } {

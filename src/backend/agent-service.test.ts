@@ -358,6 +358,9 @@ describe.sequential("AgentService", () => {
       expect(params.developerInstructions).toContain(
         "You may list, read, create, edit, move, and delete files and run local commands in both directories.",
       );
+      expect(params.developerInstructions).toContain("For every browser task");
+      expect(params.developerInstructions).toContain("Use the installed Computer Use plugin only");
+      expect(params.developerInstructions).toContain("When you use openbot_browser");
       expect(params.developerInstructions).toContain("openbot.create_routine");
       expect(params.developerInstructions).toContain("openbot.attach_files_to_response");
       expect(params.developerInstructions).toContain("sadness, disappointment, frustration, loneliness");
@@ -783,6 +786,114 @@ describe.sequential("AgentService", () => {
       id: "approval-permissions",
       result: { permissions: {}, scope: "turn" },
     });
+  });
+
+  it("surfaces Computer Use app access elicitations and returns the user's persistence choice", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider);
+      clients.set(provider, client);
+      return client;
+    });
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Use Telegram" });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const turnId = events.find((event) => event.type === "turn-started")?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The Computer Use test turn did not start.");
+
+    client.emit("request", {
+      method: "mcpServer/elicitation/request",
+      id: "computer-use-always",
+      params: {
+        threadId,
+        turnId,
+        serverName: "computer-use",
+        mode: "openai/form",
+        _meta: { persist: ["always"] },
+        message: "Allow ChatGPT to use Telegram?",
+        requestedSchema: { type: "object", properties: {} },
+      },
+    });
+
+    await waitFor(() => events.some((event) => event.type === "prompt"));
+    expect(client.responses).toHaveLength(0);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "prompt",
+        requestId: "computer-use-always",
+        botId: "chief",
+        questions: [
+          expect.objectContaining({
+            question: "Allow ChatGPT to use Telegram?",
+            options: [
+              expect.objectContaining({ label: "Allow once" }),
+              expect.objectContaining({ label: "Always allow" }),
+              expect.objectContaining({ label: "Don't allow" }),
+            ],
+          }),
+        ],
+      }),
+    );
+
+    await service.respondToPrompt({
+      requestId: "computer-use-always",
+      answers: { "mcp-elicitation-decision": ["Always allow"] },
+    });
+    expect(client.responses.at(-1)).toEqual({
+      id: "computer-use-always",
+      result: { action: "accept", content: {}, _meta: { persist: "always" } },
+    });
+
+    client.emit("request", {
+      method: "mcpServer/elicitation/request",
+      id: "computer-use-decline",
+      params: {
+        threadId,
+        turnId,
+        serverName: "computer-use",
+        mode: "form",
+        _meta: { persist: ["always"] },
+        message: "Allow ChatGPT to use Preview?",
+        requestedSchema: { type: "object", properties: {} },
+      },
+    });
+    await waitFor(() => events.filter((event) => event.type === "prompt").length === 2);
+    await service.respondToPrompt({
+      requestId: "computer-use-decline",
+      answers: { "mcp-elicitation-decision": ["Don't allow"] },
+    });
+    expect(client.responses.at(-1)).toEqual({
+      id: "computer-use-decline",
+      result: { action: "decline", content: null, _meta: null },
+    });
+
+    client.emit("request", {
+      method: "mcpServer/elicitation/request",
+      id: "unsupported-elicitation",
+      params: {
+        threadId,
+        turnId,
+        serverName: "other-plugin",
+        mode: "form",
+        _meta: null,
+        message: "Enter a value.",
+        requestedSchema: { type: "object", properties: {} },
+      },
+    });
+    await waitFor(() => client.responses.some((response) => response.id === "unsupported-elicitation"));
+    expect(client.responses.at(-1)).toEqual({
+      id: "unsupported-elicitation",
+      result: { action: "decline", content: null, _meta: null },
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "error", code: "mcp_safety_handoff", botId: "chief" }),
+    );
   });
 
   it("provides a default-mode ask_user tool that resolves through the Questions card", async () => {
@@ -3086,6 +3197,27 @@ describe.sequential("AgentService", () => {
     expect(events).toContainEqual(expect.objectContaining({ type: "error", code: "delivery_start_unconfirmed" }));
   });
 
+  it("keeps a completed turn idle when its start response arrives after lifecycle events", async () => {
+    process.env.OPENBOT_FAKE_AUTO_COMPLETE = "Finished before the start response";
+    process.env.OPENBOT_FAKE_TURN_START_RESPONSE_DELAY = "100";
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+
+    await service.sendMessage({ botId: "chief", text: "Run exactly once" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "completed");
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    const delivery = service.listQueue("chief").deliveries[0];
+    if (!delivery?.turnId) throw new Error("The completed delivery did not have a turn.");
+    expect((await service.readConversation("chief")).activeTurnId).toBeNull();
+    expect(
+      store.database.connection
+        .prepare("SELECT status, completed_at FROM projection_turns WHERE turn_id = ?")
+        .get(delivery.turnId),
+    ).toMatchObject({ status: "completed", completed_at: expect.any(String) });
+  });
+
   it("resumes stored threads and does not replay an uncertain running delivery", async () => {
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());
@@ -3295,6 +3427,12 @@ describe.sequential("AgentService", () => {
     const client = clients.get("codex");
     const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
     if (!running?.turnId || !client || !threadId) throw new Error("The routine turn did not start.");
+    const routineInput = firstInputText(client.requests.find((request) => request.method === "turn/start")?.params);
+    expect(routineInput).toContain("Execute one run of an existing OpenBot routine now.");
+    expect(routineInput).toContain("Run type: manual Test run");
+    expect(routineInput).toContain("Do not create, update, delete, list, or test routines during this run.");
+    expect(routineInput).toContain("Report the action and result");
+    expect(routineInput).toContain("Check the current queue health.");
     client.emit("request", {
       id: "routine-approval",
       method: "item/commandExecution/requestApproval",
@@ -3362,6 +3500,41 @@ describe.sequential("AgentService", () => {
         ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
         .some((run) => run.status === "interrupted"),
     );
+  });
+
+  it("persists a completed routine turn as terminal", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(
+      store,
+      mailbox,
+      fakeBrowser(),
+      null,
+      30_000,
+      "codex",
+      (provider) => new FakeAgentClient(provider),
+    );
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    const routine = service.createRoutine({
+      botId: bot.id,
+      name: "Queue health",
+      instruction: "Check the current queue health.",
+      active: true,
+      timezone: "Europe/Warsaw",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+
+    await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await waitFor(() => service?.listQueue(bot.id).deliveries[0]?.status === "completed");
+
+    const turnId = service.listQueue(bot.id).deliveries[0]?.turnId;
+    if (!turnId) throw new Error("The completed routine turn did not start.");
+    expect(
+      store.database.connection
+        .prepare("SELECT status, completed_at FROM projection_turns WHERE turn_id = ?")
+        .get(turnId),
+    ).toMatchObject({ status: "completed", completed_at: expect.any(String) });
+    expect((await service.readConversation(bot.id)).activeTurnId).toBeNull();
   });
 
   it("queues only the last missed run after sleep and does not duplicate it after restart", async () => {
