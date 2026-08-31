@@ -194,8 +194,16 @@ function connectSignal(state: PeerState): void {
       })
       .catch((error) => failPeer(state, error));
   });
-  socket.addEventListener("close", () => {
-    if (state.socket === socket) state.socket = null;
+  socket.addEventListener("close", (event) => {
+    if (state.socket !== socket) return;
+    state.socket = null;
+    if (event.code === 4000) {
+      state.closed = true;
+      disconnectPeerConnection(state);
+      peers.delete(state.id);
+      post({ type: "peer-disconnected", peerId: state.id });
+      return;
+    }
     if (!state.closed) scheduleSignalReconnect(state);
   });
   socket.addEventListener("error", () => socket.close());
