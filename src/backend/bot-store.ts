@@ -288,6 +288,10 @@ export class BotStore {
   }
 
   async ensureThreadId(id: string): Promise<string> {
+    return this.ensureThreadIdNow(id);
+  }
+
+  ensureThreadIdNow(id: string): string {
     const bot = this.#requireBot(id);
     if (bot.threadId) return bot.threadId;
     bot.threadId = `openbot-thread-${randomUUID()}`;

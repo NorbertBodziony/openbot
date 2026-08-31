@@ -14,6 +14,7 @@ import {
   type BrowserControlState,
   type BrowserTab,
   isAgentEvent,
+  routineConversationEvent,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -2679,6 +2680,83 @@ describe.sequential("AgentService", () => {
     });
     expect(service.listRoutines("chief")).toEqual([]);
     expect(service.listRoutines("design")).toEqual([expect.objectContaining({ id: otherRoutine.id, active: true })]);
+    const ownEvents = (await service.readConversation("chief")).messages.flatMap((message) => {
+      const event = routineConversationEvent(message);
+      return event ? [{ ...event, turnId: message.turnId }] : [];
+    });
+    expect(ownEvents).toEqual([
+      expect.objectContaining({ action: "created", routineId: ownRoutine.id, turnId: expect.any(String) }),
+      expect.objectContaining({ action: "deleted", routineId: ownRoutine.id, turnId: expect.any(String) }),
+    ]);
+    const otherEvents = (await service.readConversation("design")).messages.flatMap((message) => {
+      const event = routineConversationEvent(message);
+      return event ? [{ ...event, turnId: message.turnId }] : [];
+    });
+    expect(otherEvents).toEqual([
+      expect.objectContaining({ action: "created", routineId: otherRoutine.id, turnId: undefined }),
+      expect.objectContaining({ action: "updated", routineId: otherRoutine.id, turnId: undefined }),
+    ]);
+  });
+
+  it("persists routine lifecycle markers without adding unread or search results", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+
+    const created = service.createRoutine({
+      botId: bot.id,
+      name: "Morning brief",
+      instruction: "Prepare the daily brief.",
+      active: true,
+      timezone: "UTC",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    const updated = service.updateRoutine({
+      botId: bot.id,
+      routineId: created.id,
+      name: "Updated morning brief",
+    });
+    await service.deleteRoutine({ botId: bot.id, routineId: created.id });
+
+    const conversation = await service.readConversation(bot.id);
+    expect(conversation.messages.flatMap((message) => routineConversationEvent(message) ?? [])).toEqual([
+      { action: "created", routineId: created.id, routineName: "Morning brief" },
+      { action: "updated", routineId: updated.id, routineName: "Updated morning brief" },
+      { action: "deleted", routineId: updated.id, routineName: "Updated morning brief" },
+    ]);
+    expect((await service.readConversationPageFor(bot.id, "member-1")).readState?.unreadCount).toBe(0);
+    expect(service.searchConversationMessages("morning brief", bot.id).total).toBe(0);
+
+    await service.stop();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    expect(
+      (await service.readConversation(bot.id)).messages.flatMap((message) => routineConversationEvent(message) ?? []),
+    ).toHaveLength(3);
+  });
+
+  it("rolls back a routine mutation when its transcript marker cannot persist", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    vi.spyOn(store.database, "persistConversation").mockImplementationOnce(() => {
+      throw new Error("conversation persistence failed");
+    });
+
+    expect(() =>
+      service?.createRoutine({
+        botId: bot.id,
+        name: "Atomic routine",
+        instruction: "Do not persist half of this change.",
+        active: true,
+        timezone: "UTC",
+        schedule: { kind: "daily", time: "09:00" },
+      }),
+    ).toThrow("conversation persistence failed");
+    expect(service.listRoutines(bot.id)).toEqual([]);
+    expect((await service.readConversation(bot.id)).messages).toEqual([]);
   });
 
   it("rejects invalid or cross-agent routine tool mutations", async () => {

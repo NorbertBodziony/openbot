@@ -11,7 +11,12 @@ import type {
   ConversationSearchPage,
   ConversationSnapshot,
 } from "@openbot/contracts/ipc";
-import { isAgentProvider, isConversationMessage, providerForLegacyModel } from "@openbot/contracts/ipc";
+import {
+  isAgentProvider,
+  isConversationMessage,
+  providerForLegacyModel,
+  ROUTINE_EVENT_ITEM_TYPE_PREFIX,
+} from "@openbot/contracts/ipc";
 import { type DynamicRecord, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { migrateOpenBotDatabase } from "./openbot-database-schema";
 
@@ -485,6 +490,7 @@ export class OpenBotDatabase {
            JOIN projection_threads thread ON thread.thread_id = message.thread_id
            WHERE LOWER(json_extract(message.message_json, '$.text')) LIKE ? ESCAPE '\\'
              AND COALESCE(json_extract(message.message_json, '$.delivery.status'), '') NOT IN ('queued', 'cancelled')
+             AND COALESCE(message.item_type, '') NOT LIKE '${ROUTINE_EVENT_ITEM_TYPE_PREFIX}%'
              ${filter}`,
         )
         .get(...parameters),
@@ -498,6 +504,7 @@ export class OpenBotDatabase {
            JOIN projection_threads thread ON thread.thread_id = message.thread_id
            WHERE LOWER(json_extract(message.message_json, '$.text')) LIKE ? ESCAPE '\\'
              AND COALESCE(json_extract(message.message_json, '$.delivery.status'), '') NOT IN ('queued', 'cancelled')
+             AND COALESCE(message.item_type, '') NOT LIKE '${ROUTINE_EVENT_ITEM_TYPE_PREFIX}%'
              ${filter}
            ORDER BY message.created_at DESC, message.ordinal DESC, message.message_id DESC
            LIMIT ? OFFSET ?`,

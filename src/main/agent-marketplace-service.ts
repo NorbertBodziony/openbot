@@ -50,15 +50,21 @@ interface AgentMarketplaceAgents {
     avatarHue: MarketplaceAgentDetail["avatarHue"];
   }): Promise<BotSummary>;
   setAvatar(botId: string, image: AvatarImageInput | null): Promise<BotSummary>;
-  createRoutine(input: {
-    botId: string;
-    name: string;
-    instruction: string;
-    active: boolean;
-    timezone: string;
-    schedule: RoutineSchedule;
-  }): { id: string };
-  deleteRoutine(input: { botId: string; routineId: string }): Promise<void>;
+  createRoutine(
+    input: {
+      botId: string;
+      name: string;
+      instruction: string;
+      active: boolean;
+      timezone: string;
+      schedule: RoutineSchedule;
+    },
+    options?: { recordConversationEvent?: boolean },
+  ): { id: string };
+  deleteRoutine(
+    input: { botId: string; routineId: string },
+    options?: { recordConversationEvent?: boolean },
+  ): Promise<void>;
   setMarketplaceSource(botId: string, source: NonNullable<BotSummary["marketplaceSource"]>): BotSummary;
   deleteBot(botId: string): Promise<void>;
 }
@@ -183,14 +189,17 @@ export class AgentMarketplaceService {
         await this.skills.installVersion({ botId: bot.id, skillId: skill.skillId, versionId: skill.versionId });
       }
       for (const routine of detail.routines) {
-        const created = this.agents.createRoutine({
-          botId: bot.id,
-          name: routine.name,
-          instruction: routine.instruction,
-          active: routine.active,
-          timezone: input.timezone,
-          schedule: localSchedule(routine.schedule),
-        });
+        const created = this.agents.createRoutine(
+          {
+            botId: bot.id,
+            name: routine.name,
+            instruction: routine.instruction,
+            active: routine.active,
+            timezone: input.timezone,
+            schedule: localSchedule(routine.schedule),
+          },
+          { recordConversationEvent: false },
+        );
         createdRoutineIds.push(created.id);
       }
       if (existing) {
@@ -216,13 +225,17 @@ export class AgentMarketplaceService {
         routineIds: createdRoutineIds,
       });
       for (const routineId of existing?.marketplaceSource?.routineIds ?? []) {
-        await this.agents.deleteRoutine({ botId: bot.id, routineId }).catch(() => undefined);
+        await this.agents
+          .deleteRoutine({ botId: bot.id, routineId }, { recordConversationEvent: false })
+          .catch(() => undefined);
       }
     } catch (error) {
       if (existing) {
         await Promise.all(
           createdRoutineIds.map((routineId) =>
-            this.agents.deleteRoutine({ botId: bot.id, routineId }).catch(() => undefined),
+            this.agents
+              .deleteRoutine({ botId: bot.id, routineId }, { recordConversationEvent: false })
+              .catch(() => undefined),
           ),
         );
       } else {
