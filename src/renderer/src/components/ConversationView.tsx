@@ -896,6 +896,7 @@ function createConversationViewScope(props: ConversationProps) {
   async function startVoiceRecording(): Promise<void> {
     const botId = props.bot?.id;
     if (!botId || voicePhase() !== "idle") return;
+    resources.voiceSubmitRequested = false;
     setComposerError(null);
     setVoicePhase("preparing");
     setVoiceModelProgress(0);
@@ -953,9 +954,11 @@ function createConversationViewScope(props: ConversationProps) {
   async function finishVoiceRecording(mimeType: string): Promise<void> {
     const targetBotId = resources.voiceBotId;
     const chunks = resources.voiceChunks;
+    const submitAfterTranscription = resources.voiceSubmitRequested;
     resources.voiceRecorder = undefined;
     resources.voiceBotId = undefined;
     resources.voiceChunks = [];
+    resources.voiceSubmitRequested = false;
     if (!targetBotId || resources.voiceDisposed) return;
     const analytics = desktopAnalytics.scope();
     const audioDurationSeconds = voiceElapsedSeconds();
@@ -971,14 +974,13 @@ function createConversationViewScope(props: ConversationProps) {
         duration_ms: Math.max(0, Math.round(performance.now() - startedAt)),
       });
       if (resources.voiceDisposed || !props.bots.some((bot) => bot.id === targetBotId)) return;
-      setDrafts((current) => {
-        const draft = current[targetBotId] ?? EMPTY_DRAFT;
-        return {
-          ...current,
-          [targetBotId]: { ...draft, text: appendVoiceTranscript(draft.text, result.text) },
-        };
-      });
-      if (props.bot?.id === targetBotId) setComposerFocusRequest((current) => current + 1);
+      const draft = drafts()[targetBotId] ?? EMPTY_DRAFT;
+      const transcribedDraft = { ...draft, text: appendVoiceTranscript(draft.text, result.text) };
+      setDrafts((current) => ({ ...current, [targetBotId]: transcribedDraft }));
+      if (props.bot?.id === targetBotId) {
+        if (submitAfterTranscription) await submitMessage(transcribedDraft);
+        else setComposerFocusRequest((current) => current + 1);
+      }
     } catch (error) {
       analytics.track("voice_transcription", {
         result: "failed",
@@ -1630,16 +1632,16 @@ function createConversationViewScope(props: ConversationProps) {
     );
   }
 
-  async function submitMessage(override?: string) {
+  async function submitMessage(draftOverride?: ComposerDraft) {
     if (selectionSending()) return;
-    if (!override && editingDeliveryId()) {
+    if (!draftOverride && editingDeliveryId()) {
       await saveQueuedMessageEdit();
       return;
     }
     const botId = props.bot?.id;
-    const draft = currentDraft();
-    const text = override ?? expandComposerMentions(draft.text);
-    const attachments = override ? [] : draft.attachments;
+    const draft = draftOverride ?? currentDraft();
+    const text = expandComposerMentions(draft.text);
+    const attachments = draft.attachments;
     if (!botId || submitting() || (!text.trim() && attachments.length === 0)) return;
     stopTeamTyping();
     stickToLatest = true;
@@ -1648,12 +1650,21 @@ function createConversationViewScope(props: ConversationProps) {
     const sent = await props.onSendMessage(
       text,
       attachments.map((item) => item.id),
-      override ? null : draft.replyToMessageId,
+      draft.replyToMessageId,
     );
     setSubmitting(false);
     if (sent) {
       setDrafts((current) => ({ ...current, [botId]: EMPTY_DRAFT }));
     }
+  }
+
+  function submitComposer(): void {
+    if (voicePhase() === "recording") {
+      resources.voiceSubmitRequested = true;
+      stopVoiceRecording();
+      return;
+    }
+    void submitMessage();
   }
 
   async function sendSelectionInstruction(messageId: string, body: string): Promise<boolean> {
@@ -2213,7 +2224,7 @@ function createConversationViewScope(props: ConversationProps) {
     stopVoiceRecording,
     stopVoiceStream,
     streamingAgentMessage,
-    submitMessage,
+    submitComposer,
     submitting,
     unreadDividerVisible,
     unreadMessagesDivider,
@@ -2861,7 +2872,7 @@ export function ConversationComposer() {
     showComposerActions,
     startVoiceRecording,
     stopVoiceRecording,
-    submitMessage,
+    submitComposer,
     submitting,
     unreferencedDraftAttachments,
     updateCurrentDraft,
@@ -2979,7 +2990,7 @@ export function ConversationComposer() {
                 updateCurrentDraft({ text });
                 updateTeamTyping(text);
               }}
-              onSubmit={() => void submitMessage()}
+              onSubmit={submitComposer}
               onOpenAttachment={(attachment) =>
                 attachment.previewKind === "none"
                   ? attachmentAction(attachment, "open")
@@ -3105,9 +3116,22 @@ export function ConversationComposer() {
                     variant="ghost"
                     type="button"
                     class="voice-button"
-                    aria-label={editingDeliveryId() ? "Save queued message" : "Send message"}
-                    disabled={submitting() || selectionSending() || !agentReady()}
-                    onClick={() => void submitMessage()}
+                    aria-label={
+                      editingDeliveryId()
+                        ? "Save queued message"
+                        : voicePhase() === "recording"
+                          ? "Send voice message"
+                          : "Send message"
+                    }
+                    disabled={
+                      submitting() ||
+                      selectionSending() ||
+                      !agentReady() ||
+                      voicePhase() === "preparing" ||
+                      voicePhase() === "requesting" ||
+                      voicePhase() === "transcribing"
+                    }
+                    onClick={submitComposer}
                   >
                     {submitting() ? "…" : "↑"}
                   </Button>

@@ -36,6 +36,7 @@ interface ConversationResources {
   voiceElapsedTimer: ReturnType<typeof setInterval> | undefined;
   voiceChunks: Blob[];
   voiceBotId: string | undefined;
+  voiceSubmitRequested: boolean;
   voiceDisposed: boolean;
   filePreviewRequestGeneration: number;
 }
@@ -92,6 +93,7 @@ export function createConversationController(props: Pick<ConversationProps, "onT
     voiceElapsedTimer: undefined,
     voiceChunks: [],
     voiceBotId: undefined,
+    voiceSubmitRequested: false,
     voiceDisposed: false,
     filePreviewRequestGeneration: 0,
   };
