@@ -276,7 +276,11 @@ export class HostedSiteService {
     }
     const files = parseManifest(deployment.manifest_json);
     const file = expectedFile(files, path);
-    const contentLength = Number(request.headers.get("Content-Length"));
+    const contentLengthHeader = request.headers.get("Content-Length");
+    if (contentLengthHeader === null) {
+      throw new HostedSiteInputError(400, "size_mismatch", "The file size does not match the manifest.");
+    }
+    const contentLength = Number(contentLengthHeader);
     if (!Number.isSafeInteger(contentLength) || contentLength !== file.size) {
       throw new HostedSiteInputError(400, "size_mismatch", "The file size does not match the manifest.");
     }
@@ -286,7 +290,8 @@ export class HostedSiteService {
     }
     if (!request.body) throw new HostedSiteInputError(400, "missing_file", "The file body is missing.");
     const key = assetKey(deployment.site_id, deployment.id, file.path);
-    await this.bucket.put(key, request.body, { httpMetadata: { contentType: file.mimeType } });
+    const body = await readUploadBody(request.body, file.size);
+    await this.bucket.put(key, body, { httpMetadata: { contentType: file.mimeType } });
     const stored = await this.bucket.head(key);
     if (!stored || stored.size !== file.size) {
       await this.bucket.delete(key);
@@ -394,10 +399,11 @@ export class HostedSiteService {
       this.database
         .prepare(
           `UPDATE site_deployments SET status = 'abandoned'
-           WHERE site_id = ? AND status IN ('uploading', 'activating')
+           WHERE site_id = ? AND status IN ('uploading', 'activating', 'active', 'superseded')
+             AND EXISTS (SELECT 1 FROM hosted_sites WHERE id = ? AND status = 'deleted')
            RETURNING id`,
         )
-        .bind(site.id),
+        .bind(site.id, site.id),
     ];
     if (site.status !== "deleted") {
       statements.push(
@@ -409,10 +415,7 @@ export class HostedSiteService {
       );
     }
     const results = await this.database.batch(statements);
-    const deploymentIds = new Set([
-      ...(site.current_deployment_id ? [site.current_deployment_id] : []),
-      ...deploymentResultIds(results[1]),
-    ]);
+    const deploymentIds = deploymentResultIds(results[1]);
     try {
       await this.publishAuthoritativeRoute(site.id);
       await this.bucket.delete(blockKey(site.hostname));
@@ -517,6 +520,20 @@ export class HostedSiteService {
       abandonedUploads += 1;
       await this.deleteDeployment(upload.site_id, upload.id);
     }
+    const unsyncedSites = await this.database
+      .prepare(
+        `SELECT id, hostname FROM hosted_sites
+         WHERE status IN ('active', 'blocked', 'deleted', 'expired') AND route_synced_at IS NULL LIMIT 50`,
+      )
+      .all<{ id: string; hostname: string }>();
+    for (const site of unsyncedSites.results) {
+      const current = await this.siteById(site.id);
+      if (!current) continue;
+      if (current.status === "blocked") {
+        await this.bucket.put(blockKey(site.hostname), "blocked", { httpMetadata: { contentType: "text/plain" } });
+      }
+      await this.publishAuthoritativeRoute(site.id);
+    }
     const obsoleteDeployments = await this.database
       .prepare(
         `SELECT id, site_id FROM site_deployments
@@ -525,17 +542,6 @@ export class HostedSiteService {
       .all<{ id: string; site_id: string }>();
     for (const deployment of obsoleteDeployments.results) {
       await this.deleteDeployment(deployment.site_id, deployment.id);
-    }
-    const unsyncedBlocks = await this.database
-      .prepare(
-        `SELECT id, hostname FROM hosted_sites
-         WHERE status = 'blocked' AND expires_at > ? AND route_synced_at IS NULL LIMIT 50`,
-      )
-      .bind(now)
-      .all<{ id: string; hostname: string }>();
-    for (const site of unsyncedBlocks.results) {
-      await this.bucket.put(blockKey(site.hostname), "blocked", { httpMetadata: { contentType: "text/plain" } });
-      await this.publishAuthoritativeRoute(site.id);
     }
     await this.database
       .prepare(
@@ -702,21 +708,26 @@ export class HostedSiteService {
     if (results[3].meta.changes !== 1) {
       const currentSite = await this.requireOwnedSite(userId, site.id, true);
       const currentDeployment = await this.requireDeployment(userId, deployment.id);
-      await this.abandonDeployment(currentDeployment);
-      if (currentSite.status !== "uploading") await this.publishAuthoritativeRoute(site.id);
-      await this.deleteDeployment(site.id, deployment.id);
-      if (currentSite.status !== "uploading" && currentSite.status !== "active")
-        throw inactiveSiteError(currentSite.status);
-      if (currentDeployment.upload_expires_at <= now && currentDeployment.status !== "active") {
-        throw new HostedSiteInputError(409, "upload_expired", "This upload session has expired.");
-      }
-      if (currentSite.status === "active" && (!currentSite.expires_at || currentSite.expires_at <= now)) {
-        throw inactiveSiteError("expired");
-      }
-      if ((await this.activeSiteSlotCount(userId, site.id, now)) >= HOSTED_SITE_LIMITS.activeSites) {
-        throw new HostedSiteInputError(409, "site_limit", "This account already has 10 active sites.");
-      }
-      if (currentSite.current_deployment_id !== deployment.id || currentDeployment.status !== "active") {
+      const alreadyActive =
+        currentSite.status === "active" &&
+        currentSite.current_deployment_id === deployment.id &&
+        currentDeployment.status === "active";
+      if (!alreadyActive) {
+        await this.abandonDeployment(currentDeployment);
+        if (currentSite.status !== "uploading") await this.publishAuthoritativeRoute(site.id);
+        await this.deleteDeployment(site.id, deployment.id);
+        if (currentSite.status !== "uploading" && currentSite.status !== "active") {
+          throw inactiveSiteError(currentSite.status);
+        }
+        if (currentDeployment.upload_expires_at <= now) {
+          throw new HostedSiteInputError(409, "upload_expired", "This upload session has expired.");
+        }
+        if (currentSite.status === "active" && (!currentSite.expires_at || currentSite.expires_at <= now)) {
+          throw inactiveSiteError("expired");
+        }
+        if ((await this.activeSiteSlotCount(userId, site.id, now)) >= HOSTED_SITE_LIMITS.activeSites) {
+          throw new HostedSiteInputError(409, "site_limit", "This account already has 10 active sites.");
+        }
         throw new HostedSiteInputError(409, "activation_superseded", "A newer site deployment is active.");
       }
     }
@@ -1048,6 +1059,32 @@ function parseManifest(value: string): HostedSiteFileManifest[] {
     throw new Error("The stored site manifest is invalid.");
   }
   return parsed.map((file) => ({ path: file.path, size: file.size, mimeType: file.mimeType }));
+}
+
+async function readUploadBody(body: ReadableStream<Uint8Array>, expectedSize: number): Promise<Uint8Array> {
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalSize = 0;
+  while (true) {
+    const result = await reader.read();
+    if (result.done) break;
+    totalSize += result.value.byteLength;
+    if (totalSize > expectedSize) {
+      await reader.cancel().catch(() => undefined);
+      throw new HostedSiteInputError(400, "size_mismatch", "The file size does not match the manifest.");
+    }
+    chunks.push(result.value);
+  }
+  if (totalSize !== expectedSize) {
+    throw new HostedSiteInputError(400, "size_mismatch", "The file size does not match the manifest.");
+  }
+  const combined = new Uint8Array(totalSize);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return combined;
 }
 
 function isStoredManifestFile(value: unknown): value is HostedSiteFileManifest {

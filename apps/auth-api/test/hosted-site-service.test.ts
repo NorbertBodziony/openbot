@@ -111,6 +111,100 @@ describe("hosted site control plane", () => {
     expect(initialDeployment).toMatchObject({ status: "superseded", objects_deleted_at: expect.any(Number) });
   });
 
+  it("keeps the active objects when two requests finalize the same authorized upload", async () => {
+    const fixture = serviceFixture();
+    const upload = await fixture.service.createUpload("alice", uploadRequest(), "concurrent-same-upload");
+    await uploadIndex(fixture.service, "alice", upload.uploadId);
+    const pause = fixture.database.pauseNextBatchContaining("UPDATE hosted_sites SET status = 'active'");
+    const firstActivation = fixture.service.activate("alice", upload.uploadId, "concurrent-activate-first");
+    await pause.started;
+    const secondActivation = await fixture.service.activate("alice", upload.uploadId, "concurrent-activate-second");
+    pause.resume();
+    const firstResult = await firstActivation;
+
+    expect(firstResult.id).toBe(secondActivation.id);
+    expect(fixture.bucket.keys()).toContain(`sites/${firstResult.id}/deployments/${upload.uploadId}/index.html`);
+    expect(await fixture.bucket.route(firstResult.hostname)).toMatchObject({
+      status: "active",
+      deploymentId: upload.uploadId,
+    });
+  });
+
+  it("rejects missing or false content lengths before an oversized body reaches R2", async () => {
+    const fixture = serviceFixture();
+    const upload = await fixture.service.createUpload(
+      "alice",
+      uploadRequest({ files: [{ path: "index.html", size: 0, mimeType: "text/html" }] }),
+      "oversized-upload",
+    );
+    const request = (headers: HeadersInit) =>
+      new Request("https://openbot.run/v1/sites/upload", {
+        method: "PUT",
+        headers,
+        body: "oversized",
+      });
+
+    await expect(
+      fixture.service.uploadFile("alice", upload.uploadId, "index.html", request({ "Content-Type": "text/html" })),
+    ).rejects.toMatchObject({ code: "size_mismatch" });
+    await expect(
+      fixture.service.uploadFile(
+        "alice",
+        upload.uploadId,
+        "index.html",
+        request({ "Content-Type": "text/html", "Content-Length": "0" }),
+      ),
+    ).rejects.toMatchObject({ code: "size_mismatch" });
+    expect(fixture.bucket.keys()).not.toContain(`sites/${upload.site.id}/deployments/${upload.uploadId}/index.html`);
+  });
+
+  it("republishes an unsynced active route before deleting the prior deployment", async () => {
+    const fixture = serviceFixture();
+    const site = await publish(fixture.service, "alice", "cleanup-route-publish", "cleanup-route-activate");
+    const priorDeployment = await fixture.database
+      .prepare("SELECT current_deployment_id FROM hosted_sites WHERE id = ?")
+      .bind(site.id)
+      .first<{ current_deployment_id: string }>();
+    const replacement = await fixture.service.createUpload(
+      "alice",
+      uploadRequest({ siteId: site.id, title: "Cleanup route replacement" }),
+      "cleanup-route-replace",
+    );
+    await uploadIndex(fixture.service, "alice", replacement.uploadId);
+    fixture.bucket.failNextPutContaining(`routes/${site.hostname}.json`);
+    await expect(
+      fixture.service.activate("alice", replacement.uploadId, "cleanup-route-replace-activate"),
+    ).rejects.toThrow("Injected R2 put failure");
+
+    expect(await fixture.bucket.route(site.hostname)).toMatchObject({
+      deploymentId: priorDeployment?.current_deployment_id,
+    });
+    await fixture.service.cleanup();
+    expect(await fixture.bucket.route(site.hostname)).toMatchObject({ deploymentId: replacement.uploadId });
+    expect(fixture.bucket.keys()).not.toContain(
+      `sites/${site.id}/deployments/${priorDeployment?.current_deployment_id}/index.html`,
+    );
+  });
+
+  it("deletes a deployment activated after deletion reads its site snapshot", async () => {
+    const fixture = serviceFixture();
+    const upload = await fixture.service.createUpload("alice", uploadRequest(), "delete-activation-race");
+    await uploadIndex(fixture.service, "alice", upload.uploadId);
+    const pause = fixture.database.pauseNextBatchContaining("SET status = 'deleted'");
+    const deletion = fixture.service.delete("alice", upload.site.id, "delete-after-activation");
+    await pause.started;
+    await fixture.service.activate("alice", upload.uploadId, "activate-before-delete-batch");
+    pause.resume();
+    await deletion;
+
+    expect(fixture.bucket.keys()).not.toContain(`sites/${upload.site.id}/deployments/${upload.uploadId}/index.html`);
+    const deployment = await fixture.database
+      .prepare("SELECT status, objects_deleted_at FROM site_deployments WHERE id = ?")
+      .bind(upload.uploadId)
+      .first<{ status: string; objects_deleted_at: number | null }>();
+    expect(deployment).toMatchObject({ status: "abandoned", objects_deleted_at: expect.any(Number) });
+  });
+
   it("allows only two concurrent upload sessions", async () => {
     const fixture = serviceFixture();
     const results = await Promise.allSettled(
@@ -486,11 +580,25 @@ function migration(name: string): string {
 
 class FakeD1Database implements D1Database {
   #failFragment: string | null = null;
+  #pause: { fragment: string; started: () => void; wait: Promise<void> } | null = null;
 
   constructor(private readonly database: DatabaseSync) {}
 
   failNextBatchContaining(fragment: string): void {
     this.#failFragment = fragment;
+  }
+
+  pauseNextBatchContaining(fragment: string): { started: Promise<void>; resume: () => void } {
+    let markStarted: () => void = () => undefined;
+    let resume: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const wait = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    this.#pause = { fragment, started: markStarted, wait };
+    return { started, resume };
   }
 
   prepare(query: string): D1PreparedStatement {
@@ -505,6 +613,12 @@ class FakeD1Database implements D1Database {
     if (this.#failFragment && owned.some((statement) => statement.query.includes(this.#failFragment ?? ""))) {
       this.#failFragment = null;
       throw new Error("Injected D1 failure");
+    }
+    const pause = this.#pause;
+    if (pause && owned.some((statement) => statement.query.includes(pause.fragment))) {
+      this.#pause = null;
+      pause.started();
+      await pause.wait;
     }
     this.database.exec("BEGIN IMMEDIATE");
     try {
