@@ -271,6 +271,11 @@
   min-height: 0;
 }
 
+.browser-takeover-story-states {
+  display: grid;
+  align-content: start;
+}
+
 .chat-primitives-stage {
   width: min(820px, 100%);
   min-width: 0;
@@ -363,10 +368,105 @@
   color: var(--openbot-text-secondary);
 }
 
+.question-prompt-story-stage {
+  min-height: 100vh;
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  background: var(--openbot-bg-canvas);
+  padding: var(--openbot-space-8);
+}
+
+.question-prompt-story-narrow {
+  width: 320px;
+  max-width: 100%;
+}
+
+.question-prompt-story-stage:has(.question-prompt-chat-preview) {
+  display: block;
+  padding: 0;
+}
+
+.question-prompt-chat-preview {
+  width: 100%;
+  height: 100vh;
+  min-height: 560px;
+  color: var(--openbot-text-primary);
+}
+
+.question-prompt-chat-preview .conversation-title .bot-avatar {
+  width: 22px;
+  height: 22px;
+}
+
+.question-prompt-chat-model.provider-model-trigger {
+  height: 26px;
+  padding-inline: var(--openbot-space-2);
+}
+
+.question-prompt-chat-model svg {
+  width: var(--openbot-icon-xs);
+  height: var(--openbot-icon-xs);
+}
+
+.question-prompt-chat-thread {
+  width: min(760px, 100%);
+  margin: 0 auto;
+}
+
+.question-prompt-chat-question {
+  margin-top: var(--openbot-space-5);
+}
+
+.question-prompt-chat-question > .ui-message-content {
+  gap: var(--openbot-space-1);
+}
+
+.question-prompt-chat-composer-wrap {
+  width: min(784px, 100%);
+  align-self: center;
+}
+
+.question-prompt-chat-composer-wrap .ui-textarea {
+  width: 100%;
+  min-height: 28px;
+  resize: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  padding: 4px 0;
+  box-shadow: none;
+  color: var(--openbot-text-primary);
+  font: inherit;
+  font-size: var(--openbot-text-md);
+  line-height: 20px;
+}
+
+.question-prompt-chat-composer-wrap .ui-textarea::placeholder {
+  color: var(--openbot-text-muted);
+}
+
+.question-prompt-chat-composer-wrap .ui-textarea:focus {
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+}
+
+.question-prompt-chat-composer-wrap .composer-button svg,
+.question-prompt-chat-composer-wrap .voice-button svg {
+  width: var(--openbot-icon-sm);
+  height: var(--openbot-icon-sm);
+}
+
 @media (max-width: 720px) {
   .chat-primitives-stage,
-  .chat-primitives-gallery {
+  .chat-primitives-gallery,
+  .question-prompt-story-stage {
     padding: var(--openbot-space-4);
+  }
+
+  .question-prompt-story-stage:has(.question-prompt-chat-preview) {
+    padding: 0;
   }
 }
 
@@ -409,5 +509,147 @@
 @media (max-width: 520px) {
   .app-logo-gallery {
     grid-template-columns: 1fr;
+  }
+}
+
+.dynamic-island-story-stage {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: var(--openbot-space-8);
+  background: var(--openbot-bg-canvas);
+  color: var(--openbot-text-primary);
+}
+
+.dynamic-island-story-screen {
+  position: relative;
+  width: min(1120px, 100%);
+  aspect-ratio: 1512 / 982;
+  min-height: 620px;
+  overflow: hidden;
+  border: 1px solid var(--openbot-border-strong);
+  border-radius: var(--openbot-radius-xl);
+  background: var(--openbot-bg-host-inset);
+  box-shadow: var(--openbot-shadow-raised);
+}
+
+.dynamic-island-story-menubar {
+  position: relative;
+  z-index: 1;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--openbot-space-4);
+  background: var(--openbot-bg-glass);
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-xs);
+  backdrop-filter: blur(18px);
+}
+
+.dynamic-island-story-menu-left,
+.dynamic-island-story-menu-right {
+  display: flex;
+  align-items: center;
+  gap: var(--openbot-space-3);
+}
+
+.dynamic-island-story-menu-left svg,
+.dynamic-island-story-menu-right svg {
+  width: var(--openbot-icon-sm);
+  height: var(--openbot-icon-sm);
+}
+
+.dynamic-island-story-menu-left strong {
+  color: var(--openbot-text-primary);
+  font-weight: var(--openbot-weight-semibold);
+}
+
+.dynamic-island-story-anchor {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+/* The production overlay keeps an enlarged hover target. Storybook uses only
+   the visible island so its preview cannot retrigger hover at the target edge. */
+.dynamic-island-story-stage .dynamic-island-idle::before {
+  content: none;
+  pointer-events: none;
+}
+
+.dynamic-island-story-stage-comparison {
+  grid-template-rows: auto 1fr;
+  place-items: center;
+  padding: var(--openbot-space-4);
+}
+
+.dynamic-island-story-display-grid {
+  width: min(1280px, 100%);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--openbot-space-4);
+}
+
+.dynamic-island-story-comparison-screen {
+  width: 100%;
+  max-width: 632px;
+  height: 360px;
+  min-height: 0;
+  aspect-ratio: auto;
+}
+
+.dynamic-island-story-external-screen {
+  background: var(--openbot-bg-surface);
+}
+
+.dynamic-island-story-display-label {
+  position: absolute;
+  bottom: var(--openbot-space-4);
+  left: var(--openbot-space-4);
+  display: grid;
+  gap: 2px;
+}
+
+.dynamic-island-story-display-label strong {
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-sm);
+  font-weight: var(--openbot-weight-semibold);
+}
+
+.dynamic-island-story-display-label span {
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-xs);
+}
+
+@media (max-width: 1279px) {
+  .dynamic-island-story-display-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .dynamic-island-story-stage {
+    padding: 0;
+  }
+
+  .dynamic-island-story-screen {
+    width: 100%;
+    min-height: 100vh;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .dynamic-island-story-comparison-screen {
+    height: 360px;
+    min-height: 360px;
+  }
+
+  .dynamic-island-story-menu-left span,
+  .dynamic-island-story-menu-left strong,
+  .dynamic-island-story-menu-right span {
+    display: none;
   }
 }

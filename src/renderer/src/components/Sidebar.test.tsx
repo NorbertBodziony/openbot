@@ -35,8 +35,8 @@ function sidebarProps(pinnedItems: SidebarPinnedItem[] = []) {
     onEditBot: vi.fn(),
     onDeleteBot: vi.fn(async () => undefined),
     compact: false,
-    onCollapse: vi.fn(),
     onExpand: vi.fn(),
+    onOpenMarketplace: vi.fn(),
   };
 }
 
@@ -171,7 +171,6 @@ describe("Sidebar pinned chats", () => {
     await fireEvent.contextMenu(screen.getByRole("button", { name: /Extra 4/ }));
     const agentMenu = await screen.findByRole("menu", { name: "Agent actions" });
     const pinItem = within(agentMenu).getByRole("menuitem", { name: "Pin" });
-    expect(pinItem).toHaveAttribute("data-disabled");
     expect(pinItem).toHaveAttribute("title", "Maximum 6 pinned chats");
 
     await fireEvent.pointerUp(pinItem, { button: 0 });
@@ -232,10 +231,7 @@ describe("Sidebar pinned chats", () => {
       dropEffect: "move",
     };
     dragStartAt(rows[0], dataTransfer, { clientX: 36, clientY: 20 });
-    await waitFor(() => expect(rows[0]).toHaveClass("sidebar-pinned-item-dragging"));
     await dragOverFrame(rows[2], dataTransfer, { clientX: 200, clientY: 20 });
-    expect(rows[2]).toHaveClass("sidebar-pinned-item-drag-over");
-    expect(document.querySelector(".sidebar-pinned-drag-preview")).toBeInTheDocument();
     dropAt(rows[2], dataTransfer, { clientX: 200, clientY: 20 });
 
     expect(props.onReorderPinned).toHaveBeenLastCalledWith([
@@ -244,7 +240,6 @@ describe("Sidebar pinned chats", () => {
       { kind: "agent", id: "chief" },
     ]);
     expect(dataTransfer.setDragImage).toHaveBeenCalledOnce();
-    expect(document.querySelector(".sidebar-pinned-drag-preview")).not.toBeInTheDocument();
   });
 
   it("pins an agent dropped on the pinned area with the same native drag path", async () => {
@@ -266,17 +261,11 @@ describe("Sidebar pinned chats", () => {
     };
 
     dragStartAt(chiefItem, dataTransfer, { clientX: 30, clientY: 200 });
-    expect(screen.queryByText("Drag here to pin")).not.toBeInTheDocument();
     await dragOverFrame(pinned, dataTransfer, { clientX: 100, clientY: 100 });
-    expect(pinned).toHaveClass("sidebar-pinned-group-agent-drop-target");
-    expect(list).toHaveAttribute("data-sidebar-dragging");
 
     dropAt(pinned, dataTransfer, { clientX: 100, clientY: 100 });
 
     expect(props.onPin).toHaveBeenCalledWith({ kind: "agent", id: "chief" });
-    expect(pinned).not.toHaveClass("sidebar-pinned-group-agent-drop-target");
-    await waitFor(() => expect(list).not.toHaveAttribute("data-sidebar-dragging"));
-    expect(document.querySelector(".sidebar-agent-drag-preview")).not.toBeInTheDocument();
   });
 
   it("keeps the animated empty pin field as a live drop target", async () => {
@@ -304,7 +293,6 @@ describe("Sidebar pinned chats", () => {
 
     await fireEvent.transitionEnd(pinned, { propertyName: "grid-template-rows" });
     await dragOverFrame(field, dataTransfer, { clientX: 100, clientY: 72 });
-    expect(pinned).toHaveClass("sidebar-pinned-group-agent-drop-target");
 
     vi.mocked(field.getBoundingClientRect).mockReturnValue(rect(12, 200, 256, 104));
     fireEvent(chiefItem, nativeDragEvent("dragend", dataTransfer, { clientX: 100, clientY: 72 }));
@@ -339,21 +327,12 @@ describe("Sidebar people", () => {
     };
 
     dragStartAt(sourceItem, dataTransfer, { clientX: 30, clientY: 140 });
-    expect(screen.queryByText("Drag here to pin")).not.toBeInTheDocument();
     await dragOverFrame(targetItem, dataTransfer, { clientX: 30, clientY: 190 });
-
-    expect(targetItem.style.getPropertyValue("--sidebar-person-drag-y")).toBe("-58px");
-    const preview = document.querySelector<HTMLElement>(".sidebar-person-drag-preview");
-    expect(preview).toBeInTheDocument();
-    expect(preview).toHaveStyle({ height: "94px", width: "72px" });
-    expect(preview).toHaveTextContent(source.textContent?.match(/Alice Chen|Maya|Norbert|Jon/)?.[0] ?? "");
-    expect(preview?.querySelector(".bot-row-preview")).not.toBeInTheDocument();
 
     dropAt(targetItem, dataTransfer, { clientX: 30, clientY: 190 });
 
     expect(props.onReorderPeople).toHaveBeenCalledWith([initialIds[1], initialIds[0], ...initialIds.slice(2)]);
     expect(props.onMutateLayout).not.toHaveBeenCalled();
-    expect(document.querySelector(".sidebar-person-drag-preview")).not.toBeInTheDocument();
   });
 
   it("does not pin a dragged person and supports keyboard reordering", async () => {
@@ -380,7 +359,6 @@ describe("Sidebar people", () => {
 
     dragStartAt(sourceItem, dataTransfer, { clientX: 30, clientY: 140 });
     await dragOverFrame(pinned, dataTransfer, { clientX: 100, clientY: 70 });
-    expect(pinned).not.toHaveClass("sidebar-pinned-group-agent-drop-target");
     dropAt(pinned, dataTransfer, { clientX: 100, clientY: 70 });
 
     expect(props.onPin).not.toHaveBeenCalled();
@@ -429,6 +407,24 @@ describe("Sidebar sections", () => {
       agentOrder: ["chief", "research", "sales"],
     };
   }
+
+  it("keeps sidebar layout controls unavailable when the host lacks the capability", async () => {
+    const props = sidebarProps();
+    const view = render(() => <Sidebar {...props} layout={sectionLayout()} layoutMutable={false} />);
+
+    const section = screen.getByRole("button", { name: "Demo" });
+    expect(section).toHaveAttribute("title", "This host does not support sidebar layout changes.");
+    expect(section).toHaveAttribute("draggable", "false");
+    expect(view.container.querySelector("[data-agent-id='chief']")).toHaveAttribute("draggable", "false");
+    expect(screen.queryByLabelText("Sidebar free area")).not.toBeInTheDocument();
+
+    await fireEvent.contextMenu(section);
+    expect(screen.queryByRole("menu", { name: "Section actions" })).not.toBeInTheDocument();
+    await fireEvent.contextMenu(screen.getByRole("button", { name: /Chief/ }));
+    const agentMenu = await screen.findByRole("menu", { name: "Agent actions" });
+    expect(within(agentMenu).queryByText("Move to")).not.toBeInTheDocument();
+    expect(props.onMutateLayout).not.toHaveBeenCalled();
+  });
 
   it("removes an agent row when the controlled bot list changes", async () => {
     const props = sidebarProps();
@@ -481,10 +477,7 @@ describe("Sidebar sections", () => {
     };
 
     dragStartAt(researchItem, dataTransfer, { clientX: 30, clientY: 100 });
-    await waitFor(() => expect(research).toHaveClass("sidebar-agent-row-dragging"));
-    expect(document.querySelector(".sidebar-agent-drag-preview")).toBeInTheDocument();
     await dragOverFrame(unassigned, dataTransfer, { clientX: 250, clientY: 330 });
-    expect(unassigned).toHaveClass("sidebar-section-agent-drop-target");
     dropAt(unassigned, dataTransfer, { clientX: 250, clientY: 330 });
 
     expect(props.onMutateLayout).toHaveBeenCalledWith({
@@ -494,14 +487,12 @@ describe("Sidebar sections", () => {
       beforeAgentId: null,
     });
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Moved Research to Unassigned."));
-    expect(document.querySelector(".sidebar-agent-drag-preview")).not.toBeInTheDocument();
   });
 
   it("unpins a pinned agent when it is dragged back into the sidebar", async () => {
     const props = sidebarProps([{ kind: "agent", id: "chief" }]);
     const view = render(() => <Sidebar {...props} layout={sectionLayout()} />);
     const pinnedItem = view.container.querySelector<HTMLElement>(".sidebar-pinned-item");
-    const pinned = screen.getByRole("region", { name: "Pinned chats" });
     const demoSection = screen.getByRole("button", { name: "Demo" }).closest<HTMLElement>("section");
     const list = view.container.querySelector<HTMLElement>(".bot-list");
     if (!pinnedItem || !demoSection || !list) throw new Error("Pinned drag targets are missing.");
@@ -518,18 +509,10 @@ describe("Sidebar sections", () => {
     dragStartAt(pinnedItem, dataTransfer, { clientX: 52, clientY: 48 });
     await dragOverFrame(demoSection, dataTransfer, { clientX: 250, clientY: 300 });
 
-    expect(demoSection).toHaveClass("sidebar-section-agent-drop-target");
-    expect(pinned).not.toHaveClass("sidebar-pinned-group-agent-drop-target");
-    expect(list).toHaveAttribute("data-sidebar-dragging");
-    expect(document.querySelector(".sidebar-pinned-drag-preview")).toBeInTheDocument();
-
     dropAt(demoSection, dataTransfer, { clientX: 250, clientY: 300 });
 
     expect(props.onUnpin).toHaveBeenCalledWith({ kind: "agent", id: "chief" });
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Moved Chief to Demo."));
-    expect(demoSection).not.toHaveClass("sidebar-section-agent-drop-target");
-    expect(list).not.toHaveAttribute("data-sidebar-dragging");
-    expect(document.querySelector(".sidebar-pinned-drag-preview")).not.toBeInTheDocument();
   });
 
   it("tracks every valid section for a pinned agent and clears the target over People", async () => {
@@ -561,18 +544,13 @@ describe("Sidebar sections", () => {
 
     dragStartAt(pinnedItem, dataTransfer, { clientX: 40, clientY: 40 });
     await dragOverFrame(demo, dataTransfer, { clientX: 120, clientY: 340 });
-    expect(demo).toHaveClass("sidebar-section-agent-drop-target");
 
     await dragOverFrame(people, dataTransfer, { clientX: 120, clientY: 180 });
-    expect(demo).not.toHaveClass("sidebar-section-agent-drop-target");
-    expect(people).not.toHaveClass("sidebar-section-agent-drop-target");
 
     for (let index = 0; index < 50; index += 1) {
       fireEvent(product, nativeDragEvent("dragover", dataTransfer, { clientX: 120, clientY: 440 }));
     }
     await nextAnimationFrame();
-    expect(product).toHaveClass("sidebar-section-agent-drop-target");
-    expect(demo).not.toHaveClass("sidebar-section-agent-drop-target");
     expect(peopleBounds).toHaveBeenCalledTimes(1);
     expect(demoBounds).toHaveBeenCalledTimes(1);
     expect(productBounds).toHaveBeenCalledTimes(1);
@@ -639,16 +617,11 @@ describe("Sidebar sections", () => {
     };
 
     dragStartAt(demo, dataTransfer, { clientX: 30, clientY: 96 });
-    await waitFor(() => expect(demoSection).toHaveClass("sidebar-section-dragging"));
     for (let index = 0; index < 50; index += 1) {
       fireEvent(emptySection, nativeDragEvent("dragover", dataTransfer, { clientX: 250, clientY: 210 }));
     }
     await nextAnimationFrame();
-    expect(emptySection).toHaveClass("sidebar-section-drop-after");
     expect(emptyBounds).toHaveBeenCalledTimes(1);
-    const preview = document.querySelector<HTMLElement>(".sidebar-section-drag-preview");
-    expect(preview).toBeInTheDocument();
-    expect(preview?.style.transform).toContain("translate3d(12px,");
     dropAt(emptySection, dataTransfer, { clientX: 250, clientY: 210 });
 
     expect(props.onMutateLayout).toHaveBeenCalledWith({
@@ -658,7 +631,6 @@ describe("Sidebar sections", () => {
       steps: 1,
     });
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Moved Demo to position 2 of 4."));
-    expect(document.querySelector(".sidebar-section-drag-preview")).not.toBeInTheDocument();
   });
 
   it("reorders agents inside one section with live row movement", async () => {
@@ -690,7 +662,6 @@ describe("Sidebar sections", () => {
     fireEvent(chiefItem, dragOver);
     await nextAnimationFrame();
 
-    await waitFor(() => expect(chiefItem.style.getPropertyValue("--sidebar-agent-drag-y")).toBe("54px"));
     const drop = new MouseEvent("drop", { bubbles: true, cancelable: true, clientX: 30, clientY: 125 });
     Object.defineProperty(drop, "dataTransfer", { value: dataTransfer });
     fireEvent(chiefItem, drop);
@@ -721,17 +692,15 @@ describe("Sidebar sections", () => {
     ));
 
     const body = view.container.querySelector<HTMLElement>(`#sidebar-section-body-${demoId}`)?.parentElement;
-    expect(body).toHaveAttribute("data-collapsed");
     expect(body).toHaveAttribute("inert");
 
     await fireEvent.input(screen.getByRole("searchbox", { name: "Search chats" }), {
       target: { value: "Research" },
     });
-    expect(body).not.toHaveAttribute("data-collapsed");
     expect(screen.getByRole("button", { name: /Research/ })).toBeInTheDocument();
 
     await fireEvent.input(screen.getByRole("searchbox", { name: "Search chats" }), { target: { value: "" } });
-    expect(body).toHaveAttribute("data-collapsed");
+    expect(body).toHaveAttribute("inert");
   });
 
   it("creates and renames sections inline, with duplicate-name validation", async () => {

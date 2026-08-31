@@ -9,11 +9,14 @@ import type {
   BrowserControlSession,
   BrowserControlState,
   BrowserNavigationDirection,
+  BrowserPreview,
   BrowserTab,
+  BrowserViewTarget,
   BrowserVisibilityInput,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { app, type BrowserWindow, type Session, session, type WebContents, WebContentsView } from "electron";
+import { embeddedBrowserUserAgent } from "./browser-identity";
 import { isCloseBrowserTabShortcut, isGlobalSearchShortcut, isToggleDevToolsShortcut } from "./browser-shortcuts";
 import { persistentBrowserUrl, xLoginUrlForLanding } from "./browser-state";
 import type { DynamicToolCallParams, DynamicToolResult } from "./protocol";
@@ -159,7 +162,10 @@ export class BrowserHost {
   #visible = false;
   #bounds: BrowserBounds | null = null;
   #attachedView: WebContentsView | null = null;
-  readonly #mountedViews = new Set<WebContentsView>();
+  #pictureInPictureWindow: BrowserWindow | null = null;
+  #pictureInPictureOverlayView: WebContentsView | null = null;
+  #target: BrowserViewTarget = "main";
+  readonly #mountedViews = new Map<WebContentsView, BrowserWindow>();
   #persistQueue: Promise<void> = Promise.resolve();
 
   constructor(window: BrowserWindow, downloadsRoot: string, statePath: string) {
@@ -236,6 +242,28 @@ export class BrowserHost {
     return this.#visible;
   }
 
+  getDisplayState(): { tabs: BrowserTab[]; activeTabId: string | null } {
+    return { tabs: this.listTabs(), activeTabId: this.#activeTabId };
+  }
+
+  setPictureInPictureWindow(window: BrowserWindow | null): void {
+    this.#pictureInPictureWindow = window;
+    if (!window && this.#target === "picture-in-picture") {
+      this.#visible = false;
+      this.#target = "main";
+      if (this.#attachedView) this.#mountView(this.#attachedView, this.#window);
+    }
+    this.#syncAttachedView();
+  }
+
+  setPictureInPictureOverlayView(view: WebContentsView | null): void {
+    const previous = this.#pictureInPictureOverlayView;
+    const window = this.#pictureInPictureWindow;
+    if (previous && window && !window.isDestroyed()) window.contentView.removeChildView(previous);
+    this.#pictureInPictureOverlayView = view;
+    if (view && window && !window.isDestroyed()) window.contentView.addChildView(view);
+  }
+
   async open(
     url: string,
     ownerThreadId: string | null = null,
@@ -258,6 +286,10 @@ export class BrowserHost {
 
     try {
       await tab.view.webContents.loadURL(normalizedUrl, browserLoadOptions());
+      if (focus) {
+        this.#focusTab(tab);
+        setImmediate(() => this.#focusTab(tab));
+      }
     } catch (error) {
       if (this.#tabs.get(tab.id) === tab) {
         this.#unmountView(tab.view);
@@ -318,6 +350,7 @@ export class BrowserHost {
   async setVisible(input: BrowserVisibilityInput): Promise<void> {
     this.#visible = input.visible;
     if (input.bounds) this.#bounds = validateBounds(input.bounds);
+    if (input.target) this.#target = input.target;
     this.#syncAttachedView();
   }
 
@@ -369,6 +402,31 @@ export class BrowserHost {
     return this.#enqueue(tabId, async (tab) => {
       const image = await withTimeout(tab.view.webContents.capturePage(), 10_000, "Browser screenshot timed out.");
       return image.toDataURL();
+    });
+  }
+
+  async capturePreview(tabId: string): Promise<BrowserPreview> {
+    return this.#enqueue(tabId, async (tab) => {
+      const image = await withTimeout(tab.view.webContents.capturePage(), 10_000, "Browser preview timed out.");
+      const size = image.getSize();
+      if (size.width <= 0 || size.height <= 0) throw new Error("Browser preview is empty.");
+
+      const targetAspectRatio = 16 / 10;
+      let cropWidth = size.width;
+      let cropHeight = Math.round(cropWidth / targetAspectRatio);
+      if (cropHeight > size.height) {
+        cropHeight = size.height;
+        cropWidth = Math.round(cropHeight * targetAspectRatio);
+      }
+      const cropped = image.crop({
+        x: Math.max(0, Math.floor((size.width - cropWidth) / 2)),
+        y: 0,
+        width: cropWidth,
+        height: cropHeight,
+      });
+      const preview = cropped.resize({ width: 960, height: 600, quality: "good" });
+      const dataUrl = `data:image/jpeg;base64,${preview.toJPEG(72).toString("base64")}`;
+      return { dataUrl, width: 960, height: 600 };
     });
   }
 
@@ -475,7 +533,7 @@ export class BrowserHost {
   }
 
   #configureSession(): void {
-    const userAgent = browserUserAgent(this.#session.getUserAgent());
+    const userAgent = embeddedBrowserUserAgent(this.#session.getUserAgent());
     this.#session.setUserAgent(userAgent, preferredBrowserLanguageCodes());
     this.#session.webRequest.onBeforeSendHeaders((details, callback) => {
       callback({
@@ -523,6 +581,7 @@ export class BrowserHost {
     contents.on("did-start-loading", changed);
     contents.on("did-stop-loading", () => {
       changed();
+      void this.#syncViewBackground(tab);
       void this.#redirectXLandingToLogin(tab);
     });
     contents.on("page-title-updated", changed);
@@ -545,6 +604,24 @@ export class BrowserHost {
       if (isAllowedMainUrl(url)) void this.open(url, tab.ownerThreadId, tab.ownerBotId);
       return { action: "deny" };
     });
+  }
+
+  async #syncViewBackground(tab: InternalTab): Promise<void> {
+    try {
+      const background = await tab.view.webContents.executeJavaScript(
+        `(() => {
+          const transparent = "rgba(0, 0, 0, 0)";
+          const body = document.body ? getComputedStyle(document.body).backgroundColor : transparent;
+          if (body !== transparent) return body;
+          const root = getComputedStyle(document.documentElement).backgroundColor;
+          return root !== transparent ? root : "#0b0b0b";
+        })()`,
+        true,
+      );
+      if (isString(background)) tab.view.setBackgroundColor(background);
+    } catch {
+      // Navigation can replace the document before its background is read.
+    }
   }
 
   async #redirectXLandingToLogin(tab: InternalTab): Promise<void> {
@@ -579,36 +656,64 @@ export class BrowserHost {
 
   #syncAttachedView(): void {
     const tab = this.#activeTabId ? this.#tabs.get(this.#activeTabId) : null;
-    if (!this.#visible || !this.#bounds || !tab) {
+    const targetWindow = this.#target === "picture-in-picture" ? this.#pictureInPictureWindow : this.#window;
+    if (!this.#visible || !this.#bounds || !tab || !targetWindow || targetWindow.isDestroyed()) {
       this.#attachedView?.setVisible(false);
       return;
     }
 
     if (this.#attachedView !== tab.view) {
       this.#attachedView?.setVisible(false);
-      this.#mountView(tab.view);
+      this.#mountView(tab.view, targetWindow);
       this.#attachedView = tab.view;
+    } else {
+      this.#mountView(tab.view, targetWindow);
     }
     tab.view.setBounds(this.#bounds);
     tab.view.setVisible(true);
     tab.view.webContents.invalidate();
+    this.#raisePictureInPictureOverlay();
     if (tab.focusOnVisible) {
       tab.focusOnVisible = false;
       tab.view.webContents.focus();
     }
   }
 
-  #mountView(view: WebContentsView): void {
-    if (this.#mountedViews.has(view)) return;
+  #raisePictureInPictureOverlay(): void {
+    const overlay = this.#pictureInPictureOverlayView;
+    const window = this.#pictureInPictureWindow;
+    if (this.#target !== "picture-in-picture" || !overlay || !window || window.isDestroyed()) return;
+    window.contentView.removeChildView(overlay);
+    window.contentView.addChildView(overlay);
+  }
+
+  #focusTab(tab: InternalTab): void {
+    if (
+      this.#tabs.get(tab.id) !== tab ||
+      this.#activeTabId !== tab.id ||
+      !tab.view.getVisible() ||
+      tab.view.webContents.isDestroyed()
+    ) {
+      return;
+    }
+    tab.view.webContents.focus();
+  }
+
+  #mountView(view: WebContentsView, window = this.#window): void {
+    const currentWindow = this.#mountedViews.get(view);
+    if (currentWindow === window) return;
     view.setVisible(false);
+    if (currentWindow && !currentWindow.isDestroyed()) currentWindow.contentView.removeChildView(view);
     view.setBounds({ x: 0, y: 0, width: 1200, height: 800 });
-    this.#window.contentView.addChildView(view);
-    this.#mountedViews.add(view);
+    window.contentView.addChildView(view);
+    this.#mountedViews.set(view, window);
   }
 
   #unmountView(view: WebContentsView): void {
     view.setVisible(false);
-    if (this.#mountedViews.delete(view)) this.#window.contentView.removeChildView(view);
+    const window = this.#mountedViews.get(view);
+    if (window && !window.isDestroyed()) window.contentView.removeChildView(view);
+    this.#mountedViews.delete(view);
     if (this.#attachedView === view) this.#attachedView = null;
   }
 
@@ -784,24 +889,11 @@ function browserRequestHeaders(
   requestHeaders: Record<string, string>,
   sessionUserAgent: string,
 ): Record<string, string> {
-  const userAgent = browserUserAgent(sessionUserAgent);
+  const userAgent = embeddedBrowserUserAgent(sessionUserAgent);
   const headers = { ...requestHeaders };
   setRequestHeader(headers, "User-Agent", userAgent);
   setRequestHeader(headers, "Accept-Language", preferredBrowserLanguages());
   return headers;
-}
-
-function browserUserAgent(sessionUserAgent: string): string {
-  return removeUserAgentProducts(sessionUserAgent, ["Electron", app.getName()]);
-}
-
-function removeUserAgentProducts(userAgent: string, products: string[]): string {
-  return products
-    .filter(Boolean)
-    .reduce(
-      (current, product) => current.replace(new RegExp(`\\s${escapeRegExp(product)}/[^\\s]+`, "g"), ""),
-      userAgent,
-    );
 }
 
 function preferredBrowserLanguages(): string {
@@ -820,10 +912,6 @@ function setRequestHeader(headers: Record<string, string>, name: string, value: 
   const existingName = Object.keys(headers).find((candidate) => candidate.toLowerCase() === name.toLowerCase());
   if (existingName && existingName !== name) delete headers[existingName];
   headers[name] = value;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function readBrowserState(path: string): Promise<StoredBrowserState> {

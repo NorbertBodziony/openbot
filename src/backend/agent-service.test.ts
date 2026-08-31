@@ -6,7 +6,15 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeF
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
-import type { AgentEvent, BrowserControlState, BrowserTab } from "@openbot/contracts/ipc";
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import {
+  AGENT_RUNTIME_QUESTION_DESCRIPTION_LIMIT,
+  AGENT_RUNTIME_TEXT_LIMIT,
+  type AgentEvent,
+  type BrowserControlState,
+  type BrowserTab,
+  isAgentEvent,
+} from "@openbot/contracts/ipc";
 import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentClient, AgentProvider } from "./agent-client";
@@ -136,6 +144,26 @@ describe.sequential("AgentService", () => {
         .filter((model) => model.provider === "codex")
         .map((model) => model.id),
     ).toEqual(["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]);
+  });
+
+  it("creates a bounded runtime snapshot for reconnecting clients", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    await store.getOrCreate("chief");
+
+    expect(service.getRuntimeSnapshot()).toMatchObject({
+      bots: [expect.objectContaining({ id: "chief" })],
+      activeTurns: [],
+      work: [],
+      attentionComplete: true,
+      pendingPrompts: [],
+      pendingApprovals: [],
+      pendingBrowserTakeovers: [],
+      failedTurns: [],
+    });
+    expect(service.getRuntimeSnapshot().bots[0]).not.toHaveProperty("workspacePath");
+    expect(service.getRuntimeSnapshot().bots[0]).not.toHaveProperty("description");
   });
 
   it("resolves only regular files inside the shared directory", async () => {
@@ -331,6 +359,7 @@ describe.sequential("AgentService", () => {
         "You may list, read, create, edit, move, and delete files and run local commands in both directories.",
       );
       expect(params.developerInstructions).toContain("openbot.create_routine");
+      expect(params.developerInstructions).toContain("openbot.attach_files_to_response");
       expect(params.developerInstructions).toContain("sadness, disappointment, frustration, loneliness");
       expect(params.developerInstructions).toContain("An emoji written inside your answer does not count");
       expect(params.developerInstructions).toContain("Omit botId to target yourself");
@@ -341,6 +370,7 @@ describe.sequential("AgentService", () => {
             type: "namespace",
             name: "openbot",
             tools: expect.arrayContaining([
+              expect.objectContaining({ name: "attach_files_to_response" }),
               expect.objectContaining({ name: "ask_user" }),
               expect.objectContaining({ name: "list_agents" }),
               expect.objectContaining({ name: "update_profile" }),
@@ -702,7 +732,7 @@ describe.sequential("AgentService", () => {
         turnId,
         command: ["npm", "test"],
         cwd: "/tmp/openbot",
-        reason: "Run tests.",
+        reason: "r".repeat(1_000),
       },
     });
     await waitFor(() => events.some((event) => event.type === "approval"));
@@ -719,9 +749,21 @@ describe.sequential("AgentService", () => {
         }),
       }),
     );
+    expect(isAgentEvent({ type: "runtime-snapshot", snapshot: service.getRuntimeSnapshot() })).toBe(true);
+    expect(service.getRuntimeSnapshot().pendingApprovals[0]?.reason).toHaveLength(AGENT_RUNTIME_TEXT_LIMIT);
+    expect(service.getRuntimeSnapshot().pendingApprovals[0]?.truncated).toBe(true);
 
     await service.respondToApproval({ requestId: "approval-command", decision: "accept" });
     expect(client.responses).toEqual([{ id: "approval-command", result: { decision: "accept" } }]);
+    expect(events).toContainEqual({
+      type: "agent-input-resolved",
+      kind: "approval",
+      requestId: "approval-command",
+      botId: "chief",
+    });
+    expect(events.findLast((event) => event.type === "runtime-snapshot")).toMatchObject({
+      snapshot: { pendingApprovals: [] },
+    });
 
     client.emit("request", {
       method: "item/permissions/requestApproval",
@@ -763,6 +805,7 @@ describe.sequential("AgentService", () => {
     const turnId = events.find((event) => event.type === "turn-started")?.turnId;
     if (!threadId || !turnId) throw new Error("Turn did not start.");
 
+    const optionLabel = "L".repeat(INPUT_LIMITS.promptOptionLabel);
     client.emit("request", {
       method: "item/tool/call",
       id: "question-call",
@@ -778,18 +821,48 @@ describe.sequential("AgentService", () => {
               id: "favorite",
               header: "Favorite",
               question: "What is your favorite color?",
-              options: [{ label: "Blue", description: "A calm choice." }],
+              options: [{ label: optionLabel, description: "d".repeat(1_000) }],
+            },
+            {
+              id: "token",
+              header: "Token",
+              question: "What is the private token?",
+              isSecret: true,
             },
           ],
         },
       },
     });
     await waitFor(() => events.some((event) => event.type === "prompt"));
+    const runtimeSnapshot = service.getRuntimeSnapshot();
+    expect(isAgentEvent({ type: "runtime-snapshot", snapshot: runtimeSnapshot })).toBe(true);
+    expect(runtimeSnapshot.pendingPrompts[0]?.questions[0]?.options?.[0]?.description).toHaveLength(
+      AGENT_RUNTIME_QUESTION_DESCRIPTION_LIMIT,
+    );
+    expect(runtimeSnapshot.pendingPrompts[0]?.questions[0]?.options?.[0]?.label).toBe(optionLabel);
     expect(client.responses).toHaveLength(0);
+    const pendingMessage = (await service.readConversation("chief")).messages.find(
+      (message) => message.questionPrompt?.requestId === "question-call",
+    );
+    expect(pendingMessage).toMatchObject({
+      itemType: "question_prompt",
+      text: expect.stringContaining("What is your favorite color?"),
+      questionPrompt: { resolution: null },
+    });
+    expect(runtimeSnapshot.latestMessages).not.toContainEqual(expect.objectContaining({ id: pendingMessage?.id }));
 
     await service.respondToPrompt({
       requestId: "question-call",
-      answers: { favorite: ["Blue"] },
+      answers: { favorite: [optionLabel], token: ["super-secret"] },
+    });
+    expect(events).toContainEqual({
+      type: "agent-input-resolved",
+      kind: "prompt",
+      requestId: "question-call",
+      botId: "chief",
+    });
+    expect(events.findLast((event) => event.type === "runtime-snapshot")).toMatchObject({
+      snapshot: { pendingPrompts: [] },
     });
     await waitFor(() => client.responses.length === 1);
     expect(client.responses[0]).toMatchObject({
@@ -804,7 +877,353 @@ describe.sequential("AgentService", () => {
     if (!isDynamicRecord(content) || !isString(content.text)) {
       throw new Error("The question result has no text content.");
     }
-    expect(JSON.parse(content.text)).toEqual({ favorite: ["Blue"] });
+    expect(JSON.parse(content.text)).toEqual({ favorite: [optionLabel], token: ["super-secret"] });
+
+    const resolvedMessage = (await service.readConversation("chief")).messages.find(
+      (message) => message.questionPrompt?.requestId === "question-call",
+    );
+    expect(resolvedMessage?.questionPrompt?.resolution).toEqual({
+      status: "answered",
+      responses: {
+        favorite: { status: "answered", answers: [optionLabel] },
+        token: { status: "answered" },
+      },
+    });
+    expect(resolvedMessage?.text).toContain(`Answer: ${optionLabel}`);
+    expect(resolvedMessage?.text).toContain("Answer: Private answer");
+    expect(JSON.stringify(resolvedMessage)).not.toContain("super-secret");
+    const persisted = store.database.readConversation(
+      "chief",
+      resolvedMessage?.turnId ? (store.list().find((bot) => bot.id === "chief")?.threadId ?? null) : null,
+    );
+    expect(JSON.stringify(persisted)).not.toContain("super-secret");
+    expect(service.searchConversationMessages(optionLabel, "chief").results).toEqual([
+      expect.objectContaining({ message: expect.objectContaining({ id: resolvedMessage?.id }) }),
+    ]);
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "skipped-question-call",
+      params: {
+        threadId,
+        turnId,
+        callId: "skipped-question-call",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: {
+          questions: [{ id: "favorite", header: "Favorite", question: "Choose again." }],
+        },
+      },
+    });
+    await waitFor(() => events.filter((event) => event.type === "prompt").length === 2);
+    await service.respondToPrompt({ requestId: "skipped-question-call", answers: { favorite: [] } });
+    expect(
+      (await service.readConversation("chief")).messages.find(
+        (message) => message.questionPrompt?.requestId === "skipped-question-call",
+      )?.questionPrompt?.resolution,
+    ).toEqual({ status: "answered", responses: { favorite: { status: "skipped" } } });
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "cancelled-question-call",
+      params: {
+        threadId,
+        turnId,
+        callId: "cancelled-question-call",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: {
+          questions: [{ id: "favorite", header: "Favorite", question: "Choose one more time." }],
+        },
+      },
+    });
+    await waitFor(() => events.filter((event) => event.type === "prompt").length === 3);
+    await service.respondToPrompt({ requestId: "cancelled-question-call", answers: {} });
+    expect(
+      (await service.readConversation("chief")).messages.find(
+        (message) => message.questionPrompt?.requestId === "cancelled-question-call",
+      )?.questionPrompt?.resolution,
+    ).toEqual({ status: "cancelled" });
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "duplicate-question-call",
+      params: {
+        threadId,
+        turnId,
+        callId: "duplicate-question-call",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: {
+          questions: [
+            { id: "duplicate", header: "Secret", question: "Private value?", isSecret: true },
+            { id: "duplicate", header: "Public", question: "Public value?" },
+          ],
+        },
+      },
+    });
+    await waitFor(() => client.responses.some((response) => response.id === "duplicate-question-call"));
+    expect(client.responses.find((response) => response.id === "duplicate-question-call")?.result).toMatchObject({
+      success: false,
+    });
+    expect(events.filter((event) => event.type === "prompt")).toHaveLength(3);
+
+    const invalidPrompts = [
+      {
+        id: "too-many-questions-call",
+        questions: Array.from({ length: 33 }, (_, index) => ({
+          id: `question-${index}`,
+          header: "Question",
+          question: `Question ${index}?`,
+        })),
+      },
+      {
+        id: "too-many-options-call",
+        questions: [
+          {
+            id: "options",
+            header: "Options",
+            question: "Choose one.",
+            options: Array.from({ length: 6 }, (_, index) => ({ label: `Option ${index}` })),
+          },
+        ],
+      },
+      {
+        id: "long-question-call",
+        questions: [{ id: "long", header: "Long", question: "q".repeat(2_001) }],
+      },
+    ];
+    for (const invalidPrompt of invalidPrompts) {
+      client.emit("request", {
+        method: "item/tool/call",
+        id: invalidPrompt.id,
+        params: {
+          threadId,
+          turnId,
+          callId: invalidPrompt.id,
+          namespace: "openbot",
+          tool: "ask_user",
+          arguments: { questions: invalidPrompt.questions },
+        },
+      });
+      await waitFor(() => client.responses.some((response) => response.id === invalidPrompt.id));
+      expect(client.responses.find((response) => response.id === invalidPrompt.id)?.result).toMatchObject({
+        success: false,
+      });
+    }
+    expect(events.filter((event) => event.type === "prompt")).toHaveLength(3);
+
+    client.emit("request", {
+      method: "item/tool/requestUserInput",
+      id: "empty-legacy-question",
+      params: { threadId, turnId, questions: [] },
+    });
+    await waitFor(() => client.responses.some((response) => response.id === "empty-legacy-question"));
+    expect(client.responses.find((response) => response.id === "empty-legacy-question")?.result).toEqual({
+      answers: {},
+    });
+    expect(events.filter((event) => event.type === "prompt")).toHaveLength(3);
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "retry-question-call",
+      params: {
+        threadId,
+        turnId,
+        callId: "retry-question-call",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: {
+          questions: [{ id: "retry", header: "Retry", question: "Can this answer be retried?" }],
+        },
+      },
+    });
+    await waitFor(() => events.filter((event) => event.type === "prompt").length === 4);
+    await expect(
+      service.respondToPrompt({ requestId: "retry-question-call", answers: { typo: ["Yes"] } }),
+    ).rejects.toThrow("does not match an active question");
+    expect(client.responses.some((response) => response.id === "retry-question-call")).toBe(false);
+    expect(
+      (await service.readConversation("chief")).messages.find(
+        (message) => message.questionPrompt?.requestId === "retry-question-call",
+      )?.questionPrompt?.resolution,
+    ).toBeNull();
+    client.responseError = new Error("Provider process is not running.");
+    await expect(
+      service.respondToPrompt({ requestId: "retry-question-call", answers: { retry: ["Yes"] } }),
+    ).rejects.toThrow("Provider process is not running.");
+    expect(
+      (await service.readConversation("chief")).messages.find(
+        (message) => message.questionPrompt?.requestId === "retry-question-call",
+      )?.questionPrompt?.resolution,
+    ).toBeNull();
+    client.responseError = null;
+    await service.respondToPrompt({ requestId: "retry-question-call", answers: { retry: ["Yes"] } });
+    expect(
+      (await service.readConversation("chief")).messages.find(
+        (message) => message.questionPrompt?.requestId === "retry-question-call",
+      )?.questionPrompt?.resolution,
+    ).toEqual({ status: "answered", responses: { retry: { status: "answered", answers: ["Yes"] } } });
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "persistence-question-call",
+      params: {
+        threadId,
+        turnId,
+        callId: "persistence-question-call",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: {
+          questions: [{ id: "delivery", header: "Delivery", question: "Was the answer delivered?" }],
+        },
+      },
+    });
+    await waitFor(() => events.filter((event) => event.type === "prompt").length === 5);
+    const persistenceFailure = vi.spyOn(store.database, "persistConversation").mockImplementationOnce(() => {
+      throw new Error("Database write failed.");
+    });
+    await expect(
+      service.respondToPrompt({ requestId: "persistence-question-call", answers: { delivery: ["Yes"] } }),
+    ).resolves.toBeUndefined();
+    expect(client.responses.filter((response) => response.id === "persistence-question-call")).toHaveLength(1);
+    await expect(
+      service.respondToPrompt({ requestId: "persistence-question-call", answers: { delivery: ["Yes"] } }),
+    ).rejects.toThrow("no longer active");
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "error", code: "prompt_persistence_failed", botId: "chief" }),
+    );
+    persistenceFailure.mockRestore();
+  });
+
+  it("does not use a question prompt summary as the completed assistant reply", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "DONE", false);
+      clients.set(provider, client);
+      return client;
+    });
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Ask only one question" });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const turnId = events.find((event) => event.type === "turn-started")?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The question-only turn did not start.");
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "question-only-call",
+      params: {
+        threadId,
+        turnId,
+        callId: "question-only-call",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: {
+          questions: [{ id: "scope", header: "Scope", question: "Which scope should we use?" }],
+        },
+      },
+    });
+    await waitFor(() => events.some((event) => event.type === "prompt"));
+    await service.respondToPrompt({ requestId: "question-only-call", answers: { scope: ["Small"] } });
+    const previewBeforeCompletion = service.listBots().find((bot) => bot.id === "chief")?.preview;
+
+    client.emit(
+      "notification",
+      notification("turn/completed", { threadId, turn: { id: turnId, status: "completed" } }),
+    );
+    await waitFor(() => events.some((event) => event.type === "turn-completed"));
+
+    const previewAfterCompletion = service.listBots().find((bot) => bot.id === "chief")?.preview;
+    expect(previewAfterCompletion).toBe(previewBeforeCompletion);
+    expect(previewAfterCompletion).not.toContain("Which scope should we use?");
+  });
+
+  it("keeps prompts from a healthy provider active when another provider exits", async () => {
+    process.env.OPENBOT_CLAUDE_PATH = await createFakeClaude(root);
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "DONE", false);
+      clients.set(provider, client);
+      return client;
+    });
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Ask from Codex" });
+    await service.setPreferredProvider("claude");
+    const claudeBot = await service.createBot({
+      ...CREATE_BOT_INPUT,
+      name: "Claude Prompt Bot",
+      avatarSeed: "setup:claude-prompt",
+    });
+    await service.sendMessage({ botId: claudeBot.id, text: "Ask from Claude" });
+    await waitFor(() => events.filter((event) => event.type === "turn-started").length === 2);
+
+    const codexClient = clients.get("codex");
+    const claudeClient = clients.get("claude");
+    const codexThreadId = store.activeProviderSession("chief")?.externalSessionId;
+    const claudeThreadId = store.activeProviderSession(claudeBot.id)?.externalSessionId;
+    const codexTurn = events.find((event) => event.type === "turn-started" && event.botId === "chief");
+    const claudeTurn = events.find((event) => event.type === "turn-started" && event.botId === claudeBot.id);
+    if (
+      !codexClient ||
+      !claudeClient ||
+      !codexThreadId ||
+      !claudeThreadId ||
+      codexTurn?.type !== "turn-started" ||
+      claudeTurn?.type !== "turn-started"
+    ) {
+      throw new Error("Both provider turns did not start.");
+    }
+
+    codexClient.emit("request", {
+      method: "item/tool/call",
+      id: "codex-provider-prompt",
+      params: {
+        threadId: codexThreadId,
+        turnId: codexTurn.turnId,
+        callId: "codex-provider-prompt",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: { questions: [{ id: "codex", header: "Codex", question: "Codex question?" }] },
+      },
+    });
+    claudeClient.emit("request", {
+      method: "item/tool/call",
+      id: "claude-provider-prompt",
+      params: {
+        threadId: claudeThreadId,
+        turnId: claudeTurn.turnId,
+        callId: "claude-provider-prompt",
+        namespace: "openbot",
+        tool: "ask_user",
+        arguments: { questions: [{ id: "claude", header: "Claude", question: "Claude question?" }] },
+      },
+    });
+    await waitFor(() => events.filter((event) => event.type === "prompt").length === 2);
+
+    codexClient.emit("exit", new Error("Codex exited."));
+    await waitFor(() => events.some((event) => event.type === "error" && event.code === "codex_exited"));
+    expect(
+      (await service.readConversation("chief")).messages.find(
+        (message) => message.questionPrompt?.requestId === "codex-provider-prompt",
+      )?.questionPrompt?.resolution,
+    ).toEqual({ status: "expired" });
+    expect(
+      (await service.readConversation(claudeBot.id)).messages.find(
+        (message) => message.questionPrompt?.requestId === "claude-provider-prompt",
+      )?.questionPrompt?.resolution,
+    ).toBeNull();
+
+    await service.respondToPrompt({ requestId: "claude-provider-prompt", answers: { claude: ["Still active"] } });
+    expect(claudeClient.responses.find((response) => response.id === "claude-provider-prompt")).toBeDefined();
   });
 
   it("pauses a browser tool call until the user resolves the takeover", async () => {
@@ -886,6 +1305,9 @@ describe.sequential("AgentService", () => {
       type: "browser-takeover-resolved",
       requestId: "takeover-call",
       botId: "chief",
+    });
+    expect(events.findLast((event) => event.type === "runtime-snapshot")).toMatchObject({
+      snapshot: { pendingBrowserTakeovers: [] },
     });
 
     client.emit("request", {
@@ -2290,6 +2712,255 @@ describe.sequential("AgentService", () => {
     );
   });
 
+  it("attaches an agent-created screenshot to the current user response", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "", false);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    const screenshotPath = join(store.sharedRoot, "desktop-screenshot.png");
+    const screenshot = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4]);
+    await writeFile(screenshotPath, screenshot);
+    await service.sendMessage({ botId: "chief", text: "Send me a screenshot." });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const turnId = service.listQueue("chief").deliveries[0]?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The screenshot attachment turn did not start.");
+
+    const result = await callOpenBotTool(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [screenshotPath] },
+      turnId,
+    );
+    expect(openBotToolPayload(result.result)).toMatchObject({
+      status: "attached",
+      attachments: [{ name: "desktop-screenshot.png" }],
+    });
+
+    const message = (await service.readConversation("chief")).messages.find(
+      (candidate) => candidate.itemType === "agent_attachment" && candidate.turnId === turnId,
+    );
+    expect(message).toMatchObject({
+      author: "assistant",
+      status: "completed",
+      text: "",
+      attachments: [
+        {
+          name: "desktop-screenshot.png",
+          kind: "image",
+          mimeType: "image/png",
+          previewKind: "image",
+        },
+      ],
+    });
+    expect(service.getRuntimeSnapshot().latestMessages).not.toContainEqual(
+      expect.objectContaining({ id: message?.id }),
+    );
+    const managed = await mailbox.resolveAttachment(message?.attachments?.[0]?.id ?? "");
+    expect(managed?.path).not.toBe(screenshotPath);
+    await expect(readFile(managed?.path ?? "")).resolves.toEqual(screenshot);
+
+    const outsidePath = join(root, "outside.png");
+    await writeFile(outsidePath, screenshot);
+    await expectOpenBotToolError(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [outsidePath] },
+      "inside this agent's workspace or the OpenBot shared directory",
+      turnId,
+    );
+    const linkedPath = join(store.sharedRoot, "linked-outside.png");
+    await symlink(outsidePath, linkedPath);
+    await expectOpenBotToolError(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [linkedPath] },
+      "inside this agent's workspace or the OpenBot shared directory",
+      turnId,
+    );
+
+    const publishedPath = join(store.sharedRoot, "published-screenshot.png");
+    await writeFile(publishedPath, screenshot);
+    const publicationFailure = (event: AgentEvent) => {
+      if (
+        event.type === "conversation" &&
+        event.snapshot.messages.some((candidate) =>
+          candidate.attachments?.some((attachment) => attachment.name === "published-screenshot.png"),
+        )
+      ) {
+        throw new Error("conversation listener failed");
+      }
+    };
+    const publicationEvents: AgentEvent[] = [];
+    const recordPublicationEvent = (event: AgentEvent) => publicationEvents.push(event);
+    service.on("event", publicationFailure);
+    service.on("event", recordPublicationEvent);
+    const publicationCallId = "publication-failure-call";
+    const publicationResult = await callOpenBotTool(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [publishedPath] },
+      turnId,
+      publicationCallId,
+    );
+    service.off("event", publicationFailure);
+    service.off("event", recordPublicationEvent);
+    expect(openBotToolPayload(publicationResult.result)).toMatchObject({
+      status: "attached",
+      attachments: [{ name: "published-screenshot.png" }],
+    });
+    expect(publicationEvents).toContainEqual(
+      expect.objectContaining({
+        type: "error",
+        code: "conversation_publication_failed",
+        message: "conversation listener failed",
+      }),
+    );
+    const publishedMessage = (await service.readConversation("chief")).messages.find((candidate) =>
+      candidate.attachments?.some((attachment) => attachment.name === "published-screenshot.png"),
+    );
+    await expect(mailbox.resolveAttachment(publishedMessage?.attachments?.[0]?.id ?? "")).resolves.not.toBeNull();
+  });
+
+  it("shares one attachment operation between concurrent retries", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "", false);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    const screenshotPath = join(store.sharedRoot, "concurrent-screenshot.png");
+    await writeFile(screenshotPath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    await service.sendMessage({ botId: "chief", text: "Send the screenshot once." });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const turnId = service.listQueue("chief").deliveries[0]?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The concurrent attachment turn did not start.");
+
+    const originalStore = mailbox.stageGeneratedAttachments.bind(mailbox);
+    let releaseStore: (() => void) | undefined;
+    const storeGate = new Promise<void>((resolve) => {
+      releaseStore = resolve;
+    });
+    let markStoreStarted: (() => void) | undefined;
+    const storeStarted = new Promise<void>((resolve) => {
+      markStoreStarted = resolve;
+    });
+    const storage = vi.spyOn(mailbox, "stageGeneratedAttachments").mockImplementation(async (input) => {
+      markStoreStarted?.();
+      await storeGate;
+      return originalStore(input);
+    });
+    const callId = "concurrent-attachment-call";
+    const first = callOpenBotTool(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [screenshotPath] },
+      turnId,
+      callId,
+    );
+    await storeStarted;
+    const second = callOpenBotTool(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [screenshotPath] },
+      turnId,
+      callId,
+    );
+    let stopCompleted = false;
+    const stopping = service.stop().then(() => {
+      stopCompleted = true;
+    });
+    await Promise.resolve();
+    expect(stopCompleted).toBe(false);
+    releaseStore?.();
+
+    const [firstResult, secondResult] = await Promise.all([first, second, stopping]);
+    expect(stopCompleted).toBe(true);
+    expect(openBotToolPayload(firstResult.result)).toEqual(openBotToolPayload(secondResult.result));
+    expect(storage).toHaveBeenCalledTimes(1);
+    expect(
+      (await service.readConversation("chief")).messages.filter(
+        (message) => message.itemType === "agent_attachment" && message.turnId === turnId,
+      ),
+    ).toHaveLength(1);
+    await expect(mailbox.listExportAttachments()).resolves.toHaveLength(1);
+  });
+
+  it("rolls back response attachments when conversation persistence fails and permits retry", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "", false);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    const screenshotPath = join(store.sharedRoot, "retry-screenshot.png");
+    await writeFile(screenshotPath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    await service.sendMessage({ botId: "chief", text: "Send the screenshot safely." });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const turnId = service.listQueue("chief").deliveries[0]?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The attachment rollback turn did not start.");
+
+    const callId = "stable-attachment-call";
+    const persistence = vi.spyOn(mailbox, "persistGeneratedAttachmentsWithConversation").mockImplementationOnce(() => {
+      throw new Error("conversation write failed");
+    });
+    const failed = await callOpenBotTool(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [screenshotPath] },
+      turnId,
+      callId,
+    );
+    expect(failed.error?.message).toContain("conversation write failed");
+    expect((await service.readConversation("chief")).messages).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ itemType: "agent_attachment", turnId })]),
+    );
+    await expect(mailbox.listExportAttachments()).resolves.toEqual([]);
+
+    persistence.mockRestore();
+    const retried = await callOpenBotTool(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [screenshotPath] },
+      turnId,
+      callId,
+    );
+    expect(openBotToolPayload(retried.result)).toMatchObject({
+      status: "attached",
+      attachments: [{ name: "retry-screenshot.png" }],
+    });
+    await expect(mailbox.listExportAttachments()).resolves.toHaveLength(1);
+    expect(
+      (await service.readConversation("chief")).messages.filter(
+        (message) => message.itemType === "agent_attachment" && message.turnId === turnId,
+      ),
+    ).toHaveLength(1);
+  });
+
   it("sends a teammate request only to the selected profile match", async () => {
     process.env.OPENBOT_FAKE_AGENT_TOOL_CALLS = JSON.stringify([
       { tool: "list_agents", arguments: {} },
@@ -2437,6 +3108,51 @@ describe.sequential("AgentService", () => {
       ]),
     });
     expect((await store.getOrCreate("chief")).threadId).toBe(threadId);
+  });
+
+  it("expires a persisted question prompt after restart", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Start a recoverable turn" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+    const bot = await store.getOrCreate("chief");
+    await service.stop();
+    const snapshot = store.database.readConversation("chief", bot.threadId);
+    snapshot.activeTurnId = "turn-with-question";
+    snapshot.messages.push({
+      id: "question-prompt:turn-with-question:request-1",
+      turnId: "turn-with-question",
+      author: "assistant",
+      source: "assistant",
+      text: "",
+      createdAt: "2026-08-28T12:00:00.000Z",
+      status: "completed",
+      itemType: "question_prompt",
+      questionPrompt: {
+        requestId: "request-1",
+        questions: [
+          {
+            id: "scope",
+            header: "Scope",
+            question: "How broad should the change be?",
+            isSecret: false,
+            options: null,
+          },
+        ],
+        resolution: null,
+      },
+    });
+    store.database.persistConversation(snapshot, "test.question-prompt-pending");
+
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+
+    const recovered = await service.readConversation("chief");
+    expect(recovered.activeTurnId).toBeNull();
+    expect(recovered.messages.find((message) => message.questionPrompt)?.questionPrompt?.resolution).toEqual({
+      status: "expired",
+    });
   });
 
   it("does not persist unchanged provider history after repeated restarts", async () => {
@@ -2659,6 +3375,15 @@ describe.sequential("AgentService", () => {
         ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
         .some((run) => run.status === "failed"),
     );
+    const failedRuntime = service.getRuntimeSnapshot();
+    expect(isAgentEvent({ type: "runtime-snapshot", snapshot: failedRuntime })).toBe(true);
+    expect(failedRuntime.failedTurns).toEqual([{ botId: bot.id, turnId: running.turnId }]);
+    expect(failedRuntime.work).toEqual([
+      expect.objectContaining({ id: running.id, botId: bot.id, status: "failed", turnId: running.turnId }),
+    ]);
+    service.acknowledgeFailedTurn(bot.id, running.turnId);
+    expect(service.getRuntimeSnapshot().failedTurns).toEqual([]);
+    expect(service.getRuntimeSnapshot().work).toEqual([]);
 
     await service.testRoutine({ botId: bot.id, routineId: routine.id });
     await waitFor(
@@ -2738,6 +3463,7 @@ class FakeAgentClient extends EventEmitter implements AgentClient {
   readonly errors: Array<{ id: RequestId; error: RpcError }> = [];
   #threadCounter = 0;
   running = false;
+  responseError: Error | null = null;
 
   constructor(
     readonly provider: AgentProvider,
@@ -2859,6 +3585,7 @@ class FakeAgentClient extends EventEmitter implements AgentClient {
   }
 
   respond(id: RequestId, result: unknown): void {
+    if (this.responseError) throw this.responseError;
     this.responses.push({ id, result: structuredClone(result) });
   }
 
@@ -2873,6 +3600,7 @@ async function callOpenBotTool(
   tool: string,
   args: unknown,
   turnId = "routine-tool-turn",
+  callId: string = randomUUID(),
 ): Promise<{ result?: unknown; error?: RpcError }> {
   const id = `openbot-tool-${randomUUID()}`;
   client.emit("request", {
@@ -2881,7 +3609,7 @@ async function callOpenBotTool(
     params: {
       threadId,
       turnId,
-      callId: randomUUID(),
+      callId,
       namespace: "openbot",
       tool,
       arguments: args,

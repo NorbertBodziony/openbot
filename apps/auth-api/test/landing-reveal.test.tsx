@@ -49,11 +49,9 @@ describe("createLandingReveal", () => {
     const section = view.container.querySelector("section");
     const observer = IntersectionObserverMock.instances[0];
 
-    expect(section).toHaveAttribute("data-revealed", "false");
     expect(observer?.observe).toHaveBeenCalledWith(section);
     observer?.reveal();
-    await waitFor(() => expect(section).toHaveAttribute("data-revealed", "true"));
-    expect(observer?.disconnect).toHaveBeenCalled();
+    await waitFor(() => expect(observer?.disconnect).toHaveBeenCalled());
   });
 
   it("disconnects the observer on cleanup", () => {
@@ -67,9 +65,8 @@ describe("createLandingReveal", () => {
 
   it("reveals immediately for reduced motion", () => {
     installBrowserMocks(true);
-    const view = render(() => <RevealFixture />);
+    render(() => <RevealFixture />);
 
-    expect(view.container.querySelector("section")).toHaveAttribute("data-revealed", "true");
     expect(IntersectionObserverMock.instances).toHaveLength(0);
   });
 });

@@ -3,13 +3,17 @@ import type {
   AgentStatus,
   AttachmentImportEvent,
   BotSummary,
+  BrowserPictureInPictureEvent,
   BrowserTab,
   CentralAuthState,
+  ConversationPage,
   ConversationSnapshot,
   DirectConversationSnapshot,
   DirectMessageRealtimeEvent,
   DirectTypingRealtimeEvent,
+  DynamicIslandAction,
   QueueDelivery,
+  ScopedAgentEvent,
   ServerSummary,
   TeamPresenceSnapshot,
   UpdateStatus,
@@ -36,7 +40,9 @@ vi.spyOn(desktopAnalytics, "anonymousScope").mockImplementation(() => ({
 const defaultMatchMedia = window.matchMedia;
 
 let emitAgentEvent: ((event: AgentEvent) => void) | undefined;
+let emitScopedAgentEvent: ((event: ScopedAgentEvent) => void) | undefined;
 let emitAttachmentImport: ((event: AttachmentImportEvent) => void) | undefined;
+let emitBrowserPictureInPicture: ((event: BrowserPictureInPictureEvent) => void) | undefined;
 let emitUpdateStatus: ((status: UpdateStatus) => void) | undefined;
 let emitAuth: ((state: CentralAuthState) => void) | undefined;
 let emitServers: ((servers: ServerSummary[]) => void) | undefined;
@@ -44,6 +50,7 @@ let emitPresence: ((snapshot: TeamPresenceSnapshot) => void) | undefined;
 let emitDirectMessage: ((event: DirectMessageRealtimeEvent) => void) | undefined;
 let emitDirectTyping: ((event: DirectTypingRealtimeEvent) => void) | undefined;
 let emitInvite: ((inviteUrl: string) => void) | undefined;
+let emitDynamicIslandAction: ((action: DynamicIslandAction) => void) | undefined;
 
 const BOTS: BotSummary[] = [
   {
@@ -82,6 +89,39 @@ const BOTS: BotSummary[] = [
   },
 ];
 
+function testServer(id: string, active: boolean): ServerSummary {
+  const local = id === "local";
+  return {
+    id,
+    name: local ? "Local" : "Studio Mac",
+    logoUrl: null,
+    kind: local ? "local" : "remote",
+    state: "online",
+    apiUrl: local ? null : "https://studio.example.com",
+    remoteDesktopAvailable: false,
+    role: local ? null : "member",
+    active,
+  };
+}
+
+function testConversationPage(
+  botId: string,
+  messages: ConversationPage["messages"] = [],
+  overrides: Partial<ConversationPage> = {},
+): ConversationPage {
+  return {
+    botId,
+    threadId: "thread-1",
+    activeTurnId: null,
+    revision: 1,
+    messages,
+    references: {},
+    readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+    pageInfo: { hasOlder: false, olderCursor: null },
+    ...overrides,
+  };
+}
+
 async function confirmOnboardingModel(): Promise<void> {
   await screen.findByRole("button", { name: "Agent model: Luna" });
 }
@@ -112,7 +152,9 @@ function queuedDelivery(
 describe("OpenBot connected desktop shell", () => {
   beforeEach(() => {
     emitAgentEvent = undefined;
+    emitScopedAgentEvent = undefined;
     emitAttachmentImport = undefined;
+    emitBrowserPictureInPicture = undefined;
     emitUpdateStatus = undefined;
     emitAuth = undefined;
     emitServers = undefined;
@@ -120,6 +162,7 @@ describe("OpenBot connected desktop shell", () => {
     emitDirectMessage = undefined;
     emitDirectTyping = undefined;
     emitInvite = undefined;
+    emitDynamicIslandAction = undefined;
     trackAnalytics.mockClear();
     window.localStorage.clear();
     Object.defineProperty(window, "matchMedia", {
@@ -143,6 +186,26 @@ describe("OpenBot connected desktop shell", () => {
         getSetupState: vi.fn().mockResolvedValue({ completed: true, preferredProvider: "codex" }),
         getAnalyticsPreference: vi.fn().mockResolvedValue({ enabled: true }),
         setAnalyticsPreference: vi.fn(async ({ enabled }) => ({ enabled })),
+        dynamicIsland: {
+          getPreference: vi.fn().mockResolvedValue({
+            enabled: true,
+            hapticsEnabled: true,
+            idleVisible: true,
+            additionalDisplaysEnabled: true,
+          }),
+          setPreference: vi.fn(async (preference) => ({ ...preference })),
+          publishPresentation: vi.fn().mockResolvedValue(undefined),
+          getPresentation: vi.fn().mockResolvedValue(null),
+          onPreference: vi.fn().mockReturnValue(() => undefined),
+          onPresentation: vi.fn().mockReturnValue(() => undefined),
+          performAction: vi.fn().mockResolvedValue(undefined),
+          performHaptic: vi.fn().mockResolvedValue(undefined),
+          onAction: vi.fn((listener) => {
+            emitDynamicIslandAction = listener;
+            return () => undefined;
+          }),
+          setInteractive: vi.fn().mockResolvedValue(undefined),
+        },
         saveSetup: vi.fn().mockImplementation(async ({ preferredProvider }) => ({
           completed: true,
           preferredProvider,
@@ -458,6 +521,7 @@ describe("OpenBot connected desktop shell", () => {
           }),
           setMessageReaction: vi.fn().mockResolvedValue(undefined),
           listQueue: vi.fn().mockImplementation(async (botId) => ({ botId, deliveries: [] })),
+          acknowledgeFailedTurn: vi.fn().mockResolvedValue(undefined),
           cancelQueuedMessage: vi.fn().mockResolvedValue(undefined),
           steerQueuedMessage: vi.fn().mockResolvedValue(undefined),
           updateQueuedMessage: vi.fn().mockResolvedValue(undefined),
@@ -471,6 +535,10 @@ describe("OpenBot connected desktop shell", () => {
             emitAgentEvent = listener;
             return () => undefined;
           }),
+          onScopedEvent: vi.fn((listener) => {
+            emitScopedAgentEvent = listener;
+            return () => undefined;
+          }),
         },
         browser: {
           open: vi.fn().mockResolvedValue(undefined),
@@ -479,8 +547,25 @@ describe("OpenBot connected desktop shell", () => {
           reload: vi.fn().mockResolvedValue(undefined),
           close: vi.fn().mockResolvedValue(undefined),
           listTabs: vi.fn().mockResolvedValue([]),
+          getDisplayState: vi.fn().mockResolvedValue({ tabs: [], activeTabId: null }),
           getControlState: vi.fn().mockResolvedValue({ sessions: [] }),
+          capturePreview: vi.fn().mockResolvedValue({
+            dataUrl: "data:image/jpeg;base64,YWJj",
+            width: 960,
+            height: 600,
+          }),
           setVisible: vi.fn().mockResolvedValue(undefined),
+          onDisplayState: vi.fn().mockReturnValue(() => undefined),
+          openPictureInPicture: vi
+            .fn()
+            .mockImplementation(async (bounds) => bounds ?? { x: 900, y: 500, width: 420, height: 300 }),
+          closePictureInPicture: vi.fn().mockResolvedValue(undefined),
+          dockPictureInPicture: vi.fn().mockResolvedValue(undefined),
+          hidePictureInPicture: vi.fn().mockResolvedValue(undefined),
+          onPictureInPictureEvent: vi.fn((listener) => {
+            emitBrowserPictureInPicture = listener;
+            return () => undefined;
+          }),
         },
         update: {
           getStatus: vi.fn().mockResolvedValue({
@@ -555,6 +640,7 @@ describe("OpenBot connected desktop shell", () => {
           }),
           takePendingInvite: vi.fn().mockResolvedValue(null),
           login: vi.fn().mockResolvedValue(undefined),
+          retryConnection: vi.fn().mockRejectedValue(new Error("The host is still incompatible.")),
           remove: vi.fn().mockResolvedValue(undefined),
           getPresence: vi.fn().mockResolvedValue({ serverId: null, members: [], updatedAt: "" }),
           getPresenceFor: vi.fn().mockResolvedValue({ serverId: null, members: [], updatedAt: "" }),
@@ -766,6 +852,496 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(await screen.findByRole("heading", { name: "Remote Chief" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("blocks an incompatible remote workspace and offers a manual retry", async () => {
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([
+      { ...testServer("local", false) },
+      {
+        ...testServer("remote-1", true),
+        state: "incompatible",
+        compatibility: {
+          localAppVersion: "0.4.0",
+          hostAppVersion: "0.2.0",
+          localProtocol: { minimum: 2, maximum: 2 },
+          hostProtocol: { minimum: 1, maximum: 1 },
+          negotiatedProtocol: null,
+          capabilities: [],
+        },
+        issue: {
+          code: "host_update_required",
+          message: "Update OpenBot on the host.",
+          retryable: true,
+        },
+      },
+    ]);
+
+    render(() => <App />);
+
+    expect(await screen.findByRole("heading", { name: "Update OpenBot on Studio Mac" })).toBeInTheDocument();
+    expect(window.openbot.agent.listBots).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(window.openbot.servers.retryConnection).toHaveBeenCalledWith("remote-1"));
+  });
+
+  it("keeps a newer online event when retry returns an older summary", async () => {
+    const local = testServer("local", false);
+    const incompatible: ServerSummary = {
+      ...testServer("remote-1", true),
+      state: "incompatible",
+      compatibility: {
+        localAppVersion: "0.4.0",
+        hostAppVersion: "0.4.0",
+        localProtocol: { minimum: 2, maximum: 2 },
+        hostProtocol: { minimum: 1, maximum: 1 },
+        negotiatedProtocol: null,
+        capabilities: [],
+      },
+      issue: { code: "host_update_required", message: "Update OpenBot on the host.", retryable: true },
+    };
+    const online: ServerSummary = {
+      ...incompatible,
+      state: "online",
+      issue: null,
+      compatibility: {
+        localAppVersion: "0.4.0",
+        hostAppVersion: "0.4.0",
+        localProtocol: { minimum: 1, maximum: 1 },
+        hostProtocol: { minimum: 1, maximum: 1 },
+        negotiatedProtocol: 1,
+        capabilities: [],
+      },
+      connectionSequence: 1,
+    };
+    let resolveRetry: ((server: ServerSummary) => void) | undefined;
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, incompatible]);
+    vi.mocked(window.openbot.servers.retryConnection).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveRetry = resolve;
+      }),
+    );
+    vi.mocked(window.openbot.servers.select).mockRejectedValueOnce(new Error("Workspace refresh failed"));
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Update OpenBot on Studio Mac" });
+    await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    emitServers?.([local, online]);
+    resolveRetry?.({ ...online, state: "connecting" });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Studio Mac server" })).toBeInTheDocument());
+  });
+
+  it("shows a version warning after every compatible remote connection", async () => {
+    const local = testServer("local", true);
+    const remote: ServerSummary = {
+      ...testServer("remote-1", false),
+      compatibility: {
+        localAppVersion: "0.4.0",
+        hostAppVersion: "0.3.0",
+        localProtocol: { minimum: 1, maximum: 1 },
+        hostProtocol: { minimum: 1, maximum: 1 },
+        negotiatedProtocol: 1,
+        capabilities: [],
+      },
+      connectionSequence: 0,
+    };
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    emitServers?.([local, { ...remote, connectionSequence: 1 }]);
+    expect(await screen.findByText("Different OpenBot versions on Studio Mac")).toBeInTheDocument();
+    emitServers?.([local, { ...remote, connectionSequence: 2 }]);
+    await waitFor(() => expect(screen.getAllByText("Different OpenBot versions on Studio Mac")).toHaveLength(2));
+  });
+
+  it("loads capability-gated state when a provisional handshake becomes ready", async () => {
+    const local = testServer("local", false);
+    const provisional: ServerSummary = {
+      ...testServer("remote-1", true),
+      state: "connecting",
+      compatibility: {
+        localAppVersion: "0.4.0",
+        hostAppVersion: null,
+        localProtocol: { minimum: 1, maximum: 1 },
+        hostProtocol: null,
+        negotiatedProtocol: null,
+        capabilities: [],
+      },
+      connectionSequence: 0,
+    };
+    const negotiated: ServerSummary = {
+      ...provisional,
+      state: "online",
+      compatibility: {
+        localAppVersion: "0.4.0",
+        hostAppVersion: "0.4.0",
+        localProtocol: { minimum: 1, maximum: 1 },
+        hostProtocol: { minimum: 1, maximum: 1 },
+        negotiatedProtocol: 1,
+        capabilities: ["browser-control", "sidebar-layout"],
+      },
+      connectionSequence: 1,
+    };
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, provisional]);
+    vi.mocked(window.openbot.servers.select).mockResolvedValueOnce([local, negotiated]);
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    expect(window.openbot.agent.getSidebarLayout).not.toHaveBeenCalled();
+    expect(window.openbot.browser.listTabs).not.toHaveBeenCalled();
+
+    emitServers?.([local, negotiated]);
+    await waitFor(() => expect(window.openbot.servers.select).toHaveBeenCalledWith("remote-1"));
+    await waitFor(() => expect(window.openbot.agent.getSidebarLayout).toHaveBeenCalled());
+    expect(window.openbot.browser.listTabs).toHaveBeenCalled();
+  });
+
+  it("keeps a remote approval when Review in OpenBot switches to its host", async () => {
+    const servers: ServerSummary[] = [
+      {
+        id: "local",
+        name: "Local",
+        logoUrl: null,
+        kind: "local",
+        state: "online",
+        apiUrl: null,
+        remoteDesktopAvailable: false,
+        role: null,
+        active: true,
+      },
+      {
+        id: "remote-1",
+        name: "Studio Mac",
+        logoUrl: null,
+        kind: "remote",
+        state: "online",
+        apiUrl: "https://studio.example.com",
+        remoteDesktopAvailable: false,
+        role: "member",
+        active: false,
+      },
+    ];
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce(servers);
+    vi.mocked(window.openbot.servers.select).mockResolvedValueOnce(
+      servers.map((server) => ({ ...server, active: server.id === "remote-1" })),
+    );
+
+    render(() => <App />);
+    await waitFor(() => expect(emitScopedAgentEvent).toBeTypeOf("function"));
+    emitScopedAgentEvent?.({ serverId: "remote-1", event: { type: "bots-changed", bots: BOTS } });
+    emitScopedAgentEvent?.({
+      serverId: "remote-1",
+      event: {
+        type: "approval",
+        approval: {
+          requestId: "approval-remote",
+          botId: "chief",
+          threadId: "thread-chief",
+          turnId: "turn-remote",
+          kind: "permissions",
+          command: null,
+          cwd: null,
+          reason: "Review remote access.",
+          grantRoot: null,
+          permissions: { fileSystem: { read: ["/workspace"], write: [] }, network: false },
+        },
+      },
+    });
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        serverId: "remote-1",
+        mode: "approval",
+        item: { requestId: "approval-remote" },
+      }),
+    );
+
+    emitDynamicIslandAction?.({
+      type: "review-attention",
+      serverId: "remote-1",
+      botId: "chief",
+      requestId: "approval-remote",
+    });
+    await waitFor(() => expect(window.openbot.servers.select).toHaveBeenCalledWith("remote-1"));
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        serverId: "remote-1",
+        mode: "approval",
+        item: { requestId: "approval-remote" },
+      }),
+    );
+
+    emitDynamicIslandAction?.({
+      type: "respond-approval",
+      serverId: "remote-1",
+      botId: "chief",
+      requestId: "approval-remote",
+      decision: "accept",
+    });
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        serverId: "remote-1",
+        mode: "idle",
+      }),
+    );
+  });
+
+  it("removes stale Dynamic Island attention when a remote host goes offline", async () => {
+    const local: ServerSummary = {
+      id: "local",
+      name: "Local",
+      logoUrl: null,
+      kind: "local",
+      state: "online",
+      apiUrl: null,
+      remoteDesktopAvailable: false,
+      role: null,
+      active: true,
+    };
+    const remote: ServerSummary = {
+      id: "remote-1",
+      name: "Studio Mac",
+      logoUrl: null,
+      kind: "remote",
+      state: "online",
+      apiUrl: "https://studio.example.com",
+      remoteDesktopAvailable: false,
+      role: "member",
+      active: false,
+    };
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+
+    render(() => <App />);
+    await waitFor(() => expect(emitScopedAgentEvent).toBeTypeOf("function"));
+    emitScopedAgentEvent?.({ serverId: remote.id, event: { type: "bots-changed", bots: BOTS } });
+    emitScopedAgentEvent?.({
+      serverId: remote.id,
+      event: {
+        type: "approval",
+        approval: {
+          requestId: "stale-approval",
+          botId: "chief",
+          threadId: "thread-chief",
+          turnId: "turn-remote",
+          kind: "permissions",
+          command: null,
+          cwd: null,
+          reason: "Review remote access.",
+          grantRoot: null,
+          permissions: { fileSystem: { read: ["/workspace"], write: [] }, network: false },
+        },
+      },
+    });
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        serverId: remote.id,
+        mode: "approval",
+      }),
+    );
+
+    emitServers?.([local, { ...remote, state: "offline" }]);
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        serverId: "local",
+        mode: "idle",
+      }),
+    );
+  });
+
+  it("reports a remote reply that arrives while its host is offline", async () => {
+    const local: ServerSummary = {
+      id: "local",
+      name: "Local",
+      logoUrl: null,
+      kind: "local",
+      state: "online",
+      apiUrl: null,
+      remoteDesktopAvailable: false,
+      role: null,
+      active: true,
+    };
+    const remote: ServerSummary = {
+      id: "remote-1",
+      name: "Studio Mac",
+      logoUrl: null,
+      kind: "remote",
+      state: "online",
+      apiUrl: "https://studio.example.com",
+      remoteDesktopAvailable: false,
+      role: "member",
+      active: false,
+    };
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+    const snapshot = (messageId: string, text: string) => ({
+      type: "runtime-snapshot" as const,
+      snapshot: {
+        bots: [
+          {
+            id: "chief",
+            name: "Chief",
+            notifications: true,
+            preview: "",
+            updatedAt: null,
+            avatarSeed: "chief",
+            avatarHue: null,
+            avatarUrl: null,
+          },
+        ],
+        activeTurns: [],
+        work: [],
+        latestMessages: [{ botId: "chief", id: messageId, text, createdAt: "2026-08-29T10:00:00.000Z" }],
+        attentionComplete: true,
+        pendingPrompts: [],
+        pendingApprovals: [],
+        pendingBrowserTakeovers: [],
+        failedTurns: [],
+      },
+    });
+
+    render(() => <App />);
+    await waitFor(() => expect(emitScopedAgentEvent).toBeTypeOf("function"));
+    emitScopedAgentEvent?.({ serverId: remote.id, event: snapshot("reply-old", "Earlier reply") });
+    emitServers?.([local, { ...remote, state: "offline" }]);
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        serverId: "local",
+        mode: "idle",
+      }),
+    );
+
+    emitServers?.([local, remote]);
+    emitScopedAgentEvent?.({ serverId: remote.id, event: snapshot("reply-new", "Reply from offline work") });
+
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        serverId: remote.id,
+        mode: "message",
+        unreadCount: 1,
+        message: { messageId: "reply-new", text: "Reply from offline work" },
+      }),
+    );
+  });
+
+  it("preserves omitted attention only when a compact runtime snapshot is incomplete", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(window.openbot.agent.listQueue).toHaveBeenCalledWith("chief"));
+
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: {
+        botId: "chief",
+        deliveries: [
+          queuedDelivery("delivery-running", "Keep the full queue", null, {
+            status: "running",
+            turnId: "turn-running",
+          }),
+        ],
+      },
+    });
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-authoritative",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-running",
+      questions: [
+        {
+          id: "scope",
+          header: "Scope",
+          question: "Which scope?",
+          isSecret: false,
+          options: null,
+        },
+      ],
+    });
+
+    expect(await screen.findByRole("status", { name: "Chief is working" })).toBeInTheDocument();
+    expect(await screen.findByRole("textbox", { name: "Custom answer for: Which scope?" })).toBeInTheDocument();
+
+    const runtimeSnapshot: AgentEvent = {
+      type: "runtime-snapshot",
+      snapshot: {
+        bots: [],
+        activeTurns: [{ botId: "chief", threadId: "thread-chief", turnId: "turn-running" }],
+        work: [],
+        latestMessages: [],
+        attentionComplete: false,
+        pendingPrompts: [],
+        pendingApprovals: [],
+        pendingBrowserTakeovers: [],
+        failedTurns: [],
+      },
+    };
+    emitAgentEvent?.(runtimeSnapshot);
+
+    expect(screen.getByRole("status", { name: "Chief is working" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Custom answer for: Which scope?" })).toBeInTheDocument();
+
+    emitAgentEvent?.({
+      ...runtimeSnapshot,
+      snapshot: { ...runtimeSnapshot.snapshot, activeTurns: [], attentionComplete: true },
+    });
+    await waitFor(() =>
+      expect(screen.queryByRole("textbox", { name: "Custom answer for: Which scope?" })).not.toBeInTheDocument(),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument());
+  });
+
+  it("merges compact runtime attention into the active server", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+
+    emitAgentEvent?.({
+      type: "runtime-snapshot",
+      snapshot: {
+        bots: [],
+        activeTurns: [],
+        work: [],
+        latestMessages: [],
+        attentionComplete: true,
+        pendingPrompts: [],
+        pendingApprovals: [
+          {
+            requestId: "approval-runtime",
+            botId: "chief",
+            threadId: "thread-chief",
+            turnId: "turn-runtime",
+            kind: "command",
+            command: "bun test",
+            truncated: false,
+            cwd: null,
+            reason: null,
+            grantRoot: null,
+            permissions: null,
+          },
+        ],
+        pendingBrowserTakeovers: [],
+        failedTurns: [],
+      },
+    });
+
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "approval",
+        item: { requestId: "approval-runtime" },
+      }),
+    );
+
+    emitAgentEvent?.({
+      type: "agent-input-resolved",
+      kind: "approval",
+      requestId: "approval-runtime",
+      botId: "chief",
+    });
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "idle",
+      }),
+    );
   });
 
   it("shows the first-run onboarding before starting agents", async () => {
@@ -1248,7 +1824,6 @@ describe("OpenBot connected desktop shell", () => {
     const remoteDesktop = await screen.findByRole("main", { name: "Remote control" });
     const appFrame = document.querySelector<HTMLElement>(".app-frame");
     if (!appFrame) throw new Error("App frame is missing.");
-    expect(remoteDesktop).toHaveClass("remote-desktop-workspace-visible");
     expect(appFrame.inert).toBe(true);
     expect(appFrame).toHaveAttribute("aria-hidden", "true");
     expect(within(remoteDesktop).queryByText("Studio Mac")).not.toBeInTheDocument();
@@ -1546,10 +2121,10 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
 
-    await fireEvent.click(screen.getByRole("button", { name: "Open account menu" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Open account actions" }));
     await fireEvent.click(screen.getByRole("button", { name: "Providers & permissions" }));
 
-    expect(screen.getByRole("dialog", { name: "Providers & permissions" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "Providers & permissions" })).toBeInTheDocument();
     const providers = screen.getByRole("radiogroup", { name: "Default provider" });
     expect(within(providers).getByRole("radio", { name: /Codex.*Connected/ })).toBeChecked();
     expect(within(providers).getByText("norbert@example.com")).toBeInTheDocument();
@@ -1664,29 +2239,52 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(window.openbot.openExternal).toHaveBeenCalledWith("agent-setup"));
   });
 
-  it("shows a compact account menu with weekly usage and contact actions", async () => {
+  it("shows focused weekly usage and compact account actions", async () => {
     render(() => <App />);
-    const accountButton = await screen.findByRole("button", { name: "Open account menu" });
-    expect(accountButton).toHaveTextContent("person@example.com");
-    expect(accountButton.closest(".account-dock")).toHaveClass("account-dock-with-server-rail");
-    expect(screen.getByRole("complementary", { name: "Bot navigation" })).not.toContainElement(accountButton);
-
-    fireEvent.click(accountButton);
     await waitFor(() => expect(window.openbot.agent.getUsage).toHaveBeenCalledTimes(1));
-    const accountDialog = screen.getByRole("dialog", { name: "Account" });
-    expect(within(accountDialog).getAllByText("person@example.com")).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Upload photo" })).toBeInTheDocument();
-    expect(await screen.findByText("Weekly usage")).toBeInTheDocument();
-    expect(screen.getByText("59%")).toBeInTheDocument();
+    const usageButton = await screen.findByRole("button", { name: "Weekly usage, 59% left" });
+    expect(screen.getByRole("complementary", { name: "Bot navigation" })).not.toContainElement(usageButton);
+
+    await fireEvent.click(usageButton);
+    const usageDialog = screen.getByRole("dialog", { name: "Weekly usage" });
+    const usageProgress = within(usageDialog).getByRole("progressbar", { name: "Weekly usage remaining" });
+    expect(usageProgress).toHaveAttribute("aria-valuenow", "59");
+    expect(usageProgress).toHaveAttribute("aria-valuetext", "59% left");
+    expect(within(usageDialog).getByText("59%")).toBeInTheDocument();
+    expect(within(usageDialog).getByText("Resets")).toBeInTheDocument();
+    await fireEvent.click(within(usageDialog).getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(window.openbot.agent.getUsage).toHaveBeenCalledTimes(2));
     expect(screen.queryByText(/ChatGPT Pro/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Developer preview/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Lifetime/i)).not.toBeInTheDocument();
 
+    await fireEvent.keyDown(usageDialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Weekly usage" })).not.toBeInTheDocument());
+    await waitFor(() => expect(usageButton).toHaveFocus());
+
+    const accountButton = screen.getByRole("button", { name: "Open account actions" });
+    await fireEvent.click(accountButton);
+    const accountDialog = screen.getByRole("dialog", { name: "Account actions" });
+    expect(within(accountDialog).getByRole("button", { name: /Check for updates/ })).toBeInTheDocument();
+    expect(within(accountDialog).getByRole("button", { name: "Marketplace" })).toBeInTheDocument();
+    expect(within(accountDialog).getByRole("button", { name: "Providers & permissions" })).toBeInTheDocument();
+    expect(within(accountDialog).getByRole("button", { name: "Send feedback" })).toBeInTheDocument();
+    expect(within(accountDialog).getByRole("button", { name: "Message" })).toBeInTheDocument();
+    expect(within(accountDialog).getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+    expect(within(accountDialog).queryByText("person@example.com")).not.toBeInTheDocument();
+    expect(within(accountDialog).queryByRole("button", { name: /photo/i })).not.toBeInTheDocument();
+    expect(within(accountDialog).queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
+    expect(within(accountDialog).queryByText("Weekly usage")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Export data" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Export diagnostics" })).not.toBeInTheDocument();
 
-    await screen.findByRole("button", { name: "Send feedback" });
-    fireEvent.click(screen.getByRole("button", { name: "Send feedback" }));
+    await fireEvent.keyDown(accountDialog, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Account actions" })).not.toBeInTheDocument());
+    await waitFor(() => expect(accountButton).toHaveFocus());
+
+    await fireEvent.click(accountButton);
+    const reopenedAccountDialog = await screen.findByRole("dialog", { name: "Account actions" });
+    fireEvent.click(within(reopenedAccountDialog).getByRole("button", { name: "Send feedback" }));
     await waitFor(() => expect(window.openbot.openExternal).toHaveBeenCalledWith("feedback"));
 
     fireEvent.click(accountButton);
@@ -1694,12 +2292,11 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(window.openbot.openExternal).toHaveBeenCalledWith("message"));
   });
 
-  it("opens global settings from the account menu and restores focus after every close path", async () => {
+  it("opens global settings from the dock and restores focus after every close path", async () => {
     render(() => <App />);
-    const accountButton = await screen.findByRole("button", { name: "Open account menu" });
+    const settingsButton = await screen.findByRole("button", { name: "Settings" });
 
-    await fireEvent.click(accountButton);
-    await fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await fireEvent.click(settingsButton);
     let dialog = await screen.findByRole("dialog", { name: "General" });
     const launchSwitch = within(dialog).getByRole("switch", { name: "Launch OpenBot at login" });
     await fireEvent.click(launchSwitch);
@@ -1707,31 +2304,47 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.click(within(dialog).getByRole("button", { name: "Close settings" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
-    await waitFor(() => expect(accountButton).toHaveFocus());
+    await waitFor(() => expect(settingsButton).toHaveFocus());
 
-    await fireEvent.click(accountButton);
-    await fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await fireEvent.click(settingsButton);
     dialog = await screen.findByRole("dialog", { name: "General" });
     expect(within(dialog).getByRole("switch", { name: "Launch OpenBot at login" })).not.toBeChecked();
     await fireEvent.keyDown(dialog, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
-    await waitFor(() => expect(accountButton).toHaveFocus());
+    await waitFor(() => expect(settingsButton).toHaveFocus());
 
-    await fireEvent.click(accountButton);
-    await fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await fireEvent.click(settingsButton);
     await screen.findByRole("dialog", { name: "General" });
     await fireEvent.pointerDown(screen.getByTestId("settings-modal-backdrop"), { button: 0 });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
-    await waitFor(() => expect(accountButton).toHaveFocus());
+    await waitFor(() => expect(settingsButton).toHaveFocus());
   });
 
   it("persists the product analytics opt-out", async () => {
     render(() => <App />);
-    await fireEvent.click(await screen.findByRole("button", { name: "Open account menu" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
     await fireEvent.click(await screen.findByRole("switch", { name: "Share product analytics" }));
 
     await waitFor(() => expect(window.openbot.setAnalyticsPreference).toHaveBeenCalledWith({ enabled: false }));
+  });
+
+  it("persists the MacBook notch preference from settings on macOS", async () => {
+    render(() => <App />);
+    await fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    const notchSwitch = await screen.findByRole("switch", { name: "Show status in the MacBook notch" });
+    expect(notchSwitch).toBeChecked();
+
+    await fireEvent.click(notchSwitch);
+
+    await waitFor(() =>
+      expect(window.openbot.dynamicIsland.setPreference).toHaveBeenCalledWith({
+        enabled: false,
+        hapticsEnabled: true,
+        idleVisible: true,
+        additionalDisplaysEnabled: true,
+      }),
+    );
+    expect(notchSwitch).not.toBeChecked();
   });
 
   it("does not open desktop analytics when the saved preference is disabled", async () => {
@@ -1745,27 +2358,9 @@ describe("OpenBot connected desktop shell", () => {
     setTrackingEnabled.mockRestore();
   });
 
-  it("removes a custom account avatar from the account menu", async () => {
-    vi.mocked(window.openbot.auth.getState).mockResolvedValueOnce({
-      status: "signed_in",
-      user: {
-        id: "user-1",
-        email: "person@example.com",
-        name: null,
-        avatarUrl: "https://api.openbot.run/v1/avatars/user-1?v=image-1",
-      },
-    });
-    render(() => <App />);
-    const accountButton = await screen.findByRole("button", { name: "Open account menu" });
-    await fireEvent.click(accountButton);
-    await fireEvent.click(screen.getByRole("button", { name: "Remove photo" }));
-    await waitFor(() => expect(window.openbot.auth.updateAvatar).toHaveBeenCalledWith(null));
-  });
-
   it("signs out from the account menu without removing local data", async () => {
     render(() => <App />);
-    const accountButton = await screen.findByRole("button", { name: "Open account menu" });
-    await fireEvent.click(accountButton);
+    await fireEvent.click(await screen.findByRole("button", { name: "Open account actions" }));
     await fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
 
     await waitFor(() => expect(window.openbot.auth.logout).toHaveBeenCalledOnce());
@@ -1786,8 +2381,8 @@ describe("OpenBot connected desktop shell", () => {
     });
     render(() => <App />);
 
-    expect(await screen.findByText("Update")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Open account menu" }));
+    expect(await screen.findByText("OpenBot update available")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open account actions" }));
     fireEvent.click(await screen.findByRole("button", { name: /Download update/ }));
     await waitFor(() => expect(window.openbot.update.download).toHaveBeenCalledOnce());
     expect(trackAnalytics).toHaveBeenCalledWith("update_action", {
@@ -1830,7 +2425,7 @@ describe("OpenBot connected desktop shell", () => {
     });
     render(() => <App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Open account menu" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open account actions" }));
     fireEvent.click(await screen.findByRole("button", { name: /Download update/ }));
 
     await waitFor(() =>
@@ -2157,7 +2752,6 @@ describe("OpenBot connected desktop shell", () => {
     const leftResizer = screen.getByRole("separator", { name: "Resize left sidebar" });
     await fireEvent.keyDown(leftResizer, { key: "ArrowRight" });
     expect(leftResizer).toHaveAttribute("aria-valuenow", "292");
-    expect(leftResizer.closest(".app-frame")).toHaveStyle("--left-panel-width: 292px");
     expect(window.localStorage.getItem("openbot:left-panel-width")).toBe("292");
 
     await fireEvent.keyDown(leftResizer, { key: "Home" });
@@ -2176,7 +2770,6 @@ describe("OpenBot connected desktop shell", () => {
     const rightResizer = await screen.findByRole("separator", { name: "Resize right panel" });
     await fireEvent.keyDown(rightResizer, { key: "ArrowLeft" });
     expect(rightResizer).toHaveAttribute("aria-valuenow", "308");
-    expect(screen.getByRole("main", { name: "Conversation" })).toHaveStyle("--settings-panel-width: 308px");
     expect(window.localStorage.getItem("openbot:settings-panel-width")).toBe("308");
 
     await fireEvent.dblClick(rightResizer);
@@ -2271,6 +2864,7 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     const trigger = screen.getByRole("button", { name: "Agent model: Luna" });
+    await waitFor(() => expect(trigger).toBeEnabled());
 
     emitAgentEvent?.({
       type: "turn-started",
@@ -2604,28 +3198,63 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
 
-    const frame = screen.getByRole("main", { name: "Conversation" }).closest(".app-frame");
-    const sidebarToggle = screen.getByRole("button", { name: "Collapse sidebar" });
-    expect(sidebarToggle).toHaveClass("sidebar-icon-button");
-    expect(sidebarToggle).toHaveAttribute("aria-expanded", "true");
-    await fireEvent.click(sidebarToggle);
+    expect(screen.getByRole("button", { name: "Open Marketplace" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Collapse sidebar" })).not.toBeInTheDocument();
+    const resizer = screen.getByRole("separator", { name: "Resize left sidebar" });
+    await fireEvent.keyDown(resizer, { key: "Home" });
 
-    expect(screen.getByRole("complementary", { name: "Bot navigation" })).toHaveClass("sidebar-compact");
     expect(screen.getByRole("separator", { name: "Resize left sidebar" })).toHaveAttribute("aria-valuenow", "88");
-    expect(frame).toHaveClass("app-frame-sidebar-compact");
-    expect(frame).toHaveStyle("--left-panel-width: 88px");
     expect(window.localStorage.getItem("openbot:left-panel-collapsed")).toBe("true");
     expect(screen.queryByRole("button", { name: "Show sidebar" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Expand sidebar" })).toHaveAttribute("aria-expanded", "false");
+
+    const compactAccountButton = await screen.findByRole("button", { name: "Open account menu" });
+    await fireEvent.click(compactAccountButton);
+    const compactAccountDialog = screen.getByRole("dialog", { name: "Account actions" });
+    expect(within(compactAccountDialog).getByRole("button", { name: /Check for updates/ })).toBeInTheDocument();
+    expect(within(compactAccountDialog).getByRole("button", { name: "Marketplace" })).toBeInTheDocument();
+    expect(within(compactAccountDialog).getByRole("button", { name: "Providers & permissions" })).toBeInTheDocument();
+    expect(within(compactAccountDialog).getByRole("button", { name: "Send feedback" })).toBeInTheDocument();
+    expect(within(compactAccountDialog).getByRole("button", { name: "Message" })).toBeInTheDocument();
+    expect(within(compactAccountDialog).getByRole("button", { name: "Sign out" })).toBeInTheDocument();
+    expect(within(compactAccountDialog).getByRole("button", { name: "Settings" })).toBeInTheDocument();
+    const compactUsageButton = await within(compactAccountDialog).findByRole("button", {
+      name: "Weekly usage, 59% left",
+    });
+    expect(within(compactAccountDialog).queryByRole("button", { name: /photo/i })).not.toBeInTheDocument();
+    vi.mocked(window.openbot.agent.getUsage).mockRejectedValueOnce(new Error("Usage service unavailable."));
+    const usageRequestsBeforeRefresh = vi.mocked(window.openbot.agent.getUsage).mock.calls.length;
+    await fireEvent.click(compactUsageButton);
+    await waitFor(() => expect(window.openbot.agent.getUsage).toHaveBeenCalledTimes(usageRequestsBeforeRefresh + 1));
+    expect(await within(compactAccountDialog).findByText("Usage service unavailable.")).toBeInTheDocument();
+    await fireEvent.keyDown(compactAccountDialog, { key: "Escape" });
+    await waitFor(() => expect(compactAccountButton).toHaveFocus());
+
+    await fireEvent.click(compactAccountButton);
+    await fireEvent.click(
+      within(await screen.findByRole("dialog", { name: "Account actions" })).getByRole("button", { name: "Settings" }),
+    );
+    const compactSettingsDialog = await screen.findByRole("dialog", { name: "General" });
+    await fireEvent.click(within(compactSettingsDialog).getByRole("button", { name: "Close settings" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
+    await waitFor(() => expect(compactAccountButton).toHaveFocus());
 
     await fireEvent.click(screen.getByRole("button", { name: "Expand sidebar and search chats" }));
 
     expect(screen.getByRole("complementary", { name: "Bot navigation" })).toBeInTheDocument();
     expect(screen.getByRole("separator", { name: "Resize left sidebar" })).toHaveAttribute("aria-valuenow", "280");
-    expect(frame).not.toHaveClass("app-frame-sidebar-compact");
     expect(window.localStorage.getItem("openbot:left-panel-collapsed")).toBe("false");
-    expect(screen.getByRole("button", { name: "Collapse sidebar" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Open Marketplace" })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole("searchbox", { name: "Search chats" })).toHaveFocus());
+  });
+
+  it("opens Marketplace from the sidebar header", async () => {
+    render(() => <App />);
+    const marketplaceButton = await screen.findByRole("button", { name: "Open Marketplace" });
+
+    await fireEvent.click(marketplaceButton);
+
+    expect(await screen.findByRole("dialog", { name: "Marketplace" })).toBeInTheDocument();
   });
 
   it("snaps drag resizing between compact and expanded widths with hysteresis", async () => {
@@ -2654,8 +3283,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("separator", { name: "Resize left sidebar" })).toHaveAttribute("aria-valuenow", "240");
   });
 
-  it("moves the live embedded browser between the sidebar and Picture in Picture", async () => {
-    Object.defineProperty(window, "innerHeight", { configurable: true, value: 768 });
+  it("moves the live embedded browser between the sidebar and desktop Picture in Picture", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     emitAgentEvent?.({
@@ -2675,141 +3303,40 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
     const conversation = screen.getByRole("main", { name: "Conversation" });
-    expect(await screen.findByRole("complementary", { name: "Browser" })).not.toHaveClass("browser-panel-pip");
+    expect(await screen.findByRole("complementary", { name: "Browser" })).toBeInTheDocument();
     expect(conversation).toHaveClass("browser-panel-active");
 
     await fireEvent.click(screen.getByRole("button", { name: "Open browser Picture in Picture" }));
 
-    const pip = await screen.findByRole("complementary", { name: "Browser" });
-    expect(pip).toHaveClass("browser-panel-pip");
-    expect(pip).toHaveStyle({ left: "588px", top: "400px", width: "420px", height: "300px" });
-    expect(pip).toHaveTextContent("Picture in Picture test");
+    await waitFor(() => expect(window.openbot.browser.openPictureInPicture).toHaveBeenCalledWith(undefined));
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
     expect(conversation).not.toHaveClass("browser-panel-active");
-    const address = screen.getByRole("textbox", { name: "Browser address" });
-    expect(address).toHaveValue("https://example.com/pip");
-    await fireEvent.focus(address);
-    await fireEvent.input(address, { target: { value: "example.com/typed" } });
-    emitAgentEvent?.({
-      type: "browser-changed",
-      tabs: [
-        {
-          id: "tab-pip",
-          title: "Updated while typing",
-          url: "https://example.com/updated",
-          loading: true,
-          ownerThreadId: "thread-chief",
-          ownerBotId: "chief",
-        },
-      ],
-      activeTabId: "tab-pip",
-    });
-    expect(address).toHaveValue("example.com/typed");
-    await fireEvent.blur(address);
-    expect(address).toHaveValue("https://example.com/updated");
+    expect(window.openbot.browser.close).not.toHaveBeenCalled();
 
-    vi.mocked(window.openbot.browser.open).mockResolvedValueOnce({
-      id: "tab-next",
-      title: "Next page",
-      url: "https://example.com/next",
-      loading: false,
-      ownerThreadId: "thread-chief",
-      ownerBotId: "chief",
+    emitBrowserPictureInPicture?.({
+      type: "bounds-changed",
+      bounds: { x: 720, y: 360, width: 460, height: 340 },
     });
-    await fireEvent.focus(address);
-    await fireEvent.input(address, { target: { value: "example.com/next" } });
-    const addressForm = address.closest("form");
-    if (!(addressForm instanceof HTMLFormElement)) throw new Error("Browser address form was not rendered.");
-    await fireEvent.submit(addressForm);
-    await waitFor(() => expect(window.openbot.browser.open).toHaveBeenCalledTimes(1));
-    emitAgentEvent?.({
-      type: "browser-changed",
-      tabs: [
-        {
-          id: "tab-next",
-          title: "Redirected page",
-          url: "https://substack.com/dashboard",
-          loading: false,
-          ownerThreadId: "thread-chief",
-          ownerBotId: "chief",
-        },
-      ],
-      activeTabId: "tab-next",
-    });
-    expect(address).toHaveValue("https://substack.com/dashboard");
-    expect(screen.getByRole("complementary", { name: "Browser" })).toHaveClass("browser-panel-pip");
+    expect(window.localStorage.getItem("openbot:browser-pip-native-bounds")).toBe("720,360,460,340");
 
-    vi.mocked(window.openbot.browser.setVisible).mockClear();
-    await fireEvent.keyDown(window, { key: "k", metaKey: true });
-    expect(await screen.findByRole("dialog", { name: "Search OpenBot" })).toBeInTheDocument();
-    await waitFor(() => expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({ visible: false }));
-    await fireEvent.keyDown(window, { key: "k", metaKey: true });
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Search OpenBot" })).not.toBeInTheDocument());
+    emitBrowserPictureInPicture?.({ type: "dock" });
+    expect(await screen.findByRole("complementary", { name: "Browser" })).toBeInTheDocument();
+    expect(conversation).toHaveClass("browser-panel-active");
+    expect(window.openbot.browser.close).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open browser Picture in Picture" }));
     await waitFor(() =>
-      expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true })),
-    );
-
-    const header = pip.querySelector(".browser-pip-header");
-    if (!(header instanceof HTMLElement)) throw new Error("Picture in Picture header was not rendered.");
-    const surface = pip.querySelector(".browser-surface");
-    if (!(surface instanceof HTMLElement)) throw new Error("Picture in Picture browser surface was not rendered.");
-    vi.spyOn(surface, "getBoundingClientRect").mockImplementation(() => {
-      const left = Number.parseFloat(pip.style.left);
-      const top = Number.parseFloat(pip.style.top);
-      const width = Number.parseFloat(pip.style.width);
-      const height = Number.parseFloat(pip.style.height);
-      return {
-        x: left + 7,
-        y: top + 73,
-        width: width - 14,
-        height: height - 80,
-        top: top + 73,
-        right: left + width - 7,
-        bottom: top + height - 7,
-        left: left + 7,
-        toJSON: () => ({}),
-      };
-    });
-    vi.mocked(window.openbot.browser.setVisible).mockClear();
-    await fireEvent.pointerDown(header, { button: 0, pointerId: 7, clientX: 600, clientY: 460 });
-    await fireEvent.pointerMove(window, { pointerId: 7, clientX: 560, clientY: 420 });
-    await fireEvent.pointerUp(window, { pointerId: 7, clientX: 560, clientY: 420 });
-    expect(window.localStorage.getItem("openbot:browser-pip-bounds")).toBe("548,360,420,300");
-    await waitFor(() =>
-      expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({
-        visible: true,
-        bounds: { x: 555, y: 433, width: 406, height: 220 },
+      expect(window.openbot.browser.openPictureInPicture).toHaveBeenLastCalledWith({
+        x: 720,
+        y: 360,
+        width: 460,
+        height: 340,
       }),
     );
-
-    const resizeHandle = pip.querySelector(".browser-pip-resize-bottom-right");
-    if (!(resizeHandle instanceof HTMLElement)) throw new Error("Picture in Picture resize handle was not rendered.");
-    await fireEvent.pointerDown(resizeHandle, { button: 0, pointerId: 8, clientX: 968, clientY: 712 });
-    await fireEvent.pointerMove(window, { pointerId: 8, clientX: 928, clientY: 682 });
-    await fireEvent.pointerUp(window, { pointerId: 8, clientX: 928, clientY: 682 });
-    expect(window.localStorage.getItem("openbot:browser-pip-bounds")).toBe("548,360,380,270");
-
-    await fireEvent.click(screen.getByRole("button", { name: "Dock browser to right sidebar" }));
-    await waitFor(() =>
-      expect(screen.getByRole("complementary", { name: "Browser" })).not.toHaveClass("browser-panel-pip"),
-    );
-    expect(conversation).toHaveClass("browser-panel-active");
-    await fireEvent.click(screen.getByRole("button", { name: "Go back" }));
-    expect(window.openbot.browser.navigate).toHaveBeenCalledWith({ tabId: "tab-next", direction: "back" });
-    await fireEvent.click(screen.getByRole("button", { name: "Go forward" }));
-    expect(window.openbot.browser.navigate).toHaveBeenCalledWith({ tabId: "tab-next", direction: "forward" });
-    await fireEvent.click(screen.getByRole("button", { name: "Reload page" }));
-    expect(window.openbot.browser.reload).toHaveBeenCalledWith("tab-next");
-    expect(window.openbot.browser.open).toHaveBeenCalledTimes(1);
-
-    await fireEvent.click(screen.getByRole("button", { name: "Open browser Picture in Picture" }));
-    const reopenedPip = await screen.findByRole("complementary", { name: "Browser" });
-    expect(reopenedPip).toHaveStyle({ left: "628px", top: "430px", width: "380px", height: "270px" });
-    await fireEvent.click(screen.getByRole("button", { name: "Hide browser" }));
-    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument());
+    emitBrowserPictureInPicture?.({ type: "hide" });
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
     expect(window.openbot.browser.close).not.toHaveBeenCalled();
-    expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({ visible: false });
   });
-
   it("keeps a newly opened browser tab active when the initial tab request resolves late", async () => {
     const googleTab: BrowserTab = {
       id: "tab-google",
@@ -2853,9 +3380,8 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("textbox", { name: "Browser address" })).toHaveValue("https://substack.com/chat");
   });
 
-  it("clamps and restores Picture in Picture per conversation without overriding it during agent control", async () => {
-    Object.defineProperty(window, "innerHeight", { configurable: true, value: 768 });
-    window.localStorage.setItem("openbot:browser-pip-bounds", "-50,-50,2000,2000");
+  it("restores desktop Picture in Picture per conversation without overriding it during agent control", async () => {
+    window.localStorage.setItem("openbot:browser-pip-native-bounds", "640,320,460,340");
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     emitAgentEvent?.({
@@ -2874,10 +3400,14 @@ describe("OpenBot connected desktop shell", () => {
     });
     await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
     await fireEvent.click(screen.getByRole("button", { name: "Open browser Picture in Picture" }));
-
-    const pip = await screen.findByRole("complementary", { name: "Browser" });
-    expect(pip).toHaveClass("browser-panel-pip");
-    expect(pip).toHaveStyle({ left: "12px", top: "12px", width: "1000px", height: "744px" });
+    await waitFor(() =>
+      expect(window.openbot.browser.openPictureInPicture).toHaveBeenLastCalledWith({
+        x: 640,
+        y: 320,
+        width: 460,
+        height: 340,
+      }),
+    );
 
     emitAgentEvent?.({
       type: "browser-control-changed",
@@ -2896,14 +3426,12 @@ describe("OpenBot connected desktop shell", () => {
         ],
       },
     });
-    expect(screen.getByRole("complementary", { name: "Browser" })).toHaveClass("browser-panel-pip");
-
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
-    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument());
+    await waitFor(() => expect(window.openbot.browser.closePictureInPicture).toHaveBeenCalled());
     await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
-    expect(await screen.findByRole("complementary", { name: "Browser" })).toHaveClass("browser-panel-pip");
+    await waitFor(() => expect(window.openbot.browser.openPictureInPicture).toHaveBeenCalledTimes(2));
   });
-
   it("shows a stable indicator while an agent controls the embedded browser", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
@@ -2958,12 +3486,8 @@ describe("OpenBot connected desktop shell", () => {
     const controlledTab = await screen.findByRole("tab", {
       name: "Local smoke page, controlled by Chief",
     });
-    expect(controlledTab.closest(".browser-tab-wrap")).toHaveClass("browser-tab-controlled");
     expect(controlledTab).toHaveAttribute("aria-description", "Press Delete or Control/Command W to close");
-    expect(await screen.findByRole("complementary", { name: "Browser" })).toHaveClass("browser-panel-controlled");
-    const browserTabStrip = document.querySelector(".browser-tab-strip");
-    expect(browserTabStrip?.querySelectorAll(".browser-tab-wrap")).toHaveLength(3);
-    expect(browserTabStrip).not.toContainElement(screen.getByRole("button", { name: "New browser tab" }));
+    expect(screen.getAllByRole("tab")).toHaveLength(3);
     await fireEvent.keyDown(screen.getByRole("tab", { name: "Third page" }), { key: "Delete" });
     expect(window.openbot.browser.close).toHaveBeenCalledWith("tab-3");
     expect(screen.queryByRole("button", { name: "Hide browser panel" })).not.toBeInTheDocument();
@@ -2979,7 +3503,6 @@ describe("OpenBot connected desktop shell", () => {
       "aria-expanded",
       "true",
     );
-    expect(screen.getByRole("button", { name: "Chief is controlling the browser" })).toHaveClass("header-panel-toggle");
 
     emitAgentEvent?.({
       type: "browser-control-changed",
@@ -3005,8 +3528,6 @@ describe("OpenBot connected desktop shell", () => {
       expect(screen.queryByRole("tab", { name: "Local smoke page, controlled by Chief" })).not.toBeInTheDocument(),
     );
     expect(screen.getByRole("tab", { name: "Local smoke page" })).toBe(controlledTab);
-    expect(controlledTab.closest(".browser-tab-wrap")).not.toHaveClass("browser-tab-controlled");
-    expect(await screen.findByRole("complementary", { name: "Browser" })).not.toHaveClass("browser-panel-controlled");
   });
 
   it("reveals the requested browser tab and resumes the agent from the takeover card", async () => {
@@ -3047,15 +3568,16 @@ describe("OpenBot connected desktop shell", () => {
       },
     });
 
-    expect(await screen.findByRole("region", { name: "Browser takeover" })).toHaveTextContent("Take over");
-    expect(
-      screen.getByText("Complete the authorization in the open browser, then let the agent continue."),
-    ).toBeVisible();
+    expect(await screen.findByRole("region", { name: "Browser takeover" })).toHaveTextContent("Action required");
+    expect(screen.getByRole("heading", { name: "Complete the step on example.com" })).toBeVisible();
+    expect(await screen.findByRole("img", { name: "Preview of Sign in" })).toBeVisible();
     expect(await screen.findByRole("complementary", { name: "Browser" })).toBeVisible();
     await waitFor(() => expect(window.openbot.browser.activate).toHaveBeenCalledWith("tab-login"));
+    expect(window.openbot.browser.capturePreview).toHaveBeenCalledTimes(1);
+    expect(window.openbot.browser.capturePreview).toHaveBeenCalledWith("tab-login");
     expect(screen.queryByRole("textbox", { name: "Message Chief" })).not.toBeInTheDocument();
 
-    await fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    await fireEvent.click(screen.getByRole("button", { name: "I’m done" }));
     await waitFor(() =>
       expect(window.openbot.agent.respondToBrowserTakeover).toHaveBeenCalledWith({
         requestId: "takeover-1",
@@ -3063,6 +3585,56 @@ describe("OpenBot connected desktop shell", () => {
       }),
     );
     await waitFor(() => expect(screen.queryByRole("region", { name: "Browser takeover" })).not.toBeInTheDocument());
+    const completedCard = await screen.findByRole("region", { name: "Browser takeover complete" });
+    expect(completedCard).toHaveTextContent("Done");
+    expect(within(completedCard).getByRole("img", { name: "Preview of Sign in" })).toBeVisible();
+    expect(within(completedCard).queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Message Chief" })).toBeVisible();
+  });
+
+  it("keeps browser takeover actions available when the preview fails", async () => {
+    vi.mocked(window.openbot.browser.capturePreview).mockRejectedValueOnce(new Error("Preview unavailable"));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitAgentEvent).toBeDefined());
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "tab-login",
+          title: "Sign in",
+          url: "https://example.com/login",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "tab-login",
+    });
+    emitAgentEvent?.({
+      type: "browser-takeover-requested",
+      request: {
+        requestId: "takeover-preview-failed",
+        botId: "chief",
+        threadId: "thread-chief",
+        turnId: "turn-preview-failed",
+        tabId: "tab-login",
+      },
+    });
+
+    const card = await screen.findByRole("region", { name: "Browser takeover" });
+    await waitFor(() => expect(within(card).queryByRole("img")).not.toBeInTheDocument());
+    await fireEvent.click(within(card).getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(window.openbot.agent.respondToBrowserTakeover).toHaveBeenCalledWith({
+        requestId: "takeover-preview-failed",
+        decision: "cancel",
+      }),
+    );
+    const cancelledCard = await screen.findByRole("region", { name: "Browser takeover cancelled" });
+    expect(cancelledCard).toHaveTextContent("Cancelled");
+    expect(within(cancelledCard).queryByRole("button")).not.toBeInTheDocument();
   });
 
   it("closes browser tabs with the middle mouse button and Control W, then closes the panel", async () => {
@@ -3169,6 +3741,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({
         visible: true,
+        target: "main",
         bounds: { x: 640, y: 73, width: 380, height: 600 },
       }),
     );
@@ -3249,7 +3822,6 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.agent.openWorkspaceFile).toHaveBeenCalledWith({ botId: "chief", path: workspacePath });
     await fireEvent.click(screen.getByRole("button", { name: "Close file preview" }));
     expect(screen.queryByRole("complementary", { name: "File preview" })).not.toBeInTheDocument();
-    expect(screen.getByRole("main", { name: "Conversation" })).not.toHaveClass("browser-panel-active");
 
     await fireEvent.click(screen.getByRole("button", { name: "Open shared file menu.txt" }));
     expect(await screen.findByText("Pasta menu")).toBeInTheDocument();
@@ -3272,10 +3844,13 @@ describe("OpenBot connected desktop shell", () => {
       }),
     );
     await waitFor(() =>
-      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
-        botId: "chief",
-        throughMessageId: "delivery-1",
-      }),
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          throughMessageId: "delivery-1",
+        },
+        "local",
+      ),
     );
     await waitFor(() => expect(composer).toHaveTextContent(""));
     expect(trackAnalytics).toHaveBeenCalledWith("message_send", {
@@ -3544,7 +4119,6 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(await screen.findByText("Show this message", { selector: ".message-copy" })).toBeInTheDocument();
     expect(screen.queryByText("Show this message", { selector: ".agent-queue-message" })).not.toBeInTheDocument();
-    expect(document.querySelector(".agent-queue-slot")).toHaveAttribute("data-open", "false");
   });
 
   it("replies to a message through the composer and keeps the reference in the queued input", async () => {
@@ -3841,7 +4415,6 @@ describe("OpenBot connected desktop shell", () => {
       ".png,.jpg,.jpeg,.gif,.webp,.avif",
     );
     await fireEvent.pointerDown(screen.getByRole("button", { name: "Add to prompt" }), { button: 0 });
-    expect(screen.getByRole("menuitem", { name: /Use a skill/ })).toHaveAttribute("data-disabled");
     await fireEvent.pointerDown(screen.getByRole("menuitem", { name: /Add context/ }), { button: 0 });
     expect(filePickerClick).toHaveBeenCalledTimes(2);
     emitAttachmentImport?.({ type: "started", requestId: "picker-1" });
@@ -3959,11 +4532,8 @@ describe("OpenBot connected desktop shell", () => {
       },
     });
 
-    const activeMessage = await screen.findByText("Start this work", { selector: ".message-copy" });
-    const activity = await screen.findByRole("status", { name: "Chief is working" });
-    const activitySlot = activeMessage.closest(".virtual-chat-list")?.nextElementSibling;
-    expect(activitySlot).toHaveClass("agent-activity-slot");
-    expect(activitySlot).toContainElement(activity);
+    await screen.findByText("Start this work", { selector: ".message-copy" });
+    await screen.findByRole("status", { name: "Chief is working" });
     expect(screen.getByText("Run this second", { selector: ".agent-queue-message" })).toBeInTheDocument();
     expect(screen.getByText("Run this third", { selector: ".agent-queue-message" })).toBeInTheDocument();
     expect(screen.getByText("Run this fourth", { selector: ".agent-queue-message" })).toBeInTheDocument();
@@ -3985,10 +4555,7 @@ describe("OpenBot connected desktop shell", () => {
     });
     const queueSlot = document.querySelector<HTMLElement>(".agent-queue-slot");
     await waitFor(() => expect(document.querySelectorAll(".agent-queue-item-removing")).toHaveLength(3));
-    expect(queueSlot).toHaveAttribute("data-open", "true");
-    expect(queueSlot).toContainElement(document.querySelector(".agent-queue-panel"));
     await waitFor(() => expect(document.querySelector(".agent-queue-panel")).not.toBeInTheDocument());
-    expect(queueSlot).toHaveAttribute("data-open", "false");
     expect(queueSlot).toHaveAttribute("aria-hidden", "true");
   });
 
@@ -4100,74 +4667,337 @@ describe("OpenBot connected desktop shell", () => {
         },
       ],
     });
-    await fireEvent.click(await screen.findByRole("button", { name: /Something else/ }));
     const answer = await screen.findByRole("textbox", {
       name: "Custom answer for: Which account?",
     });
     await fireEvent.input(answer, { target: { value: "Acme" } });
-    await fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await fireEvent.keyDown(answer, { key: "Enter" });
     await waitFor(() =>
       expect(window.openbot.agent.respondToPrompt).toHaveBeenCalledWith({
         requestId: "prompt-1",
         answers: { account: ["Acme"] },
       }),
     );
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: "turn-1",
+        revision: 20,
+        messages: [
+          {
+            id: "question-prompt:turn-1:prompt-1",
+            turnId: "turn-1",
+            author: "assistant",
+            source: "assistant",
+            text: "",
+            createdAt: "2026-08-28T12:00:00.000Z",
+            status: "completed",
+            itemType: "question_prompt",
+            questionPrompt: {
+              requestId: "prompt-1",
+              questions: [
+                {
+                  id: "account",
+                  header: "Account",
+                  question: "Which account?",
+                  isSecret: false,
+                  options: null,
+                },
+              ],
+              resolution: {
+                status: "answered",
+                responses: { account: { status: "answered", answers: ["Acme"] } },
+              },
+            },
+          },
+        ],
+      },
+    });
+    await waitFor(() => expect(screen.getByRole("region", { name: "Answers sent" })).toBeVisible());
+    expect(screen.queryByRole("textbox", { name: "Custom answer for: Which account?" })).not.toBeInTheDocument();
   });
 
-  it("walks through questions one at a time and can skip them", async () => {
+  it("keeps the prompt active and reports a delivery failure", async () => {
+    vi.mocked(window.openbot.agent.respondToPrompt).mockRejectedValueOnce(new Error("Provider is offline."));
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await confirmOnboardingModel();
     emitAgentEvent?.({
       type: "prompt",
-      requestId: "prompt-steps",
+      requestId: "prompt-failure",
       botId: "chief",
       threadId: "thread-1",
-      turnId: "turn-1",
+      turnId: "turn-failure",
       questions: [
         {
-          id: "environment",
-          header: "Environment",
-          question: "Where should I work?",
-          isSecret: false,
-          options: [
-            { label: "Repository", description: "Use the current project." },
-            { label: "Sandbox", description: "Keep changes isolated." },
-          ],
-        },
-        {
-          id: "goal",
-          header: "Goal",
-          question: "What is the desired outcome?",
+          id: "account",
+          header: "Account",
+          question: "Which account?",
           isSecret: false,
           options: null,
         },
       ],
     });
 
-    expect(
-      await screen.findByText("Where should I work?", { selector: ".approval-question-prompt" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("1")).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: /Repository/ }));
-    await fireEvent.click(screen.getByRole("button", { name: "Next question" }));
-    expect(
-      await screen.findByText("What is the desired outcome?", {
-        selector: ".approval-question-prompt",
-      }),
-    ).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "Previous question" }));
-    expect(
-      await screen.findByText("Where should I work?", { selector: ".approval-question-prompt" }),
-    ).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "Skip" }));
+    const answer = await screen.findByRole("textbox", { name: "Custom answer for: Which account?" });
+    await fireEvent.input(answer, { target: { value: "Acme" } });
+    await fireEvent.keyDown(answer, { key: "Enter" });
 
-    await waitFor(() =>
-      expect(window.openbot.agent.respondToPrompt).toHaveBeenCalledWith({
-        requestId: "prompt-steps",
-        answers: {},
-      }),
-    );
+    expect(await screen.findByText("Provider is offline.")).toBeVisible();
+    expect(screen.getByText("Answer failed")).toBeVisible();
+    expect(answer).toBeEnabled();
+  });
+
+  it("replaces an active prompt when its resolution arrives from another client", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-external",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-external",
+      questions: [
+        {
+          id: "account",
+          header: "Account",
+          question: "Which external account?",
+          isSecret: false,
+          options: null,
+        },
+      ],
+    });
+    expect(await screen.findByRole("textbox", { name: "Custom answer for: Which external account?" })).toBeVisible();
+
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: "turn-external",
+        revision: 20,
+        messages: [
+          {
+            id: "question-prompt:turn-external:prompt-external",
+            turnId: "turn-external",
+            author: "assistant",
+            source: "assistant",
+            text: "Question: Which external account?\nAnswer: External",
+            createdAt: "2026-08-28T12:00:00.000Z",
+            status: "completed",
+            itemType: "question_prompt",
+            questionPrompt: {
+              requestId: "prompt-external",
+              questions: [
+                {
+                  id: "account",
+                  header: "Account",
+                  question: "Which external account?",
+                  isSecret: false,
+                  options: null,
+                },
+              ],
+              resolution: {
+                status: "answered",
+                responses: { account: { status: "answered", answers: ["External"] } },
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    await waitFor(() => expect(screen.getByRole("region", { name: "Answers sent" })).toBeVisible());
+    expect(
+      screen.queryByRole("textbox", { name: "Custom answer for: Which external account?" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides an unresolved history record and mounts a rapid follow-up prompt", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: "turn-first",
+        revision: 20,
+        messages: [
+          {
+            id: "question-prompt:turn-first:prompt-first",
+            turnId: "turn-first",
+            author: "assistant",
+            source: "assistant",
+            text: "Question: First question?",
+            createdAt: "2026-08-28T12:00:00.000Z",
+            status: "completed",
+            itemType: "question_prompt",
+            questionPrompt: {
+              requestId: "prompt-first",
+              questions: [
+                {
+                  id: "first",
+                  header: "First",
+                  question: "First question?",
+                  isSecret: false,
+                  options: null,
+                },
+              ],
+              resolution: null,
+            },
+          },
+        ],
+      },
+    });
+    expect(screen.queryByRole("region", { name: "Questions expired" })).not.toBeInTheDocument();
+
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-first",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-first",
+      questions: [
+        {
+          id: "first",
+          header: "First",
+          question: "First question?",
+          isSecret: false,
+          options: null,
+        },
+      ],
+    });
+    const firstAnswer = await screen.findByRole("textbox", { name: "Custom answer for: First question?" });
+    await fireEvent.input(firstAnswer, { target: { value: "First answer" } });
+    await fireEvent.keyDown(firstAnswer, { key: "Enter" });
+    await screen.findByRole("region", { name: "Answers sent" });
+
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: "turn-first",
+        revision: 21,
+        messages: [
+          {
+            id: "question-prompt:turn-first:prompt-first",
+            turnId: "turn-first",
+            author: "assistant",
+            source: "assistant",
+            text: "Question: First question?\nAnswer: First answer",
+            createdAt: "2026-08-28T12:00:00.000Z",
+            status: "completed",
+            itemType: "question_prompt",
+            questionPrompt: {
+              requestId: "prompt-first",
+              questions: [
+                {
+                  id: "first",
+                  header: "First",
+                  question: "First question?",
+                  isSecret: false,
+                  options: null,
+                },
+              ],
+              resolution: {
+                status: "answered",
+                responses: { first: { status: "answered", answers: ["First answer"] } },
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-second",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-second",
+      questions: [
+        {
+          id: "second",
+          header: "Second",
+          question: "Second question?",
+          isSecret: false,
+          options: null,
+        },
+      ],
+    });
+
+    expect(await screen.findByRole("textbox", { name: "Custom answer for: Second question?" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Answers sent" })).not.toBeInTheDocument();
+  });
+
+  it("keeps an older resolved prompt when a new turn reuses its request ID", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: null,
+        revision: 20,
+        messages: [
+          {
+            id: "question-prompt:turn-old:prompt-reused",
+            turnId: "turn-old",
+            author: "assistant",
+            source: "assistant",
+            text: "Question: Which account?\nAnswer: Acme",
+            createdAt: "2026-08-28T12:00:00.000Z",
+            status: "completed",
+            itemType: "question_prompt",
+            questionPrompt: {
+              requestId: "prompt-reused",
+              questions: [
+                {
+                  id: "account",
+                  header: "Account",
+                  question: "Which account?",
+                  isSecret: false,
+                  options: null,
+                },
+              ],
+              resolution: {
+                status: "answered",
+                responses: { account: { status: "answered", answers: ["Acme"] } },
+              },
+            },
+          },
+        ],
+      },
+    });
+    expect(await screen.findByRole("region", { name: "Answers sent" })).toBeVisible();
+
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-reused",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-new",
+      questions: [
+        {
+          id: "goal",
+          header: "Goal",
+          question: "What should I do next?",
+          isSecret: false,
+          options: null,
+        },
+      ],
+    });
+
+    expect(await screen.findByRole("textbox", { name: "Custom answer for: What should I do next?" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Answers sent" })).toBeVisible();
   });
 
   it("renders command approvals and keeps the action pending while submitting", async () => {
@@ -4209,6 +5039,1223 @@ describe("OpenBot connected desktop shell", () => {
 
     resolveApproval?.();
     await waitFor(() => expect(screen.queryByText("Run this command?")).not.toBeInTheDocument());
+  });
+
+  it("removes a completed Dynamic Island answer without sending it twice", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-island",
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      questions: [
+        {
+          id: "source",
+          header: "Choose a source",
+          question: "Which source should I use?",
+          isSecret: false,
+          options: [
+            { label: "Official data", description: "Use the public dataset" },
+            { label: "Industry report", description: "Use the detailed report" },
+          ],
+        },
+      ],
+    });
+    await screen.findByText("Which source should I use?");
+
+    emitDynamicIslandAction?.({
+      type: "answer-prompt",
+      serverId: "local",
+      botId: "chief",
+      requestId: "prompt-island",
+      answers: { source: ["Official data"] },
+    });
+
+    await Promise.resolve();
+
+    expect(window.openbot.agent.respondToPrompt).not.toHaveBeenCalled();
+    expect(screen.queryByText("Which source should I use?")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Chief" })).toBeVisible();
+  });
+
+  it("keeps a Dynamic Island failure until acknowledgement succeeds", async () => {
+    vi.mocked(window.openbot.agent.acknowledgeFailedTurn).mockRejectedValueOnce(
+      new Error("Acknowledgement unavailable"),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+    emitScopedAgentEvent?.({
+      serverId: "local",
+      event: {
+        type: "turn-completed",
+        botId: "chief",
+        threadId: "thread-1",
+        turnId: "turn-failed",
+        status: "failed",
+      },
+    });
+    const action = {
+      type: "open-failure",
+      serverId: "local",
+      botId: "chief",
+      turnId: "turn-failed",
+    } as const;
+    emitDynamicIslandAction?.(action);
+
+    expect(await screen.findByText("Acknowledgement unavailable")).toBeInTheDocument();
+    expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+      mode: "failed",
+    });
+    emitDynamicIslandAction?.(action);
+    await waitFor(() => expect(window.openbot.agent.acknowledgeFailedTurn).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "idle",
+      }),
+    );
+  });
+
+  it("marks the selected Dynamic Island message as read after opening it", async () => {
+    vi.mocked(window.openbot.agent.readConversation).mockResolvedValue({
+      botId: "chief",
+      threadId: "thread-1",
+      activeTurnId: null,
+      revision: 1,
+      messages: [
+        {
+          id: "reply-island",
+          author: "assistant",
+          text: "The result is ready.",
+          createdAt: "2026-08-29T10:42:00.000Z",
+          status: "completed",
+        },
+      ],
+      readState: { unreadCount: 1, firstUnreadMessageId: "reply-island", throughMessageId: null },
+    });
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+
+    emitDynamicIslandAction?.({
+      type: "open-message",
+      serverId: "local",
+      botId: "chief",
+      messageId: "reply-island",
+    });
+
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          throughMessageId: "reply-island",
+        },
+        "local",
+      ),
+    );
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "idle",
+      }),
+    );
+  });
+
+  it("stops opening a Dynamic Island message when the active server changes", async () => {
+    let resolveFocusedPage: ((page: ConversationPage) => void) | undefined;
+    vi.mocked(window.openbot.agent.readConversationPage).mockImplementation(async (input) => {
+      if (input.anchor?.type === "around") {
+        return await new Promise<ConversationPage>((resolve) => {
+          resolveFocusedPage = resolve;
+        });
+      }
+      return testConversationPage(input.botId);
+    });
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+
+    emitDynamicIslandAction?.({
+      type: "open-message",
+      serverId: "local",
+      botId: "chief",
+      messageId: "reply-island",
+    });
+    await waitFor(() =>
+      expect(window.openbot.agent.readConversationPage).toHaveBeenCalledWith({
+        botId: "chief",
+        anchor: { type: "around", messageId: "reply-island" },
+        limit: 50,
+      }),
+    );
+    emitServers?.([testServer("local", false), testServer("remote-1", true)]);
+    await screen.findByRole("button", { name: "Studio Mac server" });
+    resolveFocusedPage?.(
+      testConversationPage("chief", [
+        {
+          id: "reply-island",
+          author: "assistant",
+          text: "The result is ready.",
+          createdAt: "2026-08-29T10:42:00.000Z",
+          status: "completed",
+        },
+      ]),
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(
+      vi
+        .mocked(window.openbot.agent.readConversationPage)
+        .mock.calls.filter(([input]) => input.anchor?.type === "latest" && input.limit === 1),
+    ).toHaveLength(0);
+    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
+  });
+
+  it("discards a chat-open reload that resolves during a server switch", async () => {
+    const local = testServer("local", true);
+    const remote = testServer("remote-1", false);
+    let resolveOldPage: ((page: ConversationPage) => void) | undefined;
+    let resolveRemoteBots: ((bots: BotSummary[]) => void) | undefined;
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+    vi.mocked(window.openbot.servers.select).mockResolvedValueOnce([
+      { ...local, active: false },
+      { ...remote, active: true },
+    ]);
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    vi.mocked(window.openbot.agent.readConversationPage)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveOldPage = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(
+        testConversationPage(
+          "chief",
+          [
+            {
+              id: "reply-new-server",
+              author: "assistant",
+              text: "Unread reply from the new server",
+              createdAt: "2026-08-30T02:05:00.000Z",
+              status: "completed",
+            },
+          ],
+          {
+            readState: { unreadCount: 1, firstUnreadMessageId: "reply-new-server", throughMessageId: null },
+          },
+        ),
+      );
+    vi.mocked(window.openbot.agent.listBots).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRemoteBots = resolve;
+        }),
+    );
+
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    await waitFor(() => expect(resolveOldPage).toBeDefined());
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() => expect(resolveRemoteBots).toBeDefined());
+    resolveOldPage?.(
+      testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-old-server",
+            author: "assistant",
+            text: "Reply from the old server",
+            createdAt: "2026-08-30T02:04:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-old-server", throughMessageId: null },
+        },
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByText("Reply from the old server")).not.toBeInTheDocument();
+    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
+    resolveRemoteBots?.(BOTS);
+    await screen.findByRole("heading", { name: "Chief" });
+    await screen.findByText("Unread reply from the new server");
+    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
+    expect(screen.getByRole("status", { name: "1 new message" })).toBeInTheDocument();
+  });
+
+  it("merges a refreshed remote conversation page without dropping loaded messages", async () => {
+    const message = (id: string, text: string) => ({
+      id,
+      author: "assistant" as const,
+      text,
+      createdAt: "2026-08-30T02:00:00.000Z",
+      status: "completed" as const,
+    });
+    vi.mocked(window.openbot.agent.readConversationPage).mockResolvedValue(
+      testConversationPage("chief", [message("reply-old", "Loaded earlier")], {
+        pageInfo: { hasOlder: true, olderCursor: "older" },
+      }),
+    );
+    render(() => <App />);
+    expect(await screen.findByText("Loaded earlier")).toBeInTheDocument();
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage("chief", [message("reply-new", "Fresh remote reply")], {
+        revision: 2,
+        pageInfo: { hasOlder: true, olderCursor: "older" },
+      }),
+    });
+
+    expect(await screen.findByText("Fresh remote reply")).toBeInTheDocument();
+    expect(screen.getByText("Loaded earlier")).toBeInTheDocument();
+  });
+
+  it("keeps the current read state when an older page returns stale read data", async () => {
+    const latestMessage = {
+      id: "reply-latest-page",
+      author: "assistant" as const,
+      text: "Latest reply",
+      createdAt: "2026-08-30T02:02:00.000Z",
+      status: "completed" as const,
+    };
+    const latestPage = testConversationPage("chief", [latestMessage], {
+      readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+      pageInfo: { hasOlder: true, olderCursor: "older" },
+    });
+    let resolveOlderPage: ((page: ConversationPage) => void) | undefined;
+    vi.mocked(window.openbot.agent.readConversationPage).mockImplementation(async (input) => {
+      if (input.anchor?.type !== "before") return latestPage;
+      return await new Promise((resolve) => {
+        resolveOlderPage = resolve;
+      });
+    });
+
+    function Harness() {
+      const controller = createAppController({});
+      return (
+        <AppControllerProvider controller={controller}>
+          <button type="button" onClick={() => void controller.loadOlderAgentMessages("chief")}>
+            Load older agent messages
+          </button>
+          <output data-testid="agent-read-state">
+            {controller.conversationReads().chief?.unreadCount ?? -1}|
+            {controller
+              .activeMessages()
+              .map((message) => message.id)
+              .join(",")}
+          </output>
+        </AppControllerProvider>
+      );
+    }
+
+    render(() => <Harness />);
+    await waitFor(() => expect(screen.getByTestId("agent-read-state")).toHaveTextContent("0|reply-latest-page"));
+    await fireEvent.click(screen.getByRole("button", { name: "Load older agent messages" }));
+    await waitFor(() => expect(resolveOlderPage).toBeDefined());
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage("chief", [latestMessage], {
+        revision: 2,
+        readState: { unreadCount: 1, firstUnreadMessageId: latestMessage.id, throughMessageId: null },
+        pageInfo: { hasOlder: true, olderCursor: "older" },
+      }),
+    });
+    await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.getByTestId("agent-read-state")).toHaveTextContent("0|reply-latest-page"));
+
+    resolveOlderPage?.(
+      testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-older-page",
+            author: "assistant",
+            text: "Older reply",
+            createdAt: "2026-08-30T02:01:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 1, firstUnreadMessageId: latestMessage.id, throughMessageId: null },
+        },
+      ),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("agent-read-state")).toHaveTextContent("0|reply-older-page,reply-latest-page"),
+    );
+  });
+
+  it("keeps a refreshed conversation page read while its agent chat is open", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-visible",
+            author: "assistant",
+            text: "Visible remote reply",
+            createdAt: "2026-08-30T02:01:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-visible", throughMessageId: null },
+        },
+      ),
+    });
+
+    expect(await screen.findByText("Visible remote reply")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          throughMessageId: "reply-visible",
+        },
+        "local",
+      ),
+    );
+    expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
+  });
+
+  it("does not mark an attachment-only conversation refresh as unread", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-attachment-only",
+            author: "assistant",
+            text: "",
+            createdAt: "2026-08-30T02:02:00.000Z",
+            status: "completed",
+            itemType: "agent_attachment",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+        },
+      ),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
+    expect(screen.queryByRole("status", { name: /new messages?/ })).not.toBeInTheDocument();
+  });
+
+  it("does not persist a redundant read for an already-read refreshed page", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-already-read",
+            author: "assistant",
+            text: "Historical visible reply",
+            createdAt: "2026-08-30T02:02:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "reply-already-read" },
+        },
+      ),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
+    expect(screen.queryByRole("status", { name: /new messages?/ })).not.toBeInTheDocument();
+  });
+
+  it("keeps a successful read when an equal-revision unread page arrives later", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const delayedPage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "reply-delayed-read-state",
+          author: "assistant",
+          text: "Reply from the delayed page",
+          createdAt: "2026-08-30T02:02:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: { unreadCount: 1, firstUnreadMessageId: "reply-delayed-read-state", throughMessageId: null },
+      },
+    );
+
+    emitAgentEvent?.({ type: "conversation-page", page: delayedPage });
+    await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+
+    emitAgentEvent?.({ type: "conversation-page", page: delayedPage });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
+  });
+
+  it("keeps a successful realtime read when a pending reload resolves later", async () => {
+    let resolveInitialPage: ((page: ConversationPage) => void) | undefined;
+    vi.mocked(window.openbot.agent.listConversationReads).mockResolvedValueOnce({
+      chief: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+    });
+    vi.mocked(window.openbot.agent.readConversationPage).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveInitialPage = resolve;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await waitFor(() => expect(resolveInitialPage).toBeDefined());
+    const unreadPage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "reply-reload-race",
+          author: "assistant",
+          text: "Reply before the reload resolves",
+          createdAt: "2026-08-30T02:02:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: { unreadCount: 1, firstUnreadMessageId: "reply-reload-race", throughMessageId: null },
+      },
+    );
+
+    emitAgentEvent?.({ type: "conversation-page", page: unreadPage });
+    await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce());
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+
+    resolveInitialPage?.(unreadPage);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
+  });
+
+  it("keeps a duplicate refreshed page read while persistence is pending", async () => {
+    let resolveRead: ((state: NonNullable<ConversationPage["readState"]>) => void) | undefined;
+    vi.mocked(window.openbot.agent.listConversationReads).mockResolvedValueOnce({
+      chief: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+    });
+    vi.mocked(window.openbot.agent.markConversationRead).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveRead = resolve;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const duplicatePage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "reply-pending-read",
+          author: "assistant",
+          text: "Reply with a pending read",
+          createdAt: "2026-08-30T02:02:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: { unreadCount: 1, firstUnreadMessageId: "reply-pending-read", throughMessageId: null },
+      },
+    );
+
+    emitAgentEvent?.({ type: "conversation-page", page: duplicatePage });
+    await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
+
+    emitAgentEvent?.({ type: "conversation-page", page: duplicatePage });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
+
+    resolveRead?.({ unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "reply-pending-read" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  it("restores a newer unread reply when its queued read fails", async () => {
+    let resolveFirstRead: ((state: NonNullable<ConversationPage["readState"]>) => void) | undefined;
+    let rejectSecondRead: ((error: Error) => void) | undefined;
+    vi.mocked(window.openbot.agent.listConversationReads).mockResolvedValueOnce({
+      chief: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+    });
+    vi.mocked(window.openbot.agent.markConversationRead)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirstRead = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            rejectSecondRead = reject;
+          }),
+      );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-read-a",
+            author: "assistant",
+            text: "First queued reply",
+            createdAt: "2026-08-30T02:02:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-read-a", throughMessageId: null },
+        },
+      ),
+    });
+    await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce());
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-read-a",
+            author: "assistant",
+            text: "First queued reply",
+            createdAt: "2026-08-30T02:02:00.000Z",
+            status: "completed",
+          },
+          {
+            id: "reply-read-b",
+            author: "assistant",
+            text: "Newer queued reply",
+            createdAt: "2026-08-30T02:03:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 3,
+          readState: { unreadCount: 2, firstUnreadMessageId: "reply-read-a", throughMessageId: null },
+        },
+      ),
+    });
+    await screen.findByText("Newer queued reply");
+    expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce();
+
+    resolveFirstRead?.({ unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "reply-read-a" });
+    await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledTimes(2));
+    vi.mocked(window.openbot.agent.readConversationPage).mockResolvedValueOnce(
+      testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-read-b",
+            author: "assistant",
+            text: "Newer queued reply",
+            createdAt: "2026-08-30T02:03:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 3,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-read-b", throughMessageId: "reply-read-a" },
+        },
+      ),
+    );
+    rejectSecondRead?.(new Error("Newer read unavailable"));
+
+    expect(await screen.findByText("Newer read unavailable")).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+  });
+
+  it("retries an automatic read for the same message after persistence fails", async () => {
+    vi.mocked(window.openbot.agent.markConversationRead).mockRejectedValueOnce(new Error("Read unavailable"));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const page = testConversationPage(
+      "chief",
+      [
+        {
+          id: "reply-read-retry",
+          author: "assistant",
+          text: "Visible reply that needs a retry",
+          createdAt: "2026-08-30T02:02:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: { unreadCount: 1, firstUnreadMessageId: "reply-read-retry", throughMessageId: null },
+      },
+    );
+    vi.mocked(window.openbot.agent.readConversationPage).mockResolvedValueOnce(page);
+
+    emitAgentEvent?.({ type: "conversation-page", page });
+    expect(await screen.findByText("Read unavailable")).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+
+    emitAgentEvent?.({ type: "conversation-page", page });
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenNthCalledWith(
+        2,
+        {
+          botId: "chief",
+          throughMessageId: "reply-read-retry",
+        },
+        "local",
+      ),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+  });
+
+  it("does not carry a failed automatic read to the same bot on another server", async () => {
+    const local = testServer("local", true);
+    const remote = testServer("remote-1", false);
+    let selectedServerId = "local";
+    let returningToLocal = false;
+    let rejectLocalRead: ((error: Error) => void) | undefined;
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+    vi.mocked(window.openbot.servers.select).mockImplementation(async (serverId) => {
+      selectedServerId = serverId;
+      returningToLocal = serverId === "local";
+      return [
+        { ...local, active: serverId === "local" },
+        { ...remote, active: serverId === "remote-1" },
+      ];
+    });
+    vi.mocked(window.openbot.agent.readConversationPage).mockImplementation(async (input) => {
+      if (selectedServerId === "remote-1") {
+        return testConversationPage(
+          input.botId,
+          [
+            {
+              id: "reply-remote-loaded",
+              author: "assistant",
+              text: "Remote loaded reply",
+              createdAt: "2026-08-30T02:02:30.000Z",
+              status: "completed",
+            },
+          ],
+          {
+            readState: { unreadCount: 1, firstUnreadMessageId: "reply-remote-loaded", throughMessageId: null },
+          },
+        );
+      }
+      if (returningToLocal) {
+        return testConversationPage(
+          input.botId,
+          [
+            {
+              id: "reply-local",
+              author: "assistant",
+              text: "Local reply after returning",
+              createdAt: "2026-08-30T02:02:00.000Z",
+              status: "completed",
+            },
+          ],
+          {
+            readState: { unreadCount: 1, firstUnreadMessageId: "reply-local", throughMessageId: null },
+          },
+        );
+      }
+      return testConversationPage(input.botId);
+    });
+    vi.mocked(window.openbot.agent.listConversationReads)
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({
+        chief: { unreadCount: 1, firstUnreadMessageId: "reply-remote", throughMessageId: null },
+      })
+      .mockResolvedValueOnce({
+        chief: { unreadCount: 1, firstUnreadMessageId: "reply-local", throughMessageId: null },
+      });
+    vi.mocked(window.openbot.agent.markConversationRead).mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          rejectLocalRead = reject;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-local",
+            author: "assistant",
+            text: "Local visible reply",
+            createdAt: "2026-08-30T02:02:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-local", throughMessageId: null },
+        },
+      ),
+    });
+    await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce());
+
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() => expect(window.openbot.servers.select).toHaveBeenCalledWith("remote-1"));
+    await waitFor(() => expect(window.openbot.agent.listConversationReads).toHaveBeenCalledTimes(2));
+    await screen.findByText("Remote loaded reply");
+    expect(screen.getByRole("status", { name: "1 new message" })).toBeInTheDocument();
+    rejectLocalRead?.(new Error("Local read unavailable"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-remote",
+            author: "assistant",
+            text: "Remote unread reply",
+            createdAt: "2026-08-30T02:03:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-remote", throughMessageId: null },
+        },
+      ),
+    });
+    await screen.findByText("Remote unread reply");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce();
+    expect(screen.queryByText("Local read unavailable")).not.toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "1 new message" })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Local server" }));
+    await waitFor(() => expect(window.openbot.agent.listConversationReads).toHaveBeenCalledTimes(3));
+    await screen.findByText("Local reply after returning");
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenNthCalledWith(
+        2,
+        { botId: "chief", throughMessageId: "reply-local" },
+        "local",
+      ),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+  });
+
+  it("keeps a queued read scoped to its original server", async () => {
+    const local = testServer("local", true);
+    const remote = testServer("remote-1", false);
+    let resolveFirstRead: ((state: NonNullable<ConversationPage["readState"]>) => void) | undefined;
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+    vi.mocked(window.openbot.servers.select).mockResolvedValueOnce([
+      { ...local, active: false },
+      { ...remote, active: true },
+    ]);
+    vi.mocked(window.openbot.agent.markConversationRead)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirstRead = resolve;
+          }),
+      )
+      .mockImplementationOnce(async (input) => ({
+        unreadCount: 0,
+        firstUnreadMessageId: null,
+        throughMessageId: input.throughMessageId,
+      }));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-first-local",
+            author: "assistant",
+            text: "First local reply",
+            createdAt: "2026-08-30T02:02:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-first-local", throughMessageId: null },
+        },
+      ),
+    });
+    await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce());
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-first-local",
+            author: "assistant",
+            text: "First local reply",
+            createdAt: "2026-08-30T02:02:00.000Z",
+            status: "completed",
+          },
+          {
+            id: "reply-second-local",
+            author: "assistant",
+            text: "Second local reply",
+            createdAt: "2026-08-30T02:03:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 3,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-second-local", throughMessageId: null },
+        },
+      ),
+    });
+    await screen.findByText("Second local reply");
+    expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() => expect(window.openbot.agent.listConversationReads).toHaveBeenCalledTimes(2));
+    resolveFirstRead?.({
+      unreadCount: 1,
+      firstUnreadMessageId: "reply-second-local",
+      throughMessageId: "reply-first-local",
+    });
+
+    await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledTimes(2));
+    expect(window.openbot.agent.markConversationRead).toHaveBeenNthCalledWith(
+      2,
+      { botId: "chief", throughMessageId: "reply-second-local" },
+      "local",
+    );
+  });
+
+  it("does not mark an older boundary from a rejected conversation page", async () => {
+    let resolveInitialPage: ((page: ConversationPage) => void) | undefined;
+    vi.mocked(window.openbot.agent.readConversationPage).mockImplementation(
+      async (): Promise<ConversationPage> =>
+        await new Promise((resolve) => {
+          resolveInitialPage = resolve;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-newer-boundary",
+            author: "assistant",
+            text: "Newest visible reply",
+            createdAt: "2026-08-30T02:02:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-newer-boundary", throughMessageId: null },
+        },
+      ),
+    });
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          throughMessageId: "reply-newer-boundary",
+        },
+        "local",
+      ),
+    );
+
+    resolveInitialPage?.(
+      testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-older-boundary",
+            author: "assistant",
+            text: "Older reply",
+            createdAt: "2026-08-30T02:01:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 1,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-older-boundary", throughMessageId: null },
+        },
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalledWith(
+      {
+        botId: "chief",
+        throughMessageId: "reply-older-boundary",
+      },
+      "local",
+    );
+    expect(screen.getByText("Newest visible reply")).toBeInTheDocument();
+  });
+
+  it("retries an explicit chat-open reload when its page revision is stale", async () => {
+    const unreadState = {
+      unreadCount: 1,
+      firstUnreadMessageId: "reply-current-revision",
+      throughMessageId: null,
+    };
+    const currentPage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "reply-current-revision",
+          author: "assistant",
+          text: "Current revision reply",
+          createdAt: "2026-08-30T02:03:00.000Z",
+          status: "completed",
+        },
+      ],
+      { revision: 2, readState: unreadState },
+    );
+    vi.mocked(window.openbot.agent.listConversationReads).mockResolvedValueOnce({ chief: unreadState });
+    vi.mocked(window.openbot.agent.readConversation).mockResolvedValue({
+      botId: "chief",
+      threadId: currentPage.threadId,
+      activeTurnId: null,
+      revision: currentPage.revision,
+      readState: unreadState,
+      messages: currentPage.messages,
+    });
+    render(() => <App />);
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+
+    vi.mocked(window.openbot.agent.readConversationPage)
+      .mockResolvedValueOnce(
+        testConversationPage(
+          "chief",
+          [
+            {
+              id: "reply-stale-revision",
+              author: "assistant",
+              text: "Stale revision reply",
+              createdAt: "2026-08-30T02:02:00.000Z",
+              status: "completed",
+            },
+          ],
+          {
+            revision: 1,
+            readState: { unreadCount: 1, firstUnreadMessageId: "reply-stale-revision", throughMessageId: null },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(currentPage);
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          throughMessageId: "reply-current-revision",
+        },
+        "local",
+      ),
+    );
+    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalledWith(
+      {
+        botId: "chief",
+        throughMessageId: "reply-stale-revision",
+      },
+      "local",
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+  });
+
+  it("uses the latest visible reply after one stale retry without reloading the queue", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-applied-revision",
+            author: "assistant",
+            text: "Applied revision reply",
+            createdAt: "2026-08-30T02:03:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "reply-applied-revision" },
+        },
+      ),
+    });
+    await screen.findByText("Applied revision reply");
+    const stalePage = testConversationPage("chief", [], {
+      revision: 1,
+      readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+    });
+    const callsBeforeOpen = vi.mocked(window.openbot.agent.readConversationPage).mock.calls.length;
+    const queueCallsBeforeOpen = vi.mocked(window.openbot.agent.listQueue).mock.calls.length;
+    vi.mocked(window.openbot.agent.readConversationPage).mockResolvedValue(stalePage);
+
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    await waitFor(() => expect(window.openbot.agent.readConversationPage).toHaveBeenCalledTimes(callsBeforeOpen + 2));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(window.openbot.agent.readConversationPage).toHaveBeenCalledTimes(callsBeforeOpen + 2);
+    expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+      { botId: "chief", throughMessageId: "reply-applied-revision" },
+      "local",
+    );
+    expect(window.openbot.agent.listQueue).toHaveBeenCalledTimes(queueCallsBeforeOpen);
+  });
+
+  it("applies an explicit read after an older automatic read", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const firstPage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "reply-automatic-first",
+          author: "assistant",
+          text: "First automatic reply",
+          createdAt: "2026-08-30T02:03:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 2,
+        readState: { unreadCount: 1, firstUnreadMessageId: "reply-automatic-first", throughMessageId: null },
+      },
+    );
+    emitAgentEvent?.({ type: "conversation-page", page: firstPage });
+    await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce());
+
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+    await screen.findByRole("heading", { name: "Sales Outbound" });
+    const newerPage = testConversationPage(
+      "chief",
+      [
+        ...firstPage.messages,
+        {
+          id: "reply-explicit-newer",
+          author: "assistant",
+          text: "Newer reply while closed",
+          createdAt: "2026-08-30T02:04:00.000Z",
+          status: "completed",
+        },
+      ],
+      {
+        revision: 3,
+        readState: {
+          unreadCount: 1,
+          firstUnreadMessageId: "reply-explicit-newer",
+          throughMessageId: "reply-automatic-first",
+        },
+      },
+    );
+    emitAgentEvent?.({ type: "conversation-page", page: newerPage });
+    vi.mocked(window.openbot.agent.readConversationPage).mockResolvedValueOnce(newerPage);
+
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenNthCalledWith(
+        2,
+        { botId: "chief", throughMessageId: "reply-explicit-newer" },
+        "local",
+      ),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+  });
+
+  it("marks the latest visible reply when a chat-open reload fails", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+    await screen.findByRole("heading", { name: "Sales Outbound" });
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "reply-before-load-failure",
+            author: "assistant",
+            text: "Visible reply before load failure",
+            createdAt: "2026-08-30T02:04:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 1, firstUnreadMessageId: "reply-before-load-failure", throughMessageId: null },
+        },
+      ),
+    });
+    vi.mocked(window.openbot.agent.readConversationPage).mockRejectedValueOnce(new Error("Reload unavailable"));
+
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    expect(await screen.findByText("Reload unavailable")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        { botId: "chief", throughMessageId: "reply-before-load-failure" },
+        "local",
+      ),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
   });
 
   it("rejects a permission approval and keeps the error visible", async () => {
@@ -4744,10 +6791,13 @@ describe("OpenBot connected desktop shell", () => {
     expect(scrollTo).toHaveBeenCalledWith({ behavior: "smooth", top: 1080 });
 
     await waitFor(() =>
-      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
-        botId: "chief",
-        throughMessageId: "agent-new-2",
-      }),
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          throughMessageId: "agent-new-2",
+        },
+        "local",
+      ),
     );
     await waitFor(() => expect(screen.queryByRole("status", { name: "2 new messages" })).not.toBeInTheDocument());
     await waitFor(() => expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "smooth", top: 1080 }));
@@ -4782,10 +6832,13 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
     expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
     await waitFor(() =>
-      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
-        botId: "chief",
-        throughMessageId: "agent-visible-answer",
-      }),
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          throughMessageId: "agent-visible-answer",
+        },
+        "local",
+      ),
     );
   });
 
@@ -4832,13 +6885,221 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(await screen.findByText("A new sales reply")).toBeInTheDocument();
     await waitFor(() =>
-      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
-        botId: "sales-outbound",
-        throughMessageId: "sales-new",
-      }),
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "sales-outbound",
+          throughMessageId: "sales-new",
+        },
+        "local",
+      ),
     );
     await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
     expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
+  });
+
+  it("clears unread messages in the selected agent chat when queue loading fails", async () => {
+    const unreadState = {
+      unreadCount: 1,
+      firstUnreadMessageId: "chief-new",
+      throughMessageId: null,
+    };
+    vi.mocked(window.openbot.agent.listConversationReads).mockResolvedValueOnce({ chief: unreadState });
+    vi.mocked(window.openbot.agent.readConversation).mockResolvedValue({
+      botId: "chief",
+      threadId: "thread-chief",
+      activeTurnId: null,
+      revision: 1,
+      readState: unreadState,
+      messages: [
+        {
+          id: "chief-new",
+          author: "assistant",
+          text: "A new reply from Chief",
+          createdAt: "2026-08-19T09:03:00.000Z",
+          status: "completed",
+        },
+      ],
+    });
+    vi.mocked(window.openbot.agent.listQueue).mockRejectedValue(new Error("Queue unavailable"));
+
+    render(() => <App />);
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+    await screen.findByText("A new reply from Chief");
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          throughMessageId: "chief-new",
+        },
+        "local",
+      ),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+    expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
+  });
+
+  it("preserves explicit read intent when an agent status change supersedes the page request", async () => {
+    const unreadState = {
+      unreadCount: 1,
+      firstUnreadMessageId: "chief-status-reply",
+      throughMessageId: null,
+    };
+    const unreadPage = testConversationPage(
+      "chief",
+      [
+        {
+          id: "chief-status-reply",
+          author: "assistant",
+          text: "Reply visible after status change",
+          createdAt: "2026-08-19T09:05:00.000Z",
+          status: "completed",
+        },
+      ],
+      { readState: unreadState },
+    );
+    vi.mocked(window.openbot.agent.listConversationReads).mockResolvedValueOnce({ chief: unreadState });
+    vi.mocked(window.openbot.agent.readConversation).mockResolvedValue({
+      botId: "chief",
+      threadId: unreadPage.threadId,
+      activeTurnId: null,
+      revision: unreadPage.revision,
+      readState: unreadState,
+      messages: unreadPage.messages,
+    });
+    render(() => <App />);
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+
+    let resolveFirstPage: ((page: ConversationPage) => void) | undefined;
+    let resolveSecondPage: ((page: ConversationPage) => void) | undefined;
+    vi.mocked(window.openbot.agent.readConversationPage)
+      .mockImplementationOnce(
+        async (): Promise<ConversationPage> =>
+          await new Promise((resolve) => {
+            resolveFirstPage = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        async (): Promise<ConversationPage> =>
+          await new Promise((resolve) => {
+            resolveSecondPage = resolve;
+          }),
+      );
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    await waitFor(() => expect(resolveFirstPage).toBeDefined());
+
+    const currentStatus = await window.openbot.agent.getStatus();
+    emitAgentEvent?.({ type: "status", status: { ...currentStatus, phase: "starting" } });
+    await waitFor(() => expect(resolveSecondPage).toBeDefined());
+    resolveFirstPage?.(unreadPage);
+    resolveSecondPage?.(unreadPage);
+
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          throughMessageId: "chief-status-reply",
+        },
+        "local",
+      ),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
+  });
+
+  it("marks a newer reply that arrives while an opened agent chat is being marked read", async () => {
+    const unreadState = {
+      unreadCount: 1,
+      firstUnreadMessageId: "chief-old-reply",
+      throughMessageId: null,
+    };
+    vi.mocked(window.openbot.agent.listConversationReads).mockResolvedValueOnce({ chief: unreadState });
+    vi.mocked(window.openbot.agent.readConversation).mockResolvedValue({
+      botId: "chief",
+      threadId: "thread-chief",
+      activeTurnId: null,
+      revision: 1,
+      readState: unreadState,
+      messages: [
+        {
+          id: "chief-old-reply",
+          author: "assistant",
+          text: "First visible reply",
+          createdAt: "2026-08-19T09:03:00.000Z",
+          status: "completed",
+        },
+      ],
+    });
+    let resolveInitialMark: ((state: NonNullable<ConversationPage["readState"]>) => void) | undefined;
+    vi.mocked(window.openbot.agent.markConversationRead)
+      .mockImplementationOnce(
+        async (): Promise<NonNullable<ConversationPage["readState"]>> =>
+          await new Promise((resolve) => {
+            resolveInitialMark = resolve;
+          }),
+      )
+      .mockImplementation(async (input) => ({
+        unreadCount: 0,
+        firstUnreadMessageId: null,
+        throughMessageId: input.throughMessageId,
+      }));
+
+    render(() => <App />);
+    expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          throughMessageId: "chief-old-reply",
+        },
+        "local",
+      ),
+    );
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage(
+        "chief",
+        [
+          {
+            id: "chief-old-reply",
+            author: "assistant",
+            text: "First visible reply",
+            createdAt: "2026-08-19T09:03:00.000Z",
+            status: "completed",
+          },
+          {
+            id: "chief-newer-reply",
+            author: "assistant",
+            text: "Newer visible reply",
+            createdAt: "2026-08-19T09:04:00.000Z",
+            status: "completed",
+          },
+        ],
+        {
+          revision: 2,
+          readState: { unreadCount: 2, firstUnreadMessageId: "chief-old-reply", throughMessageId: null },
+        },
+      ),
+    });
+
+    expect(await screen.findByText("Newer visible reply")).toBeInTheDocument();
+    resolveInitialMark?.({
+      unreadCount: 1,
+      firstUnreadMessageId: "chief-newer-reply",
+      throughMessageId: "chief-old-reply",
+    });
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        {
+          botId: "chief",
+          throughMessageId: "chief-newer-reply",
+        },
+        "local",
+      ),
+    );
+    await waitFor(() => expect(screen.queryByRole("status", { name: /new messages?/ })).not.toBeInTheDocument());
   });
 
   it("keeps the agent unread state when marking it fails", async () => {
@@ -4914,10 +7175,13 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByText("Read state unavailable")).toBeInTheDocument();
     expect(screen.getByRole("status", { name: "1 new message" })).toBeInTheDocument();
     expect(screen.getByRole("separator", { name: "New messages" })).toBeInTheDocument();
-    expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith({
-      botId: "chief",
-      throughMessageId: "agent-new",
-    });
+    expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+      {
+        botId: "chief",
+        throughMessageId: "agent-new",
+      },
+      "local",
+    );
     await waitFor(() => expect(scrollTo).toHaveBeenLastCalledWith({ behavior: "smooth", top: 840 }));
     expect(scrollElement.scrollTop).toBe(840);
   });

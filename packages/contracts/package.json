@@ -11,6 +11,9 @@
     "./invite-links": "./src/invite-links.ts",
     "./ipc": "./src/ipc.ts",
     "./runtime-values": "./src/runtime-values.ts",
+    "./team-protocol": "./src/team-protocol/index.ts",
+    "./team-protocol/v1": "./src/team-protocol/v1.ts",
+    "./team-protocol/v1-adapter": "./src/team-protocol/v1-adapter.ts",
     "./validation": "./src/validation.ts"
   },
   "scripts": {

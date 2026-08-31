@@ -110,8 +110,8 @@ const args: Parameters<typeof Sidebar>[0] = {
   onEditBot: fn(),
   onDeleteBot: async () => undefined,
   compact: false,
-  onCollapse: fn(),
   onExpand: fn(),
+  onOpenMarketplace: fn(),
 };
 
 function InteractiveSidebar(props: Parameters<typeof Sidebar>[0]) {
@@ -388,6 +388,32 @@ export const AgentTiles: Story = {
   },
 };
 
+export const AgentLongLabels: Story = {
+  args: {
+    bots: longLabelBots,
+    people: [],
+    directThreads: [],
+    agentStates: {},
+    pinnedItems: [],
+  },
+  decorators: [
+    (Story) => (
+      <div
+        style={{
+          width: "240px",
+          "min-width": "240px",
+          "max-width": "400px",
+          height: "100vh",
+          overflow: "hidden",
+          resize: "horizontal",
+        }}
+      >
+        {Story()}
+      </div>
+    ),
+  ],
+};
+
 export const AgentContextMenu: Story = {
   args: {
     people: [],
@@ -530,7 +556,7 @@ export const LongServerName: Story = {
   decorators: [(Story) => <div style={{ width: "240px", height: "100vh" }}>{Story()}</div>],
   play: async ({ canvas }) => {
     const name = canvas.getByText("Synthetify production workspace with a long name");
-    const actions = canvas.getByRole("button", { name: "Collapse sidebar" }).parentElement;
+    const actions = canvas.getByRole("button", { name: "Open Marketplace" }).parentElement;
     if (!actions) throw new Error("Sidebar header actions are missing.");
     await expect(getComputedStyle(name).textOverflow).toBe("ellipsis");
     await expect(name.scrollWidth).toBeGreaterThan(name.clientWidth);

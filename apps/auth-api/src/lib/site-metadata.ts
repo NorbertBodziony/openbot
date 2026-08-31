@@ -13,7 +13,7 @@ export const OPENBOT_SOFTWARE_APPLICATION = {
   image: OPENBOT_SOCIAL_IMAGE_URL,
   description: OPENBOT_SITE_DESCRIPTION,
   applicationCategory: "DeveloperApplication",
-  operatingSystem: ["macOS 12 or later", "Windows 10 or later"],
+  operatingSystem: ["macOS 13 or later", "Windows 10 or later"],
   downloadUrl: [`${OPENBOT_SITE_URL}download/macos`, `${OPENBOT_SITE_URL}download/windows`],
   isAccessibleForFree: true,
   offers: {

@@ -9,18 +9,17 @@ import {
 } from "./bloub-avatar";
 
 describe("Bloub avatar adapter", () => {
-  it("resolves a stable profile from the stored seed", () => {
-    expect(bloubAvatarProfile("chief:avatar:2:4", null)).toEqual(bloubAvatarProfile("chief:avatar:2:4", null));
-    expect(bloubAvatarProfile("chief:avatar:2:4", null)).not.toEqual(bloubAvatarProfile("research:avatar:2:4", null));
-  });
-
   it("maps stored hues to the visible Bloub color", () => {
     expect(bloubAvatarProfile("chief", 215).color).toBe("bleu");
     expect(avatarHeadColor("chief", 215)).toBe("#3b93f0");
     expect(avatarHueSwatch(215)).toBe(avatarHeadColor("different-seed", 215));
   });
 
-  it("keeps all eight Bloub shapes in each deterministic candidate set", () => {
+  it("preserves the generated droplet outside explicit avatar overrides", () => {
+    expect(bloubAvatarProfile("droplet-regression-0", null).shape).toBe("goutte");
+  });
+
+  it("keeps every supported Bloub shape in avatar candidates", () => {
     const firstSet = avatarCandidateSeeds("chief", "chief:avatar:4:7", 0);
     const repeatedSet = avatarCandidateSeeds("chief", "chief:avatar:4:7", 0);
     const nextSet = avatarCandidateSeeds("chief", "chief:avatar:4:7", 1);

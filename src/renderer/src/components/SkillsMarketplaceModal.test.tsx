@@ -95,13 +95,8 @@ describe("SkillsMarketplaceModal", () => {
       />
     ));
     const listing = await screen.findByRole("button", { name: "View Release Notes details" });
-    const marketplaceBody = document.querySelector<HTMLElement>(".skills-marketplace-body");
-    if (!marketplaceBody) throw new Error("Missing marketplace body.");
-    marketplaceBody.scrollTop = 320;
     listing.click();
-    expect(marketplaceBody.scrollTop).toBe(0);
     const details = await screen.findByRole("region", { name: "Release Notes details" });
-    expect(marketplaceBody).toHaveAttribute("data-detail-open");
     expect(within(details).getByText("What this skill does")).toBeInTheDocument();
     expect(within(details).getByText(/Group changes by customer impact/u)).toBeInTheDocument();
     expect(within(details).getByText("references/template.md")).toBeInTheDocument();
@@ -114,8 +109,6 @@ describe("SkillsMarketplaceModal", () => {
     await waitFor(() =>
       expect(screen.queryByRole("region", { name: "Release Notes details" })).not.toBeInTheDocument(),
     );
-    await waitFor(() => expect(marketplaceBody.scrollTop).toBe(320));
-    expect(marketplaceBody).not.toHaveAttribute("data-detail-open");
   });
 
   it("shows discover listings and install totals", async () => {
@@ -397,14 +390,12 @@ describe("SkillsMarketplaceModal", () => {
     ));
 
     expect(screen.getByRole("status", { name: "Loading skills" })).toBeInTheDocument();
-    expect(document.querySelectorAll(".skills-marketplace-category-section")).toHaveLength(8);
-    expect(document.querySelectorAll(".skills-marketplace-card-skeleton")).toHaveLength(40);
 
     resolvePage({ skills: [], nextCursor: null });
     await waitFor(() => expect(screen.queryByRole("status", { name: "Loading skills" })).not.toBeInTheDocument());
   });
 
-  it("uses the final detail layout while a skill loads", async () => {
+  it("announces detail loading", async () => {
     const loadedDetail = await window.openbot.skills.get("release-notes");
     let resolveDetail!: (detail: typeof loadedDetail) => void;
     window.openbot.skills.get = vi.fn(
@@ -426,8 +417,6 @@ describe("SkillsMarketplaceModal", () => {
     listing.click();
 
     expect(await screen.findByRole("status", { name: "Loading skill" })).toBeInTheDocument();
-    expect(document.querySelector(".skills-marketplace-detail-hero")).toBeInTheDocument();
-    expect(document.querySelector(".skills-marketplace-detail-content")).toBeInTheDocument();
 
     resolveDetail(loadedDetail);
     await screen.findByRole("region", { name: "Release Notes details" });

@@ -5,6 +5,28 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-30
+
+### Added
+
+- Add a macOS Dynamic Island overlay for messages, questions, approvals, browser takeovers, and failures.
+- Add persistent question prompt bubbles with safe handling for secret answers.
+- Let agents attach local response images with preview, download, and file actions.
+- Negotiate compatible Team API protocol versions and capabilities between clients and hosts.
+
+### Changed
+
+- Redesign the account dock, usage popover, account menu, and Marketplace access.
+- Improve browser takeover cards with persistent page previews and completed states.
+- Hide People communication by default while retaining an explicit opt-in.
+- Require macOS 13 or newer after the Electron and Chromium upgrade.
+
+### Fixed
+
+- Support embedded Google sign-in with the current Chromium identity while keeping the OpenBot browser session.
+- Clear Bot unread state reliably when a chat opens or refreshes.
+- Preserve agent names before title badges truncate in the sidebar.
+
 ## [0.3.5] - 2026-08-27
 
 ### Changed

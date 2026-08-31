@@ -16,23 +16,16 @@ export const Gallery: Story = {
         Badges
       </Heading>
       <div class="foundation-story-row">
-        <Badge tone="neutral">Neutral</Badge>
-        <Badge tone="accent">Accent</Badge>
-        <Badge tone="success" dot>
-          Connected
-        </Badge>
-        <Badge tone="warning" dot>
-          Waiting
-        </Badge>
-        <Badge tone="danger" dot>
-          Failed
-        </Badge>
+        <Badge variant="secondary">Secondary</Badge>
+        <Badge variant="primary-light">Primary</Badge>
+        <Badge variant="success-light">Success</Badge>
+        <Badge variant="warning-light">Warning</Badge>
+        <Badge variant="destructive-light">Destructive</Badge>
       </div>
       <div class="foundation-story-row">
-        <Badge size="sm" shape="rounded">
-          Small
-        </Badge>
-        <Badge shape="pill">Status pill</Badge>
+        <Badge variant="outline">Outline</Badge>
+        <Badge variant="success-outline">Success outline</Badge>
+        <Badge variant="warning-outline">Warning outline</Badge>
       </div>
     </main>
   ),

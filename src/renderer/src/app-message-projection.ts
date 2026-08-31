@@ -16,6 +16,7 @@ export function toBotProfile(stored: BotSummary): BotProfile {
     avatarHue: stored.avatarHue,
     avatarUrl: stored.avatarUrl,
     marketplaceSource: stored.marketplaceSource,
+    updatedAt: stored.updatedAt,
     time: stored.updatedAt ? formatTime(stored.updatedAt) : "now",
     preview: cleanPreview(stored.preview),
   };
@@ -29,13 +30,15 @@ export function toBotMessage(message: ConversationMessage): BotMessage {
     author: message.author === "user" ? "you" : "bot",
     body: message.text,
     time: formatTime(message.createdAt),
+    createdAt: message.createdAt,
     streaming: message.status === "streaming",
     itemType: message.itemType,
-    kind: message.exchange ? "exchange" : "text",
+    kind: message.questionPrompt ? "question" : message.exchange ? "exchange" : "text",
     senderBotId: exchangeSenderId,
     replyToMessageId: message.replyToMessageId,
     attachments: message.attachments,
     imageGeneration: message.imageGeneration,
+    questionPrompt: message.questionPrompt,
     exchange: message.exchange,
     reaction: message.reaction,
     reactions:
@@ -79,6 +82,7 @@ export function toBotMessages(messages: ConversationMessage[]): BotMessage[] {
       author: "bot",
       body: "",
       time: formatTime(message.createdAt),
+      createdAt: message.createdAt,
       streaming: message.status === "streaming",
       itemType: "commentary",
       kind: "thinking",
@@ -99,7 +103,10 @@ export function readStateForMessages(
     : -1;
   const unread = messages
     .slice(throughIndex + 1)
-    .filter((message) => message.author !== "user" && message.itemType !== "commentary");
+    .filter(
+      (message) =>
+        message.author !== "user" && message.itemType !== "commentary" && message.itemType !== "agent_attachment",
+    );
   return {
     ...state,
     unreadCount: unread.length,
@@ -120,7 +127,9 @@ export function botProfilesEqual(left: BotProfile, right: BotProfile): boolean {
     left.threadId === right.threadId &&
     left.avatarSeed === right.avatarSeed &&
     left.avatarHue === right.avatarHue &&
+    left.avatarUrl === right.avatarUrl &&
     marketplaceSourcesEqual(left.marketplaceSource, right.marketplaceSource) &&
+    left.updatedAt === right.updatedAt &&
     left.time === right.time &&
     left.preview === right.preview
   );
@@ -161,6 +170,7 @@ export function botMessagesEqual(left: BotMessage, right: BotMessage): boolean {
     JSON.stringify(left.reactions) === JSON.stringify(right.reactions) &&
     JSON.stringify(left.reactionSummary) === JSON.stringify(right.reactionSummary) &&
     JSON.stringify(left.attachments) === JSON.stringify(right.attachments) &&
+    JSON.stringify(left.questionPrompt) === JSON.stringify(right.questionPrompt) &&
     JSON.stringify(left.exchange) === JSON.stringify(right.exchange) &&
     JSON.stringify(left.routine) === JSON.stringify(right.routine) &&
     JSON.stringify(left.items) === JSON.stringify(right.items)

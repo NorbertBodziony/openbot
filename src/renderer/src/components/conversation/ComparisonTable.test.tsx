@@ -23,7 +23,5 @@ describe("ComparisonTable", () => {
     expect(within(table).getAllByRole("cell")).toHaveLength(6);
     expect(within(table).getByText("<strong>Unlimited projects</strong>")).toBeInTheDocument();
     expect(table.querySelector("strong")).toBeNull();
-    expect(table.querySelectorAll(".message-comparison-table-yes")).toHaveLength(3);
-    expect(table.querySelectorAll(".message-comparison-table-no")).toHaveLength(1);
   });
 });

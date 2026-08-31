@@ -1,10 +1,11 @@
 // @vitest-environment node
 
-import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, open, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import { AGENT_RUNTIME_TEXT_LIMIT, AGENT_RUNTIME_WORKING_ITEMS_LIMIT } from "@openbot/contracts/ipc";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MailboxStore } from "./mailbox-store";
 
@@ -22,6 +23,61 @@ afterEach(async () => {
 });
 
 describe("MailboxStore", () => {
+  it("keeps staged generated attachments out of unrelated mailbox writes", async () => {
+    const sourcePath = join(root, "staged-screenshot.png");
+    await writeFile(sourcePath, "image bytes");
+    const source = await open(sourcePath, "r");
+    const staged = await store.stageGeneratedAttachments({ sources: [{ path: sourcePath, handle: source }] });
+    await source.close();
+
+    await expect(store.listExportAttachments()).resolves.toEqual([]);
+    await store.enqueue({ sender: { kind: "user" }, recipientBotIds: ["chief"], text: "Unrelated work" });
+    const restored = new MailboxStore(join(root, "user-data"), join(root, "Shared"));
+    await restored.initialize();
+    await expect(restored.listExportAttachments()).resolves.toEqual([]);
+
+    await store.discardStagedGeneratedAttachments(staged.map((attachment) => attachment.id));
+  });
+
+  it("preserves the extension when it shortens a long attachment name", async () => {
+    const source = join(root, `${"screenshot-".repeat(19)}capture.png`);
+    await writeFile(source, "image bytes");
+
+    const [draft] = await store.prepareAttachments([source]);
+
+    expect(draft.name).toHaveLength(180);
+    expect(draft).toMatchObject({ kind: "image", mimeType: "image/png", previewKind: "image" });
+    expect(draft.name.endsWith(".png")).toBe(true);
+  });
+
+  it("keeps runtime queues small and excludes queued work", async () => {
+    const source = join(root, "runtime.txt");
+    await writeFile(source, "runtime attachment");
+    const [draft] = await store.prepareAttachments([source]);
+    const botIds = Array.from({ length: AGENT_RUNTIME_WORKING_ITEMS_LIMIT + 2 }, (_, index) => `bot-${index}`);
+    for (const [index, botId] of botIds.entries()) {
+      const receipt = await store.enqueue({
+        sender: { kind: "user" },
+        recipientBotIds: [botId],
+        text: index === 0 ? "x".repeat(AGENT_RUNTIME_TEXT_LIMIT + 100) : `Work ${index}`,
+        draftIds: index === 0 ? [draft.id] : undefined,
+      });
+      const deliveryId = receipt.deliveries[0].id;
+      await store.markStarting(deliveryId);
+      await store.markRunning(deliveryId, `turn-${index}`);
+    }
+    await store.enqueue({ sender: { kind: "user" }, recipientBotIds: ["queued"], text: "Still queued" });
+
+    const runtime = store.listRuntimeWork([...botIds, "queued"], new Map());
+
+    expect(runtime).toHaveLength(AGENT_RUNTIME_WORKING_ITEMS_LIMIT);
+    expect(runtime[0]).toMatchObject({
+      text: "x".repeat(AGENT_RUNTIME_TEXT_LIMIT),
+      status: "running",
+    });
+    expect(runtime.some((delivery) => delivery.text === "Still queued")).toBe(false);
+  });
+
   it("imports mailbox.json once and keeps a legacy backup", async () => {
     const userData = join(root, "legacy-user-data");
     await mkdir(userData, { recursive: true });

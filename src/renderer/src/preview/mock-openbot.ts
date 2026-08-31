@@ -1,4 +1,5 @@
 import type {
+  AccountUsage,
   AgentEvent,
   AgentModelOption,
   AgentStatus,
@@ -10,6 +11,8 @@ import type {
   BotSummary,
   BrowserControlState,
   BrowserOpenInput,
+  BrowserPictureInPictureEvent,
+  BrowserPreview,
   BrowserTab,
   CentralAuthState,
   CentralAuthUser,
@@ -22,6 +25,8 @@ import type {
   DirectMessageRealtimeEvent,
   DirectThreadSummary,
   DirectTypingRealtimeEvent,
+  DynamicIslandPreference,
+  DynamicIslandPresentation,
   HostStatus,
   InviteSummary,
   JoinServerInput,
@@ -56,7 +61,12 @@ import type {
   UpdateStatus,
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
-import { SIDEBAR_PEOPLE_SECTION_ID, SIDEBAR_UNASSIGNED_SECTION_ID } from "@openbot/contracts/ipc";
+import {
+  DEFAULT_DYNAMIC_ISLAND_PREFERENCE,
+  SIDEBAR_PEOPLE_SECTION_ID,
+  SIDEBAR_UNASSIGNED_SECTION_ID,
+} from "@openbot/contracts/ipc";
+import browserTakeoverPreviewUrl from "../../stories/assets/browser-takeover-preview.svg";
 import {
   STORY_AGENT_STATUS,
   STORY_APP_INFO,
@@ -86,11 +96,13 @@ export interface MockOpenBotOptions {
   authState?: CentralAuthState;
   setupState?: AppSetupState;
   agentStatus?: AgentStatus;
+  usage?: AccountUsage;
   bots?: BotSummary[];
   models?: AgentModelOption[];
   snapshots?: Record<string, ConversationSnapshot>;
   browserTabs?: BrowserTab[];
   browserControlState?: BrowserControlState;
+  browserPreview?: BrowserPreview | null;
   servers?: ServerSummary[];
   presence?: TeamPresenceSnapshot;
   directThreads?: DirectThreadSummary[];
@@ -149,6 +161,8 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   let authState = clone<CentralAuthState>(options.authState ?? defaultAuthState);
   let setupState = clone<AppSetupState>(options.setupState ?? { completed: true, preferredProvider: "codex" });
   let analyticsPreference = clone<AnalyticsPreference>(options.analyticsPreference ?? { enabled: true });
+  let dynamicIslandPreference: DynamicIslandPreference = { ...DEFAULT_DYNAMIC_ISLAND_PREFERENCE };
+  let dynamicIslandPresentation: DynamicIslandPresentation = { serverId: "local", mode: "idle" };
   const agentStatus = clone(options.agentStatus ?? STORY_AGENT_STATUS);
   let bots = clone(options.bots ?? STORY_BOT_SUMMARIES);
   let sidebarLayout: SidebarLayoutSnapshot = {
@@ -161,7 +175,12 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   const models = clone(options.models ?? STORY_MODELS);
   const snapshots = clone(options.snapshots ?? STORY_SNAPSHOTS);
   let browserTabs = clone(options.browserTabs ?? STORY_BROWSER_TABS);
+  let activeBrowserTabId = browserTabs.at(-1)?.id ?? null;
   const browserControlState = clone(options.browserControlState ?? STORY_BROWSER_CONTROL);
+  const browserPreview =
+    options.browserPreview === undefined
+      ? { dataUrl: browserTakeoverPreviewUrl, width: 960, height: 600 }
+      : options.browserPreview;
   let servers = clone(options.servers ?? STORY_SERVERS);
   let presence = clone(options.presence ?? STORY_PRESENCE);
   let directThreads = clone(options.directThreads ?? STORY_DIRECT_THREADS);
@@ -172,12 +191,14 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   let sessions = clone(options.sessions ?? STORY_SESSIONS);
   let remoteDesktopSessions = clone(options.remoteDesktopSessions ?? [STORY_REMOTE_DESKTOP_SESSION]);
   let updateStatus = clone(options.updateStatus ?? STORY_UPDATE_STATUS);
-  const usage = clone(STORY_USAGE);
+  const usage = clone(options.usage ?? STORY_USAGE);
   let botCounter = bots.length;
   let messageCounter = 10;
   let directMessageCounter = 10;
 
   const agentListeners = new Set<Listener<AgentEvent>>();
+  const browserDisplayListeners = new Set<Listener<{ tabs: BrowserTab[]; activeTabId: string | null }>>();
+  const browserPictureInPictureListeners = new Set<Listener<BrowserPictureInPictureEvent>>();
   const authListeners = new Set<Listener<CentralAuthState>>();
   const presenceListeners = new Set<Listener<TeamPresenceSnapshot>>();
   const directMessageListeners = new Set<Listener<DirectMessageRealtimeEvent>>();
@@ -351,6 +372,23 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       analyticsPreference = { enabled };
       return clone(analyticsPreference);
     },
+    dynamicIsland: {
+      getPreference: async () => clone(dynamicIslandPreference),
+      setPreference: async (preference) => {
+        dynamicIslandPreference = { ...preference };
+        return clone(dynamicIslandPreference);
+      },
+      publishPresentation: async (presentation) => {
+        dynamicIslandPresentation = clone(presentation);
+      },
+      getPresentation: async () => clone(dynamicIslandPresentation),
+      onPreference: () => () => undefined,
+      onPresentation: () => () => undefined,
+      performAction: async () => undefined,
+      performHaptic: async () => undefined,
+      onAction: () => () => undefined,
+      setInteractive: async () => undefined,
+    },
     getMacPermissions: async (): Promise<MacPermissionsState> => ({
       screenRecording: "granted",
       accessibility: "granted",
@@ -409,7 +447,15 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         authState = { status: "signed_in", user };
         return clone(authState);
       },
-      updateAvatar: async () => clone(authState),
+      updateAvatar: async (image) => {
+        if (authState.status !== "signed_in") return clone(authState);
+        const avatarUrl = image
+          ? `data:${image.mimeType};base64,${btoa(Array.from(image.bytes, (byte) => String.fromCharCode(byte)).join(""))}`
+          : null;
+        authState = { ...authState, user: { ...authState.user, avatarUrl } };
+        emitAuthState(authState);
+        return clone(authState);
+      },
       logout: async () => {
         authState = { status: "signed_out" };
         emitAuthState(authState);
@@ -786,6 +832,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         });
       },
       listQueue: async (botId) => clone(queues.get(botId) ?? emptyQueue(botId)),
+      acknowledgeFailedTurn: async () => undefined,
       cancelQueuedMessage: async (input) => {
         const queue = queues.get(input.botId) ?? emptyQueue(input.botId);
         queue.deliveries = queue.deliveries.map((delivery) =>
@@ -865,6 +912,11 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         agentListeners.add(listener);
         return () => agentListeners.delete(listener);
       },
+      onScopedEvent: (listener) => {
+        const scopedListener = (event: AgentEvent) => listener({ serverId: "local", event });
+        agentListeners.add(scopedListener);
+        return () => agentListeners.delete(scopedListener);
+      },
     },
     browser: {
       open: async (input: BrowserOpenInput) => {
@@ -877,23 +929,51 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
           ownerBotId: input.ownerBotId ?? null,
         };
         browserTabs = [...browserTabs, tab];
+        activeBrowserTabId = tab.id;
+        emit(browserDisplayListeners, { tabs: browserTabs, activeTabId: tab.id });
         emitAgentEvent({ type: "browser-changed", tabs: browserTabs, activeTabId: tab.id });
         return clone(tab);
       },
-      activate: async () => undefined,
+      activate: async (tabId) => {
+        activeBrowserTabId = tabId;
+        emit(browserDisplayListeners, { tabs: browserTabs, activeTabId: activeBrowserTabId });
+      },
       navigate: async () => undefined,
       reload: async () => undefined,
       close: async (tabId) => {
         browserTabs = browserTabs.filter((tab) => tab.id !== tabId);
+        activeBrowserTabId = browserTabs[0]?.id ?? null;
+        emit(browserDisplayListeners, { tabs: browserTabs, activeTabId: activeBrowserTabId });
         emitAgentEvent({
           type: "browser-changed",
           tabs: browserTabs,
-          activeTabId: browserTabs[0]?.id ?? null,
+          activeTabId: activeBrowserTabId,
         });
       },
       listTabs: async () => clone(browserTabs),
+      getDisplayState: async () => ({ tabs: clone(browserTabs), activeTabId: activeBrowserTabId }),
       getControlState: async () => clone(browserControlState),
+      capturePreview: async () => {
+        if (!browserPreview) throw new Error("Browser preview is unavailable.");
+        return clone(browserPreview);
+      },
       setVisible: async () => undefined,
+      onDisplayState: (listener) => {
+        browserDisplayListeners.add(listener);
+        return () => browserDisplayListeners.delete(listener);
+      },
+      openPictureInPicture: async (bounds) => bounds ?? { x: 16, y: 16, width: 420, height: 300 },
+      closePictureInPicture: async () => undefined,
+      dockPictureInPicture: async () => {
+        emit(browserPictureInPictureListeners, { type: "dock" });
+      },
+      hidePictureInPicture: async () => {
+        emit(browserPictureInPictureListeners, { type: "hide" });
+      },
+      onPictureInPictureEvent: (listener) => {
+        browserPictureInPictureListeners.add(listener);
+        return () => browserPictureInPictureListeners.delete(listener);
+      },
     },
     update: {
       getStatus: async () => clone(updateStatus),
@@ -964,6 +1044,11 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       takePendingInvite: async () => null,
       login: async (input) => {
         const server = servers.find((candidate) => candidate.id === input.serverId);
+        if (!server) throw new Error("Server not found");
+        return clone(server);
+      },
+      retryConnection: async (serverId) => {
+        const server = servers.find((candidate) => candidate.id === serverId);
         if (!server) throw new Error("Server not found");
         return clone(server);
       },

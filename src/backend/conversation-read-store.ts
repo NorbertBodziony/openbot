@@ -142,7 +142,9 @@ export class ConversationReadStore {
     }
     const afterBoundary = boundary ? `AND (created_at, ordinal, message_id) > (?, ?, ?)` : "";
     const parameters = boundary ? [threadId, boundary.created_at, boundary.ordinal, throughMessageId] : [threadId];
-    const unreadFilter = `author != 'user' AND COALESCE(item_type, '') != 'commentary'`;
+    const unreadFilter = `author != 'user'
+      AND COALESCE(item_type, '') != 'commentary'
+      AND COALESCE(item_type, '') != 'agent_attachment'`;
     const countRow = this.database.connection
       .prepare(
         `SELECT COUNT(*) AS unread_count FROM projection_thread_messages
@@ -236,7 +238,10 @@ function stateFromSnapshot(snapshot: ConversationSnapshot, throughMessageId: str
     : -1;
   const unread = snapshot.messages
     .slice(throughIndex + 1)
-    .filter((message) => message.author !== "user" && message.itemType !== "commentary");
+    .filter(
+      (message) =>
+        message.author !== "user" && message.itemType !== "commentary" && message.itemType !== "agent_attachment",
+    );
   return {
     unreadCount: unread.length,
     firstUnreadMessageId: unread[0]?.id ?? null,

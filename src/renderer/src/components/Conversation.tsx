@@ -1,4 +1,4 @@
-import type { AgentModelId, AgentReasoningEffort } from "@openbot/contracts/ipc";
+import type { AgentModelId, AgentReasoningEffort, BrowserBounds } from "@openbot/contracts/ipc";
 import { createContext, createSignal, onCleanup, type ParentProps, useContext } from "solid-js";
 import {
   type ComposerDraft,
@@ -9,14 +9,13 @@ import {
   type SidebarFilePreview,
 } from "./ConversationView";
 import type { AgentActivityPresentation } from "./conversation/AgentActivity";
-import type { BrowserPipBounds } from "./conversation/BrowserPanel";
 import type { ChatSearchMatch } from "./conversation/chat-search";
 
 const SETTINGS_PANEL_DEFAULT = 296;
 const BROWSER_PANEL_DEFAULT = 380;
-const BROWSER_PIP_STORAGE_KEY = "openbot:browser-pip-bounds";
+const BROWSER_PIP_STORAGE_KEY = "openbot:browser-pip-native-bounds";
 
-function readBrowserPipBounds(): BrowserPipBounds | null {
+function readBrowserPipBounds(): BrowserBounds | null {
   const values = (window.localStorage.getItem(BROWSER_PIP_STORAGE_KEY) ?? "")
     .split(",")
     .map((value) => Number.parseFloat(value));
@@ -64,7 +63,7 @@ export function createConversationController(props: Pick<ConversationProps, "onT
   const [settingsReasoning, setSettingsReasoning] = createSignal<AgentReasoningEffort>("medium");
   const [browserAddress, setBrowserAddress] = createSignal("https://www.google.com");
   const [browserAddressEditing, setBrowserAddressEditing] = createSignal(false);
-  const [browserPipBounds, setBrowserPipBounds] = createSignal<BrowserPipBounds | null>(readBrowserPipBounds());
+  const [browserPipBounds, setBrowserPipBounds] = createSignal<BrowserBounds | null>(readBrowserPipBounds());
   const [mediaPreview, setMediaPreview] = createSignal<MediaPreview | null>(null);
   const [sidebarFilePreview, setSidebarFilePreview] = createSignal<SidebarFilePreview | null>(null);
   const [openReactionMessageId, setOpenReactionMessageId] = createSignal<string | null>(null);

@@ -1,9 +1,16 @@
-import type { UpdateStatus } from "@openbot/contracts/ipc";
+import type { AvatarImageInput, CentralAuthUser, UpdateStatus } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_GENERAL_SETTINGS } from "../app-settings";
 import { SettingsModal } from "./SettingsModal";
+
+const account: CentralAuthUser = {
+  id: "user-1",
+  email: "norbert@example.com",
+  name: "Norbert",
+  avatarUrl: null,
+};
 
 const idleUpdateStatus: UpdateStatus = {
   phase: "idle",
@@ -16,6 +23,29 @@ const idleUpdateStatus: UpdateStatus = {
 };
 
 describe("SettingsModal", () => {
+  it("keeps dependent notch options selected but unavailable while the MacBook notch is disabled", () => {
+    render(() => (
+      <SettingsModal
+        open
+        onOpenChange={() => undefined}
+        value={{ ...DEFAULT_GENERAL_SETTINGS, macBookNotch: false }}
+        onValueChange={() => undefined}
+        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
+        updateStatus={idleUpdateStatus}
+        onUpdateAction={vi.fn(async () => undefined)}
+        account={account}
+        onUpdateAccountAvatar={vi.fn(async () => undefined)}
+      />
+    ));
+
+    expect(screen.getByRole("switch", { name: "Haptic feedback" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "Haptic feedback" })).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Show idle island" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "Show idle island" })).toBeDisabled();
+    expect(screen.getByRole("switch", { name: "Show on additional displays" })).toBeChecked();
+    expect(screen.getByRole("switch", { name: "Show on additional displays" })).toBeDisabled();
+  });
+
   it("keeps General preferences controlled across close and reopen", async () => {
     const [open, setOpen] = createSignal(true);
     const [value, setValue] = createSignal({ ...DEFAULT_GENERAL_SETTINGS });
@@ -34,6 +64,8 @@ describe("SettingsModal", () => {
           appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
           updateStatus={idleUpdateStatus}
           onUpdateAction={vi.fn(async () => undefined)}
+          account={account}
+          onUpdateAccountAvatar={vi.fn(async () => undefined)}
           restoreFocusTarget={openTrigger}
         />
       </>
@@ -74,6 +106,8 @@ describe("SettingsModal", () => {
         appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
         updateStatus={status()}
         onUpdateAction={onUpdateAction}
+        account={account}
+        onUpdateAccountAvatar={vi.fn(async () => undefined)}
       />
     ));
 
@@ -95,6 +129,8 @@ describe("SettingsModal", () => {
         appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
         updateStatus={idleUpdateStatus}
         onUpdateAction={onUpdateAction}
+        account={account}
+        onUpdateAccountAvatar={vi.fn(async () => undefined)}
       />
     ));
 
@@ -111,9 +147,50 @@ describe("SettingsModal", () => {
         appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
         updateStatus={{ ...idleUpdateStatus, phase: "checking" }}
         onUpdateAction={onUpdateAction}
+        account={account}
+        onUpdateAccountAvatar={vi.fn(async () => undefined)}
       />
     ));
 
     expect(screen.getByRole("button", { name: "Checking for updates…" })).toBeDisabled();
+  });
+
+  it("updates and removes the signed-in account avatar from Profile settings", async () => {
+    const [currentAccount, setCurrentAccount] = createSignal({ ...account });
+    const onUpdateAccountAvatar = vi.fn(async (image: AvatarImageInput | null) => {
+      setCurrentAccount((current) => ({
+        ...current,
+        avatarUrl: image ? "data:image/webp;base64,cHJvZmlsZQ==" : null,
+      }));
+    });
+
+    render(() => (
+      <SettingsModal
+        open
+        onOpenChange={() => undefined}
+        value={DEFAULT_GENERAL_SETTINGS}
+        onValueChange={() => undefined}
+        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
+        updateStatus={idleUpdateStatus}
+        onUpdateAction={vi.fn(async () => undefined)}
+        account={currentAccount()}
+        onUpdateAccountAvatar={onUpdateAccountAvatar}
+        processAvatarFile={async () => ({
+          mimeType: "image/webp",
+          bytes: new Uint8Array([1, 2, 3]),
+        })}
+      />
+    ));
+
+    await fireEvent.click(screen.getByRole("tab", { name: "Profile" }));
+    const input = screen.getByLabelText("Upload profile photo");
+    const file = new File(["profile"], "profile.png", { type: "image/png" });
+    await fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() =>
+      expect(onUpdateAccountAvatar).toHaveBeenCalledWith(expect.objectContaining({ mimeType: "image/webp" })),
+    );
+    await fireEvent.click(await screen.findByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(onUpdateAccountAvatar).toHaveBeenLastCalledWith(null));
   });
 });

@@ -26,6 +26,49 @@
   --server-rail-width: 72px;
 }
 
+.remote-compatibility-screen {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  grid-column: 3;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: var(--openbot-space-5);
+  padding: var(--openbot-space-6);
+}
+
+.app-frame-with-server-rail .remote-compatibility-screen {
+  grid-column: 4;
+}
+
+.remote-compatibility-alert,
+.remote-compatibility-details {
+  width: min(100%, 520px);
+}
+
+.remote-compatibility-details {
+  display: grid;
+  margin: 0;
+}
+
+.remote-compatibility-details > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--openbot-space-4);
+  border-bottom: 1px solid var(--openbot-border);
+  padding: var(--openbot-space-2) 0;
+}
+
+.remote-compatibility-details dt {
+  color: var(--openbot-text-muted);
+}
+
+.remote-compatibility-details dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
 .global-search-overlay {
   position: fixed;
   z-index: var(--openbot-layer-dialog);
@@ -1546,7 +1589,7 @@ textarea {
   justify-content: space-between;
   gap: var(--openbot-space-2);
   border-bottom: 1px solid var(--openbot-border);
-  padding: 2px 15px 0 10px;
+  padding: 2px 3px 0 10px;
 }
 
 .sidebar-server-name {
@@ -1672,6 +1715,12 @@ textarea {
   stroke-width: 1.35;
 }
 
+.sidebar-marketplace-button > svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.8;
+}
+
 .sidebar-search-wrap {
   position: relative;
   padding: 8px 12px 6px;
@@ -1754,6 +1803,11 @@ textarea {
   overflow-x: hidden;
   overflow-y: auto;
   padding: 4px 12px 0;
+  scrollbar-width: none;
+}
+
+.bot-list::-webkit-scrollbar {
+  display: none;
 }
 
 .bot-list-content {
@@ -2653,7 +2707,7 @@ textarea {
   width: 128%;
   height: 128%;
   overflow: visible;
-  translate: 0 var(--bot-avatar-optical-offset, 0);
+  translate: var(--bot-avatar-optical-offset-x, 0) var(--bot-avatar-optical-offset, 0);
 }
 
 .bot-avatar-custom {
@@ -2956,6 +3010,15 @@ textarea {
   overflow: hidden;
 }
 
+.bot-row-title:has(.bot-role-badge) {
+  --bot-role-badge-collapsed-width: calc(2ch + 9px);
+
+  display: grid;
+  grid-template-columns:
+    fit-content(calc(100% - var(--bot-role-badge-collapsed-width) - 5px))
+    minmax(var(--bot-role-badge-collapsed-width), 1fr);
+}
+
 .bot-row-title strong,
 .person-row .bot-row-heading strong {
   min-width: 0;
@@ -2970,8 +3033,10 @@ textarea {
 
 .bot-role-badge {
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   flex: 0 1 auto;
+  justify-self: start;
   border: 0.5px solid var(--openbot-border);
   border-radius: var(--openbot-radius-xs);
   background: var(--openbot-hover);
@@ -2980,6 +3045,12 @@ textarea {
   font-size: var(--openbot-text-xs);
   font-weight: 400;
   line-height: 16px;
+  white-space: nowrap;
+}
+
+.bot-role-badge > span {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3067,6 +3138,426 @@ textarea {
 
 .account-dock-with-server-rail {
   width: calc(var(--server-rail-width) + var(--left-panel-width, 280px));
+}
+
+.app-frame:has(.account-dock-hybrid) .server-rail {
+  padding-bottom: 9px;
+}
+
+.app-frame:has(.account-dock-hybrid) .bot-list,
+.app-frame:has(.account-dock-hybrid) .server-rail-list {
+  padding-bottom: 60px;
+  scroll-padding-bottom: 60px;
+}
+
+.app-frame:has(.account-dock-hybrid) .bot-list.scroll-fade-bottom:not(.scroll-fade-top),
+.app-frame:has(.account-dock-hybrid) .server-rail-list.scroll-fade-bottom:not(.scroll-fade-top) {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    var(--openbot-text-primary) 0,
+    var(--openbot-text-primary) calc(100% - 84px),
+    transparent calc(100% - 60px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    var(--openbot-text-primary) 0,
+    var(--openbot-text-primary) calc(100% - 84px),
+    transparent calc(100% - 60px),
+    transparent 100%
+  );
+}
+
+.app-frame:has(.account-dock-hybrid) .bot-list.scroll-fade-top.scroll-fade-bottom,
+.app-frame:has(.account-dock-hybrid) .server-rail-list.scroll-fade-top.scroll-fade-bottom {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    var(--openbot-text-primary) 18px,
+    var(--openbot-text-primary) calc(100% - 84px),
+    transparent calc(100% - 60px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    var(--openbot-text-primary) 18px,
+    var(--openbot-text-primary) calc(100% - 84px),
+    transparent calc(100% - 60px),
+    transparent 100%
+  );
+}
+
+.account-dock-hybrid {
+  height: 60px;
+  border-top: 0;
+  background: transparent;
+  padding: 6px;
+}
+
+.account-dock-hybrid::before {
+  position: absolute;
+  z-index: 0;
+  top: -24px;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: linear-gradient(to bottom, transparent, var(--openbot-bg-sidebar) 24px);
+  content: "";
+  pointer-events: none;
+}
+
+.account-dock-hybrid-shelf {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 100%;
+  height: 48px;
+  min-width: 0;
+  align-items: center;
+  border-radius: var(--openbot-radius-lg);
+  background: var(--openbot-bg-control);
+  box-shadow: 0 8px 24px var(--openbot-shadow-popover-ambient);
+  padding: 0 6px 0 4px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 2px;
+}
+
+.account-dock-hybrid-identity {
+  display: grid;
+  width: 100%;
+  max-width: 280px;
+  height: 40px;
+  min-width: 0;
+  align-items: center;
+  border: 0;
+  border-radius: var(--openbot-radius-md);
+  background: transparent;
+  padding: 0;
+  grid-template-columns: calc(var(--server-rail-width) - 24px) minmax(0, 1fr);
+  gap: 0;
+  color: var(--openbot-text-primary);
+  text-align: left;
+  transition:
+    background-color var(--openbot-duration-normal) var(--openbot-ease-out),
+    box-shadow var(--openbot-duration-normal) var(--openbot-ease-out),
+    transform var(--openbot-duration-fast) var(--openbot-ease-out);
+}
+
+.account-dock-hybrid-identity .account-dock-copy strong {
+  line-height: 16px;
+}
+
+.account-dock-avatar-frame {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  justify-self: center;
+}
+
+.account-dock-hybrid-identity .account-dock-avatar {
+  transition: transform var(--openbot-duration-normal) var(--openbot-ease-out);
+}
+
+.account-dock-hybrid-identity:focus-visible {
+  outline: 0;
+  background: var(--openbot-bg-control-hover);
+  box-shadow: inset 0 0 0 1px var(--openbot-border-focus);
+}
+
+.account-dock-hybrid-identity:active {
+  transform: scale(0.96);
+}
+
+.account-dock-hybrid-identity[aria-expanded="true"] {
+  background: var(--openbot-bg-control-active);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .account-dock-hybrid-identity:hover:not(:disabled):not([data-disabled]) {
+    background: var(--openbot-hover);
+  }
+
+  .account-dock-hybrid-identity:hover .account-dock-avatar {
+    transform: scale(1.04);
+  }
+}
+
+.account-dock-tooltip-trigger {
+  display: flex;
+}
+
+.account-dock-usage-trigger,
+.account-dock-icon-button {
+  position: relative;
+  display: grid;
+  height: 30px;
+  min-width: 30px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--openbot-radius-md);
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  color: var(--openbot-text-secondary);
+  transition:
+    background-color var(--openbot-duration-normal) var(--openbot-ease-out),
+    box-shadow var(--openbot-duration-normal) var(--openbot-ease-out),
+    color var(--openbot-duration-normal) var(--openbot-ease-out),
+    transform var(--openbot-duration-fast) var(--openbot-ease-out);
+}
+
+.account-dock-usage-trigger {
+  --account-dock-usage-color: var(--openbot-text-secondary);
+
+  width: auto;
+  padding-inline: 7px;
+  color: var(--account-dock-usage-color);
+}
+
+.account-dock-usage-trigger[data-usage-tone="warning"] {
+  --account-dock-usage-color: var(--openbot-warning);
+}
+
+.account-dock-usage-trigger[data-usage-tone="critical"] {
+  --account-dock-usage-color: var(--openbot-danger);
+}
+
+.account-dock-icon-button > svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2.35;
+  transition: transform var(--openbot-duration-normal) var(--openbot-ease-out);
+}
+
+.account-dock-usage-trigger:focus-visible,
+.account-dock-icon-button:focus-visible {
+  outline: 0;
+  box-shadow:
+    0 0 0 1px var(--openbot-accent-strong),
+    0 0 0 4px var(--openbot-accent-soft);
+}
+
+.account-dock-usage-trigger:active,
+.account-dock-icon-button:active {
+  transform: scale(0.96);
+}
+
+.account-dock-usage-trigger[aria-expanded="true"],
+.account-dock-icon-button[aria-expanded="true"] {
+  background: var(--openbot-bg-control-active);
+  color: var(--account-dock-usage-color, var(--openbot-text-primary));
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .account-dock-usage-trigger:hover:not(:focus-visible),
+  .account-dock-icon-button:hover:not(:focus-visible) {
+    background: var(--openbot-bg-surface-raised);
+    box-shadow:
+      0 0 0 1px var(--openbot-border),
+      0 var(--openbot-space-1) var(--openbot-space-3) var(--openbot-shadow-popover-ambient);
+    color: var(--account-dock-usage-color, var(--openbot-text-primary));
+  }
+
+  .account-dock-icon-button:hover > svg {
+    transform: rotate(18deg) scale(1.06);
+  }
+}
+
+.account-dock-usage-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.account-dock-usage-chip > svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 2.35;
+}
+
+.account-dock-usage-chip > strong {
+  color: inherit;
+  font-size: var(--openbot-text-xs);
+  font-weight: var(--openbot-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: 14px;
+}
+
+.account-dock-tooltip {
+  position: relative;
+  z-index: 80;
+  border: 0;
+  border-radius: var(--openbot-radius-sm);
+  background: var(--openbot-bg-canvas);
+  box-shadow:
+    0 0 0 1px var(--openbot-border-strong),
+    var(--openbot-shadow-raised);
+  padding: var(--openbot-space-1-5) var(--openbot-space-2);
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-sm);
+  font-weight: var(--openbot-weight-semibold);
+  line-height: var(--openbot-leading-sm);
+  opacity: 1;
+  pointer-events: none;
+  transform: translateY(0) scale(1);
+  transform-origin: bottom center;
+  transition:
+    opacity var(--openbot-duration-fast) ease,
+    transform var(--openbot-duration-fast) var(--openbot-ease-out);
+
+  @starting-style {
+    opacity: 0;
+    transform: translateY(2px) scale(0.96);
+  }
+}
+
+.account-dock-tooltip::after {
+  position: absolute;
+  bottom: -4px;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  background: var(--openbot-bg-canvas);
+  box-shadow: 1px 1px 0 var(--openbot-border-strong);
+  content: "";
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.account-usage-popover {
+  position: relative;
+  z-index: 80;
+  display: grid;
+  width: min(232px, calc(100vw - var(--openbot-space-4)));
+  padding: var(--openbot-space-2);
+  gap: var(--openbot-space-2);
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transform-origin: var(--kb-popover-content-transform-origin);
+  transition:
+    opacity var(--openbot-duration-fast) ease,
+    transform var(--openbot-duration-fast) var(--openbot-ease-out);
+
+  @starting-style {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+
+.account-usage-popover-header,
+.account-usage-popover-heading,
+.account-usage-popover-reset {
+  display: flex;
+  align-items: center;
+}
+
+.account-usage-popover-header {
+  justify-content: space-between;
+}
+
+.account-usage-popover-heading {
+  min-width: 0;
+  gap: var(--openbot-space-2);
+}
+
+.account-usage-popover-heading > svg {
+  width: var(--openbot-icon-md);
+  height: var(--openbot-icon-md);
+  flex: 0 0 auto;
+  color: var(--openbot-text-primary);
+  stroke-width: 2;
+}
+
+.account-usage-popover-title {
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-md);
+  font-weight: var(--openbot-weight-semibold);
+  line-height: var(--openbot-leading-md);
+}
+
+.account-usage-popover-meter {
+  display: grid;
+  place-items: center;
+  padding-block: var(--openbot-space-0-5) var(--openbot-space-1);
+}
+
+.account-usage-popover-meter .ui-radial-progress-content > strong {
+  color: var(--ui-radial-progress-color);
+  font-size: var(--openbot-text-3xl);
+  font-weight: var(--openbot-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--openbot-tracking-tight);
+  line-height: var(--openbot-leading-2xl);
+}
+
+.account-usage-popover-reset {
+  min-width: 0;
+  border-top: 1px solid var(--openbot-border);
+  padding-top: var(--openbot-space-2);
+  gap: var(--openbot-space-2);
+  color: var(--openbot-text-secondary);
+}
+
+.account-usage-popover-reset > svg {
+  width: var(--openbot-icon-sm);
+  height: var(--openbot-icon-sm);
+  flex: 0 0 auto;
+  color: var(--openbot-text-muted);
+}
+
+.account-usage-popover-reset > span {
+  overflow: hidden;
+  font-size: var(--openbot-text-xs);
+  line-height: var(--openbot-leading-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-usage-popover-reset > strong {
+  margin-left: auto;
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-xs);
+  font-weight: var(--openbot-weight-medium);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--openbot-leading-sm);
+  white-space: nowrap;
+}
+
+.account-usage-refresh.ui-button {
+  position: relative;
+  width: var(--openbot-control-md);
+  height: var(--openbot-control-md);
+  flex: 0 0 auto;
+  border-radius: var(--openbot-radius-md);
+  color: var(--openbot-text-muted);
+}
+
+.account-usage-refresh.ui-button::before {
+  position: absolute;
+  inset: calc(0px - var(--openbot-space-1));
+  content: "";
+}
+
+.account-usage-refresh > svg {
+  width: var(--openbot-icon-md);
+  height: var(--openbot-icon-md);
+  stroke-width: 2.5;
+  transition: transform var(--openbot-duration-normal) var(--openbot-ease-out);
+}
+
+.account-usage-refresh > svg.account-menu-icon-spinning {
+  animation-duration: 600ms;
+}
+
+.account-usage-popover-error {
+  margin: 0;
+  border-radius: var(--openbot-radius-md);
+  background: var(--openbot-danger-soft);
+  padding: var(--openbot-space-2);
+  color: var(--openbot-danger);
+  font-size: var(--openbot-text-xs);
+  line-height: var(--openbot-leading-sm);
 }
 
 .account-dock-trigger {
@@ -3318,15 +3809,10 @@ textarea {
 
 .account-popover {
   position: relative;
-  width: min(max(280px, var(--kb-popper-anchor-width)), calc(100vw - 16px));
+  width: min(232px, calc(100vw - var(--openbot-space-4)));
   z-index: 80;
   overflow: hidden;
-  border: 1px solid var(--openbot-border);
-  border-radius: var(--openbot-radius-md);
-  background: var(--openbot-bg-surface);
-  padding: 4px;
-  box-shadow: var(--openbot-shadow-raised);
-  color: var(--openbot-text-primary);
+  padding: var(--openbot-space-1);
   opacity: 1;
   transform: scale(1);
   transform-origin: var(--kb-popover-content-transform-origin);
@@ -3340,144 +3826,27 @@ textarea {
   }
 }
 
-.account-profile-card {
+.account-menu-group {
   display: grid;
-  min-width: 0;
-  align-items: center;
-  padding: 8px;
-  grid-template-columns: 40px minmax(0, 1fr);
-  gap: 10px;
-}
-
-.account-profile-photo {
-  position: relative;
-  width: 40px;
-  height: 40px;
-  border: 0;
-  border-radius: var(--openbot-radius-pill);
-  background: transparent;
-  padding: 0;
-}
-
-.account-profile-photo:focus-visible {
-  outline: 2px solid var(--openbot-border-focus);
-  outline-offset: 2px;
-}
-
-.account-profile-avatar {
-  display: grid;
-  width: 40px;
-  height: 40px;
-  place-items: center;
-  overflow: hidden;
-  border-radius: var(--openbot-radius-pill);
-  background: var(--openbot-bg-control-hover);
-  box-shadow: inset 0 0 0 1px var(--openbot-border);
-  color: var(--openbot-text-secondary);
-  font-size: var(--openbot-text-sm);
-  font-weight: var(--openbot-weight-semibold);
-}
-
-.account-profile-avatar > img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.account-profile-photo-action {
-  position: absolute;
-  right: -2px;
-  bottom: -2px;
-  display: grid;
-  width: 18px;
-  height: 18px;
-  place-items: center;
-  border: 2px solid var(--openbot-bg-surface);
-  border-radius: var(--openbot-radius-pill);
-  background: var(--openbot-bg-control-hover);
-  color: var(--openbot-text-secondary);
-}
-
-.account-profile-photo-action svg {
-  width: 11px;
-  height: 11px;
-  fill: none;
-  stroke: currentcolor;
-  stroke-width: 1.5;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.account-profile-copy {
-  min-width: 0;
-}
-
-.account-profile-copy > strong,
-.account-profile-copy > span {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.account-profile-copy > strong {
-  color: var(--openbot-text-primary);
-  font-size: var(--openbot-text-md);
-  line-height: 16px;
-  letter-spacing: -0.01em;
-  font-weight: var(--openbot-weight-semibold);
-}
-
-.account-profile-copy > span {
-  color: var(--openbot-text-muted);
-  font-size: var(--openbot-text-xs);
-  line-height: 14px;
-}
-
-.account-profile-copy .account-profile-remove {
-  display: block;
-  width: fit-content;
-  height: 16px;
-  margin-top: 2px;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  color: var(--openbot-text-muted);
-  font-size: var(--openbot-text-xs);
-  line-height: 14px;
-  text-align: left;
-}
-
-.account-profile-copy .account-profile-remove:disabled,
-.account-profile-photo:disabled {
-  cursor: wait;
-  opacity: 0.55;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .account-profile-copy .account-profile-remove:hover:not(:disabled) {
-    color: var(--openbot-text-primary);
-  }
+  gap: 1px;
 }
 
 .account-menu-row {
   display: grid;
   width: 100%;
-  height: 36px;
+  height: var(--openbot-control-md);
   align-items: center;
   border: 0;
-  border-radius: var(--openbot-radius-md);
+  border-radius: var(--openbot-radius-sm);
   background: transparent;
-  padding: 0 8px;
+  padding: 0 var(--openbot-space-2);
   grid-template-columns: 16px minmax(0, 1fr) auto;
-  gap: 8px;
-  color: var(--openbot-text-secondary);
+  gap: var(--openbot-space-2);
+  color: var(--openbot-text-primary);
   font-size: var(--openbot-text-md);
   letter-spacing: -0.01em;
   text-align: left;
-  transition:
-    background-color var(--openbot-duration-hover) ease,
-    color var(--openbot-duration-hover) ease;
+  transition: background-color var(--openbot-duration-hover) ease;
 }
 
 .account-menu-row:hover:not(:disabled) {
@@ -3487,33 +3856,29 @@ textarea {
 
 .account-menu-row:disabled {
   cursor: default;
-}
-
-.account-menu-row:active:not(:disabled) {
-  transform: scale(0.985);
+  opacity: 0.45;
 }
 
 .account-menu-row:focus-visible {
-  outline: 2px solid var(--openbot-border-focus);
-  outline-offset: -2px;
+  outline: 0;
+  background: var(--openbot-bg-control-hover);
+  box-shadow: inset 0 0 0 1px var(--openbot-border-strong);
 }
 
-.account-update-row {
-  color: var(--openbot-text-primary);
+.account-menu-danger,
+.account-menu-danger .account-menu-icon {
+  color: var(--openbot-danger-strong);
 }
 
-.account-menu-danger {
-  color: var(--openbot-danger);
-}
-
-.account-menu-danger:hover:not(:disabled) {
+.account-menu-danger:hover:not(:disabled),
+.account-menu-danger:focus-visible {
   background: var(--openbot-danger-soft);
-  color: var(--openbot-danger);
+  color: var(--openbot-danger-strong);
 }
 
 .account-menu-separator {
   height: 1px;
-  margin: 4px 8px;
+  margin: var(--openbot-space-1) var(--openbot-space-2);
   background: var(--openbot-border);
 }
 
@@ -3527,16 +3892,13 @@ textarea {
 .account-menu-icon {
   width: 16px;
   height: 16px;
+  flex: 0 0 auto;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.4;
+  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
-}
-
-.account-menu-icon-fill {
-  fill: currentColor;
-  stroke: none;
+  color: var(--openbot-text-primary);
 }
 
 .account-menu-icon-spinning {
@@ -3572,7 +3934,8 @@ textarea {
     transition: none;
   }
 
-  .account-popover {
+  .account-popover,
+  .account-usage-popover {
     transform: none;
     transition: opacity var(--openbot-duration-fast) ease;
 
@@ -3584,6 +3947,24 @@ textarea {
 
   .account-dock-chevron {
     transition: none;
+  }
+
+  .account-dock-hybrid-identity,
+  .account-dock-hybrid-identity .account-dock-avatar,
+  .account-dock-usage-trigger,
+  .account-dock-icon-button,
+  .account-dock-icon-button > svg,
+  .account-usage-refresh > svg {
+    transition: none;
+  }
+
+  .account-dock-hybrid-identity:active,
+  .account-dock-hybrid-identity:hover .account-dock-avatar,
+  .account-dock-usage-trigger:active,
+  .account-dock-icon-button:active,
+  .account-dock-icon-button:hover > svg,
+  .account-usage-refresh:hover:not(:disabled) > svg {
+    transform: none;
   }
 
   .account-menu-icon-spinning {

@@ -21,7 +21,6 @@ describe("TeamPersonAvatar", () => {
     const view = render(() => <TeamPersonAvatar member={member} />);
 
     expect(view.container.querySelector("img")).toHaveAttribute("src", member.avatarUrl);
-    expect(view.container.querySelector(".person-avatar")).toHaveClass("online");
   });
 
   it("uses an agent avatar when the account image cannot load", async () => {

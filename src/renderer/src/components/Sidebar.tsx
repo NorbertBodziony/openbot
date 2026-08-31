@@ -31,6 +31,7 @@ import {
   Pencil,
   Pin,
   PinOff,
+  Puzzle,
   Trash2,
 } from "./ui";
 
@@ -45,6 +46,7 @@ interface SidebarProps {
   activeDirectMemberId: string | null;
   agentStates: Record<string, SidebarAgentState>;
   layout: SidebarLayoutSnapshot;
+  layoutMutable?: boolean;
   collapsedSectionIds: string[];
   onMutateLayout: (action: SidebarLayoutAction) => Promise<void>;
   onToggleSection: (sectionId: string) => void;
@@ -61,8 +63,8 @@ interface SidebarProps {
   onEditBot: (botId: string) => void;
   onDeleteBot: (botId: string) => Promise<void>;
   compact: boolean;
-  onCollapse: () => void;
   onExpand: () => void;
+  onOpenMarketplace: () => void;
   emptyAction?: {
     label: string;
     avatarSeed: string;
@@ -242,7 +244,9 @@ function createSidebarAgentDragCard(source: HTMLElement): HTMLElement {
   const titleText = source.querySelector(".sidebar-pinned-title, .bot-role-badge")?.textContent?.trim();
   if (titleText) {
     const title = document.createElement("span");
-    title.className = "ui-badge sidebar-pinned-title";
+    title.className = "z-badge z-badge-variant-secondary sidebar-pinned-title";
+    title.dataset.slot = "badge";
+    title.dataset.variant = "secondary";
     title.dataset.size = "sm";
     const label = document.createElement("span");
     label.textContent = titleText;
@@ -307,6 +311,7 @@ function DeleteIcon() {
 }
 
 export function Sidebar(props: SidebarProps) {
+  const layoutMutable = () => props.layoutMutable !== false;
   const [query, setQuery] = createSignal("");
   const [deleteTargetId, setDeleteTargetId] = createSignal<string | null>(null);
   const [deleting, setDeleting] = createSignal(false);
@@ -1216,6 +1221,10 @@ export function Sidebar(props: SidebarProps) {
     source: Extract<SidebarDragSource, { kind: "agent" }>,
     target: SidebarDropTarget | null,
   ) {
+    if (target && target.kind !== "pinned" && !layoutMutable()) {
+      setReorderAnnouncement("This host does not support sidebar layout changes.");
+      return;
+    }
     let action: SidebarLayoutAction | null = null;
     let sectionId = assignedSectionId(source.id);
     if (target?.kind === "agent") {
@@ -1444,44 +1453,49 @@ export function Sidebar(props: SidebarProps) {
             </Show>
             <span>{pinned ? "Unpin" : "Pin"}</span>
           </ContextMenu.Item>
-          <ContextMenu.Sub>
-            <ContextMenu.SubTrigger>
-              <FolderInput class="bot-context-icon size-4" aria-hidden="true" />
-              <span>Move to</span>
-              <ChevronRight class="bot-context-submenu-chevron size-4" aria-hidden="true" />
-            </ContextMenu.SubTrigger>
-            <ContextMenu.Portal>
-              <ContextMenu.SubContent class="ui-action-menu bot-context-menu bot-context-submenu" aria-label="Move to">
-                <For each={props.layout.sections}>
-                  {(section) => (
-                    <ContextMenu.Item onSelect={() => assign(section.id)}>
-                      <Show
-                        when={assignedSectionId() === section.id}
-                        fallback={<Folder class="bot-context-icon size-4" aria-hidden="true" />}
-                      >
-                        <Check class="bot-context-icon size-4" aria-hidden="true" />
-                      </Show>
-                      <span>{section.name}</span>
-                    </ContextMenu.Item>
-                  )}
-                </For>
-                <ContextMenu.Item onSelect={() => assign(null)}>
-                  <Show
-                    when={assignedSectionId() === null}
-                    fallback={<Folder class="bot-context-icon size-4" aria-hidden="true" />}
-                  >
-                    <Check class="bot-context-icon size-4" aria-hidden="true" />
-                  </Show>
-                  <span>Unassigned</span>
-                </ContextMenu.Item>
-                <ContextMenu.Separator />
-                <ContextMenu.Item onSelect={() => startCreateSection(bot.id)}>
-                  <FolderPlus class="bot-context-icon size-4" aria-hidden="true" />
-                  <span>New section</span>
-                </ContextMenu.Item>
-              </ContextMenu.SubContent>
-            </ContextMenu.Portal>
-          </ContextMenu.Sub>
+          <Show when={layoutMutable()}>
+            <ContextMenu.Sub>
+              <ContextMenu.SubTrigger>
+                <FolderInput class="bot-context-icon size-4" aria-hidden="true" />
+                <span>Move to</span>
+                <ChevronRight class="bot-context-submenu-chevron size-4" aria-hidden="true" />
+              </ContextMenu.SubTrigger>
+              <ContextMenu.Portal>
+                <ContextMenu.SubContent
+                  class="ui-action-menu bot-context-menu bot-context-submenu"
+                  aria-label="Move to"
+                >
+                  <For each={props.layout.sections}>
+                    {(section) => (
+                      <ContextMenu.Item onSelect={() => assign(section.id)}>
+                        <Show
+                          when={assignedSectionId() === section.id}
+                          fallback={<Folder class="bot-context-icon size-4" aria-hidden="true" />}
+                        >
+                          <Check class="bot-context-icon size-4" aria-hidden="true" />
+                        </Show>
+                        <span>{section.name}</span>
+                      </ContextMenu.Item>
+                    )}
+                  </For>
+                  <ContextMenu.Item onSelect={() => assign(null)}>
+                    <Show
+                      when={assignedSectionId() === null}
+                      fallback={<Folder class="bot-context-icon size-4" aria-hidden="true" />}
+                    >
+                      <Check class="bot-context-icon size-4" aria-hidden="true" />
+                    </Show>
+                    <span>Unassigned</span>
+                  </ContextMenu.Item>
+                  <ContextMenu.Separator />
+                  <ContextMenu.Item onSelect={() => startCreateSection(bot.id)}>
+                    <FolderPlus class="bot-context-icon size-4" aria-hidden="true" />
+                    <span>New section</span>
+                  </ContextMenu.Item>
+                </ContextMenu.SubContent>
+              </ContextMenu.Portal>
+            </ContextMenu.Sub>
+          </Show>
           <ContextMenu.Item
             onSelect={() => {
               setDeleteError(null);
@@ -1511,40 +1525,42 @@ export function Sidebar(props: SidebarProps) {
     const custom = () => customSectionById().has(sectionId);
     const position = () => sectionPosition(sectionId);
     return (
-      <ContextMenu.Portal>
-        <ContextMenu.Content class="bot-context-menu" aria-label="Section actions">
-          <Show when={custom()}>
-            <ContextMenu.Item onSelect={() => startRenameSection(sectionId)}>
-              <Pencil class="bot-context-icon size-4" aria-hidden="true" />
-              <span>Rename</span>
+      <Show when={layoutMutable()}>
+        <ContextMenu.Portal>
+          <ContextMenu.Content class="bot-context-menu" aria-label="Section actions">
+            <Show when={custom()}>
+              <ContextMenu.Item onSelect={() => startRenameSection(sectionId)}>
+                <Pencil class="bot-context-icon size-4" aria-hidden="true" />
+                <span>Rename</span>
+              </ContextMenu.Item>
+            </Show>
+            <ContextMenu.Item disabled={position() <= 0} onSelect={() => moveSection(sectionId, "up")}>
+              <ArrowUp class="bot-context-icon size-4" aria-hidden="true" />
+              <span>Move up</span>
             </ContextMenu.Item>
-          </Show>
-          <ContextMenu.Item disabled={position() <= 0} onSelect={() => moveSection(sectionId, "up")}>
-            <ArrowUp class="bot-context-icon size-4" aria-hidden="true" />
-            <span>Move up</span>
-          </ContextMenu.Item>
-          <ContextMenu.Item
-            disabled={position() < 0 || position() >= visibleSectionIds().length - 1}
-            onSelect={() => moveSection(sectionId, "down")}
-          >
-            <ArrowDown class="bot-context-icon size-4" aria-hidden="true" />
-            <span>Move down</span>
-          </ContextMenu.Item>
-          <Show when={custom()}>
-            <ContextMenu.Separator />
             <ContextMenu.Item
-              class="ui-action-menu-danger bot-context-danger"
-              onSelect={() => {
-                setSectionDeleteError(null);
-                setSectionDeleteTargetId(sectionId);
-              }}
+              disabled={position() < 0 || position() >= visibleSectionIds().length - 1}
+              onSelect={() => moveSection(sectionId, "down")}
             >
-              <Trash2 class="bot-context-icon bot-context-danger-icon size-4" aria-hidden="true" />
-              <span>Delete</span>
+              <ArrowDown class="bot-context-icon size-4" aria-hidden="true" />
+              <span>Move down</span>
             </ContextMenu.Item>
-          </Show>
-        </ContextMenu.Content>
-      </ContextMenu.Portal>
+            <Show when={custom()}>
+              <ContextMenu.Separator />
+              <ContextMenu.Item
+                class="ui-action-menu-danger bot-context-danger"
+                onSelect={() => {
+                  setSectionDeleteError(null);
+                  setSectionDeleteTargetId(sectionId);
+                }}
+              >
+                <Trash2 class="bot-context-icon bot-context-danger-icon size-4" aria-hidden="true" />
+                <span>Delete</span>
+              </ContextMenu.Item>
+            </Show>
+          </ContextMenu.Content>
+        </ContextMenu.Portal>
+      </Show>
     );
   }
 
@@ -1604,7 +1620,8 @@ export function Sidebar(props: SidebarProps) {
                 variant: "ghost",
                 class: "sidebar-section-toggle sidebar-section-drag-handle",
               })}
-              draggable={props.compact ? "false" : "true"}
+              draggable={!layoutMutable() || props.compact ? "false" : "true"}
+              title={!layoutMutable() ? "This host does not support sidebar layout changes." : undefined}
               aria-expanded={collapsed() ? "false" : "true"}
               aria-controls={`sidebar-section-body-${sectionId}`}
               onClick={(event: MouseEvent) => {
@@ -1646,7 +1663,7 @@ export function Sidebar(props: SidebarProps) {
         ]}
         style={`--sidebar-agent-drag-y: ${dragOffset().y}px;`}
         data-agent-id={bot.id}
-        draggable={props.compact ? "false" : "true"}
+        draggable={!layoutMutable() || props.compact ? "false" : "true"}
         onDragStart={(event: DragEvent & { currentTarget: HTMLElement }) => startAgentDragging(event, bot)}
         onDragEnd={endAgentDragging}
       >
@@ -1679,7 +1696,7 @@ export function Sidebar(props: SidebarProps) {
                   <Show when={title()}>
                     {(label) => (
                       <Badge class="bot-role-badge" size="sm" title={label()}>
-                        {label()}
+                        <span>{label()}</span>
                       </Badge>
                     )}
                   </Show>
@@ -1722,14 +1739,19 @@ export function Sidebar(props: SidebarProps) {
           <Button
             variant="ghost"
             type="button"
-            class="sidebar-icon-button sidebar-toggle-button no-drag"
-            onClick={() => (props.compact ? props.onExpand() : props.onCollapse())}
-            aria-label={props.compact ? "Expand sidebar" : "Collapse sidebar"}
-            aria-controls="bot-sidebar"
-            aria-expanded={props.compact ? "false" : "true"}
-            title={props.compact ? "Expand sidebar" : "Collapse sidebar"}
+            class={[
+              "sidebar-icon-button no-drag",
+              props.compact ? "sidebar-toggle-button" : "sidebar-marketplace-button",
+            ]}
+            onClick={() => (props.compact ? props.onExpand() : props.onOpenMarketplace())}
+            aria-label={props.compact ? "Expand sidebar" : "Open Marketplace"}
+            aria-controls={props.compact ? "bot-sidebar" : undefined}
+            aria-expanded={props.compact ? "false" : undefined}
+            title={props.compact ? "Expand sidebar" : "Marketplace"}
           >
-            <SidebarToggleIcon />
+            <Show when={props.compact} fallback={<Puzzle aria-hidden="true" />}>
+              <SidebarToggleIcon />
+            </Show>
           </Button>
           <Button
             variant="ghost"
@@ -2090,17 +2112,19 @@ export function Sidebar(props: SidebarProps) {
             {reorderAnnouncement()}
           </span>
         </div>
-        <ContextMenu.Root modal={false}>
-          <ContextMenu.Trigger class="sidebar-list-context-trigger" aria-label="Sidebar free area" />
-          <ContextMenu.Portal>
-            <ContextMenu.Content class="bot-context-menu" aria-label="Sidebar actions">
-              <ContextMenu.Item onSelect={() => startCreateSection()}>
-                <FolderPlus class="bot-context-icon size-4" aria-hidden="true" />
-                <span>New section</span>
-              </ContextMenu.Item>
-            </ContextMenu.Content>
-          </ContextMenu.Portal>
-        </ContextMenu.Root>
+        <Show when={layoutMutable()}>
+          <ContextMenu.Root modal={false}>
+            <ContextMenu.Trigger class="sidebar-list-context-trigger" aria-label="Sidebar free area" />
+            <ContextMenu.Portal>
+              <ContextMenu.Content class="bot-context-menu" aria-label="Sidebar actions">
+                <ContextMenu.Item onSelect={() => startCreateSection()}>
+                  <FolderPlus class="bot-context-icon size-4" aria-hidden="true" />
+                  <span>New section</span>
+                </ContextMenu.Item>
+              </ContextMenu.Content>
+            </ContextMenu.Portal>
+          </ContextMenu.Root>
+        </Show>
       </nav>
 
       <AlertDialog.Root

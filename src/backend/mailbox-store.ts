@@ -1,5 +1,16 @@
 import { createHash, randomUUID } from "node:crypto";
-import { copyFile, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  type FileHandle,
+  mkdir,
+  open,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative } from "node:path";
 import {
   attachmentMimeTypeForName,
@@ -9,6 +20,7 @@ import {
 import { rewriteAttachmentReferences } from "@openbot/contracts/attachment-references";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
+  AgentRuntimeWorkItem,
   AttachmentDataInput,
   AttachmentKind,
   AttachmentPreviewKind,
@@ -16,6 +28,7 @@ import type {
   ConversationMessage,
   ConversationReaction,
   ConversationReactionActor,
+  ConversationSnapshot,
   DraftAttachment,
   MessageReaction,
   QueueDelivery,
@@ -23,7 +36,12 @@ import type {
   QueuedMessageReceipt,
   QueueSnapshot,
 } from "@openbot/contracts/ipc";
-import { isMessageReaction } from "@openbot/contracts/ipc";
+import {
+  AGENT_RUNTIME_ATTENTION_LIMIT,
+  AGENT_RUNTIME_TEXT_LIMIT,
+  AGENT_RUNTIME_WORKING_ITEMS_LIMIT,
+  isMessageReaction,
+} from "@openbot/contracts/ipc";
 import { isNumber, isString } from "@openbot/contracts/runtime-values";
 import { OpenBotDatabase } from "./openbot-database";
 import { isRecord } from "./protocol";
@@ -132,6 +150,11 @@ export interface ExportedAttachmentFile {
   relativePath: string;
 }
 
+export interface GeneratedAttachmentSource {
+  path: string;
+  handle: FileHandle;
+}
+
 const EMPTY_STATE: StoredState = {
   version: 3,
   messages: [],
@@ -148,6 +171,7 @@ export class MailboxStore {
   readonly #draftsRoot: string;
   readonly #transfersRoot: string;
   readonly #database: OpenBotDatabase;
+  readonly #stagedGeneratedAttachments = new Map<string, StoredGeneratedAttachment>();
   #state: StoredState = structuredClone(EMPTY_STATE);
 
   constructor(userDataPath: string, sharedRoot: string, database = new OpenBotDatabase(userDataPath)) {
@@ -390,6 +414,48 @@ export class MailboxStore {
         .filter((delivery) => delivery.recipientBotId === botId)
         .map((delivery) => this.#publicDelivery(delivery, positions)),
     };
+  }
+
+  listRuntimeWork(botIds: readonly string[], failedTurns: ReadonlyMap<string, string>): AgentRuntimeWorkItem[] {
+    const targetBotIds = new Set(botIds);
+    const working: StoredDelivery[] = [];
+    const failed: StoredDelivery[] = [];
+    const workingBotIds = new Set<string>();
+    const failedBotIds = new Set<string>();
+    for (const delivery of this.#state.deliveries) {
+      if (!targetBotIds.has(delivery.recipientBotId)) continue;
+      const isWorking = delivery.status === "starting" || delivery.status === "running";
+      const isCurrentFailure =
+        delivery.status === "failed" && delivery.turnId === failedTurns.get(delivery.recipientBotId);
+      if (!isWorking && !isCurrentFailure) continue;
+      const seenBotIds = isCurrentFailure ? failedBotIds : workingBotIds;
+      if (seenBotIds.has(delivery.recipientBotId)) continue;
+      seenBotIds.add(delivery.recipientBotId);
+      (isCurrentFailure ? failed : working).push(delivery);
+    }
+    const selected = [
+      ...failed.slice(0, AGENT_RUNTIME_ATTENTION_LIMIT),
+      ...working.slice(0, AGENT_RUNTIME_WORKING_ITEMS_LIMIT),
+    ];
+    const messageIds = new Set(selected.map((delivery) => delivery.messageId));
+    const messages = new Map(
+      this.#state.messages.filter((message) => messageIds.has(message.id)).map((message) => [message.id, message]),
+    );
+    return selected.map((delivery) => {
+      const message = messages.get(delivery.messageId);
+      if (!message) throw new Error(`Mailbox message is missing: ${delivery.messageId}`);
+      if (delivery.status !== "starting" && delivery.status !== "running" && delivery.status !== "failed") {
+        throw new Error(`Mailbox runtime delivery has an invalid status: ${delivery.status}`);
+      }
+      return {
+        id: delivery.id,
+        botId: delivery.recipientBotId,
+        turnId: delivery.turnId,
+        status: delivery.status,
+        text: message.text.slice(0, AGENT_RUNTIME_TEXT_LIMIT),
+        error: delivery.error?.slice(0, AGENT_RUNTIME_TEXT_LIMIT) ?? null,
+      };
+    });
   }
 
   conversationMessages(botId: string): ConversationMessage[] {
@@ -908,6 +974,118 @@ export class MailboxStore {
     }
   }
 
+  async stageGeneratedAttachments(input: {
+    sources: GeneratedAttachmentSource[];
+    ownerBotId?: string;
+    ownerThreadId?: string | null;
+  }): Promise<AttachmentSummary[]> {
+    if (input.sources.length === 0 || input.sources.length > MAX_ATTACHMENTS) {
+      throw new Error(`Attach between 1 and ${MAX_ATTACHMENTS} files.`);
+    }
+    const sources = await Promise.all(
+      input.sources.map(async (source) => {
+        const metadata = await source.handle.stat();
+        if (!metadata.isFile()) throw new Error(`Attachment is not a file: ${source.path}`);
+        if (metadata.size > MAX_FILE_BYTES) throw new Error(`${basename(source.path)} exceeds the 100 MB limit.`);
+        assertSupportedAttachmentName(source.path);
+        return { ...source, size: metadata.size };
+      }),
+    );
+    const total = sources.reduce((sum, source) => sum + source.size, 0);
+    if (total > MAX_TOTAL_BYTES) throw new Error("Attachments exceed the 250 MB total limit.");
+
+    const usedNames = new Set<string>();
+    const entries = sources.map((source) => {
+      const id = randomUUID();
+      const name = uniqueName(sanitizeName(source.path), usedNames);
+      const generatedRoot = join(this.#transfersRoot, "generated", id);
+      return { id, name, source, generatedRoot, targetPath: join(generatedRoot, name) };
+    });
+    const storedIds = new Set<string>(entries.map((entry) => entry.id));
+
+    try {
+      const attachments: StoredGeneratedAttachment[] = [];
+      let copiedTotal = 0;
+      for (const entry of entries) {
+        await mkdir(entry.generatedRoot, { recursive: true, mode: 0o700 });
+        await copyOpenedFile(entry.source.handle, entry.targetPath, entry.name, MAX_TOTAL_BYTES - copiedTotal);
+        const copied = await stat(entry.targetPath);
+        if (copied.size > MAX_FILE_BYTES) throw new Error(`${entry.name} exceeds the 100 MB limit.`);
+        copiedTotal += copied.size;
+        if (copiedTotal > MAX_TOTAL_BYTES) throw new Error("Attachments exceed the 250 MB total limit.");
+        const attachment: StoredGeneratedAttachment = {
+          id: entry.id,
+          name: entry.name,
+          size: copied.size,
+          ...attachmentMetadata(entry.name),
+          previewUrl: attachmentPreviewUrl(entry.id),
+          path: entry.targetPath,
+          sha256: await sha256(entry.targetPath),
+          ...(input.ownerBotId ? { ownerBotId: input.ownerBotId } : {}),
+          ...(input.ownerThreadId !== undefined ? { ownerThreadId: input.ownerThreadId } : {}),
+        };
+        await writeTransferManifest(entry.generatedRoot, {
+          version: 1,
+          kind: "generated-attachment",
+          generatedAttachmentId: entry.id,
+          ...(input.ownerBotId ? { ownerBotId: input.ownerBotId } : {}),
+          ...(input.ownerThreadId !== undefined ? { ownerThreadId: input.ownerThreadId } : {}),
+          createdAt: new Date().toISOString(),
+          attachments: [manifestAttachment(attachment, entry.name)],
+        });
+        attachments.push(attachment);
+      }
+      for (const attachment of attachments) this.#stagedGeneratedAttachments.set(attachment.id, attachment);
+      return attachments.map(toAttachmentSummary);
+    } catch (error) {
+      for (const id of storedIds) this.#stagedGeneratedAttachments.delete(id);
+      await Promise.allSettled(entries.map((entry) => rm(entry.generatedRoot, { recursive: true, force: true })));
+      throw error;
+    }
+  }
+
+  persistGeneratedAttachmentsWithConversation(
+    snapshot: ConversationSnapshot,
+    eventType: string,
+    detail: unknown,
+    attachmentIds: string[],
+  ): ConversationSnapshot {
+    const staged = attachmentIds.map((id) => {
+      const attachment = this.#stagedGeneratedAttachments.get(id);
+      if (!attachment) throw new Error(`Staged generated attachment is missing: ${id}`);
+      return attachment;
+    });
+    const nextState: StoredState = {
+      ...this.#state,
+      generatedAttachments: [...this.#state.generatedAttachments, ...staged],
+    };
+    const persisted = this.#database.persistConversationAndMailbox(
+      snapshot,
+      eventType,
+      detail,
+      nextState,
+      "attachment.generated-batch",
+    );
+    this.#state = nextState;
+    for (const id of attachmentIds) this.#stagedGeneratedAttachments.delete(id);
+    return persisted;
+  }
+
+  async discardStagedGeneratedAttachments(attachmentIds: string[]): Promise<void> {
+    const ids = new Set(attachmentIds);
+    const removed = attachmentIds.flatMap((id) => {
+      const attachment = this.#stagedGeneratedAttachments.get(id);
+      return attachment ? [attachment] : [];
+    });
+    if (removed.length === 0) return;
+
+    for (const id of ids) this.#stagedGeneratedAttachments.delete(id);
+    const generatedRoots = removed
+      .map((attachment) => generatedRootForPath(this.#transfersRoot, attachment.path))
+      .filter((path): path is string => path !== null);
+    await Promise.allSettled(generatedRoots.map((path) => rm(path, { recursive: true, force: true })));
+  }
+
   async storeGeneratedAttachment(input: {
     sourcePath?: string;
     bytes?: Uint8Array;
@@ -1024,8 +1202,11 @@ export class MailboxStore {
     );
   }
 
-  #publicDelivery(delivery: StoredDelivery, positions = this.#queuedPositions()): QueueDelivery {
-    const message = this.#requireMessage(delivery.messageId);
+  #publicDelivery(
+    delivery: StoredDelivery,
+    positions = this.#queuedPositions(),
+    message = this.#requireMessage(delivery.messageId),
+  ): QueueDelivery {
     return {
       ...delivery,
       sender: structuredClone(message.sender),
@@ -1229,7 +1410,11 @@ function sanitizeName(path: string): string {
     .replace(/[^\p{L}\p{N}._ -]+/gu, "-")
     .replace(/^\.+/, "")
     .trim();
-  return value.slice(0, 180) || "attachment";
+  if (!value) return "attachment";
+  const extension = extname(value);
+  if (!extension || extension.length >= 180) return value.slice(0, 180);
+  const stem = value.slice(0, -extension.length);
+  return `${stem.slice(0, 180 - extension.length)}${extension}`;
 }
 
 function safeArchiveSegment(value: string): string {
@@ -1462,4 +1647,34 @@ function generatedRootForPath(root: string, path: string): string | null {
   const segments = candidate.split(/[\\/]/u);
   if (segments[0] !== "generated" || !segments[1] || segments[1].startsWith(".")) return null;
   return join(root, "generated", segments[1]);
+}
+
+async function copyOpenedFile(
+  source: FileHandle,
+  targetPath: string,
+  name: string,
+  remainingTotalBytes: number,
+): Promise<void> {
+  const target = await open(targetPath, "wx", 0o600);
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  let position = 0;
+  try {
+    while (true) {
+      const { bytesRead } = await source.read(buffer, 0, buffer.byteLength, position);
+      if (bytesRead === 0) return;
+      const nextPosition = position + bytesRead;
+      if (nextPosition > MAX_FILE_BYTES) throw new Error(`${name} exceeds the 100 MB limit.`);
+      if (nextPosition > remainingTotalBytes) throw new Error("Attachments exceed the 250 MB total limit.");
+
+      let written = 0;
+      while (written < bytesRead) {
+        const result = await target.write(buffer, written, bytesRead - written, position + written);
+        if (result.bytesWritten === 0) throw new Error(`OpenBot could not copy ${name}.`);
+        written += result.bytesWritten;
+      }
+      position = nextPosition;
+    }
+  } finally {
+    await target.close();
+  }
 }

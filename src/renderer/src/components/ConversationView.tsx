@@ -12,7 +12,9 @@ import type {
   AgentStatus,
   AttachmentSummary,
   AvatarImageInput,
+  BrowserBounds,
   BrowserControlState,
+  BrowserPreview,
   BrowserTab,
   DraftAttachment,
   FilePreview,
@@ -54,7 +56,6 @@ import {
 } from "./conversation/AgentActivity";
 import { AttachmentCards, fileBadge, formatFileSize } from "./conversation/AttachmentCards";
 import { attachmentReferenceTone } from "./conversation/AttachmentReference";
-import type { BrowserPipBounds } from "./conversation/BrowserPanel";
 import { ChatSearch } from "./conversation/ChatSearch";
 import {
   CloseIcon,
@@ -112,6 +113,9 @@ const BrowserPanel = lazy(() => import("./conversation/BrowserPanel"));
 const FilePreviewPanel = lazy(() => import("./conversation/FilePreviewPanel"));
 const QueuePanel = lazy(() => import("./conversation/QueuePanel").then((module) => ({ default: module.QueuePanel })));
 const ApprovalCard = lazy(() => import("./ConversationPrompts").then((module) => ({ default: module.ApprovalCard })));
+const QuestionPromptBubble = lazy(() =>
+  import("./QuestionPromptBubble").then((module) => ({ default: module.QuestionPromptBubble })),
+);
 
 function conversationBubbleVariant(message: BotMessage): BubbleVariant {
   if (message.author === "you") return "secondary";
@@ -126,6 +130,19 @@ interface RenderedAgentActivity {
   bot: BotProfile | undefined;
   phase: "active" | "exiting";
   presentation: AgentActivityPresentation;
+}
+
+interface BrowserTakeoverPreviewState {
+  status: "idle" | "loading" | "ready" | "failed";
+  preview: BrowserPreview | null;
+}
+
+interface BrowserTakeoverResolutionState {
+  decision: "complete" | "cancel";
+  tab: BrowserTab | undefined;
+  preview: BrowserPreview | null;
+  previewStatus: BrowserTakeoverPreviewState["status"];
+  messageMarker: string | null;
 }
 
 interface RoutineSettingsRequest {
@@ -206,6 +223,7 @@ export interface ConversationProps {
   onOpenSearchMessage?: (messageId: string) => Promise<void>;
   onTypingChange: (botId: string, typing: boolean) => void;
   onAnswerPrompt: (answers: Record<string, string[]>) => Promise<boolean>;
+  onPromptResolutionPresented?: (botId: string, turnId: string, requestId: string | number) => void;
   onRespondToApproval: (decision: "accept" | "decline") => Promise<boolean>;
   onRespondToBrowserTakeover: (decision: "complete" | "cancel") => Promise<boolean>;
   onCancelQueuedMessage: (deliveryId: string) => void;
@@ -262,58 +280,6 @@ const BROWSER_PANEL_DEFAULT_RATIO = 0.5;
 const BROWSER_PANEL_MIN = 220;
 const BROWSER_PANEL_MAX = 1600;
 const CONVERSATION_PANEL_MIN = 96;
-const BROWSER_PIP_STORAGE_KEY = "openbot:browser-pip-bounds";
-const BROWSER_PIP_DEFAULT_WIDTH = 420;
-const BROWSER_PIP_DEFAULT_HEIGHT = 300;
-const BROWSER_PIP_MIN_WIDTH = 300;
-const BROWSER_PIP_MIN_HEIGHT = 220;
-const BROWSER_PIP_MARGIN = 12;
-const BROWSER_PIP_BOTTOM_INSET = 68;
-
-function defaultBrowserPipBounds(containerWidth: number, containerHeight: number): BrowserPipBounds {
-  const width = Math.min(BROWSER_PIP_DEFAULT_WIDTH, containerWidth - BROWSER_PIP_MARGIN * 2);
-  const height = Math.min(BROWSER_PIP_DEFAULT_HEIGHT, containerHeight - BROWSER_PIP_MARGIN * 2);
-  return {
-    x: containerWidth - width - 16,
-    y: containerHeight - height - BROWSER_PIP_BOTTOM_INSET,
-    width,
-    height,
-  };
-}
-
-function bottomRightBrowserPipBounds(
-  bounds: BrowserPipBounds,
-  containerWidth: number,
-  containerHeight: number,
-): BrowserPipBounds {
-  const constrained = clampBrowserPipBounds(bounds, containerWidth, containerHeight);
-  return clampBrowserPipBounds(
-    {
-      ...constrained,
-      x: containerWidth - constrained.width - 16,
-      y: containerHeight - constrained.height - BROWSER_PIP_BOTTOM_INSET,
-    },
-    containerWidth,
-    containerHeight,
-  );
-}
-
-function clampBrowserPipBounds(
-  bounds: BrowserPipBounds,
-  containerWidth: number,
-  containerHeight: number,
-): BrowserPipBounds {
-  const availableWidth = Math.max(1, containerWidth - BROWSER_PIP_MARGIN * 2);
-  const availableHeight = Math.max(1, containerHeight - BROWSER_PIP_MARGIN * 2);
-  const width = Math.round(Math.min(availableWidth, Math.max(BROWSER_PIP_MIN_WIDTH, bounds.width)));
-  const height = Math.round(Math.min(availableHeight, Math.max(BROWSER_PIP_MIN_HEIGHT, bounds.height)));
-  return {
-    x: Math.round(Math.min(containerWidth - width - BROWSER_PIP_MARGIN, Math.max(BROWSER_PIP_MARGIN, bounds.x))),
-    y: Math.round(Math.min(containerHeight - height - BROWSER_PIP_MARGIN, Math.max(BROWSER_PIP_MARGIN, bounds.y))),
-    width,
-    height,
-  };
-}
 function createConversationViewScope(props: ConversationProps) {
   const controller = useConversationController();
   const agentReady = () => props.agentStatus.phase === "ready";
@@ -430,6 +396,83 @@ function createConversationViewScope(props: ConversationProps) {
   const activeBrowserTab = createMemo(
     () => browserTabs().find((tab) => tab.id === props.activeBrowserTabId) ?? browserTabs()[0],
   );
+  const browserTakeoverTab = createMemo(() => {
+    const tabId = props.browserTakeover?.tabId;
+    return tabId ? browserTabs().find((tab) => tab.id === tabId) : undefined;
+  });
+  const [browserTakeoverPreview, setBrowserTakeoverPreview] = createSignal<BrowserTakeoverPreviewState>({
+    status: "idle",
+    preview: null,
+  });
+  let browserTakeoverPreviewKey: string | null = null;
+  let browserTakeoverPreviewGeneration = 0;
+  createEffect(
+    () => ({ request: props.browserTakeover, tab: browserTakeoverTab() }),
+    ({ request, tab }) => {
+      if (!request) {
+        browserTakeoverPreviewKey = null;
+        browserTakeoverPreviewGeneration += 1;
+        setBrowserTakeoverPreview({ status: "idle", preview: null });
+        return;
+      }
+
+      const requestKey = String(request.requestId);
+      if (!tab) {
+        if (browserTakeoverPreviewKey !== requestKey) {
+          setBrowserTakeoverPreview({ status: "loading", preview: null });
+        }
+        return;
+      }
+      if (browserTakeoverPreviewKey === requestKey) return;
+
+      browserTakeoverPreviewKey = requestKey;
+      const generation = ++browserTakeoverPreviewGeneration;
+      setBrowserTakeoverPreview({ status: "loading", preview: null });
+      void window.openbot.browser
+        .capturePreview(tab.id)
+        .then((preview) => {
+          if (browserTakeoverPreviewGeneration !== generation) return;
+          setBrowserTakeoverPreview({ status: "ready", preview });
+        })
+        .catch(() => {
+          if (browserTakeoverPreviewGeneration !== generation) return;
+          setBrowserTakeoverPreview({ status: "failed", preview: null });
+        });
+    },
+  );
+  const latestMessageMarker = createMemo(() => {
+    const message = props.messages.at(-1);
+    return message
+      ? `${message.id}:${message.body.length}:${message.streaming === true ? "streaming" : "settled"}`
+      : null;
+  });
+  const [browserTakeoverResolution, setBrowserTakeoverResolution] = createSignal<BrowserTakeoverResolutionState | null>(
+    null,
+  );
+  createEffect(
+    () => props.browserTakeover?.requestId,
+    (requestId) => {
+      if (requestId !== undefined) setBrowserTakeoverResolution(null);
+    },
+  );
+  createEffect(latestMessageMarker, (messageMarker) => {
+    const resolution = untrack(browserTakeoverResolution);
+    if (resolution && resolution.messageMarker !== messageMarker) setBrowserTakeoverResolution(null);
+  });
+  const respondToBrowserTakeover = async (decision: "complete" | "cancel") => {
+    const request = props.browserTakeover;
+    if (!request) return false;
+    const resolution = {
+      decision,
+      tab: browserTakeoverTab(),
+      preview: browserTakeoverPreview().preview,
+      previewStatus: browserTakeoverPreview().status,
+      messageMarker: latestMessageMarker(),
+    } satisfies BrowserTakeoverResolutionState;
+    const completed = await props.onRespondToBrowserTakeover(decision);
+    if (completed && latestMessageMarker() === resolution.messageMarker) setBrowserTakeoverResolution(resolution);
+    return completed;
+  };
   let previousBrowserTabCount = 0;
   createEffect(
     () => ({ count: browserTabs().length, open: screenOpen() }),
@@ -1336,8 +1379,7 @@ function createConversationViewScope(props: ConversationProps) {
   createEffect(
     () => ({
       botId: props.bot?.id,
-      visible: screenOpen() && !props.globalOverlayOpen && !props.remoteDesktopVisible && !mediaPreview(),
-      pipBounds: browserPipOpen() ? browserPipBounds() : null,
+      visible: browserSidebarOpen() && !props.globalOverlayOpen && !props.remoteDesktopVisible && !mediaPreview(),
     }),
     ({ botId, visible }) => {
       if (props.browserEnabled === false) return;
@@ -1355,14 +1397,19 @@ function createConversationViewScope(props: ConversationProps) {
       }
       browserVisibilityFrame = requestAnimationFrame(() => {
         browserVisibilityFrame = undefined;
-        if (generation !== browserVisibilityGeneration || props.bot?.id !== botId || !screenOpen() || !browserSurface) {
+        if (
+          generation !== browserVisibilityGeneration ||
+          props.bot?.id !== botId ||
+          !browserSidebarOpen() ||
+          !browserSurface
+        ) {
           return;
         }
         const syncBounds = () => {
           if (
             generation !== browserVisibilityGeneration ||
             props.bot?.id !== botId ||
-            !screenOpen() ||
+            !browserSidebarOpen() ||
             !browserSurface
           ) {
             return;
@@ -1370,6 +1417,7 @@ function createConversationViewScope(props: ConversationProps) {
           const bounds = browserSurface.getBoundingClientRect();
           void window.openbot.browser.setVisible({
             visible: true,
+            target: "main",
             bounds: {
               x: bounds.x,
               y: bounds.y,
@@ -1383,25 +1431,6 @@ function createConversationViewScope(props: ConversationProps) {
           if (browserBoundsFrame !== undefined) cancelAnimationFrame(browserBoundsFrame);
           browserBoundsFrame = requestAnimationFrame(() => {
             browserBoundsFrame = undefined;
-            if (browserPipOpen()) {
-              const current = browserPipBounds();
-              if (current && conversationPanel) {
-                const constrained = clampBrowserPipBounds(
-                  current,
-                  conversationPanel.clientWidth,
-                  conversationPanel.clientHeight,
-                );
-                if (
-                  constrained.x !== current.x ||
-                  constrained.y !== current.y ||
-                  constrained.width !== current.width ||
-                  constrained.height !== current.height
-                ) {
-                  setBrowserPipBounds(constrained);
-                  return;
-                }
-              }
-            }
             syncBounds();
           });
         };
@@ -1414,13 +1443,39 @@ function createConversationViewScope(props: ConversationProps) {
     },
   );
 
+  createEffect(
+    () => ({ botId: props.bot?.id, open: browserPipOpen() }),
+    ({ open }) => {
+      if (props.browserEnabled === false) return;
+      if (!open) {
+        void window.openbot.browser.closePictureInPicture();
+        return;
+      }
+      void window.openbot.browser
+        .openPictureInPicture(untrack(browserPipBounds) ?? undefined)
+        .then(saveBrowserPipBounds);
+    },
+  );
+
+  const removeBrowserPictureInPictureListener = window.openbot.browser.onPictureInPictureEvent((event) => {
+    if (event.type === "bounds-changed") {
+      saveBrowserPipBounds(event.bounds);
+      return;
+    }
+    setActiveRightPanel(event.type === "dock" ? "browser" : "none");
+  });
+
   onCleanup(() => {
     browserVisibilityGeneration += 1;
     if (browserVisibilityFrame !== undefined) cancelAnimationFrame(browserVisibilityFrame);
     if (browserBoundsFrame !== undefined) cancelAnimationFrame(browserBoundsFrame);
     browserResizeObserver?.disconnect();
     if (browserWindowResizeHandler) window.removeEventListener("resize", browserWindowResizeHandler);
-    if (props.browserEnabled !== false) void window.openbot.browser.setVisible({ visible: false });
+    removeBrowserPictureInPictureListener();
+    if (props.browserEnabled !== false) {
+      void window.openbot.browser.setVisible({ visible: false });
+      void window.openbot.browser.closePictureInPicture();
+    }
   });
 
   function updateTeamTyping(text: string): void {
@@ -1760,31 +1815,17 @@ function createConversationViewScope(props: ConversationProps) {
     if (browserTabs().length === 0) void openBrowserAddress();
   }
 
-  function constrainBrowserPipBounds(bounds: BrowserPipBounds): BrowserPipBounds {
-    const width = conversationPanel?.clientWidth || window.innerWidth;
-    const height = conversationPanel?.clientHeight || window.innerHeight;
-    return clampBrowserPipBounds(bounds, width, height);
-  }
-
   function showBrowserPip() {
     if (props.browserEnabled === false) return;
-    const width = conversationPanel?.clientWidth || window.innerWidth;
-    const height = conversationPanel?.clientHeight || window.innerHeight;
-    setBrowserPipBounds((current) =>
-      bottomRightBrowserPipBounds(current ?? defaultBrowserPipBounds(width, height), width, height),
-    );
     setActiveRightPanel("browser-pip");
   }
 
-  function updateBrowserPipBounds(bounds: BrowserPipBounds, commit: boolean) {
-    const constrained = constrainBrowserPipBounds(bounds);
-    setBrowserPipBounds(constrained);
-    if (commit) {
-      window.localStorage.setItem(
-        BROWSER_PIP_STORAGE_KEY,
-        [constrained.x, constrained.y, constrained.width, constrained.height].join(","),
-      );
-    }
+  function saveBrowserPipBounds(bounds: BrowserBounds) {
+    setBrowserPipBounds(bounds);
+    window.localStorage.setItem(
+      "openbot:browser-pip-native-bounds",
+      [bounds.x, bounds.y, bounds.width, bounds.height].join(","),
+    );
   }
 
   function hideBrowserPanel() {
@@ -1987,6 +2028,10 @@ function createConversationViewScope(props: ConversationProps) {
     activeActivityId,
     activeBrowserControl,
     activeBrowserTab,
+    browserTakeoverPreview,
+    browserTakeoverResolution,
+    browserTakeoverTab,
+    respondToBrowserTakeover,
     activeChatSearchIndex,
     activeDeliveries,
     activeRightPanel,
@@ -2002,7 +2047,6 @@ function createConversationViewScope(props: ConversationProps) {
     attachmentAction,
     attachmentBusy,
     browserAddress,
-    browserPipBounds,
     browserPipOpen,
     browserSidebarOpen,
     browserBoundsFrame,
@@ -2035,7 +2079,6 @@ function createConversationViewScope(props: ConversationProps) {
     composerError,
     composerFocusRequest,
     composerHasContent,
-    constrainBrowserPipBounds,
     controller,
     copiedMessageId,
     copyMessage,
@@ -2175,7 +2218,6 @@ function createConversationViewScope(props: ConversationProps) {
     unreadDividerVisible,
     unreadMessagesDivider,
     unreadVisibilityFrame,
-    updateBrowserPipBounds,
     unreferencedDraftAttachments,
     updateCurrentDraft,
     updateScrollFade,
@@ -2345,6 +2387,9 @@ export function ConversationTimeline() {
     agentActivitySpaceReserved,
     agentReady,
     attachmentAction,
+    browserTakeoverPreview,
+    browserTakeoverResolution,
+    browserTakeoverTab,
     chatSearchMatches,
     chatSearchOpen,
     chatSearchQuery,
@@ -2373,6 +2418,7 @@ export function ConversationTimeline() {
     props,
     reactToMessage,
     renderedAgentActivity,
+    respondToBrowserTakeover,
     replyToMessage,
     scheduleUnreadDividerVisibilityUpdate,
     setChatSearchQuery,
@@ -2393,6 +2439,18 @@ export function ConversationTimeline() {
     setVirtualRootElement,
   } = useConversationViewScope();
   const virtualMessageRows = createMemo(() => messageVirtualizer.getVirtualItems());
+  let cachedPrompt: { key: string; prompt: NonNullable<ConversationProps["prompt"]> } | null = null;
+  const keyedPrompt = createMemo(() => {
+    const prompt = props.prompt;
+    if (!prompt) {
+      cachedPrompt = null;
+      return null;
+    }
+    const key = JSON.stringify([prompt.turnId, String(prompt.requestId)]);
+    if (cachedPrompt?.key === key) return cachedPrompt;
+    cachedPrompt = { key, prompt };
+    return cachedPrompt;
+  });
   return (
     <>
       <Show when={chatSearchOpen()}>
@@ -2522,188 +2580,211 @@ export function ConversationTimeline() {
                       />
                     </Show>
                     <Show
-                      when={message()?.exchange}
+                      when={message()?.questionPrompt}
                       fallback={
                         <Show
-                          when={message()?.kind === "thinking"}
+                          when={message()?.exchange}
                           fallback={
-                            <Message
-                              role="article"
-                              align={message()?.author === "you" ? "end" : "start"}
-                              data-chat-search-message={message()?.id}
-                              data-author={message()?.author === "you" ? "user" : "assistant"}
-                              class={[
-                                "message-entry",
-                                {
-                                  "message-entry-animated": animateEntrance,
-                                  "message-entry-user": message()?.author === "you",
-                                  "message-entry-bot": message()?.author === "bot",
-                                },
-                              ]}
-                            >
-                              <MessageContent>
-                                <div class="message-shell">
-                                  <Bubble
-                                    align={message()?.author === "you" ? "end" : "start"}
-                                    variant={conversationBubbleVariant(message() ?? initialMessage)}
-                                    data-author={message()?.author === "you" ? "user" : "assistant"}
-                                    data-streaming={message()?.streaming === true ? "" : undefined}
-                                  >
-                                    <BubbleContent>
-                                      <MessageBody
-                                        message={message() ?? initialMessage}
-                                        referencedMessage={
-                                          props.messages.find(
-                                            (candidate) => candidate.id === message()?.replyToMessageId,
-                                          ) ??
-                                          (message()?.replyToMessageId
-                                            ? props.messageReferences?.[message()?.replyToMessageId ?? ""]
-                                            : undefined)
-                                        }
-                                        bots={props.bots}
-                                        onSelectAgent={props.onSelectAgent}
-                                        onOpenLink={(url) => void openExternalMessageUrl(url)}
-                                        onPreview={(attachment) => void previewAttachment(attachment)}
-                                        onAttachmentAction={attachmentAction}
-                                        onOpenSharedFile={openSharedFile}
-                                        onOpenWorkspaceFile={openWorkspaceFile}
-                                        onDownload={(attachment) => attachmentAction(attachment, "download")}
-                                        onOpenRoutine={openRoutineSettings}
-                                      />
-                                    </BubbleContent>
-                                    <Show when={displayedReactions().length > 0}>
-                                      <BubbleReactions
-                                        class="message-reaction-anchor"
-                                        align={message()?.author === "you" ? "start" : "end"}
-                                        overflowCount={message()?.reactionSummary?.overflowCount}
-                                        role="group"
-                                        aria-label={`Reactions: ${displayedReactions()
-                                          .map((reaction) => reaction.emoji)
-                                          .join(", ")}`}
+                            <Show
+                              when={message()?.kind === "thinking"}
+                              fallback={
+                                <Message
+                                  role="article"
+                                  align={message()?.author === "you" ? "end" : "start"}
+                                  data-chat-search-message={message()?.id}
+                                  data-author={message()?.author === "you" ? "user" : "assistant"}
+                                  class={[
+                                    "message-entry",
+                                    {
+                                      "message-entry-animated": animateEntrance,
+                                      "message-entry-user": message()?.author === "you",
+                                      "message-entry-bot": message()?.author === "bot",
+                                    },
+                                  ]}
+                                >
+                                  <MessageContent>
+                                    <div class="message-shell">
+                                      <Bubble
+                                        align={message()?.author === "you" ? "end" : "start"}
+                                        variant={conversationBubbleVariant(message() ?? initialMessage)}
+                                        data-author={message()?.author === "you" ? "user" : "assistant"}
+                                        data-streaming={message()?.streaming === true ? "" : undefined}
                                       >
-                                        <For each={displayedReactions()}>
-                                          {(reaction) => (
-                                            <Show
-                                              when={reaction.actor.kind === "user"}
-                                              fallback={
-                                                <span
-                                                  class="message-reaction-pill message-reaction-pill-readonly"
-                                                  role="img"
-                                                  aria-label={`${
-                                                    props.bots.find(
-                                                      (bot) =>
-                                                        reaction.actor.kind === "bot" &&
-                                                        bot.id === reaction.actor.botId,
-                                                    )?.name ?? "Agent"
-                                                  } reacted with ${reaction.emoji}`}
+                                        <BubbleContent>
+                                          <MessageBody
+                                            message={message() ?? initialMessage}
+                                            referencedMessage={
+                                              props.messages.find(
+                                                (candidate) => candidate.id === message()?.replyToMessageId,
+                                              ) ??
+                                              (message()?.replyToMessageId
+                                                ? props.messageReferences?.[message()?.replyToMessageId ?? ""]
+                                                : undefined)
+                                            }
+                                            bots={props.bots}
+                                            onSelectAgent={props.onSelectAgent}
+                                            onOpenLink={(url) => void openExternalMessageUrl(url)}
+                                            onPreview={(attachment) => void previewAttachment(attachment)}
+                                            onAttachmentAction={attachmentAction}
+                                            onOpenSharedFile={openSharedFile}
+                                            onOpenWorkspaceFile={openWorkspaceFile}
+                                            onDownload={(attachment) => attachmentAction(attachment, "download")}
+                                            onOpenRoutine={openRoutineSettings}
+                                          />
+                                        </BubbleContent>
+                                        <Show when={displayedReactions().length > 0}>
+                                          <BubbleReactions
+                                            class="message-reaction-anchor"
+                                            align={message()?.author === "you" ? "start" : "end"}
+                                            overflowCount={message()?.reactionSummary?.overflowCount}
+                                            role="group"
+                                            aria-label={`Reactions: ${displayedReactions()
+                                              .map((reaction) => reaction.emoji)
+                                              .join(", ")}`}
+                                          >
+                                            <For each={displayedReactions()}>
+                                              {(reaction) => (
+                                                <Show
+                                                  when={reaction.actor.kind === "user"}
+                                                  fallback={
+                                                    <span
+                                                      class="message-reaction-pill message-reaction-pill-readonly"
+                                                      role="img"
+                                                      aria-label={`${
+                                                        props.bots.find(
+                                                          (bot) =>
+                                                            reaction.actor.kind === "bot" &&
+                                                            bot.id === reaction.actor.botId,
+                                                        )?.name ?? "Agent"
+                                                      } reacted with ${reaction.emoji}`}
+                                                    >
+                                                      <span aria-hidden="true">{reaction.emoji}</span>
+                                                    </span>
+                                                  }
                                                 >
-                                                  <span aria-hidden="true">{reaction.emoji}</span>
-                                                </span>
-                                              }
-                                            >
-                                              <Button
-                                                variant="ghost"
-                                                type="button"
-                                                class="message-reaction-pill"
-                                                aria-label={`Remove your reaction ${reaction.emoji}`}
-                                                onClick={() => {
-                                                  const currentMessage = message();
-                                                  if (currentMessage) void reactToMessage(currentMessage, null);
-                                                }}
-                                              >
-                                                <span aria-hidden="true">{reaction.emoji}</span>
-                                              </Button>
-                                            </Show>
-                                          )}
-                                        </For>
-                                      </BubbleReactions>
-                                    </Show>
-                                  </Bubble>
-                                  <MessageActions
-                                    message={message() ?? initialMessage}
-                                    pickerOpen={openReactionMessageId() === message()?.id}
-                                    moreOpen={openMoreMessageId() === message()?.id}
-                                    expandedEmoji={expandedEmojiMessageId() === message()?.id}
-                                    copied={copiedMessageId() === message()?.id}
-                                    onTogglePicker={() => {
-                                      const messageId = message()?.id;
-                                      if (!messageId) return;
-                                      setOpenReactionMessageId((current) => (current === messageId ? null : messageId));
-                                      setOpenMoreMessageId(null);
-                                      setExpandedEmojiMessageId(null);
-                                    }}
-                                    onToggleMore={() => {
-                                      const messageId = message()?.id;
-                                      if (!messageId) return;
-                                      setOpenMoreMessageId((current) => (current === messageId ? null : messageId));
-                                      setOpenReactionMessageId(null);
-                                      setExpandedEmojiMessageId(null);
-                                    }}
-                                    onExpandEmoji={() => {
-                                      const messageId = message()?.id;
-                                      if (!messageId) return;
-                                      setExpandedEmojiMessageId((current) =>
-                                        current === messageId ? null : messageId,
-                                      );
-                                    }}
-                                    onReact={(emoji) => {
-                                      const currentMessage = message();
-                                      if (currentMessage) void reactToMessage(currentMessage, emoji);
-                                    }}
-                                    onReply={() => {
-                                      const currentMessage = message();
-                                      if (currentMessage) replyToMessage(currentMessage);
-                                    }}
-                                    onCopy={() => {
-                                      const currentMessage = message();
-                                      if (currentMessage) void copyMessage(currentMessage);
-                                    }}
-                                  />
-                                </div>
-                              </MessageContent>
-                            </Message>
+                                                  <Button
+                                                    variant="ghost"
+                                                    type="button"
+                                                    class="message-reaction-pill"
+                                                    aria-label={`Remove your reaction ${reaction.emoji}`}
+                                                    onClick={() => {
+                                                      const currentMessage = message();
+                                                      if (currentMessage) void reactToMessage(currentMessage, null);
+                                                    }}
+                                                  >
+                                                    <span aria-hidden="true">{reaction.emoji}</span>
+                                                  </Button>
+                                                </Show>
+                                              )}
+                                            </For>
+                                          </BubbleReactions>
+                                        </Show>
+                                      </Bubble>
+                                      <MessageActions
+                                        message={message() ?? initialMessage}
+                                        pickerOpen={openReactionMessageId() === message()?.id}
+                                        moreOpen={openMoreMessageId() === message()?.id}
+                                        expandedEmoji={expandedEmojiMessageId() === message()?.id}
+                                        copied={copiedMessageId() === message()?.id}
+                                        onTogglePicker={() => {
+                                          const messageId = message()?.id;
+                                          if (!messageId) return;
+                                          setOpenReactionMessageId((current) =>
+                                            current === messageId ? null : messageId,
+                                          );
+                                          setOpenMoreMessageId(null);
+                                          setExpandedEmojiMessageId(null);
+                                        }}
+                                        onToggleMore={() => {
+                                          const messageId = message()?.id;
+                                          if (!messageId) return;
+                                          setOpenMoreMessageId((current) => (current === messageId ? null : messageId));
+                                          setOpenReactionMessageId(null);
+                                          setExpandedEmojiMessageId(null);
+                                        }}
+                                        onExpandEmoji={() => {
+                                          const messageId = message()?.id;
+                                          if (!messageId) return;
+                                          setExpandedEmojiMessageId((current) =>
+                                            current === messageId ? null : messageId,
+                                          );
+                                        }}
+                                        onReact={(emoji) => {
+                                          const currentMessage = message();
+                                          if (currentMessage) void reactToMessage(currentMessage, emoji);
+                                        }}
+                                        onReply={() => {
+                                          const currentMessage = message();
+                                          if (currentMessage) replyToMessage(currentMessage);
+                                        }}
+                                        onCopy={() => {
+                                          const currentMessage = message();
+                                          if (currentMessage) void copyMessage(currentMessage);
+                                        }}
+                                      />
+                                    </div>
+                                  </MessageContent>
+                                </Message>
+                              }
+                            >
+                              <div
+                                data-chat-search-message={message()?.id}
+                                class={{ "thinking-entry-animated": animateEntrance }}
+                              >
+                                <ThinkingDisclosure
+                                  message={message() ?? initialMessage}
+                                  open={
+                                    expandedThinkingMessages()[`${props.bot?.id ?? ""}:${message()?.id ?? ""}`] === true
+                                  }
+                                  onOpenChange={(open) => {
+                                    const key = `${props.bot?.id ?? ""}:${message()?.id ?? ""}`;
+                                    setExpandedThinkingMessages((current) =>
+                                      current[key] === open ? current : { ...current, [key]: open },
+                                    );
+                                  }}
+                                />
+                              </div>
+                            </Show>
                           }
                         >
-                          <div
-                            data-chat-search-message={message()?.id}
-                            class={{ "thinking-entry-animated": animateEntrance }}
-                          >
-                            <ThinkingDisclosure
-                              message={message() ?? initialMessage}
-                              open={
-                                expandedThinkingMessages()[`${props.bot?.id ?? ""}:${message()?.id ?? ""}`] === true
-                              }
-                              onOpenChange={(open) => {
-                                const key = `${props.bot?.id ?? ""}:${message()?.id ?? ""}`;
-                                setExpandedThinkingMessages((current) =>
-                                  current[key] === open ? current : { ...current, [key]: open },
-                                );
-                              }}
-                            />
-                          </div>
+                          {(exchange) => (
+                            <article
+                              data-chat-search-message={message()?.id}
+                              class={["exchange-message-entry", { "exchange-message-entry-animated": animateEntrance }]}
+                            >
+                              <ExchangeSystemRow
+                                message={message() ?? initialMessage}
+                                bots={props.bots}
+                                onSelectAgent={props.onSelectAgent}
+                              />
+                              <Show
+                                when={exchange().direction === "incoming" && (message()?.attachments?.length ?? 0) > 0}
+                              >
+                                <div class="exchange-agent-attachments">
+                                  <AttachmentCards
+                                    attachments={message()?.attachments ?? []}
+                                    onPreview={(attachment) => void previewAttachment(attachment)}
+                                    onAction={attachmentAction}
+                                  />
+                                </div>
+                              </Show>
+                            </article>
+                          )}
                         </Show>
                       }
                     >
-                      {(exchange) => (
-                        <article
-                          data-chat-search-message={message()?.id}
-                          class={["exchange-message-entry", { "exchange-message-entry-animated": animateEntrance }]}
-                        >
-                          <ExchangeSystemRow
-                            message={message() ?? initialMessage}
-                            bots={props.bots}
-                            onSelectAgent={props.onSelectAgent}
-                          />
-                          <Show when={exchange().direction === "incoming" && (message()?.attachments?.length ?? 0) > 0}>
-                            <div class="exchange-agent-attachments">
-                              <AttachmentCards
-                                attachments={message()?.attachments ?? []}
-                                onPreview={(attachment) => void previewAttachment(attachment)}
-                                onAction={attachmentAction}
+                      {(questionPrompt) => (
+                        <Show when={questionPrompt().resolution}>
+                          {(resolution) => (
+                            <article data-chat-search-message={message()?.id} class="question-prompt-history-entry">
+                              <QuestionPromptBubble
+                                questions={questionPrompt().questions}
+                                resolution={resolution()}
+                                onSubmit={async () => false}
                               />
-                            </div>
-                          </Show>
-                        </article>
+                            </article>
+                          )}
+                        </Show>
                       )}
                     </Show>
                   </div>
@@ -2726,10 +2807,16 @@ export function ConversationTimeline() {
               )}
             </Show>
           </div>
-          <Show when={props.prompt}>
-            {(prompt) => (
+          <Show when={keyedPrompt()} keyed>
+            {(entry) => (
               <Loading>
-                <ApprovalCard variant="questions" questions={prompt().questions} onSubmit={props.onAnswerPrompt} />
+                <QuestionPromptBubble
+                  questions={entry.prompt.questions}
+                  onSubmit={props.onAnswerPrompt}
+                  onResolutionPresented={() =>
+                    props.onPromptResolutionPresented?.(entry.prompt.botId, entry.prompt.turnId, entry.prompt.requestId)
+                  }
+                />
               </Loading>
             )}
           </Show>
@@ -2737,7 +2824,6 @@ export function ConversationTimeline() {
             {(approval) => (
               <Loading>
                 <ApprovalCard
-                  variant="approval"
                   approval={approval()}
                   onApprove={() => props.onRespondToApproval("accept")}
                   onReject={() => props.onRespondToApproval("decline")}
@@ -2748,10 +2834,27 @@ export function ConversationTimeline() {
           <Show when={props.browserTakeover}>
             <Loading>
               <BrowserTakeoverCard
-                onComplete={() => props.onRespondToBrowserTakeover("complete")}
-                onCancel={() => props.onRespondToBrowserTakeover("cancel")}
+                botName={props.bot?.name ?? "the agent"}
+                tab={browserTakeoverTab()}
+                preview={browserTakeoverPreview().preview}
+                previewStatus={browserTakeoverPreview().status}
+                onComplete={() => respondToBrowserTakeover("complete")}
+                onCancel={() => respondToBrowserTakeover("cancel")}
               />
             </Loading>
+          </Show>
+          <Show when={!props.browserTakeover && browserTakeoverResolution()}>
+            {(resolution) => (
+              <BrowserTakeoverCard
+                botName={props.bot?.name ?? "the agent"}
+                tab={resolution().tab}
+                preview={resolution().preview}
+                previewStatus={resolution().previewStatus}
+                decision={resolution().decision}
+                onComplete={async () => false}
+                onCancel={async () => false}
+              />
+            )}
           </Show>
         </Show>
       </div>
@@ -3082,12 +3185,10 @@ export function ConversationPanels() {
     browserAddress,
     browserControlForTab,
     browserControllerForTab,
-    browserPipBounds,
-    browserPipOpen,
+    browserSidebarOpen,
     browserTabs,
     closeSidebarFilePreview,
     closeBrowserTab,
-    constrainBrowserPipBounds,
     conversationPanelElement,
     filePreviewOpen,
     openBrowserAddress,
@@ -3099,7 +3200,6 @@ export function ConversationPanels() {
     navigateBrowserTab,
     props,
     reloadBrowserTab,
-    screenOpen,
     setActiveRightPanel,
     setBrowserAddress,
     setBrowserAddressEditing,
@@ -3107,12 +3207,10 @@ export function ConversationPanels() {
     setBrowserSurfaceElement,
     setSettingsPanelWidth,
     showBrowserPip,
-    hideBrowserPanel,
     handleRoutineSettingsRequest,
     sidebarFilePreview,
     settingsOpen,
     routineSettingsRequest,
-    updateBrowserPipBounds,
   } = useConversationViewScope();
   return (
     <>
@@ -3145,9 +3243,8 @@ export function ConversationPanels() {
         )}
       </Show>
 
-      <Show when={screenOpen()}>
+      <Show when={browserSidebarOpen()}>
         <BrowserPanel
-          mode={browserPipOpen() ? "pip" : "sidebar"}
           tabs={browserTabs()}
           activeTab={activeBrowserTab()}
           activeControl={activeBrowserControl()}
@@ -3175,18 +3272,7 @@ export function ConversationPanels() {
           onCloseTab={(tabId) => void closeBrowserTab(tabId)}
           onSurface={setBrowserSurfaceElement}
           onWidthChange={setBrowserPanelWidth}
-          pipBounds={
-            browserPipBounds() ??
-            defaultBrowserPipBounds(
-              conversationPanelElement()?.clientWidth || window.innerWidth,
-              conversationPanelElement()?.clientHeight || window.innerHeight,
-            )
-          }
-          constrainPipBounds={constrainBrowserPipBounds}
-          onPipBoundsChange={updateBrowserPipBounds}
           onEnterPip={showBrowserPip}
-          onDockPip={() => setActiveRightPanel("browser")}
-          onHidePip={hideBrowserPanel}
         />
       </Show>
 

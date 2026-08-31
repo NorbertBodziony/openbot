@@ -1,0 +1,16 @@
+<svg width="960" height="600" viewBox="0 0 960 600" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>Example sign-in page</title>
+  <rect width="960" height="600" fill="#F5F5F3"/>
+  <rect x="280" y="82" width="400" height="436" rx="20" fill="white" stroke="#DEDEDA" stroke-width="2"/>
+  <rect x="324" y="126" width="48" height="48" rx="12" fill="#1F1F1F"/>
+  <path d="M339 151.5 348 160l11-17" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="324" y="202" width="238" height="18" rx="9" fill="#222222"/>
+  <rect x="324" y="234" width="308" height="12" rx="6" fill="#B8B8B2"/>
+  <rect x="324" y="256" width="272" height="12" rx="6" fill="#D0D0CB"/>
+  <rect x="324" y="306" width="312" height="54" rx="12" fill="#FAFAF8" stroke="#DEDEDA" stroke-width="2"/>
+  <rect x="342" y="325" width="112" height="14" rx="7" fill="#B8B8B2"/>
+  <rect x="324" y="378" width="312" height="54" rx="12" fill="#FAFAF8" stroke="#DEDEDA" stroke-width="2"/>
+  <rect x="342" y="397" width="148" height="14" rx="7" fill="#B8B8B2"/>
+  <rect x="324" y="456" width="138" height="38" rx="10" fill="#1F1F1F"/>
+  <rect x="344" y="469" width="98" height="12" rx="6" fill="white"/>
+</svg>

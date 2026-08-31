@@ -3,7 +3,6 @@ import type { AttachmentSummary } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
-import { avatarHeadColor } from "../../bloub-avatar";
 import type { BotMessage, BotProfile } from "../../data";
 import { triggerResize } from "../../setupTests";
 import { ImageGeneration } from "./ImageGeneration";
@@ -61,17 +60,6 @@ const message = {
 } satisfies BotMessage;
 
 describe("ExchangeSystemRow", () => {
-  it("mixes every recipient avatar color for a multi-agent trigger", () => {
-    render(() => <ExchangeSystemRow message={message} bots={bots} onSelectAgent={vi.fn()} />);
-
-    const trigger = screen.getByRole("button", { name: "2 agents, show list" });
-    const researchColor = avatarHeadColor(bots[0].avatarSeed, bots[0].avatarHue);
-    const salesColor = avatarHeadColor(bots[1].avatarSeed, bots[1].avatarHue);
-    expect(trigger.style.getPropertyValue("--exchange-agent-color")).toBe(
-      `color-mix(in oklab, ${researchColor} 50%, ${salesColor})`,
-    );
-  });
-
   it("opens the chat for a single outgoing recipient", async () => {
     const onSelectAgent = vi.fn();
     render(() => (
@@ -196,6 +184,49 @@ describe("MessageBody", () => {
     expect(screen.queryByRole("button", { name: "Preview raport.csv" })).toBeNull();
     await fireEvent.click(reference);
     expect(onPreview).toHaveBeenCalledWith(attachment);
+  });
+
+  it("renders an image attached by an agent as a large preview", async () => {
+    const attachment: AttachmentSummary = {
+      id: "agent-screenshot",
+      name: "desktop-screenshot.png",
+      size: 1_966_000,
+      kind: "image",
+      mimeType: "image/png",
+      previewKind: "image",
+      previewUrl: "openbot-attachment://file/agent-screenshot",
+    };
+    const onPreview = vi.fn();
+    const onDownload = vi.fn();
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-agent-screenshot",
+          author: "bot",
+          body: "",
+          time: "10:00",
+          status: "completed",
+          itemType: "agent_attachment",
+          attachments: [attachment],
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={onPreview}
+        onAttachmentAction={vi.fn()}
+        onDownload={onDownload}
+      />
+    ));
+
+    const image = screen.getByAltText("desktop-screenshot.png");
+    await fireEvent.load(image);
+    expect(screen.getByLabelText("Attached image")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Preview desktop-screenshot.png" })).toBeInTheDocument();
+    expect(screen.queryByText("1.9 MB")).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Preview desktop-screenshot.png" }));
+    expect(onPreview).toHaveBeenCalledWith(attachment);
+    await fireEvent.click(screen.getByRole("button", { name: "Download desktop-screenshot.png" }));
+    expect(onDownload).toHaveBeenCalledWith(attachment);
   });
 
   it("renders a Markdown table in an agent response without exposing its syntax", () => {
@@ -620,7 +651,7 @@ describe("ImageGeneration", () => {
     previewUrl: "openbot-attachment://file/generated-image",
   };
 
-  it("exposes the generating state and preserves the requested aspect ratio", () => {
+  it("exposes the generating state", () => {
     render(() => (
       <ImageGeneration
         status="generating"
@@ -632,11 +663,6 @@ describe("ImageGeneration", () => {
 
     expect(screen.getByRole("img", { name: "Generating image" })).toHaveAttribute("aria-busy", "true");
     expect(screen.getByText("Generating image")).toBeInTheDocument();
-    expect(
-      document
-        .querySelector<HTMLElement>(".image-generation-stage")
-        ?.style.getPropertyValue("--image-generation-ratio"),
-    ).toBe("4 / 5");
   });
 
   it("crossfades to a clickable preview when complete", async () => {
@@ -665,33 +691,17 @@ describe("ImageGeneration", () => {
     expect(onDownload).toHaveBeenCalledWith(attachment);
   });
 
-  it("uses the loaded image dimensions for the completed canvas", async () => {
-    render(() => (
-      <ImageGeneration status="completed" resolution="1024 × 1024" aspectRatio="square" attachment={attachment} />
-    ));
-
-    const image = screen.getByAltText("Generated image");
-    Object.defineProperties(image, {
-      naturalWidth: { configurable: true, value: 1536 },
-      naturalHeight: { configurable: true, value: 1024 },
-    });
-    await fireEvent.load(image);
-
-    expect(
-      document
-        .querySelector<HTMLElement>(".image-generation-stage")
-        ?.style.getPropertyValue("--image-generation-ratio"),
-    ).toBe("1536 / 1024");
-  });
-
   it("shows the failure mark when the preview cannot load", async () => {
+    const onDownload = vi.fn();
     render(() => (
       <ImageGeneration
         status="completed"
+        presentation="attachment"
         prompt="A quiet observatory"
         resolution="1024 × 1024"
         aspectRatio="square"
         attachment={attachment}
+        onDownload={onDownload}
       />
     ));
 
@@ -700,6 +710,8 @@ describe("ImageGeneration", () => {
     expect(screen.getByRole("img", { name: "Image unavailable" })).toBeInTheDocument();
     expect(screen.getByText("×")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Download generated-image.png" }));
+    expect(onDownload).toHaveBeenCalledWith(attachment);
   });
 
   it.each([

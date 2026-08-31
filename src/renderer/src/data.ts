@@ -6,12 +6,13 @@ import type {
   AttachmentSummary,
   BotAvatarHue,
   BotSummary,
+  ConversationQuestionPrompt,
   ConversationReaction,
   ImageGenerationInfo,
   MessageReaction,
 } from "@openbot/contracts/ipc";
 
-export type MessageKind = "text" | "thinking" | "exchange";
+export type MessageKind = "text" | "thinking" | "exchange" | "question";
 
 export interface MessageCitation {
   number: number;
@@ -31,6 +32,7 @@ export interface BotMessage {
   author: "you" | "bot";
   body: string;
   time: string;
+  createdAt?: string;
   streaming?: boolean;
   animate?: boolean;
   itemType?: string;
@@ -40,6 +42,7 @@ export interface BotMessage {
   replyToMessageId?: string | null;
   attachments?: AttachmentSummary[];
   imageGeneration?: ImageGenerationInfo;
+  questionPrompt?: ConversationQuestionPrompt;
   citations?: MessageCitation[];
   exchange?: AgentExchangeSummary;
   reaction?: MessageReaction | null;
@@ -68,6 +71,7 @@ export interface BotProfile {
   avatarHue: BotAvatarHue | null;
   avatarUrl: string | null;
   marketplaceSource?: BotSummary["marketplaceSource"];
+  updatedAt?: string | null;
   time: string;
   preview: string;
 }

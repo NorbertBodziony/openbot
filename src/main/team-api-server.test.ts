@@ -14,7 +14,9 @@ import type {
   RoutineRun,
   TeamPresenceSnapshot,
 } from "@openbot/contracts/ipc";
-import { isBoolean, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
+import { AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT } from "@openbot/contracts/ipc";
+import { isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { TEAM_APP_VERSION_HEADER, TEAM_PROTOCOL_VERSION_HEADER } from "@openbot/contracts/team-protocol/v1";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpenBotDatabase } from "../backend/openbot-database";
 import { SidebarLayoutStore } from "../backend/sidebar-layout-store";
@@ -30,6 +32,8 @@ type TestBrowser = TeamApiOptions["browser"];
 
 interface TestRealtimeEvent {
   type: string;
+  botId?: string;
+  revision?: number;
   code?: string;
   snapshot?: unknown;
   message?: unknown;
@@ -52,6 +56,17 @@ function createAgents(overrides: Partial<TestAgents> = {}, events = new EventEmi
       events.off(event, listener);
     },
     getStatus: unimplemented,
+    getRuntimeSnapshot: () => ({
+      bots: [],
+      activeTurns: [],
+      work: [],
+      latestMessages: [],
+      attentionComplete: true,
+      pendingPrompts: [],
+      pendingApprovals: [],
+      pendingBrowserTakeovers: [],
+      failedTurns: [],
+    }),
     getUsage: unimplemented,
     listModels: unimplemented,
     listBots: unimplemented,
@@ -82,6 +97,7 @@ function createAgents(overrides: Partial<TestAgents> = {}, events = new EventEmi
     resolveWorkspaceFile: unimplemented,
     sendMessage: unimplemented,
     listQueue: unimplemented,
+    acknowledgeFailedTurn: unimplemented,
     setMessageReaction: unimplemented,
     cancelQueuedMessage: unimplemented,
     steerQueuedMessage: unimplemented,
@@ -100,7 +116,7 @@ function createMailbox(): TestMailbox {
   return { resolveAttachment: unimplemented };
 }
 
-function createBrowser(): TestBrowser {
+function createBrowser(overrides: Partial<TestBrowser> = {}): TestBrowser {
   return {
     listTabs: unimplemented,
     getControlState: unimplemented,
@@ -109,12 +125,59 @@ function createBrowser(): TestBrowser {
     navigate: unimplemented,
     reload: unimplemented,
     close: unimplemented,
+    capturePreview: unimplemented,
     setVisible: unimplemented,
+    ...overrides,
   };
 }
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
+
+describe("TeamApiServer compatibility", () => {
+  it("publishes protocol support and blocks requests without a compatible handshake", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-compatibility-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    const api = new TeamApiServer({
+      appVersion: "0.4.0",
+      store,
+      agents: createAgents(),
+      mailbox: createMailbox(),
+      browser: createBrowser(),
+    });
+    const port = await api.start();
+    const base = `http://127.0.0.1:${port}`;
+
+    try {
+      const compatibility = await fetch(`${base}/v1/compatibility`);
+      expect(compatibility.status).toBe(200);
+      await expect(compatibility.json()).resolves.toMatchObject({
+        appVersion: "0.4.0",
+        protocol: { minimum: 1, maximum: 1 },
+        capabilities: expect.arrayContaining(["browser-control", "remote-desktop"]),
+      });
+
+      const missing = await fetch(`${base}/v1/identity`);
+      expect(missing.status).toBe(426);
+      await expect(missing.json()).resolves.toMatchObject({ code: "client_update_required" });
+
+      const newerClient = await fetch(`${base}/v1/identity`, {
+        headers: { [TEAM_PROTOCOL_VERSION_HEADER]: "2", [TEAM_APP_VERSION_HEADER]: "0.5.0" },
+      });
+      expect(newerClient.status).toBe(426);
+      await expect(newerClient.json()).resolves.toMatchObject({ code: "host_update_required" });
+
+      const compatible = await fetch(`${base}/v1/identity`, {
+        headers: { [TEAM_PROTOCOL_VERSION_HEADER]: "1", [TEAM_APP_VERSION_HEADER]: "0.3.9" },
+      });
+      expect(compatible.status).toBe(200);
+    } finally {
+      await api.stop();
+    }
+  });
 });
 
 describe("TeamApiServer administration", () => {
@@ -140,7 +203,22 @@ describe("TeamApiServer administration", () => {
     });
     const sidebarLayout = new SidebarLayoutStore(join(root, "sidebar-layout.json"));
     await sidebarLayout.initialize();
+    const getRuntimeSnapshot = vi.fn<TestAgents["getRuntimeSnapshot"]>(() => ({
+      bots: [],
+      activeTurns: [],
+      work: [],
+      latestMessages: [],
+      attentionComplete: true,
+      pendingPrompts: [],
+      pendingApprovals: [],
+      pendingBrowserTakeovers: [],
+      failedTurns: [],
+    }));
+    const agentEvents = new EventEmitter();
     const agents = createAgents({
+      on: (event, listener) => agentEvents.on(event, listener),
+      off: (event, listener) => agentEvents.off(event, listener),
+      getRuntimeSnapshot,
       listBots: () => [
         {
           id: "chief",
@@ -161,12 +239,14 @@ describe("TeamApiServer administration", () => {
         } satisfies BotSummary,
       ],
     });
+    let now = 0;
     const api = new TeamApiServer({
       store,
       agents,
       sidebarLayout,
       mailbox: createMailbox(),
       browser: createBrowser(),
+      now: () => now,
     });
     const port = await api.start();
     const base = `http://127.0.0.1:${port}`;
@@ -174,15 +254,95 @@ describe("TeamApiServer administration", () => {
     try {
       const owner = await store.login("owner", "correct horse battery");
       const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/events`, [
-        "openbot-events",
+        "openbot-events-v2",
         `openbot-token.${member.sessionToken}`,
       ]);
-      const initialPresence = nextJsonEvent(socket);
+      const initialEvents = nextJsonEvents(socket, 2);
       await new Promise<void>((resolve, reject) => {
         socket.addEventListener("open", () => resolve(), { once: true });
         socket.addEventListener("error", () => reject(new Error("WebSocket did not open.")), { once: true });
       });
-      await expect(initialPresence).resolves.toMatchObject({ type: "team-presence" });
+      const [initialSnapshot, initialPresence] = await initialEvents;
+      expect(initialSnapshot).toMatchObject({
+        type: "runtime-snapshot",
+        snapshot: { bots: [], activeTurns: [], pendingApprovals: [] },
+      });
+      expect(initialPresence).toMatchObject({ type: "team-presence" });
+
+      const conversation = {
+        type: "conversation",
+        snapshot: {
+          botId: "chief",
+          threadId: "thread-chief",
+          activeTurnId: null,
+          revision: 1,
+          messages: [
+            {
+              id: "reply-1",
+              author: "assistant",
+              text: "Done",
+              createdAt: "2026-08-29T10:00:00.000Z",
+              status: "completed",
+            },
+          ],
+        },
+      };
+      getRuntimeSnapshot.mockReturnValueOnce({
+        ...createAgents().getRuntimeSnapshot(),
+        latestMessages: [{ botId: "chief", id: "reply-1", text: "Done", createdAt: "2026-08-29T10:00:00.000Z" }],
+      });
+      const boundedEvents = nextJsonEvents(socket, 2);
+      agentEvents.emit("event", conversation);
+      agentEvents.emit("event", {
+        type: "turn-completed",
+        botId: "chief",
+        threadId: "thread-chief",
+        turnId: "turn-1",
+        status: "completed",
+      });
+      await expect(boundedEvents).resolves.toEqual([
+        expect.objectContaining({ type: "turn-completed" }),
+        expect.objectContaining({
+          type: "runtime-snapshot",
+          snapshot: expect.objectContaining({ latestMessages: [expect.objectContaining({ id: "reply-1" })] }),
+        }),
+      ]);
+
+      socket.send(JSON.stringify({ type: "agent-event-scope", includeConversations: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const conversationEvent = nextJsonEvent(socket);
+      agentEvents.emit("event", conversation);
+      await expect(conversationEvent).resolves.toEqual({
+        type: "conversation-invalidated",
+        botId: "chief",
+        revision: 1,
+      });
+      const queueEvent = nextJsonEvent(socket);
+      agentEvents.emit("event", { type: "queue-changed", snapshot: { botId: "chief", deliveries: [] } });
+      await expect(queueEvent).resolves.toEqual({ type: "queue-invalidated", botId: "chief" });
+
+      const eventsAfterOversizedConversation = nextJsonEvents(socket, 2);
+      agentEvents.emit("event", {
+        ...conversation,
+        snapshot: {
+          ...conversation.snapshot,
+          messages: [{ ...conversation.snapshot.messages[0], text: "x".repeat(1024 * 1024) }],
+        },
+      });
+      agentEvents.emit("event", { type: "bots-changed", bots: [] });
+      await expect(eventsAfterOversizedConversation).resolves.toEqual([
+        expect.objectContaining({ type: "conversation-invalidated" }),
+        expect.objectContaining({ type: "bots-changed" }),
+      ]);
+
+      const refreshedSnapshot = nextJsonEvent(socket);
+      socket.send(JSON.stringify({ type: "runtime-snapshot-request" }));
+      await expect(refreshedSnapshot).resolves.toMatchObject({ type: "runtime-snapshot" });
+      for (let index = 0; index < 20; index += 1) {
+        socket.send(JSON.stringify({ type: "runtime-snapshot-request" }));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(getRuntimeSnapshot).toHaveBeenCalledTimes(3);
 
       for (const [index, token] of [owner.sessionToken, admin.sessionToken, member.sessionToken].entries()) {
         const event = nextJsonEvent(socket);
@@ -202,8 +362,67 @@ describe("TeamApiServer administration", () => {
         revision: 3,
         sections: [{ name: "Shared 1" }, { name: "Shared 2" }, { name: "Shared 3" }],
       });
-      socket.close();
+      const closed = new Promise<CloseEvent>((resolve) => socket.addEventListener("close", resolve, { once: true }));
+      now = 1_000;
+      getRuntimeSnapshot.mockImplementationOnce(() => ({
+        bots: [],
+        activeTurns: [],
+        work: [],
+        latestMessages: [
+          {
+            botId: "chief",
+            id: "oversized",
+            text: "x".repeat(AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT),
+            createdAt: "2026-08-29T10:00:00.000Z",
+          },
+        ],
+        attentionComplete: true,
+        pendingPrompts: [],
+        pendingApprovals: [],
+        pendingBrowserTakeovers: [],
+        failedTurns: [],
+      }));
+      socket.send(JSON.stringify({ type: "runtime-snapshot-request" }));
+      expect((await closed).code).toBe(1011);
     } finally {
+      await api.stop();
+    }
+  }, 10_000);
+
+  it("keeps legacy event clients connected without sending runtime snapshots", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-legacy-events-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const login = await store.login("owner", "correct horse battery");
+    const agentEvents = new EventEmitter();
+    const api = new TeamApiServer({
+      store,
+      agents: createAgents({}, agentEvents),
+      mailbox: createMailbox(),
+      browser: createBrowser(),
+    });
+    const port = await api.start();
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/events`, [
+      "openbot-events",
+      `openbot-token.${login.sessionToken}`,
+    ]);
+    const firstEvent = nextJsonEvent(socket);
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.addEventListener("open", () => resolve(), { once: true });
+        socket.addEventListener("error", () => reject(new Error("WebSocket did not open.")), { once: true });
+      });
+      await expect(firstEvent).resolves.toMatchObject({ type: "team-presence" });
+      expect(socket.protocol).toBe("openbot-events");
+      const supportedEvent = nextJsonEvent(socket);
+      agentEvents.emit("event", { type: "runtime-snapshot", snapshot: createAgents().getRuntimeSnapshot() });
+      agentEvents.emit("event", { type: "bots-changed", bots: [] });
+      await expect(supportedEvent).resolves.toMatchObject({ type: "bots-changed" });
+    } finally {
+      socket.close();
       await api.stop();
     }
   });
@@ -431,17 +650,19 @@ describe("TeamApiServer administration", () => {
       expect(store.authenticate(ownerConnection.sessionToken)?.email).toBe("owner@example.com");
 
       const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/events`, [
-        "openbot-events",
+        "openbot-events-v2",
         `openbot-token.${joined.sessionToken}`,
       ]);
-      const initialPresence = nextJsonEvent(socket);
+      const initialEvents = nextJsonEvents(socket, 2);
       await new Promise<void>((resolve, reject) => {
         socket.addEventListener("open", () => resolve(), { once: true });
         socket.addEventListener("error", () => reject(new Error("WebSocket did not open.")), {
           once: true,
         });
       });
-      await expect(initialPresence).resolves.toMatchObject({
+      const [initialSnapshot, initialPresence] = await initialEvents;
+      expect(initialSnapshot).toMatchObject({ type: "runtime-snapshot" });
+      expect(initialPresence).toMatchObject({
         type: "team-presence",
         snapshot: {
           members: expect.arrayContaining([
@@ -1066,15 +1287,23 @@ describe("TeamApiServer administration", () => {
     }
   });
 
-  it("responds to an authenticated remote approval request", async () => {
+  it("responds to authenticated remote interactive requests", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-team-api-approval-"));
     roots.push(root);
     const store = new TeamStore(join(root, "team.json"));
     await store.initialize();
     await store.configure("Studio Mac", "owner", "correct horse battery");
     const approvals: unknown[] = [];
+    const failures: unknown[] = [];
     const takeovers: unknown[] = [];
+    const prompts: unknown[] = [];
     const agents = createAgents({
+      acknowledgeFailedTurn: (botId, turnId) => {
+        failures.push({ botId, turnId });
+      },
+      respondToPrompt: async (input: unknown) => {
+        prompts.push(input);
+      },
       respondToApproval: async (input: unknown) => {
         approvals.push(input);
       },
@@ -1105,6 +1334,33 @@ describe("TeamApiServer administration", () => {
         body: { requestId: "takeover-17", decision: "complete" },
       });
       expect(takeovers).toEqual([{ requestId: "takeover-17", decision: "complete" }]);
+      await emptyRequest(base, "/v1/prompts/respond", {
+        token: login.sessionToken,
+        body: { requestId: "prompt-17", answers: { scope: ["Small"] } },
+      });
+      expect(prompts).toEqual([{ requestId: "prompt-17", answers: { scope: ["Small"] } }]);
+      await emptyRequest(base, "/v1/agents/chief/failures/acknowledge", {
+        token: login.sessionToken,
+        body: { turnId: "turn-failed" },
+      });
+      expect(failures).toEqual([{ botId: "chief", turnId: "turn-failed" }]);
+
+      const oversizedPrompt = await fetch(`${base}/v1/prompts/respond`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${login.sessionToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          requestId: "prompt-18",
+          answers: {
+            first: ["a".repeat(INPUT_LIMITS.promptAnswersTotalText / 2 + 1)],
+            second: ["b".repeat(INPUT_LIMITS.promptAnswersTotalText / 2)],
+          },
+        }),
+      });
+      expect(oversizedPrompt.status).toBe(400);
+      expect(prompts).toHaveLength(1);
 
       const invalid = await fetch(`${base}/v1/approvals/respond`, {
         method: "POST",
@@ -1115,6 +1371,43 @@ describe("TeamApiServer administration", () => {
         body: JSON.stringify({ requestId: 17, decision: "session" }),
       });
       expect(invalid.status).toBe(400);
+    } finally {
+      await api.stop();
+    }
+  });
+
+  it("returns a bounded browser preview to an authenticated client", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-browser-preview-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const capturePreview = vi.fn(async () => ({
+      dataUrl: "data:image/jpeg;base64,YWJj",
+      width: 960,
+      height: 600,
+    }));
+    const api = new TeamApiServer({
+      store,
+      agents: createAgents(),
+      mailbox: createMailbox(),
+      browser: createBrowser({ capturePreview }),
+    });
+    const port = await api.start();
+    const base = `http://127.0.0.1:${port}`;
+
+    try {
+      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
+        body: { username: "owner", password: "correct horse battery" },
+      });
+      const preview = await jsonRequest<{ dataUrl: string; width: number; height: number }>(
+        base,
+        "/v1/browser/preview",
+        { token: login.sessionToken, body: { tabId: "tab-login" } },
+      );
+
+      expect(capturePreview).toHaveBeenCalledWith("tab-login");
+      expect(preview).toEqual({ dataUrl: "data:image/jpeg;base64,YWJj", width: 960, height: 600 });
     } finally {
       await api.stop();
     }
@@ -1271,6 +1564,19 @@ function nextJsonEvent(websocket: WebSocket): Promise<TestRealtimeEvent> {
   });
 }
 
+function nextJsonEvents(websocket: WebSocket, count: number): Promise<TestRealtimeEvent[]> {
+  return new Promise((resolve, reject) => {
+    const events: TestRealtimeEvent[] = [];
+    websocket.addEventListener("message", (message) => {
+      events.push(decodeTestRealtimeEvent(JSON.parse(String(message.data))));
+      if (events.length === count) resolve(events);
+    });
+    websocket.addEventListener("error", () => reject(new Error("WebSocket event failed.")), {
+      once: true,
+    });
+  });
+}
+
 async function jsonRequest<T>(
   base: string,
   path: string,
@@ -1304,8 +1610,14 @@ function decodeTestRealtimeEvent(value: unknown): TestRealtimeEvent {
   }
   const typing = value.typing;
   if (typing !== undefined && !isBoolean(typing)) throw new Error("Invalid test typing state.");
+  const botId = value.botId;
+  if (botId !== undefined && !isString(botId)) throw new Error("Invalid test bot id.");
+  const revision = value.revision;
+  if (revision !== undefined && !isNumber(revision)) throw new Error("Invalid test revision.");
   return {
     type: value.type,
+    ...(botId === undefined ? {} : { botId }),
+    ...(revision === undefined ? {} : { revision }),
     ...(code === undefined ? {} : { code }),
     ...(value.snapshot === undefined ? {} : { snapshot: value.snapshot }),
     ...(value.message === undefined ? {} : { message: value.message }),

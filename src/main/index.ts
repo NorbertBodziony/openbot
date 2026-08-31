@@ -15,6 +15,7 @@ import {
   type AgentEvent,
   type AppInfo,
   type AppSetupState,
+  type BrowserDisplayState,
   type CentralAuthState,
   type ExternalDestination,
   type FilePreview,
@@ -33,13 +34,16 @@ import { isNumber, isString } from "@openbot/contracts/runtime-values";
 import {
   app,
   BrowserWindow,
+  type Display,
   desktopCapturer,
   dialog,
   Menu,
   Notification,
   autoUpdater as nativeAutoUpdater,
   type OpenDialogOptions,
+  powerMonitor,
   protocol,
+  type Rectangle,
   safeStorage,
   screen,
   session,
@@ -61,6 +65,7 @@ import { notificationForAgentEvent } from "./agent-notifications";
 import { HostAnalytics } from "./analytics";
 import { readAnalyticsPreference, writeAnalyticsPreference } from "./analytics-preference-store";
 import { readAppVariant, resolveAppIconPath } from "./app-icon";
+import { BrowserPictureInPicture } from "./browser-picture-in-picture";
 import { CentralAuthManager, readCentralAuthApiUrl } from "./central-auth-manager";
 import { resolveOpenBotCloudflaredExecutable } from "./cloudflared-artifact";
 import { buildContentSecurityPolicy } from "./content-security-policy";
@@ -71,9 +76,12 @@ import {
   shouldAutoStartHost,
   shouldShowDevelopmentWindow,
 } from "./development-profile";
+import { performDynamicIslandCriticalAction } from "./dynamic-island-actions";
+import { DynamicIslandWindowController, requireDynamicIslandSender } from "./dynamic-island-window";
 import { filePreviewFromBytes, localFilePreview, mimeTypeForName } from "./file-preview";
 import { DEVELOPMENT_REMOTE_CLIENT_USERNAME, HostService } from "./host-service";
 import {
+  parseAcknowledgeFailedTurn,
   parseAgentRequest,
   parseApprovalResponse,
   parseBrowserTakeoverResponse,
@@ -109,16 +117,21 @@ import {
 } from "./ipc/agent-inputs";
 import {
   parseAnalyticsPreference,
+  parseDynamicIslandAction,
+  parseDynamicIslandInteractive,
+  parseDynamicIslandPreference,
+  parseDynamicIslandPresentation,
   parseExternalDestination,
   parseMacPermission,
   parseProvider,
   parseProviderId,
 } from "./ipc/app-inputs";
 import { parseAvatarImage } from "./ipc/avatar-inputs";
-import { parseBrowserNavigate, parseBrowserOpen, parseVisibility } from "./ipc/browser-inputs";
+import { parseBrowserBounds, parseBrowserNavigate, parseBrowserOpen, parseVisibility } from "./ipc/browser-inputs";
 import { registerTeamIpcHandlers, withLocalHostSummary } from "./ipc/register-team-handlers";
 import { isObject, requireString } from "./ipc/validation";
 import { parseVoiceTranscription } from "./ipc/voice-inputs";
+import { MacHapticFeedback } from "./mac-haptic-feedback";
 import { exportDiagnostics, exportOpenBotData } from "./maintenance-service";
 import { ProviderRuntimeManager } from "./provider-runtime-manager";
 import { RemoteDesktopManager } from "./remote-desktop-manager";
@@ -134,6 +147,7 @@ import {
   decodeBotSummaries,
   decodeBotSummary,
   decodeBrowserControlState,
+  decodeBrowserPreview,
   decodeBrowserTab,
   decodeBrowserTabs,
   decodeQueuedMessageReceipt,
@@ -150,7 +164,7 @@ import { canCheckRendererPermission, canRequestRendererPermission } from "./rend
 import { readSetupState, writeSetupState } from "./setup-store";
 import { SkillMarketplaceService } from "./skill-marketplace-service";
 import { TeamStore } from "./team-store";
-import { handleTrusted } from "./trusted-ipc";
+import { handleTrusted, handleTrustedWithEvent } from "./trusted-ipc";
 import { isTrustedRendererUrl } from "./trusted-renderer";
 import { supportsInstalledUpdates, UpdateService } from "./update-service";
 import { WHISPER_MODEL_NAME, WHISPER_MODEL_URL } from "./voice-model-service";
@@ -185,6 +199,7 @@ if (commandLineUserDataDirectory) {
     ),
   );
 }
+app.setName("OpenBot");
 app.enableSandbox();
 if (process.platform === "win32") app.setAppUserModelId("app.openbot.desktop");
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
@@ -228,7 +243,9 @@ protocol.registerSchemesAsPrivileged([
 ]);
 
 let mainWindow: BrowserWindow | null = null;
+let mainWindowLoad: Promise<BrowserWindow> | null = null;
 let browserHost: BrowserHost | null = null;
+let browserPictureInPicture: BrowserPictureInPicture | null = null;
 let agentService: AgentService | null = null;
 let mailboxStore: MailboxStore | null = null;
 let updateService: UpdateService | null = null;
@@ -239,6 +256,8 @@ let remoteServerManager: RemoteServerManager | null = null;
 let centralAuthManager: CentralAuthManager | null = null;
 let hostAnalytics: HostAnalytics | null = null;
 let voiceTranscriptionService: VoiceTranscriptionService | null = null;
+let dynamicIslandController: DynamicIslandWindowController | null = null;
+const macHapticFeedback = new MacHapticFeedback();
 let isQuitting = false;
 let shutdownStarted = false;
 let systemSessionEnding = false;
@@ -247,6 +266,7 @@ let inviteReceiverReady = false;
 
 const SETUP_FILE = "openbot-setup-v2.json";
 const ANALYTICS_PREFERENCE_FILE = "openbot-analytics-preference-v1.json";
+const DYNAMIC_ISLAND_PREFERENCE_FILE = "openbot-dynamic-island-preference-v1.json";
 const BROWSER_STATE_FILE = "openbot-browser-state-v1.json";
 const SIDEBAR_LAYOUT_FILE = "openbot-sidebar-layout-v1.json";
 const TEAM_FILE = "openbot-team-server-v1.json";
@@ -285,6 +305,7 @@ function registerIpcHandlers(
   providerRuntimes: ProviderRuntimeManager,
   mailbox: MailboxStore,
   browser: BrowserHost,
+  browserPictureInPicture: BrowserPictureInPicture,
   updater: UpdateService,
   setupFile: string,
   analyticsPreferenceFile: string,
@@ -297,6 +318,7 @@ function registerIpcHandlers(
   skills: SkillMarketplaceService,
   marketplaceAgents: AgentMarketplaceService,
   voice: VoiceTranscriptionService,
+  dynamicIsland: DynamicIslandWindowController,
 ): void {
   handleTrusted(IPC_CHANNELS.getAppInfo, (): AppInfo => {
     const platform = process.platform;
@@ -311,6 +333,38 @@ function registerIpcHandlers(
     const preference = await writeAnalyticsPreference(analyticsPreferenceFile, parseAnalyticsPreference(input).enabled);
     hostAnalytics?.setTrackingEnabled(preference.enabled);
     return preference;
+  });
+  handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandGetPreference, (event) => {
+    requireDynamicIslandSender(
+      event.sender.id,
+      new Set([...dynamicIsland.mainRendererIds, ...dynamicIsland.overlayRendererIds]),
+      "main or Dynamic Island renderer",
+    );
+    return dynamicIsland.preference;
+  });
+  handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandSetPreference, (event, input: unknown) => {
+    requireDynamicIslandSender(event.sender.id, dynamicIsland.mainRendererIds, "main renderer");
+    return dynamicIsland.setPreference(parseDynamicIslandPreference(input));
+  });
+  handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandPublishPresentation, (event, input: unknown) => {
+    requireDynamicIslandSender(event.sender.id, dynamicIsland.mainRendererIds, "main renderer");
+    dynamicIsland.publish(parseDynamicIslandPresentation(input));
+  });
+  handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandGetPresentation, (event) => {
+    requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer");
+    return dynamicIsland.presentation;
+  });
+  handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandPerformAction, (event, input: unknown) => {
+    requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer");
+    return dynamicIsland.performAction(parseDynamicIslandAction(input));
+  });
+  handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandPerformHaptic, (event) => {
+    requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer");
+    dynamicIsland.performHaptic();
+  });
+  handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandSetInteractive, (event, input: unknown) => {
+    requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer");
+    dynamicIsland.setInteractive(event.sender.id, parseDynamicIslandInteractive(input).interactive);
   });
   handleTrusted(IPC_CHANNELS.saveSetup, async (input: unknown): Promise<AppSetupState> => {
     const preferredProvider = parseProvider(input);
@@ -883,6 +937,18 @@ function registerIpcHandlers(
     const scoped = parseAgentRequest(input);
     return routeListQueue(service, remoteServers, scoped.serverId, requireString(scoped.payload, "botId"));
   });
+  handleTrusted(IPC_CHANNELS.agentAcknowledgeFailedTurn, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseAcknowledgeFailedTurn(scoped.payload);
+    return scoped.serverId === "local"
+      ? service.acknowledgeFailedTurn(parsed.botId, parsed.turnId)
+      : remoteServers.request(
+          `/v1/agents/${encodeURIComponent(parsed.botId)}/failures/acknowledge`,
+          { method: "POST", body: { turnId: parsed.turnId } },
+          scoped.serverId,
+          decodeVoid,
+        );
+  });
   handleTrusted(IPC_CHANNELS.agentCancelQueuedMessage, (input: unknown) => {
     const scoped = parseAgentRequest(input);
     const parsed = parseCancelQueuedMessage(scoped.payload);
@@ -1046,11 +1112,23 @@ function registerIpcHandlers(
       ? browser.listTabs()
       : remoteServers.request("/v1/browser/tabs", {}, undefined, decodeBrowserTabs),
   );
+  handleTrusted(IPC_CHANNELS.browserGetDisplayState, (): BrowserDisplayState => browser.getDisplayState());
   handleTrusted(IPC_CHANNELS.browserGetControlState, () =>
     remoteServers.activeServerId === "local"
       ? browser.getControlState()
       : remoteServers.request("/v1/browser/control", {}, undefined, decodeBrowserControlState),
   );
+  handleTrusted(IPC_CHANNELS.browserCapturePreview, (tabId: unknown) => {
+    const parsedTabId = requireString(tabId, "tabId");
+    return remoteServers.activeServerId === "local"
+      ? browser.capturePreview(parsedTabId)
+      : remoteServers.request(
+          "/v1/browser/preview",
+          { method: "POST", body: { tabId: parsedTabId } },
+          undefined,
+          decodeBrowserPreview,
+        );
+  });
   handleTrusted(IPC_CHANNELS.browserSetVisible, async (input: unknown) => {
     const parsed = parseVisibility(input);
     if (remoteServers.activeServerId === "local") await browser.setVisible(parsed);
@@ -1058,6 +1136,12 @@ function registerIpcHandlers(
       await remoteServers.request("/v1/browser/visible", { method: "POST", body: parsed }, undefined, decodeVoid);
     }
   });
+  handleTrusted(IPC_CHANNELS.browserPictureInPictureOpen, (input: unknown) =>
+    browserPictureInPicture.open(input === undefined ? undefined : parseBrowserBounds(input)),
+  );
+  handleTrusted(IPC_CHANNELS.browserPictureInPictureClose, () => browserPictureInPicture.close());
+  handleTrusted(IPC_CHANNELS.browserPictureInPictureDock, () => browserPictureInPicture.dock());
+  handleTrusted(IPC_CHANNELS.browserPictureInPictureHide, () => browserPictureInPicture.hide());
 }
 
 function createWindow(): BrowserWindow {
@@ -1096,6 +1180,7 @@ function createWindow(): BrowserWindow {
   });
   window.on("close", (event) => {
     if (process.platform === "darwin" && !isQuitting) {
+      // The hidden renderer owns the cross-host Dynamic Island coordinator and must outlive its visible window.
       event.preventDefault();
       window.hide();
     }
@@ -1162,7 +1247,44 @@ function createWindow(): BrowserWindow {
   window.webContents.on("will-navigate", (event, targetUrl) => {
     if (!isTrustedRendererUrl(targetUrl)) event.preventDefault();
   });
+  window.webContents.on("did-finish-load", () => {
+    const service = agentService;
+    if (service) forwardAgentEvent("local", { type: "runtime-snapshot", snapshot: service.getRuntimeSnapshot() });
+    remoteServerManager?.refreshRuntimeSnapshots();
+  });
 
+  return window;
+}
+
+function createDynamicIslandWindow(bounds: Rectangle, _display: Display): BrowserWindow {
+  const window = new BrowserWindow({
+    ...bounds,
+    show: false,
+    transparent: true,
+    frame: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    enableLargerThanScreen: true,
+    hasShadow: false,
+    skipTaskbar: true,
+    type: "panel",
+    backgroundColor: "#00000000",
+    webPreferences: {
+      preload: join(__dirname, "../preload/index.cjs"),
+      contextIsolation: true,
+      devTools: true,
+      sandbox: true,
+      nodeIntegration: false,
+      webSecurity: true,
+    },
+  });
+  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.on("will-navigate", (event, targetUrl) => {
+    if (!isTrustedRendererUrl(targetUrl)) event.preventDefault();
+  });
   return window;
 }
 
@@ -1170,6 +1292,36 @@ function loadRenderer(window: BrowserWindow): Promise<void> {
   inviteReceiverReady = false;
   const developmentUrl = process.env.ELECTRON_RENDERER_URL;
   return developmentUrl ? window.loadURL(developmentUrl) : window.loadURL("openbot-app://app/index.html");
+}
+
+async function ensureMainWindow(): Promise<BrowserWindow> {
+  if (mainWindow && !mainWindow.isDestroyed()) return mainWindow;
+  if (mainWindowLoad) return mainWindowLoad;
+  const window = createWindow();
+  mainWindow = window;
+  mainWindowLoad = loadRenderer(window)
+    .then(() => window)
+    .catch((error) => {
+      if (!window.isDestroyed()) window.destroy();
+      if (mainWindow === window) mainWindow = null;
+      throw error;
+    })
+    .finally(() => {
+      mainWindowLoad = null;
+    });
+  return mainWindowLoad;
+}
+
+function loadDynamicIslandRenderer(window: BrowserWindow, display: Display): Promise<void> {
+  const displayMode = display.internal ? "notch" : "island";
+  const developmentUrl = process.env.ELECTRON_RENDERER_URL;
+  if (developmentUrl) {
+    const url = new URL(developmentUrl);
+    url.searchParams.set("surface", "dynamic-island");
+    url.searchParams.set("display", displayMode);
+    return window.loadURL(url.toString());
+  }
+  return window.loadURL(`openbot-app://app/index.html?surface=dynamic-island&display=${displayMode}`);
 }
 
 function configureApplicationMenu(service: AgentService, updater: UpdateService): void {
@@ -1203,10 +1355,13 @@ function configureApplicationMenu(service: AgentService, updater: UpdateService)
   );
 }
 
-function forwardAgentEvent(serverId: string, event: AgentEvent): void {
+function forwardAgentEvent(serverId: string, event: AgentEvent, bufferedLive = false): void {
   if (serverId === "local") hostAnalytics?.handleAgentEvent(event);
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.agentEvent, { serverId, event });
+  mainWindow.webContents.send(
+    IPC_CHANNELS.agentEvent,
+    bufferedLive ? { serverId, event, bufferedLive } : { serverId, event },
+  );
   if (mainWindow.isFocused() || !Notification.isSupported()) return;
 
   const content = notificationForAgentEvent(event, agentService?.listBots() ?? []);
@@ -1219,6 +1374,12 @@ function forwardAgentEvent(serverId: string, event: AgentEvent): void {
     mainWindow.focus();
   });
   notification.show();
+}
+
+function forwardBrowserDisplayState(state: BrowserDisplayState): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.browserDisplayStateEvent, state);
+  }
 }
 
 function forwardUpdateStatus(status: import("@openbot/contracts/ipc").UpdateStatus): void {
@@ -1371,6 +1532,20 @@ if (!hasSingleInstanceLock) {
       configureContentSecurityPolicy();
       configureRendererPermissions();
       mainWindow = createWindow();
+      dynamicIslandController = new DynamicIslandWindowController({
+        platform: process.platform,
+        preferencePath: join(app.getPath("userData"), DYNAMIC_ISLAND_PREFERENCE_FILE),
+        createWindow: createDynamicIslandWindow,
+        loadWindow: loadDynamicIslandRenderer,
+        getDisplays: () => screen.getAllDisplays(),
+        getMainWindow: () => mainWindow,
+        ensureMainWindow,
+        performHaptic: () => macHapticFeedback.performAlignment(),
+        performCriticalAction: async (action) => {
+          if (!agentService || !remoteServerManager) throw new Error("OpenBot is not ready.");
+          await performDynamicIslandCriticalAction(action, agentService, remoteServerManager, decodeVoid);
+        },
+      });
       centralAuthManager = new CentralAuthManager({
         apiUrl: readCentralAuthApiUrl(
           process.env.OPENBOT_AUTH_API_URL,
@@ -1398,6 +1573,18 @@ if (!hasSingleInstanceLock) {
       configureApplicationProtocol();
       browserHost = new BrowserHost(mainWindow, store.downloadsRoot, join(app.getPath("userData"), BROWSER_STATE_FILE));
       await browserHost.restore();
+      browserPictureInPicture = new BrowserPictureInPicture({
+        mainWindow,
+        browser: browserHost,
+        preloadPath: join(__dirname, "../preload/index.cjs"),
+        iconPath: appIconPath,
+        developmentUrl: process.env.ELECTRON_RENDERER_URL,
+        onEvent: (event) => {
+          if (!mainWindow || mainWindow.isDestroyed()) return;
+          mainWindow.webContents.send(IPC_CHANNELS.browserPictureInPictureEvent, event);
+        },
+      });
+      browserHost.onChanged((tabs, activeTabId) => forwardBrowserDisplayState({ tabs, activeTabId }));
       const setupFile = join(app.getPath("userData"), SETUP_FILE);
       const analyticsPreferenceFile = join(app.getPath("userData"), ANALYTICS_PREFERENCE_FILE);
       const setupState = await readSetupState(setupFile);
@@ -1465,6 +1652,7 @@ if (!hasSingleInstanceLock) {
         overrideRoot: process.env.OPENBOT_REMOTE_DESKTOP_RUNTIME_PATH,
       });
       hostService = new HostService({
+        appVersion: app.getVersion(),
         store: teamStore,
         agents: service,
         sidebarLayout: sidebarLayoutStore,
@@ -1578,7 +1766,10 @@ if (!hasSingleInstanceLock) {
             return centralAuthManager.getSignedInUser().email;
           },
         },
-        { allowLocalDevelopmentInvites: developmentRemoteRole !== null },
+        {
+          allowLocalDevelopmentInvites: developmentRemoteRole !== null,
+          appVersion: app.getVersion(),
+        },
       );
       await remoteServerManager.initialize();
       if (developmentRemoteRole === "host") {
@@ -1626,8 +1817,8 @@ if (!hasSingleInstanceLock) {
       host.on("directTyping", (event) => forwardDirectTyping("local", event));
       remoteDesktop.on("changed", forwardRemoteDesktopSessions);
       remoteServers.on("changed", forwardServers);
-      remoteServers.on("agent", (serverId, event) => {
-        forwardAgentEvent(serverId, event);
+      remoteServers.on("agent", (serverId, event, bufferedLive) => {
+        forwardAgentEvent(serverId, event, bufferedLive);
       });
       remoteServers.on("presence", forwardTeamPresence);
       remoteServers.on("directMessage", forwardDirectMessage);
@@ -1640,6 +1831,7 @@ if (!hasSingleInstanceLock) {
         providerRuntimeManager,
         mailboxStore,
         browserHost,
+        browserPictureInPicture,
         updateService,
         setupFile,
         analyticsPreferenceFile,
@@ -1652,9 +1844,22 @@ if (!hasSingleInstanceLock) {
         skillMarketplace,
         agentMarketplace,
         voiceTranscriptionService,
+        dynamicIslandController,
       );
       configureApplicationMenu(service, updateService);
+      await dynamicIslandController
+        .initialize()
+        .catch((error) => console.error("Unable to initialize Dynamic Island:", error));
       await loadRenderer(mainWindow);
+      remoteServers.startEventConnections();
+      const reconcileDynamicIsland = () =>
+        void dynamicIslandController
+          ?.reconcileWindow()
+          .catch((error) => console.error("Unable to reconcile Dynamic Island displays:", error));
+      screen.on("display-added", reconcileDynamicIsland);
+      screen.on("display-removed", reconcileDynamicIsland);
+      screen.on("display-metrics-changed", reconcileDynamicIsland);
+      powerMonitor.on("resume", reconcileDynamicIsland);
       const teamIdentity = teamStore.getIdentity();
       if (
         !developmentRemoteRole &&
@@ -1676,8 +1881,9 @@ if (!hasSingleInstanceLock) {
           mainWindow.show();
           return;
         }
-        mainWindow = createWindow();
-        void loadRenderer(mainWindow);
+        void ensureMainWindow()
+          .then((window) => window.show())
+          .catch((error) => console.error("Unable to open the main window:", error));
       });
     })
     .catch((error) => {
@@ -1804,11 +2010,15 @@ async function prepareForShutdown(): Promise<void> {
   shutdownStarted = true;
   isQuitting = true;
   updateService?.stop();
+  dynamicIslandController?.destroy();
+  dynamicIslandController = null;
+  macHapticFeedback.destroy();
   await (providerRuntimeManager?.stop() ?? Promise.resolve());
   remoteServerManager?.stop();
   voiceTranscriptionService?.shutdown();
   await (remoteDesktopManager?.stop() ?? Promise.resolve());
   await (hostService?.shutdown() ?? Promise.resolve());
+  browserPictureInPicture?.destroy();
   await (browserHost?.destroy() ?? Promise.resolve());
   await (agentService?.stop() ?? Promise.resolve());
 }

@@ -3,6 +3,7 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { describe, expect, it } from "vitest";
 import {
+  parseAcknowledgeFailedTurn,
   parseAgentRequest,
   parseApprovalResponse,
   parseBrowserTakeoverResponse,
@@ -34,6 +35,10 @@ import {
 } from "./agent-inputs";
 import {
   parseAnalyticsPreference,
+  parseDynamicIslandAction,
+  parseDynamicIslandInteractive,
+  parseDynamicIslandPreference,
+  parseDynamicIslandPresentation,
   parseExternalDestination,
   parseMacPermission,
   parseProvider,
@@ -72,6 +77,105 @@ describe("app IPC input parsing", () => {
     expect(() => parseExternalDestination("https://example.com")).toThrowError("Unknown external destination.");
     expect(() => parseExternalDestination("chatgpt-install")).toThrowError("Unknown external destination.");
     expect(() => parseAnalyticsPreference({ enabled: "false" })).toThrowError("Analytics preference is required.");
+  });
+
+  it("validates Dynamic Island data and actions", () => {
+    const presentation = {
+      serverId: "local",
+      mode: "working",
+      working: [
+        {
+          bot: { id: "chief", name: "Chief", avatarSeed: "chief", avatarHue: 215, avatarUrl: null },
+          task: "Checking the release",
+        },
+      ],
+    } as const;
+    expect(
+      parseDynamicIslandPreference({
+        enabled: true,
+        hapticsEnabled: false,
+        idleVisible: false,
+        additionalDisplaysEnabled: true,
+      }),
+    ).toEqual({
+      enabled: true,
+      hapticsEnabled: false,
+      idleVisible: false,
+      additionalDisplaysEnabled: true,
+    });
+    expect(() => parseDynamicIslandPreference({ enabled: true })).toThrowError(
+      "Dynamic Island preference is required.",
+    );
+    expect(parseDynamicIslandInteractive({ interactive: false })).toEqual({ interactive: false });
+    expect(parseDynamicIslandPresentation(presentation)).toEqual(presentation);
+    const takeoverPresentation = {
+      serverId: "local",
+      mode: "takeover",
+      item: {
+        requestId: "takeover-1",
+        bot: presentation.working[0].bot,
+        title: "Browser step needs you",
+        detail: "Complete the sign-in in the browser.",
+      },
+    } as const;
+    expect(parseDynamicIslandPresentation(takeoverPresentation)).toEqual(takeoverPresentation);
+    const failedPresentation = {
+      serverId: "local",
+      mode: "failed",
+      item: {
+        turnId: "turn-failed",
+        bot: presentation.working[0].bot,
+        title: "Task failed",
+        detail: "The browser tab closed unexpectedly.",
+      },
+    } as const;
+    expect(parseDynamicIslandPresentation(failedPresentation)).toEqual(failedPresentation);
+    expect(parseDynamicIslandAction({ type: "open-bot", serverId: "local", botId: "chief" })).toEqual({
+      type: "open-bot",
+      serverId: "local",
+      botId: "chief",
+    });
+    expect(
+      parseDynamicIslandAction({
+        type: "answer-prompt",
+        serverId: "local",
+        botId: "chief",
+        requestId: "prompt-1",
+        answers: { source: ["Official data"] },
+      }),
+    ).toEqual({
+      type: "answer-prompt",
+      serverId: "local",
+      botId: "chief",
+      requestId: "prompt-1",
+      answers: { source: ["Official data"] },
+    });
+    expect(
+      parseDynamicIslandAction({
+        type: "open-failure",
+        serverId: "local",
+        botId: "chief",
+        turnId: "turn-failed",
+      }),
+    ).toEqual({
+      type: "open-failure",
+      serverId: "local",
+      botId: "chief",
+      turnId: "turn-failed",
+    });
+    expect(() =>
+      parseDynamicIslandPresentation({ ...presentation, working: Array(4).fill(presentation.working[0]) }),
+    ).toThrow();
+    expect(() => parseDynamicIslandAction({ type: "approve", serverId: "local", botId: "chief" })).toThrow();
+    expect(() =>
+      parseDynamicIslandAction({
+        type: "answer-prompt",
+        serverId: "local",
+        botId: "chief",
+        requestId: "prompt-1",
+        answers: {},
+      }),
+    ).toThrow();
   });
 });
 
@@ -188,6 +292,10 @@ describe("agent IPC input parsing", () => {
       turnId: "turn-1",
     });
     expect(parseStopAgent({ botId: "bot-1" })).toEqual({ botId: "bot-1" });
+    expect(parseAcknowledgeFailedTurn({ botId: "bot-1", turnId: "turn-1" })).toEqual({
+      botId: "bot-1",
+      turnId: "turn-1",
+    });
     expect(parseMarkConversationRead({ botId: "bot-1", throughMessageId: "message-1" })).toEqual({
       botId: "bot-1",
       throughMessageId: "message-1",
@@ -361,6 +469,15 @@ describe("agent IPC input parsing", () => {
     );
     expect(() => parseDeleteBotMemory({ botId: "", memoryId: "memory-1" })).toThrowError("botId is required.");
     expect(() => parsePromptResponse({ requestId: 1, answers: null })).toThrowError("Prompt answers are required.");
+    expect(() =>
+      parsePromptResponse({
+        requestId: 1,
+        answers: {
+          first: ["a".repeat(INPUT_LIMITS.promptAnswersTotalText / 2 + 1)],
+          second: ["b".repeat(INPUT_LIMITS.promptAnswersTotalText / 2)],
+        },
+      }),
+    ).toThrowError("Prompt answers are too long.");
     expect(() => parseApprovalResponse({ requestId: "approval-1", decision: "maybe" })).toThrowError(
       "Invalid approval decision.",
     );
@@ -452,6 +569,11 @@ describe("browser IPC input parsing", () => {
       visible: true,
       bounds: { x: 1, y: 2, width: 3, height: 4 },
     });
+    expect(parseVisibility({ visible: true, target: "picture-in-picture" })).toEqual({
+      visible: true,
+      bounds: undefined,
+      target: "picture-in-picture",
+    });
   });
 
   it("keeps browser input error messages", () => {
@@ -463,6 +585,7 @@ describe("browser IPC input parsing", () => {
       "Invalid browser navigation request.",
     );
     expect(() => parseVisibility({ visible: "yes" })).toThrowError("Invalid browser visibility request.");
+    expect(() => parseVisibility({ visible: true, target: "desktop" })).toThrowError("Invalid browser view target.");
     expect(() => parseVisibility({ visible: true, bounds: { x: 1, y: 2, width: Number.NaN, height: 4 } })).toThrowError(
       "Invalid browser bound: width.",
     );

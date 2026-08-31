@@ -1,7 +1,7 @@
 {
   "name": "openbot",
   "productName": "OpenBot",
-  "version": "0.3.5",
+  "version": "0.4.0",
   "description": "A local-first multi-agent desktop workspace for Codex, Claude, and Grok.",
   "author": {
     "name": "Norbert Bodziony",
@@ -91,6 +91,7 @@
     "test:contracts": "bun run --cwd packages/contracts test",
     "test:backend": "vitest run src/backend",
     "test:browser": "bun scripts/browser-smoke.ts",
+    "test:browser:google-live": "bun scripts/browser-smoke.ts --google-live",
     "test:codex": "bun scripts/codex-doctor.ts --strict",
     "test:filesystem": "bun scripts/filesystem-smoke.ts",
     "test:imagegen": "bun scripts/filesystem-smoke.ts --provider codex --imagegen",
@@ -164,7 +165,7 @@
     "@testing-library/jest-dom": "7.0.1",
     "@types/node": "22.20.1",
     "@types/ws": "8.18.1",
-    "electron": "43.4.1",
+    "electron": "44.0.0",
     "electron-builder": "26.15.7",
     "electron-vite": "5.0.0",
     "jsdom": "30.0.1",

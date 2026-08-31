@@ -1,4 +1,5 @@
-import { createMemo, Loading, lazy, Show } from "solid-js";
+import type { ServerSummary } from "@openbot/contracts/ipc";
+import { createMemo, For, Loading, lazy, Show } from "solid-js";
 import { useAppController } from "./App";
 import { Conversation } from "./components/Conversation";
 import { FIRST_BOT_SUGGESTIONS, FirstBotSetup } from "./components/FirstBotSetup";
@@ -6,6 +7,7 @@ import { PanelResizer, savePanelWidth } from "./components/PanelResizer";
 import { ServerRail } from "./components/ServerRail";
 import { Sidebar } from "./components/Sidebar";
 import { StaticAccountDock } from "./components/StaticAccountDock";
+import { Alert, AlertContent, AlertDescription, Button, toast } from "./components/ui";
 
 const AccountDock = lazy(() => import("./components/AccountDock").then((module) => ({ default: module.AccountDock })));
 const AccountLogin = lazy(() =>
@@ -163,6 +165,7 @@ function WorkspaceShell(props: {
     leftPanelWidth,
     servers,
     selectServer,
+    retryServerConnection,
     reorderServers,
     setJoinServerOpen,
     openServerSettings,
@@ -170,6 +173,7 @@ function WorkspaceShell(props: {
     botList,
     activeDirectMemberId,
     peopleEnabled,
+    activeServerSupportsCapability,
     activeBot,
     directPeople,
     directThreads,
@@ -204,7 +208,6 @@ function WorkspaceShell(props: {
     connectGrok,
     refreshAccountUsage,
     runUpdateAction,
-    updateAccountAvatar,
     logoutCentralAccount,
     setPermissionsOpen,
     appSettingsOpen,
@@ -270,6 +273,7 @@ function WorkspaceShell(props: {
     openAgentMessage,
     setTeamTyping,
     answerPrompt,
+    presentPromptResolution,
     respondToApproval,
     respondToBrowserTakeover,
     cancelQueuedMessage,
@@ -293,6 +297,12 @@ function WorkspaceShell(props: {
     const event = bot ? pendingPrompts()[bot.id] : undefined;
     return event?.type === "browser-takeover-requested" ? event.request : undefined;
   });
+  const blockedRemoteServer = createMemo(() => {
+    const server = activeServer();
+    if (server?.kind !== "remote") return null;
+    return server.state === "incompatible" || server.issue?.code === "protocol_error" ? server : null;
+  });
+  const activePeopleEnabled = createMemo(() => peopleEnabled && activeServerSupportsCapability("direct-messages"));
 
   return (
     <div
@@ -311,7 +321,13 @@ function WorkspaceShell(props: {
       <Show when={appInfo()?.platform === "darwin" || appInfo()?.platform === "win32"}>
         <ServerRail
           servers={servers()}
-          onSelect={(serverId) => void selectServer(serverId)}
+          onSelect={(serverId) =>
+            void selectServer(serverId).catch((error) => {
+              toast.error("Could not select the server", {
+                description: error instanceof Error ? error.message : String(error),
+              });
+            })
+          }
           onReorder={(serverIds) => void reorderServers(serverIds)}
           onAdd={() => {
             if (!appProps.landingPreview) setJoinServerOpen(true);
@@ -327,12 +343,13 @@ function WorkspaceShell(props: {
         }}
         bots={botList()}
         activeBotId={activeDirectMember() ? "" : (activeBot()?.id ?? "")}
-        showPeople={peopleEnabled}
+        showPeople={activePeopleEnabled()}
         people={directPeople()}
         directThreads={directThreads()}
         activeDirectMemberId={activeDirectMemberId()}
         agentStates={sidebarAgentStates()}
         layout={sidebarLayout()}
+        layoutMutable={activeServerSupportsCapability("sidebar-layout")}
         collapsedSectionIds={collapsedSidebarSectionIds()}
         onMutateLayout={mutateSidebarLayout}
         onToggleSection={toggleSidebarSection}
@@ -344,13 +361,13 @@ function WorkspaceShell(props: {
         onReorderPeople={reorderSidebarPeople}
         onSelectBot={selectBot}
         onSelectPerson={(memberId) => void selectDirectMember(memberId)}
-        onPreloadDirectConversation={peopleEnabled ? () => void DirectConversation.preload() : undefined}
+        onPreloadDirectConversation={activePeopleEnabled() ? () => void DirectConversation.preload() : undefined}
         onCreateBot={openBotSetup}
         onEditBot={editBot}
         onDeleteBot={deleteBot}
         compact={leftPanelCompact()}
-        onCollapse={() => setSidebarCollapsed(true)}
         onExpand={expandSidebar}
+        onOpenMarketplace={() => setSkillsMarketplaceOpen(true)}
         emptyAction={
           botList().length === 0
             ? {
@@ -391,7 +408,6 @@ function WorkspaceShell(props: {
             withServerRail={appInfo()?.platform === "darwin" || appInfo()?.platform === "win32"}
             onRefreshUsage={refreshAccountUsage}
             onUpdateAction={runUpdateAction}
-            onUpdateAccountAvatar={updateAccountAvatar}
             onLogout={logoutCentralAccount}
             onOpenExternal={(destination) => window.openbot.openExternal(destination)}
             onOpenPermissions={() => setPermissionsOpen(true)}
@@ -422,31 +438,22 @@ function WorkspaceShell(props: {
           },
         }}
       />
-      <Show when={botSetupOpen()}>
+      <Show when={blockedRemoteServer()} keyed>
+        {(server) => <RemoteCompatibilityScreen server={server} onRetry={() => retryServerConnection(server.id)} />}
+      </Show>
+      <Show when={!blockedRemoteServer() && botSetupOpen()}>
         <FirstBotSetup
           value={botSetupDraft()}
           suggestions={FIRST_BOT_SUGGESTIONS}
           mode={botList().length === 0 ? "first" : "additional"}
           submitting={creatingAgent()}
           error={botSetupError()}
-          providerSetup={
-            botList().length === 0 && activeServer()?.kind === "local" && providerRuntimeDownloadsAvailable()
-              ? {
-                  agentStatus: agentStatus(),
-                  runtimeStatuses: providerRuntimeStatuses(),
-                  onDownload: downloadProviderRuntime,
-                  onCancel: cancelProviderRuntimeDownload,
-                  onConnect: (provider) =>
-                    provider === "codex" ? connectChatGPT() : provider === "claude" ? connectClaude() : connectGrok(),
-                }
-              : undefined
-          }
           onChange={setBotSetupDraft}
           onSubmit={createAgent}
           onCancel={botList().length > 0 ? cancelBotSetup : undefined}
         />
       </Show>
-      <Show when={peopleEnabled && !botSetupOpen() && activeDirectMember()} keyed>
+      <Show when={!blockedRemoteServer() && activePeopleEnabled() && !botSetupOpen() && activeDirectMember()} keyed>
         {(member) => (
           <Loading
             fallback={
@@ -463,7 +470,10 @@ function WorkspaceShell(props: {
               snapshot={directConversations()[member.id]}
               loading={directConversationLoading()}
               loadError={directConversationError()}
-              hasOlder={directConversationPages()[member.id]?.hasOlder ?? false}
+              hasOlder={
+                activeServerSupportsCapability("conversation-pagination") &&
+                (directConversationPages()[member.id]?.hasOlder ?? false)
+              }
               loadingOlder={directOlderLoading()[member.id] === true}
               olderError={directOlderErrors()[member.id] ?? null}
               typing={directTypingMemberIds().has(member.id)}
@@ -476,7 +486,7 @@ function WorkspaceShell(props: {
           </Loading>
         )}
       </Show>
-      <Show when={!botSetupOpen() && !activeDirectMember()}>
+      <Show when={!blockedRemoteServer() && !botSetupOpen() && !activeDirectMember()}>
         <Conversation
           agentStatus={agentStatus()}
           providerRuntimeStatuses={
@@ -510,7 +520,11 @@ function WorkspaceShell(props: {
             activeBot() ? (conversationReads()[activeBot()?.id ?? ""]?.firstUnreadMessageId ?? null) : null
           }
           loaded={activeBot() ? conversationLoaded()[activeBot()?.id ?? ""] === true : false}
-          hasOlder={activeBot() ? (conversationPages()[activeBot()?.id ?? ""]?.hasOlder ?? false) : false}
+          hasOlder={
+            activeServerSupportsCapability("conversation-pagination") && activeBot()
+              ? (conversationPages()[activeBot()?.id ?? ""]?.hasOlder ?? false)
+              : false
+          }
           discontinuous={activeBot() ? conversationWindowModes()[activeBot()?.id ?? ""] === "around" : false}
           loadingOlder={activeBot() ? conversationOlderLoading()[activeBot()?.id ?? ""] === true : false}
           olderError={activeBot() ? (conversationOlderErrors()[activeBot()?.id ?? ""] ?? null) : null}
@@ -521,10 +535,10 @@ function WorkspaceShell(props: {
           server={activeServer()}
           presence={teamPresence()}
           currentUserEmail={props.account().email}
-          browserEnabled={!appProps.landingPreview}
+          browserEnabled={!appProps.landingPreview && activeServerSupportsCapability("browser-control")}
           remoteDesktopSessionActive={Boolean(activeRemoteDesktopSession())}
           remoteDesktopVisible={remoteDesktopWorkspaceVisible()}
-          remoteDesktopEnabled={!appProps.landingPreview}
+          remoteDesktopEnabled={!appProps.landingPreview && activeServerSupportsCapability("remote-desktop")}
           prompt={activePrompt()}
           approval={activeBot() ? pendingApprovals()[activeBot()?.id ?? ""] : undefined}
           browserTakeover={activeBrowserTakeover()}
@@ -549,6 +563,7 @@ function WorkspaceShell(props: {
           }
           onTypingChange={setTeamTyping}
           onAnswerPrompt={answerPrompt}
+          onPromptResolutionPresented={presentPromptResolution}
           onRespondToApproval={respondToApproval}
           onRespondToBrowserTakeover={respondToBrowserTakeover}
           onCancelQueuedMessage={cancelQueuedMessage}
@@ -564,6 +579,53 @@ function WorkspaceShell(props: {
       </Show>
       <WorkspaceOverlays account={props.account} />
     </div>
+  );
+}
+
+function RemoteCompatibilityScreen(props: { server: ServerSummary; onRetry: () => Promise<void> }) {
+  const title = () => {
+    if (props.server.issue?.code === "client_update_required") return "Update this OpenBot app";
+    if (props.server.issue?.code === "host_update_required") return `Update OpenBot on ${props.server.name}`;
+    return "The host returned unsafe data";
+  };
+  const description = () => {
+    if (props.server.issue?.code === "client_update_required") {
+      return "This app supports only older protocols than the host. Update this app, then try again.";
+    }
+    if (props.server.issue?.code === "host_update_required") {
+      return "The host supports only older protocols than this app. Update the host, then try again.";
+    }
+    return "OpenBot stopped this connection because a known payload was invalid. Your current workspace data was not changed.";
+  };
+  const compatibility = () => props.server.compatibility;
+  const details = () => [
+    ["Client version", compatibility()?.localAppVersion ?? "Unknown"],
+    ["Host version", compatibility()?.hostAppVersion ?? "Unknown"],
+    ["Negotiated protocol", compatibility()?.negotiatedProtocol ?? "None"],
+  ];
+
+  return (
+    <main class="remote-compatibility-screen" aria-labelledby="remote-compatibility-title">
+      <Alert class="remote-compatibility-alert" tone="danger" role="alert">
+        <AlertContent>
+          <h1 class="ui-alert-title" id="remote-compatibility-title">
+            {title()}
+          </h1>
+          <AlertDescription>{description()}</AlertDescription>
+        </AlertContent>
+      </Alert>
+      <dl class="remote-compatibility-details">
+        <For each={details()}>
+          {([label, value]) => (
+            <div>
+              <dt>{label}</dt>
+              <dd>{value}</dd>
+            </div>
+          )}
+        </For>
+      </dl>
+      <Button onClick={() => void props.onRetry()}>Retry</Button>
+    </main>
   );
 }
 
@@ -612,6 +674,7 @@ function WorkspaceOverlays(props: {
     revokeServerInvite,
     updateStatus,
     runUpdateAction,
+    updateAccountAvatar,
     providerRuntimeStatuses,
     providerRuntimeDownloadsAvailable,
     downloadProviderRuntime,
@@ -715,6 +778,8 @@ function WorkspaceOverlays(props: {
           appInfo={appInfo()}
           updateStatus={updateStatus()}
           onUpdateAction={runUpdateAction}
+          account={props.account()}
+          onUpdateAccountAvatar={updateAccountAvatar}
           agentStatus={agentStatus()}
           providerRuntimeStatuses={
             activeServer()?.kind === "local" && providerRuntimeDownloadsAvailable()

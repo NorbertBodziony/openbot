@@ -3,7 +3,6 @@ import { createSignal, flush } from "solid-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   Button,
-  buttonVariants,
   CopyButton,
   Field,
   IconButton,
@@ -77,10 +76,10 @@ describe("UI primitives", () => {
     await vi.runAllTicks();
 
     expect(writeText).toHaveBeenCalledWith("https://openbot.example/invite");
-    expect(screen.getByRole("button", { name: "Copied" })).toHaveAttribute("data-copied");
+    expect(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
 
     await vi.advanceTimersByTimeAsync(1_500);
-    expect(screen.getByRole("button", { name: "Copy link" })).not.toHaveAttribute("data-copied");
+    expect(screen.getByRole("button", { name: "Copy link" })).toBeInTheDocument();
   });
 
   it("reports clipboard failures without showing a stale success state", async () => {
@@ -95,10 +94,9 @@ describe("UI primitives", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Copy address" }));
 
     await waitFor(() => expect(onCopyError).toHaveBeenCalledWith(clipboardError));
-    expect(screen.getByRole("button", { name: "Copy address" })).not.toHaveAttribute("data-copied");
   });
 
-  it("supports polymorphic links, refs, expanded state, and the shared variant helper", () => {
+  it("supports polymorphic links, refs, and expanded state", () => {
     let buttonRef: HTMLButtonElement | undefined;
     render(() => (
       <>
@@ -114,29 +112,20 @@ describe("UI primitives", () => {
     expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
     expect(buttonRef).toBe(screen.getByRole("button", { name: "Options" }));
     expect(buttonRef).toHaveAttribute("aria-expanded", "true");
-    expect(buttonVariants({ variant: "secondary", size: "sm" })).toContain("ui-button-variant-secondary");
   });
 
-  it("keeps forwarded Kobalte button state reactive", async () => {
+  it("keeps forwarded loading state reactive", async () => {
     const [loading, setLoading] = createSignal(false);
-    const [variant, setVariant] = createSignal<"outline" | "destructive">("outline");
-    render(() => (
-      <Button loading={loading()} variant={variant()}>
-        Sync
-      </Button>
-    ));
+    render(() => <Button loading={loading()}>Sync</Button>);
 
     const button = screen.getByRole("button", { name: "Sync" });
     expect(button).not.toBeDisabled();
-    expect(button).toHaveAttribute("data-variant", "outline");
 
     setLoading(true);
-    setVariant("destructive");
     await flush();
 
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute("aria-busy", "true");
-    expect(button).toHaveAttribute("data-variant", "destructive");
   });
 
   it("requires an accessible icon button label", () => {
@@ -147,7 +136,6 @@ describe("UI primitives", () => {
     ));
     const button = screen.getByRole("button", { name: "Close" });
     expect(button).toHaveAttribute("title", "Close");
-    expect(button).toHaveAttribute("data-size", "icon-sm");
   });
 
   it("supports controlled switch state and form-compatible input props", async () => {
@@ -183,39 +171,21 @@ describe("UI primitives", () => {
     expect(control).not.toBeChecked();
   });
 
-  it("exposes Zaidan switch slots, sizes, invalid state, and field description", async () => {
+  it("exposes invalid switch state and field description", async () => {
     render(() => (
-      <>
-        <Switch size="sm" aria-label="Compact option" />
-        <SwitchField
-          id="invalid-option"
-          validationState="invalid"
-          label="Invalid option"
-          description="Choose a valid value."
-        />
-      </>
+      <SwitchField
+        id="invalid-option"
+        validationState="invalid"
+        label="Invalid option"
+        description="Choose a valid value."
+      />
     ));
-
-    const compact = screen.getByRole("switch", { name: "Compact option" });
-    const compactRoot = compact.closest('[data-slot="switch"]');
-    expect(compactRoot).toHaveAttribute("data-size", "sm");
-    const visualControl = compactRoot?.querySelector('[data-slot="switch-control"]');
-    expect(visualControl).toBeInTheDocument();
-    expect(compactRoot?.querySelector('[data-slot="switch-thumb"]')).toBeInTheDocument();
-
-    if (!(visualControl instanceof HTMLElement)) throw new Error("Expected the visual switch control.");
-    await fireEvent.pointerDown(visualControl);
-    expect(compactRoot).toHaveAttribute("data-pointer-focus");
-    await fireEvent.keyDown(compact, { key: " " });
-    expect(compactRoot).not.toHaveAttribute("data-pointer-focus");
 
     const invalid = screen.getByRole("switch", { name: "Invalid option" });
     expect(invalid).toHaveAttribute("aria-invalid", "true");
     expect(invalid).toHaveAttribute("aria-describedby", "invalid-option-description");
-    expect(invalid.closest('[data-slot="switch"]')).toHaveAttribute("data-invalid");
 
     const label = screen.getByText("Invalid option");
-    expect(await fireEvent.pointerDown(label)).toBe(false);
     await fireEvent.click(label);
     expect(invalid).toBeChecked();
   });

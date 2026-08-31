@@ -26,7 +26,7 @@ export const DOWNLOAD_PLATFORMS: Record<DownloadPlatform, DownloadPlatformDetail
     id: "macos",
     label: "macOS",
     status: "Available",
-    description: "macOS 12+ · Apple silicon",
+    description: "macOS 13+ · Apple silicon",
     action: "Download for macOS",
     available: true,
     href: OPENBOT_DOWNLOAD_LINKS.macos,

@@ -1,8 +1,9 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { realpath, stat } from "node:fs/promises";
-import { basename } from "node:path";
+import { constants } from "node:fs";
+import { lstat, open, realpath, stat } from "node:fs/promises";
+import { basename, isAbsolute } from "node:path";
 import { expandAttachmentReferences } from "@openbot/contracts/attachment-references";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
@@ -15,7 +16,9 @@ import type {
   AgentEvent,
   AgentModelOption,
   AgentPromptQuestion,
+  AgentPromptResolution,
   AgentProviderStatus,
+  AgentRuntimeSnapshot,
   AgentStatus,
   AttachmentDataInput,
   AttachmentSummary,
@@ -60,6 +63,12 @@ import type {
   UpdateRoutineInput,
 } from "@openbot/contracts/ipc";
 import {
+  AGENT_RUNTIME_ATTENTION_LIMIT,
+  AGENT_RUNTIME_PERMISSION_PATHS_LIMIT,
+  AGENT_RUNTIME_QUESTION_DESCRIPTION_LIMIT,
+  AGENT_RUNTIME_QUESTION_HEADER_LIMIT,
+  AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT,
+  AGENT_RUNTIME_TEXT_LIMIT,
   isImageGenerationAspectRatio,
   isMessageReaction,
   isReasoningEffort,
@@ -89,7 +98,7 @@ import {
   snapshotFromThread,
   sortConversationMessages,
 } from "./conversation-snapshots";
-import type { DeliveryContext, MailboxStore } from "./mailbox-store";
+import type { DeliveryContext, GeneratedAttachmentSource, MailboxStore } from "./mailbox-store";
 import { OPENBOT_DYNAMIC_TOOLS } from "./openbot-tools";
 import {
   type AccountLoginCompletedResult,
@@ -142,8 +151,13 @@ interface AgentBrowserHost {
 interface PendingPrompt {
   client: AgentClient;
   id: RequestId;
+  responseKind: "dynamic-tool" | "user-input";
   params: unknown;
-  resolve?: (result: DynamicToolResult) => void;
+  botId: string;
+  publicThreadId: string;
+  turnId: string;
+  messageId: string;
+  questions: AgentPromptQuestion[];
 }
 
 interface PendingApproval {
@@ -188,6 +202,11 @@ interface PendingDelta {
 interface ImageGenerationOperation {
   interrupted: boolean;
   promise: Promise<void> | null;
+}
+
+interface OpenBotToolResponse {
+  success: boolean;
+  contentItems: Array<{ type: "inputText"; text: string }>;
 }
 
 interface PendingCodexLogin {
@@ -324,6 +343,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #pendingPrompts = new Map<RequestId, PendingPrompt>();
   readonly #pendingApprovals = new Map<RequestId, PendingApproval>();
   readonly #pendingBrowserTakeovers = new Map<RequestId, PendingBrowserTakeover>();
+  readonly #failedTurns = new Map<string, string>();
   readonly #itemTurns = new Map<string, string>();
   readonly #imageGenerationOperations = new Map<string, ImageGenerationOperation>();
   readonly #interruptedTurns = new Set<string>();
@@ -341,6 +361,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #pendingRuntimeRefreshes = new Set<string>();
   readonly #pendingDeltas = new Map<string, PendingDelta>();
   readonly #pendingMemoryMutations = new Map<string, PendingMemoryMutation[]>();
+  readonly #responseAttachmentCommands = new Map<string, Promise<OpenBotToolResponse>>();
   readonly #memoryEpochs = new Map<string, number>();
   #routineTimer: NodeJS.Timeout | null = null;
   #status: AgentStatus = structuredClone(INITIAL_STATUS);
@@ -411,6 +432,84 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   listBots(): BotSummary[] {
     return this.#store.list();
+  }
+
+  getRuntimeSnapshot(): AgentRuntimeSnapshot {
+    const bots = this.listBots();
+    const runtimeBots: AgentRuntimeSnapshot["bots"] = bots.map((bot) => ({
+      id: bot.id,
+      name: bot.name,
+      notifications: bot.notifications,
+      preview: bot.preview.slice(0, AGENT_RUNTIME_TEXT_LIMIT),
+      updatedAt: bot.updatedAt,
+      avatarSeed: bot.avatarSeed,
+      avatarHue: bot.avatarHue,
+      avatarUrl: bot.avatarUrl,
+    }));
+    const activeTurns: AgentRuntimeSnapshot["activeTurns"] = [];
+    const latestMessages: AgentRuntimeSnapshot["latestMessages"] = [];
+    for (const bot of bots) {
+      const live = this.#snapshots.get(bot.id);
+      const liveLatest = [...(live?.messages ?? [])]
+        .reverse()
+        .find(
+          (message) =>
+            (message.author === "assistant" || message.author === "agent") &&
+            message.itemType !== "commentary" &&
+            message.itemType !== "question_prompt" &&
+            message.itemType !== "agent_attachment",
+        );
+      const persisted =
+        !live || !liveLatest
+          ? this.#store.database.readConversationRuntime(bot.id, bot.threadId)
+          : { activeTurnId: null, latestMessage: null };
+      const activeTurnId = live ? live.activeTurnId : persisted.activeTurnId;
+      if (activeTurnId && bot.threadId) {
+        activeTurns.push({ botId: bot.id, threadId: bot.threadId, turnId: activeTurnId });
+      }
+      const latest = liveLatest ?? persisted.latestMessage;
+      if (latest) {
+        latestMessages.push({
+          botId: bot.id,
+          id: latest.id,
+          text: latest.text.slice(0, AGENT_RUNTIME_TEXT_LIMIT),
+          createdAt: latest.createdAt,
+        });
+      }
+    }
+    const attentionComplete =
+      this.#pendingPrompts.size + this.#pendingApprovals.size + this.#pendingBrowserTakeovers.size <=
+      AGENT_RUNTIME_ATTENTION_LIMIT;
+    let remainingAttention = AGENT_RUNTIME_ATTENTION_LIMIT;
+    const pendingPrompts = [...this.#pendingPrompts.values()].slice(0, remainingAttention).map((pending) => ({
+      requestId: pending.id,
+      botId: pending.botId,
+      threadId: pending.publicThreadId,
+      turnId: pending.turnId,
+      questions: pending.questions.map(compactRuntimeQuestion),
+    }));
+    remainingAttention -= pendingPrompts.length;
+    const pendingApprovals = [...this.#pendingApprovals.values()]
+      .slice(0, remainingAttention)
+      .map((pending) => compactRuntimeApproval(pending.approval));
+    remainingAttention -= pendingApprovals.length;
+    const pendingBrowserTakeovers = [...this.#pendingBrowserTakeovers.values()]
+      .slice(0, remainingAttention)
+      .map((pending) => structuredClone(pending.request));
+    return fitRuntimeSnapshot({
+      bots: runtimeBots,
+      activeTurns,
+      work: this.#mailbox.listRuntimeWork(
+        bots.map((bot) => bot.id),
+        this.#failedTurns,
+      ),
+      latestMessages,
+      attentionComplete,
+      pendingPrompts,
+      pendingApprovals,
+      pendingBrowserTakeovers,
+      failedTurns: [...this.#failedTurns].map(([botId, turnId]) => ({ botId, turnId })),
+    });
   }
 
   listMemories(botId: string): BotMemory[] {
@@ -685,6 +784,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       errors.push(error);
     }
     this.#snapshots.delete(bot.id);
+    this.#failedTurns.delete(bot.id);
     this.#lastConversationSignatures.delete(bot.id);
     this.#drainingBots.delete(bot.id);
     this.#scheduledDrains.delete(bot.id);
@@ -828,6 +928,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#clearPendingPrompts();
     this.#clearPendingBrowserTakeovers();
     this.#pendingApprovals.clear();
+    this.#failedTurns.clear();
     const pendingLogin = this.#codexLogin;
     this.#codexLogin = null;
     const claudeLogin = this.#claudeLogin;
@@ -856,6 +957,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         .filter((promise): promise is Promise<void> => promise !== null),
     );
     this.#imageGenerationOperations.clear();
+    await Promise.allSettled([...this.#responseAttachmentCommands.values()]);
+    this.#responseAttachmentCommands.clear();
     this.#interruptedTurns.clear();
     this.#ignoredTurns.clear();
     this.#setStatus({ phase: "stopped", message: null });
@@ -929,6 +1032,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   listQueue(botId: string): QueueSnapshot {
     return this.#mailbox.listQueue(botId);
+  }
+
+  acknowledgeFailedTurn(botId: string, turnId: string): void {
+    if (this.#failedTurns.get(botId) !== turnId) return;
+    this.#failedTurns.delete(botId);
+    this.#emitRuntimeSnapshot();
   }
 
   async cancelQueuedMessage(botId: string, deliveryId: string): Promise<void> {
@@ -1125,16 +1234,27 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async respondToPrompt(input: RespondToPromptInput): Promise<void> {
     const pending = this.#pendingPrompts.get(input.requestId);
     if (!pending) throw new Error("This prompt is no longer active.");
+    const questionIds = new Set(pending.questions.map((question) => question.id));
+    if (Object.keys(input.answers).some((id) => !questionIds.has(id))) {
+      throw new Error("A prompt answer does not match an active question.");
+    }
     this.#markRoutineRunningForTurn(getString(pending.params, "turnId"));
 
+    const result =
+      pending.responseKind === "dynamic-tool"
+        ? dynamicPromptResult(input.answers)
+        : {
+            answers: Object.fromEntries(Object.entries(input.answers).map(([id, values]) => [id, { answers: values }])),
+          };
+    pending.client.respond(pending.id, result);
     this.#pendingPrompts.delete(input.requestId);
-    if (pending.resolve) {
-      pending.resolve(dynamicPromptResult(input.answers));
-      return;
+    this.#emit({ type: "agent-input-resolved", kind: "prompt", requestId: input.requestId, botId: pending.botId });
+    try {
+      this.#resolvePersistedPrompt(pending, promptResolution(pending.questions, input.answers));
+    } catch (error) {
+      this.#emitError("prompt_persistence_failed", error, pending.botId);
     }
-
-    const answers = Object.fromEntries(Object.entries(input.answers).map(([id, values]) => [id, { answers: values }]));
-    pending.client.respond(pending.id, { answers });
+    this.#emitRuntimeSnapshot();
   }
 
   async respondToApproval(input: RespondToApprovalInput): Promise<void> {
@@ -1157,6 +1277,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       pending.client.respond(pending.id, { decision: input.decision });
     }
     this.#pendingApprovals.delete(input.requestId);
+    this.#emit({
+      type: "agent-input-resolved",
+      kind: "approval",
+      requestId: input.requestId,
+      botId: pending.approval.botId,
+    });
+    this.#emitRuntimeSnapshot();
   }
 
   async respondToBrowserTakeover(input: RespondToBrowserTakeoverInput): Promise<void> {
@@ -1875,7 +2002,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     void client.stop().catch(() => undefined);
     this.#loadedThreads.clear();
     this.#clearCompactionRuntime();
-    this.#clearPendingPrompts();
+    this.#clearPendingPrompts(client);
     this.#clearPendingBrowserTakeovers();
     this.#pendingApprovals.clear();
     this.#browser.clearControls();
@@ -2049,7 +2176,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           }
           if (request.params.namespace === "openbot") {
             if (request.params.tool === "ask_user") {
-              client.respond(request.id, await this.#surfaceDynamicPrompt(client, request));
+              this.#surfaceDynamicPrompt(client, request);
               return;
             }
             client.respond(request.id, await this.#handleOpenBotTool(request.params));
@@ -2088,12 +2215,35 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  async #handleOpenBotTool(params: DynamicToolCallParams): Promise<{
-    success: boolean;
-    contentItems: Array<{ type: "inputText"; text: string }>;
-  }> {
+  async #handleOpenBotTool(params: DynamicToolCallParams): Promise<OpenBotToolResponse> {
     const senderBotId = this.#threadToBot.get(params.threadId);
     if (!senderBotId) throw new Error("The sending OpenBot agent is unknown.");
+
+    if (params.tool === "attach_files_to_response") {
+      const args = params.arguments;
+      if (!isRecord(args) || !Array.isArray(args.paths)) throw new Error("paths must be an array of local files.");
+      if (
+        args.paths.length === 0 ||
+        args.paths.length > INPUT_LIMITS.attachments ||
+        !args.paths.every((path) => isString(path) && path.trim().length > 0 && path.length <= INPUT_LIMITS.path)
+      ) {
+        throw new Error(`paths must contain between 1 and ${INPUT_LIMITS.attachments} valid local file paths.`);
+      }
+
+      const messageId = responseAttachmentMessageId(params.threadId, params.turnId, params.callId);
+      const inFlight = this.#responseAttachmentCommands.get(messageId);
+      if (inFlight) return inFlight;
+
+      const command = this.#attachFilesToResponse(senderBotId, params, args.paths, messageId);
+      this.#responseAttachmentCommands.set(messageId, command);
+      try {
+        return await command;
+      } finally {
+        if (this.#responseAttachmentCommands.get(messageId) === command) {
+          this.#responseAttachmentCommands.delete(messageId);
+        }
+      }
+    }
 
     if (params.tool === "list_agents") {
       const agents = this.#store.list().map((bot) => {
@@ -2378,6 +2528,149 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       success: true,
       contentItems: [{ type: "inputText", text: JSON.stringify(receipt) }],
     };
+  }
+
+  async #attachFilesToResponse(
+    senderBotId: string,
+    params: DynamicToolCallParams,
+    paths: string[],
+    messageId: string,
+  ): Promise<OpenBotToolResponse> {
+    const publicThreadId = this.#publicThreadId(senderBotId, params.threadId);
+    const snapshot = this.#ensureSnapshot(senderBotId, publicThreadId);
+    const existing = snapshot.messages.find((message) => message.id === messageId);
+    if (existing) {
+      return openBotToolResult({
+        status: "attached",
+        messageId,
+        attachments: (existing.attachments ?? []).map((attachment) => ({
+          id: attachment.id,
+          name: attachment.name,
+        })),
+      });
+    }
+
+    const sources = await this.#openAgentAttachmentSources(senderBotId, paths);
+    let attachments: AttachmentSummary[];
+    try {
+      attachments = await this.#mailbox.stageGeneratedAttachments({
+        sources,
+        ownerBotId: senderBotId,
+        ownerThreadId: publicThreadId,
+      });
+    } finally {
+      await Promise.allSettled(sources.map((source) => source.handle.close()));
+    }
+    const message: ConversationSnapshot["messages"][number] = {
+      id: messageId,
+      turnId: params.turnId,
+      author: "assistant",
+      source: "assistant",
+      text: "",
+      createdAt: new Date().toISOString(),
+      status: "completed",
+      itemType: "agent_attachment",
+      attachments,
+    };
+    snapshot.messages.push(message);
+    sortConversationMessages(snapshot.messages);
+    try {
+      const persisted = this.#mailbox.persistGeneratedAttachmentsWithConversation(
+        snapshot,
+        "response.attachments-added",
+        {
+          turnId: params.turnId,
+          messageId,
+          attachmentCount: attachments.length,
+        },
+        attachments.map((attachment) => attachment.id),
+      );
+      snapshot.revision = persisted.revision;
+      this.#lastConversationSignatures.set(snapshot.botId, conversationContentSignature(snapshot));
+    } catch (error) {
+      const messageIndex = snapshot.messages.findIndex((candidate) => candidate.id === messageId);
+      if (messageIndex >= 0) snapshot.messages.splice(messageIndex, 1);
+      await this.#mailbox.discardStagedGeneratedAttachments(attachments.map((attachment) => attachment.id));
+      throw error;
+    }
+    try {
+      this.#emit({ type: "conversation", snapshot: structuredClone(snapshot) });
+    } catch (error) {
+      try {
+        this.#emitError("conversation_publication_failed", error, senderBotId);
+      } catch {
+        // A committed attachment remains successful even if event listeners fail.
+      }
+    }
+    return openBotToolResult({
+      status: "attached",
+      messageId,
+      attachments: attachments.map((attachment) => ({ id: attachment.id, name: attachment.name })),
+    });
+  }
+
+  async #openAgentAttachmentSources(botId: string, paths: string[]): Promise<GeneratedAttachmentSource[]> {
+    const results = await Promise.allSettled(paths.map((path) => this.#openAgentAttachmentSource(botId, path)));
+    const sources = results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") {
+      await Promise.allSettled(sources.map((source) => source.handle.close()));
+      throw failure.reason;
+    }
+    if (sources.length !== new Set(sources.map((source) => source.path)).size) {
+      await Promise.allSettled(sources.map((source) => source.handle.close()));
+      throw new Error("Duplicate attachment paths are not allowed.");
+    }
+    return sources;
+  }
+
+  async #openAgentAttachmentSource(botId: string, inputPath: string): Promise<GeneratedAttachmentSource> {
+    const bot = this.#requireKnownBot(botId);
+    const value = inputPath.trim();
+    const [workspaceRoot, sharedRoot] = await Promise.all([
+      realpath(bot.workspacePath),
+      realpath(this.#store.sharedRoot),
+    ]);
+    const normalized = value.replaceAll("\\", "/");
+    const sharedReference = ["~/OpenBot/Shared/", "OpenBot/Shared/", "Shared/"].some((prefix) =>
+      normalized.startsWith(prefix),
+    );
+    const candidates = isAbsolute(value)
+      ? [value]
+      : sharedReference
+        ? [sharedPathFromInput(this.#store.sharedRoot, value)]
+        : [
+            workspacePathFromInput(bot.workspacePath, bot.id, value),
+            sharedPathFromInput(this.#store.sharedRoot, value),
+          ];
+
+    for (const candidate of candidates) {
+      try {
+        if ((await lstat(candidate)).isSymbolicLink()) continue;
+        const resolved = await realpath(candidate);
+        if (!isWithin(workspaceRoot, resolved) && !isWithin(sharedRoot, resolved)) continue;
+        const authorizedMetadata = await lstat(resolved);
+        if (authorizedMetadata.isSymbolicLink() || !authorizedMetadata.isFile()) continue;
+        const handle = await open(resolved, constants.O_RDONLY | constants.O_NOFOLLOW);
+        try {
+          const openedMetadata = await handle.stat();
+          if (
+            !openedMetadata.isFile() ||
+            openedMetadata.dev !== authorizedMetadata.dev ||
+            openedMetadata.ino !== authorizedMetadata.ino
+          ) {
+            throw new Error("The attachment changed while it was being opened.");
+          }
+          return { path: resolved, handle };
+        } catch (error) {
+          await handle.close();
+          throw error;
+        }
+      } catch {
+        // Try the other permitted root for relative paths.
+      }
+    }
+    throw new Error("Attachment files must exist inside this agent's workspace or the OpenBot shared directory.");
   }
 
   #stageMemoryMutation(turnId: string, mutation: PendingMemoryMutation): void {
@@ -2722,15 +3015,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     for (const bot of this.#store.list()) {
       if (!bot.threadId) continue;
       const snapshot = this.#store.database.readConversation(bot.id, bot.threadId);
-      if (!snapshot.activeTurnId) continue;
       const turnId = snapshot.activeTurnId;
-      snapshot.activeTurnId = null;
+      let changed = false;
+      if (turnId) {
+        snapshot.activeTurnId = null;
+        changed = true;
+      }
       for (const message of snapshot.messages) {
-        if (message.turnId === turnId && message.status === "streaming") {
+        if (message.questionPrompt?.resolution === null) {
+          message.questionPrompt.resolution = { status: "expired" };
+          changed = true;
+        }
+        if (turnId && message.turnId === turnId && message.status === "streaming") {
           message.status = "interrupted";
           markIncompleteImageGeneration(message, "interrupted");
+          changed = true;
         }
       }
+      if (!changed) continue;
       const persisted = this.#store.database.persistConversation(snapshot, "turn.interrupted-by-restart", { turnId });
       this.#snapshots.set(bot.id, persisted);
     }
@@ -2881,6 +3183,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const publicThreadId = this.#publicThreadId(botId, threadId);
         const snapshot = this.#ensureSnapshot(botId, publicThreadId);
         snapshot.activeTurnId = turnId;
+        this.#failedTurns.delete(botId);
         const origin = this.#mailbox.startingDeliveryForBot(botId)?.delivery.sender.kind ?? "unknown";
         const association = this.#associateStartedTurn(botId, turnId, snapshot);
         this.#turnAssociations.set(turnId, association);
@@ -3003,6 +3306,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#browser.endControl(this.#publicThreadId(botId, threadId), turnId);
     const snapshot = this.#ensureSnapshot(botId, threadId);
     snapshot.activeTurnId = null;
+    if (status === "failed") this.#failedTurns.set(botId, turnId);
+    else this.#failedTurns.delete(botId);
     for (const message of snapshot.messages) {
       if (this.#itemTurns.get(message.id) !== turnId || message.status !== "streaming") continue;
       message.status = normalizeCompletionStatus(status);
@@ -3016,6 +3321,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           message.author === "assistant" &&
           message.turnId === turnId &&
           message.itemType !== "commentary" &&
+          message.itemType !== "question_prompt" &&
           message.text.trim(),
       );
     if (deliveries.length > 0) {
@@ -3466,7 +3772,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const pendingThreadId = getString(pending.params, "threadId");
       const pendingTurnId = getString(pending.params, "turnId");
       if (pendingThreadId === threadId && pendingTurnId === turnId) {
-        pending.resolve?.(dynamicPromptResult({}));
+        this.#resolvePersistedPrompt(pending, { status: "expired" });
         this.#pendingPrompts.delete(requestId);
       }
     }
@@ -3484,11 +3790,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  #clearPendingPrompts(): void {
-    for (const pending of this.#pendingPrompts.values()) {
-      pending.resolve?.(dynamicPromptResult({}));
+  #clearPendingPrompts(client?: AgentClient): void {
+    for (const [requestId, pending] of this.#pendingPrompts) {
+      if (client && pending.client !== client) continue;
+      this.#resolvePersistedPrompt(pending, { status: "expired" });
+      this.#pendingPrompts.delete(requestId);
     }
-    this.#pendingPrompts.clear();
   }
 
   #clearPendingBrowserTakeovers(): void {
@@ -3508,6 +3815,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       requestId: pending.request.requestId,
       botId: pending.request.botId,
     });
+    this.#emitRuntimeSnapshot();
     pending.resolve(browserTakeoverResult(decision));
   }
 
@@ -3550,14 +3858,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     });
   }
 
-  #surfaceDynamicPrompt(client: AgentClient, request: AppServerRequest): Promise<DynamicToolResult> {
+  #surfaceDynamicPrompt(client: AgentClient, request: AppServerRequest): void {
     const threadId = getString(request.params, "threadId");
     const turnId = getString(request.params, "turnId");
     const botId = threadId ? this.#threadToBot.get(threadId) : undefined;
+    const publicThreadId = threadId && botId ? this.#publicThreadId(botId, threadId) : null;
     const args = getRecord(request.params, "arguments");
     const questions = promptQuestions(args);
-    if (!threadId || !turnId || !botId || questions.length === 0) {
-      return Promise.resolve({
+    if (!threadId || !turnId || !botId || !publicThreadId || !validPromptQuestions(questions)) {
+      client.respond(request.id, {
         success: false,
         contentItems: [
           {
@@ -3566,24 +3875,29 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           },
         ],
       });
+      return;
     }
 
-    return new Promise((resolve) => {
-      this.#pendingPrompts.set(request.id, {
-        client,
-        id: request.id,
-        params: request.params,
-        resolve,
-      });
-      this.#markRoutineNeedsAttention(turnId);
-      this.#emit({
-        type: "prompt",
-        requestId: request.id,
-        botId,
-        threadId: this.#publicThreadId(botId, threadId),
-        turnId,
-        questions,
-      });
+    const messageId = this.#persistQuestionPrompt(botId, publicThreadId, turnId, request.id, questions);
+    this.#pendingPrompts.set(request.id, {
+      client,
+      id: request.id,
+      responseKind: "dynamic-tool",
+      params: request.params,
+      botId,
+      publicThreadId,
+      turnId,
+      messageId,
+      questions,
+    });
+    this.#markRoutineNeedsAttention(turnId);
+    this.#emit({
+      type: "prompt",
+      requestId: request.id,
+      botId,
+      threadId: publicThreadId,
+      turnId,
+      questions,
     });
   }
 
@@ -3597,15 +3911,75 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
 
     const questions = promptQuestions(request.params);
-    this.#pendingPrompts.set(request.id, { client, id: request.id, params: request.params });
+    if (!validPromptQuestions(questions)) {
+      client.respond(request.id, { answers: {} });
+      return;
+    }
+    const publicThreadId = this.#publicThreadId(botId, threadId);
+    const messageId = this.#persistQuestionPrompt(botId, publicThreadId, turnId, request.id, questions);
+    this.#pendingPrompts.set(request.id, {
+      client,
+      id: request.id,
+      responseKind: "user-input",
+      params: request.params,
+      botId,
+      publicThreadId,
+      turnId,
+      messageId,
+      questions,
+    });
     this.#markRoutineNeedsAttention(turnId);
     this.#emit({
       type: "prompt",
       requestId: request.id,
       botId,
-      threadId: this.#publicThreadId(botId, threadId),
+      threadId: publicThreadId,
       turnId,
       questions,
+    });
+  }
+
+  #persistQuestionPrompt(
+    botId: string,
+    publicThreadId: string,
+    turnId: string,
+    requestId: RequestId,
+    questions: AgentPromptQuestion[],
+  ): string {
+    const snapshot = this.#ensureSnapshot(botId, publicThreadId);
+    const messageId = `question-prompt:${turnId}:${String(requestId)}`;
+    const existing = snapshot.messages.find((message) => message.id === messageId);
+    if (!existing) {
+      snapshot.messages.push({
+        id: messageId,
+        turnId,
+        author: "assistant",
+        source: "assistant",
+        text: questionPromptText(questions, null),
+        createdAt: new Date().toISOString(),
+        status: "completed",
+        itemType: "question_prompt",
+        questionPrompt: {
+          requestId,
+          questions: structuredClone(questions),
+          resolution: null,
+        },
+      });
+      this.#emitConversation(snapshot, "prompt.requested", { turnId, requestId });
+    }
+    return messageId;
+  }
+
+  #resolvePersistedPrompt(pending: PendingPrompt, resolution: AgentPromptResolution): void {
+    const snapshot = this.#ensureSnapshot(pending.botId, pending.publicThreadId);
+    const message = snapshot.messages.find((candidate) => candidate.id === pending.messageId);
+    if (!message?.questionPrompt || message.questionPrompt.resolution !== null) return;
+    message.questionPrompt.resolution = structuredClone(resolution);
+    message.text = questionPromptText(message.questionPrompt.questions, resolution);
+    this.#emitConversation(snapshot, "prompt.resolved", {
+      turnId: pending.turnId,
+      requestId: pending.id,
+      status: resolution.status,
     });
   }
 
@@ -3935,11 +4309,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     sortConversationMessages(snapshot.messages);
     const signature = conversationContentSignature(snapshot);
     if (this.#lastConversationSignatures.get(snapshot.botId) === signature) return;
-    this.#lastConversationSignatures.set(snapshot.botId, signature);
     if (snapshot.threadId) {
       const persisted = this.#store.database.persistConversation(snapshot, eventType, detail);
       snapshot.revision = persisted.revision;
     }
+    this.#lastConversationSignatures.set(snapshot.botId, signature);
     this.#emit({ type: "conversation", snapshot: structuredClone(snapshot) });
   }
 
@@ -3952,9 +4326,123 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     });
   }
 
+  #emitRuntimeSnapshot(): void {
+    this.#emit({ type: "runtime-snapshot", snapshot: this.getRuntimeSnapshot() });
+  }
+
   #emit(event: AgentEvent): void {
     this.emit("event", event);
   }
+}
+
+function compactRuntimeQuestion(
+  question: AgentPromptQuestion,
+): AgentRuntimeSnapshot["pendingPrompts"][number]["questions"][number] {
+  return {
+    id: question.id,
+    header: question.header.slice(0, AGENT_RUNTIME_QUESTION_HEADER_LIMIT),
+    question: question.question.slice(0, AGENT_RUNTIME_TEXT_LIMIT),
+    isSecret: question.isSecret,
+    options:
+      question.options?.map((option) => ({
+        label: option.label,
+        description: option.description.slice(0, AGENT_RUNTIME_QUESTION_DESCRIPTION_LIMIT),
+      })) ?? null,
+  };
+}
+
+function compactRuntimeApproval(approval: AgentApproval): AgentRuntimeSnapshot["pendingApprovals"][number] {
+  const pathTruncated = (path: string) => path.length > AGENT_RUNTIME_TEXT_LIMIT;
+  return {
+    ...approval,
+    truncated:
+      [approval.command, approval.cwd, approval.reason, approval.grantRoot].some(
+        (value) => value !== null && value.length > AGENT_RUNTIME_TEXT_LIMIT,
+      ) ||
+      Boolean(
+        approval.permissions &&
+          (approval.permissions.fileSystem.read.length > AGENT_RUNTIME_PERMISSION_PATHS_LIMIT ||
+            approval.permissions.fileSystem.write.length > AGENT_RUNTIME_PERMISSION_PATHS_LIMIT ||
+            approval.permissions.fileSystem.read.some(pathTruncated) ||
+            approval.permissions.fileSystem.write.some(pathTruncated)),
+      ),
+    command: approval.command?.slice(0, AGENT_RUNTIME_TEXT_LIMIT) ?? null,
+    cwd: approval.cwd?.slice(0, AGENT_RUNTIME_TEXT_LIMIT) ?? null,
+    reason: approval.reason?.slice(0, AGENT_RUNTIME_TEXT_LIMIT) ?? null,
+    grantRoot: approval.grantRoot?.slice(0, AGENT_RUNTIME_TEXT_LIMIT) ?? null,
+    permissions: approval.permissions
+      ? {
+          fileSystem: {
+            read: approval.permissions.fileSystem.read
+              .slice(0, AGENT_RUNTIME_PERMISSION_PATHS_LIMIT)
+              .map((path) => path.slice(0, AGENT_RUNTIME_TEXT_LIMIT)),
+            write: approval.permissions.fileSystem.write
+              .slice(0, AGENT_RUNTIME_PERMISSION_PATHS_LIMIT)
+              .map((path) => path.slice(0, AGENT_RUNTIME_TEXT_LIMIT)),
+          },
+          network: approval.permissions.network,
+        }
+      : null,
+  };
+}
+
+function fitRuntimeSnapshot(snapshot: AgentRuntimeSnapshot): AgentRuntimeSnapshot {
+  if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
+
+  snapshot.bots = snapshot.bots.map((bot) => ({ ...bot, preview: "", avatarUrl: null }));
+  if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
+
+  snapshot.work = [];
+  if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
+
+  snapshot.latestMessages = snapshot.latestMessages.map((message) => ({ ...message, text: "" }));
+  if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
+
+  snapshot.pendingPrompts = snapshot.pendingPrompts.map((prompt) => ({
+    ...prompt,
+    questions: prompt.questions.map((question) => ({
+      ...question,
+      header: question.header.slice(0, 40),
+      question: question.question.slice(0, 80),
+      options: question.options?.map((option) => ({ label: option.label, description: "" })) ?? null,
+    })),
+  }));
+  snapshot.pendingApprovals = snapshot.pendingApprovals.map((approval) => ({
+    ...approval,
+    truncated: true,
+    command: approval.command?.slice(0, 80) ?? null,
+    cwd: approval.cwd?.slice(0, 80) ?? null,
+    reason: approval.reason?.slice(0, 80) ?? null,
+    grantRoot: approval.grantRoot?.slice(0, 80) ?? null,
+    permissions: approval.permissions
+      ? { fileSystem: { read: [], write: [] }, network: approval.permissions.network }
+      : null,
+  }));
+  if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
+
+  while (
+    runtimeSnapshotBytes(snapshot) > AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT &&
+    snapshot.pendingPrompts.length + snapshot.pendingApprovals.length + snapshot.pendingBrowserTakeovers.length > 0
+  ) {
+    snapshot.attentionComplete = false;
+    if (snapshot.pendingBrowserTakeovers.length > 0) snapshot.pendingBrowserTakeovers.pop();
+    else if (snapshot.pendingApprovals.length > 0) snapshot.pendingApprovals.pop();
+    else snapshot.pendingPrompts.pop();
+  }
+  if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
+
+  snapshot.bots = snapshot.bots.map((bot) => ({
+    ...bot,
+    name: bot.name.slice(0, 40),
+    preview: "",
+    avatarSeed: bot.id,
+    avatarUrl: null,
+  }));
+  return snapshot;
+}
+
+function runtimeSnapshotBytes(snapshot: AgentRuntimeSnapshot): number {
+  return Buffer.byteLength(JSON.stringify({ type: "runtime-snapshot", snapshot }));
 }
 
 function routineToolArguments(value: unknown, allowedKeys: readonly string[]): DynamicRecord {
@@ -3997,6 +4485,11 @@ function openBotToolResult(value: unknown): {
     success: true,
     contentItems: [{ type: "inputText", text: JSON.stringify(value) }],
   };
+}
+
+function responseAttachmentMessageId(threadId: string, turnId: string, callId: string): string {
+  const digest = createHash("sha256").update(`${threadId}\0${turnId}\0${callId}`).digest("hex").slice(0, 32);
+  return `agent-attachments:${digest}`;
 }
 
 function conversationContentSignature(snapshot: ConversationSnapshot): string {
@@ -4135,6 +4628,7 @@ function developerInstructions(bot: BotSummary, sharedRoot: string, memories: Bo
     "Memory tools always apply to your own agent profile. They cannot change another agent's memories.",
     "Use openbot.react_to_user_message when the user's message contains an obvious positive or negative emotional moment where a reaction would feel natural. Clear wins or celebrations, affection, gratitude, playful humor, sadness, disappointment, frustration, loneliness, empathy, and strong approval should normally receive one fitting reaction; do not be so conservative that you skip these obvious cases. Negative emotions deserve an empathetic reaction such as ❤️, 😔, or 🫂 rather than being excluded as sensitive. An emoji written inside your answer does not count as a message reaction: when you use an inline emoji to acknowledge the user's emotion, that is a strong signal that you should also call the reaction tool. Skip neutral, purely informational, or routine messages, and never react on every turn. A reaction never replaces, shortens, or changes your normal answer: always provide the same complete response you would give without it, and do not mention the reaction in that response.",
     "Use openbot.send_message to send asynchronous messages or local files to one or more teammates. Always set replyToMessageId when answering a teammate. Replies are never forwarded automatically.",
+    "When the user should receive a local file that you created, call openbot.attach_files_to_response with its path before your final answer. Use it for screenshots, images, charts, diagrams, reports, and other output files. Do not only say that you sent a file, and do not only mention its path. OpenBot copies the file and displays image attachments in the conversation.",
     "When you need clarification or the user asks you to ask a question, use openbot.ask_user with 1–3 short questions instead of writing the question as a normal assistant message. Use options for choices and wait for the tool result before continuing. Claude should use AskUserQuestion for the same purpose.",
     "OpenBot renders GitHub-flavored Markdown tables in your final responses. Use a table when structured data or a comparison is clearer than prose; include a header row, a separator row with at least three dashes per column, and at least one data row. For a feature-by-option comparison, use at least three columns and put exactly ✓ or — in every option cell; OpenBot will render that Markdown as a comparison table. Example: | Feature | Personal | Enterprise | followed by | --- | --- | --- | and rows such as | Priority support | — | ✓ |.",
     "When a teammate asks you to do work, complete it and explicitly send the result back. When you receive a reply, summarize it for the user without creating an acknowledgement loop.",
@@ -4364,6 +4858,59 @@ function promptQuestions(params: unknown): AgentPromptQuestion[] {
           }))
         : null,
     }));
+}
+
+function validPromptQuestions(questions: AgentPromptQuestion[]): boolean {
+  return (
+    questions.length > 0 &&
+    questions.length <= INPUT_LIMITS.promptQuestions &&
+    new Set(questions.map((question) => question.id)).size === questions.length &&
+    questions.every(
+      (question) =>
+        question.id.length > 0 &&
+        question.id.length <= INPUT_LIMITS.identifier &&
+        question.header.length <= INPUT_LIMITS.promptHeader &&
+        question.question.length > 0 &&
+        question.question.length <= INPUT_LIMITS.promptQuestion &&
+        (question.options === null ||
+          (question.options.length <= INPUT_LIMITS.promptOptions &&
+            question.options.every(
+              (option) =>
+                option.label.length > 0 &&
+                option.label.length <= INPUT_LIMITS.promptOptionLabel &&
+                option.description.length <= INPUT_LIMITS.promptOptionDescription,
+            ))),
+    )
+  );
+}
+
+function questionPromptText(questions: AgentPromptQuestion[], resolution: AgentPromptResolution | null): string {
+  const responses = resolution?.status === "answered" ? resolution.responses : null;
+  return questions
+    .map((question) => {
+      const lines = [`Question: ${question.question}`];
+      if (!responses) return lines.join("\n");
+      const response = responses[question.id];
+      if (!response || response.status === "skipped") lines.push("Answer: Skipped");
+      else if (question.isSecret || !response.answers) lines.push("Answer: Private answer");
+      else lines.push(`Answer: ${response.answers.join(", ")}`);
+      return lines.join("\n");
+    })
+    .join("\n\n");
+}
+
+function promptResolution(questions: AgentPromptQuestion[], answers: Record<string, string[]>): AgentPromptResolution {
+  if (Object.keys(answers).length === 0) return { status: "cancelled" };
+  return {
+    status: "answered",
+    responses: Object.fromEntries(
+      questions.map((question) => {
+        const values = answers[question.id] ?? [];
+        if (values.length === 0) return [question.id, { status: "skipped" }];
+        return [question.id, question.isSecret ? { status: "answered" } : { status: "answered", answers: [...values] }];
+      }),
+    ),
+  };
 }
 
 function dynamicPromptResult(answers: Record<string, string[]>): DynamicToolResult {

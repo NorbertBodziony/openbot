@@ -12,7 +12,6 @@ import { render } from "@solidjs/web";
 import { flush } from "solid-js";
 
 export type AvatarMotion = "hover" | "always" | "idle" | "working" | "connecting";
-
 export interface BloubAvatarProfile {
   shape: ShapeId;
   color: ColorId;

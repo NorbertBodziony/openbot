@@ -1,6 +1,6 @@
-import type { BotSummary } from "@openbot/contracts/ipc";
+import type { BotSummary, ConversationMessage } from "@openbot/contracts/ipc";
 import { describe, expect, it } from "vitest";
-import { toBotProfile } from "./app-message-projection";
+import { botProfilesEqual, readStateForMessages, toBotProfile } from "./app-message-projection";
 
 describe("toBotProfile", () => {
   it("preserves marketplace installation metadata for the renderer", () => {
@@ -31,4 +31,59 @@ describe("toBotProfile", () => {
 
     expect(toBotProfile(bot).marketplaceSource).toEqual(bot.marketplaceSource);
   });
+
+  it("detects metadata changes hidden by the formatted preview time", () => {
+    const first = toBotProfile(botSummary("2026-08-29T10:00:01.000Z"));
+    const second = toBotProfile(botSummary("2026-08-29T10:00:40.000Z"));
+
+    expect(first.time).toBe(second.time);
+    expect(first.preview).toBe(second.preview);
+    expect(botProfilesEqual(first, second)).toBe(false);
+  });
 });
+
+describe("readStateForMessages", () => {
+  it("does not count response attachments as unread replies", () => {
+    const messages: ConversationMessage[] = [
+      {
+        id: "attachment",
+        author: "assistant",
+        text: "",
+        createdAt: "2026-08-30T11:00:00.000Z",
+        status: "completed",
+        itemType: "agent_attachment",
+      },
+      {
+        id: "answer",
+        author: "assistant",
+        text: "Here is the screenshot.",
+        createdAt: "2026-08-30T11:01:00.000Z",
+        status: "completed",
+      },
+    ];
+
+    expect(
+      readStateForMessages({ unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null }, messages),
+    ).toMatchObject({ unreadCount: 1, firstUnreadMessageId: "answer" });
+  });
+});
+
+function botSummary(updatedAt: string): BotSummary {
+  return {
+    id: "chief",
+    name: "Chief",
+    title: "Coordinator",
+    description: "Coordinates work.",
+    notifications: true,
+    provider: "codex",
+    model: "gpt-5.6-luna",
+    reasoningEffort: "medium",
+    threadId: "thread-chief",
+    workspacePath: "/tmp/chief",
+    preview: "Repeated result",
+    updatedAt,
+    avatarSeed: "chief",
+    avatarHue: null,
+    avatarUrl: null,
+  };
+}

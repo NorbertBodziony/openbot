@@ -8,12 +8,16 @@ import {
   type AttachmentImportEvent,
   type BotMemory,
   type BotSummary,
+  type BrowserPreview,
   type ConversationMessage,
   type ConversationPage,
   type ConversationReadState,
   type ConversationSearchPage,
   type ConversationWithReadState,
   type DraftAttachment,
+  type DynamicIslandAction,
+  type DynamicIslandPreference,
+  type DynamicIslandPresentation,
   type FilePreview,
   type ImportAttachmentsInput,
   type InstalledSkill,
@@ -23,6 +27,9 @@ import {
   isAvatarSeed,
   isBotMemory,
   isConversationMessage,
+  isDynamicIslandAction,
+  isDynamicIslandPreference,
+  isDynamicIslandPresentation,
   isReasoningEffort,
   isRoutine,
   isRoutineRun,
@@ -68,7 +75,16 @@ function invokeAgent<TResult>(
   payload: unknown = null,
   decoder: (value: unknown) => TResult,
 ): Promise<TResult> {
-  const request: AgentIpcRequest = { serverId: selectedServerId, payload };
+  return invokeAgentForServer(selectedServerId, channel, payload, decoder);
+}
+
+function invokeAgentForServer<TResult>(
+  serverId: string,
+  channel: string,
+  payload: unknown,
+  decoder: (value: unknown) => TResult,
+): Promise<TResult> {
+  const request: AgentIpcRequest = { serverId, payload };
   return ipcRenderer.invoke(channel, request).then(decoder);
 }
 
@@ -114,6 +130,26 @@ function record(value: unknown, label: string): DynamicRecord {
   return value;
 }
 
+function decodeBrowserPreview(value: unknown): BrowserPreview {
+  const preview = record(value, "browser preview");
+  const dataUrl = requiredString(preview, "dataUrl");
+  const width = requiredNumber(preview, "width");
+  const height = requiredNumber(preview, "height");
+  if (
+    dataUrl.length > 2_000_000 ||
+    !/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(dataUrl) ||
+    !Number.isSafeInteger(width) ||
+    width <= 0 ||
+    width > 960 ||
+    !Number.isSafeInteger(height) ||
+    height <= 0 ||
+    height > 600
+  ) {
+    throw new Error("Invalid browser preview.");
+  }
+  return { dataUrl, width, height };
+}
+
 function nullableString(value: unknown, label: string): value is string | null {
   if (value !== null && !isString(value)) throw new Error(`Invalid ${label}.`);
   return true;
@@ -122,6 +158,21 @@ function nullableString(value: unknown, label: string): value is string | null {
 function decodeVoid(value: unknown): undefined {
   if (value !== undefined && value !== null) throw new Error("IPC returned unexpected data.");
   return undefined;
+}
+
+function decodeDynamicIslandPreference(value: unknown): DynamicIslandPreference {
+  if (!isDynamicIslandPreference(value)) throw new Error("Invalid Dynamic Island preference response.");
+  return value;
+}
+
+function decodeDynamicIslandPresentation(value: unknown): DynamicIslandPresentation {
+  if (!isDynamicIslandPresentation(value)) throw new Error("Invalid Dynamic Island presentation.");
+  return value;
+}
+
+function decodeDynamicIslandAction(value: unknown): DynamicIslandAction {
+  if (isDynamicIslandAction(value)) return value;
+  throw new Error("Invalid Dynamic Island action.");
 }
 
 function decodeRoutine(value: unknown): Routine {
@@ -718,6 +769,37 @@ const openbotApi: OpenBotDesktopApi = {
   saveSetup: (input) => ipcRenderer.invoke(IPC_CHANNELS.saveSetup, input),
   getAnalyticsPreference: () => ipcRenderer.invoke(IPC_CHANNELS.getAnalyticsPreference),
   setAnalyticsPreference: (input) => ipcRenderer.invoke(IPC_CHANNELS.setAnalyticsPreference, input),
+  dynamicIsland: {
+    getPreference: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.dynamicIslandGetPreference).then(decodeDynamicIslandPreference),
+    setPreference: (input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.dynamicIslandSetPreference, input).then(decodeDynamicIslandPreference),
+    publishPresentation: (presentation) =>
+      ipcRenderer.invoke(IPC_CHANNELS.dynamicIslandPublishPresentation, presentation).then(decodeVoid),
+    getPresentation: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.dynamicIslandGetPresentation).then(decodeDynamicIslandPresentation),
+    onPreference: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, preference: unknown) =>
+        listener(decodeDynamicIslandPreference(preference));
+      ipcRenderer.on(IPC_CHANNELS.dynamicIslandPreference, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.dynamicIslandPreference, handler);
+    },
+    onPresentation: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, presentation: unknown) =>
+        listener(decodeDynamicIslandPresentation(presentation));
+      ipcRenderer.on(IPC_CHANNELS.dynamicIslandPresentation, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.dynamicIslandPresentation, handler);
+    },
+    performAction: (action) => ipcRenderer.invoke(IPC_CHANNELS.dynamicIslandPerformAction, action).then(decodeVoid),
+    performHaptic: () => ipcRenderer.invoke(IPC_CHANNELS.dynamicIslandPerformHaptic).then(decodeVoid),
+    onAction: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, action: unknown) =>
+        listener(decodeDynamicIslandAction(action));
+      ipcRenderer.on(IPC_CHANNELS.dynamicIslandAction, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.dynamicIslandAction, handler);
+    },
+    setInteractive: (input) => ipcRenderer.invoke(IPC_CHANNELS.dynamicIslandSetInteractive, input).then(decodeVoid),
+  },
   getMacPermissions: () => ipcRenderer.invoke(IPC_CHANNELS.getMacPermissions),
   requestMacPermission: (permission) => ipcRenderer.invoke(IPC_CHANNELS.requestMacPermission, permission),
   openExternal: (destination) => ipcRenderer.invoke(IPC_CHANNELS.openExternal, destination),
@@ -809,11 +891,13 @@ const openbotApi: OpenBotDesktopApi = {
     testRoutine: (input) => invokeAgent(IPC_CHANNELS.agentTestRoutine, input, decodeRoutineRun),
     listRoutineRuns: (input) => invokeAgent(IPC_CHANNELS.agentListRoutineRuns, input, decodeRoutineRuns),
     readConversation: (botId) => invokeAgent(IPC_CHANNELS.agentReadConversation, botId, decodeConversation),
-    readConversationPage: (input) => invokeAgent(IPC_CHANNELS.agentReadConversationPage, input, decodeConversationPage),
+    readConversationPage: (input, serverId = selectedServerId) =>
+      invokeAgentForServer(serverId, IPC_CHANNELS.agentReadConversationPage, input, decodeConversationPage),
     searchConversationMessages: (input) =>
       invokeAgent(IPC_CHANNELS.agentSearchConversationMessages, input, decodeConversationSearchPage),
     listConversationReads: () => invokeAgent(IPC_CHANNELS.agentListConversationReads, null, decodeReadStates),
-    markConversationRead: (input) => invokeAgent(IPC_CHANNELS.agentMarkConversationRead, input, decodeReadState),
+    markConversationRead: (input, serverId = selectedServerId) =>
+      invokeAgentForServer(serverId, IPC_CHANNELS.agentMarkConversationRead, input, decodeReadState),
     chooseAttachments: (input) => invokeAgent(IPC_CHANNELS.agentChooseAttachments, input, decodeAttachments),
     onAttachmentImport: (listener) => {
       attachmentImportListeners.add(listener);
@@ -829,6 +913,7 @@ const openbotApi: OpenBotDesktopApi = {
     sendMessage: (input) => invokeAgent(IPC_CHANNELS.agentSendMessage, input, decodeReceipt),
     setMessageReaction: (input) => invokeAgent(IPC_CHANNELS.agentSetMessageReaction, input, decodeVoid),
     listQueue: (botId) => invokeAgent(IPC_CHANNELS.agentListQueue, botId, decodeQueue),
+    acknowledgeFailedTurn: (input) => invokeAgent(IPC_CHANNELS.agentAcknowledgeFailedTurn, input, decodeVoid),
     cancelQueuedMessage: (input) => invokeAgent(IPC_CHANNELS.agentCancelQueuedMessage, input, decodeVoid),
     steerQueuedMessage: (input) => invokeAgent(IPC_CHANNELS.agentSteerQueuedMessage, input, decodeVoid),
     updateQueuedMessage: (input) => invokeAgent(IPC_CHANNELS.agentUpdateQueuedMessage, input, decodeVoid),
@@ -845,6 +930,11 @@ const openbotApi: OpenBotDesktopApi = {
       ipcRenderer.on(IPC_CHANNELS.agentEvent, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.agentEvent, handler);
     },
+    onScopedEvent: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: ScopedAgentEvent) => listener(payload);
+      ipcRenderer.on(IPC_CHANNELS.agentEvent, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.agentEvent, handler);
+    },
   },
   browser: {
     open: (input) => ipcRenderer.invoke(IPC_CHANNELS.browserOpen, input),
@@ -853,8 +943,24 @@ const openbotApi: OpenBotDesktopApi = {
     reload: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.browserReload, tabId),
     close: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.browserClose, tabId),
     listTabs: () => ipcRenderer.invoke(IPC_CHANNELS.browserListTabs),
+    getDisplayState: () => ipcRenderer.invoke(IPC_CHANNELS.browserGetDisplayState),
     getControlState: () => ipcRenderer.invoke(IPC_CHANNELS.browserGetControlState),
+    capturePreview: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.browserCapturePreview, tabId).then(decodeBrowserPreview),
     setVisible: (input) => ipcRenderer.invoke(IPC_CHANNELS.browserSetVisible, input),
+    onDisplayState: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, state: Parameters<typeof listener>[0]) => listener(state);
+      ipcRenderer.on(IPC_CHANNELS.browserDisplayStateEvent, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.browserDisplayStateEvent, handler);
+    },
+    openPictureInPicture: (bounds) => ipcRenderer.invoke(IPC_CHANNELS.browserPictureInPictureOpen, bounds),
+    closePictureInPicture: () => ipcRenderer.invoke(IPC_CHANNELS.browserPictureInPictureClose),
+    dockPictureInPicture: () => ipcRenderer.invoke(IPC_CHANNELS.browserPictureInPictureDock),
+    hidePictureInPicture: () => ipcRenderer.invoke(IPC_CHANNELS.browserPictureInPictureHide),
+    onPictureInPictureEvent: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, event: Parameters<typeof listener>[0]) => listener(event);
+      ipcRenderer.on(IPC_CHANNELS.browserPictureInPictureEvent, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.browserPictureInPictureEvent, handler);
+    },
   },
   update: {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.updateGetStatus),
@@ -887,6 +993,7 @@ const openbotApi: OpenBotDesktopApi = {
       selectedServerId = server.id;
       return server;
     },
+    retryConnection: (serverId) => ipcRenderer.invoke(IPC_CHANNELS.serversRetryConnection, serverId),
     remove: (serverId) => ipcRenderer.invoke(IPC_CHANNELS.serversRemove, serverId),
     getPresence: () => ipcRenderer.invoke(IPC_CHANNELS.serversGetPresence),
     getPresenceFor: (serverId) => ipcRenderer.invoke(IPC_CHANNELS.serversGetPresenceFor, serverId),

@@ -7,6 +7,12 @@ export interface BrowserTab {
   ownerBotId: string | null;
 }
 
+export interface BrowserPreview {
+  dataUrl: string;
+  width: number;
+  height: number;
+}
+
 export type BrowserControlPhase = "acting" | "waiting";
 
 export type BrowserControlAction =
@@ -45,6 +51,18 @@ export interface BrowserBounds {
   height: number;
 }
 
+export type BrowserViewTarget = "main" | "picture-in-picture";
+
+export interface BrowserDisplayState {
+  tabs: BrowserTab[];
+  activeTabId: string | null;
+}
+
+export type BrowserPictureInPictureEvent =
+  | { type: "bounds-changed"; bounds: BrowserBounds }
+  | { type: "dock" }
+  | { type: "hide" };
+
 export interface BrowserOpenInput {
   url: string;
   ownerThreadId?: string | null;
@@ -62,4 +80,5 @@ export interface BrowserNavigateInput {
 export interface BrowserVisibilityInput {
   visible: boolean;
   bounds?: BrowserBounds;
+  target?: BrowserViewTarget;
 }

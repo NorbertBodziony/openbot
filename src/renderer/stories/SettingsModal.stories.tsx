@@ -1,4 +1,10 @@
-import type { AgentStatus, ProviderRuntimeSnapshot, UpdateStatus } from "@openbot/contracts/ipc";
+import type {
+  AgentStatus,
+  AvatarImageInput,
+  CentralAuthUser,
+  ProviderRuntimeSnapshot,
+  UpdateStatus,
+} from "@openbot/contracts/ipc";
 import { createSignal } from "solid-js";
 import { expect, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
@@ -7,6 +13,12 @@ import { SettingsModal } from "../src/components/SettingsModal";
 import { Button, Heading, Text } from "../src/components/ui";
 
 const storyAppInfo = { name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" } as const;
+const storyAccount: CentralAuthUser = {
+  id: "user-1",
+  email: "person@example.com",
+  name: "Norbert",
+  avatarUrl: null,
+};
 const storyUpdateStatus: UpdateStatus = {
   phase: "idle",
   currentVersion: "0.2.1",
@@ -40,6 +52,14 @@ function SettingsModalStory(props: { initialOpen: boolean; providerDownloads?: b
   const [open, setOpen] = createSignal(props.initialOpen);
   const [value, setValue] = createSignal({ ...DEFAULT_GENERAL_SETTINGS });
   const [updateStatus, setUpdateStatus] = createSignal<UpdateStatus>(storyUpdateStatus);
+  const [account, setAccount] = createSignal<CentralAuthUser>({ ...storyAccount });
+
+  async function updateAccountAvatar(image: AvatarImageInput | null): Promise<void> {
+    const avatarUrl = image
+      ? `data:${image.mimeType};base64,${btoa(Array.from(image.bytes, (byte) => String.fromCharCode(byte)).join(""))}`
+      : null;
+    setAccount((current) => ({ ...current, avatarUrl }));
+  }
 
   return (
     <main class="foundation-story foundation-interaction-stage">
@@ -57,6 +77,8 @@ function SettingsModalStory(props: { initialOpen: boolean; providerDownloads?: b
         onValueChange={setValue}
         appInfo={storyAppInfo}
         updateStatus={updateStatus()}
+        account={account()}
+        onUpdateAccountAvatar={updateAccountAvatar}
         onUpdateAction={async () => {
           setUpdateStatus({ ...storyUpdateStatus, phase: "up-to-date", checkedAt: new Date().toISOString() });
         }}
@@ -81,6 +103,8 @@ const meta = {
     appInfo: storyAppInfo,
     updateStatus: storyUpdateStatus,
     onUpdateAction: fn(async () => undefined),
+    account: storyAccount,
+    onUpdateAccountAvatar: fn(async () => undefined),
   },
   parameters: {
     layout: "fullscreen",
@@ -141,7 +165,7 @@ export const Interactive: Story = {
     const profileTab = body.getByRole("tab", { name: "Profile" });
     await expect(profileTab).toHaveAttribute("aria-selected", "true");
     await expect(body.getByRole("heading", { name: "Profile", level: 2 })).toBeVisible();
-    await expect(body.getByRole("textbox", { name: "Display name" })).toHaveValue("OpenBot user");
+    await expect(body.getByRole("textbox", { name: "Display name" })).toHaveValue("Norbert");
 
     await userEvent.click(generalTab);
     await expect(generalTab).toHaveAttribute("aria-selected", "true");

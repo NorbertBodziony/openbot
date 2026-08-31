@@ -1,5 +1,6 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
+  type AcknowledgeFailedTurnInput,
   type AgentIpcRequest,
   type CancelQueuedMessageInput,
   type ChooseAttachmentsInput,
@@ -430,6 +431,14 @@ export function parseCancelQueuedMessage(value: unknown): CancelQueuedMessageInp
   };
 }
 
+export function parseAcknowledgeFailedTurn(value: unknown): AcknowledgeFailedTurnInput {
+  if (!isObject(value)) throw new Error("Invalid failed turn acknowledgement.");
+  return {
+    botId: requireString(value.botId, "botId"),
+    turnId: requireString(value.turnId, "turnId"),
+  };
+}
+
 export function parseSteerQueuedMessage(value: unknown): SteerQueuedMessageInput {
   if (!isObject(value)) throw new Error("Invalid queued steer request.");
   return {
@@ -505,6 +514,7 @@ export function parsePromptResponse(value: unknown): RespondToPromptInput {
   const entries = Object.entries(value.answers);
   if (entries.length > INPUT_LIMITS.promptQuestions) throw new Error("Too many prompt answers.");
   const answers: Record<string, string[]> = {};
+  let totalTextLength = 0;
   for (const [key, answer] of entries) {
     if (
       key.length > INPUT_LIMITS.identifier ||
@@ -513,6 +523,10 @@ export function parsePromptResponse(value: unknown): RespondToPromptInput {
       !answer.every((item) => isString(item) && item.length <= INPUT_LIMITS.promptAnswerText)
     ) {
       throw new Error("Invalid prompt answer.");
+    }
+    totalTextLength += answer.reduce((length, item) => length + item.length, 0);
+    if (totalTextLength > INPUT_LIMITS.promptAnswersTotalText) {
+      throw new Error("Prompt answers are too long.");
     }
     answers[key] = answer;
   }

@@ -4,8 +4,27 @@ import { ROUTINE_SCHEDULE_JSON_SCHEMA } from "./routine-tool-schema";
 export const OPENBOT_DYNAMIC_TOOLS = {
   type: "namespace",
   name: "openbot",
-  description: "Discover and asynchronously message persistent OpenBot teammates.",
+  description: "Attach files to the current response and work with persistent OpenBot teammates.",
   tools: [
+    {
+      type: "function",
+      name: "attach_files_to_response",
+      description:
+        "Attach existing local files to the current response for the user. Use this after creating screenshots, charts, diagrams, reports, or other files that the user should receive. OpenBot copies each file and shows image previews in the conversation.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          paths: {
+            type: "array",
+            items: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.path },
+            minItems: 1,
+            maxItems: INPUT_LIMITS.attachments,
+          },
+        },
+        required: ["paths"],
+        additionalProperties: false,
+      },
+    },
     {
       type: "function",
       name: "list_agents",
@@ -153,18 +172,18 @@ export const OPENBOT_DYNAMIC_TOOLS = {
             items: {
               type: "object",
               properties: {
-                id: { type: "string" },
-                header: { type: "string" },
-                question: { type: "string" },
+                id: { type: "string", maxLength: INPUT_LIMITS.identifier },
+                header: { type: "string", maxLength: INPUT_LIMITS.promptHeader },
+                question: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.promptQuestion },
                 isSecret: { type: "boolean" },
                 options: {
                   type: "array",
-                  maxItems: 5,
+                  maxItems: INPUT_LIMITS.promptOptions,
                   items: {
                     type: "object",
                     properties: {
-                      label: { type: "string" },
-                      description: { type: "string" },
+                      label: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.promptOptionLabel },
+                      description: { type: "string", maxLength: INPUT_LIMITS.promptOptionDescription },
                     },
                     required: ["label"],
                     additionalProperties: false,

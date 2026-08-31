@@ -13,14 +13,19 @@ import type {
   UpdateStatus,
 } from "./ipc-app-auth";
 import type {
+  BrowserBounds,
   BrowserControlState,
+  BrowserDisplayState,
   BrowserNavigateInput,
   BrowserOpenInput,
+  BrowserPictureInPictureEvent,
+  BrowserPreview,
   BrowserTab,
   BrowserVisibilityInput,
 } from "./ipc-browser";
 import type {
   AccountUsage,
+  AcknowledgeFailedTurnInput,
   AgentEvent,
   AgentModelOption,
   AgentProviderId,
@@ -56,6 +61,7 @@ import type {
   RespondToPromptInput,
   Routine,
   RoutineRun,
+  ScopedAgentEvent,
   SearchConversationMessagesInput,
   SendMessageInput,
   SetAgentAvatarInput,
@@ -70,6 +76,13 @@ import type {
   UpdateQueuedMessageInput,
   UpdateRoutineInput,
 } from "./ipc-conversation";
+import type {
+  DynamicIslandAction,
+  DynamicIslandPreference,
+  DynamicIslandPresentation,
+  SetDynamicIslandInteractiveInput,
+  SetDynamicIslandPreferenceInput,
+} from "./ipc-dynamic-island";
 import type {
   AgentPublicationPreview,
   AgentSubmission,
@@ -148,10 +161,10 @@ export interface AgentDesktopApi {
   testRoutine: (input: TestRoutineInput) => Promise<RoutineRun>;
   listRoutineRuns: (input: ListRoutineRunsInput) => Promise<RoutineRun[]>;
   readConversation: (botId: string) => Promise<ConversationWithReadState>;
-  readConversationPage: (input: ReadConversationPageInput) => Promise<ConversationPage>;
+  readConversationPage: (input: ReadConversationPageInput, serverId?: string) => Promise<ConversationPage>;
   searchConversationMessages: (input: SearchConversationMessagesInput) => Promise<ConversationSearchPage>;
   listConversationReads: () => Promise<Record<string, ConversationReadState>>;
-  markConversationRead: (input: MarkConversationReadInput) => Promise<ConversationReadState>;
+  markConversationRead: (input: MarkConversationReadInput, serverId?: string) => Promise<ConversationReadState>;
   chooseAttachments: (input: ChooseAttachmentsInput) => Promise<DraftAttachment[]>;
   onAttachmentImport: (listener: (event: AttachmentImportEvent) => void) => () => void;
   discardDraftAttachment: (attachmentId: string) => Promise<void>;
@@ -163,6 +176,7 @@ export interface AgentDesktopApi {
   sendMessage: (input: SendMessageInput) => Promise<QueuedMessageReceipt>;
   setMessageReaction: (input: SetMessageReactionInput) => Promise<void>;
   listQueue: (botId: string) => Promise<QueueSnapshot>;
+  acknowledgeFailedTurn: (input: AcknowledgeFailedTurnInput) => Promise<void>;
   cancelQueuedMessage: (input: CancelQueuedMessageInput) => Promise<void>;
   steerQueuedMessage: (input: SteerQueuedMessageInput) => Promise<void>;
   updateQueuedMessage: (input: UpdateQueuedMessageInput) => Promise<void>;
@@ -173,6 +187,7 @@ export interface AgentDesktopApi {
   respondToApproval: (input: RespondToApprovalInput) => Promise<void>;
   respondToBrowserTakeover: (input: RespondToBrowserTakeoverInput) => Promise<void>;
   onEvent: (listener: (event: AgentEvent) => void) => () => void;
+  onScopedEvent: (listener: (event: ScopedAgentEvent) => void) => () => void;
 }
 
 export interface MarketplaceAgentsDesktopApi {
@@ -191,8 +206,16 @@ export interface BrowserDesktopApi {
   reload: (tabId: string) => Promise<void>;
   close: (tabId: string) => Promise<void>;
   listTabs: () => Promise<BrowserTab[]>;
+  getDisplayState: () => Promise<BrowserDisplayState>;
   getControlState: () => Promise<BrowserControlState>;
+  capturePreview: (tabId: string) => Promise<BrowserPreview>;
   setVisible: (input: BrowserVisibilityInput) => Promise<void>;
+  onDisplayState: (listener: (state: BrowserDisplayState) => void) => () => void;
+  openPictureInPicture: (bounds?: BrowserBounds) => Promise<BrowserBounds>;
+  closePictureInPicture: () => Promise<void>;
+  dockPictureInPicture: () => Promise<void>;
+  hidePictureInPicture: () => Promise<void>;
+  onPictureInPictureEvent: (listener: (event: BrowserPictureInPictureEvent) => void) => () => void;
 }
 
 export interface UpdateDesktopApi {
@@ -215,6 +238,19 @@ export interface MaintenanceDesktopApi {
   exportDiagnostics: () => Promise<ExportResult>;
 }
 
+export interface DynamicIslandDesktopApi {
+  getPreference: () => Promise<DynamicIslandPreference>;
+  setPreference: (input: SetDynamicIslandPreferenceInput) => Promise<DynamicIslandPreference>;
+  publishPresentation: (presentation: DynamicIslandPresentation) => Promise<void>;
+  getPresentation: () => Promise<DynamicIslandPresentation>;
+  onPreference: (listener: (preference: DynamicIslandPreference) => void) => () => void;
+  onPresentation: (listener: (presentation: DynamicIslandPresentation) => void) => () => void;
+  performAction: (action: DynamicIslandAction) => Promise<void>;
+  performHaptic: () => Promise<void>;
+  onAction: (listener: (action: DynamicIslandAction) => void) => () => void;
+  setInteractive: (input: SetDynamicIslandInteractiveInput) => Promise<void>;
+}
+
 export interface ServersDesktopApi {
   list: () => Promise<ServerSummary[]>;
   select: (serverId: string) => Promise<ServerSummary[]>;
@@ -223,6 +259,7 @@ export interface ServersDesktopApi {
   previewInvite: (input: JoinServerInput) => Promise<InvitePreview>;
   takePendingInvite: () => Promise<string | null>;
   login: (input: LoginServerInput) => Promise<ServerSummary>;
+  retryConnection: (serverId: string) => Promise<ServerSummary>;
   remove: (serverId: string) => Promise<void>;
   getPresence: () => Promise<TeamPresenceSnapshot>;
   getPresenceFor: (serverId: string) => Promise<TeamPresenceSnapshot>;
@@ -297,6 +334,7 @@ export interface OpenBotDesktopApi {
   saveSetup: (input: SaveSetupInput) => Promise<AppSetupState>;
   getAnalyticsPreference: () => Promise<AnalyticsPreference>;
   setAnalyticsPreference: (input: SetAnalyticsPreferenceInput) => Promise<AnalyticsPreference>;
+  dynamicIsland: DynamicIslandDesktopApi;
   getMacPermissions: () => Promise<MacPermissionsState>;
   requestMacPermission: (permission: MacPermissionId) => Promise<MacPermissionsState>;
   openExternal: (destination: ExternalDestination) => Promise<void>;

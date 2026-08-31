@@ -1,4 +1,4 @@
-import { ipcMain } from "electron";
+import { type IpcMainInvokeEvent, ipcMain } from "electron";
 import { isTrustedRendererUrl } from "./trusted-renderer";
 
 export function handleTrusted<Result>(channel: string, handler: (...arguments_: unknown[]) => Result): void {
@@ -7,5 +7,17 @@ export function handleTrusted<Result>(channel: string, handler: (...arguments_: 
       throw new Error("Rejected IPC request from an untrusted renderer.");
     }
     return handler(...arguments_);
+  });
+}
+
+export function handleTrustedWithEvent<Result>(
+  channel: string,
+  handler: (event: IpcMainInvokeEvent, ...arguments_: unknown[]) => Result,
+): void {
+  ipcMain.handle(channel, (event, ...arguments_: unknown[]) => {
+    if (!isTrustedRendererUrl(event.senderFrame?.url)) {
+      throw new Error("Rejected IPC request from an untrusted renderer.");
+    }
+    return handler(event, ...arguments_);
   });
 }

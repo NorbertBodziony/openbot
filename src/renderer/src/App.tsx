@@ -4,6 +4,7 @@ import type {
   AgentEvent,
   AgentModelOption,
   AgentProviderId,
+  AgentRuntimeSnapshot,
   AgentStatus,
   AppInfo,
   AppSetupState,
@@ -22,6 +23,7 @@ import type {
   DirectMessageRealtimeEvent,
   DirectThreadSummary,
   DirectTypingRealtimeEvent,
+  DynamicIslandAction,
   HostStatus,
   InviteSummary,
   ProviderRuntimeSnapshot,
@@ -37,6 +39,7 @@ import type {
   UpdateStatus,
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
+import type { TeamProtocolV1Capability } from "@openbot/contracts/team-protocol/v1";
 import {
   createContext,
   createEffect,
@@ -66,8 +69,9 @@ import { playCompletionSoundForAgentEvent } from "./completion-sound";
 import { createFirstBotDraft, type FirstBotDraft } from "./components/FirstBotSetup";
 import { readPanelWidth } from "./components/PanelResizer";
 import type { SidebarAgentState } from "./components/Sidebar";
-import { Toaster } from "./components/ui";
+import { Toaster, toast } from "./components/ui";
 import type { BotMessage, BotProfile } from "./data";
+import { DynamicIslandCoordinator, reconcileQueuesWithRuntimeWork } from "./dynamic-island-coordinator";
 import {
   normalizeSidebarPeopleOrder,
   readSidebarPeopleOrder,
@@ -149,8 +153,24 @@ const EMPTY_TEAM_PRESENCE: TeamPresenceSnapshot = {
   updatedAt: "",
 };
 
+function serverSupportsCapability(server: ServerSummary | undefined, capability: TeamProtocolV1Capability): boolean {
+  return server?.kind !== "remote" || !server.compatibility || server.compatibility.capabilities.includes(capability);
+}
+
 type PromptEvent = Extract<AgentEvent, { type: "prompt" }>;
 type BrowserTakeoverEvent = Extract<AgentEvent, { type: "browser-takeover-requested" }>;
+
+function promptRequestKey(turnId: string | undefined, requestId: string | number | undefined): string | null {
+  if (!turnId || requestId === undefined) return null;
+  return JSON.stringify([turnId, String(requestId)]);
+}
+
+function messagePromptRequestKey(message: {
+  turnId?: string;
+  questionPrompt?: { requestId: string | number };
+}): string | null {
+  return promptRequestKey(message.turnId, message.questionPrompt?.requestId);
+}
 
 const LEFT_PANEL_STORAGE_KEY = "openbot:left-panel-width";
 const LEFT_PANEL_COLLAPSED_STORAGE_KEY = "openbot:left-panel-collapsed";
@@ -231,6 +251,7 @@ export function createAppController(props: AppProps = {}) {
   const [botList, setBotList] = createSignal<BotProfile[]>([]);
   const [modelOptions, setModelOptions] = createSignal<AgentModelOption[]>([]);
   const [activeBotId, setActiveBotId] = createSignal("");
+  const [agentChatOpenRevision, setAgentChatOpenRevision] = createSignal(0);
   const [liveMessages, setLiveMessages] = createSignal<Record<string, BotMessage[]>>({});
   const [uiErrors, setUiErrors] = createSignal<Record<string, BotMessage[]>>({});
   const [conversationLoaded, setConversationLoaded] = createSignal<Record<string, boolean>>({});
@@ -243,6 +264,7 @@ export function createAppController(props: AppProps = {}) {
   const [conversationOlderLoading, setConversationOlderLoading] = createSignal<Record<string, boolean>>({});
   const [conversationOlderErrors, setConversationOlderErrors] = createSignal<Record<string, string | null>>({});
   const [activeTurns, setActiveTurns] = createSignal<Record<string, string | null>>({});
+  const [failedTurns, setFailedTurns] = createSignal<Record<string, string | undefined>>({});
   const [unreadReplies, setUnreadReplies] = createSignal<Record<string, number>>({});
   const [conversationReads, setConversationReads] = createSignal<Record<string, ConversationReadState>>({});
   const [recentReplies, setRecentReplies] = createSignal<Record<string, boolean>>({});
@@ -264,6 +286,10 @@ export function createAppController(props: AppProps = {}) {
   const [pendingPrompts, setPendingPrompts] = createSignal<
     Record<string, PromptEvent | BrowserTakeoverEvent | undefined>
   >({});
+  const [presentedPromptResolutions, setPresentedPromptResolutions] = createSignal<Record<string, string | undefined>>(
+    {},
+  );
+  const [submittedPromptRequests, setSubmittedPromptRequests] = createSignal<Record<string, string | undefined>>({});
   const [pendingApprovals, setPendingApprovals] = createSignal<Record<string, AgentApproval | undefined>>({});
   const [appInfo, setAppInfo] = createSignal<AppInfo | null>(null);
   const [agentStatus, setAgentStatus] = createSignal<AgentStatus>(FALLBACK_STATUS);
@@ -299,6 +325,7 @@ export function createAppController(props: AppProps = {}) {
   const [appSettingsOpen, setAppSettingsOpen] = createSignal(false);
   const [generalSettings, setGeneralSettings] = createSignal<GeneralSettingsValue>(DEFAULT_GENERAL_SETTINGS);
   const [servers, setServers] = createSignal<ServerSummary[]>([]);
+  const [dynamicIslandLoadedServerId, setDynamicIslandLoadedServerId] = createSignal<string | null>(null);
   const [joinServerOpen, setJoinServerOpen] = createSignal(false);
   const [pendingInviteUrl, setPendingInviteUrl] = createSignal("");
   const [serverSettingsTargetId, setServerSettingsTargetId] = createSignal<string | null>(null);
@@ -337,13 +364,24 @@ export function createAppController(props: AppProps = {}) {
     { snapshot: ConversationSnapshot; markNewMessagesRead: boolean }
   >();
   const agentChatsToMarkRead = new Set<string>();
-  const autoReadAgentMessageIds = new Map<string, string>();
+  const agentChatsRetriedOnOpen = new Set<string>();
+  let explicitlyOpenedAgentChatId: string | null = null;
+  const autoReadAgentMessages = new Map<
+    string,
+    | { messageId: string; status: "pending"; optimisticState: ConversationReadState | null }
+    | { messageId: string; status: "succeeded"; state: ConversationReadState }
+  >();
+  const agentChatsToRetryRead = new Set<string>();
   const recentReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const conversationPageRequests = new Map<string, number>();
+  const conversationReadOperations = new Map<string, Promise<void>>();
   const queueSnapshotRequests = new Map<string, number>();
   const completedTurnByBot = new Map<string, string>();
   const pendingProviderConnections = new Map<AgentProviderId, ReturnType<typeof desktopAnalytics.scope>>();
+  const dynamicIslandCoordinator = new DynamicIslandCoordinator();
+  const dynamicIslandConnectedServers = new Set(["local"]);
   let conversationFrame: number | undefined;
+  let dynamicIslandPresentationScheduled = false;
   let directConversationRequest = 0;
   let serverSettingsRequest = 0;
   let serverSettingsRestoreTarget: HTMLElement | null = null;
@@ -356,6 +394,54 @@ export function createAppController(props: AppProps = {}) {
   let analyticsOpened = false;
   let analyticsVersionRecorded = false;
   let appInfoLoadedFromHost = false;
+  let pendingCompatibilityRetryServerId: string | null = null;
+
+  function applyServerSummaries(value: ServerSummary[]): void {
+    const previous = new Map(servers().map((server) => [server.id, server]));
+    for (const server of value) {
+      const sequence = server.connectionSequence ?? 0;
+      const previousSequence = previous.get(server.id)?.connectionSequence ?? 0;
+      const compatibility = server.compatibility;
+      if (
+        server.kind === "remote" &&
+        sequence > previousSequence &&
+        compatibility?.hostAppVersion &&
+        compatibility.hostAppVersion !== compatibility.localAppVersion
+      ) {
+        toast.warning(`Different OpenBot versions on ${server.name}`, {
+          description: `The connection uses protocol ${compatibility.negotiatedProtocol}. Some newer features may be unavailable. Client ${compatibility.localAppVersion}; host ${compatibility.hostAppVersion}.`,
+        });
+      }
+    }
+    setServers(value);
+    const retryTarget = value.find(
+      (server) => server.id === pendingCompatibilityRetryServerId && server.active && server.state === "online",
+    );
+    const negotiatedTarget = value.find((server) => {
+      const oldCompatibility = previous.get(server.id)?.compatibility;
+      return (
+        server.kind === "remote" &&
+        server.active &&
+        server.state === "online" &&
+        oldCompatibility?.hostAppVersion === null &&
+        Boolean(server.compatibility?.hostAppVersion)
+      );
+    });
+    const loadTarget = retryTarget ?? negotiatedTarget;
+    if (loadTarget) {
+      pendingCompatibilityRetryServerId = null;
+      void selectServer(loadTarget.id, false).catch((error) => {
+        toast.error("Could not load the remote workspace", {
+          description: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
+  }
+
+  function activeServerSupportsCapability(capability: TeamProtocolV1Capability): boolean {
+    const server = servers().find((candidate) => candidate.active);
+    return serverSupportsCapability(server, capability);
+  }
 
   function analyticsAgentProperties(botId: string) {
     const bot = botList().find((candidate) => candidate.id === botId);
@@ -424,21 +510,54 @@ export function createAppController(props: AppProps = {}) {
   function updateGeneralSettings(value: GeneralSettingsValue): void {
     const previous = generalSettings();
     setGeneralSettings(value);
-    if (previous.productAnalytics === value.productAnalytics) return;
-    desktopAnalytics.setTrackingEnabled(value.productAnalytics);
-    setAnalyticsPreferenceLoaded(value.productAnalytics);
-    void window.openbot
-      .setAnalyticsPreference({ enabled: value.productAnalytics })
-      .then((preference) => {
-        desktopAnalytics.setTrackingEnabled(preference.enabled);
-        setAnalyticsPreferenceLoaded(preference.enabled);
-        setGeneralSettings((current) => ({ ...current, productAnalytics: preference.enabled }));
-      })
-      .catch(() => {
-        desktopAnalytics.setTrackingEnabled(previous.productAnalytics);
-        setAnalyticsPreferenceLoaded(previous.productAnalytics);
-        setGeneralSettings(previous);
-      });
+    if (previous.productAnalytics !== value.productAnalytics) {
+      desktopAnalytics.setTrackingEnabled(value.productAnalytics);
+      setAnalyticsPreferenceLoaded(value.productAnalytics);
+      void window.openbot
+        .setAnalyticsPreference({ enabled: value.productAnalytics })
+        .then((preference) => {
+          desktopAnalytics.setTrackingEnabled(preference.enabled);
+          setAnalyticsPreferenceLoaded(preference.enabled);
+          setGeneralSettings((current) => ({ ...current, productAnalytics: preference.enabled }));
+        })
+        .catch(() => {
+          desktopAnalytics.setTrackingEnabled(previous.productAnalytics);
+          setAnalyticsPreferenceLoaded(previous.productAnalytics);
+          setGeneralSettings((current) => ({ ...current, productAnalytics: previous.productAnalytics }));
+        });
+    }
+    if (
+      previous.macBookNotch !== value.macBookNotch ||
+      previous.macBookNotchHaptics !== value.macBookNotchHaptics ||
+      previous.macBookNotchIdle !== value.macBookNotchIdle ||
+      previous.macBookNotchAdditionalDisplays !== value.macBookNotchAdditionalDisplays
+    ) {
+      void window.openbot.dynamicIsland
+        .setPreference({
+          enabled: value.macBookNotch,
+          hapticsEnabled: value.macBookNotchHaptics,
+          idleVisible: value.macBookNotchIdle,
+          additionalDisplaysEnabled: value.macBookNotchAdditionalDisplays,
+        })
+        .then((preference) =>
+          setGeneralSettings((current) => ({
+            ...current,
+            macBookNotch: preference.enabled,
+            macBookNotchHaptics: preference.hapticsEnabled,
+            macBookNotchIdle: preference.idleVisible,
+            macBookNotchAdditionalDisplays: preference.additionalDisplaysEnabled,
+          })),
+        )
+        .catch(() =>
+          setGeneralSettings((current) => ({
+            ...current,
+            macBookNotch: previous.macBookNotch,
+            macBookNotchHaptics: previous.macBookNotchHaptics,
+            macBookNotchIdle: previous.macBookNotchIdle,
+            macBookNotchAdditionalDisplays: previous.macBookNotchAdditionalDisplays,
+          })),
+        );
+    }
   }
 
   const leftPanelCompact = createMemo(() => leftPanelCollapsed() || leftPanelAutoCompact());
@@ -493,7 +612,14 @@ export function createAppController(props: AppProps = {}) {
   });
   const activeMessages = createMemo(() => {
     const bot = activeBot();
-    return bot ? [...(liveMessages()[bot.id] ?? []), ...(uiErrors()[bot.id] ?? [])] : [];
+    if (!bot) return [];
+    const prompt = pendingPrompts()[bot.id];
+    const requestKey = prompt?.type === "prompt" ? promptRequestKey(prompt.turnId, prompt.requestId) : null;
+    const messages = (liveMessages()[bot.id] ?? []).filter(
+      (message) =>
+        message.questionPrompt?.resolution !== null && (!requestKey || messagePromptRequestKey(message) !== requestKey),
+    );
+    return [...messages, ...(uiErrors()[bot.id] ?? [])];
   });
 
   createEffect(
@@ -527,6 +653,15 @@ export function createAppController(props: AppProps = {}) {
     const unsubscribe = window.openbot.agent.onEvent((event) => {
       flush(() => handleAgentEvent(event));
     });
+    const unsubscribeScopedAgent = window.openbot.agent.onScopedEvent((event) => {
+      flush(() => {
+        const server = servers().find((candidate) => candidate.id === event.serverId);
+        if (server?.kind === "remote" && server.state !== "online") return;
+        dynamicIslandConnectedServers.add(event.serverId);
+        dynamicIslandCoordinator.applyEvent(event, activeServerSidebarKey());
+        publishDynamicIslandPresentation();
+      });
+    });
     const unsubscribeUpdate = window.openbot.update.onEvent((status) => {
       flush(() => setUpdateStatus(status));
     });
@@ -537,7 +672,7 @@ export function createAppController(props: AppProps = {}) {
     const unsubscribeAuth = window.openbot.auth.onEvent((state) => {
       flush(() => applyCentralAuthState(state));
     });
-    const unsubscribeServers = window.openbot.servers.onEvent((value) => flush(() => setServers(value)));
+    const unsubscribeServers = window.openbot.servers.onEvent((value) => flush(() => applyServerSummaries(value)));
     const unsubscribePresence = window.openbot.servers.onPresence((snapshot) => flush(() => setTeamPresence(snapshot)));
     const unsubscribeDirectMessage = peopleEnabled
       ? window.openbot.servers.onDirectMessage((event) => flush(() => handleDirectMessageEvent(event)))
@@ -576,6 +711,7 @@ export function createAppController(props: AppProps = {}) {
     window.addEventListener("keydown", handleGlobalSearchShortcut);
     const cleanup = () => {
       unsubscribe();
+      unsubscribeScopedAgent();
       unsubscribeUpdate();
       unsubscribeProviderRuntimes();
       unsubscribeAuth();
@@ -628,6 +764,18 @@ export function createAppController(props: AppProps = {}) {
         setAnalyticsPreferenceLoaded(false);
         setGeneralSettings((current) => ({ ...current, productAnalytics: false }));
       });
+    void window.openbot.dynamicIsland
+      .getPreference()
+      .then((preference) =>
+        setGeneralSettings((current) => ({
+          ...current,
+          macBookNotch: preference.enabled,
+          macBookNotchHaptics: preference.hapticsEnabled,
+          macBookNotchIdle: preference.idleVisible,
+          macBookNotchAdditionalDisplays: preference.additionalDisplaysEnabled,
+        })),
+      )
+      .catch(() => undefined);
     void window.openbot.servers
       .takePendingInvite()
       .then((inviteUrl) => inviteUrl && receiveInvite(inviteUrl))
@@ -649,9 +797,17 @@ export function createAppController(props: AppProps = {}) {
       );
     const initialServerReady = window.openbot.servers
       .list()
-      .then(setServers)
+      .then(applyServerSummaries)
       .catch(() => undefined);
     void initialServerReady.then(() => {
+      const loadingServerId = activeServerSidebarKey();
+      const loadingServer = servers().find((server) => server.id === loadingServerId);
+      if (
+        loadingServer?.kind === "remote" &&
+        (loadingServer.state === "incompatible" || loadingServer.issue?.code === "protocol_error")
+      ) {
+        return;
+      }
       void Promise.all([
         window.openbot.agent
           .getStatus()
@@ -667,16 +823,20 @@ export function createAppController(props: AppProps = {}) {
           .catch((error) => {
             setAgentStatus((current) => ({ ...current, message: String(error) }));
           }),
-        window.openbot.agent
-          .getSidebarLayout()
-          .then(setSidebarLayout)
-          .catch(() => setSidebarLayout(defaultSidebarLayout())),
+        serverSupportsCapability(loadingServer, "sidebar-layout")
+          ? window.openbot.agent
+              .getSidebarLayout()
+              .then(setSidebarLayout)
+              .catch(() => setSidebarLayout(defaultSidebarLayout()))
+          : Promise.resolve(setSidebarLayout(defaultSidebarLayout())),
         window.openbot.agent
           .listConversationReads()
           .then(applyConversationReads)
           .catch(() => undefined),
-      ]);
-      if (!props.landingPreview) {
+      ]).finally(() => {
+        if (activeServerSidebarKey() === loadingServerId) setDynamicIslandLoadedServerId(loadingServerId);
+      });
+      if (!props.landingPreview && serverSupportsCapability(loadingServer, "browser-control")) {
         const requestedAtRevision = browserChangeRevision;
         void window.openbot.browser
           .listTabs()
@@ -724,33 +884,71 @@ export function createAppController(props: AppProps = {}) {
   );
 
   createEffect(
-    () => ({ botId: activeBotId(), agentPhase: agentStatus().phase }),
+    () => ({ botId: activeBotId(), agentPhase: agentStatus().phase, openRevision: agentChatOpenRevision() }),
     ({ botId }) => {
       if (!botId) return;
-      const markReadOnOpen = agentChatsToMarkRead.delete(botId);
+      const serverId = activeServerSidebarKey();
+      const trackingKey = agentConversationKey(serverId, botId);
       const pageRequest = (conversationPageRequests.get(botId) ?? 0) + 1;
       conversationPageRequests.set(botId, pageRequest);
+      void window.openbot.agent
+        .readConversationPage({ botId, anchor: { type: "latest" }, limit: 50 }, serverId)
+        .then((page) => {
+          if (activeServerSidebarKey() !== serverId || conversationPageRequests.get(botId) !== pageRequest) return;
+          const pageApplied = applyConversationPage(page, "replace", "latest");
+          if (!pageApplied) {
+            if (agentChatsToMarkRead.has(trackingKey)) {
+              if (!agentChatsRetriedOnOpen.has(botId)) {
+                agentChatsRetriedOnOpen.add(botId);
+                setAgentChatOpenRevision((current) => current + 1);
+              } else {
+                agentChatsToMarkRead.delete(trackingKey);
+                markLatestVisibleAgentMessageRead(botId, serverId);
+              }
+            }
+            return;
+          }
+          agentChatsRetriedOnOpen.delete(botId);
+          const markReadOnOpen = agentChatsToMarkRead.delete(trackingKey);
+          if (markReadOnOpen && (page.readState?.unreadCount ?? 0) > 0) {
+            void markAgentMessagesRead(botId, page.messages.at(-1)?.id ?? null, serverId).catch((error) =>
+              appendUiError(botId, error, "Read state failed"),
+            );
+          } else if (agentChatsToRetryRead.has(trackingKey) && (page.readState?.unreadCount ?? 0) > 0) {
+            const latestIncomingMessage = [...page.messages]
+              .reverse()
+              .find(
+                (message) =>
+                  message.author !== "user" &&
+                  message.itemType !== "commentary" &&
+                  message.itemType !== "agent_attachment",
+              );
+            if (latestIncomingMessage) autoMarkAgentMessageRead(botId, latestIncomingMessage.id);
+          }
+        })
+        .catch((error) => {
+          if (activeServerSidebarKey() !== serverId || conversationPageRequests.get(botId) !== pageRequest) return;
+          appendUiError(botId, error, "Load failed");
+          if (agentChatsToMarkRead.delete(trackingKey)) markLatestVisibleAgentMessageRead(botId, serverId);
+        });
+    },
+  );
+
+  createEffect(
+    () => ({ botId: activeBotId(), agentPhase: agentStatus().phase, serverId: activeServerSidebarKey() }),
+    ({ botId, serverId }) => {
+      if (!botId) return;
       const queueRequest = (queueSnapshotRequests.get(botId) ?? 0) + 1;
       queueSnapshotRequests.set(botId, queueRequest);
       void window.openbot.agent
         .listQueue(botId)
         .then((queue) => {
-          if (queueSnapshotRequests.get(botId) !== queueRequest) return;
+          if (activeServerSidebarKey() !== serverId || queueSnapshotRequests.get(botId) !== queueRequest) return;
           setQueues((current) => ({ ...current, [botId]: queue }));
         })
-        .catch((error) => appendUiError(botId, error, "Queue load failed"));
-      void window.openbot.agent
-        .readConversationPage({ botId, anchor: { type: "latest" }, limit: 50 })
-        .then((page) => {
-          if (conversationPageRequests.get(botId) !== pageRequest) return;
-          applyConversationPage(page, true, "latest");
-          if (markReadOnOpen && (page.readState?.unreadCount ?? 0) > 0) {
-            void markAgentMessagesRead(botId, page.messages.at(-1)?.id ?? null).catch((error) =>
-              appendUiError(botId, error, "Read state failed"),
-            );
-          }
-        })
-        .catch((error) => appendUiError(botId, error, "Load failed"));
+        .catch((error) => {
+          if (activeServerSidebarKey() === serverId) appendUiError(botId, error, "Queue load failed");
+        });
     },
   );
 
@@ -777,6 +975,34 @@ export function createAppController(props: AppProps = {}) {
       case "conversation":
         scheduleConversation(event.snapshot, isAgentChatOpen(event.snapshot.botId));
         return;
+      case "conversation-page":
+        {
+          const existingUnreadCount = conversationReads()[event.page.botId]?.unreadCount ?? 0;
+          const trackingKey = agentConversationKey(activeServerSidebarKey(), event.page.botId);
+          const markNewMessagesRead =
+            isAgentChatOpen(event.page.botId) &&
+            (event.page.readState === undefined || event.page.readState.unreadCount > 0) &&
+            (existingUnreadCount === 0 ||
+              explicitlyOpenedAgentChatId === event.page.botId ||
+              agentChatsToRetryRead.has(trackingKey));
+          const pageApplied = applyConversationPage(event.page, "latest", "latest");
+          const latestIncomingMessage = markNewMessagesRead
+            ? [...event.page.messages]
+                .reverse()
+                .find(
+                  (message) =>
+                    message.author !== "user" &&
+                    message.itemType !== "commentary" &&
+                    message.itemType !== "agent_attachment",
+                )
+            : undefined;
+          if (pageApplied && latestIncomingMessage) {
+            autoMarkAgentMessageRead(event.page.botId, latestIncomingMessage.id, existingUnreadCount === 0);
+          }
+        }
+        return;
+      case "conversation-invalidated":
+        return;
       case "conversation-delta":
         applyConversationDelta(event);
         return;
@@ -800,6 +1026,7 @@ export function createAppController(props: AppProps = {}) {
       case "turn-started":
         completedTurnByBot.delete(event.botId);
         clearRecentReply(event.botId);
+        setFailedTurns((current) => withoutBot(current, event.botId));
         setActiveTurns((current) => ({
           ...current,
           [event.botId]: event.turnId,
@@ -807,6 +1034,9 @@ export function createAppController(props: AppProps = {}) {
         return;
       case "turn-completed":
         completedTurnByBot.set(event.botId, event.turnId);
+        setFailedTurns((current) =>
+          event.status === "failed" ? { ...current, [event.botId]: event.turnId } : withoutBot(current, event.botId),
+        );
         setActiveTurns((current) => ({ ...current, [event.botId]: null }));
         setQueues((current) => {
           const snapshot = current[event.botId];
@@ -821,7 +1051,17 @@ export function createAppController(props: AppProps = {}) {
           if (deliveries.length === snapshot.deliveries.length) return current;
           return { ...current, [event.botId]: { ...snapshot, deliveries } };
         });
-        setPendingPrompts((current) => ({ ...current, [event.botId]: undefined }));
+        setPendingPrompts((current) => {
+          const pending = current[event.botId];
+          const submittedRequestKey = submittedPromptRequests()[event.botId];
+          if (
+            pending?.type === "prompt" &&
+            promptRequestKey(pending.turnId, pending.requestId) === submittedRequestKey
+          ) {
+            return current;
+          }
+          return { ...current, [event.botId]: undefined };
+        });
         setPendingApprovals((current) => ({ ...current, [event.botId]: undefined }));
         if (event.status === "completed") {
           markReplyCompleted(event.botId);
@@ -830,12 +1070,34 @@ export function createAppController(props: AppProps = {}) {
         return;
       case "prompt":
         setPendingPrompts((current) => ({ ...current, [event.botId]: event }));
+        setPresentedPromptResolutions((current) => ({ ...current, [event.botId]: undefined }));
+        setSubmittedPromptRequests((current) => ({ ...current, [event.botId]: undefined }));
+        return;
+      case "agent-input-resolved":
+        if (event.kind === "prompt") {
+          setPendingPrompts((current) => {
+            const prompt = current[event.botId];
+            return prompt?.type === "prompt" && String(prompt.requestId) === String(event.requestId)
+              ? { ...current, [event.botId]: undefined }
+              : current;
+          });
+        } else {
+          setPendingApprovals((current) => {
+            const approval = current[event.botId];
+            return approval && String(approval.requestId) === String(event.requestId)
+              ? { ...current, [event.botId]: undefined }
+              : current;
+          });
+        }
         return;
       case "approval":
         setPendingApprovals((current) => ({
           ...current,
           [event.approval.botId]: event.approval,
         }));
+        return;
+      case "runtime-snapshot":
+        applyAgentRuntimeSnapshot(event.snapshot);
         return;
       case "browser-takeover-requested":
         setPendingPrompts((current) => ({
@@ -854,6 +1116,53 @@ export function createAppController(props: AppProps = {}) {
       case "error":
         if (event.botId) appendUiError(event.botId, event.message, "Error");
     }
+  }
+
+  function applyAgentRuntimeSnapshot(snapshot: AgentRuntimeSnapshot): void {
+    setActiveTurns(Object.fromEntries(snapshot.activeTurns.map((turn) => [turn.botId, turn.turnId])));
+    setFailedTurns(Object.fromEntries(snapshot.failedTurns.map((turn) => [turn.botId, turn.turnId])));
+    setQueues((current) =>
+      reconcileQueuesWithRuntimeWork(
+        current,
+        snapshot.work,
+        new Map(snapshot.activeTurns.map((turn) => [turn.botId, turn.turnId])),
+      ),
+    );
+    setPendingPrompts((current) => {
+      const next = snapshot.attentionComplete ? {} : { ...current };
+      const submitted = submittedPromptRequests();
+      for (const prompt of snapshot.pendingPrompts) {
+        if (promptRequestKey(prompt.turnId, prompt.requestId) !== submitted[prompt.botId]) {
+          next[prompt.botId] = { type: "prompt", ...prompt };
+        }
+      }
+      for (const request of snapshot.pendingBrowserTakeovers) {
+        next[request.botId] = { type: "browser-takeover-requested", request };
+      }
+      return next;
+    });
+    setPendingApprovals((current) => ({
+      ...(snapshot.attentionComplete ? {} : current),
+      ...Object.fromEntries(snapshot.pendingApprovals.map((approval) => [approval.botId, approval])),
+    }));
+    setLiveMessages((current) => {
+      const next = { ...current };
+      for (const message of snapshot.latestMessages) {
+        const messages = next[message.botId] ?? [];
+        if (messages.some((candidate) => candidate.id === message.id)) continue;
+        next[message.botId] = [
+          ...messages,
+          {
+            id: message.id,
+            author: "bot",
+            body: message.text,
+            time: message.createdAt,
+            createdAt: message.createdAt,
+          },
+        ];
+      }
+      return next;
+    });
   }
 
   function applyAgentStatus(status: AgentStatus): void {
@@ -933,19 +1242,102 @@ export function createAppController(props: AppProps = {}) {
     return !botSetupOpen() && !activeDirectMemberId() && activeBot()?.id === botId;
   }
 
-  function autoMarkAgentMessageRead(botId: string, messageId: string): void {
-    if (autoReadAgentMessageIds.get(botId) === messageId) return;
+  function agentConversationKey(serverId: string, botId: string): string {
+    return `${serverId}\0${botId}`;
+  }
+
+  function markLatestVisibleAgentMessageRead(botId: string, serverId: string): void {
+    const latestIncomingMessage = liveMessages()
+      [botId]?.filter(
+        (message) =>
+          message.author !== "you" &&
+          message.itemType !== "commentary" &&
+          message.itemType !== "agent_attachment" &&
+          !message.id.startsWith("thinking:") &&
+          !message.id.startsWith("ui-"),
+      )
+      .at(-1);
+    if (!latestIncomingMessage) return;
+    void markAgentMessagesRead(botId, latestIncomingMessage.id, serverId).catch((error) =>
+      appendUiError(botId, error, "Read state failed"),
+    );
+  }
+
+  function refreshAgentReadStateAfterFailure(
+    botId: string,
+    messageId: string,
+    serverId: string,
+    minimumRevision: number,
+    fallbackState: ConversationReadState | null,
+  ): void {
+    const trackingKey = agentConversationKey(serverId, botId);
+    const applyFallback = () => {
+      if (activeServerSidebarKey() !== serverId || autoReadAgentMessages.has(trackingKey) || !fallbackState) return;
+      const latest = conversationReads()[botId];
+      if (latest?.unreadCount === 0 && latest.throughMessageId === messageId) {
+        applyConversationReadState(botId, fallbackState);
+      }
+    };
+    void window.openbot.agent
+      .readConversationPage({ botId, anchor: { type: "latest" }, limit: 1 }, serverId)
+      .then((page) => {
+        if (
+          activeServerSidebarKey() !== serverId ||
+          autoReadAgentMessages.has(trackingKey) ||
+          page.revision < minimumRevision ||
+          !page.readState
+        ) {
+          applyFallback();
+          return;
+        }
+        applyConversationReadState(botId, page.readState);
+      })
+      .catch(applyFallback);
+  }
+
+  function autoMarkAgentMessageRead(botId: string, messageId: string, optimisticallyClearUnread = false): void {
+    const serverId = activeServerSidebarKey();
+    const trackingKey = agentConversationKey(serverId, botId);
     const current = conversationReads()[botId];
-    if (current && current.unreadCount > 0) return;
-    autoReadAgentMessageIds.set(botId, messageId);
-    if (current) {
-      applyConversationReadState(botId, {
-        unreadCount: 0,
-        firstUnreadMessageId: null,
-        throughMessageId: messageId,
-      });
+    const previousAutoRead = autoReadAgentMessages.get(trackingKey);
+    if (previousAutoRead?.messageId === messageId) {
+      const retainedState =
+        previousAutoRead.status === "succeeded" ? previousAutoRead.state : previousAutoRead.optimisticState;
+      if (retainedState) applyConversationReadState(botId, retainedState);
+      return;
     }
-    void markAgentMessagesRead(botId, messageId).catch((error) => appendUiError(botId, error, "Read state failed"));
+    const hasUnread = Boolean(current && current.unreadCount > 0);
+    const retryingRead = agentChatsToRetryRead.delete(trackingKey);
+    if (!optimisticallyClearUnread && explicitlyOpenedAgentChatId !== botId && !retryingRead && hasUnread) return;
+    const optimisticallyCleared = Boolean(current && (!hasUnread || optimisticallyClearUnread));
+    const optimisticState: ConversationReadState | null =
+      current && optimisticallyCleared
+        ? { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: messageId }
+        : null;
+    autoReadAgentMessages.set(trackingKey, { messageId, status: "pending", optimisticState });
+    const rollbackState = current
+      ? hasUnread
+        ? current
+        : { ...current, unreadCount: 1, firstUnreadMessageId: messageId }
+      : null;
+    if (optimisticState) applyConversationReadState(botId, optimisticState);
+    void markAgentMessagesRead(botId, messageId, serverId, (state) => {
+      if (autoReadAgentMessages.get(trackingKey)?.messageId !== messageId) return;
+      autoReadAgentMessages.set(trackingKey, { messageId, status: "succeeded", state });
+    }).catch((error) => {
+      if (autoReadAgentMessages.get(trackingKey)?.messageId !== messageId) return;
+      autoReadAgentMessages.delete(trackingKey);
+      agentChatsToRetryRead.add(trackingKey);
+      if (activeServerSidebarKey() !== serverId) return;
+      refreshAgentReadStateAfterFailure(
+        botId,
+        messageId,
+        serverId,
+        conversationRevisions()[botId] ?? -1,
+        optimisticallyCleared ? rollbackState : null,
+      );
+      appendUiError(botId, error, "Read state failed");
+    });
   }
 
   function applyConversationDelta(event: Extract<AgentEvent, { type: "conversation-delta" }>) {
@@ -970,6 +1362,7 @@ export function createAppController(props: AppProps = {}) {
         author: "bot",
         body: event.delta,
         time: formatTime(event.createdAt),
+        createdAt: event.createdAt,
         streaming: true,
         animate: conversationLoaded()[event.botId] === true,
         kind: "text",
@@ -1033,6 +1426,35 @@ export function createAppController(props: AppProps = {}) {
       return { ...current, [botId]: next };
     });
     setConversationLoaded((current) => ({ ...current, [botId]: true }));
+    const presentedRequestKey = presentedPromptResolutions()[botId];
+    const pendingPrompt = pendingPrompts()[botId];
+    const pendingRequestKey =
+      pendingPrompt?.type === "prompt" ? promptRequestKey(pendingPrompt.turnId, pendingPrompt.requestId) : null;
+    const submittedRequestKey = submittedPromptRequests()[botId];
+    const resolvedPendingPrompt =
+      pendingRequestKey !== null &&
+      snapshot.messages.some(
+        (message) =>
+          messagePromptRequestKey(message) === pendingRequestKey && message.questionPrompt?.resolution !== null,
+      );
+    if (
+      presentedRequestKey &&
+      snapshot.messages.some(
+        (message) =>
+          messagePromptRequestKey(message) === presentedRequestKey && message.questionPrompt?.resolution !== null,
+      )
+    ) {
+      setPendingPrompts((current) => ({ ...current, [botId]: undefined }));
+      setPresentedPromptResolutions((current) => ({ ...current, [botId]: undefined }));
+      setSubmittedPromptRequests((current) => ({ ...current, [botId]: undefined }));
+    } else if (
+      resolvedPendingPrompt &&
+      (activeBot()?.id !== botId || !submittedRequestKey || submittedRequestKey !== pendingRequestKey)
+    ) {
+      setPendingPrompts((current) => ({ ...current, [botId]: undefined }));
+      setPresentedPromptResolutions((current) => ({ ...current, [botId]: undefined }));
+      setSubmittedPromptRequests((current) => ({ ...current, [botId]: undefined }));
+    }
     setActiveTurns((current) => ({
       ...current,
       [botId]: completedTurnByBot.get(botId) === snapshot.activeTurnId ? null : snapshot.activeTurnId,
@@ -1041,7 +1463,10 @@ export function createAppController(props: AppProps = {}) {
     const latestIncomingMessage = markNewMessagesRead
       ? [...snapshot.messages]
           .reverse()
-          .find((message) => message.author !== "user" && message.itemType !== "commentary")
+          .find(
+            (message) =>
+              message.author !== "user" && message.itemType !== "commentary" && message.itemType !== "agent_attachment",
+          )
       : undefined;
     if (latestIncomingMessage) {
       autoMarkAgentMessageRead(botId, latestIncomingMessage.id);
@@ -1050,8 +1475,12 @@ export function createAppController(props: AppProps = {}) {
     }
   }
 
-  function applyConversationPage(page: ConversationPage, replace: boolean, windowMode?: "latest" | "around"): void {
-    if (page.revision < (conversationRevisions()[page.botId] ?? -1)) return;
+  function applyConversationPage(
+    page: ConversationPage,
+    merge: "replace" | "older" | "latest",
+    windowMode?: "latest" | "around",
+  ): boolean {
+    if (page.revision < (conversationRevisions()[page.botId] ?? -1)) return false;
     const mapped = toBotMessages(page.messages);
     setLiveMessages((current) => {
       const currentMessages = current[page.botId] ?? [];
@@ -1062,17 +1491,22 @@ export function createAppController(props: AppProps = {}) {
         if (!botMessagesEqual(stored, message)) updateStored(stored, { ...message, animate: stored.animate });
         return stored;
       });
-      const existing = replace ? [] : currentMessages;
+      const existing = merge === "replace" ? [] : currentMessages;
       const ids = new Set(mapped.map((message) => message.id));
       return {
         ...current,
-        [page.botId]: replace ? pageMessages : [...pageMessages, ...existing.filter((message) => !ids.has(message.id))],
+        [page.botId]:
+          merge === "replace"
+            ? pageMessages
+            : merge === "older"
+              ? [...pageMessages, ...existing.filter((message) => !ids.has(message.id))]
+              : [...existing.filter((message) => !ids.has(message.id)), ...pageMessages],
       };
     });
     setConversationReferences((current) => ({
       ...current,
       [page.botId]: {
-        ...(replace ? {} : current[page.botId]),
+        ...(merge === "replace" ? {} : current[page.botId]),
         ...Object.fromEntries(Object.entries(page.references).map(([id, message]) => [id, toBotMessage(message)])),
       },
     }));
@@ -1084,7 +1518,22 @@ export function createAppController(props: AppProps = {}) {
       ...current,
       [page.botId]: completedTurnByBot.get(page.botId) === page.activeTurnId ? null : page.activeTurnId,
     }));
-    if (page.readState) applyConversationReadState(page.botId, page.readState);
+    if (page.readState && merge !== "older") {
+      const trackedAutoRead = autoReadAgentMessages.get(agentConversationKey(activeServerSidebarKey(), page.botId));
+      const latestIncomingMessage = [...page.messages]
+        .reverse()
+        .find(
+          (message) =>
+            message.author !== "user" && message.itemType !== "commentary" && message.itemType !== "agent_attachment",
+        );
+      let retainedState: ConversationReadState | null = null;
+      if (trackedAutoRead && trackedAutoRead.messageId === latestIncomingMessage?.id) {
+        retainedState =
+          trackedAutoRead.status === "succeeded" ? trackedAutoRead.state : trackedAutoRead.optimisticState;
+      }
+      applyConversationReadState(page.botId, retainedState ?? page.readState);
+    }
+    return true;
   }
 
   async function loadOlderAgentMessages(botId = activeBot()?.id): Promise<void> {
@@ -1103,7 +1552,7 @@ export function createAppController(props: AppProps = {}) {
       });
       if (conversationPageRequests.get(botId) !== requestVersion) return;
       if (conversationPages()[botId]?.olderCursor !== cursor) return;
-      applyConversationPage(page, false);
+      applyConversationPage(page, "older");
     } catch (error) {
       setConversationOlderErrors((current) => ({
         ...current,
@@ -1153,6 +1602,7 @@ export function createAppController(props: AppProps = {}) {
     }
     setBotSetupDraft(createFirstBotDraft());
     setBotSetupError(null);
+    explicitlyOpenedAgentChatId = null;
     setBotSetupOpen(true);
   }
 
@@ -1175,8 +1625,13 @@ export function createAppController(props: AppProps = {}) {
     }
     setActiveDirectMemberId(null);
     clearReplyIndicators(botId);
-    agentChatsToMarkRead.add(botId);
+    const trackingKey = agentConversationKey(activeServerSidebarKey(), botId);
+    autoReadAgentMessages.delete(trackingKey);
+    agentChatsToMarkRead.add(trackingKey);
+    agentChatsRetriedOnOpen.delete(botId);
+    explicitlyOpenedAgentChatId = botId;
     setActiveBotId(botId);
+    setAgentChatOpenRevision((current) => current + 1);
   }
 
   function setGlobalSearchVisibility(open: boolean): void {
@@ -1213,7 +1668,9 @@ export function createAppController(props: AppProps = {}) {
   }
 
   async function openAgentMessage(botId: string, messageId: string): Promise<void> {
+    const serverId = activeServerSidebarKey();
     await Promise.resolve();
+    if (activeServerSidebarKey() !== serverId) return;
     const request = (conversationPageRequests.get(botId) ?? 0) + 1;
     conversationPageRequests.set(botId, request);
     try {
@@ -1222,19 +1679,37 @@ export function createAppController(props: AppProps = {}) {
         anchor: { type: "around", messageId },
         limit: 50,
       });
-      if (conversationPageRequests.get(botId) !== request) return;
+      if (conversationPageRequests.get(botId) !== request || activeServerSidebarKey() !== serverId) return;
       if (!page.messages.some((message) => message.id === messageId)) {
         throw new Error("This message is no longer available.");
       }
-      applyConversationPage(page, true, "around");
+      applyConversationPage(page, "replace", "around");
       setMessageFocusRequest({ botId, messageId, nonce: Date.now() });
+      try {
+        let readBoundary = page.messages.at(-1)?.id ?? messageId;
+        try {
+          if (activeServerSidebarKey() !== serverId) return;
+          const latestPage = await window.openbot.agent.readConversationPage({
+            botId,
+            anchor: { type: "latest" },
+            limit: 1,
+          });
+          if (activeServerSidebarKey() !== serverId) return;
+          readBoundary = latestPage.messages.at(-1)?.id ?? readBoundary;
+        } catch {
+          // The focused page still gives us a safe read boundary when the latest-page refresh fails.
+        }
+        await markAgentMessagesRead(botId, readBoundary, serverId);
+      } catch (error) {
+        appendUiError(botId, error, "Read state failed");
+      }
     } catch (error) {
       appendUiError(botId, error, "Message load failed");
     }
   }
 
   async function refreshDirectThreads(): Promise<void> {
-    if (!currentTeamMember()) {
+    if (!currentTeamMember() || !activeServerSupportsCapability("direct-messages")) {
       setDirectThreads([]);
       return;
     }
@@ -1250,6 +1725,7 @@ export function createAppController(props: AppProps = {}) {
     if (!peopleEnabled || !currentTeamMember() || !directPeople().some((member) => member.id === memberId)) return;
     const previousBotId = activeBotId();
     if (previousBotId) pruneInactiveAgentHistory(previousBotId);
+    explicitlyOpenedAgentChatId = null;
     setBotSetupOpen(false);
     setBotSetupError(null);
     setSettingsRequest(null);
@@ -1384,7 +1860,7 @@ export function createAppController(props: AppProps = {}) {
       limit: 50,
     });
     if (conversationPageRequests.get(botId) !== request) return;
-    applyConversationPage(page, true, "latest");
+    applyConversationPage(page, "replace", "latest");
   }
 
   async function sendDirectMessage(
@@ -1665,6 +2141,7 @@ export function createAppController(props: AppProps = {}) {
       setConversationLoaded((current) => withoutBot(current, botId));
       setConversationRevisions((current) => withoutBot(current, botId));
       setActiveTurns((current) => withoutBot(current, botId));
+      setFailedTurns((current) => withoutBot(current, botId));
       setUnreadReplies((current) => withoutBot(current, botId));
       setConversationReads((current) => withoutBot(current, botId));
       setRecentReplies((current) => withoutBot(current, botId));
@@ -1752,33 +2229,70 @@ export function createAppController(props: AppProps = {}) {
     }
   }
 
-  async function markAgentMessagesRead(botId = activeBot()?.id, throughMessageId?: string | null): Promise<void> {
-    if (!botId) return;
+  async function markAgentMessagesRead(
+    botId = activeBot()?.id,
+    throughMessageId?: string | null,
+    serverId = activeServerSidebarKey(),
+    onSuccess?: (state: ConversationReadState) => void,
+  ): Promise<void> {
+    if (!botId || activeServerSidebarKey() !== serverId) return;
+    const requestKey = agentConversationKey(serverId, botId);
     const boundary =
       throughMessageId ??
       liveMessages()
         [botId]?.filter((message) => !message.id.startsWith("thinking:") && !message.id.startsWith("ui-"))
         .at(-1)?.id ??
       null;
-    const state = await window.openbot.agent.markConversationRead({
-      botId,
-      throughMessageId: boundary,
-    });
-    applyConversationReadState(botId, state);
-    clearRecentReply(botId);
+    const previousOperation = conversationReadOperations.get(requestKey) ?? Promise.resolve();
+    const operation = previousOperation
+      .catch(() => undefined)
+      .then(async () => {
+        const state: ConversationReadState = await window.openbot.agent.markConversationRead(
+          {
+            botId,
+            throughMessageId: boundary,
+          },
+          serverId,
+        );
+        agentChatsToRetryRead.delete(requestKey);
+        onSuccess?.(state);
+        const trackedAutoRead = autoReadAgentMessages.get(requestKey);
+        const supersededByAutoRead = Boolean(trackedAutoRead && trackedAutoRead.messageId !== boundary);
+        if (activeServerSidebarKey() === serverId && !supersededByAutoRead) {
+          applyConversationReadState(botId, state);
+          clearRecentReply(botId);
+        }
+      });
+    conversationReadOperations.set(requestKey, operation);
+    try {
+      await operation;
+    } finally {
+      if (conversationReadOperations.get(requestKey) === operation) conversationReadOperations.delete(requestKey);
+    }
   }
 
   async function answerPrompt(answers: Record<string, string[]>): Promise<boolean> {
     const bot = activeBot();
     const prompt = bot ? pendingPrompts()[bot.id] : undefined;
     if (!bot || prompt?.type !== "prompt") return false;
+    return submitPromptAnswers(bot.id, prompt, answers);
+  }
+
+  async function submitPromptAnswers(
+    botId: string,
+    prompt: PromptEvent,
+    answers: Record<string, string[]>,
+  ): Promise<boolean> {
     const analytics = desktopAnalytics.scope();
+    setSubmittedPromptRequests((current) => ({
+      ...current,
+      [botId]: promptRequestKey(prompt.turnId, prompt.requestId) ?? undefined,
+    }));
     try {
       await window.openbot.agent.respondToPrompt({
         requestId: prompt.requestId,
         answers,
       });
-      setPendingPrompts((current) => ({ ...current, [bot.id]: undefined }));
       analytics.track("agent_input_action", {
         kind: "prompt",
         decision: "answered",
@@ -1786,28 +2300,54 @@ export function createAppController(props: AppProps = {}) {
       });
       return true;
     } catch (error) {
+      setSubmittedPromptRequests((current) => ({ ...current, [botId]: undefined }));
       analytics.track("agent_input_action", {
         kind: "prompt",
         decision: "answered",
         result: "failed",
         failure_code: "response_failed",
       });
-      appendUiError(bot.id, error, "Answer failed");
+      appendUiError(botId, error, "Answer failed");
       return false;
     }
   }
 
-  async function respondToApproval(decision: "accept" | "decline"): Promise<boolean> {
-    const bot = activeBot();
-    const approval = bot ? pendingApprovals()[bot.id] : undefined;
-    if (!bot || !approval) return false;
+  function presentPromptResolution(botId: string, turnId: string, requestId: string | number): void {
+    const requestKey = promptRequestKey(turnId, requestId);
+    if (!requestKey) return;
+    const currentPrompt = pendingPrompts()[botId];
+    if (
+      currentPrompt?.type !== "prompt" ||
+      promptRequestKey(currentPrompt.turnId, currentPrompt.requestId) !== requestKey
+    ) {
+      return;
+    }
+    const persisted = (liveMessages()[botId] ?? []).some(
+      (message) => messagePromptRequestKey(message) === requestKey && message.questionPrompt?.resolution !== null,
+    );
+    if (persisted) {
+      setPendingPrompts((current) => ({ ...current, [botId]: undefined }));
+      setPresentedPromptResolutions((current) => ({ ...current, [botId]: undefined }));
+      setSubmittedPromptRequests((current) => ({ ...current, [botId]: undefined }));
+      return;
+    }
+    setPresentedPromptResolutions((current) => ({ ...current, [botId]: requestKey }));
+  }
+
+  async function respondToApprovalRequest(
+    botId: string,
+    requestId: string | number,
+    decision: "accept" | "decline",
+  ): Promise<boolean> {
+    const approval = pendingApprovals()[botId];
+    if (!approval || String(approval.requestId) !== String(requestId)) return false;
     const analytics = desktopAnalytics.scope();
     try {
       await window.openbot.agent.respondToApproval({
         requestId: approval.requestId,
         decision,
       });
-      setPendingApprovals((current) => ({ ...current, [bot.id]: undefined }));
+      setPendingApprovals((current) => ({ ...current, [botId]: undefined }));
       analytics.track("agent_input_action", { kind: "approval", decision, result: "succeeded" });
       return true;
     } catch (error) {
@@ -1817,9 +2357,16 @@ export function createAppController(props: AppProps = {}) {
         result: "failed",
         failure_code: "response_failed",
       });
-      appendUiError(bot.id, error, "Approval failed");
+      appendUiError(botId, error, "Approval failed");
       return false;
     }
+  }
+
+  async function respondToApproval(decision: "accept" | "decline"): Promise<boolean> {
+    const bot = activeBot();
+    const approval = bot ? pendingApprovals()[bot.id] : undefined;
+    if (!bot || !approval) return false;
+    return respondToApprovalRequest(bot.id, approval.requestId, decision);
   }
 
   async function respondToBrowserTakeover(decision: "complete" | "cancel"): Promise<boolean> {
@@ -2225,6 +2772,8 @@ export function createAppController(props: AppProps = {}) {
       await disconnectRemoteDesktopWorkspace(false);
     }
     directConversationRequest += 1;
+    const previousDynamicIslandLoadedServerId = dynamicIslandLoadedServerId();
+    setDynamicIslandLoadedServerId(null);
     let nextServers: ServerSummary[];
     try {
       nextServers = await window.openbot.servers.select(serverId);
@@ -2243,13 +2792,17 @@ export function createAppController(props: AppProps = {}) {
           failure_code: "server_select_failed",
         });
       }
+      setDynamicIslandLoadedServerId(previousDynamicIslandLoadedServerId);
       throw error;
     }
+    const dynamicIslandState = dynamicIslandCoordinator.serverState(serverId);
     setServers(nextServers);
     setBotSetupOpen(false);
     setBotSetupError(null);
     setSettingsRequest(null);
     setBotList([]);
+    agentChatsRetriedOnOpen.clear();
+    explicitlyOpenedAgentChatId = null;
     setSidebarLayout(defaultSidebarLayout());
     setActiveBotId("");
     setActiveDirectMemberId(null);
@@ -2264,17 +2817,33 @@ export function createAppController(props: AppProps = {}) {
     setConversationReads({});
     setConversationWindowModes({});
     setUnreadReplies({});
-    setQueues({});
+    setActiveTurns(dynamicIslandState?.activeTurns ?? {});
+    setQueues(dynamicIslandState?.queues ?? {});
+    setPendingPrompts(dynamicIslandState?.pendingPrompts ?? {});
+    setPendingApprovals(dynamicIslandState?.pendingApprovals ?? {});
+    setFailedTurns(dynamicIslandState?.failedTurns ?? {});
     setTeamPresence(EMPTY_TEAM_PRESENCE);
+    const selectedServer = nextServers.find((server) => server.id === serverId);
+    if (
+      selectedServer?.kind === "remote" &&
+      (selectedServer.state === "incompatible" || selectedServer.issue?.code === "protocol_error")
+    ) {
+      return;
+    }
     const browserRequestedAtRevision = browserChangeRevision;
+    const browserSupported = serverSupportsCapability(selectedServer, "browser-control");
     const [storedBots, layout, reads, status, models, tabs, controlState, presence] = await Promise.all([
       window.openbot.agent.listBots(),
-      window.openbot.agent.getSidebarLayout(),
+      serverSupportsCapability(selectedServer, "sidebar-layout")
+        ? window.openbot.agent.getSidebarLayout()
+        : Promise.resolve(defaultSidebarLayout()),
       window.openbot.agent.listConversationReads(),
       window.openbot.agent.getStatus(),
       window.openbot.agent.listModels(),
-      props.landingPreview ? Promise.resolve([]) : window.openbot.browser.listTabs(),
-      props.landingPreview ? Promise.resolve({ sessions: [] }) : window.openbot.browser.getControlState(),
+      props.landingPreview || !browserSupported ? Promise.resolve([]) : window.openbot.browser.listTabs(),
+      props.landingPreview || !browserSupported
+        ? Promise.resolve({ sessions: [] })
+        : window.openbot.browser.getControlState(),
       window.openbot.servers.getPresence(),
     ]);
     setAgentStatus(status);
@@ -2288,6 +2857,19 @@ export function createAppController(props: AppProps = {}) {
     setSidebarLayout(layout);
     applyStoredBots(storedBots);
     applyConversationReads(reads);
+    setDynamicIslandLoadedServerId(serverId);
+  }
+
+  async function retryServerConnection(serverId: string): Promise<void> {
+    pendingCompatibilityRetryServerId = serverId;
+    try {
+      await window.openbot.servers.retryConnection(serverId);
+    } catch (error) {
+      pendingCompatibilityRetryServerId = null;
+      toast.error("The host is still incompatible", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   async function openInstalledMarketplaceAgent(bot: BotSummary): Promise<void> {
@@ -2682,6 +3264,7 @@ export function createAppController(props: AppProps = {}) {
     const existingSession = latestRemoteDesktopSession(serverId);
     if (
       server?.kind !== "remote" ||
+      !serverSupportsCapability(server, "remote-desktop") ||
       (!existingSession && (server.state !== "online" || !server.remoteDesktopAvailable))
     ) {
       return;
@@ -2742,12 +3325,138 @@ export function createAppController(props: AppProps = {}) {
   }
 
   const activeServer = createMemo(() => servers().find((server) => server.active));
-  const activeServerSidebarKey = createMemo(() => activeServer()?.id ?? "local");
+  const activeServerSidebarKey: () => string = createMemo((): string => activeServer()?.id ?? "local");
+
+  function dynamicIslandServerOrder(): string[] {
+    const ids = servers()
+      .filter(
+        (server) =>
+          dynamicIslandConnectedServers.has(server.id) && (server.kind === "local" || server.state === "online"),
+      )
+      .map((server) => server.id);
+    return ids.length > 0 ? ids : ["local"];
+  }
+
+  function publishDynamicIslandPresentation(): void {
+    if (props.landingPreview || dynamicIslandPresentationScheduled) return;
+    dynamicIslandPresentationScheduled = true;
+    queueMicrotask(() => {
+      dynamicIslandPresentationScheduled = false;
+      const presentation = dynamicIslandCoordinator.presentation(dynamicIslandServerOrder());
+      void window.openbot.dynamicIsland.publishPresentation(presentation).catch(() => undefined);
+    });
+  }
+
+  createEffect(
+    () =>
+      servers()
+        .map((server) => `${server.id}:${server.state}`)
+        .join("\u0000"),
+    () => {
+      const currentServers = servers();
+      const configuredServerIds = new Set(currentServers.map((server) => server.id));
+      for (const serverId of dynamicIslandConnectedServers) {
+        const server = currentServers.find((candidate) => candidate.id === serverId);
+        if (!configuredServerIds.has(serverId) || (server?.kind === "remote" && server.state !== "online")) {
+          dynamicIslandConnectedServers.delete(serverId);
+        }
+      }
+      dynamicIslandConnectedServers.add("local");
+      dynamicIslandCoordinator.retainServers([...configuredServerIds]);
+      publishDynamicIslandPresentation();
+    },
+  );
+
+  createEffect(
+    () => {
+      if (props.landingPreview) return null;
+      const serverId = dynamicIslandLoadedServerId();
+      if (!serverId || serverId !== activeServerSidebarKey()) return null;
+      return {
+        serverId,
+        bots: botList(),
+        activeTurns: activeTurns(),
+        queues: queues(),
+        unreadReplies: unreadReplies(),
+        unreadMessageIds: Object.fromEntries(
+          Object.entries(conversationReads()).map(([botId, state]) => [botId, state.firstUnreadMessageId]),
+        ),
+        liveMessages: liveMessages(),
+        pendingPrompts: pendingPrompts(),
+        pendingApprovals: pendingApprovals(),
+        failedTurns: failedTurns(),
+      };
+    },
+    (input) => {
+      if (!input) return;
+      dynamicIslandCoordinator.replaceServer(input);
+      publishDynamicIslandPresentation();
+    },
+  );
+
+  onSettled(() => {
+    if (props.landingPreview) return;
+    return window.openbot.dynamicIsland.onAction((action) => {
+      void handleDynamicIslandAction(action).catch((error) => {
+        toast.error("Could not open this remote item", {
+          description: error instanceof Error ? error.message : String(error),
+        });
+      });
+    });
+  });
+
+  async function handleDynamicIslandAction(action: DynamicIslandAction): Promise<void> {
+    if (action.type === "open-app") return;
+    if (action.type === "answer-prompt") {
+      dynamicIslandCoordinator.resolveAction(action);
+      const prompt = pendingPrompts()[action.botId];
+      if (prompt?.type === "prompt" && String(prompt.requestId) === String(action.requestId)) {
+        setPendingPrompts((current) => ({ ...current, [action.botId]: undefined }));
+        setSubmittedPromptRequests((current) => ({
+          ...current,
+          [action.botId]: promptRequestKey(prompt.turnId, prompt.requestId) ?? undefined,
+        }));
+      }
+      publishDynamicIslandPresentation();
+      return;
+    }
+    if (action.type === "respond-approval") {
+      dynamicIslandCoordinator.resolveAction(action);
+      setPendingApprovals((current) => {
+        const approval = current[action.botId];
+        return approval && String(approval.requestId) === String(action.requestId)
+          ? { ...current, [action.botId]: undefined }
+          : current;
+      });
+      publishDynamicIslandPresentation();
+      return;
+    }
+    if (activeServerSidebarKey() !== action.serverId) await selectServer(action.serverId, false);
+    selectBot(action.botId);
+    if (action.type === "open-message") await openAgentMessage(action.botId, action.messageId);
+    if (action.type === "open-failure") {
+      try {
+        await window.openbot.agent.acknowledgeFailedTurn({ botId: action.botId, turnId: action.turnId });
+      } catch (error) {
+        appendUiError(action.botId, error, "Acknowledge failed");
+        return;
+      }
+      setFailedTurns((current) =>
+        current[action.botId] === action.turnId ? withoutBot(current, action.botId) : current,
+      );
+      dynamicIslandCoordinator.resolveAction(action);
+      publishDynamicIslandPresentation();
+    }
+  }
+
   const pinnedSidebarItems = createMemo(() => sidebarPinsByServer()[activeServerSidebarKey()] ?? []);
   const sidebarPeopleOrder = createMemo(() => sidebarPeopleOrderByServer()[activeServerSidebarKey()] ?? []);
   const collapsedSidebarSectionIds = createMemo(() => sidebarCollapsedByServer()[activeServerSidebarKey()] ?? []);
 
   async function mutateSidebarLayout(action: SidebarLayoutAction): Promise<void> {
+    if (!activeServerSupportsCapability("sidebar-layout")) {
+      throw new Error("This host does not support sidebar layout changes.");
+    }
     const layout = await window.openbot.agent.mutateSidebarLayout(action);
     setSidebarLayout(layout);
   }
@@ -2901,6 +3610,7 @@ export function createAppController(props: AppProps = {}) {
     leftPanelWidth,
     servers,
     selectServer,
+    retryServerConnection,
     reorderServers,
     setJoinServerOpen,
     openServerSettings,
@@ -2908,6 +3618,7 @@ export function createAppController(props: AppProps = {}) {
     botList,
     activeDirectMemberId,
     peopleEnabled,
+    activeServerSupportsCapability,
     activeBot,
     directPeople,
     directThreads,
@@ -3003,6 +3714,7 @@ export function createAppController(props: AppProps = {}) {
     openAgentMessage,
     setTeamTyping,
     answerPrompt,
+    presentPromptResolution,
     respondToApproval,
     respondToBrowserTakeover,
     cancelQueuedMessage,

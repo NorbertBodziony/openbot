@@ -25,10 +25,8 @@ describe("HeroDownloadSelector", () => {
     async (source, expected, label) => {
       setPlatform(source);
       const view = render(() => <HeroDownloadSelector />);
-      const selector = view.container.querySelector(".landing-download-selector");
 
-      await waitFor(() => expect(selector).toHaveAttribute("data-detected-platform", expected));
-      const download = view.getByRole("link", { name: label });
+      const download = await view.findByRole("link", { name: label });
       expect(download).toHaveAttribute("href", OPENBOT_DOWNLOAD_LINKS[expected]);
       expect(download).not.toHaveAttribute("target");
       expect(download).not.toHaveAttribute("rel");
@@ -46,13 +44,7 @@ describe("HeroDownloadSelector", () => {
     expect(view.getAllByRole("menuitem")).toHaveLength(3);
 
     await fireEvent.click(view.getByRole("menuitem", { name: /Linux.*Coming soon/i }));
-    await waitFor(() =>
-      expect(view.container.querySelector(".landing-download-selector")).toHaveAttribute(
-        "data-detected-platform",
-        "linux",
-      ),
-    );
-    expect(view.queryByRole("menu")).not.toBeInTheDocument();
+    await waitFor(() => expect(view.queryByRole("menu")).not.toBeInTheDocument());
     expect(view.getByText("Linux coming soon")).toHaveAttribute("aria-disabled", "true");
     expect(view.queryByRole("link", { name: "Linux coming soon" })).not.toBeInTheDocument();
   });

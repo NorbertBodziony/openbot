@@ -184,7 +184,8 @@ export class OpenBotDatabase {
     );
     if (receipt) return JSON.parse(receipt.result_json);
 
-    db.exec("BEGIN IMMEDIATE");
+    const ownsTransaction = !db.isTransaction;
+    if (ownsTransaction) db.exec("BEGIN IMMEDIATE");
     try {
       const sequences: number[] = [];
       const append = db.prepare(`
@@ -216,10 +217,10 @@ export class OpenBotDatabase {
         sequences.at(-1) ?? 0,
         JSON.stringify(result ?? null),
       );
-      db.exec("COMMIT");
+      if (ownsTransaction) db.exec("COMMIT");
       return result;
     } catch (error) {
-      db.exec("ROLLBACK");
+      if (ownsTransaction && db.isTransaction) db.exec("ROLLBACK");
       throw error;
     }
   }
@@ -361,6 +362,37 @@ export class OpenBotDatabase {
       activeTurnId: thread?.active_turn_id ?? null,
       revision: thread?.last_event_sequence ?? 0,
       messages: rows.map((row) => JSON.parse(requiredStringColumn(row, "message_json"))),
+    };
+  }
+
+  readConversationRuntime(
+    botId: string,
+    threadId: string | null,
+  ): { activeTurnId: string | null; latestMessage: ConversationMessage | null } {
+    if (!threadId) return { activeTurnId: null, latestMessage: null };
+    const row = databaseRow(
+      this.connection
+        .prepare(
+          `SELECT thread.active_turn_id,
+                  (SELECT message.message_json
+                   FROM projection_thread_messages message
+                   WHERE message.thread_id = thread.thread_id
+                     AND json_extract(message.message_json, '$.author') IN ('assistant', 'agent')
+                     AND COALESCE(json_extract(message.message_json, '$.itemType'), '') != 'commentary'
+                     AND COALESCE(json_extract(message.message_json, '$.itemType'), '') != 'question_prompt'
+                     AND COALESCE(json_extract(message.message_json, '$.itemType'), '') != 'agent_attachment'
+                   ORDER BY message.created_at DESC, message.ordinal DESC, message.message_id DESC
+                   LIMIT 1) AS latest_message_json
+           FROM projection_threads thread
+           WHERE thread.thread_id = ? AND thread.agent_id = ?`,
+        )
+        .get(threadId, botId),
+    );
+    if (!row) return { activeTurnId: null, latestMessage: null };
+    const latestMessage = optionalStringColumn(row, "latest_message_json");
+    return {
+      activeTurnId: optionalStringColumn(row, "active_turn_id"),
+      latestMessage: latestMessage ? decodeConversationMessageJson(latestMessage) : null,
     };
   }
 
@@ -737,6 +769,31 @@ export class OpenBotDatabase {
       },
     );
     return { ...structuredClone(snapshot), revision: result.revision };
+  }
+
+  persistConversationAndMailbox(
+    snapshot: ConversationSnapshot,
+    eventType: string,
+    payload: unknown,
+    mailboxState: MailboxProjectionState,
+    mailboxEventType: string,
+  ): ConversationSnapshot {
+    const db = this.connection;
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      this.replaceMailboxState(`mailbox:${mailboxEventType}:${randomUUID()}`, mailboxState, mailboxEventType);
+      const persisted = this.persistConversation(
+        snapshot,
+        eventType,
+        payload,
+        `conversation:${eventType}:${randomUUID()}`,
+      );
+      db.exec("COMMIT");
+      return persisted;
+    } catch (error) {
+      if (db.isTransaction) db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   activeProviderSession(threadId: string, provider: AgentProviderId): ProviderSession | null {
