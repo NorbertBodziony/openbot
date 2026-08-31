@@ -239,6 +239,88 @@ fi
     expect(query.closed).toBe(true);
   });
 
+  it("bounds model discovery with the caller's timeout and closes the query", async () => {
+    const query = new TestQuery(new TestQueue<TestStreamMessage>(), new Promise<ModelInfo[]>(() => {}));
+    const client = new ClaudeAgentClient({ executable: "/bin/true", version: "2.1.251" }, () => query);
+    client.start();
+
+    await expect(client.request("model/list", {}, decodeModelListResponse, 10)).rejects.toThrow(
+      "Claude request timed out: model/list",
+    );
+    expect(query.closed).toBe(true);
+  });
+
+  it("keeps neutral UI effort for unsupported models without sending effort to Claude", async () => {
+    root = await mkdtemp(join(tmpdir(), "openbot-claude-effort-support-"));
+    const discoveryQuery = new TestQuery(new TestQueue<TestStreamMessage>(), [
+      {
+        value: "haiku",
+        resolvedModel: "claude-haiku-5",
+        displayName: "Claude Haiku 5",
+        description: "Fast",
+        supportsEffort: false,
+      },
+      {
+        value: "sonnet",
+        resolvedModel: "claude-sonnet-5",
+        displayName: "Claude Sonnet 5",
+        description: "Balanced",
+        supportsEffort: true,
+        supportedEffortLevels: ["low", "medium", "high"],
+      },
+    ]);
+    const unsupportedQuery = new TestQuery(new TestQueue<TestStreamMessage>());
+    const switchingQuery = new TestQuery(new TestQueue<TestStreamMessage>());
+    const queries = [discoveryQuery, unsupportedQuery, switchingQuery];
+    const runtimeOptions: DynamicRecord[] = [];
+    const client = new ClaudeAgentClient({ executable: "/bin/true", version: "2.1.251" }, (params) => {
+      const next = queries.shift();
+      if (!next) throw new Error("Unexpected Claude query.");
+      if (next !== discoveryQuery && isDynamicRecord(params.options)) runtimeOptions.push(params.options);
+      return next;
+    });
+    client.start();
+
+    const models = await client.request("model/list", {}, decodeModelListResponse);
+    expect(models.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          model: "claude-haiku-5",
+          defaultReasoningEffort: "medium",
+          supportedReasoningEfforts: [{ reasoningEffort: "medium" }],
+        }),
+      ]),
+    );
+
+    const unsupportedThread = await client.request(
+      "thread/start",
+      { cwd: root, model: "claude-haiku-5", effort: "medium" },
+      decodeThreadResponse,
+    );
+    expect(runtimeOptions[0]).not.toHaveProperty("effort");
+    await client.request(
+      "turn/start",
+      { threadId: unsupportedThread.thread.id, model: "claude-haiku-5", effort: "high", input: [] },
+      decodeTurnResponse,
+    );
+    expect(unsupportedQuery.maxThinkingTokens).toEqual([]);
+
+    const switchingThread = await client.request(
+      "thread/start",
+      { cwd: root, model: "claude-haiku-5", effort: "medium" },
+      decodeThreadResponse,
+    );
+    await client.request(
+      "turn/start",
+      { threadId: switchingThread.thread.id, model: "claude-sonnet-5", effort: "medium", input: [] },
+      decodeTurnResponse,
+    );
+    expect(switchingQuery.models).toEqual(["claude-sonnet-5"]);
+    expect(switchingQuery.maxThinkingTokens).toEqual([8_000]);
+
+    await client.stop();
+  });
+
   it("restarts an inactive session when resumed with updated memory instructions", async () => {
     root = await mkdtemp(join(tmpdir(), "openbot-claude-memory-resume-"));
     const instructions: string[] = [];
@@ -471,10 +553,12 @@ class TestQueue<T> implements AsyncIterable<T> {
 
 class TestQuery implements AsyncIterable<TestStreamMessage> {
   closed = false;
+  readonly models: Array<string | undefined> = [];
+  readonly maxThinkingTokens: Array<number | null> = [];
 
   constructor(
     private readonly output: TestQueue<TestStreamMessage>,
-    private readonly models: ModelInfo[] = [],
+    private readonly supportedModelList: ModelInfo[] | Promise<ModelInfo[]> = [],
   ) {}
 
   [Symbol.asyncIterator](): AsyncIterator<TestStreamMessage> {
@@ -486,15 +570,19 @@ class TestQuery implements AsyncIterable<TestStreamMessage> {
   }
 
   async supportedModels(): Promise<ModelInfo[]> {
-    return this.models;
+    return this.supportedModelList;
   }
 
-  async setModel(_model?: string): Promise<void> {}
+  async setModel(model?: string): Promise<void> {
+    this.models.push(model);
+  }
 
   async setMaxThinkingTokens(
-    _maxThinkingTokens: number | null,
+    maxThinkingTokens: number | null,
     _thinkingDisplay?: "summarized" | "omitted" | null,
-  ): Promise<void> {}
+  ): Promise<void> {
+    this.maxThinkingTokens.push(maxThinkingTokens);
+  }
 
   close(): void {
     this.closed = true;
