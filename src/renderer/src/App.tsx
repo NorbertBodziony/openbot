@@ -360,10 +360,7 @@ export function createAppController(props: AppProps = {}) {
   const [remoteDesktopConnectingServerId, setRemoteDesktopConnectingServerId] = createSignal<string | null>(null);
   const [remoteDesktopConnectionError, setRemoteDesktopConnectionError] = createSignal<string | null>(null);
   const [remoteDesktopSessionEstablished, setRemoteDesktopSessionEstablished] = createSignal(false);
-  const pendingConversationSnapshots = new Map<
-    string,
-    { snapshot: ConversationSnapshot; markNewMessagesRead: boolean }
-  >();
+  const pendingConversationSnapshots = new Map<string, ConversationSnapshot>();
   const agentChatsToMarkRead = new Set<string>();
   const agentChatsRetriedOnOpen = new Set<string>();
   let explicitlyOpenedAgentChatId: string | null = null;
@@ -375,6 +372,7 @@ export function createAppController(props: AppProps = {}) {
   const agentChatsToRetryRead = new Set<string>();
   const conversationPageRequests = new Map<string, number>();
   const conversationReadOperations = new Map<string, Promise<void>>();
+  const directConversationReadOperations = new Map<string, Promise<void>>();
   const queueSnapshotRequests = new Map<string, number>();
   const completedTurnByBot = new Map<string, string>();
   const pendingProviderConnections = new Map<AgentProviderId, ReturnType<typeof desktopAnalytics.scope>>();
@@ -996,7 +994,7 @@ export function createAppController(props: AppProps = {}) {
         setSidebarLayout(event.layout);
         return;
       case "conversation":
-        scheduleConversation(event.snapshot, isAgentChatReadable(event.snapshot.botId));
+        scheduleConversation(event.snapshot);
         return;
       case "conversation-page":
         {
@@ -1240,26 +1238,20 @@ export function createAppController(props: AppProps = {}) {
     setUnreadReplies((current) => ({ ...current, [botId]: state.unreadCount }));
   }
 
-  function scheduleConversation(snapshot: ConversationSnapshot, markNewMessagesRead = false) {
+  function scheduleConversation(snapshot: ConversationSnapshot) {
     const botId = snapshot.botId;
     const appliedRevision = conversationRevisions()[botId] ?? -1;
     const pending = pendingConversationSnapshots.get(botId);
-    const pendingRevision = pending?.snapshot.revision ?? -1;
+    const pendingRevision = pending?.revision ?? -1;
     if (snapshot.revision < Math.max(appliedRevision, pendingRevision)) return;
-    pendingConversationSnapshots.set(botId, {
-      snapshot,
-      markNewMessagesRead: markNewMessagesRead || (pending?.markNewMessagesRead ?? false),
-    });
+    pendingConversationSnapshots.set(botId, snapshot);
     if (conversationFrame !== undefined) return;
     conversationFrame = requestAnimationFrame(() => {
       conversationFrame = undefined;
       const snapshots = [...pendingConversationSnapshots.values()];
       pendingConversationSnapshots.clear();
       for (const pendingSnapshot of snapshots) {
-        applyConversation(
-          pendingSnapshot.snapshot,
-          pendingSnapshot.markNewMessagesRead || isAgentChatReadable(pendingSnapshot.snapshot.botId),
-        );
+        applyConversation(pendingSnapshot, isAgentChatReadable(pendingSnapshot.botId));
       }
     });
   }
@@ -1276,19 +1268,25 @@ export function createAppController(props: AppProps = {}) {
     return `${serverId}\0${botId}`;
   }
 
+  function latestVisibleAgentMessageId(botId: string): string | null {
+    return (
+      liveMessages()
+        [botId]?.filter(
+          (message) =>
+            message.author !== "you" &&
+            message.itemType !== "commentary" &&
+            message.itemType !== "agent_attachment" &&
+            !message.id.startsWith("thinking:") &&
+            !message.id.startsWith("ui-"),
+        )
+        .at(-1)?.id ?? null
+    );
+  }
+
   function markLatestVisibleAgentMessageRead(botId: string, serverId: string): void {
-    const latestIncomingMessage = liveMessages()
-      [botId]?.filter(
-        (message) =>
-          message.author !== "you" &&
-          message.itemType !== "commentary" &&
-          message.itemType !== "agent_attachment" &&
-          !message.id.startsWith("thinking:") &&
-          !message.id.startsWith("ui-"),
-      )
-      .at(-1);
-    if (!latestIncomingMessage) return;
-    void markAgentMessagesRead(botId, latestIncomingMessage.id, serverId).catch((error) =>
+    const latestMessageId = latestVisibleAgentMessageId(botId);
+    if (!latestMessageId) return;
+    void markAgentMessagesRead(botId, latestMessageId, serverId).catch((error) =>
       appendUiError(botId, error, "Read state failed"),
     );
   }
@@ -1943,17 +1941,53 @@ export function createAppController(props: AppProps = {}) {
 
   async function markDirectMessagesRead(memberId = activeDirectMemberId(), throughSequence?: number): Promise<void> {
     if (!memberId) return;
+    const serverId = activeServerSidebarKey();
+    const requestKey = `${serverId}\0${memberId}`;
     const snapshot = directConversations()[memberId];
     const boundary = throughSequence ?? snapshot?.messages.at(-1)?.sequence ?? 0;
-    const readState = await window.openbot.servers.markDirectRead({
-      memberId,
-      throughSequence: boundary,
-    });
-    setDirectConversations((current) => {
-      const currentSnapshot = current[memberId];
-      return currentSnapshot ? { ...current, [memberId]: { ...currentSnapshot, readState } } : current;
-    });
-    await refreshDirectThreads();
+    const previousOperation = directConversationReadOperations.get(requestKey) ?? Promise.resolve();
+    const operation: Promise<void> = previousOperation
+      .catch(() => undefined)
+      .then(async () => {
+        if (activeServerSidebarKey() !== serverId) return;
+        const readState = await window.openbot.servers.markDirectRead({
+          memberId,
+          throughSequence: boundary,
+        });
+        if (activeServerSidebarKey() !== serverId) return;
+        setDirectConversations((current) => {
+          const currentSnapshot = current[memberId];
+          return currentSnapshot ? { ...current, [memberId]: { ...currentSnapshot, readState } } : current;
+        });
+        await refreshDirectThreads();
+        const latestSequence = directConversations()[memberId]?.messages.at(-1)?.sequence ?? boundary;
+        if (
+          directConversationReadOperations.get(requestKey) === operation &&
+          appFocused() &&
+          activeDirectMemberId() === memberId &&
+          latestSequence > boundary
+        ) {
+          queueMicrotask(() => {
+            const latestVisibleSequence = directConversations()[memberId]?.messages.at(-1)?.sequence ?? boundary;
+            if (
+              activeServerSidebarKey() === serverId &&
+              appFocused() &&
+              activeDirectMemberId() === memberId &&
+              latestVisibleSequence > boundary
+            ) {
+              void markDirectMessagesRead(memberId, latestVisibleSequence).catch(() => undefined);
+            }
+          });
+        }
+      });
+    directConversationReadOperations.set(requestKey, operation);
+    try {
+      await operation;
+    } finally {
+      if (directConversationReadOperations.get(requestKey) === operation) {
+        directConversationReadOperations.delete(requestKey);
+      }
+    }
   }
 
   function setDirectTyping(typing: boolean): void {
@@ -2266,7 +2300,7 @@ export function createAppController(props: AppProps = {}) {
         .at(-1)?.id ??
       null;
     const previousOperation = conversationReadOperations.get(requestKey) ?? Promise.resolve();
-    const operation = previousOperation
+    const operation: Promise<void> = previousOperation
       .catch(() => undefined)
       .then(async () => {
         const state: ConversationReadState = await window.openbot.agent.markConversationRead(
@@ -2283,6 +2317,28 @@ export function createAppController(props: AppProps = {}) {
         if (activeServerSidebarKey() === serverId && !supersededByAutoRead) {
           applyConversationReadState(botId, state);
           clearRecentReply(botId);
+        }
+        const latestMessageId = latestVisibleAgentMessageId(botId);
+        if (
+          conversationReadOperations.get(requestKey) === operation &&
+          activeServerSidebarKey() === serverId &&
+          isAgentChatReadable(botId) &&
+          latestMessageId &&
+          latestMessageId !== boundary
+        ) {
+          queueMicrotask(() => {
+            const latestVisibleMessageId = latestVisibleAgentMessageId(botId);
+            if (
+              activeServerSidebarKey() === serverId &&
+              isAgentChatReadable(botId) &&
+              latestVisibleMessageId &&
+              latestVisibleMessageId !== boundary
+            ) {
+              void markAgentMessagesRead(botId, latestVisibleMessageId, serverId).catch((error) =>
+                appendUiError(botId, error, "Read state failed"),
+              );
+            }
+          });
         }
       });
     conversationReadOperations.set(requestKey, operation);
