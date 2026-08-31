@@ -331,7 +331,6 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       this.on("error", onError);
     });
     active.sessionId = sessionId;
-    active.connecting = connected;
     try {
       await this.#options.bridge.connect({
         peerId: hostId,

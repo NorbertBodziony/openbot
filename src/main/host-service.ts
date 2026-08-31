@@ -211,10 +211,16 @@ export class HostService extends EventEmitter<HostEvents> {
           store: options.store,
           appVersion: options.appVersion,
           transferDirectory: join(options.logDirectory ?? ".openbot-remote", "transfers"),
-          prepareIncomingSession: async () => {
-            const hostId = options.store.getIdentity()?.serverId;
-            if (!hostId || !options.listRemoteMembers) return;
-            await options.store.syncRemoteDirectory(await options.listRemoteMembers(hostId));
+          renewSignal: async (hostId) => {
+            if (!options.issueRemoteHostTicket) throw new Error("The WebRTC host service is not configured.");
+            return options.issueRemoteHostTicket(hostId);
+          },
+          onSignalRecoveryFailure: (error) => {
+            this.#setStatus({
+              phase: "error",
+              apiOnline: false,
+              message: error.message,
+            });
           },
         })
       : null;

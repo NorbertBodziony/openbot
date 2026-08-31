@@ -85,6 +85,37 @@ describe("TeamWebRtcFileTransfer", () => {
     await transfers.stop();
   });
 
+  it("keeps a malformed peer frame isolated from other hosts", async () => {
+    const bridge = new FakeBridge();
+    const transfers = new TeamWebRtcFileTransfer(bridge, await temporaryDirectory());
+    const first = transfers.receive("host-1", "transfer-1");
+    const second = transfers.receive("host-2", "transfer-2");
+    bridge.emit(
+      "data",
+      "host-1",
+      "files",
+      fileOpen("transfer-1", 4, createHash("sha256").update("test").digest("hex")),
+    );
+    bridge.emit(
+      "data",
+      "host-2",
+      "files",
+      fileOpen("transfer-2", 4, createHash("sha256").update("safe").digest("hex")),
+    );
+    bridge.emit("data", "host-1", "files", chunk("transfer-1", 2, new Uint8Array([1, 2])));
+    bridge.emit("data", "host-2", "files", chunk("transfer-2", 0, new TextEncoder().encode("safe")));
+    bridge.emit(
+      "data",
+      "host-2",
+      "files",
+      encodeTeamProtocolV2Frame({ version: 2, type: "file-complete", transferId: "transfer-2" }),
+    );
+
+    await expect(first).rejects.toThrow("offset");
+    await expect(second).resolves.toMatchObject({ peerId: "host-2", transferId: "transfer-2" });
+    await transfers.stop();
+  });
+
   it("keeps the transfer ID and resumes from the last acknowledged offset", async () => {
     const bridge = new ResumingBridge();
     const transfers = new TeamWebRtcFileTransfer(bridge, await temporaryDirectory());

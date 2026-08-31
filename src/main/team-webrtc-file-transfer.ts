@@ -165,7 +165,10 @@ export class TeamWebRtcFileTransfer {
     data: string | ArrayBuffer,
   ): void => {
     if (channel !== "files") return;
-    this.#chain = this.#chain.then(() => this.#handleData(peerId, data)).catch((error) => this.#failUnknown(error));
+    const transferId = fileTransferId(data);
+    this.#chain = this.#chain
+      .then(() => this.#handleData(peerId, data))
+      .catch((error) => this.#failFrame(peerId, transferId, error));
   };
 
   async #handleData(peerId: string, data: string | ArrayBuffer): Promise<void> {
@@ -310,23 +313,22 @@ export class TeamWebRtcFileTransfer {
     }
   }
 
-  #failUnknown(error: unknown): void {
+  async #failFrame(peerId: string, transferId: string | null, error: unknown): Promise<void> {
+    if (!transferId) return;
     const failure = error instanceof Error ? error : new Error("The WebRTC file transfer failed.");
-    for (const [key, transfer] of this.#incoming) {
-      void this.#bridge
-        .send(
-          transfer.peerId,
-          "files",
-          encodeTeamProtocolV2Frame({
-            version: 2,
-            type: "file-cancel",
-            transferId: transfer.transferId,
-            reason: failure.message.slice(0, 512),
-          }),
-        )
-        .catch(() => undefined);
-      void this.#cancel(key, failure);
-    }
+    await this.#bridge
+      .send(
+        peerId,
+        "files",
+        encodeTeamProtocolV2Frame({
+          version: 2,
+          type: "file-cancel",
+          transferId,
+          reason: failure.message.slice(0, 512),
+        }),
+      )
+      .catch(() => undefined);
+    await this.#cancel(transferKey(peerId, transferId), failure);
   }
 
   async #sendWithResume(transfer: OutgoingTransfer): Promise<void> {
@@ -419,6 +421,16 @@ export class TeamWebRtcFileTransfer {
 
 function transferKey(peerId: string, transferId: string): string {
   return `${peerId}\0${transferId}`;
+}
+
+function fileTransferId(data: string | ArrayBuffer): string | null {
+  try {
+    return isString(data)
+      ? decodeTeamProtocolV2FileControlFrame(data).transferId
+      : decodeTeamProtocolV2FileChunk(data).transferId;
+  } catch {
+    return null;
+  }
 }
 
 async function sha256File(path: string): Promise<string> {

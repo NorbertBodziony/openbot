@@ -144,7 +144,7 @@ interface RemoteServerManagerOptions {
   allowLocalDevelopmentInvites?: boolean;
   appVersion?: string;
   webrtcTransport?: TeamWebRtcClientTransport;
-  localHostId?: string | null;
+  getLocalHostId?: () => string | null;
 }
 
 export interface DevelopmentRemoteServerConnection {
@@ -216,7 +216,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   #eventGenerations = new Map<string, number>();
   #eventsEnabled = false;
   readonly #webrtcTransport: TeamWebRtcClientTransport | null;
-  readonly #localHostId: string | null;
+  readonly #getLocalHostId: () => string | null;
   readonly #remoteViewerProxy: RemoteViewerProxy | null;
   #presence = new Map<string, TeamPresenceSnapshot>();
   #writeChain = Promise.resolve();
@@ -234,7 +234,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#allowLocalDevelopmentInvites = options.allowLocalDevelopmentInvites ?? false;
     this.#appVersion = options.appVersion ?? null;
     this.#webrtcTransport = options.webrtcTransport ?? null;
-    this.#localHostId = options.localHostId ?? null;
+    this.#getLocalHostId = options.getLocalHostId ?? (() => null);
     this.#remoteViewerProxy = this.#webrtcTransport
       ? new RemoteViewerProxy({
           transport: this.#webrtcTransport,
@@ -1066,7 +1066,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       ? this.#state.servers.filter((server) => server.transport !== "webrtc-v2")
       : [];
     const servers = hosts
-      .filter((host) => host.hostId !== this.#localHostId)
+      .filter((host) => host.hostId !== this.#getLocalHostId())
       .map<StoredRemoteServer>((host) => ({
         id: host.hostId,
         name: host.name,

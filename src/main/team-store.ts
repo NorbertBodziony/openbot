@@ -388,7 +388,7 @@ export class TeamStore {
     const sessionExpiresAt = new Date(input.expiresAt ?? Date.now() + SESSION_TTL_MS).toISOString();
     const stored = this.#requireState().members.find((member) => member.id === input.membershipId);
     const member: TeamMemberSummary = stored
-      ? publicMember(stored)
+      ? { ...publicMember(stored), role: input.role, disabled: false }
       : {
           id: input.membershipId,
           username: input.userId,
@@ -398,7 +398,6 @@ export class TeamStore {
           createdAt: new Date().toISOString(),
           disabled: false,
         };
-    if (member.disabled || member.role !== input.role) throw new TeamStoreError("The remote member is not active.");
     this.#remoteSessions.set(hashToken(sessionToken), { member, sessionId: input.sessionId, sessionExpiresAt });
     return { member: structuredClone(member), sessionToken, sessionExpiresAt };
   }

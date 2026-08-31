@@ -1464,7 +1464,10 @@ function forwardCentralAuth(state: CentralAuthState): void {
         await remoteServerManager?.disconnectRemoteSessions();
       }
       activeRemotePrincipalId = nextPrincipalId;
-      if (state.status !== "signed_in") return;
+      if (state.status !== "signed_in") {
+        if (state.status === "signed_out") await hostService?.stop(false);
+        return;
+      }
       await remoteServerManager?.syncRemoteHosts();
       const host = hostService;
       if (!host) return;
@@ -1801,7 +1804,7 @@ if (!hasSingleInstanceLock) {
         {
           allowLocalDevelopmentInvites: developmentRemoteRole !== null,
           appVersion: app.getVersion(),
-          localHostId: teamStore.getIdentity()?.serverId ?? null,
+          getLocalHostId: () => teamStore.getIdentity()?.serverId ?? null,
           webrtcTransport: new TeamWebRtcClientTransport({
             bridge: teamWebRtcBridge,
             listHosts: () => {

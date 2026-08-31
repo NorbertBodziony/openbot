@@ -29,7 +29,8 @@ interface TeamWebRtcHostGatewayOptions {
   store: TeamStore;
   appVersion: string;
   transferDirectory: string;
-  prepareIncomingSession?: () => Promise<void>;
+  renewSignal?: (hostId: string) => Promise<{ signalUrl: string; ticket: string }>;
+  onSignalRecoveryFailure?: (error: Error) => void;
 }
 
 export class TeamWebRtcHostGateway {
@@ -37,7 +38,8 @@ export class TeamWebRtcHostGateway {
   readonly #store: TeamStore;
   readonly #appVersion: string;
   readonly #files: TeamWebRtcFileTransfer;
-  readonly #prepareIncomingSession: () => Promise<void>;
+  readonly #renewSignal: ((hostId: string) => Promise<{ signalUrl: string; ticket: string }>) | null;
+  readonly #onSignalRecoveryFailure: (error: Error) => void;
   readonly #responses = new Map<string, TeamProtocolV2RpcFrame>();
   readonly #events = new Map<number, string>();
   #peerId: string | null = null;
@@ -50,16 +52,19 @@ export class TeamWebRtcHostGateway {
   #desktopStreamId: string | null = null;
   #sessionExpirationTimer: ReturnType<typeof setTimeout> | null = null;
   #sessionPreparation: Promise<void> | null = null;
+  #signalRecovery: Promise<void> | null = null;
 
   constructor(options: TeamWebRtcHostGatewayOptions) {
     this.#bridge = options.bridge;
     this.#store = options.store;
     this.#appVersion = options.appVersion;
     this.#files = new TeamWebRtcFileTransfer(options.bridge, options.transferDirectory);
-    this.#prepareIncomingSession = options.prepareIncomingSession ?? (() => Promise.resolve());
+    this.#renewSignal = options.renewSignal ?? null;
+    this.#onSignalRecoveryFailure = options.onSignalRecoveryFailure ?? (() => undefined);
     this.#bridge.on("incoming", this.#onIncoming);
     this.#bridge.on("data", this.#onData);
     this.#bridge.on("disconnected", this.#onDisconnected);
+    this.#bridge.on("error", this.#onError);
   }
 
   async start(input: { hostId: string; signalUrl: string; ticket: string; localApiPort: number }): Promise<void> {
@@ -85,6 +90,7 @@ export class TeamWebRtcHostGateway {
     const peerId = this.#peerId;
     this.#peerId = null;
     this.#closeLocalSession();
+    await this.#signalRecovery?.catch(() => undefined);
     if (peerId) await this.#bridge.disconnect(peerId);
   }
 
@@ -92,6 +98,7 @@ export class TeamWebRtcHostGateway {
     this.#bridge.off("incoming", this.#onIncoming);
     this.#bridge.off("data", this.#onData);
     this.#bridge.off("disconnected", this.#onDisconnected);
+    this.#bridge.off("error", this.#onError);
     void this.#files.stop();
   }
 
@@ -149,7 +156,6 @@ export class TeamWebRtcHostGateway {
   ): Promise<void> {
     if (peerId !== this.#peerId) return;
     if (connection.sessionId === this.#localSessionId && this.#localSessionToken) return;
-    await this.#prepareIncomingSession();
     this.#closeLocalSession();
     this.#events.clear();
     this.#responses.clear();
@@ -184,6 +190,35 @@ export class TeamWebRtcHostGateway {
       this.#closeLocalSession();
     }
   };
+
+  readonly #onError = (peerId: string, code: string): void => {
+    if (peerId !== this.#peerId || code !== "authentication_required" || !this.#renewSignal) return;
+    if (this.#signalRecovery) return;
+    this.#signalRecovery = this.#recoverSignal(peerId)
+      .catch((error) => {
+        if (this.#peerId === peerId) {
+          this.#onSignalRecoveryFailure(error instanceof Error ? error : new Error("Remote Signal recovery failed."));
+        }
+      })
+      .finally(() => {
+        this.#signalRecovery = null;
+      });
+  };
+
+  async #recoverSignal(peerId: string): Promise<void> {
+    const renewSignal = this.#renewSignal;
+    if (!renewSignal) return;
+    const bootstrap = await renewSignal(peerId);
+    if (this.#peerId !== peerId) return;
+    await this.#bridge.disconnect(peerId).catch(() => undefined);
+    if (this.#peerId !== peerId) return;
+    await this.#bridge.connect({ peerId, signalUrl: bootstrap.signalUrl, token: bootstrap.ticket, peer: "host" });
+    if (this.#peerId !== peerId) {
+      await this.#bridge.disconnect(peerId).catch(() => undefined);
+      return;
+    }
+    await this.#waitForSignal(peerId);
+  }
 
   async #handleRpc(data: string): Promise<void> {
     await this.#sessionPreparation;

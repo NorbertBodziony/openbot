@@ -42,6 +42,7 @@ export const Route = createFileRoute("/v2/remote/hosts/$hostId/logo")({
           const upload = await readAvatarUpload(request);
           const requestedVersion = request.headers.get("OpenBot-Logo-Version");
           const version = requestedVersion && isUuidV4(requestedVersion) ? requestedVersion : crypto.randomUUID();
+          const currentVersion = (await requestRemoteControlPlane().hostAsset(user.id, params.hostId)).logoKey;
           const bucket = requestAvatarBucket();
           const key = hostLogoObjectKey(params.hostId, version);
           await bucket.put(key, upload.bytes, {
@@ -49,9 +50,10 @@ export const Route = createFileRoute("/v2/remote/hosts/$hostId/logo")({
           });
           try {
             const previous = await requestRemoteControlPlane().setHostLogo(user.id, params.hostId, version);
-            if (previous) await bucket.delete(hostLogoObjectKey(params.hostId, previous)).catch(() => undefined);
+            if (previous && previous !== version)
+              await bucket.delete(hostLogoObjectKey(params.hostId, previous)).catch(() => undefined);
           } catch (error) {
-            await bucket.delete(key).catch(() => undefined);
+            if (currentVersion !== version) await bucket.delete(key).catch(() => undefined);
             throw error;
           }
           return Response.json({ logoKey: version }, { headers: { "Cache-Control": "no-store" } });
