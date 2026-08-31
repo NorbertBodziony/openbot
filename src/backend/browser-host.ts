@@ -17,7 +17,6 @@ import type {
 import { type DynamicRecord, isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { app, type BrowserWindow, type Session, session, type WebContents, WebContentsView } from "electron";
 import { embeddedBrowserUserAgent, embeddedBrowserUserAgentForUrl } from "./browser-identity";
-import { isAllowedBrowserStoragePermission } from "./browser-permissions";
 import { isCloseBrowserTabShortcut, isGlobalSearchShortcut, isToggleDevToolsShortcut } from "./browser-shortcuts";
 import { persistentBrowserUrl } from "./browser-state";
 import type { DynamicToolCallParams, DynamicToolResult } from "./protocol";
@@ -318,12 +317,7 @@ export class BrowserHost {
 
   async navigate(tabId: string, direction: BrowserNavigationDirection): Promise<void> {
     await this.#enqueue(tabId, async (tab) => {
-      const history = tab.view.webContents.navigationHistory;
-      if (direction === "back") {
-        if (history.canGoBack()) history.goBack();
-        return;
-      }
-      if (history.canGoForward()) history.goForward();
+      navigateHistory(tab.view.webContents, direction, this.#session.getUserAgent());
     });
   }
 
@@ -382,7 +376,11 @@ export class BrowserHost {
       tab.view.webContents.focus();
       try {
         if (!wasVisible) await delay(250);
-        await withTimeout(performAction(tab.view.webContents, action), 10_000, "Browser action timed out.");
+        await withTimeout(
+          performAction(tab.view.webContents, action, this.#session.getUserAgent()),
+          10_000,
+          "Browser action timed out.",
+        );
         await delay(50);
       } finally {
         if (!wasVisible) {
@@ -540,12 +538,8 @@ export class BrowserHost {
         requestHeaders: browserRequestHeaders(details.requestHeaders),
       });
     });
-    this.#session.setPermissionRequestHandler((_webContents, permission, callback, details) => {
-      callback(isAllowedBrowserStoragePermission(permission, details.requestingUrl));
-    });
-    this.#session.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details) => {
-      return isAllowedBrowserStoragePermission(permission, requestingOrigin, details.embeddingOrigin);
-    });
+    this.#session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+    this.#session.setPermissionCheckHandler(() => false);
     this.#session.on("will-download", (_event, item) => {
       const safeName = basename(item.getFilename()).replace(/[^a-zA-Z0-9._ -]/g, "_");
       const downloadPath = uniqueDownloadPath(
@@ -604,6 +598,14 @@ export class BrowserHost {
         return;
       }
       contents.setUserAgent(embeddedBrowserUserAgentForUrl(this.#session.getUserAgent(), url));
+    });
+    contents.on("will-redirect", (event) => {
+      if (!event.isMainFrame) return;
+      if (!isAllowedMainUrl(event.url)) {
+        event.preventDefault();
+        return;
+      }
+      contents.setUserAgent(embeddedBrowserUserAgentForUrl(this.#session.getUserAgent(), event.url));
     });
     contents.setWindowOpenHandler(({ url }) => {
       if (isAllowedMainUrl(url)) void this.open(url, tab.ownerThreadId, tab.ownerBotId);
@@ -1045,7 +1047,7 @@ function snapshotScript(revision: number): string {
   })()`;
 }
 
-async function performAction(contents: WebContents, action: BrowserAction): Promise<void> {
+async function performAction(contents: WebContents, action: BrowserAction, sessionUserAgent: string): Promise<void> {
   switch (action.type) {
     case "click": {
       await withDevToolsDebugger(contents, async () => {
@@ -1151,14 +1153,24 @@ async function performAction(contents: WebContents, action: BrowserAction): Prom
       );
       return;
     case "back":
-      if (contents.navigationHistory.canGoBack()) contents.navigationHistory.goBack();
+      navigateHistory(contents, "back", sessionUserAgent);
       return;
     case "forward":
-      if (contents.navigationHistory.canGoForward()) contents.navigationHistory.goForward();
+      navigateHistory(contents, "forward", sessionUserAgent);
       return;
     case "reload":
       contents.reload();
   }
+}
+
+function navigateHistory(contents: WebContents, direction: BrowserNavigationDirection, sessionUserAgent: string): void {
+  const history = contents.navigationHistory;
+  const offset = direction === "back" ? -1 : 1;
+  if (!history.canGoToOffset(offset)) return;
+  const entry = history.getEntryAtIndex(history.getActiveIndex() + offset);
+  if (!entry?.url) return;
+  contents.setUserAgent(embeddedBrowserUserAgentForUrl(sessionUserAgent, entry.url));
+  history.goToOffset(offset);
 }
 
 function isInputPoint(value: unknown): value is { x: number; y: number; direct?: boolean } {

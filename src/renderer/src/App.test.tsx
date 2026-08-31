@@ -3410,6 +3410,64 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("textbox", { name: "Browser address" })).toHaveValue("https://example.com/active");
   });
 
+  it("restores the active local browser tab after returning from a remote server", async () => {
+    const local = testServer("local", true);
+    const remote = testServer("remote-1", false);
+    let resolveRemoteTabs: ((tabs: BrowserTab[]) => void) | undefined;
+    const firstTab: BrowserTab = {
+      id: "tab-first",
+      title: "First local tab",
+      url: "https://example.com/first",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    const activeTab: BrowserTab = {
+      id: "tab-active",
+      title: "Active local tab",
+      url: "https://example.com/active",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+    vi.mocked(window.openbot.servers.select).mockImplementation(async (serverId) => [
+      { ...local, active: serverId === "local" },
+      { ...remote, active: serverId === "remote-1" },
+    ]);
+    vi.mocked(window.openbot.browser.getDisplayState)
+      .mockResolvedValueOnce({ tabs: [], activeTabId: null })
+      .mockResolvedValueOnce({ tabs: [firstTab, activeTab], activeTabId: activeTab.id });
+    vi.mocked(window.openbot.browser.listTabs).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveRemoteTabs = resolve;
+      }),
+    );
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await waitFor(() => expect(window.openbot.browser.getDisplayState).toHaveBeenCalledTimes(1));
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() => expect(window.openbot.servers.select).toHaveBeenCalledWith("remote-1"));
+    await waitFor(() => expect(resolveRemoteTabs).toBeDefined());
+    resolveRemoteTabs?.([]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true"),
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "Local server" }));
+    await waitFor(() => expect(window.openbot.browser.getDisplayState).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Local server" })).toHaveAttribute("aria-pressed", "true"),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+
+    expect(await screen.findByRole("tab", { name: "Active local tab" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "First local tab" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("textbox", { name: "Browser address" })).toHaveValue("https://example.com/active");
+  });
+
   it("restores desktop Picture in Picture per conversation without overriding it during agent control", async () => {
     window.localStorage.setItem("openbot:browser-pip-native-bounds", "640,320,460,340");
     render(() => <App />);

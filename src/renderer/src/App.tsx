@@ -2836,7 +2836,13 @@ export function createAppController(props: AppProps = {}) {
     }
     const browserRequestedAtRevision = browserChangeRevision;
     const browserSupported = serverSupportsCapability(selectedServer, "browser-control");
-    const [storedBots, layout, reads, status, models, tabs, controlState, presence] = await Promise.all([
+    const browserDisplayState =
+      props.landingPreview || !browserSupported
+        ? Promise.resolve({ tabs: [], activeTabId: null })
+        : selectedServer?.kind === "remote"
+          ? window.openbot.browser.listTabs().then((tabs) => ({ tabs, activeTabId: tabs[0]?.id ?? null }))
+          : window.openbot.browser.getDisplayState();
+    const [storedBots, layout, reads, status, models, displayState, controlState, presence] = await Promise.all([
       window.openbot.agent.listBots(),
       serverSupportsCapability(selectedServer, "sidebar-layout")
         ? window.openbot.agent.getSidebarLayout()
@@ -2844,7 +2850,7 @@ export function createAppController(props: AppProps = {}) {
       window.openbot.agent.listConversationReads(),
       window.openbot.agent.getStatus(),
       window.openbot.agent.listModels(),
-      props.landingPreview || !browserSupported ? Promise.resolve([]) : window.openbot.browser.listTabs(),
+      browserDisplayState,
       props.landingPreview || !browserSupported
         ? Promise.resolve({ sessions: [] })
         : window.openbot.browser.getControlState(),
@@ -2853,8 +2859,8 @@ export function createAppController(props: AppProps = {}) {
     setAgentStatus(status);
     setModelOptions(models);
     if (browserChangeRevision === browserRequestedAtRevision) {
-      setBrowserTabs(tabs);
-      setActiveBrowserTabId(tabs[0]?.id ?? null);
+      setBrowserTabs(displayState.tabs);
+      setActiveBrowserTabId(displayState.activeTabId ?? displayState.tabs[0]?.id ?? null);
     }
     setBrowserControlState(controlState);
     setTeamPresence(presence);

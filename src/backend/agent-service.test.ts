@@ -788,6 +788,114 @@ describe.sequential("AgentService", () => {
     });
   });
 
+  it("surfaces Computer Use app access elicitations and returns the user's persistence choice", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider);
+      clients.set(provider, client);
+      return client;
+    });
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Use Telegram" });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const turnId = events.find((event) => event.type === "turn-started")?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The Computer Use test turn did not start.");
+
+    client.emit("request", {
+      method: "mcpServer/elicitation/request",
+      id: "computer-use-always",
+      params: {
+        threadId,
+        turnId,
+        serverName: "computer-use",
+        mode: "openai/form",
+        _meta: { persist: ["always"] },
+        message: "Allow ChatGPT to use Telegram?",
+        requestedSchema: { type: "object", properties: {} },
+      },
+    });
+
+    await waitFor(() => events.some((event) => event.type === "prompt"));
+    expect(client.responses).toHaveLength(0);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "prompt",
+        requestId: "computer-use-always",
+        botId: "chief",
+        questions: [
+          expect.objectContaining({
+            question: "Allow ChatGPT to use Telegram?",
+            options: [
+              expect.objectContaining({ label: "Allow once" }),
+              expect.objectContaining({ label: "Always allow" }),
+              expect.objectContaining({ label: "Don't allow" }),
+            ],
+          }),
+        ],
+      }),
+    );
+
+    await service.respondToPrompt({
+      requestId: "computer-use-always",
+      answers: { "mcp-elicitation-decision": ["Always allow"] },
+    });
+    expect(client.responses.at(-1)).toEqual({
+      id: "computer-use-always",
+      result: { action: "accept", content: {}, _meta: { persist: "always" } },
+    });
+
+    client.emit("request", {
+      method: "mcpServer/elicitation/request",
+      id: "computer-use-decline",
+      params: {
+        threadId,
+        turnId,
+        serverName: "computer-use",
+        mode: "form",
+        _meta: { persist: ["always"] },
+        message: "Allow ChatGPT to use Preview?",
+        requestedSchema: { type: "object", properties: {} },
+      },
+    });
+    await waitFor(() => events.filter((event) => event.type === "prompt").length === 2);
+    await service.respondToPrompt({
+      requestId: "computer-use-decline",
+      answers: { "mcp-elicitation-decision": ["Don't allow"] },
+    });
+    expect(client.responses.at(-1)).toEqual({
+      id: "computer-use-decline",
+      result: { action: "decline", content: null, _meta: null },
+    });
+
+    client.emit("request", {
+      method: "mcpServer/elicitation/request",
+      id: "unsupported-elicitation",
+      params: {
+        threadId,
+        turnId,
+        serverName: "other-plugin",
+        mode: "form",
+        _meta: null,
+        message: "Enter a value.",
+        requestedSchema: { type: "object", properties: {} },
+      },
+    });
+    await waitFor(() => client.responses.some((response) => response.id === "unsupported-elicitation"));
+    expect(client.responses.at(-1)).toEqual({
+      id: "unsupported-elicitation",
+      result: { action: "decline", content: null, _meta: null },
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "error", code: "mcp_safety_handoff", botId: "chief" }),
+    );
+  });
+
   it("provides a default-mode ask_user tool that resolves through the Questions card", async () => {
     const clients = new Map<AgentProvider, FakeAgentClient>();
     const { store, mailbox } = stores();
