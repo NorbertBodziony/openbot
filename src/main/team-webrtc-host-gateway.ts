@@ -173,7 +173,7 @@ export class TeamWebRtcHostGateway {
       return;
     }
     if (!isString(data)) return;
-    if (channel === "rpc") void this.#handleRpc(data);
+    if (channel === "rpc") void this.#handleRpc(data).catch(() => this.#closeLocalSession());
     else if (channel === "events") void this.#handleEventControl(data);
   };
 

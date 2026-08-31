@@ -94,7 +94,6 @@ export interface RemoteInvitePreview {
 
 export interface RemoteMemberRecord {
   membershipId: string;
-  userId: string;
   email: string;
   name: string | null;
   avatarUrl: string | null;
@@ -999,7 +998,6 @@ function decodeRemoteMember(value: unknown): RemoteMemberRecord {
   if (record.avatarUrl !== null && !isString(record.avatarUrl)) throw new Error("Invalid remote member avatar.");
   return {
     membershipId: requiredString(record, "membershipId"),
-    userId: requiredString(record, "userId"),
     email: requiredString(record, "email"),
     name: record.name,
     avatarUrl: record.avatarUrl,

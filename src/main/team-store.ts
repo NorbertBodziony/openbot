@@ -99,7 +99,6 @@ export interface AuthenticatedMember {
 
 export interface RemoteDirectoryMember {
   membershipId: string;
-  userId: string;
   email: string;
   name: string | null;
   avatarUrl: string | null;
@@ -355,7 +354,6 @@ export class TeamStore {
           throw new TeamStoreError("The control-plane owner identity does not match this host.");
         state.members.push({
           id: remote.membershipId,
-          accountId: remote.userId,
           username: normalizeEmail(remote.email),
           email: normalizeEmail(remote.email),
           name: normalizeName(remote.name),
@@ -366,7 +364,6 @@ export class TeamStore {
         });
         continue;
       }
-      member.accountId = remote.userId;
       member.username = normalizeEmail(remote.email);
       member.email = normalizeEmail(remote.email);
       member.name = normalizeName(remote.name);

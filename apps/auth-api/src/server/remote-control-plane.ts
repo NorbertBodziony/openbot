@@ -297,7 +297,7 @@ export class RemoteControlPlane {
     await this.#requireRole(hostId, userId, ["owner", "admin", "member"]);
     const result = await this.#database
       .prepare(
-        `SELECT m.membership_id, m.user_id, m.role, m.status, m.created_at,
+        `SELECT m.membership_id, m.role, m.status, m.created_at,
                 u.email, u.name, u.avatar_url
          FROM remote_memberships m
          JOIN users u ON u.id = m.user_id
@@ -307,7 +307,6 @@ export class RemoteControlPlane {
       .bind(hostId)
       .all<{
         membership_id: string;
-        user_id: string;
         role: RemoteMemberRole;
         status: "active" | "revoked";
         created_at: number;
@@ -317,7 +316,6 @@ export class RemoteControlPlane {
       }>();
     return (result.results ?? []).map((member) => ({
       membershipId: member.membership_id,
-      userId: member.user_id,
       role: member.role,
       status: member.status,
       createdAt: member.created_at,

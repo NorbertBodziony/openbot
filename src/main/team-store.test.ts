@@ -217,7 +217,6 @@ describe("TeamStore", () => {
     await store.syncRemoteDirectory([
       {
         membershipId: ownerMembershipId ?? "missing-owner",
-        userId: "owner-account",
         email: "owner@example.com",
         name: "Owner",
         avatarUrl: null,
@@ -227,7 +226,6 @@ describe("TeamStore", () => {
       },
       {
         membershipId: "d1-member",
-        userId: "alice-account",
         email: "alice@example.com",
         name: "Alice",
         avatarUrl: null,
