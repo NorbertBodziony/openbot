@@ -194,7 +194,7 @@ function MarkdownBlock(props: {
           <MarkdownBlocks
             tokens={token.tokens}
             content={props.content}
-            streaming={props.streaming}
+            streaming={props.streaming === true && !parentClosesFinalNestedTable(token)}
             streamingTail={props.streamingTail}
           />
         </blockquote>
@@ -302,6 +302,9 @@ function MarkdownList(props: {
 function MarkdownTable(props: { token: Tokens.Table; content: MarkdownContentProps; streaming?: boolean }) {
   const headers = createMemo(() => props.token.header);
   const rows = createMemo(() => props.token.rows);
+  const streamingCellIndex = createMemo(() =>
+    props.streaming === true ? activeStreamingTableCellIndex(props.token) : -1,
+  );
   return (
     <section class="message-markdown-table-scroll" aria-label="Data table" tabindex="0">
       <table class="message-markdown-table">
@@ -326,9 +329,7 @@ function MarkdownTable(props: { token: Tokens.Table; content: MarkdownContentPro
                       <MarkdownInline
                         tokens={cell.tokens}
                         content={props.content}
-                        streaming={
-                          props.streaming === true && rowIndex() === rows().length - 1 && cellIndex() === row.length - 1
-                        }
+                        streaming={rowIndex() === rows().length - 1 && cellIndex() === streamingCellIndex()}
                       />
                     </td>
                   )}
@@ -608,6 +609,43 @@ function activeStreamingBlockTokenIndex(tokens: Token[]): number {
   const token = tokens[index];
   if (tokenIs(token, "heading") && token.raw.includes("\n")) return -1;
   return index;
+}
+
+function activeStreamingTableCellIndex(token: Tokens.Table): number {
+  const row = token.rows.at(-1);
+  if (!row || /\n[\t ]*$/u.test(token.raw)) return -1;
+  const sourceRow = token.raw.split("\n").at(-1)?.trimEnd();
+  if (!sourceRow) return -1;
+
+  const finalCharacterIndex = sourceRow.length - 1;
+  if (sourceRow[finalCharacterIndex] === "|" && !isEscapedMarkdownCharacter(sourceRow, finalCharacterIndex)) {
+    return -1;
+  }
+
+  let sourceIndex = sourceRow.search(/\S/u);
+  if (sourceIndex === -1) return -1;
+  if (sourceRow[sourceIndex] === "|") sourceIndex += 1;
+
+  let cellIndex = 0;
+  for (; sourceIndex < sourceRow.length; sourceIndex += 1) {
+    if (sourceRow[sourceIndex] === "|" && !isEscapedMarkdownCharacter(sourceRow, sourceIndex)) cellIndex += 1;
+  }
+  return cellIndex < row.length ? cellIndex : -1;
+}
+
+function parentClosesFinalNestedTable(token: Tokens.Blockquote): boolean {
+  if (!/\n[\t ]*$/u.test(token.raw)) return false;
+  const index = lastRenderableTokenIndex(token.tokens);
+  const finalToken = token.tokens[index];
+  return finalToken !== undefined && tokenIs(finalToken, "table");
+}
+
+function isEscapedMarkdownCharacter(value: string, index: number): boolean {
+  let slashCount = 0;
+  for (let slashIndex = index - 1; slashIndex >= 0 && value[slashIndex] === "\\"; slashIndex -= 1) {
+    slashCount += 1;
+  }
+  return slashCount % 2 === 1;
 }
 
 function markdownInlinePlainText(tokens: Token[]): string {

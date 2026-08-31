@@ -923,6 +923,59 @@ describe("MessageBody", () => {
     await waitFor(() => expect(screen.getByText("bold").tagName).toBe("STRONG"));
   });
 
+  it("hides an incomplete marker in an unpadded source cell", async () => {
+    const [body, setBody] = createSignal("> | A | B |\n> | --- | --- |\n> | **bold");
+    const [streaming, setStreaming] = createSignal(true);
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: "message-streaming-short-table-row",
+          author: "bot",
+          body: body(),
+          time: "10:00",
+          streaming: streaming(),
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(container).toHaveTextContent("bold");
+    expect(container).not.toHaveTextContent("**");
+
+    setBody("> | A | B |\n> | --- | --- |\n> | **bold**");
+    setStreaming(false);
+
+    await waitFor(() => expect(screen.getByText("bold").tagName).toBe("STRONG"));
+  });
+
+  it.each([
+    ["closing pipe", "> | A | B |\n> | --- | --- |\n> | x | **literal |"],
+    ["newline", "> | A | B |\n> | --- | --- |\n> | x | **literal\n"],
+  ])("preserves markers in a table cell closed by a %s", (_boundary, body) => {
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: "message-streaming-closed-table-cell",
+          author: "bot",
+          body,
+          time: "10:00",
+          streaming: true,
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(container).toHaveTextContent("**literal");
+  });
+
   it("preserves literal markers in a completed streaming table header", () => {
     const { container } = render(() => (
       <MessageBody
