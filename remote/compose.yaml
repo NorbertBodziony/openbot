@@ -10,6 +10,7 @@ services:
       SIGNAL_DOMAIN: ${SIGNAL_DOMAIN:?SIGNAL_DOMAIN is required}
       TURN_DOMAIN: ${TURN_DOMAIN:?TURN_DOMAIN is required}
       CF_DNS_API_TOKEN: ${CLOUDFLARE_DNS_API_TOKEN:?CLOUDFLARE_DNS_API_TOKEN is required}
+      ACME_CERTIFICATE_GROUP_ID: ${ACME_CERTIFICATE_GROUP_ID:-2000}
     volumes:
       - acme-data:/acme
       - ./acme/renew.sh:/opt/openbot/renew.sh:ro
@@ -49,6 +50,8 @@ services:
       TURN_TLS_PORT: 5349
     ports:
       - "${REMOTE_SIGNAL_BIND_ADDRESS:-0.0.0.0}:${REMOTE_SIGNAL_PUBLIC_PORT:-443}:${REMOTE_SIGNAL_PORT:-8443}/tcp"
+    group_add:
+      - "${ACME_CERTIFICATE_GROUP_ID:-2000}"
     volumes:
       - acme-data:/acme:ro
     read_only: true
@@ -73,6 +76,8 @@ services:
       TURN_SHARED_SECRET: ${TURN_SHARED_SECRET:?TURN_SHARED_SECRET is required}
       TURN_TLS_CERT_PATH: /acme/certificates/${SIGNAL_DOMAIN}.crt
       TURN_TLS_KEY_PATH: /acme/certificates/${SIGNAL_DOMAIN}.key
+    group_add:
+      - "${ACME_CERTIFICATE_GROUP_ID:-2000}"
     volumes:
       - acme-data:/acme:ro
     read_only: true

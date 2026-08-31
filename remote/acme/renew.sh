@@ -3,8 +3,10 @@ set -eu
 
 lego_args="--path /acme --email ${ACME_EMAIL} --accept-tos --dns cloudflare --domains ${SIGNAL_DOMAIN} --domains ${TURN_DOMAIN}"
 make_certificates_readable() {
-  chmod 0555 /acme/certificates
-  chmod 0444 "/acme/certificates/${SIGNAL_DOMAIN}.crt" "/acme/certificates/${SIGNAL_DOMAIN}.key"
+  chgrp "${ACME_CERTIFICATE_GROUP_ID}" /acme/certificates
+  chgrp "${ACME_CERTIFICATE_GROUP_ID}" "/acme/certificates/${SIGNAL_DOMAIN}.crt" "/acme/certificates/${SIGNAL_DOMAIN}.key"
+  chmod 0550 /acme/certificates
+  chmod 0440 "/acme/certificates/${SIGNAL_DOMAIN}.crt" "/acme/certificates/${SIGNAL_DOMAIN}.key"
 }
 
 if [ ! -f "/acme/certificates/${SIGNAL_DOMAIN}.crt" ]; then

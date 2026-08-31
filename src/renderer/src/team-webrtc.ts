@@ -88,6 +88,7 @@ interface PeerState {
   turnRefreshTimer: number | null;
   iceRestartPending: boolean;
   iceRestarting: boolean;
+  signalChain: Promise<void>;
   closed: boolean;
 }
 
@@ -130,6 +131,7 @@ async function handleCommand(command: BridgeCommand): Promise<void> {
         turnRefreshTimer: null,
         iceRestartPending: false,
         iceRestarting: false,
+        signalChain: Promise.resolve(),
         closed: false,
       };
       peers.set(state.id, state);
@@ -172,9 +174,12 @@ function connectSignal(state: PeerState): void {
   });
   socket.addEventListener("message", (event) => {
     if (!isString(event.data)) return;
-    void handleSignal(state, signalMessageSchema.parse(JSON.parse(event.data))).catch((error) =>
-      failPeer(state, error),
-    );
+    state.signalChain = state.signalChain
+      .then(async () => {
+        if (state.closed || state.socket !== socket) return;
+        await handleSignal(state, signalMessageSchema.parse(JSON.parse(event.data)));
+      })
+      .catch((error) => failPeer(state, error));
   });
   socket.addEventListener("close", () => {
     if (state.socket === socket) state.socket = null;
