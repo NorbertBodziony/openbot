@@ -46,6 +46,37 @@ describe("hosted site control plane", () => {
     expect(fixture.bucket.keys()).not.toContain(`sites/${first.id}/deployments/${firstDeployment}/index.html`);
   });
 
+  it("rejects an idempotency key reused for another site or operation", async () => {
+    const fixture = serviceFixture();
+    const first = await publish(fixture.service, "alice", "receipt-first-publish", "shared-activation-key");
+    const replacement = await fixture.service.createUpload(
+      "alice",
+      uploadRequest({ siteId: first.id, title: "Replacement with reused activation key" }),
+      "receipt-replacement-publish",
+    );
+    await uploadIndex(fixture.service, "alice", replacement.uploadId);
+
+    await expect(
+      fixture.service.activate("alice", replacement.uploadId, "shared-activation-key"),
+    ).rejects.toMatchObject({ code: "idempotency_conflict" });
+    const replacementDeployment = await fixture.database
+      .prepare("SELECT status FROM site_deployments WHERE id = ?")
+      .bind(replacement.uploadId)
+      .first<{ status: string }>();
+    expect(replacementDeployment?.status).toBe("uploading");
+
+    const second = await fixture.service.createUpload("alice", uploadRequest(), "receipt-second-publish");
+    await fixture.service.delete("alice", first.id, "shared-delete-key");
+    await expect(fixture.service.delete("alice", second.site.id, "shared-delete-key")).rejects.toMatchObject({
+      code: "idempotency_conflict",
+    });
+    const secondSite = await fixture.database
+      .prepare("SELECT status FROM hosted_sites WHERE id = ?")
+      .bind(second.site.id)
+      .first<{ status: string }>();
+    expect(secondSite?.status).toBe("uploading");
+  });
+
   it("charges the activation limit before a concurrent activating request can publish", async () => {
     const fixture = serviceFixture();
     const site = await publish(fixture.service, "alice", "rate-publish-0", "rate-activate-0");
@@ -654,10 +685,6 @@ function serviceFixture(): {
   databases.push(sqlite);
   sqlite.exec("PRAGMA foreign_keys = ON; CREATE TABLE users(id TEXT PRIMARY KEY);");
   sqlite.exec(migration("0012_hosted_sites.sql"));
-  sqlite.exec(migration("0013_hosted_site_hostname_reservations.sql"));
-  sqlite.exec(migration("0014_hosted_site_object_cleanup.sql"));
-  sqlite.exec(migration("0015_hosted_site_activation_authorization.sql"));
-  sqlite.exec(migration("0016_hosted_site_concurrency.sql"));
   sqlite.prepare("INSERT INTO users(id) VALUES (?), (?)").run("alice", "bob");
   const database = new FakeD1Database(sqlite);
   const bucket = new FakeR2Bucket();

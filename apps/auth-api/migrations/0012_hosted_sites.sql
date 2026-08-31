@@ -12,7 +12,8 @@ CREATE TABLE hosted_sites (
   updated_at INTEGER NOT NULL,
   expires_at INTEGER,
   deleted_at INTEGER,
-  blocked_at INTEGER
+  blocked_at INTEGER,
+  route_synced_at INTEGER
 );
 
 CREATE INDEX hosted_sites_owner_status ON hosted_sites(user_id, status, expires_at);
@@ -35,11 +36,16 @@ CREATE TABLE site_deployments (
   created_at INTEGER NOT NULL,
   upload_expires_at INTEGER NOT NULL,
   activated_at INTEGER,
+  objects_deleted_at INTEGER,
+  activation_authorized_at INTEGER,
+  in_flight_uploads INTEGER NOT NULL DEFAULT 0,
   UNIQUE(user_id, idempotency_key)
 );
 
 CREATE INDEX site_deployments_site ON site_deployments(site_id, created_at);
 CREATE INDEX site_deployments_upload_expiry ON site_deployments(status, upload_expires_at);
+CREATE INDEX site_deployments_object_cleanup ON site_deployments(status, objects_deleted_at);
+CREATE INDEX site_deployments_activation_rate ON site_deployments(user_id, activation_authorized_at);
 
 CREATE TABLE site_upload_files (
   deployment_id TEXT NOT NULL REFERENCES site_deployments(id) ON DELETE CASCADE,
@@ -59,6 +65,19 @@ CREATE TABLE site_operation_receipts (
   created_at INTEGER NOT NULL,
   PRIMARY KEY(user_id, idempotency_key)
 );
+
+CREATE TABLE site_hostname_reservations (
+  hostname TEXT PRIMARY KEY,
+  created_at INTEGER NOT NULL
+);
+
+CREATE TABLE site_creation_events (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX site_creation_events_owner_time ON site_creation_events(user_id, created_at);
 
 CREATE TABLE site_audit_log (
   id TEXT PRIMARY KEY,

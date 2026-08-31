@@ -353,9 +353,9 @@ export class HostedSiteService {
   }
 
   async activate(userId: string, uploadId: string, idempotencyKey: string): Promise<HostedSiteSummary> {
-    const receipt = await this.receipt(userId, idempotencyKey, "activate");
-    if (receipt) return parseStoredSiteSummary(receipt);
     const deployment = await this.requireDeployment(userId, uploadId);
+    const receipt = await this.receipt(userId, idempotencyKey, "activate", deployment.id);
+    if (receipt) return parseStoredSiteSummary(receipt);
     const now = this.now();
     const site = await this.requireOwnedSite(userId, deployment.site_id, true);
     if (site.status !== "uploading" && site.status !== "active") {
@@ -385,7 +385,7 @@ export class HostedSiteService {
       if (deployment.base_deployment_id && deployment.base_deployment_id !== deployment.id) {
         await this.deleteDeployment(site.id, deployment.base_deployment_id);
       }
-      await this.saveReceipt(userId, idempotencyKey, "activate", site.id, summary, now);
+      await this.saveReceipt(userId, idempotencyKey, "activate", deployment.id, summary, now);
       return summary;
     }
     if (!["uploading", "activating"].includes(deployment.status) || deployment.upload_expires_at <= now) {
@@ -423,7 +423,7 @@ export class HostedSiteService {
   }
 
   async delete(userId: string, siteId: string, idempotencyKey: string): Promise<void> {
-    if (await this.receipt(userId, idempotencyKey, "delete")) return;
+    if (await this.receipt(userId, idempotencyKey, "delete", siteId)) return;
     const site = await this.requireOwnedSite(userId, siteId, true);
     if (site.status === "deleted" && (await this.completedDeletion(userId, site.id))) return;
     const now = this.now();
@@ -800,7 +800,7 @@ export class HostedSiteService {
     for (const abandonedDeploymentId of deploymentResultIds(results[4])) {
       await this.deleteDeployment(site.id, abandonedDeploymentId);
     }
-    await this.saveReceipt(userId, idempotencyKey, "activate", site.id, summary, now);
+    await this.saveReceipt(userId, idempotencyKey, "activate", deployment.id, summary, now);
     return summary;
   }
 
@@ -1035,14 +1035,22 @@ export class HostedSiteService {
     return mapSite(row);
   }
 
-  private async receipt(userId: string, key: string, operation: string): Promise<string | null> {
+  private async receipt(userId: string, key: string, operation: string, resourceId: string): Promise<string | null> {
     const row = await this.database
       .prepare(
-        "SELECT response_json FROM site_operation_receipts WHERE user_id = ? AND idempotency_key = ? AND operation = ?",
+        "SELECT operation, resource_id, response_json FROM site_operation_receipts WHERE user_id = ? AND idempotency_key = ?",
       )
-      .bind(userId, key, operation)
-      .first<{ response_json: string }>();
-    return row?.response_json ?? null;
+      .bind(userId, key)
+      .first<{ operation: string; resource_id: string | null; response_json: string }>();
+    if (!row) return null;
+    if (row.operation !== operation || row.resource_id !== resourceId) {
+      throw new HostedSiteInputError(
+        409,
+        "idempotency_conflict",
+        "This idempotency key was already used for a different site operation.",
+      );
+    }
+    return row.response_json;
   }
 
   private async completedDeletion(userId: string, siteId: string): Promise<boolean> {
