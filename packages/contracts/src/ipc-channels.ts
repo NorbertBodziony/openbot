@@ -49,6 +49,7 @@ export const IPC_CHANNELS = {
   authRetry: "auth:retry",
   authRequestEmailCode: "auth:request-email-code",
   authVerifyEmailCode: "auth:verify-email-code",
+  authUpdateName: "auth:update-name",
   authUpdateAvatar: "auth:update-avatar",
   authLogout: "auth:logout",
   authEvent: "auth:event",

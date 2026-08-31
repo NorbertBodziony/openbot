@@ -2,6 +2,8 @@ export const INPUT_LIMITS = {
   identifier: 128,
   email: 254,
   accountName: 120,
+  profileNameMin: 3,
+  profileName: 20,
   serverNameMin: 6,
   serverName: 32,
   inviteUrl: 4_096,

@@ -18,7 +18,6 @@
 }
 
 .settings-modal {
-  --settings-divider-inset: var(--openbot-space-6);
   --openbot-bg-surface: var(--openbot-bg-control);
   --openbot-accent: var(--openbot-settings-accent);
   --openbot-accent-hover: var(--openbot-settings-accent-hover);
@@ -104,7 +103,7 @@
   font-weight: var(--openbot-weight-medium);
 }
 
-.settings-modal-nav-item:not(:disabled) {
+.settings-modal-nav-item {
   cursor: pointer;
 }
 
@@ -113,23 +112,11 @@
   box-shadow: var(--openbot-focus-ring);
 }
 
-.settings-modal-nav-item:disabled {
-  color: var(--openbot-text-dim);
-  cursor: default;
-}
-
 @media (hover: hover) and (pointer: fine) {
-  .settings-modal-nav-item:not(:disabled, [aria-current="page"]):hover {
+  .settings-modal-nav-item:not([aria-current="page"]):hover {
     background: var(--openbot-hover);
     color: var(--openbot-text-primary);
   }
-}
-
-.settings-modal-nav-status {
-  font-size: var(--openbot-text-2xs);
-  line-height: var(--openbot-leading-xs);
-  text-transform: uppercase;
-  letter-spacing: var(--openbot-tracking-wide);
 }
 
 .settings-modal-main {
@@ -231,26 +218,39 @@
   will-change: transform, opacity;
 }
 
+.settings-modal-tab-panel:not([data-selected]) {
+  display: none;
+}
+
 .settings-modal-group {
   display: grid;
   gap: var(--openbot-space-2);
 }
 
-.settings-modal-card.ui-card {
-  width: auto;
+.settings-modal-card:is(.ui-card, .ui-item-group) {
+  width: 100%;
   display: grid;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--openbot-radius-lg);
+  background: var(--openbot-bg-surface);
+  box-shadow: none;
+}
+
+.settings-modal-card.ui-card {
   padding: 0 var(--openbot-space-4);
-  background: var(--openbot-bg-control);
 }
 
 .settings-modal-card > .ui-switch-field,
+.settings-modal-card > .ui-item,
 .settings-modal-row {
-  min-height: 60px;
+  min-height: 64px;
 }
 
 .settings-modal-card > .ui-switch-field {
   width: 100%;
   justify-content: space-between;
+  padding: var(--openbot-space-3) var(--openbot-space-4);
 }
 
 .settings-modal-card > :not(:first-child) {
@@ -258,29 +258,15 @@
   border-top: 0;
 }
 
-.settings-modal-card > :not(:first-child)::before,
-.settings-modal .ui-item-group > :not(:first-child)::before {
+.settings-modal-card > :not(:first-child)::before {
   position: absolute;
   top: 0;
+  right: var(--openbot-space-4);
+  left: var(--openbot-space-4);
   height: 1px;
   background: var(--openbot-border);
   pointer-events: none;
   content: "";
-}
-
-.settings-modal-card > :not(:first-child)::before {
-  right: calc(var(--settings-divider-inset) - var(--openbot-space-4));
-  left: calc(var(--settings-divider-inset) - var(--openbot-space-4));
-}
-
-.settings-modal .ui-item-group > :not(:first-child) {
-  position: relative;
-  border-top: 0;
-}
-
-.settings-modal .ui-item-group > :not(:first-child)::before {
-  right: var(--settings-divider-inset);
-  left: var(--settings-divider-inset);
 }
 
 .settings-modal-row {
@@ -324,7 +310,7 @@
   gap: var(--openbot-space-0-5);
 }
 
-.settings-modal :where(.ui-button, .ui-input, .ui-textarea, .ui-native-select, .ui-select-trigger) {
+.settings-modal :where(.ui-button, .ui-input, .ui-textarea, .ui-native-select) {
   font-size: var(--openbot-text-lg);
   line-height: var(--openbot-leading-lg);
 }
@@ -363,7 +349,6 @@
 }
 
 :is(.app-settings-modal-shell, .server-settings-modal-shell).settings-modal {
-  --settings-divider-inset: var(--openbot-space-4);
   width: min(920px, calc(100vw - 48px));
   height: min(640px, calc(100dvh - 48px));
   grid-template-columns: 196px minmax(0, 1fr);
@@ -396,7 +381,7 @@
 
 :is(.app-settings-modal-shell, .server-settings-modal-shell) .settings-modal-header {
   align-items: center;
-  padding: var(--openbot-space-8);
+  padding: var(--openbot-space-4) var(--openbot-space-4) var(--openbot-space-6) var(--openbot-space-8);
 }
 
 :is(.app-settings-modal-shell, .server-settings-modal-shell) .settings-modal-title {
@@ -438,27 +423,68 @@
   line-height: var(--openbot-leading-md);
 }
 
-.app-settings-modal-shell .settings-modal-card.ui-item-group {
-  width: 100%;
+.provider-picker-embedded {
+  border: 0;
+}
+
+.provider-picker-embedded .provider-picker-list {
   overflow: hidden;
   border: 0;
   border-radius: var(--openbot-radius-lg);
-  background: var(--openbot-bg-control);
+  background: var(--openbot-bg-surface);
 }
 
-.app-settings-modal-shell .settings-modal-card > .ui-switch-field {
+.provider-picker-embedded .provider-picker-option {
+  position: relative;
   min-height: 64px;
-  padding: var(--openbot-space-3) var(--openbot-space-4);
+  border: 0;
+  background: transparent;
+  padding: 0 var(--openbot-space-4);
 }
 
-.app-settings-modal-shell .settings-modal-card > .ui-item {
+.provider-picker-embedded .provider-picker-option-selection {
   min-height: 64px;
+  padding: var(--openbot-space-3) 0;
 }
 
-.app-settings-modal-shell .settings-modal-card > :not(:first-child)::before,
-.app-settings-modal-shell .ui-item-group > :not(:first-child)::before {
+.provider-picker-embedded .provider-picker-option + .provider-picker-option {
+  border-top: 0;
+}
+
+.provider-picker-embedded .provider-picker-option + .provider-picker-option::before {
+  position: absolute;
+  top: 0;
   right: var(--openbot-space-4);
   left: var(--openbot-space-4);
+  height: 1px;
+  background: var(--openbot-border);
+  pointer-events: none;
+  content: "";
+}
+
+.provider-picker-embedded .provider-picker-install {
+  margin-right: 0;
+}
+
+.provider-picker-embedded .provider-picker-option:hover:not(.provider-picker-option-unavailable),
+.provider-picker-embedded .provider-picker-option:focus-within,
+.provider-picker-embedded .provider-picker-option-selected {
+  background: var(--openbot-bg-control-hover);
+}
+
+.settings-modal .provider-picker-name {
+  font-size: var(--openbot-text-lg);
+  font-weight: var(--openbot-weight-medium);
+  line-height: var(--openbot-leading-lg);
+}
+
+.settings-modal :where(.provider-picker-email, .provider-picker-check-error) {
+  font-size: var(--openbot-text-md);
+  line-height: var(--openbot-leading-md);
+}
+
+.settings-modal .provider-picker-status {
+  font-variant-numeric: tabular-nums;
 }
 
 .app-settings-modal-shell .settings-modal-select {
@@ -470,32 +496,121 @@
   color: var(--openbot-text-secondary);
 }
 
+.app-settings-modal-shell .settings-modal-update-track-select {
+  width: 112px;
+}
+
 .app-settings-modal-shell .settings-modal-update-actions {
   flex-wrap: wrap;
+}
+
+.app-settings-modal-shell .settings-modal-update-status {
+  text-wrap: pretty;
+}
+
+.app-settings-modal-shell .settings-modal-update-status-active {
+  color: var(--openbot-accent);
 }
 
 .app-settings-modal-shell .settings-modal-error {
   color: var(--openbot-danger);
 }
 
-.settings-modal-profile-card.ui-card {
-  padding-block: var(--openbot-space-4);
+.settings-identity-name-row.ui-item,
+.settings-identity-image-row.ui-item {
+  min-height: 72px;
 }
 
-.settings-modal-profile-summary {
-  min-height: 56px;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+.settings-identity-name-control {
+  --settings-identity-error-duration: 280ms;
+  position: relative;
+  width: 220px;
+  height: var(--openbot-control-md);
+}
+
+.settings-identity-name-input.ui-input {
+  width: 100%;
+  transition: border-color var(--openbot-duration-normal) ease-out;
+  will-change: transform;
+}
+
+.settings-identity-name-input.is-shaking {
+  animation: settings-identity-name-shake 280ms linear;
+}
+
+.settings-identity-name-error {
+  position: absolute;
+  top: calc(100% + var(--openbot-space-0-5));
+  right: 0;
+  left: 0;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--settings-identity-error-duration) ease-out,
+    visibility 0s linear var(--settings-identity-error-duration);
+}
+
+.settings-identity-name-control[data-invalid] .settings-identity-name-error {
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity var(--settings-identity-error-duration) ease-out,
+    visibility 0s linear;
+}
+
+.settings-identity-image-control {
+  gap: var(--openbot-space-2);
+}
+
+.settings-identity-image-picker {
+  position: relative;
+  display: flex;
+}
+
+.settings-identity-image-trigger {
+  position: relative;
+  width: calc(var(--openbot-control-xl) + var(--openbot-space-2));
+  height: calc(var(--openbot-control-xl) + var(--openbot-space-2));
+  overflow: hidden;
+}
+
+.settings-modal-save-bar {
+  min-height: 60px;
+  display: flex;
   align-items: center;
-  gap: var(--openbot-space-3);
+  justify-content: space-between;
+  gap: var(--openbot-space-4);
+  border-top: 1px solid var(--openbot-border);
+  background: var(--openbot-bg-surface);
+  padding: var(--openbot-space-3) var(--openbot-space-6);
+}
+
+.settings-modal-save-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--openbot-space-1);
+}
+
+.settings-modal-readonly-value {
+  min-width: 180px;
+  max-width: 300px;
+  overflow-wrap: anywhere;
+  color: var(--openbot-text-primary);
+  font-weight: var(--openbot-weight-medium);
+  text-align: right;
+  user-select: text;
+}
+
+.settings-modal-profile-photo-trigger {
+  border-radius: var(--openbot-radius-pill);
 }
 
 .settings-modal-avatar {
-  width: 48px;
-  height: 48px;
+  width: 100%;
+  height: 100%;
   display: grid;
   place-items: center;
-  border: 1px solid var(--openbot-border-strong);
+  border: 0;
   border-radius: var(--openbot-radius-pill);
   background: var(--openbot-accent-soft);
   color: var(--openbot-accent-hover);
@@ -508,37 +623,27 @@
   height: 100%;
   border-radius: inherit;
   object-fit: cover;
+  outline: 1px solid var(--openbot-image-outline);
+  outline-offset: -1px;
 }
 
-.settings-modal-profile-copy {
-  min-width: 0;
-  display: grid;
-  gap: var(--openbot-space-1);
-}
+@keyframes settings-identity-name-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
 
-.settings-modal-profile-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--openbot-space-1);
-}
+  28.57% {
+    transform: translateX(6px);
+  }
 
-.settings-modal-profile-actions .ui-button-variant-destructive-ghost {
-  color: var(--openbot-settings-danger);
-}
+  57.14% {
+    transform: translateX(-6px);
+  }
 
-.settings-modal-profile-error {
-  margin: var(--openbot-space-3) 0 0;
-  color: var(--openbot-settings-danger);
-  font-size: var(--openbot-text-sm);
-  font-weight: var(--openbot-weight-medium);
-}
-
-.settings-modal-profile-fields > .ui-field {
-  padding-block: var(--openbot-space-4);
-}
-
-.settings-modal-profile-fields .ui-input {
-  max-width: 320px;
+  78.57% {
+    transform: translateX(4px);
+  }
 }
 
 @keyframes settings-modal-tab-in {
@@ -665,15 +770,55 @@
   :is(.app-settings-modal-shell, .server-settings-modal-shell) .settings-modal-content {
     padding: 0 calc(var(--openbot-space-4) - var(--openbot-scrollbar-size)) var(--openbot-space-4);
   }
+
+  .settings-identity-name-row,
+  .settings-identity-image-row,
+  .settings-modal-account-email-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .settings-identity-name-control {
+    width: min(320px, 100%);
+    max-width: 320px;
+    height: auto;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: var(--openbot-control-md) var(--openbot-leading-xs);
+    align-items: stretch;
+    row-gap: var(--openbot-space-0-5);
+  }
+
+  .settings-identity-name-error {
+    position: static;
+  }
+
+  .settings-identity-image-control,
+  .settings-modal-account-email-row .ui-item-actions {
+    width: 100%;
+    max-width: none;
+    justify-content: space-between;
+  }
+
+  .settings-modal-readonly-value {
+    min-width: 0;
+    max-width: none;
+    text-align: left;
+  }
+
+  .settings-modal-save-bar {
+    padding-inline: var(--openbot-space-4);
+  }
 }
 
 @media (max-width: 520px) {
-  .settings-modal-profile-summary {
-    grid-template-columns: auto minmax(0, 1fr);
+  .settings-modal-save-bar {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
-  .settings-modal-profile-actions {
-    grid-column: 1 / -1;
+  .settings-modal-save-actions {
+    width: 100%;
     justify-content: flex-end;
   }
 
@@ -683,12 +828,12 @@
   }
 
   .app-settings-modal-shell .settings-modal-row .ui-item-actions,
-  .app-settings-modal-shell .settings-modal-select {
+  .app-settings-modal-shell :is(.settings-modal-select, .settings-modal-update-track-select) {
     width: 100%;
   }
 
   .app-settings-modal-shell .settings-modal-update-actions {
-    justify-content: space-between;
+    justify-content: flex-end;
   }
 }
 
@@ -707,5 +852,10 @@
 
   .settings-modal-tab-panel {
     animation: none;
+  }
+
+  .settings-identity-name-input.is-shaking {
+    animation: none;
+    transform: none;
   }
 }

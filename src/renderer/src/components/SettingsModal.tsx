@@ -1,3 +1,4 @@
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   AgentProviderId,
   AgentStatus,
@@ -7,6 +8,7 @@ import type {
   ProviderRuntimeStatus,
   UpdateStatus,
 } from "@openbot/contracts/ipc";
+import { normalizeAccountName, validateProfileName } from "@openbot/contracts/validation";
 import { createEffect, createMemo, createSignal, Show } from "solid-js";
 import type { GeneralSettingsValue } from "../app-settings";
 import { normalizeAvatarFile } from "../avatar-image";
@@ -14,11 +16,9 @@ import { presentUpdateStatus } from "../update-status";
 import { ProviderPicker, type ProviderPickerOption } from "./ProviderPicker";
 import { SettingsDialogShell } from "./SettingsDialogShell";
 import {
-  Badge,
-  Bell,
   Button,
-  Card,
-  Field,
+  CircleArrowDown,
+  ImageRemoveButton,
   Input,
   Item,
   ItemActions,
@@ -26,7 +26,6 @@ import {
   ItemDescription,
   ItemGroup,
   ItemTitle,
-  Palette,
   Select,
   SelectContent,
   SelectItem,
@@ -34,7 +33,6 @@ import {
   SelectValue,
   Settings,
   SettingsSection,
-  SlidersHorizontal,
   SwitchField,
   Tabs,
   Text,
@@ -51,6 +49,7 @@ export interface SettingsModalProps {
   updateStatus: UpdateStatus;
   onUpdateAction: () => Promise<void>;
   account: CentralAuthUser;
+  onUpdateAccountName: (name: string) => Promise<void>;
   onUpdateAccountAvatar: (image: AvatarImageInput | null) => Promise<void>;
   processAvatarFile?: (file: File) => Promise<AvatarImageInput>;
   agentStatus?: AgentStatus;
@@ -61,55 +60,116 @@ export interface SettingsModalProps {
   restoreFocusTarget?: HTMLElement | null;
 }
 
-type SettingsTab = "general" | "profile";
+type SettingsTab = "general" | "profile" | "updates";
 
-type SettingsNavItem =
-  | { value: SettingsTab; label: string; icon: typeof Settings; enabled: true }
-  | {
-      value: "appearance" | "notifications" | "advanced";
-      label: string;
-      icon: typeof Settings;
-      enabled: false;
-    };
+type SettingsNavItem = { value: SettingsTab; label: string; icon: typeof Settings };
 
 const navItems: ReadonlyArray<SettingsNavItem> = [
-  { value: "general", label: "General", icon: Settings, enabled: true },
-  { value: "profile", label: "Profile", icon: UserRound, enabled: true },
-  { value: "appearance", label: "Appearance", icon: Palette, enabled: false },
-  { value: "notifications", label: "Notifications", icon: Bell, enabled: false },
-  { value: "advanced", label: "Advanced", icon: SlidersHorizontal, enabled: false },
+  { value: "general", label: "General", icon: Settings },
+  { value: "profile", label: "Profile", icon: UserRound },
+  { value: "updates", label: "Updates", icon: CircleArrowDown },
 ];
 
+const tabDetails: Record<SettingsTab, { title: string; description: string }> = {
+  general: { title: "General", description: "Control how OpenBot behaves on this computer." },
+  profile: { title: "Profile", description: "Manage how you appear in OpenBot." },
+  updates: { title: "Updates", description: "Keep OpenBot current on this computer." },
+};
+
 const linkTargetOptions: GeneralSettingsValue["externalLinkTarget"][] = ["Default browser", "OpenBot"];
+type UpdateTrack = "Stable";
+const updateTrackOptions: UpdateTrack[] = ["Stable"];
 
 export function SettingsModal(props: SettingsModalProps) {
   const [activeTab, setActiveTab] = createSignal<SettingsTab>("general");
+  const [savedProfileName, setSavedProfileName] = createSignal("");
   const [profileName, setProfileName] = createSignal("");
+  const [profileNameTouched, setProfileNameTouched] = createSignal(false);
+  const [profileNameBusy, setProfileNameBusy] = createSignal(false);
+  const [profileSaveError, setProfileSaveError] = createSignal<string | null>(null);
   const [avatarBusy, setAvatarBusy] = createSignal(false);
   const [avatarError, setAvatarError] = createSignal<string | null>(null);
   const [updateError, setUpdateError] = createSignal<string | null>(null);
   const [selectedProvider, setSelectedProvider] = createSignal<AgentProviderId | null>(null);
   let modalElement: HTMLElement | undefined;
   let avatarFileInput: HTMLInputElement | undefined;
+  let profileNameInput: HTMLInputElement | undefined;
 
   const accountName = () => props.account.name?.trim() || props.account.email.split("@")[0] || props.account.email;
 
   createEffect(
     () => props.account.name,
     () => {
-      setProfileName(accountName());
+      const name = accountName();
+      setSavedProfileName(normalizeAccountName(name));
+      setProfileName(name);
+      setProfileNameTouched(false);
+      setProfileSaveError(null);
     },
   );
 
-  const title = () => (activeTab() === "general" ? "General" : "Profile");
-  const description = () =>
-    activeTab() === "general" ? "Control how OpenBot behaves on this computer." : "Manage how you appear in OpenBot.";
+  const profileNameValidation = createMemo(() => validateProfileName(profileName()));
+  const normalizedProfileName = () => profileNameValidation().name;
+  const profileNameError = () => {
+    switch (profileNameValidation().error) {
+      case "unsafe":
+        return "Remove line breaks and hidden or control characters.";
+      case "required":
+        return "Enter a display name.";
+      case "too-short":
+        return `Use at least ${INPUT_LIMITS.profileNameMin} characters.`;
+      case "too-long":
+        return `Use no more than ${INPUT_LIMITS.profileName} characters.`;
+      case null:
+        return null;
+    }
+  };
+  const visibleProfileNameError = () => profileSaveError() ?? (profileNameTouched() ? profileNameError() : null);
+  const profileNameDirty = () => normalizedProfileName() !== savedProfileName();
+
+  const title = () => tabDetails[activeTab()].title;
+  const description = () => tabDetails[activeTab()].description;
   const updatePresentation = createMemo(() => presentUpdateStatus(props.updateStatus));
   const installedVersion = () => props.updateStatus.currentVersion || props.appInfo?.version || "Unknown";
-  const updateMessage = () =>
-    updateError() ??
-    (props.updateStatus.phase === "error" ? props.updateStatus.message : null) ??
-    (props.updateStatus.phase === "up-to-date" ? "OpenBot is up to date." : "Installed version");
+  const targetUpdate = () =>
+    props.updateStatus.availableVersion
+      ? `OpenBot v${props.updateStatus.availableVersion}`
+      : "The latest OpenBot update";
+  const updateMessage = () => {
+    if (updateError()) return updateError();
+    switch (props.updateStatus.phase) {
+      case "idle":
+        return "Check for updates to find the latest Stable release.";
+      case "checking":
+        return "Checking the Stable track for updates…";
+      case "available":
+        return `${targetUpdate()} is available to download.`;
+      case "downloading":
+        return `Downloading ${targetUpdate()}${
+          props.updateStatus.progress === null ? "…" : ` · ${Math.round(props.updateStatus.progress)}%`
+        }`;
+      case "preparing":
+        return `Preparing ${targetUpdate()}…`;
+      case "ready":
+        return `${targetUpdate()} is ready. Restart to apply.`;
+      case "installing":
+        return `Restarting to apply ${targetUpdate()}…`;
+      case "up-to-date":
+        return "OpenBot is up to date on the Stable track.";
+      case "error":
+        return props.updateStatus.message ?? "OpenBot could not check for updates.";
+      case "unsupported":
+        return props.updateStatus.message ?? "Updates are unavailable in this build.";
+    }
+  };
+  const updateMessageClass = () => {
+    if (updateError() || props.updateStatus.phase === "error")
+      return "settings-modal-update-status settings-modal-error";
+    if (["available", "downloading", "preparing", "ready", "installing"].includes(props.updateStatus.phase)) {
+      return "settings-modal-update-status settings-modal-update-status-active";
+    }
+    return "settings-modal-update-status";
+  };
   const providerOptions = createMemo<ProviderPickerOption[]>(() =>
     (["codex", "claude", "grok"] as const).map((provider) => {
       const agent = props.agentStatus?.providers?.find((candidate) => candidate.id === provider);
@@ -135,7 +195,7 @@ export function SettingsModal(props: SettingsModalProps) {
       return activeTab();
     },
     onChange(value: string) {
-      if (value === "general" || value === "profile") setActiveTab(value);
+      if (value === "general" || value === "profile" || value === "updates") setActiveTab(value);
     },
     orientation: "vertical" as const,
     activationMode: "automatic" as const,
@@ -168,6 +228,43 @@ export function SettingsModal(props: SettingsModalProps) {
     }
   }
 
+  function updateProfileName(value: string): void {
+    setProfileName(value);
+    setProfileSaveError(null);
+    if (validateProfileName(value).error) return;
+    setProfileNameTouched(false);
+  }
+
+  function resetProfileName(): void {
+    setProfileName(savedProfileName());
+    setProfileNameTouched(false);
+    setProfileSaveError(null);
+  }
+
+  async function saveProfileName(): Promise<void> {
+    if (profileNameBusy()) return;
+    setProfileNameTouched(true);
+    setProfileSaveError(null);
+    if (profileNameError()) {
+      queueMicrotask(() => profileNameInput?.focus({ preventScroll: true }));
+      return;
+    }
+    if (!profileNameDirty()) return;
+    const name = normalizedProfileName();
+    setProfileNameBusy(true);
+    try {
+      await props.onUpdateAccountName(name);
+      setSavedProfileName(name);
+      setProfileName(name);
+      setProfileNameTouched(false);
+    } catch (error) {
+      setProfileSaveError(error instanceof Error ? error.message : "Could not update your display name.");
+      queueMicrotask(() => profileNameInput?.focus({ preventScroll: true }));
+    } finally {
+      setProfileNameBusy(false);
+    }
+  }
+
   async function uploadAvatar(file: File | undefined): Promise<void> {
     if (!file || avatarBusy()) return;
     setAvatarBusy(true);
@@ -194,6 +291,31 @@ export function SettingsModal(props: SettingsModalProps) {
         contentKey={activeTab()}
         restoreFocusTarget={props.restoreFocusTarget}
         onContentElement={(element) => (modalElement = element)}
+        footer={
+          <Show when={profileNameDirty()}>
+            <section class="settings-modal-save-bar" aria-label="Unsaved changes">
+              <Text variant="caption" tone="muted">
+                Changes not saved
+              </Text>
+              <div class="settings-modal-save-actions">
+                <Button type="button" size="sm" variant="ghost" disabled={profileNameBusy()} onClick={resetProfileName}>
+                  Reset
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="default"
+                  loading={profileNameBusy()}
+                  loadingLabel="Saving…"
+                  disabled={profileNameBusy()}
+                  onClick={() => void saveProfileName()}
+                >
+                  Save
+                </Button>
+              </div>
+            </section>
+          </Show>
+        }
         sidebar={
           <Tabs.List class="settings-modal-nav" aria-label="Settings sections">
             {navItems.map((item) => {
@@ -202,17 +324,10 @@ export function SettingsModal(props: SettingsModalProps) {
                 <Tabs.Trigger
                   class="settings-modal-nav-item"
                   value={item.value}
-                  disabled={!item.enabled}
-                  title={item.enabled ? undefined : "Coming soon"}
                   aria-current={activeTab() === item.value ? "page" : undefined}
                 >
                   <NavIcon aria-hidden="true" />
                   <span>{item.label}</span>
-                  {!item.enabled && (
-                    <span class="settings-modal-nav-status" aria-hidden="true">
-                      Soon
-                    </span>
-                  )}
                 </Tabs.Trigger>
               );
             })}
@@ -235,7 +350,7 @@ export function SettingsModal(props: SettingsModalProps) {
           </SettingsSection>
 
           <SettingsSection title="App behavior">
-            <ItemGroup class="settings-modal-card" surface="subtle">
+            <ItemGroup class="settings-modal-card">
               <SwitchField
                 checked={props.value.launchAtLogin}
                 onChange={(checked) => updateSetting("launchAtLogin", checked)}
@@ -252,7 +367,7 @@ export function SettingsModal(props: SettingsModalProps) {
           </SettingsSection>
 
           <SettingsSection title="Workspace">
-            <ItemGroup class="settings-modal-card" surface="subtle">
+            <ItemGroup class="settings-modal-card">
               <SwitchField
                 checked={props.value.restoreLastWorkspace}
                 onChange={(checked) => updateSetting("restoreLastWorkspace", checked)}
@@ -288,7 +403,7 @@ export function SettingsModal(props: SettingsModalProps) {
           </SettingsSection>
 
           <SettingsSection title="Notifications">
-            <ItemGroup class="settings-modal-card" surface="subtle">
+            <ItemGroup class="settings-modal-card">
               <SwitchField
                 checked={props.value.desktopNotifications}
                 onChange={(checked) => updateSetting("desktopNotifications", checked)}
@@ -306,7 +421,7 @@ export function SettingsModal(props: SettingsModalProps) {
 
           <Show when={props.appInfo?.platform === "darwin"}>
             <SettingsSection title="MacBook notch">
-              <ItemGroup class="settings-modal-card" surface="subtle">
+              <ItemGroup class="settings-modal-card">
                 <SwitchField
                   checked={props.value.macBookNotch}
                   onChange={(checked) => updateSetting("macBookNotch", checked)}
@@ -338,27 +453,151 @@ export function SettingsModal(props: SettingsModalProps) {
             </SettingsSection>
           </Show>
 
-          <SettingsSection title="Updates">
-            <ItemGroup class="settings-modal-card" surface="subtle">
+          <SettingsSection title="Privacy">
+            <ItemGroup class="settings-modal-card">
               <SwitchField
-                checked={props.value.autoDownloadUpdates}
-                onChange={(checked) => updateSetting("autoDownloadUpdates", checked)}
-                label="Automatically download updates"
-                description="Download new versions when they become available."
+                checked={props.value.productAnalytics}
+                onChange={(checked) => updateSetting("productAnalytics", checked)}
+                label="Share product analytics"
+                description="Send usage and reliability metadata with your account ID and email to OpenBot's self-hosted analytics."
               />
-              <Item class="settings-modal-row settings-modal-update-row">
+            </ItemGroup>
+          </SettingsSection>
+        </Tabs.Content>
+
+        <Tabs.Content value="profile" class="settings-modal-tab-panel" data-tab="profile">
+          <SettingsSection title="Identity">
+            <Input
+              ref={(element) => (avatarFileInput = element)}
+              class="sr-only"
+              type="file"
+              aria-label="Upload profile photo"
+              accept="image/png,image/jpeg,image/webp"
+              onChange={(event) => void uploadAvatar(event.currentTarget.files?.[0])}
+            />
+            <ItemGroup class="settings-modal-card">
+              <Item class="settings-identity-name-row">
                 <ItemContent>
-                  <ItemTitle>OpenBot version</ItemTitle>
-                  <ItemDescription
-                    class={updateError() || props.updateStatus.phase === "error" ? "settings-modal-error" : undefined}
-                  >
-                    {updateMessage()}
+                  <ItemTitle id="settings-profile-name-label">Display name</ItemTitle>
+                  <ItemDescription id="settings-profile-name-description">
+                    Visible in shared workspaces.
                   </ItemDescription>
                 </ItemContent>
+                <ItemActions
+                  class="settings-identity-name-control"
+                  data-invalid={visibleProfileNameError() ? "" : undefined}
+                >
+                  <Input
+                    ref={(element) => (profileNameInput = element)}
+                    class="settings-identity-name-input"
+                    id="settings-profile-name"
+                    size="md"
+                    value={profileName()}
+                    aria-labelledby="settings-profile-name-label"
+                    aria-describedby={
+                      visibleProfileNameError() ? "settings-profile-name-error" : "settings-profile-name-description"
+                    }
+                    aria-invalid={visibleProfileNameError() ? "true" : undefined}
+                    onValueChange={updateProfileName}
+                    onBlur={() => {
+                      if (!profileNameDirty()) return;
+                      setProfileNameTouched(true);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" || event.isComposing) return;
+                      event.preventDefault();
+                      void saveProfileName();
+                    }}
+                  />
+                  <span
+                    id="settings-profile-name-error"
+                    class="ui-field-error settings-identity-name-error"
+                    role="alert"
+                    aria-hidden={visibleProfileNameError() ? undefined : "true"}
+                  >
+                    {visibleProfileNameError() ?? ""}
+                  </span>
+                </ItemActions>
+              </Item>
+              <Item class="settings-identity-image-row">
+                <ItemContent>
+                  <ItemTitle>Profile photo</ItemTitle>
+                  <ItemDescription class={avatarError() ? "settings-modal-error" : undefined}>
+                    {avatarError() ?? "Shown with your profile in OpenBot."}
+                  </ItemDescription>
+                </ItemContent>
+                <ItemActions class="settings-identity-image-control">
+                  <div class="settings-identity-image-picker ui-removable-image">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon-lg"
+                      class="settings-identity-image-trigger settings-modal-profile-photo-trigger"
+                      aria-label={props.account.avatarUrl ? "Edit profile photo" : "Add profile photo"}
+                      disabled={avatarBusy()}
+                      onClick={() => avatarFileInput?.click()}
+                    >
+                      <UserAvatar user={props.account} class="settings-modal-avatar" decorative />
+                    </Button>
+                    <Show when={props.account.avatarUrl && !avatarBusy()}>
+                      <ImageRemoveButton label="Remove profile photo" onClick={() => void updateAvatar(null)} />
+                    </Show>
+                  </div>
+                </ItemActions>
+              </Item>
+            </ItemGroup>
+          </SettingsSection>
+
+          <SettingsSection title="Account">
+            <ItemGroup class="settings-modal-card">
+              <Item class="settings-modal-account-email-row">
+                <ItemContent>
+                  <ItemTitle>Email</ItemTitle>
+                  <ItemDescription>Used to sign in to OpenBot.</ItemDescription>
+                </ItemContent>
+                <ItemActions>
+                  <Text as="span" class="settings-modal-readonly-value" variant="body">
+                    {props.account.email}
+                  </Text>
+                </ItemActions>
+              </Item>
+            </ItemGroup>
+          </SettingsSection>
+        </Tabs.Content>
+
+        <Tabs.Content value="updates" class="settings-modal-tab-panel" data-tab="updates">
+          <SettingsSection title="OpenBot updates">
+            <ItemGroup class="settings-modal-card">
+              <Item class="settings-modal-row settings-modal-update-track-row">
+                <ItemContent>
+                  <ItemTitle>Update track</ItemTitle>
+                  <ItemDescription>Stable receives tested OpenBot releases.</ItemDescription>
+                </ItemContent>
+                <ItemActions>
+                  <Select<UpdateTrack>
+                    class="settings-modal-update-track-select"
+                    options={updateTrackOptions}
+                    value="Stable"
+                    onChange={() => undefined}
+                    placement="bottom-end"
+                    itemComponent={(selectProps) => (
+                      <SelectItem item={selectProps.item}>{selectProps.item.rawValue}</SelectItem>
+                    )}
+                  >
+                    <SelectTrigger size="sm" aria-label="Update track">
+                      <SelectValue<UpdateTrack>>{(state) => state.selectedOption()}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent mount={modalElement} />
+                  </Select>
+                </ItemActions>
+              </Item>
+              <Item class="settings-modal-row settings-modal-update-row">
+                <ItemContent>
+                  <ItemTitle>Version {installedVersion()}</ItemTitle>
+                  <ItemDescription>Updates follow the Stable track.</ItemDescription>
+                  <ItemDescription class={updateMessageClass()}>{updateMessage()}</ItemDescription>
+                </ItemContent>
                 <ItemActions class="settings-modal-update-actions">
-                  <Badge tone={props.updateStatus.phase === "up-to-date" ? "success" : "accent"}>
-                    v{installedVersion()}
-                  </Badge>
                   <Button
                     variant="outline"
                     type="button"
@@ -372,83 +611,13 @@ export function SettingsModal(props: SettingsModalProps) {
                   </Button>
                 </ItemActions>
               </Item>
-            </ItemGroup>
-          </SettingsSection>
-
-          <SettingsSection title="Privacy">
-            <ItemGroup class="settings-modal-card" surface="subtle">
               <SwitchField
-                checked={props.value.productAnalytics}
-                onChange={(checked) => updateSetting("productAnalytics", checked)}
-                label="Share product analytics"
-                description="Send usage and reliability metadata with your account ID and email to OpenBot's self-hosted analytics."
+                checked={props.value.autoDownloadUpdates}
+                onChange={(checked) => updateSetting("autoDownloadUpdates", checked)}
+                label="Automatically download updates"
+                description="Download new versions when they become available."
               />
             </ItemGroup>
-          </SettingsSection>
-        </Tabs.Content>
-
-        <Tabs.Content value="profile" class="settings-modal-tab-panel" data-tab="profile">
-          <SettingsSection title="Account">
-            <Card class="settings-modal-card settings-modal-profile-card">
-              <div class="settings-modal-profile-summary">
-                <UserAvatar user={props.account} class="settings-modal-avatar" decorative />
-                <div class="settings-modal-profile-copy">
-                  <span class="settings-modal-row-title">{accountName()}</span>
-                  <Text tone="muted" variant="caption">
-                    {props.account.email}
-                  </Text>
-                </div>
-                <div class="settings-modal-profile-actions">
-                  <Input
-                    ref={(element) => (avatarFileInput = element)}
-                    class="sr-only"
-                    type="file"
-                    aria-label="Upload profile photo"
-                    accept="image/png,image/jpeg,image/webp"
-                    onChange={(event) => void uploadAvatar(event.currentTarget.files?.[0])}
-                  />
-                  <Button
-                    variant="outline"
-                    type="button"
-                    size="sm"
-                    loading={avatarBusy()}
-                    loadingLabel="Updating…"
-                    onClick={() => avatarFileInput?.click()}
-                  >
-                    Change photo
-                  </Button>
-                  <Show when={props.account.avatarUrl}>
-                    <Button
-                      variant="destructive-ghost"
-                      type="button"
-                      size="sm"
-                      disabled={avatarBusy()}
-                      onClick={() => void updateAvatar(null)}
-                    >
-                      Remove
-                    </Button>
-                  </Show>
-                </div>
-              </div>
-              <Show when={avatarError()}>{(message) => <p class="settings-modal-profile-error">{message()}</p>}</Show>
-            </Card>
-          </SettingsSection>
-
-          <SettingsSection title="Profile details">
-            <Card class="settings-modal-card settings-modal-profile-fields">
-              <Field
-                label="Display name"
-                description="This name is visible in shared workspaces."
-                htmlFor="settings-profile-name"
-              >
-                <Input id="settings-profile-name" value={profileName()} onValueChange={setProfileName} />
-              </Field>
-              <SwitchField
-                defaultChecked
-                label="Show activity status"
-                description="Let workspace members see when you are active."
-              />
-            </Card>
           </SettingsSection>
         </Tabs.Content>
       </SettingsDialogShell>

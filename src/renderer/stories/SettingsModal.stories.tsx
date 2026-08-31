@@ -28,6 +28,16 @@ const storyUpdateStatus: UpdateStatus = {
   message: null,
   errorCode: null,
 };
+const availableUpdateStatus: UpdateStatus = {
+  ...storyUpdateStatus,
+  phase: "available",
+  availableVersion: "0.3.0",
+};
+const readyUpdateStatus: UpdateStatus = {
+  ...availableUpdateStatus,
+  phase: "ready",
+  progress: 100,
+};
 const providerAgentStatus: AgentStatus = {
   phase: "blocked",
   cliVersion: null,
@@ -48,10 +58,15 @@ const providerRuntimeStatuses: ProviderRuntimeSnapshot["providers"] = {
   grok: { phase: "downloading", progress: 72, message: null, version: null },
 };
 
-function SettingsModalStory(props: { initialOpen: boolean; providerDownloads?: boolean }) {
+function SettingsModalStory(props: {
+  initialOpen: boolean;
+  initialUpdateStatus?: UpdateStatus;
+  mockDownloadUpdate?: boolean;
+  providerDownloads?: boolean;
+}) {
   const [open, setOpen] = createSignal(props.initialOpen);
   const [value, setValue] = createSignal({ ...DEFAULT_GENERAL_SETTINGS });
-  const [updateStatus, setUpdateStatus] = createSignal<UpdateStatus>(storyUpdateStatus);
+  const [updateStatus, setUpdateStatus] = createSignal<UpdateStatus>(props.initialUpdateStatus ?? storyUpdateStatus);
   const [account, setAccount] = createSignal<CentralAuthUser>({ ...storyAccount });
 
   async function updateAccountAvatar(image: AvatarImageInput | null): Promise<void> {
@@ -59,6 +74,26 @@ function SettingsModalStory(props: { initialOpen: boolean; providerDownloads?: b
       ? `data:${image.mimeType};base64,${btoa(Array.from(image.bytes, (byte) => String.fromCharCode(byte)).join(""))}`
       : null;
     setAccount((current) => ({ ...current, avatarUrl }));
+  }
+
+  async function updateAccountName(name: string): Promise<void> {
+    setAccount((current) => ({ ...current, name }));
+  }
+
+  async function runUpdateAction(): Promise<void> {
+    if (!props.mockDownloadUpdate || updateStatus().phase !== "available") {
+      setUpdateStatus({ ...storyUpdateStatus, phase: "up-to-date", checkedAt: new Date().toISOString() });
+      return;
+    }
+
+    const downloadingStatus = { ...updateStatus(), phase: "downloading", progress: 0 } as const;
+    setUpdateStatus(downloadingStatus);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    setUpdateStatus({ ...downloadingStatus, progress: 48 });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    setUpdateStatus({ ...downloadingStatus, phase: "preparing", progress: 100 });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    setUpdateStatus({ ...downloadingStatus, phase: "ready", progress: 100 });
   }
 
   return (
@@ -78,10 +113,9 @@ function SettingsModalStory(props: { initialOpen: boolean; providerDownloads?: b
         appInfo={storyAppInfo}
         updateStatus={updateStatus()}
         account={account()}
+        onUpdateAccountName={updateAccountName}
         onUpdateAccountAvatar={updateAccountAvatar}
-        onUpdateAction={async () => {
-          setUpdateStatus({ ...storyUpdateStatus, phase: "up-to-date", checkedAt: new Date().toISOString() });
-        }}
+        onUpdateAction={runUpdateAction}
         agentStatus={props.providerDownloads ? providerAgentStatus : undefined}
         providerRuntimeStatuses={props.providerDownloads ? providerRuntimeStatuses : undefined}
         onDownloadProvider={props.providerDownloads ? fn() : undefined}
@@ -104,6 +138,7 @@ const meta = {
     updateStatus: storyUpdateStatus,
     onUpdateAction: fn(async () => undefined),
     account: storyAccount,
+    onUpdateAccountName: fn(async () => undefined),
     onUpdateAccountAvatar: fn(async () => undefined),
   },
   parameters: {
@@ -145,6 +180,65 @@ export const ProviderDownloads: Story = {
   parameters: { viewport: { defaultViewport: "settingsPhone" } },
 };
 
+export const Profile: Story = {
+  render: () => <SettingsModalStory initialOpen />,
+  play: async ({ userEvent }) => {
+    const body = within(document.body);
+    await userEvent.click(await body.findByRole("tab", { name: "Profile" }));
+  },
+};
+
+export const Updates: Story = {
+  render: () => <SettingsModalStory initialOpen />,
+  play: async ({ userEvent }) => {
+    const body = within(document.body);
+    await userEvent.click(await body.findByRole("tab", { name: "Updates" }));
+  },
+};
+
+export const UpdateAvailable: Story = {
+  render: () => <SettingsModalStory initialOpen initialUpdateStatus={availableUpdateStatus} />,
+  play: async ({ userEvent }) => {
+    const body = within(document.body);
+    await userEvent.click(await body.findByRole("tab", { name: "Updates" }));
+  },
+};
+
+export const DownloadUpdateFlow: Story = {
+  render: () => <SettingsModalStory initialOpen initialUpdateStatus={availableUpdateStatus} mockDownloadUpdate />,
+  play: async ({ step, userEvent }) => {
+    const body = within(document.body);
+
+    await step("Open the available OpenBot update", async () => {
+      await userEvent.click(await body.findByRole("tab", { name: "Updates" }));
+      await expect(body.getByText("OpenBot v0.3.0 is available to download.")).toBeVisible();
+    });
+
+    await step("Start the mocked download", async () => {
+      const downloadButton = body.getByRole("button", { name: "Download update" });
+      await expect(downloadButton).toBeEnabled();
+      await userEvent.click(downloadButton);
+      await expect(await body.findByText("Downloading OpenBot v0.3.0 · 0%")).toBeVisible();
+      await expect(body.getByRole("button", { name: "Downloading update…" })).toBeDisabled();
+    });
+
+    await step("Finish the mocked download", async () => {
+      await waitFor(() => expect(body.getByText("Downloading OpenBot v0.3.0 · 48%")).toBeVisible());
+      await waitFor(() => expect(body.getByText("Preparing OpenBot v0.3.0…")).toBeVisible());
+      await waitFor(() => expect(body.getByText("OpenBot v0.3.0 is ready. Restart to apply.")).toBeVisible());
+      await expect(body.getByRole("button", { name: "Restart to update" })).toBeEnabled();
+    });
+  },
+};
+
+export const ReadyToInstall: Story = {
+  render: () => <SettingsModalStory initialOpen initialUpdateStatus={readyUpdateStatus} />,
+  play: async ({ userEvent }) => {
+    const body = within(document.body);
+    await userEvent.click(await body.findByRole("tab", { name: "Updates" }));
+  },
+};
+
 export const Interactive: Story = {
   render: () => <SettingsModalStory initialOpen={false} />,
   play: async ({ canvas, userEvent }) => {
@@ -155,9 +249,6 @@ export const Interactive: Story = {
     let dialog = await body.findByRole("dialog", { name: "General" });
     await waitFor(() => expect(dialog).toBeVisible());
     await expect(body.getByTestId("settings-modal-scroll-frame")).toHaveAttribute("data-scroll-down");
-    await expect(body.getByRole("tab", { name: "Appearance" })).toBeDisabled();
-    await expect(body.getByRole("tab", { name: "Notifications" })).toBeDisabled();
-    await expect(body.getByRole("tab", { name: "Advanced" })).toBeDisabled();
 
     const generalTab = body.getByRole("tab", { name: "General" });
     generalTab.focus();
@@ -166,6 +257,11 @@ export const Interactive: Story = {
     await expect(profileTab).toHaveAttribute("aria-selected", "true");
     await expect(body.getByRole("heading", { name: "Profile", level: 2 })).toBeVisible();
     await expect(body.getByRole("textbox", { name: "Display name" })).toHaveValue("Norbert");
+
+    await userEvent.keyboard("{ArrowDown}");
+    const updatesTab = body.getByRole("tab", { name: "Updates" });
+    await expect(updatesTab).toHaveAttribute("aria-selected", "true");
+    await expect(body.getByRole("heading", { name: "Updates", level: 2 })).toBeVisible();
 
     await userEvent.click(generalTab);
     await expect(generalTab).toHaveAttribute("aria-selected", "true");
@@ -181,8 +277,11 @@ export const Interactive: Story = {
     await userEvent.click(launchSwitch);
     await expect(launchSwitch).not.toBeChecked();
 
+    await userEvent.click(updatesTab);
     await userEvent.click(body.getByRole("button", { name: "Check for updates" }));
-    await expect(body.getByText("OpenBot is up to date.")).toBeVisible();
+    await expect(body.getByText("OpenBot is up to date on the Stable track.")).toBeVisible();
+
+    await userEvent.click(generalTab);
 
     await userEvent.click(body.getByRole("button", { name: "Close settings" }));
     await expect(dialog).toHaveAttribute("data-motion", "closing");

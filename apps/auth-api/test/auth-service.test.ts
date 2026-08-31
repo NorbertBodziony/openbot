@@ -1,3 +1,4 @@
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { describe, expect, it } from "vitest";
 import { AuthService, generateOneTimeCode, normalizeOneTimeCode } from "../src/server/auth-service";
 import type { AuthRepository, AuthUser, EmailVerificationResult } from "../src/server/types";
@@ -110,6 +111,13 @@ class MemoryAuthRepository implements AuthRepository {
     return session.user;
   }
 
+  async updateUserName(userId: string, name: string): Promise<AuthUser> {
+    const session = [...this.sessions.values()].find((item) => item.user.id === userId);
+    if (!session) throw new Error("User not found.");
+    session.user = { ...session.user, name };
+    return session.user;
+  }
+
   async createTeamAuthTicket(input: {
     ticketHash: string;
     userId: string;
@@ -168,12 +176,49 @@ describe("email one-time codes", () => {
     });
     expect(session.user.email).toBe("person@example.com");
     expect(await service.authenticate(session.sessionToken)).toEqual(session.user);
+    await expect(service.updateName(session.sessionToken, "👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦")).resolves.toMatchObject({
+      name: "👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦",
+    });
+    await expect(service.updateName(session.sessionToken, "  No\u0308rbert\u00a0\u00a0Bot  ")).resolves.toMatchObject({
+      name: "Nörbert Bot",
+    });
+    await expect(service.updateName(session.sessionToken, "   ")).rejects.toMatchObject({
+      status: 400,
+      code: "invalid_profile_name",
+    });
+    await expect(
+      service.updateName(session.sessionToken, "x".repeat(INPUT_LIMITS.profileNameMin - 1)),
+    ).rejects.toMatchObject({
+      status: 400,
+      code: "invalid_profile_name",
+    });
+    await expect(
+      service.updateName(session.sessionToken, "x".repeat(INPUT_LIMITS.profileName + 1)),
+    ).rejects.toMatchObject({
+      status: 400,
+      code: "invalid_profile_name",
+    });
+    await expect(service.updateName(session.sessionToken, "Nor\nbert")).rejects.toMatchObject({
+      status: 400,
+      code: "invalid_profile_name",
+    });
+    await expect(service.updateName(session.sessionToken, "\u200d\u200d\u200d")).rejects.toMatchObject({
+      status: 400,
+      code: "invalid_profile_name",
+    });
+    await expect(service.updateName("missing-session", "Norbert")).rejects.toMatchObject({
+      status: 401,
+      code: "unauthorized",
+    });
     const serverId = "00000000-0000-4000-8000-000000000000";
     const ticket = await service.issueTeamAuthTicket(session.sessionToken, serverId, "203.0.113.4");
     expect(
       await service.redeemTeamAuthTicket(ticket.ticket, "00000000-0000-4000-8000-000000000001", "203.0.113.5"),
     ).toBeNull();
-    expect(await service.redeemTeamAuthTicket(ticket.ticket, serverId, "203.0.113.5")).toEqual(session.user);
+    expect(await service.redeemTeamAuthTicket(ticket.ticket, serverId, "203.0.113.5")).toMatchObject({
+      id: session.user.id,
+      name: "Nörbert Bot",
+    });
     expect(await service.redeemTeamAuthTicket(ticket.ticket, serverId, "203.0.113.5")).toBeNull();
     await expect(service.updateAvatar(session.sessionToken, "/v1/avatars/user?v=avatar", null)).resolves.toMatchObject({
       avatarUrl: "/v1/avatars/user?v=avatar",

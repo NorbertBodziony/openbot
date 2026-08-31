@@ -676,6 +676,7 @@ function WorkspaceOverlays(props: {
     revokeServerInvite,
     updateStatus,
     runUpdateAction,
+    updateAccountName,
     updateAccountAvatar,
     providerRuntimeStatuses,
     providerRuntimeDownloadsAvailable,
@@ -781,6 +782,7 @@ function WorkspaceOverlays(props: {
           updateStatus={updateStatus()}
           onUpdateAction={runUpdateAction}
           account={props.account()}
+          onUpdateAccountName={updateAccountName}
           onUpdateAccountAvatar={updateAccountAvatar}
           agentStatus={agentStatus()}
           providerRuntimeStatuses={

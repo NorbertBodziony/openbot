@@ -423,11 +423,11 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
         }
         footer={
           <Show when={section() === "general" && identityDirty()}>
-            <section class="server-settings-save-bar" aria-label="Unsaved changes">
+            <section class="settings-modal-save-bar" aria-label="Unsaved changes">
               <Text variant="caption" tone="muted">
                 Changes not saved
               </Text>
-              <div class="server-settings-save-actions">
+              <div class="settings-modal-save-actions">
                 <Button type="button" size="sm" variant="ghost" disabled={Boolean(busy())} onClick={resetIdentity}>
                   Reset
                 </Button>
@@ -549,7 +549,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
               event.currentTarget.value = "";
             }}
           />
-          <ItemGroup class="server-settings-general-card">
+          <ItemGroup class="settings-modal-card">
             <Show
               when={canEditIdentity()}
               fallback={
@@ -566,17 +566,17 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                 </Item>
               }
             >
-              <Item class="server-settings-name-row">
+              <Item class="settings-identity-name-row">
                 <ItemContent>
                   <ItemTitle id="server-settings-name-label">Server name</ItemTitle>
                   <ItemDescription id="server-settings-name-description">
                     Shown in invitations and shared spaces.
                   </ItemDescription>
                 </ItemContent>
-                <ItemActions class="server-settings-name-control" data-invalid={visibleNameError() ? "" : undefined}>
+                <ItemActions class="settings-identity-name-control" data-invalid={visibleNameError() ? "" : undefined}>
                   <Input
                     ref={(element) => (nameInput = element)}
-                    class={nameShaking() ? "server-settings-name-input is-shaking" : "server-settings-name-input"}
+                    class={nameShaking() ? "settings-identity-name-input is-shaking" : "settings-identity-name-input"}
                     id="server-settings-name"
                     size="md"
                     maxlength={INPUT_LIMITS.serverName}
@@ -602,7 +602,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                   />
                   <span
                     id="server-settings-name-error"
-                    class="ui-field-error server-settings-name-error"
+                    class="ui-field-error settings-identity-name-error"
                     role="alert"
                     aria-hidden={visibleNameError() ? undefined : "true"}
                   >
@@ -611,7 +611,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                 </ItemActions>
               </Item>
             </Show>
-            <Item class="server-settings-logo-row">
+            <Item class="settings-identity-image-row">
               <ItemContent>
                 <ItemTitle>Server logo</ItemTitle>
                 <ItemDescription class={logoError() ? "server-settings-item-error" : undefined}>
@@ -621,17 +621,17 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                       : "Only the server owner can change this logo.")}
                 </ItemDescription>
               </ItemContent>
-              <ItemActions class="server-settings-logo-control">
+              <ItemActions class="settings-identity-image-control">
                 <Show
                   when={canEditIdentity()}
                   fallback={<ServerLogo name={draftName() || props.server.name} url={draftLogoUrl()} />}
                 >
-                  <div class="server-settings-logo-picker ui-removable-image">
+                  <div class="settings-identity-image-picker ui-removable-image">
                     <Button
                       type="button"
                       variant="outline"
                       size="icon-lg"
-                      class="server-settings-logo-trigger"
+                      class="settings-identity-image-trigger server-settings-logo-trigger"
                       aria-label={draftLogoUrl() ? "Edit server logo" : "Add server logo"}
                       onClick={() => logoInput?.click()}
                     >
@@ -661,7 +661,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
           </ItemGroup>
         </SettingsSection>
         <SettingsSection title="Access">
-          <ItemGroup class="server-settings-general-card">
+          <ItemGroup class="settings-modal-card">
             <SwitchField
               class="server-settings-publish-setting"
               size="default"
@@ -740,10 +740,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
             </label>
           }
         >
-          <ItemGroup
-            class="server-settings-general-card server-settings-members-list"
-            data-testid="server-members-list"
-          >
+          <ItemGroup class="settings-modal-card server-settings-members-list" data-testid="server-members-list">
             <Show
               when={filteredMembers().length > 0}
               fallback={
@@ -920,7 +917,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
           </Text>
         }
       >
-        <ItemGroup class="server-settings-general-card server-settings-invites-list">
+        <ItemGroup class="settings-modal-card server-settings-invites-list">
           <Show
             when={activeInvites().length > 0}
             fallback={
@@ -963,7 +960,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
   function DesktopPanel() {
     return (
       <SettingsSection title="Remote desktop access">
-        <ItemGroup class="server-settings-general-card server-settings-desktop-card">
+        <ItemGroup class="settings-modal-card server-settings-desktop-card">
           <Show when={local()} fallback={remoteDesktopConnection()}>
             <Item size="spacious">
               <ItemMedia class="server-settings-desktop-icon">

@@ -163,6 +163,19 @@ export class D1AuthRepository implements AuthRepository {
       .run();
   }
 
+  async updateUserName(userId: string, name: string, now: number): Promise<AuthUser> {
+    const row = await this.database
+      .prepare(
+        `UPDATE users SET name = ?, updated_at = ?
+         WHERE id = ?
+         RETURNING id, email, name, avatar_url`,
+      )
+      .bind(name, now, userId)
+      .first<UserRow>();
+    if (!row) throw new Error("User not found.");
+    return mapUser(row);
+  }
+
   async updateUserAvatar(
     userId: string,
     avatarUrl: string | null,

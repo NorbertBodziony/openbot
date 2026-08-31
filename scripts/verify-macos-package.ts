@@ -8,11 +8,25 @@ import { isDynamicRecord } from "@openbot/contracts/runtime-values";
 
 const FUSE_DISABLED = 48;
 const FUSE_ENABLED = 49;
+const EXPECTED_MACOS_ICON_FILES = [
+  "icon_16x16.png",
+  "icon_16x16@2x.png",
+  "icon_32x32.png",
+  "icon_32x32@2x.png",
+  "icon_128x128.png",
+  "icon_128x128@2x.png",
+  "icon_256x256.png",
+  "icon_256x256@2x.png",
+  "icon_512x512.png",
+  "icon_512x512@2x.png",
+] as const;
 
 const appPath = resolve(process.argv[2] ?? "dist/mac-arm64/OpenBot.app");
 const contentsPath = resolve(appPath, "Contents");
 const executablePath = resolve(contentsPath, "MacOS/OpenBot");
 const resourcesPath = resolve(contentsPath, "Resources");
+const packagedIconPath = resolve(resourcesPath, "icon.icns");
+const sourceIconPath = resolve("build/icon-production.icns");
 const plistPath = resolve(contentsPath, "Info.plist");
 const whisperExecutablePath = resolve(resourcesPath, "whisper/bin/whisper-cli");
 const whisperModelPath = resolve(resourcesPath, "whisper/model/ggml-medium-q5_0.bin");
@@ -21,7 +35,8 @@ const remoteRuntimePath = resolve(resourcesPath, "remote-desktop-runtime/darwin/
 await Promise.all([
   access(executablePath),
   access(resolve(resourcesPath, "app.asar")),
-  access(resolve(resourcesPath, "icon.icns")),
+  access(packagedIconPath),
+  access(sourceIconPath),
   access(resolve(resourcesPath, "licenses/Electron-LICENSE")),
   access(resolve(resourcesPath, "licenses/LICENSES.chromium.html")),
   access(resolve(resourcesPath, "licenses/OpenAI-Whisper-LICENSE")),
@@ -46,6 +61,7 @@ await Promise.all([
   access(resolve(resourcesPath, "cloudflared/licenses/cloudflared-Apache-2.0.txt")),
   access(resolve(resourcesPath, "cloudflared/source-manifest.json")),
 ]);
+await verifyPackagedIcon(packagedIconPath, sourceIconPath);
 await Promise.all(["codex", "claude", "grok"].map((name) => assertAbsent(resolve(resourcesPath, name))));
 await assertAbsent(
   resolve(resourcesPath, "app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64"),
@@ -122,6 +138,22 @@ async function assertAbsent(path: string): Promise<void> {
     return;
   }
   throw new Error(`Provider runtime must not be packaged: ${path}`);
+}
+
+async function verifyPackagedIcon(packagedPath: string, sourcePath: string): Promise<void> {
+  const [packagedIcon, sourceIcon] = await Promise.all([readFile(packagedPath), readFile(sourcePath)]);
+  if (!packagedIcon.equals(sourceIcon)) {
+    throw new Error("The packaged macOS icon does not match build/icon-production.icns.");
+  }
+
+  const iconRoot = await mkdtemp(join(tmpdir(), "openbot-icon-"));
+  const iconSetPath = join(iconRoot, "OpenBot.iconset");
+  try {
+    run("iconutil", ["--convert", "iconset", packagedPath, "--output", iconSetPath]);
+    await Promise.all(EXPECTED_MACOS_ICON_FILES.map((name) => access(join(iconSetPath, name))));
+  } finally {
+    await rm(iconRoot, { recursive: true, force: true });
+  }
 }
 
 function run(command: string, args: string[], includeStderr = false): string {

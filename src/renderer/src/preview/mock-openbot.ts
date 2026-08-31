@@ -448,6 +448,12 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         authState = { status: "signed_in", user };
         return clone(authState);
       },
+      updateName: async (name) => {
+        if (authState.status !== "signed_in") return clone(authState);
+        authState = { ...authState, user: { ...authState.user, name } };
+        emitAuthState(authState);
+        return clone(authState);
+      },
       updateAvatar: async (image) => {
         if (authState.status !== "signed_in") return clone(authState);
         const avatarUrl = image
@@ -986,6 +992,19 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
       download: async () => {
         updateStatus = { ...updateStatus, phase: "downloading", progress: 0 };
         emit(updateListeners, updateStatus);
+        const downloadSteps = [
+          { delay: 350, expectedPhase: "downloading", phase: "downloading", progress: 28 },
+          { delay: 700, expectedPhase: "downloading", phase: "downloading", progress: 64 },
+          { delay: 1_050, expectedPhase: "downloading", phase: "preparing", progress: 100 },
+          { delay: 1_400, expectedPhase: "preparing", phase: "ready", progress: 100 },
+        ] as const;
+        for (const step of downloadSteps) {
+          schedule(() => {
+            if (updateStatus.phase !== step.expectedPhase) return;
+            updateStatus = { ...updateStatus, phase: step.phase, progress: step.progress };
+            emit(updateListeners, updateStatus);
+          }, step.delay);
+        }
         return clone(updateStatus);
       },
       install: async () => {
