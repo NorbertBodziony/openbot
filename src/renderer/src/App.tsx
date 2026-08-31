@@ -52,6 +52,7 @@ import {
   useContext,
 } from "solid-js";
 import { AppAccessGate } from "./AppView";
+import { cleanAgentMessageText } from "./agent-message-text";
 import { desktopAnalytics } from "./analytics";
 import {
   botMessagesEqual,
@@ -237,6 +238,17 @@ function authFailureCode(value: string | undefined): string {
   }
 }
 
+function agentMessageKey(botId: string, messageId: string): string {
+  return `${botId}\0${messageId}`;
+}
+
+function deleteAgentMessageBodies(messages: Map<string, string>, botId: string): void {
+  const prefix = `${botId}\0`;
+  for (const key of messages.keys()) {
+    if (key.startsWith(prefix)) messages.delete(key);
+  }
+}
+
 export function createBotInitialMessage(draft: Pick<FirstBotDraft, "purpose">): string {
   return `Your ongoing role is: ${draft.purpose.trim()}`;
 }
@@ -262,6 +274,7 @@ export function createAppController(props: AppProps = {}) {
   const [conversationReferences, setConversationReferences] = createSignal<Record<string, Record<string, BotMessage>>>(
     {},
   );
+  const rawAgentMessageBodies = new Map<string, string>();
   const [conversationOlderLoading, setConversationOlderLoading] = createSignal<Record<string, boolean>>({});
   const [conversationOlderErrors, setConversationOlderErrors] = createSignal<Record<string, string | null>>({});
   const [activeTurns, setActiveTurns] = createSignal<Record<string, string | null>>({});
@@ -1166,6 +1179,12 @@ export function createAppController(props: AppProps = {}) {
       ...(snapshot.attentionComplete ? {} : current),
       ...Object.fromEntries(snapshot.pendingApprovals.map((approval) => [approval.botId, approval])),
     }));
+    for (const botId of new Set(snapshot.latestMessages.map((message) => message.botId))) {
+      deleteAgentMessageBodies(rawAgentMessageBodies, botId);
+    }
+    for (const message of snapshot.latestMessages) {
+      rawAgentMessageBodies.set(agentMessageKey(message.botId, message.id), message.text);
+    }
     setLiveMessages((current) => {
       const next = { ...current };
       for (const message of snapshot.latestMessages) {
@@ -1176,7 +1195,7 @@ export function createAppController(props: AppProps = {}) {
           {
             id: message.id,
             author: "bot",
-            body: message.text,
+            body: cleanAgentMessageText(message.text),
             time: message.createdAt,
             createdAt: message.createdAt,
           },
@@ -1244,6 +1263,11 @@ export function createAppController(props: AppProps = {}) {
     const pending = pendingConversationSnapshots.get(botId);
     const pendingRevision = pending?.revision ?? -1;
     if (snapshot.revision < Math.max(appliedRevision, pendingRevision)) return;
+    for (const message of snapshot.messages) {
+      const key = agentMessageKey(botId, message.id);
+      if (message.author !== "user" && message.status === "streaming") rawAgentMessageBodies.set(key, message.text);
+      else rawAgentMessageBodies.delete(key);
+    }
     pendingConversationSnapshots.set(botId, snapshot);
     if (conversationFrame !== undefined) return;
     conversationFrame = requestAnimationFrame(() => {
@@ -1377,10 +1401,13 @@ export function createAppController(props: AppProps = {}) {
     }));
 
     const existing = liveMessages()[event.botId]?.find((message) => message.id === event.messageId);
+    const messageKey = agentMessageKey(event.botId, event.messageId);
+    const rawBody = (rawAgentMessageBodies.get(messageKey) ?? existing?.body ?? "") + event.delta;
+    rawAgentMessageBodies.set(messageKey, rawBody);
     if (existing) {
       updateStored(existing, {
         ...existing,
-        body: existing.body + event.delta,
+        body: cleanAgentMessageText(rawBody),
         streaming: true,
       });
     } else {
@@ -1388,7 +1415,7 @@ export function createAppController(props: AppProps = {}) {
         id: event.messageId,
         turnId: event.turnId,
         author: "bot",
-        body: event.delta,
+        body: cleanAgentMessageText(rawBody),
         time: formatTime(event.createdAt),
         createdAt: event.createdAt,
         streaming: true,
@@ -1509,6 +1536,11 @@ export function createAppController(props: AppProps = {}) {
     windowMode?: "latest" | "around",
   ): boolean {
     if (page.revision < (conversationRevisions()[page.botId] ?? -1)) return false;
+    for (const message of page.messages) {
+      const key = agentMessageKey(page.botId, message.id);
+      if (message.author !== "user" && message.status === "streaming") rawAgentMessageBodies.set(key, message.text);
+      else rawAgentMessageBodies.delete(key);
+    }
     const mapped = toBotMessages(page.messages);
     setLiveMessages((current) => {
       const currentMessages = current[page.botId] ?? [];
@@ -2196,6 +2228,7 @@ export function createAppController(props: AppProps = {}) {
       setActiveBotId((current) => (current === botId ? (remaining[0]?.id ?? "") : current));
       setSettingsRequest((current) => (current?.botId === botId ? null : current));
       setLiveMessages((current) => withoutBot(current, botId));
+      deleteAgentMessageBodies(rawAgentMessageBodies, botId);
       setUiErrors((current) => withoutBot(current, botId));
       setConversationLoaded((current) => withoutBot(current, botId));
       setConversationRevisions((current) => withoutBot(current, botId));
@@ -2893,6 +2926,7 @@ export function createAppController(props: AppProps = {}) {
     setDirectConversations({});
     setDirectTypingMemberIds(new Set<string>());
     setLiveMessages({});
+    rawAgentMessageBodies.clear();
     setUiErrors({});
     setConversationLoaded({});
     setConversationRevisions({});
