@@ -60,7 +60,6 @@
     "mobile": "bun run --cwd apps/mobile start",
     "mobile:android": "bun run --cwd apps/mobile android",
     "mobile:ios": "bun run --cwd apps/mobile ios",
-    "mobile:web": "bun run --cwd apps/mobile web",
     "mobile:lint": "bun run --cwd apps/mobile lint",
     "mobile:typecheck": "bun run --cwd apps/mobile typecheck",
     "mobile:doctor": "bun run --cwd apps/mobile doctor",

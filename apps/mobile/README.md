@@ -16,7 +16,6 @@ Run commands from the repository root:
 bun run mobile
 bun run mobile:ios
 bun run mobile:android
-bun run mobile:web
 ```
 
 Application routes live in `src/app`. Shared components, hooks, and other application code live in sibling directories under `src`.

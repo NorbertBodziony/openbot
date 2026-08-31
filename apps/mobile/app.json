@@ -2,6 +2,7 @@
   "expo": {
     "name": "OpenBot",
     "slug": "openbot",
+    "platforms": ["ios", "android"],
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icons/app-icon.png",
@@ -19,10 +20,6 @@
       "package": "run.openbot.mobile",
       "icon": "./assets/icons/app-icon-android.png",
       "predictiveBackGestureEnabled": false
-    },
-    "web": {
-      "output": "static",
-      "favicon": "./assets/icons/app-icon.png"
     },
     "plugins": [
       "expo-router",
