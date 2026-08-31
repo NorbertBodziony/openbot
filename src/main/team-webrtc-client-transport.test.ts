@@ -50,6 +50,8 @@ describe("TeamWebRtcClientTransport", () => {
       downloadHostLogo: async () => ({ bytes: new Uint8Array(), mimeType: "image/png" }),
       transferDirectory: join(tmpdir(), "openbot-webrtc-client-test"),
     });
+    const protocolError = vi.fn();
+    transport.on("error", protocolError);
 
     await transport.connect("host-1");
     bridge.emit("data", "host-1", "events", JSON.stringify({ version: 2, type: "event-reset", nextSequence: 2_001 }));
@@ -80,6 +82,13 @@ describe("TeamWebRtcClientTransport", () => {
       "events",
       JSON.stringify({ version: 2, type: "event-ack", throughSequence: 0 }),
     );
+    const malformedRequest = transport.request("host-1", "/v1/agents");
+    const malformedRejection = expect(malformedRequest).rejects.toMatchObject({ code: "protocol_error" });
+    await vi.waitFor(() => expect(bridge.send).toHaveBeenCalledWith("host-1", "rpc", expect.any(String)));
+    bridge.emit("data", "host-1", "rpc", "not-a-protocol-frame");
+    await malformedRejection;
+    expect(protocolError).toHaveBeenCalledWith("host-1", "protocol_error", expect.any(String));
+    await vi.waitFor(() => expect(bridge.disconnect).toHaveBeenCalledWith("host-1"));
     await transport.stop();
   });
 

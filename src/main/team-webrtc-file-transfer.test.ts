@@ -28,6 +28,31 @@ class FakeBridge extends TeamWebRtcBridge {
 }
 
 describe("TeamWebRtcFileTransfer", () => {
+  it("lets only the transfer service that owns a peer process its file frames", async () => {
+    const bridge = new FakeBridge();
+    const first = new TeamWebRtcFileTransfer(
+      bridge,
+      await temporaryDirectory(),
+      undefined,
+      (peerId) => peerId === "host-1",
+    );
+    const second = new TeamWebRtcFileTransfer(
+      bridge,
+      await temporaryDirectory(),
+      undefined,
+      (peerId) => peerId === "host-2",
+    );
+    bridge.emit(
+      "data",
+      "host-1",
+      "files",
+      fileOpen("transfer-1", 4, createHash("sha256").update("test").digest("hex")),
+    );
+    await vi.waitFor(() => expect(bridge.sent).toHaveLength(1));
+    await first.stop();
+    await second.stop();
+  });
+
   it("resumes at the last exact offset and verifies SHA-256", async () => {
     const bridge = new FakeBridge();
     const directory = await temporaryDirectory();

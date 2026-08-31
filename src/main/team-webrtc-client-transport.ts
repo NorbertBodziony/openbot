@@ -82,7 +82,9 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
   constructor(options: TeamWebRtcClientTransportOptions) {
     super();
     this.#options = options;
-    this.#files = new TeamWebRtcFileTransfer(options.bridge, options.transferDirectory);
+    this.#files = new TeamWebRtcFileTransfer(options.bridge, options.transferDirectory, undefined, (peerId) =>
+      this.#active.has(peerId),
+    );
     options.bridge.on("connected", this.#onConnected);
     options.bridge.on("disconnected", this.#onDisconnected);
     options.bridge.on("data", this.#onData);
@@ -443,7 +445,15 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
     try {
       frame = decodeTeamProtocolV2RpcFrame(data);
     } catch {
-      this.emit("error", hostId, "protocol_error", "The host returned an invalid RPC frame.");
+      const error = new TeamWebRtcRequestError(502, "protocol_error", "The host returned an invalid RPC frame.");
+      for (const [requestId, pending] of this.#pending) {
+        if (pending.hostId !== hostId) continue;
+        clearTimeout(pending.timer);
+        this.#pending.delete(requestId);
+        pending.reject(error);
+      }
+      this.emit("error", hostId, error.code, error.message);
+      void this.disconnect(hostId).catch(() => undefined);
       return;
     }
     if (frame.type !== "response") return;

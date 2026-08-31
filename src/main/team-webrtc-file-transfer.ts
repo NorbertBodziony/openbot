@@ -55,6 +55,7 @@ export class TeamWebRtcFileTransfer {
   readonly #bridge: TeamWebRtcBridge;
   readonly #directory: string;
   readonly #resumeMilliseconds: number;
+  readonly #acceptPeer: (peerId: string) => boolean;
   readonly #incoming = new Map<string, IncomingTransfer>();
   readonly #outgoing = new Map<string, OutgoingTransfer>();
   readonly #completed = new Map<string, ReceivedWebRtcFile>();
@@ -72,10 +73,16 @@ export class TeamWebRtcFileTransfer {
   readonly #stateWaiters = new Set<() => void>();
   #stopped = false;
 
-  constructor(bridge: TeamWebRtcBridge, directory: string, resumeMilliseconds = TRANSFER_RESUME_MILLISECONDS) {
+  constructor(
+    bridge: TeamWebRtcBridge,
+    directory: string,
+    resumeMilliseconds = TRANSFER_RESUME_MILLISECONDS,
+    acceptPeer: (peerId: string) => boolean = () => true,
+  ) {
     this.#bridge = bridge;
     this.#directory = directory;
     this.#resumeMilliseconds = resumeMilliseconds;
+    this.#acceptPeer = acceptPeer;
     bridge.on("data", this.#onData);
     bridge.on("connected", this.#onConnected);
     bridge.on("disconnected", this.#onDisconnected);
@@ -160,11 +167,13 @@ export class TeamWebRtcFileTransfer {
   }
 
   readonly #onConnected = (peerId: string): void => {
+    if (!this.#acceptPeer(peerId)) return;
     this.#connectedPeers.add(peerId);
     this.#notifyStateChange();
   };
 
   readonly #onDisconnected = (peerId: string): void => {
+    if (!this.#acceptPeer(peerId)) return;
     this.#connectedPeers.delete(peerId);
     this.#notifyStateChange();
   };
@@ -174,7 +183,7 @@ export class TeamWebRtcFileTransfer {
     channel: "rpc" | "events" | "files" | "desktop",
     data: string | ArrayBuffer,
   ): void => {
-    if (channel !== "files") return;
+    if (channel !== "files" || !this.#acceptPeer(peerId)) return;
     const transferId = fileTransferId(data);
     this.#chain = this.#chain
       .then(() => this.#handleData(peerId, data))

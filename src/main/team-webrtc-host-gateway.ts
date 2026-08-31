@@ -61,7 +61,12 @@ export class TeamWebRtcHostGateway {
     this.#bridge = options.bridge;
     this.#store = options.store;
     this.#appVersion = options.appVersion;
-    this.#files = new TeamWebRtcFileTransfer(options.bridge, options.transferDirectory);
+    this.#files = new TeamWebRtcFileTransfer(
+      options.bridge,
+      options.transferDirectory,
+      undefined,
+      (peerId) => peerId === this.#peerId,
+    );
     this.#renewSignal = options.renewSignal ?? null;
     this.#onSignalRecoveryFailure = options.onSignalRecoveryFailure ?? (() => undefined);
     this.#closeSession = options.closeSession ?? (() => Promise.resolve());
