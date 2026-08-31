@@ -3546,42 +3546,33 @@ describe.sequential("AgentService", () => {
     expect(service.listBots().some((bot) => bot.id === "chief")).toBe(true);
   });
 
-  it("rejects stop and preserves deletion guards when provider interruption fails", async () => {
-    let rejectInterrupt: ((error: Error) => void) | undefined;
-    const interruptPending = new Promise<void>((_resolve, reject) => {
-      rejectInterrupt = reject;
-    });
+  it("restarts an exclusive provider when direct interruption fails", async () => {
     const { store, mailbox } = stores();
-    const client = new FakeAgentClient("codex", "", false, true, {}, async (method) => {
-      if (method === "turn/interrupt") await interruptPending;
+    const clients: FakeAgentClient[] = [];
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const failInterrupt = clients.length === 0;
+      const client = new FakeAgentClient(provider, "", false, true, {}, async (method) => {
+        if (failInterrupt && method === "turn/interrupt") throw new Error("Runtime unavailable");
+      });
+      clients.push(client);
+      return client;
     });
-    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", () => client);
     await service.initialize();
 
     await service.sendMessage({ botId: "chief", text: "Keep working" });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
     await service.sendMessage({ botId: "chief", text: "Run later" });
 
-    const firstStop = service.stopAgent("chief");
-    await waitFor(() => client.requests.some((request) => request.method === "turn/interrupt"));
-    const secondStop = service.stopAgent("chief");
-    expect(secondStop).toBe(firstStop);
-    const stopResults = Promise.allSettled([firstStop, secondStop]);
-    rejectInterrupt?.(new Error("Runtime unavailable"));
-    expect(await stopResults).toEqual([
-      { status: "rejected", reason: expect.objectContaining({ message: "Runtime unavailable" }) },
-      { status: "rejected", reason: expect.objectContaining({ message: "Runtime unavailable" }) },
+    await service.stopAgent("chief");
+
+    expect(clients).toHaveLength(2);
+    expect(clients[0]?.running).toBe(false);
+    expect(clients[1]?.running).toBe(true);
+    expect(service.listQueue("chief").deliveries.map((delivery) => delivery.status)).toEqual([
+      "interrupted",
+      "cancelled",
     ]);
-
-    expect(service.listQueue("chief").deliveries.map((delivery) => delivery.status)).toEqual(["running", "queued"]);
-    expect((await service.readConversation("chief")).activeTurnId).not.toBeNull();
-    expect(client.requests.filter((request) => request.method === "turn/start")).toHaveLength(1);
-    expect(client.requests.filter((request) => request.method === "turn/interrupt")).toHaveLength(1);
-
-    await expect(service.deleteBot("chief")).rejects.toThrow(
-      "Stop the agent and cancel its queued messages before deleting it.",
-    );
-    expect(service.listBots().some((bot) => bot.id === "chief")).toBe(true);
+    await service.deleteBot("chief");
   });
 
   it("stops a delivery without a confirmed provider turn and interrupts a delayed orphan", async () => {
@@ -3599,6 +3590,43 @@ describe.sequential("AgentService", () => {
     expect(client.requests.filter((request) => request.method === "turn/start")).toHaveLength(1);
     await service.deleteBot("chief");
     await waitFor(() => client.requests.some((request) => request.method === "turn/interrupt"));
+    expect(service.listBots().some((bot) => bot.id === "chief")).toBe(false);
+  });
+
+  it("stops recovered work when provider authentication is unavailable", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(
+      store,
+      mailbox,
+      fakeBrowser(),
+      null,
+      30_000,
+      "codex",
+      (provider) => new FakeAgentClient(provider, "", false),
+    );
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Recover this work" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+    await service.sendMessage({ botId: "chief", text: "Cancel this queued work" });
+    await service.stop();
+
+    service = new AgentService(
+      store,
+      mailbox,
+      fakeBrowser(),
+      null,
+      30_000,
+      "codex",
+      (provider) => new FakeAgentClient(provider, "", false, false),
+    );
+    await service.initialize();
+    await service.stopAgent("chief");
+
+    expect(service.listQueue("chief").deliveries.map((delivery) => delivery.status)).toEqual([
+      "interrupted",
+      "cancelled",
+    ]);
+    await service.deleteBot("chief");
     expect(service.listBots().some((bot) => bot.id === "chief")).toBe(false);
   });
 
@@ -3660,6 +3688,100 @@ describe.sequential("AgentService", () => {
     expect(service.listQueue("chief").deliveries[0]?.status).toBe("interrupted");
     await service.deleteBot("chief");
     expect(service.listBots().some((bot) => bot.id === "chief")).toBe(false);
+  });
+
+  it("refuses to restart a shared provider while another agent is running", async () => {
+    let blockStart = false;
+    let releaseStart: (() => void) | undefined;
+    const startPending = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "", false, true, {}, async (method) => {
+        if (provider === "codex" && blockStart && method === "turn/start") await startPending;
+      });
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    await service.sendMessage({ botId: "sales-outbound", text: "Keep the shared provider busy" });
+    await waitFor(() => service?.listQueue("sales-outbound").deliveries[0]?.status === "running");
+    blockStart = true;
+    await service.sendMessage({ botId: "chief", text: "Start without confirming" });
+    const client = clients.get("codex");
+    await waitFor(() => client?.requests.filter((request) => request.method === "turn/start").length === 2);
+
+    vi.useFakeTimers();
+    try {
+      const stopping = service.stopAgent("chief");
+      const rejected = expect(stopping).rejects.toThrow(
+        "Codex is running another agent. Wait for that work to finish, then try stopping this agent again.",
+      );
+      await vi.advanceTimersByTimeAsync(2_000);
+      await rejected;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(client?.running).toBe(true);
+    expect(service.listQueue("sales-outbound").deliveries[0]?.status).toBe("running");
+    await expect(service.deleteBot("chief")).rejects.toThrow(
+      "Stop the agent and cancel its queued messages before deleting it.",
+    );
+    releaseStart?.();
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+  });
+
+  it("restarts a provider when its other agent has queued-only work", async () => {
+    let rejectStart: ((error: Error) => void) | undefined;
+    const startPending = new Promise<void>((_resolve, reject) => {
+      rejectStart = reject;
+    });
+    const codexClients: FakeAgentClient[] = [];
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      if (provider !== "codex") return new FakeAgentClient(provider, "", false);
+      const client =
+        codexClients.length === 0
+          ? new FakeAgentClient(
+              provider,
+              "",
+              false,
+              true,
+              {},
+              async (method) => {
+                if (method === "turn/start") await startPending;
+              },
+              async () => rejectStart?.(new Error("Provider stopped.")),
+            )
+          : new FakeAgentClient(provider, "", false);
+      codexClients.push(client);
+      return client;
+    });
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Start without confirming" });
+    await waitFor(() => codexClients[0]?.requests.some((request) => request.method === "turn/start"));
+    await store.getOrCreate("sales-outbound");
+    await mailbox.enqueue({
+      sender: { kind: "user" },
+      recipientBotIds: ["sales-outbound"],
+      text: "Run after provider recovery",
+    });
+
+    vi.useFakeTimers();
+    try {
+      const stopping = service.stopAgent("chief");
+      await vi.advanceTimersByTimeAsync(2_000);
+      await stopping;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(codexClients).toHaveLength(2);
+    expect(service.listQueue("chief").deliveries[0]?.status).toBe("interrupted");
+    expect(["queued", "starting", "running"]).toContain(service.listQueue("sales-outbound").deliveries[0]?.status);
   });
 
   it("does not send a provider turn after a starting delivery is stopped during preflight", async () => {

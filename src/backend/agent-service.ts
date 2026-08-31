@@ -1222,11 +1222,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     );
     if (activeTurnId) turnIds.add(activeTurnId);
 
-    const client = this.#clientForBot(bot);
     const pendingStart = this.#pendingTurnStarts.get(botId);
-    if ((turnIds.size > 0 || pendingStart) && (!session || !client)) {
-      throw new Error("The provider is unavailable, so OpenBot could not confirm the stop.");
-    }
+    const client = this.#clientForBot(bot) ?? pendingStart?.client ?? null;
 
     const stoppingTurnKeys = new Set(
       session ? [...turnIds].map((turnId) => `${session.externalSessionId}:${turnId}`) : [],
@@ -1234,7 +1231,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     for (const key of stoppingTurnKeys) this.#stoppingTurns.add(key);
     try {
       try {
-        let restartClient: AgentClient | null = null;
+        let restartClient = Boolean(client && activeDeliveries.length > 0 && !session);
         if (pendingStart && client) {
           const pendingTurnId = await this.#waitForPendingTurnStart(pendingStart, 2_000);
           if (pendingTurnId) {
@@ -1243,21 +1240,30 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             stoppingTurnKeys.add(turnKey);
             this.#stoppingTurns.add(turnKey);
           } else {
-            restartClient = client;
+            restartClient = true;
           }
         }
-        if (session && client) {
-          for (const turnId of turnIds) {
-            await client.request(
-              "turn/interrupt",
-              { threadId: session.externalSessionId, turnId },
-              decodeRecordResponse,
-              2_000,
+        if (!restartClient && session && client) {
+          try {
+            for (const turnId of turnIds) {
+              await client.request(
+                "turn/interrupt",
+                { threadId: session.externalSessionId, turnId },
+                decodeRecordResponse,
+                2_000,
+              );
+            }
+          } catch {
+            restartClient = true;
+          }
+        }
+        if (restartClient && client) {
+          if (this.#providerHasOtherActiveWork(client.provider, botId)) {
+            throw new Error(
+              `${providerLabel(client.provider)} is running another agent. Wait for that work to finish, then try stopping this agent again.`,
             );
           }
-        }
-        if (restartClient) {
-          await this.#restartProviderClient(restartClient, async () => {
+          await this.#restartProviderClient(client, async () => {
             await this.#mailbox.stopPending(
               botId,
               "Stopped by the user.",
@@ -2189,6 +2195,28 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       return this.getStatus();
     });
+  }
+
+  #providerHasOtherActiveWork(provider: AgentProvider, excludedBotId: string): boolean {
+    for (const bot of this.#store.list()) {
+      if (bot.id === excludedBotId || providerForBot(bot) !== provider) continue;
+      const hasActiveDelivery = this.#mailbox
+        .listQueue(bot.id)
+        .deliveries.some((delivery) => delivery.status === "starting" || delivery.status === "running");
+      if (
+        hasActiveDelivery ||
+        this.#snapshots.get(bot.id)?.activeTurnId ||
+        this.#pendingTurnStarts.has(bot.id) ||
+        this.#hasInFlightTurnCommand(bot.id) ||
+        this.#compactingBots.has(bot.id) ||
+        [...this.#pendingPrompts.values()].some((pending) => pending.botId === bot.id) ||
+        [...this.#pendingApprovals.values()].some((pending) => pending.approval.botId === bot.id) ||
+        [...this.#pendingBrowserTakeovers.values()].some((pending) => pending.request.botId === bot.id)
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   async #ensureThread(bot: BotSummary, client: AgentClient): Promise<string> {

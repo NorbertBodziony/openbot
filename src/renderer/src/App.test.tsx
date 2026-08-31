@@ -7501,6 +7501,77 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(window.openbot.agent.stop).toHaveBeenCalledWith({ botId: "chief" }));
   });
 
+  it("keeps force-stop available across every pending agent input surface", async () => {
+    vi.mocked(window.openbot.agent.listQueue).mockResolvedValue({
+      botId: "chief",
+      deliveries: [
+        queuedDelivery("running-delivery", "Stuck work", null, {
+          status: "running",
+          turnId: "turn-stuck",
+        }),
+      ],
+    });
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-stop",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-stuck",
+      questions: [{ id: "scope", header: "Scope", question: "Which scope?", isSecret: false, options: null }],
+    });
+    await screen.findByRole("textbox", { name: "Custom answer for: Which scope?" });
+    expect(screen.getByRole("button", { name: "Stop agent" })).toBeVisible();
+    emitAgentEvent?.({
+      type: "agent-input-resolved",
+      kind: "prompt",
+      requestId: "prompt-stop",
+      botId: "chief",
+    });
+
+    emitAgentEvent?.({
+      type: "approval",
+      approval: {
+        requestId: "approval-stop",
+        botId: "chief",
+        threadId: "thread-chief",
+        turnId: "turn-stuck",
+        kind: "command",
+        command: "bun test",
+        cwd: null,
+        reason: null,
+        grantRoot: null,
+        permissions: null,
+      },
+    });
+    await screen.findByText("Run this command?");
+    expect(screen.getByRole("button", { name: "Stop agent" })).toBeVisible();
+    emitAgentEvent?.({
+      type: "agent-input-resolved",
+      kind: "approval",
+      requestId: "approval-stop",
+      botId: "chief",
+    });
+
+    emitAgentEvent?.({
+      type: "browser-takeover-requested",
+      request: {
+        requestId: "takeover-stop",
+        botId: "chief",
+        threadId: "thread-chief",
+        turnId: "turn-stuck",
+        tabId: "missing-tab",
+      },
+    });
+    await screen.findByRole("region", { name: "Browser takeover" });
+    await fireEvent.click(screen.getByRole("button", { name: "Stop agent" }));
+
+    await waitFor(() => expect(window.openbot.agent.stop).toHaveBeenCalledWith({ botId: "chief" }));
+  });
+
   it("disables force-stop on a remote host that does not advertise the capability", async () => {
     vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([
       testServer("local", false),

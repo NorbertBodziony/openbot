@@ -320,6 +320,21 @@ const CONVERSATION_PANEL_MIN = 96;
 function createConversationViewScope(props: ConversationProps) {
   const controller = useConversationController();
   const agentReady = () => props.agentStatus.phase === "ready";
+  const [stoppingAgent, setStoppingAgent] = createSignal(false);
+  const hasActiveWork = createMemo(
+    () =>
+      Boolean(props.activeTurnId) ||
+      Boolean(props.queue?.deliveries.some((delivery) => ["queued", "starting", "running"].includes(delivery.status))),
+  );
+  const stopAgent = async (): Promise<void> => {
+    if (stoppingAgent()) return;
+    setStoppingAgent(true);
+    try {
+      await props.onStop();
+    } finally {
+      setStoppingAgent(false);
+    }
+  };
   const {
     drafts,
     setDrafts,
@@ -2426,6 +2441,7 @@ function createConversationViewScope(props: ConversationProps) {
     finishVoiceRecording,
     handleChatSearchShortcut,
     hideBrowserPanel,
+    hasActiveWork,
     jumpToLatestMessage,
     jumpToUnreadMessages,
     lastChatSearchQuery,
@@ -2540,6 +2556,8 @@ function createConversationViewScope(props: ConversationProps) {
     showScrollToLatest,
     startVoiceElapsedTimer,
     startVoiceRecording,
+    stopAgent,
+    stoppingAgent,
     stickToLatest,
     stopTeamTyping,
     stopVoiceElapsedTimer,
@@ -3164,6 +3182,11 @@ export function ConversationTimeline() {
               />
             )}
           </Show>
+          <Show when={props.prompt || props.approval || props.browserTakeover}>
+            <div class="composer-stop-row">
+              <ForceStopButton />
+            </div>
+          </Show>
         </Show>
       </div>
     </>
@@ -3171,6 +3194,28 @@ export function ConversationTimeline() {
 }
 
 /** @internal Stable HMR boundary for conversation composer. */
+function ForceStopButton() {
+  const { hasActiveWork, props, stopAgent, stoppingAgent } = useConversationViewScope();
+  return (
+    <Show when={hasActiveWork()}>
+      <Button
+        variant="destructive"
+        size="sm"
+        type="button"
+        class="composer-stop-button"
+        aria-label={stoppingAgent() ? "Stopping agent" : "Stop agent"}
+        disabled={stoppingAgent() || props.forceStopEnabled === false}
+        title={props.forceStopEnabled === false ? props.forceStopDisabledReason : undefined}
+        onClick={() => void stopAgent()}
+      >
+        <Show when={!stoppingAgent()} fallback={<LoaderCircle aria-hidden="true" />}>
+          <StopIcon />
+        </Show>
+      </Button>
+    </Show>
+  );
+}
+
 export function ConversationComposer() {
   const {
     agentReady,
@@ -3208,22 +3253,6 @@ export function ConversationComposer() {
     voicePhase,
     voiceModelProgress,
   } = useConversationViewScope();
-  const [stoppingAgent, setStoppingAgent] = createSignal(false);
-  const hasActiveWork = createMemo(
-    () =>
-      Boolean(props.activeTurnId) ||
-      Boolean(props.queue?.deliveries.some((delivery) => ["queued", "starting", "running"].includes(delivery.status))),
-  );
-
-  async function stopAgent(): Promise<void> {
-    if (stoppingAgent()) return;
-    setStoppingAgent(true);
-    try {
-      await props.onStop();
-    } finally {
-      setStoppingAgent(false);
-    }
-  }
   return (
     <Show when={!props.prompt && !props.approval && !props.browserTakeover}>
       <div class="composer-wrap">
@@ -3412,22 +3441,7 @@ export function ConversationComposer() {
               </DropdownMenu.Portal>
             </DropdownMenu.Root>
             <div class="composer-primary-actions">
-              <Show when={hasActiveWork()}>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  type="button"
-                  class="composer-stop-button"
-                  aria-label={stoppingAgent() ? "Stopping agent" : "Stop agent"}
-                  disabled={stoppingAgent() || props.forceStopEnabled === false}
-                  title={props.forceStopEnabled === false ? props.forceStopDisabledReason : undefined}
-                  onClick={() => void stopAgent()}
-                >
-                  <Show when={!stoppingAgent()} fallback={<LoaderCircle aria-hidden="true" />}>
-                    <StopIcon />
-                  </Show>
-                </Button>
-              </Show>
+              <ForceStopButton />
               <Show when={voicePhase() === "preparing"}>
                 <span class="voice-model-progress" role="status">
                   Downloading voice model {voiceModelProgress() ?? 0}%
