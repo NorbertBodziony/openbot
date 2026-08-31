@@ -90,7 +90,7 @@ export function MarkdownInlineText(
   props: Omit<MarkdownMessageTextProps, "showCitationFooter" | "streaming" | "streamingTail">,
 ) {
   const tokens = createMemo(() =>
-    marked.Lexer.lexInline(normalizeEscapedLocalFileLinks(props.body), { breaks: true, gfm: true }),
+    marked.Lexer.lexInline(normalizeEscapedLocalFileLinksInline(props.body), { breaks: true, gfm: true }),
   );
   const contentProps = (): MarkdownContentProps => ({
     bots: props.bots,
@@ -493,17 +493,55 @@ function sharedFileTarget(value: string): string | null {
 }
 
 function normalizeEscapedLocalFileLinks(body: string): string {
-  return body.replace(/(\[[^\]\r\n]+\])\\\(<([^<>\r\n]+)>(\\?\))/gu, (match, label: string, target: string) =>
+  return marked
+    .lexer(body, { breaks: true, gfm: true })
+    .map((token) =>
+      token.type === "code" || token.type === "html" ? token.raw : normalizeEscapedLocalFileLinksInline(token.raw),
+    )
+    .join("");
+}
+
+function normalizeEscapedLocalFileLinksInline(body: string): string {
+  const tokens = marked.Lexer.lexInline(body, { breaks: true, gfm: true });
+  let result = "";
+  let candidate = "";
+  const flushCandidate = () => {
+    result += normalizeEscapedLocalFileLinkCandidate(candidate);
+    candidate = "";
+  };
+  for (const token of tokens) {
+    if (!markdownTokenContainsProtectedLiteral(token)) {
+      candidate += token.raw;
+      continue;
+    }
+    flushCandidate();
+    result += token.raw;
+  }
+  flushCandidate();
+  return result;
+}
+
+function markdownTokenContainsProtectedLiteral(token: Token): boolean {
+  if (token.type === "html" || tokenIs(token, "codespan")) return true;
+  if (tokenIs(token, "strong")) return token.tokens.some(markdownTokenContainsProtectedLiteral);
+  if (tokenIs(token, "em")) return token.tokens.some(markdownTokenContainsProtectedLiteral);
+  if (tokenIs(token, "del")) return token.tokens.some(markdownTokenContainsProtectedLiteral);
+  if (tokenIs(token, "link")) return token.tokens.some(markdownTokenContainsProtectedLiteral);
+  return tokenIs(token, "text") && Boolean(token.tokens?.some(markdownTokenContainsProtectedLiteral));
+}
+
+function normalizeEscapedLocalFileLinkCandidate(value: string): string {
+  return value.replace(/(\[[^\]\r\n]+\])\\\(<([^<>\r\n]+)>(\\?\))/gu, (match, label: string, target: string) =>
     localFileTarget(target) ? `${label}(<${target}>)` : match,
   );
 }
 
 function localFileTarget(value: string): string | null {
   const path = value.trim();
-  const shared = sharedFileTarget(path);
-  if (shared) return shared;
   const workspace = workspaceFileTarget(path);
   if (!workspace) return null;
+  const shared = sharedFileTarget(path);
+  if (shared) return shared;
   return /^(?:~[/\\]|[/\\]|[A-Za-z]:[/\\])/u.test(path) || isFileMention(path) ? workspace : null;
 }
 

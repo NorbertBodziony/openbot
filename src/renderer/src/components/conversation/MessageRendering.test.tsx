@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { BotMessage, BotProfile } from "../../data";
 import { triggerResize } from "../../setupTests";
 import { ImageGeneration } from "./ImageGeneration";
+import { MarkdownMessageText } from "./MarkdownMessageText";
 import { ExchangeSystemRow, MessageBody } from "./MessageRendering";
 
 const bots: BotProfile[] = [
@@ -434,12 +435,12 @@ describe("MessageBody", () => {
   it("does not repair escaped Markdown delimiters around web links", () => {
     const onOpenSharedFile = vi.fn();
     const onOpenWorkspaceFile = vi.fn();
-    render(() => (
+    const { container } = render(() => (
       <MessageBody
         message={{
           id: "message-escaped-web-link",
           author: "bot",
-          body: String.raw`[OpenAI]\(<https://openai.com/docs.xlsx>\)`,
+          body: String.raw`[OpenAI]\(<https://example.com/OpenBot/Shared/docs.xlsx>\)`,
           time: "10:00",
         }}
         bots={bots}
@@ -453,8 +454,31 @@ describe("MessageBody", () => {
     ));
 
     expect(screen.queryByRole("button", { name: /Open (?:shared|workspace) file/u })).toBeNull();
+    expect(container).toHaveTextContent("[OpenAI](");
+    expect(container).toHaveTextContent("https://example.com/OpenBot/Shared/docs.xlsx");
     expect(onOpenSharedFile).not.toHaveBeenCalled();
     expect(onOpenWorkspaceFile).not.toHaveBeenCalled();
+  });
+
+  it("keeps escaped local-file syntax literal inside code and HTML", () => {
+    const inlineCode = String.raw`[inline]\(<C:\tmp\inline.txt>\)`;
+    const fencedCode = String.raw`[fenced]\(<C:\tmp\fenced.txt>\)`;
+    const html = String.raw`<div>[html]\(<C:\tmp\html.txt>\)</div>`;
+    const { container } = render(() => (
+      <MarkdownMessageText
+        body={[`Inline: \`${inlineCode}\``, "", "```md", fencedCode, "```", "", html].join("\n")}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onOpenSharedFile={vi.fn()}
+        onOpenWorkspaceFile={vi.fn()}
+      />
+    ));
+
+    expect(container).toHaveTextContent(inlineCode);
+    expect(container).toHaveTextContent(fencedCode);
+    expect(container).toHaveTextContent(html);
+    expect(container.querySelector(".message-file-reference")).toBeNull();
   });
 
   it("turns filenames listed after a Shared directory into preview references", async () => {
