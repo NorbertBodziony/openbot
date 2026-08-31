@@ -1288,14 +1288,10 @@ export class TeamApiServer {
         if (!queueInvalidation) continue;
         outgoing = queueInvalidation;
       } else if (event.type === "conversation" && !connection.capabilities.has("routine-event-markers")) {
-        const routineEventFilteredPayload = cachedTeamCurrentEvent(
-          routineEventFilteredPayloads,
-          connection.protocol,
-          {
-            ...event,
-            snapshot: conversationSnapshotWithoutRoutineEvents(event.snapshot),
-          },
-        );
+        const routineEventFilteredPayload = cachedTeamCurrentEvent(routineEventFilteredPayloads, connection.protocol, {
+          ...event,
+          snapshot: conversationSnapshotWithoutRoutineEvents(event.snapshot),
+        });
         if (!routineEventFilteredPayload) continue;
         outgoing = routineEventFilteredPayload;
       } else {

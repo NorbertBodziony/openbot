@@ -813,6 +813,24 @@ function remoteEventManager(statePath: string, appVersion?: string): RemoteServe
 }
 
 describe("Team API compatibility negotiation", () => {
+  it("limits app-version-less connections to v1 capabilities", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-assumed-compatibility-"));
+    const statePath = join(directory, "servers.json");
+    await writeRemoteEventState(statePath, "assumed-compatibility");
+    const manager = remoteEventManager(statePath);
+
+    try {
+      await manager.initialize();
+      await manager.retryConnection("assumed-compatibility");
+      const compatibility = manager.list().find((server) => server.id === "assumed-compatibility")?.compatibility;
+      expect(compatibility).toMatchObject({ negotiatedProtocol: 1 });
+      expect(compatibility?.capabilities).not.toContain("installed-skills");
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when a binary route returns malformed protocol metadata", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openbot-binary-protocol-error-"));
     const statePath = join(directory, "servers.json");

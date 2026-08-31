@@ -325,6 +325,44 @@ describe("MessageBody", () => {
     expect(onOpenLink).toHaveBeenCalledWith("https://kobalte.dev/docs/core/overview/introduction");
   });
 
+  it("preserves semantic tags in agent-authored Markdown", async () => {
+    const onSelectAgent = vi.fn();
+    const skills: InstalledSkill[] = [
+      {
+        skillId: "skill-1",
+        slug: "release-notes",
+        name: "Release Notes",
+        installedVersion: 1,
+        availableVersion: 1,
+        state: "installed",
+      },
+    ];
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-markdown-tags",
+          author: "bot",
+          body: "Ask **@[Old Research](agent:research)** to use @[Old Skill](skill:skill-1).",
+          time: "10:00",
+        }}
+        bots={bots}
+        skills={skills}
+        onSelectAgent={onSelectAgent}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    const agentTag = screen.getByRole("button", { name: "Open agent Research" });
+    expect(agentTag.closest("strong")).toBeInTheDocument();
+    expect(screen.getByText("Release Notes").closest(".message-skill-tag")).toHaveTextContent("Skill Release Notes");
+    expect(screen.queryByText("Old Research")).toBeNull();
+    expect(screen.queryByText("Old Skill")).toBeNull();
+    await fireEvent.click(agentTag);
+    expect(onSelectAgent).toHaveBeenCalledWith("research");
+  });
+
   it("renders absolute agent workspace Markdown paths as file controls", async () => {
     const onOpenWorkspaceFile = vi.fn();
     const pagePath = "/Users/arozycka23/OpenBot/Bots/bot-7b62fdf2/app/page.tsx";

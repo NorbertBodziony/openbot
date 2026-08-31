@@ -1,3 +1,4 @@
+import { serializeChatTagReference } from "@openbot/contracts/chat-tag-references";
 import { Dynamic } from "@solidjs/web";
 import type { Token, Tokens } from "marked";
 import { marked } from "marked";
@@ -360,6 +361,8 @@ function MarkdownInline(props: {
     return values.map((token, index) => ({
       token,
       streaming: markerTokenIndexes.has(index),
+      semanticTag: index > 0 && textTokenEndsWithTagMarker(values[index - 1]) ? semanticChatTag(token) : null,
+      precedesSemanticTag: textTokenEndsWithTagMarker(token) && semanticChatTag(values[index + 1]) !== null,
       streamingTail: props.streamingTail === true && index === lastTokenIndex,
     }));
   });
@@ -414,6 +417,9 @@ function MarkdownInline(props: {
             return <br />;
           case "link": {
             if (!tokenIs(token, "link")) return token.raw;
+            if (item.semanticTag) {
+              return <RichText body={item.semanticTag} content={props.content} streamingTail={item.streamingTail} />;
+            }
             const url = safeBrowserUrl(token.href);
             const sharedPath = sharedFileTarget(token.href);
             const workspacePath = workspaceFileTarget(token.href);
@@ -477,7 +483,7 @@ function MarkdownInline(props: {
               />
             ) : (
               <RichText
-                body={token.text}
+                body={item.precedesSemanticTag ? token.text.slice(0, -1) : token.text}
                 content={props.content}
                 streaming={item.streaming}
                 streamingTail={item.streamingTail}
@@ -492,6 +498,19 @@ function MarkdownInline(props: {
       }}
     </For>
   );
+}
+
+function textTokenEndsWithTagMarker(token: Token | undefined): boolean {
+  return token !== undefined && tokenIs(token, "text") && !token.tokens && token.text.endsWith("@");
+}
+
+function semanticChatTag(token: Token | undefined): string | null {
+  if (!token || !tokenIs(token, "link")) return null;
+  const target = /^(agent|skill):(.+)$/u.exec(token.href);
+  const kind = target?.[1] === "agent" ? "agent" : target?.[1] === "skill" ? "skill" : null;
+  const id = target?.[2]?.trim();
+  const name = (markdownInlinePlainText(token.tokens) || token.text).trim();
+  return kind && id && name ? serializeChatTagReference(kind, name, id) : null;
 }
 
 function RichText(props: {
@@ -513,7 +532,7 @@ function RichText(props: {
 function hideIncompleteEmphasisMarker(body: string): string {
   const characters = [...body];
   const markers = incompleteEmphasisMarkers(characters);
-  for (const marker of markers.toReversed()) characters.splice(marker.index, marker.length);
+  for (const marker of markers.reverse()) characters.splice(marker.index, marker.length);
   return characters.join("");
 }
 

@@ -1023,7 +1023,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       hostAppVersion: "0.0.0",
       hostProtocol: LOCAL_TEAM_PROTOCOL,
       negotiatedProtocol: TEAM_PROTOCOL_V1,
-      capabilities: [...TEAM_PROTOCOL_V2_CAPABILITIES],
+      capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
     };
   }
 
