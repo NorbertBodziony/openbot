@@ -2293,6 +2293,7 @@ export function createAppController(props: AppProps = {}) {
   ): Promise<void> {
     if (!botId || activeServerSidebarKey() !== serverId) return;
     const requestKey = agentConversationKey(serverId, botId);
+    const visibleMessageIdAtStart = latestVisibleAgentMessageId(botId);
     const boundary =
       throughMessageId ??
       liveMessages()
@@ -2324,7 +2325,8 @@ export function createAppController(props: AppProps = {}) {
           activeServerSidebarKey() === serverId &&
           isAgentChatReadable(botId) &&
           latestMessageId &&
-          latestMessageId !== boundary
+          latestMessageId !== boundary &&
+          latestMessageId !== visibleMessageIdAtStart
         ) {
           queueMicrotask(() => {
             const latestVisibleMessageId = latestVisibleAgentMessageId(botId);
@@ -2332,7 +2334,8 @@ export function createAppController(props: AppProps = {}) {
               activeServerSidebarKey() === serverId &&
               isAgentChatReadable(botId) &&
               latestVisibleMessageId &&
-              latestVisibleMessageId !== boundary
+              latestVisibleMessageId !== boundary &&
+              latestVisibleMessageId !== visibleMessageIdAtStart
             ) {
               void markAgentMessagesRead(botId, latestVisibleMessageId, serverId).catch((error) =>
                 appendUiError(botId, error, "Read state failed"),

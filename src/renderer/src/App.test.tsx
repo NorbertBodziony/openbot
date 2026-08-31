@@ -3958,6 +3958,49 @@ describe("OpenBot connected desktop shell", () => {
     });
   });
 
+  it("does not read an earlier agent reply again after sending a message", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 1,
+        messages: [
+          {
+            id: "assistant-before-send",
+            author: "assistant",
+            text: "Earlier agent reply",
+            createdAt: "2026-08-12T10:00:00.000Z",
+            status: "completed",
+          },
+        ],
+      },
+    });
+    await screen.findByText("Earlier agent reply");
+    await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    vi.mocked(window.openbot.agent.markConversationRead).mockClear();
+
+    const composer = screen.getByRole("textbox", { name: "Message Chief" });
+    composer.textContent = "Continue this work";
+    await fireEvent.input(composer);
+    await fireEvent.keyDown(composer, { key: "Enter" });
+
+    await waitFor(() =>
+      expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
+        { botId: "chief", throughMessageId: "delivery-1" },
+        "local",
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(vi.mocked(window.openbot.agent.markConversationRead).mock.calls).toEqual([
+      [{ botId: "chief", throughMessageId: "delivery-1" }, "local"],
+    ]);
+  });
+
   it("publishes typing state", async () => {
     render(() => <App />);
     await confirmOnboardingModel();
@@ -5614,7 +5657,9 @@ describe("OpenBot connected desktop shell", () => {
 
     emitAgentEvent?.({ type: "conversation-page", page: delayedPage });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce();
+    expect(vi.mocked(window.openbot.agent.markConversationRead).mock.calls).toEqual([
+      [{ botId: "chief", throughMessageId: "reply-delayed-read-state" }, "local"],
+    ]);
     expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
   });
 
