@@ -55,6 +55,7 @@ import {
   nextAgentActivityPresentation,
   ThinkingDisclosure,
 } from "./conversation/AgentActivity";
+import type { AgentRuntimeSettings } from "./conversation/AgentSettingsPanel";
 import { AttachmentCards, fileBadge, formatFileSize } from "./conversation/AttachmentCards";
 import { attachmentReferenceTone } from "./conversation/AttachmentReference";
 import { ChatSearch } from "./conversation/ChatSearch";
@@ -153,13 +154,7 @@ interface RoutineSettingsRequest {
   nonce: number;
 }
 
-interface RuntimeSettingsTuple {
-  provider: AgentProviderId;
-  model: AgentModelId;
-  reasoningEffort: AgentReasoningEffort;
-}
-
-function runtimeSettingsEqual(left: RuntimeSettingsTuple, right: RuntimeSettingsTuple): boolean {
+function runtimeSettingsEqual(left: AgentRuntimeSettings, right: AgentRuntimeSettings): boolean {
   return (
     left.provider === right.provider && left.model === right.model && left.reasoningEffort === right.reasoningEffort
   );
@@ -877,8 +872,12 @@ function createConversationViewScope(props: ConversationProps) {
     }
   }
 
-  async function saveRuntimeSettings(settings: RuntimeSettingsTuple, errorMessage: string | null): Promise<boolean> {
-    const botId = props.bot?.id;
+  async function saveRuntimeSettings(
+    settings: AgentRuntimeSettings,
+    errorMessage: string | null,
+    targetBotId = props.bot?.id,
+  ): Promise<boolean> {
+    const botId = targetBotId;
     if (!botId) return false;
     const previousAttempt = resources.runtimeSettingsAttempts.get(botId);
     const generation = (previousAttempt?.generation ?? 0) + 1;
@@ -902,7 +901,7 @@ function createConversationViewScope(props: ConversationProps) {
       }
     }
     const latestAttempt = resources.runtimeSettingsAttempts.get(botId);
-    if (latestAttempt?.generation !== generation) return saved;
+    if (latestAttempt?.generation !== generation) return true;
     latestAttempt.pending = false;
     if (saved) return true;
 
@@ -918,6 +917,15 @@ function createConversationViewScope(props: ConversationProps) {
     setSettingsReasoning(activeBot.reasoningEffort);
     if (errorMessage) setComposerError(errorMessage);
     return false;
+  }
+
+  async function updateRuntimeSettings(botId: string, settings: AgentRuntimeSettings): Promise<boolean> {
+    if (props.bot?.id === botId) {
+      setSettingsProvider(settings.provider);
+      setSettingsModel(settings.model);
+      setSettingsReasoning(settings.reasoningEffort);
+    }
+    return saveRuntimeSettings(settings, null, botId);
   }
 
   async function selectModel(
@@ -2443,6 +2451,7 @@ function createConversationViewScope(props: ConversationProps) {
     rightPanels,
     routineSettingsRequest,
     saveBotPatch,
+    updateRuntimeSettings,
     saveQueuedMessageEdit,
     scheduleUnreadDividerVisibilityUpdate,
     screenOpen,
@@ -3496,6 +3505,10 @@ export function ConversationPanels() {
     sidebarFilePreview,
     settingsOpen,
     routineSettingsRequest,
+    settingsModel,
+    settingsProvider,
+    settingsReasoning,
+    updateRuntimeSettings,
   } = useConversationViewScope();
   return (
     <>
@@ -3566,6 +3579,11 @@ export function ConversationPanels() {
           <Loading>
             <AgentSettingsPanel
               bot={bot()}
+              runtimeSettings={{
+                provider: settingsProvider(),
+                model: settingsModel(),
+                reasoningEffort: settingsReasoning(),
+              }}
               agentStatus={props.agentStatus}
               providerRuntimeStatuses={props.providerRuntimeStatuses}
               onDownloadProvider={props.onDownloadProvider}
@@ -3585,6 +3603,7 @@ export function ConversationPanels() {
               onClose={() => setActiveRightPanel("none")}
               onWidthChange={setSettingsPanelWidth}
               onUpdateBot={props.onUpdateBot}
+              onUpdateRuntimeSettings={updateRuntimeSettings}
               onSetAgentAvatar={props.onSetAgentAvatar}
               routineSelectionRequest={routineSettingsRequest()?.botId === bot().id ? routineSettingsRequest() : null}
               onRoutineSelectionRequestHandled={handleRoutineSettingsRequest}
