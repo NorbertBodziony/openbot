@@ -39,6 +39,7 @@ interface DeploymentRow {
   site_framework: "vanilla" | "astro";
   site_spa_fallback: number;
   objects_deleted_at: number | null;
+  activation_authorized_at: number | null;
 }
 
 export interface HostedSiteSummary {
@@ -337,49 +338,37 @@ export class HostedSiteService {
       }
       await this.publishAuthoritativeRoute(site.id);
       const summary = await this.summaryForSite(userId, deployment.site_id);
+      if (deployment.base_deployment_id && deployment.base_deployment_id !== deployment.id) {
+        await this.deleteDeployment(site.id, deployment.base_deployment_id);
+      }
       await this.saveReceipt(userId, idempotencyKey, "activate", site.id, summary, now);
       return summary;
     }
-    if (deployment.status === "activating") {
-      return this.finalizeActivation(
-        userId,
-        site,
-        deployment,
-        now + HOSTED_SITE_LIMITS.siteLifetimeMs,
-        idempotencyKey,
-        now,
-      );
-    }
-    if (deployment.status !== "uploading" || deployment.upload_expires_at <= now) {
+    if (!["uploading", "activating"].includes(deployment.status) || deployment.upload_expires_at <= now) {
       throw new HostedSiteInputError(409, "upload_expired", "This upload session has expired.");
     }
-    const uploaded = await this.database
-      .prepare("SELECT path, size, mime_type FROM site_upload_files WHERE deployment_id = ?")
-      .bind(deployment.id)
-      .all<{ path: string; size: number; mime_type: string }>();
-    const files = parseManifest(deployment.manifest_json);
-    if (
-      uploaded.results.length !== files.length ||
-      files.some(
-        (file) =>
-          !uploaded.results.some(
-            (item) => item.path === file.path && item.size === file.size && item.mime_type === file.mimeType,
-          ),
-      )
-    ) {
-      throw new HostedSiteInputError(409, "upload_incomplete", "Upload every manifest file before activation.");
+    if (deployment.status === "uploading") {
+      const uploaded = await this.database
+        .prepare("SELECT path, size, mime_type FROM site_upload_files WHERE deployment_id = ?")
+        .bind(deployment.id)
+        .all<{ path: string; size: number; mime_type: string }>();
+      const files = parseManifest(deployment.manifest_json);
+      if (
+        uploaded.results.length !== files.length ||
+        files.some(
+          (file) =>
+            !uploaded.results.some(
+              (item) => item.path === file.path && item.size === file.size && item.mime_type === file.mimeType,
+            ),
+        )
+      ) {
+        throw new HostedSiteInputError(409, "upload_incomplete", "Upload every manifest file before activation.");
+      }
     }
     const expiresAt = now + HOSTED_SITE_LIMITS.siteLifetimeMs;
-    const claim = await this.database
-      .prepare("UPDATE site_deployments SET status = 'activating' WHERE id = ? AND status = 'uploading'")
-      .bind(deployment.id)
-      .run();
-    if (claim.meta.changes !== 1) {
-      throw new HostedSiteInputError(409, "activation_in_progress", "This upload is already being activated.");
-    }
+    const authorizedDeployment = await this.authorizeActivation(userId, deployment, now);
     try {
-      await this.enforceActivationRate(userId, now);
-      return await this.finalizeActivation(userId, site, deployment, expiresAt, idempotencyKey, now);
+      return await this.finalizeActivation(userId, site, authorizedDeployment, expiresAt, idempotencyKey, now);
     } catch (error) {
       await this.database
         .prepare("UPDATE site_deployments SET status = 'uploading' WHERE id = ? AND status = 'activating'")
@@ -528,13 +517,15 @@ export class HostedSiteService {
       abandonedUploads += 1;
       await this.deleteDeployment(upload.site_id, upload.id);
     }
-    const abandoned = await this.database
+    const obsoleteDeployments = await this.database
       .prepare(
         `SELECT id, site_id FROM site_deployments
-         WHERE status = 'abandoned' AND objects_deleted_at IS NULL LIMIT 50`,
+         WHERE status IN ('abandoned', 'superseded') AND objects_deleted_at IS NULL LIMIT 50`,
       )
       .all<{ id: string; site_id: string }>();
-    for (const deployment of abandoned.results) await this.deleteDeployment(deployment.site_id, deployment.id);
+    for (const deployment of obsoleteDeployments.results) {
+      await this.deleteDeployment(deployment.site_id, deployment.id);
+    }
     const unsyncedBlocks = await this.database
       .prepare(
         `SELECT id, hostname FROM hosted_sites
@@ -731,13 +722,13 @@ export class HostedSiteService {
     }
     await this.publishAuthoritativeRoute(site.id);
     const summary = await this.summaryForSite(userId, site.id);
-    await this.saveReceipt(userId, idempotencyKey, "activate", site.id, summary, now);
     if (previousDeployment && previousDeployment !== deployment.id) {
       await this.deleteDeployment(site.id, previousDeployment);
     }
     for (const abandonedDeploymentId of deploymentResultIds(results[4])) {
       await this.deleteDeployment(site.id, abandonedDeploymentId);
     }
+    await this.saveReceipt(userId, idempotencyKey, "activate", site.id, summary, now);
     return summary;
   }
 
@@ -840,32 +831,49 @@ export class HostedSiteService {
     return row?.count ?? 0;
   }
 
-  private async enforceActivationRate(userId: string, now: number): Promise<void> {
+  private async authorizeActivation(userId: string, deployment: DeploymentRow, now: number): Promise<DeploymentRow> {
+    if (deployment.activation_authorized_at !== null) {
+      if (deployment.status === "activating") return deployment;
+      const retryClaim = await this.database
+        .prepare(
+          `UPDATE site_deployments SET status = 'activating'
+           WHERE id = ? AND user_id = ? AND status = 'uploading' AND activation_authorized_at IS NOT NULL`,
+        )
+        .bind(deployment.id, userId)
+        .run();
+      if (retryClaim.meta.changes === 1) return { ...deployment, status: "activating" };
+    }
     const hour = Math.floor(now / 3_600_000) * 3_600_000;
     const day = Math.floor(now / 86_400_000) * 86_400_000;
-    const [hourResult, dayResult] = await this.database.batch([
-      this.database
-        .prepare(
-          `INSERT INTO site_publish_rate_limits(user_id, window_kind, window_start, activations)
-           VALUES (?, 'hour', ?, 1)
-           ON CONFLICT(user_id, window_kind, window_start) DO UPDATE SET activations = activations + 1
-           RETURNING activations`,
-        )
-        .bind(userId, hour),
-      this.database
-        .prepare(
-          `INSERT INTO site_publish_rate_limits(user_id, window_kind, window_start, activations)
-           VALUES (?, 'day', ?, 1)
-           ON CONFLICT(user_id, window_kind, window_start) DO UPDATE SET activations = activations + 1
-           RETURNING activations`,
-        )
-        .bind(userId, day),
-    ]);
-    const hourCount = activationCount(hourResult.results?.[0]);
-    const dayCount = activationCount(dayResult.results?.[0]);
-    if (hourCount > 20 || dayCount > 100) {
-      throw new HostedSiteInputError(429, "activation_rate_limit", "The publish limit for this account was reached.");
+    const claim = await this.database
+      .prepare(
+        `UPDATE site_deployments SET status = 'activating', activation_authorized_at = ?
+         WHERE id = ? AND user_id = ? AND status IN ('uploading', 'activating')
+           AND activation_authorized_at IS NULL
+           AND (
+             SELECT COUNT(*) FROM site_deployments
+             WHERE user_id = ? AND activation_authorized_at >= ?
+           ) < 20
+           AND (
+             SELECT COUNT(*) FROM site_deployments
+             WHERE user_id = ? AND activation_authorized_at >= ?
+           ) < 100`,
+      )
+      .bind(now, deployment.id, userId, userId, hour, userId, day)
+      .run();
+    if (claim.meta.changes === 1) {
+      return { ...deployment, status: "activating", activation_authorized_at: now };
     }
+    const current = await this.requireDeployment(userId, deployment.id);
+    if (current.status === "activating" && current.activation_authorized_at !== null) return current;
+    await this.database
+      .prepare(
+        `UPDATE site_deployments SET status = 'uploading'
+         WHERE id = ? AND user_id = ? AND status = 'activating' AND activation_authorized_at IS NULL`,
+      )
+      .bind(deployment.id, userId)
+      .run();
+    throw new HostedSiteInputError(429, "activation_rate_limit", "The publish limit for this account was reached.");
   }
 
   private async enforceCreationRate(userId: string, now: number): Promise<void> {
@@ -1044,10 +1052,6 @@ function parseManifest(value: string): HostedSiteFileManifest[] {
 
 function isStoredManifestFile(value: unknown): value is HostedSiteFileManifest {
   return isDynamicRecord(value) && isString(value.path) && isNumber(value.size) && isString(value.mimeType);
-}
-
-function activationCount(value: unknown): number {
-  return isDynamicRecord(value) && isNumber(value.activations) ? value.activations : 0;
 }
 
 function creationCount(value: unknown): number {

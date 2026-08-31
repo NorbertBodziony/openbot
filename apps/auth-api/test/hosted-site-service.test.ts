@@ -46,6 +46,71 @@ describe("hosted site control plane", () => {
     expect(fixture.bucket.keys()).not.toContain(`sites/${first.id}/deployments/${firstDeployment}/index.html`);
   });
 
+  it("charges the activation limit before a concurrent activating request can publish", async () => {
+    const fixture = serviceFixture();
+    const site = await publish(fixture.service, "alice", "rate-publish-0", "rate-activate-0");
+    for (let index = 1; index < 20; index += 1) {
+      const replacement = await fixture.service.createUpload(
+        "alice",
+        uploadRequest({ siteId: site.id, title: `Rate limited replacement ${index}` }),
+        `rate-publish-${index}`,
+      );
+      await uploadIndex(fixture.service, "alice", replacement.uploadId);
+      await fixture.service.activate("alice", replacement.uploadId, `rate-activate-${index}`);
+    }
+    const limited = await fixture.service.createUpload(
+      "alice",
+      uploadRequest({ siteId: site.id, title: "Rate limited replacement twenty one" }),
+      "rate-publish-20",
+    );
+    await uploadIndex(fixture.service, "alice", limited.uploadId);
+    await fixture.database
+      .prepare("UPDATE site_deployments SET status = 'activating' WHERE id = ?")
+      .bind(limited.uploadId)
+      .run();
+
+    await expect(fixture.service.activate("alice", limited.uploadId, "rate-activate-20")).rejects.toMatchObject({
+      code: "activation_rate_limit",
+    });
+    const deployment = await fixture.database
+      .prepare("SELECT status, activation_authorized_at FROM site_deployments WHERE id = ?")
+      .bind(limited.uploadId)
+      .first<{ status: string; activation_authorized_at: number | null }>();
+    expect(deployment).toEqual({ status: "uploading", activation_authorized_at: null });
+  });
+
+  it("removes the prior deployment when activation recovers after route publication fails", async () => {
+    const fixture = serviceFixture();
+    const site = await publish(fixture.service, "alice", "retry-publish", "retry-activate");
+    const initialDeploymentId = await fixture.database
+      .prepare("SELECT current_deployment_id FROM hosted_sites WHERE id = ?")
+      .bind(site.id)
+      .first<{ current_deployment_id: string }>();
+    const replacement = await fixture.service.createUpload(
+      "alice",
+      uploadRequest({ siteId: site.id, title: "Replacement after route failure" }),
+      "retry-replace",
+    );
+    await uploadIndex(fixture.service, "alice", replacement.uploadId);
+    fixture.bucket.failNextPutContaining(`routes/${site.hostname}.json`);
+
+    await expect(fixture.service.activate("alice", replacement.uploadId, "retry-replace-activate")).rejects.toThrow(
+      "Injected R2 put failure",
+    );
+    const initialAsset = `sites/${site.id}/deployments/${initialDeploymentId?.current_deployment_id}/index.html`;
+    expect(fixture.bucket.keys()).toContain(initialAsset);
+
+    await expect(
+      fixture.service.activate("alice", replacement.uploadId, "retry-replace-activate"),
+    ).resolves.toMatchObject({ id: site.id });
+    expect(fixture.bucket.keys()).not.toContain(initialAsset);
+    const initialDeployment = await fixture.database
+      .prepare("SELECT status, objects_deleted_at FROM site_deployments WHERE id = ?")
+      .bind(initialDeploymentId?.current_deployment_id ?? "")
+      .first<{ status: string; objects_deleted_at: number | null }>();
+    expect(initialDeployment).toMatchObject({ status: "superseded", objects_deleted_at: expect.any(Number) });
+  });
+
   it("allows only two concurrent upload sessions", async () => {
     const fixture = serviceFixture();
     const results = await Promise.allSettled(
@@ -362,6 +427,7 @@ function serviceFixture(): {
   sqlite.exec(migration("0012_hosted_sites.sql"));
   sqlite.exec(migration("0013_hosted_site_hostname_reservations.sql"));
   sqlite.exec(migration("0014_hosted_site_object_cleanup.sql"));
+  sqlite.exec(migration("0015_hosted_site_activation_authorization.sql"));
   sqlite.prepare("INSERT INTO users(id) VALUES (?), (?)").run("alice", "bob");
   const database = new FakeD1Database(sqlite);
   const bucket = new FakeR2Bucket();
