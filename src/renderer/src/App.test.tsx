@@ -2684,6 +2684,9 @@ describe("OpenBot connected desktop shell", () => {
     installVoiceRecordingMocks();
     render(() => <App />);
 
+    const composer = await screen.findByRole("textbox", { name: "Message Chief" });
+    composer.textContent = "Retry me";
+    await fireEvent.input(composer);
     await fireEvent.click(await screen.findByRole("button", { name: "Create prompt with voice" }));
     await screen.findByRole("group", { name: "Voice recording" });
     await fireEvent.click(screen.getByRole("button", { name: "Send voice message" }));
@@ -2695,6 +2698,8 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByText("Transcription failed")).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Transcription failed");
+    await fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(screen.queryByText("Transcription failed")).not.toBeInTheDocument());
   });
 
   it("finishes an accepted voice send on the original server after the server changes", async () => {
@@ -2760,6 +2765,9 @@ describe("OpenBot connected desktop shell", () => {
     await screen.findByRole("group", { name: "Voice recording" });
     await fireEvent.click(screen.getByRole("button", { name: "Send voice message" }));
     await waitFor(() => expect(window.openbot.voice.transcribe).toHaveBeenCalledOnce());
+    const composer = screen.getByRole("textbox", { name: "Message Chief" });
+    composer.textContent = "Later local draft";
+    await fireEvent.input(composer);
     await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true"),
@@ -2770,6 +2778,9 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByText("Local send failed")).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Local server" }));
     expect(await screen.findByText("Local send failed")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Message Chief" })).toHaveTextContent(
+      "Later local draft Message for local Chief",
+    );
   });
 
   it("saves a queued-message edit on its original server after the server changes", async () => {

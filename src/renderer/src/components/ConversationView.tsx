@@ -924,6 +924,7 @@ function createConversationViewScope(props: ConversationProps) {
   const updateCurrentDraft = (patch: Partial<ComposerDraft>) => {
     const target = currentTarget();
     if (!target) return;
+    clearVoiceError(target);
     const key = composerDraftKey(target);
     setDrafts((current) => ({
       ...current,
@@ -945,15 +946,30 @@ function createConversationViewScope(props: ConversationProps) {
     });
   }
 
+  function clearVoiceError(target: ConversationTarget): void {
+    const key = composerDraftKey(target);
+    setVoiceErrors((current) => {
+      const { [key]: _removed, ...next } = current;
+      return next;
+    });
+  }
+
+  function restoreVoiceTranscript(target: ConversationTarget, transcript: string): void {
+    const key = composerDraftKey(target);
+    setDrafts((current) => {
+      const draft = current[key] ?? EMPTY_DRAFT;
+      return {
+        ...current,
+        [key]: { ...draft, text: appendVoiceTranscript(draft.text, transcript) },
+      };
+    });
+  }
+
   async function startVoiceRecording(): Promise<void> {
     const botId = props.bot?.id;
     const serverId = props.server?.id ?? "local";
     if (!botId || voicePhase() !== "idle") return;
-    const voiceErrorKey = composerDraftKey({ botId, serverId });
-    setVoiceErrors((current) => {
-      const { [voiceErrorKey]: _removed, ...next } = current;
-      return next;
-    });
+    clearVoiceError({ botId, serverId });
     resources.voiceSubmitRequest = undefined;
     setComposerError(null);
     setVoicePhase("preparing");
@@ -1036,17 +1052,14 @@ function createConversationViewScope(props: ConversationProps) {
       });
       if (resources.voiceDisposed) return;
       const recordingTarget = { botId: targetBotId, serverId: targetServerId };
-      const voiceErrorKey = composerDraftKey(recordingTarget);
-      setVoiceErrors((current) => {
-        const { [voiceErrorKey]: _removed, ...next } = current;
-        return next;
-      });
+      clearVoiceError(recordingTarget);
       const draft = submitRequest?.draft ?? drafts()[composerDraftKey(recordingTarget)] ?? EMPTY_DRAFT;
       const transcribedDraft = { ...draft, text: appendVoiceTranscript(draft.text, result.text) };
       if (submitRequest) {
         const target = { botId: submitRequest.botId, serverId: submitRequest.serverId };
+        let delivered: boolean;
         if (submitRequest.queuedEdit) {
-          await saveQueuedMessageEdit(
+          delivered = await saveQueuedMessageEdit(
             transcribedDraft,
             {
               ...target,
@@ -1055,8 +1068,9 @@ function createConversationViewScope(props: ConversationProps) {
             submitRequest.draft,
           );
         } else {
-          await submitMessage(transcribedDraft, target, submitRequest.draft);
+          delivered = await submitMessage(transcribedDraft, target, submitRequest.draft);
         }
+        if (!delivered) restoreVoiceTranscript(target, result.text);
       } else {
         const key = composerDraftKey(recordingTarget);
         setDrafts((current) => ({ ...current, [key]: transcribedDraft }));
@@ -1596,6 +1610,7 @@ function createConversationViewScope(props: ConversationProps) {
 
   function addAttachments(selected: DraftAttachment[], target = currentTarget()) {
     if (!target) return;
+    clearVoiceError(target);
     const key = composerDraftKey(target);
     const draft = drafts()[key] ?? EMPTY_DRAFT;
     const available = Math.max(0, 10 - draft.attachments.length);
@@ -1631,6 +1646,7 @@ function createConversationViewScope(props: ConversationProps) {
     const botId = props.bot?.id;
     const serverId = props.server?.id ?? "local";
     if (!botId || delivery.status !== "queued") return;
+    clearVoiceError({ botId, serverId });
     setEditingBotId(botId);
     setEditingServerId(serverId);
     setEditingDraftBackup({
@@ -1684,17 +1700,17 @@ function createConversationViewScope(props: ConversationProps) {
     draftOverride?: ComposerDraft,
     target?: ConversationTarget & { deliveryId: string; originalAttachmentIds: string[] },
     submittedSnapshot?: ComposerDraft,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const botId = target?.botId ?? editingBotId() ?? props.bot?.id;
     const serverId = target?.serverId ?? editingServerId() ?? props.server?.id ?? "local";
     const deliveryId = target?.deliveryId ?? editingDeliveryId();
     const draft = draftOverride ?? currentDraft();
-    if (!botId || !deliveryId || submitting()) return;
+    if (!botId || !deliveryId || submitting()) return false;
     const delivery = target ? undefined : props.queue?.deliveries.find((item) => item.id === deliveryId);
     if (!target && delivery?.status !== "queued") {
       setComposerError("This queued message is no longer available.");
       cancelQueuedMessageEdit();
-      return;
+      return false;
     }
     const text = expandComposerMentions(draft.text);
     const originalAttachmentIds = new Set(
@@ -1706,7 +1722,7 @@ function createConversationViewScope(props: ConversationProps) {
     const attachmentDraftIds = draft.attachments
       .filter((attachment) => !originalAttachmentIds.has(attachment.id))
       .map((attachment) => attachment.id);
-    if (!text.trim() && keepAttachmentIds.length === 0 && attachmentDraftIds.length === 0) return;
+    if (!text.trim() && keepAttachmentIds.length === 0 && attachmentDraftIds.length === 0) return false;
 
     stopTeamTyping();
     setSubmitting(true);
@@ -1725,8 +1741,9 @@ function createConversationViewScope(props: ConversationProps) {
     } finally {
       setSubmitting(false);
     }
-    if (!saved) return;
+    if (!saved) return false;
     const savedTarget = { botId, serverId };
+    clearVoiceError(savedTarget);
     if (submittedSnapshot) clearSubmittedDraft(savedTarget, submittedSnapshot);
     else setDrafts((current) => ({ ...current, [composerDraftKey(savedTarget)]: EMPTY_DRAFT }));
     if (editingBotId() === botId && editingServerId() === serverId && editingDeliveryId() === deliveryId) {
@@ -1735,6 +1752,7 @@ function createConversationViewScope(props: ConversationProps) {
       setEditingDeliveryId(null);
       setEditingDraftBackup(null);
     }
+    return true;
   }
 
   function reorderPresentedQueue(deliveryIds: string[]) {
@@ -1760,23 +1778,22 @@ function createConversationViewScope(props: ConversationProps) {
     draftOverride?: ComposerDraft,
     targetOverride?: ConversationTarget,
     submittedSnapshot?: ComposerDraft,
-  ) {
-    if (selectionSending()) return;
+  ): Promise<boolean> {
+    if (selectionSending()) return false;
     if (
       !draftOverride &&
       editingDeliveryId() &&
       editingBotId() === props.bot?.id &&
       editingServerId() === (props.server?.id ?? "local")
     ) {
-      await saveQueuedMessageEdit();
-      return;
+      return saveQueuedMessageEdit();
     }
     const botId = targetOverride?.botId ?? props.bot?.id;
     const target = targetOverride ?? (botId ? { botId, serverId: props.server?.id ?? "local" } : undefined);
     const draft = draftOverride ?? currentDraft();
     const text = expandComposerMentions(draft.text);
     const attachments = draft.attachments;
-    if (!botId || !target || submitting() || (!text.trim() && attachments.length === 0)) return;
+    if (!botId || !target || submitting() || (!text.trim() && attachments.length === 0)) return false;
     stopTeamTyping();
     stickToLatest = true;
     setSubmitting(true);
@@ -1789,9 +1806,11 @@ function createConversationViewScope(props: ConversationProps) {
     );
     setSubmitting(false);
     if (sent) {
+      clearVoiceError(target);
       if (submittedSnapshot) clearSubmittedDraft(target, submittedSnapshot);
       else setDrafts((current) => ({ ...current, [composerDraftKey(target)]: EMPTY_DRAFT }));
     }
+    return sent;
   }
 
   function submitComposer(): void {
