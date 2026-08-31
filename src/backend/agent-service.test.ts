@@ -1493,6 +1493,49 @@ describe.sequential("AgentService", () => {
     expect(JSON.stringify(resume?.params)).toContain("The user prefers concise status updates.");
   });
 
+  it("discards staged memories when force-stop succeeds before ignored completion", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "DONE", false);
+      clients.set(provider, client);
+      return client;
+    });
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Remember this only if the turn completes." });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const turnId = events.find((event) => event.type === "turn-started")?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The force-stop memory turn did not start.");
+    const staged = await callOpenBotTool(
+      client,
+      threadId,
+      "remember",
+      { text: "This stopped value must never persist." },
+      turnId,
+    );
+    expect(staged.error).toBeUndefined();
+
+    await service.stopAgent("chief");
+    client.emit(
+      "notification",
+      notification("turn/completed", { threadId, turn: { id: turnId, status: "interrupted" } }),
+    );
+    client.emit(
+      "notification",
+      notification("turn/completed", { threadId, turn: { id: turnId, status: "completed" } }),
+    );
+
+    await waitFor(
+      () => events.filter((event) => event.type === "turn-completed" && event.turnId === turnId).length === 2,
+    );
+    expect(service.listMemories("chief")).toEqual([]);
+  });
+
   it("discards staged memories after a failed turn and preserves a concurrent manual edit", async () => {
     const clients = new Map<AgentProvider, FakeAgentClient>();
     const { store, mailbox } = stores();
@@ -3012,6 +3055,114 @@ describe.sequential("AgentService", () => {
       ),
     ).toHaveLength(1);
     await expect(mailbox.listExportAttachments()).resolves.toHaveLength(1);
+  });
+
+  it("discards an in-flight response attachment after stop and blocks deletion until cleanup", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "", false);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    const screenshotPath = join(store.sharedRoot, "stopped-screenshot.png");
+    await writeFile(screenshotPath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    await service.sendMessage({ botId: "chief", text: "Attach this unless I stop the turn." });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const turnId = service.listQueue("chief").deliveries[0]?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The stopped attachment turn did not start.");
+    const originalStage = mailbox.stageGeneratedAttachments.bind(mailbox);
+    let releaseStage: (() => void) | undefined;
+    const stageGate = new Promise<void>((resolve) => {
+      releaseStage = resolve;
+    });
+    let markStageStarted: (() => void) | undefined;
+    const stageStarted = new Promise<void>((resolve) => {
+      markStageStarted = resolve;
+    });
+    vi.spyOn(mailbox, "stageGeneratedAttachments").mockImplementation(async (input) => {
+      markStageStarted?.();
+      await stageGate;
+      return originalStage(input);
+    });
+
+    const attachment = callOpenBotTool(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [screenshotPath] },
+      turnId,
+    );
+    await stageStarted;
+    await service.stopAgent("chief");
+    await expect(service.deleteBot("chief")).rejects.toThrow(
+      "Stop the agent and cancel its queued messages before deleting it.",
+    );
+
+    releaseStage?.();
+    expect((await attachment).error).toEqual({ code: -32000, message: "The turn was stopped." });
+    expect((await service.readConversation("chief")).messages).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ itemType: "agent_attachment", turnId })]),
+    );
+    await expect(mailbox.listExportAttachments()).resolves.toEqual([]);
+
+    await service.deleteBot("chief");
+    expect(service.listBots().some((bot) => bot.id === "chief")).toBe(false);
+  });
+
+  it("rejects an in-flight teammate message when stop wins before its commit", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "", false);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    await store.getOrCreate("sales-outbound");
+    const notePath = join(store.sharedRoot, "stopped-note.txt");
+    await writeFile(notePath, "Do not send this after stop.\n");
+    await service.sendMessage({ botId: "chief", text: "Send a note unless I stop the turn." });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    const turnId = service.listQueue("chief").deliveries[0]?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The stopped teammate-message turn did not start.");
+    const originalEnqueue = mailbox.enqueue.bind(mailbox);
+    let releaseEnqueue: (() => void) | undefined;
+    const enqueueGate = new Promise<void>((resolve) => {
+      releaseEnqueue = resolve;
+    });
+    let markEnqueueStarted: (() => void) | undefined;
+    const enqueueStarted = new Promise<void>((resolve) => {
+      markEnqueueStarted = resolve;
+    });
+    vi.spyOn(mailbox, "enqueue").mockImplementation(async (input) => {
+      if (input.sender.kind !== "bot") return originalEnqueue(input);
+      markEnqueueStarted?.();
+      await enqueueGate;
+      return originalEnqueue(input);
+    });
+
+    const sending = callOpenBotTool(
+      client,
+      threadId,
+      "send_message",
+      { recipientBotIds: ["sales-outbound"], text: "Late message", paths: [notePath] },
+      turnId,
+    );
+    await enqueueStarted;
+    await service.stopAgent("chief");
+    releaseEnqueue?.();
+
+    expect((await sending).error).toEqual({ code: -32000, message: "The turn was stopped." });
+    expect(service.listQueue("sales-outbound").deliveries).toEqual([]);
+    await expect(mailbox.listExportAttachments()).resolves.toEqual([]);
   });
 
   it("rolls back response attachments when conversation persistence fails and permits retry", async () => {

@@ -209,6 +209,17 @@ interface OpenBotToolResponse {
   contentItems: Array<{ type: "inputText"; text: string }>;
 }
 
+interface InFlightTurnCommands {
+  botId: string;
+  commands: Set<Promise<unknown>>;
+}
+
+class StoppedTurnError extends Error {
+  constructor() {
+    super("The turn was stopped.");
+  }
+}
+
 const MCP_ELICITATION_DECISION_ID = "mcp-elicitation-decision";
 const MCP_ELICITATION_ALLOW_ONCE = "Allow once";
 const MCP_ELICITATION_ALLOW_ALWAYS = "Always allow";
@@ -354,6 +365,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #interruptedTurns = new Set<string>();
   readonly #ignoredTurns = new Set<string>();
   readonly #stoppingTurns = new Set<string>();
+  readonly #inFlightTurnCommands = new Map<string, InFlightTurnCommands>();
   readonly #turnAssociations = new Map<string, Promise<void>>();
   readonly #drainingBots = new Set<string>();
   readonly #stoppingBots = new Map<string, Promise<void>>();
@@ -572,27 +584,31 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return routine;
   }
 
-  async deleteRoutine(input: DeleteRoutineInput): Promise<void> {
+  async deleteRoutine(input: DeleteRoutineInput, beforeCommit: () => void = () => undefined): Promise<void> {
     this.#requireKnownBot(input.botId);
     const routine = this.#routines.get(input.botId, input.routineId);
     if (!routine) throw new Error("This routine no longer exists.");
     for (const run of this.#routines.activeRuns(input.botId, input.routineId)) {
       if (run.status !== "queued" || !run.deliveryId) continue;
+      beforeCommit();
       await this.#mailbox.cancel(input.botId, run.deliveryId).catch(() => undefined);
+      beforeCommit();
       this.#routines.updateRunStatus(run.id, "cancelled");
     }
+    beforeCommit();
     this.#routines.delete(input.botId, input.routineId);
     this.#emitQueue(input.botId);
     this.#routineStateChanged(input.botId);
     this.#armRoutineTimer();
   }
 
-  async testRoutine(input: TestRoutineInput): Promise<RoutineRun> {
+  async testRoutine(input: TestRoutineInput, beforeCommit: () => void = () => undefined): Promise<RoutineRun> {
     this.#requireKnownBot(input.botId);
     const routine = this.#routines.get(input.botId, input.routineId);
     if (!routine) throw new Error("This routine no longer exists.");
+    beforeCommit();
     const run = this.#routines.createRun(routine, null, "manual", new Date().toISOString());
-    await this.#enqueueRoutineRun(run);
+    await this.#enqueueRoutineRun(run, beforeCommit);
     this.#routineStateChanged(input.botId);
     return this.#routines.listRuns(input.botId, input.routineId, 1)[0] ?? run;
   }
@@ -767,7 +783,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const hasPendingWork = this.#mailbox
       .listQueue(botId)
       .deliveries.some((delivery) => ["queued", "starting", "running"].includes(delivery.status));
-    if (this.#stoppingBots.has(botId) || hasPendingWork || this.#snapshots.get(botId)?.activeTurnId) {
+    if (
+      this.#stoppingBots.has(botId) ||
+      this.#hasInFlightTurnCommand(botId) ||
+      hasPendingWork ||
+      this.#snapshots.get(botId)?.activeTurnId
+    ) {
       throw new Error("Stop the agent and cancel its queued messages before deleting it.");
     }
 
@@ -1220,6 +1241,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
       if (session) {
         for (const turnId of turnIds) {
+          this.#finishMemoryMutations(turnId, "interrupted");
           this.#ignoredTurns.add(`${session.externalSessionId}:${turnId}`);
           this.#interruptImageGenerations(botId, session.externalSessionId, turnId);
           this.#clearPendingRequestsForTurn(session.externalSessionId, turnId);
@@ -2195,7 +2217,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const threadId = getString(request.params, "threadId");
       const turnId = getString(request.params, "turnId");
       const turnKey = threadId && turnId ? `${threadId}:${turnId}` : null;
-      if (turnKey && (this.#stoppingTurns.has(turnKey) || this.#ignoredTurns.has(turnKey))) {
+      if (turnKey && this.#turnIsStopped(turnKey)) {
         client.respondError(request.id, { code: -32000, message: "The turn was stopped." });
         return;
       }
@@ -2215,20 +2237,33 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           return;
         case "item/tool/call": {
           if (!isDynamicToolCall(request.params)) throw new Error("Invalid dynamic tool request.");
+          const botId = this.#threadToBot.get(request.params.threadId);
+          if (!botId) throw new Error("The sending OpenBot agent is unknown.");
           if (request.params.namespace === OPENBOT_BROWSER_NAMESPACE) {
-            const botId = this.#threadToBot.get(request.params.threadId);
-            if (!botId) throw new Error("The browsing OpenBot agent is unknown.");
             if (request.params.tool === "request_takeover") {
-              client.respond(request.id, await this.#surfaceBrowserTakeover(request));
+              client.respond(
+                request.id,
+                await this.#trackTurnCommand(
+                  botId,
+                  request.params.threadId,
+                  request.params.turnId,
+                  this.#surfaceBrowserTakeover(request),
+                ),
+              );
               return;
             }
             client.respond(
               request.id,
-              await this.#browser.handleDynamicTool({
-                ...request.params,
-                threadId: this.#publicThreadId(botId, request.params.threadId),
-                ownerBotId: botId,
-              }),
+              await this.#trackTurnCommand(
+                botId,
+                request.params.threadId,
+                request.params.turnId,
+                this.#browser.handleDynamicTool({
+                  ...request.params,
+                  threadId: this.#publicThreadId(botId, request.params.threadId),
+                  ownerBotId: botId,
+                }),
+              ),
             );
             return;
           }
@@ -2237,7 +2272,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               this.#surfaceDynamicPrompt(client, request);
               return;
             }
-            client.respond(request.id, await this.#handleOpenBotTool(request.params));
+            client.respond(
+              request.id,
+              await this.#trackTurnCommand(
+                botId,
+                request.params.threadId,
+                request.params.turnId,
+                this.#handleOpenBotTool(request.params),
+              ),
+            );
             return;
           }
           throw new Error(`Unsupported dynamic tool namespace: ${request.params.namespace}`);
@@ -2258,6 +2301,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           });
       }
     } catch (error) {
+      if (error instanceof StoppedTurnError) {
+        client.respondError(request.id, { code: -32000, message: "The turn was stopped." });
+        return;
+      }
       if (client.running) {
         try {
           client.respondError(request.id, { code: -32603, message: String(error) });
@@ -2267,6 +2314,39 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       this.#emitError("server_request_failed", error);
     }
+  }
+
+  #turnIsStopped(turnKey: string): boolean {
+    return this.#stoppingTurns.has(turnKey) || this.#ignoredTurns.has(turnKey);
+  }
+
+  #assertTurnActive(threadId: string, turnId: string): void {
+    if (this.#turnIsStopped(`${threadId}:${turnId}`)) throw new StoppedTurnError();
+  }
+
+  async #trackTurnCommand<T>(botId: string, threadId: string, turnId: string, command: Promise<T>): Promise<T> {
+    const turnKey = `${threadId}:${turnId}`;
+    const entry = this.#inFlightTurnCommands.get(turnKey) ?? { botId, commands: new Set<Promise<unknown>>() };
+    if (entry.botId !== botId) throw new Error("The turn belongs to a different OpenBot agent.");
+    let finishTracking: (() => void) | undefined;
+    const tracked = new Promise<void>((resolve) => {
+      finishTracking = resolve;
+    });
+    entry.commands.add(tracked);
+    this.#inFlightTurnCommands.set(turnKey, entry);
+    try {
+      return await command;
+    } finally {
+      finishTracking?.();
+      entry.commands.delete(tracked);
+      if (entry.commands.size === 0 && this.#inFlightTurnCommands.get(turnKey) === entry) {
+        this.#inFlightTurnCommands.delete(turnKey);
+      }
+    }
+  }
+
+  #hasInFlightTurnCommand(botId: string): boolean {
+    return [...this.#inFlightTurnCommands.values()].some((entry) => entry.botId === botId && entry.commands.size > 0);
   }
 
   async #handleOpenBotTool(params: DynamicToolCallParams): Promise<OpenBotToolResponse> {
@@ -2335,6 +2415,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (value !== undefined && !isString(value)) throw new Error(`${field} must be a string.`);
         if (value !== undefined) input[field] = value;
       }
+      this.#assertTurnActive(params.threadId, params.turnId);
       const updated = await this.updateBot(input);
       return {
         success: true,
@@ -2374,6 +2455,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         args.timezone === undefined
           ? localTimezone()
           : routineToolString(args.timezone, "timezone", 128, "A routine timezone is required.");
+      this.#assertTurnActive(params.threadId, params.turnId);
       const routine = this.createRoutine({
         botId,
         name: routineToolString(args.name, "name", INPUT_LIMITS.routineName, "A routine name is required."),
@@ -2427,6 +2509,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         hasUpdate = true;
       }
       if (!hasUpdate) throw new Error("At least one routine update is required.");
+      this.#assertTurnActive(params.threadId, params.turnId);
       return openBotToolResult(this.updateRoutine(input));
     }
 
@@ -2439,7 +2522,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         INPUT_LIMITS.identifier,
         "routineId is required.",
       );
-      await this.deleteRoutine({ botId, routineId });
+      await this.deleteRoutine({ botId, routineId }, () => this.#assertTurnActive(params.threadId, params.turnId));
       return openBotToolResult({ deleted: true, botId, routineId });
     }
 
@@ -2452,7 +2535,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         INPUT_LIMITS.identifier,
         "routineId is required.",
       );
-      return openBotToolResult(await this.testRoutine({ botId, routineId }));
+      return openBotToolResult(
+        await this.testRoutine({ botId, routineId }, () => this.#assertTurnActive(params.threadId, params.turnId)),
+      );
     }
 
     if (params.tool === "remember") {
@@ -2470,6 +2555,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       const current = memoryId ? this.#memories.get(senderBotId, memoryId) : null;
       if (memoryId && !current) throw new Error("This memory does not belong to the current agent.");
+      this.#assertTurnActive(params.threadId, params.turnId);
       this.#stageMemoryMutation(params.turnId, {
         callId: params.callId,
         type: "remember",
@@ -2503,6 +2589,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       const current = this.#memories.get(senderBotId, args.memoryId);
       if (!current) throw new Error("This memory does not belong to the current agent.");
+      this.#assertTurnActive(params.threadId, params.turnId);
       this.#stageMemoryMutation(params.turnId, {
         callId: params.callId,
         type: "forget",
@@ -2526,6 +2613,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         .findDeliveriesByTurn(senderBotId, params.turnId)
         .find((candidate) => candidate.delivery.sender.kind === "user");
       if (!delivery) throw new Error("Only the current user message can receive an agent reaction.");
+      this.#assertTurnActive(params.threadId, params.turnId);
       await this.#mailbox.setReaction(
         senderBotId,
         delivery.delivery.id,
@@ -2570,6 +2658,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       sourcePaths: paths,
       replyToMessageId: replyToMessageId ?? null,
       idempotencyKey: `${params.threadId}:${params.turnId}:${params.callId}`,
+      beforeCommit: () => this.#assertTurnActive(params.threadId, params.turnId),
     });
     for (const recipient of recipientValues) {
       this.#emitQueue(recipient);
@@ -2614,6 +2703,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       });
     } finally {
       await Promise.allSettled(sources.map((source) => source.handle.close()));
+    }
+    try {
+      this.#assertTurnActive(params.threadId, params.turnId);
+    } catch (error) {
+      await this.#mailbox.discardStagedGeneratedAttachments(attachments.map((attachment) => attachment.id));
+      throw error;
     }
     const message: ConversationSnapshot["messages"][number] = {
       id: messageId,
@@ -4264,9 +4359,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ].join("\n");
   }
 
-  async #enqueueRoutineRun(run: RoutineRun): Promise<void> {
+  async #enqueueRoutineRun(run: RoutineRun, beforeCommit: () => void = () => undefined): Promise<void> {
     const bot = await this.#store.getOrCreate(run.botId);
     try {
+      beforeCommit();
       const receipt = await this.#mailbox.enqueue({
         sender: {
           kind: "routine",
@@ -4280,6 +4376,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         draftIds: [],
         replyToMessageId: null,
         idempotencyKey: run.triggerId ? `routine:${run.triggerId}:${run.scheduledFor}` : `routine:manual:${run.id}`,
+        beforeCommit,
       });
       const deliveryId = receipt.deliveries[0]?.id;
       if (!deliveryId) throw new Error("Unable to create the routine delivery.");

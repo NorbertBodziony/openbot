@@ -115,6 +115,7 @@ interface EnqueueInput {
   draftIds?: string[];
   sourcePaths?: string[];
   idempotencyKey?: string;
+  beforeCommit?: () => void;
 }
 
 interface TransferManifest {
@@ -358,6 +359,12 @@ export class MailboxStore {
       createdAt,
       sourcePaths,
     );
+    try {
+      input.beforeCommit?.();
+    } catch (error) {
+      await rm(join(this.#transfersRoot, messageId), { recursive: true, force: true });
+      throw error;
+    }
     const committedByDraftId = new Map(drafts.map((draft, index) => [draft.id, attachments[index]] as const));
     const message: StoredMessage = {
       id: messageId,
