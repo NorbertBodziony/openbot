@@ -76,6 +76,9 @@ interface RouteManifest {
 
 type OperationClaim = { status: "pending"; token: string } | { status: "completed"; response: string };
 
+const CLEANUP_BATCH_SIZE = 50;
+const CLEANUP_RUNTIME_BUDGET_MS = 20_000;
+
 export class HostedSiteService {
   constructor(
     private readonly database: D1Database,
@@ -475,8 +478,8 @@ export class HostedSiteService {
         }
         const results = await this.database.batch(statements);
         const deploymentIds = deploymentResultIds(results[1]);
+        await this.publishAuthoritativeRoute(site.id);
         try {
-          await this.publishAuthoritativeRoute(site.id);
           await this.deleteBlockMarker(site.id, site.hostname);
         } finally {
           for (const deploymentId of deploymentIds) await this.deleteDeployment(site.id, deploymentId);
@@ -580,105 +583,135 @@ export class HostedSiteService {
   }
 
   async cleanup(now = this.now()): Promise<{ uploads: number; expired: number; tombstones: number }> {
-    const staleUploads = await this.database
-      .prepare(
-        `SELECT id, site_id FROM site_deployments
-         WHERE status IN ('uploading', 'activating') AND upload_expires_at <= ? LIMIT 50`,
-      )
-      .bind(now)
-      .all<{ id: string; site_id: string }>();
+    const deadline = performance.now() + CLEANUP_RUNTIME_BUDGET_MS;
     let abandonedUploads = 0;
-    for (const upload of staleUploads.results) {
-      const claim = await this.database
+    let expiredSites = 0;
+    let deletedTombstones = 0;
+    const tombstoneCutoff = now - HOSTED_SITE_LIMITS.tombstoneLifetimeMs;
+    let hasMore = true;
+    cleanupBatches: while (hasMore && performance.now() < deadline) {
+      hasMore = false;
+      const staleUploads = await this.database
         .prepare(
-          `UPDATE site_deployments SET status = 'abandoned'
-           WHERE id = ? AND status IN ('uploading', 'activating') AND upload_expires_at <= ?`,
+          `SELECT id, site_id FROM site_deployments
+           WHERE status IN ('uploading', 'activating') AND upload_expires_at <= ?
+           LIMIT ${CLEANUP_BATCH_SIZE}`,
         )
-        .bind(upload.id, now)
-        .run();
-      if (claim.meta.changes !== 1) continue;
-      abandonedUploads += 1;
-      await this.deleteDeployment(upload.site_id, upload.id);
-    }
-    const unsyncedSites = await this.database
-      .prepare(
-        `SELECT id, hostname FROM hosted_sites
-         WHERE status IN ('active', 'blocked', 'deleted', 'expired') AND route_synced_at IS NULL
-         ORDER BY updated_at, id LIMIT 50`,
-      )
-      .all<{ id: string; hostname: string }>();
-    for (const site of unsyncedSites.results) {
-      await this.reconcileRouteAndMarker(site.id);
-    }
-    const obsoleteDeployments = await this.database
-      .prepare(
-        `SELECT deployment.id, deployment.site_id FROM site_deployments AS deployment
-         WHERE deployment.status IN ('abandoned', 'superseded')
-           AND deployment.objects_deleted_at IS NULL
-           AND NOT EXISTS (
-             SELECT 1 FROM hosted_sites AS site
-             WHERE site.id = deployment.site_id AND site.route_synced_at IS NULL
-           )
-         LIMIT 50`,
-      )
-      .all<{ id: string; site_id: string }>();
-    for (const deployment of obsoleteDeployments.results) {
-      await this.deleteDeployment(deployment.site_id, deployment.id);
-    }
-    await this.database
-      .prepare(
-        `DELETE FROM hosted_sites WHERE status = 'uploading'
-         AND NOT EXISTS (
-           SELECT 1 FROM site_deployments d
-           WHERE d.site_id = hosted_sites.id AND d.status IN ('uploading', 'activating')
-         )`,
-      )
-      .run();
-
-    const expired = await this.database
-      .prepare("SELECT * FROM hosted_sites WHERE status IN ('active', 'blocked') AND expires_at <= ? LIMIT 50")
-      .bind(now)
-      .all<SiteRow>();
-    for (const site of expired.results) {
-      const results = await this.database.batch([
-        this.database
-          .prepare(
-            `UPDATE hosted_sites SET status = 'expired', route_synced_at = NULL, updated_at = ?
-             WHERE id = ? AND status IN ('active', 'blocked') AND expires_at <= ?`,
-          )
-          .bind(now, site.id, now),
-        this.database
+        .bind(now)
+        .all<{ id: string; site_id: string }>();
+      hasMore ||= staleUploads.results.length === CLEANUP_BATCH_SIZE;
+      for (const upload of staleUploads.results) {
+        if (performance.now() >= deadline) break cleanupBatches;
+        const claim = await this.database
           .prepare(
             `UPDATE site_deployments SET status = 'abandoned'
-             WHERE site_id = ? AND status IN ('uploading', 'activating')
-               AND EXISTS (SELECT 1 FROM hosted_sites WHERE id = ? AND status = 'expired')`,
+             WHERE id = ? AND status IN ('uploading', 'activating') AND upload_expires_at <= ?`,
           )
-          .bind(site.id, site.id),
-      ]);
-      if (results[0].meta.changes !== 1) continue;
-      try {
-        await this.publishAuthoritativeRoute(site.id);
-      } finally {
-        await this.deleteBlockMarker(site.id, site.hostname);
+          .bind(upload.id, now)
+          .run();
+        if (claim.meta.changes !== 1) continue;
+        abandonedUploads += 1;
+        await this.deleteDeployment(upload.site_id, upload.id);
       }
-      const current = await this.siteById(site.id);
-      if (current?.current_deployment_id) await this.deleteDeployment(site.id, current.current_deployment_id);
-    }
 
-    const tombstoneCutoff = now - HOSTED_SITE_LIMITS.tombstoneLifetimeMs;
-    const tombstones = await this.database
-      .prepare(
-        "SELECT id, hostname FROM hosted_sites WHERE status IN ('deleted', 'expired') AND updated_at <= ? LIMIT 50",
-      )
-      .bind(tombstoneCutoff)
-      .all<{ id: string; hostname: string }>();
-    for (const site of tombstones.results) {
-      await this.bucket.delete([routeKey(site.hostname), blockKey(site.hostname)]);
-    }
-    if (tombstones.results.length) {
-      await this.database.batch(
-        tombstones.results.map((site) => this.database.prepare("DELETE FROM hosted_sites WHERE id = ?").bind(site.id)),
-      );
+      const unsyncedSites = await this.database
+        .prepare(
+          `SELECT id, hostname FROM hosted_sites
+           WHERE status IN ('active', 'blocked', 'deleted', 'expired') AND route_synced_at IS NULL
+           ORDER BY updated_at, id LIMIT ${CLEANUP_BATCH_SIZE}`,
+        )
+        .all<{ id: string; hostname: string }>();
+      hasMore ||= unsyncedSites.results.length === CLEANUP_BATCH_SIZE;
+      for (const site of unsyncedSites.results) {
+        if (performance.now() >= deadline) break cleanupBatches;
+        await this.reconcileRouteAndMarker(site.id);
+      }
+
+      const obsoleteDeployments = await this.database
+        .prepare(
+          `SELECT deployment.id, deployment.site_id FROM site_deployments AS deployment
+           WHERE deployment.status IN ('abandoned', 'superseded')
+             AND deployment.objects_deleted_at IS NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM hosted_sites AS site
+               WHERE site.id = deployment.site_id AND site.route_synced_at IS NULL
+             )
+           LIMIT ${CLEANUP_BATCH_SIZE}`,
+        )
+        .all<{ id: string; site_id: string }>();
+      hasMore ||= obsoleteDeployments.results.length === CLEANUP_BATCH_SIZE;
+      for (const deployment of obsoleteDeployments.results) {
+        if (performance.now() >= deadline) break cleanupBatches;
+        await this.deleteDeployment(deployment.site_id, deployment.id);
+      }
+      await this.database
+        .prepare(
+          `DELETE FROM hosted_sites WHERE status = 'uploading'
+           AND NOT EXISTS (
+             SELECT 1 FROM site_deployments d
+             WHERE d.site_id = hosted_sites.id AND d.status IN ('uploading', 'activating')
+           )`,
+        )
+        .run();
+
+      const expired = await this.database
+        .prepare(
+          `SELECT * FROM hosted_sites
+           WHERE status IN ('active', 'blocked') AND expires_at <= ? LIMIT ${CLEANUP_BATCH_SIZE}`,
+        )
+        .bind(now)
+        .all<SiteRow>();
+      hasMore ||= expired.results.length === CLEANUP_BATCH_SIZE;
+      for (const site of expired.results) {
+        if (performance.now() >= deadline) break cleanupBatches;
+        const results = await this.database.batch([
+          this.database
+            .prepare(
+              `UPDATE hosted_sites SET status = 'expired', route_synced_at = NULL, updated_at = ?
+               WHERE id = ? AND status IN ('active', 'blocked') AND expires_at <= ?`,
+            )
+            .bind(now, site.id, now),
+          this.database
+            .prepare(
+              `UPDATE site_deployments SET status = 'abandoned'
+               WHERE site_id = ? AND status IN ('uploading', 'activating')
+                 AND EXISTS (SELECT 1 FROM hosted_sites WHERE id = ? AND status = 'expired')`,
+            )
+            .bind(site.id, site.id),
+        ]);
+        if (results[0].meta.changes !== 1) continue;
+        expiredSites += 1;
+        try {
+          await this.publishAuthoritativeRoute(site.id);
+        } finally {
+          await this.deleteBlockMarker(site.id, site.hostname);
+        }
+        const current = await this.siteById(site.id);
+        if (current?.current_deployment_id) await this.deleteDeployment(site.id, current.current_deployment_id);
+      }
+
+      const tombstones = await this.database
+        .prepare(
+          `SELECT id, hostname FROM hosted_sites
+           WHERE status IN ('deleted', 'expired') AND updated_at <= ? LIMIT ${CLEANUP_BATCH_SIZE}`,
+        )
+        .bind(tombstoneCutoff)
+        .all<{ id: string; hostname: string }>();
+      hasMore ||= tombstones.results.length === CLEANUP_BATCH_SIZE;
+      const processedTombstones: { id: string }[] = [];
+      for (const site of tombstones.results) {
+        if (performance.now() >= deadline) break;
+        await this.bucket.delete([routeKey(site.hostname), blockKey(site.hostname)]);
+        processedTombstones.push(site);
+      }
+      if (processedTombstones.length) {
+        const results = await this.database.batch(
+          processedTombstones.map((site) =>
+            this.database.prepare("DELETE FROM hosted_sites WHERE id = ?").bind(site.id),
+          ),
+        );
+        deletedTombstones += results.reduce((total, result) => total + result.meta.changes, 0);
+      }
     }
     await this.database
       .prepare("DELETE FROM site_creation_events WHERE created_at < ?")
@@ -694,8 +727,8 @@ export class HostedSiteService {
       .run();
     return {
       uploads: abandonedUploads,
-      expired: expired.results.length,
-      tombstones: tombstones.results.length,
+      expired: expiredSites,
+      tombstones: deletedTombstones,
     };
   }
 

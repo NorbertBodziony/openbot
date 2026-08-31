@@ -318,13 +318,6 @@ describe("hosted site control plane", () => {
       deploymentId: priorDeployment?.current_deployment_id,
     });
     await fixture.service.cleanup();
-    expect(await fixture.bucket.route(site.hostname)).toMatchObject({
-      deploymentId: priorDeployment?.current_deployment_id,
-    });
-    expect(fixture.bucket.keys()).toContain(
-      `sites/${site.id}/deployments/${priorDeployment?.current_deployment_id}/index.html`,
-    );
-    await fixture.service.cleanup();
     expect(await fixture.bucket.route(site.hostname)).toMatchObject({ deploymentId: replacement.uploadId });
     expect(fixture.bucket.keys()).not.toContain(
       `sites/${site.id}/deployments/${priorDeployment?.current_deployment_id}/index.html`,
@@ -725,6 +718,57 @@ describe("hosted site control plane", () => {
       .first<{ count: number }>();
     expect(auditRows?.count).toBe(1);
     expect(receipts?.count).toBe(1);
+  });
+
+  it("keeps deployment objects until a failed deletion route is reconciled", async () => {
+    const fixture = serviceFixture();
+    const site = await publish(fixture.service, "alice", "failed-delete-upload", "failed-delete-activation");
+    const deployment = await fixture.database
+      .prepare("SELECT current_deployment_id FROM hosted_sites WHERE id = ?")
+      .bind(site.id)
+      .first<{ current_deployment_id: string }>();
+    const asset = `sites/${site.id}/deployments/${deployment?.current_deployment_id}/index.html`;
+    fixture.bucket.failNextPutContaining(`routes/${site.hostname}.json`);
+
+    await expect(fixture.service.delete("alice", site.id, "failed-delete-key")).rejects.toThrow(
+      "Injected R2 put failure",
+    );
+    expect(await fixture.bucket.route(site.hostname)).toMatchObject({ status: "active" });
+    expect(fixture.bucket.keys()).toContain(asset);
+
+    await fixture.service.cleanup();
+    expect(await fixture.bucket.route(site.hostname)).toMatchObject({ status: "deleted" });
+    expect(fixture.bucket.keys()).not.toContain(asset);
+  });
+
+  it("processes more than one cleanup batch", async () => {
+    const fixture = serviceFixture();
+    for (let index = 0; index < 51; index += 1) {
+      await fixture.database
+        .prepare(
+          `INSERT INTO hosted_sites(
+             id, user_id, hostname, title, description, framework, spa_fallback, status,
+             current_deployment_id, created_at, updated_at, expires_at, route_synced_at
+           ) VALUES (?, 'alice', ?, 'Expired site', 'Expired cleanup backlog.', 'vanilla', 0, 'active',
+             NULL, ?, ?, ?, ?)`,
+        )
+        .bind(
+          `expired-cleanup-${index}`,
+          `expired-cleanup-project-number-${index}-abcdefghij.openbot.site`,
+          fixture.now() - 31 * 24 * 60 * 60_000,
+          fixture.now() - 31 * 24 * 60 * 60_000,
+          fixture.now() - 1,
+          fixture.now(),
+        )
+        .run();
+    }
+
+    await expect(fixture.service.cleanup()).resolves.toMatchObject({ expired: 51 });
+    const active = await fixture.database
+      .prepare("SELECT COUNT(*) AS count FROM hosted_sites WHERE status = 'active' AND expires_at <= ?")
+      .bind(fixture.now())
+      .first<{ count: number }>();
+    expect(active?.count).toBe(0);
   });
 
   it("rate limits repeated new-site creation after deleted sites release their slots", async () => {
