@@ -11,7 +11,7 @@ export const Route = createFileRoute("/v1/sites/admin/$siteId/block")({
   server: {
     handlers: {
       POST: async ({ request, params }) => {
-        if (!requireOperationsAdmin(request)) return apiError(401, "unauthorized", "Admin access is required.");
+        if (!(await requireOperationsAdmin(request))) return apiError(401, "unauthorized", "Admin access is required.");
         try {
           await requestHostedSiteService().setBlocked(params.siteId, true);
           return json({ blocked: true });
@@ -20,7 +20,7 @@ export const Route = createFileRoute("/v1/sites/admin/$siteId/block")({
         }
       },
       DELETE: async ({ request, params }) => {
-        if (!requireOperationsAdmin(request)) return apiError(401, "unauthorized", "Admin access is required.");
+        if (!(await requireOperationsAdmin(request))) return apiError(401, "unauthorized", "Admin access is required.");
         try {
           await requestHostedSiteService().setBlocked(params.siteId, false);
           return json({ blocked: false });

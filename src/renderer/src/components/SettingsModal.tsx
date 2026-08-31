@@ -744,7 +744,7 @@ export function SettingsModal(props: SettingsModalProps) {
 
           <SettingsSection title="Publish a site">
             <Card class="settings-modal-card hosted-sites-publish-card">
-              <Field label="Local directory" description="Vanilla files or an existing Astro static project.">
+              <Field label="Local directory" description="Vanilla files or an Astro project with an existing dist/.">
                 <div class="hosted-sites-directory-field">
                   <Input value={siteDirectory()} readonly placeholder="Choose a directory" />
                   <Button variant="outline" size="sm" onClick={() => void chooseSiteDirectory()}>
@@ -760,7 +760,7 @@ export function SettingsModal(props: SettingsModalProps) {
               </Field>
               <div class="hosted-sites-publish-actions">
                 <Text tone="muted" variant="caption">
-                  OpenBot uses vanilla files by default and detects Astro static projects automatically.
+                  OpenBot uses vanilla files by default. Build Astro first; OpenBot publishes only its existing dist/.
                 </Text>
                 <Button
                   size="sm"

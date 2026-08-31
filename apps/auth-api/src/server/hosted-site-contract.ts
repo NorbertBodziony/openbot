@@ -51,7 +51,7 @@ const SERVER_SOURCE_NAME = /^(?:server|worker)\.[cm]?[jt]s$/iu;
 
 export class HostedSiteInputError extends Error {
   constructor(
-    readonly status: 400 | 409 | 413 | 429,
+    readonly status: 400 | 404 | 409 | 413 | 429,
     readonly code: string,
     message: string,
   ) {

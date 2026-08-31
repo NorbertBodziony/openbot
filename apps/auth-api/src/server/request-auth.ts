@@ -6,6 +6,7 @@ import { D1AuthRepository } from "./d1-auth-repository";
 import { D1TeamTunnelRepository } from "./d1-team-tunnel-repository";
 import { createEmailCodeDelivery, createTeamInviteEmailDelivery } from "./email-delivery";
 import { HostedSiteInputError } from "./hosted-site-contract";
+import { enforceHostedSiteReportRateLimit as enforceReportRateLimit } from "./hosted-site-request-policy";
 import { HostedSiteService } from "./hosted-site-service";
 import { JsonBodyError } from "./json-body";
 import { MarketplaceQueryError } from "./marketplace-pagination";
@@ -70,6 +71,10 @@ export function enforceMarketplaceMutationRateLimit(kind: MarketplaceMutationKin
   return enforceMarketplaceMutation(requireWorkerBindings(env), kind, principal);
 }
 
+export function enforceHostedSiteReportRateLimit(sourceIp: string): Promise<void> {
+  return enforceReportRateLimit(requireWorkerBindings(env), sourceIp);
+}
+
 export function marketplaceErrorResponse(error: unknown): Response {
   if (error instanceof AgentMarketplaceError) return apiError(error.status, error.code, error.message);
   return skillErrorResponse(error);
@@ -98,8 +103,17 @@ export function requireSkillsAdmin(request: Request): boolean {
   return Boolean(expected && bearerToken(request) === expected);
 }
 
-export function requireOperationsAdmin(request: Request): boolean {
-  return requireSkillsAdmin(request);
+export async function requireOperationsAdmin(request: Request): Promise<boolean> {
+  const bindings = requireWorkerBindings(env);
+  const expected = bindings.SITE_OPERATIONS_ADMIN_TOKEN;
+  const provided = bearerToken(request);
+  if (!expected || !provided) return false;
+  const encoder = new TextEncoder();
+  const [expectedHash, providedHash] = await Promise.all([
+    crypto.subtle.digest("SHA-256", encoder.encode(expected)),
+    crypto.subtle.digest("SHA-256", encoder.encode(provided)),
+  ]);
+  return constantTimeEqual(new Uint8Array(expectedHash), new Uint8Array(providedHash));
 }
 
 export function requestTeamInviteEmailDelivery(): TeamInviteEmailDelivery | null {
@@ -145,6 +159,13 @@ export function bearerToken(request: Request): string | null {
   if (!authorization?.startsWith("Bearer ")) return null;
   const token = authorization.slice("Bearer ".length);
   return token && token.length <= 512 ? token : null;
+}
+
+function constantTimeEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.byteLength !== right.byteLength) return false;
+  let difference = 0;
+  for (let index = 0; index < left.byteLength; index += 1) difference |= left[index] ^ right[index];
+  return difference === 0;
 }
 
 export function json(value: unknown, status = 200): Response {

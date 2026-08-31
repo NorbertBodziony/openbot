@@ -1,8 +1,6 @@
-import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, readdir, readFile, realpath } from "node:fs/promises";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
-import { promisify } from "node:util";
 import type {
   HostedSiteFramework,
   HostedSiteSummary,
@@ -12,7 +10,6 @@ import type {
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import type { CentralAuthManager } from "./central-auth-manager";
 
-const execFileAsync = promisify(execFile);
 const MAX_FILES = 20;
 const MAX_TOTAL_BYTES = 2 * 1024 * 1024;
 const MAX_FILE_BYTES = 1024 * 1024;
@@ -137,7 +134,7 @@ export async function prepareSite(sourcePath: string, allowedRoots?: readonly st
     }
   }
   const framework = await detectFramework(root);
-  const output = framework === "astro" ? await buildAstro(root) : root;
+  const output = framework === "astro" ? await staticAstroOutput(root) : root;
   return { framework, files: await collectFiles(output) };
 }
 
@@ -165,7 +162,7 @@ async function detectFramework(root: string): Promise<HostedSiteFramework> {
   return "vanilla";
 }
 
-async function buildAstro(root: string): Promise<string> {
+async function staticAstroOutput(root: string): Promise<string> {
   const configPath = await firstExisting(
     ["astro.config.mjs", "astro.config.js", "astro.config.ts"].map((name) => join(root, name)),
   );
@@ -184,31 +181,10 @@ async function buildAstro(root: string): Promise<string> {
   if (sourceEntries.some((entry) => /(^|\/)(?:middleware|[^/]+\.server)\.[cm]?[jt]s$/u.test(String(entry)))) {
     throw new Error("Astro middleware and server source are not allowed.");
   }
-  const packageValue = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
-  if (
-    !isDynamicRecord(packageValue) ||
-    !isDynamicRecord(packageValue.scripts) ||
-    !isString(packageValue.scripts.build)
-  ) {
-    throw new Error("The Astro project needs an existing build script.");
-  }
-  const command = await packageManager(root);
-  await execFileAsync(command.executable, command.args, {
-    cwd: root,
-    timeout: 120_000,
-    maxBuffer: 1024 * 1024,
-    windowsHide: true,
-  });
   const output = join(root, "dist");
-  if (!(await exists(output))) throw new Error("The Astro build did not create dist/.");
+  if (!(await exists(output)))
+    throw new Error("Build the Astro project first. Its existing dist/ directory is required.");
   return output;
-}
-
-async function packageManager(root: string): Promise<{ executable: string; args: string[] }> {
-  if (await exists(join(root, "bun.lock"))) return { executable: "bun", args: ["run", "build"] };
-  if (await exists(join(root, "pnpm-lock.yaml"))) return { executable: "pnpm", args: ["run", "build"] };
-  if (await exists(join(root, "yarn.lock"))) return { executable: "yarn", args: ["run", "build"] };
-  return { executable: process.platform === "win32" ? "npm.cmd" : "npm", args: ["run", "build"] };
 }
 
 async function collectFiles(root: string): Promise<PreparedFile[]> {

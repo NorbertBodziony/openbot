@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -23,7 +23,7 @@ describe("hosted site preparation", () => {
     expect(site.files.map((file) => file.path)).toEqual(["index.html", "style.css"]);
   });
 
-  it("runs an existing Astro static build and publishes only dist", async () => {
+  it("publishes an existing Astro dist without running project scripts", async () => {
     const root = await fixture();
     await writeFile(
       join(root, "package.json"),
@@ -32,17 +32,17 @@ describe("hosted site preparation", () => {
         devDependencies: { astro: "5.0.0" },
       }),
     );
-    await writeFile(
-      join(root, "build.mjs"),
-      'import { mkdir, writeFile } from "node:fs/promises"; await mkdir("dist", { recursive: true }); await writeFile("dist/index.html", "<h1>Astro</h1>");',
-    );
+    await writeFile(join(root, "build.mjs"), 'await Bun.write("script-was-run", "unsafe");');
     await mkdir(join(root, "src"));
+    await mkdir(join(root, "dist"));
+    await writeFile(join(root, "dist", "index.html"), "<h1>Astro</h1>");
     await writeFile(join(root, "astro.config.mjs"), 'export default { output: "static" };');
 
     const site = await prepareSite(root);
 
     expect(site.framework).toBe("astro");
     expect(site.files.map((file) => file.path)).toEqual(["index.html"]);
+    await expect(lstat(join(root, "script-was-run"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("rejects Astro SSR and server adapters", async () => {
@@ -54,6 +54,13 @@ describe("hosted site preparation", () => {
     await writeFile(join(root, "astro.config.mjs"), 'export default { output: "server", adapter: cloudflare() };');
 
     await expect(prepareSite(root)).rejects.toThrow("static output");
+  });
+
+  it("requires Astro to have an existing dist directory", async () => {
+    const root = await fixture();
+    await writeFile(join(root, "package.json"), JSON.stringify({ dependencies: { astro: "5.0.0" } }));
+
+    await expect(prepareSite(root)).rejects.toThrow("existing dist");
   });
 
   it("rejects symlinks and paths outside the allowed roots", async () => {

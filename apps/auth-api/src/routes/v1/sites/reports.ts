@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/solid-router";
 import {
   apiError,
+  enforceHostedSiteReportRateLimit,
   hostedSiteErrorResponse,
   json,
   requestHostedSiteService,
@@ -12,6 +13,8 @@ export const Route = createFileRoute("/v1/sites/reports")({
     handlers: {
       POST: async ({ request }) => {
         try {
+          const sourceIp = requestSourceIp(request);
+          await enforceHostedSiteReportRateLimit(sourceIp);
           const length = Number(request.headers.get("Content-Length"));
           if (Number.isFinite(length) && length > 4_096) {
             return apiError(413, "request_too_large", "The report is too large.");
@@ -26,7 +29,7 @@ export const Route = createFileRoute("/v1/sites/reports")({
           const hostname = form.get("hostname")?.trim().toLowerCase() ?? "";
           const reason = form.get("reason")?.trim().toLowerCase() ?? "";
           const details = form.get("details")?.trim() || null;
-          await requestHostedSiteService().report(hostname, reason, details, requestSourceIp(request));
+          await requestHostedSiteService().report(hostname, reason, details, sourceIp);
           return json({ reported: true }, 201);
         } catch (error) {
           return hostedSiteErrorResponse(error);

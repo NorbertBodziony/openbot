@@ -23,6 +23,7 @@ CREATE TABLE site_deployments (
   site_id TEXT NOT NULL REFERENCES hosted_sites(id) ON DELETE CASCADE,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   status TEXT NOT NULL CHECK (status IN ('uploading', 'activating', 'active', 'superseded', 'abandoned')),
+  base_deployment_id TEXT,
   file_count INTEGER NOT NULL,
   total_bytes INTEGER NOT NULL,
   manifest_json TEXT NOT NULL,

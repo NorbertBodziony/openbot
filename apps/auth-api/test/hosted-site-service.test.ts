@@ -71,6 +71,101 @@ describe("hosted site control plane", () => {
       fixture.service.createUpload("alice", uploadRequest({ title: "Eleventh hosted planner" }), "publish-11"),
     ).rejects.toMatchObject({ code: "site_limit" });
   });
+
+  it("does not let a pending upload resurrect a deleted or expired site", async () => {
+    const deletedFixture = serviceFixture();
+    const deletedSite = await publish(deletedFixture.service, "alice", "publish-delete", "activate-delete");
+    const pendingDelete = await deletedFixture.service.createUpload(
+      "alice",
+      uploadRequest({ siteId: deletedSite.id }),
+      "replace-before-delete",
+    );
+    await uploadIndex(deletedFixture.service, "alice", pendingDelete.uploadId);
+
+    await deletedFixture.service.delete("alice", deletedSite.id, "delete-site-once");
+    await expect(
+      deletedFixture.service.activate("alice", pendingDelete.uploadId, "activate-after-delete"),
+    ).rejects.toMatchObject({ code: "site_deleted" });
+    expect(await deletedFixture.bucket.route(deletedSite.hostname)).toMatchObject({ status: "deleted" });
+
+    const expiredFixture = serviceFixture();
+    const expiredSite = await publish(expiredFixture.service, "alice", "publish-expiry", "activate-expiry");
+    expiredFixture.setNow(NOW + 30 * 24 * 60 * 60_000 - 5 * 60_000);
+    const pendingExpiry = await expiredFixture.service.createUpload(
+      "alice",
+      uploadRequest({ siteId: expiredSite.id }),
+      "replace-before-expiry",
+    );
+    await uploadIndex(expiredFixture.service, "alice", pendingExpiry.uploadId);
+    expiredFixture.setNow(NOW + 30 * 24 * 60 * 60_000 + 5 * 60_000);
+
+    await expiredFixture.service.cleanup();
+    await expect(
+      expiredFixture.service.activate("alice", pendingExpiry.uploadId, "activate-after-expiry"),
+    ).rejects.toMatchObject({ code: "site_expired" });
+    expect(await expiredFixture.bucket.route(expiredSite.hostname)).toMatchObject({ status: "expired" });
+  });
+
+  it("lets only one concurrent replacement become the served deployment", async () => {
+    const fixture = serviceFixture();
+    const site = await publish(fixture.service, "alice", "publish-race", "activate-race");
+    const [first, second] = await Promise.all([
+      fixture.service.createUpload(
+        "alice",
+        uploadRequest({ siteId: site.id, title: "First replacement site" }),
+        "replace-a",
+      ),
+      fixture.service.createUpload(
+        "alice",
+        uploadRequest({ siteId: site.id, title: "Second replacement site" }),
+        "replace-b",
+      ),
+    ]);
+    await Promise.all([
+      uploadIndex(fixture.service, "alice", first.uploadId),
+      uploadIndex(fixture.service, "alice", second.uploadId),
+    ]);
+
+    const activations = await Promise.allSettled([
+      fixture.service.activate("alice", first.uploadId, "activate-replace-a"),
+      fixture.service.activate("alice", second.uploadId, "activate-replace-b"),
+    ]);
+
+    expect(activations.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(activations.find((result) => result.status === "rejected")).toMatchObject({
+      reason: { code: "activation_superseded" },
+    });
+    const current = fixture.database
+      .prepare("SELECT current_deployment_id FROM hosted_sites WHERE id = ?")
+      .bind(site.id);
+    const row = await current.first<{ current_deployment_id: string }>();
+    expect(await fixture.bucket.route(site.hostname)).toMatchObject({
+      status: "active",
+      deploymentId: row?.current_deployment_id,
+    });
+  });
+
+  it("accepts reports only for allocated hostnames, deduplicates them, and removes old rows", async () => {
+    const fixture = serviceFixture();
+    await expect(
+      fixture.service.report("unknown-project-name-k7m2q9tz.openbot.site", "abuse", null, "203.0.113.10"),
+    ).rejects.toMatchObject({ code: "site_not_found" });
+    const site = await publish(fixture.service, "alice", "publish-report", "activate-report");
+
+    await fixture.service.report(site.hostname, "phishing", "Suspicious form", "203.0.113.10");
+    await fixture.service.report(site.hostname, "phishing", "Repeated report", "203.0.113.10");
+    const initial = await fixture.database
+      .prepare("SELECT COUNT(*) AS count FROM site_reports")
+      .first<{ count: number }>();
+    expect(initial?.count).toBe(1);
+
+    fixture.setNow(NOW + 181 * 24 * 60 * 60_000);
+    await fixture.service.cleanup();
+    const retained = await fixture.database
+      .prepare("SELECT COUNT(*) AS count FROM site_reports")
+      .first<{ count: number }>();
+    expect(retained?.count).toBe(0);
+  });
 });
 
 function serviceFixture(): {
@@ -265,6 +360,11 @@ class FakeR2Bucket implements R2Bucket {
 
   keys(): string[] {
     return [...this.objects.keys()];
+  }
+
+  async route(hostname: string): Promise<unknown> {
+    const stored = this.objects.get(`routes/${hostname}.json`);
+    return stored ? JSON.parse(new TextDecoder().decode(stored.bytes)) : null;
   }
 
   async head(key: string): Promise<R2Object | null> {

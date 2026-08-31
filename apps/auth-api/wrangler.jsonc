@@ -24,7 +24,7 @@
     }
   ],
   "secrets": {
-    "required": ["EMAIL_SMTP_PASSWORD", "CLOUDFLARE_API_TOKEN", "SKILLS_ADMIN_TOKEN"]
+    "required": ["EMAIL_SMTP_PASSWORD", "CLOUDFLARE_API_TOKEN", "SKILLS_ADMIN_TOKEN", "SITE_OPERATIONS_ADMIN_TOKEN"]
   },
   "vars": {
     "AUTH_EXPOSE_DEVELOPMENT_CODE": "false",
@@ -77,6 +77,11 @@
       "name": "MARKETPLACE_UPLOAD_RATE_LIMITER",
       "namespace_id": "2026082703",
       "simple": { "limit": 5, "period": 60 }
+    },
+    {
+      "name": "SITE_REPORT_RATE_LIMITER",
+      "namespace_id": "2026083101",
+      "simple": { "limit": 10, "period": 60 }
     }
   ],
   "env": {
@@ -139,6 +144,11 @@
           "name": "MARKETPLACE_UPLOAD_RATE_LIMITER",
           "namespace_id": "2026082706",
           "simple": { "limit": 5, "period": 60 }
+        },
+        {
+          "name": "SITE_REPORT_RATE_LIMITER",
+          "namespace_id": "2026083102",
+          "simple": { "limit": 10, "period": 60 }
         }
       ]
     },
@@ -151,7 +161,7 @@
         "crons": []
       },
       "secrets": {
-        "required": ["EMAIL_SMTP_PASSWORD", "CLOUDFLARE_API_TOKEN", "SKILLS_ADMIN_TOKEN"]
+        "required": ["EMAIL_SMTP_PASSWORD", "CLOUDFLARE_API_TOKEN", "SKILLS_ADMIN_TOKEN", "SITE_OPERATIONS_ADMIN_TOKEN"]
       },
       "vars": {
         "AUTH_EXPOSE_DEVELOPMENT_CODE": "false",
@@ -201,6 +211,11 @@
           "name": "MARKETPLACE_UPLOAD_RATE_LIMITER",
           "namespace_id": "2026082709",
           "simple": { "limit": 5, "period": 60 }
+        },
+        {
+          "name": "SITE_REPORT_RATE_LIMITER",
+          "namespace_id": "2026083103",
+          "simple": { "limit": 10, "period": 60 }
         }
       ]
     }

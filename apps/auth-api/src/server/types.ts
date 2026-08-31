@@ -8,6 +8,7 @@ export interface WorkerBindings {
   MARKETPLACE_INGRESS_RATE_LIMITER: RateLimit;
   MARKETPLACE_MUTATION_RATE_LIMITER: RateLimit;
   MARKETPLACE_UPLOAD_RATE_LIMITER: RateLimit;
+  SITE_REPORT_RATE_LIMITER: RateLimit;
   AUTH_EXPOSE_DEVELOPMENT_CODE?: string;
   EMAIL_SMTP_HOST?: string;
   EMAIL_SMTP_PORT?: string;
@@ -21,6 +22,7 @@ export interface WorkerBindings {
   CLOUDFLARE_TUNNEL_DOMAIN?: string;
   CLOUDFLARE_API_TOKEN?: string;
   SKILLS_ADMIN_TOKEN?: string;
+  SITE_OPERATIONS_ADMIN_TOKEN?: string;
   SITE_PUBLISH_ENABLED?: string;
 }
 
@@ -33,6 +35,7 @@ export function isWorkerBindings(value: unknown): value is WorkerBindings {
   const marketplaceIngressRateLimiter = value.MARKETPLACE_INGRESS_RATE_LIMITER;
   const marketplaceMutationRateLimiter = value.MARKETPLACE_MUTATION_RATE_LIMITER;
   const marketplaceUploadRateLimiter = value.MARKETPLACE_UPLOAD_RATE_LIMITER;
+  const siteReportRateLimiter = value.SITE_REPORT_RATE_LIMITER;
   if (
     !isDynamicRecord(database) ||
     !isFunction(database.prepare) ||
@@ -53,7 +56,9 @@ export function isWorkerBindings(value: unknown): value is WorkerBindings {
     !isDynamicRecord(marketplaceMutationRateLimiter) ||
     !isFunction(marketplaceMutationRateLimiter.limit) ||
     !isDynamicRecord(marketplaceUploadRateLimiter) ||
-    !isFunction(marketplaceUploadRateLimiter.limit)
+    !isFunction(marketplaceUploadRateLimiter.limit) ||
+    !isDynamicRecord(siteReportRateLimiter) ||
+    !isFunction(siteReportRateLimiter.limit)
   ) {
     return false;
   }

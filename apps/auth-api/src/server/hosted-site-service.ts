@@ -28,6 +28,7 @@ interface DeploymentRow {
   site_id: string;
   user_id: string;
   status: "uploading" | "activating" | "active" | "superseded" | "abandoned";
+  base_deployment_id: string | null;
   manifest_json: string;
   file_count: number;
   total_bytes: number;
@@ -115,10 +116,10 @@ export class HostedSiteService {
       const insert = await this.database
         .prepare(
           `INSERT INTO site_deployments(
-            id, site_id, user_id, status, file_count, total_bytes, manifest_json,
+            id, site_id, user_id, status, base_deployment_id, file_count, total_bytes, manifest_json,
             site_title, site_description, site_framework, site_spa_fallback,
             idempotency_key, created_at, upload_expires_at
-          ) SELECT ?, ?, ?, 'uploading', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          ) SELECT ?, ?, ?, 'uploading', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             WHERE (SELECT COUNT(*) FROM site_deployments
                    WHERE user_id = ? AND status = 'uploading' AND upload_expires_at > ?) < ?`,
         )
@@ -126,6 +127,7 @@ export class HostedSiteService {
           deploymentId,
           site.id,
           userId,
+          site.current_deployment_id,
           request.files.length,
           totalBytes,
           JSON.stringify(request.files),
@@ -182,10 +184,10 @@ export class HostedSiteService {
       this.database
         .prepare(
           `INSERT INTO site_deployments(
-            id, site_id, user_id, status, file_count, total_bytes, manifest_json,
+            id, site_id, user_id, status, base_deployment_id, file_count, total_bytes, manifest_json,
             site_title, site_description, site_framework, site_spa_fallback,
             idempotency_key, created_at, upload_expires_at
-          ) SELECT ?, ?, ?, 'uploading', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          ) SELECT ?, ?, ?, 'uploading', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             WHERE EXISTS (SELECT 1 FROM hosted_sites WHERE id = ? AND user_id = ?)
               AND (SELECT COUNT(*) FROM site_deployments
                    WHERE user_id = ? AND status = 'uploading' AND upload_expires_at > ?) < ?`,
@@ -277,22 +279,28 @@ export class HostedSiteService {
     const deployment = await this.requireDeployment(userId, uploadId);
     const now = this.now();
     const site = await this.requireOwnedSite(userId, deployment.site_id, true);
-    if (site.status === "blocked") throw new HostedSiteInputError(409, "site_blocked", "This site is blocked.");
+    if (site.status !== "uploading" && site.status !== "active") {
+      await this.abandonDeployment(deployment);
+      throw inactiveSiteError(site.status);
+    }
     if (deployment.status === "active") {
+      if (site.current_deployment_id !== deployment.id) {
+        throw new HostedSiteInputError(409, "activation_superseded", "A newer site deployment is active.");
+      }
+      await this.publishAuthoritativeRoute(site.id);
       const summary = await this.summaryForSite(userId, deployment.site_id);
       await this.saveReceipt(userId, idempotencyKey, "activate", site.id, summary, now);
       return summary;
     }
     if (deployment.status === "activating") {
-      const publishedExpiry = await this.publishedRouteExpiry(site, deployment);
-      if (publishedExpiry !== null) {
-        return this.finalizeActivation(userId, site, deployment, publishedExpiry, idempotencyKey, now);
-      }
-      await this.database
-        .prepare("UPDATE site_deployments SET status = 'uploading' WHERE id = ? AND status = 'activating'")
-        .bind(deployment.id)
-        .run();
-      throw new HostedSiteInputError(409, "activation_retry", "The activation was interrupted. Retry it.");
+      return this.finalizeActivation(
+        userId,
+        site,
+        deployment,
+        now + HOSTED_SITE_LIMITS.siteLifetimeMs,
+        idempotencyKey,
+        now,
+      );
     }
     if (deployment.status !== "uploading" || deployment.upload_expires_at <= now) {
       throw new HostedSiteInputError(409, "upload_expired", "This upload session has expired.");
@@ -314,20 +322,6 @@ export class HostedSiteService {
       throw new HostedSiteInputError(409, "upload_incomplete", "Upload every manifest file before activation.");
     }
     const expiresAt = now + HOSTED_SITE_LIMITS.siteLifetimeMs;
-    const route: RouteManifest = {
-      version: 1,
-      status: "active",
-      siteId: site.id,
-      deploymentId: deployment.id,
-      expiresAt,
-      spaFallback: deployment.site_spa_fallback === 1,
-      files: Object.fromEntries(
-        files.map((file) => [
-          file.path,
-          { key: assetKey(site.id, deployment.id, file.path), size: file.size, mimeType: file.mimeType },
-        ]),
-      ),
-    };
     const claim = await this.database
       .prepare("UPDATE site_deployments SET status = 'activating' WHERE id = ? AND status = 'uploading'")
       .bind(deployment.id)
@@ -335,21 +329,14 @@ export class HostedSiteService {
     if (claim.meta.changes !== 1) {
       throw new HostedSiteInputError(409, "activation_in_progress", "This upload is already being activated.");
     }
-    let routePublished = false;
     try {
       await this.enforceActivationRate(userId, now);
-      await this.bucket.put(routeKey(site.hostname), JSON.stringify(route), {
-        httpMetadata: { contentType: "application/json" },
-      });
-      routePublished = true;
       return await this.finalizeActivation(userId, site, deployment, expiresAt, idempotencyKey, now);
     } catch (error) {
-      if (!routePublished) {
-        await this.database
-          .prepare("UPDATE site_deployments SET status = 'uploading' WHERE id = ? AND status = 'activating'")
-          .bind(deployment.id)
-          .run();
-      }
+      await this.database
+        .prepare("UPDATE site_deployments SET status = 'uploading' WHERE id = ? AND status = 'activating'")
+        .bind(deployment.id)
+        .run();
       throw error;
     }
   }
@@ -358,32 +345,29 @@ export class HostedSiteService {
     if (await this.receipt(userId, idempotencyKey, "delete")) return;
     const site = await this.requireOwnedSite(userId, siteId, true);
     const now = this.now();
-    const tombstone: RouteManifest = {
-      version: 1,
-      status: "deleted",
-      siteId: site.id,
-      deploymentId: null,
-      expiresAt: null,
-      spaFallback: false,
-      files: {},
-    };
-    await this.bucket.put(routeKey(site.hostname), JSON.stringify(tombstone), {
-      httpMetadata: { contentType: "application/json" },
-    });
     await this.database.batch([
       this.database
         .prepare(
-          "UPDATE hosted_sites SET status = 'deleted', deleted_at = ?, expires_at = NULL, updated_at = ? WHERE id = ? AND user_id = ?",
+          `UPDATE hosted_sites SET status = 'deleted', deleted_at = ?, expires_at = NULL, updated_at = ?
+           WHERE id = ? AND user_id = ? AND status != 'deleted'`,
         )
         .bind(now, now, site.id, userId),
+      this.database
+        .prepare(
+          `UPDATE site_deployments SET status = 'abandoned'
+           WHERE site_id = ? AND status IN ('uploading', 'activating')`,
+        )
+        .bind(site.id),
       this.database
         .prepare(
           "INSERT INTO site_audit_log(id, user_id, site_id, operation, created_at) VALUES (?, ?, ?, 'delete', ?)",
         )
         .bind(crypto.randomUUID(), userId, site.id, now),
     ]);
+    await this.publishAuthoritativeRoute(site.id);
     await this.saveReceipt(userId, idempotencyKey, "delete", site.id, { deleted: true }, now);
-    if (site.current_deployment_id) await this.deleteDeployment(site.id, site.current_deployment_id);
+    const deleted = await this.requireOwnedSite(userId, site.id, true);
+    if (deleted.current_deployment_id) await this.deleteDeployment(site.id, deleted.current_deployment_id);
   }
 
   async report(hostname: string, reason: string, details: string | null, sourceIp: string): Promise<void> {
@@ -396,12 +380,22 @@ export class HostedSiteService {
     if (details !== null && details.length > 1_000) {
       throw new HostedSiteInputError(400, "invalid_details", "Report details are too long.");
     }
+    const site = await this.database
+      .prepare("SELECT id FROM hosted_sites WHERE hostname = ?")
+      .bind(hostname)
+      .first<{ id: string }>();
+    if (!site) throw new HostedSiteInputError(404, "site_not_found", "The hosted site was not found.");
+    const now = this.now();
+    const ipHash = await sourceIpHash(sourceIp);
+    const deduplicationWindow = Math.floor(now / 86_400_000);
+    const reportId = await sha256(`${hostname}\0${reason}\0${ipHash}\0${deduplicationWindow}`);
     await this.database
       .prepare(
         `INSERT INTO site_reports(id, hostname, reason, details, source_ip_hash, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO NOTHING`,
       )
-      .bind(crypto.randomUUID(), hostname, reason, details, await sourceIpHash(sourceIp), this.now())
+      .bind(reportId, hostname, reason, details, ipHash, now)
       .run();
   }
 
@@ -409,64 +403,29 @@ export class HostedSiteService {
     const site = await this.database.prepare("SELECT * FROM hosted_sites WHERE id = ?").bind(siteId).first<SiteRow>();
     if (!site) throw new HostedSiteInputError(409, "site_not_found", "The site was not found.");
     const now = this.now();
-    let route: RouteManifest;
     let status: SiteRow["status"];
     if (blocked) {
-      route = {
-        version: 1,
-        status: "blocked",
-        siteId: site.id,
-        deploymentId: null,
-        expiresAt: site.expires_at,
-        spaFallback: false,
-        files: {},
-      };
       status = "blocked";
     } else if (!site.current_deployment_id || !site.expires_at || site.expires_at <= now) {
-      route = {
-        version: 1,
-        status: "expired",
-        siteId: site.id,
-        deploymentId: null,
-        expiresAt: site.expires_at,
-        spaFallback: false,
-        files: {},
-      };
       status = "expired";
     } else {
-      const deployment = await this.database
-        .prepare("SELECT * FROM site_deployments WHERE id = ? AND site_id = ?")
-        .bind(site.current_deployment_id, site.id)
-        .first<DeploymentRow>();
-      if (!deployment) throw new Error("The active deployment is missing.");
-      const files = parseManifest(deployment.manifest_json);
-      route = {
-        version: 1,
-        status: "active",
-        siteId: site.id,
-        deploymentId: deployment.id,
-        expiresAt: site.expires_at,
-        spaFallback: deployment.site_spa_fallback === 1,
-        files: Object.fromEntries(
-          files.map((file) => [
-            file.path,
-            { key: assetKey(site.id, deployment.id, file.path), size: file.size, mimeType: file.mimeType },
-          ]),
-        ),
-      };
       status = "active";
     }
-    await this.bucket.put(routeKey(site.hostname), JSON.stringify(route), {
-      httpMetadata: { contentType: "application/json" },
-    });
     await this.database.batch([
       this.database
         .prepare("UPDATE hosted_sites SET status = ?, blocked_at = ?, updated_at = ? WHERE id = ?")
         .bind(status, blocked ? now : null, now, site.id),
       this.database
+        .prepare(
+          `UPDATE site_deployments SET status = 'abandoned'
+           WHERE site_id = ? AND status IN ('uploading', 'activating') AND ? = 1`,
+        )
+        .bind(site.id, blocked ? 1 : 0),
+      this.database
         .prepare("INSERT INTO site_audit_log(id, user_id, site_id, operation, created_at) VALUES (?, NULL, ?, ?, ?)")
         .bind(crypto.randomUUID(), site.id, blocked ? "block" : "unblock", now),
     ]);
+    await this.publishAuthoritativeRoute(site.id);
   }
 
   async cleanup(now = this.now()): Promise<{ uploads: number; expired: number; tombstones: number }> {
@@ -495,25 +454,25 @@ export class HostedSiteService {
       .bind(now)
       .all<SiteRow>();
     for (const site of expired.results) {
-      const route: RouteManifest = {
-        version: 1,
-        status: "expired",
-        siteId: site.id,
-        deploymentId: null,
-        expiresAt: site.expires_at,
-        spaFallback: false,
-        files: {},
-      };
-      await this.bucket.put(routeKey(site.hostname), JSON.stringify(route), {
-        httpMetadata: { contentType: "application/json" },
-      });
-      await this.database
-        .prepare(
-          "UPDATE hosted_sites SET status = 'expired', updated_at = ? WHERE id = ? AND status IN ('active', 'blocked')",
-        )
-        .bind(now, site.id)
-        .run();
-      if (site.current_deployment_id) await this.deleteDeployment(site.id, site.current_deployment_id);
+      const results = await this.database.batch([
+        this.database
+          .prepare(
+            `UPDATE hosted_sites SET status = 'expired', updated_at = ?
+             WHERE id = ? AND status IN ('active', 'blocked') AND expires_at <= ?`,
+          )
+          .bind(now, site.id, now),
+        this.database
+          .prepare(
+            `UPDATE site_deployments SET status = 'abandoned'
+             WHERE site_id = ? AND status IN ('uploading', 'activating')
+               AND EXISTS (SELECT 1 FROM hosted_sites WHERE id = ? AND status = 'expired')`,
+          )
+          .bind(site.id, site.id),
+      ]);
+      if (results[0].meta.changes !== 1) continue;
+      await this.publishAuthoritativeRoute(site.id);
+      const current = await this.siteById(site.id);
+      if (current?.current_deployment_id) await this.deleteDeployment(site.id, current.current_deployment_id);
     }
 
     const tombstoneCutoff = now - HOSTED_SITE_LIMITS.tombstoneLifetimeMs;
@@ -537,31 +496,15 @@ export class HostedSiteService {
       .prepare("DELETE FROM site_operation_receipts WHERE created_at < ?")
       .bind(now - 90 * 24 * 60 * 60_000)
       .run();
+    await this.database
+      .prepare("DELETE FROM site_reports WHERE created_at < ?")
+      .bind(now - 180 * 24 * 60 * 60_000)
+      .run();
     return {
       uploads: staleUploads.results.length,
       expired: expired.results.length,
       tombstones: tombstones.results.length,
     };
-  }
-
-  private async publishedRouteExpiry(site: SiteRow, deployment: DeploymentRow): Promise<number | null> {
-    const object = await this.bucket.get(routeKey(site.hostname));
-    if (!object) return null;
-    try {
-      const value = await object.json();
-      if (
-        isDynamicRecord(value) &&
-        value.status === "active" &&
-        value.siteId === site.id &&
-        value.deploymentId === deployment.id &&
-        isNumber(value.expiresAt)
-      ) {
-        return value.expiresAt;
-      }
-    } catch {
-      return null;
-    }
-    return null;
   }
 
   private async finalizeActivation(
@@ -572,13 +515,14 @@ export class HostedSiteService {
     idempotencyKey: string,
     now: number,
   ): Promise<HostedSiteSummary> {
-    const previousDeployment = site.current_deployment_id;
+    const previousDeployment = deployment.base_deployment_id;
     const results = await this.database.batch([
       this.database
         .prepare(
           `UPDATE hosted_sites SET status = 'active', current_deployment_id = ?, expires_at = ?,
            updated_at = ?, title = ?, description = ?, framework = ?, spa_fallback = ?
            WHERE id = ? AND user_id = ? AND status IN ('uploading', 'active')
+             AND current_deployment_id IS ?
              AND EXISTS (SELECT 1 FROM site_deployments WHERE id = ? AND status = 'activating')`,
         )
         .bind(
@@ -591,6 +535,7 @@ export class HostedSiteService {
           deployment.site_spa_fallback,
           site.id,
           userId,
+          previousDeployment,
           deployment.id,
         ),
       this.database
@@ -607,14 +552,14 @@ export class HostedSiteService {
       this.database
         .prepare(
           `UPDATE site_deployments SET status = 'superseded'
-           WHERE id = ? AND id != ?
+           WHERE site_id = ? AND id != ? AND status = 'active'
              AND EXISTS (SELECT 1 FROM site_deployments WHERE id = ? AND status = 'activating')
              AND EXISTS (
                SELECT 1 FROM hosted_sites WHERE id = ? AND user_id = ? AND status = 'active'
                  AND current_deployment_id = ?
              )`,
         )
-        .bind(previousDeployment, deployment.id, deployment.id, site.id, userId, deployment.id),
+        .bind(site.id, deployment.id, deployment.id, site.id, userId, deployment.id),
       this.database
         .prepare(
           `UPDATE site_deployments SET status = 'active', activated_at = ?
@@ -625,23 +570,101 @@ export class HostedSiteService {
              )`,
         )
         .bind(now, deployment.id, site.id, userId, deployment.id),
+      this.database
+        .prepare(
+          `UPDATE site_deployments SET status = 'abandoned'
+           WHERE site_id = ? AND id != ? AND status IN ('uploading', 'activating')
+             AND base_deployment_id IS ?
+             AND EXISTS (
+               SELECT 1 FROM hosted_sites WHERE id = ? AND user_id = ? AND status = 'active'
+                 AND current_deployment_id = ?
+             )`,
+        )
+        .bind(site.id, deployment.id, previousDeployment, site.id, userId, deployment.id),
     ]);
     if (results[3].meta.changes !== 1) {
       const currentSite = await this.requireOwnedSite(userId, site.id, true);
       const currentDeployment = await this.requireDeployment(userId, deployment.id);
-      if (currentSite.status === "blocked") {
-        throw new HostedSiteInputError(409, "site_blocked", "This site is blocked.");
-      }
+      await this.abandonDeployment(currentDeployment);
+      if (currentSite.status !== "uploading") await this.publishAuthoritativeRoute(site.id);
+      await this.deleteDeployment(site.id, deployment.id);
+      if (currentSite.status !== "uploading" && currentSite.status !== "active")
+        throw inactiveSiteError(currentSite.status);
       if (currentSite.current_deployment_id !== deployment.id || currentDeployment.status !== "active") {
-        throw new HostedSiteInputError(409, "activation_in_progress", "This upload activation is not complete.");
+        throw new HostedSiteInputError(409, "activation_superseded", "A newer site deployment is active.");
       }
     }
+    await this.publishAuthoritativeRoute(site.id);
     const summary = await this.summaryForSite(userId, site.id);
     await this.saveReceipt(userId, idempotencyKey, "activate", site.id, summary, now);
     if (previousDeployment && previousDeployment !== deployment.id) {
       await this.deleteDeployment(site.id, previousDeployment);
     }
     return summary;
+  }
+
+  private async abandonDeployment(deployment: DeploymentRow): Promise<void> {
+    await this.database
+      .prepare(
+        `UPDATE site_deployments SET status = 'abandoned'
+         WHERE id = ? AND status IN ('uploading', 'activating')`,
+      )
+      .bind(deployment.id)
+      .run();
+  }
+
+  private async publishAuthoritativeRoute(siteId: string): Promise<void> {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const before = await this.siteById(siteId);
+      if (!before) throw new HostedSiteInputError(409, "site_not_found", "The site was not found.");
+      const route = await this.routeForSite(before);
+      await this.bucket.put(routeKey(before.hostname), JSON.stringify(route), {
+        httpMetadata: { contentType: "application/json" },
+      });
+      const after = await this.siteById(siteId);
+      if (after && siteRouteIdentity(after) === siteRouteIdentity(before)) return;
+    }
+    throw new Error("The site route changed too often during publication.");
+  }
+
+  private async routeForSite(site: SiteRow): Promise<RouteManifest> {
+    if (site.status !== "active") {
+      if (site.status === "uploading") throw new Error("An uploading site does not have a public route.");
+      return {
+        version: 1,
+        status: site.status,
+        siteId: site.id,
+        deploymentId: null,
+        expiresAt: site.expires_at,
+        spaFallback: false,
+        files: {},
+      };
+    }
+    if (!site.current_deployment_id) throw new Error("The active site deployment is missing.");
+    const deployment = await this.database
+      .prepare("SELECT * FROM site_deployments WHERE id = ? AND site_id = ? AND status = 'active'")
+      .bind(site.current_deployment_id, site.id)
+      .first<DeploymentRow>();
+    if (!deployment) throw new Error("The active deployment is missing.");
+    const files = parseManifest(deployment.manifest_json);
+    return {
+      version: 1,
+      status: "active",
+      siteId: site.id,
+      deploymentId: deployment.id,
+      expiresAt: site.expires_at,
+      spaFallback: deployment.site_spa_fallback === 1,
+      files: Object.fromEntries(
+        files.map((file) => [
+          file.path,
+          { key: assetKey(site.id, deployment.id, file.path), size: file.size, mimeType: file.mimeType },
+        ]),
+      ),
+    };
+  }
+
+  private siteById(siteId: string): Promise<SiteRow | null> {
+    return this.database.prepare("SELECT * FROM hosted_sites WHERE id = ?").bind(siteId).first<SiteRow>();
   }
 
   private async enforceActivationRate(userId: string, now: number): Promise<void> {
@@ -812,6 +835,17 @@ function isStoredManifestFile(value: unknown): value is HostedSiteFileManifest {
 
 function activationCount(value: unknown): number {
   return isDynamicRecord(value) && isNumber(value.activations) ? value.activations : 0;
+}
+
+function inactiveSiteError(status: SiteRow["status"]): HostedSiteInputError {
+  if (status === "blocked") return new HostedSiteInputError(409, "site_blocked", "This site is blocked.");
+  if (status === "deleted") return new HostedSiteInputError(409, "site_deleted", "This site was deleted.");
+  if (status === "expired") return new HostedSiteInputError(409, "site_expired", "This site has expired.");
+  return new HostedSiteInputError(409, "site_not_active", "This site cannot accept this deployment.");
+}
+
+function siteRouteIdentity(site: SiteRow): string {
+  return `${site.status}:${site.current_deployment_id ?? ""}:${site.expires_at ?? ""}`;
 }
 
 function parseStoredSiteSummary(value: string): HostedSiteSummary {
