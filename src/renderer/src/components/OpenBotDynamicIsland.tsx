@@ -232,7 +232,7 @@ const OPENBOT_ISLAND_MODE_CONFIG: Record<DynamicIslandPresentation["mode"], Open
   },
 };
 
-export function compactStatusGeometry(
+function compactStatusGeometry(
   presentation: DynamicIslandPresentation,
   physicalNotchWidth = STATUS_COMPACT_NOTCH_WIDTH,
 ): StatusCompactGeometry | undefined {

@@ -79,7 +79,7 @@ import {
 import { performDynamicIslandCriticalAction } from "./dynamic-island-actions";
 import {
   DynamicIslandWindowController,
-  dynamicIslandNotchSize,
+  dynamicIslandNotchSizeForDisplay,
   requireDynamicIslandSender,
 } from "./dynamic-island-window";
 import { filePreviewFromBytes, localFilePreview, mimeTypeForName } from "./file-preview";
@@ -1309,8 +1309,8 @@ function loadDynamicIslandRenderer(window: BrowserWindow, display: Display): Pro
   const url = new URL(developmentUrl ?? "openbot-app://app/index.html");
   url.searchParams.set("surface", "dynamic-island");
   url.searchParams.set("display", displayMode);
-  if (display.internal) {
-    const notch = dynamicIslandNotchSize(display);
+  const notch = dynamicIslandNotchSizeForDisplay(display);
+  if (notch) {
     url.searchParams.set("notch-width", String(notch.width));
     url.searchParams.set("notch-height", String(notch.height));
   }

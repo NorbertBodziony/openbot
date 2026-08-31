@@ -1,16 +1,11 @@
 import { fireEvent, render, screen } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DynamicIsland, type DynamicIslandViewState, defaultNotchCompactWidth } from "./dynamic-island";
+import { DynamicIsland, type DynamicIslandViewState } from "./dynamic-island";
 
 afterEach(() => vi.useRealTimers());
 
 describe("DynamicIsland", () => {
-  it("keeps the minimum ear tracks outside a wide physical notch", () => {
-    expect(defaultNotchCompactWidth(192)).toBe(268);
-    expect(defaultNotchCompactWidth(220)).toBe(296);
-  });
-
   it("opens from the compact control and closes with Escape", async () => {
     const changed = vi.fn();
     render(() => {

@@ -16,6 +16,7 @@ import * as preferenceStore from "./dynamic-island-preference-store";
 import {
   DynamicIslandWindowController,
   dynamicIslandNotchSize,
+  dynamicIslandNotchSizeForDisplay,
   dynamicIslandWindowBounds,
   requireDynamicIslandSender,
 } from "./dynamic-island-window";
@@ -123,6 +124,15 @@ describe("dynamic island window geometry", () => {
       width: 220,
       height: 38,
     });
+  });
+
+  it("does not scale unsupported internal display geometry", () => {
+    expect(
+      dynamicIslandNotchSizeForDisplay(display({ bounds: { x: 0, y: 0, width: 2560, height: 1440 } })),
+    ).toBeUndefined();
+    expect(
+      dynamicIslandNotchSizeForDisplay(display({ bounds: { x: 0, y: 0, width: 1512, height: 982 }, internal: false })),
+    ).toBeUndefined();
   });
 
   it("centers the overlay at each display top edge", () => {

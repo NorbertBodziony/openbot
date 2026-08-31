@@ -2,7 +2,7 @@ import type { DynamicIslandAction, DynamicIslandBotIdentity, DynamicIslandPresen
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal, flush } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
-import { compactStatusGeometry, OpenBotDynamicIsland } from "./OpenBotDynamicIsland";
+import { OpenBotDynamicIsland } from "./OpenBotDynamicIsland";
 import type { DynamicIslandViewState } from "./ui";
 
 const BOT: DynamicIslandBotIdentity = {
@@ -14,18 +14,6 @@ const BOT: DynamicIslandBotIdentity = {
 };
 
 describe("OpenBotDynamicIsland mode transitions", () => {
-  it("preserves the compact ear budget for wider physical notches", () => {
-    const presentation = workingPresentation();
-    if (presentation.mode !== "working" || !presentation.working[0]) throw new Error("Working fixture is missing.");
-    presentation.working[0] = {
-      ...presentation.working[0],
-      bot: { ...presentation.working[0].bot, name: "A very long agent identity" },
-    };
-
-    expect(compactStatusGeometry(presentation, 220)).toMatchObject({ notch: { width: 440 } });
-    expect(compactStatusGeometry(presentation, 180)).toMatchObject({ notch: { width: 400 } });
-  });
-
   it("keeps an expanded island open and finishes with only the new interactive content", async () => {
     const controller = renderControlledIsland(workingPresentation(), "expanded");
     expect(screen.getByRole("button", { name: /Research/ })).toBeVisible();

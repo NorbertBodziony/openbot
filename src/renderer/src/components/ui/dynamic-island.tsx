@@ -395,7 +395,7 @@ function dynamicIslandStyle(props: DynamicIslandProps): string | undefined {
   const compactWidth =
     props.compactWidth ??
     (props.displayMode !== "island" && props.notchSize !== undefined
-      ? defaultNotchCompactWidth(props.notchSize.width)
+      ? props.notchSize.width + COMPACT_EAR_TRACK_WIDTH * 2
       : undefined);
   const styles = [
     compactWidth === undefined ? undefined : `--dynamic-island-compact-width: ${compactWidth}px`,
@@ -403,10 +403,6 @@ function dynamicIslandStyle(props: DynamicIslandProps): string | undefined {
     props.notchSize === undefined ? undefined : `--dynamic-island-notch-height: ${props.notchSize.height}px`,
   ].filter((style): style is string => style !== undefined);
   return styles.length > 0 ? styles.join("; ") : undefined;
-}
-
-export function defaultNotchCompactWidth(notchWidth: number): number {
-  return notchWidth + COMPACT_EAR_TRACK_WIDTH * 2;
 }
 
 interface SmoothSizeResizeOptions {
