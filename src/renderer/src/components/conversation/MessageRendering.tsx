@@ -333,7 +333,25 @@ export function MessageBody(props: {
         {(referenced) => (
           <div class="message-reply-context">
             <span>{referenced().author === "you" ? "You" : "Agent"}</span>
-            <p>{referenced().body || "Attachment"}</p>
+            <p>
+              <RichMessageText
+                body={referenced().body || "Attachment"}
+                bots={props.bots}
+                skills={props.skills}
+                attachments={referenced().attachments}
+                citations={referenced().citations}
+                onSelectAgent={props.onSelectAgent}
+                onOpenLink={props.onOpenLink}
+                onOpenAttachment={(attachment) =>
+                  attachment.previewKind === "none"
+                    ? props.onAttachmentAction(attachment, "open")
+                    : props.onPreview(attachment)
+                }
+                onOpenSharedFile={props.onOpenSharedFile}
+                onOpenWorkspaceFile={props.onOpenWorkspaceFile}
+                showCitationFooter={false}
+              />
+            </p>
           </div>
         )}
       </Show>

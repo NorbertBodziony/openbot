@@ -1,3 +1,4 @@
+import { serializeChatTagReference } from "@openbot/contracts/chat-tag-references";
 import type {
   AgentEvent,
   AgentStatus,
@@ -5181,12 +5182,22 @@ describe("OpenBot connected desktop shell", () => {
     expect(composer).toHaveTextContent("Keep this draft");
   });
 
-  it("reacts and copies from agent hover actions", async () => {
+  it("reacts and copies resolved tags from message hover actions", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText },
     });
+    vi.mocked(window.openbot.agent.listInstalledSkills).mockResolvedValueOnce([
+      {
+        skillId: "skill-1",
+        slug: "release-notes",
+        name: "Release Notes",
+        installedVersion: 1,
+        availableVersion: 1,
+        state: "installed",
+      },
+    ]);
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     emitAgentEvent?.({
@@ -5199,8 +5210,8 @@ describe("OpenBot connected desktop shell", () => {
         messages: [
           {
             id: "assistant-actions",
-            author: "assistant",
-            text: "Ready to ship.",
+            author: "user",
+            text: `Ask ${serializeChatTagReference("agent", "Old Sales", "sales-outbound")} to use ${serializeChatTagReference("skill", "Old Skill", "skill-1")}.`,
             createdAt: "2026-08-12T10:00:00.000Z",
             status: "completed",
           },
@@ -5208,7 +5219,7 @@ describe("OpenBot connected desktop shell", () => {
       },
     });
 
-    await screen.findByText("Ready to ship.");
+    await screen.findByRole("button", { name: "Open agent Sales Outbound" });
     await fireEvent.pointerDown(screen.getByRole("button", { name: "Add reaction" }), { button: 0 });
     await fireEvent.pointerUp(screen.getByRole("menuitemradio", { name: "React with ❤️" }), { button: 0 });
     expect(window.openbot.agent.setMessageReaction).toHaveBeenCalledWith({
@@ -5220,7 +5231,7 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.pointerDown(screen.getByRole("button", { name: "More message actions" }), { button: 0 });
     await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Copy" }), { button: 0 });
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith("Ready to ship."));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("Ask @Sales Outbound to use Release Notes (skill)."));
   });
 
   it("lets the user remove only their own reaction while keeping the agent reaction read-only", async () => {

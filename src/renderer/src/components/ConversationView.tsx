@@ -4,6 +4,7 @@ import {
   expandAttachmentReferences,
   removeAttachmentReferences,
 } from "@openbot/contracts/attachment-references";
+import { expandChatTagReferences } from "@openbot/contracts/chat-tag-references";
 import type {
   AgentEvent,
   AgentModelId,
@@ -2104,7 +2105,16 @@ function createConversationViewScope(props: ConversationProps) {
 
   async function copyMessage(message: BotMessage) {
     const attachmentNames = new Map((message.attachments ?? []).map((attachment) => [attachment.id, attachment.name]));
-    const text = expandAttachmentReferences(message.body, (reference) => attachmentNames.get(reference.attachmentId));
+    const agentNames = new Map(props.bots.map((bot) => [bot.id, bot.name]));
+    const skillNames = new Map(
+      installedSkills()
+        .filter((skill) => skill.state !== "needs-repair")
+        .map((skill) => [skill.skillId, skill.name]),
+    );
+    const text = expandChatTagReferences(
+      expandAttachmentReferences(message.body, (reference) => attachmentNames.get(reference.attachmentId)),
+      (reference) => (reference.kind === "agent" ? agentNames.get(reference.id) : skillNames.get(reference.id)),
+    );
     if (!text) return;
     try {
       if (navigator.clipboard?.writeText) {

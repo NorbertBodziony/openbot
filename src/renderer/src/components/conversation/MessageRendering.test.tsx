@@ -1,6 +1,7 @@
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
-import type { AttachmentSummary } from "@openbot/contracts/ipc";
-import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
+import { serializeChatTagReference } from "@openbot/contracts/chat-tag-references";
+import type { AttachmentSummary, InstalledSkill } from "@openbot/contracts/ipc";
+import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import type { BotMessage, BotProfile } from "../../data";
@@ -1136,6 +1137,48 @@ describe("MessageBody", () => {
     expect(screen.getByText("This is the exact selected sentence.", { selector: "blockquote" })).toBeInTheDocument();
     expect(screen.getByText("A longer answer containing this exact selected sentence.")).toBeInTheDocument();
     expect(screen.queryByText(/^> This is/u)).toBeNull();
+  });
+
+  it("renders semantic tags in reply context with the current catalogs", () => {
+    const skills: InstalledSkill[] = [
+      {
+        skillId: "skill-1",
+        slug: "release-notes",
+        name: "Release Notes",
+        installedVersion: 1,
+        availableVersion: 1,
+        state: "installed",
+      },
+    ];
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-reply",
+          author: "you",
+          body: "Please continue.",
+          replyToMessageId: "message-source",
+          time: "10:01",
+        }}
+        referencedMessage={{
+          id: "message-source",
+          author: "bot",
+          body: `Ask ${serializeChatTagReference("agent", "Old Research", "research")} to use ${serializeChatTagReference("skill", "Old Skill", "skill-1")}.`,
+          time: "10:00",
+        }}
+        bots={bots}
+        skills={skills}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    const context = document.querySelector(".message-reply-context");
+    if (!(context instanceof HTMLElement)) throw new Error("Reply context did not render");
+    expect(within(context).getByRole("button", { name: "Open agent Research" })).toBeInTheDocument();
+    expect(within(context).getByText("Release Notes")).toBeInTheDocument();
+    expect(context).not.toHaveTextContent("@[");
   });
 
   it("renders a Markdown feature matrix as a comparison table", () => {
