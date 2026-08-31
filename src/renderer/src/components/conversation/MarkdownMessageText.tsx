@@ -56,7 +56,9 @@ function headingLevel(depth: number): 1 | 2 | 3 | 4 | 5 | 6 {
 }
 
 export function MarkdownMessageText(props: MarkdownMessageTextProps) {
-  const tokens = createMemo(() => marked.lexer(props.body, { breaks: true, gfm: true }));
+  const tokens = createMemo(() =>
+    marked.lexer(normalizeEscapedLocalFileLinks(props.body), { breaks: true, gfm: true }),
+  );
   const contentProps = (): MarkdownContentProps => ({
     bots: props.bots,
     attachments: props.attachments,
@@ -87,7 +89,9 @@ export function MarkdownMessageText(props: MarkdownMessageTextProps) {
 export function MarkdownInlineText(
   props: Omit<MarkdownMessageTextProps, "showCitationFooter" | "streaming" | "streamingTail">,
 ) {
-  const tokens = createMemo(() => marked.Lexer.lexInline(props.body, { breaks: true, gfm: true }));
+  const tokens = createMemo(() =>
+    marked.Lexer.lexInline(normalizeEscapedLocalFileLinks(props.body), { breaks: true, gfm: true }),
+  );
   const contentProps = (): MarkdownContentProps => ({
     bots: props.bots,
     attachments: props.attachments,
@@ -365,14 +369,14 @@ function MarkdownInline(props: { tokens: Token[]; content: MarkdownContentProps;
             ) : sharedPath && props.content.onOpenSharedFile ? (
               <LocalFileLink
                 path={sharedPath}
-                label={token.text}
+                label={markdownInlinePlainText(token.tokens) || token.text}
                 kind="shared"
                 onOpen={props.content.onOpenSharedFile}
               />
             ) : workspacePath && props.content.onOpenWorkspaceFile ? (
               <LocalFileLink
                 path={workspacePath}
-                label={token.text}
+                label={markdownInlinePlainText(token.tokens) || token.text}
                 kind="workspace"
                 onOpen={props.content.onOpenWorkspaceFile}
               />
@@ -439,6 +443,21 @@ function lastRenderableTokenIndex(tokens: Token[]): number {
   return -1;
 }
 
+function markdownInlinePlainText(tokens: Token[]): string {
+  return tokens
+    .map((token) => {
+      if (tokenIs(token, "strong")) return markdownInlinePlainText(token.tokens);
+      if (tokenIs(token, "em")) return markdownInlinePlainText(token.tokens);
+      if (tokenIs(token, "del")) return markdownInlinePlainText(token.tokens);
+      if (tokenIs(token, "link")) return markdownInlinePlainText(token.tokens);
+      if (tokenIs(token, "text")) return token.tokens ? markdownInlinePlainText(token.tokens) : token.text;
+      if (tokenIs(token, "codespan") || tokenIs(token, "escape") || tokenIs(token, "image")) return token.text;
+      if (token.type === "br") return "\n";
+      return token.raw;
+    })
+    .join("");
+}
+
 function LocalFileLink(props: {
   path: string;
   label: string;
@@ -471,6 +490,21 @@ function sharedFileTarget(value: string): string | null {
     normalized.includes("/OpenBot/Shared/")
     ? path
     : null;
+}
+
+function normalizeEscapedLocalFileLinks(body: string): string {
+  return body.replace(/(\[[^\]\r\n]+\])\\\(<([^<>\r\n]+)>(\\?\))/gu, (match, label: string, target: string) =>
+    localFileTarget(target) ? `${label}(<${target}>)` : match,
+  );
+}
+
+function localFileTarget(value: string): string | null {
+  const path = value.trim();
+  const shared = sharedFileTarget(path);
+  if (shared) return shared;
+  const workspace = workspaceFileTarget(path);
+  if (!workspace) return null;
+  return /^(?:~[/\\]|[/\\]|[A-Za-z]:[/\\])/u.test(path) || isFileMention(path) ? workspace : null;
 }
 
 function workspaceFileTarget(value: string): string | null {

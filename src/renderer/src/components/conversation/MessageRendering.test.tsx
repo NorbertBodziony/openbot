@@ -384,6 +384,79 @@ describe("MessageBody", () => {
     expect(onOpenWorkspaceFile).not.toHaveBeenCalled();
   });
 
+  it("repairs escaped Markdown delimiters around Windows file links", async () => {
+    const onOpenSharedFile = vi.fn();
+    const onOpenWorkspaceFile = vi.fn();
+    const forwardSlashPath = "C:/Users/julia/OpenBot/Shared/Outputs/FineRite-Krakow-social-links-final.xlsx";
+    const backslashPath = String.raw`C:\Users\julia\OpenBot\Shared\Outputs\FineRite-Krakow-social-links-backslash.xlsx`;
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-windows-shared-paths",
+          author: "bot",
+          body: [
+            String.raw`[**Pobierz aktualny plik Excel**]\(<${forwardSlashPath}>)`,
+            String.raw`[Pobierz drugi plik]\(<${backslashPath}>\)`,
+          ].join("\n\n"),
+          time: "10:00",
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+        onOpenSharedFile={onOpenSharedFile}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    ));
+
+    const forwardSlashLink = screen.getByRole("button", {
+      name: "Open shared file FineRite-Krakow-social-links-final.xlsx",
+    });
+    const backslashLink = screen.getByRole("button", {
+      name: "Open shared file FineRite-Krakow-social-links-backslash.xlsx",
+    });
+    expect(forwardSlashLink).toHaveTextContent("Pobierz aktualny plik Excel");
+    expect(backslashLink).toHaveTextContent("Pobierz drugi plik");
+    expect(forwardSlashLink).not.toHaveTextContent("**");
+    expect(forwardSlashLink).not.toHaveTextContent(forwardSlashPath);
+    expect(backslashLink).not.toHaveTextContent(backslashPath);
+    expect(forwardSlashLink).not.toHaveTextContent(/[[\]\\()]/u);
+    expect(backslashLink).not.toHaveTextContent(/[[\]\\()]/u);
+
+    await fireEvent.click(forwardSlashLink);
+    await fireEvent.click(backslashLink);
+    expect(onOpenSharedFile).toHaveBeenNthCalledWith(1, forwardSlashPath);
+    expect(onOpenSharedFile).toHaveBeenNthCalledWith(2, backslashPath);
+    expect(onOpenWorkspaceFile).not.toHaveBeenCalled();
+  });
+
+  it("does not repair escaped Markdown delimiters around web links", () => {
+    const onOpenSharedFile = vi.fn();
+    const onOpenWorkspaceFile = vi.fn();
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-escaped-web-link",
+          author: "bot",
+          body: String.raw`[OpenAI]\(<https://openai.com/docs.xlsx>\)`,
+          time: "10:00",
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+        onOpenSharedFile={onOpenSharedFile}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+      />
+    ));
+
+    expect(screen.queryByRole("button", { name: /Open (?:shared|workspace) file/u })).toBeNull();
+    expect(onOpenSharedFile).not.toHaveBeenCalled();
+    expect(onOpenWorkspaceFile).not.toHaveBeenCalled();
+  });
+
   it("turns filenames listed after a Shared directory into preview references", async () => {
     const onOpenSharedFile = vi.fn();
     const onOpenWorkspaceFile = vi.fn();
