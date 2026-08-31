@@ -3323,8 +3323,6 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
         botId: "chief",
-        model: "gpt-5.6-luna",
-        provider: "codex",
         reasoningEffort: "high",
       }),
     );
@@ -3375,8 +3373,6 @@ describe("OpenBot connected desktop shell", () => {
         [
           {
             botId: "chief",
-            provider: "claude",
-            model: "claude-opus-5",
             reasoningEffort: "high",
           },
         ],
@@ -3384,8 +3380,6 @@ describe("OpenBot connected desktop shell", () => {
     );
     expect(window.openbot.agent.updateBot).toHaveBeenLastCalledWith({
       botId: "chief",
-      provider: "claude",
-      model: "claude-opus-5",
       reasoningEffort: "high",
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -3438,8 +3432,6 @@ describe("OpenBot connected desktop shell", () => {
         [
           {
             botId: "chief",
-            provider: "claude",
-            model: "claude-opus-5",
             reasoningEffort: "high",
           },
         ],
@@ -3447,8 +3439,6 @@ describe("OpenBot connected desktop shell", () => {
     );
     expect(window.openbot.agent.updateBot).toHaveBeenLastCalledWith({
       botId: "chief",
-      provider: "claude",
-      model: "claude-opus-5",
       reasoningEffort: "high",
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -3479,8 +3469,6 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(window.openbot.agent.updateBot).toHaveBeenCalledTimes(2));
     expect(window.openbot.agent.updateBot).toHaveBeenLastCalledWith({
       botId: "chief",
-      provider: "codex",
-      model: "gpt-5.6-luna",
       reasoningEffort: "low",
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -3656,8 +3644,6 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.updateBot).toHaveBeenLastCalledWith({
         botId: "chief",
-        provider: "codex",
-        model: "gpt-5.6-sol",
         reasoningEffort: "xhigh",
       }),
     );
