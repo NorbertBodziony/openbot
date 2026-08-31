@@ -8,7 +8,10 @@ import {
   AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT,
   type AgentEvent,
   type CentralAuthUser,
+  type ConversationPage,
   type ConversationPageAnchor,
+  type ConversationSnapshot,
+  type ConversationWithReadState,
   type CreateBotInput,
   type CreateTeamInviteInput,
   type DirectConversationPage,
@@ -24,6 +27,7 @@ import {
   isAvatarSeed,
   isMessageReaction,
   isReasoningEffort,
+  parseRoutineConversationEventItemType,
   type ReorderQueueInput,
   type RespondToApprovalInput,
   type RespondToBrowserTakeoverInput,
@@ -40,6 +44,7 @@ import {
   decodeTeamProtocolV1ClientEvent,
   isTeamProtocolV1Capability,
   TEAM_APP_VERSION_HEADER,
+  TEAM_CAPABILITIES_HEADER,
   TEAM_PROTOCOL_V1,
   TEAM_PROTOCOL_V1_CAPABILITIES,
   TEAM_PROTOCOL_V1_WEBSOCKET,
@@ -448,6 +453,7 @@ export class TeamApiServer {
       response.setHeader("X-Content-Type-Options", "nosniff");
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       const method = request.method ?? "GET";
+      const clientCapabilities = requestCapabilities(request);
       this.#responseRoutes.set(response, { method, path: url.pathname });
 
       if (method === "GET" && url.pathname === "/v1/compatibility") {
@@ -1040,13 +1046,26 @@ export class TeamApiServer {
           }
         }
         if (method === "GET" && action === "conversation") {
-          return this.#json(response, 200, await this.#options.agents.readConversationFor(botId, member.id));
-        }
-        if (method === "GET" && action === "conversation-page") {
+          const conversation = await this.#options.agents.readConversationFor(botId, member.id);
           return this.#json(
             response,
             200,
-            await this.#options.agents.readConversationPageFor(botId, member.id, pageAnchor(url), pageLimit(url)),
+            clientCapabilities.has("routine-event-markers")
+              ? conversation
+              : conversationWithoutRoutineEvents(conversation),
+          );
+        }
+        if (method === "GET" && action === "conversation-page") {
+          const page = await this.#options.agents.readConversationPageFor(
+            botId,
+            member.id,
+            pageAnchor(url),
+            pageLimit(url),
+          );
+          return this.#json(
+            response,
+            200,
+            clientCapabilities.has("routine-event-markers") ? page : conversationPageWithoutRoutineEvents(page),
           );
         }
         if (method === "POST" && action === "conversation/read") {
@@ -1195,6 +1214,7 @@ export class TeamApiServer {
 
   #broadcastAgentEvent(event: AgentEvent): void {
     let payload: string | undefined;
+    let routineEventFilteredPayload: string | undefined;
     let conversationInvalidation: string | undefined;
     let queueInvalidation: string | undefined;
     let completionSnapshot: string | undefined;
@@ -1221,6 +1241,14 @@ export class TeamApiServer {
           encodeTeamProtocolV1CurrentEvent({ type: "queue-invalidated", botId: event.snapshot.botId }) ?? undefined;
         if (!queueInvalidation) continue;
         outgoing = queueInvalidation;
+      } else if (event.type === "conversation" && !connection.capabilities.has("routine-event-markers")) {
+        routineEventFilteredPayload ??=
+          encodeTeamProtocolV1CurrentEvent({
+            ...event,
+            snapshot: conversationSnapshotWithoutRoutineEvents(event.snapshot),
+          }) ?? undefined;
+        if (!routineEventFilteredPayload) continue;
+        outgoing = routineEventFilteredPayload;
       } else {
         payload ??= encodeTeamProtocolV1CurrentEvent(event) ?? undefined;
         if (!payload) continue;
@@ -1258,7 +1286,9 @@ export class TeamApiServer {
         acceptsCapabilityDeclaration
           ? []
           : TEAM_PROTOCOL_V1_CAPABILITIES.filter(
-              (capability) => supportsSnapshotTransport || capability !== "agent-runtime-snapshots",
+              (capability) =>
+                capability !== "routine-event-markers" &&
+                (supportsSnapshotTransport || capability !== "agent-runtime-snapshots"),
             ),
       ),
       includeConversationEvents: !supportsSnapshotTransport,
@@ -1580,6 +1610,42 @@ function unavailableSidebarLayout(): TeamApiSidebarLayout {
     }),
     on: () => undefined,
     off: () => undefined,
+  };
+}
+
+function requestCapabilities(request: import("node:http").IncomingMessage): Set<string> {
+  const value = firstHeaderValue(request.headers[TEAM_CAPABILITIES_HEADER.toLowerCase()]);
+  if (!value || value.length > 4_096) return new Set();
+  const capabilities = value.split(",").map((capability) => capability.trim());
+  if (capabilities.length > 64) return new Set();
+  return new Set(capabilities.filter(isTeamProtocolV1Capability));
+}
+
+function conversationSnapshotWithoutRoutineEvents(snapshot: ConversationSnapshot): ConversationSnapshot {
+  return {
+    ...snapshot,
+    messages: snapshot.messages.filter((message) => parseRoutineConversationEventItemType(message.itemType) === null),
+  };
+}
+
+function conversationWithoutRoutineEvents(conversation: ConversationWithReadState): ConversationWithReadState {
+  return {
+    ...conversation,
+    messages: conversation.messages.filter(
+      (message) => parseRoutineConversationEventItemType(message.itemType) === null,
+    ),
+  };
+}
+
+function conversationPageWithoutRoutineEvents(page: ConversationPage): ConversationPage {
+  return {
+    ...page,
+    messages: page.messages.filter((message) => parseRoutineConversationEventItemType(message.itemType) === null),
+    references: Object.fromEntries(
+      Object.entries(page.references).filter(
+        ([, message]) => parseRoutineConversationEventItemType(message.itemType) === null,
+      ),
+    ),
   };
 }
 

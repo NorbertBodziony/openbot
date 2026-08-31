@@ -300,6 +300,12 @@ export class BotStore {
     return bot.threadId;
   }
 
+  restoreThreadIdentity(id: string, threadId: string | null, updatedAt: string | null): void {
+    const bot = this.#requireBot(id);
+    bot.threadId = threadId;
+    bot.updatedAt = updatedAt;
+  }
+
   activeProviderSession(id: string): ProviderSession | null {
     const bot = this.#requireBot(id);
     if (!bot.threadId) return null;

@@ -2741,6 +2741,7 @@ describe.sequential("AgentService", () => {
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
     const bot = await store.getOrCreate("chief");
+    const initialBot = store.list().find((candidate) => candidate.id === bot.id);
     vi.spyOn(store.database, "persistConversation").mockImplementationOnce(() => {
       throw new Error("conversation persistence failed");
     });
@@ -2757,6 +2758,10 @@ describe.sequential("AgentService", () => {
     ).toThrow("conversation persistence failed");
     expect(service.listRoutines(bot.id)).toEqual([]);
     expect((await service.readConversation(bot.id)).messages).toEqual([]);
+    expect(store.list().find((candidate) => candidate.id === bot.id)).toMatchObject({
+      threadId: initialBot?.threadId ?? null,
+      updatedAt: initialBot?.updatedAt ?? null,
+    });
   });
 
   it("rejects invalid or cross-agent routine tool mutations", async () => {

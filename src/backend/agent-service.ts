@@ -4309,15 +4309,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     eventRoutine: (result: T) => Pick<Routine, "id" | "name">,
     turnId?: string,
   ): T {
-    const threadId = this.#store.ensureThreadIdNow(botId);
-    const nextSnapshot = structuredClone(this.#ensureSnapshot(botId, threadId));
-    nextSnapshot.threadId = threadId;
+    const previousBot = this.#requireKnownBot(botId);
+    const previousSnapshot = this.#snapshots.get(botId);
+    const previousSnapshotState = previousSnapshot ? structuredClone(previousSnapshot) : undefined;
     const database = this.#store.database;
     const ownsTransaction = !database.connection.isTransaction;
     if (ownsTransaction) database.connection.exec("BEGIN IMMEDIATE");
     let result: T;
     let persisted: ConversationSnapshot;
     try {
+      const threadId = this.#store.ensureThreadIdNow(botId);
+      const nextSnapshot = structuredClone(this.#ensureSnapshot(botId, threadId));
+      nextSnapshot.threadId = threadId;
       result = mutate();
       const routine = eventRoutine(result);
       const createdAt = new Date().toISOString();
@@ -4342,6 +4345,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (ownsTransaction) database.connection.exec("COMMIT");
     } catch (error) {
       if (ownsTransaction && database.connection.isTransaction) database.connection.exec("ROLLBACK");
+      if (previousBot.threadId === null) {
+        this.#store.restoreThreadIdentity(botId, previousBot.threadId, previousBot.updatedAt);
+      }
+      if (previousSnapshotState) this.#snapshots.set(botId, previousSnapshotState);
+      else this.#snapshots.delete(botId);
       throw error;
     }
     this.#snapshots.set(botId, persisted);

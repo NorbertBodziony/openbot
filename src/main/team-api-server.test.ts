@@ -14,9 +14,13 @@ import type {
   RoutineRun,
   TeamPresenceSnapshot,
 } from "@openbot/contracts/ipc";
-import { AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT } from "@openbot/contracts/ipc";
+import { AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT, routineConversationEventItemType } from "@openbot/contracts/ipc";
 import { isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
-import { TEAM_APP_VERSION_HEADER, TEAM_PROTOCOL_VERSION_HEADER } from "@openbot/contracts/team-protocol/v1";
+import {
+  TEAM_APP_VERSION_HEADER,
+  TEAM_CAPABILITIES_HEADER,
+  TEAM_PROTOCOL_VERSION_HEADER,
+} from "@openbot/contracts/team-protocol/v1";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpenBotDatabase } from "../backend/openbot-database";
 import { SidebarLayoutStore } from "../backend/sidebar-layout-store";
@@ -420,6 +424,39 @@ describe("TeamApiServer administration", () => {
       agentEvents.emit("event", { type: "runtime-snapshot", snapshot: createAgents().getRuntimeSnapshot() });
       agentEvents.emit("event", { type: "bots-changed", bots: [] });
       await expect(supportedEvent).resolves.toMatchObject({ type: "bots-changed" });
+
+      const conversationEvent = nextJsonEvent(socket);
+      agentEvents.emit("event", {
+        type: "conversation",
+        snapshot: {
+          botId: "chief",
+          threadId: "thread-chief",
+          activeTurnId: null,
+          revision: 2,
+          messages: [
+            {
+              id: "reply-1",
+              author: "assistant",
+              text: "Done",
+              createdAt: "2026-08-29T10:00:00.000Z",
+              status: "completed",
+            },
+            {
+              id: "routine-event-1",
+              author: "system",
+              source: "system",
+              text: "Morning brief",
+              createdAt: "2026-08-29T10:01:00.000Z",
+              status: "completed",
+              itemType: routineConversationEventItemType("created", "routine-1"),
+            },
+          ],
+        },
+      });
+      await expect(conversationEvent).resolves.toMatchObject({
+        type: "conversation",
+        snapshot: { messages: [expect.objectContaining({ id: "reply-1" })] },
+      });
     } finally {
       socket.close();
       await api.stop();
@@ -1204,6 +1241,15 @@ describe("TeamApiServer administration", () => {
           createdAt: "2026-08-19T10:00:00.000Z",
           status: "completed",
         },
+        {
+          id: "routine-event-1",
+          author: "system",
+          source: "system",
+          text: "Morning brief",
+          createdAt: "2026-08-19T10:01:00.000Z",
+          status: "completed",
+          itemType: routineConversationEventItemType("created", "routine-1"),
+        },
       ],
     };
     const createBot = vi.fn(
@@ -1265,6 +1311,16 @@ describe("TeamApiServer administration", () => {
       expect(createBot).toHaveBeenCalledWith(createInput);
       await expect(jsonRequest(base, "/v1/agents", { token: login.sessionToken })).resolves.toEqual(localBots);
       await expect(jsonRequest(base, "/v1/agents/chief/conversation", { token: login.sessionToken })).resolves.toEqual({
+        ...localConversation,
+        messages: [localConversation.messages[0]],
+        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
+      });
+      await expect(
+        jsonRequest(base, "/v1/agents/chief/conversation", {
+          token: login.sessionToken,
+          capabilities: ["routine-event-markers"],
+        }),
+      ).resolves.toEqual({
         ...localConversation,
         readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
       });
@@ -1579,13 +1635,14 @@ function nextJsonEvents(websocket: WebSocket, count: number): Promise<TestRealti
 async function jsonRequest<T>(
   base: string,
   path: string,
-  options: { method?: string; token?: string; body?: unknown } = {},
+  options: { method?: string; token?: string; body?: unknown; capabilities?: string[] } = {},
 ): Promise<T> {
   const response = await fetch(`${base}${path}`, {
     method: options.method ?? (options.body === undefined ? "GET" : "POST"),
     headers: {
       ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
       ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
+      ...(options.capabilities ? { [TEAM_CAPABILITIES_HEADER]: options.capabilities.join(",") } : {}),
     },
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
