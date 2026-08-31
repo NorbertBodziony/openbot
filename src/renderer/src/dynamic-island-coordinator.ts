@@ -6,6 +6,7 @@ import type {
   QueueSnapshot,
   ScopedAgentEvent,
 } from "@openbot/contracts/ipc";
+import { cleanAgentMessageText } from "./agent-message-text";
 import {
   countDynamicIslandAttention,
   createDynamicIslandPresentation,
@@ -20,6 +21,7 @@ type ServerRuntime = DynamicIslandPresentationInput & {
   lastRecordedMessageIds: Map<string, string>;
   receivedConversations: Set<string>;
   resolvedPrompts: Map<string, string>;
+  rawMessageBodies: Map<string, string>;
   receivedRuntimeSnapshot: boolean;
 };
 
@@ -61,16 +63,30 @@ export class DynamicIslandCoordinator {
     for (const botId of completedBots) if (!botIds.has(botId)) completedBots.delete(botId);
     for (const botId of lastRecordedMessageIds.keys()) if (!botIds.has(botId)) lastRecordedMessageIds.delete(botId);
     const receivedConversations = [...(previous?.receivedConversations ?? [])].filter((botId) => botIds.has(botId));
+    const liveMessages = compactLiveMessages(input.liveMessages);
+    const rawMessageBodies = new Map(previous?.rawMessageBodies);
+    const retainedMessageKeys = new Set<string>();
+    for (const [botId, messages] of Object.entries(liveMessages)) {
+      for (const message of messages) {
+        const key = dynamicIslandMessageKey(botId, message.id);
+        retainedMessageKeys.add(key);
+        if (!rawMessageBodies.has(key)) rawMessageBodies.set(key, message.body);
+      }
+    }
+    for (const key of rawMessageBodies.keys()) {
+      if (!retainedMessageKeys.has(key)) rawMessageBodies.delete(key);
+    }
     this.#servers.set(input.serverId, {
       ...input,
       pendingApprovals,
       pendingPrompts,
-      liveMessages: compactLiveMessages(input.liveMessages),
+      liveMessages,
       incomingMessageAnchors,
       completedBots,
       lastRecordedMessageIds,
       receivedConversations: new Set([...receivedConversations, ...Object.keys(input.liveMessages)]),
       resolvedPrompts,
+      rawMessageBodies,
       receivedRuntimeSnapshot: previous?.receivedRuntimeSnapshot ?? false,
     });
   }
@@ -94,6 +110,13 @@ export class DynamicIslandCoordinator {
         return;
       case "conversation": {
         runtime.activeTurns[event.snapshot.botId] = event.snapshot.activeTurnId;
+        deleteDynamicIslandMessageBodies(runtime.rawMessageBodies, event.snapshot.botId);
+        for (const message of event.snapshot.messages) {
+          const key = dynamicIslandMessageKey(event.snapshot.botId, message.id);
+          if (message.author !== "user" && message.status === "streaming") {
+            runtime.rawMessageBodies.set(key, message.text);
+          } else runtime.rawMessageBodies.delete(key);
+        }
         const messages = event.snapshot.messages.flatMap(toDynamicIslandMessage);
         const anchorId = runtime.incomingMessageAnchors.get(event.snapshot.botId);
         const receivedConversation = runtime.receivedConversations.has(event.snapshot.botId);
@@ -122,7 +145,12 @@ export class DynamicIslandCoordinator {
       case "conversation-delta": {
         const messages = runtime.liveMessages[event.botId] ?? [];
         const existing = messages.find((message) => message.id === event.messageId);
-        if (existing) existing.body += event.delta;
+        if (existing) {
+          const key = dynamicIslandMessageKey(event.botId, event.messageId);
+          const rawBody = (runtime.rawMessageBodies.get(key) ?? existing.body) + event.delta;
+          runtime.rawMessageBodies.set(key, rawBody);
+          existing.body = cleanAgentMessageText(rawBody);
+        }
         return;
       }
       case "queue-changed":
@@ -234,6 +262,7 @@ export class DynamicIslandCoordinator {
       lastRecordedMessageIds: new Map(),
       receivedConversations: new Set(),
       resolvedPrompts: new Map(),
+      rawMessageBodies: new Map(),
       receivedRuntimeSnapshot: false,
     };
     this.#servers.set(serverId, runtime);
@@ -265,6 +294,9 @@ export class DynamicIslandCoordinator {
     for (const botId of Object.keys(runtime.liveMessages)) {
       if (!botIds.has(botId)) delete runtime.liveMessages[botId];
     }
+    for (const key of runtime.rawMessageBodies.keys()) {
+      if (!botIds.has(key.slice(0, key.indexOf("\0")))) runtime.rawMessageBodies.delete(key);
+    }
   }
 
   #replaceRuntimeSnapshot(
@@ -275,11 +307,15 @@ export class DynamicIslandCoordinator {
   ): void {
     const liveMessages: Record<string, DynamicIslandMessageSource[]> = {};
     const incomingMessageAnchors = new Map(runtime.incomingMessageAnchors);
+    for (const botId of new Set(snapshot.latestMessages.map((message) => message.botId))) {
+      deleteDynamicIslandMessageBodies(runtime.rawMessageBodies, botId);
+    }
     for (const message of snapshot.latestMessages) {
+      runtime.rawMessageBodies.set(dynamicIslandMessageKey(message.botId, message.id), message.text);
       const converted = {
         id: message.id,
         author: "bot",
-        body: message.text,
+        body: cleanAgentMessageText(message.text),
         time: message.createdAt,
         createdAt: message.createdAt,
       };
@@ -319,6 +355,17 @@ export class DynamicIslandCoordinator {
     const nextRuntime = this.#runtime(serverId);
     nextRuntime.incomingMessageAnchors = incomingMessageAnchors;
     nextRuntime.receivedRuntimeSnapshot = true;
+  }
+}
+
+function dynamicIslandMessageKey(botId: string, messageId: string): string {
+  return `${botId}\0${messageId}`;
+}
+
+function deleteDynamicIslandMessageBodies(messages: Map<string, string>, botId: string): void {
+  const prefix = `${botId}\0`;
+  for (const key of messages.keys()) {
+    if (key.startsWith(prefix)) messages.delete(key);
   }
 }
 
@@ -416,5 +463,13 @@ function toDynamicIslandMessage(
   ) {
     return [];
   }
-  return [{ id: message.id, author: "bot", body: message.text, time: message.createdAt, createdAt: message.createdAt }];
+  return [
+    {
+      id: message.id,
+      author: "bot",
+      body: cleanAgentMessageText(message.text),
+      time: message.createdAt,
+      createdAt: message.createdAt,
+    },
+  ];
 }
