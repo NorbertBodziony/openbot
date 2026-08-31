@@ -1844,7 +1844,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.servers.join).not.toHaveBeenCalled();
   });
 
-  it("keeps the landing preview account static and omits browser and remote control", async () => {
+  it("shows the interactive account dock in the landing preview and omits browser and remote control", async () => {
     vi.mocked(window.openbot.auth.getState).mockResolvedValueOnce({
       status: "signed_in",
       user: {
@@ -1871,9 +1871,22 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App landingPreview />);
     await screen.findByRole("heading", { name: "Chief" });
 
-    expect(screen.queryByRole("button", { name: "Open account menu" })).not.toBeInTheDocument();
+    const usageButton = await screen.findByRole("button", { name: "Weekly usage, 59% left" });
+    await fireEvent.click(usageButton);
+    expect(screen.getByRole("dialog", { name: "Weekly usage" })).toBeInTheDocument();
+
+    const accountButton = screen.getByRole("button", { name: "Open account actions" });
+    await fireEvent.click(accountButton);
+    const accountDialog = screen.getByRole("dialog", { name: "Account actions" });
+    expect(accountDialog).toBeInTheDocument();
     expect(screen.getByText("Norbert")).toBeInTheDocument();
     expect(screen.getByText("norbertbodziony@gmail.com")).toBeInTheDocument();
+    expect(within(accountDialog).queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
+    await fireEvent.click(within(accountDialog).getByRole("button", { name: "Providers & permissions" }));
+    const permissionsDialog = await screen.findByRole("dialog", { name: "Providers & permissions" });
+    expect(within(permissionsDialog).queryByRole("button", { name: "Sign out" })).not.toBeInTheDocument();
+    await fireEvent.click(within(permissionsDialog).getByRole("button", { name: "Cancel" }));
+    expect(window.openbot.auth.logout).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "Open computer" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /remote control/iu })).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Add remote server" }));
