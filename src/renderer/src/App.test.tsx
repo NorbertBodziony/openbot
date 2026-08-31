@@ -2481,7 +2481,7 @@ describe("OpenBot connected desktop shell", () => {
     });
     render(() => <App />);
 
-    expect(await screen.findByText("OpenBot update available")).toBeInTheDocument();
+    expect(await screen.findByText("New update available")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open account actions" }));
     fireEvent.click(await screen.findByRole("button", { name: /Download update/ }));
     await waitFor(() => expect(window.openbot.update.download).toHaveBeenCalledOnce());
