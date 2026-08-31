@@ -167,6 +167,13 @@ describe("desktop analytics", () => {
       }),
     ).toEqual({ action: "delete", result: "failed", failure_code: "unknown" });
     expect(
+      sanitizeDesktopAnalyticsEvent("queue_action", {
+        action: "stop",
+        result: "failed",
+        failure_code: "stop_failed",
+      }),
+    ).toEqual({ action: "stop", result: "failed", failure_code: "stop_failed" });
+    expect(
       sanitizeDesktopAnalyticsEvent(
         "routine_action",
         Object.assign(

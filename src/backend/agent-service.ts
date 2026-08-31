@@ -348,6 +348,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #imageGenerationOperations = new Map<string, ImageGenerationOperation>();
   readonly #interruptedTurns = new Set<string>();
   readonly #ignoredTurns = new Set<string>();
+  readonly #stoppingTurns = new Set<string>();
   readonly #turnAssociations = new Map<string, Promise<void>>();
   readonly #drainingBots = new Set<string>();
   readonly #stoppingBots = new Set<string>();
@@ -761,7 +762,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const hasPendingWork = this.#mailbox
       .listQueue(botId)
       .deliveries.some((delivery) => ["queued", "starting", "running"].includes(delivery.status));
-    if (hasPendingWork || this.#snapshots.get(botId)?.activeTurnId) {
+    if (this.#stoppingBots.has(botId) || hasPendingWork || this.#snapshots.get(botId)?.activeTurnId) {
       throw new Error("Stop the agent and cancel its queued messages before deleting it.");
     }
 
@@ -961,6 +962,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#responseAttachmentCommands.clear();
     this.#interruptedTurns.clear();
     this.#ignoredTurns.clear();
+    this.#stoppingTurns.clear();
     this.#setStatus({ phase: "stopped", message: null });
   }
 
@@ -1161,25 +1163,59 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const snapshot = this.#ensureSnapshot(bot.id, bot.threadId);
       const session = this.#store.activeProviderSession(botId);
       const activeTurnId = snapshot.activeTurnId;
-      const pending = await this.#mailbox.stopPending(botId, "Stopped by the user.");
-      const turnIds = new Set(pending.turnIds);
+      const pendingDeliveries = this.#mailbox
+        .listQueue(botId)
+        .deliveries.filter((delivery) => ["queued", "starting", "running"].includes(delivery.status));
+      const activeDeliveries = pendingDeliveries.filter(
+        (delivery) => delivery.status === "starting" || delivery.status === "running",
+      );
+      if (activeDeliveries.some((delivery) => !delivery.turnId)) {
+        throw new Error("The agent is still starting. Try stopping it again after the turn starts.");
+      }
+      const turnIds = new Set(
+        activeDeliveries.map((delivery) => delivery.turnId).filter((turnId): turnId is string => Boolean(turnId)),
+      );
       if (activeTurnId) turnIds.add(activeTurnId);
+
+      const client = this.#clientForBot(bot);
+      if (turnIds.size > 0 && (!session || !client)) {
+        throw new Error("The provider is unavailable, so OpenBot could not confirm the stop.");
+      }
+
+      const stoppingTurnKeys = session ? [...turnIds].map((turnId) => `${session.externalSessionId}:${turnId}`) : [];
+      for (const key of stoppingTurnKeys) this.#stoppingTurns.add(key);
+      try {
+        if (session && client) {
+          for (const turnId of turnIds) {
+            await client.request(
+              "turn/interrupt",
+              { threadId: session.externalSessionId, turnId },
+              decodeRecordResponse,
+              2_000,
+            );
+          }
+        }
+      } catch (error) {
+        this.#emitError("force_stop_interrupt_failed", error, botId);
+        throw error;
+      } finally {
+        for (const key of stoppingTurnKeys) this.#stoppingTurns.delete(key);
+      }
 
       if (session) {
         for (const turnId of turnIds) {
           this.#ignoredTurns.add(`${session.externalSessionId}:${turnId}`);
           this.#interruptImageGenerations(botId, session.externalSessionId, turnId);
           this.#clearPendingRequestsForTurn(session.externalSessionId, turnId);
-          const client = this.#clientForBot(bot);
-          if (client) {
-            await client
-              .request("turn/interrupt", { threadId: session.externalSessionId, turnId }, decodeRecordResponse, 2_000)
-              .catch((error) => this.#emitError("force_stop_interrupt_failed", error, botId));
-          }
           this.#browser.endControl(bot.threadId ?? session.externalSessionId, turnId);
         }
       }
 
+      await this.#mailbox.stopPending(
+        botId,
+        "Stopped by the user.",
+        pendingDeliveries.map((delivery) => delivery.id),
+      );
       snapshot.activeTurnId = null;
       for (const message of snapshot.messages) {
         if (message.status !== "streaming") continue;
@@ -1202,6 +1238,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
     } finally {
       this.#stoppingBots.delete(botId);
+      if (this.#mailbox.nextQueued(botId)) this.#scheduleDrain(botId);
     }
   }
 
@@ -2141,6 +2178,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async #handleServerRequest(client: AgentClient, request: AppServerRequest): Promise<void> {
     try {
+      const threadId = getString(request.params, "threadId");
+      const turnId = getString(request.params, "turnId");
+      const turnKey = threadId && turnId ? `${threadId}:${turnId}` : null;
+      if (turnKey && (this.#stoppingTurns.has(turnKey) || this.#ignoredTurns.has(turnKey))) {
+        client.respondError(request.id, { code: -32000, message: "The turn was stopped." });
+        return;
+      }
       switch (request.method) {
         case "item/commandExecution/requestApproval":
           this.#surfaceApproval(client, request, "command");
@@ -2866,7 +2910,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         },
         decodeTurnResponse,
       );
-      await this.#mailbox.markRunning(delivery.id, response.turn.id);
       const currentDelivery = this.#mailbox.getDelivery(delivery.id);
       if (!currentDelivery || !["starting", "running"].includes(currentDelivery.delivery.status)) {
         this.#ignoredTurns.add(`${threadId}:${response.turn.id}`);
@@ -2875,6 +2918,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           .catch((error) => this.#emitError("orphaned_turn_interrupt_failed", error, bot.id));
         return;
       }
+      await this.#mailbox.markRunning(delivery.id, response.turn.id);
       snapshot.activeTurnId = response.turn.id;
       this.#syncDeliveryMessage(snapshot, delivery.id);
       this.#emitQueue(bot.id);

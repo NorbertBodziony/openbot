@@ -39,7 +39,7 @@ import type {
   UpdateStatus,
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
-import type { TeamProtocolV1Capability } from "@openbot/contracts/team-protocol/v1";
+import type { TeamProtocolCapability } from "@openbot/contracts/team-protocol/v2";
 import {
   createContext,
   createEffect,
@@ -153,8 +153,10 @@ const EMPTY_TEAM_PRESENCE: TeamPresenceSnapshot = {
   updatedAt: "",
 };
 
-function serverSupportsCapability(server: ServerSummary | undefined, capability: TeamProtocolV1Capability): boolean {
-  return server?.kind !== "remote" || !server.compatibility || server.compatibility.capabilities.includes(capability);
+function serverSupportsCapability(server: ServerSummary | undefined, capability: TeamProtocolCapability): boolean {
+  if (server?.kind !== "remote") return true;
+  if (capability === "agent-force-stop") return server.compatibility?.capabilities.includes(capability) ?? false;
+  return !server.compatibility || server.compatibility.capabilities.includes(capability);
 }
 
 type PromptEvent = Extract<AgentEvent, { type: "prompt" }>;
@@ -438,7 +440,7 @@ export function createAppController(props: AppProps = {}) {
     }
   }
 
-  function activeServerSupportsCapability(capability: TeamProtocolV1Capability): boolean {
+  function activeServerSupportsCapability(capability: TeamProtocolCapability): boolean {
     const server = servers().find((candidate) => candidate.active);
     return serverSupportsCapability(server, capability);
   }
@@ -2454,6 +2456,9 @@ export function createAppController(props: AppProps = {}) {
     if (!bot) return;
     const analytics = desktopAnalytics.scope();
     try {
+      if (!activeServerSupportsCapability("agent-force-stop")) {
+        throw new Error("Update OpenBot on the host to stop this agent.");
+      }
       await window.openbot.agent.stop({ botId: bot.id });
       analytics.track("queue_action", { action: "stop", result: "succeeded" });
     } catch (error) {

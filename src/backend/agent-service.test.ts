@@ -3263,7 +3263,7 @@ describe.sequential("AgentService", () => {
     expect(service.listBots().some((bot) => bot.id === "chief")).toBe(true);
   });
 
-  it("stops active and queued work before deleting when provider interruption fails", async () => {
+  it("rejects stop and preserves deletion guards when provider interruption fails", async () => {
     const { store, mailbox } = stores();
     const client = new FakeAgentClient("codex", "", false, true, {}, async (method) => {
       if (method === "turn/interrupt") throw new Error("Runtime unavailable");
@@ -3275,20 +3275,19 @@ describe.sequential("AgentService", () => {
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
     await service.sendMessage({ botId: "chief", text: "Run later" });
 
-    await service.stopAgent("chief");
+    await expect(service.stopAgent("chief")).rejects.toThrow("Runtime unavailable");
 
-    expect(service.listQueue("chief").deliveries.map((delivery) => delivery.status)).toEqual([
-      "interrupted",
-      "cancelled",
-    ]);
-    expect((await service.readConversation("chief")).activeTurnId).toBeNull();
+    expect(service.listQueue("chief").deliveries.map((delivery) => delivery.status)).toEqual(["running", "queued"]);
+    expect((await service.readConversation("chief")).activeTurnId).not.toBeNull();
     expect(client.requests.filter((request) => request.method === "turn/start")).toHaveLength(1);
 
-    await expect(service.deleteBot("chief")).resolves.toBeUndefined();
-    expect(service.listBots().some((bot) => bot.id === "chief")).toBe(false);
+    await expect(service.deleteBot("chief")).rejects.toThrow(
+      "Stop the agent and cancel its queued messages before deleting it.",
+    );
+    expect(service.listBots().some((bot) => bot.id === "chief")).toBe(true);
   });
 
-  it("does not reactivate a stopped delivery after a delayed turn start response", async () => {
+  it("rejects stop while a delivery has no confirmed provider turn", async () => {
     const client = new FakeAgentClient("codex", "", false, true, { "turn/start": 50 });
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", () => client);
@@ -3296,12 +3295,91 @@ describe.sequential("AgentService", () => {
 
     await service.sendMessage({ botId: "chief", text: "Start slowly" });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "starting");
-    await service.stopAgent("chief");
-    await waitFor(() => client.requests.some((request) => request.method === "turn/interrupt"));
+    await expect(service.stopAgent("chief")).rejects.toThrow("The agent is still starting");
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
 
+    expect((await service.readConversation("chief")).activeTurnId).not.toBeNull();
+    expect(client.requests.filter((request) => request.method === "turn/start")).toHaveLength(1);
+    await expect(service.deleteBot("chief")).rejects.toThrow(
+      "Stop the agent and cancel its queued messages before deleting it.",
+    );
+  });
+
+  it("interrupts a delayed provider turn when its delivery became terminal before start returned", async () => {
+    const client = new FakeAgentClient("codex", "", false, true, { "turn/start": 50 });
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", () => client);
+    await service.initialize();
+
+    await service.sendMessage({ botId: "chief", text: "Start slowly" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "starting");
+    const deliveryId = service.listQueue("chief").deliveries[0]?.id;
+    if (!deliveryId) throw new Error("The starting delivery was not created.");
+    await mailbox.recoverAsInterrupted(deliveryId, "Stopped concurrently.");
+
+    await waitFor(() => client.requests.some((request) => request.method === "turn/interrupt"));
     expect(service.listQueue("chief").deliveries[0]?.status).toBe("interrupted");
     expect((await service.readConversation("chief")).activeTurnId).toBeNull();
-    expect(client.requests.filter((request) => request.method === "turn/start")).toHaveLength(1);
+  });
+
+  it("rejects tool requests while a turn is stopping", async () => {
+    let releaseInterrupt: (() => void) | undefined;
+    const interruptPending = new Promise<void>((resolve) => {
+      releaseInterrupt = resolve;
+    });
+    const client = new FakeAgentClient("codex", "", false, true, {}, async (method) => {
+      if (method === "turn/interrupt") await interruptPending;
+    });
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", () => client);
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Keep working" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+    const conversation = await service.readConversation("chief");
+    if (!conversation.activeTurnId) throw new Error("The active turn did not start.");
+
+    const stopping = service.stopAgent("chief");
+    await waitFor(() => client.requests.some((request) => request.method === "turn/interrupt"));
+    const interruptRequest = client.requests.find((request) => request.method === "turn/interrupt");
+    const externalThreadId = stringParam(interruptRequest?.params, "threadId");
+    const result = await callOpenBotTool(
+      client,
+      externalThreadId,
+      "send_message",
+      { recipientBotIds: ["sales-outbound"], text: "This must not be sent.", paths: [] },
+      conversation.activeTurnId,
+    );
+
+    expect(result.error).toEqual({ code: -32000, message: "The turn was stopped." });
+    expect(service.listQueue("sales-outbound").deliveries).toHaveLength(0);
+    releaseInterrupt?.();
+    await stopping;
+  });
+
+  it("drains messages enqueued while stop is awaiting provider confirmation", async () => {
+    let releaseInterrupt: (() => void) | undefined;
+    const interruptPending = new Promise<void>((resolve) => {
+      releaseInterrupt = resolve;
+    });
+    const client = new FakeAgentClient("codex", "", false, true, {}, async (method) => {
+      if (method === "turn/interrupt") await interruptPending;
+    });
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), null, 30_000, "codex", () => client);
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Stop this" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+
+    const stopping = service.stopAgent("chief");
+    await waitFor(() => client.requests.some((request) => request.method === "turn/interrupt"));
+    const receipt = await service.sendMessage({ botId: "chief", text: "Run after stopping" });
+    releaseInterrupt?.();
+    await stopping;
+
+    await waitFor(() => service?.listQueue("chief").deliveries.some((delivery) => delivery.status === "running"));
+    expect(
+      service.listQueue("chief").deliveries.find((delivery) => delivery.id === receipt.deliveries[0]?.id)?.status,
+    ).toBe("running");
   });
   it("queues independent manual routine runs and renders routine metadata", async () => {
     const clients = new Map<AgentProvider, FakeAgentClient>();

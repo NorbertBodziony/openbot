@@ -788,12 +788,14 @@ export class MailboxStore {
     await this.#persist("delivery.cancelled");
   }
 
-  async stopPending(botId: string, reason: string): Promise<{ turnIds: string[] }> {
+  async stopPending(botId: string, reason: string, deliveryIds?: readonly string[]): Promise<{ turnIds: string[] }> {
     const previous = structuredClone(this.#state);
+    const selected = deliveryIds ? new Set(deliveryIds) : null;
     const turnIds = new Set<string>();
     let changed = false;
     for (const delivery of this.#state.deliveries) {
       if (delivery.recipientBotId !== botId) continue;
+      if (selected && !selected.has(delivery.id)) continue;
       if (delivery.status === "queued") {
         delivery.status = "cancelled";
         changed = true;

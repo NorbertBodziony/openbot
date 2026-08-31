@@ -77,23 +77,22 @@ import {
   isString,
 } from "@openbot/contracts/runtime-values";
 import {
+  TEAM_PROTOCOL_CAPABILITIES,
+  TEAM_PROTOCOL_MAXIMUM,
+  TEAM_PROTOCOL_MINIMUM,
+  type TeamProtocolCapability,
+  teamProtocolAdapter,
+  teamProtocolAdapterForWebSocket,
+} from "@openbot/contracts/team-protocol";
+import {
   decodeTeamProtocolSupportV1,
-  encodeTeamProtocolV1ClientEvent,
   highestCommonTeamProtocol,
   TEAM_APP_VERSION_HEADER,
   TEAM_PROTOCOL_V1,
-  TEAM_PROTOCOL_V1_CAPABILITIES,
-  TEAM_PROTOCOL_V1_WEBSOCKET,
   TEAM_PROTOCOL_VERSION_HEADER,
   type TeamProtocolSupportV1,
-  type TeamProtocolV1Capability,
   teamProtocolUpdateDirection,
 } from "@openbot/contracts/team-protocol/v1";
-import {
-  decodeTeamProtocolV1CurrentEvent,
-  decodeTeamProtocolV1CurrentHttpResponse,
-  encodeTeamProtocolV1CurrentHttpRequest,
-} from "@openbot/contracts/team-protocol/v1-adapter";
 import { fingerprint } from "./team-store";
 
 export { isValidRemoteApiUrl } from "@openbot/contracts/invite-links";
@@ -159,7 +158,7 @@ const REMOTE_EVENT_PAYLOAD_LIMIT = 1024 * 1024;
 const REMOTE_EVENT_INITIAL_BUFFER_LIMIT = 1_000;
 const REMOTE_EVENT_PROTOCOL = "openbot-events";
 const REMOTE_EVENT_SNAPSHOT_PROTOCOL = "openbot-events-v2";
-const LOCAL_TEAM_PROTOCOL = { minimum: TEAM_PROTOCOL_V1, maximum: TEAM_PROTOCOL_V1 } as const;
+const LOCAL_TEAM_PROTOCOL = { minimum: TEAM_PROTOCOL_MINIMUM, maximum: TEAM_PROTOCOL_MAXIMUM } as const;
 
 type ResponseDecoder<T> = (value: unknown) => T;
 
@@ -285,7 +284,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         continue;
       }
       if (this.#supportsRuntimeSnapshots(server.id, socket)) {
-        socket.send(encodeTeamProtocolV1ClientEvent({ type: "runtime-snapshot-request" }));
+        const adapter = teamProtocolAdapterForWebSocket(socket.protocol) ?? teamProtocolAdapter(TEAM_PROTOCOL_V1);
+        if (adapter) socket.send(adapter.encodeClientEvent({ type: "runtime-snapshot-request" }));
       } else {
         void this.#refreshAgentStateFallback(server.id).catch(() => undefined);
       }
@@ -624,7 +624,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   setTyping(input: SetTeamTypingInput, serverId = this.#state.activeServerId): void {
     const socket = this.#eventSockets.get(serverId);
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    socket.send(encodeTeamProtocolV1ClientEvent({ type: "team-typing", ...input }));
+    const adapter = teamProtocolAdapterForWebSocket(socket.protocol);
+    if (adapter) socket.send(adapter.encodeClientEvent({ type: "team-typing", ...input }));
   }
 
   listDirectThreads(serverId = this.#state.activeServerId): Promise<DirectThreadSummary[]> {
@@ -673,13 +674,16 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   setDirectTyping(input: DirectTypingInput, serverId = this.#state.activeServerId): void {
     const socket = this.#eventSockets.get(serverId);
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    socket.send(
-      encodeTeamProtocolV1ClientEvent({
-        type: "team-direct-typing",
-        recipientMemberId: input.memberId,
-        typing: input.typing,
-      }),
-    );
+    const adapter = teamProtocolAdapterForWebSocket(socket.protocol);
+    if (adapter) {
+      socket.send(
+        adapter.encodeClientEvent({
+          type: "team-direct-typing",
+          recipientMemberId: input.memberId,
+          typing: input.typing,
+        }),
+      );
+    }
   }
 
   createRemoteDesktopSession(serverId: string): Promise<RemoteDesktopSession> {
@@ -721,7 +725,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       },
       body: Buffer.from(bytes),
     });
-    const value = decodeTeamProtocolV1CurrentHttpResponse("POST", url.pathname, response.status, await response.json());
+    const adapter = teamProtocolAdapter(this.#compatibility.get(server.id)?.negotiatedProtocol ?? TEAM_PROTOCOL_V1);
+    if (!adapter) throw new Error("The negotiated Team API protocol is unavailable.");
+    const value = adapter.decodeHttpResponse("POST", url.pathname, response.status, await response.json());
     return addRemotePreviewUrls(decodeDraftAttachment(value), server.id);
   }
 
@@ -739,7 +745,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       headers,
       body: image ? Buffer.from(image.bytes) : undefined,
     });
-    const value = decodeTeamProtocolV1CurrentHttpResponse(
+    const adapter = teamProtocolAdapter(this.#compatibility.get(server.id)?.negotiatedProtocol ?? TEAM_PROTOCOL_V1);
+    if (!adapter) throw new Error("The negotiated Team API protocol is unavailable.");
+    const value = adapter.decodeHttpResponse(
       image ? "PUT" : "DELETE",
       url.pathname,
       response.status,
@@ -886,7 +894,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           throw new RemoteRequestError(response.status, `Remote server request failed (${response.status}).`);
         }
         try {
-          const value = decodeTeamProtocolV1CurrentHttpResponse(method, path, response.status, body);
+          const adapter = teamProtocolAdapter(compatibility.negotiatedProtocol ?? TEAM_PROTOCOL_V1);
+          if (!adapter) throw new Error("The negotiated Team API protocol is unavailable.");
+          const value = adapter.decodeHttpResponse(method, path, response.status, body);
           if (!isDynamicRecord(value) || !isString(value.error)) throw new Error("Invalid error envelope.");
           throw new RemoteRequestError(response.status, value.error, isString(value.code) ? value.code : null);
         } catch (error) {
@@ -989,7 +999,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       hostAppVersion: "0.0.0",
       hostProtocol: LOCAL_TEAM_PROTOCOL,
       negotiatedProtocol: TEAM_PROTOCOL_V1,
-      capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
+      capabilities: [...TEAM_PROTOCOL_CAPABILITIES],
     };
   }
 
@@ -1125,8 +1135,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       }
       const eventsUrl = new URL("/v1/events", server.apiUrl);
       eventsUrl.protocol = eventsUrl.protocol === "https:" ? "wss:" : "ws:";
+      const adapter = teamProtocolAdapter(compatibility.negotiatedProtocol ?? TEAM_PROTOCOL_V1);
+      if (this.#appVersion && !adapter) throw new Error("The negotiated Team API protocol is unavailable.");
       const socketProtocols = this.#appVersion
-        ? [TEAM_PROTOCOL_V1_WEBSOCKET, `openbot-token.${this.#token(server)}`]
+        ? [adapter?.websocketProtocol ?? "", `openbot-token.${this.#token(server)}`]
         : [REMOTE_EVENT_SNAPSHOT_PROTOCOL, REMOTE_EVENT_PROTOCOL, `openbot-token.${this.#token(server)}`];
       const socket = new WebSocket(eventsUrl, socketProtocols);
       let agentEventsReady = false;
@@ -1183,7 +1195,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
             return;
           }
           try {
-            const decoded = decodeTeamProtocolV1CurrentEvent(JSON.parse(message.data));
+            const decoded = (adapter ?? teamProtocolAdapter(TEAM_PROTOCOL_V1))?.decodeCurrentEvent(
+              JSON.parse(message.data),
+            );
+            if (!decoded) throw new Error("The negotiated Team API protocol is unavailable.");
             if (decoded.kind === "unknown") return;
             if (decoded.kind === "invalid") {
               protocolFailed = true;
@@ -1285,19 +1300,16 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   #sendEventScope(serverId: string, socket: WebSocket): void {
     if (socket.readyState !== WebSocket.OPEN) return;
-    if (
-      this.#appVersion
-        ? socket.protocol !== TEAM_PROTOCOL_V1_WEBSOCKET
-        : !this.#supportsRuntimeSnapshots(serverId, socket)
-    ) {
+    const adapter = teamProtocolAdapterForWebSocket(socket.protocol);
+    if (this.#appVersion ? !adapter : !this.#supportsRuntimeSnapshots(serverId, socket)) {
       return;
     }
     socket.send(
-      encodeTeamProtocolV1ClientEvent({
+      (adapter ?? teamProtocolAdapter(TEAM_PROTOCOL_V1))?.encodeClientEvent({
         type: "agent-event-scope",
         includeConversations: this.#state.activeServerId === serverId,
-        ...(this.#appVersion ? { capabilities: TEAM_PROTOCOL_V1_CAPABILITIES } : {}),
-      }),
+        ...(this.#appVersion ? { capabilities: TEAM_PROTOCOL_CAPABILITIES } : {}),
+      }) ?? "",
     );
   }
 
@@ -1361,7 +1373,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     }
   }
 
-  #supportsCapability(serverId: string, capability: TeamProtocolV1Capability): boolean {
+  #supportsCapability(serverId: string, capability: TeamProtocolCapability): boolean {
     return this.#compatibility.get(serverId)?.capabilities.includes(capability) ?? false;
   }
 
@@ -1531,6 +1543,8 @@ async function requestJson<T>(
   options: { method?: string; body?: unknown; token?: string; protocol?: number; appVersion?: string } = {},
 ): Promise<T> {
   const method = options.method ?? (options.body === undefined ? "GET" : "POST");
+  const adapter = teamProtocolAdapter(options.protocol ?? TEAM_PROTOCOL_V1);
+  if (!adapter) throw new Error("The negotiated Team API protocol is unavailable.");
   const response = await remoteFetch(new URL(path, apiUrl), {
     method,
     headers: {
@@ -1540,7 +1554,7 @@ async function requestJson<T>(
       ...(options.protocol ? { [TEAM_PROTOCOL_VERSION_HEADER]: String(options.protocol) } : {}),
       ...(options.appVersion ? { [TEAM_APP_VERSION_HEADER]: options.appVersion } : {}),
     },
-    body: options.body === undefined ? undefined : encodeTeamProtocolV1CurrentHttpRequest(method, path, options.body),
+    body: options.body === undefined ? undefined : adapter.encodeHttpRequest(method, path, options.body),
   });
   let value: unknown;
   if (response.status !== 204) {
@@ -1552,7 +1566,7 @@ async function requestJson<T>(
   }
   if (value !== undefined) {
     try {
-      value = decodeTeamProtocolV1CurrentHttpResponse(method, path, response.status, value);
+      value = adapter.decodeHttpResponse(method, path, response.status, value);
     } catch (error) {
       throw new RemoteProtocolError(
         "protocol_error",

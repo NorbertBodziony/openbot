@@ -6538,6 +6538,38 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(window.openbot.agent.stop).toHaveBeenCalledWith({ botId: "chief" }));
   });
 
+  it("disables force-stop on a remote host that does not advertise the capability", async () => {
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([
+      testServer("local", false),
+      {
+        ...testServer("remote-1", true),
+        compatibility: {
+          localAppVersion: "0.5.0",
+          hostAppVersion: "0.4.0",
+          localProtocol: { minimum: 1, maximum: 2 },
+          hostProtocol: { minimum: 1, maximum: 1 },
+          negotiatedProtocol: 1,
+          capabilities: [],
+        },
+      },
+    ]);
+    vi.mocked(window.openbot.agent.listQueue).mockResolvedValue({
+      botId: "chief",
+      deliveries: [queuedDelivery("running-delivery", "Stuck work", null, { status: "running", turnId: "turn-stuck" })],
+    });
+
+    render(() => <App />);
+    const stopButtons = await screen.findAllByRole("button", { name: "Stop agent" });
+    expect(stopButtons.length).toBeGreaterThan(0);
+    for (const button of stopButtons) {
+      expect(button).toBeDisabled();
+      expect(button).toHaveAttribute("title", "Update OpenBot on the host to stop this agent.");
+      await fireEvent.click(button);
+    }
+    expect(window.openbot.agent.stop).not.toHaveBeenCalled();
+    expect(window.openbot.agent.interrupt).not.toHaveBeenCalled();
+  });
+
   it("shows the server rail and opens the join flow", async () => {
     render(() => <App />);
     expect(await screen.findByRole("complementary", { name: "Servers" })).toBeInTheDocument();

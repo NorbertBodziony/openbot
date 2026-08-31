@@ -247,6 +247,7 @@ const SAFE_FAILURE_CODES = new Set([
   "identity_save_failed",
   "install_failed",
   "interrupt_failed",
+  "stop_failed",
   "invalid_email",
   "invalid_sign_in_code",
   "invite_create_failed",

@@ -539,6 +539,8 @@ function WorkspaceShell(props: {
           remoteDesktopSessionActive={Boolean(activeRemoteDesktopSession())}
           remoteDesktopVisible={remoteDesktopWorkspaceVisible()}
           remoteDesktopEnabled={!appProps.landingPreview && activeServerSupportsCapability("remote-desktop")}
+          forceStopEnabled={activeServerSupportsCapability("agent-force-stop")}
+          forceStopDisabledReason="Update OpenBot on the host to stop this agent."
           prompt={activePrompt()}
           approval={activeBot() ? pendingApprovals()[activeBot()?.id ?? ""] : undefined}
           browserTakeover={activeBrowserTakeover()}

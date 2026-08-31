@@ -156,8 +156,8 @@ describe("TeamApiServer compatibility", () => {
       expect(compatibility.status).toBe(200);
       await expect(compatibility.json()).resolves.toMatchObject({
         appVersion: "0.4.0",
-        protocol: { minimum: 1, maximum: 1 },
-        capabilities: expect.arrayContaining(["browser-control", "remote-desktop"]),
+        protocol: { minimum: 1, maximum: 2 },
+        capabilities: expect.arrayContaining(["browser-control", "remote-desktop", "agent-force-stop"]),
       });
 
       const missing = await fetch(`${base}/v1/identity`);
@@ -165,7 +165,7 @@ describe("TeamApiServer compatibility", () => {
       await expect(missing.json()).resolves.toMatchObject({ code: "client_update_required" });
 
       const newerClient = await fetch(`${base}/v1/identity`, {
-        headers: { [TEAM_PROTOCOL_VERSION_HEADER]: "2", [TEAM_APP_VERSION_HEADER]: "0.5.0" },
+        headers: { [TEAM_PROTOCOL_VERSION_HEADER]: "3", [TEAM_APP_VERSION_HEADER]: "0.5.0" },
       });
       expect(newerClient.status).toBe(426);
       await expect(newerClient.json()).resolves.toMatchObject({ code: "host_update_required" });
@@ -174,6 +174,42 @@ describe("TeamApiServer compatibility", () => {
         headers: { [TEAM_PROTOCOL_VERSION_HEADER]: "1", [TEAM_APP_VERSION_HEADER]: "0.3.9" },
       });
       expect(compatible.status).toBe(200);
+    } finally {
+      await api.stop();
+    }
+  });
+
+  it("dispatches force-stop only for protocol v2", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-force-stop-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const member = await store.login("owner", "correct horse battery");
+    const stopAgent = vi.fn(async () => undefined);
+    const api = new TeamApiServer({
+      appVersion: "0.5.0",
+      store,
+      agents: createAgents({ stopAgent }),
+      mailbox: createMailbox(),
+      browser: createBrowser(),
+    });
+    const port = await api.start();
+    const url = `http://127.0.0.1:${port}/v1/agents/chief/stop`;
+    const headers = (protocol: string) => ({
+      Authorization: `Bearer ${member.sessionToken}`,
+      [TEAM_PROTOCOL_VERSION_HEADER]: protocol,
+      [TEAM_APP_VERSION_HEADER]: "0.5.0",
+    });
+
+    try {
+      const v1 = await fetch(url, { method: "POST", headers: headers("1") });
+      expect(v1.status).toBe(404);
+      expect(stopAgent).not.toHaveBeenCalled();
+
+      const v2 = await fetch(url, { method: "POST", headers: headers("2") });
+      expect(v2.status).toBe(204);
+      expect(stopAgent).toHaveBeenCalledWith("chief");
     } finally {
       await api.stop();
     }

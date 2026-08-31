@@ -1031,12 +1031,18 @@ function registerIpcHandlers(
     const parsed = parseStopAgent(scoped.payload);
     return scoped.serverId === "local"
       ? service.stopAgent(parsed.botId)
-      : remoteServers.request(
-          `/v1/agents/${encodeURIComponent(parsed.botId)}/stop`,
-          { method: "POST" },
-          scoped.serverId,
-          decodeVoid,
-        );
+      : (() => {
+          const server = remoteServers.list().find((candidate) => candidate.id === scoped.serverId);
+          if (!server?.compatibility?.capabilities.includes("agent-force-stop")) {
+            throw new Error("Update OpenBot on the host to stop this agent.");
+          }
+          return remoteServers.request(
+            `/v1/agents/${encodeURIComponent(parsed.botId)}/stop`,
+            { method: "POST" },
+            scoped.serverId,
+            decodeVoid,
+          );
+        })();
   });
   handleTrusted(IPC_CHANNELS.agentRespondToPrompt, (input: unknown) => {
     const scoped = parseAgentRequest(input);

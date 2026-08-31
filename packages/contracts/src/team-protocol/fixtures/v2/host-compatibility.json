@@ -1,0 +1,13 @@
+{
+  "appVersion": "0.5.0",
+  "protocol": { "minimum": 1, "maximum": 2 },
+  "capabilities": [
+    "agent-runtime-snapshots",
+    "browser-control",
+    "conversation-pagination",
+    "direct-messages",
+    "remote-desktop",
+    "sidebar-layout",
+    "agent-force-stop"
+  ]
+}

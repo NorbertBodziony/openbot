@@ -239,6 +239,8 @@ export interface ConversationProps {
   onCloseBrowserTab: (tabId: string) => void | Promise<void>;
   onOpenRemoteDesktop: (serverId: string, trigger: HTMLElement) => Promise<void>;
   onOpenAgentSetup: () => Promise<void>;
+  forceStopEnabled?: boolean;
+  forceStopDisabledReason?: string;
   onStop: () => Promise<void>;
 }
 
@@ -2317,7 +2319,8 @@ export function ConversationHeader() {
             type="button"
             class="header-panel-toggle"
             aria-label={stoppingAgent() ? "Stopping agent" : "Stop agent"}
-            disabled={stoppingAgent()}
+            disabled={stoppingAgent() || props.forceStopEnabled === false}
+            title={props.forceStopEnabled === false ? props.forceStopDisabledReason : undefined}
             onClick={() => void stopAgent()}
           >
             <Show when={!stoppingAgent()} fallback={<LoaderCircle aria-hidden="true" />}>
@@ -3102,7 +3105,8 @@ export function ConversationComposer() {
                   type="button"
                   class="composer-stop-button"
                   aria-label={stoppingAgent() ? "Stopping agent" : "Stop agent"}
-                  disabled={stoppingAgent()}
+                  disabled={stoppingAgent() || props.forceStopEnabled === false}
+                  title={props.forceStopEnabled === false ? props.forceStopDisabledReason : undefined}
                   onClick={() => void stopAgent()}
                 >
                   <Show when={!stoppingAgent()} fallback={<LoaderCircle aria-hidden="true" />}>
