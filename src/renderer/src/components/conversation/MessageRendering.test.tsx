@@ -465,25 +465,42 @@ describe("MessageBody", () => {
     expect(onOpenWorkspaceFile).not.toHaveBeenCalled();
   });
 
-  it("keeps escaped local-file syntax literal inside code and HTML", () => {
+  it("keeps code and HTML literal while repairing a later file link", async () => {
     const inlineCode = String.raw`[inline]\(<C:\tmp\inline.txt>\)`;
     const fencedCode = String.raw`[fenced]\(<C:\tmp\fenced.txt>\)`;
     const html = String.raw`<code>[html]\(<C:\tmp\html.txt>\)</code>`;
+    const nestedCode = String.raw`[nested]\(<C:\tmp\nested.txt>\)`;
+    const reportPath = String.raw`C:\tmp\report.xlsx`;
+    const onOpenWorkspaceFile = vi.fn();
     const { container } = render(() => (
       <MarkdownMessageText
-        body={[`Inline: \`${inlineCode}\``, "", "```md", fencedCode, "```", "", html].join("\n")}
+        body={[
+          `Inline: \`${inlineCode}\``,
+          "",
+          "```md",
+          fencedCode,
+          "```",
+          "",
+          `${html} then ${String.raw`[report]\(<${reportPath}>\)`}`,
+          "",
+          `>     ${nestedCode}`,
+        ].join("\n")}
         bots={bots}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onOpenSharedFile={vi.fn()}
-        onOpenWorkspaceFile={vi.fn()}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
       />
     ));
 
     expect(container).toHaveTextContent(inlineCode);
     expect(container).toHaveTextContent(fencedCode);
     expect(container).toHaveTextContent(String.raw`<code>[html](<C:\tmp\html.txt>)</code>`);
-    expect(container.querySelector(".message-file-reference")).toBeNull();
+    expect(container).toHaveTextContent(nestedCode);
+    const reportLink = screen.getByRole("button", { name: "Open workspace file report.xlsx" });
+    expect(container.querySelectorAll(".message-file-reference")).toHaveLength(1);
+    await fireEvent.click(reportLink);
+    expect(onOpenWorkspaceFile).toHaveBeenCalledWith(reportPath);
   });
 
   it("turns filenames listed after a Shared directory into preview references", async () => {

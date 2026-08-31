@@ -42,6 +42,22 @@ interface MarkdownTokenByType {
   escape: Tokens.Escape;
 }
 
+const VOID_HTML_ELEMENTS = new Set([
+  "area",
+  "base",
+  "br",
+  "col",
+  "embed",
+  "hr",
+  "img",
+  "input",
+  "link",
+  "meta",
+  "source",
+  "track",
+  "wbr",
+]);
+
 function tokenIs<K extends keyof MarkdownTokenByType>(token: Token, type: K): token is MarkdownTokenByType[K] {
   return token.type === type;
 }
@@ -56,9 +72,7 @@ function headingLevel(depth: number): 1 | 2 | 3 | 4 | 5 | 6 {
 }
 
 export function MarkdownMessageText(props: MarkdownMessageTextProps) {
-  const tokens = createMemo(() =>
-    marked.lexer(normalizeEscapedLocalFileLinks(props.body), { breaks: true, gfm: true }),
-  );
+  const tokens = createMemo(() => marked.lexer(props.body, { breaks: true, gfm: true }));
   const contentProps = (): MarkdownContentProps => ({
     bots: props.bots,
     attachments: props.attachments,
@@ -89,9 +103,7 @@ export function MarkdownMessageText(props: MarkdownMessageTextProps) {
 export function MarkdownInlineText(
   props: Omit<MarkdownMessageTextProps, "showCitationFooter" | "streaming" | "streamingTail">,
 ) {
-  const tokens = createMemo(() =>
-    marked.Lexer.lexInline(normalizeEscapedLocalFileLinksInline(props.body), { breaks: true, gfm: true }),
-  );
+  const tokens = createMemo(() => marked.Lexer.lexInline(props.body, { breaks: true, gfm: true }));
   const contentProps = (): MarkdownContentProps => ({
     bots: props.bots,
     attachments: props.attachments,
@@ -295,7 +307,7 @@ function MarkdownTable(props: { token: Tokens.Table; content: MarkdownContentPro
 }
 
 function MarkdownInline(props: { tokens: Token[]; content: MarkdownContentProps; streamingTail?: boolean }) {
-  const tokens = createMemo(() => props.tokens);
+  const tokens = createMemo(() => repairEscapedLocalFileLinkTokens(props.tokens));
   const renderedTokens = createMemo(() => {
     const values = tokens();
     const lastTokenIndex = lastRenderableTokenIndex(values);
@@ -492,35 +504,34 @@ function sharedFileTarget(value: string): string | null {
     : null;
 }
 
-function normalizeEscapedLocalFileLinks(body: string): string {
-  if (!body.includes("\\(<")) return body;
-  return marked
-    .lexer(body, { breaks: true, gfm: true })
-    .map((token) =>
-      token.type === "code" || token.type === "html" ? token.raw : normalizeEscapedLocalFileLinksInline(token.raw),
-    )
-    .join("");
-}
-
-function normalizeEscapedLocalFileLinksInline(body: string): string {
-  if (!body.includes("\\(<")) return body;
-  const tokens = marked.Lexer.lexInline(body, { breaks: true, gfm: true });
-  if (tokens.some(markdownTokenContainsHtml)) return body;
-  let result = "";
-  let candidate = "";
-  const flushCandidate = () => {
-    result += normalizeEscapedLocalFileLinkCandidate(candidate);
-    candidate = "";
+function repairEscapedLocalFileLinkTokens(tokens: Token[]): Token[] {
+  const raw = tokens.map((token) => token.raw).join("");
+  if (!raw.includes("\\(<")) return tokens;
+  const result: Token[] = [];
+  let candidates: Token[] = [];
+  const openHtmlElements: string[] = [];
+  const flushCandidates = () => {
+    if (candidates.length === 0) return;
+    const source = candidates.map((token) => token.raw).join("");
+    const repaired = normalizeEscapedLocalFileLinkCandidate(source);
+    result.push(...(repaired === source ? candidates : marked.Lexer.lexInline(repaired, { breaks: true, gfm: true })));
+    candidates = [];
   };
   for (const token of tokens) {
-    if (!markdownTokenContainsProtectedLiteral(token)) {
-      candidate += token.raw;
+    if (token.type === "html") {
+      flushCandidates();
+      result.push(token);
+      updateOpenHtmlElements(openHtmlElements, token.raw);
       continue;
     }
-    flushCandidate();
-    result += token.raw;
+    if (openHtmlElements.length > 0 || markdownTokenContainsProtectedLiteral(token)) {
+      flushCandidates();
+      result.push(token);
+      continue;
+    }
+    candidates.push(token);
   }
-  flushCandidate();
+  flushCandidates();
   return result;
 }
 
@@ -533,13 +544,17 @@ function markdownTokenContainsProtectedLiteral(token: Token): boolean {
   return tokenIs(token, "text") && Boolean(token.tokens?.some(markdownTokenContainsProtectedLiteral));
 }
 
-function markdownTokenContainsHtml(token: Token): boolean {
-  if (token.type === "html") return true;
-  if (tokenIs(token, "strong")) return token.tokens.some(markdownTokenContainsHtml);
-  if (tokenIs(token, "em")) return token.tokens.some(markdownTokenContainsHtml);
-  if (tokenIs(token, "del")) return token.tokens.some(markdownTokenContainsHtml);
-  if (tokenIs(token, "link")) return token.tokens.some(markdownTokenContainsHtml);
-  return tokenIs(token, "text") && Boolean(token.tokens?.some(markdownTokenContainsHtml));
+function updateOpenHtmlElements(elements: string[], raw: string): void {
+  for (const match of raw.matchAll(/<\s*(\/?)\s*([A-Za-z][\w:-]*)\b[^>]*>/gu)) {
+    const name = (match[2] ?? "").toLowerCase();
+    if (!name) continue;
+    if (match[1]) {
+      const openingIndex = elements.lastIndexOf(name);
+      if (openingIndex >= 0) elements.splice(openingIndex);
+      continue;
+    }
+    if (!match[0].endsWith("/>") && !VOID_HTML_ELEMENTS.has(name)) elements.push(name);
+  }
 }
 
 function normalizeEscapedLocalFileLinkCandidate(value: string): string {
