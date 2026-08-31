@@ -9,7 +9,7 @@ import {
   encodeTeamProtocolV2FileChunk,
   encodeTeamProtocolV2Frame,
 } from "@openbot/contracts/team-protocol/v2";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { TeamWebRtcBridge } from "./team-webrtc-bridge";
 import { TeamWebRtcFileTransfer } from "./team-webrtc-file-transfer";
 
@@ -129,6 +129,31 @@ describe("TeamWebRtcFileTransfer", () => {
     expect(bridge.firstOffsetAfterReconnect).toBe(bridge.resumeAcknowledged);
     expect(bridge.acknowledged).toBeGreaterThan(0);
     await transfers.stop();
+  });
+
+  it("releases quota for file declarations that make no progress", async () => {
+    const bridge = new FakeBridge();
+    const transfers = new TeamWebRtcFileTransfer(bridge, await temporaryDirectory(), 10);
+    try {
+      const maximumFileBytes = 100 * 1024 * 1024;
+      bridge.emit("data", "host-1", "files", fileOpen("transfer-1", maximumFileBytes, "1".repeat(64)));
+      bridge.emit("data", "host-1", "files", fileOpen("transfer-2", maximumFileBytes, "2".repeat(64)));
+      bridge.emit("data", "host-1", "files", fileOpen("transfer-3", maximumFileBytes / 2, "3".repeat(64)));
+      await vi.waitFor(() => expect(bridge.sent).toHaveLength(3));
+
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      bridge.emit("data", "host-1", "files", fileOpen("transfer-4", maximumFileBytes, "4".repeat(64)));
+      await vi.waitFor(() => expect(bridge.sent).toHaveLength(4));
+
+      const last = bridge.sent.at(-1)?.data;
+      expect(isString(last) ? decodeTeamProtocolV2FileControlFrame(last) : null).toMatchObject({
+        type: "file-ack",
+        transferId: "transfer-4",
+        receivedThrough: 0,
+      });
+    } finally {
+      await transfers.stop();
+    }
   });
 });
 

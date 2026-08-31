@@ -15,6 +15,7 @@ import type { TeamWebRtcBridge } from "./team-webrtc-bridge";
 
 const FILE_CHUNK_BYTES = 60 * 1024;
 const ACK_INTERVAL_BYTES = 1024 * 1024;
+const TRANSFER_RESUME_MILLISECONDS = 10 * 60_000;
 
 interface IncomingTransfer {
   peerId: string;
@@ -53,9 +54,11 @@ export interface ReceivedWebRtcFile {
 export class TeamWebRtcFileTransfer {
   readonly #bridge: TeamWebRtcBridge;
   readonly #directory: string;
+  readonly #resumeMilliseconds: number;
   readonly #incoming = new Map<string, IncomingTransfer>();
   readonly #outgoing = new Map<string, OutgoingTransfer>();
   readonly #completed = new Map<string, ReceivedWebRtcFile>();
+  readonly #expirationTimers = new Map<string, ReturnType<typeof setTimeout>>();
   readonly #waiters = new Map<
     string,
     {
@@ -69,9 +72,10 @@ export class TeamWebRtcFileTransfer {
   readonly #stateWaiters = new Set<() => void>();
   #stopped = false;
 
-  constructor(bridge: TeamWebRtcBridge, directory: string) {
+  constructor(bridge: TeamWebRtcBridge, directory: string, resumeMilliseconds = TRANSFER_RESUME_MILLISECONDS) {
     this.#bridge = bridge;
     this.#directory = directory;
+    this.#resumeMilliseconds = resumeMilliseconds;
     bridge.on("data", this.#onData);
     bridge.on("connected", this.#onConnected);
     bridge.on("disconnected", this.#onDisconnected);
@@ -128,7 +132,9 @@ export class TeamWebRtcFileTransfer {
     try {
       return { bytes: new Uint8Array(await readFile(file.path)), name: file.name, mimeType: file.mimeType };
     } finally {
-      this.#completed.delete(transferKey(peerId, transferId));
+      const key = transferKey(peerId, transferId);
+      this.#clearExpiration(key);
+      this.#completed.delete(key);
       await rm(file.path, { force: true });
     }
   }
@@ -139,14 +145,18 @@ export class TeamWebRtcFileTransfer {
     this.#bridge.off("data", this.#onData);
     this.#bridge.off("connected", this.#onConnected);
     this.#bridge.off("disconnected", this.#onDisconnected);
+    for (const timer of this.#expirationTimers.values()) clearTimeout(timer);
+    this.#expirationTimers.clear();
     await this.#chain.catch(() => undefined);
     await Promise.all([...this.#incoming.values()].map((transfer) => transfer.file.close().catch(() => undefined)));
     await Promise.all(
       [...this.#incoming.values(), ...this.#completed.values()].map((transfer) => rm(transfer.path, { force: true })),
     );
+    for (const timer of this.#expirationTimers.values()) clearTimeout(timer);
     this.#incoming.clear();
     this.#outgoing.clear();
     this.#completed.clear();
+    this.#expirationTimers.clear();
   }
 
   readonly #onConnected = (peerId: string): void => {
@@ -212,6 +222,7 @@ export class TeamWebRtcFileTransfer {
           received: 0,
           lastAcknowledged: 0,
         });
+        this.#scheduleExpiration(key);
         await this.#bridge.send(
           peerId,
           "files",
@@ -259,6 +270,7 @@ export class TeamWebRtcFileTransfer {
           path: transfer.path,
         };
         this.#completed.set(key, completed);
+        this.#scheduleExpiration(key);
         const waiter = this.#waiters.get(key);
         if (waiter) {
           clearTimeout(waiter.timer);
@@ -283,6 +295,7 @@ export class TeamWebRtcFileTransfer {
     }
     await transfer.file.write(chunk.bytes, 0, chunk.bytes.byteLength, chunk.offset);
     transfer.received += chunk.bytes.byteLength;
+    this.#scheduleExpiration(key);
     if (transfer.received === transfer.size || transfer.received - transfer.lastAcknowledged >= ACK_INTERVAL_BYTES) {
       transfer.lastAcknowledged = transfer.received;
       await this.#bridge.send(
@@ -299,11 +312,17 @@ export class TeamWebRtcFileTransfer {
   }
 
   async #cancel(key: string, error: Error): Promise<void> {
+    this.#clearExpiration(key);
     const transfer = this.#incoming.get(key);
     if (transfer) {
       this.#incoming.delete(key);
       await transfer.file.close().catch(() => undefined);
       await rm(transfer.path, { force: true });
+    }
+    const completed = this.#completed.get(key);
+    if (completed) {
+      this.#completed.delete(key);
+      await rm(completed.path, { force: true });
     }
     const waiter = this.#waiters.get(key);
     if (waiter) {
@@ -332,7 +351,7 @@ export class TeamWebRtcFileTransfer {
   }
 
   async #sendWithResume(transfer: OutgoingTransfer): Promise<void> {
-    const deadline = Date.now() + 10 * 60_000;
+    const deadline = Date.now() + this.#resumeMilliseconds;
     while (Date.now() < deadline) {
       if (transfer.cancelled) throw transfer.cancelled;
       await this.#waitUntil(() => this.#connectedPeers.has(transfer.peerId), deadline);
@@ -416,6 +435,43 @@ export class TeamWebRtcFileTransfer {
 
   #notifyStateChange(): void {
     for (const waiter of [...this.#stateWaiters]) waiter();
+  }
+
+  #scheduleExpiration(key: string): void {
+    this.#clearExpiration(key);
+    const timer = setTimeout(() => {
+      this.#expirationTimers.delete(key);
+      this.#chain = this.#chain.then(() => this.#expire(key)).catch(() => undefined);
+    }, this.#resumeMilliseconds);
+    timer.unref?.();
+    this.#expirationTimers.set(key, timer);
+  }
+
+  #clearExpiration(key: string): void {
+    const timer = this.#expirationTimers.get(key);
+    if (timer) clearTimeout(timer);
+    this.#expirationTimers.delete(key);
+  }
+
+  async #expire(key: string): Promise<void> {
+    const error = new Error("The WebRTC file transfer resume deadline expired.");
+    const transfer = this.#incoming.get(key);
+    if (transfer) {
+      this.#incoming.delete(key);
+      await transfer.file.close().catch(() => undefined);
+      await rm(transfer.path, { force: true });
+    }
+    const completed = this.#completed.get(key);
+    if (completed) {
+      this.#completed.delete(key);
+      await rm(completed.path, { force: true });
+    }
+    const waiter = this.#waiters.get(key);
+    if (waiter) {
+      clearTimeout(waiter.timer);
+      this.#waiters.delete(key);
+      waiter.reject(error);
+    }
   }
 }
 

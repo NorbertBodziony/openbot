@@ -84,6 +84,11 @@ describe("SignalService", () => {
     expect(host.messages.some((message) => message.includes('"type":"disconnect"'))).toBe(true);
     expect(host.messages.at(-1)).toContain('"code":"session_revoked"');
     expect(host.closed).toBe(true);
+
+    const staleHost = socket("stale-host");
+    await hello(service, staleHost, "stale-host-ticket", "host");
+    expect(staleHost.messages.at(-1)).toContain('"code":"authentication_required"');
+    expect(staleHost.closed).toBe(true);
   });
 
   it("does not let an owner client ticket impersonate the host", async () => {
@@ -148,6 +153,7 @@ function fakeTokens() {
   return {
     verifyTicket: async (token: string) => {
       if (token === "host-ticket") return claims("host", "host-jti");
+      if (token === "stale-host-ticket") return claims("host", "stale-host-jti");
       if (token === "client-ticket") return claims("member", "client-jti");
       if (token === "second-client-ticket") return claims("member", "second-client-jti", "second-client-session");
       if (token === "owner-ticket") return claims("owner", "owner-jti");

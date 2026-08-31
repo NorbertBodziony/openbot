@@ -235,7 +235,7 @@ export class SignalService {
         usedInitialTicket = false;
         claims = await this.#tokens.verifyResumeToken(message.token);
       }
-      if (claims.role !== "host" && (this.#revokedEpochs.get(claims.hostId) ?? 0) > claims.authEpoch) {
+      if ((this.#revokedEpochs.get(claims.hostId) ?? 0) > claims.authEpoch) {
         throw new Error("Revoked ticket.");
       }
       if (claims.role !== "host" && this.#revokedSessions.has(claims.sessionId)) throw new Error("Ended session.");

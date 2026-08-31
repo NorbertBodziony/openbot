@@ -406,6 +406,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
   readonly #onDisconnected = (hostId: string): void => {
     const active = this.#active.get(hostId);
     if (active) active.connected = false;
+    this.#lastEventSequence.delete(hostId);
     for (const [requestId, pending] of this.#pending) {
       if (pending.hostId !== hostId) continue;
       clearTimeout(pending.timer);

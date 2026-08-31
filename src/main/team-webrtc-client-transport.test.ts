@@ -51,6 +51,7 @@ describe("TeamWebRtcClientTransport", () => {
     });
 
     await transport.connect("host-1");
+    bridge.emit("data", "host-1", "events", JSON.stringify({ version: 2, type: "event", sequence: 1, payload: null }));
     bridge.emit("disconnected", "host-1");
     await transport.connect("host-1");
 
@@ -58,6 +59,11 @@ describe("TeamWebRtcClientTransport", () => {
     expect(issueTicket).toHaveBeenCalledTimes(2);
     expect(issueTicket).toHaveBeenNthCalledWith(2, "session-1");
     expect(endSession).not.toHaveBeenCalled();
+    expect(bridge.send).toHaveBeenLastCalledWith(
+      "host-1",
+      "events",
+      JSON.stringify({ version: 2, type: "event-ack", throughSequence: 0 }),
+    );
     await transport.stop();
   });
 
