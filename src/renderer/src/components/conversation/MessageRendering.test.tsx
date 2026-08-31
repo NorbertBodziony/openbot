@@ -655,6 +655,36 @@ describe("MessageBody", () => {
     expect(screen.getByText("const answer = 4")).toBeInTheDocument();
   });
 
+  it("hides an incomplete marker in the final cell of a nested streaming table", async () => {
+    const [body, setBody] = createSignal("> | A | B |\n> | --- | --- |\n> | x | **bold");
+    const [streaming, setStreaming] = createSignal(true);
+    const { container } = render(() => (
+      <MessageBody
+        message={{
+          id: "message-streaming-nested-table",
+          author: "bot",
+          body: body(),
+          time: "10:00",
+          streaming: streaming(),
+        }}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(container).toHaveTextContent("bold");
+    expect(container).not.toHaveTextContent("**");
+
+    setBody("> | A | B |\n> | --- | --- |\n> | x | **bold**");
+    setStreaming(false);
+
+    await waitFor(() => expect(screen.getByText("bold").tagName).toBe("STRONG"));
+  });
+
   it("keeps Markdown tables in user messages as plain text", () => {
     render(() => (
       <MessageBody

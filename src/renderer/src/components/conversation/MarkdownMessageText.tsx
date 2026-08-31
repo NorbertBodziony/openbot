@@ -201,7 +201,7 @@ function MarkdownBlock(props: {
     }
     case "table": {
       if (!tokenIs(token, "table")) return token.raw;
-      return <MarkdownTable token={token} content={props.content} />;
+      return <MarkdownTable token={token} content={props.content} streaming={props.streaming} />;
     }
     case "hr":
       return <hr />;
@@ -282,7 +282,7 @@ function MarkdownList(props: {
   );
 }
 
-function MarkdownTable(props: { token: Tokens.Table; content: MarkdownContentProps }) {
+function MarkdownTable(props: { token: Tokens.Table; content: MarkdownContentProps; streaming?: boolean }) {
   const headers = createMemo(() => props.token.header);
   const rows = createMemo(() => props.token.rows);
   return (
@@ -291,9 +291,13 @@ function MarkdownTable(props: { token: Tokens.Table; content: MarkdownContentPro
         <thead>
           <tr>
             <For each={headers()}>
-              {(cell) => (
+              {(cell, index) => (
                 <th scope="col" data-align={cell.align ?? "left"}>
-                  <MarkdownInline tokens={cell.tokens} content={props.content} />
+                  <MarkdownInline
+                    tokens={cell.tokens}
+                    content={props.content}
+                    streaming={props.streaming === true && rows().length === 0 && index() === headers().length - 1}
+                  />
                 </th>
               )}
             </For>
@@ -301,12 +305,18 @@ function MarkdownTable(props: { token: Tokens.Table; content: MarkdownContentPro
         </thead>
         <tbody>
           <For each={rows()}>
-            {(row) => (
+            {(row, rowIndex) => (
               <tr>
                 <For each={row}>
-                  {(cell) => (
+                  {(cell, cellIndex) => (
                     <td data-align={cell.align ?? "left"}>
-                      <MarkdownInline tokens={cell.tokens} content={props.content} />
+                      <MarkdownInline
+                        tokens={cell.tokens}
+                        content={props.content}
+                        streaming={
+                          props.streaming === true && rowIndex() === rows().length - 1 && cellIndex() === row.length - 1
+                        }
+                      />
                     </td>
                   )}
                 </For>
