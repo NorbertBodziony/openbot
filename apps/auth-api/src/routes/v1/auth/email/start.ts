@@ -18,7 +18,10 @@ export const Route = createFileRoute("/v1/auth/email/start")({
           if (!isString(body.email)) {
             return apiError(400, "invalid_email", "Enter a valid email address.");
           }
-          return json(await requestAuthService().startEmailSignIn(body.email, requestSourceIp(request)));
+          const idempotencyKey = request.headers.get("Idempotency-Key") ?? undefined;
+          return json(
+            await requestAuthService().startEmailSignIn(body.email, requestSourceIp(request), idempotencyKey),
+          );
         } catch (error) {
           if (error instanceof SyntaxError) {
             return apiError(400, "invalid_json", "The request body is invalid.");
