@@ -330,6 +330,14 @@ export class HostedSiteService {
     }
     if (!request.body) throw new HostedSiteInputError(400, "missing_file", "The file body is missing.");
     const key = assetKey(deployment.site_id, deployment.id, file.path);
+    const uploaded = await this.database
+      .prepare("SELECT size, mime_type FROM site_upload_files WHERE deployment_id = ? AND path = ?")
+      .bind(deployment.id, file.path)
+      .first<{ size: number; mime_type: string }>();
+    if (uploaded?.size === file.size && uploaded.mime_type === file.mimeType) {
+      const stored = await this.bucket.head(key);
+      if (stored?.size === file.size && stored.httpMetadata?.contentType === file.mimeType) return;
+    }
     const claimTime = this.now();
     const uploadClaim = await this.database
       .prepare(

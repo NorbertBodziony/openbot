@@ -257,20 +257,21 @@ describe("hosted site control plane", () => {
     expect(fixture.bucket.keys()).not.toContain(`sites/${upload.site.id}/deployments/${upload.uploadId}/index.html`);
   });
 
-  it("does not activate while a duplicate upload can still mutate the asset", async () => {
+  it("does not activate while a file upload can still mutate the asset", async () => {
     const fixture = serviceFixture();
-    const upload = await fixture.service.createUpload("alice", uploadRequest(), "duplicate-file-upload");
-    await uploadIndex(fixture.service, "alice", upload.uploadId);
+    const upload = await fixture.service.createUpload("alice", uploadRequest(), "active-file-upload");
     const asset = `sites/${upload.site.id}/deployments/${upload.uploadId}/index.html`;
+    await uploadIndex(fixture.service, "alice", upload.uploadId);
+    await fixture.bucket.delete(asset);
     const pause = fixture.bucket.pauseNextPutContaining(asset);
-    const duplicateUpload = uploadIndex(fixture.service, "alice", upload.uploadId);
+    const fileUpload = uploadIndex(fixture.service, "alice", upload.uploadId);
     await pause.started;
 
     await expect(
       fixture.service.activate("alice", upload.uploadId, "activate-during-file-upload"),
     ).rejects.toMatchObject({ code: "upload_in_progress" });
     pause.resume();
-    await duplicateUpload;
+    await fileUpload;
 
     await expect(
       fixture.service.activate("alice", upload.uploadId, "activate-after-file-upload"),
@@ -302,7 +303,21 @@ describe("hosted site control plane", () => {
     await Promise.all([firstUpload, secondUpload]);
   });
 
-  it("bounds repeated upload bytes within one upload session", async () => {
+  it("does not consume retry claims for an already completed file", async () => {
+    const fixture = serviceFixture();
+    const upload = await fixture.service.createUpload("alice", uploadRequest(), "completed-file-retry");
+
+    await uploadIndex(fixture.service, "alice", upload.uploadId);
+    await uploadIndex(fixture.service, "alice", upload.uploadId);
+
+    const deployment = await fixture.database
+      .prepare("SELECT upload_claims FROM site_deployments WHERE id = ?")
+      .bind(upload.uploadId)
+      .first<{ upload_claims: number }>();
+    expect(deployment?.upload_claims).toBe(1);
+  });
+
+  it("bounds failed upload bytes within one upload session", async () => {
     const fixture = serviceFixture();
     const content = "x".repeat(HOSTED_SITE_LIMITS.fileBytes);
     const upload = await fixture.service.createUpload(
@@ -322,8 +337,11 @@ describe("hosted site control plane", () => {
         }),
       );
 
-    await put();
-    await put();
+    const asset = `sites/${upload.site.id}/deployments/${upload.uploadId}/index.html`;
+    fixture.bucket.failNextPutContaining(asset);
+    await expect(put()).rejects.toThrow("Injected R2 put failure");
+    fixture.bucket.failNextPutContaining(asset);
+    await expect(put()).rejects.toThrow("Injected R2 put failure");
     await expect(put()).rejects.toMatchObject({ code: "upload_rate_limit" });
   });
 

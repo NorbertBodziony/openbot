@@ -41,6 +41,7 @@ describe("site router", () => {
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(response.headers.get("Set-Cookie")).toBeNull();
     expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(response.headers.get("Content-Security-Policy")).toBe("worker-src 'none'");
   });
 
   it("returns 410 for expired and deleted routes", async () => {
