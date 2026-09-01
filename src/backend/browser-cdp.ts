@@ -90,8 +90,8 @@ export class BrowserCdpEngine {
 
   constructor(contents: WebContents) {
     this.#contents = contents;
-    contents.on("did-start-navigation", () => {
-      this.#navigationGeneration += 1;
+    contents.on("did-start-navigation", (details) => {
+      if (details.isMainFrame) this.#navigationGeneration += 1;
       this.#targets.clear();
       this.#lastSnapshot = null;
     });
@@ -1313,8 +1313,8 @@ function actionableNodesExpression(limit: number): string {
       if (node.nodeType !== 1 || node.hidden || node.closest('[hidden],[inert],[aria-hidden="true"]')) return false;
       const explicitRole = (node.getAttribute('role') || '').trim().split(/\\s+/)[0].toLowerCase();
       const tag = node.localName;
-      const semantic = tag === 'button' || tag === 'summary' || tag === 'a' || tag === 'select' ||
-        tag === 'textarea' || (tag === 'input' && node.type !== 'hidden') || node.isContentEditable;
+      const semantic = tag === 'button' || tag === 'summary' || (tag === 'a' && node.hasAttribute('href')) ||
+        tag === 'select' || tag === 'textarea' || (tag === 'input' && node.type !== 'hidden') || node.isContentEditable;
       if (!semantic && !roles.has(explicitRole)) return false;
       return node.getClientRects().length > 0;
     };

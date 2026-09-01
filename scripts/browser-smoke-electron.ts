@@ -326,6 +326,22 @@ async function main(): Promise<void> {
     if (!sameOriginTyped.success || sameOriginValue !== "ab") {
       throw new Error(`V2 same-origin iframe typing failed: ${toolError(sameOriginTyped)}`);
     }
+    await v2Contents.executeJavaScript(`document.querySelector('iframe[title="Same origin frame"]').remove()`, true);
+    await v2Contents.executeJavaScript(
+      `(() => {
+        const container = document.createElement('div');
+        container.dataset.anchorNoise = '';
+        container.innerHTML = Array.from({ length: 250 }, () => '<a>Not a link</a>').join('') +
+          '<button aria-label="Action after anchor noise">Action after anchor noise</button>';
+        document.body.appendChild(container);
+      })()`,
+      true,
+    );
+    const anchorNoiseSnapshot = await browser.snapshot(v2Tab.id);
+    if (!anchorNoiseSnapshot.elements.some((element) => element.name === "Action after anchor noise")) {
+      throw new Error("V2 non-link anchors consumed the actionable-element limit.");
+    }
+    await v2Contents.executeJavaScript(`document.querySelector('[data-anchor-noise]').remove()`, true);
     const shadowClick = await callBrowserTool(browser, "click", {
       tabId: v2Tab.id,
       target: { kind: "role", role: "button", name: "Shadow action", exact: true },
