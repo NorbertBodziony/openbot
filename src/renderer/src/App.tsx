@@ -39,8 +39,8 @@ import type {
   UpdateStatus,
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
-import { parseRoutineConversationEventItemType } from "@openbot/contracts/ipc";
-import type { TeamProtocolV1Capability } from "@openbot/contracts/team-protocol/v1";
+import { ROUTINE_EVENT_ITEM_TYPE_PREFIX, ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX } from "@openbot/contracts/ipc";
+import type { TeamProtocolV3Capability } from "@openbot/contracts/team-protocol/v3";
 import {
   createContext,
   createEffect,
@@ -155,7 +155,10 @@ const EMPTY_TEAM_PRESENCE: TeamPresenceSnapshot = {
   updatedAt: "",
 };
 
-function serverSupportsCapability(server: ServerSummary | undefined, capability: TeamProtocolV1Capability): boolean {
+function serverSupportsCapability(server: ServerSummary | undefined, capability: TeamProtocolV3Capability): boolean {
+  if (capability === "agent-duplication" && server?.kind === "remote") {
+    return server.compatibility?.capabilities.includes(capability) === true;
+  }
   return server?.kind !== "remote" || !server.compatibility || server.compatibility.capabilities.includes(capability);
 }
 
@@ -163,7 +166,10 @@ type PromptEvent = Extract<AgentEvent, { type: "prompt" }>;
 type BrowserTakeoverEvent = Extract<AgentEvent, { type: "browser-takeover-requested" }>;
 
 function isRoutineEventItem(message: { itemType?: string }): boolean {
-  return parseRoutineConversationEventItemType(message.itemType) !== null;
+  return (
+    message.itemType?.startsWith(ROUTINE_EVENT_ITEM_TYPE_PREFIX) === true ||
+    message.itemType?.startsWith(ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX) === true
+  );
 }
 
 function preserveKnownAgentUnread(
@@ -311,6 +317,7 @@ interface AppProps {
 export function createAppController(props: AppProps = {}) {
   const peopleEnabled = props.peopleEnabled === true;
   const [botList, setBotList] = createSignal<BotProfile[]>([]);
+  const [duplicatingBotIds, setDuplicatingBotIds] = createSignal<Set<string>>(new Set());
   const [modelOptions, setModelOptions] = createSignal<AgentModelOption[]>([]);
   const [activeBotId, setActiveBotId] = createSignal("");
   const [appFocused, setAppFocused] = createSignal(document.hasFocus());
@@ -333,6 +340,9 @@ export function createAppController(props: AppProps = {}) {
   const [conversationReads, setConversationReads] = createSignal<Record<string, ConversationReadState>>({});
   const [recentReplies, setRecentReplies] = createSignal<Record<string, boolean>>({});
   const [queues, setQueues] = createSignal<Record<string, QueueSnapshot>>({});
+  const [routineIdsByConversation, setRoutineIdsByConversation] = createSignal<Record<string, string[] | undefined>>(
+    {},
+  );
   const [browserTabs, setBrowserTabs] = createSignal<BrowserTab[]>([]);
   const [activeBrowserTabId, setActiveBrowserTabId] = createSignal<string | null>(null);
   let browserChangeRevision = 0;
@@ -437,6 +447,7 @@ export function createAppController(props: AppProps = {}) {
   const conversationReadOperations = new Map<string, Promise<void>>();
   const directConversationReadOperations = new Map<string, Promise<void>>();
   const queueSnapshotRequests = new Map<string, number>();
+  const routineSnapshotRequests = new Map<string, number>();
   const completedTurnByBot = new Map<string, string>();
   const pendingProviderConnections = new Map<AgentProviderId, ReturnType<typeof desktopAnalytics.scope>>();
   const dynamicIslandCoordinator = new DynamicIslandCoordinator();
@@ -499,7 +510,7 @@ export function createAppController(props: AppProps = {}) {
     }
   }
 
-  function activeServerSupportsCapability(capability: TeamProtocolV1Capability): boolean {
+  function activeServerSupportsCapability(capability: TeamProtocolV3Capability): boolean {
     const server = servers().find((candidate) => candidate.active);
     return serverSupportsCapability(server, capability);
   }
@@ -1037,6 +1048,27 @@ export function createAppController(props: AppProps = {}) {
     },
   );
 
+  function refreshRoutineIds(botId: string, serverId: string): void {
+    const key = agentConversationKey(serverId, botId);
+    const request = (routineSnapshotRequests.get(key) ?? 0) + 1;
+    routineSnapshotRequests.set(key, request);
+    setRoutineIdsByConversation((current) => ({ ...current, [key]: undefined }));
+    void window.openbot.agent
+      .listRoutines(botId)
+      .then((routines) => {
+        if (routineSnapshotRequests.get(key) !== request) return;
+        setRoutineIdsByConversation((current) => ({ ...current, [key]: routines.map((routine) => routine.id) }));
+      })
+      .catch(() => undefined);
+  }
+
+  createEffect(
+    () => ({ botId: activeBotId(), agentPhase: agentStatus().phase, serverId: activeServerSidebarKey() }),
+    ({ botId, serverId }) => {
+      if (botId) refreshRoutineIds(botId, serverId);
+    },
+  );
+
   function handleAgentEvent(event: AgentEvent) {
     switch (event.type) {
       case "status":
@@ -1098,6 +1130,9 @@ export function createAppController(props: AppProps = {}) {
           ...current,
           [event.snapshot.botId]: event.snapshot,
         }));
+        return;
+      case "routines-changed":
+        refreshRoutineIds(event.botId, activeServerSidebarKey());
         return;
       case "browser-changed":
         if (props.landingPreview) return;
@@ -1504,7 +1539,7 @@ export function createAppController(props: AppProps = {}) {
     setLiveMessages((current) => {
       const previous = current[botId] ?? [];
       const previousById = new Map(previous.map((message) => [message.id, message]));
-      const allMappedMessages = toBotMessages(snapshot.messages);
+      const allMappedMessages = toBotMessages(snapshot.messages, snapshot.botId);
       const pageInfo = conversationPages()[botId];
       const windowMode = conversationWindowModes()[botId] ?? "latest";
       const mappedMessages = retainThinkingMessages(
@@ -1597,7 +1632,7 @@ export function createAppController(props: AppProps = {}) {
       if (message.author !== "user" && message.status === "streaming") rawAgentMessageBodies.set(key, message.text);
       else rawAgentMessageBodies.delete(key);
     }
-    const mapped = toBotMessages(page.messages);
+    const mapped = toBotMessages(page.messages, page.botId);
     setLiveMessages((current) => {
       const currentMessages = current[page.botId] ?? [];
       const currentById = new Map(currentMessages.map((message) => [message.id, message]));
@@ -1623,7 +1658,9 @@ export function createAppController(props: AppProps = {}) {
       ...current,
       [page.botId]: {
         ...(merge === "replace" ? {} : current[page.botId]),
-        ...Object.fromEntries(Object.entries(page.references).map(([id, message]) => [id, toBotMessage(message)])),
+        ...Object.fromEntries(
+          Object.entries(page.references).map(([id, message]) => [id, toBotMessage(message, page.botId)]),
+        ),
       },
     }));
     setConversationPages((current) => ({ ...current, [page.botId]: page.pageInfo }));
@@ -1762,7 +1799,10 @@ export function createAppController(props: AppProps = {}) {
     try {
       const page = await window.openbot.agent.searchConversationMessages({ query, limit: 100 });
       analytics.track("search_action", { scope: "global", result: "succeeded", result_count: page.total });
-      return page.results.map((result) => ({ botId: result.botId, message: toBotMessage(result.message) }));
+      return page.results.map((result) => ({
+        botId: result.botId,
+        message: toBotMessage(result.message, result.botId),
+      }));
     } catch (error) {
       analytics.track("search_action", { scope: "global", result: "failed", failure_code: "search_failed" });
       throw error;
@@ -2282,6 +2322,41 @@ export function createAppController(props: AppProps = {}) {
     setSettingsRequest({ botId, nonce: Date.now() });
   }
 
+  async function duplicateBot(botId: string): Promise<void> {
+    if (botSetupOpen() && creatingAgent()) return;
+    if (!activeServerSupportsCapability("agent-duplication") || duplicatingBotIds().has(botId)) return;
+    const serverId = activeServerSidebarKey();
+    const analytics = desktopAnalytics.scope();
+    const properties = analyticsAgentProperties(botId);
+    setDuplicatingBotIds((current) => new Set(current).add(botId));
+    try {
+      const result = await window.openbot.agent.duplicateBot(botId);
+      if (activeServerSidebarKey() !== serverId) return;
+      const profile = toBotProfile(result.bot);
+      setBotList((current) => [profile, ...current.filter((candidate) => candidate.id !== profile.id)]);
+      setSidebarLayout(result.layout);
+      selectBot(result.bot.id);
+      analytics.track("agent_action", { action: "duplicate", result: "succeeded", ...(properties ?? {}) });
+    } catch (error) {
+      analytics.track("agent_action", {
+        action: "duplicate",
+        result: "failed",
+        failure_code: "duplicate_failed",
+        ...(properties ?? {}),
+      });
+      toast.error("Could not duplicate agent", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    } finally {
+      setDuplicatingBotIds((current) => {
+        const next = new Set(current);
+        next.delete(botId);
+        return next;
+      });
+    }
+  }
+
   async function deleteBot(botId: string) {
     if (botSetupOpen() && creatingAgent()) return;
     const serverId = activeServerSidebarKey();
@@ -2693,6 +2768,10 @@ export function createAppController(props: AppProps = {}) {
   const activeQueue = createMemo(() => {
     const bot = activeBot();
     return bot ? queues()[bot.id] : undefined;
+  });
+  const activeRoutineIds = createMemo(() => {
+    const bot = activeBot();
+    return bot ? routineIdsByConversation()[agentConversationKey(activeServerSidebarKey(), bot.id)] : undefined;
   });
   const sidebarAgentStates = createMemo<Record<string, SidebarAgentState>>(() => {
     const turns = activeTurns();
@@ -3861,6 +3940,8 @@ export function createAppController(props: AppProps = {}) {
     openBotSetup,
     cancelBotSetup,
     editBot,
+    duplicateBot,
+    duplicatingBotIds,
     deleteBot,
     setSidebarCollapsed,
     expandSidebar,
@@ -3914,6 +3995,7 @@ export function createAppController(props: AppProps = {}) {
     conversationOlderLoading,
     conversationOlderErrors,
     activeQueue,
+    activeRoutineIds,
     browserTabs,
     activeBrowserTabId,
     browserControlState,

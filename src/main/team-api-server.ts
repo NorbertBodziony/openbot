@@ -20,16 +20,18 @@ import {
   type DirectMessageRealtimeEvent,
   type DirectThreadSummary,
   type DirectTypingRealtimeEvent,
+  type DuplicateBotResult,
   type InviteSummary,
   isAgentModel,
   isAvatarHue,
   isAvatarSeed,
   isMessageReaction,
   isReasoningEffort,
-  parseRoutineConversationEventItemType,
   type ReorderQueueInput,
   type RespondToApprovalInput,
   type RespondToBrowserTakeoverInput,
+  ROUTINE_EVENT_ITEM_TYPE_PREFIX,
+  ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX,
   type SidebarLayoutSnapshot,
   type SteerQueuedMessageInput,
   type TeamMemberSummary,
@@ -55,6 +57,11 @@ import {
   encodeTeamProtocolV1CurrentEvent,
   encodeTeamProtocolV1CurrentHttpResponse,
 } from "@openbot/contracts/team-protocol/v1-adapter";
+import { TEAM_PROTOCOL_V3, TEAM_PROTOCOL_V3_CAPABILITIES } from "@openbot/contracts/team-protocol/v3";
+import {
+  decodeTeamProtocolV3CurrentHttpRequest,
+  encodeTeamProtocolV3CurrentHttpResponse,
+} from "@openbot/contracts/team-protocol/v3-adapter";
 import type * as Ws from "ws";
 import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
@@ -92,6 +99,9 @@ type TeamApiAgentMethods = Pick<
   | "listBots"
   | "listConversationReads"
   | "createBot"
+  | "committedBotDuplication"
+  | "duplicateBot"
+  | "commitBotDuplication"
   | "updateBot"
   | "deleteBot"
   | "listMemories"
@@ -135,7 +145,10 @@ type TeamApiAgents = TeamApiAgentMethods & {
 };
 
 type TeamApiMailbox = Pick<MailboxStore, "resolveAttachment">;
-type TeamApiSidebarLayout = Pick<SidebarLayoutStore, "getSnapshot" | "mutate" | "removeAgent"> & {
+type TeamApiSidebarLayout = Pick<
+  SidebarLayoutStore,
+  "getSnapshot" | "mutate" | "removeAgent" | "placeDuplicateAfter"
+> & {
   on: (event: "changed", listener: (layout: SidebarLayoutSnapshot) => void) => void;
   off: (event: "changed", listener: (layout: SidebarLayoutSnapshot) => void) => void;
 };
@@ -218,7 +231,8 @@ export class TeamApiServer {
   readonly #options: Omit<TeamApiOptions, "sidebarLayout"> & { sidebarLayout: TeamApiSidebarLayout };
   readonly #rateLimits = new Map<string, RateEntry>();
   readonly #eventClients = new Map<Ws.WebSocket, EventClientState>();
-  readonly #responseRoutes = new WeakMap<ServerResponse, { method: string; path: string }>();
+  readonly #responseRoutes = new WeakMap<ServerResponse, { method: string; path: string; protocol: number }>();
+  readonly #duplicateRequests = new Map<string, { sourceBotId: string; result: Promise<DuplicateBotResult> }>();
   readonly #webSockets = new webSockets.WebSocketServer({
     noServer: true,
     maxPayload: EVENT_PAYLOAD_LIMIT,
@@ -455,7 +469,7 @@ export class TeamApiServer {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       const method = request.method ?? "GET";
       const clientCapabilities = requestCapabilities(request);
-      this.#responseRoutes.set(response, { method, path: url.pathname });
+      this.#responseRoutes.set(response, { method, path: url.pathname, protocol: requestProtocol(request) });
 
       if (method === "GET" && url.pathname === "/v1/compatibility") {
         return this.#json(response, 200, this.#protocolSupport());
@@ -931,6 +945,10 @@ export class TeamApiServer {
           const body = await readJson(request);
           return this.#json(response, 200, await this.#options.agents.updateBot(botUpdate(body, botId)));
         }
+        if (method === "POST" && action === "duplicate") {
+          const body = await readJson(request);
+          return this.#json(response, 201, await this.#duplicateAgent(botId, stringField(body, "operationId")));
+        }
         if (method === "DELETE" && !action) {
           if (member.role === "member") throw new HttpError(403, "Members cannot delete agents.");
           await this.#options.agents.deleteBot(botId);
@@ -1049,13 +1067,7 @@ export class TeamApiServer {
         }
         if (method === "GET" && action === "conversation") {
           const conversation = await this.#options.agents.readConversationFor(botId, member.id);
-          return this.#json(
-            response,
-            200,
-            clientCapabilities.has("routine-event-markers")
-              ? conversation
-              : conversationWithoutRoutineEvents(conversation),
-          );
+          return this.#json(response, 200, conversationForCapabilities(conversation, clientCapabilities));
         }
         if (method === "GET" && action === "conversation-page") {
           const page = await this.#options.agents.readConversationPageFor(
@@ -1063,7 +1075,10 @@ export class TeamApiServer {
             member.id,
             pageAnchor(url),
             pageLimit(url),
-            { excludeRoutineEvents: !clientCapabilities.has("routine-event-markers") },
+            {
+              excludeRoutineEvents: !clientCapabilities.has("routine-event-markers"),
+              excludeRoutineRunEvents: !clientCapabilities.has("routine-run-event-markers"),
+            },
           );
           return this.#json(response, 200, page);
         }
@@ -1213,7 +1228,7 @@ export class TeamApiServer {
 
   #broadcastAgentEvent(event: AgentEvent): void {
     let payload: string | undefined;
-    let routineEventFilteredPayload: string | undefined;
+    const filteredConversationPayloads = new Map<string, string>();
     let conversationInvalidation: string | undefined;
     let queueInvalidation: string | undefined;
     let completionSnapshot: string | undefined;
@@ -1240,14 +1255,23 @@ export class TeamApiServer {
           encodeTeamProtocolV1CurrentEvent({ type: "queue-invalidated", botId: event.snapshot.botId }) ?? undefined;
         if (!queueInvalidation) continue;
         outgoing = queueInvalidation;
-      } else if (event.type === "conversation" && !connection.capabilities.has("routine-event-markers")) {
-        routineEventFilteredPayload ??=
-          encodeTeamProtocolV1CurrentEvent({
-            ...event,
-            snapshot: conversationSnapshotWithoutRoutineEvents(event.snapshot),
-          }) ?? undefined;
-        if (!routineEventFilteredPayload) continue;
-        outgoing = routineEventFilteredPayload;
+      } else if (
+        event.type === "conversation" &&
+        (!connection.capabilities.has("routine-event-markers") ||
+          !connection.capabilities.has("routine-run-event-markers"))
+      ) {
+        const key = `${connection.capabilities.has("routine-event-markers")}:${connection.capabilities.has("routine-run-event-markers")}`;
+        let filtered = filteredConversationPayloads.get(key);
+        if (!filtered) {
+          filtered =
+            encodeTeamProtocolV1CurrentEvent({
+              ...event,
+              snapshot: conversationSnapshotForCapabilities(event.snapshot, connection.capabilities),
+            }) ?? undefined;
+          if (filtered) filteredConversationPayloads.set(key, filtered);
+        }
+        if (!filtered) continue;
+        outgoing = filtered;
       } else {
         payload ??= encodeTeamProtocolV1CurrentEvent(event) ?? undefined;
         if (!payload) continue;
@@ -1287,6 +1311,7 @@ export class TeamApiServer {
           : TEAM_PROTOCOL_V1_CAPABILITIES.filter(
               (capability) =>
                 capability !== "routine-event-markers" &&
+                capability !== "routine-run-event-markers" &&
                 (supportsSnapshotTransport || capability !== "agent-runtime-snapshots"),
             ),
       ),
@@ -1522,6 +1547,49 @@ export class TeamApiServer {
     return this.#options.chat;
   }
 
+  #duplicateAgent(sourceBotId: string, operationId: string): Promise<DuplicateBotResult> {
+    const committed = this.#options.agents.committedBotDuplication(operationId, sourceBotId);
+    if (committed) {
+      return Promise.resolve({ bot: committed.bot, layout: this.#options.sidebarLayout.getSnapshot() });
+    }
+    const pending = this.#duplicateRequests.get(operationId);
+    if (pending) {
+      if (pending.sourceBotId !== sourceBotId) {
+        return Promise.reject(new Error("This agent duplication operation belongs to another source agent."));
+      }
+      return pending.result;
+    }
+    const result = this.#performAgentDuplication(sourceBotId, operationId).finally(() => {
+      this.#duplicateRequests.delete(operationId);
+    });
+    this.#duplicateRequests.set(operationId, { sourceBotId, result });
+    return result;
+  }
+
+  async #performAgentDuplication(sourceBotId: string, operationId: string): Promise<DuplicateBotResult> {
+    const bot = await this.#options.agents.duplicateBot(sourceBotId, operationId);
+    try {
+      const layout = await this.#options.sidebarLayout.placeDuplicateAfter(sourceBotId, bot.id, [
+        ...this.#options.agents.listBots().map((candidate) => candidate.id),
+        bot.id,
+      ]);
+      return await this.#options.agents.commitBotDuplication(bot.id, layout);
+    } catch (error) {
+      const rollbackResults = await Promise.allSettled([
+        this.#options.agents.deleteBot(bot.id),
+        this.#options.sidebarLayout.removeAgent(bot.id),
+      ]);
+      const rollbackErrors = rollbackResults.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
+      if (rollbackErrors.length > 0) {
+        throw new AggregateError(
+          [error, ...rollbackErrors],
+          "Agent duplication failed and the incomplete copy could not be removed.",
+        );
+      }
+      throw error;
+    }
+  }
+
   #requireDirectRecipient(senderMemberId: string, recipientMemberId: string): TeamMemberSummary {
     if (senderMemberId === recipientMemberId) {
       throw new Error("You cannot open a direct message with yourself.");
@@ -1537,14 +1605,18 @@ export class TeamApiServer {
     const route = this.#responseRoutes.get(response);
     if (!route) throw new Error("Team API response route is unavailable.");
     response.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
-    response.end(`${encodeTeamProtocolV1CurrentHttpResponse(route.method, route.path, status, value)}\n`);
+    const body =
+      route.protocol === TEAM_PROTOCOL_V3
+        ? encodeTeamProtocolV3CurrentHttpResponse(route.method, route.path, status, value)
+        : encodeTeamProtocolV1CurrentHttpResponse(route.method, route.path, status, value);
+    response.end(`${body}\n`);
   }
 
   #protocolSupport(): TeamProtocolSupportV1 {
     return {
       appVersion: this.#options.appVersion ?? "0.0.0",
-      protocol: { minimum: TEAM_PROTOCOL_V1, maximum: TEAM_PROTOCOL_V1 },
-      capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
+      protocol: { minimum: TEAM_PROTOCOL_V1, maximum: TEAM_PROTOCOL_V3 },
+      capabilities: [...TEAM_PROTOCOL_V3_CAPABILITIES],
     };
   }
 
@@ -1576,7 +1648,7 @@ export class TeamApiServer {
         body: { error: "Invalid Team API protocol headers.", code: "protocol_error", host },
       };
     }
-    if (protocol === TEAM_PROTOCOL_V1) return null;
+    if (protocol >= TEAM_PROTOCOL_V1 && protocol <= TEAM_PROTOCOL_V3) return null;
     const clientIsOlder = protocol < TEAM_PROTOCOL_V1;
     return {
       status: 426,
@@ -1609,6 +1681,9 @@ function unavailableSidebarLayout(): TeamApiSidebarLayout {
     mutate: async () => {
       throw new HttpError(503, "Sidebar layout is unavailable.");
     },
+    placeDuplicateAfter: async () => {
+      throw new HttpError(503, "Sidebar layout is unavailable.");
+    },
     removeAgent: async () => ({
       revision: 0,
       sections: [],
@@ -1630,20 +1705,32 @@ function requestCapabilities(request: import("node:http").IncomingMessage): Set<
   return new Set(capabilities.filter(isTeamProtocolV1Capability));
 }
 
-function conversationSnapshotWithoutRoutineEvents(snapshot: ConversationSnapshot): ConversationSnapshot {
+function conversationSnapshotForCapabilities(
+  snapshot: ConversationSnapshot,
+  capabilities: ReadonlySet<string>,
+): ConversationSnapshot {
   return {
     ...snapshot,
-    messages: snapshot.messages.filter((message) => parseRoutineConversationEventItemType(message.itemType) === null),
+    messages: snapshot.messages.filter((message) => markerSupported(message.itemType, capabilities)),
   };
 }
 
-function conversationWithoutRoutineEvents(conversation: ConversationWithReadState): ConversationWithReadState {
+function conversationForCapabilities(
+  conversation: ConversationWithReadState,
+  capabilities: ReadonlySet<string>,
+): ConversationWithReadState {
   return {
     ...conversation,
-    messages: conversation.messages.filter(
-      (message) => parseRoutineConversationEventItemType(message.itemType) === null,
-    ),
+    messages: conversation.messages.filter((message) => markerSupported(message.itemType, capabilities)),
   };
+}
+
+function markerSupported(itemType: string | undefined, capabilities: ReadonlySet<string>): boolean {
+  if (itemType?.startsWith(ROUTINE_EVENT_ITEM_TYPE_PREFIX)) return capabilities.has("routine-event-markers");
+  if (itemType?.startsWith(ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX)) {
+    return capabilities.has("routine-run-event-markers");
+  }
+  return true;
 }
 
 function eventCapability(event: AgentEvent): (typeof TEAM_PROTOCOL_V1_CAPABILITIES)[number] | null {
@@ -1722,10 +1809,18 @@ async function readJson(request: import("node:http").IncomingMessage): Promise<D
   }
   try {
     const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    return decodeTeamProtocolV1CurrentHttpRequest(request.method ?? "GET", request.url ?? "/", value);
+    return requestProtocol(request) === TEAM_PROTOCOL_V3
+      ? decodeTeamProtocolV3CurrentHttpRequest(request.method ?? "GET", request.url ?? "/", value)
+      : decodeTeamProtocolV1CurrentHttpRequest(request.method ?? "GET", request.url ?? "/", value);
   } catch {
     throw new HttpError(400, "A valid JSON object is required.");
   }
+}
+
+function requestProtocol(request: import("node:http").IncomingMessage): number {
+  const raw = firstHeaderValue(request.headers[TEAM_PROTOCOL_VERSION_HEADER.toLowerCase()]);
+  const protocol = raw ? Number(raw) : TEAM_PROTOCOL_V1;
+  return Number.isSafeInteger(protocol) ? protocol : TEAM_PROTOCOL_V1;
 }
 
 function stringField(

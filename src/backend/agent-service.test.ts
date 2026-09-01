@@ -15,10 +15,13 @@ import {
   type BrowserTab,
   isAgentEvent,
   routineConversationEvent,
+  routineRunConversationEvent,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentClient, AgentProvider } from "./agent-client";
+import { AgentMemoryStore } from "./agent-memory-store";
+import { AgentRoutineStore } from "./agent-routine-store";
 import { AgentService } from "./agent-service";
 import { BotStore } from "./bot-store";
 import { MailboxStore } from "./mailbox-store";
@@ -44,6 +47,13 @@ const CREATE_BOT_INPUT = {
   avatarHue: 215,
   initialMessage: "Help me make a practical plan.",
 } as const;
+const EMPTY_LAYOUT = {
+  revision: 0,
+  sections: [],
+  order: ["people", "unassigned"],
+  agentAssignments: {},
+  agentOrder: [],
+};
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "openbot-agent-test-"));
@@ -144,6 +154,217 @@ describe.sequential("AgentService", () => {
         .filter((model) => model.provider === "codex")
         .map((model) => model.id),
     ).toEqual(["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]);
+  });
+
+  it("duplicates persistent agent data without conversation or routine-run history", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    const source = await store.getOrCreate("chief", "Research", "Research lead");
+    await store.updateBot({
+      botId: source.id,
+      description: "Finds primary sources.",
+      notifications: false,
+      model: "gpt-5.6-sol",
+      reasoningEffort: "high",
+    });
+    await writeFile(join(source.workspacePath, "research.md"), "source workspace\n");
+    service.createMemory({ botId: source.id, text: "Use official documents." });
+    new AgentMemoryStore(store.database).saveAutomatic({
+      botId: source.id,
+      text: "The user prefers short briefs.",
+      sourceTurnId: "turn-source-memory",
+    });
+    const activeRoutine = service.createRoutine({
+      botId: source.id,
+      name: "Morning brief",
+      instruction: "Prepare the morning brief.",
+      active: true,
+      timezone: "Europe/Warsaw",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    const inactiveRoutine = service.createRoutine({
+      botId: source.id,
+      name: "Weekly review",
+      instruction: "Review the week.",
+      active: false,
+      timezone: "UTC",
+      schedule: { kind: "weekly", weekday: 1, time: "10:30" },
+    });
+    const routineStore = new AgentRoutineStore(store.database);
+    const oldRun = routineStore.createRun(
+      activeRoutine,
+      activeRoutine.trigger.id,
+      "scheduled",
+      "2026-08-31T07:00:00.000Z",
+    );
+    routineStore.updateRunStatus(oldRun.id, "succeeded");
+    service.setMarketplaceSource(source.id, {
+      agentId: "market-research",
+      versionId: "market-research-v2",
+      version: 2,
+      skillIds: ["primary-sources"],
+      routineIds: [activeRoutine.id],
+    });
+    const duplicateStartedAt = Date.now();
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+
+    const duplicate = await service.duplicateBot(source.id);
+
+    expect(service.listBots().some((bot) => bot.id === duplicate.id)).toBe(false);
+    await expect(service.sendMessage({ botId: duplicate.id, text: "Do not start yet." })).rejects.toThrow(
+      `Unknown bot: ${duplicate.id}`,
+    );
+    await expect(service.updateBot({ botId: duplicate.id, title: "Hidden copy" })).rejects.toThrow(
+      `Unknown bot: ${duplicate.id}`,
+    );
+    expect(service.listQueue(duplicate.id).deliveries).toEqual([]);
+    expect(events).toEqual([]);
+    await service.commitBotDuplication(duplicate.id, EMPTY_LAYOUT);
+    expect(service.listBots().some((bot) => bot.id === duplicate.id)).toBe(true);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "bots-changed" }),
+        expect.objectContaining({ type: "memories-changed", botId: duplicate.id }),
+        expect.objectContaining({ type: "routines-changed", botId: duplicate.id }),
+      ]),
+    );
+
+    expect(duplicate.id).not.toBe(source.id);
+    expect(duplicate).toMatchObject({
+      name: "Research copy",
+      title: "Research lead",
+      description: "Finds primary sources.",
+      notifications: false,
+      model: "gpt-5.6-sol",
+      reasoningEffort: "high",
+      threadId: null,
+      preview: "No messages yet",
+    });
+    expect((await service.readConversation(duplicate.id)).messages).toEqual([]);
+    await expect(readFile(join(duplicate.workspacePath, "research.md"), "utf8")).resolves.toBe("source workspace\n");
+
+    const sourceMemories = service.listMemories(source.id);
+    const duplicateMemories = service.listMemories(duplicate.id);
+    expect(
+      duplicateMemories
+        .map(({ text, origin, sourceTurnId }) => ({ text, origin, sourceTurnId }))
+        .sort((left, right) => left.text.localeCompare(right.text)),
+    ).toEqual(
+      sourceMemories
+        .map(({ text, origin }) => ({ text, origin, sourceTurnId: null }))
+        .sort((left, right) => left.text.localeCompare(right.text)),
+    );
+    expect(new Set(duplicateMemories.map((memory) => memory.id))).not.toEqual(
+      new Set(sourceMemories.map((memory) => memory.id)),
+    );
+
+    const sourceRoutines = service.listRoutines(source.id);
+    const duplicateRoutines = service.listRoutines(duplicate.id);
+    expect(
+      duplicateRoutines
+        .map(({ name, instruction, active, timezone, trigger }) => ({
+          name,
+          instruction,
+          active,
+          timezone,
+          schedule: trigger.schedule,
+        }))
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    ).toEqual(
+      sourceRoutines
+        .map(({ name, instruction, active, timezone, trigger }) => ({
+          name,
+          instruction,
+          active,
+          timezone,
+          schedule: trigger.schedule,
+        }))
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    );
+    expect(duplicateRoutines.every((routine) => Date.parse(routine.trigger.nextRunAt) >= duplicateStartedAt)).toBe(
+      true,
+    );
+    expect(duplicateRoutines.map((routine) => routine.id)).not.toEqual(sourceRoutines.map((routine) => routine.id));
+    for (const routine of duplicateRoutines) {
+      expect(service.listRoutineRuns({ botId: duplicate.id, routineId: routine.id, limit: 10 })).toEqual([]);
+    }
+    expect(duplicate.marketplaceSource).toMatchObject({
+      agentId: "market-research",
+      skillIds: ["primary-sources"],
+      routineIds: [duplicateRoutines.find((routine) => routine.name === activeRoutine.name)?.id],
+    });
+
+    await writeFile(join(duplicate.workspacePath, "research.md"), "duplicate workspace\n");
+    await service.updateMemory({
+      botId: duplicate.id,
+      memoryId: duplicateMemories[0]?.id ?? "missing",
+      text: "Changed only in the duplicate.",
+    });
+    const copiedActiveRoutine = duplicateRoutines.find((routine) => routine.name === activeRoutine.name);
+    if (!copiedActiveRoutine) throw new Error("The duplicated active routine is missing.");
+    service.updateRoutine({ botId: duplicate.id, routineId: copiedActiveRoutine.id, active: false });
+
+    await expect(readFile(join(source.workspacePath, "research.md"), "utf8")).resolves.toBe("source workspace\n");
+    expect(service.listMemories(source.id).some((memory) => memory.text === "Changed only in the duplicate.")).toBe(
+      false,
+    );
+    expect(service.listRoutines(source.id).find((routine) => routine.id === activeRoutine.id)?.active).toBe(true);
+    expect(service.listRoutines(source.id).find((routine) => routine.id === inactiveRoutine.id)?.active).toBe(false);
+  });
+
+  it("blocks duplication while the source agent has active work", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    await store.getOrCreate("chief");
+    await service.sendMessage({ botId: "chief", text: "Keep working.", attachmentDraftIds: [] });
+
+    await expect(service.duplicateBot("chief")).rejects.toThrow("finish and clear its queue");
+    expect(store.list().map((bot) => bot.id)).toEqual(["chief"]);
+  });
+
+  it("serializes duplication until the previous copy is committed", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    await store.getOrCreate("chief");
+    await store.getOrCreate("research");
+    const first = await service.duplicateBot("chief");
+    let secondResolved = false;
+    const secondRequest = service.duplicateBot("research").then((duplicate) => {
+      secondResolved = true;
+      return duplicate;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(secondResolved).toBe(false);
+    await service.commitBotDuplication(first.id, EMPTY_LAYOUT);
+    const second = await secondRequest;
+    await service.commitBotDuplication(second.id, EMPTY_LAYOUT);
+    expect(service.listBots().map((bot) => bot.id)).toEqual(
+      expect.arrayContaining(["chief", "research", first.id, second.id]),
+    );
+  });
+
+  it("removes copied data when the source changes during duplication", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    await store.getOrCreate("chief");
+    const duplicateInStore = store.duplicateBot.bind(store);
+    vi.spyOn(store, "duplicateBot").mockImplementationOnce(async (botId) => {
+      const duplicate = await duplicateInStore(botId);
+      service?.createMemory({ botId, text: "Changed during duplication." });
+      return duplicate;
+    });
+
+    await expect(service.duplicateBot("chief")).rejects.toThrow("changed while it was being duplicated");
+
+    expect(store.list().map((bot) => bot.id)).toEqual(["chief"]);
+    expect(service.listMemories("chief")).toEqual([expect.objectContaining({ text: "Changed during duplication." })]);
   });
 
   it("creates a bounded runtime snapshot for reconnecting clients", async () => {
@@ -1036,6 +1257,130 @@ describe.sequential("AgentService", () => {
     expect(client.responses.at(-1)).toEqual({
       id: "approval-permissions",
       result: { permissions: {}, scope: "turn" },
+    });
+  });
+
+  it("requires user approval before an agent mutates hosted sites", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    const hostedSite = {
+      id: "site-1",
+      hostname: "approved-public-site-for-students-k7m2q9tzab.openbot.site",
+      url: "https://approved-public-site-for-students-k7m2q9tzab.openbot.site",
+      title: "Approved public site",
+      description: "A public test site.",
+      framework: "vanilla" as const,
+      status: "active" as const,
+      fileCount: 1,
+      size: 20,
+      expiresAt: "2026-09-30T12:00:00.000Z",
+      updatedAt: "2026-08-31T12:00:00.000Z",
+    };
+    const hostedSites = {
+      list: vi.fn(async () => [hostedSite]),
+      publish: vi.fn(async () => hostedSite),
+      replace: vi.fn(async () => ({})),
+      delete: vi.fn(async () => undefined),
+    };
+    service = new AgentService(
+      store,
+      mailbox,
+      fakeBrowser(),
+      30_000,
+      "codex",
+      (provider) => {
+        const client = new FakeAgentClient(provider, "", false);
+        clients.set(provider, client);
+        return client;
+      },
+      undefined,
+      null,
+      null,
+      async () => undefined,
+      hostedSites,
+    );
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    await service.sendMessage({ botId: bot.id, text: "Publish my site." });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
+    const turnId = events.find((event) => event.type === "turn-started")?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The hosted site approval turn did not start.");
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "invalid-site-approval",
+      params: {
+        threadId,
+        turnId,
+        callId: "invalid-site-approval",
+        namespace: "openbot",
+        tool: "publish_site",
+        arguments: { title: "Hidden source", description: "This request has no source path." },
+      },
+    });
+    await waitFor(() => client.errors.some((response) => response.id === "invalid-site-approval"));
+    expect(service.getRuntimeSnapshot().pendingApprovals).toHaveLength(0);
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "publish-site-approval",
+      params: {
+        threadId,
+        turnId,
+        callId: "publish-site-approval",
+        namespace: "openbot",
+        tool: "publish_site",
+        arguments: {
+          sourcePath: bot.workspacePath,
+          title: "Approved public site",
+          description: "A public test site.",
+        },
+      },
+    });
+    await waitFor(() => events.some((event) => event.type === "approval"));
+    expect(hostedSites.publish).not.toHaveBeenCalled();
+    expect(client.responses).toHaveLength(0);
+    expect(events.find((event) => event.type === "approval")).toMatchObject({
+      approval: {
+        kind: "permissions",
+        reason: 'Publish "Approved public site" as a public site on openbot.site.',
+        permissions: { fileSystem: { read: [bot.workspacePath], write: [] }, network: true },
+      },
+    });
+
+    const accepted = service.respondToApproval({ requestId: "publish-site-approval", decision: "accept" });
+    await expect(service.respondToApproval({ requestId: "publish-site-approval", decision: "accept" })).rejects.toThrow(
+      "no longer active",
+    );
+    await accepted;
+    expect(hostedSites.publish).toHaveBeenCalledTimes(1);
+    expect(openBotToolPayload(client.responses[0]?.result)).toMatchObject({ id: "site-1", status: "active" });
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "delete-site-approval",
+      params: {
+        threadId,
+        turnId,
+        callId: "delete-site-approval",
+        namespace: "openbot",
+        tool: "delete_site",
+        arguments: { siteId: "site-1" },
+      },
+    });
+    await waitFor(() => service?.getRuntimeSnapshot().pendingApprovals.length === 1);
+    expect(events.findLast((event) => event.type === "approval")).toMatchObject({
+      approval: { reason: `Delete ${hostedSite.hostname} from openbot.site.` },
+    });
+    await service.respondToApproval({ requestId: "delete-site-approval", decision: "decline" });
+    expect(hostedSites.delete).not.toHaveBeenCalled();
+    expect(client.errors.at(-1)).toMatchObject({
+      id: "delete-site-approval",
+      error: { message: "The user declined this hosted site change." },
     });
   });
 
@@ -2984,6 +3329,249 @@ describe.sequential("AgentService", () => {
     ).toHaveLength(3);
   });
 
+  it("appends a cancellation marker before deleting an active routine run", async () => {
+    const { store, mailbox } = stores();
+    let client: FakeAgentClient | undefined;
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
+      client = new FakeAgentClient(provider, "", false);
+      return client;
+    });
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    const routine = service.createRoutine({
+      botId: bot.id,
+      name: "Active routine",
+      instruction: "Remain active until deletion.",
+      active: true,
+      timezone: "UTC",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    const run = await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await waitFor(() =>
+      service
+        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .some((candidate) => candidate.id === run.id && candidate.status === "running"),
+    );
+    const runningDelivery = service.listQueue(bot.id).deliveries.find((delivery) => delivery.status === "running");
+    if (!runningDelivery?.turnId || !client) throw new Error("The active routine turn did not start.");
+
+    await service.deleteRoutine({ botId: bot.id, routineId: routine.id });
+
+    expect(client.requests).toContainEqual(
+      expect.objectContaining({
+        method: "turn/interrupt",
+        params: expect.objectContaining({ turnId: runningDelivery.turnId }),
+      }),
+    );
+    const events = (await service.readConversation(bot.id)).messages.flatMap(
+      (message) => routineRunConversationEvent(message) ?? [],
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({ routineId: routine.id, runId: run.id, status: "cancelled" }),
+    );
+  });
+
+  it("keeps a started routine delivery running while its transition marker retries", async () => {
+    const { store, mailbox } = stores();
+    let client: FakeAgentClient | undefined;
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
+      client = new FakeAgentClient(provider, "", false);
+      return client;
+    });
+    const emitted: AgentEvent[] = [];
+    service.on("event", (event: AgentEvent) => emitted.push(event));
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    const routine = service.createRoutine({
+      botId: bot.id,
+      name: "Retry running marker",
+      instruction: "Keep the provider turn active while marker persistence retries.",
+      active: true,
+      timezone: "UTC",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    const appendConversationMessage = store.database.appendConversationMessage.bind(store.database);
+    let rejectRunningMarker = true;
+    vi.spyOn(store.database, "appendConversationMessage").mockImplementation((input) => {
+      if (rejectRunningMarker && input.eventType === "routine.run-running") {
+        rejectRunningMarker = false;
+        throw new Error("running marker persistence failed");
+      }
+      return appendConversationMessage(input);
+    });
+
+    const run = await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await waitFor(() => {
+      const currentRun = service?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })[0];
+      return currentRun?.id === run.id && currentRun.status === "running";
+    });
+
+    expect(service.listQueue(bot.id).deliveries).toContainEqual(expect.objectContaining({ status: "running" }));
+    expect(client?.requests.filter((request) => request.method === "turn/start")).toHaveLength(1);
+    expect(emitted).toContainEqual(
+      expect.objectContaining({ type: "error", code: "delivery_reconciliation_pending", botId: bot.id }),
+    );
+    const runningMarkers = (await service.readConversation(bot.id)).messages.filter(
+      (message) => routineRunConversationEvent(message)?.status === "running",
+    );
+    expect(runningMarkers).toHaveLength(1);
+  });
+
+  it("keeps routine approvals interactive while attention markers retry", async () => {
+    const { store, mailbox } = stores();
+    let client: FakeAgentClient | undefined;
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
+      client = new FakeAgentClient(provider, "", false);
+      return client;
+    });
+    const emitted: AgentEvent[] = [];
+    service.on("event", (event: AgentEvent) => emitted.push(event));
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    const routine = service.createRoutine({
+      botId: bot.id,
+      name: "Approval marker retry",
+      instruction: "Request approval and continue after the response.",
+      active: true,
+      timezone: "UTC",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    const run = await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await waitFor(() =>
+      service
+        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .some((candidate) => candidate.id === run.id && candidate.status === "running"),
+    );
+    const delivery = service.listQueue(bot.id).deliveries.find((candidate) => candidate.status === "running");
+    const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
+    if (!delivery?.turnId || !client || !threadId) throw new Error("The routine turn did not start.");
+
+    const appendConversationMessage = store.database.appendConversationMessage.bind(store.database);
+    let rejectNeedsAttentionMarker = true;
+    let rejectResumedRunningMarker = false;
+    vi.spyOn(store.database, "appendConversationMessage").mockImplementation((input) => {
+      if (rejectNeedsAttentionMarker && input.eventType === "routine.run-needs-attention") {
+        rejectNeedsAttentionMarker = false;
+        throw new Error("attention marker persistence failed");
+      }
+      if (rejectResumedRunningMarker && input.eventType === "routine.run-running") {
+        rejectResumedRunningMarker = false;
+        throw new Error("resumed marker persistence failed");
+      }
+      return appendConversationMessage(input);
+    });
+
+    client.emit("request", {
+      id: "retry-routine-approval",
+      method: "item/commandExecution/requestApproval",
+      params: { threadId, turnId: delivery.turnId, command: "echo routine" },
+    });
+
+    await waitFor(() => emitted.some((event) => event.type === "approval"));
+    await waitFor(() =>
+      service
+        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .some((candidate) => candidate.id === run.id && candidate.status === "needs-attention"),
+    );
+    expect(client.responses).toEqual([]);
+
+    rejectResumedRunningMarker = true;
+    await service.respondToApproval({ requestId: "retry-routine-approval", decision: "accept" });
+    expect(client.responses).toContainEqual(
+      expect.objectContaining({ id: "retry-routine-approval", result: { decision: "accept" } }),
+    );
+    await waitFor(() =>
+      service
+        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .some((candidate) => candidate.id === run.id && candidate.status === "running"),
+    );
+
+    expect(
+      emitted.filter(
+        (event) => event.type === "error" && event.code === "delivery_reconciliation_pending" && event.botId === bot.id,
+      ),
+    ).toHaveLength(2);
+    const transitions = (await service.readConversation(bot.id)).messages.flatMap(
+      (message) => routineRunConversationEvent(message) ?? [],
+    );
+    expect(transitions.filter((event) => event.runId === run.id && event.status === "needs-attention")).toHaveLength(1);
+    expect(transitions.filter((event) => event.runId === run.id && event.status === "running")).toHaveLength(2);
+  });
+
+  it("continues turn completion while a terminal routine marker retries", async () => {
+    const { store, mailbox } = stores();
+    let client: FakeAgentClient | undefined;
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
+      client = new FakeAgentClient(provider, "", false);
+      return client;
+    });
+    const emitted: AgentEvent[] = [];
+    service.on("event", (event: AgentEvent) => emitted.push(event));
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    const routine = service.createRoutine({
+      botId: bot.id,
+      name: "Retry terminal marker",
+      instruction: "Continue queued work after terminal marker persistence retries.",
+      active: true,
+      timezone: "UTC",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    const firstRun = await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await waitFor(() => {
+      const deliveries = service?.listQueue(bot.id).deliveries ?? [];
+      return (
+        deliveries.some((delivery) => delivery.status === "running") &&
+        deliveries.some((delivery) => delivery.status === "queued")
+      );
+    });
+    const firstDelivery = service.listQueue(bot.id).deliveries.find((delivery) => delivery.status === "running");
+    const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
+    if (!firstDelivery?.turnId || !client || !threadId) throw new Error("The first routine turn did not start.");
+    const appendConversationMessage = store.database.appendConversationMessage.bind(store.database);
+    let rejectTerminalMarker = true;
+    vi.spyOn(store.database, "appendConversationMessage").mockImplementation((input) => {
+      if (rejectTerminalMarker && input.eventType === "routine.run-succeeded") {
+        rejectTerminalMarker = false;
+        throw new Error("terminal marker persistence failed");
+      }
+      return appendConversationMessage(input);
+    });
+
+    client.emit(
+      "notification",
+      notification("turn/completed", {
+        threadId,
+        turn: { id: firstDelivery.turnId, status: "completed" },
+      }),
+    );
+
+    await waitFor(() =>
+      emitted.some(
+        (event) => event.type === "turn-completed" && event.botId === bot.id && event.turnId === firstDelivery.turnId,
+      ),
+    );
+    await waitFor(() =>
+      service
+        ?.listQueue(bot.id)
+        .deliveries.some((delivery) => delivery.id !== firstDelivery.id && delivery.status === "running"),
+    );
+    expect(
+      service
+        .listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .find((run) => run.id === firstRun.id),
+    ).toMatchObject({ status: "succeeded" });
+    expect(emitted).toContainEqual(
+      expect.objectContaining({ type: "error", code: "delivery_reconciliation_pending", botId: bot.id }),
+    );
+    const terminalMarkers = (await service.readConversation(bot.id)).messages.filter((message) => {
+      const event = routineRunConversationEvent(message);
+      return event?.runId === firstRun.id && event.status === "succeeded";
+    });
+    expect(terminalMarkers).toHaveLength(1);
+  });
+
   it("rolls back a routine mutation when its transcript marker cannot persist", async () => {
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());
@@ -3030,22 +3618,103 @@ describe.sequential("AgentService", () => {
     await waitFor(() => service?.listQueue(bot.id).deliveries.some((delivery) => delivery.status === "queued"));
     const queuedDelivery = service.listQueue(bot.id).deliveries.find((delivery) => delivery.status === "queued");
     if (!queuedDelivery) throw new Error("The queued routine delivery is missing.");
-    vi.spyOn(store.database, "persistConversation").mockImplementationOnce(() => {
-      throw new Error("delete marker persistence failed");
+    const queuedRun = service
+      .listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+      .find((run) => run.deliveryId === queuedDelivery.id);
+    if (!queuedRun) throw new Error("The queued routine run is missing.");
+    const persistConversation = store.database.persistConversation.bind(store.database);
+    vi.spyOn(store.database, "persistConversation").mockImplementation((...args) => {
+      if (args[1] === "routine.deleted") throw new Error("delete marker persistence failed");
+      return persistConversation(...args);
     });
 
     await expect(service.deleteRoutine({ botId: bot.id, routineId: routine.id })).rejects.toThrow(
       "delete marker persistence failed",
     );
     expect(service.listRoutines(bot.id)).toEqual([expect.objectContaining({ id: routine.id })]);
-    expect(service.listQueue(bot.id).deliveries).toContainEqual(
-      expect.objectContaining({ id: queuedDelivery.id, status: "queued" }),
+    const restoredDelivery = service.listQueue(bot.id).deliveries.find((delivery) => delivery.id === queuedDelivery.id);
+    expect(restoredDelivery).toBeDefined();
+    expect(["queued", "starting", "running"]).toContain(restoredDelivery?.status);
+    const restoredRun = service
+      .listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+      .find((run) => run.id === queuedRun.id);
+    expect(restoredRun).toBeDefined();
+    expect(["queued", "running"]).toContain(restoredRun?.status);
+    await waitFor(() =>
+      service
+        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .some((run) => run.status === "interrupted"),
+    );
+    expect(service.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })).toEqual(
+      expect.arrayContaining([expect.objectContaining({ status: "interrupted" })]),
+    );
+  });
+
+  it("rolls back a routine transition and retries without a duplicate marker", async () => {
+    const { store, mailbox } = stores();
+    const createService = () =>
+      new AgentService(
+        store,
+        mailbox,
+        fakeBrowser(),
+        30_000,
+        "codex",
+        (provider) => new FakeAgentClient(provider, "", false),
+      );
+    service = createService();
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    const routine = service.createRoutine({
+      botId: bot.id,
+      name: "Atomic run",
+      instruction: "Keep run state and history together.",
+      active: true,
+      timezone: "UTC",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await waitFor(() => service?.listQueue(bot.id).deliveries.some((delivery) => delivery.status === "queued"));
+    const queued = service.listQueue(bot.id).deliveries.find((delivery) => delivery.status === "queued");
+    if (!queued) throw new Error("The queued routine delivery is missing.");
+    const queuedRun = service
+      .listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+      .find((run) => run.deliveryId === queued.id);
+    if (!queuedRun) throw new Error("The queued routine run is missing.");
+    const appendConversationMessage = store.database.appendConversationMessage.bind(store.database);
+    let rejectCancellationMarker = true;
+    vi.spyOn(store.database, "appendConversationMessage").mockImplementation((input) => {
+      if (rejectCancellationMarker && input.eventType === "routine.run-cancelled") {
+        rejectCancellationMarker = false;
+        throw new Error("transition marker persistence failed");
+      }
+      return appendConversationMessage(input);
+    });
+
+    await expect(service.cancelQueuedMessage(bot.id, queued.id)).rejects.toThrow(
+      "transition marker persistence failed",
     );
     expect(
       service
         .listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
-        .filter((run) => run.status === "queued"),
-    ).toHaveLength(2);
+        .find((run) => run.deliveryId === queued.id),
+    ).toMatchObject({ status: "queued" });
+    const cancelledMarkers = async () =>
+      (await service?.readConversation(bot.id))?.messages.filter((message) => {
+        const event = routineRunConversationEvent(message);
+        return event?.runId === queuedRun.id && event.status === "cancelled";
+      }) ?? [];
+
+    await service.stop();
+    service = createService();
+    await service.initialize();
+
+    expect(
+      service
+        .listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .find((run) => run.deliveryId === queued.id),
+    ).toMatchObject({ status: "cancelled" });
+    expect(await cancelledMarkers()).toHaveLength(1);
   });
 
   it("rejects invalid or cross-agent routine tool mutations", async () => {
@@ -3867,6 +4536,13 @@ describe.sequential("AgentService", () => {
         ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
         .some((run) => run.status === "interrupted"),
     );
+    const transitionStatuses = (await service.readConversation(bot.id)).messages.flatMap(
+      (message) => routineRunConversationEvent(message)?.status ?? [],
+    );
+    expect(transitionStatuses).toEqual(
+      expect.arrayContaining(["running", "needs-attention", "cancelled", "failed", "interrupted"]),
+    );
+    expect(transitionStatuses.filter((status) => status === "running")).toHaveLength(3);
   });
 
   it("persists a completed routine turn as terminal", async () => {
@@ -3901,6 +4577,11 @@ describe.sequential("AgentService", () => {
         .get(turnId),
     ).toMatchObject({ status: "completed", completed_at: expect.any(String) });
     expect((await service.readConversation(bot.id)).activeTurnId).toBeNull();
+    expect(
+      (await service.readConversation(bot.id)).messages.flatMap(
+        (message) => routineRunConversationEvent(message)?.status ?? [],
+      ),
+    ).toContain("succeeded");
   });
 
   it("queues only the last missed run after sleep and does not duplicate it after restart", async () => {

@@ -1,10 +1,8 @@
 import type { AttachmentSummary, MessageReaction } from "@openbot/contracts/ipc";
 import { MESSAGE_REACTIONS, MORE_MESSAGE_REACTIONS } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack } from "solid-js";
-import { avatarHeadColor } from "../../bloub-avatar";
 import type { BotMessage, BotProfile } from "../../data";
-import { AgentAvatar } from "../AgentAvatar";
-import { Button, CalendarClock, DropdownMenu } from "../ui";
+import { Button, DropdownMenu } from "../ui";
 import { AttachmentCards } from "./AttachmentCards";
 import { CodeBlock } from "./CodeBlock";
 import { ComparisonTable } from "./ComparisonTable";
@@ -128,127 +126,6 @@ function createStreamingBody(message: () => BotMessage) {
   return { animateTail, body, smoothHeight };
 }
 
-function ExchangeAgentAvatar(props: { bot: BotProfile | undefined }) {
-  return <AgentAvatar bot={props.bot} class="exchange-agent-avatar" />;
-}
-
-function exchangeAgentStyle(bot: BotProfile | undefined): string | undefined {
-  return bot ? `--exchange-agent-color: ${avatarHeadColor(bot.avatarSeed, bot.avatarHue)}` : undefined;
-}
-
-function exchangeAgentsStyle(bots: Array<BotProfile | undefined>): string | undefined {
-  const colors = bots.flatMap((bot) => (bot ? [avatarHeadColor(bot.avatarSeed, bot.avatarHue)] : []));
-  const mixedColor = colors.reduce<string | undefined>((mix, color, index) => {
-    if (!mix) return color;
-    const previousColorsWeight = Math.round((index / (index + 1)) * 10_000) / 100;
-    return `color-mix(in oklab, ${mix} ${previousColorsWeight}%, ${color})`;
-  }, undefined);
-  return mixedColor ? `--exchange-agent-color: ${mixedColor}` : undefined;
-}
-
-export function ExchangeSystemRow(props: {
-  message: BotMessage;
-  bots: BotProfile[];
-  onSelectAgent: (botId: string) => void;
-}) {
-  const exchange = () => props.message.exchange;
-  const recipients = () => exchange()?.recipientBotIds ?? [];
-  const sender = () => {
-    const senderId = exchange()?.senderBotId;
-    return props.bots.find((bot) => bot.id === senderId);
-  };
-  const singleRecipient = () => {
-    const recipientId = recipients()[0];
-    return recipientId ? props.bots.find((bot) => bot.id === recipientId) : undefined;
-  };
-  const agentCountLabel = () => `${recipients().length} agents`;
-
-  return (
-    <div class="exchange-system-row">
-      <Show
-        when={exchange()?.direction === "outgoing"}
-        fallback={
-          <>
-            <span class="exchange-system-label">Message from</span>
-            <Button
-              variant="ghost"
-              type="button"
-              class="exchange-agent-trigger exchange-agent-trigger-incoming"
-              style={exchangeAgentStyle(sender())}
-              aria-label={`Open chat with ${sender()?.name ?? exchange()?.senderBotId ?? "agent"}`}
-              onClick={() => {
-                const senderId = exchange()?.senderBotId;
-                if (senderId) props.onSelectAgent(senderId);
-              }}
-            >
-              <ExchangeAgentAvatar bot={sender()} />
-              <span>{sender()?.name ?? exchange()?.senderBotId ?? "Agent"}</span>
-            </Button>
-          </>
-        }
-      >
-        <span class="exchange-system-label">Messaged</span>
-        <Show
-          when={recipients().length === 1}
-          fallback={
-            <div class="exchange-agent-picker">
-              <DropdownMenu.Root placement="bottom" gutter={8} modal={false}>
-                <DropdownMenu.Trigger
-                  class="exchange-agent-trigger exchange-agent-trigger-outgoing"
-                  style={exchangeAgentsStyle(
-                    recipients().map((recipientId) => props.bots.find((bot) => bot.id === recipientId)),
-                  )}
-                  aria-label={`${agentCountLabel()}, show list`}
-                >
-                  <span class="exchange-avatar-stack" aria-hidden="true">
-                    <For each={recipients().slice(0, 3)}>
-                      {(recipientId) => <ExchangeAgentAvatar bot={props.bots.find((bot) => bot.id === recipientId)} />}
-                    </For>
-                  </span>
-                  <span>{agentCountLabel()}</span>
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Content class="exchange-agent-menu">
-                  <For each={recipients()}>
-                    {(recipientId) => {
-                      const recipient = () => props.bots.find((bot) => bot.id === recipientId);
-                      return (
-                        <DropdownMenu.Item
-                          class="exchange-agent-menu-item"
-                          onSelect={() => props.onSelectAgent(recipientId)}
-                        >
-                          <ExchangeAgentAvatar bot={recipient()} />
-                          <span>{recipient()?.name ?? recipientId}</span>
-                        </DropdownMenu.Item>
-                      );
-                    }}
-                  </For>
-                </DropdownMenu.Content>
-              </DropdownMenu.Root>
-            </div>
-          }
-        >
-          <Button
-            variant="ghost"
-            type="button"
-            class="exchange-agent-trigger exchange-agent-trigger-single"
-            style={exchangeAgentStyle(singleRecipient())}
-            aria-label={`Open chat with ${singleRecipient()?.name ?? recipients()[0] ?? "agent"}`}
-            title={singleRecipient()?.name ?? recipients()[0] ?? "Agent"}
-            onClick={() => {
-              const recipientId = recipients()[0];
-              if (recipientId) props.onSelectAgent(recipientId);
-            }}
-          >
-            <ExchangeAgentAvatar bot={singleRecipient()} />
-            <span>{singleRecipient()?.name ?? recipients()[0] ?? "Agent"}</span>
-          </Button>
-        </Show>
-      </Show>
-      <time datetime={props.message.time}>{props.message.time}</time>
-    </div>
-  );
-}
-
 export function MessageBody(props: {
   message: BotMessage;
   referencedMessage?: BotMessage;
@@ -260,7 +137,6 @@ export function MessageBody(props: {
   onOpenSharedFile?: (path: string) => void;
   onOpenWorkspaceFile?: (path: string) => void;
   onDownload?: (attachment: AttachmentSummary) => void;
-  onOpenRoutine?: (routine: { routineId: string; name: string }) => void;
 }) {
   const streamingBody = createStreamingBody(() => props.message);
   const streamedBody = streamingBody.body;
@@ -333,23 +209,6 @@ export function MessageBody(props: {
             <span>{referenced().author === "you" ? "You" : "Agent"}</span>
             <p>{referenced().body || "Attachment"}</p>
           </div>
-        )}
-      </Show>
-      <Show when={props.message.routine}>
-        {(routine) => (
-          <Button
-            variant="ghost"
-            type="button"
-            class="routine-message-label"
-            aria-label={`Open routine ${routine().name}`}
-            title={`Scheduled for ${routine().scheduledFor}`}
-            onClick={() => props.onOpenRoutine?.({ routineId: routine().routineId, name: routine().name })}
-          >
-            <span class="routine-message-icon" aria-hidden="true">
-              <CalendarClock />
-            </span>
-            <span class="routine-message-name">{routine().name}</span>
-          </Button>
         )}
       </Show>
       <div class="message-content-resize" ref={(element) => (messageContentResize = element)}>

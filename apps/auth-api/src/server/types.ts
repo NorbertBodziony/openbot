@@ -4,9 +4,11 @@ export interface WorkerBindings {
   DB: D1Database;
   AVATARS: R2Bucket;
   SKILLS: R2Bucket;
+  SITES: R2Bucket;
   MARKETPLACE_INGRESS_RATE_LIMITER: RateLimit;
   MARKETPLACE_MUTATION_RATE_LIMITER: RateLimit;
   MARKETPLACE_UPLOAD_RATE_LIMITER: RateLimit;
+  SITE_REPORT_RATE_LIMITER: RateLimit;
   AUTH_EXPOSE_DEVELOPMENT_CODE?: string;
   EMAIL_SMTP_HOST?: string;
   EMAIL_SMTP_PORT?: string;
@@ -16,6 +18,10 @@ export interface WorkerBindings {
   EMAIL_DELIVERY_WEBHOOK_URL?: string;
   EMAIL_DELIVERY_WEBHOOK_SECRET?: string;
   SKILLS_ADMIN_TOKEN?: string;
+  SITE_OPERATIONS_ADMIN_TOKEN?: string;
+  SITE_REPORT_HASH_SECRET?: string;
+  SITE_COOKIE_ISOLATION_READY?: string;
+  SITE_PUBLISH_ENABLED?: string;
   REMOTE_TICKET_PRIVATE_JWK?: string;
   REMOTE_TICKET_PUBLIC_JWKS?: string;
   REMOTE_TICKET_KEY_ID?: string;
@@ -29,9 +35,11 @@ export function isWorkerBindings(value: unknown): value is WorkerBindings {
   const database = value.DB;
   const avatars = value.AVATARS;
   const skills = value.SKILLS;
+  const sites = value.SITES;
   const marketplaceIngressRateLimiter = value.MARKETPLACE_INGRESS_RATE_LIMITER;
   const marketplaceMutationRateLimiter = value.MARKETPLACE_MUTATION_RATE_LIMITER;
   const marketplaceUploadRateLimiter = value.MARKETPLACE_UPLOAD_RATE_LIMITER;
+  const siteReportRateLimiter = value.SITE_REPORT_RATE_LIMITER;
   if (
     !isDynamicRecord(database) ||
     !isFunction(database.prepare) ||
@@ -43,12 +51,18 @@ export function isWorkerBindings(value: unknown): value is WorkerBindings {
     !isFunction(skills.get) ||
     !isFunction(skills.put) ||
     !isFunction(skills.delete) ||
+    !isDynamicRecord(sites) ||
+    !isFunction(sites.get) ||
+    !isFunction(sites.put) ||
+    !isFunction(sites.delete) ||
     !isDynamicRecord(marketplaceIngressRateLimiter) ||
     !isFunction(marketplaceIngressRateLimiter.limit) ||
     !isDynamicRecord(marketplaceMutationRateLimiter) ||
     !isFunction(marketplaceMutationRateLimiter.limit) ||
     !isDynamicRecord(marketplaceUploadRateLimiter) ||
-    !isFunction(marketplaceUploadRateLimiter.limit)
+    !isFunction(marketplaceUploadRateLimiter.limit) ||
+    !isDynamicRecord(siteReportRateLimiter) ||
+    !isFunction(siteReportRateLimiter.limit)
   ) {
     return false;
   }

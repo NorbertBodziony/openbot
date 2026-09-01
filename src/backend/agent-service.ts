@@ -43,8 +43,10 @@ import type {
   DeleteBotMemoryInput,
   DeleteRoutineInput,
   DraftAttachment,
+  DuplicateBotResult,
   ImageGenerationInfo,
   ListRoutineRunsInput,
+  PublishHostedSiteInput,
   QueueDeliveryStatus,
   QueuedMessageReceipt,
   QueueSnapshot,
@@ -55,9 +57,11 @@ import type {
   Routine,
   RoutineConversationEventAction,
   RoutineRun,
+  RoutineRunConversationEventStatus,
   RoutineSchedule,
   SendMessageInput,
   SetMessageReactionInput,
+  SidebarLayoutSnapshot,
   SteerQueuedMessageInput,
   TestRoutineInput,
   UpdateBotInput,
@@ -77,6 +81,7 @@ import {
   isReasoningEffort,
   isRoutineSchedule,
   routineConversationEventItemType,
+  routineRunConversationEventItemType,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
 import type { AgentClient, AgentProvider } from "./agent-client";
@@ -159,6 +164,13 @@ interface AgentBrowserHost {
   ): Promise<DynamicToolResult>;
 }
 
+interface AgentHostedSites {
+  list(): Promise<unknown[]>;
+  publish(input: PublishHostedSiteInput, allowedRoots: readonly string[]): Promise<unknown>;
+  replace(input: PublishHostedSiteInput & { siteId: string }, allowedRoots: readonly string[]): Promise<unknown>;
+  delete(siteId: string): Promise<void>;
+}
+
 interface PendingPrompt {
   client: AgentClient;
   id: RequestId;
@@ -177,12 +189,22 @@ interface PendingApproval {
   method: string;
   params: unknown;
   approval: AgentApproval;
+  hostedSiteMutation?: DynamicToolCallParams;
 }
+
+type HostedSiteMutationTool = "publish_site" | "replace_site" | "delete_site";
+
+const HOSTED_SITE_APPROVAL_METHOD = "openbot/hosted-site-mutation";
 
 interface PendingBrowserTakeover {
   params: DynamicToolCallParams;
   request: BrowserTakeoverRequest;
   resolve: (result: DynamicToolResult) => void;
+}
+
+interface HostedSiteApprovalDetails {
+  reason: string;
+  permissions: AgentApprovalPermissions;
 }
 
 interface ThreadContextBudget {
@@ -365,6 +387,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #bundledCodexExecutable: string | null | undefined;
   readonly #bundledClaudeExecutable: string | null | undefined;
   readonly #bundledGrokExecutable: string | null | undefined;
+  readonly #prepareBotWorkspace: (bot: BotSummary) => Promise<void>;
+  readonly #hostedSites: AgentHostedSites | null;
   readonly #snapshots = new Map<string, ConversationSnapshot>();
   readonly #threadToBot = new Map<string, string>();
   readonly #loadedThreads = new Set<string>();
@@ -379,18 +403,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #drainingBots = new Set<string>();
   readonly #scheduledDrains = new Set<string>();
   readonly #drainTasks = new Map<string, Promise<void>>();
+  readonly #routineDeletionBots = new Set<string>();
   readonly #lastConversationSignatures = new Map<string, string>();
   readonly #contextBudgets = new Map<string, ThreadContextBudget>();
   readonly #compactingBots = new Set<string>();
   readonly #compactionTimers = new Map<string, NodeJS.Timeout>();
   readonly #pendingHandoffs = new Map<string, string>();
   readonly #pendingRuntimeRefreshes = new Set<string>();
+  readonly #duplicatingBots = new Set<string>();
+  readonly #pendingDuplicateBots = new Set<string>();
+  readonly #pendingDuplicateOperations = new Map<string, { operationId: string; sourceBotId: string }>();
+  readonly #pendingDuplicateReleases = new Map<string, () => void>();
   readonly #pendingDeltas = new Map<string, PendingDelta>();
   readonly #pendingMemoryMutations = new Map<string, PendingMemoryMutation[]>();
   readonly #responseAttachmentCommands = new Map<string, Promise<OpenBotToolResponse>>();
   readonly #browserUploadRoots = new Map<string, Map<string, BrowserUploadRoot>>();
   readonly #browserUploadReservations = new Map<string, Map<symbol, BrowserUploadReservation>>();
   readonly #memoryEpochs = new Map<string, number>();
+  #duplicationCommitQueue: Promise<void> = Promise.resolve();
   #routineTimer: NodeJS.Timeout | null = null;
   #status: AgentStatus = structuredClone(INITIAL_STATUS);
   readonly #clients = new Map<AgentProvider, AgentClient>();
@@ -420,6 +450,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     bundledCodexExecutable: string | null | undefined = undefined,
     bundledClaudeExecutable: string | null | undefined = null,
     bundledGrokExecutable: string | null | undefined = null,
+    prepareBotWorkspace: (bot: BotSummary) => Promise<void> = async () => undefined,
+    hostedSites: AgentHostedSites | null = null,
   ) {
     super();
     this.#store = store;
@@ -433,6 +465,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#bundledCodexExecutable = bundledCodexExecutable;
     this.#bundledClaudeExecutable = bundledClaudeExecutable;
     this.#bundledGrokExecutable = bundledGrokExecutable;
+    this.#prepareBotWorkspace = prepareBotWorkspace;
+    this.#hostedSites = hostedSites;
     this.#preferredProvider = preferredProvider;
     this.#browser.onChanged((tabs, activeTabId) => {
       const currentTabIds = new Set(tabs.map((tab) => tab.id));
@@ -464,7 +498,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   listBots(): BotSummary[] {
-    return this.#store.list();
+    return this.#store.list().filter((bot) => !this.#pendingDuplicateBots.has(bot.id));
   }
 
   getRuntimeSnapshot(): AgentRuntimeSnapshot {
@@ -621,48 +655,64 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#requireKnownBot(input.botId);
     const routine = this.#routines.get(input.botId, input.routineId);
     if (!routine) throw new Error("This routine no longer exists.");
-    const activeRuns = this.#routines.activeRuns(input.botId, input.routineId);
-    if (options.recordConversationEvent === false) {
-      const database = this.#store.database;
-      const ownsTransaction = !database.connection.isTransaction;
-      if (ownsTransaction) database.connection.exec("BEGIN IMMEDIATE");
-      try {
-        for (const run of activeRuns) {
-          if (run.status !== "queued" || !run.deliveryId) continue;
-          if (this.#mailbox.getDelivery(run.deliveryId)?.delivery.status !== "queued") continue;
-          this.#mailbox.cancelNow(input.botId, run.deliveryId);
-          this.#routines.updateRunStatus(run.id, "cancelled");
-        }
-        this.#routines.delete(input.botId, input.routineId);
-        if (ownsTransaction) database.connection.exec("COMMIT");
-      } catch (error) {
-        if (ownsTransaction && database.connection.isTransaction) database.connection.exec("ROLLBACK");
-        this.#mailbox.restorePersistedState();
-        throw error;
-      }
-    } else {
-      this.#mutateRoutineWithConversation(
-        input.botId,
-        "deleted",
-        () => this.#routines.delete(input.botId, input.routineId),
-        () => routine,
-        options.turnId,
-        {
-          beforeMutate: () => {
-            for (const run of activeRuns) {
-              if (run.status !== "queued" || !run.deliveryId) continue;
-              if (this.#mailbox.getDelivery(run.deliveryId)?.delivery.status !== "queued") continue;
-              this.#mailbox.cancelNow(input.botId, run.deliveryId);
-              this.#routines.updateRunStatus(run.id, "cancelled");
-            }
-          },
-          onRollback: () => this.#mailbox.restorePersistedState(),
-        },
-      );
+    if (this.#routineDeletionBots.has(input.botId)) {
+      throw new Error("Another routine deletion is already in progress for this agent.");
     }
-    this.#emitQueue(input.botId);
-    this.#routineStateChanged(input.botId);
-    this.#armRoutineTimer();
+    this.#routineDeletionBots.add(input.botId);
+    try {
+      const activeRuns = await this.#interruptRoutineRunsBeforeDeletion(
+        input.botId,
+        this.#routines.activeRuns(input.botId, input.routineId),
+      );
+      if (options.recordConversationEvent === false) {
+        const database = this.#store.database;
+        const ownsTransaction = !database.connection.isTransaction;
+        if (ownsTransaction) database.connection.exec("BEGIN IMMEDIATE");
+        try {
+          for (const run of activeRuns) {
+            if (run.status === "queued" && run.deliveryId) {
+              if (this.#mailbox.getDelivery(run.deliveryId)?.delivery.status === "queued") {
+                this.#mailbox.cancelNow(input.botId, run.deliveryId);
+              }
+            }
+            this.#routines.updateRunStatus(run.id, "cancelled");
+          }
+          this.#routines.delete(input.botId, input.routineId);
+          if (ownsTransaction) database.connection.exec("COMMIT");
+        } catch (error) {
+          if (ownsTransaction && database.connection.isTransaction) database.connection.exec("ROLLBACK");
+          this.#mailbox.restorePersistedState();
+          throw error;
+        }
+      } else {
+        this.#mutateRoutineWithConversation(
+          input.botId,
+          "deleted",
+          () => this.#routines.delete(input.botId, input.routineId),
+          () => routine,
+          options.turnId,
+          {
+            beforeMutate: (snapshot) => {
+              for (const run of activeRuns) {
+                if (run.status === "queued" && run.deliveryId) {
+                  if (this.#mailbox.getDelivery(run.deliveryId)?.delivery.status === "queued") {
+                    this.#mailbox.cancelNow(input.botId, run.deliveryId);
+                  }
+                }
+                this.#appendRoutineRunTransition(snapshot, run, "cancelled");
+              }
+            },
+            onRollback: () => this.#mailbox.restorePersistedState(),
+          },
+        );
+      }
+      this.#emitQueue(input.botId);
+      this.#routineStateChanged(input.botId);
+      this.#armRoutineTimer();
+    } finally {
+      this.#routineDeletionBots.delete(input.botId);
+      if (this.#mailbox.nextQueued(input.botId)) this.#scheduleDrain(input.botId);
+    }
   }
 
   async testRoutine(input: TestRoutineInput): Promise<RoutineRun> {
@@ -691,6 +741,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (input.initialMessage.length > INPUT_LIMITS.messageText) throw new Error("Initial message is too long.");
     let bot = await this.#store.createBot(input);
     try {
+      await this.#prepareBotWorkspace(bot);
       if (this.#preferredProvider !== bot.provider) {
         const preferredDefault =
           this.#preferredProvider === "codex"
@@ -718,7 +769,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       } catch (caught) {
         rollbackError = caught;
       }
-      this.#emit({ type: "bots-changed", bots: this.#store.list() });
+      this.#emit({ type: "bots-changed", bots: this.listBots() });
       if (rollbackError) {
         throw new AggregateError(
           [error, rollbackError],
@@ -731,18 +782,109 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async createBotProfile(input: Omit<CreateBotInput, "initialMessage"> & { title?: string }): Promise<BotSummary> {
     let bot = await this.#store.createBot(input);
-    if (input.title) bot = await this.#store.updateBot({ botId: bot.id, title: input.title });
-    this.#emit({ type: "bots-changed", bots: this.#store.list() });
-    return bot;
+    try {
+      await this.#prepareBotWorkspace(bot);
+      if (input.title) bot = await this.#store.updateBot({ botId: bot.id, title: input.title });
+      this.#emit({ type: "bots-changed", bots: this.listBots() });
+      return bot;
+    } catch (error) {
+      await this.#deleteBotData(bot);
+      throw error;
+    }
+  }
+
+  committedBotDuplication(operationId: string, sourceBotId: string): DuplicateBotResult | null {
+    return this.#store.committedBotDuplication(operationId, sourceBotId);
+  }
+
+  async duplicateBot(sourceBotId: string, operationId: string = randomUUID()): Promise<BotSummary> {
+    const releaseDuplication = await this.#acquireDuplicationCommitLock();
+    let releaseOnExit = true;
+    let duplicate: BotSummary | null = null;
+    try {
+      const source = this.#requireKnownBot(sourceBotId);
+      if (this.#duplicatingBots.has(sourceBotId)) throw new Error("This agent is already being duplicated.");
+      this.#assertBotIdleForDuplication(sourceBotId);
+      const sourceSignature = this.#duplicationSourceSignature(sourceBotId);
+      this.#duplicatingBots.add(sourceBotId);
+      duplicate = await this.#store.duplicateBot(sourceBotId, operationId);
+      this.#pendingDuplicateBots.add(duplicate.id);
+      this.#pendingDuplicateOperations.set(duplicate.id, { operationId, sourceBotId });
+      this.#assertDuplicationSourceUnchanged(sourceBotId, sourceSignature);
+      this.#memories.duplicate(sourceBotId, duplicate.id);
+      const routines = this.#routines.duplicate(sourceBotId, duplicate.id, new Date());
+      this.#assertDuplicationSourceUnchanged(sourceBotId, sourceSignature);
+      if (source.marketplaceSource) {
+        duplicate = this.#store.setMarketplaceSource(duplicate.id, {
+          ...structuredClone(source.marketplaceSource),
+          routineIds: source.marketplaceSource.routineIds.flatMap((routineId) => {
+            const copied = routines.get(routineId);
+            return copied ? [copied.id] : [];
+          }),
+        });
+      }
+      this.#assertDuplicationSourceUnchanged(sourceBotId, sourceSignature);
+      const completedDuplicate = duplicate;
+      this.#pendingDuplicateReleases.set(completedDuplicate.id, releaseDuplication);
+      releaseOnExit = false;
+      return this.#store.list().find((candidate) => candidate.id === completedDuplicate.id) ?? completedDuplicate;
+    } catch (error) {
+      if (!duplicate) throw error;
+      let rollbackError: unknown;
+      try {
+        await this.#deleteBotData(duplicate);
+        this.#pendingDuplicateBots.delete(duplicate.id);
+        this.#pendingDuplicateOperations.delete(duplicate.id);
+      } catch (caught) {
+        rollbackError = caught;
+      }
+      this.#armRoutineTimer();
+      if (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          "Agent duplication failed and the incomplete copy could not be removed.",
+        );
+      }
+      throw error;
+    } finally {
+      this.#duplicatingBots.delete(sourceBotId);
+      if (releaseOnExit) releaseDuplication();
+    }
+  }
+
+  async commitBotDuplication(botId: string, layout: SidebarLayoutSnapshot): Promise<DuplicateBotResult> {
+    if (!this.#pendingDuplicateBots.has(botId)) throw new Error("This agent duplication is not pending.");
+    const operation = this.#pendingDuplicateOperations.get(botId);
+    if (!operation) throw new Error("This agent duplication operation is unavailable.");
+    const releaseDuplication = this.#pendingDuplicateReleases.get(botId);
+    try {
+      const result = await this.#store.commitBotDuplication(
+        botId,
+        operation.operationId,
+        operation.sourceBotId,
+        layout,
+      );
+      this.#pendingDuplicateBots.delete(botId);
+      this.#pendingDuplicateOperations.delete(botId);
+      this.#emit({ type: "bots-changed", bots: this.listBots() });
+      if (this.#memories.list(result.bot.id).length > 0) this.#memoryStateChanged(result.bot.id);
+      if (this.#routines.list(result.bot.id).length > 0) this.#routineStateChanged(result.bot.id);
+      this.#armRoutineTimer();
+      return result;
+    } finally {
+      this.#pendingDuplicateReleases.delete(botId);
+      releaseDuplication?.();
+    }
   }
 
   setMarketplaceSource(botId: string, source: NonNullable<BotSummary["marketplaceSource"]>): BotSummary {
     const bot = this.#store.setMarketplaceSource(botId, source);
-    this.#emit({ type: "bots-changed", bots: this.#store.list() });
+    this.#emit({ type: "bots-changed", bots: this.listBots() });
     return bot;
   }
 
   async updateBot(input: UpdateBotInput): Promise<BotSummary> {
+    this.#requireKnownBot(input.botId);
     const previous = this.#store.list().find((bot) => bot.id === input.botId);
     const requestedModel = input.model
       ? this.#models.find((model) => model.id === input.model && (!input.provider || model.provider === input.provider))
@@ -792,13 +934,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       // Re-resume before the next turn so App Server receives the updated standing instructions.
       this.#loadedThreads.delete(activeSession.externalSessionId);
     }
-    this.#emit({ type: "bots-changed", bots: this.#store.list() });
+    this.#emit({ type: "bots-changed", bots: this.listBots() });
     return bot;
   }
 
   async setAvatar(botId: string, image: AvatarImageInput | null): Promise<BotSummary> {
     const bot = await this.#store.setAvatar(botId, image);
-    this.#emit({ type: "bots-changed", bots: this.#store.list() });
+    this.#emit({ type: "bots-changed", bots: this.listBots() });
     return bot;
   }
 
@@ -849,9 +991,59 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error("Stop the agent and cancel its queued messages before deleting it.");
     }
 
-    await this.#deleteBotData(bot);
-    this.#emit({ type: "bots-changed", bots: this.#store.list() });
+    const wasPendingDuplicate = this.#pendingDuplicateBots.has(botId);
+    const releaseDuplication = this.#pendingDuplicateReleases.get(botId);
+    try {
+      await this.#deleteBotData(bot);
+    } finally {
+      if (wasPendingDuplicate) {
+        this.#pendingDuplicateReleases.delete(botId);
+        releaseDuplication?.();
+      }
+    }
+    this.#pendingDuplicateBots.delete(botId);
+    this.#pendingDuplicateOperations.delete(botId);
+    if (!wasPendingDuplicate) this.#emit({ type: "bots-changed", bots: this.listBots() });
     this.#armRoutineTimer();
+  }
+
+  #assertBotIdleForDuplication(botId: string): void {
+    const hasPendingWork = this.#mailbox
+      .listQueue(botId)
+      .deliveries.some((delivery) => ["queued", "starting", "running"].includes(delivery.status));
+    const hasAttention =
+      [...this.#pendingPrompts.values()].some((pending) => pending.botId === botId) ||
+      [...this.#pendingApprovals.values()].some((pending) => pending.approval.botId === botId) ||
+      [...this.#pendingBrowserTakeovers.values()].some((pending) => pending.request.botId === botId);
+    if (hasPendingWork || hasAttention || this.#snapshots.get(botId)?.activeTurnId) {
+      throw new Error("Wait for the agent to finish and clear its queue before duplicating it.");
+    }
+  }
+
+  async #acquireDuplicationCommitLock(): Promise<() => void> {
+    const previous = this.#duplicationCommitQueue;
+    let release = (): void => undefined;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.#duplicationCommitQueue = previous.then(() => current);
+    await previous;
+    return release;
+  }
+
+  #duplicationSourceSignature(botId: string): string {
+    return JSON.stringify({
+      bot: this.#requireKnownBot(botId),
+      memories: this.#memories.list(botId),
+      routines: this.#routines.list(botId),
+    });
+  }
+
+  #assertDuplicationSourceUnchanged(botId: string, signature: string): void {
+    this.#assertBotIdleForDuplication(botId);
+    if (this.#duplicationSourceSignature(botId) !== signature) {
+      throw new Error("The agent changed while it was being duplicated. Try again.");
+    }
   }
 
   async #deleteBotData(bot: BotSummary): Promise<void> {
@@ -895,6 +1087,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       "starting",
       BUILT_IN_PROVIDER_DRIVERS.map((driver) => driver.id),
     );
+    for (const bot of this.#store.list()) this.#emitQueue(bot.id);
     await this.#resumePendingRoutineRuns();
     this.#armRoutineTimer();
   }
@@ -1084,7 +1277,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     memberId: string,
     anchor: ConversationPageAnchor = { type: "latest" },
     limit = 50,
-    options: { excludeRoutineEvents?: boolean } = {},
+    options: { excludeRoutineEvents?: boolean; excludeRoutineRunEvents?: boolean } = {},
   ): Promise<ConversationPage> {
     const bot = await this.#store.getOrCreate(botId);
     this.#reconcilePersistedMailboxMessages(bot);
@@ -1201,6 +1394,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async sendMessage(input: SendMessageInput): Promise<QueuedMessageReceipt> {
+    if (this.#pendingDuplicateBots.has(input.botId)) throw new Error(`Unknown bot: ${input.botId}`);
     const bot = await this.#store.getOrCreate(input.botId);
     await this.ensureProvider(providerForBot(bot));
     const receipt = await this.#mailbox.enqueue({
@@ -1219,7 +1413,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       displayAttachmentReferences(delivery.delivery.text, delivery.delivery.attachments) ||
         delivery.delivery.attachments.map((item) => item.name).join(", "),
     );
-    this.#emit({ type: "bots-changed", bots: this.#store.list() });
+    this.#emit({ type: "bots-changed", bots: this.listBots() });
     this.#emitConversation(snapshot);
     this.#emitQueue(bot.id);
     this.#scheduleDrain(bot.id);
@@ -1311,7 +1505,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!pending) throw new Error("This approval is no longer active.");
     this.#markRoutineRunningForTurn(getString(pending.params, "turnId"));
 
-    if (pending.approval.kind === "permissions") {
+    if (pending.hostedSiteMutation) {
+      this.#pendingApprovals.delete(input.requestId);
+      if (input.decision === "decline") {
+        pending.client.respondError(pending.id, {
+          code: -32001,
+          message: "The user declined this hosted site change.",
+        });
+      } else {
+        try {
+          pending.client.respond(pending.id, await this.#handleOpenBotTool(pending.hostedSiteMutation));
+        } catch (error) {
+          pending.client.respondError(pending.id, { code: -32603, message: String(error) });
+          this.#emitError("server_request_failed", error, pending.approval.botId);
+        }
+      }
+    } else if (pending.approval.kind === "permissions") {
       const permissions = getRecord(pending.params, "permissions") ?? {};
       pending.client.respond(pending.id, {
         permissions: input.decision === "accept" ? permissions : {},
@@ -2228,6 +2437,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               this.#surfaceDynamicPrompt(client, request);
               return;
             }
+            if (isHostedSiteMutationTool(request.params.tool)) {
+              await this.#surfaceHostedSiteApproval(client, request, request.params, request.params.tool);
+              return;
+            }
             client.respond(request.id, await this.#handleOpenBotTool(request.params));
             return;
           }
@@ -2264,6 +2477,46 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const senderBotId = this.#threadToBot.get(params.threadId);
     if (!senderBotId) throw new Error("The sending OpenBot agent is unknown.");
 
+    if (params.tool === "list_sites") {
+      return openBotToolResult({ sites: await this.#requireHostedSites().list(), limit: 10 });
+    }
+
+    if (params.tool === "publish_site" || params.tool === "replace_site") {
+      const args = params.arguments;
+      if (!isRecord(args)) throw new Error("Site publishing arguments are required.");
+      const sourcePath = siteToolString(args.sourcePath, "sourcePath", INPUT_LIMITS.path);
+      const title = siteToolString(args.title, "title", 120);
+      const description = siteToolString(args.description, "description", 500);
+      if (args.spaFallback !== undefined && !isBoolean(args.spaFallback)) {
+        throw new Error("spaFallback must be a boolean.");
+      }
+      const bot = this.#store.list().find((candidate) => candidate.id === senderBotId);
+      if (!bot) throw new Error("The publishing OpenBot agent is unknown.");
+      const input = {
+        sourcePath,
+        title,
+        description,
+        ...(isBoolean(args.spaFallback) ? { spaFallback: args.spaFallback } : {}),
+      };
+      const roots = [bot.workspacePath, this.#store.sharedRoot];
+      const site =
+        params.tool === "publish_site"
+          ? await this.#requireHostedSites().publish(input, roots)
+          : await this.#requireHostedSites().replace(
+              { ...input, siteId: siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier) },
+              roots,
+            );
+      return openBotToolResult(site);
+    }
+
+    if (params.tool === "delete_site") {
+      const args = params.arguments;
+      if (!isRecord(args)) throw new Error("Site deletion arguments are required.");
+      const siteId = siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier);
+      await this.#requireHostedSites().delete(siteId);
+      return openBotToolResult({ deleted: true, siteId });
+    }
+
     if (params.tool === "attach_files_to_response") {
       const args = params.arguments;
       if (!isRecord(args) || !Array.isArray(args.paths)) throw new Error("paths must be an array of local files.");
@@ -2291,7 +2544,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
 
     if (params.tool === "list_agents") {
-      const agents = this.#store.list().map((bot) => {
+      const agents = this.listBots().map((bot) => {
         const queue = this.#mailbox.listQueue(bot.id);
         return {
           id: bot.id,
@@ -2545,7 +2798,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error("Duplicate recipients are not allowed.");
     }
     if (recipientValues.includes(senderBotId)) throw new Error("An agent cannot message itself.");
-    const knownIds = new Set(this.#store.list().map((bot) => bot.id));
+    const knownIds = new Set(this.listBots().map((bot) => bot.id));
     for (const recipient of recipientValues) {
       if (!knownIds.has(recipient)) throw new Error(`Unknown OpenBot agent: ${recipient}`);
     }
@@ -2578,6 +2831,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       success: true,
       contentItems: [{ type: "inputText", text: JSON.stringify(receipt) }],
     };
+  }
+
+  #requireHostedSites(): AgentHostedSites {
+    if (!this.#hostedSites) throw new Error("OpenBot site hosting is unavailable.");
+    return this.#hostedSites;
   }
 
   async #attachFilesToResponse(
@@ -2883,6 +3141,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (
       this.#stopping ||
       this.#status.phase !== "ready" ||
+      this.#pendingDuplicateBots.has(botId) ||
+      this.#routineDeletionBots.has(botId) ||
       this.#drainingBots.has(botId) ||
       this.#scheduledDrains.has(botId) ||
       this.#compactingBots.has(botId)
@@ -2903,6 +3163,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async #drainBot(botId: string): Promise<void> {
     if (
       this.#stopping ||
+      this.#pendingDuplicateBots.has(botId) ||
+      this.#routineDeletionBots.has(botId) ||
       this.#drainingBots.has(botId) ||
       this.#compactingBots.has(botId) ||
       this.#status.phase !== "ready"
@@ -2929,6 +3191,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async #startDelivery(context: DeliveryContext): Promise<void> {
     const { delivery, managedAttachments } = context;
+    let confirmedTurnId: string | null = null;
     try {
       await this.#mailbox.markStarting(delivery.id);
       this.#emitQueue(delivery.recipientBotId);
@@ -3058,13 +3321,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         decodeTurnResponse,
       );
       await this.#mailbox.markRunning(delivery.id, response.turn.id);
+      confirmedTurnId = response.turn.id;
       const currentDelivery = this.#mailbox.getDelivery(delivery.id)?.delivery;
       if (currentDelivery?.status !== "running" || currentDelivery.turnId !== response.turn.id) return;
       snapshot.activeTurnId = response.turn.id;
       this.#syncDeliveryMessage(snapshot, delivery.id);
       this.#emitQueue(bot.id);
-      this.#emitConversation(snapshot);
+      this.#emitConversation(this.#snapshots.get(bot.id) ?? snapshot);
     } catch (error) {
+      const currentDelivery = this.#mailbox.getDelivery(delivery.id)?.delivery;
+      if (confirmedTurnId && currentDelivery?.status === "running" && currentDelivery.turnId === confirmedTurnId) {
+        this.#emitError("delivery_reconciliation_pending", error, delivery.recipientBotId);
+        this.#retryDeliveryReconciliation(delivery.recipientBotId);
+        return;
+      }
       if (isRequestTimeout(error, "turn/start")) {
         this.#emitError(
           "delivery_start_unconfirmed",
@@ -3312,7 +3582,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const status = routineStatusForDelivery(delivery.status);
       if (run.status === "needs-attention" && ["starting", "running"].includes(delivery.status)) continue;
       if (run.status === status && run.error === delivery.error) continue;
-      this.#routines.updateRunStatus(run.id, status, delivery.error);
+      if (status === "queued") this.#routines.updateRunStatus(run.id, status, delivery.error);
+      else this.#transitionRoutineRunWithConversation(run, status, delivery.error);
       routinesChanged = true;
     }
     this.#emit({ type: "queue-changed", snapshot: queue });
@@ -3321,9 +3592,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     for (const affectedBotId of affectedBots) {
       const snapshot = this.#snapshots.get(affectedBotId);
       if (!snapshot) continue;
+      const previousSignature = conversationContentSignature(snapshot);
       this.#syncMailboxMessages(snapshot);
-      this.#emitConversation(snapshot);
+      if (conversationContentSignature(snapshot) !== previousSignature) this.#emitConversation(snapshot);
+      else if (!this.#lastConversationSignatures.has(affectedBotId)) this.#publishConversation(snapshot);
     }
+  }
+
+  #retryDeliveryReconciliation(botId: string): void {
+    queueMicrotask(() => {
+      try {
+        this.#emitQueue(botId);
+        const snapshot = this.#snapshots.get(botId);
+        if (snapshot) this.#emitConversation(snapshot);
+      } catch (error) {
+        this.#emitError("delivery_reconciliation_pending", error, botId);
+      }
+    });
   }
 
   #handleNotification(notification: AppServerNotification, source: AgentClient): void {
@@ -3434,7 +3719,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.#finishContextCompaction(botId, threadId, status);
           return;
         }
-        void this.#completeTurn(botId, threadId, turnId, status);
+        void this.#completeTurn(botId, threadId, turnId, status).catch((error) => {
+          this.#emitError("turn_completion_failed", error, botId);
+        });
         return;
       }
       case "thread/tokenUsage/updated": {
@@ -3511,10 +3798,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     if (latestAssistant) {
       await this.#store.updatePreview(botId, latestAssistant.text);
-      this.#emit({ type: "bots-changed", bots: this.#store.list() });
+      this.#emit({ type: "bots-changed", bots: this.listBots() });
     }
     this.#emitConversation(snapshot, "turn.completed", { turnId, status });
-    if (deliveries.length > 0) this.#emitQueue(botId);
+    if (deliveries.length > 0) {
+      try {
+        this.#emitQueue(botId);
+      } catch (error) {
+        this.#emitError("delivery_reconciliation_pending", error, botId);
+        this.#retryDeliveryReconciliation(botId);
+      }
+    }
     this.#emit({
       type: "turn-completed",
       botId,
@@ -3893,6 +4187,87 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     });
     this.#markRoutineNeedsAttention(turnId);
     this.#emit({ type: "approval", approval });
+  }
+
+  async #surfaceHostedSiteApproval(
+    client: AgentClient,
+    request: AppServerRequest,
+    params: DynamicToolCallParams,
+    tool: HostedSiteMutationTool,
+  ): Promise<void> {
+    const threadId = params.threadId;
+    const turnId = params.turnId;
+    const botId = this.#threadToBot.get(threadId);
+    if (!turnId || !botId) {
+      client.respondError(request.id, {
+        code: -32602,
+        message: "OpenBot could not identify this hosted site request.",
+      });
+      return;
+    }
+    const details = await this.#hostedSiteApprovalDetails(params, tool);
+    const approval: AgentApproval = {
+      requestId: request.id,
+      botId,
+      threadId: this.#publicThreadId(botId, threadId),
+      turnId,
+      kind: "permissions",
+      command: null,
+      cwd: null,
+      reason: details.reason,
+      grantRoot: null,
+      permissions: details.permissions,
+    };
+    this.#pendingApprovals.set(request.id, {
+      client,
+      id: request.id,
+      method: HOSTED_SITE_APPROVAL_METHOD,
+      params,
+      approval,
+      hostedSiteMutation: params,
+    });
+    this.#markRoutineNeedsAttention(turnId);
+    this.#emit({ type: "approval", approval });
+  }
+
+  async #hostedSiteApprovalDetails(
+    params: DynamicToolCallParams,
+    tool: HostedSiteMutationTool,
+  ): Promise<HostedSiteApprovalDetails> {
+    const args = params.arguments;
+    if (!isRecord(args)) throw new Error("Hosted site arguments are required.");
+    if (tool === "delete_site") {
+      const siteId = siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier);
+      const hostname = await this.#ownedHostedSiteHostname(siteId);
+      return {
+        reason: `Delete ${hostname} from openbot.site.`,
+        permissions: { fileSystem: { read: [], write: [] }, network: true },
+      };
+    }
+
+    const sourcePath = siteToolString(args.sourcePath, "sourcePath", INPUT_LIMITS.path);
+    const title = siteToolString(args.title, "title", 120);
+    siteToolString(args.description, "description", 500);
+    if (args.spaFallback !== undefined && !isBoolean(args.spaFallback)) {
+      throw new Error("spaFallback must be a boolean.");
+    }
+    const permissions = { fileSystem: { read: [sourcePath], write: [] }, network: true };
+    if (tool === "publish_site") {
+      return { reason: `Publish ${JSON.stringify(title)} as a public site on openbot.site.`, permissions };
+    }
+    const siteId = siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier);
+    const hostname = await this.#ownedHostedSiteHostname(siteId);
+    return { reason: `Replace ${hostname} with ${JSON.stringify(title)}.`, permissions };
+  }
+
+  async #ownedHostedSiteHostname(siteId: string): Promise<string> {
+    const sites = await this.#requireHostedSites().list();
+    for (const site of sites) {
+      if (!isRecord(site) || getString(site, "id") !== siteId) continue;
+      const hostname = getString(site, "hostname");
+      if (hostname) return hostname;
+    }
+    throw new Error("The hosted site was not found.");
   }
 
   #surfaceLegacyApproval(client: AgentClient, request: AppServerRequest): void {
@@ -4381,12 +4756,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const snapshot = this.#ensureSnapshot(bot.id, bot.threadId);
       this.#syncMailboxMessages(snapshot);
       await this.#store.updatePreview(bot.id, run.instruction);
-      this.#emit({ type: "bots-changed", bots: this.#store.list() });
+      this.#emit({ type: "bots-changed", bots: this.listBots() });
       this.#emitConversation(snapshot, "routine.run-queued", { routineId: run.routineId, runId: run.id });
       this.#emitQueue(bot.id);
       this.#scheduleDrain(bot.id);
     } catch (error) {
-      this.#routines.updateRunStatus(run.id, "failed", error instanceof Error ? error.message : String(error));
+      this.#transitionRoutineRunWithConversation(run, "failed", error instanceof Error ? error.message : String(error));
       this.#routineStateChanged(run.botId);
       throw error;
     }
@@ -4404,7 +4779,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.#routineTimer) clearTimeout(this.#routineTimer);
     this.#routineTimer = null;
     if (!this.#initialized || this.#stopping) return;
-    const nextDueAt = this.#routines.nextDueAt();
+    const nextDueAt = this.#routines.nextDueAt(this.#pendingDuplicateBots);
     if (!nextDueAt) return;
     const delay = Math.max(0, Math.min(new Date(nextDueAt).getTime() - Date.now(), 2_147_000_000));
     this.#routineTimer = setTimeout(() => {
@@ -4417,7 +4792,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async #processDueRoutines(now = new Date()): Promise<void> {
     const changedBots = new Set<string>();
     try {
-      for (const due of this.#routines.due(now)) {
+      for (const due of this.#routines.due(now, this.#pendingDuplicateBots)) {
         let scheduledFor = new Date(due.nextRunAt);
         let nextRunAt = nextRoutineOccurrence(due.schedule, due.routine.timezone, scheduledFor);
         while (nextRunAt.getTime() <= now.getTime()) {
@@ -4447,8 +4822,43 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (delivery?.delivery.sender.kind !== "routine") return;
     const run = this.#routines.runForDelivery(delivery.delivery.id);
     if (!run || run.status === "needs-attention") return;
-    this.#routines.updateRunStatus(run.id, "needs-attention");
-    this.#routineStateChanged(run.botId);
+    this.#transitionRoutineInteractionWithReconciliation(run, "needs-attention");
+  }
+
+  async #interruptRoutineRunsBeforeDeletion(botId: string, runs: RoutineRun[]): Promise<RoutineRun[]> {
+    const startingRun = runs.find((run) => {
+      if (!run.deliveryId) return false;
+      const delivery = this.#mailbox.getDelivery(run.deliveryId)?.delivery;
+      return delivery?.status === "starting" && !delivery.turnId;
+    });
+    if (startingRun) await this.#drainTasks.get(botId);
+
+    const cancellableRuns: RoutineRun[] = [];
+    const activeTurnIds = new Set<string>();
+    for (const run of runs) {
+      if (!run.deliveryId) {
+        cancellableRuns.push(run);
+        continue;
+      }
+      const delivery = this.#mailbox.getDelivery(run.deliveryId)?.delivery;
+      if (!delivery) continue;
+      if (delivery.status === "queued") {
+        cancellableRuns.push(run);
+        continue;
+      }
+      if (delivery.status !== "starting" && delivery.status !== "running") continue;
+      if (!delivery.turnId) {
+        throw new Error("This routine run is still starting. Try again after its turn starts.");
+      }
+      cancellableRuns.push(run);
+      activeTurnIds.add(delivery.turnId);
+    }
+    if (activeTurnIds.size === 0) return cancellableRuns;
+    if (!this.#store.activeProviderSession(botId)) {
+      throw new Error("OpenBot cannot interrupt the active routine run because its provider session is unavailable.");
+    }
+    for (const turnId of activeTurnIds) await this.interrupt(botId, turnId);
+    return cancellableRuns;
   }
 
   #markRoutineRunningForTurn(turnId: string | null): void {
@@ -4457,8 +4867,29 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (delivery?.delivery.sender.kind !== "routine") return;
     const run = this.#routines.runForDelivery(delivery.delivery.id);
     if (run?.status !== "needs-attention") return;
-    this.#routines.updateRunStatus(run.id, "running");
-    this.#routineStateChanged(run.botId);
+    this.#transitionRoutineInteractionWithReconciliation(run, "running");
+  }
+
+  #transitionRoutineInteractionWithReconciliation(run: RoutineRun, status: "needs-attention" | "running"): void {
+    try {
+      this.#transitionRoutineRunWithConversation(run, status);
+      this.#routineStateChanged(run.botId);
+    } catch (error) {
+      this.#emitError("delivery_reconciliation_pending", error, run.botId);
+      queueMicrotask(() => {
+        if (!run.deliveryId) return;
+        const current = this.#routines.runForDelivery(run.deliveryId);
+        if (!current || current.status === status) return;
+        if (status === "running" && current.status !== "needs-attention") return;
+        if (status === "needs-attention" && current.status !== "running") return;
+        try {
+          this.#transitionRoutineRunWithConversation(current, status);
+          this.#routineStateChanged(current.botId);
+        } catch (retryError) {
+          this.#emitError("delivery_reconciliation_pending", retryError, current.botId);
+        }
+      });
+    }
   }
 
   #clientForBot(bot: BotSummary): AgentClient | null {
@@ -4466,7 +4897,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   #requireKnownBot(botId: string): BotSummary {
-    const bot = this.#store.list().find((candidate) => candidate.id === botId);
+    const bot = this.listBots().find((candidate) => candidate.id === botId);
     if (!bot) throw new Error(`Unknown bot: ${botId}`);
     return bot;
   }
@@ -4482,13 +4913,78 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#emit({ type: "routines-changed", botId });
   }
 
+  #transitionRoutineRunWithConversation(
+    run: RoutineRun,
+    status: RoutineRunConversationEventStatus,
+    error: string | null = null,
+  ): RoutineRun {
+    if (run.status === status && run.error === error) return run;
+    const previousBot = this.#requireKnownBot(run.botId);
+    const previousSnapshot = this.#snapshots.get(run.botId);
+    const previousSnapshotState = previousSnapshot ? structuredClone(previousSnapshot) : undefined;
+    const database = this.#store.database;
+    const ownsTransaction = !database.connection.isTransaction;
+    if (ownsTransaction) database.connection.exec("BEGIN IMMEDIATE");
+    let updated: RoutineRun;
+    let persisted: ConversationSnapshot;
+    try {
+      const threadId = this.#store.ensureThreadIdNow(run.botId);
+      const nextSnapshot = structuredClone(this.#ensureSnapshot(run.botId, threadId));
+      nextSnapshot.threadId = threadId;
+      const transition = this.#appendRoutineRunTransition(nextSnapshot, run, status, error);
+      updated = transition.run;
+      sortConversationMessages(nextSnapshot.messages);
+      nextSnapshot.revision = database.appendConversationMessage({
+        botId: run.botId,
+        threadId,
+        activeTurnId: nextSnapshot.activeTurnId,
+        message: transition.message,
+        eventType: `routine.run-${status}`,
+        detail: { routineId: run.routineId, runId: run.id, status },
+      });
+      persisted = nextSnapshot;
+      if (ownsTransaction) database.connection.exec("COMMIT");
+    } catch (caught) {
+      if (ownsTransaction && database.connection.isTransaction) database.connection.exec("ROLLBACK");
+      if (previousBot.threadId === null) {
+        this.#store.restoreThreadIdentity(run.botId, previousBot.threadId, previousBot.updatedAt);
+      }
+      if (previousSnapshotState) this.#snapshots.set(run.botId, previousSnapshotState);
+      else this.#snapshots.delete(run.botId);
+      throw caught;
+    }
+    this.#snapshots.set(run.botId, persisted);
+    this.#publishConversation(persisted);
+    return updated;
+  }
+
+  #appendRoutineRunTransition(
+    snapshot: ConversationSnapshot,
+    run: RoutineRun,
+    status: RoutineRunConversationEventStatus,
+    error: string | null = null,
+  ): { run: RoutineRun; message: ConversationMessage } {
+    const updated = this.#routines.updateRunStatus(run.id, status, error);
+    const message: ConversationMessage = {
+      id: randomUUID(),
+      author: "system",
+      source: "system",
+      text: run.routineName,
+      createdAt: updated.updatedAt,
+      status: "completed",
+      itemType: routineRunConversationEventItemType(status, run.routineId, run.id),
+    };
+    snapshot.messages.push(message);
+    return { run: updated, message };
+  }
+
   #mutateRoutineWithConversation<T>(
     botId: string,
     action: RoutineConversationEventAction,
     mutate: () => T,
     eventRoutine: (result: T) => Pick<Routine, "id" | "name">,
     turnId?: string,
-    transactionHooks?: { beforeMutate?: () => void; onRollback?: () => void },
+    transactionHooks?: { beforeMutate?: (snapshot: ConversationSnapshot) => void; onRollback?: () => void },
   ): T {
     const previousBot = this.#requireKnownBot(botId);
     const previousSnapshot = this.#snapshots.get(botId);
@@ -4502,7 +4998,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const threadId = this.#store.ensureThreadIdNow(botId);
       const nextSnapshot = structuredClone(this.#ensureSnapshot(botId, threadId));
       nextSnapshot.threadId = threadId;
-      transactionHooks?.beforeMutate?.();
+      transactionHooks?.beforeMutate?.(nextSnapshot);
       result = mutate();
       const routine = eventRoutine(result);
       const createdAt = new Date().toISOString();
@@ -4732,6 +5228,12 @@ function routineToolString(value: unknown, field: string, limit: number, require
   if (!isString(value) || !value.trim()) throw new Error(requiredMessage);
   if (value.length > limit) throw new Error(`${field} is too long.`);
   return value;
+}
+
+function siteToolString(value: unknown, field: string, limit: number): string {
+  if (!isString(value) || !value.trim()) throw new Error(`${field} is required.`);
+  if (value.length > limit) throw new Error(`${field} is too long.`);
+  return value.trim();
 }
 
 function routineToolSchedule(value: unknown): RoutineSchedule {
@@ -5285,4 +5787,8 @@ function approvalPermissions(params: unknown): AgentApprovalPermissions {
     fileSystem: { read, write },
     network: network?.enabled === true,
   };
+}
+
+function isHostedSiteMutationTool(value: string): value is HostedSiteMutationTool {
+  return value === "publish_site" || value === "replace_site" || value === "delete_site";
 }

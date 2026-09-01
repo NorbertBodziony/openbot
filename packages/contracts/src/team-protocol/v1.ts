@@ -13,6 +13,7 @@ export const TEAM_PROTOCOL_V1_CAPABILITIES = [
   "direct-messages",
   "remote-desktop",
   "routine-event-markers",
+  "routine-run-event-markers",
   "sidebar-layout",
 ] as const;
 

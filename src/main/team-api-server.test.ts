@@ -14,7 +14,11 @@ import type {
   RoutineRun,
   TeamPresenceSnapshot,
 } from "@openbot/contracts/ipc";
-import { AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT, routineConversationEventItemType } from "@openbot/contracts/ipc";
+import {
+  AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT,
+  routineConversationEventItemType,
+  routineRunConversationEventItemType,
+} from "@openbot/contracts/ipc";
 import { isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import {
   TEAM_APP_VERSION_HEADER,
@@ -22,6 +26,7 @@ import {
   TEAM_PROTOCOL_V1_CAPABILITIES,
   TEAM_PROTOCOL_VERSION_HEADER,
 } from "@openbot/contracts/team-protocol/v1";
+import { TEAM_PROTOCOL_V3 } from "@openbot/contracts/team-protocol/v3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpenBotDatabase } from "../backend/openbot-database";
 import { SidebarLayoutStore } from "../backend/sidebar-layout-store";
@@ -88,6 +93,9 @@ function createAgents(overrides: Partial<TestAgents> = {}, events = new EventEmi
     listRoutineRuns: unimplemented,
     listConversationReads: unimplemented,
     createBot: unimplemented,
+    committedBotDuplication: () => null,
+    duplicateBot: unimplemented,
+    commitBotDuplication: unimplemented,
     updateBot: unimplemented,
     deleteBot: unimplemented,
     setAvatar: unimplemented,
@@ -160,7 +168,7 @@ describe("TeamApiServer compatibility", () => {
       expect(compatibility.status).toBe(200);
       await expect(compatibility.json()).resolves.toMatchObject({
         appVersion: "0.4.0",
-        protocol: { minimum: 1, maximum: 1 },
+        protocol: { minimum: 1, maximum: 3 },
         capabilities: expect.arrayContaining(["browser-control", "remote-desktop"]),
       });
 
@@ -169,7 +177,7 @@ describe("TeamApiServer compatibility", () => {
       await expect(missing.json()).resolves.toMatchObject({ code: "client_update_required" });
 
       const newerClient = await fetch(`${base}/v1/identity`, {
-        headers: { [TEAM_PROTOCOL_VERSION_HEADER]: "2", [TEAM_APP_VERSION_HEADER]: "0.5.0" },
+        headers: { [TEAM_PROTOCOL_VERSION_HEADER]: "4", [TEAM_APP_VERSION_HEADER]: "0.5.0" },
       });
       expect(newerClient.status).toBe(426);
       await expect(newerClient.json()).resolves.toMatchObject({ code: "host_update_required" });
@@ -185,6 +193,198 @@ describe("TeamApiServer compatibility", () => {
 });
 
 describe("TeamApiServer administration", () => {
+  it("duplicates an agent through protocol v3 and places it after the source", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-duplicate-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const sidebarLayout = new SidebarLayoutStore(join(root, "sidebar-layout.json"));
+    await sidebarLayout.initialize();
+    const source = {
+      id: "chief",
+      provider: "codex",
+      name: "Chief",
+      title: "Lead",
+      description: "Coordinates work.",
+      notifications: true,
+      model: "gpt-5.6-luna",
+      reasoningEffort: "medium",
+      threadId: "thread-chief",
+      workspacePath: join(root, "chief"),
+      preview: "Ready",
+      updatedAt: null,
+      avatarSeed: "chief",
+      avatarHue: null,
+      avatarUrl: null,
+    } satisfies BotSummary;
+    const duplicate = {
+      ...source,
+      id: "chief-copy",
+      name: "Chief copy",
+      threadId: null,
+      workspacePath: join(root, "chief-copy"),
+      preview: "No messages yet",
+    } satisfies BotSummary;
+    let bots: BotSummary[] = [source];
+    const duplicateBot = vi.fn(async () => {
+      bots = [duplicate, source];
+      return duplicate;
+    });
+    let committedDuplicate: Awaited<ReturnType<TestAgents["commitBotDuplication"]>> | null = null;
+    const commitBotDuplication = vi.fn(async (_botId, layout) => {
+      committedDuplicate = { bot: duplicate, layout };
+      return committedDuplicate;
+    });
+    const deleteBot = vi.fn(async (botId: string) => {
+      bots = bots.filter((bot) => bot.id !== botId);
+    });
+    const agents = createAgents({
+      listBots: () => bots,
+      committedBotDuplication: () => committedDuplicate,
+      duplicateBot,
+      commitBotDuplication,
+      deleteBot,
+    });
+    const section = await sidebarLayout.mutate(
+      { type: "create", name: "Core", agentId: source.id },
+      new Set([source.id]),
+    );
+    const api = new TeamApiServer({
+      store,
+      agents,
+      sidebarLayout,
+      mailbox: createMailbox(),
+      browser: createBrowser(),
+      appVersion: "1.0.0",
+    });
+    const port = await api.start();
+    const base = `http://127.0.0.1:${port}`;
+
+    try {
+      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
+        body: { username: "owner", password: "correct horse battery" },
+        protocol: TEAM_PROTOCOL_V3,
+        appVersion: "1.0.0",
+      });
+      const response = await fetch(`${base}/v1/agents/${source.id}/duplicate`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${login.sessionToken}`,
+          "Content-Type": "application/json",
+          [TEAM_PROTOCOL_VERSION_HEADER]: String(TEAM_PROTOCOL_V3),
+          [TEAM_APP_VERSION_HEADER]: "1.0.0",
+        },
+        body: JSON.stringify({ operationId: "7674b664-cd72-4cf9-88ed-6f2e189d551f" }),
+      });
+
+      expect(response.status).toBe(201);
+      await expect(response.json()).resolves.toMatchObject({
+        bot: { id: duplicate.id, threadId: null },
+        layout: {
+          agentAssignments: { [source.id]: section.sections[0]?.id, [duplicate.id]: section.sections[0]?.id },
+          agentOrder: [source.id, duplicate.id],
+        },
+      });
+      expect(duplicateBot).toHaveBeenCalledWith(source.id, "7674b664-cd72-4cf9-88ed-6f2e189d551f");
+      expect(commitBotDuplication).toHaveBeenCalledWith(duplicate.id, expect.objectContaining({ revision: 2 }));
+      expect(deleteBot).not.toHaveBeenCalled();
+
+      const currentLayout = await sidebarLayout.mutate(
+        { type: "create", name: "Later", agentId: duplicate.id },
+        new Set([source.id, duplicate.id]),
+      );
+
+      const retry = await fetch(`${base}/v1/agents/${source.id}/duplicate`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${login.sessionToken}`,
+          "Content-Type": "application/json",
+          [TEAM_PROTOCOL_VERSION_HEADER]: String(TEAM_PROTOCOL_V3),
+          [TEAM_APP_VERSION_HEADER]: "1.0.0",
+        },
+        body: JSON.stringify({ operationId: "7674b664-cd72-4cf9-88ed-6f2e189d551f" }),
+      });
+      expect(retry.status).toBe(201);
+      await expect(retry.json()).resolves.toMatchObject({ layout: { revision: currentLayout.revision } });
+      expect(duplicateBot).toHaveBeenCalledTimes(1);
+      expect(commitBotDuplication).toHaveBeenCalledTimes(1);
+    } finally {
+      await api.stop();
+    }
+  });
+
+  it("attempts layout cleanup when duplicate deletion reports an error", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-duplicate-rollback-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const sidebarLayout = new SidebarLayoutStore(join(root, "sidebar-layout.json"));
+    await sidebarLayout.initialize();
+    const duplicate = {
+      id: "chief-copy",
+      provider: "codex",
+      name: "Chief copy",
+      title: "Lead",
+      description: "",
+      notifications: true,
+      model: "gpt-5.6-luna",
+      reasoningEffort: "medium",
+      threadId: null,
+      workspacePath: join(root, "chief-copy"),
+      preview: "No messages yet",
+      updatedAt: null,
+      avatarSeed: "chief",
+      avatarHue: null,
+      avatarUrl: null,
+    } satisfies BotSummary;
+    const deleteBot = vi.fn(async () => {
+      throw new Error("agent cleanup failed");
+    });
+    const agents = createAgents({
+      listBots: () => [duplicate],
+      duplicateBot: vi.fn(async () => duplicate),
+      deleteBot,
+    });
+    vi.spyOn(sidebarLayout, "placeDuplicateAfter").mockRejectedValueOnce(new Error("layout persistence failed"));
+    const removeAgent = vi.spyOn(sidebarLayout, "removeAgent");
+    const api = new TeamApiServer({
+      store,
+      agents,
+      sidebarLayout,
+      mailbox: createMailbox(),
+      browser: createBrowser(),
+      appVersion: "1.0.0",
+    });
+    const port = await api.start();
+    const base = `http://127.0.0.1:${port}`;
+
+    try {
+      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
+        body: { username: "owner", password: "correct horse battery" },
+        protocol: TEAM_PROTOCOL_V3,
+        appVersion: "1.0.0",
+      });
+      const response = await fetch(`${base}/v1/agents/chief/duplicate`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${login.sessionToken}`,
+          "Content-Type": "application/json",
+          [TEAM_PROTOCOL_VERSION_HEADER]: String(TEAM_PROTOCOL_V3),
+          [TEAM_APP_VERSION_HEADER]: "1.0.0",
+        },
+        body: JSON.stringify({ operationId: "25dc8b8e-a93b-48f5-9e22-d3a7840f5d4d" }),
+      });
+
+      expect(response.status).toBe(500);
+      expect(deleteBot).toHaveBeenCalledWith(duplicate.id);
+      expect(removeAgent).toHaveBeenCalledWith(duplicate.id);
+    } finally {
+      await api.stop();
+    }
+  });
+
   it("shares sidebar layout mutations with owner, admin, and member clients", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-team-api-sidebar-layout-"));
     roots.push(root);
@@ -467,6 +667,15 @@ describe("TeamApiServer administration", () => {
               createdAt: "2026-08-29T10:01:00.000Z",
               status: "completed",
               itemType: routineConversationEventItemType("created", "routine-1"),
+            },
+            {
+              id: "routine-run-event-1",
+              author: "system",
+              source: "system",
+              text: "Morning brief",
+              createdAt: "2026-08-29T10:02:00.000Z",
+              status: "completed",
+              itemType: routineRunConversationEventItemType("running", "routine-1", "run-1"),
             },
           ],
         },
@@ -1268,6 +1477,15 @@ describe("TeamApiServer administration", () => {
           status: "completed",
           itemType: routineConversationEventItemType("created", "routine-1"),
         },
+        {
+          id: "routine-run-event-1",
+          author: "system",
+          source: "system",
+          text: "Morning brief",
+          createdAt: "2026-08-19T10:02:00.000Z",
+          status: "completed",
+          itemType: routineRunConversationEventItemType("running", "routine-1", "run-1"),
+        },
       ],
     };
     const createBot = vi.fn(
@@ -1653,7 +1871,14 @@ function nextJsonEvents(websocket: WebSocket, count: number): Promise<TestRealti
 async function jsonRequest<T>(
   base: string,
   path: string,
-  options: { method?: string; token?: string; body?: unknown; capabilities?: string[] } = {},
+  options: {
+    method?: string;
+    token?: string;
+    body?: unknown;
+    capabilities?: string[];
+    protocol?: number;
+    appVersion?: string;
+  } = {},
 ): Promise<T> {
   const response = await fetch(`${base}${path}`, {
     method: options.method ?? (options.body === undefined ? "GET" : "POST"),
@@ -1661,6 +1886,8 @@ async function jsonRequest<T>(
       ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
       ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
       ...(options.capabilities ? { [TEAM_CAPABILITIES_HEADER]: options.capabilities.join(",") } : {}),
+      ...(options.protocol ? { [TEAM_PROTOCOL_VERSION_HEADER]: String(options.protocol) } : {}),
+      ...(options.appVersion ? { [TEAM_APP_VERSION_HEADER]: options.appVersion } : {}),
     },
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });

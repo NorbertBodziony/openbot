@@ -520,6 +520,28 @@ describe("OpenBot connected desktop shell", () => {
             avatarSeed: input.avatarSeed,
             avatarHue: input.avatarHue,
           })),
+          duplicateBot: vi.fn().mockImplementation(async (botId) => {
+            const source = BOTS.find((bot) => bot.id === botId) ?? BOTS[0];
+            const bot = {
+              ...source,
+              id: `${botId}-copy`,
+              name: `${source.name} copy`,
+              threadId: null,
+              workspacePath: `/tmp/OpenBot/Bots/${botId}-copy`,
+              preview: "No messages yet",
+              updatedAt: null,
+            };
+            return {
+              bot,
+              layout: {
+                revision: 1,
+                sections: [],
+                order: ["people", "unassigned"],
+                agentAssignments: {},
+                agentOrder: ["chief", "sales-outbound", bot.id],
+              },
+            };
+          }),
           updateBot: vi.fn().mockImplementation(async (input) => ({
             ...BOTS.find((bot) => bot.id === input.botId),
             ...input,
@@ -917,6 +939,29 @@ describe("OpenBot connected desktop shell", () => {
       routineId: routine.id,
       limit: 10,
     });
+  });
+
+  it("keeps an old routine marker unavailable when paginated history omits its deletion", async () => {
+    vi.mocked(window.openbot.agent.listRoutines).mockResolvedValue([]);
+    vi.mocked(window.openbot.agent.readConversation).mockResolvedValue(
+      testConversationPage("chief", [
+        {
+          id: "old-routine-event",
+          author: "system",
+          source: "system",
+          text: "Archived brief",
+          createdAt: "2026-08-30T10:00:00.000Z",
+          status: "completed",
+          itemType: routineConversationEventItemType("updated", "deleted-routine"),
+        },
+      ]),
+    );
+
+    render(() => <App />);
+
+    expect(await screen.findByText("Archived brief")).toBeInTheDocument();
+    await waitFor(() => expect(window.openbot.agent.listRoutines).toHaveBeenCalledWith("chief"));
+    expect(screen.queryByRole("button", { name: "Open routine Archived brief" })).not.toBeInTheDocument();
   });
 
   it("restores the active server before loading its workspace data", async () => {
@@ -7630,6 +7675,45 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByRole("complementary", { name: "Agent settings" })).toBeInTheDocument();
   });
 
+  it("duplicates an agent from its context menu and opens its empty conversation", async () => {
+    localStorage.setItem(
+      SIDEBAR_PINS_STORAGE_KEY,
+      JSON.stringify({ local: [{ kind: "agent", id: "sales-outbound" }] }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.contextMenu(screen.getByRole("button", { name: "Sales Outbound, pinned agent" }), {
+      clientX: 120,
+      clientY: 90,
+    });
+
+    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Duplicate agent" }), { button: 0 });
+
+    await waitFor(() => expect(window.openbot.agent.duplicateBot).toHaveBeenCalledWith("sales-outbound"));
+    expect(await screen.findByRole("heading", { name: "Sales Outbound copy" })).toBeInTheDocument();
+    await waitFor(() => expect(window.openbot.agent.readConversation).toHaveBeenCalledWith("sales-outbound-copy"));
+    expect(
+      within(screen.getByRole("region", { name: "Pinned chats" })).queryByRole("button", {
+        name: /Sales Outbound copy/,
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the current selection and shows an error when duplication fails", async () => {
+    vi.mocked(window.openbot.agent.duplicateBot).mockRejectedValueOnce(new Error("The agent is busy."));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.contextMenu(screen.getByRole("button", { name: /Sales Outbound/ }), {
+      clientX: 120,
+      clientY: 90,
+    });
+
+    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Duplicate agent" }), { button: 0 });
+
+    expect(await screen.findByText("Could not duplicate agent")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Chief" })).toBeInTheDocument();
+  });
+
   it("confirms and persistently deletes a bot from its context menu", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
@@ -7831,10 +7915,28 @@ describe("OpenBot connected desktop shell", () => {
         },
         {
           id: "agent-new-1",
-          author: "assistant",
-          text: "First unseen answer",
+          author: "agent",
+          source: "agent",
+          senderBotId: "sales-outbound",
+          text: "First unseen agent answer",
           createdAt: "2026-08-19T09:01:00.000Z",
           status: "completed",
+          exchange: {
+            direction: "incoming",
+            messageId: "agent-new-1",
+            senderBotId: "sales-outbound",
+            recipientBotIds: ["chief"],
+            replyToMessageId: null,
+            deliveries: [
+              {
+                id: "agent-new-1",
+                recipientBotId: "chief",
+                status: "completed",
+                position: null,
+                error: null,
+              },
+            ],
+          },
         },
         {
           id: "agent-new-2",
@@ -7853,7 +7955,7 @@ describe("OpenBot connected desktop shell", () => {
 
     render(() => <App />);
     expect(await screen.findByRole("status", { name: "2 new messages" })).toBeInTheDocument();
-    await screen.findByText("First unseen answer");
+    await screen.findByText("Message from");
     expect(screen.getByRole("separator", { name: "New messages" })).toBeInTheDocument();
     const scrollElement = document.querySelector<HTMLElement>(".conversation-scroll");
     const divider = document.querySelector<HTMLElement>(".unread-messages-divider");

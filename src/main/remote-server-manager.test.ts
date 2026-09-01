@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseInviteUrl } from "@openbot/contracts/invite-links";
+import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { TEAM_CAPABILITIES_HEADER } from "@openbot/contracts/team-protocol/v1";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -1302,7 +1303,7 @@ describe("Team API compatibility negotiation", () => {
       .mockResolvedValueOnce(
         Response.json({
           appVersion: "0.5.0",
-          protocol: { minimum: 3, maximum: 3 },
+          protocol: { minimum: 4, maximum: 4 },
           capabilities: [],
         }),
       )
@@ -1325,7 +1326,7 @@ describe("Team API compatibility negotiation", () => {
   });
 
   it("blocks a host range with no shared protocol", async () => {
-    const protocol = { minimum: 3, maximum: 3 };
+    const protocol = { minimum: 4, maximum: 4 };
     const directory = await mkdtemp(join(tmpdir(), "openbot-compatibility-range-"));
     const statePath = join(directory, "servers.json");
     await writeRemoteEventState(statePath, "compatibility-range");
@@ -1379,12 +1380,13 @@ describe("Team API compatibility negotiation", () => {
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
       if (url.pathname === "/v1/compatibility") {
-        return Response.json({ appVersion: "0.3.0", protocol: { minimum: 1, maximum: 3 }, capabilities: [] });
+        return Response.json({ appVersion: "0.3.0", protocol: { minimum: 1, maximum: 2 }, capabilities: [] });
       }
       const headers = new Headers(init?.headers);
       expect(headers.get("OpenBot-Protocol-Version")).toBe("2");
       expect(headers.get("OpenBot-App-Version")).toBe("0.4.0");
       expect(headers.get(TEAM_CAPABILITIES_HEADER)).toContain("routine-event-markers");
+      expect(headers.get(TEAM_CAPABILITIES_HEADER)).toContain("routine-run-event-markers");
       return Response.json({
         phase: "ready",
         cliVersion: "1.0.0",
@@ -1407,6 +1409,79 @@ describe("Team API compatibility negotiation", () => {
         hostAppVersion: "0.3.0",
         negotiatedProtocol: 2,
       });
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("reuses the duplication operation id after an ambiguous transport failure", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-duplicate-retry-"));
+    const statePath = join(directory, "servers.json");
+    await writeRemoteEventState(statePath, "duplicate-retry");
+    const operationIds: string[] = [];
+    let duplicateAttempts = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(input instanceof Request ? input.url : input.toString());
+        if (url.pathname === "/v1/compatibility") {
+          return Response.json({
+            appVersion: "1.0.0",
+            protocol: { minimum: 3, maximum: 3 },
+            capabilities: ["agent-duplication"],
+          });
+        }
+        const body = JSON.parse(String(init?.body));
+        if (!isDynamicRecord(body) || !isString(body.operationId)) throw new Error("Invalid duplicate request body.");
+        operationIds.push(body.operationId);
+        duplicateAttempts += 1;
+        if (duplicateAttempts === 1) throw new TypeError("connection reset after commit");
+        if (duplicateAttempts === 2) {
+          return Response.json({ error: "Host response was lost." }, { status: 503 });
+        }
+        return Response.json(
+          {
+            bot: {
+              id: "bot-copy",
+              provider: "codex",
+              name: "Research copy",
+              title: "Research lead",
+              description: "",
+              notifications: true,
+              model: "gpt-5.6-luna",
+              reasoningEffort: "medium",
+              threadId: null,
+              workspacePath: "/OpenBot/Bots/bot-copy",
+              preview: "No messages yet",
+              updatedAt: null,
+              avatarSeed: "research",
+              avatarHue: null,
+              avatarUrl: null,
+            },
+            layout: {
+              revision: 1,
+              sections: [],
+              order: ["people", "unassigned"],
+              agentAssignments: {},
+              agentOrder: ["bot-source", "bot-copy"],
+            },
+          },
+          { status: 201 },
+        );
+      }),
+    );
+    const manager = remoteEventManager(statePath, "1.0.0");
+
+    try {
+      await manager.initialize();
+      await expect(manager.duplicateBot("bot-source", "duplicate-retry")).rejects.toThrow("connection reset");
+      await expect(manager.duplicateBot("bot-source", "duplicate-retry")).rejects.toThrow("Host response was lost");
+      await expect(manager.duplicateBot("bot-source", "duplicate-retry")).resolves.toMatchObject({
+        bot: { id: "bot-copy" },
+      });
+      expect(operationIds).toHaveLength(3);
+      expect(new Set(operationIds).size).toBe(1);
     } finally {
       manager.stop();
       await rm(directory, { recursive: true, force: true });

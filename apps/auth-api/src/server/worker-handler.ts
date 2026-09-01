@@ -1,4 +1,5 @@
 import { type AuthRetentionResult, pruneExpiredAuthData } from "./auth-data-retention";
+import { HostedSiteService } from "./hosted-site-service";
 import { enforceMarketplaceIngress, MarketplaceRateLimitError } from "./marketplace-request-policy";
 import { deliverPendingRemoteAuthEvents } from "./remote-control-plane";
 import type { WorkerBindings } from "./types";
@@ -55,15 +56,21 @@ export function createWorkerHandler(
     },
     async scheduled(
       controller: Pick<ScheduledController, "scheduledTime">,
-      bindings: Pick<WorkerBindings, "DB" | "REMOTE_AUTH_WEBHOOK_URL" | "REMOTE_AUTH_WEBHOOK_SECRET">,
+      bindings: Pick<WorkerBindings, "DB" | "REMOTE_AUTH_WEBHOOK_URL" | "REMOTE_AUTH_WEBHOOK_SECRET"> &
+        Partial<Pick<WorkerBindings, "SITES">>,
     ) {
       const delivery = deliverRemoteAuthEvents(bindings, controller.scheduledTime);
+      const cleanup = bindings.SITES
+        ? new HostedSiteService(bindings.DB, bindings.SITES).cleanup(controller.scheduledTime)
+        : Promise.resolve(null);
       if (!isDailyRetentionRun(controller.scheduledTime)) {
-        await delivery;
+        const [, sites] = await Promise.all([delivery, cleanup]);
+        if (sites) console.info("Hosted site cleanup completed.", sites);
         return;
       }
-      const [result] = await Promise.all([prune(bindings.DB, controller.scheduledTime), delivery]);
+      const [result, , sites] = await Promise.all([prune(bindings.DB, controller.scheduledTime), delivery, cleanup]);
       log(result);
+      if (sites) console.info("Hosted site cleanup completed.", sites);
     },
   } satisfies ExportedHandler<WorkerBindings>;
 }

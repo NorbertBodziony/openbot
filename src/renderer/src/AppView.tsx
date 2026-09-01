@@ -193,6 +193,8 @@ function WorkspaceShell(props: {
     openBotSetup,
     cancelBotSetup,
     editBot,
+    duplicateBot,
+    duplicatingBotIds,
     deleteBot,
     setSidebarCollapsed,
     expandSidebar,
@@ -244,6 +246,7 @@ function WorkspaceShell(props: {
     conversationOlderLoading,
     conversationOlderErrors,
     activeQueue,
+    activeRoutineIds,
     browserTabs,
     activeBrowserTabId,
     browserControlState,
@@ -364,6 +367,9 @@ function WorkspaceShell(props: {
         onPreloadDirectConversation={activePeopleEnabled() ? () => void DirectConversation.preload() : undefined}
         onCreateBot={openBotSetup}
         onEditBot={editBot}
+        duplicateSupported={activeServerSupportsCapability("agent-duplication")}
+        duplicatingBotIds={duplicatingBotIds()}
+        onDuplicateBot={duplicateBot}
         onDeleteBot={deleteBot}
         compact={leftPanelCompact()}
         onExpand={expandSidebar}
@@ -502,6 +508,7 @@ function WorkspaceShell(props: {
           }
           bot={activeBot()}
           bots={botList()}
+          availableRoutineIds={activeRoutineIds()}
           modelOptions={modelOptions()}
           messages={activeMessages()}
           messageReferences={activeBot() ? (conversationReferences()[activeBot()?.id ?? ""] ?? {}) : {}}
@@ -800,6 +807,7 @@ function WorkspaceOverlays(props: {
                   provider === "codex" ? connectChatGPT() : provider === "claude" ? connectClaude() : connectGrok()
               : undefined
           }
+          hostedSitesApi={window.openbot.hostedSites}
           restoreFocusTarget={appSettingsRestoreTarget()}
         />
       </Loading>
