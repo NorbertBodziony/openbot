@@ -22,6 +22,7 @@ const MAX_SNAPSHOT_TEXT = 100_000;
 const MAX_SNAPSHOT_SCANNED_NODES = 10_000;
 const MAX_SNAPSHOT_ELEMENT_VALUE = 2_000;
 const MAX_SERIALIZED_SNAPSHOT_BYTES = 1024 * 1024;
+const DOM_QUIET_MS = 250;
 const ACTIONABLE_ROLES = new Set([
   "button",
   "checkbox",
@@ -204,8 +205,9 @@ export class BrowserCdpEngine {
               range.selectNodeContents(this); selection.removeAllRanges(); selection.addRange(range);
             }
           } else if ('value' in this && typeof this.setSelectionRange === 'function') {
-            const selectable = this instanceof HTMLTextAreaElement ||
-              (this instanceof HTMLInputElement && ['text', 'search', 'tel', 'url', 'password'].includes(this.type));
+            const tag = this.localName;
+            const selectable = tag === 'textarea' ||
+              (tag === 'input' && ['text', 'search', 'tel', 'url', 'password'].includes(this.type));
             if (!selectable) return true;
             const end = String(this.value).length; this.setSelectionRange(end, end);
           } else if (this.isContentEditable) {
@@ -278,7 +280,7 @@ export class BrowserCdpEngine {
         send,
         resolved.backendNodeId,
         `function(values) {
-          if (!(this instanceof HTMLSelectElement)) throw new Error('Target is not a select element.');
+          if (this.localName !== 'select') throw new Error('Target is not a select element.');
           if (!this.multiple && values.length > 1) throw new Error('A single-select accepts only one requested value.');
           const wanted = new Set(values);
           const matched = new Set();
@@ -312,7 +314,7 @@ export class BrowserCdpEngine {
           if (!('checked' in this)) throw new Error('Target is not checkable.');
           return {
             checked: Boolean(this.checked),
-            radio: this instanceof HTMLInputElement && this.type === 'radio',
+            radio: this.localName === 'input' && this.type === 'radio',
           };
         }`,
         [],
@@ -557,7 +559,12 @@ export class BrowserCdpEngine {
       while (true) {
         if (await matches()) {
           if (condition.state !== "dom-quiet") return;
-          await waitForDomQuietAcrossTargets(send, this.#snapshotTargets(), deadline - Date.now());
+          await waitForDomQuietAcrossTargets(send, this.#snapshotTargets(), deadline - Date.now()).catch((error) => {
+            if (error instanceof Error && error.message === "DOM did not become quiet.") {
+              throw new Error("Browser wait condition timed out.");
+            }
+            throw error;
+          });
           if (await matches()) return;
         }
         const remaining = deadline - Date.now();
@@ -635,7 +642,7 @@ export class BrowserCdpEngine {
           send,
           record.backendNodeId,
           `function() {
-            if (!(this instanceof Element) || !this.isConnected || this.getClientRects().length === 0) return false;
+            if (this.nodeType !== 1 || !this.isConnected || this.getClientRects().length === 0) return false;
             let element = this;
             while (element) {
               if (element.hidden || element.inert || String(element.getAttribute('aria-hidden')).toLowerCase() === 'true') return false;
@@ -1050,7 +1057,7 @@ async function collectPageSummary(
               }
               continue;
             }
-            if (!(node instanceof Element)) continue;
+            if (node.nodeType !== 1) continue;
             const tag = node.localName;
             if (tag === 'canvas' || tag === 'video') hasVisualSurface = true;
             if (tag === 'iframe' || tag === 'frame') {
@@ -1136,7 +1143,7 @@ async function pageContainsText(
                 }
                 continue;
               }
-              if (!(node instanceof Element)) continue;
+              if (node.nodeType !== 1) continue;
               if ((node.localName === 'iframe' || node.localName === 'frame')) {
                 try { if (node.contentDocument) roots.push(node.contentDocument); } catch {}
               }
@@ -1303,7 +1310,7 @@ function actionableNodesExpression(limit: number): string {
     const matches = [];
     let scanned = 0;
     const isCandidate = node => {
-      if (!(node instanceof Element) || node.hidden || node.closest('[hidden],[inert],[aria-hidden="true"]')) return false;
+      if (node.nodeType !== 1 || node.hidden || node.closest('[hidden],[inert],[aria-hidden="true"]')) return false;
       const explicitRole = (node.getAttribute('role') || '').trim().split(/\\s+/)[0].toLowerCase();
       const tag = node.localName;
       const semantic = tag === 'button' || tag === 'summary' || tag === 'a' || tag === 'select' ||
@@ -1630,7 +1637,7 @@ async function waitForDomQuietAcrossTargets(
       const changed = () => {
         discoverRoots();
         clearTimeout(quietTimer);
-        quietTimer = setTimeout(() => done(true), 120);
+        quietTimer = setTimeout(() => done(true), ${DOM_QUIET_MS});
       };
       const discoverRoots = () => {
         const pending = [document];
@@ -1658,12 +1665,12 @@ async function waitForDomQuietAcrossTargets(
         }
         if (discovered) {
           clearTimeout(quietTimer);
-          quietTimer = setTimeout(() => done(true), 120);
+          quietTimer = setTimeout(() => done(true), ${DOM_QUIET_MS});
         }
       };
       discoverRoots();
       discoveryTimer = setInterval(discoverRoots, 25);
-      quietTimer = setTimeout(() => done(true), 120);
+      quietTimer = setTimeout(() => done(true), ${DOM_QUIET_MS});
       deadlineTimer = setTimeout(() => done(false), ${deadlineMs});
     })`,
           contextId,

@@ -79,6 +79,17 @@ const server = createServer((request, response) => {
     );
     return;
   }
+  if (url.pathname === "/same-frame") {
+    response.setHeader("content-type", "text/html; charset=utf-8");
+    response.end(
+      `<button aria-label="Same-origin action" onclick="document.querySelector('output').textContent='Same-origin:' + event.isTrusted">Same-origin action</button>
+       <label>Mode <select aria-label="Same-origin mode"><option value="a">Alpha</option><option value="b">Beta</option></select></label>
+       <label><input type="radio" name="same-choice" aria-label="Same-origin primary choice" checked />Primary</label>
+       <input aria-label="Same-origin field" value="a" />
+       <output>Same-origin ready</output>`,
+    );
+    return;
+  }
   if (url.pathname === "/diagnostic-error") {
     response.writeHead(503, { "content-type": "text/plain" });
     response.end("expected diagnostic failure");
@@ -118,6 +129,7 @@ const server = createServer((request, response) => {
       <button draggable="true" aria-label="Drag source">Drag source</button><button aria-label="Drop target" ondragover="event.preventDefault()" ondrop="event.preventDefault();document.querySelector('output').textContent='drag:' + event.isTrusted">Drop target</button>
       <input type="file" aria-label="Files" onchange="document.querySelector('output').textContent=this.files[0]?.name || ''" />
       <canvas width="40" height="20" style="display:block;width:80px;height:40px" onclick="document.querySelector('output').textContent='canvas:' + event.isTrusted"></canvas>
+      <iframe title="Same origin frame" src="/same-frame"></iframe>
       <iframe title="Cross origin frame" src="http://localhost:${port}/frame?frame_token=frame-secret"></iframe>
       <div id="shadow"></div><output>ready</output>
       <script src="/console-script?console_token=console-secret"></script>
@@ -270,6 +282,49 @@ async function main(): Promise<void> {
     }
     if (!v2Elements.some((element) => element.name === "Frame action")) {
       throw new Error("V2 snapshot did not include a cross-origin iframe control.");
+    }
+    if (!v2Elements.some((element) => element.name === "Same-origin action")) {
+      throw new Error("V2 snapshot did not include a same-origin iframe control.");
+    }
+    const sameOriginClick = await callBrowserTool(browser, "click", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "button", name: "Same-origin action", exact: true },
+    });
+    if (!sameOriginClick.success || !String(toolTextPayload(sameOriginClick)?.text).includes("Same-origin:true")) {
+      throw new Error(`V2 same-origin iframe click failed: ${toolError(sameOriginClick)}`);
+    }
+    const sameOriginSelect = await callBrowserTool(browser, "select_option", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "combobox", name: "Same-origin mode", exact: true },
+      values: ["b"],
+    });
+    const sameOriginSelection = await v2Contents.executeJavaScript(
+      `document.querySelector('iframe[title="Same origin frame"]').contentDocument.querySelector('select').value`,
+      true,
+    );
+    if (!sameOriginSelect.success || sameOriginSelection !== "b") {
+      throw new Error(`V2 same-origin iframe select failed: ${toolError(sameOriginSelect)}`);
+    }
+    const sameOriginRadio = await callBrowserTool(browser, "set_checked", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "radio", name: "Same-origin primary choice", exact: true },
+      checked: false,
+    });
+    if (sameOriginRadio.success || !toolError(sameOriginRadio).includes("cannot be cleared directly")) {
+      throw new Error("V2 same-origin iframe radio used the wrong DOM realm.");
+    }
+    const sameOriginTyped = await callBrowserTool(browser, "type", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "textbox", name: "Same-origin field", exact: true },
+      text: "b",
+      mode: "append",
+    });
+    const sameOriginValue = await v2Contents.executeJavaScript(
+      `document.querySelector('iframe[title="Same origin frame"]').contentDocument.querySelector('input[aria-label="Same-origin field"]').value`,
+      true,
+    );
+    if (!sameOriginTyped.success || sameOriginValue !== "ab") {
+      throw new Error(`V2 same-origin iframe typing failed: ${toolError(sameOriginTyped)}`);
     }
     const shadowClick = await callBrowserTool(browser, "click", {
       tabId: v2Tab.id,
@@ -637,7 +692,7 @@ async function main(): Promise<void> {
       state: "dom-quiet",
       timeoutMs: 200,
     });
-    if (quietWait.success || !toolError(quietWait).includes("DOM did not become quiet")) {
+    if (quietWait.success || !toolError(quietWait).includes("timed out")) {
       throw new Error("V2 DOM-quiet wait suppressed its timeout.");
     }
     const activeObservers = await v2Contents.executeJavaScript("globalThis.__openbotActiveObservers", true);
@@ -663,17 +718,19 @@ async function main(): Promise<void> {
       throw new Error(`V2 DOM-quiet wait ignored the requested timeout: ${toolError(patientQuietWait)}`);
     }
     await v2Contents.executeJavaScript(
-      "globalThis.__openbotTransient = document.body.appendChild(Object.assign(document.createElement('span'), { textContent: 'transient quiet condition' })); globalThis.__openbotTransientNoise = setInterval(() => document.body.toggleAttribute('data-transient-noise'), 20); setTimeout(() => { clearInterval(globalThis.__openbotTransientNoise); globalThis.__openbotTransient.remove(); delete globalThis.__openbotTransient; delete globalThis.__openbotTransientNoise; }, 300); true",
+      "globalThis.__openbotTransient = document.body.appendChild(Object.assign(document.createElement('span'), { textContent: 'transient quiet condition' })); setTimeout(() => { globalThis.__openbotTransient.remove(); delete globalThis.__openbotTransient; }, 100); true",
       true,
     );
     const invalidatedQuietWait = await callBrowserTool(browser, "wait_for", {
       tabId: v2Tab.id,
       text: "transient quiet condition",
       state: "dom-quiet",
-      timeoutMs: 700,
+      timeoutMs: 800,
     });
     if (invalidatedQuietWait.success || !toolError(invalidatedQuietWait).includes("timed out")) {
-      throw new Error("V2 DOM-quiet wait did not recheck its matched text condition.");
+      throw new Error(
+        `V2 DOM-quiet wait did not recheck its matched text condition: ${toolError(invalidatedQuietWait)}`,
+      );
     }
     const removedEvaluation = await callBrowserTool(browser, "evaluate", {
       tabId: v2Tab.id,
