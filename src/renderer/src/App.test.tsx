@@ -4373,7 +4373,7 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
     await waitFor(() => expect(window.openbot.browser.openPictureInPicture).toHaveBeenCalledTimes(2));
   });
-  it("shows a stable indicator while an agent controls the embedded browser", async () => {
+  it("shows the browser control indicator only while an agent acts", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     emitAgentEvent?.({
@@ -4467,12 +4467,11 @@ describe("OpenBot connected desktop shell", () => {
         ],
       },
     });
-    expect(screen.getByRole("tab", { name: "Local smoke page, controlled by Chief" })).toBe(controlledTab);
+    expect(screen.queryByRole("button", { name: "Chief is controlling the browser" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hide computer" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Local smoke page" })).toBe(controlledTab);
 
     emitAgentEvent?.({ type: "browser-control-changed", state: { sessions: [] } });
-    await waitFor(() =>
-      expect(screen.queryByRole("tab", { name: "Local smoke page, controlled by Chief" })).not.toBeInTheDocument(),
-    );
     expect(screen.getByRole("tab", { name: "Local smoke page" })).toBe(controlledTab);
   });
 
@@ -4669,7 +4668,14 @@ describe("OpenBot connected desktop shell", () => {
     expect(within(cancelledCard).queryByRole("button")).not.toBeInTheDocument();
   });
 
-  it("closes browser tabs with the middle mouse button and Control W, then closes the panel", async () => {
+  it("coalesces repeated tab closes and ignores navigation while a close is pending", async () => {
+    let resolveClose: (() => void) | undefined;
+    vi.mocked(window.openbot.browser.close).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveClose = resolve;
+        }),
+    );
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     const firstTab = {
@@ -4691,19 +4697,23 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "browser-changed",
       tabs: [firstTab, secondTab],
-      activeTabId: firstTab.id,
+      activeTabId: secondTab.id,
     });
 
     await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
-    await fireEvent.pointerDown(screen.getByRole("tab", { name: "Second page" }), { button: 1 });
+    await screen.findByRole("complementary", { name: "Browser" });
+    const closingTab = await screen.findByRole("tab", { name: "Second page" });
+    await fireEvent.pointerDown(closingTab, { button: 1 });
+    await fireEvent.pointerDown(closingTab, { button: 1 });
     expect(window.openbot.browser.close).toHaveBeenCalledWith(secondTab.id);
+    expect(window.openbot.browser.close).toHaveBeenCalledTimes(1);
 
+    await fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+    expect(window.openbot.browser.navigate).not.toHaveBeenCalled();
+
+    resolveClose?.();
     emitAgentEvent?.({ type: "browser-changed", tabs: [firstTab], activeTabId: firstTab.id });
     await waitFor(() => expect(screen.queryByRole("tab", { name: "Second page" })).not.toBeInTheDocument());
-    await fireEvent.keyDown(window, { key: "w", ctrlKey: true });
-    expect(window.openbot.browser.close).toHaveBeenLastCalledWith(firstTab.id);
-    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument());
-    expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({ visible: false });
   });
 
   it("closes the browser panel when its last tab is closed from the embedded page", async () => {

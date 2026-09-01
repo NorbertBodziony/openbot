@@ -327,7 +327,8 @@ export class BrowserHost {
   }
 
   async close(tabId: string): Promise<void> {
-    const tab = this.#requireTab(tabId);
+    const tab = this.#tabs.get(tabId);
+    if (!tab) return;
     const tabIds = [...this.#tabs.keys()];
     const closedIndex = tabIds.indexOf(tabId);
     this.#unmountView(tab.view);

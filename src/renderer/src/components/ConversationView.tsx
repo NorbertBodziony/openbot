@@ -461,6 +461,15 @@ function createConversationViewScope(props: ConversationProps) {
       tab.ownerBotId ? tab.ownerBotId === bot.id : Boolean(bot.threadId && tab.ownerThreadId === bot.threadId),
     );
   });
+  const closingBrowserTabIds = new Set<string>();
+  createEffect(
+    () => new Set(browserTabs().map((tab) => tab.id)),
+    (visibleTabIds) => {
+      for (const tabId of closingBrowserTabIds) {
+        if (!visibleTabIds.has(tabId)) closingBrowserTabIds.delete(tabId);
+      }
+    },
+  );
   createEffect(
     () => browserTabs().map((tab) => ({ id: tab.id, url: tab.url })),
     (tabs) => {
@@ -581,6 +590,10 @@ function createConversationViewScope(props: ConversationProps) {
         .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
         .find((session) => session.phase === "acting") ?? candidates.at(-1)
     );
+  });
+  const actingBrowserControl = createMemo(() => {
+    const control = activeBrowserControl();
+    return control?.phase === "acting" ? control : undefined;
   });
   const browserControlBot = createMemo(() => {
     const control = activeBrowserControl();
@@ -1302,22 +1315,6 @@ function createConversationViewScope(props: ConversationProps) {
       hideBrowserPanel();
       setMediaPreview(null);
     };
-    const closeActiveBrowserTab = (event: KeyboardEvent) => {
-      if (
-        !screenOpen() ||
-        event.key.toLowerCase() !== "w" ||
-        (!event.ctrlKey && !event.metaKey) ||
-        event.altKey ||
-        event.shiftKey
-      ) {
-        return;
-      }
-      const tab = activeBrowserTab();
-      if (!tab) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      void closeBrowserTab(tab.id);
-    };
     const closeMessageMenus = (event: MouseEvent) => {
       if (event.target instanceof Element && event.target.closest(".message-actions")) return;
       setOpenReactionMessageId(null);
@@ -1325,9 +1322,7 @@ function createConversationViewScope(props: ConversationProps) {
       setExpandedEmojiMessageId(null);
     };
     const keyboardTarget = conversationPanel?.ownerDocument ?? document;
-    const keyboardWindow = keyboardTarget.defaultView ?? window;
     keyboardTarget.addEventListener("keydown", closeOnEscape);
-    keyboardWindow.addEventListener("keydown", closeActiveBrowserTab);
     keyboardTarget.addEventListener("keydown", handleChatSearchShortcut);
     window.addEventListener("pointerdown", closeMessageMenus);
     scrollResizeObserver = new ResizeObserver(() => {
@@ -1352,7 +1347,6 @@ function createConversationViewScope(props: ConversationProps) {
       scrollResizeObserver = undefined;
       unsubscribeImport();
       keyboardTarget.removeEventListener("keydown", closeOnEscape);
-      keyboardWindow.removeEventListener("keydown", closeActiveBrowserTab);
       keyboardTarget.removeEventListener("keydown", handleChatSearchShortcut);
       window.removeEventListener("pointerdown", closeMessageMenus);
     };
@@ -2178,16 +2172,20 @@ function createConversationViewScope(props: ConversationProps) {
   }
 
   async function closeBrowserTab(tabId: string) {
+    if (closingBrowserTabIds.has(tabId) || !browserTabs().some((tab) => tab.id === tabId)) return;
+    closingBrowserTabIds.add(tabId);
     const closesLastTab = browserTabs().length === 1 && browserTabs()[0]?.id === tabId;
     try {
       await props.onCloseBrowserTab(tabId);
       if (closesLastTab) hideBrowserPanel();
     } catch {
+      closingBrowserTabIds.delete(tabId);
       setComposerError("Could not close the browser tab.");
     }
   }
 
   async function reloadBrowserTab(tabId: string) {
+    if (closingBrowserTabIds.has(tabId) || !browserTabs().some((tab) => tab.id === tabId)) return;
     const analytics = desktopAnalytics.scope();
     try {
       await window.openbot.browser.reload(tabId);
@@ -2203,6 +2201,7 @@ function createConversationViewScope(props: ConversationProps) {
   }
 
   async function navigateBrowserTab(tabId: string, direction: "back" | "forward") {
+    if (closingBrowserTabIds.has(tabId) || !browserTabs().some((tab) => tab.id === tabId)) return;
     try {
       await window.openbot.browser.navigate({ tabId, direction });
     } catch {
@@ -2371,6 +2370,7 @@ function createConversationViewScope(props: ConversationProps) {
     setVirtualRootElement,
     activeActivityId,
     activeBrowserControl,
+    actingBrowserControl,
     activeBrowserTab,
     browserTakeoverPreview,
     browserTakeoverResolution,
@@ -2592,10 +2592,9 @@ export function useConversationViewScope(): ConversationViewScope {
 /** @internal Stable HMR boundary for conversation header. */
 export function ConversationHeader() {
   const {
-    activeBrowserControl,
+    actingBrowserControl,
     agentActivity,
     browserControlBot,
-    browserTabs,
     hideBrowserPanel,
     props,
     screenOpen,
@@ -2679,13 +2678,10 @@ export function ConversationHeader() {
             type="button"
             class={[
               "header-panel-toggle computer-button",
-              {
-                "computer-button-available": !screenOpen() && browserTabs().length > 0,
-                "computer-button-agent-active": Boolean(activeBrowserControl()),
-              },
+              { "computer-button-agent-active": Boolean(actingBrowserControl()) },
             ]}
             aria-label={
-              activeBrowserControl()
+              actingBrowserControl()
                 ? `${browserControlBot()?.name ?? "Agent"} is controlling the browser`
                 : screenOpen()
                   ? "Hide computer"
@@ -2698,7 +2694,7 @@ export function ConversationHeader() {
             }}
           >
             <ComputerIcon />
-            <Show when={activeBrowserControl()}>
+            <Show when={actingBrowserControl()}>
               <span class="computer-control-dot" aria-hidden="true" />
             </Show>
           </Button>
@@ -3769,11 +3765,9 @@ export function ConversationOverlays() {
 export function ConversationView(props: ConversationProps) {
   const scope = createConversationViewScope(props);
   const {
-    activeBrowserControl,
     agentReady,
     browserPanelWidth,
     browserSidebarOpen,
-    browserTabs,
     dropActive,
     filePreviewOpen,
     handleChatSearchShortcut,
@@ -3781,7 +3775,6 @@ export function ConversationView(props: ConversationProps) {
     setConversationPanelElement,
     setDropActive,
     settingsPanelWidth,
-    screenOpen,
     submitting,
   } = scope;
   createEffect(
@@ -3801,7 +3794,6 @@ export function ConversationView(props: ConversationProps) {
           {
             "conversation-drop-active": dropActive(),
             "browser-panel-active": browserSidebarOpen() || filePreviewOpen(),
-            "browser-panel-available": !screenOpen() && (browserTabs().length > 0 || Boolean(activeBrowserControl())),
           },
         ]}
         style={`--settings-panel-width: ${settingsPanelWidth()}px; --browser-panel-width: ${browserPanelWidth()}px`}
