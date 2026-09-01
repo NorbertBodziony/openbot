@@ -4481,6 +4481,35 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("button", { name: "Hide computer" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Local smoke page" })).toBe(controlledTab);
 
+    emitAgentEvent?.({
+      type: "browser-control-changed",
+      state: {
+        sessions: [
+          {
+            id: "thread-chief:turn-1",
+            threadId: "thread-chief",
+            turnId: "turn-1",
+            callId: "call-1",
+            tabId: "tab-1",
+            action: "type",
+            phase: "waiting",
+            startedAt: "2026-08-12T10:00:00.000Z",
+          },
+          {
+            id: "thread-chief:turn-2",
+            threadId: "thread-chief",
+            turnId: "turn-2",
+            callId: "call-2",
+            tabId: "tab-1",
+            action: "click",
+            phase: "acting",
+            startedAt: "2026-08-12T10:00:01.000Z",
+          },
+        ],
+      },
+    });
+    expect(screen.getByRole("tab", { name: "Local smoke page, controlled by Chief" })).toBe(controlledTab);
+
     emitAgentEvent?.({ type: "browser-control-changed", state: { sessions: [] } });
     expect(screen.getByRole("tab", { name: "Local smoke page" })).toBe(controlledTab);
   });

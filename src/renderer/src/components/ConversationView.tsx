@@ -601,14 +601,13 @@ function createConversationViewScope(props: ConversationProps) {
     return control ? props.bots.find((bot) => bot.threadId === control.threadId) : undefined;
   });
   const browserControlForTab = (tab: BrowserTab) => {
-    const sessions = props.browserControlState.sessions;
-    return (
-      sessions.find((session) => session.tabId === tab.id) ??
-      sessions.find(
-        (session) =>
-          session.tabId === null && tab.id === activeBrowserTab()?.id && session.threadId === tab.ownerThreadId,
-      )
+    const sessions = props.browserControlState.sessions.filter(
+      (session) =>
+        session.tabId === tab.id ||
+        (session.tabId === null && tab.id === activeBrowserTab()?.id && session.threadId === tab.ownerThreadId),
     );
+    const newestFirst = [...sessions].sort((left, right) => right.startedAt.localeCompare(left.startedAt));
+    return newestFirst.find((session) => session.phase === "acting") ?? newestFirst[0];
   };
   const browserControllerForTab = (tab: BrowserTab) => {
     const control = browserControlForTab(tab);
