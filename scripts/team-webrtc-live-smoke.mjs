@@ -255,7 +255,10 @@ async function runWebRtcSmoke(input) {
           120_000,
         );
       }
-      const size = Math.min(chunkBytes, input.payloadBytes - sentBytes);
+      const remainingBytes = input.payloadBytes - sentBytes;
+      let size = Math.min(chunkBytes, remainingBytes);
+      const finalRemainder = remainingBytes - size;
+      if (finalRemainder > 0 && finalRemainder < 4) size -= 4 - finalRemainder;
       const chunk = new Uint8Array(size);
       new DataView(chunk.buffer).setUint32(0, sequence);
       clientChannel.send(chunk);
