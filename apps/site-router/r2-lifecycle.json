@@ -1,13 +1,16 @@
 {
-  "Rules": [
+  "rules": [
     {
-      "ID": "delete-orphaned-site-deployments",
-      "Status": "Enabled",
-      "Filter": {
-        "Prefix": "sites/"
+      "id": "delete-orphaned-site-deployments",
+      "enabled": true,
+      "conditions": {
+        "prefix": "sites/"
       },
-      "Expiration": {
-        "Days": 32
+      "deleteObjectsTransition": {
+        "condition": {
+          "type": "Age",
+          "maxAge": 2764800
+        }
       }
     }
   ]
