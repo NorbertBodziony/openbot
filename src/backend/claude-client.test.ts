@@ -239,7 +239,7 @@ fi
     expect(query.closed).toBe(true);
   });
 
-  it("clears discovered model capabilities when a later refresh times out", async () => {
+  it("preserves discovered model capabilities when a later refresh times out", async () => {
     const discoveryQuery = new TestQuery(new TestQueue<TestStreamMessage>(), [
       {
         value: "fable",
@@ -271,7 +271,8 @@ fi
       decodeThreadResponse,
     );
 
-    expect(runtimeOptions).toMatchObject({ model: "claude-fable-5", effort: "medium" });
+    expect(runtimeOptions).toMatchObject({ model: "fable" });
+    expect(runtimeOptions).not.toHaveProperty("effort");
     expect(timeoutQuery.closed).toBe(true);
     await client.stop();
   });
