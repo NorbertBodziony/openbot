@@ -14,6 +14,8 @@
     "./team-protocol": "./src/team-protocol/index.ts",
     "./team-protocol/v1": "./src/team-protocol/v1.ts",
     "./team-protocol/v1-adapter": "./src/team-protocol/v1-adapter.ts",
+    "./team-protocol/v2": "./src/team-protocol/v2.ts",
+    "./team-protocol/v2-adapter": "./src/team-protocol/v2-adapter.ts",
     "./validation": "./src/validation.ts"
   },
   "scripts": {

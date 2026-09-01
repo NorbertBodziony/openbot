@@ -1,0 +1,8 @@
+[Unit]
+Description=Reload Nginx after OpenBot Remote TLS renewal
+After=nginx.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/nginx -t
+ExecStart=/bin/systemctl reload nginx
