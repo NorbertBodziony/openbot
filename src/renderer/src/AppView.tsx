@@ -246,6 +246,7 @@ function WorkspaceShell(props: {
     conversationOlderLoading,
     conversationOlderErrors,
     activeQueue,
+    activeRoutineIds,
     browserTabs,
     activeBrowserTabId,
     browserVisibilitySuspended,
@@ -508,6 +509,7 @@ function WorkspaceShell(props: {
           }
           bot={activeBot()}
           bots={botList()}
+          availableRoutineIds={activeRoutineIds()}
           modelOptions={modelOptions()}
           messages={activeMessages()}
           messageReferences={activeBot() ? (conversationReferences()[activeBot()?.id ?? ""] ?? {}) : {}}

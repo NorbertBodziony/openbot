@@ -26,7 +26,7 @@ export function UnreadMessagesBanner(props: {
         disabled={props.busy}
         onClick={props.onMarkRead}
       >
-        {props.busy ? "Marking…" : "Mark as read"}
+        <span class="unread-messages-mark-read-label">{props.busy ? "Marking…" : "Mark as read"}</span>
       </Button>
     </div>
   );

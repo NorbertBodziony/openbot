@@ -43,7 +43,7 @@ import {
   useContext,
 } from "solid-js";
 import { desktopAnalytics } from "../analytics";
-import type { BotMessage, BotProfile } from "../data";
+import type { BotMessage, BotProfile, ChatActionMarkerModel } from "../data";
 import { appendVoiceTranscript, recordingToWav } from "../voice-recording";
 import { AgentAvatar } from "./AgentAvatar";
 import { ComposerEditor, expandComposerMentions } from "./ComposerEditor";
@@ -58,6 +58,7 @@ import {
 import type { AgentRuntimeSettings, AgentRuntimeSettingsPatch } from "./conversation/AgentSettingsPanel";
 import { AttachmentCards, fileBadge, formatFileSize } from "./conversation/AttachmentCards";
 import { attachmentReferenceTone } from "./conversation/AttachmentReference";
+import { ChatActionMarker } from "./conversation/ChatActionMarker";
 import { ChatSearch } from "./conversation/ChatSearch";
 import {
   CloseIcon,
@@ -75,8 +76,7 @@ import {
 import { calculateChatScrollMargin, createChatVirtualizer } from "./conversation/createChatVirtualizer";
 import { messageContentBlocks } from "./conversation/DataTable";
 import { ScrollToLatestButton, scrollToLatestMessage } from "./conversation/MessageNavigation";
-import { ExchangeSystemRow, MessageActions, MessageBody } from "./conversation/MessageRendering";
-import { RoutineEventMarker } from "./conversation/RoutineEventMarker";
+import { MessageActions, MessageBody } from "./conversation/MessageRendering";
 import { MessageSelectionActions } from "./conversation/SelectionActions";
 import {
   scrollToUnreadBoundary,
@@ -210,6 +210,7 @@ export interface ConversationProps {
   onConnectProvider?: (provider: AgentProviderId) => void | Promise<void>;
   bot: BotProfile | undefined;
   bots: BotProfile[];
+  availableRoutineIds?: readonly string[];
   modelOptions: AgentModelOption[];
   messages: BotMessage[];
   messageReferences?: Record<string, BotMessage>;
@@ -2729,6 +2730,15 @@ export function ConversationHeader() {
   );
 }
 
+function routineMarkerAvailable(
+  marker: ChatActionMarkerModel,
+  availableRoutineIds: readonly string[] | undefined,
+): boolean {
+  if (!("routineId" in marker)) return true;
+  if (marker.kind === "routine-lifecycle" && marker.action === "deleted") return false;
+  return availableRoutineIds?.includes(marker.routineId) === true;
+}
+
 /** @internal Stable HMR boundary for conversation timeline. */
 export function ConversationTimeline() {
   const {
@@ -2897,8 +2907,15 @@ export function ConversationTimeline() {
                 const message = createMemo(() => props.messages[virtualRow.index]);
                 const initialMessage = untrack(message);
                 if (!initialMessage) return null;
-                const routineEvent = initialMessage.routineEvent;
-                if (initialMessage.kind === "routine-event" && routineEvent) {
+                const animateEntrance = initialMessage.animate === true && markMessageSeen(initialMessage.id);
+                const initialActionMarker = initialMessage.actionMarker;
+                const markerOnly =
+                  initialActionMarker &&
+                  (initialMessage.exchange ||
+                    !initialMessage.routine ||
+                    initialActionMarker.kind === "routine-lifecycle" ||
+                    initialActionMarker.kind === "unavailable");
+                if (markerOnly) {
                   return (
                     <div
                       data-index={virtualRow.index}
@@ -2910,25 +2927,43 @@ export function ConversationTimeline() {
                           : "none",
                       }}
                     >
-                      <article aria-label={`${routineEvent.routineName}, ${routineEvent.action}`}>
-                        <Show
-                          when={routineEvent.action === "deleted"}
-                          fallback={
-                            <RoutineEventMarker
-                              action={routineEvent.action === "created" ? "created" : "updated"}
-                              routineId={routineEvent.routineId}
-                              routineName={routineEvent.routineName}
-                              onOpenRoutine={(routineId) =>
-                                openRoutineSettings({ routineId, name: routineEvent.routineName })
-                              }
+                      <Show when={message()?.id === props.firstUnreadMessageId}>
+                        <UnreadMessagesDivider
+                          elementRef={(element) => {
+                            setUnreadMessagesDividerElement(element);
+                            scheduleUnreadDividerVisibilityUpdate();
+                          }}
+                        />
+                      </Show>
+                      <article
+                        data-chat-search-message={message()?.id}
+                        class={{ "chat-action-entry-animated": animateEntrance }}
+                      >
+                        <Show when={message()?.actionMarker ?? initialActionMarker}>
+                          {(marker) => (
+                            <ChatActionMarker
+                              marker={marker()}
+                              bots={props.bots}
+                              announce={animateEntrance}
+                              routineAvailable={routineMarkerAvailable(marker(), props.availableRoutineIds)}
+                              onSelectAgent={props.onSelectAgent}
+                              onOpenRoutine={openRoutineSettings}
                             />
+                          )}
+                        </Show>
+                        <Show
+                          when={
+                            initialMessage.exchange?.direction === "incoming" &&
+                            (message()?.attachments?.length ?? 0) > 0
                           }
                         >
-                          <RoutineEventMarker
-                            action="deleted"
-                            routineId={routineEvent.routineId}
-                            routineName={routineEvent.routineName}
-                          />
+                          <div class="chat-action-attachments">
+                            <AttachmentCards
+                              attachments={message()?.attachments ?? []}
+                              onPreview={(attachment) => void previewAttachment(attachment)}
+                              onAction={attachmentAction}
+                            />
+                          </div>
                         </Show>
                       </article>
                     </div>
@@ -2945,7 +2980,6 @@ export function ConversationTimeline() {
                     actor: { kind: "user" as const },
                   }));
                 });
-                const animateEntrance = initialMessage.animate === true && markMessageSeen(initialMessage.id);
                 return (
                   <div
                     data-index={virtualRow.index}
@@ -2969,193 +3003,177 @@ export function ConversationTimeline() {
                       when={message()?.questionPrompt}
                       fallback={
                         <Show
-                          when={message()?.exchange}
+                          when={message()?.kind === "thinking"}
                           fallback={
-                            <Show
-                              when={message()?.kind === "thinking"}
-                              fallback={
-                                <Message
-                                  role="article"
-                                  align={message()?.author === "you" ? "end" : "start"}
-                                  data-chat-search-message={message()?.id}
-                                  data-author={message()?.author === "you" ? "user" : "assistant"}
-                                  class={[
-                                    "message-entry",
-                                    {
-                                      "message-entry-animated": animateEntrance,
-                                      "message-entry-user": message()?.author === "you",
-                                      "message-entry-bot": message()?.author === "bot",
-                                    },
-                                  ]}
-                                >
-                                  <MessageContent>
-                                    <div class="message-shell">
-                                      <Bubble
-                                        align={message()?.author === "you" ? "end" : "start"}
-                                        variant={conversationBubbleVariant(message() ?? initialMessage)}
-                                        data-author={message()?.author === "you" ? "user" : "assistant"}
-                                        data-streaming={message()?.streaming === true ? "" : undefined}
-                                      >
-                                        <BubbleContent>
-                                          <MessageBody
-                                            message={message() ?? initialMessage}
-                                            referencedMessage={
-                                              props.messages.find(
-                                                (candidate) => candidate.id === message()?.replyToMessageId,
-                                              ) ??
-                                              (message()?.replyToMessageId
-                                                ? props.messageReferences?.[message()?.replyToMessageId ?? ""]
-                                                : undefined)
-                                            }
-                                            bots={props.bots}
-                                            onSelectAgent={props.onSelectAgent}
-                                            onOpenLink={(url) => void openExternalMessageUrl(url)}
-                                            onPreview={(attachment) => void previewAttachment(attachment)}
-                                            onAttachmentAction={attachmentAction}
-                                            onOpenSharedFile={openSharedFile}
-                                            onOpenWorkspaceFile={openWorkspaceFile}
-                                            onDownload={(attachment) => attachmentAction(attachment, "download")}
-                                            onOpenRoutine={openRoutineSettings}
-                                          />
-                                        </BubbleContent>
-                                        <Show when={displayedReactions().length > 0}>
-                                          <BubbleReactions
-                                            class="message-reaction-anchor"
-                                            align={message()?.author === "you" ? "start" : "end"}
-                                            overflowCount={message()?.reactionSummary?.overflowCount}
-                                            role="group"
-                                            aria-label={`Reactions: ${displayedReactions()
-                                              .map((reaction) => reaction.emoji)
-                                              .join(", ")}`}
-                                          >
-                                            <For each={displayedReactions()}>
-                                              {(reaction) => (
-                                                <Show
-                                                  when={reaction.actor.kind === "user"}
-                                                  fallback={
-                                                    <span
-                                                      class="message-reaction-pill message-reaction-pill-readonly"
-                                                      role="img"
-                                                      aria-label={`${
-                                                        props.bots.find(
-                                                          (bot) =>
-                                                            reaction.actor.kind === "bot" &&
-                                                            bot.id === reaction.actor.botId,
-                                                        )?.name ?? "Agent"
-                                                      } reacted with ${reaction.emoji}`}
-                                                    >
-                                                      <span aria-hidden="true">{reaction.emoji}</span>
-                                                    </span>
-                                                  }
-                                                >
-                                                  <Button
-                                                    variant="ghost"
-                                                    type="button"
-                                                    class="message-reaction-pill"
-                                                    aria-label={`Remove your reaction ${reaction.emoji}`}
-                                                    onClick={() => {
-                                                      const currentMessage = message();
-                                                      if (currentMessage) void reactToMessage(currentMessage, null);
-                                                    }}
+                            <>
+                              <Show when={message()?.routine && message()?.actionMarker}>
+                                {(marker) => (
+                                  <ChatActionMarker
+                                    marker={marker()}
+                                    bots={props.bots}
+                                    announce={animateEntrance}
+                                    routineAvailable={routineMarkerAvailable(marker(), props.availableRoutineIds)}
+                                    onSelectAgent={props.onSelectAgent}
+                                    onOpenRoutine={openRoutineSettings}
+                                  />
+                                )}
+                              </Show>
+                              <Message
+                                role="article"
+                                align={message()?.author === "you" ? "end" : "start"}
+                                data-chat-search-message={message()?.id}
+                                data-author={message()?.author === "you" ? "user" : "assistant"}
+                                class={[
+                                  "message-entry",
+                                  {
+                                    "message-entry-animated": animateEntrance,
+                                    "message-entry-user": message()?.author === "you",
+                                    "message-entry-bot": message()?.author === "bot",
+                                  },
+                                ]}
+                              >
+                                <MessageContent>
+                                  <div class="message-shell">
+                                    <Bubble
+                                      align={message()?.author === "you" ? "end" : "start"}
+                                      variant={conversationBubbleVariant(message() ?? initialMessage)}
+                                      data-author={message()?.author === "you" ? "user" : "assistant"}
+                                      data-streaming={message()?.streaming === true ? "" : undefined}
+                                    >
+                                      <BubbleContent>
+                                        <MessageBody
+                                          message={message() ?? initialMessage}
+                                          referencedMessage={
+                                            props.messages.find(
+                                              (candidate) => candidate.id === message()?.replyToMessageId,
+                                            ) ??
+                                            (message()?.replyToMessageId
+                                              ? props.messageReferences?.[message()?.replyToMessageId ?? ""]
+                                              : undefined)
+                                          }
+                                          bots={props.bots}
+                                          onSelectAgent={props.onSelectAgent}
+                                          onOpenLink={(url) => void openExternalMessageUrl(url)}
+                                          onPreview={(attachment) => void previewAttachment(attachment)}
+                                          onAttachmentAction={attachmentAction}
+                                          onOpenSharedFile={openSharedFile}
+                                          onOpenWorkspaceFile={openWorkspaceFile}
+                                          onDownload={(attachment) => attachmentAction(attachment, "download")}
+                                        />
+                                      </BubbleContent>
+                                      <Show when={displayedReactions().length > 0}>
+                                        <BubbleReactions
+                                          class="message-reaction-anchor"
+                                          align={message()?.author === "you" ? "start" : "end"}
+                                          overflowCount={message()?.reactionSummary?.overflowCount}
+                                          role="group"
+                                          aria-label={`Reactions: ${displayedReactions()
+                                            .map((reaction) => reaction.emoji)
+                                            .join(", ")}`}
+                                        >
+                                          <For each={displayedReactions()}>
+                                            {(reaction) => (
+                                              <Show
+                                                when={reaction.actor.kind === "user"}
+                                                fallback={
+                                                  <span
+                                                    class="message-reaction-pill message-reaction-pill-readonly"
+                                                    role="img"
+                                                    aria-label={`${
+                                                      props.bots.find(
+                                                        (bot) =>
+                                                          reaction.actor.kind === "bot" &&
+                                                          bot.id === reaction.actor.botId,
+                                                      )?.name ?? "Agent"
+                                                    } reacted with ${reaction.emoji}`}
                                                   >
                                                     <span aria-hidden="true">{reaction.emoji}</span>
-                                                  </Button>
-                                                </Show>
-                                              )}
-                                            </For>
-                                          </BubbleReactions>
-                                        </Show>
-                                      </Bubble>
-                                      <MessageActions
-                                        message={message() ?? initialMessage}
-                                        pickerOpen={openReactionMessageId() === message()?.id}
-                                        moreOpen={openMoreMessageId() === message()?.id}
-                                        expandedEmoji={expandedEmojiMessageId() === message()?.id}
-                                        copied={copiedMessageId() === message()?.id}
-                                        onTogglePicker={() => {
-                                          const messageId = message()?.id;
-                                          if (!messageId) return;
-                                          setOpenReactionMessageId((current) =>
-                                            current === messageId ? null : messageId,
-                                          );
-                                          setOpenMoreMessageId(null);
-                                          setExpandedEmojiMessageId(null);
-                                        }}
-                                        onToggleMore={() => {
-                                          const messageId = message()?.id;
-                                          if (!messageId) return;
-                                          setOpenMoreMessageId((current) => (current === messageId ? null : messageId));
-                                          setOpenReactionMessageId(null);
-                                          setExpandedEmojiMessageId(null);
-                                        }}
-                                        onExpandEmoji={() => {
-                                          const messageId = message()?.id;
-                                          if (!messageId) return;
-                                          setExpandedEmojiMessageId((current) =>
-                                            current === messageId ? null : messageId,
-                                          );
-                                        }}
-                                        onReact={(emoji) => {
-                                          const currentMessage = message();
-                                          if (currentMessage) void reactToMessage(currentMessage, emoji);
-                                        }}
-                                        onReply={() => {
-                                          const currentMessage = message();
-                                          if (currentMessage) replyToMessage(currentMessage);
-                                        }}
-                                        onCopy={() => {
-                                          const currentMessage = message();
-                                          if (currentMessage) void copyMessage(currentMessage);
-                                        }}
-                                      />
-                                    </div>
-                                  </MessageContent>
-                                </Message>
-                              }
-                            >
-                              <div
-                                data-chat-search-message={message()?.id}
-                                class={{ "thinking-entry-animated": animateEntrance }}
-                              >
-                                <ThinkingDisclosure
-                                  message={message() ?? initialMessage}
-                                  open={
-                                    expandedThinkingMessages()[`${props.bot?.id ?? ""}:${message()?.id ?? ""}`] === true
-                                  }
-                                  onOpenChange={(open) => {
-                                    const key = `${props.bot?.id ?? ""}:${message()?.id ?? ""}`;
-                                    setExpandedThinkingMessages((current) =>
-                                      current[key] === open ? current : { ...current, [key]: open },
-                                    );
-                                  }}
-                                />
-                              </div>
-                            </Show>
+                                                  </span>
+                                                }
+                                              >
+                                                <Button
+                                                  variant="ghost"
+                                                  type="button"
+                                                  class="message-reaction-pill"
+                                                  aria-label={`Remove your reaction ${reaction.emoji}`}
+                                                  onClick={() => {
+                                                    const currentMessage = message();
+                                                    if (currentMessage) void reactToMessage(currentMessage, null);
+                                                  }}
+                                                >
+                                                  <span aria-hidden="true">{reaction.emoji}</span>
+                                                </Button>
+                                              </Show>
+                                            )}
+                                          </For>
+                                        </BubbleReactions>
+                                      </Show>
+                                    </Bubble>
+                                    <MessageActions
+                                      message={message() ?? initialMessage}
+                                      pickerOpen={openReactionMessageId() === message()?.id}
+                                      moreOpen={openMoreMessageId() === message()?.id}
+                                      expandedEmoji={expandedEmojiMessageId() === message()?.id}
+                                      copied={copiedMessageId() === message()?.id}
+                                      onTogglePicker={() => {
+                                        const messageId = message()?.id;
+                                        if (!messageId) return;
+                                        setOpenReactionMessageId((current) =>
+                                          current === messageId ? null : messageId,
+                                        );
+                                        setOpenMoreMessageId(null);
+                                        setExpandedEmojiMessageId(null);
+                                      }}
+                                      onToggleMore={() => {
+                                        const messageId = message()?.id;
+                                        if (!messageId) return;
+                                        setOpenMoreMessageId((current) => (current === messageId ? null : messageId));
+                                        setOpenReactionMessageId(null);
+                                        setExpandedEmojiMessageId(null);
+                                      }}
+                                      onExpandEmoji={() => {
+                                        const messageId = message()?.id;
+                                        if (!messageId) return;
+                                        setExpandedEmojiMessageId((current) =>
+                                          current === messageId ? null : messageId,
+                                        );
+                                      }}
+                                      onReact={(emoji) => {
+                                        const currentMessage = message();
+                                        if (currentMessage) void reactToMessage(currentMessage, emoji);
+                                      }}
+                                      onReply={() => {
+                                        const currentMessage = message();
+                                        if (currentMessage) replyToMessage(currentMessage);
+                                      }}
+                                      onCopy={() => {
+                                        const currentMessage = message();
+                                        if (currentMessage) void copyMessage(currentMessage);
+                                      }}
+                                    />
+                                  </div>
+                                </MessageContent>
+                              </Message>
+                            </>
                           }
                         >
-                          {(exchange) => (
-                            <article
-                              data-chat-search-message={message()?.id}
-                              class={["exchange-message-entry", { "exchange-message-entry-animated": animateEntrance }]}
-                            >
-                              <ExchangeSystemRow
-                                message={message() ?? initialMessage}
-                                bots={props.bots}
-                                onSelectAgent={props.onSelectAgent}
-                              />
-                              <Show
-                                when={exchange().direction === "incoming" && (message()?.attachments?.length ?? 0) > 0}
-                              >
-                                <div class="exchange-agent-attachments">
-                                  <AttachmentCards
-                                    attachments={message()?.attachments ?? []}
-                                    onPreview={(attachment) => void previewAttachment(attachment)}
-                                    onAction={attachmentAction}
-                                  />
-                                </div>
-                              </Show>
-                            </article>
-                          )}
+                          <div
+                            data-chat-search-message={message()?.id}
+                            class={{ "thinking-entry-animated": animateEntrance }}
+                          >
+                            <ThinkingDisclosure
+                              message={message() ?? initialMessage}
+                              open={
+                                expandedThinkingMessages()[`${props.bot?.id ?? ""}:${message()?.id ?? ""}`] === true
+                              }
+                              onOpenChange={(open) => {
+                                const key = `${props.bot?.id ?? ""}:${message()?.id ?? ""}`;
+                                setExpandedThinkingMessages((current) =>
+                                  current[key] === open ? current : { ...current, [key]: open },
+                                );
+                              }}
+                            />
+                          </div>
                         </Show>
                       }
                     >

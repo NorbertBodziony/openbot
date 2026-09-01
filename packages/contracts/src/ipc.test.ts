@@ -11,8 +11,11 @@ import {
   isDynamicIslandAction,
   isMessageReaction,
   parseRoutineConversationEventItemType,
+  parseRoutineRunConversationEventItemType,
   routineConversationEvent,
   routineConversationEventItemType,
+  routineRunConversationEvent,
+  routineRunConversationEventItemType,
 } from "./ipc";
 
 describe("Dynamic Island action validation", () => {
@@ -341,6 +344,47 @@ describe("routine conversation events", () => {
     expect(parseRoutineConversationEventItemType("routine-event:created:")).toBeNull();
     expect(() => routineConversationEventItemType("created", "x".repeat(128))).toThrow(
       "The routine event item type is too long.",
+    );
+  });
+});
+
+describe("routine run conversation events", () => {
+  it.each(["running", "needs-attention", "succeeded", "failed", "interrupted", "cancelled"] as const)(
+    "encodes and decodes the %s state",
+    (status) => {
+      const itemType = routineRunConversationEventItemType(status, "routine-1", "run-1");
+      const message = {
+        id: `event-${status}`,
+        author: "system",
+        source: "system",
+        text: "Morning brief",
+        createdAt: "2026-09-01T12:00:00.000Z",
+        status: "completed",
+        itemType,
+      } as const;
+
+      expect(parseRoutineRunConversationEventItemType(itemType)).toEqual({
+        status,
+        routineId: "routine-1",
+        runId: "run-1",
+      });
+      expect(routineRunConversationEvent(message)).toEqual({
+        status,
+        routineId: "routine-1",
+        runId: "run-1",
+        routineName: "Morning brief",
+      });
+      expect(isConversationMessage(message)).toBe(true);
+    },
+  );
+
+  it("rejects unknown, malformed, and oversized metadata", () => {
+    expect(parseRoutineRunConversationEventItemType("routine-run-event:queued:routine-1:run-1")).toBeNull();
+    expect(parseRoutineRunConversationEventItemType("routine-run-event:running:routine-1")).toBeNull();
+    expect(parseRoutineRunConversationEventItemType("routine-run-event:running::run-1")).toBeNull();
+    expect(parseRoutineRunConversationEventItemType("routine-run-event:running:routine-1:run-1:extra")).toBeNull();
+    expect(() => routineRunConversationEventItemType("running", "r".repeat(80), "x".repeat(80))).toThrow(
+      "The routine run event item type is too long.",
     );
   });
 });
