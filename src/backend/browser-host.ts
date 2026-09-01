@@ -344,10 +344,12 @@ export class BrowserHost {
   }
 
   async setVisible(input: BrowserVisibilityInput): Promise<void> {
+    const restoreRendererFocus = !input.visible && this.#attachedView?.webContents.isFocused();
     this.#visible = input.visible;
     if (input.bounds) this.#bounds = validateBounds(input.bounds);
     if (input.target) this.#target = input.target;
     this.#syncAttachedView();
+    if (restoreRendererFocus) this.#window.webContents.focus();
   }
 
   async snapshot(tabId: string): Promise<BrowserSnapshot> {

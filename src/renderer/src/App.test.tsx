@@ -1164,6 +1164,7 @@ describe("OpenBot connected desktop shell", () => {
       }),
     );
 
+    const presentationCountBeforeReview = vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.length;
     emitDynamicIslandAction?.({
       type: "review-attention",
       serverId: "remote-1",
@@ -1172,11 +1173,20 @@ describe("OpenBot connected desktop shell", () => {
     });
     await waitFor(() => expect(window.openbot.servers.select).toHaveBeenCalledWith("remote-1"));
     await waitFor(() =>
-      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
-        serverId: "remote-1",
-        mode: "approval",
-        item: { requestId: "approval-remote" },
-      }),
+      expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true"),
+    );
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(window.openbot.dynamicIsland.publishPresentation)
+          .mock.calls.slice(presentationCountBeforeReview)
+          .some(
+            ([presentation]) =>
+              presentation.serverId === "remote-1" &&
+              presentation.mode === "approval" &&
+              presentation.item.requestId === "approval-remote",
+          ),
+      ).toBe(true),
     );
 
     emitDynamicIslandAction?.({
@@ -4773,6 +4783,67 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.keyDown(window, { key: "w", ctrlKey: true });
 
     expect(window.openbot.browser.close).toHaveBeenCalledWith("remote-tab");
+  });
+
+  it("restores the visible browser after a server switch fails", async () => {
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([
+      testServer("local", true),
+      testServer("remote-1", false),
+    ]);
+    vi.mocked(window.openbot.servers.select).mockRejectedValueOnce(new Error("Workspace refresh failed"));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "local-tab",
+          title: "Local page",
+          url: "https://example.com/local",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "local-tab",
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    const browserPanel = await screen.findByRole("complementary", { name: "Browser" });
+    const surface = document.querySelector(".browser-surface");
+    if (!(surface instanceof HTMLElement)) throw new Error("Browser surface was not rendered.");
+    vi.spyOn(surface, "getBoundingClientRect").mockReturnValue({
+      x: 640,
+      y: 73,
+      width: 380,
+      height: 600,
+      top: 73,
+      right: 1020,
+      bottom: 673,
+      left: 640,
+      toJSON: () => ({}),
+    });
+    window.dispatchEvent(new Event("resize"));
+    await waitFor(() =>
+      expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({
+        visible: true,
+        target: "main",
+        bounds: { x: 640, y: 73, width: 380, height: 600 },
+      }),
+    );
+    vi.mocked(window.openbot.browser.setVisible).mockClear();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+
+    await screen.findByText("Could not select the server");
+    await waitFor(() =>
+      expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({
+        visible: true,
+        target: "main",
+        bounds: { x: 640, y: 73, width: 380, height: 600 },
+      }),
+    );
+    expect(browserPanel).toBeInTheDocument();
   });
 
   it("closes the browser panel when its last tab is closed from the embedded page", async () => {

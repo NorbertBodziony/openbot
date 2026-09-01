@@ -227,6 +227,7 @@ export interface ConversationProps {
   queue: QueueSnapshot | undefined;
   browserTabs: BrowserTab[];
   activeBrowserTabId: string | null;
+  browserVisibilitySuspended: boolean;
   browserControlState: BrowserControlState;
   server: ServerSummary | undefined;
   presence: TeamPresenceSnapshot;
@@ -1633,7 +1634,12 @@ function createConversationViewScope(props: ConversationProps) {
   createEffect(
     () => ({
       botId: props.bot?.id,
-      visible: browserSidebarOpen() && !props.globalOverlayOpen && !props.remoteDesktopVisible && !mediaPreview(),
+      visible:
+        browserSidebarOpen() &&
+        !props.browserVisibilitySuspended &&
+        !props.globalOverlayOpen &&
+        !props.remoteDesktopVisible &&
+        !mediaPreview(),
     }),
     ({ botId, visible }) => {
       if (props.browserEnabled === false) return;

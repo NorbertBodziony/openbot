@@ -335,6 +335,8 @@ export function createAppController(props: AppProps = {}) {
   const [queues, setQueues] = createSignal<Record<string, QueueSnapshot>>({});
   const [browserTabs, setBrowserTabs] = createSignal<BrowserTab[]>([]);
   const [activeBrowserTabId, setActiveBrowserTabId] = createSignal<string | null>(null);
+  const [browserVisibilitySuspended, setBrowserVisibilitySuspended] = createSignal(false);
+  let browserVisibilitySuspensionCount = 0;
   let browserChangeRevision = 0;
   const [browserControlState, setBrowserControlState] = createSignal<BrowserControlState>({
     sessions: [],
@@ -2981,13 +2983,32 @@ export function createAppController(props: AppProps = {}) {
     setAppSettingsOpen(true);
   }
 
+  function suspendBrowserVisibility(): () => void {
+    browserVisibilitySuspensionCount += 1;
+    setBrowserVisibilitySuspended(true);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      browserVisibilitySuspensionCount -= 1;
+      setBrowserVisibilitySuspended(browserVisibilitySuspensionCount > 0);
+    };
+  }
+
   async function selectServer(serverId: string, trackSelection = true): Promise<void> {
     if (botSetupOpen() && creatingAgent()) return;
     const analytics = desktopAnalytics.scope();
     const previousServerId = servers().find((server) => server.active)?.id;
-    if (previousServerId && previousServerId !== serverId) {
-      await disconnectRemoteDesktopWorkspace(false);
-      await window.openbot.browser.setVisible({ visible: false }).catch(() => undefined);
+    const switchingServers = Boolean(previousServerId && previousServerId !== serverId);
+    const releaseBrowserVisibility = switchingServers ? suspendBrowserVisibility() : () => undefined;
+    if (switchingServers) {
+      try {
+        await disconnectRemoteDesktopWorkspace(false);
+        await window.openbot.browser.setVisible({ visible: false }).catch(() => undefined);
+      } catch (error) {
+        releaseBrowserVisibility();
+        throw error;
+      }
     }
     directConversationRequest += 1;
     const previousDynamicIslandLoadedServerId = dynamicIslandLoadedServerId();
@@ -3011,6 +3032,7 @@ export function createAppController(props: AppProps = {}) {
         });
       }
       setDynamicIslandLoadedServerId(previousDynamicIslandLoadedServerId);
+      releaseBrowserVisibility();
       throw error;
     }
     const dynamicIslandState = dynamicIslandCoordinator.serverState(serverId);
@@ -3019,6 +3041,7 @@ export function createAppController(props: AppProps = {}) {
     setBotSetupError(null);
     setSettingsRequest(null);
     setBotList([]);
+    releaseBrowserVisibility();
     agentChatsRetriedOnOpen.clear();
     explicitlyOpenedAgentChatId = null;
     setSidebarLayout(defaultSidebarLayout());
@@ -3552,12 +3575,14 @@ export function createAppController(props: AppProps = {}) {
   const activeServerSidebarKey: () => string = createMemo((): string => activeServer()?.id ?? "local");
 
   function dynamicIslandServerOrder(): string[] {
+    const activeServerId = activeServerSidebarKey();
     const ids = servers()
       .filter(
         (server) =>
           dynamicIslandConnectedServers.has(server.id) && (server.kind === "local" || server.state === "online"),
       )
       .map((server) => server.id);
+    ids.sort((left, right) => Number(right === activeServerId) - Number(left === activeServerId));
     return ids.length > 0 ? ids : ["local"];
   }
 
@@ -3917,6 +3942,7 @@ export function createAppController(props: AppProps = {}) {
     activeQueue,
     browserTabs,
     activeBrowserTabId,
+    browserVisibilitySuspended,
     browserControlState,
     teamPresence,
     activeRemoteDesktopSession,

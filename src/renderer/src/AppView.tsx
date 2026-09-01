@@ -246,6 +246,7 @@ function WorkspaceShell(props: {
     activeQueue,
     browserTabs,
     activeBrowserTabId,
+    browserVisibilitySuspended,
     browserControlState,
     teamPresence,
     activeRemoteDesktopSession,
@@ -521,6 +522,7 @@ function WorkspaceShell(props: {
           queue={activeQueue()}
           browserTabs={browserTabs()}
           activeBrowserTabId={activeBrowserTabId()}
+          browserVisibilitySuspended={browserVisibilitySuspended()}
           browserControlState={browserControlState()}
           server={activeServer()}
           presence={teamPresence()}
