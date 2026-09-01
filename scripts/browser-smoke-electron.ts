@@ -588,7 +588,7 @@ async function main(): Promise<void> {
     const largeDom = await callBrowserTool(browser, "evaluate", {
       tabId: boundedTab.id,
       expression:
-        "document.body.replaceChildren(...Array.from({ length: 250 }, (_, index) => Object.assign(document.createElement('button'), { textContent: 'Bounded ' + index }))); true",
+        "document.body.replaceChildren(...Array.from({ length: 200 }, (_, index) => Object.assign(document.createElement('div'), { role: 'presentation', tabIndex: 0, textContent: 'Decoration ' + index })), ...Array.from({ length: 250 }, (_, index) => Object.assign(document.createElement('button'), { textContent: 'Bounded ' + index }))); true",
     });
     if (!largeDom.success) throw new Error(`V2 bounded DOM setup failed: ${toolError(largeDom)}`);
     const boundedSnapshot = await browser.snapshot(boundedTab.id);

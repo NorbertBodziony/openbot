@@ -73,11 +73,13 @@ export class BrowserCdpEngine {
   #environment: BrowserEnvironment | null = null;
   #evaluationContextId: number | null = null;
   #evaluationFrameId: string | null = null;
+  #navigationGeneration = 0;
   readonly #targetSessions = new Map<string, { sessionId: string; url: string }>();
 
   constructor(contents: WebContents) {
     this.#contents = contents;
     contents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+      this.#navigationGeneration += 1;
       this.#targets.clear();
       this.#lastSnapshot = null;
       if (!isInPlace && isMainFrame) {
@@ -109,10 +111,14 @@ export class BrowserCdpEngine {
 
   async snapshot(context: SnapshotContext): Promise<SnapshotReadResult> {
     return this.#lease(async (send) => {
+      const navigationGeneration = this.#navigationGeneration;
       const [metrics, parsed] = await Promise.all([
         send("Page.getLayoutMetrics"),
         collectBoundedSnapshot(send, this.#snapshotTargets(), context.revision, true),
       ]);
+      if (navigationGeneration !== this.#navigationGeneration) {
+        throw new Error("Page navigated during the browser snapshot. Take a fresh snapshot.");
+      }
       this.#targets = parsed.targets;
       const viewport = readViewport(metrics, context.environment);
       const snapshot: BrowserSnapshot = {
@@ -367,14 +373,8 @@ export class BrowserCdpEngine {
     }
     return this.#lease(async (send) => {
       const resolved = await this.#resolveElement(send, target);
-      const described = await send(
-        "DOM.describeNode",
-        { backendNodeId: resolved.backendNodeId, depth: 0 },
-        resolved.sessionId,
-      );
-      const frameId = stringValue(recordValue(described.node)?.frameId) || "main";
       await send("DOM.setFileInputFiles", { backendNodeId: resolved.backendNodeId, files: paths }, resolved.sessionId);
-      return `${frameId}:${resolved.backendNodeId}`;
+      return `${resolved.sessionId ?? "main"}:${resolved.backendNodeId}`;
     });
   }
 
@@ -645,12 +645,16 @@ export class BrowserCdpEngine {
   }
 
   async #refreshSemanticTargets(send: SendCommand): Promise<void> {
+    const navigationGeneration = this.#navigationGeneration;
     const parsed = await collectBoundedSnapshot(
       send,
       this.#snapshotTargets(),
       this.#lastSnapshot?.revision ?? 0,
       false,
     );
+    if (navigationGeneration !== this.#navigationGeneration) {
+      throw new Error("Page navigated during semantic target collection. Take a fresh snapshot.");
+    }
     this.#targets = parsed.targets;
   }
 
@@ -899,6 +903,7 @@ async function collectActionableNodes(
     "Runtime.evaluate",
     {
       expression: `(() => {
+        const actionableRoles = new Set(${JSON.stringify([...ACTIONABLE_ROLES])});
         const roots = [document];
         const seen = new Set();
         const elements = [];
@@ -911,7 +916,9 @@ async function collectActionableNodes(
           let node;
           while ((node = walker.nextNode()) && scanned < ${MAX_SNAPSHOT_SCANNED_NODES} && elements.length < ${limit}) {
             scanned++;
-            if (node.matches('button, input, select, textarea, a[href], summary, [role], [contenteditable], [onclick], [tabindex]')) {
+            const nativeAction = node.matches('button, input:not([type="hidden"]), select, textarea, a[href], summary, [contenteditable]');
+            const explicitRoles = String(node.getAttribute('role') || '').toLowerCase().split(/s+/).filter(Boolean);
+            if (nativeAction || explicitRoles.some(role => actionableRoles.has(role))) {
               elements.push(node);
             }
             if ((node.localName === 'iframe' || node.localName === 'frame')) {
