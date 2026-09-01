@@ -96,6 +96,7 @@ interface ClaudeQuery extends AsyncIterable<ClaudeStreamMessage> {
 }
 
 type QueryFactory = (params: Parameters<typeof query>[0]) => ClaudeQuery;
+type ClaudeEffortCapability = { supported: ClaudeEffort[]; defaultEffort: ClaudeEffort } | null;
 
 export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
   readonly provider: AgentProvider = "claude";
@@ -103,7 +104,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
   readonly #createQuery: QueryFactory;
   readonly #threads = new Map<string, ThreadRuntime>();
   readonly #pendingServerRequests = new Map<RequestId, PendingServerRequest>();
-  readonly #modelEffortSupport = new Map<string, boolean>();
+  readonly #modelEffortCapabilities = new Map<string, ClaudeEffortCapability>();
   readonly #modelSdkValues = new Map<string, string>();
   #running = false;
 
@@ -242,27 +243,36 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
         if (!id || models.has(id)) continue;
         models.set(id, model);
       }
-      this.#modelEffortSupport.clear();
-      this.#modelSdkValues.clear();
-      for (const [id, model] of models) {
-        this.#modelEffortSupport.set(id, model.supportsEffort !== false);
-        this.#modelSdkValues.set(id, model.value.trim() || id);
-      }
-      return [...models.entries()].map(([id, model]) => {
+      const effortCapabilities = new Map<string, ClaudeEffortCapability>();
+      const sdkValues = new Map<string, string>();
+      const result = [...models.entries()].map(([id, model]) => {
         const discoveredReasoningEfforts = [
           ...new Set((model.supportedEffortLevels ?? []).filter((effort) => isOneOf(CLAUDE_EFFORTS, effort))),
         ];
         const supportedReasoningEfforts =
           discoveredReasoningEfforts.length > 0 ? discoveredReasoningEfforts : ["medium" as const];
+        const defaultReasoningEffort = supportedReasoningEfforts.includes("high")
+          ? "high"
+          : (supportedReasoningEfforts[0] ?? "medium");
+        effortCapabilities.set(
+          id,
+          model.supportsEffort === false
+            ? null
+            : { supported: supportedReasoningEfforts, defaultEffort: defaultReasoningEffort },
+        );
+        sdkValues.set(id, model.value.trim() || id);
         return {
           model: id,
           displayName: model.displayName,
-          defaultReasoningEffort: supportedReasoningEfforts.includes("high")
-            ? "high"
-            : (supportedReasoningEfforts[0] ?? "medium"),
+          defaultReasoningEffort,
           supportedReasoningEfforts: supportedReasoningEfforts.map((reasoningEffort) => ({ reasoningEffort })),
         };
       });
+      this.#modelEffortCapabilities.clear();
+      this.#modelSdkValues.clear();
+      for (const [id, capability] of effortCapabilities) this.#modelEffortCapabilities.set(id, capability);
+      for (const [id, value] of sdkValues) this.#modelSdkValues.set(id, value);
+      return result;
     } finally {
       if (timeout) clearTimeout(timeout);
       input.close();
@@ -297,7 +307,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
 
   async #startThread(threadId: string, config: ThreadConfig, resume: boolean): Promise<void> {
     const input = new AsyncMessageQueue();
-    const supportsEffort = this.#modelSupportsEffort(config.model);
+    const appliedEffort = this.#resolveEffort(config.model, config.effort);
     const canUseTool: CanUseTool = async (toolName, toolInput, options) => {
       if (toolName !== "AskUserQuestion") {
         return { behavior: "allow", updatedInput: toolInput } satisfies PermissionResult;
@@ -311,7 +321,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
         cwd: config.cwd,
         pathToClaudeCodeExecutable: this.#cli.executable,
         ...(config.model ? { model: this.#sdkModel(config.model) } : {}),
-        ...(config.effort && supportsEffort ? { effort: normalizeClaudeEffort(config.effort) } : {}),
+        ...(appliedEffort ? { effort: appliedEffort } : {}),
         ...(resume ? { resume: threadId } : { sessionId: threadId }),
         systemPrompt: {
           type: "preset",
@@ -331,7 +341,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     const runtime: ThreadRuntime = {
       id: threadId,
       config,
-      appliedEffort: supportsEffort ? config.effort : undefined,
+      appliedEffort,
       input,
       query: claudeQuery,
       activeTurn: null,
@@ -354,12 +364,13 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     }
     const requestedEffort = getString(params, "effort");
     const selectedEffort = requestedEffort ?? runtime.config.effort;
-    if (!this.#modelSupportsEffort(runtime.config.model)) {
+    const appliedEffort = this.#resolveEffort(runtime.config.model, selectedEffort);
+    if (!appliedEffort) {
       if (runtime.appliedEffort !== undefined) await runtime.query.applyFlagSettings({ effortLevel: null });
       runtime.appliedEffort = undefined;
-    } else if (selectedEffort && (modelChanged || selectedEffort !== runtime.appliedEffort)) {
-      await runtime.query.applyFlagSettings({ effortLevel: normalizeClaudeEffort(selectedEffort) });
-      runtime.appliedEffort = selectedEffort;
+    } else if (modelChanged || appliedEffort !== runtime.appliedEffort) {
+      await runtime.query.applyFlagSettings({ effortLevel: appliedEffort });
+      runtime.appliedEffort = appliedEffort;
     }
     if (requestedEffort) runtime.config.effort = requestedEffort;
 
@@ -744,9 +755,14 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     return runtime;
   }
 
-  #modelSupportsEffort(model?: string): boolean {
-    if (!model) return true;
-    return this.#modelEffortSupport.get(model) !== false;
+  #resolveEffort(model: string | undefined, effort: string | undefined): ClaudeEffort | undefined {
+    if (!effort) return undefined;
+    const normalized = normalizeClaudeEffort(effort);
+    if (!model) return normalized;
+    const capability = this.#modelEffortCapabilities.get(model);
+    if (capability === null) return undefined;
+    if (!capability || capability.supported.includes(normalized)) return normalized;
+    return capability.defaultEffort;
   }
 
   #sdkModel(model: string): string {
