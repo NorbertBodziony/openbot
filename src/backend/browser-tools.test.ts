@@ -25,7 +25,6 @@ describe("browser tool catalog", () => {
         "drag",
         "upload_files",
         "wait_for",
-        "evaluate",
         "set_environment",
         "recording_start",
         "recording_stop",

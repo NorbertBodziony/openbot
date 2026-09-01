@@ -152,11 +152,6 @@ export const BROWSER_TOOL_DEFINITIONS: readonly BrowserToolDefinition[] = [
     },
   },
   {
-    name: "evaluate",
-    description: "Evaluate JavaScript in the sandboxed page world. Only a serializable result up to 64 KB is returned.",
-    shape: { tabId, expression: z.string().min(1).max(INPUT_LIMITS.browserActionText), timeoutMs: timeout },
-  },
-  {
     name: "set_environment",
     description:
       "Set a memory-bounded viewport, color scheme, and reduced-motion emulation without changing browser identity or user agent.",

@@ -51,7 +51,6 @@ const BROWSER_ACTION_LABELS: Record<BrowserControlAction | BrowserControlDetailA
   drag: "Dragging…",
   "upload-files": "Uploading files…",
   "wait-for": "Waiting for the page…",
-  evaluate: "Evaluating page code…",
   "set-environment": "Changing the viewport…",
   "recording-start": "Starting recording…",
   "recording-stop": "Saving recording…",

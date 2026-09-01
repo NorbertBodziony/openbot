@@ -260,6 +260,7 @@ const MCP_ELICITATION_ALLOW_ALWAYS = "Always allow";
 const MCP_ELICITATION_DECLINE = "Don't allow";
 const MAX_BROWSER_UPLOAD_INPUTS_PER_TAB = 10;
 const MAX_BROWSER_UPLOAD_BYTES_PER_TAB = ATTACHMENT_LIMITS.totalBytes;
+const MAX_BROWSER_UPLOAD_BYTES_TOTAL = ATTACHMENT_LIMITS.totalBytes * 2;
 
 interface PendingCodexLogin {
   client: AgentClient;
@@ -3091,6 +3092,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const reservedBytes = [...reservations.values()].reduce((total, value) => total + value.bytes, 0);
     if (retainedBytes + reservedBytes + reservation.bytes > MAX_BROWSER_UPLOAD_BYTES_PER_TAB) {
       throw new Error(`A browser tab can retain up to ${MAX_BROWSER_UPLOAD_BYTES_PER_TAB} upload bytes.`);
+    }
+    const totalRetainedBytes = [...this.#browserUploadRoots.values()].reduce(
+      (total, values) => total + [...values.values()].reduce((sum, value) => sum + value.bytes, 0),
+      0,
+    );
+    const totalReservedBytes = [...this.#browserUploadReservations.values()].reduce(
+      (total, values) => total + [...values.values()].reduce((sum, value) => sum + value.bytes, 0),
+      0,
+    );
+    if (totalRetainedBytes + totalReservedBytes + reservation.bytes > MAX_BROWSER_UPLOAD_BYTES_TOTAL) {
+      throw new Error(`Browser uploads can retain up to ${MAX_BROWSER_UPLOAD_BYTES_TOTAL} bytes in total.`);
     }
     reservations.set(id, reservation);
     this.#browserUploadReservations.set(tabId, reservations);

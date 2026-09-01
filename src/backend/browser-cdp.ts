@@ -13,7 +13,6 @@ import type { WebContents } from "electron";
 const ACTION_TIMEOUT_MS = 10_000;
 const WAIT_TIMEOUT_MS = 30_000;
 const MAX_RESULT_BYTES = 64 * 1024;
-const EVALUATION_WORLD_NAME = "openbot-browser-evaluation";
 const AUTOMATION_WORLD_NAME = "openbot-browser-automation";
 const DOCUMENT_ID_PROPERTY = "__openbot_browser_document_id__";
 const MAX_SNAPSHOT_FRAMES = 12;
@@ -78,8 +77,6 @@ export class BrowserCdpEngine {
   #targets = new Map<string, TargetRecord>();
   #lastSnapshot: BrowserSnapshot | null = null;
   #environment: BrowserEnvironment | null = null;
-  #evaluationContextId: number | null = null;
-  #evaluationFrameId: string | null = null;
   #navigationGeneration = 0;
   #retainDebugger = false;
   #ownsDebugger = false;
@@ -89,14 +86,10 @@ export class BrowserCdpEngine {
 
   constructor(contents: WebContents) {
     this.#contents = contents;
-    contents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+    contents.on("did-start-navigation", () => {
       this.#navigationGeneration += 1;
       this.#targets.clear();
       this.#lastSnapshot = null;
-      if (!isInPlace && isMainFrame) {
-        this.#evaluationContextId = null;
-        this.#evaluationFrameId = null;
-      }
     });
     contents.debugger.on("message", (_event, method, params, sessionId) => {
       if (method === "Target.attachedToTarget" && isRecord(params)) {
@@ -202,11 +195,14 @@ export class BrowserCdpEngine {
           if (mode === 'replace') {
             if ('select' in this && typeof this.select === 'function') this.select();
             else {
-              const selection = getSelection(); const range = document.createRange();
+              const selection = this.ownerDocument.getSelection(); const range = this.ownerDocument.createRange();
               range.selectNodeContents(this); selection.removeAllRanges(); selection.addRange(range);
             }
           } else if ('value' in this && typeof this.setSelectionRange === 'function') {
             const end = String(this.value).length; this.setSelectionRange(end, end);
+          } else if (this.isContentEditable) {
+            const selection = this.ownerDocument.getSelection(); const range = this.ownerDocument.createRange();
+            range.selectNodeContents(this); range.collapse(false); selection.removeAllRanges(); selection.addRange(range);
           }
         }`,
         [mode],
@@ -435,53 +431,6 @@ export class BrowserCdpEngine {
 
   hasUploadDocuments(): boolean {
     return this.#uploadDocumentIds.size > 0;
-  }
-
-  async evaluate(expression: string, timeoutMs = ACTION_TIMEOUT_MS): Promise<unknown> {
-    return this.#lease(async (send) => {
-      const tree = await send("Page.getFrameTree");
-      const frameId = frameTreeRootId(tree);
-      if (!frameId) throw new Error("The page has no main frame.");
-      if (this.#evaluationContextId === null || this.#evaluationFrameId !== frameId) {
-        const world = await send("Page.createIsolatedWorld", {
-          frameId,
-          worldName: EVALUATION_WORLD_NAME,
-          grantUniveralAccess: false,
-        });
-        this.#evaluationContextId = numberValue(world.executionContextId);
-        this.#evaluationFrameId = frameId;
-      }
-      const contextId = this.#evaluationContextId;
-      if (!contextId) throw new Error("The browser evaluation world is unavailable.");
-      let result: CdpResult;
-      try {
-        result = await withTimeout(
-          send("Runtime.evaluate", {
-            expression: `Promise.resolve((0, eval)(${JSON.stringify(expression)}))`,
-            contextId,
-            awaitPromise: true,
-            returnByValue: true,
-            userGesture: false,
-          }),
-          clamp(timeoutMs, 1, WAIT_TIMEOUT_MS),
-          "Browser evaluation timed out.",
-        );
-      } catch (error) {
-        if (error instanceof Error && error.message === "Browser evaluation timed out.") {
-          await send("Runtime.terminateExecution").catch(() => undefined);
-          this.#evaluationContextId = null;
-          this.#evaluationFrameId = null;
-        }
-        throw error;
-      }
-      const exception = recordValue(result.exceptionDetails);
-      if (exception) throw new Error(`Browser evaluation failed: ${exceptionDescription(exception)}`);
-      const value = recordValue(result.result)?.value;
-      const serialized = JSON.stringify(value);
-      if (serialized === undefined) throw new Error("Browser evaluation result is not serializable.");
-      if (Buffer.byteLength(serialized) > MAX_RESULT_BYTES) throw new Error("Browser evaluation result exceeds 64 KB.");
-      return value;
-    });
   }
 
   async setEnvironment(environment: BrowserEnvironment): Promise<void> {
@@ -1353,30 +1302,41 @@ async function dispatchShortcut(send: SendCommand, shortcut: string, sessionId?:
     if (!modifier) throw new Error(`Invalid browser shortcut: ${shortcut}`);
     modifierNames.push(modifier);
   }
-  const modifiers = modifierMask(modifierNames);
-  for (const modifier of modifierNames) {
-    await send(
-      "Input.dispatchKeyEvent",
-      {
-        type: "rawKeyDown",
-        key: modifier,
-        code: `${modifier}Left`,
-        modifiers: modifierMask([modifier]),
-      },
-      sessionId,
-    );
-  }
   const keyInfo = normalizeKey(key);
-  await send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...keyInfo, modifiers }, sessionId);
-  if (key.length === 1 && modifiers === 0)
-    await send("Input.dispatchKeyEvent", { type: "char", ...keyInfo, text: key }, sessionId);
-  await send("Input.dispatchKeyEvent", { type: "keyUp", ...keyInfo, modifiers }, sessionId);
-  for (const modifier of [...modifierNames].reverse()) {
-    await send(
-      "Input.dispatchKeyEvent",
-      { type: "keyUp", key: modifier, code: `${modifier}Left`, modifiers: 0 },
-      sessionId,
-    );
+  const modifiers = modifierMask(modifierNames);
+  const pressedModifiers: string[] = [];
+  let keyPressed = false;
+  try {
+    for (const modifier of modifierNames) {
+      await send(
+        "Input.dispatchKeyEvent",
+        {
+          type: "rawKeyDown",
+          key: modifier,
+          code: `${modifier}Left`,
+          modifiers: modifierMask([...pressedModifiers, modifier]),
+        },
+        sessionId,
+      );
+      pressedModifiers.push(modifier);
+    }
+    await send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...keyInfo, modifiers }, sessionId);
+    keyPressed = true;
+    if (key.length === 1 && modifiers === 0)
+      await send("Input.dispatchKeyEvent", { type: "char", ...keyInfo, text: key }, sessionId);
+    await send("Input.dispatchKeyEvent", { type: "keyUp", ...keyInfo, modifiers }, sessionId);
+    keyPressed = false;
+  } finally {
+    if (keyPressed) {
+      await send("Input.dispatchKeyEvent", { type: "keyUp", ...keyInfo, modifiers }, sessionId).catch(() => undefined);
+    }
+    for (const modifier of [...pressedModifiers].reverse()) {
+      await send(
+        "Input.dispatchKeyEvent",
+        { type: "keyUp", key: modifier, code: `${modifier}Left`, modifiers: 0 },
+        sessionId,
+      ).catch(() => undefined);
+    }
   }
 }
 
@@ -1677,19 +1637,4 @@ function isFiniteNumber(value: unknown): value is number {
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error(message)), timeoutMs);
-        timer.unref();
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
 }

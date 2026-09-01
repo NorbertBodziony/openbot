@@ -734,14 +734,6 @@ export class BrowserHost {
             }),
           );
         }
-        case "evaluate": {
-          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
-          this.#requireToolTab(params, tabId);
-          const expression = requiredString(args, "expression", INPUT_LIMITS.browserActionText);
-          return textResult({
-            result: await this.#enqueue(tabId, (tab) => tab.engine.evaluate(expression, readTimeout(args))),
-          });
-        }
         case "set_environment": {
           const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
           this.#requireToolTab(params, tabId);
@@ -1407,8 +1399,6 @@ function browserControlAction(tool: string, args: DynamicRecord): BrowserControl
       return "type";
     case "wait_for":
       return "snapshot";
-    case "evaluate":
-      return "snapshot";
     case "set_environment":
       return "snapshot";
     case "recording_start":
@@ -1442,7 +1432,6 @@ function browserControlDetailAction(tool: string): BrowserControlDetailAction | 
     case "press":
     case "hover":
     case "drag":
-    case "evaluate":
       return tool;
     case "select_option":
       return "select-option";

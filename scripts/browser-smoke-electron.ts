@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type DynamicRecord, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
-import { app, BrowserWindow, webContents } from "electron";
+import { app, BrowserWindow, type WebContents, webContents } from "electron";
 import { BrowserHost } from "../src/backend/browser-host";
 import { type DynamicToolResult, getString } from "../src/backend/protocol";
 
@@ -326,10 +326,7 @@ async function main(): Promise<void> {
     if (!scheduledFrameNavigation.success || !staleFrameTarget || !isNumber(staleFrameRevision)) {
       throw new Error(`V2 iframe navigation setup failed: ${toolError(scheduledFrameNavigation)}`);
     }
-    await new Promise((resolve) => setTimeout(resolve, 1_200));
-    if (!documentChangedTabs.slice(documentChangesBeforeFrameNavigation).includes(v2Tab.id)) {
-      throw new Error("V2 iframe navigation did not notify document cleanup listeners.");
-    }
+    await waitFor(async () => documentChangedTabs.slice(documentChangesBeforeFrameNavigation).includes(v2Tab.id));
     const staleFrameClick = await callBrowserTool(browser, "click", {
       tabId: v2Tab.id,
       target: { kind: "ref", ref: String(staleFrameTarget.ref), revision: staleFrameRevision },
@@ -338,23 +335,16 @@ async function main(): Promise<void> {
       throw new Error("V2 iframe navigation did not invalidate revision-bound references.");
     }
     await browser.snapshot(v2Tab.id);
-    const noDomRefs = await callBrowserTool(browser, "evaluate", {
-      tabId: v2Tab.id,
-      expression: "document.querySelector('[data-openbot-ref]') === null",
-    });
-    if (toolTextPayload(noDomRefs)?.result !== true) throw new Error("V2 snapshot mutated the page DOM.");
+    const noDomRefs = await v2Contents.executeJavaScript("document.querySelector('[data-openbot-ref]') === null", true);
+    if (noDomRefs !== true) throw new Error("V2 snapshot mutated the page DOM.");
     const selected = await callBrowserTool(browser, "select_option", {
       tabId: v2Tab.id,
       target: { kind: "role", role: "combobox", name: "Mode", exact: true },
       values: ["b"],
     });
     if (!selected.success) throw new Error(`V2 select failed: ${toolError(selected)}`);
-    const selectionValue = await callBrowserTool(browser, "evaluate", {
-      tabId: v2Tab.id,
-      expression: "document.querySelector('select').value",
-    });
-    if (toolTextPayload(selectionValue)?.result !== "b")
-      throw new Error("V2 select did not change the native control.");
+    const selectionValue = await v2Contents.executeJavaScript("document.querySelector('select').value", true);
+    if (selectionValue !== "b") throw new Error("V2 select did not change the native control.");
     const partialSelection = await callBrowserTool(browser, "select_option", {
       tabId: v2Tab.id,
       target: { kind: "role", role: "combobox", name: "Mode", exact: true },
@@ -392,21 +382,41 @@ async function main(): Promise<void> {
       mode: "replace",
     });
     if (!contentEditable.success) throw new Error(`V2 contenteditable typing failed: ${toolError(contentEditable)}`);
-    const editableValue = await callBrowserTool(browser, "evaluate", {
+    const appendedContentEditable = await callBrowserTool(browser, "type", {
       tabId: v2Tab.id,
-      expression: "document.querySelector('[contenteditable]').textContent",
+      target: { kind: "role", role: "textbox", name: "Notes", exact: true },
+      text: " appended",
+      mode: "append",
     });
-    if (toolTextPayload(editableValue)?.result !== "editable text") {
+    if (!appendedContentEditable.success) {
+      throw new Error(`V2 contenteditable append failed: ${toolError(appendedContentEditable)}`);
+    }
+    const editableValue = await v2Contents.executeJavaScript(
+      "document.querySelector('[contenteditable]').textContent",
+      true,
+    );
+    if (editableValue !== "editable text appended") {
       throw new Error("V2 contenteditable target did not receive text.");
     }
     const shortcut = await callBrowserTool(browser, "press", { tabId: v2Tab.id, key: "Control+k" });
     if (!shortcut.success) throw new Error(`V2 keyboard shortcut failed: ${toolError(shortcut)}`);
-    const shortcutValue = await callBrowserTool(browser, "evaluate", {
-      tabId: v2Tab.id,
-      expression: "document.querySelector('output').textContent",
-    });
-    if (toolTextPayload(shortcutValue)?.result !== "shortcut:true") {
+    const shortcutValue = await v2Contents.executeJavaScript("document.querySelector('output').textContent", true);
+    if (shortcutValue !== "shortcut:true") {
       throw new Error("V2 keyboard shortcut was not a trusted page event.");
+    }
+    await v2Contents.executeJavaScript("document.querySelector('output').textContent = ''", true);
+    const invalidShortcut = await callBrowserTool(browser, "press", { tabId: v2Tab.id, key: "Control+💥" });
+    if (invalidShortcut.success || !toolError(invalidShortcut).includes("Unsupported browser key")) {
+      throw new Error("V2 invalid shortcut did not return a validation error.");
+    }
+    const plainKey = await callBrowserTool(browser, "press", { tabId: v2Tab.id, key: "k" });
+    if (!plainKey.success) throw new Error(`V2 plain key failed after an invalid shortcut: ${toolError(plainKey)}`);
+    const outputAfterInvalidShortcut = await v2Contents.executeJavaScript(
+      "document.querySelector('output').textContent",
+      true,
+    );
+    if (outputAfterInvalidShortcut === "shortcut:true") {
+      throw new Error("V2 invalid shortcut left Control pressed.");
     }
     const ambiguous = await callBrowserTool(browser, "click", {
       tabId: v2Tab.id,
@@ -436,12 +446,10 @@ async function main(): Promise<void> {
     if (!partiallyCovered.success || !String(toolTextPayload(partiallyCovered)?.text).includes("partial:true")) {
       throw new Error(`V2 hit testing did not use a visible target point: ${toolError(partiallyCovered)}`);
     }
-    const freshTargetSetup = await callBrowserTool(browser, "evaluate", {
-      tabId: v2Tab.id,
-      expression:
-        "document.body.appendChild(Object.assign(document.createElement('button'), { ariaLabel: 'Fresh target', textContent: 'Fresh target', onclick: event => { document.querySelector('output').textContent = 'fresh:' + event.isTrusted; } })); true",
-    });
-    if (!freshTargetSetup.success) throw new Error(`V2 fresh target setup failed: ${toolError(freshTargetSetup)}`);
+    await v2Contents.executeJavaScript(
+      "document.body.appendChild(Object.assign(document.createElement('button'), { ariaLabel: 'Fresh target', textContent: 'Fresh target', onclick: event => { document.querySelector('output').textContent = 'fresh:' + event.isTrusted; } })); true",
+      true,
+    );
     const freshTarget = await callBrowserTool(browser, "click", {
       tabId: v2Tab.id,
       target: { kind: "role", role: "button", name: "Fresh target", exact: true },
@@ -449,23 +457,18 @@ async function main(): Promise<void> {
     if (!freshTarget.success || !String(toolTextPayload(freshTarget)?.text).includes("fresh:true")) {
       throw new Error(`V2 semantic target did not refresh before the action: ${toolError(freshTarget)}`);
     }
-    const canvasPoint = await callBrowserTool(browser, "evaluate", {
-      tabId: v2Tab.id,
-      expression:
-        "(() => { const r = document.querySelector('canvas').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()",
-    });
-    const point = toolTextPayload(canvasPoint)?.result;
+    const point = await v2Contents.executeJavaScript(
+      "(() => { const r = document.querySelector('canvas').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()",
+      true,
+    );
     if (!isDynamicRecord(point)) throw new Error("V2 canvas coordinates were not serializable.");
     const canvasClick = await callBrowserTool(browser, "click", {
       tabId: v2Tab.id,
       target: { kind: "point", x: point.x, y: point.y },
     });
     if (!canvasClick.success) throw new Error(`V2 coordinate click failed: ${toolError(canvasClick)}`);
-    const canvasValue = await callBrowserTool(browser, "evaluate", {
-      tabId: v2Tab.id,
-      expression: "document.querySelector('output').textContent",
-    });
-    if (toolTextPayload(canvasValue)?.result !== "canvas:true") {
+    const canvasValue = await v2Contents.executeJavaScript("document.querySelector('output').textContent", true);
+    if (canvasValue !== "canvas:true") {
       throw new Error("V2 canvas coordinate click was not trusted.");
     }
     const dragged = await callBrowserTool(browser, "drag", {
@@ -474,11 +477,8 @@ async function main(): Promise<void> {
       target: { kind: "role", role: "button", name: "Drop target", exact: true },
     });
     if (!dragged.success) throw new Error(`V2 drag failed: ${toolError(dragged)}`);
-    const dragValue = await callBrowserTool(browser, "evaluate", {
-      tabId: v2Tab.id,
-      expression: "document.querySelector('output').textContent",
-    });
-    if (toolTextPayload(dragValue)?.result !== "drag:true") {
+    const dragValue = await v2Contents.executeJavaScript("document.querySelector('output').textContent", true);
+    if (dragValue !== "drag:true") {
       throw new Error("V2 drag did not produce a trusted drop event.");
     }
     const spaClick = await callBrowserTool(browser, "click", {
@@ -488,12 +488,10 @@ async function main(): Promise<void> {
     if (!spaClick.success) throw new Error(`V2 SPA click failed: ${toolError(spaClick)}`);
     const spaWait = await callBrowserTool(browser, "wait_for", { tabId: v2Tab.id, text: "SPA done", timeoutMs: 2_000 });
     if (!spaWait.success) throw new Error(`V2 event wait failed: ${toolError(spaWait)}`);
-    const scheduledTarget = await callBrowserTool(browser, "evaluate", {
-      tabId: v2Tab.id,
-      expression:
-        "setTimeout(() => { const button = document.createElement('button'); button.setAttribute('aria-label', 'Late action'); document.body.append(button); }, 100); true",
-    });
-    if (!scheduledTarget.success) throw new Error(`V2 late target setup failed: ${toolError(scheduledTarget)}`);
+    await v2Contents.executeJavaScript(
+      "setTimeout(() => { const button = document.createElement('button'); button.setAttribute('aria-label', 'Late action'); document.body.append(button); }, 100); true",
+      true,
+    );
     const semanticWait = await callBrowserTool(browser, "wait_for", {
       tabId: v2Tab.id,
       target: { kind: "role", role: "button", name: "Late action", exact: true },
@@ -512,12 +510,10 @@ async function main(): Promise<void> {
     if (removedRefWait.success || !toolError(removedRefWait).includes("timed out")) {
       throw new Error("V2 ref wait matched an element after it was removed.");
     }
-    const largeTargetSet = await callBrowserTool(browser, "evaluate", {
-      tabId: v2Tab.id,
-      expression:
-        "(() => { const container = Object.assign(document.createElement('div'), { innerHTML: Array.from({ length: 200 }, (_, index) => '<button aria-label=\"Bulk ' + index + '\">Bulk ' + index + '</button>').join('') }); container.dataset.bulkTargets = ''; document.body.appendChild(container); return true; })()",
-    });
-    if (!largeTargetSet.success) throw new Error(`V2 large target setup failed: ${toolError(largeTargetSet)}`);
+    await v2Contents.executeJavaScript(
+      "(() => { const container = Object.assign(document.createElement('div'), { innerHTML: Array.from({ length: 200 }, (_, index) => '<button aria-label=\"Bulk ' + index + '\">Bulk ' + index + '</button>').join('') }); container.dataset.bulkTargets = ''; document.body.appendChild(container); return true; })()",
+      true,
+    );
     const semanticWaitStarted = Date.now();
     const boundedSemanticWait = await callBrowserTool(browser, "wait_for", {
       tabId: v2Tab.id,
@@ -539,13 +535,7 @@ async function main(): Promise<void> {
     if (boundedWaitSnapshot.success || !toolError(boundedWaitSnapshot).includes("timed out")) {
       throw new Error("V2 wait snapshot did not share the condition deadline.");
     }
-    const largeTargetCleanup = await callBrowserTool(browser, "evaluate", {
-      tabId: v2Tab.id,
-      expression: "document.querySelector('[data-bulk-targets]').remove(); true",
-    });
-    if (!largeTargetCleanup.success) {
-      throw new Error(`V2 large target cleanup failed: ${toolError(largeTargetCleanup)}`);
-    }
+    await v2Contents.executeJavaScript("document.querySelector('[data-bulk-targets]').remove(); true", true);
     await v2Contents.executeJavaScript(
       `(() => {
         const container = document.createElement('div');
@@ -569,19 +559,10 @@ async function main(): Promise<void> {
       throw new Error("V2 text wait did not enforce its scan deadline.");
     }
     await v2Contents.executeJavaScript(`document.querySelector('[data-bulk-text]').remove()`, true);
-    const noisyPage = await callBrowserTool(browser, "evaluate", {
-      tabId: v2Tab.id,
-      expression:
-        "globalThis.__openbotNoise = setInterval(() => document.querySelector('output').toggleAttribute('data-noise'), 10); true",
-    });
-    if (!noisyPage.success) throw new Error(`V2 DOM noise setup failed: ${toolError(noisyPage)}`);
-    const sharedEvaluationWorld = await callBrowserTool(browser, "evaluate", {
-      tabId: v2Tab.id,
-      expression: "typeof globalThis.__openbotNoise === 'number'",
-    });
-    if (toolTextPayload(sharedEvaluationWorld)?.result !== true) {
-      throw new Error("V2 evaluation did not reuse its isolated world.");
-    }
+    await v2Contents.executeJavaScript(
+      "globalThis.__openbotNoise = setInterval(() => document.querySelector('output').toggleAttribute('data-noise'), 10); true",
+      true,
+    );
     const actionTimeoutStarted = Date.now();
     const boundedAction = await callBrowserTool(browser, "click", {
       tabId: v2Tab.id,
@@ -629,17 +610,14 @@ async function main(): Promise<void> {
       "globalThis.MutationObserver = globalThis.__openbotOriginalMutationObserver; globalThis.setTimeout = globalThis.__openbotOriginalSetTimeout; delete globalThis.__openbotOriginalMutationObserver; delete globalThis.__openbotOriginalSetTimeout; delete globalThis.__openbotActiveObservers;",
       true,
     );
-    const stoppedNoise = await callBrowserTool(browser, "evaluate", {
-      tabId: v2Tab.id,
-      expression: "clearInterval(globalThis.__openbotNoise); delete globalThis.__openbotNoise; true",
-    });
-    if (!stoppedNoise.success) throw new Error(`V2 DOM noise cleanup failed: ${toolError(stoppedNoise)}`);
-    const slowNoise = await callBrowserTool(browser, "evaluate", {
-      tabId: v2Tab.id,
-      expression:
-        "globalThis.__openbotSlowNoise = setInterval(() => document.body.toggleAttribute('data-slow-noise'), 10); setTimeout(() => { clearInterval(globalThis.__openbotSlowNoise); delete globalThis.__openbotSlowNoise; }, 1200); true",
-    });
-    if (!slowNoise.success) throw new Error(`V2 slow DOM noise setup failed: ${toolError(slowNoise)}`);
+    await v2Contents.executeJavaScript(
+      "clearInterval(globalThis.__openbotNoise); delete globalThis.__openbotNoise; true",
+      true,
+    );
+    await v2Contents.executeJavaScript(
+      "globalThis.__openbotSlowNoise = setInterval(() => document.body.toggleAttribute('data-slow-noise'), 10); setTimeout(() => { clearInterval(globalThis.__openbotSlowNoise); delete globalThis.__openbotSlowNoise; }, 1200); true",
+      true,
+    );
     const patientQuietWait = await callBrowserTool(browser, "wait_for", {
       tabId: v2Tab.id,
       state: "dom-quiet",
@@ -648,14 +626,10 @@ async function main(): Promise<void> {
     if (!patientQuietWait.success) {
       throw new Error(`V2 DOM-quiet wait ignored the requested timeout: ${toolError(patientQuietWait)}`);
     }
-    const transientCondition = await callBrowserTool(browser, "evaluate", {
-      tabId: v2Tab.id,
-      expression:
-        "globalThis.__openbotTransient = document.body.appendChild(Object.assign(document.createElement('span'), { textContent: 'transient quiet condition' })); globalThis.__openbotTransientNoise = setInterval(() => document.body.toggleAttribute('data-transient-noise'), 20); setTimeout(() => { clearInterval(globalThis.__openbotTransientNoise); globalThis.__openbotTransient.remove(); delete globalThis.__openbotTransient; delete globalThis.__openbotTransientNoise; }, 300); true",
-    });
-    if (!transientCondition.success) {
-      throw new Error(`V2 transient wait setup failed: ${toolError(transientCondition)}`);
-    }
+    await v2Contents.executeJavaScript(
+      "globalThis.__openbotTransient = document.body.appendChild(Object.assign(document.createElement('span'), { textContent: 'transient quiet condition' })); globalThis.__openbotTransientNoise = setInterval(() => document.body.toggleAttribute('data-transient-noise'), 20); setTimeout(() => { clearInterval(globalThis.__openbotTransientNoise); globalThis.__openbotTransient.remove(); delete globalThis.__openbotTransient; delete globalThis.__openbotTransientNoise; }, 300); true",
+      true,
+    );
     const invalidatedQuietWait = await callBrowserTool(browser, "wait_for", {
       tabId: v2Tab.id,
       text: "transient quiet condition",
@@ -665,27 +639,12 @@ async function main(): Promise<void> {
     if (invalidatedQuietWait.success || !toolError(invalidatedQuietWait).includes("timed out")) {
       throw new Error("V2 DOM-quiet wait did not recheck its matched text condition.");
     }
-    const clearedEvaluationWorld = await callBrowserTool(browser, "evaluate", {
+    const removedEvaluation = await callBrowserTool(browser, "evaluate", {
       tabId: v2Tab.id,
-      expression: "globalThis.__openbotNoise === undefined",
+      expression: "document.cookie",
     });
-    if (toolTextPayload(clearedEvaluationWorld)?.result !== true) {
-      throw new Error("V2 evaluation world did not preserve cross-call cleanup.");
-    }
-    const evaluationTimeout = await callBrowserTool(browser, "evaluate", {
-      tabId: v2Tab.id,
-      expression: "new Promise(() => {})",
-      timeoutMs: 50,
-    });
-    if (evaluationTimeout.success || !toolError(evaluationTimeout).includes("timed out")) {
-      throw new Error("V2 evaluation did not return its bounded timeout.");
-    }
-    const evaluationRecovered = await callBrowserTool(browser, "evaluate", {
-      tabId: v2Tab.id,
-      expression: "21 * 2",
-    });
-    if (toolTextPayload(evaluationRecovered)?.result !== 42) {
-      throw new Error(`V2 evaluation did not recover after timeout: ${toolError(evaluationRecovered)}`);
+    if (removedEvaluation.success || !toolError(removedEvaluation).includes("Unknown browser tool")) {
+      throw new Error("V2 exposed arbitrary page evaluation.");
     }
     const timedOut = await callBrowserTool(browser, "wait_for", {
       tabId: v2Tab.id,
@@ -820,14 +779,16 @@ async function main(): Promise<void> {
         () => true,
       ),
     );
-    const actionNavigationTab = await browser.open(origin, "smoke-thread", "smoke-bot");
-    const actionNavigationSetup = await callBrowserTool(browser, "evaluate", {
-      tabId: actionNavigationTab.id,
-      expression: `(() => { const button = document.createElement('button'); button.setAttribute('aria-label', 'Slow action navigation'); button.onclick = () => { location.href = ${JSON.stringify(`${origin}/slow-document?action`)}; }; document.body.append(button); return true; })()`,
-    });
-    if (!actionNavigationSetup.success) {
-      throw new Error(`V2 action navigation setup failed: ${toolError(actionNavigationSetup)}`);
-    }
+    const { tab: actionNavigationTab, contents: actionNavigationContents } = await openTabWithContents(
+      browser,
+      origin,
+      "smoke-thread",
+      "smoke-bot",
+    );
+    await actionNavigationContents.executeJavaScript(
+      `(() => { const button = document.createElement('button'); button.setAttribute('aria-label', 'Slow action navigation'); button.onclick = () => { location.href = ${JSON.stringify(`${origin}/slow-document?action`)}; }; document.body.append(button); return true; })()`,
+      true,
+    );
     const timedActionNavigation = await callBrowserTool(browser, "click", {
       tabId: actionNavigationTab.id,
       target: { kind: "role", role: "button", name: "Slow action navigation", exact: true },
@@ -844,15 +805,19 @@ async function main(): Promise<void> {
       throw new Error("V2 action-triggered navigation escaped tab serialization.");
     }
     await browser.close(actionNavigationTab.id);
-    const waitTab = await browser.open(origin, "smoke-thread", "smoke-bot");
+    const { tab: waitTab, contents: waitContents } = await openTabWithContents(
+      browser,
+      origin,
+      "smoke-thread",
+      "smoke-bot",
+    );
     const beforeNavigation = await browser.snapshot(waitTab.id);
     const staleNavigationTarget = beforeNavigation.elements.find((element) => element.name === "Save");
     if (!staleNavigationTarget) throw new Error("V2 stale-reference test did not find its source target.");
-    const navigationStarted = await callBrowserTool(browser, "evaluate", {
-      tabId: waitTab.id,
-      expression: `location.href = ${JSON.stringify(`${origin}/slow-document?domcontentloaded`)}; true`,
-    });
-    if (!navigationStarted.success) throw new Error(`V2 readiness navigation failed: ${toolError(navigationStarted)}`);
+    await waitContents.executeJavaScript(
+      `location.href = ${JSON.stringify(`${origin}/slow-document?domcontentloaded`)}; true`,
+      true,
+    );
     const readinessStartedAt = Date.now();
     const domContentLoaded = await callBrowserTool(browser, "wait_for", {
       tabId: waitTab.id,
@@ -864,12 +829,9 @@ async function main(): Promise<void> {
         `V2 DOMContentLoaded wait returned before the document was ready: ${toolError(domContentLoaded)}`,
       );
     }
-    const evaluationAfterNavigation = await callBrowserTool(browser, "evaluate", {
-      tabId: waitTab.id,
-      expression: "document.readyState",
-    });
-    if (!["interactive", "complete"].includes(String(toolTextPayload(evaluationAfterNavigation)?.result))) {
-      throw new Error(`V2 evaluation world was not restored after navigation: ${toolError(evaluationAfterNavigation)}`);
+    const readyState = await waitContents.executeJavaScript("document.readyState", true);
+    if (!["interactive", "complete"].includes(String(readyState))) {
+      throw new Error("V2 page did not reach a ready state after navigation.");
     }
     const staleNavigationClick = await callBrowserTool(browser, "click", {
       tabId: waitTab.id,
@@ -906,13 +868,16 @@ async function main(): Promise<void> {
     if (!reloaded.success || reloadedText === beforeReloadText || Date.now() - reloadStartedAt < 150) {
       throw new Error(`V2 reload snapshot did not wait for the new document: ${toolError(reloaded)}`);
     }
-    const boundedTab = await browser.open(origin, "smoke-thread", "smoke-bot");
-    const largeDom = await callBrowserTool(browser, "evaluate", {
-      tabId: boundedTab.id,
-      expression:
-        "document.body.replaceChildren(...Array.from({ length: 200 }, (_, index) => Object.assign(document.createElement('div'), { role: 'presentation', tabIndex: 0, textContent: 'Decoration ' + index })), ...Array.from({ length: 200 }, (_, index) => Object.assign(document.createElement('button'), { hidden: true, textContent: 'Hidden ' + index })), Object.assign(document.createElement('div'), { role: 'switch', ariaLabel: 'Bounded switch', textContent: 'Switch' }), ...Array.from({ length: 250 }, (_, index) => Object.assign(document.createElement('button'), { textContent: 'Bounded ' + index }))); true",
-    });
-    if (!largeDom.success) throw new Error(`V2 bounded DOM setup failed: ${toolError(largeDom)}`);
+    const { tab: boundedTab, contents: boundedContents } = await openTabWithContents(
+      browser,
+      origin,
+      "smoke-thread",
+      "smoke-bot",
+    );
+    await boundedContents.executeJavaScript(
+      "document.body.replaceChildren(...Array.from({ length: 200 }, (_, index) => Object.assign(document.createElement('div'), { role: 'presentation', tabIndex: 0, textContent: 'Decoration ' + index })), ...Array.from({ length: 200 }, (_, index) => Object.assign(document.createElement('button'), { hidden: true, textContent: 'Hidden ' + index })), Object.assign(document.createElement('div'), { role: 'switch', ariaLabel: 'Bounded switch', textContent: 'Switch' }), ...Array.from({ length: 250 }, (_, index) => Object.assign(document.createElement('button'), { textContent: 'Bounded ' + index }))); true",
+      true,
+    );
     const boundedSnapshot = await browser.snapshot(boundedTab.id);
     if (boundedSnapshot.elements.length !== 200) {
       throw new Error(`V2 snapshot did not enforce its global element cap: ${boundedSnapshot.elements.length}`);
@@ -1268,6 +1233,21 @@ async function waitForPersistenceSnapshot(browser: BrowserHost, tabId: string): 
 
 function argumentValue(prefix: string): string | null {
   return process.argv.find((argument) => argument.startsWith(prefix))?.slice(prefix.length) || null;
+}
+
+async function openTabWithContents(
+  browser: BrowserHost,
+  url: string,
+  ownerThreadId: string,
+  ownerBotId?: string,
+): Promise<{ tab: Awaited<ReturnType<BrowserHost["open"]>>; contents: WebContents }> {
+  const existingIds = new Set(webContents.getAllWebContents().map((contents) => contents.id));
+  const tab = await browser.open(url, ownerThreadId, ownerBotId);
+  const contents = webContents
+    .getAllWebContents()
+    .find((candidate) => !existingIds.has(candidate.id) && !candidate.isDestroyed());
+  if (!contents) throw new Error(`Browser contents were not created for ${url}.`);
+  return { tab, contents };
 }
 
 function callBrowserTool(browser: BrowserHost, tool: string, argumentsValue: unknown): Promise<DynamicToolResult> {
