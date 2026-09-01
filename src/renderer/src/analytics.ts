@@ -169,7 +169,8 @@ export type OpenPanelClient = Pick<OpenPanelBase, "setGlobalProperties" | "track
 
 type ClientFactory = (options: OpenPanelOptions) => OpenPanelClient;
 type AnalyticsIdentity = Pick<CentralAuthUser, "id" | "email">;
-type AnalyticsOperation = () => unknown;
+type AnalyticsOperationKind = "clear" | "identify" | "track";
+type AnalyticsOperation = { kind: AnalyticsOperationKind; run: () => unknown };
 type AnalyticsOperationQueue = { active: boolean; operations: AnalyticsOperation[] };
 export interface DesktopAnalyticsScope {
   track<Name extends AnalyticsEventName>(name: Name, properties: DesktopAnalyticsEvents[Name]): void;
@@ -500,7 +501,7 @@ export class DesktopAnalytics {
     this.#identity = normalized;
     if (!this.#client || !this.#trackingEnabled) return;
     if (previous && (!normalized || previous.id !== normalized.id))
-      this.#enqueue(this.#clientQueue, () => this.#client?.clear());
+      this.#enqueue(this.#clientQueue, "clear", () => this.#client?.clear());
     if (normalized) this.#identifyClient(normalized);
   }
 
@@ -519,8 +520,8 @@ export class DesktopAnalytics {
       this.#pending = [];
       this.#clientQueue.operations = [];
       this.#anonymousQueue.operations = [];
-      this.#enqueue(this.#clientQueue, () => this.#client?.clear());
-      this.#enqueue(this.#anonymousQueue, () => this.#anonymousClient?.clear());
+      this.#enqueue(this.#clientQueue, "clear", () => this.#client?.clear());
+      this.#enqueue(this.#anonymousQueue, "clear", () => this.#anonymousClient?.clear());
       return;
     }
     if (this.#identity) this.#identifyClient(this.#identity);
@@ -569,7 +570,7 @@ export class DesktopAnalytics {
     timestamp?: string,
   ): void {
     const client = profileId ? this.#client : this.#anonymousClient;
-    this.#enqueue(profileId ? this.#clientQueue : this.#anonymousQueue, () =>
+    this.#enqueue(profileId ? this.#clientQueue : this.#anonymousQueue, "track", () =>
       client?.track(name, {
         ...properties,
         ...(timestamp ? { __timestamp: timestamp } : {}),
@@ -587,12 +588,21 @@ export class DesktopAnalytics {
   }
 
   #identifyClient(user: AnalyticsIdentity): void {
-    this.#enqueue(this.#clientQueue, () => this.#client?.identify({ profileId: user.id, email: user.email }));
+    this.#enqueue(this.#clientQueue, "identify", () =>
+      this.#client?.identify({ profileId: user.id, email: user.email }),
+    );
   }
 
-  #enqueue(queue: AnalyticsOperationQueue, operation: AnalyticsOperation): void {
-    if (queue.operations.length >= MAX_PENDING_EVENTS) queue.operations.shift();
-    queue.operations.push(operation);
+  #enqueue(queue: AnalyticsOperationQueue, kind: AnalyticsOperationKind, run: () => unknown): void {
+    if (kind === "clear") {
+      queue.operations = queue.operations.filter((operation) => operation.kind === "track");
+    } else if (kind === "identify") {
+      queue.operations = queue.operations.filter((operation) => operation.kind !== "identify");
+    } else if (queue.operations.filter((operation) => operation.kind === "track").length >= MAX_PENDING_EVENTS) {
+      const oldestTrack = queue.operations.findIndex((operation) => operation.kind === "track");
+      if (oldestTrack >= 0) queue.operations.splice(oldestTrack, 1);
+    }
+    queue.operations.push({ kind, run });
     if (queue.active) return;
     queue.active = true;
     void this.#drain(queue);
@@ -603,7 +613,7 @@ export class DesktopAnalytics {
       const operation = queue.operations.shift();
       if (!operation) continue;
       try {
-        const result = operation();
+        const result = operation.run();
         if (isPromiseLike(result)) await result;
       } catch {
         // Analytics must never change application behavior or stop later events.

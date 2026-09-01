@@ -298,6 +298,7 @@ describe("desktop analytics", () => {
     const analytics = new DesktopAnalytics(createClient, true);
     analytics.configure(PRODUCTION_APP);
     analytics.setUser({ id: "account-1", email: "person@example.com" });
+    analytics.setUser({ id: "account-2", email: "second@example.com" });
 
     for (let index = 0; index < 150; index += 1) {
       analytics.track("search_action", { scope: "global", result: "succeeded", result_count: index });
@@ -305,6 +306,8 @@ describe("desktop analytics", () => {
     releaseIdentify();
 
     await vi.waitFor(() => expect(client.track).toHaveBeenCalledTimes(100));
+    expect(client.identify).toHaveBeenCalledWith({ profileId: "account-2", email: "second@example.com" });
+    expect(client.clear).toHaveBeenCalled();
   });
 
   it("does not let SDK failures escape", () => {

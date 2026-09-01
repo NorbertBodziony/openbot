@@ -6,6 +6,7 @@ import { normalizeEmailAddress } from "@openbot/contracts/validation";
 const DEFAULT_OPENPANEL_API_URL = "https://analytics.openbot.run/api";
 const MAX_RETRIES = 3;
 const INITIAL_RETRY_DELAY_MS = 250;
+const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 
 export interface BackfillAuthUser {
   id: string;
@@ -29,6 +30,7 @@ export interface BackfillOptions {
   apiUrl?: string;
   clientId?: string;
   clientSecret?: string;
+  requestTimeoutMs?: number;
   fetcher?: typeof fetch;
   sleep?: (milliseconds: number) => Promise<void>;
 }
@@ -89,7 +91,7 @@ export function buildBackfillUpdates(authUsers: readonly unknown[], profiles: re
 
 export async function applyBackfill(
   updates: readonly BackfillIdentity[],
-  options: Pick<BackfillOptions, "apiUrl" | "clientId" | "clientSecret" | "fetcher" | "sleep">,
+  options: Pick<BackfillOptions, "apiUrl" | "clientId" | "clientSecret" | "requestTimeoutMs" | "fetcher" | "sleep">,
 ) {
   const clientId = requiredSecret(options.clientId, "OPENPANEL_CLIENT_ID");
   const clientSecret = requiredSecret(options.clientSecret, "OPENPANEL_CLIENT_SECRET");
@@ -99,7 +101,15 @@ export async function applyBackfill(
 
   let applied = 0;
   for (const identity of updates) {
-    await identifyProfile(endpoint, identity, clientId, clientSecret, fetcher, sleep);
+    await identifyProfile(
+      endpoint,
+      identity,
+      clientId,
+      clientSecret,
+      options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+      fetcher,
+      sleep,
+    );
     applied += 1;
   }
   return applied;
@@ -110,20 +120,36 @@ async function identifyProfile(
   identity: BackfillIdentity,
   clientId: string,
   clientSecret: string,
+  requestTimeoutMs: number,
   fetcher: typeof fetch,
   sleep: (milliseconds: number) => Promise<void>,
 ): Promise<void> {
+  if (!Number.isFinite(requestTimeoutMs) || requestTimeoutMs <= 0) {
+    throw new Error("OpenPanel backfill request timeout must be positive.");
+  }
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
-    const response = await fetcher(endpoint, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "openpanel-client-id": clientId,
-        "openpanel-client-secret": clientSecret,
-        "openpanel-sdk-name": "openbot-backfill",
-      },
-      body: JSON.stringify({ type: "identify", payload: identity }),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+    let response: Response;
+    try {
+      response = await fetcher(endpoint, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "openpanel-client-id": clientId,
+          "openpanel-client-secret": clientSecret,
+          "openpanel-sdk-name": "openbot-backfill",
+        },
+        body: JSON.stringify({ type: "identify", payload: identity }),
+        signal: controller.signal,
+      });
+    } catch {
+      if (attempt === MAX_RETRIES) throw new Error("OpenPanel backfill request failed after retries.");
+      await sleep(INITIAL_RETRY_DELAY_MS * 2 ** attempt);
+      continue;
+    } finally {
+      clearTimeout(timeout);
+    }
     if (response.status >= 200 && response.status < 300) return;
     if ((response.status !== 429 && (response.status < 500 || response.status >= 600)) || attempt === MAX_RETRIES) {
       throw new Error(`OpenPanel backfill failed with HTTP ${response.status}.`);

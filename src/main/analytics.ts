@@ -21,7 +21,8 @@ const ACTIVE_TURN_TTL_MS = 24 * 60 * 60 * 1_000;
 const ANALYTICS_SCHEMA_VERSION = 4;
 
 type AnalyticsIdentity = Pick<CentralAuthUser, "id" | "email">;
-type AnalyticsOperation = () => unknown;
+type AnalyticsOperationKind = "clear" | "identify" | "track";
+type AnalyticsOperation = { kind: AnalyticsOperationKind; run: () => unknown };
 type AnalyticsOperationQueue = { active: boolean; operations: AnalyticsOperation[] };
 type HostEventName =
   | "system_turn_started"
@@ -175,7 +176,7 @@ export class HostAnalytics {
     this.#activeTurns.clear();
     this.#identifiedOwner = null;
     this.#operationQueue.operations = [];
-    if (this.#trackingEnabled) this.#enqueue(() => this.#client?.clear());
+    if (this.#trackingEnabled) this.#enqueue("clear", () => this.#client?.clear());
   }
 
   setTrackingEnabled(enabled: boolean): void {
@@ -183,18 +184,24 @@ export class HostAnalytics {
     this.#trackingEnabled = enabled;
     if (!enabled) {
       this.clear();
-      this.#enqueue(() => this.#client?.clear());
+      this.#enqueue("clear", () => this.#client?.clear());
       return;
     }
     this.flushPending();
   }
 
   #handleHostedSiteConversation(messages: readonly ConversationMessage[]): void {
-    const observedRunningOperations = new Set(this.#hostedSiteOwners.keys());
-    for (const message of messages) {
+    const events = messages.flatMap((message) => {
       const event = hostedSiteConversationEvent(message);
-      if (!event) continue;
+      return event ? [event] : [];
+    });
+    const terminalOperations = new Set(
+      events.filter((event) => event.status !== "running").map((event) => event.operationId),
+    );
+    const observedRunningOperations = new Set(this.#hostedSiteOwners.keys());
+    for (const event of events) {
       if (event.status === "running") {
+        if (terminalOperations.has(event.operationId)) continue;
         const owner = normalizeAnalyticsIdentity(this.#resolveOwner());
         if (!this.#hostedSiteOwners.has(event.operationId)) this.#hostedSiteOwners.set(event.operationId, owner);
         continue;
@@ -236,6 +243,12 @@ export class HostAnalytics {
     const sanitized = sanitizeHostEvent(name, properties);
     this.#flushPendingForOwner(owner);
     this.#send(name, sanitized, owner.id);
+    if (name === "hosted_site_action") {
+      const currentOwner = normalizeAnalyticsIdentity(this.#resolveOwner());
+      if (currentOwner?.id !== owner.id || currentOwner.email !== owner.email) {
+        this.#enqueue("clear", () => this.#client?.clear());
+      }
+    }
   }
 
   #flushPendingForOwner(owner: AnalyticsIdentity): void {
@@ -261,13 +274,13 @@ export class HostAnalytics {
     if (!this.#client) return;
     const previous = this.#identifiedOwner;
     if (previous?.id === owner.id && previous.email === owner.email) return;
-    if (previous && previous.id !== owner.id) this.#enqueue(() => this.#client?.clear());
+    if (previous && previous.id !== owner.id) this.#enqueue("clear", () => this.#client?.clear());
     this.#identifiedOwner = { ...owner };
-    this.#enqueue(() => this.#client?.identify({ profileId: owner.id, email: owner.email }));
+    this.#enqueue("identify", () => this.#client?.identify({ profileId: owner.id, email: owner.email }));
   }
 
   #send(name: HostEventName, properties: HostProperties, profileId: string, timestamp?: string): void {
-    this.#enqueue(() =>
+    this.#enqueue("track", () =>
       this.#client?.track(name, {
         ...properties,
         ...(timestamp ? { __timestamp: timestamp } : {}),
@@ -296,9 +309,22 @@ export class HostAnalytics {
     }
   }
 
-  #enqueue(operation: AnalyticsOperation): void {
-    if (this.#operationQueue.operations.length >= MAX_PENDING_EVENTS) this.#operationQueue.operations.shift();
-    this.#operationQueue.operations.push(operation);
+  #enqueue(kind: AnalyticsOperationKind, run: () => unknown): void {
+    if (kind === "clear") {
+      this.#operationQueue.operations = this.#operationQueue.operations.filter(
+        (operation) => operation.kind === "track",
+      );
+    } else if (kind === "identify") {
+      this.#operationQueue.operations = this.#operationQueue.operations.filter(
+        (operation) => operation.kind !== "identify",
+      );
+    } else if (
+      this.#operationQueue.operations.filter((operation) => operation.kind === "track").length >= MAX_PENDING_EVENTS
+    ) {
+      const oldestTrack = this.#operationQueue.operations.findIndex((operation) => operation.kind === "track");
+      if (oldestTrack >= 0) this.#operationQueue.operations.splice(oldestTrack, 1);
+    }
+    this.#operationQueue.operations.push({ kind, run });
     if (this.#operationQueue.active) return;
     this.#operationQueue.active = true;
     void this.#drainQueue();
@@ -309,7 +335,7 @@ export class HostAnalytics {
       const operation = this.#operationQueue.operations.shift();
       if (!operation) continue;
       try {
-        const result = operation();
+        const result = operation.run();
         if (isPromiseLike(result)) await result;
       } catch {
         // Analytics must never change host behavior or stop later events.

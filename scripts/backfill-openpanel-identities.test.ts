@@ -115,4 +115,49 @@ describe("OpenPanel identity backfill", () => {
     expect(fetcher).toHaveBeenCalledOnce();
     expect(sleep).not.toHaveBeenCalled();
   });
+
+  it("retries rejected requests and passes a bounded abort signal", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockRejectedValueOnce(new Error("network reset"))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const sleep = vi.fn(async () => undefined);
+
+    await expect(
+      applyBackfill([{ profileId: "account-1", email: "person@example.com" }], {
+        clientId: "client-id",
+        clientSecret: "client-secret",
+        requestTimeoutMs: 50,
+        fetcher,
+        sleep,
+      }),
+    ).resolves.toBe(1);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+    expect(sleep).toHaveBeenCalledOnce();
+  });
+
+  it("retries timed out requests and stops after the retry limit", async () => {
+    const fetcher = vi.fn<typeof fetch>(
+      (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), {
+            once: true,
+          });
+        }),
+    );
+    const sleep = vi.fn(async () => undefined);
+
+    await expect(
+      applyBackfill([{ profileId: "account-1", email: "person@example.com" }], {
+        clientId: "client-id",
+        clientSecret: "client-secret",
+        requestTimeoutMs: 1,
+        fetcher,
+        sleep,
+      }),
+    ).rejects.toThrow("after retries");
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    expect(sleep).toHaveBeenCalledTimes(3);
+  });
 });

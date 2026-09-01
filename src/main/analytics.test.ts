@@ -349,7 +349,7 @@ describe("host analytics", () => {
     expect(JSON.stringify(vi.mocked(client.track).mock.calls)).not.toContain("hosted-site-23456789ab.openbot.site");
   });
 
-  it("ignores terminal hosted-site history without a live running marker", () => {
+  it("ignores hosted-site history even when it contains running and terminal markers", () => {
     const client = fakeClient();
     const analytics = new HostAnalytics(
       {
@@ -362,6 +362,10 @@ describe("host analytics", () => {
       () => client,
     );
 
+    const messages = [
+      hostedSiteMessage("hosted-history-running", "publish", "running", "operation-history"),
+      hostedSiteMessage("hosted-history-terminal", "publish", "succeeded", "operation-history"),
+    ];
     analytics.handleAgentEvent({
       type: "conversation",
       snapshot: {
@@ -369,8 +373,12 @@ describe("host analytics", () => {
         threadId: BOT.threadId,
         activeTurnId: null,
         revision: 1,
-        messages: [hostedSiteMessage("hosted-history", "publish", "succeeded", "operation-history")],
+        messages,
       },
+    });
+    analytics.handleAgentEvent({
+      type: "conversation",
+      snapshot: { botId: BOT.id, threadId: BOT.threadId, activeTurnId: null, revision: 2, messages },
     });
 
     expect(client.track).not.toHaveBeenCalled();
@@ -396,7 +404,7 @@ describe("host analytics", () => {
     });
 
     analytics.clear();
-    owner = { id: "owner-2", email: "two@example.com" };
+    owner = null;
     analytics.handleAgentEvent({
       type: "conversation",
       snapshot: {
@@ -409,32 +417,38 @@ describe("host analytics", () => {
     });
 
     expect(client.track).toHaveBeenCalledWith("hosted_site_action", expect.objectContaining({ profileId: "owner-1" }));
+    expect(client.clear).toHaveBeenCalledTimes(2);
   });
 
-  it("bounds events behind a stalled identify request", async () => {
+  it("preserves identity transitions when the queue overflows", async () => {
     const client = fakeClient();
     let releaseIdentify!: () => void;
     const identifyReady = new Promise<void>((resolve) => {
       releaseIdentify = resolve;
     });
     vi.mocked(client.identify).mockImplementation(async () => identifyReady);
+    let owner = { id: "owner-1", email: "one@example.com" };
     const analytics = new HostAnalytics(
       {
         enabled: true,
         appVersion: "1.2.3",
         platform: "darwin",
-        resolveOwner: () => ({ id: "owner-account", email: "owner@example.com" }),
+        resolveOwner: () => owner,
         resolveBot: () => BOT,
       },
       () => client,
     );
 
+    analytics.handleAgentEvent({ type: "error", code: "agent_initial", message: "private" });
+    owner = { id: "owner-2", email: "two@example.com" };
     for (let index = 0; index < 150; index += 1) {
       analytics.handleAgentEvent({ type: "error", code: `agent_${index}`, message: "private" });
     }
     releaseIdentify();
 
     await vi.waitFor(() => expect(client.track).toHaveBeenCalledTimes(100));
+    expect(client.identify).toHaveBeenCalledWith({ profileId: "owner-2", email: "two@example.com" });
+    expect(client.clear).toHaveBeenCalled();
   });
 
   it("normalizes the owner email before identifying", () => {
