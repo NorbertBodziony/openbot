@@ -382,6 +382,14 @@ describe("RemoteControlPlane", () => {
     expect(webhookBodies).toContain(
       JSON.stringify({ type: "remote-session-ended", hostId: "host-1", sessionId: memberSession.sessionId }),
     );
+    await controlPlane.changeMembership("revoked-member", {
+      hostId: "host-1",
+      membershipId: "revoked-membership",
+      revoke: true,
+    });
+    expect(
+      database.prepare("SELECT status FROM remote_memberships WHERE membership_id = 'revoked-membership'").get(),
+    ).toEqual({ status: "revoked" });
 
     database.prepare("INSERT INTO users(id) VALUES ('competing-owner')").run();
     const competingOwner = {

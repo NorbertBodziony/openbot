@@ -242,6 +242,12 @@ describe("TeamStore", () => {
       role: "member",
     });
     expect(remote.member).toMatchObject({ id: "d1-member", email: "alice@example.com", name: "Alice" });
+    expect(store.listSessions()).toEqual([
+      expect.objectContaining({ id: "remote-session", memberId: "d1-member", username: "alice@example.com" }),
+    ]);
+    await store.revokeSession("remote-session");
+    expect(store.listSessions()).toHaveLength(0);
+    expect(store.authenticate(remote.sessionToken)).toBeNull();
     expect(store.getMember("d1-member")).toMatchObject({ email: "alice@example.com", disabled: false });
 
     const restored = new TeamStore(path);

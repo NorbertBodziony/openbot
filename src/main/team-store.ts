@@ -113,7 +113,7 @@ export class TeamStore {
   #state: StoredTeam | null = null;
   readonly #remoteSessions = new Map<
     string,
-    { member: TeamMemberSummary; sessionId: string; sessionExpiresAt: string }
+    { member: TeamMemberSummary; sessionId: string; createdAt: string; sessionExpiresAt: string }
   >();
   #writeChain = Promise.resolve();
 
@@ -415,7 +415,12 @@ export class TeamStore {
           createdAt: new Date().toISOString(),
           disabled: false,
         };
-    this.#remoteSessions.set(hashToken(sessionToken), { member, sessionId: input.sessionId, sessionExpiresAt });
+    this.#remoteSessions.set(hashToken(sessionToken), {
+      member,
+      sessionId: input.sessionId,
+      createdAt: new Date().toISOString(),
+      sessionExpiresAt,
+    });
     return { member: structuredClone(member), sessionToken, sessionExpiresAt };
   }
 
@@ -442,13 +447,29 @@ export class TeamStore {
 
   listSessions(): TeamSessionSummary[] {
     const state = this.#requireState();
-    return state.sessions.map((session) => ({
+    const persisted = state.sessions.map((session) => ({
       id: session.id,
       memberId: session.memberId,
       username: state.members.find((member) => member.id === session.memberId)?.username ?? "unknown",
       createdAt: session.createdAt,
       expiresAt: session.expiresAt,
     }));
+    const now = Date.now();
+    const remote: TeamSessionSummary[] = [];
+    for (const [tokenHash, session] of this.#remoteSessions) {
+      if (Date.parse(session.sessionExpiresAt) <= now) {
+        this.#remoteSessions.delete(tokenHash);
+        continue;
+      }
+      remote.push({
+        id: session.sessionId,
+        memberId: session.member.id,
+        username: session.member.username,
+        createdAt: session.createdAt,
+        expiresAt: session.sessionExpiresAt,
+      });
+    }
+    return [...persisted, ...remote];
   }
 
   async createInvite(role: Exclude<TeamRole, "owner">, emailInput?: string): Promise<CreatedInvite> {
@@ -664,6 +685,7 @@ export class TeamStore {
   async revokeSession(sessionId: string): Promise<void> {
     const state = this.#requireState();
     state.sessions = state.sessions.filter((session) => session.id !== sessionId);
+    this.closeRemoteSession(sessionId);
     await this.#persist();
   }
 

@@ -159,6 +159,13 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
     return this.#options.removeMember(hostId, membershipId);
   }
 
+  async leaveHost(hostId: string): Promise<void> {
+    const host = (await this.#options.listHosts()).find((candidate) => candidate.hostId === hostId);
+    if (!host) return;
+    if (host.role === "owner") throw new Error("The owner cannot leave this host.");
+    await this.#options.removeMember(hostId, host.membershipId);
+  }
+
   async sendDesktop(hostId: string, data: string | ArrayBuffer): Promise<void> {
     await this.#ensureConnected(hostId);
     await this.#options.bridge.send(hostId, "desktop", data);

@@ -1809,6 +1809,10 @@ if (!hasSingleInstanceLock) {
             if (!centralAuthManager) throw new Error("The account service is not ready.");
             return centralAuthManager.getSignedInUser().email;
           },
+          sendTeamInviteEmail: (input) => {
+            if (!centralAuthManager) throw new Error("The account service is not ready.");
+            return centralAuthManager.sendTeamInviteEmail(input);
+          },
         },
         {
           allowLocalDevelopmentInvites: developmentRemoteRole !== null,

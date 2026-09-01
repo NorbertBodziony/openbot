@@ -138,6 +138,12 @@ interface TokenCipher {
 interface CentralAccountSession {
   createTeamAuthTicket: (serverId: string) => Promise<string>;
   getEmail: () => string;
+  sendTeamInviteEmail?: (input: {
+    email: string;
+    serverName: string;
+    inviteUrl: string;
+    role: "admin" | "member";
+  }) => Promise<void>;
 }
 
 interface RemoteServerManagerOptions {
@@ -579,7 +585,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   async remove(serverId: string): Promise<void> {
     if (serverId === "local") throw new Error("The local server cannot be removed.");
     if (this.#state.servers.find((server) => server.id === serverId)?.transport === "webrtc-v2") {
-      await this.#webrtcTransport?.disconnect(serverId);
+      if (!this.#webrtcTransport) throw new Error("The WebRTC transport is unavailable.");
+      await this.#webrtcTransport.leaveHost(serverId);
+      await this.#webrtcTransport.disconnect(serverId).catch(() => undefined);
     }
     this.#clearServerConnectionState(serverId);
     this.#state.servers = this.#state.servers.filter((server) => server.id !== serverId);
@@ -807,12 +815,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     return this.request(`/v1/team/invites/${encodeURIComponent(inviteId)}`, { method: "DELETE" }, serverId, decodeVoid);
   }
 
-  createInvite(serverId: string, input: { role: "admin" | "member"; email?: string }): Promise<InviteSummary> {
+  async createInvite(serverId: string, input: { role: "admin" | "member"; email?: string }): Promise<InviteSummary> {
     const server = this.#requireServer(serverId);
     if (server.transport === "webrtc-v2" && this.#webrtcTransport) {
       const transport = this.#webrtcTransport;
       if (!server.fingerprint) throw new Error("The host must connect once before it can create invitations.");
-      return transport.createInvite(serverId, input).then((invite) => ({
+      const invite = await transport.createInvite(serverId, input);
+      const result: InviteSummary = {
         id: invite.inviteId,
         role: input.role,
         expiresAt: new Date(invite.expiresAt).toISOString(),
@@ -824,7 +833,22 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           fingerprint: server.fingerprint,
           token: invite.token,
         }),
-      }));
+      };
+      if (input.email) {
+        try {
+          if (!this.#centralAccount.sendTeamInviteEmail) throw new Error("Email delivery is unavailable.");
+          await this.#centralAccount.sendTeamInviteEmail({
+            email: input.email,
+            serverName: server.name,
+            inviteUrl: result.inviteUrl,
+            role: input.role,
+          });
+        } catch (error) {
+          await transport.revokeInvite(invite.inviteId).catch(() => undefined);
+          throw error;
+        }
+      }
+      return result;
     }
     return this.request("/v1/team/invites", { method: "POST", body: input }, serverId, decodeInviteSummary);
   }

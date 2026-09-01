@@ -207,6 +207,7 @@ export class HostService extends EventEmitter<HostEvents> {
       onDirectMessage: (event) => this.emit("directMessage", event),
       onDirectTyping: (event) => this.emit("directTyping", event),
       createInvite: (input) => this.createInvite(input),
+      onSessionRevoked: (sessionId) => this.#webrtcGateway?.revokeSession(sessionId),
     });
     this.#webrtcGateway = options.teamWebRtcBridge
       ? new TeamWebRtcHostGateway({
@@ -585,6 +586,7 @@ export class HostService extends EventEmitter<HostEvents> {
 
   async revokeSession(sessionId: string): Promise<void> {
     await this.#options.store.revokeSession(sessionId);
+    await this.#webrtcGateway?.revokeSession(sessionId);
     await this.#remoteScreen.revokeTeamSession(sessionId);
     this.#api.refreshPresence();
   }

@@ -117,7 +117,7 @@ describe("remote server links", () => {
         signalUrl: "wss://signal.openbot.run/v1/signal",
       }),
       endSession: async () => undefined,
-      createInvite: async () => ({ inviteId: "invite-1", token: "token", expiresAt: Date.now() + 60_000 }),
+      createInvite: async () => ({ inviteId: "invite-1", token: "t".repeat(43), expiresAt: Date.now() + 60_000 }),
       listInvites: async () => [],
       previewInvite: async () => ({
         inviteId: "invite-1",
@@ -239,6 +239,9 @@ describe("remote server links", () => {
   it("keeps the saved WebRTC host order and loads Remote Desktop readiness after connection", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openbot-webrtc-host-order-"));
     const statePath = join(directory, "servers.json");
+    const alphaId = "00000000-0000-4000-8000-000000000001";
+    const betaId = "00000000-0000-4000-8000-000000000002";
+    const gammaId = "00000000-0000-4000-8000-000000000003";
     const storedWebRtcServer = (id: string, name: string) => ({
       id,
       name,
@@ -256,14 +259,14 @@ describe("remote server links", () => {
       statePath,
       JSON.stringify({
         version: 3,
-        activeServerId: "host-beta",
-        servers: [storedWebRtcServer("host-beta", "Beta"), storedWebRtcServer("host-alpha", "Alpha")],
+        activeServerId: betaId,
+        servers: [storedWebRtcServer(betaId, "Beta"), storedWebRtcServer(alphaId, "Alpha")],
       }),
     );
-    const hosts = [
-      { hostId: "host-alpha", name: "Alpha", devicePublicKey: "host-alpha-public-key" },
-      { hostId: "host-beta", name: "Beta", devicePublicKey: "host-beta-public-key" },
-      { hostId: "host-gamma", name: "Gamma", devicePublicKey: "host-gamma-public-key" },
+    let hosts = [
+      { hostId: alphaId, name: "Alpha", devicePublicKey: `${alphaId}-public-key` },
+      { hostId: betaId, name: "Beta", devicePublicKey: `${betaId}-public-key` },
+      { hostId: gammaId, name: "Gamma", devicePublicKey: `${gammaId}-public-key` },
     ].map((host) => ({
       ...host,
       logoKey: null,
@@ -273,13 +276,18 @@ describe("remote server links", () => {
     }));
     const bridge = new TeamWebRtcBridge();
     vi.spyOn(bridge, "disconnect").mockResolvedValue();
+    const removeMember = vi.fn(async (hostId: string) => {
+      hosts = hosts.filter((host) => host.hostId !== hostId);
+    });
+    const revokeInvite = vi.fn(async () => undefined);
+    const sendTeamInviteEmail = vi.fn(async () => undefined);
     const transport = new TeamWebRtcClientTransport({
       bridge,
       listHosts: async () => hosts,
       startSession: async (hostId) => ({ sessionId: "session-1", hostId, expiresAt: Date.now() + 60_000 }),
       issueTicket: async () => ({ ticket: "ticket", expiresAt: Date.now() + 60_000, signalUrl: "wss://signal" }),
       endSession: async () => undefined,
-      createInvite: async () => ({ inviteId: "invite-1", token: "token", expiresAt: Date.now() + 60_000 }),
+      createInvite: async () => ({ inviteId: "invite-1", token: "t".repeat(43), expiresAt: Date.now() + 60_000 }),
       listInvites: async () => [],
       previewInvite: async () => {
         throw new Error("Unexpected invite preview.");
@@ -287,10 +295,10 @@ describe("remote server links", () => {
       acceptInvite: async () => {
         throw new Error("Unexpected invite acceptance.");
       },
-      revokeInvite: async () => undefined,
+      revokeInvite,
       listMembers: async () => [],
       updateMember: async () => undefined,
-      removeMember: async () => undefined,
+      removeMember,
       getPrincipalId: () => "person-1",
       controlPlaneUrl: "https://api.openbot.run",
       downloadHostLogo: async () => ({ bytes: new Uint8Array(), mimeType: "image/png" }),
@@ -310,7 +318,11 @@ describe("remote server links", () => {
     const manager = new RemoteServerManager(
       statePath,
       { encrypt: (value) => Buffer.from(value), decrypt: (value) => value.toString() },
-      { createTeamAuthTicket: async () => "ticket", getEmail: () => "person@example.com" },
+      {
+        createTeamAuthTicket: async () => "ticket",
+        getEmail: () => "person@example.com",
+        sendTeamInviteEmail,
+      },
       { webrtcTransport: transport },
     );
 
@@ -321,13 +333,29 @@ describe("remote server links", () => {
           .list()
           .slice(1)
           .map((server) => server.id),
-      ).toEqual(["host-beta", "host-alpha", "host-gamma"]);
-      expect(manager.list().find((server) => server.id === "host-beta")?.remoteDesktopAvailable).toBe(false);
-      transport.emit("connected", "host-beta");
+      ).toEqual([betaId, alphaId, gammaId]);
+      expect(manager.list().find((server) => server.id === betaId)?.remoteDesktopAvailable).toBe(false);
+      transport.emit("connected", betaId);
       await vi.waitFor(() =>
-        expect(manager.list().find((server) => server.id === "host-beta")?.remoteDesktopAvailable).toBe(true),
+        expect(manager.list().find((server) => server.id === betaId)?.remoteDesktopAvailable).toBe(true),
       );
-      expect(request).toHaveBeenCalledWith("host-beta", "/v1/remote-screen/capabilities", {});
+      expect(request).toHaveBeenCalledWith(betaId, "/v1/remote-screen/capabilities", {});
+      const invite = await manager.createInvite(betaId, { role: "member", email: "friend@example.com" });
+      expect(sendTeamInviteEmail).toHaveBeenCalledWith({
+        email: "friend@example.com",
+        serverName: "Beta",
+        inviteUrl: invite.inviteUrl,
+        role: "member",
+      });
+      sendTeamInviteEmail.mockRejectedValueOnce(new Error("SMTP unavailable"));
+      await expect(manager.createInvite(betaId, { role: "member", email: "failed@example.com" })).rejects.toThrow(
+        "SMTP unavailable",
+      );
+      expect(revokeInvite).toHaveBeenCalledWith("invite-1");
+      await manager.remove(alphaId);
+      expect(removeMember).toHaveBeenCalledWith(alphaId, `${alphaId}-member`);
+      await manager.syncRemoteHosts();
+      expect(manager.list().some((server) => server.id === alphaId)).toBe(false);
     } finally {
       await manager.stop();
       await rm(directory, { recursive: true, force: true });

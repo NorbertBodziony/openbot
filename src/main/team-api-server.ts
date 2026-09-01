@@ -180,6 +180,7 @@ interface TeamApiOptions {
   onDirectMessage?: (event: DirectMessageRealtimeEvent) => void;
   onDirectTyping?: (event: DirectTypingRealtimeEvent) => void;
   createInvite?: (input: CreateTeamInviteInput) => Promise<InviteSummary>;
+  onSessionRevoked?: (sessionId: string) => Promise<void> | void;
   rateLimitCapacity?: number;
   now?: () => number;
 }
@@ -885,6 +886,7 @@ export class TeamApiServer {
         requireAdmin(member);
         const revokedSessionId = pathIdentifier(sessionMatch[1], "sessionId");
         await this.#options.store.revokeSession(revokedSessionId);
+        await this.#options.onSessionRevoked?.(revokedSessionId);
         await this.#options.remoteScreen?.revokeTeamSession(revokedSessionId);
         this.refreshPresence();
         return this.#empty(response, 204);

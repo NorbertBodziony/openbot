@@ -570,7 +570,6 @@ export class RemoteControlPlane {
       reactivate?: boolean;
     },
   ): Promise<void> {
-    await this.#requireRole(input.hostId, actorUserId, ["owner"]);
     const membership = await this.#database
       .prepare("SELECT membership_id, host_id, user_id, role, status FROM remote_memberships WHERE membership_id = ?")
       .bind(input.membershipId)
@@ -578,6 +577,8 @@ export class RemoteControlPlane {
     if (!membership || membership.host_id !== input.hostId) {
       throw new RemoteControlPlaneError(404, "membership_not_found", "The membership does not exist.");
     }
+    const leavingOwnMembership = input.revoke === true && membership.user_id === actorUserId;
+    if (!leavingOwnMembership) await this.#requireRole(input.hostId, actorUserId, ["owner"]);
     if (membership.role === "owner") {
       throw new RemoteControlPlaneError(409, "owner_membership_protected", "The owner membership cannot be changed.");
     }

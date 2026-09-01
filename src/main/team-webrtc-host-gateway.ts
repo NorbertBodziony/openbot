@@ -130,6 +130,13 @@ export class TeamWebRtcHostGateway {
     if (peerId) await this.#bridge.disconnect(peerId);
   }
 
+  async revokeSession(sessionId: string): Promise<void> {
+    if (sessionId !== this.#localSessionId) return;
+    const peerId = this.#peerId;
+    this.#closeLocalSession();
+    if (peerId) await this.#bridge.disconnectPeer(peerId).catch(() => undefined);
+  }
+
   dispose(): void {
     this.#bridge.off("incoming", this.#onIncoming);
     this.#bridge.off("connected", this.#onConnected);
