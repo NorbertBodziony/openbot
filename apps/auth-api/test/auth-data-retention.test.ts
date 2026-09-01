@@ -16,7 +16,7 @@ describe("auth data retention", () => {
 
     runRetention(database, now);
 
-    expect(ids(database, "email_login_challenges", "id_hash")).toEqual(["active"]);
+    expect(ids(database, "email_login_challenges", "id_hash")).toEqual(["active", "consumed"]);
     expect(ids(database, "auth_sessions", "id")).toEqual(["active"]);
     expect(ids(database, "auth_rate_limits", "key_hash")).toEqual(["current"]);
     expect(ids(database, "team_auth_tickets", "ticket_hash")).toEqual(["active"]);
