@@ -102,9 +102,23 @@ class MemoryAuthRepository implements AuthRepository {
     return session && !session.revoked && session.expiresAt > now ? session.user : null;
   }
 
+  async authenticateDesktopSession(sessionToken: string, now: number): Promise<AuthUser | null> {
+    const session = this.sessions.get(sessionToken);
+    return session && !session.revoked && session.expiresAt > now && !this.mobileDevices.has(session.id)
+      ? session.user
+      : null;
+  }
+
   async revokeSession(sessionToken: string): Promise<void> {
     const session = this.sessions.get(sessionToken);
     if (session) session.revoked = true;
+  }
+
+  async revokeMobileSession(sessionToken: string): Promise<boolean> {
+    const session = this.sessions.get(sessionToken);
+    if (!session || session.revoked || !this.mobileDevices.has(session.id)) return false;
+    session.revoked = true;
+    return true;
   }
 
   async updateUserAvatar(
@@ -318,6 +332,9 @@ describe("email one-time codes", () => {
       id: session.user.id,
     });
     expect(await service.authenticate(mobileSession?.sessionToken ?? "missing")).toMatchObject({ id: session.user.id });
+    await expect(
+      service.issueMobileAuthTicket(mobileSession?.sessionToken ?? "missing", "203.0.113.4"),
+    ).rejects.toMatchObject({ status: 401, code: "unauthorized" });
     expect(await service.listMobileAuthDevices(session.sessionToken)).toMatchObject([
       { name: "Norbert’s iPhone", platform: "ios", connectedAt: 1_000 },
     ]);
@@ -328,6 +345,17 @@ describe("email one-time codes", () => {
     expect(await service.listMobileAuthDevices(session.sessionToken)).toEqual([]);
     expect(await service.authenticateMobileSession(mobileSession?.sessionToken ?? "missing")).toBeNull();
     expect(await service.authenticate(mobileSession?.sessionToken ?? "missing")).toBeNull();
+    expect(await service.authenticateDesktopSession(session.sessionToken)).toMatchObject({ id: session.user.id });
+
+    const logoutTicket = await service.issueMobileAuthTicket(session.sessionToken, "203.0.113.4");
+    const logoutSession = await service.redeemMobileAuthTicket(logoutTicket.ticket, device, "203.0.113.5");
+    await service.logoutMobileSession(logoutSession?.sessionToken ?? "missing");
+    expect(await service.authenticateMobileSession(logoutSession?.sessionToken ?? "missing")).toBeNull();
+    expect(await service.authenticateDesktopSession(session.sessionToken)).toMatchObject({ id: session.user.id });
+    await expect(service.logoutMobileSession(session.sessionToken)).rejects.toMatchObject({
+      status: 401,
+      code: "unauthorized",
+    });
     await expect(service.updateAvatar(session.sessionToken, "/v1/avatars/user?v=avatar", null)).resolves.toMatchObject({
       avatarUrl: "/v1/avatars/user?v=avatar",
     });

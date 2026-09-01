@@ -91,8 +91,8 @@ export async function validateMobileSession(session: MobileSession): Promise<Mob
 export async function logoutMobileSession(session: MobileSession): Promise<void> {
   await Promise.all([
     deleteMobileSessionIfCurrent(session.sessionToken),
-    fetch(new URL("/v1/auth/logout", session.apiUrl).toString(), {
-      method: "POST",
+    fetch(new URL("/v1/mobile-auth/session", session.apiUrl).toString(), {
+      method: "DELETE",
       headers: { Authorization: `Bearer ${session.sessionToken}` },
     }),
   ]);

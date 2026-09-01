@@ -131,6 +131,10 @@ export class AuthService {
     return this.#repository.authenticate(sessionToken, this.#now());
   }
 
+  authenticateDesktopSession(sessionToken: string): Promise<AuthUser | null> {
+    return this.#repository.authenticateDesktopSession(sessionToken, this.#now());
+  }
+
   async updateName(sessionToken: string, nameInput: string): Promise<AuthUser> {
     const user = await this.authenticate(sessionToken);
     if (!user) throw new AuthServiceError(401, "unauthorized", "The session is invalid.");
@@ -209,7 +213,7 @@ export class AuthService {
   }
 
   async issueMobileAuthTicket(sessionToken: string, sourceIp: string): Promise<{ ticket: string; expiresAt: number }> {
-    const user = await this.authenticate(sessionToken);
+    const user = await this.authenticateDesktopSession(sessionToken);
     if (!user) throw new AuthServiceError(401, "unauthorized", "The session is invalid.");
     const now = this.#now();
     await this.#enforceRateLimit(`mobile-ticket:user:${user.id}`, 30, now);
@@ -269,6 +273,11 @@ export class AuthService {
 
   logout(sessionToken: string): Promise<void> {
     return this.#repository.revokeSession(sessionToken, this.#now());
+  }
+
+  async logoutMobileSession(sessionToken: string): Promise<void> {
+    const revoked = await this.#repository.revokeMobileSession(sessionToken, this.#now());
+    if (!revoked) throw new AuthServiceError(401, "unauthorized", "The mobile session is invalid.");
   }
 
   async #enforceRateLimit(key: string, limit: number, now: number): Promise<void> {

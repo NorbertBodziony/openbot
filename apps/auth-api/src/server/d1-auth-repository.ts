@@ -168,11 +168,48 @@ export class D1AuthRepository implements AuthRepository {
     return mapUser(row);
   }
 
+  async authenticateDesktopSession(sessionToken: string, now: number): Promise<AuthUser | null> {
+    const tokenHash = await sha256(sessionToken);
+    const row = await this.database
+      .prepare(
+        `SELECT users.id, users.email, users.name, users.avatar_url
+         FROM auth_sessions
+         JOIN users ON users.id = auth_sessions.user_id
+         WHERE auth_sessions.token_hash = ?
+           AND auth_sessions.revoked_at IS NULL
+           AND auth_sessions.expires_at > ?
+           AND NOT EXISTS (
+             SELECT 1 FROM mobile_auth_sessions
+             WHERE mobile_auth_sessions.session_id = auth_sessions.id
+           )`,
+      )
+      .bind(tokenHash, now)
+      .first<UserRow>();
+    if (!row) return null;
+    await this.database
+      .prepare("UPDATE auth_sessions SET last_used_at = ? WHERE token_hash = ?")
+      .bind(now, tokenHash)
+      .run();
+    return mapUser(row);
+  }
+
   async revokeSession(sessionToken: string, now: number): Promise<void> {
     await this.database
       .prepare("UPDATE auth_sessions SET revoked_at = ? WHERE token_hash = ?")
       .bind(now, await sha256(sessionToken))
       .run();
+  }
+
+  async revokeMobileSession(sessionToken: string, now: number): Promise<boolean> {
+    const result = await this.database
+      .prepare(
+        `UPDATE auth_sessions SET revoked_at = ?
+         WHERE token_hash = ? AND revoked_at IS NULL
+           AND id IN (SELECT session_id FROM mobile_auth_sessions)`,
+      )
+      .bind(now, await sha256(sessionToken))
+      .run();
+    return result.meta.changes === 1;
   }
 
   async updateUserName(userId: string, name: string, now: number): Promise<AuthUser> {

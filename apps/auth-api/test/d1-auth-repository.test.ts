@@ -17,6 +17,29 @@ interface PreparedCall {
 }
 
 describe("D1 mobile session activity", () => {
+  it("excludes registered mobile sessions from desktop authentication", async () => {
+    const calls: PreparedCall[] = [];
+    const repository = new D1AuthRepository(desktopAuthenticationDatabase(calls));
+
+    await expect(repository.authenticateDesktopSession("desktop-token", 1_000)).resolves.toMatchObject({
+      id: "user-1",
+    });
+
+    expect(calls[0]?.query).toContain("NOT EXISTS");
+    expect(calls[0]?.query).toContain("mobile_auth_sessions.session_id = auth_sessions.id");
+    expect(calls[0]?.values).toEqual([expect.any(String), 1_000]);
+  });
+
+  it("revokes only a session registered as mobile", async () => {
+    const calls: PreparedCall[] = [];
+    const repository = new D1AuthRepository(mobileRevocationDatabase(calls));
+
+    await expect(repository.revokeMobileSession("mobile-token", 2_000)).resolves.toBe(true);
+
+    expect(calls[0]?.query).toContain("id IN (SELECT session_id FROM mobile_auth_sessions)");
+    expect(calls[0]?.values).toEqual([2_000, expect.any(String)]);
+  });
+
   it("updates last activity only after the coarse activity window", async () => {
     const updates: unknown[][] = [];
     const connectedAt = 1_000;
@@ -117,8 +140,43 @@ function activityDatabase(lastUsedAt: number, updates: unknown[][]): D1Database 
   };
 }
 
+function desktopAuthenticationDatabase(calls: PreparedCall[]): D1Database {
+  return singleStatementDatabase(calls, {
+    id: "user-1",
+    email: "person@example.com",
+    name: null,
+    avatar_url: null,
+  });
+}
+
+function mobileRevocationDatabase(calls: PreparedCall[]): D1Database {
+  return singleStatementDatabase(calls);
+}
+
+function singleStatementDatabase(calls: PreparedCall[], first?: unknown): D1Database {
+  return {
+    prepare(query) {
+      const call: PreparedCall = { query, values: [] };
+      calls.push(call);
+      return statement({ first, onBind: (values) => (call.values = values) });
+    },
+    batch() {
+      throw new Error("Unexpected batch call.");
+    },
+    exec() {
+      throw new Error("Unexpected exec call.");
+    },
+    withSession() {
+      throw new Error("Unexpected withSession call.");
+    },
+    dump() {
+      throw new Error("Unexpected dump call.");
+    },
+  };
+}
+
 function statement(options: {
-  first?: TestMobileSessionUserRow;
+  first?: unknown;
   onBind?: (values: unknown[]) => void;
   onRun?: (values: unknown[]) => void;
 }): D1PreparedStatement {

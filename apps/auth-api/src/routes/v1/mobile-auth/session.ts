@@ -14,6 +14,16 @@ export const Route = createFileRoute("/v1/mobile-auth/session")({
           return authErrorResponse(error);
         }
       },
+      DELETE: async ({ request }) => {
+        try {
+          const token = bearerToken(request);
+          if (!token) return apiError(401, "unauthorized", "Sign in is required.");
+          await requestAuthService().logoutMobileSession(token);
+          return new Response(null, { status: 204, headers: { "Cache-Control": "no-store" } });
+        } catch (error) {
+          return authErrorResponse(error);
+        }
+      },
     },
   },
 });
