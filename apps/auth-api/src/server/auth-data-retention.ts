@@ -19,7 +19,7 @@ export function authRetentionOperations(now: number): AuthRetentionOperation[] {
   return [
     {
       name: "challenges",
-      sql: "DELETE FROM email_login_challenges WHERE expires_at <= ? OR consumed_at IS NOT NULL",
+      sql: "DELETE FROM email_login_challenges WHERE expires_at <= ?",
       cutoff: now,
     },
     {

@@ -37,6 +37,8 @@ export function createEmailCodeDelivery(bindings: EmailDeliveryBindings): EmailC
         },
         body: JSON.stringify(message),
         signal: AbortSignal.timeout(10_000),
+      }).catch(() => {
+        throw new Error("email_delivery_unknown");
       });
       if (!response.ok) throw new Error("email_delivery_webhook_failed");
     },

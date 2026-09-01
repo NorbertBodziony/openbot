@@ -17,6 +17,17 @@ interface PreparedCall {
 }
 
 describe("D1 auth sessions", () => {
+  it("includes verified sent challenges in resend cooldown checks", async () => {
+    const calls: PreparedCall[] = [];
+    const repository = new D1AuthRepository(emailChallengeDatabase(calls));
+
+    await expect(repository.latestEmailChallengeAt("person@example.com")).resolves.toBe(1_000);
+
+    expect(calls[0]?.query).toContain("delivery_state IN ('pending', 'sent')");
+    expect(calls[0]?.query).not.toContain("consumed_at IS NULL");
+    expect(calls[0]?.values).toEqual(["person@example.com"]);
+  });
+
   it("excludes registered mobile sessions from desktop authentication", async () => {
     const calls: PreparedCall[] = [];
     const repository = new D1AuthRepository(desktopAuthenticationDatabase(calls));
@@ -91,6 +102,28 @@ describe("D1 auth sessions", () => {
     ]);
   });
 });
+
+function emailChallengeDatabase(calls: PreparedCall[]): D1Database {
+  return {
+    prepare(query) {
+      const call: PreparedCall = { query, values: [] };
+      calls.push(call);
+      return statement({ first: { created_at: 1_000 }, onBind: (values) => (call.values = values) });
+    },
+    batch() {
+      throw new Error("Unexpected batch call.");
+    },
+    exec() {
+      throw new Error("Unexpected exec call.");
+    },
+    withSession() {
+      throw new Error("Unexpected withSession call.");
+    },
+    dump() {
+      throw new Error("Unexpected dump call.");
+    },
+  };
+}
 
 function ticketDatabase(batches: PreparedCall[][]): D1Database {
   const pending: PreparedCall[] = [];
