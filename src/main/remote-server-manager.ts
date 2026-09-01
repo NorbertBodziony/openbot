@@ -1254,6 +1254,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
             contentType: new Headers(init.headers).get("Content-Type") ?? undefined,
           });
           const headers = new Headers();
+          if (response.setCookie) headers.set("Set-Cookie", response.setCookie);
           if (response.file) {
             headers.set("Content-Type", response.file.mimeType);
             headers.set(

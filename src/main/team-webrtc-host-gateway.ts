@@ -486,7 +486,7 @@ export class TeamWebRtcHostGateway {
               : JSON.stringify(decodeTeamProtocolV2CurrentHttpRequest(input.method, input.path, input.body)),
     });
     const contentType = response.headers.get("content-type") ?? "";
-    const body = response.status === 204 ? null : contentType.includes("json") ? await response.json() : null;
+    const body = response.status === 204 ? {} : contentType.includes("json") ? await response.json() : null;
     if (!response.ok) {
       const record = isDynamicRecord(body) ? body : null;
       throw new GatewayError(
@@ -514,6 +514,7 @@ export class TeamWebRtcHostGateway {
     return {
       status: response.status,
       body: encodeTeamProtocolV2CurrentHttpResponse(input.method, input.path, response.status, body),
+      ...(response.headers.get("set-cookie") ? { setCookie: response.headers.get("set-cookie") } : {}),
     };
   }
 

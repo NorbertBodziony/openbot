@@ -97,11 +97,11 @@ describe("TeamWebRtcClientTransport", () => {
       queueMicrotask(() => bridge.emit("connected", peerId, channelBinding));
     });
     const authentication = mockAuthenticatedSend(bridge, false);
-    vi.spyOn(bridge, "disconnect").mockResolvedValue();
+    const disconnectBridge = vi.spyOn(bridge, "disconnect").mockResolvedValue();
     const startSession = vi
       .fn()
       .mockResolvedValue({ sessionId: "session-1", hostId: "host-1", expiresAt: Date.now() + 86_400_000 });
-    const issueTicket = vi.fn((sessionId: string) =>
+    const issueTicket = vi.fn((sessionId: string, _clientPublicKey: string) =>
       Promise.resolve({
         ticket: sessionId,
         expiresAt: 2_000,
@@ -143,6 +143,15 @@ describe("TeamWebRtcClientTransport", () => {
     const protocolError = vi.fn();
     transport.on("error", protocolError);
 
+    bridge.emit("connected", "host-1", channelBinding);
+    bridge.emit("data", "host-1", "rpc", "host-gateway-data");
+    bridge.emit("path", "host-1", "p2p");
+    bridge.emit("error", "host-1", "data_channel_error", "host gateway event");
+    bridge.emit("disconnected", "host-1");
+    await Promise.resolve();
+    expect(disconnectBridge).not.toHaveBeenCalled();
+    expect(protocolError).not.toHaveBeenCalled();
+
     const initialConnection = transport.connect("host-1");
     await vi.waitFor(() => expect(authentication.pendingConfirmations).toHaveLength(1));
     expect(bridge.send).not.toHaveBeenCalledWith("host-1", "events", expect.any(String));
@@ -173,6 +182,7 @@ describe("TeamWebRtcClientTransport", () => {
     expect(startSession).toHaveBeenCalledTimes(1);
     expect(issueTicket).toHaveBeenCalledTimes(2);
     expect(issueTicket).toHaveBeenNthCalledWith(2, "session-1", expect.stringContaining("PUBLIC KEY"));
+    expect(issueTicket.mock.calls[0]?.[1]).toBe(issueTicket.mock.calls[0]?.[1].trim());
     expect(endSession).not.toHaveBeenCalled();
     expect(bridge.send).toHaveBeenLastCalledWith(
       "host-1",

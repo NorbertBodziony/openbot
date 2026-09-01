@@ -179,6 +179,21 @@ describe("TeamWebRtcFileTransfer", () => {
     await transfers.stop();
   });
 
+  it("uses the last acknowledged progress instead of a fixed whole-transfer deadline", async () => {
+    const bridge = new SlowFinalAcknowledgementBridge();
+    const transfers = new TeamWebRtcFileTransfer(bridge, await temporaryDirectory(), 20);
+    transfers.setPeerAuthenticated("host-1", true);
+    const bytes = new Uint8Array(2 * 60 * 1024 + 1);
+
+    const transferId = await transfers.send("host-1", {
+      name: "slow.bin",
+      mimeType: "application/octet-stream",
+      bytes,
+    });
+    expect(transferId).toBe(bridge.transferId);
+    await transfers.stop();
+  });
+
   it("releases quota for file declarations that make no progress", async () => {
     const bridge = new FakeBridge();
     const transfers = new TeamWebRtcFileTransfer(bridge, await temporaryDirectory(), 10);
@@ -279,6 +294,67 @@ class ResumingBridge extends TeamWebRtcBridge {
         }),
       );
       await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  }
+}
+
+class SlowFinalAcknowledgementBridge extends TeamWebRtcBridge {
+  transferId = "";
+  #received = 0;
+
+  async send(peerId: string, channel: string, data: string | ArrayBuffer): Promise<void> {
+    if (channel !== "files") return;
+    if (isString(data)) {
+      const frame = decodeTeamProtocolV2FileControlFrame(data);
+      if (frame.type === "file-open") {
+        this.transferId = frame.transferId;
+        queueMicrotask(() =>
+          this.emit(
+            "data",
+            peerId,
+            "files",
+            encodeTeamProtocolV2Frame({
+              version: 2,
+              type: "file-ack",
+              transferId: frame.transferId,
+              receivedThrough: this.#received,
+            }),
+          ),
+        );
+      }
+      return;
+    }
+    const chunk = decodeTeamProtocolV2FileChunk(data);
+    this.#received = chunk.offset + chunk.bytes.byteLength;
+    await new Promise((resolve) => setTimeout(resolve, 12));
+    if (chunk.bytes.byteLength === 60 * 1024) {
+      this.emit(
+        "data",
+        peerId,
+        "files",
+        encodeTeamProtocolV2Frame({
+          version: 2,
+          type: "file-ack",
+          transferId: this.transferId,
+          receivedThrough: this.#received,
+        }),
+      );
+    } else {
+      setTimeout(
+        () =>
+          this.emit(
+            "data",
+            peerId,
+            "files",
+            encodeTeamProtocolV2Frame({
+              version: 2,
+              type: "file-ack",
+              transferId: this.transferId,
+              receivedThrough: this.#received,
+            }),
+          ),
+        5,
+      );
     }
   }
 }
