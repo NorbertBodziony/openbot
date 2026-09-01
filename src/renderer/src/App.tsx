@@ -544,6 +544,7 @@ export function createAppController(props: AppProps = {}) {
     }),
     ({ info, setup, auth, analyticsEnabled }) => {
       if (analyticsEnabled === null) return;
+      if (props.landingPreview) return;
       desktopAnalytics.setTrackingEnabled(analyticsEnabled);
       desktopAnalytics.setUser(auth.status === "signed_in" ? auth.user : null);
       if (!appInfoLoadedFromHost || !info || !setup || auth.status === "loading") return;
@@ -1539,7 +1540,7 @@ export function createAppController(props: AppProps = {}) {
   function applyConversation(snapshot: ConversationSnapshot, markNewMessagesRead = false) {
     const botId = snapshot.botId;
     if (snapshot.revision < (conversationRevisions()[botId] ?? -1)) return;
-    const initialLoad = conversationLoaded()[botId] !== true || (liveMessages()[botId]?.length ?? 0) === 0;
+    const initialLoad = conversationLoaded()[botId] !== true;
     setConversationRevisions((current) => ({
       ...current,
       [botId]: snapshot.revision,

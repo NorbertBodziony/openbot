@@ -265,6 +265,7 @@ let remoteDesktopManager: RemoteDesktopManager | null = null;
 let remoteServerManager: RemoteServerManager | null = null;
 let centralAuthManager: CentralAuthManager | null = null;
 let activeRemotePrincipalId: string | null = null;
+let activeAnalyticsPrincipalId: string | null = null;
 let remoteAccountSync = Promise.resolve();
 let hostAnalytics: HostAnalytics | null = null;
 let teamWebRtcBridge: TeamWebRtcBridge | null = null;
@@ -1574,6 +1575,13 @@ function forwardDirectTyping(
 }
 
 function forwardCentralAuth(state: CentralAuthState): void {
+  if (state.status === "signed_in") {
+    if (activeAnalyticsPrincipalId && activeAnalyticsPrincipalId !== state.user.id) hostAnalytics?.clear();
+    activeAnalyticsPrincipalId = state.user.id;
+  } else if (state.status === "signed_out") {
+    if (activeAnalyticsPrincipalId) hostAnalytics?.clear();
+    activeAnalyticsPrincipalId = null;
+  }
   remoteAccountSync = remoteAccountSync
     .then(async () => {
       const nextPrincipalId = state.status === "signed_in" ? state.user.id : null;
@@ -1918,10 +1926,10 @@ if (!hasSingleInstanceLock) {
         appVersion: app.getVersion(),
         platform: analyticsPlatform,
         resolveOwner: () => {
-          const storedOwner = teamStore.getOwnerAnalyticsIdentity();
-          if (storedOwner) return storedOwner;
           const state = centralAuthManager?.getState();
           if (state?.status !== "signed_in") return null;
+          const storedOwner = teamStore.getOwnerAnalyticsIdentity();
+          if (storedOwner) return storedOwner.id === state.user.id ? storedOwner : null;
           const ownerEmail = teamStore.getOwnerEmail();
           return !teamStore.configured || ownerEmail?.trim().toLowerCase() === state.user.email.trim().toLowerCase()
             ? state.user

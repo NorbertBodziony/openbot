@@ -48,7 +48,7 @@ describe("landing analytics", () => {
       __referrer: "",
       surface: "landing",
       environment: "production",
-      event_schema_version: 3,
+      event_schema_version: 4,
     });
     expect(client.trackScreenView).toHaveBeenCalledOnce();
     expect(client.trackScreenView).toHaveBeenCalledWith("/");

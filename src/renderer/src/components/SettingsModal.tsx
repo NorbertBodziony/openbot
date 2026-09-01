@@ -14,6 +14,7 @@ import type {
 } from "@openbot/contracts/ipc";
 import { normalizeAccountName, validateProfileName } from "@openbot/contracts/validation";
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { desktopAnalytics } from "../analytics";
 import type { GeneralSettingsValue } from "../app-settings";
 import { normalizeAvatarFile } from "../avatar-image";
 import { presentUpdateStatus } from "../update-status";
@@ -559,13 +560,30 @@ export function SettingsModal(props: SettingsModalProps) {
   async function deleteSite(site: HostedSiteSummary): Promise<void> {
     if (!props.hostedSitesApi || hostingBusy()) return;
     if (!window.confirm(`Delete ${site.hostname}? This address will immediately return 410 Gone.`)) return;
+    const analytics = desktopAnalytics.scope();
     setHostingBusy(true);
     setHostedSitesError(null);
     try {
-      await props.hostedSitesApi.delete({ siteId: site.id });
+      try {
+        await props.hostedSitesApi.delete({ siteId: site.id });
+      } catch (error) {
+        analytics.track("hosted_site_action", {
+          action: "delete",
+          entry_point: "settings",
+          result: "failed",
+          failure_code: "delete_failed",
+        });
+        setHostedSitesError(error instanceof Error ? error.message : "Could not delete the site.");
+        return;
+      }
+      analytics.track("hosted_site_action", {
+        action: "delete",
+        entry_point: "settings",
+        result: "succeeded",
+      });
       await loadHostedSites();
     } catch (error) {
-      setHostedSitesError(error instanceof Error ? error.message : "Could not delete the site.");
+      setHostedSitesError(error instanceof Error ? error.message : "Could not reload hosted sites.");
     } finally {
       setHostingBusy(false);
     }
