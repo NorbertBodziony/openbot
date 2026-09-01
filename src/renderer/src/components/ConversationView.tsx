@@ -79,6 +79,7 @@ import { messageContentBlocks } from "./conversation/DataTable";
 import { installedSkillsRequestKey } from "./conversation/installed-skills-source";
 import { ScrollToLatestButton, scrollToLatestMessage } from "./conversation/MessageNavigation";
 import { ExchangeSystemRow, MessageActions, MessageBody } from "./conversation/MessageRendering";
+import { RichMessageText } from "./conversation/RichMessageText";
 import { RoutineEventMarker } from "./conversation/RoutineEventMarker";
 import { MessageSelectionActions } from "./conversation/SelectionActions";
 import {
@@ -224,6 +225,7 @@ export interface ConversationProps {
   loadingOlder?: boolean;
   olderError?: string | null;
   activeTurnId: string | null | undefined;
+  skillsMarketplaceOpen?: boolean;
   globalOverlayOpen: boolean;
   settingsRequest: { botId: string; nonce: number } | null;
   messageFocusRequest: { botId: string; messageId: string; nonce: number } | null;
@@ -441,7 +443,7 @@ function createConversationViewScope(props: ConversationProps) {
     return target ? (conversationErrors()[composerDraftKey(target)] ?? null) : null;
   });
   const installedSkillsSource = createMemo(() =>
-    installedSkillsRequestKey(props.bot?.id, props.server, props.globalOverlayOpen),
+    installedSkillsRequestKey(props.bot?.id, props.server, props.skillsMarketplaceOpen === true),
   );
   createEffect(
     () => `${props.server?.id ?? "local"}\0${props.server?.connectionSequence ?? 0}`,
@@ -3320,6 +3322,7 @@ export function ConversationComposer() {
     editingDeliveryId,
     openAttachmentPicker,
     openAttachmentPickerFromKey,
+    openExternalMessageUrl,
     presentedQueueDeliveries,
     previewAttachment,
     props,
@@ -3358,6 +3361,8 @@ export function ConversationComposer() {
               <Loading>
                 <QueuePanel
                   deliveries={presentedQueueDeliveries()}
+                  bots={props.bots}
+                  skills={installedSkills()}
                   editingDeliveryId={editingDeliveryId()}
                   canSteer={Boolean(props.activeTurnId)}
                   onSteer={props.onSteerQueuedMessage}
@@ -3374,7 +3379,17 @@ export function ConversationComposer() {
             <div class="composer-reply-preview">
               <div>
                 <span>Replying to {message().author === "you" ? "your message" : "Agent"}</span>
-                <p>{message().body || "Attachment"}</p>
+                <p>
+                  <RichMessageText
+                    body={message().body || "Attachment"}
+                    bots={props.bots}
+                    skills={installedSkills()}
+                    attachments={message().attachments}
+                    onSelectAgent={props.onSelectAgent}
+                    onOpenLink={(url) => void openExternalMessageUrl(url)}
+                    onOpenAttachment={(attachment) => void previewAttachment(attachment)}
+                  />
+                </p>
               </div>
               <Button
                 variant="ghost"

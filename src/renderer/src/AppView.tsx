@@ -534,6 +534,7 @@ function WorkspaceShell(props: {
           approval={activeBot() ? pendingApprovals()[activeBot()?.id ?? ""] : undefined}
           browserTakeover={activeBrowserTakeover()}
           activeTurnId={activeBot() ? activeTurns()[activeBot()?.id ?? ""] : null}
+          skillsMarketplaceOpen={skillsMarketplaceOpen()}
           globalOverlayOpen={
             globalSearchOpen() ||
             joinServerOpen() ||

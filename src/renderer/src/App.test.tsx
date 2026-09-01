@@ -5212,7 +5212,7 @@ describe("OpenBot connected desktop shell", () => {
           {
             id: "assistant-1",
             author: "assistant",
-            text: "Should I prepare the report?",
+            text: `Should ${serializeChatTagReference("agent", "Old Sales", "sales-outbound")} prepare the report?`,
             createdAt: "2026-08-12T10:00:00.000Z",
             status: "completed",
           },
@@ -5220,9 +5220,12 @@ describe("OpenBot connected desktop shell", () => {
       },
     });
 
-    await screen.findByText("Should I prepare the report?");
+    await screen.findByRole("button", { name: "Open agent Sales Outbound" });
     await fireEvent.click(screen.getByRole("button", { name: "Reply to Agent message" }));
     expect(screen.getByText("Replying to Agent")).toBeInTheDocument();
+    const replyPreview = document.querySelector(".composer-reply-preview");
+    expect(replyPreview).toHaveTextContent("Should Sales Outbound prepare the report?");
+    expect(replyPreview).not.toHaveTextContent("agent:sales-outbound");
 
     const composer = screen.getByRole("textbox", { name: "Message Chief" });
     composer.textContent = "Yes, today please";
