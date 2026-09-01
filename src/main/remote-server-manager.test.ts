@@ -337,6 +337,9 @@ describe("remote server links", () => {
           .slice(1)
           .map((server) => server.id),
       ).toEqual([betaId, alphaId, gammaId]);
+      const compatibility = manager.list().find((server) => server.id === betaId)?.compatibility;
+      expect(compatibility).toMatchObject({ negotiatedProtocol: 2 });
+      expect(compatibility?.capabilities).not.toContain("installed-skills");
       expect(manager.list().find((server) => server.id === betaId)?.remoteDesktopAvailable).toBe(false);
       transport.emit("connected", betaId);
       await vi.waitFor(() =>

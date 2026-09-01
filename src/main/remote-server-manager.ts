@@ -175,7 +175,6 @@ const REMOTE_EVENT_INITIAL_BUFFER_LIMIT = 1_000;
 const REMOTE_EVENT_PROTOCOL = "openbot-events";
 const REMOTE_EVENT_SNAPSHOT_PROTOCOL = "openbot-events-v2";
 const LOCAL_TEAM_PROTOCOL = { minimum: TEAM_PROTOCOL_V1, maximum: 2 } as const;
-const WEBRTC_TEAM_CAPABILITIES = [...TEAM_PROTOCOL_V1_CAPABILITIES, "installed-skills"];
 
 type ResponseDecoder<T> = (value: unknown) => T;
 
@@ -1201,7 +1200,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       localProtocol: LOCAL_TEAM_PROTOCOL,
       hostProtocol: { minimum: 2, maximum: 2 },
       negotiatedProtocol: 2,
-      capabilities: WEBRTC_TEAM_CAPABILITIES,
+      capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
     };
   }
 

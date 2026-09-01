@@ -29,18 +29,29 @@ describe("Team protocol v2", () => {
     expect(decodeTeamProtocolV2FileControlFrame(fileOpenFixture)).toEqual(fileOpenFixture);
   });
 
-  it("preserves semantic tags in v2 events", () => {
+  it("down-converts semantic tags in released v2 events", () => {
     const frame = createTeamProtocolV2Event(1, {
-      type: "error",
-      botId: "chief",
-      code: "test",
-      message: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: null,
+        revision: 1,
+        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+        messages: [
+          {
+            id: "message-1",
+            author: "assistant",
+            text: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
+            createdAt: "2026-08-29T10:00:00.000Z",
+            status: "completed",
+          },
+        ],
+      },
     });
 
     expect(frame).toMatchObject({
-      payload: {
-        message: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
-      },
+      payload: { snapshot: { messages: [{ text: "Ask @Research to use Sources (skill)." }] } },
     });
   });
 
@@ -110,6 +121,13 @@ describe("Team protocol v2", () => {
 
   it("projects current HTTP payloads through the frozen route codec", () => {
     expect(
+      encodeTeamProtocolV2CurrentHttpRequest("POST", "/v1/agents/chief/messages", {
+        text: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
+        attachmentDraftIds: [],
+        replyToMessageId: null,
+      }),
+    ).toMatchObject({ text: "Ask @Research to use Sources (skill)." });
+    expect(
       encodeTeamProtocolV2CurrentHttpRequest("POST", "/v1/browser/visible", {
         visible: true,
         bounds: undefined,
@@ -136,6 +154,24 @@ describe("Team protocol v2", () => {
       }),
     ).toEqual({ appVersion: "1.0.0", protocol: { minimum: 1, maximum: 2 }, capabilities: [] });
     expect(decodeTeamProtocolV2CurrentHttpResponse("POST", "/v1/browser/visible", 204, {})).toEqual({});
+    expect(
+      encodeTeamProtocolV2CurrentHttpResponse("GET", "/v1/agents/chief/conversation", 200, {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: null,
+        revision: 1,
+        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+        messages: [
+          {
+            id: "message-1",
+            author: "assistant",
+            text: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
+            createdAt: "2026-08-29T10:00:00.000Z",
+            status: "completed",
+          },
+        ],
+      }),
+    ).toMatchObject({ messages: [{ text: "Ask @Research to use Sources (skill)." }] });
     expect(
       decodeTeamProtocolV2CurrentHttpResponse("GET", "/v1/remote-screen/sessions/session-1/moonlight/api/role", 200, {
         role: "stream",

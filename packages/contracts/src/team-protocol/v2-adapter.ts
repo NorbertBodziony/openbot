@@ -3,8 +3,10 @@ import type { TeamRealtimeEvent } from "../ipc-team-host";
 import { isDynamicRecord, isString } from "../runtime-values";
 import {
   decodeTeamProtocolV1CurrentEvent,
-  decodeTeamProtocolV1CurrentHttpRequest,
   decodeTeamProtocolV1CurrentHttpResponse,
+  encodeTeamProtocolV1CurrentEvent,
+  encodeTeamProtocolV1CurrentHttpRequest,
+  encodeTeamProtocolV1CurrentHttpResponse,
 } from "./v1-adapter";
 import {
   decodeTeamProtocolV2EventFrame,
@@ -36,11 +38,13 @@ export function createTeamProtocolV2Response(requestId: string, result: unknown)
 export function createTeamProtocolV2Event(sequence: number, event: unknown): TeamProtocolV2EventFrame {
   const current = decodeTeamProtocolV1CurrentEvent(event);
   if (current.kind !== "known") throw new Error("The event is not supported by Team protocol v2.");
+  const encoded = encodeTeamProtocolV1CurrentEvent(current.event);
+  if (!encoded) throw new Error("The event is not supported by Team protocol v2.");
   return decodeTeamProtocolV2EventFrame({
     version: 2,
     type: "event",
     sequence,
-    payload: wireJson(current.event),
+    payload: wireJson(JSON.parse(encoded)),
   });
 }
 
@@ -64,7 +68,7 @@ function decodeV2HttpRequest(method: string, path: string, value: unknown): Team
   const normalized = value === undefined ? null : wireJson(value);
   if (isRemoteViewerRoute(path)) return isEmptyRequest(normalized) ? {} : normalized;
   if (isEmptyRequest(normalized) && isTeamProtocolV2NoBodyRoute(method, path)) return {};
-  return wireJson(decodeTeamProtocolV1CurrentHttpRequest(method, path, normalized));
+  return wireJson(JSON.parse(encodeTeamProtocolV1CurrentHttpRequest(method, path, normalized)));
 }
 
 function isEmptyRequest(value: unknown): boolean {
@@ -138,7 +142,9 @@ export function encodeTeamProtocolV2CurrentHttpResponse(
 ): TeamProtocolV2Json {
   if (status === 204) return {};
   if (isRemoteViewerRoute(path)) return wireJson(value === undefined ? null : value);
-  return wireJson(decodeTeamProtocolV1CurrentHttpResponse(method, path, status, value === undefined ? null : value));
+  return wireJson(
+    JSON.parse(encodeTeamProtocolV1CurrentHttpResponse(method, path, status, value === undefined ? null : value)),
+  );
 }
 
 export function decodeTeamProtocolV2CurrentHttpResponse(
