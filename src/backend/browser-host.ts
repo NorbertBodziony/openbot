@@ -35,7 +35,7 @@ import { embeddedBrowserUserAgent, embeddedBrowserUserAgentForUrl } from "./brow
 import { BrowserRecorder } from "./browser-recorder";
 import { isCloseBrowserTabShortcut, isGlobalSearchShortcut, isToggleDevToolsShortcut } from "./browser-shortcuts";
 import { persistentBrowserUrl } from "./browser-state";
-import { browserTargetSchema } from "./browser-tools";
+import { browserTargetSchema, parseBrowserToolArguments } from "./browser-tools";
 import type { DynamicToolCallParams, DynamicToolResult } from "./protocol";
 import { isRecord } from "./protocol";
 
@@ -510,9 +510,9 @@ export class BrowserHost {
     params: DynamicToolCallParams,
     hooks: BrowserDynamicToolHooks = {},
   ): Promise<DynamicToolResult> {
-    const args = isRecord(params.arguments) ? params.arguments : {};
-    this.#beginControl(params, args);
     try {
+      const args = parseBrowserToolArguments(params.tool, params.arguments);
+      this.#beginControl(params, args);
       switch (params.tool) {
         case "open": {
           const url = requiredString(args, "url", INPUT_LIMITS.browserUrl);
@@ -819,7 +819,7 @@ export class BrowserHost {
   }
 
   async resolveUploadTarget(params: DynamicToolCallParams): Promise<BrowserUploadAssignment> {
-    const args = isRecord(params.arguments) ? params.arguments : {};
+    const args = parseBrowserToolArguments("upload_files", params.arguments);
     const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
     this.#requireToolTab(params, tabId);
     const target = parseTarget(args.target);

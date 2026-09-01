@@ -1,4 +1,5 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import type { DynamicRecord } from "@openbot/contracts/runtime-values";
 import { z } from "zod";
 
 export const OPENBOT_BROWSER_NAMESPACE = "openbot_browser";
@@ -33,6 +34,10 @@ export interface BrowserToolDefinition {
   name: string;
   description: string;
   shape: z.ZodRawShape;
+}
+
+function browserToolInputSchema(definition: BrowserToolDefinition) {
+  return z.strictObject(definition.shape);
 }
 
 const targetAction = { tabId, target: browserTargetSchema, timeoutMs: timeout };
@@ -206,7 +211,15 @@ export const BROWSER_DYNAMIC_TOOLS = [
       type: "function" as const,
       name: definition.name,
       description: definition.description,
-      inputSchema: z.toJSONSchema(z.object(definition.shape), { target: "draft-7", unrepresentable: "any" }),
+      inputSchema: z.toJSONSchema(browserToolInputSchema(definition), { target: "draft-7", unrepresentable: "any" }),
     })),
   },
 ];
+
+export function parseBrowserToolArguments(tool: string, value: unknown): DynamicRecord {
+  const definition = BROWSER_TOOL_DEFINITIONS.find((candidate) => candidate.name === tool);
+  if (!definition) throw new Error(`Unknown browser tool: ${tool}`);
+  const result = browserToolInputSchema(definition).safeParse(value);
+  if (!result.success) throw new Error(`Invalid browser tool arguments: ${z.prettifyError(result.error)}`);
+  return result.data;
+}

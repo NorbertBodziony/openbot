@@ -1313,6 +1313,19 @@ async function main(): Promise<void> {
       arguments: { url: `${origin}/cookie` },
     });
     if (!toolResult.success) throw new Error("Dynamic browser tool failed.");
+    const invalidToolArguments = [
+      ["click", { tabId: tab.id, target: { kind: "point", x: 10, y: 10 }, clickCount: 1.5 }],
+      ["click", { tabId: tab.id, target: { kind: "point", x: 10, y: 10 }, modifiers: ["Bogus"] }],
+      ["scroll", { tabId: tab.id, deltaY: 100_001 }],
+      ["set_environment", { tabId: tab.id, width: 390.5 }],
+    ] as const;
+    for (const [tool, argumentsValue] of invalidToolArguments) {
+      const invalidResult = await callBrowserTool(browser, tool, argumentsValue);
+      if (invalidResult.success || !toolError(invalidResult).includes("Invalid browser tool arguments")) {
+        throw new Error(`Dynamic browser tool accepted invalid ${tool} arguments: ${toolError(invalidResult)}`);
+      }
+    }
+    process.stdout.write("BrowserHost: runtime tool argument schemas passed.\n");
     const otherBotTab = await browser.open(`${origin}/cookie`, "smoke-thread", "other-bot");
     const scopedTabsResult = await browser.handleDynamicTool({
       threadId: "smoke-thread",

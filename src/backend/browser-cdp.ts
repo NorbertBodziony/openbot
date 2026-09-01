@@ -275,6 +275,7 @@ export class BrowserCdpEngine {
   }
 
   async selectOption(target: BrowserTarget, values: string[]): Promise<void> {
+    this.#contents.focus();
     await this.#lease(async (send) => {
       const resolved = await this.#resolveElement(send, target);
       const plan = await this.#callOnNode(
@@ -306,9 +307,15 @@ export class BrowserCdpEngine {
             desiredIndices.push(matches[0]);
           }
           const uniqueDesiredIndices = [...new Set(desiredIndices)];
+          const desiredIndex = uniqueDesiredIndices[0];
+          const desiredLabel = desiredIndex === undefined ? '' : this.options[desiredIndex].label || this.options[desiredIndex].text;
+          const keyboardAnchorIndex = desiredIndex === undefined ? -1 :
+            enabledIndices.find(index => (this.options[index].label || this.options[index].text) === desiredLabel) ?? -1;
           return {
             multiple: this.multiple,
             desiredIndices: this.multiple ? uniqueDesiredIndices : uniqueDesiredIndices.slice(0, 1),
+            desiredLabel,
+            keyboardAnchorIndex,
             enabledIndices,
           };
         }`,
@@ -326,45 +333,17 @@ export class BrowserCdpEngine {
       }
       await send("DOM.focus", { backendNodeId: resolved.backendNodeId }, resolved.sessionId);
       if (!plan.multiple) {
-        const selectionToken = `OpenBotSelect${Date.now()}${Math.floor(Math.random() * 1_000_000)}`;
-        const previousLabel = await this.#callOnNode(
-          send,
-          resolved.backendNodeId,
-          `function(index, label) {
-            const option = this.options[index];
-            const previous = {
-              hadLabel: option.hasAttribute('label'),
-              label: option.getAttribute('label'),
-              text: option.textContent,
-            };
-            option.setAttribute('label', label);
-            option.textContent = label;
-            this.blur();
-            return previous;
-          }`,
-          [desiredIndices[0], selectionToken],
-          resolved.sessionId,
-        );
-        if (!isDynamicRecord(previousLabel) || !isBoolean(previousLabel.hadLabel)) {
-          throw new Error("Select target returned an invalid option label state.");
+        if (!isString(plan.desiredLabel) || !isNumber(plan.keyboardAnchorIndex) || plan.keyboardAnchorIndex < 0) {
+          throw new Error("Select target returned an invalid keyboard navigation plan.");
         }
-        try {
-          await send("DOM.focus", { backendNodeId: resolved.backendNodeId }, resolved.sessionId);
-          for (const character of selectionToken) await dispatchTextKey(send, character, resolved.sessionId);
-        } finally {
-          await this.#callOnNode(
-            send,
-            resolved.backendNodeId,
-            `function(index, hadLabel, label, text) {
-              const option = this.options[index];
-              option.textContent = text;
-              if (hadLabel) option.setAttribute('label', label);
-              else option.removeAttribute('label');
-            }`,
-            [desiredIndices[0], previousLabel.hadLabel, previousLabel.label ?? "", previousLabel.text ?? ""],
-            resolved.sessionId,
-          );
+        for (const character of plan.desiredLabel) await dispatchTextKey(send, character, resolved.sessionId);
+        const anchorRank = enabledIndices.indexOf(plan.keyboardAnchorIndex);
+        const targetRank = enabledIndices.indexOf(desiredIndices[0]);
+        if (targetRank > anchorRank) await dispatchShortcut(send, "Space", resolved.sessionId);
+        for (let index = anchorRank; index < targetRank; index++) {
+          await dispatchSelectArrowDown(send, resolved.sessionId);
         }
+        if (targetRank > anchorRank) await dispatchShortcut(send, "Enter", resolved.sessionId);
       } else {
         const additiveModifiers = process.platform === "darwin" ? ["Meta"] : ["Control"];
         for (let index = 0; index < desiredIndices.length; index++) {
@@ -1648,6 +1627,17 @@ async function dispatchTextKey(send: SendCommand, character: string, sessionId?:
   await send("Input.dispatchKeyEvent", { type: "keyUp", key: character, code }, sessionId);
 }
 
+async function dispatchSelectArrowDown(send: SendCommand, sessionId?: string): Promise<void> {
+  const key = {
+    key: "ArrowDown",
+    code: "ArrowDown",
+    windowsVirtualKeyCode: 40,
+    nativeVirtualKeyCode: process.platform === "darwin" ? 125 : 40,
+  };
+  await send("Input.dispatchKeyEvent", { type: "keyDown", ...key }, sessionId);
+  await send("Input.dispatchKeyEvent", { type: "keyUp", ...key }, sessionId);
+}
+
 function normalizeModifier(value: string) {
   const lower = value.toLowerCase();
   if (lower === "cmd" || lower === "command" || lower === "meta") return "Meta";
@@ -1814,7 +1804,6 @@ async function waitForDomQuietAcrossTargets(
           expression: `new Promise(resolve => {
       let quietTimer;
       let deadlineTimer;
-      let discoveryTimer;
       let completed = false;
       const observers = [];
       const observedRoots = new Set();
@@ -1823,7 +1812,6 @@ async function waitForDomQuietAcrossTargets(
         completed = true;
         clearTimeout(quietTimer);
         clearTimeout(deadlineTimer);
-        clearInterval(discoveryTimer);
         for (const observer of observers) observer.disconnect();
         resolve(value);
       };
@@ -1862,8 +1850,6 @@ async function waitForDomQuietAcrossTargets(
         }
       };
       discoverRoots();
-      discoveryTimer = setInterval(discoverRoots, 25);
-      quietTimer = setTimeout(() => done(true), ${DOM_QUIET_MS});
       deadlineTimer = setTimeout(() => done(false), ${deadlineMs});
     })`,
           contextId,
