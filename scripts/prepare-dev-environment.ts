@@ -12,10 +12,13 @@ export type DevelopmentCommandRunner = (
   options: { cwd: string; stdio: "inherit" },
 ) => void;
 
+export const supportedBunVersion = "1.4.0";
+
 export function prepareDevelopmentEnvironment(
-  input: { projectRoot?: string; executable?: string; run?: DevelopmentCommandRunner } = {},
+  input: { projectRoot?: string; executable?: string; bunVersion?: string; run?: DevelopmentCommandRunner } = {},
 ): void {
   const projectRoot = input.projectRoot ?? developmentProjectRoot;
+  assertSupportedBunVersion(input.bunVersion ?? process.versions.bun ?? "unknown");
   assertDevelopmentSecrets(projectRoot);
 
   const executable = input.executable ?? process.execPath;
@@ -24,6 +27,14 @@ export function prepareDevelopmentEnvironment(
 
   run(executable, ["install", "--frozen-lockfile"], options);
   run(executable, ["run", "api:migrate:local"], options);
+}
+
+export function assertSupportedBunVersion(version: string): void {
+  if (version === supportedBunVersion) return;
+
+  throw new Error(
+    `Unsupported Bun ${version}. OpenBot development requires stable Bun ${supportedBunVersion}. Install the exact version with the command in https://github.com/NorbertBodziony/openbot#development, then retry.`,
+  );
 }
 
 export function assertDevelopmentSecrets(projectRoot: string): void {

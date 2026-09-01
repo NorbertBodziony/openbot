@@ -3,10 +3,10 @@ import type {
   AppInfo,
   AppSetupState,
   CentralAuthDesktopApi,
+  ComputerUseMacSetupState,
   ExportResult,
   ExternalDestination,
   MacPermissionId,
-  MacPermissionsState,
   ProviderRuntimeSnapshot,
   SaveSetupInput,
   SetAnalyticsPreferenceInput,
@@ -349,8 +349,11 @@ export interface OpenBotDesktopApi {
   getAnalyticsPreference: () => Promise<AnalyticsPreference>;
   setAnalyticsPreference: (input: SetAnalyticsPreferenceInput) => Promise<AnalyticsPreference>;
   dynamicIsland: DynamicIslandDesktopApi;
-  getMacPermissions: () => Promise<MacPermissionsState>;
-  requestMacPermission: (permission: MacPermissionId) => Promise<MacPermissionsState>;
+  getComputerUseMacSetupState: () => Promise<ComputerUseMacSetupState>;
+  openComputerUsePermissionSetup: (permission: MacPermissionId) => Promise<ComputerUseMacSetupState>;
+  startComputerUseHelperDrag: () => Promise<void>;
+  revealComputerUseHelper: () => Promise<void>;
+  closeComputerUsePermissionSetup: () => Promise<void>;
   openExternal: (destination: ExternalDestination) => Promise<void>;
   connectChatGPT: () => Promise<AgentStatus>;
   connectClaude: () => Promise<AgentStatus>;

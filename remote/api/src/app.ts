@@ -47,7 +47,6 @@ export function createRemoteApiApp(config: RemoteApiConfig, signal: SignalServic
       perMessageDeflate: false,
       sendPings: true,
       open(ws) {
-        ws.raw.data.id = crypto.randomUUID();
         signal.connect(socketAdapter(ws, config.trustProxy));
       },
       async message(ws, message) {
@@ -71,7 +70,7 @@ export function createRemoteApiApp(config: RemoteApiConfig, signal: SignalServic
 }
 
 interface ElysiaSocketLike {
-  raw: { data: { id?: string } };
+  id: string;
   data?: { request?: Request };
   remoteAddress?: string;
   send(data: string): unknown;
@@ -79,10 +78,8 @@ interface ElysiaSocketLike {
 }
 
 function socketAdapter(ws: ElysiaSocketLike, trustProxy: boolean): SignalSocket {
-  const id = ws.raw.data.id;
-  if (!id) throw new Error("Signal socket has no identifier.");
   return {
-    id,
+    id: ws.id,
     ip: signalClientIp(ws.remoteAddress, ws.data?.request?.headers.get("x-forwarded-for"), trustProxy),
     send: (message) => {
       ws.send(message);

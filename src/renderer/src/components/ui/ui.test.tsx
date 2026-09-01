@@ -46,6 +46,16 @@ describe("UI primitives", () => {
     expect(onUndo).toHaveBeenCalledOnce();
   });
 
+  it("dismisses a toast with its accessible close button", async () => {
+    render(() => <Toaster />);
+
+    toast("Workspace synchronized");
+
+    expect(await screen.findByText("Workspace synchronized")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Close notification" }));
+    await waitFor(() => expect(screen.queryByText("Workspace synchronized")).not.toBeInTheDocument());
+  });
+
   it("forwards button events and exposes disabled and loading states", async () => {
     const onClick = vi.fn();
     const { unmount } = render(() => <Button onClick={onClick}>Continue</Button>);

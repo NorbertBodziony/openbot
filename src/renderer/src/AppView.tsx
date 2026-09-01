@@ -666,6 +666,9 @@ function WorkspaceOverlays(props: {
     runUpdateAction,
     updateAccountName,
     updateAccountAvatar,
+    createMobileConnect,
+    listMobileConnectedDevices,
+    revokeMobileConnectedDevice,
     providerRuntimeStatuses,
     providerRuntimeDownloadsAvailable,
     downloadProviderRuntime,
@@ -772,6 +775,9 @@ function WorkspaceOverlays(props: {
           account={props.account()}
           onUpdateAccountName={updateAccountName}
           onUpdateAccountAvatar={updateAccountAvatar}
+          onCreateMobileConnect={createMobileConnect}
+          onListMobileConnectedDevices={listMobileConnectedDevices}
+          onRevokeMobileConnectedDevice={revokeMobileConnectedDevice}
           agentStatus={agentStatus()}
           providerRuntimeStatuses={
             activeServer()?.kind === "local" && providerRuntimeDownloadsAvailable()

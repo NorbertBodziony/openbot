@@ -1,0 +1,324 @@
+.computer-use-settings {
+  display: grid;
+  gap: var(--openbot-space-6);
+}
+
+.computer-use-card:is(.ui-item-group) {
+  overflow: hidden;
+}
+
+.computer-use-helper-media,
+.computer-use-permission-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.computer-use-helper-media {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--openbot-radius-md);
+  background: var(--openbot-bg-control);
+}
+
+.computer-use-helper-media img {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+}
+
+.computer-use-fallback-icon,
+.computer-use-permission-icon svg {
+  width: 16px;
+  height: 16px;
+  color: var(--openbot-text-secondary);
+}
+
+.computer-use-permission-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--openbot-radius-md);
+  background: var(--openbot-settings-accent-soft);
+}
+
+.computer-use-permission-icon svg {
+  color: var(--openbot-settings-accent-text);
+}
+
+.computer-use-helper-row .z-badge {
+  gap: var(--openbot-space-1);
+}
+
+.computer-use-helper-row .z-badge svg {
+  width: 13px;
+  height: 13px;
+}
+
+.computer-use-alert {
+  margin-top: var(--openbot-space-3);
+}
+
+.computer-use-settings > .computer-use-alert:first-child,
+.computer-use-compact > .computer-use-alert:first-child {
+  margin-top: 0;
+}
+
+.computer-use-loading .computer-use-row {
+  min-height: 60px;
+}
+
+.computer-use-skeleton-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--openbot-radius-md);
+}
+
+.computer-use-skeleton-title {
+  width: 128px;
+  height: 12px;
+}
+
+.computer-use-skeleton-description {
+  width: min(220px, 70%);
+  height: 10px;
+  margin-top: var(--openbot-space-2);
+}
+
+.computer-use-compact {
+  width: min(100%, 430px);
+  margin-top: var(--openbot-space-4);
+  text-align: left;
+}
+
+.computer-use-compact-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--openbot-space-3);
+  margin: 0 var(--openbot-space-1) var(--openbot-space-2);
+}
+
+.computer-use-compact-header h2 {
+  margin: 0;
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-md);
+  font-weight: var(--openbot-weight-medium);
+  line-height: var(--openbot-leading-md);
+}
+
+.computer-use-compact-header p {
+  margin: var(--openbot-space-0-5) 0 0;
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-xs);
+  line-height: var(--openbot-leading-sm);
+}
+
+.computer-use-compact-header > span {
+  flex: 0 0 auto;
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-xs);
+  line-height: var(--openbot-leading-md);
+}
+
+.computer-use-compact .computer-use-card {
+  border: 1px solid var(--openbot-border);
+  border-radius: var(--openbot-radius-md);
+  background: var(--openbot-bg-control);
+}
+
+.computer-use-compact .computer-use-row {
+  min-height: 58px;
+  padding: var(--openbot-space-2) var(--openbot-space-3);
+}
+
+.computer-use-compact .computer-use-row + .computer-use-row {
+  border-top: 1px solid var(--openbot-border);
+}
+
+.computer-use-compact .ui-item-title {
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-sm);
+}
+
+.computer-use-compact .ui-item-description {
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-xs);
+}
+
+.computer-use-setup-surface {
+  min-height: 300px;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: var(--openbot-space-3);
+  box-sizing: border-box;
+  padding: 44px var(--openbot-space-4) var(--openbot-space-4);
+  background: var(--openbot-bg-sidebar);
+  color: var(--openbot-text-primary);
+  -webkit-app-region: drag;
+}
+
+.computer-use-setup-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--openbot-space-3);
+}
+
+.computer-use-setup-permission-icon {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border-radius: var(--openbot-radius-md);
+  background: var(--openbot-settings-accent-soft);
+  color: var(--openbot-settings-accent-text);
+}
+
+.computer-use-setup-permission-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.computer-use-setup-header h1 {
+  margin: 0;
+  color: var(--openbot-text-primary);
+  font-size: var(--openbot-text-xl);
+  font-weight: var(--openbot-weight-medium);
+  line-height: var(--openbot-leading-xl);
+}
+
+.computer-use-setup-header p,
+.computer-use-setup-footer p {
+  margin: var(--openbot-space-0-5) 0 0;
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-xs);
+  line-height: var(--openbot-leading-sm);
+}
+
+.computer-use-drag-card {
+  position: relative;
+  width: 210px;
+  min-height: 94px;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: var(--openbot-space-1);
+  align-self: center;
+  justify-self: center;
+  box-sizing: border-box;
+  border: 1px solid var(--openbot-border-strong);
+  border-radius: var(--openbot-radius-lg);
+  background: var(--openbot-bg-control);
+  color: var(--openbot-text-primary);
+  cursor: grab;
+  -webkit-app-region: no-drag;
+  transition:
+    background var(--openbot-duration-fast) var(--openbot-ease-out),
+    border-color var(--openbot-duration-fast) var(--openbot-ease-out),
+    transform var(--openbot-duration-fast) var(--openbot-ease-out);
+}
+
+.computer-use-drag-card:hover {
+  border-color: var(--openbot-settings-accent-strong);
+  background: var(--openbot-bg-control-hover);
+  transform: translateY(-1px);
+}
+
+.computer-use-drag-card:active,
+.computer-use-drag-card.is-dragging {
+  cursor: grabbing;
+  transform: translateY(0) scale(0.98);
+}
+
+.computer-use-drag-handle {
+  position: absolute;
+  top: var(--openbot-space-2);
+  right: var(--openbot-space-2);
+  color: var(--openbot-text-dim);
+}
+
+.computer-use-drag-handle svg {
+  width: 15px;
+  height: 15px;
+}
+
+.computer-use-drag-icon {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+}
+
+.computer-use-drag-icon img {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+}
+
+.computer-use-drag-icon svg {
+  width: 24px;
+  height: 24px;
+  color: var(--openbot-text-secondary);
+}
+
+.computer-use-drag-card strong {
+  font-size: var(--openbot-text-sm);
+  font-weight: var(--openbot-weight-medium);
+}
+
+.computer-use-drag-card > span:last-child {
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-xs);
+}
+
+.computer-use-setup-footer {
+  display: grid;
+  gap: var(--openbot-space-2);
+}
+
+.computer-use-setup-footer > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--openbot-space-2);
+}
+
+.computer-use-setup-footer .ui-button,
+.computer-use-drag-card,
+.computer-use-setup-unavailable {
+  -webkit-app-region: no-drag;
+}
+
+.computer-use-setup-unavailable {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--openbot-space-2);
+  color: var(--openbot-warning);
+  font-size: var(--openbot-text-sm);
+  text-align: center;
+}
+
+.computer-use-setup-unavailable svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
+.computer-use-setup-error {
+  margin: 0;
+  color: var(--openbot-danger);
+  font-size: var(--openbot-text-xs);
+  line-height: var(--openbot-leading-sm);
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .computer-use-row.ui-item {
+    align-items: flex-start;
+  }
+
+  .computer-use-row .ui-item-actions {
+    width: auto;
+    padding-top: var(--openbot-space-1);
+  }
+}

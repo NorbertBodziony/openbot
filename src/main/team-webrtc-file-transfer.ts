@@ -39,6 +39,7 @@ interface OutgoingTransfer {
   sha256: string;
   acknowledged: number;
   acknowledgementGeneration: number;
+  lastProgressAt: number;
   cancelled: Error | null;
 }
 
@@ -113,6 +114,7 @@ export class TeamWebRtcFileTransfer {
       sha256,
       acknowledged: 0,
       acknowledgementGeneration: 0,
+      lastProgressAt: Date.now(),
       cancelled: null,
     };
     this.#outgoing.set(transferKey(peerId, transferId), transfer);
@@ -241,6 +243,7 @@ export class TeamWebRtcFileTransfer {
           frame.receivedThrough > outgoing.bytes.byteLength
         )
           return;
+        if (frame.receivedThrough > outgoing.acknowledged) outgoing.lastProgressAt = Date.now();
         outgoing.acknowledged = frame.receivedThrough;
         outgoing.acknowledgementGeneration += 1;
         this.#notifyStateChange();
@@ -360,10 +363,12 @@ export class TeamWebRtcFileTransfer {
   }
 
   async #sendWithResume(transfer: OutgoingTransfer): Promise<void> {
-    const deadline = Date.now() + this.#resumeMilliseconds;
-    while (Date.now() < deadline) {
+    while (Date.now() < transfer.lastProgressAt + this.#resumeMilliseconds) {
       if (transfer.cancelled) throw transfer.cancelled;
-      await this.#waitUntil(() => this.#connectedPeers.has(transfer.peerId), deadline);
+      await this.#waitUntil(
+        () => this.#connectedPeers.has(transfer.peerId),
+        transfer.lastProgressAt + this.#resumeMilliseconds,
+      );
       const generation = transfer.acknowledgementGeneration;
       try {
         await this.#bridge.send(
@@ -384,7 +389,7 @@ export class TeamWebRtcFileTransfer {
             Boolean(transfer.cancelled) ||
             transfer.acknowledgementGeneration > generation ||
             !this.#connectedPeers.has(transfer.peerId),
-          deadline,
+          transfer.lastProgressAt + this.#resumeMilliseconds,
         );
         if (transfer.cancelled) throw transfer.cancelled;
         if (!this.#connectedPeers.has(transfer.peerId)) continue;
@@ -408,16 +413,16 @@ export class TeamWebRtcFileTransfer {
             Boolean(transfer.cancelled) ||
             transfer.acknowledged === transfer.bytes.byteLength ||
             !this.#connectedPeers.has(transfer.peerId),
-          deadline,
+          transfer.lastProgressAt + this.#resumeMilliseconds,
         );
         if (transfer.cancelled) throw transfer.cancelled;
         if (!this.#connectedPeers.has(transfer.peerId)) continue;
         return;
       } catch {
-        if (Date.now() >= deadline) break;
+        if (Date.now() >= transfer.lastProgressAt + this.#resumeMilliseconds) break;
         await this.#waitUntil(
           () => !this.#connectedPeers.has(transfer.peerId),
-          Math.min(deadline, Date.now() + 2_000),
+          Math.min(transfer.lastProgressAt + this.#resumeMilliseconds, Date.now() + 2_000),
         ).catch(() => undefined);
       }
     }

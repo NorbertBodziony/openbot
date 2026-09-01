@@ -995,93 +995,6 @@
   line-height: 16px;
 }
 
-.mac-permission-copy {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.mac-permission-copy strong {
-  color: var(--openbot-white);
-  font-size: var(--openbot-text-md);
-  font-weight: 590;
-}
-
-.mac-permission-copy small {
-  color: var(--openbot-muted);
-  font-size: var(--openbot-text-xs);
-  line-height: 1.4;
-}
-
-.mac-permissions {
-  margin-top: 27px;
-}
-
-.mac-permissions-heading {
-  margin: 0 2px 10px;
-}
-
-.mac-permissions-heading h2 {
-  margin: 0;
-  color: var(--text-primary);
-  font-size: var(--openbot-text-md);
-  font-weight: 590;
-  line-height: 18px;
-}
-
-.mac-permissions-heading p {
-  margin: 2px 0 0;
-  color: var(--text-muted);
-  font-size: var(--openbot-text-xs);
-  line-height: 16px;
-}
-
-.mac-permission-list {
-  overflow: hidden;
-  border: 1px solid var(--openbot-line-strong);
-  border-radius: var(--openbot-radius-lg);
-  background: var(--openbot-line);
-}
-
-.mac-permission-row {
-  min-height: 64px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 18px;
-  padding: 11px 12px 11px 14px;
-  background: var(--openbot-bg-sidebar);
-}
-
-.mac-permission-row + .mac-permission-row {
-  border-top: 1px solid var(--openbot-line);
-}
-
-.mac-permission-action {
-  min-width: 91px;
-  min-height: 32px;
-  border: 1px solid var(--openbot-border-strong);
-  border-radius: var(--openbot-radius-md);
-  background: var(--openbot-hover);
-  padding: 6px 10px;
-  color: var(--openbot-text-secondary);
-  font-size: var(--openbot-text-xs);
-  font-weight: 590;
-}
-
-.mac-permission-action:hover:not(:disabled) {
-  background: var(--openbot-border);
-}
-
-.mac-permission-action:disabled {
-  cursor: default;
-  opacity: 0.62;
-}
-
-.mac-permission-allowed {
-  color: var(--openbot-success);
-}
-
 .initial-setup-error {
   margin: 12px 2px 0;
   color: var(--openbot-danger);
@@ -1378,8 +1291,7 @@ body,
 .remote-admin-list > div,
 .remote-status-card,
 .remote-session-list article,
-.provider-picker-list,
-.mac-permission-list {
+.provider-picker-list {
   border-color: var(--openbot-border);
 }
 
@@ -1484,7 +1396,6 @@ body,
 .remote-desktop-overlay > button,
 .remote-secondary-button,
 .agent-setup-card button,
-.mac-permission-action,
 .remote-desktop-overlay > button:hover {
   border-color: var(--openbot-border-strong);
   background: var(--openbot-bg-control-hover);
@@ -1493,8 +1404,7 @@ body,
 
 .remote-desktop-overlay > button:hover,
 .remote-secondary-button:hover:not(:disabled),
-.agent-setup-card button:hover,
-.mac-permission-action:hover:not(:disabled) {
+.agent-setup-card button:hover {
   background: var(--openbot-bg-control-active);
 }
 
@@ -1510,7 +1420,6 @@ body,
 
 .setup-route-button,
 .setup-route-icon,
-.mac-permission-row,
 .remote-field input,
 .remote-field textarea,
 .setup-remote-form input,
@@ -1529,8 +1438,7 @@ body,
 .provider-picker-status-available i,
 .remote-admin-status-pill.online,
 .remote-status-card i.online,
-.remote-session-phase-connected,
-.mac-permission-allowed {
+.remote-session-phase-connected {
   color: var(--openbot-success);
 }
 
