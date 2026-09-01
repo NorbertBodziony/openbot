@@ -6,7 +6,8 @@ import {
   type CentralAuthUser,
   isAgentModel,
 } from "@openbot/contracts/ipc";
-import { isBoolean, isNumber, isOneOf, isString } from "@openbot/contracts/runtime-values";
+import { isBoolean, isDynamicRecord, isFunction, isNumber, isOneOf, isString } from "@openbot/contracts/runtime-values";
+import { normalizeEmailAddress } from "@openbot/contracts/validation";
 import { OpenPanelBase, type OpenPanelOptions } from "@openpanel/web";
 
 export const OPENPANEL_API_URL = "https://analytics.openbot.run/api";
@@ -14,9 +15,11 @@ export const OPENPANEL_CLIENT_ID = "6c989975-87ef-4f0c-857e-ab449a65b5c2";
 const MAX_PENDING_EVENTS = 100;
 const MAX_ACTIVE_TURNS = 1_000;
 const ACTIVE_TURN_TTL_MS = 24 * 60 * 60 * 1_000;
-const ANALYTICS_SCHEMA_VERSION = 3;
+const ANALYTICS_SCHEMA_VERSION = 4;
 
 type AnalyticsIdentity = Pick<CentralAuthUser, "id" | "email">;
+type AnalyticsOperation = () => unknown;
+type AnalyticsOperationQueue = { active: boolean; operations: AnalyticsOperation[] };
 type HostEventName =
   | "system_turn_started"
   | "system_turn_completed"
@@ -63,6 +66,7 @@ export class HostAnalytics {
   #trackingEnabled: boolean;
   #pending: HostPendingEvent[] = [];
   readonly #activeTurns = new Map<string, ActiveTurn>();
+  readonly #operationQueue: AnalyticsOperationQueue = { active: false, operations: [] };
 
   constructor(
     options: HostAnalyticsOptions,
@@ -151,7 +155,7 @@ export class HostAnalytics {
 
   flushPending(): void {
     if (!this.#client || !this.#trackingEnabled) return;
-    const owner = this.#resolveOwner();
+    const owner = normalizeAnalyticsIdentity(this.#resolveOwner());
     if (!owner) return;
     this.#identify(owner);
     const pending = this.#pending;
@@ -159,14 +163,20 @@ export class HostAnalytics {
     for (const event of pending) this.#send(event.name, event.properties, owner.id, event.timestamp);
   }
 
+  clear(): void {
+    this.#pending = [];
+    this.#activeTurns.clear();
+    this.#identifiedOwner = null;
+    this.#operationQueue.operations = [];
+    if (this.#trackingEnabled) this.#enqueue(() => this.#client?.clear());
+  }
+
   setTrackingEnabled(enabled: boolean): void {
     if (this.#trackingEnabled === enabled) return;
     this.#trackingEnabled = enabled;
     if (!enabled) {
-      this.#pending = [];
-      this.#activeTurns.clear();
-      this.#identifiedOwner = null;
-      this.#run(() => this.#client?.clear());
+      this.clear();
+      this.#enqueue(() => this.#client?.clear());
       return;
     }
     this.flushPending();
@@ -175,7 +185,7 @@ export class HostAnalytics {
   #track(name: HostEventName, properties: HostProperties): void {
     if (!this.#trackingEnabled) return;
     const sanitized = sanitizeHostEvent(name, properties);
-    const owner = this.#resolveOwner();
+    const owner = normalizeAnalyticsIdentity(this.#resolveOwner());
     if (!owner) {
       this.#pending.push({ name, properties: sanitized, timestamp: new Date().toISOString() });
       if (this.#pending.length > MAX_PENDING_EVENTS) this.#pending.shift();
@@ -190,13 +200,13 @@ export class HostAnalytics {
     if (!this.#client) return;
     const previous = this.#identifiedOwner;
     if (previous?.id === owner.id && previous.email === owner.email) return;
-    if (previous && previous.id !== owner.id) this.#run(() => this.#client?.clear());
+    if (previous && previous.id !== owner.id) this.#enqueue(() => this.#client?.clear());
     this.#identifiedOwner = { ...owner };
-    this.#run(() => this.#client?.identify({ profileId: owner.id, email: owner.email }));
+    this.#enqueue(() => this.#client?.identify({ profileId: owner.id, email: owner.email }));
   }
 
   #send(name: HostEventName, properties: HostProperties, profileId: string, timestamp?: string): void {
-    this.#run(() =>
+    this.#enqueue(() =>
       this.#client?.track(name, {
         ...properties,
         ...(timestamp ? { __timestamp: timestamp } : {}),
@@ -225,14 +235,37 @@ export class HostAnalytics {
     }
   }
 
-  #run(operation: () => unknown): void {
-    try {
-      const result = operation();
-      if (result instanceof Promise) void result.catch(() => undefined);
-    } catch {
-      // Analytics must never change host behavior.
-    }
+  #enqueue(operation: AnalyticsOperation): void {
+    this.#operationQueue.operations.push(operation);
+    if (this.#operationQueue.active) return;
+    this.#operationQueue.active = true;
+    void this.#drainQueue();
   }
+
+  async #drainQueue(): Promise<void> {
+    while (this.#operationQueue.operations.length > 0) {
+      const operation = this.#operationQueue.operations.shift();
+      if (!operation) continue;
+      try {
+        const result = operation();
+        if (isPromiseLike(result)) await result;
+      } catch {
+        // Analytics must never change host behavior or stop later events.
+      }
+    }
+    this.#operationQueue.active = false;
+  }
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return isDynamicRecord(value) && isFunction(value.then);
+}
+
+function normalizeAnalyticsIdentity(user: AnalyticsIdentity | null): AnalyticsIdentity | null {
+  if (!user) return null;
+  const id = user.id.trim();
+  const email = normalizeEmailAddress(user.email);
+  return id && email ? { id, email } : null;
 }
 
 export function sanitizeHostEvent(name: HostEventName, properties: HostProperties): HostProperties {

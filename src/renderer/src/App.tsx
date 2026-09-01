@@ -41,6 +41,7 @@ import type {
 } from "@openbot/contracts/ipc";
 import {
   HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX,
+  hostedSiteConversationEvent,
   ROUTINE_EVENT_ITEM_TYPE_PREFIX,
   ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX,
 } from "@openbot/contracts/ipc";
@@ -458,6 +459,8 @@ export function createAppController(props: AppProps = {}) {
   const routineSnapshotRequests = new Map<string, number>();
   const completedTurnByBot = new Map<string, string>();
   const pendingProviderConnections = new Map<AgentProviderId, ReturnType<typeof desktopAnalytics.scope>>();
+  const observedHostedSiteMessageIds = new Set<string>();
+  const trackedHostedSiteOperations = new Set<string>();
   const dynamicIslandCoordinator = new DynamicIslandCoordinator();
   const dynamicIslandConnectedServers = new Set(["local"]);
   let conversationFrame: number | undefined;
@@ -544,6 +547,7 @@ export function createAppController(props: AppProps = {}) {
     }),
     ({ info, setup, auth, analyticsEnabled }) => {
       if (analyticsEnabled === null) return;
+      if (props.landingPreview) return;
       desktopAnalytics.setTrackingEnabled(analyticsEnabled);
       desktopAnalytics.setUser(auth.status === "signed_in" ? auth.user : null);
       if (!appInfoLoadedFromHost || !info || !setup || auth.status === "loading") return;
@@ -828,6 +832,8 @@ export function createAppController(props: AppProps = {}) {
       if (conversationFrame !== undefined) cancelAnimationFrame(conversationFrame);
       completedTurnByBot.clear();
       pendingProviderConnections.clear();
+      observedHostedSiteMessageIds.clear();
+      trackedHostedSiteOperations.clear();
       if (authSuccessTimer !== undefined) clearTimeout(authSuccessTimer);
     };
     void window.openbot.update
@@ -1110,7 +1116,7 @@ export function createAppController(props: AppProps = {}) {
             (existingUnreadCount === 0 ||
               explicitlyOpenedAgentChatId === event.page.botId ||
               agentChatsToRetryRead.has(trackingKey));
-          const pageApplied = applyConversationPage(event.page, "latest", "latest");
+          const pageApplied = applyConversationPage(event.page, "latest", "latest", true);
           const latestIncomingMessage = markNewMessagesRead
             ? [...event.page.messages]
                 .reverse()
@@ -1539,7 +1545,8 @@ export function createAppController(props: AppProps = {}) {
   function applyConversation(snapshot: ConversationSnapshot, markNewMessagesRead = false) {
     const botId = snapshot.botId;
     if (snapshot.revision < (conversationRevisions()[botId] ?? -1)) return;
-    const initialLoad = conversationLoaded()[botId] !== true || (liveMessages()[botId]?.length ?? 0) === 0;
+    const initialLoad = conversationLoaded()[botId] !== true;
+    observeHostedSiteAnalytics(snapshot.messages, initialLoad);
     setConversationRevisions((current) => ({
       ...current,
       [botId]: snapshot.revision,
@@ -1629,12 +1636,54 @@ export function createAppController(props: AppProps = {}) {
     }
   }
 
+  function observeHostedSiteAnalytics(messages: ConversationSnapshot["messages"], initialLoad: boolean): void {
+    for (const message of messages) {
+      const event = hostedSiteConversationEvent(message);
+      if (!event) continue;
+      const previouslyObserved = observedHostedSiteMessageIds.has(message.id);
+      const terminal = event.status !== "running";
+      if (initialLoad && terminal) {
+        trackedHostedSiteOperations.add(event.operationId);
+      } else if (!initialLoad && !previouslyObserved && !trackedHostedSiteOperations.has(event.operationId)) {
+        if (event.status === "succeeded") {
+          desktopAnalytics.track("hosted_site_action", {
+            action: event.action,
+            entry_point: "agent",
+            result: "succeeded",
+          });
+          trackedHostedSiteOperations.add(event.operationId);
+        } else if (event.status === "failed" || event.status === "cancelled" || event.status === "interrupted") {
+          desktopAnalytics.track("hosted_site_action", {
+            action: event.action,
+            entry_point: "agent",
+            result: "failed",
+            failure_code: event.status === "failed" ? "hosted_site_failed" : event.status,
+          });
+          trackedHostedSiteOperations.add(event.operationId);
+        }
+      }
+      observedHostedSiteMessageIds.add(message.id);
+    }
+    while (observedHostedSiteMessageIds.size > 10_000) {
+      const oldest = observedHostedSiteMessageIds.values().next();
+      if (oldest.done) break;
+      observedHostedSiteMessageIds.delete(oldest.value);
+    }
+    while (trackedHostedSiteOperations.size > 10_000) {
+      const oldest = trackedHostedSiteOperations.values().next();
+      if (oldest.done) break;
+      trackedHostedSiteOperations.delete(oldest.value);
+    }
+  }
+
   function applyConversationPage(
     page: ConversationPage,
     merge: "replace" | "older" | "latest",
     windowMode?: "latest" | "around",
+    trackHostedSiteAnalytics = false,
   ): boolean {
     if (page.revision < (conversationRevisions()[page.botId] ?? -1)) return false;
+    observeHostedSiteAnalytics(page.messages, !trackHostedSiteAnalytics || conversationLoaded()[page.botId] !== true);
     for (const message of page.messages) {
       const key = agentMessageKey(page.botId, message.id);
       if (message.author !== "user" && message.status === "streaming") rawAgentMessageBodies.set(key, message.text);

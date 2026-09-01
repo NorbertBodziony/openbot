@@ -19,7 +19,7 @@ import type {
   UpdateStatus,
   VoiceModelStatus,
 } from "@openbot/contracts/ipc";
-import { routineConversationEventItemType } from "@openbot/contracts/ipc";
+import { hostedSiteConversationEventItemType, routineConversationEventItemType } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { createSignal, Show } from "solid-js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -120,6 +120,34 @@ function testConversationPage(
     readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
     pageInfo: { hasOlder: false, olderCursor: null },
     ...overrides,
+  };
+}
+
+function hostedSiteMessage(
+  id: string,
+  action: "publish" | "replace" | "delete",
+  status: "running" | "succeeded" | "failed" | "interrupted" | "cancelled",
+  operationId: string,
+): ConversationPage["messages"][number] {
+  const terminalSite = {
+    siteId: "site-1",
+    title: "Hosted site",
+    hostname: "hosted-site-23456789ab.openbot.site",
+    url: "https://hosted-site-23456789ab.openbot.site",
+  };
+  const details =
+    action === "publish" && status !== "succeeded"
+      ? { siteId: null, title: "Hosted site", hostname: null, url: null }
+      : terminalSite;
+  return {
+    id,
+    turnId: "turn-hosted-site",
+    author: "system",
+    source: "system",
+    text: JSON.stringify(details),
+    createdAt: "2026-08-31T10:00:00.000Z",
+    status: "completed",
+    itemType: hostedSiteConversationEventItemType(action, status, operationId),
   };
 }
 
@@ -962,6 +990,81 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByText("Archived brief")).toBeInTheDocument();
     await waitFor(() => expect(window.openbot.agent.listRoutines).toHaveBeenCalledWith("chief"));
     expect(screen.queryByRole("button", { name: "Open routine Archived brief" })).not.toBeInTheDocument();
+  });
+
+  it("tracks only new terminal hosted-site markers once", async () => {
+    const historical = hostedSiteMessage("hosted-history", "publish", "succeeded", "operation-history");
+    vi.mocked(window.openbot.agent.readConversation).mockResolvedValueOnce(testConversationPage("chief", [historical]));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await waitFor(() => expect(window.openbot.agent.readConversation).toHaveBeenCalled());
+    trackAnalytics.mockClear();
+
+    const running = hostedSiteMessage("hosted-running", "publish", "running", "operation-live");
+    const succeeded = hostedSiteMessage("hosted-succeeded", "publish", "succeeded", "operation-live");
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: null,
+        revision: 2,
+        messages: [historical, running, succeeded],
+      },
+    });
+    await waitFor(() =>
+      expect(trackAnalytics).toHaveBeenCalledWith("hosted_site_action", {
+        action: "publish",
+        entry_point: "agent",
+        result: "succeeded",
+      }),
+    );
+    expect(trackAnalytics).toHaveBeenCalledTimes(1);
+
+    emitAgentEvent?.({
+      type: "conversation-page",
+      page: testConversationPage("chief", [historical, running, succeeded], { revision: 3 }),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(trackAnalytics).toHaveBeenCalledTimes(1);
+
+    const failedReplace = hostedSiteMessage("hosted-failed", "replace", "failed", "operation-failed");
+    const cancelledDelete = hostedSiteMessage("hosted-cancelled", "delete", "cancelled", "operation-cancelled");
+    const interruptedReplace = hostedSiteMessage(
+      "hosted-interrupted",
+      "replace",
+      "interrupted",
+      "operation-interrupted",
+    );
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: null,
+        revision: 4,
+        messages: [historical, running, succeeded, failedReplace, cancelledDelete, interruptedReplace],
+      },
+    });
+    await waitFor(() => expect(trackAnalytics).toHaveBeenCalledTimes(4));
+    expect(trackAnalytics).toHaveBeenCalledWith("hosted_site_action", {
+      action: "replace",
+      entry_point: "agent",
+      result: "failed",
+      failure_code: "hosted_site_failed",
+    });
+    expect(trackAnalytics).toHaveBeenCalledWith("hosted_site_action", {
+      action: "delete",
+      entry_point: "agent",
+      result: "failed",
+      failure_code: "cancelled",
+    });
+    expect(trackAnalytics).toHaveBeenCalledWith("hosted_site_action", {
+      action: "replace",
+      entry_point: "agent",
+      result: "failed",
+      failure_code: "interrupted",
+    });
   });
 
   it("restores the active server before loading its workspace data", async () => {
@@ -1958,6 +2061,18 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.browser.setVisible).not.toHaveBeenCalled();
     expect(window.openbot.remoteDesktop.list).not.toHaveBeenCalled();
     expect(window.openbot.remoteDesktop.onEvent).not.toHaveBeenCalled();
+  });
+
+  it("does not configure desktop analytics in the landing preview", async () => {
+    const configure = vi.spyOn(desktopAnalytics, "configure");
+    try {
+      render(() => <App landingPreview />);
+
+      await screen.findByRole("heading", { name: "Chief" });
+      expect(configure).not.toHaveBeenCalled();
+    } finally {
+      configure.mockRestore();
+    }
   });
 
   it("opens, hides, resumes, and disconnects Remote Control from the header", async () => {

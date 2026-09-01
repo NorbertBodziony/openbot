@@ -8,13 +8,14 @@ import {
   type CentralAuthUser,
   isAgentModel,
 } from "@openbot/contracts/ipc";
-import { isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { isBoolean, isDynamicRecord, isFunction, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { normalizeEmailAddress } from "@openbot/contracts/validation";
 import { OpenPanelBase, type OpenPanelOptions } from "@openpanel/web";
 
 export const OPENPANEL_API_URL = "https://analytics.openbot.run/api";
 export const OPENPANEL_CLIENT_ID = "6c989975-87ef-4f0c-857e-ab449a65b5c2";
 const MAX_PENDING_EVENTS = 100;
-export const ANALYTICS_SCHEMA_VERSION = 3;
+export const ANALYTICS_SCHEMA_VERSION = 4;
 
 export type ServerKind = "local" | "remote" | "unknown";
 export type AnalyticsResult = "succeeded" | "failed";
@@ -155,6 +156,12 @@ export interface DesktopAnalyticsEvents {
     result: AnalyticsResult;
     failure_code?: string;
   };
+  hosted_site_action: {
+    action: "publish" | "replace" | "delete";
+    entry_point: "agent" | "settings";
+    result: AnalyticsResult;
+    failure_code?: string;
+  };
 }
 
 export type AnalyticsEventName = keyof DesktopAnalyticsEvents;
@@ -162,6 +169,8 @@ export type OpenPanelClient = Pick<OpenPanelBase, "setGlobalProperties" | "track
 
 type ClientFactory = (options: OpenPanelOptions) => OpenPanelClient;
 type AnalyticsIdentity = Pick<CentralAuthUser, "id" | "email">;
+type AnalyticsOperation = () => unknown;
+type AnalyticsOperationQueue = { active: boolean; operations: AnalyticsOperation[] };
 export interface DesktopAnalyticsScope {
   track<Name extends AnalyticsEventName>(name: Name, properties: DesktopAnalyticsEvents[Name]): void;
 }
@@ -209,6 +218,7 @@ const EVENT_PROPERTY_ALLOWLIST = {
   voice_transcription: ["result", "audio_duration_seconds", "duration_ms", "failure_code"],
   reaction_action: ["action", "result", "failure_code"],
   maintenance_action: ["action", "result", "failure_code"],
+  hosted_site_action: ["action", "entry_point", "result", "failure_code"],
 } as const satisfies Record<AnalyticsEventName, readonly string[]>;
 
 type AnalyticsPropertyName = (typeof EVENT_PROPERTY_ALLOWLIST)[AnalyticsEventName][number];
@@ -278,6 +288,9 @@ const SAFE_FAILURE_CODES = new Set([
   "unpublish_failed",
   "update_failed",
   "verification_failed",
+  "hosted_site_failed",
+  "cancelled",
+  "interrupted",
 ]);
 
 const EVENT_ACTIONS: Partial<Record<AnalyticsEventName, readonly string[]>> = {
@@ -311,6 +324,7 @@ const EVENT_ACTIONS: Partial<Record<AnalyticsEventName, readonly string[]>> = {
   ],
   reaction_action: ["add", "remove"],
   maintenance_action: ["export_data", "export_diagnostics"],
+  hosted_site_action: ["publish", "replace", "delete"],
 };
 
 const CHANGED_FIELDS = new Map<string, string>([
@@ -397,11 +411,13 @@ function sanitizeDesktopProperty(
   if (["setup_completed", "signed_in", "is_reply", "email_bound"].includes(key)) {
     return isBoolean(value) ? value : undefined;
   }
+  if (key === "entry_point") {
+    return safeEnum(value, name === "hosted_site_action" ? ["agent", "settings"] : ["in_app", "invite_deep_link"]);
+  }
   const enumValues: Record<string, readonly string[] | undefined> = {
     channel: ["agent", "direct"],
     decision: ["answered", "accept", "decline"],
     entity: ["skill", "agent"],
-    entry_point: ["in_app", "invite_deep_link"],
     kind: ["prompt", "approval"],
     role: ["admin", "member"],
     scope: ["global", "agent"],
@@ -432,6 +448,8 @@ export class DesktopAnalytics {
   #trackingEnabled = true;
   #identity: AnalyticsIdentity | null = null;
   #pending: PendingEvent[] = [];
+  readonly #clientQueue: AnalyticsOperationQueue = { active: false, operations: [] };
+  readonly #anonymousQueue: AnalyticsOperationQueue = { active: false, operations: [] };
 
   constructor(
     createClient: ClientFactory = (options) => new OpenPanelBase(options),
@@ -477,11 +495,13 @@ export class DesktopAnalytics {
 
   setUser(user: AnalyticsIdentity | null): void {
     const previous = this.#identity;
-    if (previous?.id === user?.id && previous?.email === user?.email) return;
-    this.#identity = user ? { ...user } : null;
+    const normalized = user ? normalizeAnalyticsIdentity(user) : null;
+    if (previous?.id === normalized?.id && previous?.email === normalized?.email) return;
+    this.#identity = normalized;
     if (!this.#client || !this.#trackingEnabled) return;
-    if (previous && previous.id !== user?.id) this.#run(() => this.#client?.clear());
-    if (user) this.#identifyClient(user);
+    if (previous && (!normalized || previous.id !== normalized.id))
+      this.#enqueue(this.#clientQueue, () => this.#client?.clear());
+    if (normalized) this.#identifyClient(normalized);
   }
 
   identify(user: AnalyticsIdentity): void {
@@ -497,7 +517,10 @@ export class DesktopAnalytics {
     this.#trackingEnabled = enabled;
     if (!enabled) {
       this.#pending = [];
-      this.#run(() => this.#client?.clear());
+      this.#clientQueue.operations = [];
+      this.#anonymousQueue.operations = [];
+      this.#enqueue(this.#clientQueue, () => this.#client?.clear());
+      this.#enqueue(this.#anonymousQueue, () => this.#anonymousClient?.clear());
       return;
     }
     if (this.#identity) this.#identifyClient(this.#identity);
@@ -546,7 +569,7 @@ export class DesktopAnalytics {
     timestamp?: string,
   ): void {
     const client = profileId ? this.#client : this.#anonymousClient;
-    this.#run(() =>
+    this.#enqueue(profileId ? this.#clientQueue : this.#anonymousQueue, () =>
       client?.track(name, {
         ...properties,
         ...(timestamp ? { __timestamp: timestamp } : {}),
@@ -564,17 +587,39 @@ export class DesktopAnalytics {
   }
 
   #identifyClient(user: AnalyticsIdentity): void {
-    this.#run(() => this.#client?.identify({ profileId: user.id, email: user.email }));
+    this.#enqueue(this.#clientQueue, () => this.#client?.identify({ profileId: user.id, email: user.email }));
   }
 
-  #run(operation: () => unknown): void {
-    try {
-      const result = operation();
-      if (result instanceof Promise) void result.catch(() => undefined);
-    } catch {
-      // Analytics must never change application behavior.
-    }
+  #enqueue(queue: AnalyticsOperationQueue, operation: AnalyticsOperation): void {
+    queue.operations.push(operation);
+    if (queue.active) return;
+    queue.active = true;
+    void this.#drain(queue);
   }
+
+  async #drain(queue: AnalyticsOperationQueue): Promise<void> {
+    while (queue.operations.length > 0) {
+      const operation = queue.operations.shift();
+      if (!operation) continue;
+      try {
+        const result = operation();
+        if (isPromiseLike(result)) await result;
+      } catch {
+        // Analytics must never change application behavior or stop later events.
+      }
+    }
+    queue.active = false;
+  }
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return isDynamicRecord(value) && isFunction(value.then);
+}
+
+function normalizeAnalyticsIdentity(user: AnalyticsIdentity): AnalyticsIdentity | null {
+  const id = user.id.trim();
+  const email = normalizeEmailAddress(user.email);
+  return id && email ? { id, email } : null;
 }
 
 export const desktopAnalytics = new DesktopAnalytics();

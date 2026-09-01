@@ -48,7 +48,7 @@ describe("host analytics", () => {
     );
 
     expect(client.setGlobalProperties).toHaveBeenCalledWith(
-      expect.objectContaining({ event_schema_version: 3, surface: "desktop_host" }),
+      expect.objectContaining({ event_schema_version: 4, surface: "desktop_host" }),
     );
 
     analytics.handleAgentEvent({
@@ -129,6 +129,30 @@ describe("host analytics", () => {
     );
   });
 
+  it("clears pending host events and the identified session on logout", () => {
+    const client = fakeClient();
+    let owner: { id: string; email: string } | null = { id: "owner-account", email: "owner@example.com" };
+    const analytics = new HostAnalytics(
+      {
+        enabled: true,
+        appVersion: "1.2.3",
+        platform: "darwin",
+        resolveOwner: () => owner,
+        resolveBot: () => BOT,
+      },
+      () => client,
+    );
+
+    analytics.handleAgentEvent({ type: "error", code: "provider_error", message: "private" });
+    owner = null;
+    analytics.handleAgentEvent({ type: "error", code: "provider_error", message: "pending-after-logout" });
+    analytics.clear();
+    analytics.flushPending();
+
+    expect(client.track).toHaveBeenCalledOnce();
+    expect(client.clear).toHaveBeenCalledOnce();
+  });
+
   it("updates the email for the same owner without clearing its session", () => {
     const client = fakeClient();
     let owner = { id: "owner-account", email: "old@example.com" };
@@ -155,8 +179,14 @@ describe("host analytics", () => {
 
   it("sends the owner email through the real SDK transport", async () => {
     const requests: unknown[] = [];
+    let releaseIdentify!: () => void;
+    const identifyReady = new Promise<void>((resolve) => {
+      releaseIdentify = resolve;
+    });
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      requests.push(JSON.parse(String(init?.body)));
+      const request = JSON.parse(String(init?.body));
+      requests.push(request);
+      if (isDynamicRecord(request) && request.type === "identify") await identifyReady;
       return new Response(null, { status: 200 });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -173,6 +203,9 @@ describe("host analytics", () => {
       );
       analytics.handleAgentEvent({ type: "error", code: "provider_error", message: "private" });
 
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+      expect(isDynamicRecord(requests[0]) ? requests[0].type : undefined).toBe("identify");
+      releaseIdentify();
       await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
       const identifyRequest = requests.find((candidate) => isDynamicRecord(candidate) && candidate.type === "identify");
       const trackRequest = requests.find(
@@ -193,6 +226,24 @@ describe("host analytics", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it("normalizes the owner email before identifying", () => {
+    const client = fakeClient();
+    const analytics = new HostAnalytics(
+      {
+        enabled: true,
+        appVersion: "1.2.3",
+        platform: "darwin",
+        resolveOwner: () => ({ id: "owner-account", email: " Owner@EXAMPLE.COM " }),
+        resolveBot: () => BOT,
+      },
+      () => client,
+    );
+
+    analytics.handleAgentEvent({ type: "error", code: "provider_error", message: "private" });
+
+    expect(client.identify).toHaveBeenCalledWith({ profileId: "owner-account", email: "owner@example.com" });
   });
 
   it("drops unsafe runtime fields", () => {
@@ -305,5 +356,25 @@ describe("host analytics", () => {
       origin: "user",
     });
     expect(client.track).toHaveBeenCalledOnce();
+  });
+
+  it("clears the host OpenPanel client when tracking is disabled", () => {
+    const client = fakeClient();
+    const analytics = new HostAnalytics(
+      {
+        enabled: true,
+        appVersion: "1.2.3",
+        platform: "darwin",
+        resolveOwner: () => ({ id: "owner-account", email: "owner@example.com" }),
+        resolveBot: () => BOT,
+      },
+      () => client,
+    );
+    analytics.handleAgentEvent({ type: "error", code: "provider_error", message: "private" });
+    vi.mocked(client.clear).mockClear();
+
+    analytics.setTrackingEnabled(false);
+
+    expect(client.clear).toHaveBeenCalledOnce();
   });
 });
