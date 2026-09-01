@@ -95,20 +95,12 @@ export class HostedSiteService {
       .prepare(
         `SELECT s.*, COALESCE(d.file_count, 0) AS file_count, COALESCE(d.total_bytes, 0) AS total_bytes
          FROM hosted_sites s LEFT JOIN site_deployments d ON d.id = s.current_deployment_id
-         WHERE s.user_id = ? AND s.status != 'uploading'
+         WHERE s.user_id = ? AND s.status IN ('active', 'blocked') AND s.expires_at > ?
          ORDER BY s.updated_at DESC`,
       )
-      .bind(userId)
+      .bind(userId, now)
       .all<SiteRow & { file_count: number; total_bytes: number }>();
-    return rows.results.map((row) =>
-      mapSite({
-        ...row,
-        status:
-          (row.status === "active" || row.status === "blocked") && row.expires_at !== null && row.expires_at <= now
-            ? "expired"
-            : row.status,
-      }),
-    );
+    return rows.results.map(mapSite);
   }
 
   async createUpload(

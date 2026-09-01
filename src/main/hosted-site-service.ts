@@ -192,9 +192,11 @@ export class HostedSiteDesktopService {
 
 export async function prepareSite(sourcePath: string, allowedRoots?: readonly string[]): Promise<PreparedSite> {
   if (!isAbsolute(sourcePath)) throw new Error("Choose an absolute site directory path.");
-  const root = await realpath(resolve(sourcePath));
-  const rootStats = await lstat(root);
-  if (!rootStats.isDirectory() || rootStats.isSymbolicLink()) throw new Error("The site source must be a directory.");
+  const selectedRoot = resolve(sourcePath);
+  const selectedRootStats = await lstat(selectedRoot);
+  if (selectedRootStats.isSymbolicLink()) throw new Error("Symlinks are not allowed in hosted sites.");
+  if (!selectedRootStats.isDirectory()) throw new Error("The site source must be a directory.");
+  const root = await realpath(selectedRoot);
   if (allowedRoots?.length) {
     const roots = await Promise.all(allowedRoots.map((candidate) => realpath(resolve(candidate))));
     if (!roots.some((candidate) => isInside(candidate, root))) {

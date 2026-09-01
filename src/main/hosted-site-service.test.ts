@@ -84,6 +84,17 @@ describe("hosted site preparation", () => {
     await expect(prepareSite(outside, [root])).rejects.toThrow("workspace");
   });
 
+  it("rejects a selected source directory that is a symlink", async () => {
+    const workspace = await fixture();
+    const target = join(workspace, "site");
+    const alias = join(workspace, "site-alias");
+    await mkdir(target);
+    await writeFile(join(target, "index.html"), "ok");
+    await symlink(target, alias);
+
+    await expect(prepareSite(alias, [workspace])).rejects.toThrow("Symlinks");
+  });
+
   it("enforces the 20 file limit", async () => {
     const root = await fixture();
     await writeFile(join(root, "index.html"), "ok");
