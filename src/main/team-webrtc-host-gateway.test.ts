@@ -185,12 +185,12 @@ describe("TeamWebRtcHostGateway", () => {
       type: "request",
       requestId: "duplicate-request",
       operation: "http.request",
-      payload: { method: "POST", path: "/v1/mutation", body: { value: 1 } },
+      payload: { method: "POST", path: "/v1/browser/visible", body: { visible: true } },
     });
     bridge.emit("data", "host-1", "rpc", duplicateRequest);
     bridge.emit("data", "host-1", "rpc", duplicateRequest);
     await vi.waitFor(() => expect(fetchRequest).toHaveBeenCalledOnce());
-    resolveFetch(Response.json({ ok: true }));
+    resolveFetch(Response.json({ visible: true }));
     await vi.waitFor(() =>
       expect(
         bridge.sent.filter((message) => {

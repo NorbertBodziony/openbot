@@ -277,15 +277,22 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     });
     this.#webrtcTransport?.on("event", (serverId, event) => this.#handleWebRtcEvent(serverId, event));
     this.#webrtcTransport?.on("error", (serverId, code, message) => {
-      if (code === "protocol_error") this.#eventAuthenticationPaused.add(serverId);
+      const authenticationEnded = code === "session_revoked";
+      const reconnectPaused = code === "protocol_error" || authenticationEnded;
+      if (reconnectPaused) this.#eventAuthenticationPaused.add(serverId);
       this.#states.set(serverId, code === "protocol_error" ? "incompatible" : "error");
       this.#issues.set(serverId, {
-        code: code === "protocol_error" ? "protocol_error" : "network_unavailable",
+        code:
+          code === "protocol_error"
+            ? "protocol_error"
+            : authenticationEnded
+              ? "authentication_required"
+              : "network_unavailable",
         message,
-        retryable: code !== "protocol_error",
+        retryable: !reconnectPaused,
       });
       this.#emitChanged();
-      if (code !== "protocol_error") this.#scheduleEventReconnect(serverId);
+      if (!reconnectPaused) this.#scheduleEventReconnect(serverId);
     });
   }
 

@@ -14,7 +14,11 @@ import {
   TEAM_PROTOCOL_V2_MAX_FILE_BYTES,
   TEAM_PROTOCOL_V2_MAX_JSON_FRAME_BYTES,
 } from "./v2";
-import { decodeTeamProtocolV2CurrentEvent } from "./v2-adapter";
+import {
+  decodeTeamProtocolV2CurrentEvent,
+  decodeTeamProtocolV2CurrentHttpResponse,
+  encodeTeamProtocolV2CurrentHttpRequest,
+} from "./v2-adapter";
 
 describe("Team protocol v2", () => {
   it("keeps the released JSON fixtures valid", () => {
@@ -69,6 +73,23 @@ describe("Team protocol v2", () => {
         payload: { type: "runtime-snapshot" },
       }),
     ).toEqual({ status: "invalid" });
+  });
+
+  it("projects current HTTP payloads through the frozen route codec", () => {
+    expect(
+      encodeTeamProtocolV2CurrentHttpRequest("POST", "/v1/browser/visible", {
+        visible: true,
+        futureRequestField: "ignored",
+      }),
+    ).toEqual({ visible: true });
+    expect(
+      decodeTeamProtocolV2CurrentHttpResponse("GET", "/v1/compatibility", 200, {
+        appVersion: "1.0.0",
+        protocol: { minimum: 1, maximum: 2 },
+        capabilities: [],
+        futureResponseField: "ignored",
+      }),
+    ).toEqual({ appVersion: "1.0.0", protocol: { minimum: 1, maximum: 2 }, capabilities: [] });
   });
 
   it("validates bounded authentication frames", () => {

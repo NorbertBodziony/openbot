@@ -5,7 +5,6 @@ import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-
 import {
   decodeTeamProtocolV2AuthFrame,
   decodeTeamProtocolV2EventFrame,
-  decodeTeamProtocolV2Json,
   decodeTeamProtocolV2RpcFrame,
   encodeTeamProtocolV2Frame,
   type TeamProtocolV2AuthFrame,
@@ -13,7 +12,11 @@ import {
   type TeamProtocolV2RpcFrame,
   teamProtocolV2AuthenticationTranscript,
 } from "@openbot/contracts/team-protocol/v2";
-import { decodeTeamProtocolV2CurrentEvent } from "@openbot/contracts/team-protocol/v2-adapter";
+import {
+  decodeTeamProtocolV2CurrentEvent,
+  decodeTeamProtocolV2CurrentHttpResponse,
+  encodeTeamProtocolV2CurrentHttpRequest,
+} from "@openbot/contracts/team-protocol/v2-adapter";
 import type {
   RemoteConnectionBootstrap,
   RemoteHostSummary,
@@ -205,6 +208,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
     file?: { bytes: Uint8Array; name: string; mimeType: string };
   }> {
     await this.#ensureConnected(hostId);
+    const method = (init.method ?? "GET").toUpperCase();
     const binary = binaryBody(init.body);
     const bodyTransferId = binary
       ? await this.#files.send(hostId, {
@@ -220,9 +224,9 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       requestId,
       operation: "http.request",
       payload: {
-        method: (init.method ?? "GET").toUpperCase(),
+        method,
         path,
-        body: binary ? null : wireJson(init.body),
+        body: binary ? null : encodeTeamProtocolV2CurrentHttpRequest(method, path, init.body),
         ...(bodyTransferId ? { bodyTransferId } : {}),
         ...(init.contentType ? { contentType: init.contentType } : {}),
       },
@@ -253,7 +257,11 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       fileRecord && isString(fileRecord.transferId)
         ? await this.#files.consume(hostId, fileRecord.transferId)
         : undefined;
-    return { status: envelope.status, body: decodeTeamProtocolV2Json(envelope.body), ...(file ? { file } : {}) };
+    return {
+      status: envelope.status,
+      body: decodeTeamProtocolV2CurrentHttpResponse(method, path, envelope.status, envelope.body),
+      ...(file ? { file } : {}),
+    };
   }
 
   async disconnect(hostId: string): Promise<void> {
@@ -711,11 +719,6 @@ export class TeamWebRtcRequestError extends Error {
   ) {
     super(message);
   }
-}
-
-function wireJson(value: unknown): TeamProtocolV2Json {
-  if (value === undefined) return null;
-  return decodeTeamProtocolV2Json(JSON.parse(JSON.stringify(value)));
 }
 
 function authenticationFrame(data: string): TeamProtocolV2AuthFrame | null {

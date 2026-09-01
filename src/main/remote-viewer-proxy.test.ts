@@ -39,6 +39,9 @@ describe("RemoteViewerProxy", () => {
     expect(isBinary).toBe(true);
     if (!Buffer.isBuffer(echoed)) throw new Error("The viewer did not return a binary WebSocket frame.");
     expect(new Uint8Array(echoed)).toEqual(binary);
+    const viewer = new URL(viewerUrl);
+    const tokenPath = viewer.pathname.split("/host-1/")[0];
+    expect((await fetch(`${viewer.origin}${tokenPath}/%/x`)).status).toBe(404);
     socket.close();
     await proxy.stop();
   });

@@ -14,7 +14,7 @@ if (coturnExists) {
   await run("docker", ["kill", "--signal=SIGUSR1", "openbot-coturn"], root);
   await run("docker", ["wait", "openbot-coturn"], root);
 }
-await run("docker", [...compose, "up", "-d", "--no-build", "--no-deps", "coturn"], root);
+await run("docker", [...compose, "up", "-d", "--no-build", "--no-deps", "--force-recreate", "coturn"], root);
 await run("docker", [...compose, "ps"], root);
 
 async function run(command: string, args: string[], cwd: string): Promise<void> {

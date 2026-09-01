@@ -346,6 +346,10 @@ describe("RemoteControlPlane", () => {
       database.prepare("SELECT status FROM remote_memberships WHERE membership_id = 'revoked-membership'").get(),
     ).toEqual({ status: "active" });
     const memberSession = await controlPlane.startSession("revoked-member", "host-1");
+    await controlPlane.endSession(owner.id, memberSession.sessionId);
+    expect(
+      database.prepare("SELECT ended_at FROM remote_sessions WHERE session_id = ?").get(memberSession.sessionId),
+    ).toEqual({ ended_at: 1_000 });
     const hostClaims = {
       sessionId: "host-host-1",
       hostId: "host-1",

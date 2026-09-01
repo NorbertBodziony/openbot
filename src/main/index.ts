@@ -1703,6 +1703,10 @@ if (!hasSingleInstanceLock) {
           if (!centralAuthManager) throw new Error("The account service is not ready.");
           return centralAuthManager.verifyRemoteSessionTicket(ticket);
         },
+        endRemoteSession: (sessionId) => {
+          if (!centralAuthManager) throw new Error("The account service is not ready.");
+          return centralAuthManager.endRemoteSession(sessionId);
+        },
         remoteControlPlaneUrl: centralAuth.resolveApiUrl("/"),
         createRemoteInvite: (hostId, input) => centralAuth.createRemoteInvite(hostId, input),
         listRemoteInvites: (hostId) => centralAuth.listRemoteInvites(hostId),

@@ -93,6 +93,7 @@ interface HostServiceOptions {
   }) => Promise<unknown>;
   issueRemoteHostTicket?: (hostId: string) => Promise<{ ticket: string; signalUrl: string; expiresAt: number }>;
   verifyRemoteSessionTicket?: (ticket: string) => Promise<VerifiedRemoteSessionTicket>;
+  endRemoteSession?: (sessionId: string) => Promise<void>;
   remoteControlPlaneUrl?: string;
   createRemoteInvite?: (
     hostId: string,
@@ -585,10 +586,14 @@ export class HostService extends EventEmitter<HostEvents> {
   }
 
   async revokeSession(sessionId: string): Promise<void> {
+    await this.#revokeWebRtcSession(sessionId);
     await this.#options.store.revokeSession(sessionId);
-    await this.#webrtcGateway?.revokeSession(sessionId);
     await this.#remoteScreen.revokeTeamSession(sessionId);
     this.#api.refreshPresence();
+  }
+
+  async #revokeWebRtcSession(sessionId: string): Promise<void> {
+    await Promise.all([this.#options.endRemoteSession?.(sessionId), this.#webrtcGateway?.revokeSession(sessionId)]);
   }
 
   revokeInvite(inviteId: string): Promise<void> {

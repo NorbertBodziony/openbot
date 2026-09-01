@@ -1328,6 +1328,16 @@ export function decodeTeamProtocolV1HttpRequest(
   const route = teamProtocolV1HttpRoute(method, path);
   if (!route) throw new Error("Invalid Team protocol v1 HTTP request.");
   const contract = TEAM_PROTOCOL_V1_HTTP_CONTRACTS[route];
+  if (contract.request === "none") {
+    if (
+      value === null ||
+      value === undefined ||
+      (isTeamProtocolV1JsonObject(value) && Object.keys(value).length === 0)
+    ) {
+      return {};
+    }
+    throw new Error("Invalid Team protocol v1 HTTP request.");
+  }
   if (contract.request !== "object" || !isTeamProtocolV1JsonObject(value)) {
     throw new Error("Invalid Team protocol v1 HTTP request.");
   }

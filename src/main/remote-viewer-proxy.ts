@@ -268,12 +268,16 @@ export class RemoteViewerProxy {
   };
 
   #route(value: string): { serverId: string; upstreamPath: string } | null {
-    const url = new URL(value, "http://127.0.0.1");
-    const match = new RegExp(`^/${this.#token}/([^/]+)(/.*)$`, "u").exec(url.pathname);
-    if (!match) return null;
-    const serverId = decodeURIComponent(match[1] ?? "");
-    if (!/^[A-Za-z0-9:_-]{1,128}$/u.test(serverId)) return null;
-    return { serverId, upstreamPath: `${match[2]}${url.search}` };
+    try {
+      const url = new URL(value, "http://127.0.0.1");
+      const match = new RegExp(`^/${this.#token}/([^/]+)(/.*)$`, "u").exec(url.pathname);
+      if (!match) return null;
+      const serverId = decodeURIComponent(match[1] ?? "");
+      if (!/^[A-Za-z0-9:_-]{1,128}$/u.test(serverId)) return null;
+      return { serverId, upstreamPath: `${match[2]}${url.search}` };
+    } catch {
+      return null;
+    }
   }
 
   #basePath(serverId: string): string {

@@ -653,16 +653,17 @@ export class RemoteControlPlane {
 
   async endSession(userId: string, sessionId: string): Promise<void> {
     const session = await this.#database
-      .prepare("SELECT host_id FROM remote_sessions WHERE session_id = ? AND user_id = ? AND ended_at IS NULL LIMIT 1")
-      .bind(sessionId, userId)
-      .first<{ host_id: string }>();
+      .prepare("SELECT host_id, user_id FROM remote_sessions WHERE session_id = ? AND ended_at IS NULL LIMIT 1")
+      .bind(sessionId)
+      .first<{ host_id: string; user_id: string }>();
     if (!session) return;
+    if (session.user_id !== userId) await this.#requireRole(session.host_id, userId, ["owner"]);
     const now = this.#now();
     const event = { type: "remote-session-ended" as const, hostId: session.host_id, sessionId };
     await this.#database.batch([
       this.#database
-        .prepare("UPDATE remote_sessions SET ended_at = ? WHERE session_id = ? AND user_id = ? AND ended_at IS NULL")
-        .bind(now, sessionId, userId),
+        .prepare("UPDATE remote_sessions SET ended_at = ? WHERE session_id = ? AND ended_at IS NULL")
+        .bind(now, sessionId),
       this.#authEventStatement(event, now),
     ]);
     await this.#flushAuthEvents();

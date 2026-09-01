@@ -6,7 +6,6 @@ import { encodeTeamProtocolV1ClientEvent, TEAM_PROTOCOL_V1_CAPABILITIES } from "
 import {
   decodeTeamProtocolV2AuthFrame,
   decodeTeamProtocolV2EventFrame,
-  decodeTeamProtocolV2Json,
   decodeTeamProtocolV2RpcFrame,
   encodeTeamProtocolV2Frame,
   type TeamProtocolV2AuthFrame,
@@ -14,6 +13,11 @@ import {
   type TeamProtocolV2RpcFrame,
   teamProtocolV2AuthenticationTranscript,
 } from "@openbot/contracts/team-protocol/v2";
+import {
+  createTeamProtocolV2Event,
+  decodeTeamProtocolV2CurrentHttpRequest,
+  encodeTeamProtocolV2CurrentHttpResponse,
+} from "@openbot/contracts/team-protocol/v2-adapter";
 import type * as Ws from "ws";
 import type { VerifiedRemoteSessionTicket } from "./central-auth-manager";
 import {
@@ -477,7 +481,7 @@ export class TeamWebRtcHostGateway {
             ? Buffer.from(uploaded.bytes)
             : input.body === null
               ? undefined
-              : JSON.stringify(input.body),
+              : JSON.stringify(decodeTeamProtocolV2CurrentHttpRequest(input.method, input.path, input.body)),
     });
     const contentType = response.headers.get("content-type") ?? "";
     const body = response.status === 204 ? null : contentType.includes("json") ? await response.json() : null;
@@ -505,7 +509,10 @@ export class TeamWebRtcHostGateway {
         file: { transferId, name, mimeType: contentType || "application/octet-stream", size: bytes.byteLength },
       };
     }
-    return { status: response.status, body: asJson(body) };
+    return {
+      status: response.status,
+      body: encodeTeamProtocolV2CurrentHttpResponse(input.method, input.path, response.status, body),
+    };
   }
 
   #connectLocalEvents(token: string): void {
@@ -527,14 +534,15 @@ export class TeamWebRtcHostGateway {
     });
     socket.on("message", (data, binary) => {
       if (binary || !this.#peerId) return;
-      let payload: TeamProtocolV2Json;
+      let frame: string;
       try {
-        payload = asJson(JSON.parse(data.toString()));
+        frame = encodeTeamProtocolV2Frame(
+          createTeamProtocolV2Event(this.#nextEventSequence, JSON.parse(data.toString())),
+        );
       } catch {
         return;
       }
       const sequence = this.#nextEventSequence++;
-      const frame = encodeTeamProtocolV2Frame({ version: 2, type: "event", sequence, payload });
       if (this.#events.size >= MAXIMUM_BUFFERED_EVENTS) {
         this.#events.clear();
         this.#sendRecoverable(
@@ -730,11 +738,6 @@ function isHttpRequest(value: TeamProtocolV2Json): value is TeamProtocolV2Json &
     (value.bodyTransferId === undefined || isString(value.bodyTransferId)) &&
     (value.contentType === undefined || isString(value.contentType))
   );
-}
-
-function asJson(value: unknown): TeamProtocolV2Json {
-  if (value === undefined) return null;
-  return decodeTeamProtocolV2Json(JSON.parse(JSON.stringify(value)));
 }
 
 function deleteOldest<Key, Value>(values: Map<Key, Value>): void {

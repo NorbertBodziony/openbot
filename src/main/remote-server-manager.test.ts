@@ -356,6 +356,11 @@ describe("remote server links", () => {
       expect(removeMember).toHaveBeenCalledWith(alphaId, `${alphaId}-member`);
       await manager.syncRemoteHosts();
       expect(manager.list().some((server) => server.id === alphaId)).toBe(false);
+      transport.emit("error", betaId, "session_revoked", "The remote session was revoked.");
+      expect(manager.list().find((server) => server.id === betaId)).toMatchObject({
+        state: "error",
+        issue: { code: "authentication_required", retryable: false },
+      });
     } finally {
       await manager.stop();
       await rm(directory, { recursive: true, force: true });
