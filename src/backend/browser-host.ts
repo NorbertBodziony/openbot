@@ -322,12 +322,19 @@ export class BrowserHost {
 
   async navigate(tabId: string, direction: BrowserNavigationDirection): Promise<void> {
     await this.#enqueue(tabId, async (tab) => {
-      navigateHistory(tab.view.webContents, direction, this.#session.getUserAgent());
+      await navigateAndWait(tab.view.webContents, () =>
+        navigateHistory(tab.view.webContents, direction, this.#session.getUserAgent()),
+      );
     });
   }
 
   async reload(tabId: string): Promise<void> {
-    await this.#enqueue(tabId, async (tab) => tab.view.webContents.reload());
+    await this.#enqueue(tabId, async (tab) =>
+      navigateAndWait(tab.view.webContents, () => {
+        tab.view.webContents.reload();
+        return true;
+      }),
+    );
   }
 
   async close(tabId: string): Promise<void> {
@@ -387,10 +394,15 @@ export class BrowserHost {
             break;
           case "back":
           case "forward":
-            navigateHistory(tab.view.webContents, action.type, this.#session.getUserAgent());
+            await navigateAndWait(tab.view.webContents, () =>
+              navigateHistory(tab.view.webContents, action.type, this.#session.getUserAgent()),
+            );
             break;
           case "reload":
-            tab.view.webContents.reload();
+            await navigateAndWait(tab.view.webContents, () => {
+              tab.view.webContents.reload();
+              return true;
+            });
         }
         await tab.engine.settle();
         tab.diagnostics.action({
@@ -498,6 +510,7 @@ export class BrowserHost {
           const url = optionalString(args, "url", INPUT_LIMITS.browserUrl);
           const direction = optionalEnum(args, "direction", ["back", "forward", "reload"] as const);
           if (!url && !direction) throw new Error("navigate requires url or direction.");
+          const timeoutMs = readTimeout(args, 30_000);
           return textResult(
             await this.#runAction(
               tabId,
@@ -512,12 +525,23 @@ export class BrowserHost {
                   );
                   await tab.view.webContents.loadURL(normalizedUrl, browserLoadOptions());
                 } else if (direction === "reload") {
-                  tab.view.webContents.reload();
+                  await navigateAndWait(
+                    tab.view.webContents,
+                    () => {
+                      tab.view.webContents.reload();
+                      return true;
+                    },
+                    timeoutMs,
+                  );
                 } else if (direction) {
-                  navigateHistory(tab.view.webContents, direction, this.#session.getUserAgent());
+                  await navigateAndWait(
+                    tab.view.webContents,
+                    () => navigateHistory(tab.view.webContents, direction, this.#session.getUserAgent()),
+                    timeoutMs,
+                  );
                 }
               },
-              readTimeout(args, 30_000),
+              timeoutMs,
             ),
           );
         }
@@ -663,10 +687,21 @@ export class BrowserHost {
           };
           if (!condition.target && !condition.text && !condition.url && !condition.state)
             throw new Error("wait_for requires a condition.");
+          const timeoutMs = readTimeout(args, 30_000);
           return textResult(
             await this.#enqueue(tabId, async (tab, keepQueueBlocked) => {
-              await tab.engine.waitFor(condition, readTimeout(args, 30_000));
-              return (await this.#readSnapshot(tab, tab.revision + 1, keepQueueBlocked)).snapshot;
+              const timeoutMessage = "Browser wait condition timed out.";
+              const deadline = Date.now() + timeoutMs;
+              await tab.engine.waitFor(condition, remainingTime(deadline, timeoutMessage));
+              return (
+                await this.#readSnapshot(
+                  tab,
+                  tab.revision + 1,
+                  keepQueueBlocked,
+                  remainingTime(deadline, timeoutMessage),
+                  timeoutMessage,
+                )
+              ).snapshot;
             }),
           );
         }
@@ -1003,7 +1038,7 @@ export class BrowserHost {
       const response = withTimeout(operationCompletion, remainingTime(deadline, timeoutMessage), timeoutMessage)
         .then(async () => {
           const settleTimeout = remainingTime(deadline, timeoutMessage);
-          const settleCompletion = tab.engine.settle(Math.min(settleTimeout, 10_000));
+          const settleCompletion = tab.engine.settle(settleTimeout);
           snapshotDrains.push(settleCompletion);
           await withTimeout(settleCompletion, settleTimeout, timeoutMessage);
           const snapshotTimeout = remainingTime(deadline, timeoutMessage);
@@ -1709,14 +1744,75 @@ function optionalStringArray(value: DynamicRecord, key: string, maximum: number)
   return requiredStringArray(value, key, maximum, 64);
 }
 
-function navigateHistory(contents: WebContents, direction: BrowserNavigationDirection, sessionUserAgent: string): void {
+function navigateHistory(
+  contents: WebContents,
+  direction: BrowserNavigationDirection,
+  sessionUserAgent: string,
+): boolean {
   const history = contents.navigationHistory;
   const offset = direction === "back" ? -1 : 1;
-  if (!history.canGoToOffset(offset)) return;
+  if (!history.canGoToOffset(offset)) return false;
   const entry = history.getEntryAtIndex(history.getActiveIndex() + offset);
-  if (!entry?.url) return;
+  if (!entry?.url) return false;
   contents.setUserAgent(embeddedBrowserUserAgentForUrl(sessionUserAgent, entry.url));
   history.goToOffset(offset);
+  return true;
+}
+
+async function navigateAndWait(contents: WebContents, initiate: () => boolean, timeoutMs = 10_000): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let started = false;
+    let inPlace = false;
+    let timer: NodeJS.Timeout;
+    const cleanup = () => {
+      clearTimeout(timer);
+      contents.off("did-start-navigation", didStartNavigation);
+      contents.off("did-stop-loading", didStopLoading);
+      contents.off("did-navigate-in-page", didNavigateInPage);
+      contents.off("did-fail-load", didFailLoad);
+      contents.off("destroyed", destroyed);
+    };
+    const complete = () => {
+      cleanup();
+      resolve();
+    };
+    const didStartNavigation = (_event: unknown, _url: string, isInPlace: boolean, isMainFrame: boolean) => {
+      if (!isMainFrame) return;
+      started = true;
+      inPlace = isInPlace;
+    };
+    const didStopLoading = () => {
+      if (started && !inPlace) complete();
+    };
+    const didNavigateInPage = (_event: unknown, _url: string, isMainFrame: boolean) => {
+      if (started && inPlace && isMainFrame) complete();
+    };
+    const didFailLoad = (_event: unknown, code: number, description: string, _url: string, isMainFrame: boolean) => {
+      if (!started || !isMainFrame) return;
+      cleanup();
+      reject(new Error(`Navigation failed (${code}): ${description}`));
+    };
+    const destroyed = () => {
+      cleanup();
+      reject(new Error("Browser tab was closed during navigation."));
+    };
+    contents.on("did-start-navigation", didStartNavigation);
+    contents.on("did-stop-loading", didStopLoading);
+    contents.on("did-navigate-in-page", didNavigateInPage);
+    contents.on("did-fail-load", didFailLoad);
+    contents.once("destroyed", destroyed);
+    timer = setTimeout(() => {
+      cleanup();
+      reject(new Error("Navigation timed out."));
+    }, timeoutMs);
+    timer.unref();
+    try {
+      if (!initiate()) complete();
+    } catch (error) {
+      cleanup();
+      reject(error);
+    }
+  });
 }
 
 function parseAction(value: unknown): BrowserAction {

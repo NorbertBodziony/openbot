@@ -8,6 +8,7 @@ import { BrowserHost } from "../src/backend/browser-host";
 import { type DynamicToolResult, getString } from "../src/backend/protocol";
 
 let cachedPageVersion = 1;
+let slowDocumentVersion = 0;
 let browserToolCall = 0;
 
 interface PersistenceSnapshot {
@@ -79,9 +80,14 @@ const server = createServer((request, response) => {
     return;
   }
   if (url.pathname === "/slow-document") {
+    slowDocumentVersion += 1;
+    const version = slowDocumentVersion;
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.write("<!doctype html><main>loading</main>");
-    setTimeout(() => response.end("<script>document.querySelector('main').textContent='ready'</script>"), 250);
+    setTimeout(
+      () => response.end(`<script>document.querySelector('main').textContent='ready:${version}'</script>`),
+      250,
+    );
     return;
   }
   if (url.pathname === "/v2") {
@@ -464,6 +470,14 @@ async function main(): Promise<void> {
     ) {
       throw new Error("V2 semantic wait did not enforce its collection deadline.");
     }
+    const boundedWaitSnapshot = await callBrowserTool(browser, "wait_for", {
+      tabId: v2Tab.id,
+      url: "/v2",
+      timeoutMs: 5,
+    });
+    if (boundedWaitSnapshot.success || !toolError(boundedWaitSnapshot).includes("timed out")) {
+      throw new Error("V2 wait snapshot did not share the condition deadline.");
+    }
     const largeTargetCleanup = await callBrowserTool(browser, "evaluate", {
       tabId: v2Tab.id,
       expression: "document.querySelector('[data-bulk-targets]').remove(); true",
@@ -767,6 +781,17 @@ async function main(): Promise<void> {
     const queuedSnapshot = await callBrowserTool(browser, "snapshot", { tabId: waitTab.id });
     if (!queuedSnapshot.success || Date.now() - queuedSnapshotStartedAt < 150) {
       throw new Error("V2 timed-out navigation escaped tab serialization.");
+    }
+    const beforeReloadText = String(toolTextPayload(queuedSnapshot)?.text);
+    const reloadStartedAt = Date.now();
+    const reloaded = await callBrowserTool(browser, "navigate", {
+      tabId: waitTab.id,
+      direction: "reload",
+      timeoutMs: 2_000,
+    });
+    const reloadedText = String(toolTextPayload(reloaded)?.text);
+    if (!reloaded.success || reloadedText === beforeReloadText || Date.now() - reloadStartedAt < 150) {
+      throw new Error(`V2 reload snapshot did not wait for the new document: ${toolError(reloaded)}`);
     }
     const boundedTab = await browser.open(origin, "smoke-thread", "smoke-bot");
     const largeDom = await callBrowserTool(browser, "evaluate", {
