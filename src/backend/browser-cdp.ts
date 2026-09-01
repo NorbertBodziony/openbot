@@ -74,6 +74,8 @@ export class BrowserCdpEngine {
   #evaluationContextId: number | null = null;
   #evaluationFrameId: string | null = null;
   #navigationGeneration = 0;
+  #retainDebugger = false;
+  #ownsDebugger = false;
   readonly #targetSessions = new Map<string, { sessionId: string; url: string }>();
 
   constructor(contents: WebContents) {
@@ -427,9 +429,24 @@ export class BrowserCdpEngine {
 
   async setEnvironment(environment: BrowserEnvironment): Promise<void> {
     this.#environment = environment;
-    await this.#lease(async (send) => {
-      await this.#applyEnvironment(send, environment);
-    });
+    this.#retainDebugger = true;
+    try {
+      await this.#lease(async (send) => {
+        await this.#applyEnvironment(send, environment);
+      });
+    } catch (error) {
+      this.#retainDebugger = false;
+      this.#detachOwnedDebugger();
+      throw error;
+    }
+  }
+
+  destroy(): void {
+    this.#retainDebugger = false;
+    this.#detachOwnedDebugger();
+    this.#targetSessions.clear();
+    this.#targets.clear();
+    this.#lastSnapshot = null;
   }
 
   async waitFor(
@@ -530,26 +547,19 @@ export class BrowserCdpEngine {
       };
     }
     if (target.kind === "css") {
-      const expression = `(() => {
-        const visit = root => {
-          const direct = root.querySelector(${JSON.stringify(target.selector)}); if (direct) return direct;
-          for (const node of root.querySelectorAll('*')) { if (node.shadowRoot) { const found = visit(node.shadowRoot); if (found) return found; } }
-          return null;
-        }; return visit(document);
-      })()`;
-      const result = await send("Runtime.evaluate", { expression, returnByValue: false });
-      const remote = recordValue(result.result);
-      const objectId = stringValue(remote?.objectId);
-      if (!objectId || remote?.subtype === "null")
-        throw new Error(`No element matches CSS selector: ${target.selector}`);
-      const node = await send("DOM.requestNode", { objectId });
-      const backendNodeId = numberValue(node.backendNodeId);
-      const nodeId = numberValue(node.nodeId);
-      if (backendNodeId) return { backendNodeId, x: 0, y: 0 };
-      if (!nodeId) throw new Error(`Unable to resolve CSS selector: ${target.selector}`);
-      const described = await send("DOM.describeNode", { nodeId });
-      const describedNode = recordValue(described.node);
-      return { backendNodeId: numberValue(describedNode?.backendNodeId), x: 0, y: 0 };
+      const objectId = await uniqueCssObjectId(send, target.selector);
+      try {
+        const node = await send("DOM.requestNode", { objectId });
+        const backendNodeId = numberValue(node.backendNodeId);
+        const nodeId = numberValue(node.nodeId);
+        if (backendNodeId) return { backendNodeId, x: 0, y: 0 };
+        if (!nodeId) throw new Error(`Unable to resolve CSS selector: ${target.selector}`);
+        const described = await send("DOM.describeNode", { nodeId });
+        const describedNode = recordValue(described.node);
+        return { backendNodeId: numberValue(describedNode?.backendNodeId), x: 0, y: 0 };
+      } finally {
+        await send("Runtime.releaseObject", { objectId }).catch(() => undefined);
+      }
     }
     const candidates = [...this.#targets.values()].filter(({ element }) => {
       if (target.kind === "role") {
@@ -596,25 +606,49 @@ export class BrowserCdpEngine {
     const model = recordValue(box.model);
     const quad = Array.isArray(model?.content) ? model.content.filter(isFiniteNumber) : [];
     if (quad.length < 8) throw new Error("Element has no visible clickable bounds.");
-    const x = (quad[0] + quad[2] + quad[4] + quad[6]) / 4;
-    const y = (quad[1] + quad[3] + quad[5] + quad[7]) / 4;
-    if (hitTest) {
+    const metrics = await send("Page.getLayoutMetrics", {}, sessionId);
+    const viewport = recordValue(metrics.cssLayoutViewport);
+    const viewportWidth = numberValue(viewport?.clientWidth);
+    const viewportHeight = numberValue(viewport?.clientHeight);
+    const xs = [quad[0], quad[2], quad[4], quad[6]];
+    const ys = [quad[1], quad[3], quad[5], quad[7]];
+    const left = Math.max(0, Math.min(...xs));
+    const right = Math.min(viewportWidth - 1, Math.max(...xs));
+    const top = Math.max(0, Math.min(...ys));
+    const bottom = Math.min(viewportHeight - 1, Math.max(...ys));
+    if (viewportWidth <= 0 || viewportHeight <= 0 || right < left || bottom < top) {
+      throw new Error("Element has no visible clickable bounds.");
+    }
+    const insetX = Math.min(4, Math.max(0, (right - left) / 4));
+    const insetY = Math.min(4, Math.max(0, (bottom - top) / 4));
+    const points = uniquePoints([
+      { x: (left + right) / 2, y: (top + bottom) / 2 },
+      { x: left + insetX, y: top + insetY },
+      { x: right - insetX, y: top + insetY },
+      { x: left + insetX, y: bottom - insetY },
+      { x: right - insetX, y: bottom - insetY },
+    ]);
+    if (!hitTest) return { ...points[0], sessionId };
+    let blockerId = 0;
+    for (const point of points) {
       const hit = await send(
         "DOM.getNodeForLocation",
-        { x: Math.round(x), y: Math.round(y), includeUserAgentShadowDOM: true },
+        { x: Math.round(point.x), y: Math.round(point.y), includeUserAgentShadowDOM: true },
         sessionId,
       );
       const hitId = numberValue(hit.backendNodeId);
-      if (hitId && !(await isNodeOrDescendant(send, hitId, backendNodeId, sessionId))) {
-        const blocker = await send("DOM.describeNode", { backendNodeId: hitId, depth: 0 }, sessionId);
-        const node = recordValue(blocker.node);
-        const name = stringValue(node?.nodeName).toLowerCase() || "element";
-        throw new Error(
-          `Target is covered by ${name} (backendNodeId ${hitId}). Dismiss the covering layer or choose a visible point.`,
-        );
+      if (hitId && (await isNodeOrDescendant(send, hitId, backendNodeId, sessionId))) {
+        return { ...point, sessionId };
       }
+      blockerId ||= hitId;
     }
-    return { x, y, sessionId };
+    if (!blockerId) throw new Error("Element has no visible clickable point.");
+    const blocker = await send("DOM.describeNode", { backendNodeId: blockerId, depth: 0 }, sessionId);
+    const node = recordValue(blocker.node);
+    const name = stringValue(node?.nodeName).toLowerCase() || "element";
+    throw new Error(
+      `Target is covered by ${name} (backendNodeId ${blockerId}). Dismiss the covering layer or choose a visible point.`,
+    );
   }
 
   async #callOnNode(
@@ -670,7 +704,10 @@ export class BrowserCdpEngine {
   async #lease<T>(operation: (send: SendCommand) => Promise<T>): Promise<T> {
     if (this.#contents.isDestroyed()) throw new Error("Browser tab was closed.");
     const attachedHere = !this.#contents.debugger.isAttached();
-    if (attachedHere) this.#contents.debugger.attach("1.3");
+    if (attachedHere) {
+      this.#contents.debugger.attach("1.3");
+      this.#ownsDebugger = true;
+    }
     const send: SendCommand = async (method, params = {}, sessionId) => {
       const result = await this.#contents.debugger.sendCommand(method, params, sessionId);
       if (!isDynamicRecord(result)) throw new Error(`CDP ${method} returned an invalid result.`);
@@ -687,8 +724,15 @@ export class BrowserCdpEngine {
       if (this.#environment) await this.#applyEnvironment(send, this.#environment);
       return await operation(send);
     } finally {
-      if (attachedHere && this.#contents.debugger.isAttached()) this.#contents.debugger.detach();
+      if (attachedHere && !this.#retainDebugger) this.#detachOwnedDebugger();
     }
+  }
+
+  #detachOwnedDebugger(): void {
+    if (!this.#ownsDebugger) return;
+    this.#ownsDebugger = false;
+    if (this.#contents.isDestroyed() || !this.#contents.debugger.isAttached()) return;
+    this.#contents.debugger.detach();
   }
 
   async #applyEnvironment(send: SendCommand, environment: BrowserEnvironment): Promise<void> {
@@ -891,6 +935,56 @@ async function pageContainsText(send: SendCommand, captures: SnapshotTarget[], t
     if (recordValue(result?.result)?.value === true) return true;
   }
   return false;
+}
+
+async function uniqueCssObjectId(send: SendCommand, selector: string): Promise<string> {
+  const collection = await send("Runtime.evaluate", {
+    expression: `(() => {
+      const selector = ${JSON.stringify(selector)};
+      const roots = [document];
+      const seen = new Set();
+      const matches = [];
+      let scanned = 0;
+      while (roots.length && scanned < ${MAX_SNAPSHOT_SCANNED_NODES} && matches.length < 2) {
+        const root = roots.shift();
+        if (!root || seen.has(root)) continue;
+        seen.add(root);
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+        let node;
+        while ((node = walker.nextNode()) && scanned < ${MAX_SNAPSHOT_SCANNED_NODES} && matches.length < 2) {
+          scanned++;
+          if (node.matches(selector)) matches.push(node);
+          if (node.shadowRoot) roots.push(node.shadowRoot);
+        }
+      }
+      return matches;
+    })()`,
+    returnByValue: false,
+  });
+  const exception = recordValue(collection.exceptionDetails);
+  if (exception) throw new Error(exceptionDescription(exception));
+  const collectionId = stringValue(recordValue(collection.result)?.objectId);
+  if (!collectionId) throw new Error(`No element matches CSS selector: ${selector}`);
+  try {
+    const lengthResult = await send("Runtime.callFunctionOn", {
+      objectId: collectionId,
+      functionDeclaration: "function() { return this.length; }",
+      returnByValue: true,
+    });
+    const length = numberValue(recordValue(lengthResult.result)?.value);
+    if (length === 0) throw new Error(`No element matches CSS selector: ${selector}`);
+    if (length > 1) throw new Error(`CSS selector is ambiguous (at least 2 matches): ${selector}`);
+    const element = await send("Runtime.callFunctionOn", {
+      objectId: collectionId,
+      functionDeclaration: "function() { return this[0]; }",
+      returnByValue: false,
+    });
+    const objectId = stringValue(recordValue(element.result)?.objectId);
+    if (!objectId) throw new Error(`Unable to resolve CSS selector: ${selector}`);
+    return objectId;
+  } finally {
+    await send("Runtime.releaseObject", { objectId: collectionId }).catch(() => undefined);
+  }
 }
 
 async function collectActionableNodes(
@@ -1107,6 +1201,16 @@ function modifierMask(values: string[]) {
   return result;
 }
 
+function uniquePoints(points: Array<{ x: number; y: number }>): Array<{ x: number; y: number }> {
+  const seen = new Set<string>();
+  return points.filter((point) => {
+    const key = `${Math.round(point.x)}:${Math.round(point.y)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 async function isNodeOrDescendant(
   send: SendCommand,
   candidate: number,
@@ -1160,20 +1264,32 @@ function waitForLoading(contents: WebContents, timeoutMs: number): Promise<void>
 
 async function waitForDomQuiet(send: SendCommand, timeoutMs: number): Promise<void> {
   if (timeoutMs <= 0) throw new Error("DOM did not become quiet.");
-  await withTimeout(
-    send("Runtime.evaluate", {
-      expression: `new Promise(resolve => {
-      let timer; const done = () => { observer.disconnect(); resolve(true); };
-      const observer = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(done, 120); });
+  const deadlineMs = Math.max(1, Math.floor(timeoutMs));
+  const result = await send("Runtime.evaluate", {
+    expression: `new Promise(resolve => {
+      let quietTimer;
+      let deadlineTimer;
+      let completed = false;
+      const done = value => {
+        if (completed) return;
+        completed = true;
+        clearTimeout(quietTimer);
+        clearTimeout(deadlineTimer);
+        observer.disconnect();
+        resolve(value);
+      };
+      const observer = new MutationObserver(() => {
+        clearTimeout(quietTimer);
+        quietTimer = setTimeout(() => done(true), 120);
+      });
       observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
-      timer = setTimeout(done, 120);
+      quietTimer = setTimeout(() => done(true), 120);
+      deadlineTimer = setTimeout(() => done(false), ${deadlineMs});
     })`,
-      awaitPromise: true,
-      returnByValue: true,
-    }),
-    timeoutMs,
-    "DOM did not become quiet.",
-  );
+    awaitPromise: true,
+    returnByValue: true,
+  });
+  if (recordValue(result.result)?.value !== true) throw new Error("DOM did not become quiet.");
 }
 
 function waitForPageSignal(contents: WebContents, timeoutMs: number): Promise<void> {

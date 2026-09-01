@@ -42,6 +42,7 @@ import { isRecord } from "./protocol";
 interface BrowserHostEvents {
   changed: [tabs: BrowserTab[], activeTabId: string | null];
   controlChanged: [state: BrowserControlState];
+  documentChanged: [tabId: string];
 }
 
 interface BrowserDynamicToolHooks {
@@ -118,6 +119,7 @@ export class BrowserHost {
   readonly #tabs = new Map<string, InternalTab>();
   readonly #listeners = new Set<(...args: BrowserHostEvents["changed"]) => void>();
   readonly #controlListeners = new Set<(...args: BrowserHostEvents["controlChanged"]) => void>();
+  readonly #documentListeners = new Set<(...args: BrowserHostEvents["documentChanged"]) => void>();
   readonly #controlSessions = new Map<string, BrowserControlSession>();
   readonly #controlTimers = new Map<string, NodeJS.Timeout>();
   readonly #reservedDownloadPaths = new Set<string>();
@@ -192,6 +194,11 @@ export class BrowserHost {
   onControlChanged(listener: (...args: BrowserHostEvents["controlChanged"]) => void): () => void {
     this.#controlListeners.add(listener);
     return () => this.#controlListeners.delete(listener);
+  }
+
+  onDocumentChanged(listener: (...args: BrowserHostEvents["documentChanged"]) => void): () => void {
+    this.#documentListeners.add(listener);
+    return () => this.#documentListeners.delete(listener);
   }
 
   getControlState(): BrowserControlState {
@@ -283,6 +290,7 @@ export class BrowserHost {
       if (this.#tabs.get(tab.id) === tab) {
         this.#unmountView(tab.view);
         this.#tabs.delete(tab.id);
+        tab.engine.destroy();
         tab.view.webContents.close();
         if (this.#activeTabId === tab.id) {
           this.#activeTabId = this.#tabs.keys().next().value ?? null;
@@ -322,6 +330,7 @@ export class BrowserHost {
     const closedIndex = tabIds.indexOf(tabId);
     this.#unmountView(tab.view);
     this.#tabs.delete(tabId);
+    tab.engine.destroy();
     tab.view.webContents.close();
 
     if (this.#activeTabId === tabId) {
@@ -729,12 +738,14 @@ export class BrowserHost {
     this.#session.flushStorageData();
     for (const tab of this.#tabs.values()) {
       this.#unmountView(tab.view);
+      tab.engine.destroy();
       tab.view.webContents.close();
     }
     this.#tabs.clear();
     this.#listeners.clear();
     this.clearControls();
     this.#controlListeners.clear();
+    this.#documentListeners.clear();
     this.#session.flushStorageData();
     await Promise.all([this.#session.cookies.flushStore(), statePersistence, recorderDestruction]);
   }
@@ -837,6 +848,10 @@ export class BrowserHost {
   #bindTabEvents(tab: InternalTab): void {
     const contents = tab.view.webContents;
     const changed = () => this.#emitChanged();
+    contents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+      if (isInPlace || !isMainFrame) return;
+      for (const listener of this.#documentListeners) listener(tab.id);
+    });
     contents.on("before-input-event", (event, input) => {
       if (isToggleDevToolsShortcut(input)) {
         event.preventDefault();

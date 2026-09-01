@@ -93,6 +93,7 @@ const server = createServer((request, response) => {
       <div contenteditable="true" role="textbox" aria-label="Notes"></div>
       <button aria-label="Duplicate">One</button><button aria-label="Duplicate">Two</button>
       <span style="position:relative;display:inline-block"><button aria-label="Covered">Covered</button><span style="position:absolute;inset:0;z-index:2" aria-hidden="true"></span></span>
+      <span style="position:relative;display:inline-block"><button style="width:200px" aria-label="Partially covered" onclick="document.querySelector('output').textContent='partial:' + event.isTrusted">Partially covered</button><span style="position:absolute;left:70px;right:70px;top:0;bottom:0;z-index:2" aria-hidden="true"></span></span>
       <button aria-label="SPA" onclick="setTimeout(() => { history.pushState({}, '', '/v2#done'); document.querySelector('output').textContent='SPA done'; }, 20)">SPA</button>
       <button draggable="true" aria-label="Drag source">Drag source</button><button aria-label="Drop target" ondragover="event.preventDefault()" ondrop="event.preventDefault();document.querySelector('output').textContent='drag:' + event.isTrusted">Drop target</button>
       <input type="file" aria-label="Files" onchange="document.querySelector('output').textContent=this.files[0]?.name || ''" />
@@ -203,6 +204,10 @@ async function main(): Promise<void> {
     process.stdout.write("BrowserHost: snapshot and actions passed.\n");
 
     const v2Tab = await browser.open(`${origin}/v2`, "smoke-thread", "smoke-bot");
+    const v2Contents = webContents
+      .getAllWebContents()
+      .find((contents) => !contents.isDestroyed() && contents.getURL().startsWith(`${origin}/v2`));
+    if (!v2Contents) throw new Error("V2 web contents were not available.");
     const v2SnapshotResult = await callBrowserTool(browser, "snapshot", { tabId: v2Tab.id, image: "auto" });
     const v2Snapshot = toolTextPayload(v2SnapshotResult);
     if (!v2SnapshotResult.success || !isDynamicRecord(v2Snapshot) || !Array.isArray(v2Snapshot.elements)) {
@@ -332,12 +337,26 @@ async function main(): Promise<void> {
     if (ambiguous.success || !toolError(ambiguous).includes("Candidates:")) {
       throw new Error("V2 semantic locator did not reject an ambiguous target.");
     }
+    const ambiguousCss = await callBrowserTool(browser, "click", {
+      tabId: v2Tab.id,
+      target: { kind: "css", selector: 'button[aria-label="Duplicate"]' },
+    });
+    if (ambiguousCss.success || !toolError(ambiguousCss).includes("CSS selector is ambiguous")) {
+      throw new Error("V2 CSS locator did not reject an ambiguous target.");
+    }
     const covered = await callBrowserTool(browser, "click", {
       tabId: v2Tab.id,
       target: { kind: "role", role: "button", name: "Covered", exact: true },
     });
     if (covered.success || !toolError(covered).includes("covered by")) {
       throw new Error("V2 hit testing did not identify a covering page layer.");
+    }
+    const partiallyCovered = await callBrowserTool(browser, "click", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "button", name: "Partially covered", exact: true },
+    });
+    if (!partiallyCovered.success || !String(toolTextPayload(partiallyCovered)?.text).includes("partial:true")) {
+      throw new Error(`V2 hit testing did not use a visible target point: ${toolError(partiallyCovered)}`);
     }
     const canvasPoint = await callBrowserTool(browser, "evaluate", {
       tabId: v2Tab.id,
@@ -403,6 +422,24 @@ async function main(): Promise<void> {
     if (toolTextPayload(sharedEvaluationWorld)?.result !== true) {
       throw new Error("V2 evaluation did not reuse its isolated world.");
     }
+    await v2Contents.executeJavaScript(
+      `(() => {
+      globalThis.__openbotOriginalMutationObserver = MutationObserver;
+      globalThis.__openbotActiveObservers = 0;
+      globalThis.MutationObserver = class extends MutationObserver {
+        #observing = false;
+        observe(...args) {
+          if (!this.#observing) { this.#observing = true; globalThis.__openbotActiveObservers += 1; }
+          return super.observe(...args);
+        }
+        disconnect() {
+          if (this.#observing) { this.#observing = false; globalThis.__openbotActiveObservers -= 1; }
+          return super.disconnect();
+        }
+      };
+    })()`,
+      true,
+    );
     const quietWait = await callBrowserTool(browser, "wait_for", {
       tabId: v2Tab.id,
       state: "dom-quiet",
@@ -411,6 +448,12 @@ async function main(): Promise<void> {
     if (quietWait.success || !toolError(quietWait).includes("DOM did not become quiet")) {
       throw new Error("V2 DOM-quiet wait suppressed its timeout.");
     }
+    const activeObservers = await v2Contents.executeJavaScript("globalThis.__openbotActiveObservers", true);
+    if (activeObservers !== 0) throw new Error("V2 DOM-quiet timeout left a MutationObserver active.");
+    await v2Contents.executeJavaScript(
+      "globalThis.MutationObserver = globalThis.__openbotOriginalMutationObserver; delete globalThis.__openbotOriginalMutationObserver; delete globalThis.__openbotActiveObservers;",
+      true,
+    );
     const stoppedNoise = await callBrowserTool(browser, "evaluate", {
       tabId: v2Tab.id,
       expression: "clearInterval(globalThis.__openbotNoise); delete globalThis.__openbotNoise; true",
@@ -467,6 +510,18 @@ async function main(): Promise<void> {
       environmentSnapshot.viewport.width !== 390
     ) {
       throw new Error(`V2 environment emulation failed: ${toolError(environment)}`);
+    }
+    const persistentEnvironment = await v2Contents?.executeJavaScript(
+      "({ width: innerWidth, dark: matchMedia('(prefers-color-scheme: dark)').matches, reduced: matchMedia('(prefers-reduced-motion: reduce)').matches })",
+      true,
+    );
+    if (
+      !isDynamicRecord(persistentEnvironment) ||
+      persistentEnvironment.width !== 390 ||
+      persistentEnvironment.dark !== true ||
+      persistentEnvironment.reduced !== true
+    ) {
+      throw new Error("V2 environment emulation did not persist between CDP operations.");
     }
     if (!Array.isArray(environmentSnapshot.diagnostics) || environmentSnapshot.diagnostics.length === 0) {
       throw new Error("V2 snapshot omitted diagnostics.");

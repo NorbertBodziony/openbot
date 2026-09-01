@@ -710,6 +710,11 @@ describe.sequential("AgentService", () => {
     const stagedContents: string[] = [];
     const delayedUpload: { complete?: () => void; completion?: Promise<void> } = {};
     const browser = fakeBrowser();
+    let documentChanged: (tabId: string) => void = (_tabId) => undefined;
+    browser.onDocumentChanged = (listener) => {
+      documentChanged = listener;
+      return () => undefined;
+    };
     browser.handleDynamicTool = async (params, hooks) => {
       if (
         params.tool === "upload_files" &&
@@ -831,6 +836,48 @@ describe.sequential("AgentService", () => {
     await expect(readFile(stagedPaths[1], "utf8")).resolves.toBe("second upload");
     await expect(readFile(stagedPaths[2], "utf8")).resolves.toBe("replacement upload");
 
+    for (let index = 0; index < 8; index++) {
+      const id = `browser-upload-extra-${index}`;
+      client.emit("request", {
+        method: "item/tool/call",
+        id,
+        params: {
+          threadId: providerThreadId,
+          turnId: "turn-browser-upload",
+          callId: id,
+          namespace: "openbot_browser",
+          tool: "upload_files",
+          arguments: {
+            tabId: "tab",
+            target: { kind: "css", selector: `#extra-${index}` },
+            paths: [replacementUploadPath],
+          },
+        },
+      });
+      await waitFor(() => client.responses.some((response) => response.id === id));
+    }
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "browser-upload-overflow",
+      params: {
+        threadId: providerThreadId,
+        turnId: "turn-browser-upload",
+        callId: "browser-upload-overflow",
+        namespace: "openbot_browser",
+        tool: "upload_files",
+        arguments: {
+          tabId: "tab",
+          target: { kind: "css", selector: "#overflow" },
+          paths: [replacementUploadPath],
+        },
+      },
+    });
+    await waitFor(() => client.errors.some((response) => response.id === "browser-upload-overflow"));
+    expect(client.errors.find((response) => response.id === "browser-upload-overflow")?.error.message).toContain(
+      "up to 10 inputs",
+    );
+
     client.emit("request", {
       method: "item/tool/call",
       id: "browser-upload-denied",
@@ -848,7 +895,13 @@ describe.sequential("AgentService", () => {
     expect(client.errors.find((response) => response.id === "browser-upload-denied")?.error.message).toContain(
       "workspace or the OpenBot shared directory",
     );
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(11);
+    documentChanged("tab");
+    await waitFor(async () =>
+      (await Promise.allSettled(stagedPaths.slice(1).map((path) => readFile(path)))).every(
+        (result) => result.status === "rejected",
+      ),
+    );
     await service.stop();
     await expect(readFile(stagedPaths[1])).rejects.toThrow();
     await expect(readFile(stagedPaths[2])).rejects.toThrow();
@@ -4073,6 +4126,7 @@ function stores(): { store: BotStore; mailbox: MailboxStore } {
 function fakeBrowser(tabs: BrowserTab[] = []) {
   return {
     onChanged: (_listener: (tabs: BrowserTab[], activeTabId: string | null) => void) => () => undefined,
+    onDocumentChanged: (_listener: (tabId: string) => void) => () => undefined,
     onControlChanged: (_listener: (state: BrowserControlState) => void) => () => undefined,
     clearControls: () => undefined,
     endControl: () => undefined,

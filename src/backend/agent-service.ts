@@ -145,6 +145,7 @@ export interface ResolvedSharedFile {
 
 interface AgentBrowserHost {
   onChanged(listener: (tabs: BrowserTab[], activeTabId: string | null) => void): () => void;
+  onDocumentChanged(listener: (tabId: string) => void): () => void;
   onControlChanged(listener: (state: BrowserControlState) => void): () => void;
   clearControls(): void;
   endControl(threadId: string, turnId: string): void;
@@ -214,6 +215,11 @@ interface OpenBotToolResponse {
   contentItems: Array<{ type: "inputText"; text: string }>;
 }
 
+interface BrowserUploadRoot {
+  path: string;
+  bytes: number;
+}
+
 export interface RoutineMutationOptions {
   recordConversationEvent?: boolean;
   turnId?: string;
@@ -223,6 +229,8 @@ const MCP_ELICITATION_DECISION_ID = "mcp-elicitation-decision";
 const MCP_ELICITATION_ALLOW_ONCE = "Allow once";
 const MCP_ELICITATION_ALLOW_ALWAYS = "Always allow";
 const MCP_ELICITATION_DECLINE = "Don't allow";
+const MAX_BROWSER_UPLOAD_INPUTS_PER_TAB = 10;
+const MAX_BROWSER_UPLOAD_BYTES_PER_TAB = ATTACHMENT_LIMITS.totalBytes;
 
 interface PendingCodexLogin {
   client: AgentClient;
@@ -374,7 +382,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #pendingDeltas = new Map<string, PendingDelta>();
   readonly #pendingMemoryMutations = new Map<string, PendingMemoryMutation[]>();
   readonly #responseAttachmentCommands = new Map<string, Promise<OpenBotToolResponse>>();
-  readonly #browserUploadRoots = new Map<string, Map<string, string>>();
+  readonly #browserUploadRoots = new Map<string, Map<string, BrowserUploadRoot>>();
   readonly #memoryEpochs = new Map<string, number>();
   #routineTimer: NodeJS.Timeout | null = null;
   #status: AgentStatus = structuredClone(INITIAL_STATUS);
@@ -423,10 +431,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const currentTabIds = new Set(tabs.map((tab) => tab.id));
       for (const [tabId, roots] of this.#browserUploadRoots) {
         if (currentTabIds.has(tabId)) continue;
-        this.#browserUploadRoots.delete(tabId);
-        for (const root of roots.values()) {
-          void rm(root, { recursive: true, force: true }).catch(() => undefined);
-        }
+        this.#discardBrowserUploadRoots(tabId, roots);
       }
       for (const [requestId, pending] of this.#pendingBrowserTakeovers) {
         if (!tabs.some((tab) => tab.id === pending.request.tabId)) {
@@ -435,6 +440,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       this.#emit({ type: "browser-changed", tabs, activeTabId });
     });
+    this.#browser.onDocumentChanged((tabId) => this.#discardBrowserUploadRoots(tabId));
     this.#browser.onControlChanged((state) => {
       this.#emit({ type: "browser-control-changed", state });
     });
@@ -1029,7 +1035,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#imageGenerationOperations.clear();
     await Promise.allSettled([...this.#responseAttachmentCommands.values()]);
     this.#responseAttachmentCommands.clear();
-    const browserUploadRoots = [...this.#browserUploadRoots.values()].flatMap((roots) => [...roots.values()]);
+    const browserUploadRoots = [...this.#browserUploadRoots.values()].flatMap((roots) =>
+      [...roots.values()].map((root) => root.path),
+    );
     this.#browserUploadRoots.clear();
     await Promise.allSettled(browserUploadRoots.map((root) => rm(root, { recursive: true, force: true })));
     this.#interruptedTurns.clear();
@@ -2722,8 +2730,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (sizes.some((size) => size > ATTACHMENT_LIMITS.fileBytes)) {
         throw new Error(`Each browser upload file must not exceed ${ATTACHMENT_LIMITS.fileBytes} bytes.`);
       }
-      if (sizes.reduce((total, size) => total + size, 0) > ATTACHMENT_LIMITS.totalBytes) {
+      const stagedBytes = sizes.reduce((total, size) => total + size, 0);
+      if (stagedBytes > ATTACHMENT_LIMITS.totalBytes) {
         throw new Error(`Browser upload files must not exceed ${ATTACHMENT_LIMITS.totalBytes} bytes in total.`);
+      }
+      const retainedRoots = this.#browserUploadRoots.get(tabId);
+      const retainedBytes = [...(retainedRoots?.values() ?? [])].reduce((total, root) => total + root.bytes, 0);
+      if ((retainedRoots?.size ?? 0) >= MAX_BROWSER_UPLOAD_INPUTS_PER_TAB) {
+        throw new Error(`A browser tab can retain files for up to ${MAX_BROWSER_UPLOAD_INPUTS_PER_TAB} inputs.`);
+      }
+      if (retainedBytes + stagedBytes > MAX_BROWSER_UPLOAD_BYTES_PER_TAB) {
+        throw new Error(`A browser tab can retain up to ${MAX_BROWSER_UPLOAD_BYTES_PER_TAB} upload bytes.`);
       }
       stagingRoot = await mkdtemp(join(tmpdir(), "openbot-browser-upload-"));
       await chmod(stagingRoot, 0o700);
@@ -2744,12 +2761,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         {
           onUploadAssigned: (inputId) => {
             if (!stagingRoot || this.#stopping) return;
-            const roots = this.#browserUploadRoots.get(tabId) ?? new Map<string, string>();
+            const roots = this.#browserUploadRoots.get(tabId) ?? new Map<string, BrowserUploadRoot>();
             const previousRoot = roots.get(inputId);
-            roots.set(inputId, stagingRoot);
+            roots.set(inputId, { path: stagingRoot, bytes: stagedBytes });
             this.#browserUploadRoots.set(tabId, roots);
             stagingRoot = null;
-            if (previousRoot) void rm(previousRoot, { recursive: true, force: true }).catch(() => undefined);
+            if (previousRoot) void rm(previousRoot.path, { recursive: true, force: true }).catch(() => undefined);
           },
           onUploadOperationStarted: (completion) => {
             uploadState.completion = completion;
@@ -2768,6 +2785,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (uploadState.completion) void uploadState.completion.then(cleanup, cleanup);
         else await cleanup();
       }
+    }
+  }
+
+  #discardBrowserUploadRoots(tabId: string, roots = this.#browserUploadRoots.get(tabId)): void {
+    if (!roots) return;
+    this.#browserUploadRoots.delete(tabId);
+    for (const root of roots.values()) {
+      void rm(root.path, { recursive: true, force: true }).catch(() => undefined);
     }
   }
 
