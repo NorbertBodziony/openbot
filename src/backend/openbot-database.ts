@@ -69,10 +69,11 @@ export interface PendingHostedSiteTerminalEvent {
   createdAt: string;
 }
 
-export interface RunningHostedSiteConversationEvent {
+export interface ActiveHostedSiteConversationEvent {
   botId: string;
   threadId: string;
-  turnId: string | null;
+  turnId: string;
+  createdAt: string;
   event: HostedSiteConversationEvent & { status: "running" };
 }
 
@@ -309,6 +310,10 @@ export class OpenBotDatabase {
     status: Exclude<HostedSiteConversationEventStatus, "running">,
   ): void {
     const commandId = `hosted-site-terminal-pending:${botId}:${operationId}:${status}`;
+    this.#deleteEventsAndReceipt(commandId);
+  }
+
+  #deleteEventsAndReceipt(commandId: string): void {
     const db = this.connection;
     const ownsTransaction = !db.isTransaction;
     if (ownsTransaction) db.exec("BEGIN IMMEDIATE");
@@ -322,48 +327,42 @@ export class OpenBotDatabase {
     }
   }
 
-  runningHostedSiteConversationEvents(): RunningHostedSiteConversationEvent[] {
-    const latest = new Map<
-      string,
-      {
-        botId: string;
-        threadId: string;
-        turnId: string | null;
-        event: HostedSiteConversationEvent;
-      }
-    >();
+  recordActiveHostedSiteConversationEvent(event: ActiveHostedSiteConversationEvent): void {
+    validateActiveHostedSiteConversationEvent(event);
+    this.dispatch(
+      `hosted-site-active:${event.botId}:${event.event.operationId}`,
+      [
+        {
+          aggregateType: "hosted-site-operation",
+          aggregateId: event.botId,
+          eventType: "hosted-site.active",
+          occurredAt: event.createdAt,
+          payload: event,
+        },
+      ],
+      () => null,
+    );
+  }
+
+  deleteActiveHostedSiteConversationEvent(botId: string, operationId: string): void {
+    this.#deleteEventsAndReceipt(`hosted-site-active:${botId}:${operationId}`);
+  }
+
+  activeHostedSiteConversationEvents(): ActiveHostedSiteConversationEvent[] {
+    const active: ActiveHostedSiteConversationEvent[] = [];
     for (const row of databaseRows(
       this.connection
         .prepare(
-          `SELECT thread.agent_id, message.thread_id, message.turn_id, message.message_json
-           FROM projection_thread_messages message
-           JOIN projection_threads thread ON thread.thread_id = message.thread_id
-           WHERE message.item_type LIKE '${HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX}%'
-           ORDER BY message.created_at, message.ordinal, message.message_id`,
+          `SELECT payload_json FROM orchestration_events
+           WHERE aggregate_type = 'hosted-site-operation' AND event_type = 'hosted-site.active'
+           ORDER BY sequence`,
         )
         .all(),
     )) {
-      const message = decodeConversationMessageJson(requiredStringColumn(row, "message_json"));
-      const event = hostedSiteConversationEvent(message);
-      if (!event) continue;
-      const botId = requiredStringColumn(row, "agent_id");
-      latest.set(`${botId}\0${event.operationId}`, {
-        botId,
-        threadId: requiredStringColumn(row, "thread_id"),
-        turnId: optionalStringColumn(row, "turn_id"),
-        event,
-      });
+      const event = activeHostedSiteConversationEventValue(JSON.parse(requiredStringColumn(row, "payload_json")));
+      if (event) active.push(event);
     }
-    return [...latest.values()].flatMap((entry) =>
-      entry.event.status === "running"
-        ? [
-            {
-              ...entry,
-              event: { ...entry.event, status: "running" as const },
-            },
-          ]
-        : [],
-    );
+    return active;
   }
 
   listAgents(): BotSummary[] {
@@ -640,6 +639,47 @@ export class OpenBotDatabase {
         olderCursor: hasOlder && first ? encodePageCursor(conversationRowCursor(first)) : null,
       },
     };
+  }
+
+  supportedConversationCursor(
+    threadId: string,
+    throughMessageId: string | null,
+    options: {
+      excludeRoutineEvents?: boolean;
+      excludeRoutineRunEvents?: boolean;
+      excludeHostedSiteEvents?: boolean;
+    } = {},
+  ): string | null {
+    if (!throughMessageId) return null;
+    const boundary = databaseRow(
+      this.connection
+        .prepare(
+          `SELECT created_at, ordinal, message_id FROM projection_thread_messages
+           WHERE thread_id = ? AND message_id = ?`,
+        )
+        .get(threadId, throughMessageId),
+    );
+    if (!boundary) return null;
+    const createdAt = requiredStringColumn(boundary, "created_at");
+    const ordinal = requiredNumberColumn(boundary, "ordinal");
+    const messageId = requiredStringColumn(boundary, "message_id");
+    const row = databaseRow(
+      this.connection
+        .prepare(
+          `SELECT message_id FROM projection_thread_messages
+           WHERE thread_id = ?
+             AND (created_at, ordinal, message_id) <= (?, ?, ?)
+             ${conversationMarkerSqlFilter(
+               options.excludeRoutineEvents === true,
+               options.excludeRoutineRunEvents === true,
+               options.excludeHostedSiteEvents === true,
+             )}
+           ORDER BY created_at DESC, ordinal DESC, message_id DESC
+           LIMIT 1`,
+        )
+        .get(threadId, createdAt, ordinal, messageId),
+    );
+    return row ? requiredStringColumn(row, "message_id") : null;
   }
 
   searchConversationMessages(
@@ -2170,6 +2210,53 @@ function validatePendingHostedSiteTerminalEvent(event: PendingHostedSiteTerminal
   if (!pendingHostedSiteTerminalEventValue(event)) {
     throw new Error("The pending hosted site terminal event is invalid.");
   }
+}
+
+function validateActiveHostedSiteConversationEvent(event: ActiveHostedSiteConversationEvent): void {
+  if (!activeHostedSiteConversationEventValue(event)) {
+    throw new Error("The active hosted site event is invalid.");
+  }
+}
+
+function activeHostedSiteConversationEventValue(value: unknown): ActiveHostedSiteConversationEvent | null {
+  if (
+    !isDynamicRecord(value) ||
+    !isString(value.botId) ||
+    !value.botId ||
+    !isString(value.threadId) ||
+    !value.threadId ||
+    !isString(value.turnId) ||
+    !value.turnId ||
+    !isString(value.createdAt) ||
+    !isDynamicRecord(value.event) ||
+    (value.event.action !== "publish" && value.event.action !== "replace" && value.event.action !== "delete") ||
+    value.event.status !== "running" ||
+    !isString(value.event.operationId)
+  ) {
+    return null;
+  }
+  const marker = hostedSiteConversationEvent({
+    id: `hosted-site-event:${value.event.operationId}:running`,
+    author: "system",
+    source: "system",
+    text: JSON.stringify({
+      siteId: value.event.siteId,
+      title: value.event.title,
+      hostname: value.event.hostname,
+      url: value.event.url,
+    }),
+    createdAt: value.createdAt,
+    status: "completed",
+    itemType: `hosted-site-event:${value.event.action}:running:${value.event.operationId}`,
+  });
+  if (marker?.status !== "running") return null;
+  return {
+    botId: value.botId,
+    threadId: value.threadId,
+    turnId: value.turnId,
+    createdAt: value.createdAt,
+    event: { ...marker, status: "running" },
+  };
 }
 
 function pendingHostedSiteTerminalEventValue(value: unknown): PendingHostedSiteTerminalEvent | null {

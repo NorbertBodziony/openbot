@@ -7,29 +7,48 @@ import {
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import type { OpenBotDatabase } from "./openbot-database";
 
+export interface ConversationMarkerExclusions {
+  excludeRoutineEvents?: boolean;
+  excludeRoutineRunEvents?: boolean;
+  excludeHostedSiteEvents?: boolean;
+}
+
 export class ConversationReadStore {
   constructor(readonly database: OpenBotDatabase) {}
 
-  listStates(memberId: string, bots: BotSummary[]): Record<string, ConversationReadState> {
-    return Object.fromEntries(bots.map((bot) => [bot.id, this.readStateForThread(memberId, bot.threadId)]));
+  listStates(
+    memberId: string,
+    bots: BotSummary[],
+    options: ConversationMarkerExclusions = {},
+  ): Record<string, ConversationReadState> {
+    return Object.fromEntries(bots.map((bot) => [bot.id, this.readStateForThread(memberId, bot.threadId, options)]));
   }
 
-  readStateForThread(memberId: string, threadId: string | null): ConversationReadState {
+  readStateForThread(
+    memberId: string,
+    threadId: string | null,
+    options: ConversationMarkerExclusions = {},
+  ): ConversationReadState {
     if (!threadId) return emptyReadState();
     const stored = this.#storedCursor(threadId, memberId);
+    let state: ConversationReadState;
     if (stored === undefined) {
       const baseline = this.#migrationCursor(threadId);
       const initialCursor =
         baseline && !this.#messageExists(threadId, baseline) ? this.#latestMessageId(threadId) : baseline;
       this.#saveCursor(threadId, memberId, initialCursor, "initialized");
-      return this.#stateFromDatabase(threadId, initialCursor);
-    }
-    if (stored !== null && !this.#messageExists(threadId, stored)) {
+      state = this.#stateFromDatabase(threadId, initialCursor);
+    } else if (stored !== null && !this.#messageExists(threadId, stored)) {
       const latestMessageId = this.#latestMessageId(threadId);
       this.#saveCursor(threadId, memberId, latestMessageId, "initialized");
-      return this.#stateFromDatabase(threadId, latestMessageId);
+      state = this.#stateFromDatabase(threadId, latestMessageId);
+    } else {
+      state = this.#stateFromDatabase(threadId, stored);
     }
-    return this.#stateFromDatabase(threadId, stored);
+    return {
+      ...state,
+      throughMessageId: this.database.supportedConversationCursor(threadId, state.throughMessageId, options),
+    };
   }
 
   adoptMemberState(sourceMemberId: string, targetMemberId: string): void {

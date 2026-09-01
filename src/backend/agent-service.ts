@@ -102,7 +102,7 @@ import {
   resolveCodexCli,
   resolveGrokCli,
 } from "./cli";
-import { ConversationReadStore } from "./conversation-read-store";
+import { type ConversationMarkerExclusions, ConversationReadStore } from "./conversation-read-store";
 import {
   mergeConversationSnapshots,
   mergeProviderHistory,
@@ -1274,18 +1274,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     memberId: string,
     anchor: ConversationPageAnchor = { type: "latest" },
     limit = 50,
-    options: {
-      excludeRoutineEvents?: boolean;
-      excludeRoutineRunEvents?: boolean;
-      excludeHostedSiteEvents?: boolean;
-    } = {},
+    options: ConversationMarkerExclusions = {},
   ): Promise<ConversationPage> {
     const bot = await this.#store.getOrCreate(botId);
     this.#reconcilePersistedMailboxMessages(bot);
     const page = this.#store.database.readConversationPage(botId, bot.threadId, anchor, limit, options);
     return {
       ...page,
-      readState: this.#conversationReads.readStateForThread(memberId, bot.threadId),
+      readState: this.#conversationReads.readStateForThread(memberId, bot.threadId, options),
     };
   }
 
@@ -1293,8 +1289,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return this.#store.database.searchConversationMessages(query, botId, cursor, limit);
   }
 
-  listConversationReads(memberId: string): Record<string, ConversationReadState> {
-    return this.#conversationReads.listStates(memberId, this.listBots());
+  listConversationReads(
+    memberId: string,
+    options: ConversationMarkerExclusions = {},
+  ): Record<string, ConversationReadState> {
+    return this.#conversationReads.listStates(memberId, this.listBots(), options);
   }
 
   adoptConversationReads(sourceMemberId: string, targetMemberId: string): void {
@@ -4986,7 +4985,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           detail: { action: context.action, status, operationId: context.operationId, siteId: details.siteId },
         });
       }
-      if (status !== "running") {
+      if (status === "running") {
+        database.recordActiveHostedSiteConversationEvent({
+          botId: context.botId,
+          threadId,
+          turnId: context.params.turnId,
+          createdAt,
+          event: { action: context.action, status, operationId: context.operationId, ...details },
+        });
+      } else {
+        database.deleteActiveHostedSiteConversationEvent(context.botId, context.operationId);
         database.deletePendingHostedSiteTerminalEvent(context.botId, context.operationId, status);
       }
       if (ownsTransaction) database.connection.exec("COMMIT");
@@ -5004,7 +5012,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   #reconcileHostedSiteEventsAfterRestart(): void {
-    for (const { botId, threadId, turnId, event } of this.#store.database.runningHostedSiteConversationEvents()) {
+    for (const { botId, threadId, turnId, event } of this.#store.database.activeHostedSiteConversationEvents()) {
       if (
         [...this.#pendingHostedSiteTerminalEvents.values()].some(
           (pending) => pending.botId === botId && pending.operationId === event.operationId,

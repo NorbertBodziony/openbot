@@ -1464,6 +1464,7 @@ describe.sequential("AgentService", () => {
         .flatMap((message) => hostedSiteConversationEvent(message) ?? [])
         .map((marker) => marker.status),
     ).toEqual(["running"]);
+    expect(store.database.activeHostedSiteConversationEvents()).toHaveLength(1);
     expect(store.database.pendingHostedSiteTerminalEvents()).toEqual([]);
 
     pendingSpy.mockRestore();
@@ -1484,6 +1485,7 @@ describe.sequential("AgentService", () => {
         .map((marker) => marker.status),
     ).toEqual(["running", "succeeded"]);
     expect(store.database.pendingHostedSiteTerminalEvents()).toEqual([]);
+    expect(store.database.activeHostedSiteConversationEvents()).toEqual([]);
   });
 
   it("normalizes legacy hosted site metadata without blocking deletion", async () => {
@@ -1587,6 +1589,13 @@ describe.sequential("AgentService", () => {
       },
       eventType: "hosted-site.publish-running",
       commandId: "hosted-site-event:operation-restart:running",
+    });
+    store.database.recordActiveHostedSiteConversationEvent({
+      botId: bot.id,
+      threadId,
+      turnId: "turn-restart",
+      createdAt: "2026-09-01T12:00:00.000Z",
+      event: { action: "publish", status: "running", operationId: "operation-restart", ...details },
     });
 
     await service.stop();

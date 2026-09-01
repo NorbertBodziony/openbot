@@ -1542,19 +1542,28 @@ describe("TeamApiServer administration", () => {
         messages,
         references: {},
         pageInfo: { hasOlder: false, olderCursor: null },
-        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
+        readState: {
+          unreadCount: 0,
+          firstUnreadMessageId: null,
+          throughMessageId: options.excludeHostedSiteEvents ? "message-1" : "hosted-site-event-1",
+        },
       };
     });
+    const listConversationReads = vi.fn((_memberId: string, options: { excludeHostedSiteEvents?: boolean } = {}) => ({
+      chief: {
+        unreadCount: 0,
+        firstUnreadMessageId: null,
+        throughMessageId: options.excludeHostedSiteEvents ? "message-1" : "hosted-site-event-1",
+      },
+    }));
     const agents = createAgents({
       listBots: () => localBots,
       createBot,
-      listConversationReads: () => ({
-        chief: { unreadCount: 1, firstUnreadMessageId: "message-1", throughMessageId: null },
-      }),
+      listConversationReads,
       readConversationFor: async (botId: string, _memberId: string) => ({
         ...localConversation,
         botId,
-        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
+        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "hosted-site-event-1" },
       }),
       readConversationPageFor,
       markConversationRead: async (_botId: string, _memberId: string, throughMessageId: string | null) => ({
@@ -1605,11 +1614,14 @@ describe("TeamApiServer administration", () => {
         }),
       ).resolves.toEqual({
         ...localConversation,
-        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
+        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "hosted-site-event-1" },
       });
       await expect(
         jsonRequest(base, "/v1/agents/chief/conversation-page?limit=10", { token: login.sessionToken }),
-      ).resolves.toMatchObject({ messages: [{ id: "message-1" }] });
+      ).resolves.toMatchObject({
+        messages: [{ id: "message-1" }],
+        readState: { throughMessageId: "message-1" },
+      });
       expect(readConversationPageFor.mock.calls.at(-1)?.[4]).toEqual({
         excludeRoutineEvents: true,
         excludeRoutineRunEvents: true,
@@ -1627,7 +1639,25 @@ describe("TeamApiServer administration", () => {
         excludeHostedSiteEvents: false,
       });
       await expect(jsonRequest(base, "/v1/agents/conversation-reads", { token: login.sessionToken })).resolves.toEqual({
-        chief: { unreadCount: 1, firstUnreadMessageId: "message-1", throughMessageId: null },
+        chief: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
+      });
+      expect(listConversationReads.mock.calls.at(-1)?.[1]).toEqual({
+        excludeRoutineEvents: true,
+        excludeRoutineRunEvents: true,
+        excludeHostedSiteEvents: true,
+      });
+      await expect(
+        jsonRequest(base, "/v1/agents/conversation-reads", {
+          token: login.sessionToken,
+          capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
+        }),
+      ).resolves.toEqual({
+        chief: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "hosted-site-event-1" },
+      });
+      expect(listConversationReads.mock.calls.at(-1)?.[1]).toEqual({
+        excludeRoutineEvents: false,
+        excludeRoutineRunEvents: false,
+        excludeHostedSiteEvents: false,
       });
       await expect(
         jsonRequest(base, "/v1/agents/chief/conversation/read", {

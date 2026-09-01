@@ -142,7 +142,7 @@ describe("OpenBotDatabase", () => {
     database.close();
   });
 
-  it("reads only hosted-site operations whose latest projected state is running", async () => {
+  it("stores only active hosted-site operations for restart reconciliation", async () => {
     const database = await createDatabase();
     const bot = testBot();
     database.replaceAgents("agents-running-sites", [bot], "agents.imported");
@@ -154,31 +154,21 @@ describe("OpenBotDatabase", () => {
       hostname: "launch-page-23456789ab.openbot.site",
       url: "https://launch-page-23456789ab.openbot.site",
     };
-    const appendMarker = (operationId: string, status: "running" | "succeeded", createdAt: string) => {
-      database.appendConversationMessage({
+    const recordActive = (operationId: string, createdAt: string) => {
+      database.recordActiveHostedSiteConversationEvent({
         botId: bot.id,
         threadId,
-        activeTurnId: null,
-        message: {
-          id: `hosted-site-event:${operationId}:${status}`,
-          turnId: `turn-${operationId}`,
-          author: "system",
-          source: "system",
-          text: hostedSiteConversationEventText(details),
-          createdAt,
-          status: "completed",
-          itemType: hostedSiteConversationEventItemType("replace", status, operationId),
-        },
-        eventType: `hosted-site.replace-${status}`,
-        commandId: `hosted-site-event:${bot.id}:${operationId}:${status}`,
+        turnId: `turn-${operationId}`,
+        createdAt,
+        event: { action: "replace", status: "running", operationId, ...details },
       });
     };
 
-    appendMarker("operation-complete", "running", "2026-09-01T12:00:00.000Z");
-    appendMarker("operation-complete", "succeeded", "2026-09-01T12:00:01.000Z");
-    appendMarker("operation-running", "running", "2026-09-01T12:00:02.000Z");
+    recordActive("operation-complete", "2026-09-01T12:00:00.000Z");
+    database.deleteActiveHostedSiteConversationEvent(bot.id, "operation-complete");
+    recordActive("operation-running", "2026-09-01T12:00:02.000Z");
 
-    expect(database.runningHostedSiteConversationEvents()).toEqual([
+    expect(database.activeHostedSiteConversationEvents()).toEqual([
       expect.objectContaining({
         botId: bot.id,
         threadId: bot.threadId,
