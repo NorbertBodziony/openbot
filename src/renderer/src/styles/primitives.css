@@ -4,6 +4,20 @@
   font-family: var(--openbot-font-sans);
 }
 
+.ui-server-gradient-logo {
+  width: var(--server-gradient-logo-size, 40px);
+  height: var(--server-gradient-logo-size, 40px);
+  display: block;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-radius: var(--server-gradient-logo-radius, var(--openbot-radius-lg));
+  background-color: var(--server-gradient-base);
+  background-image: var(--server-gradient-layers);
+  background-repeat: no-repeat;
+  outline: 1px solid var(--openbot-image-outline);
+  outline-offset: -1px;
+}
+
 :where(.ui-text)[data-tone="secondary"],
 :where(.ui-heading)[data-tone="secondary"] {
   color: var(--openbot-text-secondary);
