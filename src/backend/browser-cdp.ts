@@ -14,6 +14,7 @@ const ACTION_TIMEOUT_MS = 10_000;
 const WAIT_TIMEOUT_MS = 30_000;
 const MAX_RESULT_BYTES = 64 * 1024;
 const EVALUATION_WORLD_NAME = "openbot-browser-evaluation";
+const AUTOMATION_WORLD_NAME = "openbot-browser-automation";
 const MAX_SNAPSHOT_FRAMES = 12;
 const MAX_SNAPSHOT_ELEMENTS = 200;
 const MAX_SNAPSHOT_TEXT = 100_000;
@@ -497,8 +498,10 @@ export class BrowserCdpEngine {
         }
         if (condition.state === "load") matched &&= !this.#contents.isLoading();
         if (condition.state === "domcontentloaded") {
+          const contextId = await automationContextId(send);
           const result = await send("Runtime.evaluate", {
             expression: "document.readyState !== 'loading'",
+            contextId,
             returnByValue: true,
           });
           matched &&= recordValue(result.result)?.value === true;
@@ -723,7 +726,8 @@ export class BrowserCdpEngine {
     args: unknown[],
     sessionId?: string,
   ): Promise<unknown> {
-    const resolved = await send("DOM.resolveNode", { backendNodeId }, sessionId);
+    const executionContextId = await automationContextId(send, sessionId);
+    const resolved = await send("DOM.resolveNode", { backendNodeId, executionContextId }, sessionId);
     const objectId = stringValue(recordValue(resolved.object)?.objectId);
     if (!objectId) throw new Error("Element is no longer attached to the document.");
     try {
@@ -918,6 +922,7 @@ async function collectPageSummary(
   sessionId: string | undefined,
   maxText: number,
 ): Promise<{ text: string; hasVisualSurface: boolean; hasFrame: boolean }> {
+  const contextId = await automationContextId(send, sessionId);
   const result = await send(
     "Runtime.evaluate",
     {
@@ -980,6 +985,7 @@ async function collectPageSummary(
         }
         return { text: text.join(' '), hasVisualSurface, hasFrame };
       })()`,
+      contextId,
       returnByValue: true,
     },
     sessionId,
@@ -1001,6 +1007,7 @@ async function pageContainsText(
   for (const capture of captures) {
     assertBeforeDeadline(deadline);
     const scanBudgetMs = Math.max(1, deadline - Date.now());
+    const contextId = await automationContextId(send, capture.sessionId);
     const result = await send(
       "Runtime.evaluate",
       {
@@ -1061,6 +1068,7 @@ async function pageContainsText(
           }
           return { matched: combined.includes(needle), expired: false };
         })()`,
+        contextId,
         returnByValue: true,
       },
       capture.sessionId,
@@ -1074,6 +1082,7 @@ async function pageContainsText(
 }
 
 async function uniqueCssObjectId(send: SendCommand, selector: string): Promise<string> {
+  const contextId = await automationContextId(send);
   const collection = await send("Runtime.evaluate", {
     expression: `(() => {
       const selector = ${JSON.stringify(selector)};
@@ -1095,6 +1104,7 @@ async function uniqueCssObjectId(send: SendCommand, selector: string): Promise<s
       }
       return matches;
     })()`,
+    contextId,
     returnByValue: false,
   });
   const exception = recordValue(collection.exceptionDetails);
@@ -1132,6 +1142,7 @@ async function collectActionableNodes(
   assertBeforeDeadline(deadline);
   await Promise.all([send("DOM.enable", {}, capture.sessionId), send("Accessibility.enable", {}, capture.sessionId)]);
   assertBeforeDeadline(deadline);
+  const contextId = await automationContextId(send, capture.sessionId);
   const scanBudgetMs = deadline === undefined ? 60_000 : Math.max(1, deadline - Date.now());
   const collection = await send(
     "Runtime.evaluate",
@@ -1166,6 +1177,7 @@ async function collectActionableNodes(
         }
         return { elements };
       })()`,
+      contextId,
       returnByValue: false,
     },
     capture.sessionId,
@@ -1412,6 +1424,7 @@ function waitForLoading(contents: WebContents, timeoutMs: number): Promise<void>
 async function waitForDomQuiet(send: SendCommand, timeoutMs: number): Promise<void> {
   if (timeoutMs <= 0) throw new Error("DOM did not become quiet.");
   const deadlineMs = Math.max(1, Math.floor(timeoutMs));
+  const contextId = await automationContextId(send);
   const result = await send("Runtime.evaluate", {
     expression: `new Promise(resolve => {
       let quietTimer;
@@ -1433,10 +1446,25 @@ async function waitForDomQuiet(send: SendCommand, timeoutMs: number): Promise<vo
       quietTimer = setTimeout(() => done(true), 120);
       deadlineTimer = setTimeout(() => done(false), ${deadlineMs});
     })`,
+    contextId,
     awaitPromise: true,
     returnByValue: true,
   });
   if (recordValue(result.result)?.value !== true) throw new Error("DOM did not become quiet.");
+}
+
+async function automationContextId(send: SendCommand, sessionId?: string): Promise<number> {
+  const tree = await send("Page.getFrameTree", {}, sessionId);
+  const frameId = frameTreeRootId(tree);
+  if (!frameId) throw new Error("The browser automation world has no frame.");
+  const world = await send(
+    "Page.createIsolatedWorld",
+    { frameId, worldName: AUTOMATION_WORLD_NAME, grantUniveralAccess: false },
+    sessionId,
+  );
+  const contextId = numberValue(world.executionContextId);
+  if (!contextId) throw new Error("The browser automation world is unavailable.");
+  return contextId;
 }
 
 function waitForPageSignal(contents: WebContents, timeoutMs: number): Promise<void> {

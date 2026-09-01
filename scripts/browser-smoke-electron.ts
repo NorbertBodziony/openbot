@@ -537,7 +537,9 @@ async function main(): Promise<void> {
     await v2Contents.executeJavaScript(
       `(() => {
       globalThis.__openbotOriginalMutationObserver = MutationObserver;
+      globalThis.__openbotOriginalSetTimeout = setTimeout;
       globalThis.__openbotActiveObservers = 0;
+      globalThis.setTimeout = () => 0;
       globalThis.MutationObserver = class extends MutationObserver {
         #observing = false;
         observe(...args) {
@@ -563,7 +565,7 @@ async function main(): Promise<void> {
     const activeObservers = await v2Contents.executeJavaScript("globalThis.__openbotActiveObservers", true);
     if (activeObservers !== 0) throw new Error("V2 DOM-quiet timeout left a MutationObserver active.");
     await v2Contents.executeJavaScript(
-      "globalThis.MutationObserver = globalThis.__openbotOriginalMutationObserver; delete globalThis.__openbotOriginalMutationObserver; delete globalThis.__openbotActiveObservers;",
+      "globalThis.MutationObserver = globalThis.__openbotOriginalMutationObserver; globalThis.setTimeout = globalThis.__openbotOriginalSetTimeout; delete globalThis.__openbotOriginalMutationObserver; delete globalThis.__openbotOriginalSetTimeout; delete globalThis.__openbotActiveObservers;",
       true,
     );
     const stoppedNoise = await callBrowserTool(browser, "evaluate", {
@@ -779,8 +781,12 @@ async function main(): Promise<void> {
     }
     const queuedSnapshotStartedAt = Date.now();
     const queuedSnapshot = await callBrowserTool(browser, "snapshot", { tabId: waitTab.id });
-    if (!queuedSnapshot.success || Date.now() - queuedSnapshotStartedAt < 150) {
-      throw new Error("V2 timed-out navigation escaped tab serialization.");
+    if (
+      !queuedSnapshot.success ||
+      Date.now() - queuedSnapshotStartedAt > 1_000 ||
+      browser.listTabs().find((candidate) => candidate.id === waitTab.id)?.loading === true
+    ) {
+      throw new Error("V2 timed-out navigation did not stop before the tab queue resumed.");
     }
     const beforeReloadText = String(toolTextPayload(queuedSnapshot)?.text);
     const reloadStartedAt = Date.now();

@@ -523,7 +523,11 @@ export class BrowserHost {
                   tab.view.webContents.setUserAgent(
                     embeddedBrowserUserAgentForUrl(this.#session.getUserAgent(), normalizedUrl),
                   );
-                  await tab.view.webContents.loadURL(normalizedUrl, browserLoadOptions());
+                  await navigateAndWait(
+                    tab.view.webContents,
+                    () => tab.view.webContents.loadURL(normalizedUrl, browserLoadOptions()),
+                    timeoutMs,
+                  );
                 } else if (direction === "reload") {
                   await navigateAndWait(
                     tab.view.webContents,
@@ -1759,10 +1763,17 @@ function navigateHistory(
   return true;
 }
 
-async function navigateAndWait(contents: WebContents, initiate: () => boolean, timeoutMs = 10_000): Promise<void> {
+async function navigateAndWait(
+  contents: WebContents,
+  initiate: () => boolean | Promise<unknown>,
+  timeoutMs = 10_000,
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     let started = false;
     let inPlace = false;
+    let settled = false;
+    let timedOut = false;
+    let initiationPending = false;
     let timer: NodeJS.Timeout;
     const cleanup = () => {
       clearTimeout(timer);
@@ -1772,9 +1783,15 @@ async function navigateAndWait(contents: WebContents, initiate: () => boolean, t
       contents.off("did-fail-load", didFailLoad);
       contents.off("destroyed", destroyed);
     };
-    const complete = () => {
+    const finish = (error?: unknown) => {
+      if (settled) return;
+      settled = true;
       cleanup();
-      resolve();
+      if (error) reject(error);
+      else resolve();
+    };
+    const complete = () => {
+      finish(timedOut ? new Error("Navigation timed out.") : undefined);
     };
     const didStartNavigation = (_event: unknown, _url: string, isInPlace: boolean, isMainFrame: boolean) => {
       if (!isMainFrame) return;
@@ -1789,12 +1806,10 @@ async function navigateAndWait(contents: WebContents, initiate: () => boolean, t
     };
     const didFailLoad = (_event: unknown, code: number, description: string, _url: string, isMainFrame: boolean) => {
       if (!started || !isMainFrame) return;
-      cleanup();
-      reject(new Error(`Navigation failed (${code}): ${description}`));
+      finish(timedOut ? new Error("Navigation timed out.") : new Error(`Navigation failed (${code}): ${description}`));
     };
     const destroyed = () => {
-      cleanup();
-      reject(new Error("Browser tab was closed during navigation."));
+      finish(new Error("Browser tab was closed during navigation."));
     };
     contents.on("did-start-navigation", didStartNavigation);
     contents.on("did-stop-loading", didStopLoading);
@@ -1802,15 +1817,35 @@ async function navigateAndWait(contents: WebContents, initiate: () => boolean, t
     contents.on("did-fail-load", didFailLoad);
     contents.once("destroyed", destroyed);
     timer = setTimeout(() => {
-      cleanup();
-      reject(new Error("Navigation timed out."));
+      timedOut = true;
+      try {
+        const navigationWasActive = started || contents.isLoading();
+        contents.stop();
+        if (!navigationWasActive && !initiationPending) complete();
+      } catch (error) {
+        finish(error);
+      }
     }, timeoutMs);
     timer.unref();
     try {
-      if (!initiate()) complete();
+      const initiation = initiate();
+      if (initiation === false) {
+        complete();
+      } else if (initiation !== true) {
+        initiationPending = true;
+        void initiation.then(
+          () => {
+            initiationPending = false;
+            if (!contents.isLoading()) complete();
+          },
+          (error) => {
+            initiationPending = false;
+            finish(timedOut ? new Error("Navigation timed out.") : error);
+          },
+        );
+      }
     } catch (error) {
-      cleanup();
-      reject(error);
+      finish(error);
     }
   });
 }
