@@ -3059,6 +3059,11 @@ export function createAppController(props: AppProps = {}) {
       try {
         nextServers = await window.openbot.servers.select(serverId);
         if (!selectionIsCurrent()) return false;
+        const authoritativeServerId = nextServers.find((server) => server.active)?.id;
+        if (authoritativeServerId !== serverId) {
+          if (authoritativeServerId) await selectServer(authoritativeServerId, false, false);
+          return false;
+        }
         if (trackSelection) {
           analytics.track("team_action", {
             action: "server_selected",

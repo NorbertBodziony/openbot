@@ -6717,6 +6717,43 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("button", { name: "Office PC server" })).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("cancels a Dynamic Island action when selection activates another server", async () => {
+    const local = testServer("local", true);
+    const studio = testServer("remote-1", false);
+    const office = { ...testServer("remote-2", false), name: "Office PC", apiUrl: "https://office.example.com" };
+    const officeActive = [
+      { ...local, active: false },
+      { ...studio, active: false },
+      { ...office, active: true },
+    ];
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, studio, office]);
+    vi.mocked(window.openbot.servers.select).mockResolvedValueOnce(officeActive).mockResolvedValueOnce(officeActive);
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+    vi.mocked(window.openbot.agent.listBots).mockResolvedValueOnce([{ ...BOTS[0], name: "Office Chief" }]);
+
+    emitDynamicIslandAction?.({
+      type: "open-message",
+      serverId: "remote-1",
+      botId: "chief",
+      messageId: "wrong-server-message",
+    });
+
+    expect(await screen.findByRole("heading", { name: "Office Chief" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Office PC server" })).toHaveAttribute("aria-pressed", "true");
+    expect(window.openbot.servers.select).toHaveBeenNthCalledWith(1, "remote-1");
+    expect(window.openbot.servers.select).toHaveBeenNthCalledWith(2, "remote-2");
+    expect(
+      vi
+        .mocked(window.openbot.agent.readConversationPage)
+        .mock.calls.some(
+          ([input]) => input.anchor?.type === "around" && input.anchor.messageId === "wrong-server-message",
+        ),
+    ).toBe(false);
+  });
+
   it("discards a chat-open reload that resolves during a server switch", async () => {
     const local = testServer("local", true);
     const remote = testServer("remote-1", false);
