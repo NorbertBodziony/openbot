@@ -70,6 +70,7 @@ export class HostAnalytics {
   readonly #client: HostOpenPanelClient | null;
   #identifiedOwner: AnalyticsIdentity | null = null;
   #trackingEnabled: boolean;
+  #bufferOwnerlessEvents = true;
   #pending: HostPendingEvent[] = [];
   readonly #activeTurns = new Map<string, ActiveTurn>();
   readonly #hostedSiteOwners = new Map<string, AnalyticsIdentity | null>();
@@ -187,11 +188,13 @@ export class HostAnalytics {
     if (!this.#client || !this.#trackingEnabled) return;
     const owner = normalizeAnalyticsIdentity(this.#resolveOwner());
     if (!owner) return;
+    this.#bufferOwnerlessEvents = true;
     this.#flushPendingForOwner(owner);
   }
 
   clear(): void {
     this.#pending = [];
+    this.#bufferOwnerlessEvents = false;
     this.#identifiedOwner = null;
     if (this.#trackingEnabled) this.#enqueue("clear", () => this.#client?.clear());
   }
@@ -267,6 +270,7 @@ export class HostAnalytics {
     this.#send(name, sanitized, owner.id);
     const currentOwner = normalizeAnalyticsIdentity(this.#resolveOwner());
     if (currentOwner?.id !== owner.id || currentOwner.email !== owner.email) {
+      this.#identifiedOwner = null;
       this.#enqueue("clear", () => this.#client?.clear());
     }
   }
@@ -283,6 +287,7 @@ export class HostAnalytics {
     const sanitized = sanitizeHostEvent(name, properties);
     const owner = ownerOverride === undefined ? normalizeAnalyticsIdentity(this.#resolveOwner()) : ownerOverride;
     if (!owner) {
+      if (!this.#bufferOwnerlessEvents) return;
       this.#pending.push({ name, properties: sanitized, timestamp: new Date().toISOString() });
       if (this.#pending.length > MAX_PENDING_EVENTS) this.#pending.shift();
       return;

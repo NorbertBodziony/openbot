@@ -673,6 +673,43 @@ describe("host analytics", () => {
     });
 
     expect(client.clear).toHaveBeenCalledTimes(2);
+
+    owner = { id: "owner-1", email: "one@example.com" };
+    analytics.handleAgentEvent({ type: "error", code: "provider_error", message: "private-after-relogin" });
+
+    expect(client.identify).toHaveBeenCalledTimes(3);
+  });
+
+  it("drops ownerless events after logout until a signed-in owner is flushed", () => {
+    const client = fakeClient();
+    let owner: { id: string; email: string } | null = { id: "owner-1", email: "one@example.com" };
+    const analytics = new HostAnalytics(
+      {
+        enabled: true,
+        appVersion: "1.2.3",
+        platform: "darwin",
+        resolveOwner: () => owner,
+        resolveBot: () => BOT,
+      },
+      () => client,
+    );
+
+    analytics.handleAgentEvent({ type: "error", code: "provider_error", message: "before-logout" });
+    owner = null;
+    analytics.clear();
+    analytics.handleAgentEvent({ type: "error", code: "provider_error", message: "after-logout" });
+    owner = { id: "owner-2", email: "two@example.com" };
+    analytics.flushPending();
+
+    expect(client.track).toHaveBeenCalledOnce();
+    owner = { id: "owner-2", email: "two@example.com" };
+    analytics.handleAgentEvent({ type: "error", code: "provider_error", message: "after-relogin" });
+
+    expect(client.track).toHaveBeenCalledTimes(2);
+    expect(client.track).toHaveBeenLastCalledWith(
+      "system_operation_failed",
+      expect.objectContaining({ profileId: "owner-2" }),
+    );
   });
 
   it("adds safe bot context to host failures", () => {
