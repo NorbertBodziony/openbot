@@ -59,6 +59,7 @@ describe("TeamWebRtcHostGateway", () => {
       name: "Owner",
       avatarUrl: null,
     });
+    const closeLocalSession = vi.spyOn(store, "closeRemoteSession");
     const renewSignal = vi
       .fn()
       .mockResolvedValue({ signalUrl: "wss://signal.example.test/v1/signal", ticket: "fresh" });
@@ -211,9 +212,28 @@ describe("TeamWebRtcHostGateway", () => {
       role: "member",
       sessionExpiresAt,
     });
+    bridge.emit("connected", "host-1", {
+      localFingerprint: "HOST-FINGERPRINT",
+      remoteFingerprint: "CLIENT-FINGERPRINT",
+    });
+    expect(closeLocalSession).not.toHaveBeenCalled();
     expect(closeSession).not.toHaveBeenCalled();
-    bridge.emit("disconnected", "host-1");
-    await vi.waitFor(() => expect(closeSession).toHaveBeenCalledWith("session-1"));
+    bridge.emit("incoming", "host-1", {
+      connectionId: "connection-3",
+      sessionId: "session-1",
+      userId: "member-account",
+      membershipId: "membership-1",
+      role: "member",
+      sessionExpiresAt,
+    });
+    bridge.emit("connected", "host-1", {
+      localFingerprint: "HOST-FINGERPRINT",
+      remoteFingerprint: "DIFFERENT-CLIENT-FINGERPRINT",
+    });
+    expect(closeLocalSession).toHaveBeenCalledWith("session-1");
+    expect(closeSession).not.toHaveBeenCalled();
+    bridge.emit("data", "host-1", "rpc", duplicateRequest);
+    await vi.waitFor(() => expect(bridge.disconnectedPeers).toContain("host-1"));
     await gateway.stop();
     gateway.dispose();
   });

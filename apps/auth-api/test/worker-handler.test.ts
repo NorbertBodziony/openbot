@@ -66,6 +66,31 @@ describe("worker handler", () => {
     expect(logged).toEqual(result);
     expect(deliveredAt).toBe(1_234);
   });
+
+  it("delivers authorization events every minute and runs retention only at midnight UTC", async () => {
+    let pruneCalls = 0;
+    let deliveryCalls = 0;
+    let logCalls = 0;
+    const handler = createWorkerHandler(
+      () => new Response("ok"),
+      async () => {
+        pruneCalls += 1;
+        throw new Error("Retention must not run outside the daily window.");
+      },
+      () => {
+        logCalls += 1;
+      },
+      async () => {
+        deliveryCalls += 1;
+      },
+    );
+
+    await handler.scheduled({ scheduledTime: Date.UTC(2026, 8, 1, 12, 34) }, { DB: fakeDatabase() });
+
+    expect(deliveryCalls).toBe(1);
+    expect(pruneCalls).toBe(0);
+    expect(logCalls).toBe(0);
+  });
 });
 
 function fakeDatabase(): D1Database {

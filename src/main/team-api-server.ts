@@ -194,6 +194,7 @@ interface EventClientState {
   directTypingRecipientId: string | null;
   directTypingTimer: ReturnType<typeof setTimeout> | null;
   snapshotResponsePending: boolean;
+  snapshotRequestQueued: boolean;
   nextSnapshotRequestAt: number;
 }
 
@@ -1293,6 +1294,7 @@ export class TeamApiServer {
       directTypingRecipientId: null,
       directTypingTimer: null,
       snapshotResponsePending: false,
+      snapshotRequestQueued: false,
       nextSnapshotRequestAt: 0,
     };
     this.#eventClients.set(client, connection);
@@ -1372,9 +1374,12 @@ export class TeamApiServer {
 
   #sendRuntimeSnapshot(client: Ws.WebSocket, connection: EventClientState, rateLimited: boolean): void {
     const now = this.#now();
+    if (connection.snapshotResponsePending) {
+      if (rateLimited) connection.snapshotRequestQueued = true;
+      return;
+    }
     if (
       client.readyState !== webSockets.WebSocket.OPEN ||
-      connection.snapshotResponsePending ||
       client.bufferedAmount > EVENT_PAYLOAD_LIMIT ||
       (rateLimited && now < connection.nextSnapshotRequestAt)
     ) {
@@ -1395,6 +1400,11 @@ export class TeamApiServer {
         connection.snapshotResponsePending = false;
         if (error && client.readyState === webSockets.WebSocket.OPEN) {
           client.close(1011, "Runtime snapshot could not be sent");
+          return;
+        }
+        if (connection.snapshotRequestQueued) {
+          connection.snapshotRequestQueued = false;
+          this.#sendRuntimeSnapshot(client, connection, true);
         }
       });
     } catch {

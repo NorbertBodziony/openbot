@@ -75,6 +75,7 @@ export class TeamWebRtcHostGateway {
   #signalRecovery: Promise<void> | null = null;
   #pendingConnection: IncomingConnection | null = null;
   #peerBinding: { localFingerprint: string; remoteFingerprint: string } | null = null;
+  #sessionBinding: { localFingerprint: string; remoteFingerprint: string } | null = null;
   #authenticationCompletion: {
     claims: VerifiedRemoteSessionTicket;
     clientNonce: string;
@@ -167,7 +168,7 @@ export class TeamWebRtcHostGateway {
   readonly #onIncoming = (peerId: string, connection: IncomingConnection): void => {
     if (peerId !== this.#peerId) return;
     if (connection.sessionId === this.#localSessionId && this.#localSessionToken) {
-      this.#pendingConnection = null;
+      this.#pendingConnection = connection;
       return;
     }
     this.#closeLocalSession();
@@ -175,7 +176,25 @@ export class TeamWebRtcHostGateway {
   };
 
   readonly #onConnected = (peerId: string, binding?: { localFingerprint: string; remoteFingerprint: string }): void => {
-    if (peerId === this.#peerId) this.#peerBinding = binding ?? null;
+    if (peerId !== this.#peerId) return;
+    this.#peerBinding = binding ?? null;
+    if (
+      !this.#pendingConnection ||
+      this.#pendingConnection.sessionId !== this.#localSessionId ||
+      !this.#localSessionToken
+    )
+      return;
+    if (
+      this.#sessionBinding &&
+      binding &&
+      this.#sessionBinding.localFingerprint === binding.localFingerprint &&
+      this.#sessionBinding.remoteFingerprint === binding.remoteFingerprint
+    ) {
+      this.#pendingConnection = null;
+      this.#files.setPeerAuthenticated(peerId, true);
+      return;
+    }
+    this.#closeLocalSession(false);
   };
 
   async #openIncomingSession(peerId: string, connection: Omit<IncomingConnection, "connectionId">): Promise<void> {
@@ -310,7 +329,10 @@ export class TeamWebRtcHostGateway {
     this.#authenticationCompletion = null;
     this.#sessionPreparation = this.#openIncomingSession(peerId, completion.claims);
     await this.#sessionPreparation;
+    this.#sessionPreparation = null;
     if (!this.#localSessionToken) throw new Error("The remote session did not open.");
+    if (!this.#peerBinding) throw new Error("The WebRTC fingerprint binding is unavailable.");
+    this.#sessionBinding = { ...this.#peerBinding };
     this.#files.setPeerAuthenticated(peerId, true);
     await this.#bridge.send(
       peerId,
@@ -646,7 +668,7 @@ export class TeamWebRtcHostGateway {
     }
   }
 
-  #closeLocalSession(): void {
+  #closeLocalSession(endLogicalSession = true): void {
     if (this.#peerId) this.#files.setPeerAuthenticated(this.#peerId, false);
     if (this.#sessionExpirationTimer) clearTimeout(this.#sessionExpirationTimer);
     this.#sessionExpirationTimer = null;
@@ -654,11 +676,14 @@ export class TeamWebRtcHostGateway {
     this.#eventsSocket?.close();
     this.#eventsSocket = null;
     if (this.#localSessionId) {
-      void this.#closeSession(this.#localSessionId).catch(() => undefined);
+      if (endLogicalSession) void this.#closeSession(this.#localSessionId).catch(() => undefined);
       this.#store.closeRemoteSession(this.#localSessionId);
     }
     this.#localSessionId = null;
     this.#localSessionToken = null;
+    this.#sessionBinding = null;
+    this.#sessionPreparation = null;
+    this.#authenticationCompletion = null;
   }
 
   #sendRecoverable(peerId: string, channel: "events" | "desktop", data: string | ArrayBuffer): void {

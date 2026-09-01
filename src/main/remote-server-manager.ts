@@ -252,6 +252,16 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this.#issues.delete(serverId);
       this.#connectionSequences.set(serverId, (this.#connectionSequences.get(serverId) ?? 0) + 1);
       this.#emitChanged();
+      const server = this.#state.servers.find((candidate) => candidate.id === serverId);
+      if (server) {
+        void this.#refreshRemoteDesktop(server)
+          .catch(() => {
+            server.remoteDesktopAvailable = false;
+          })
+          .then(() => this.#persist())
+          .then(() => this.#emitChanged())
+          .catch(() => undefined);
+      }
     });
     this.#webrtcTransport?.on("disconnected", (serverId) => {
       this.#states.set(serverId, "offline");
@@ -1085,10 +1095,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   async #syncWebRtcHosts(): Promise<void> {
     if (!this.#webrtcTransport) return;
     const hosts = await this.#webrtcTransport.listHosts();
-    const legacyDevelopment = this.#allowLocalDevelopmentInvites
-      ? this.#state.servers.filter((server) => server.transport !== "webrtc-v2")
-      : [];
-    const servers = hosts
+    const synchronizedServers = hosts
       .filter((host) => host.hostId !== this.#getLocalHostId())
       .map<StoredRemoteServer>((host) => {
         const existing = this.#state.servers.find((server) => server.id === host.hostId);
@@ -1109,12 +1116,26 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           ...(publicKey ? { publicKey } : {}),
           username: this.#centralAccount.getEmail().trim().toLowerCase(),
           encryptedToken: "",
-          remoteDesktopAvailable: true,
+          remoteDesktopAvailable: false,
           logoVersion: host.logoKey,
           role: host.role,
           transport: "webrtc-v2",
         };
       });
+    const synchronizedById = new Map(synchronizedServers.map((server) => [server.id, server]));
+    const retainedIds = new Set<string>();
+    const servers = this.#state.servers.flatMap((server) => {
+      if (server.transport !== "webrtc-v2") return this.#allowLocalDevelopmentInvites ? [server] : [];
+      const synchronized = synchronizedById.get(server.id);
+      if (!synchronized) return [];
+      retainedIds.add(server.id);
+      return [synchronized];
+    });
+    for (const server of synchronizedServers) {
+      if (retainedIds.has(server.id)) continue;
+      retainedIds.add(server.id);
+      servers.push(server);
+    }
     const currentHostIds = new Set(servers.map((server) => server.id));
     const removedHostIds = this.#state.servers
       .filter((server) => server.transport === "webrtc-v2" && !currentHostIds.has(server.id))
@@ -1123,7 +1144,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       await this.#webrtcTransport.disconnect(serverId).catch(() => undefined);
       this.#clearServerConnectionState(serverId);
     }
-    this.#state.servers = [...legacyDevelopment, ...servers];
+    this.#state.servers = servers;
     if (
       this.#state.activeServerId !== "local" &&
       !this.#state.servers.some((server) => server.id === this.#state.activeServerId)
@@ -1441,15 +1462,23 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         server.remoteDesktopAvailable = false;
         return;
       }
-      const capabilities = await requestJson(
-        server.apiUrl,
-        "/v1/remote-screen/capabilities",
-        decodeRemoteDesktopCapabilities,
-        {
-          token: this.#token(server),
-          ...this.#requestProtocol(compatibility),
-        },
-      );
+      let capabilities: RemoteDesktopCapabilities;
+      if (server.transport === "webrtc-v2") {
+        if (!this.#webrtcTransport) throw new Error("The WebRTC transport is unavailable.");
+        capabilities = decodeRemoteDesktopCapabilities(
+          await this.#webrtcTransport.request(server.id, "/v1/remote-screen/capabilities", {}),
+        );
+      } else {
+        capabilities = await requestJson(
+          server.apiUrl,
+          "/v1/remote-screen/capabilities",
+          decodeRemoteDesktopCapabilities,
+          {
+            token: this.#token(server),
+            ...this.#requestProtocol(compatibility),
+          },
+        );
+      }
       server.remoteDesktopAvailable = capabilities.ready;
     } catch (error) {
       if (error instanceof RemoteRequestError && [404, 426, 503].includes(error.status)) {

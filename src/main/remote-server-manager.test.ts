@@ -235,6 +235,104 @@ describe("remote server links", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it("keeps the saved WebRTC host order and loads Remote Desktop readiness after connection", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-webrtc-host-order-"));
+    const statePath = join(directory, "servers.json");
+    const storedWebRtcServer = (id: string, name: string) => ({
+      id,
+      name,
+      apiUrl: `webrtc://${id}`,
+      fingerprint: fingerprint(`${id}-public-key`),
+      publicKey: `${id}-public-key`,
+      username: "person@example.com",
+      encryptedToken: "",
+      remoteDesktopAvailable: true,
+      logoVersion: null,
+      role: "member" as const,
+      transport: "webrtc-v2" as const,
+    });
+    await writeFile(
+      statePath,
+      JSON.stringify({
+        version: 3,
+        activeServerId: "host-beta",
+        servers: [storedWebRtcServer("host-beta", "Beta"), storedWebRtcServer("host-alpha", "Alpha")],
+      }),
+    );
+    const hosts = [
+      { hostId: "host-alpha", name: "Alpha", devicePublicKey: "host-alpha-public-key" },
+      { hostId: "host-beta", name: "Beta", devicePublicKey: "host-beta-public-key" },
+      { hostId: "host-gamma", name: "Gamma", devicePublicKey: "host-gamma-public-key" },
+    ].map((host) => ({
+      ...host,
+      logoKey: null,
+      authEpoch: 1,
+      membershipId: `${host.hostId}-member`,
+      role: "member" as const,
+    }));
+    const bridge = new TeamWebRtcBridge();
+    vi.spyOn(bridge, "disconnect").mockResolvedValue();
+    const transport = new TeamWebRtcClientTransport({
+      bridge,
+      listHosts: async () => hosts,
+      startSession: async (hostId) => ({ sessionId: "session-1", hostId, expiresAt: Date.now() + 60_000 }),
+      issueTicket: async () => ({ ticket: "ticket", expiresAt: Date.now() + 60_000, signalUrl: "wss://signal" }),
+      endSession: async () => undefined,
+      createInvite: async () => ({ inviteId: "invite-1", token: "token", expiresAt: Date.now() + 60_000 }),
+      listInvites: async () => [],
+      previewInvite: async () => {
+        throw new Error("Unexpected invite preview.");
+      },
+      acceptInvite: async () => {
+        throw new Error("Unexpected invite acceptance.");
+      },
+      revokeInvite: async () => undefined,
+      listMembers: async () => [],
+      updateMember: async () => undefined,
+      removeMember: async () => undefined,
+      getPrincipalId: () => "person-1",
+      controlPlaneUrl: "https://api.openbot.run",
+      downloadHostLogo: async () => ({ bytes: new Uint8Array(), mimeType: "image/png" }),
+      transferDirectory: join(directory, "transfers"),
+    });
+    const request = vi.spyOn(transport, "request").mockResolvedValue({
+      ready: true,
+      platform: "linux",
+      unattended: true,
+      runtime: "sunshine-moonlight",
+      protocolVersion: 2,
+      displays: [],
+      selectedDisplayId: null,
+      activeSessions: 0,
+      maxSessions: 1,
+    });
+    const manager = new RemoteServerManager(
+      statePath,
+      { encrypt: (value) => Buffer.from(value), decrypt: (value) => value.toString() },
+      { createTeamAuthTicket: async () => "ticket", getEmail: () => "person@example.com" },
+      { webrtcTransport: transport },
+    );
+
+    try {
+      await manager.initialize();
+      expect(
+        manager
+          .list()
+          .slice(1)
+          .map((server) => server.id),
+      ).toEqual(["host-beta", "host-alpha", "host-gamma"]);
+      expect(manager.list().find((server) => server.id === "host-beta")?.remoteDesktopAvailable).toBe(false);
+      transport.emit("connected", "host-beta");
+      await vi.waitFor(() =>
+        expect(manager.list().find((server) => server.id === "host-beta")?.remoteDesktopAvailable).toBe(true),
+      );
+      expect(request).toHaveBeenCalledWith("host-beta", "/v1/remote-screen/capabilities", {});
+    } finally {
+      await manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("remote server order", () => {

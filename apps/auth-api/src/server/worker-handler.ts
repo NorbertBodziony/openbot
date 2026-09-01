@@ -47,13 +47,20 @@ export function createWorkerHandler(
       controller: Pick<ScheduledController, "scheduledTime">,
       bindings: Pick<WorkerBindings, "DB" | "REMOTE_AUTH_WEBHOOK_URL" | "REMOTE_AUTH_WEBHOOK_SECRET">,
     ) {
-      const [result] = await Promise.all([
-        prune(bindings.DB, controller.scheduledTime),
-        deliverRemoteAuthEvents(bindings, controller.scheduledTime),
-      ]);
+      const delivery = deliverRemoteAuthEvents(bindings, controller.scheduledTime);
+      if (!isDailyRetentionRun(controller.scheduledTime)) {
+        await delivery;
+        return;
+      }
+      const [result] = await Promise.all([prune(bindings.DB, controller.scheduledTime), delivery]);
       log(result);
     },
   } satisfies ExportedHandler<WorkerBindings>;
+}
+
+function isDailyRetentionRun(scheduledTime: number): boolean {
+  const scheduled = new Date(scheduledTime);
+  return scheduled.getUTCHours() === 0 && scheduled.getUTCMinutes() === 0;
 }
 
 function logRetentionResult(result: AuthRetentionResult): void {
