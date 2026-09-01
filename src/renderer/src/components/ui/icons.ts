@@ -17,6 +17,7 @@ export { default as CircleQuestionMark } from "lucide-solid/icons/circle-questio
 export { default as Clock3 } from "lucide-solid/icons/clock-3";
 export { default as Copy } from "lucide-solid/icons/copy";
 export { default as CornerDownLeft } from "lucide-solid/icons/corner-down-left";
+export { default as Download } from "lucide-solid/icons/download";
 export { default as Ellipsis } from "lucide-solid/icons/ellipsis";
 export { default as ExternalLink } from "lucide-solid/icons/external-link";
 export { default as File } from "lucide-solid/icons/file";
