@@ -1531,6 +1531,10 @@ describe("TeamApiServer administration", () => {
         localConversation.messages[1],
       ],
     };
+    const sendMessage = vi.fn<TestAgents["sendMessage"]>(async () => ({
+      messageId: "message-tagged",
+      deliveries: [],
+    }));
     const agents = createAgents({
       listBots: () => localBots,
       createBot,
@@ -1547,6 +1551,7 @@ describe("TeamApiServer administration", () => {
         firstUnreadMessageId: null,
         throughMessageId,
       }),
+      sendMessage,
     });
     const api = new TeamApiServer({
       store,
@@ -1613,6 +1618,23 @@ describe("TeamApiServer administration", () => {
         unreadCount: 0,
         firstUnreadMessageId: null,
         throughMessageId: "message-1",
+      });
+      const taggedMessage = "Ask @[Research](agent:research) to use @[Sources](skill:sources).";
+      await jsonRequest(base, "/v1/agents/chief/messages", {
+        token: login.sessionToken,
+        protocol: TEAM_PROTOCOL_V3,
+        capabilities: [...TEAM_CURRENT_CAPABILITIES],
+        body: {
+          text: taggedMessage,
+          attachmentDraftIds: [],
+          replyToMessageId: null,
+        },
+      });
+      expect(sendMessage).toHaveBeenCalledWith({
+        botId: "chief",
+        text: taggedMessage,
+        attachmentDraftIds: [],
+        replyToMessageId: null,
       });
     } finally {
       await api.stop();

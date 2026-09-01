@@ -1812,7 +1812,9 @@ async function readJson(request: import("node:http").IncomingMessage): Promise<D
   try {
     const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
     return requestProtocol(request) === TEAM_PROTOCOL_V3
-      ? decodeTeamProtocolV3CurrentHttpRequest(request.method ?? "GET", request.url ?? "/", value)
+      ? decodeTeamProtocolV3CurrentHttpRequest(request.method ?? "GET", request.url ?? "/", value, {
+          preserveSemanticTags: supportsTeamSemanticTags(requestCapabilities(request)),
+        })
       : decodeTeamProtocolV1CurrentHttpRequest(request.method ?? "GET", request.url ?? "/", value);
   } catch {
     throw new HttpError(400, "A valid JSON object is required.");
