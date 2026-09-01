@@ -368,6 +368,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #pendingDeltas = new Map<string, PendingDelta>();
   readonly #pendingMemoryMutations = new Map<string, PendingMemoryMutation[]>();
   readonly #responseAttachmentCommands = new Map<string, Promise<OpenBotToolResponse>>();
+  readonly #browserUploadRoots = new Map<string, string>();
   readonly #memoryEpochs = new Map<string, number>();
   #routineTimer: NodeJS.Timeout | null = null;
   #status: AgentStatus = structuredClone(INITIAL_STATUS);
@@ -413,6 +414,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#bundledGrokExecutable = bundledGrokExecutable;
     this.#preferredProvider = preferredProvider;
     this.#browser.onChanged((tabs, activeTabId) => {
+      const currentTabIds = new Set(tabs.map((tab) => tab.id));
+      for (const [tabId, root] of this.#browserUploadRoots) {
+        if (currentTabIds.has(tabId)) continue;
+        this.#browserUploadRoots.delete(tabId);
+        void rm(root, { recursive: true, force: true }).catch(() => undefined);
+      }
       for (const [requestId, pending] of this.#pendingBrowserTakeovers) {
         if (!tabs.some((tab) => tab.id === pending.request.tabId)) {
           this.#resolveBrowserTakeover(requestId, pending, "cancel");
@@ -1014,6 +1021,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#imageGenerationOperations.clear();
     await Promise.allSettled([...this.#responseAttachmentCommands.values()]);
     this.#responseAttachmentCommands.clear();
+    const browserUploadRoots = [...this.#browserUploadRoots.values()];
+    this.#browserUploadRoots.clear();
+    await Promise.allSettled(browserUploadRoots.map((root) => rm(root, { recursive: true, force: true })));
     this.#interruptedTurns.clear();
     this.#setStatus({ phase: "stopped", message: null });
   }
@@ -2685,6 +2695,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const args = params.arguments;
     if (
       !isRecord(args) ||
+      !isString(args.tabId) ||
+      args.tabId.length === 0 ||
+      args.tabId.length > INPUT_LIMITS.identifier ||
       !Array.isArray(args.paths) ||
       args.paths.length === 0 ||
       args.paths.length > INPUT_LIMITS.attachments ||
@@ -2713,10 +2726,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         );
         stagedPaths.push(stagedPath);
       }
-      return await this.#browser.handleDynamicTool({
+      const result = await this.#browser.handleDynamicTool({
         ...params,
         arguments: { ...args, paths: stagedPaths },
       });
+      if (!result.success) return result;
+      const previousRoot = this.#browserUploadRoots.get(args.tabId);
+      this.#browserUploadRoots.set(args.tabId, stagingRoot);
+      stagingRoot = null;
+      if (previousRoot) await rm(previousRoot, { recursive: true, force: true }).catch(() => undefined);
+      return result;
     } finally {
       await Promise.allSettled(sources.map((source) => source.handle.close()));
       if (stagingRoot) await rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined);

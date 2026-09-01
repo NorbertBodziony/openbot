@@ -180,7 +180,7 @@ async function main(): Promise<void> {
     const first = await browser.snapshot(tab.id);
     const input = first.elements.find((element) => element.name === "Task");
     const save = first.elements.find((element) => element.name === "Save");
-    if (!input || !save) throw new Error("Snapshot did not expose local controls.");
+    if (!input || !save) throw new Error(`Snapshot did not expose local controls: ${JSON.stringify(first)}`);
 
     const typed = await browser.act(tab.id, first.revision, {
       type: "type",
@@ -221,6 +221,12 @@ async function main(): Promise<void> {
     if (!frameClick.success || !String(frameClickSnapshot?.text).includes("Frame clicked:true")) {
       throw new Error(`V2 cross-origin iframe click failed: ${toolError(frameClick)}`);
     }
+    const frameTextWait = await callBrowserTool(browser, "wait_for", {
+      tabId: v2Tab.id,
+      text: "Frame clicked:true",
+      timeoutMs: 2_000,
+    });
+    if (!frameTextWait.success) throw new Error(`V2 iframe text wait failed: ${toolError(frameTextWait)}`);
     const noDomRefs = await callBrowserTool(browser, "evaluate", {
       tabId: v2Tab.id,
       expression: "document.querySelector('[data-openbot-ref]') === null",
@@ -238,6 +244,22 @@ async function main(): Promise<void> {
     });
     if (toolTextPayload(selectionValue)?.result !== "b")
       throw new Error("V2 select did not change the native control.");
+    const partialSelection = await callBrowserTool(browser, "select_option", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "combobox", name: "Mode", exact: true },
+      values: ["b", "missing"],
+    });
+    if (partialSelection.success || !toolError(partialSelection).includes("single-select")) {
+      throw new Error("V2 single-select accepted multiple requested values.");
+    }
+    const missingSelection = await callBrowserTool(browser, "select_option", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "combobox", name: "Mode", exact: true },
+      values: ["missing"],
+    });
+    if (missingSelection.success || !toolError(missingSelection).includes("do not exist")) {
+      throw new Error("V2 select silently accepted a missing requested value.");
+    }
     const checked = await callBrowserTool(browser, "set_checked", {
       tabId: v2Tab.id,
       target: { kind: "role", role: "checkbox", name: "Agree", exact: true },
@@ -373,6 +395,21 @@ async function main(): Promise<void> {
     if (toolTextPayload(clearedEvaluationWorld)?.result !== true) {
       throw new Error("V2 evaluation world did not preserve cross-call cleanup.");
     }
+    const evaluationTimeout = await callBrowserTool(browser, "evaluate", {
+      tabId: v2Tab.id,
+      expression: "new Promise(() => {})",
+      timeoutMs: 50,
+    });
+    if (evaluationTimeout.success || !toolError(evaluationTimeout).includes("timed out")) {
+      throw new Error("V2 evaluation did not return its bounded timeout.");
+    }
+    const evaluationRecovered = await callBrowserTool(browser, "evaluate", {
+      tabId: v2Tab.id,
+      expression: "21 * 2",
+    });
+    if (toolTextPayload(evaluationRecovered)?.result !== 42) {
+      throw new Error(`V2 evaluation did not recover after timeout: ${toolError(evaluationRecovered)}`);
+    }
     const timedOut = await callBrowserTool(browser, "wait_for", {
       tabId: v2Tab.id,
       text: "never appears",
@@ -452,6 +489,9 @@ async function main(): Promise<void> {
       throw new Error(`V2 restarted recording did not stop: ${toolError(restartedRecordingStopped)}`);
     }
     const waitTab = await browser.open(origin, "smoke-thread", "smoke-bot");
+    const beforeNavigation = await browser.snapshot(waitTab.id);
+    const staleNavigationTarget = beforeNavigation.elements.find((element) => element.name === "Save");
+    if (!staleNavigationTarget) throw new Error("V2 stale-reference test did not find its source target.");
     const navigationStarted = await callBrowserTool(browser, "evaluate", {
       tabId: waitTab.id,
       expression: `location.href = ${JSON.stringify(`${origin}/slow-document?domcontentloaded`)}; true`,
@@ -475,6 +515,13 @@ async function main(): Promise<void> {
     if (!["interactive", "complete"].includes(String(toolTextPayload(evaluationAfterNavigation)?.result))) {
       throw new Error(`V2 evaluation world was not restored after navigation: ${toolError(evaluationAfterNavigation)}`);
     }
+    const staleNavigationClick = await callBrowserTool(browser, "click", {
+      tabId: waitTab.id,
+      target: { kind: "ref", ref: staleNavigationTarget.ref, revision: beforeNavigation.revision },
+    });
+    if (staleNavigationClick.success || !toolError(staleNavigationClick).includes("Stale browser reference")) {
+      throw new Error("V2 navigation did not invalidate revision-bound references.");
+    }
     const timedNavigation = await callBrowserTool(browser, "navigate", {
       tabId: waitTab.id,
       url: `${origin}/slow-document?serialized`,
@@ -488,6 +535,18 @@ async function main(): Promise<void> {
     if (!queuedSnapshot.success || Date.now() - queuedSnapshotStartedAt < 150) {
       throw new Error("V2 timed-out navigation escaped tab serialization.");
     }
+    const boundedTab = await browser.open(origin, "smoke-thread", "smoke-bot");
+    const largeDom = await callBrowserTool(browser, "evaluate", {
+      tabId: boundedTab.id,
+      expression:
+        "document.body.replaceChildren(...Array.from({ length: 250 }, (_, index) => Object.assign(document.createElement('button'), { textContent: 'Bounded ' + index }))); true",
+    });
+    if (!largeDom.success) throw new Error(`V2 bounded DOM setup failed: ${toolError(largeDom)}`);
+    const boundedSnapshot = await browser.snapshot(boundedTab.id);
+    if (boundedSnapshot.elements.length !== 200) {
+      throw new Error(`V2 snapshot did not enforce its global element cap: ${boundedSnapshot.elements.length}`);
+    }
+    await browser.close(boundedTab.id);
     process.stdout.write("BrowserHost: V2 semantics, adaptive image, iframe, upload, waits, and emulation passed.\n");
 
     const headerTab = await browser.open(`${origin}/headers`, "smoke-thread");

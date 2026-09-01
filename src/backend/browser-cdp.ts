@@ -1,7 +1,6 @@
 import { stat } from "node:fs/promises";
 import type {
   BrowserActionHistoryEntry,
-  BrowserBounds,
   BrowserDiagnosticEntry,
   BrowserElement,
   BrowserEnvironment,
@@ -15,6 +14,10 @@ const ACTION_TIMEOUT_MS = 10_000;
 const WAIT_TIMEOUT_MS = 30_000;
 const MAX_RESULT_BYTES = 64 * 1024;
 const EVALUATION_WORLD_NAME = "openbot-browser-evaluation";
+const MAX_SNAPSHOT_FRAMES = 12;
+const MAX_SNAPSHOT_ELEMENTS = 200;
+const MAX_SNAPSHOT_TEXT = 100_000;
+const MAX_SNAPSHOT_SCANNED_NODES = 10_000;
 const ACTIONABLE_ROLES = new Set([
   "button",
   "checkbox",
@@ -43,6 +46,12 @@ interface TargetRecord {
   element: BrowserElement;
 }
 
+interface SnapshotTarget {
+  sessionId?: string;
+  targetId?: string;
+  url?: string;
+}
+
 export interface SnapshotReadResult {
   snapshot: BrowserSnapshot;
   recommendImage: boolean;
@@ -69,6 +78,10 @@ export class BrowserCdpEngine {
   constructor(contents: WebContents) {
     this.#contents = contents;
     contents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+      if (isMainFrame) {
+        this.#targets.clear();
+        this.#lastSnapshot = null;
+      }
       if (!isInPlace && isMainFrame) {
         this.#evaluationContextId = null;
         this.#evaluationFrameId = null;
@@ -79,7 +92,11 @@ export class BrowserCdpEngine {
         const attachedSessionId = stringValue(params.sessionId) || sessionId || "";
         const targetInfo = recordValue(params.targetInfo);
         const targetId = stringValue(targetInfo?.targetId);
-        if (attachedSessionId && targetId) {
+        if (
+          attachedSessionId &&
+          targetId &&
+          (this.#targetSessions.has(targetId) || this.#targetSessions.size < MAX_SNAPSHOT_FRAMES - 1)
+        ) {
           this.#targetSessions.set(targetId, { sessionId: attachedSessionId, url: stringValue(targetInfo?.url) });
         }
       }
@@ -94,45 +111,10 @@ export class BrowserCdpEngine {
 
   async snapshot(context: SnapshotContext): Promise<SnapshotReadResult> {
     return this.#lease(async (send) => {
-      const [dom, metrics, frames] = await Promise.all([
-        send("DOMSnapshot.captureSnapshot", {
-          computedStyles: [],
-          includePaintOrder: true,
-          includeDOMRects: true,
-        }),
+      const [metrics, parsed] = await Promise.all([
         send("Page.getLayoutMetrics"),
-        send("Page.getFrameTree"),
+        collectBoundedSnapshot(send, this.#snapshotTargets(), context.revision, true),
       ]);
-      const rootAxTrees = await Promise.all(
-        allFrameIds(frames).map((frameId) =>
-          send("Accessibility.getFullAXTree", { frameId }).catch(() => ({ nodes: [] })),
-        ),
-      );
-      const childCaptures = await Promise.all(
-        [...this.#targetSessions.entries()].map(async ([targetId, target]) => {
-          const [childAx, childDom] = await Promise.all([
-            send("Accessibility.getFullAXTree", {}, target.sessionId).catch(() => ({ nodes: [] })),
-            send(
-              "DOMSnapshot.captureSnapshot",
-              {
-                computedStyles: [],
-                includePaintOrder: true,
-                includeDOMRects: true,
-              },
-              target.sessionId,
-            ).catch(() => ({ documents: [], strings: [] })),
-          ]);
-          return { targetId, sessionId: target.sessionId, url: target.url, ax: childAx, dom: childDom };
-        }),
-      );
-      const parsed = parseSnapshot(
-        [
-          { ax: { nodes: rootAxTrees.flatMap((tree) => (Array.isArray(tree.nodes) ? tree.nodes : [])) }, dom },
-          ...childCaptures,
-        ],
-        frames,
-        context.revision,
-      );
       this.#targets = parsed.targets;
       const viewport = readViewport(metrics, context.environment);
       const snapshot: BrowserSnapshot = {
@@ -274,13 +256,20 @@ export class BrowserCdpEngine {
         resolved.backendNodeId,
         `function(values) {
           if (!(this instanceof HTMLSelectElement)) throw new Error('Target is not a select element.');
+          if (!this.multiple && values.length > 1) throw new Error('A single-select accepts only one requested value.');
           const wanted = new Set(values);
-          let matched = 0;
+          const matched = new Set();
+          const selected = new Set();
           for (const option of this.options) {
-            option.selected = wanted.has(option.value) || wanted.has(option.label) || wanted.has(option.text);
-            if (option.selected) matched++;
+            for (const value of wanted) {
+              if (value === option.value || value === option.label || value === option.text) {
+                matched.add(value);
+                selected.add(option);
+              }
+            }
           }
-          if (!matched) throw new Error('No requested option exists.');
+          if (matched.size !== wanted.size) throw new Error('One or more requested options do not exist.');
+          for (const option of this.options) option.selected = selected.has(option);
           this.dispatchEvent(new Event('input', { bubbles: true }));
           this.dispatchEvent(new Event('change', { bubbles: true }));
         }`,
@@ -400,17 +389,27 @@ export class BrowserCdpEngine {
       }
       const contextId = this.#evaluationContextId;
       if (!contextId) throw new Error("The browser evaluation world is unavailable.");
-      const result = await withTimeout(
-        send("Runtime.evaluate", {
-          expression: `Promise.resolve((0, eval)(${JSON.stringify(expression)}))`,
-          contextId,
-          awaitPromise: true,
-          returnByValue: true,
-          userGesture: false,
-        }),
-        clamp(timeoutMs, 1, WAIT_TIMEOUT_MS),
-        "Browser evaluation timed out.",
-      );
+      let result: CdpResult;
+      try {
+        result = await withTimeout(
+          send("Runtime.evaluate", {
+            expression: `Promise.resolve((0, eval)(${JSON.stringify(expression)}))`,
+            contextId,
+            awaitPromise: true,
+            returnByValue: true,
+            userGesture: false,
+          }),
+          clamp(timeoutMs, 1, WAIT_TIMEOUT_MS),
+          "Browser evaluation timed out.",
+        );
+      } catch (error) {
+        if (error instanceof Error && error.message === "Browser evaluation timed out.") {
+          await send("Runtime.terminateExecution").catch(() => undefined);
+          this.#evaluationContextId = null;
+          this.#evaluationFrameId = null;
+        }
+        throw error;
+      }
       const exception = recordValue(result.exceptionDetails);
       if (exception) throw new Error(`Browser evaluation failed: ${exceptionDescription(exception)}`);
       const value = recordValue(result.result)?.value;
@@ -438,11 +437,7 @@ export class BrowserCdpEngine {
         let matched = true;
         if (condition.url) matched &&= this.#contents.getURL().includes(condition.url);
         if (condition.text) {
-          const result = await send("Runtime.evaluate", {
-            expression: `Boolean(document.body?.innerText.includes(${JSON.stringify(condition.text)}))`,
-            returnByValue: true,
-          });
-          matched &&= recordValue(result.result)?.value === true;
+          matched &&= await pageContainsText(send, this.#snapshotTargets(), condition.text);
         }
         if (condition.target) {
           try {
@@ -645,33 +640,22 @@ export class BrowserCdpEngine {
   }
 
   async #refreshSemanticTargets(send: SendCommand): Promise<void> {
-    const frames = await send("Page.getFrameTree");
-    const rootAxTrees = await Promise.all(
-      allFrameIds(frames).map((frameId) =>
-        send("Accessibility.getFullAXTree", { frameId }).catch(() => ({ nodes: [] })),
-      ),
-    );
-    const childCaptures = await Promise.all(
-      [...this.#targetSessions.entries()].map(async ([targetId, target]) => ({
-        targetId,
-        sessionId: target.sessionId,
-        url: target.url,
-        ax: await send("Accessibility.getFullAXTree", {}, target.sessionId).catch(() => ({ nodes: [] })),
-        dom: { documents: [], strings: [] },
-      })),
-    );
-    const parsed = parseSnapshot(
-      [
-        {
-          ax: { nodes: rootAxTrees.flatMap((tree) => (Array.isArray(tree.nodes) ? tree.nodes : [])) },
-          dom: { documents: [], strings: [] },
-        },
-        ...childCaptures,
-      ],
-      frames,
+    const parsed = await collectBoundedSnapshot(
+      send,
+      this.#snapshotTargets(),
       this.#lastSnapshot?.revision ?? 0,
+      false,
     );
     this.#targets = parsed.targets;
+  }
+
+  #snapshotTargets(): SnapshotTarget[] {
+    return [
+      {},
+      ...[...this.#targetSessions.entries()]
+        .slice(0, MAX_SNAPSHOT_FRAMES - 1)
+        .map(([targetId, target]) => ({ ...target, targetId })),
+    ];
   }
 
   async #lease<T>(operation: (send: SendCommand) => Promise<T>): Promise<T> {
@@ -723,68 +707,38 @@ export class BrowserCdpEngine {
 
 type SendCommand = (method: string, params?: DynamicRecord, sessionId?: string) => Promise<CdpResult>;
 
-function parseSnapshot(
-  captures: Array<{ ax: CdpResult; dom: CdpResult; sessionId?: string; targetId?: string; url?: string }>,
-  frames: CdpResult,
+async function collectBoundedSnapshot(
+  send: SendCommand,
+  captures: SnapshotTarget[],
   revision: number,
+  includeText: boolean,
 ) {
-  const nodeMeta = new Map<string, { tag: string; bounds: BrowserBounds | null; frame: BrowserElement["frame"] }>();
-  const domTextParts: string[] = [];
-  let hasVisualSurface = false;
-  let hasFrame = false;
-  for (const capture of captures) {
-    const strings = Array.isArray(capture.dom.strings)
-      ? capture.dom.strings.filter((value): value is string => isString(value))
-      : [];
-    const domDocuments = Array.isArray(capture.dom.documents) ? capture.dom.documents.filter(isRecord) : [];
-    for (const document of domDocuments) {
-      const nodes = recordValue(document.nodes);
-      const layout = recordValue(document.layout);
-      const backendIds = numberArray(nodes?.backendNodeId);
-      const names = numberArray(nodes?.nodeName);
-      const values = numberArray(nodes?.nodeValue);
-      const layoutIndexes = numberArray(layout?.nodeIndex);
-      const bounds = Array.isArray(layout?.bounds) ? layout.bounds : [];
-      const boundByIndex = new Map<number, BrowserBounds>();
-      for (let index = 0; index < layoutIndexes.length; index++) {
-        const raw = Array.isArray(bounds[index]) ? bounds[index].filter(isFiniteNumber) : [];
-        if (raw.length >= 4)
-          boundByIndex.set(layoutIndexes[index], { x: raw[0], y: raw[1], width: raw[2], height: raw[3] });
-      }
-      const frameId = stringValue(document.frameId) || capture.targetId || "";
-      const frameUrl = indexedString(strings, document.documentURL) || capture.url || "";
-      for (let index = 0; index < backendIds.length; index++) {
-        const tag = (strings[names[index]] ?? "").toLowerCase();
-        if (tag === "#text" && boundByIndex.has(index)) {
-          const text = strings[values[index]] ?? "";
-          if (text.trim()) domTextParts.push(text);
-        }
-        if (tag === "canvas" || tag === "video") hasVisualSurface = true;
-        if (tag === "iframe" || tag === "frame") hasFrame = true;
-        nodeMeta.set(nodeKey(capture.sessionId, backendIds[index]), {
-          tag,
-          bounds: boundByIndex.get(index) ?? null,
-          frame: frameId ? { id: frameId, url: frameUrl } : null,
-        });
-      }
-    }
-  }
-  const frameUrls = frameUrlMap(frames);
   const targets = new Map<string, TargetRecord>();
   const elements: BrowserElement[] = [];
   const textParts: string[] = [];
+  let textLength = 0;
+  let hasVisualSurface = false;
+  let hasFrame = captures.length > 1;
   for (const capture of captures) {
-    const axNodes = Array.isArray(capture.ax.nodes) ? capture.ax.nodes.filter(isRecord) : [];
-    for (const node of axNodes) {
-      if (node.ignored === true) continue;
-      const role = axValue(node.role)?.toLowerCase() || null;
-      const name = axValue(node.name).slice(0, 500);
-      const description = axValue(node.description).slice(0, 500);
-      if ((role === "statictext" || role === "inlinetextbox") && name) textParts.push(name);
-      const backendNodeId = numberValue(node.backendDOMNodeId);
-      if (!backendNodeId || !role || !ACTIONABLE_ROLES.has(role)) continue;
-      const meta = nodeMeta.get(nodeKey(capture.sessionId, backendNodeId));
-      const properties = Array.isArray(node.properties) ? node.properties.filter(isRecord) : [];
+    if (includeText) {
+      const remainingText = Math.max(0, MAX_SNAPSHOT_TEXT - textLength);
+      const summary = await collectPageSummary(send, capture.sessionId, remainingText).catch(() => null);
+      if (summary) {
+        if (summary.text) {
+          textParts.push(summary.text);
+          textLength += summary.text.length;
+        }
+        hasVisualSurface ||= summary.hasVisualSurface;
+        hasFrame ||= summary.hasFrame;
+      }
+    }
+    const remainingElements = MAX_SNAPSHOT_ELEMENTS - elements.length;
+    if (remainingElements <= 0) break;
+    const candidates = capture.sessionId
+      ? await collectActionableNodes(send, capture, remainingElements).catch(() => [])
+      : await collectActionableNodes(send, capture, remainingElements);
+    for (const candidate of candidates) {
+      const properties = Array.isArray(candidate.ax.properties) ? candidate.ax.properties.filter(isRecord) : [];
       const states = properties
         .filter((property) =>
           ["checked", "disabled", "expanded", "focused", "pressed", "readonly", "required", "selected"].includes(
@@ -792,34 +746,263 @@ function parseSnapshot(
           ),
         )
         .map((property) => `${stringValue(property.name)}:${axValue(property.value)}`);
-      const frameId = stringValue(node.frameId) || capture.targetId || meta?.frame?.id || "";
-      const ref = `${revision}:${capture.targetId ?? "main"}:${backendNodeId}`;
+      const frameId = stringValue(candidate.node.frameId) || capture.targetId || "";
+      const ref = `${revision}:${capture.targetId ?? "main"}:${candidate.backendNodeId}`;
       const element: BrowserElement = {
         ref,
-        role,
-        name,
-        description,
-        tag: meta?.tag ?? "",
-        value: axValue(node.value) || null,
+        role: candidate.role,
+        name: axValue(candidate.ax.name).slice(0, 500),
+        description: axValue(candidate.ax.description).slice(0, 500),
+        tag: (stringValue(candidate.node.localName) || stringValue(candidate.node.nodeName)).toLowerCase(),
+        value: axValue(candidate.ax.value) || null,
         states,
         disabled: states.includes("disabled:true"),
-        bounds: meta?.bounds ?? null,
-        frame: frameId ? { id: frameId, url: frameUrls.get(frameId) ?? meta?.frame?.url ?? "" } : null,
+        bounds: null,
+        frame: frameId ? { id: frameId, url: capture.url ?? "" } : null,
       };
       elements.push(element);
-      targets.set(ref, { backendNodeId, targetId: capture.targetId, element });
-      if (elements.length >= 1_000) break;
+      targets.set(ref, { backendNodeId: candidate.backendNodeId, targetId: capture.targetId, element });
+      if (elements.length >= MAX_SNAPSHOT_ELEMENTS) break;
     }
   }
   return {
     targets,
     elements,
-    text:
-      (domTextParts.length === 1 ? domTextParts[0] : domTextParts.join(" ")).trim().slice(0, 100_000) ||
-      textParts.join(" ").replace(/\s+/g, " ").trim().slice(0, 100_000),
+    text: textParts.join(" ").replace(/\s+/g, " ").trim().slice(0, MAX_SNAPSHOT_TEXT),
     hasVisualSurface,
     hasFrame,
   };
+}
+
+async function collectPageSummary(
+  send: SendCommand,
+  sessionId: string | undefined,
+  maxText: number,
+): Promise<{ text: string; hasVisualSurface: boolean; hasFrame: boolean }> {
+  const result = await send(
+    "Runtime.evaluate",
+    {
+      expression: `(() => {
+        const maxNodes = ${MAX_SNAPSHOT_SCANNED_NODES};
+        const maxText = ${maxText};
+        const roots = [document];
+        const seen = new Set();
+        const text = [];
+        let chars = 0;
+        let scanned = 0;
+        let hasVisualSurface = false;
+        let hasFrame = false;
+        while (roots.length && scanned < maxNodes) {
+          const root = roots.shift();
+          if (!root || seen.has(root)) continue;
+          seen.add(root);
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+          let node;
+          while ((node = walker.nextNode()) && scanned < maxNodes) {
+            scanned++;
+            if (node.nodeType === Node.TEXT_NODE && chars < maxText) {
+              const parentTag = node.parentElement?.localName;
+              if (parentTag === 'script' || parentTag === 'style' || parentTag === 'noscript' || parentTag === 'template') continue;
+              const value = String(node.nodeValue || '').replace(/\\s+/g, ' ').trim();
+              if (value) {
+                const part = value.slice(0, Math.max(0, maxText - chars));
+                text.push(part);
+                chars += part.length + 1;
+              }
+              continue;
+            }
+            if (!(node instanceof Element)) continue;
+            const tag = node.localName;
+            if (tag === 'canvas' || tag === 'video') hasVisualSurface = true;
+            if (tag === 'iframe' || tag === 'frame') {
+              hasFrame = true;
+              try { if (node.contentDocument) roots.push(node.contentDocument); } catch {}
+            }
+            if (node.shadowRoot) roots.push(node.shadowRoot);
+          }
+        }
+        return { text: text.join(' '), hasVisualSurface, hasFrame };
+      })()`,
+      returnByValue: true,
+    },
+    sessionId,
+  );
+  const value = recordValue(recordValue(result.result)?.value);
+  return {
+    text: stringValue(value?.text),
+    hasVisualSurface: value?.hasVisualSurface === true,
+    hasFrame: value?.hasFrame === true,
+  };
+}
+
+async function pageContainsText(send: SendCommand, captures: SnapshotTarget[], text: string): Promise<boolean> {
+  for (const capture of captures) {
+    const result = await send(
+      "Runtime.evaluate",
+      {
+        expression: `(() => {
+          const needle = ${JSON.stringify(text)};
+          const roots = [document];
+          const seen = new Set();
+          let combined = '';
+          let chars = 0;
+          let scanned = 0;
+          while (roots.length && scanned < ${MAX_SNAPSHOT_SCANNED_NODES} && chars < ${MAX_SNAPSHOT_TEXT}) {
+            const root = roots.shift();
+            if (!root || seen.has(root)) continue;
+            seen.add(root);
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+            let node;
+            while ((node = walker.nextNode()) && scanned < ${MAX_SNAPSHOT_SCANNED_NODES}) {
+              scanned++;
+              if (node.nodeType === Node.TEXT_NODE) {
+                const parentTag = node.parentElement?.localName;
+                if (parentTag === 'script' || parentTag === 'style' || parentTag === 'noscript' || parentTag === 'template') continue;
+                const value = String(node.nodeValue || '').replace(/\\s+/g, ' ').trim();
+                if (value) {
+                  const part = value.slice(0, Math.max(0, ${MAX_SNAPSHOT_TEXT} - chars));
+                  combined += (combined ? ' ' : '') + part;
+                  chars += part.length + 1;
+                }
+                continue;
+              }
+              if (!(node instanceof Element)) continue;
+              if ((node.localName === 'iframe' || node.localName === 'frame')) {
+                try { if (node.contentDocument) roots.push(node.contentDocument); } catch {}
+              }
+              if (node.shadowRoot) roots.push(node.shadowRoot);
+            }
+          }
+          return combined.includes(needle);
+        })()`,
+        returnByValue: true,
+      },
+      capture.sessionId,
+    ).catch(() => null);
+    if (recordValue(result?.result)?.value === true) return true;
+  }
+  return false;
+}
+
+async function collectActionableNodes(
+  send: SendCommand,
+  capture: SnapshotTarget,
+  limit: number,
+): Promise<Array<{ backendNodeId: number; node: CdpResult; ax: CdpResult; role: string }>> {
+  await Promise.all([send("DOM.enable", {}, capture.sessionId), send("Accessibility.enable", {}, capture.sessionId)]);
+  const collection = await send(
+    "Runtime.evaluate",
+    {
+      expression: `(() => {
+        const roots = [document];
+        const seen = new Set();
+        const elements = [];
+        let scanned = 0;
+        while (roots.length && scanned < ${MAX_SNAPSHOT_SCANNED_NODES} && elements.length < ${limit}) {
+          const root = roots.shift();
+          if (!root || seen.has(root)) continue;
+          seen.add(root);
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+          let node;
+          while ((node = walker.nextNode()) && scanned < ${MAX_SNAPSHOT_SCANNED_NODES} && elements.length < ${limit}) {
+            scanned++;
+            if (node.matches('button, input, select, textarea, a[href], summary, [role], [contenteditable], [onclick], [tabindex]')) {
+              elements.push(node);
+            }
+            if ((node.localName === 'iframe' || node.localName === 'frame')) {
+              try { if (node.contentDocument) roots.push(node.contentDocument); } catch {}
+            }
+            if (node.shadowRoot) roots.push(node.shadowRoot);
+          }
+        }
+        return { elements };
+      })()`,
+      returnByValue: false,
+    },
+    capture.sessionId,
+  );
+  const collectionId = stringValue(recordValue(collection.result)?.objectId);
+  if (!collectionId) return [];
+  const candidates: Array<{ backendNodeId: number; node: CdpResult; ax: CdpResult; role: string }> = [];
+  try {
+    const lengthResult = await send(
+      "Runtime.callFunctionOn",
+      {
+        objectId: collectionId,
+        functionDeclaration: "function() { return this.elements.length; }",
+        returnByValue: true,
+      },
+      capture.sessionId,
+    );
+    const length = Math.min(limit, numberValue(recordValue(lengthResult.result)?.value));
+    for (let index = 0; index < length; index++) {
+      const remoteResult = await send(
+        "Runtime.callFunctionOn",
+        {
+          objectId: collectionId,
+          functionDeclaration: "function(index) { return this.elements[index]; }",
+          arguments: [{ value: index }],
+          returnByValue: false,
+        },
+        capture.sessionId,
+      );
+      const objectId = stringValue(recordValue(remoteResult.result)?.objectId);
+      if (!objectId) continue;
+      const described = await send("DOM.describeNode", { objectId, depth: 0 }, capture.sessionId).catch(() => null);
+      const node = recordValue(described?.node);
+      if (!node) {
+        await send("Runtime.releaseObject", { objectId }, capture.sessionId).catch(() => undefined);
+        continue;
+      }
+      const backendNodeId = numberValue(node.backendNodeId);
+      if (!backendNodeId) {
+        await send("Runtime.releaseObject", { objectId }, capture.sessionId).catch(() => undefined);
+        continue;
+      }
+      const partial = await send(
+        "Accessibility.getPartialAXTree",
+        { objectId, fetchRelatives: false },
+        capture.sessionId,
+      ).catch(() => ({ nodes: [] }));
+      await send("Runtime.releaseObject", { objectId }, capture.sessionId).catch(() => undefined);
+      const axNodes = Array.isArray(partial.nodes) ? partial.nodes.filter(isRecord) : [];
+      const ax =
+        axNodes.find(
+          (candidate) => numberValue(candidate.backendDOMNodeId) === backendNodeId && candidate.ignored !== true,
+        ) ??
+        axNodes.find((candidate) => candidate.ignored !== true) ??
+        {};
+      const role = axValue(ax.role).toLowerCase() || fallbackRole(node);
+      if (!role || !ACTIONABLE_ROLES.has(role)) continue;
+      candidates.push({ backendNodeId, node, ax, role });
+    }
+  } finally {
+    await send("Runtime.releaseObject", { objectId: collectionId }, capture.sessionId).catch(() => undefined);
+  }
+  return candidates;
+}
+
+function fallbackRole(node: CdpResult): string {
+  const tag = (stringValue(node.localName) || stringValue(node.nodeName)).toLowerCase();
+  const attributes = nodeAttributes(node.attributes);
+  if (attributes.role) return attributes.role.toLowerCase();
+  if (tag === "button" || tag === "summary") return "button";
+  if (tag === "a") return "link";
+  if (tag === "select") return attributes.multiple === undefined ? "combobox" : "listbox";
+  if (tag === "textarea" || attributes.contenteditable !== undefined) return "textbox";
+  if (tag !== "input") return "";
+  if (attributes.type === "checkbox") return "checkbox";
+  if (attributes.type === "radio") return "radio";
+  if (attributes.type === "range") return "slider";
+  if (attributes.type === "number") return "spinbutton";
+  return "textbox";
+}
+
+function nodeAttributes(value: unknown): Record<string, string> {
+  const raw = Array.isArray(value) ? value.filter(isString) : [];
+  const result: Record<string, string> = {};
+  for (let index = 0; index + 1 < raw.length; index += 2) result[raw[index].toLowerCase()] = raw[index + 1];
+  return result;
 }
 
 function readViewport(metrics: CdpResult, environment: BrowserEnvironment): BrowserEnvironment["viewport"] {
@@ -995,33 +1178,8 @@ function waitForPageSignal(contents: WebContents, timeoutMs: number): Promise<vo
   });
 }
 
-function frameUrlMap(value: CdpResult): Map<string, string> {
-  const result = new Map<string, string>();
-  const visit = (tree: unknown) => {
-    const record = recordValue(tree);
-    const frame = recordValue(record?.frame);
-    const id = stringValue(frame?.id);
-    if (id) result.set(id, stringValue(frame?.url));
-    if (Array.isArray(record?.childFrames)) for (const child of record.childFrames) visit(child);
-  };
-  visit(value.frameTree);
-  return result;
-}
-
 function frameTreeRootId(value: CdpResult): string {
   return stringValue(recordValue(recordValue(value.frameTree)?.frame)?.id);
-}
-
-function allFrameIds(value: CdpResult): string[] {
-  const result: string[] = [];
-  const visit = (tree: unknown) => {
-    const record = recordValue(tree);
-    const id = stringValue(recordValue(record?.frame)?.id);
-    if (id) result.push(id);
-    if (Array.isArray(record?.childFrames)) for (const child of record.childFrames) visit(child);
-  };
-  visit(value.frameTree);
-  return result;
 }
 
 function exceptionDescription(value: CdpResult): string {
@@ -1044,18 +1202,6 @@ function axValue(value: unknown): string {
   const record = recordValue(value);
   const raw = record?.value;
   return isString(raw) || isNumber(raw) || isBoolean(raw) ? String(raw) : "";
-}
-
-function indexedString(strings: string[], value: unknown): string {
-  return strings[numberValue(value)] ?? "";
-}
-
-function nodeKey(sessionId: string | undefined, backendNodeId: number): string {
-  return `${sessionId ?? "main"}:${backendNodeId}`;
-}
-
-function numberArray(value: unknown): number[] {
-  return Array.isArray(value) ? value.filter(isFiniteNumber) : [];
 }
 
 function recordValue(value: unknown): CdpResult | undefined {

@@ -760,7 +760,7 @@ describe.sequential("AgentService", () => {
     expect(calls[0]).toMatchObject({ ownerBotId: "chief" });
     expect(stagedPath).not.toBe(uploadPath);
     expect(stagedContents).toBe("safe upload");
-    await expect(readFile(stagedPath)).rejects.toThrow();
+    await expect(readFile(stagedPath, "utf8")).resolves.toBe("safe upload");
 
     client.emit("request", {
       method: "item/tool/call",
@@ -780,6 +780,8 @@ describe.sequential("AgentService", () => {
       "workspace or the OpenBot shared directory",
     );
     expect(calls).toHaveLength(1);
+    await service.stop();
+    await expect(readFile(stagedPath)).rejects.toThrow();
   });
 
   it("surfaces Codex approvals without auto-accepting and maps one-shot decisions", async () => {
