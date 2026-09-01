@@ -8,12 +8,20 @@ import {
 } from "@openbot/contracts/validation";
 
 import { randomToken, sha256 } from "./crypto";
-import type { AuthRepository, AuthUser, EmailCodeDelivery, EmailVerificationResult } from "./types";
+import type {
+  AuthRepository,
+  AuthUser,
+  EmailCodeDelivery,
+  EmailVerificationResult,
+  MobileAuthDevice,
+  MobileAuthDeviceIdentity,
+} from "./types";
 
 const CHALLENGE_TTL_MS = 10 * 60_000;
 const RESEND_COOLDOWN_MS = 60_000;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60_000;
 const TEAM_TICKET_TTL_MS = 2 * 60_000;
+const MOBILE_CONNECT_SERVER_ID = "00000000-0000-4000-8000-000000000002";
 const RATE_WINDOW_MS = 15 * 60_000;
 
 interface AuthServiceOptions {
@@ -123,6 +131,10 @@ export class AuthService {
     return this.#repository.authenticate(sessionToken, this.#now());
   }
 
+  authenticateDesktopSession(sessionToken: string): Promise<AuthUser | null> {
+    return this.#repository.authenticateDesktopSession(sessionToken, this.#now());
+  }
+
   async updateName(sessionToken: string, nameInput: string): Promise<AuthUser> {
     const user = await this.authenticate(sessionToken);
     if (!user) throw new AuthServiceError(401, "unauthorized", "The session is invalid.");
@@ -170,7 +182,7 @@ export class AuthService {
     serverId: string,
     sourceIp: string,
   ): Promise<{ ticket: string; expiresAt: number }> {
-    validateServerId(serverId);
+    validateTeamServerId(serverId);
     const user = await this.authenticate(sessionToken);
     if (!user) throw new AuthServiceError(401, "unauthorized", "The session is invalid.");
     const now = this.#now();
@@ -189,7 +201,7 @@ export class AuthService {
   }
 
   async redeemTeamAuthTicket(ticket: string, serverId: string, sourceIp: string): Promise<AuthUser | null> {
-    validateServerId(serverId);
+    validateTeamServerId(serverId);
     if (!ticket || ticket.length > 128) return null;
     const now = this.#now();
     await this.#enforceRateLimit(`team-ticket-redeem:ip:${normalizeSourceIp(sourceIp)}`, 120, now);
@@ -200,8 +212,72 @@ export class AuthService {
     });
   }
 
+  async issueMobileAuthTicket(sessionToken: string, sourceIp: string): Promise<{ ticket: string; expiresAt: number }> {
+    const user = await this.authenticateDesktopSession(sessionToken);
+    if (!user) throw new AuthServiceError(401, "unauthorized", "The session is invalid.");
+    const now = this.#now();
+    await this.#enforceRateLimit(`mobile-ticket:user:${user.id}`, 30, now);
+    await this.#enforceRateLimit(`mobile-ticket:ip:${normalizeSourceIp(sourceIp)}`, 60, now);
+    const ticket = randomToken();
+    const expiresAt = now + TEAM_TICKET_TTL_MS;
+    await this.#repository.replaceMobileAuthTicket({
+      ticketHash: await sha256(ticket),
+      userId: user.id,
+      serverId: MOBILE_CONNECT_SERVER_ID,
+      createdAt: now,
+      expiresAt,
+    });
+    return { ticket, expiresAt };
+  }
+
+  async redeemMobileAuthTicket(
+    ticket: string,
+    deviceInput: MobileAuthDeviceIdentity,
+    sourceIp: string,
+  ): Promise<{ sessionToken: string; user: AuthUser } | null> {
+    if (!ticket || ticket.length > 128) return null;
+    const device = normalizeMobileDevice(deviceInput);
+    const now = this.#now();
+    await this.#enforceRateLimit(`mobile-ticket-redeem:ip:${normalizeSourceIp(sourceIp)}`, 60, now);
+    return this.#repository.redeemMobileAuthTicket({
+      ticketHash: await sha256(ticket),
+      serverId: MOBILE_CONNECT_SERVER_ID,
+      now,
+      session: {
+        id: crypto.randomUUID(),
+        token: randomToken(),
+        expiresAt: now + SESSION_TTL_MS,
+      },
+      device,
+    });
+  }
+
+  async listMobileAuthDevices(sessionToken: string): Promise<MobileAuthDevice[]> {
+    const user = await this.authenticate(sessionToken);
+    if (!user) throw new AuthServiceError(401, "unauthorized", "The session is invalid.");
+    return this.#repository.listMobileAuthDevices(user.id, this.#now());
+  }
+
+  authenticateMobileSession(sessionToken: string): Promise<AuthUser | null> {
+    return this.#repository.authenticateMobileSession(sessionToken, this.#now());
+  }
+
+  async revokeMobileAuthDevice(sessionToken: string, sessionId: string): Promise<void> {
+    if (!isUuidV4(sessionId)) {
+      throw new AuthServiceError(400, "invalid_mobile_session", "The mobile session ID is invalid.");
+    }
+    const user = await this.authenticate(sessionToken);
+    if (!user) throw new AuthServiceError(401, "unauthorized", "The session is invalid.");
+    await this.#repository.revokeMobileAuthDevice(user.id, sessionId, this.#now());
+  }
+
   logout(sessionToken: string): Promise<void> {
     return this.#repository.revokeSession(sessionToken, this.#now());
+  }
+
+  async logoutMobileSession(sessionToken: string): Promise<void> {
+    const revoked = await this.#repository.revokeMobileSession(sessionToken, this.#now());
+    if (!revoked) throw new AuthServiceError(401, "unauthorized", "The mobile session is invalid.");
   }
 
   async #enforceRateLimit(key: string, limit: number, now: number): Promise<void> {
@@ -275,6 +351,27 @@ function validateServerId(value: string): void {
   if (!isUuidV4(value)) {
     throw new AuthServiceError(400, "invalid_server_id", "The team server ID is invalid.");
   }
+}
+
+function validateTeamServerId(value: string): void {
+  validateServerId(value);
+  if (value === MOBILE_CONNECT_SERVER_ID) {
+    throw new AuthServiceError(400, "invalid_server_id", "The team server ID is invalid.");
+  }
+}
+
+function normalizeMobileDevice(input: MobileAuthDeviceIdentity): MobileAuthDeviceIdentity {
+  if (!isUuidV4(input.id)) {
+    throw new AuthServiceError(400, "invalid_mobile_device", "The mobile device ID is invalid.");
+  }
+  const name = input.name.normalize("NFC").trim().replace(/\s+/gu, " ");
+  if (!name || name.length > 80 || /[\p{Cc}\p{Cf}]/u.test(name)) {
+    throw new AuthServiceError(400, "invalid_mobile_device", "The mobile device name is invalid.");
+  }
+  if (input.platform !== "ios" && input.platform !== "android" && input.platform !== "unknown") {
+    throw new AuthServiceError(400, "invalid_mobile_device", "The mobile device platform is invalid.");
+  }
+  return { id: input.id, name, platform: input.platform };
 }
 
 function verificationResult(result: EmailVerificationResult): {

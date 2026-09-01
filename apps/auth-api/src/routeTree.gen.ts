@@ -23,6 +23,10 @@ import { Route as V1AuthLogoutRouteImport } from './routes/v1/auth/logout'
 import { Route as V1AvatarsUserIdRouteImport } from './routes/v1/avatars/$userId'
 import { Route as V1MeAvatarRouteImport } from './routes/v1/me/avatar'
 import { Route as V1MeProfileRouteImport } from './routes/v1/me/profile'
+import { Route as V1MobileAuthDevicesRouteImport } from './routes/v1/mobile-auth/devices'
+import { Route as V1MobileAuthRedeemRouteImport } from './routes/v1/mobile-auth/redeem'
+import { Route as V1MobileAuthSessionRouteImport } from './routes/v1/mobile-auth/session'
+import { Route as V1MobileAuthTicketRouteImport } from './routes/v1/mobile-auth/ticket'
 import { Route as V1SkillsIndexRouteImport } from './routes/v1/skills/index'
 import { Route as V1SkillsSkillIdRouteImport } from './routes/v1/skills/$skillId'
 import { Route as V1SkillsMineRouteImport } from './routes/v1/skills/mine'
@@ -36,6 +40,7 @@ import { Route as V1AuthEmailVerifyRouteImport } from './routes/v1/auth/email/ve
 import { Route as V1MarketplaceAgentsIndexRouteImport } from './routes/v1/marketplace/agents/index'
 import { Route as V1MarketplaceAgentsAgentIdRouteImport } from './routes/v1/marketplace/agents/$agentId'
 import { Route as V1MarketplaceAgentsMineRouteImport } from './routes/v1/marketplace/agents/mine'
+import { Route as V1MobileAuthDevicesSessionIdRouteImport } from './routes/v1/mobile-auth/devices/$sessionId'
 import { Route as V1SkillsSkillIdContentRouteImport } from './routes/v1/skills/$skillId/content'
 import { Route as V1SkillsSkillIdIconRouteImport } from './routes/v1/skills/$skillId/icon'
 import { Route as V1SkillsSkillIdInstallRouteImport } from './routes/v1/skills/$skillId/install'
@@ -135,6 +140,26 @@ const V1MeProfileRoute = V1MeProfileRouteImport.update({
   path: '/profile',
   getParentRoute: () => V1MeRoute,
 } as any)
+const V1MobileAuthDevicesRoute = V1MobileAuthDevicesRouteImport.update({
+  id: '/v1/mobile-auth/devices',
+  path: '/v1/mobile-auth/devices',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const V1MobileAuthRedeemRoute = V1MobileAuthRedeemRouteImport.update({
+  id: '/v1/mobile-auth/redeem',
+  path: '/v1/mobile-auth/redeem',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const V1MobileAuthSessionRoute = V1MobileAuthSessionRouteImport.update({
+  id: '/v1/mobile-auth/session',
+  path: '/v1/mobile-auth/session',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const V1MobileAuthTicketRoute = V1MobileAuthTicketRouteImport.update({
+  id: '/v1/mobile-auth/ticket',
+  path: '/v1/mobile-auth/ticket',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const V1SkillsIndexRoute = V1SkillsIndexRouteImport.update({
   id: '/v1/skills/',
   path: '/v1/skills/',
@@ -202,6 +227,12 @@ const V1MarketplaceAgentsMineRoute = V1MarketplaceAgentsMineRouteImport.update({
   path: '/v1/marketplace/agents/mine',
   getParentRoute: () => rootRouteImport,
 } as any)
+const V1MobileAuthDevicesSessionIdRoute =
+  V1MobileAuthDevicesSessionIdRouteImport.update({
+    id: '/$sessionId',
+    path: '/$sessionId',
+    getParentRoute: () => V1MobileAuthDevicesRoute,
+  } as any)
 const V1SkillsSkillIdContentRoute = V1SkillsSkillIdContentRouteImport.update({
   id: '/content',
   path: '/content',
@@ -369,6 +400,10 @@ export interface FileRoutesByFullPath {
   '/v1/avatars/$userId': typeof V1AvatarsUserIdRoute
   '/v1/me/avatar': typeof V1MeAvatarRoute
   '/v1/me/profile': typeof V1MeProfileRoute
+  '/v1/mobile-auth/devices': typeof V1MobileAuthDevicesRouteWithChildren
+  '/v1/mobile-auth/redeem': typeof V1MobileAuthRedeemRoute
+  '/v1/mobile-auth/session': typeof V1MobileAuthSessionRoute
+  '/v1/mobile-auth/ticket': typeof V1MobileAuthTicketRoute
   '/v1/skills/$skillId': typeof V1SkillsSkillIdRouteWithChildren
   '/v1/skills/mine': typeof V1SkillsMineRoute
   '/v1/team-auth/redeem': typeof V1TeamAuthRedeemRoute
@@ -381,6 +416,7 @@ export interface FileRoutesByFullPath {
   '/v1/auth/email/verify': typeof V1AuthEmailVerifyRoute
   '/v1/marketplace/agents/$agentId': typeof V1MarketplaceAgentsAgentIdRouteWithChildren
   '/v1/marketplace/agents/mine': typeof V1MarketplaceAgentsMineRoute
+  '/v1/mobile-auth/devices/$sessionId': typeof V1MobileAuthDevicesSessionIdRoute
   '/v1/skills/$skillId/content': typeof V1SkillsSkillIdContentRoute
   '/v1/skills/$skillId/icon': typeof V1SkillsSkillIdIconRoute
   '/v1/skills/$skillId/install': typeof V1SkillsSkillIdInstallRoute
@@ -425,6 +461,10 @@ export interface FileRoutesByTo {
   '/v1/avatars/$userId': typeof V1AvatarsUserIdRoute
   '/v1/me/avatar': typeof V1MeAvatarRoute
   '/v1/me/profile': typeof V1MeProfileRoute
+  '/v1/mobile-auth/devices': typeof V1MobileAuthDevicesRouteWithChildren
+  '/v1/mobile-auth/redeem': typeof V1MobileAuthRedeemRoute
+  '/v1/mobile-auth/session': typeof V1MobileAuthSessionRoute
+  '/v1/mobile-auth/ticket': typeof V1MobileAuthTicketRoute
   '/v1/skills/$skillId': typeof V1SkillsSkillIdRouteWithChildren
   '/v1/skills/mine': typeof V1SkillsMineRoute
   '/v1/team-auth/redeem': typeof V1TeamAuthRedeemRoute
@@ -437,6 +477,7 @@ export interface FileRoutesByTo {
   '/v1/auth/email/verify': typeof V1AuthEmailVerifyRoute
   '/v1/marketplace/agents/$agentId': typeof V1MarketplaceAgentsAgentIdRouteWithChildren
   '/v1/marketplace/agents/mine': typeof V1MarketplaceAgentsMineRoute
+  '/v1/mobile-auth/devices/$sessionId': typeof V1MobileAuthDevicesSessionIdRoute
   '/v1/skills/$skillId/content': typeof V1SkillsSkillIdContentRoute
   '/v1/skills/$skillId/icon': typeof V1SkillsSkillIdIconRoute
   '/v1/skills/$skillId/install': typeof V1SkillsSkillIdInstallRoute
@@ -482,6 +523,10 @@ export interface FileRoutesById {
   '/v1/avatars/$userId': typeof V1AvatarsUserIdRoute
   '/v1/me/avatar': typeof V1MeAvatarRoute
   '/v1/me/profile': typeof V1MeProfileRoute
+  '/v1/mobile-auth/devices': typeof V1MobileAuthDevicesRouteWithChildren
+  '/v1/mobile-auth/redeem': typeof V1MobileAuthRedeemRoute
+  '/v1/mobile-auth/session': typeof V1MobileAuthSessionRoute
+  '/v1/mobile-auth/ticket': typeof V1MobileAuthTicketRoute
   '/v1/skills/$skillId': typeof V1SkillsSkillIdRouteWithChildren
   '/v1/skills/mine': typeof V1SkillsMineRoute
   '/v1/team-auth/redeem': typeof V1TeamAuthRedeemRoute
@@ -494,6 +539,7 @@ export interface FileRoutesById {
   '/v1/auth/email/verify': typeof V1AuthEmailVerifyRoute
   '/v1/marketplace/agents/$agentId': typeof V1MarketplaceAgentsAgentIdRouteWithChildren
   '/v1/marketplace/agents/mine': typeof V1MarketplaceAgentsMineRoute
+  '/v1/mobile-auth/devices/$sessionId': typeof V1MobileAuthDevicesSessionIdRoute
   '/v1/skills/$skillId/content': typeof V1SkillsSkillIdContentRoute
   '/v1/skills/$skillId/icon': typeof V1SkillsSkillIdIconRoute
   '/v1/skills/$skillId/install': typeof V1SkillsSkillIdInstallRoute
@@ -540,6 +586,10 @@ export interface FileRouteTypes {
     | '/v1/avatars/$userId'
     | '/v1/me/avatar'
     | '/v1/me/profile'
+    | '/v1/mobile-auth/devices'
+    | '/v1/mobile-auth/redeem'
+    | '/v1/mobile-auth/session'
+    | '/v1/mobile-auth/ticket'
     | '/v1/skills/$skillId'
     | '/v1/skills/mine'
     | '/v1/team-auth/redeem'
@@ -552,6 +602,7 @@ export interface FileRouteTypes {
     | '/v1/auth/email/verify'
     | '/v1/marketplace/agents/$agentId'
     | '/v1/marketplace/agents/mine'
+    | '/v1/mobile-auth/devices/$sessionId'
     | '/v1/skills/$skillId/content'
     | '/v1/skills/$skillId/icon'
     | '/v1/skills/$skillId/install'
@@ -596,6 +647,10 @@ export interface FileRouteTypes {
     | '/v1/avatars/$userId'
     | '/v1/me/avatar'
     | '/v1/me/profile'
+    | '/v1/mobile-auth/devices'
+    | '/v1/mobile-auth/redeem'
+    | '/v1/mobile-auth/session'
+    | '/v1/mobile-auth/ticket'
     | '/v1/skills/$skillId'
     | '/v1/skills/mine'
     | '/v1/team-auth/redeem'
@@ -608,6 +663,7 @@ export interface FileRouteTypes {
     | '/v1/auth/email/verify'
     | '/v1/marketplace/agents/$agentId'
     | '/v1/marketplace/agents/mine'
+    | '/v1/mobile-auth/devices/$sessionId'
     | '/v1/skills/$skillId/content'
     | '/v1/skills/$skillId/icon'
     | '/v1/skills/$skillId/install'
@@ -652,6 +708,10 @@ export interface FileRouteTypes {
     | '/v1/avatars/$userId'
     | '/v1/me/avatar'
     | '/v1/me/profile'
+    | '/v1/mobile-auth/devices'
+    | '/v1/mobile-auth/redeem'
+    | '/v1/mobile-auth/session'
+    | '/v1/mobile-auth/ticket'
     | '/v1/skills/$skillId'
     | '/v1/skills/mine'
     | '/v1/team-auth/redeem'
@@ -664,6 +724,7 @@ export interface FileRouteTypes {
     | '/v1/auth/email/verify'
     | '/v1/marketplace/agents/$agentId'
     | '/v1/marketplace/agents/mine'
+    | '/v1/mobile-auth/devices/$sessionId'
     | '/v1/skills/$skillId/content'
     | '/v1/skills/$skillId/icon'
     | '/v1/skills/$skillId/install'
@@ -707,6 +768,10 @@ export interface RootRouteChildren {
   V1MeRoute: typeof V1MeRouteWithChildren
   V1AuthLogoutRoute: typeof V1AuthLogoutRoute
   V1AvatarsUserIdRoute: typeof V1AvatarsUserIdRoute
+  V1MobileAuthDevicesRoute: typeof V1MobileAuthDevicesRouteWithChildren
+  V1MobileAuthRedeemRoute: typeof V1MobileAuthRedeemRoute
+  V1MobileAuthSessionRoute: typeof V1MobileAuthSessionRoute
+  V1MobileAuthTicketRoute: typeof V1MobileAuthTicketRoute
   V1SkillsSkillIdRoute: typeof V1SkillsSkillIdRouteWithChildren
   V1SkillsMineRoute: typeof V1SkillsMineRoute
   V1TeamAuthRedeemRoute: typeof V1TeamAuthRedeemRoute
@@ -840,6 +905,34 @@ declare module '@tanstack/solid-router' {
       preLoaderRoute: typeof V1MeProfileRouteImport
       parentRoute: typeof V1MeRoute
     }
+    '/v1/mobile-auth/devices': {
+      id: '/v1/mobile-auth/devices'
+      path: '/v1/mobile-auth/devices'
+      fullPath: '/v1/mobile-auth/devices'
+      preLoaderRoute: typeof V1MobileAuthDevicesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/v1/mobile-auth/redeem': {
+      id: '/v1/mobile-auth/redeem'
+      path: '/v1/mobile-auth/redeem'
+      fullPath: '/v1/mobile-auth/redeem'
+      preLoaderRoute: typeof V1MobileAuthRedeemRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/v1/mobile-auth/session': {
+      id: '/v1/mobile-auth/session'
+      path: '/v1/mobile-auth/session'
+      fullPath: '/v1/mobile-auth/session'
+      preLoaderRoute: typeof V1MobileAuthSessionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/v1/mobile-auth/ticket': {
+      id: '/v1/mobile-auth/ticket'
+      path: '/v1/mobile-auth/ticket'
+      fullPath: '/v1/mobile-auth/ticket'
+      preLoaderRoute: typeof V1MobileAuthTicketRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/v1/skills/': {
       id: '/v1/skills/'
       path: '/v1/skills'
@@ -930,6 +1023,13 @@ declare module '@tanstack/solid-router' {
       fullPath: '/v1/marketplace/agents/mine'
       preLoaderRoute: typeof V1MarketplaceAgentsMineRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/v1/mobile-auth/devices/$sessionId': {
+      id: '/v1/mobile-auth/devices/$sessionId'
+      path: '/$sessionId'
+      fullPath: '/v1/mobile-auth/devices/$sessionId'
+      preLoaderRoute: typeof V1MobileAuthDevicesSessionIdRouteImport
+      parentRoute: typeof V1MobileAuthDevicesRoute
     }
     '/v1/skills/$skillId/content': {
       id: '/v1/skills/$skillId/content'
@@ -1135,6 +1235,17 @@ const V1MeRouteChildren: V1MeRouteChildren = {
 
 const V1MeRouteWithChildren = V1MeRoute._addFileChildren(V1MeRouteChildren)
 
+interface V1MobileAuthDevicesRouteChildren {
+  V1MobileAuthDevicesSessionIdRoute: typeof V1MobileAuthDevicesSessionIdRoute
+}
+
+const V1MobileAuthDevicesRouteChildren: V1MobileAuthDevicesRouteChildren = {
+  V1MobileAuthDevicesSessionIdRoute: V1MobileAuthDevicesSessionIdRoute,
+}
+
+const V1MobileAuthDevicesRouteWithChildren =
+  V1MobileAuthDevicesRoute._addFileChildren(V1MobileAuthDevicesRouteChildren)
+
 interface V1SkillsSkillIdVersionsVersionIdRouteChildren {
   V1SkillsSkillIdVersionsVersionIdContentRoute: typeof V1SkillsSkillIdVersionsVersionIdContentRoute
 }
@@ -1231,6 +1342,10 @@ const rootRouteChildren: RootRouteChildren = {
   V1MeRoute: V1MeRouteWithChildren,
   V1AuthLogoutRoute: V1AuthLogoutRoute,
   V1AvatarsUserIdRoute: V1AvatarsUserIdRoute,
+  V1MobileAuthDevicesRoute: V1MobileAuthDevicesRouteWithChildren,
+  V1MobileAuthRedeemRoute: V1MobileAuthRedeemRoute,
+  V1MobileAuthSessionRoute: V1MobileAuthSessionRoute,
+  V1MobileAuthTicketRoute: V1MobileAuthTicketRoute,
   V1SkillsSkillIdRoute: V1SkillsSkillIdRouteWithChildren,
   V1SkillsMineRoute: V1SkillsMineRoute,
   V1TeamAuthRedeemRoute: V1TeamAuthRedeemRoute,

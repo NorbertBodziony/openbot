@@ -2,7 +2,15 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { AvatarImageInput, CentralAuthIssue, CentralAuthState, CentralAuthUser } from "@openbot/contracts/ipc";
+import type {
+  AvatarImageInput,
+  CentralAuthIssue,
+  CentralAuthState,
+  CentralAuthUser,
+  MobileConnectedDevice,
+  MobileConnectTicket,
+} from "@openbot/contracts/ipc";
+import { createMobileConnectUrl } from "@openbot/contracts/mobile-connect";
 import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { createLocalJWKSet, jwtVerify } from "jose";
 import { z } from "zod";
@@ -15,6 +23,7 @@ type AuthFetcher = (input: string | URL | Request, init?: RequestInit) => Promis
 
 interface CentralAuthManagerOptions {
   apiUrl: string;
+  mobileConnectApiUrl?: string;
   storagePath: string;
   encrypt: (value: string) => Buffer;
   decrypt: (value: Buffer) => string;
@@ -116,6 +125,7 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     super();
     this.#options = {
       ...options,
+      mobileConnectApiUrl: options.mobileConnectApiUrl ?? options.apiUrl,
       canPersist: options.canPersist ?? (() => true),
       fetch: options.fetch ?? fetch,
       startupRetryWindowMs: options.startupRetryWindowMs ?? STARTUP_RETRY_WINDOW_MS,
@@ -172,6 +182,34 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
       throw new Error("The account service returned an invalid team ticket.");
     }
     return result.ticket;
+  }
+
+  async createMobileConnect(): Promise<MobileConnectTicket> {
+    const result = await this.#authorizedRequest("/v1/mobile-auth/ticket", { method: "POST" }, decodeTicketResponse);
+    if (!result.ticket || !Number.isFinite(result.expiresAt) || result.expiresAt <= Date.now()) {
+      throw new Error("The account service returned an invalid Mobile Connect ticket.");
+    }
+    return {
+      qrData: createMobileConnectUrl({ apiUrl: this.#options.mobileConnectApiUrl, ticket: result.ticket }),
+      expiresAt: result.expiresAt,
+    };
+  }
+
+  async listMobileConnectedDevices(): Promise<MobileConnectedDevice[]> {
+    const result = await this.#authorizedRequest(
+      "/v1/mobile-auth/devices",
+      { method: "GET" },
+      decodeMobileConnectedDevices,
+    );
+    return result.devices;
+  }
+
+  async revokeMobileConnectedDevice(sessionId: string): Promise<void> {
+    await this.#authorizedRequest(
+      `/v1/mobile-auth/devices/${encodeURIComponent(sessionId)}`,
+      { method: "DELETE" },
+      () => undefined,
+    );
   }
 
   async registerRemoteHost(input: {
@@ -774,6 +812,12 @@ export function readCentralAuthApiUrl(value: string | undefined, fallback = "htt
   return url.origin;
 }
 
+export function readMobileConnectApiUrl(value: string | undefined, fallback: string): string {
+  const apiUrl = value ?? fallback;
+  createMobileConnectUrl({ apiUrl, ticket: "x".repeat(32) });
+  return new URL(apiUrl).origin;
+}
+
 class AuthApiError extends Error {
   constructor(
     readonly status: number,
@@ -868,6 +912,30 @@ function decodeTicketResponse(value: unknown): { ticket: string; expiresAt: numb
   const record = decodeRecord(value, "team ticket");
   if (!isNumber(record.expiresAt)) throw new Error("Invalid team ticket expiration.");
   return { ticket: requiredString(record, "ticket"), expiresAt: record.expiresAt };
+}
+
+function decodeMobileConnectedDevices(value: unknown): { devices: MobileConnectedDevice[] } {
+  const record = decodeRecord(value, "mobile devices");
+  if (!Array.isArray(record.devices)) throw new Error("Invalid mobile device list.");
+  return { devices: record.devices.map(decodeMobileConnectedDevice) };
+}
+
+function decodeMobileConnectedDevice(value: unknown): MobileConnectedDevice {
+  const record = decodeRecord(value, "mobile device");
+  if (!isNumber(record.connectedAt) || !isNumber(record.lastActiveAt)) {
+    throw new Error("Invalid mobile device timestamps.");
+  }
+  const platform = record.platform;
+  if (platform !== "ios" && platform !== "android" && platform !== "unknown") {
+    throw new Error("Invalid mobile device platform.");
+  }
+  return {
+    sessionId: requiredString(record, "sessionId"),
+    name: requiredString(record, "name"),
+    platform,
+    connectedAt: record.connectedAt,
+    lastActiveAt: record.lastActiveAt,
+  };
 }
 
 function decodeRegisteredRemoteHost(value: unknown): RegisteredRemoteHost {

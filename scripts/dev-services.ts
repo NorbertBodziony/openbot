@@ -1,12 +1,14 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createServer } from "node:net";
+import { type NetworkInterfaceInfo, networkInterfaces } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { prepareDevelopmentEnvironment } from "./prepare-dev-environment";
 
 export type DevelopmentService = "api" | "app" | "test-client";
 type DevelopmentTarget = DevelopmentService | "all";
+type DevelopmentNetworkInterfaces = NodeJS.Dict<Array<Pick<NetworkInterfaceInfo, "address" | "family" | "internal">>>;
 
 export interface DevelopmentServiceSpec {
   name: DevelopmentService;
@@ -130,6 +132,10 @@ async function main(): Promise<void> {
     if (!sharedEnvironment.OPENBOT_AUTH_API_URL) {
       sharedEnvironment.OPENBOT_AUTH_API_URL = `http://127.0.0.1:${apiPort}`;
     }
+    configureMobileConnectDevelopmentNetwork(services, sharedEnvironment, networkInterfaces());
+    if (sharedEnvironment.OPENBOT_MOBILE_AUTH_API_URL) {
+      console.log(`Mobile Connect API: ${sharedEnvironment.OPENBOT_MOBILE_AUTH_API_URL}`);
+    }
     if (apiPort !== DEFAULT_API_PORT) {
       console.log(`API port ${DEFAULT_API_PORT} is busy. Using ${apiPort}.`);
     }
@@ -219,6 +225,56 @@ async function main(): Promise<void> {
     await stopAll("SIGTERM");
     throw error;
   }
+}
+
+export function configureMobileConnectDevelopmentNetwork(
+  services: DevelopmentService[],
+  environment: NodeJS.ProcessEnv,
+  interfaces: DevelopmentNetworkInterfaces,
+): void {
+  if (!services.some((service) => service === "app" || service === "test-client")) return;
+  if (environment.OPENBOT_API_HOST === "127.0.0.1") return;
+  const port = readPort(environment.OPENBOT_API_PORT);
+  const address = selectMobileConnectLanAddress(interfaces);
+  if (!port || !address) return;
+  environment.OPENBOT_API_HOST ??= "0.0.0.0";
+  environment.OPENBOT_MOBILE_AUTH_API_URL ??= `http://${address}:${port}`;
+}
+
+export function selectMobileConnectLanAddress(interfaces: DevelopmentNetworkInterfaces): string | null {
+  const candidates = Object.entries(interfaces).flatMap(([name, addresses]) =>
+    (addresses ?? []).flatMap((address) =>
+      address.family === "IPv4" && !address.internal && isPrivateIpv4(address.address)
+        ? [{ name, address: address.address }]
+        : [],
+    ),
+  );
+  candidates.sort(
+    (left, right) =>
+      interfacePriority(left.name) - interfacePriority(right.name) ||
+      left.name.localeCompare(right.name) ||
+      left.address.localeCompare(right.address),
+  );
+  return candidates[0]?.address ?? null;
+}
+
+function interfacePriority(name: string): 0 | 1 | 2 {
+  if (name === "en0" || name === "eth0") return 0;
+  if (/^(?:en|eth|wl)/u.test(name)) return 1;
+  return 2;
+}
+
+function isPrivateIpv4(address: string): boolean {
+  const values = address.split(".").map(Number);
+  if (values.length !== 4 || values.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) {
+    return false;
+  }
+  const [first, second] = values;
+  return (
+    first === 10 ||
+    (first === 172 && second !== undefined && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168)
+  );
 }
 
 async function waitForDevelopmentApi(portValue: string | undefined, child: ChildProcess): Promise<void> {
