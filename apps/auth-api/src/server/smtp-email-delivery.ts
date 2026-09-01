@@ -30,6 +30,11 @@ interface PreparedEmailMessage {
   body: string;
 }
 
+interface SmtpAttemptState {
+  submissionStarted: boolean;
+  accepted: boolean;
+}
+
 interface SmtpSocket {
   readable: ReadableStream<Uint8Array>;
   writable: WritableStream<Uint8Array>;
@@ -42,7 +47,9 @@ export type SmtpConnector = (
   options: { secureTransport: "on"; allowHalfOpen: false },
 ) => SmtpSocket;
 
-const SMTP_TIMEOUT_MS = 15_000;
+export const EMAIL_CODE_DELIVERY_BUDGET_MS = 25_000;
+const SMTP_TIMEOUT_MS = 7_500;
+const SMTP_CLOSE_TIMEOUT_MS = 250;
 const SMTP_MAX_ATTEMPTS = 3;
 const EMAIL_PATTERN = /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+$/iu;
 
@@ -138,11 +145,44 @@ async function sendPrivateEmailAttempt(
   connect: SmtpConnector,
 ): Promise<void> {
   const socket = connect({ hostname: config.host, port: config.port }, { secureTransport: "on", allowHalfOpen: false });
+  const state: SmtpAttemptState = { submissionStarted: false, accepted: false };
+  let attemptError: Error | null = null;
 
   try {
-    await withTimeout(runSmtpSession(socket, config, message), SMTP_TIMEOUT_MS);
+    await withTimeout(runSmtpSession(socket, config, message, state), SMTP_TIMEOUT_MS);
+  } catch (error) {
+    const smtpError = normalizeSmtpError(error);
+    if (!state.accepted) {
+      attemptError =
+        state.submissionStarted && smtpError.message !== "smtp_message_failed"
+          ? new Error("smtp_delivery_unknown")
+          : smtpError;
+    }
+  }
+  const closeConfirmed = await closeSmtpSocket(socket);
+  if (state.accepted) return;
+  if (attemptError && !isRetryableSmtpError(attemptError)) throw attemptError;
+  if (state.submissionStarted || !closeConfirmed) throw new Error("smtp_delivery_unknown");
+  if (attemptError) throw attemptError;
+  throw new Error("smtp_delivery_unknown");
+}
+
+async function closeSmtpSocket(socket: SmtpSocket): Promise<boolean> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve()
+        .then(() => socket.close())
+        .then(
+          () => true,
+          () => false,
+        ),
+      new Promise<boolean>((resolve) => {
+        timeout = setTimeout(() => resolve(false), SMTP_CLOSE_TIMEOUT_MS);
+      }),
+    ]);
   } finally {
-    await Promise.resolve(socket.close()).catch(() => undefined);
+    if (timeout) clearTimeout(timeout);
   }
 }
 
@@ -163,6 +203,7 @@ async function runSmtpSession(
   socket: SmtpSocket,
   config: SmtpEmailConfig,
   message: PreparedEmailMessage,
+  state: SmtpAttemptState,
 ): Promise<void> {
   await socket.opened;
   const reader = new SmtpResponseReader(socket.readable.getReader());
@@ -183,8 +224,10 @@ async function runSmtpSession(
   await reader.expect([250, 251], "recipient");
   await writeCommand(writer, "DATA");
   await reader.expect([354], "data");
+  state.submissionStarted = true;
   await writeCommand(writer, `${createMimeMessage(config.from, message)}\r\n.`);
   await reader.expect([250], "message");
+  state.accepted = true;
   await writeCommand(writer, "QUIT");
   await reader.expect([221], "quit");
 }

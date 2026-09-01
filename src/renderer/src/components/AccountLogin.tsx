@@ -15,7 +15,7 @@ interface AccountLoginProps {
   onReset: () => Promise<void>;
 }
 
-type PendingAction = "retry" | "send" | "verify" | "resend" | "reset";
+type PendingAction = "retry" | "send" | "check" | "verify" | "resend" | "reset";
 type LoginStep = "email" | "code";
 type LoginTransition = "none" | "forward" | "back";
 
@@ -26,6 +26,11 @@ const FIELD_ISSUES = new Set([
   "too_many_code_attempts",
 ]);
 const NEW_CODE_ISSUES = new Set(["sign_in_code_expired", "too_many_code_attempts"]);
+const UNCERTAIN_EMAIL_DELIVERY_ISSUES = new Set([
+  "email_delivery_pending",
+  "email_delivery_timeout",
+  "email_delivery_unknown",
+]);
 
 export function AccountLogin(props: AccountLoginProps) {
   const [email, setEmail] = createSignal("");
@@ -75,7 +80,17 @@ export function AccountLogin(props: AccountLoginProps) {
     const issue = currentIssue();
     return issue?.retryAfterSeconds ? secondsUntil(issueBlockedUntil(), now()) : 0;
   };
-  const emailBusy = () => pendingAction() === "send" || props.state.status === "signing_in";
+  const emailDeliveryUncertain = () => {
+    const issue = displayedIssue();
+    return Boolean(issue && UNCERTAIN_EMAIL_DELIVERY_ISSUES.has(issue.code));
+  };
+  const emailSubmitLabel = () => {
+    const retryIn = emailRetryIn();
+    if (emailDeliveryUncertain()) return retryIn > 0 ? `Check again in ${formatTimer(retryIn)}` : "Check delivery";
+    return retryIn > 0 ? `Try again in ${formatTimer(retryIn)}` : "Send sign-in code";
+  };
+  const emailBusy = () =>
+    pendingAction() === "send" || pendingAction() === "check" || props.state.status === "signing_in";
   const codeBusy = () => pendingAction() === "verify";
   const resendBusy = () => pendingAction() === "resend";
   const formIssue = createMemo(() => {
@@ -219,10 +234,11 @@ export function AccountLogin(props: AccountLoginProps) {
     }
     const normalizedEmail = normalizeEmailAddress(email());
     if (!normalizedEmail) return;
+    const action: PendingAction = emailDeliveryUncertain() ? "check" : "send";
     setEmail(normalizedEmail);
     setIssueVisible(false);
     setLocalError(null);
-    setPendingAction("send");
+    setPendingAction(action);
     try {
       await props.onRequestEmailCode(normalizedEmail);
     } catch {
@@ -442,14 +458,9 @@ export function AccountLogin(props: AccountLoginProps) {
                     class="account-login-primary"
                     disabled={emailBusy() || !email().trim() || emailRetryIn() > 0}
                   >
-                    <Show
-                      when={emailBusy()}
-                      fallback={
-                        emailRetryIn() > 0 ? `Try again in ${formatTimer(emailRetryIn())}` : "Send sign-in code"
-                      }
-                    >
+                    <Show when={emailBusy()} fallback={emailSubmitLabel()}>
                       <span class="account-login-button-spinner" aria-hidden="true" />
-                      Sending code…
+                      {pendingAction() === "check" ? "Checking delivery…" : "Sending code…"}
                     </Show>
                   </Button>
                 </form>
