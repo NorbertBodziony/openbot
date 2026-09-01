@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { stat } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -17,6 +17,12 @@ type ComputerUseHelperPlist = z.infer<typeof helperPlistSchema>;
 export const COMPUTER_USE_HELPER_NAME = "Codex Computer Use";
 export const COMPUTER_USE_HELPER_BUNDLE_ID = "com.openai.sky.CUAService";
 export const COMPUTER_USE_HELPER_RELATIVE_PATH = join("computer-use", "Codex Computer Use.app");
+const COMPUTER_USE_HELPER_TEAM_ID = "2DC432GLL2";
+const COMPUTER_USE_HELPER_SIGNING_REQUIREMENT =
+  `identifier "${COMPUTER_USE_HELPER_BUNDLE_ID}" and anchor apple generic ` +
+  "and certificate 1[field.1.2.840.113635.100.6.2.6] exists " +
+  "and certificate leaf[field.1.2.840.113635.100.6.1.13] exists " +
+  `and certificate leaf[subject.OU] = "${COMPUTER_USE_HELPER_TEAM_ID}"`;
 
 export interface ComputerUseMacHelper {
   path: string;
@@ -27,7 +33,8 @@ interface ComputerUseMacSetupOptions {
   platform?: NodeJS.Platform;
   codexHome?: string;
   readPlist?: (path: string) => Promise<ComputerUseHelperPlist>;
-  statPath?: typeof stat;
+  lstatPath?: typeof lstat;
+  verifyCodeSignature?: (path: string) => Promise<void>;
   getIconDataUrl?: (path: string) => Promise<string | null>;
 }
 
@@ -35,14 +42,16 @@ export class ComputerUseMacSetupService {
   readonly #platform: NodeJS.Platform;
   readonly #codexHome: string;
   readonly #readPlist: (path: string) => Promise<ComputerUseHelperPlist>;
-  readonly #statPath: typeof stat;
+  readonly #lstatPath: typeof lstat;
+  readonly #verifyCodeSignature: (path: string) => Promise<void>;
   readonly #getIconDataUrl: (path: string) => Promise<string | null>;
 
   constructor(options: ComputerUseMacSetupOptions = {}) {
     this.#platform = options.platform ?? process.platform;
     this.#codexHome = options.codexHome ?? (process.env.CODEX_HOME?.trim() || join(homedir(), ".codex"));
     this.#readPlist = options.readPlist ?? readPlistWithPlutil;
-    this.#statPath = options.statPath ?? stat;
+    this.#lstatPath = options.lstatPath ?? lstat;
+    this.#verifyCodeSignature = options.verifyCodeSignature ?? verifyComputerUseHelperSignature;
     this.#getIconDataUrl = options.getIconDataUrl ?? (async () => null);
   }
 
@@ -78,8 +87,9 @@ export class ComputerUseMacSetupService {
     if (this.#platform !== "darwin") throw new Error("Computer Use permission setup requires macOS.");
 
     const helperPath = join(this.#codexHome, COMPUTER_USE_HELPER_RELATIVE_PATH);
-    const helperInfo = await this.#statPath(helperPath);
+    const helperInfo = await this.#lstatPath(helperPath);
     if (!helperInfo.isDirectory()) throw new Error("Computer Use helper is not an application bundle.");
+    await this.#verifyCodeSignature(helperPath);
 
     const plistPath = join(helperPath, "Contents", "Info.plist");
     const plist = await this.#readPlist(plistPath);
@@ -89,7 +99,7 @@ export class ComputerUseMacSetupService {
 
     const executable = normalizedString(plist.CFBundleExecutable);
     if (!executable) throw new Error("Computer Use helper has no executable.");
-    const executableInfo = await this.#statPath(join(helperPath, "Contents", "MacOS", executable));
+    const executableInfo = await this.#lstatPath(join(helperPath, "Contents", "MacOS", executable));
     if (!executableInfo.isFile()) throw new Error("Computer Use helper executable is missing.");
 
     return {
@@ -97,6 +107,14 @@ export class ComputerUseMacSetupService {
       name: normalizedString(plist.CFBundleName) ?? COMPUTER_USE_HELPER_NAME,
     };
   }
+}
+
+async function verifyComputerUseHelperSignature(path: string): Promise<void> {
+  await execFileAsync(
+    "/usr/bin/codesign",
+    ["--verify", "--strict", "--verbose=2", `-R=${COMPUTER_USE_HELPER_SIGNING_REQUIREMENT}`, path],
+    { encoding: "utf8", maxBuffer: 1024 * 1024 },
+  );
 }
 
 async function readPlistWithPlutil(path: string): Promise<ComputerUseHelperPlist> {

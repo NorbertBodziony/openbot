@@ -133,5 +133,6 @@ function createService(root: string): ComputerUseMacSetupService {
       CFBundleName: "Codex Computer Use",
       CFBundleExecutable: "SkyComputerUseService",
     }),
+    verifyCodeSignature: async () => undefined,
   });
 }
