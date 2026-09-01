@@ -1628,7 +1628,12 @@ function normalizeModifier(value: string) {
   return null;
 }
 
-function normalizeKey(key: string): { key: string; code: string; windowsVirtualKeyCode?: number } {
+function normalizeKey(key: string): {
+  key: string;
+  code: string;
+  windowsVirtualKeyCode?: number;
+  nativeVirtualKeyCode?: number;
+} {
   const aliases: Record<string, [string, string, number?]> = {
     enter: ["Enter", "Enter", 13],
     tab: ["Tab", "Tab", 9],
@@ -1647,7 +1652,13 @@ function normalizeKey(key: string): { key: string; code: string; windowsVirtualK
     pagedown: ["PageDown", "PageDown", 34],
   };
   const alias = aliases[key.toLowerCase()];
-  if (alias) return { key: alias[0], code: alias[1], windowsVirtualKeyCode: alias[2] };
+  if (alias)
+    return {
+      key: alias[0],
+      code: alias[1],
+      windowsVirtualKeyCode: alias[2],
+      nativeVirtualKeyCode: process.platform === "darwin" && alias[0] === "ArrowDown" ? 125 : undefined,
+    };
   if (!/^[\w\-.,/;='[\]`]{1,20}$/u.test(key)) throw new Error(`Unsupported browser key: ${key}`);
   const upper = key.length === 1 ? key.toUpperCase() : key;
   return { key, code: key.length === 1 && /[a-z]/i.test(key) ? `Key${upper}` : upper };
