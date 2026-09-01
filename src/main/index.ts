@@ -69,6 +69,7 @@ import { readAppVariant, resolveAppIconPath } from "./app-icon";
 import { BrowserPictureInPicture } from "./browser-picture-in-picture";
 import { CentralAuthManager, readCentralAuthApiUrl } from "./central-auth-manager";
 import { buildContentSecurityPolicy } from "./content-security-policy";
+import { guardDevelopmentOutput } from "./development-output";
 import {
   developmentUserDataName,
   readDevelopmentInstanceId,
@@ -163,6 +164,7 @@ import {
   decodeVoid,
   RemoteServerManager,
 } from "./remote-server-manager";
+import { sendToRenderer } from "./renderer-ipc";
 import { canCheckRendererPermission, canRequestRendererPermission } from "./renderer-permissions";
 import { readSetupState, writeSetupState } from "./setup-store";
 import { SkillMarketplaceService } from "./skill-marketplace-service";
@@ -209,6 +211,7 @@ app.enableSandbox();
 if (process.platform === "win32") app.setAppUserModelId("app.openbot.desktop");
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 const appVariant = readAppVariant(process.env.OPENBOT_APP_VARIANT, app.isPackaged);
+if (!app.isPackaged) guardDevelopmentOutput([process.stdout, process.stderr], () => app.quit());
 const appIconPath = resolveAppIconPath({
   variant: appVariant,
   platform: process.platform,
@@ -1375,7 +1378,8 @@ function configureApplicationMenu(service: AgentService, updater: UpdateService)
 function forwardAgentEvent(serverId: string, event: AgentEvent, bufferedLive = false): void {
   if (serverId === "local") hostAnalytics?.handleAgentEvent(event);
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(
+  sendToRenderer(
+    mainWindow,
     IPC_CHANNELS.agentEvent,
     bufferedLive ? { serverId, event, bufferedLive } : { serverId, event },
   );
@@ -1395,41 +1399,42 @@ function forwardAgentEvent(serverId: string, event: AgentEvent, bufferedLive = f
 
 function forwardBrowserDisplayState(state: BrowserDisplayState): void {
   for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.browserDisplayStateEvent, state);
+    sendToRenderer(window, IPC_CHANNELS.browserDisplayStateEvent, state);
   }
 }
 
 function forwardUpdateStatus(status: import("@openbot/contracts/ipc").UpdateStatus): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.updateEvent, status);
+  sendToRenderer(mainWindow, IPC_CHANNELS.updateEvent, status);
 }
 
 function forwardVoiceModelStatus(status: VoiceModelStatus): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.voiceModelStatus, status);
+  sendToRenderer(mainWindow, IPC_CHANNELS.voiceModelStatus, status);
 }
 
 function forwardProviderRuntimeStatus(snapshot: import("@openbot/contracts/ipc").ProviderRuntimeSnapshot): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.providerRuntimesEvent, snapshot);
+  sendToRenderer(mainWindow, IPC_CHANNELS.providerRuntimesEvent, snapshot);
 }
 
 function forwardHostStatus(status: import("@openbot/contracts/ipc").HostStatus): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.hostEvent, status);
+  sendToRenderer(mainWindow, IPC_CHANNELS.hostEvent, status);
   if (remoteServerManager) {
-    mainWindow.webContents.send(IPC_CHANNELS.serversEvent, withLocalHostSummary(remoteServerManager.list(), status));
+    sendToRenderer(mainWindow, IPC_CHANNELS.serversEvent, withLocalHostSummary(remoteServerManager.list(), status));
   }
 }
 
 function forwardRemoteDesktopSessions(sessions: import("@openbot/contracts/ipc").RemoteDesktopSession[]): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.remoteDesktopEvent, sessions);
+  sendToRenderer(mainWindow, IPC_CHANNELS.remoteDesktopEvent, sessions);
 }
 
 function forwardServers(servers: import("@openbot/contracts/ipc").ServerSummary[]): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(
+  sendToRenderer(
+    mainWindow,
     IPC_CHANNELS.serversEvent,
     hostService ? withLocalHostSummary(servers, hostService.getStatus()) : servers,
   );
@@ -1437,7 +1442,7 @@ function forwardServers(servers: import("@openbot/contracts/ipc").ServerSummary[
 
 function forwardTeamPresence(serverId: string, snapshot: import("@openbot/contracts/ipc").TeamPresenceSnapshot): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.serversPresence, { serverId, snapshot });
+  sendToRenderer(mainWindow, IPC_CHANNELS.serversPresence, { serverId, snapshot });
 }
 
 function forwardDirectMessage(
@@ -1445,7 +1450,7 @@ function forwardDirectMessage(
   event: import("@openbot/contracts/ipc").DirectMessageRealtimeEvent,
 ): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.serversDirectMessage, { serverId, event });
+  sendToRenderer(mainWindow, IPC_CHANNELS.serversDirectMessage, { serverId, event });
 }
 
 function forwardDirectTyping(
@@ -1453,7 +1458,7 @@ function forwardDirectTyping(
   event: import("@openbot/contracts/ipc").DirectTypingRealtimeEvent,
 ): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.serversDirectTyping, { serverId, event });
+  sendToRenderer(mainWindow, IPC_CHANNELS.serversDirectTyping, { serverId, event });
 }
 
 function forwardCentralAuth(state: CentralAuthState): void {
@@ -1480,7 +1485,7 @@ function forwardCentralAuth(state: CentralAuthState): void {
       console.error("Unable to synchronize the signed-in account:", error);
     });
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.authEvent, state);
+  sendToRenderer(mainWindow, IPC_CHANNELS.authEvent, state);
 }
 
 function acceptInviteUrl(value: string): void {
@@ -1493,8 +1498,7 @@ function acceptInviteUrl(value: string): void {
   if (mainWindow && !mainWindow.isDestroyed() && inviteReceiverReady) {
     mainWindow.show();
     mainWindow.focus();
-    mainWindow.webContents.send(IPC_CHANNELS.serversInvite, value);
-    pendingInviteUrl = null;
+    if (sendToRenderer(mainWindow, IPC_CHANNELS.serversInvite, value)) pendingInviteUrl = null;
   }
 }
 
@@ -1612,7 +1616,7 @@ if (!hasSingleInstanceLock) {
         developmentUrl: process.env.ELECTRON_RENDERER_URL,
         onEvent: (event) => {
           if (!mainWindow || mainWindow.isDestroyed()) return;
-          mainWindow.webContents.send(IPC_CHANNELS.browserPictureInPictureEvent, event);
+          sendToRenderer(mainWindow, IPC_CHANNELS.browserPictureInPictureEvent, event);
         },
       });
       browserHost.onChanged((tabs, activeTabId) => forwardBrowserDisplayState({ tabs, activeTabId }));
