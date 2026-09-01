@@ -944,6 +944,7 @@ const args: Parameters<typeof Conversation>[0] = {
   queue: undefined,
   browserTabs: [],
   activeBrowserTabId: null,
+  browserVisibilitySuspended: false,
   browserControlState: { sessions: [] },
   server: STORY_SERVERS[0],
   presence: STORY_PRESENCE,

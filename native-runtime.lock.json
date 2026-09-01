@@ -165,7 +165,23 @@
       "overrides": [],
       "submodules": {}
     },
-    "releaseArtifacts": {},
+    "artifactRelease": {
+      "repository": "nightly-labs/openbot",
+      "tag": "remote-desktop-runtime-202f3df41a8a8ff92dec7abe0c8caa572cd0ead65399d5ace479ec21be9f2c66",
+      "inputDigest": "202f3df41a8a8ff92dec7abe0c8caa572cd0ead65399d5ace479ec21be9f2c66",
+      "manifestAsset": "remote-desktop-runtime-manifest.json",
+      "manifestSha256": "1776be0e036c320b2da0bc65701f174a0f1e1d618a2cc3a05a0065c511b9e60c"
+    },
+    "releaseArtifacts": {
+      "darwin-arm64": {
+        "asset": "remote-desktop-runtime-darwin-arm64.tar.gz",
+        "sha256": "4364005a99dc2753dae35a6d2e6da25de3ab1eb6e090925080eed970d3718509"
+      },
+      "win32-x64": {
+        "asset": "remote-desktop-runtime-win32-x64.tar.gz",
+        "sha256": "bce91a1b10abacd73c989fa789cd6ce4ccfe995b77ae1fb8dce3c0609e758e3c"
+      }
+    },
     "targets": {
       "darwin-arm64": ["Sunshine.app/Contents/MacOS/Sunshine", "web-server", "streamer"],
       "win32-x64": ["sunshine.exe", "web-server.exe", "streamer.exe"]

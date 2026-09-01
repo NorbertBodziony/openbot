@@ -1305,7 +1305,14 @@ function createWindow(): BrowserWindow {
       return;
     }
     const tabId = browserHost?.activeTabId;
-    if (!browserHost?.visible || !tabId || !isCloseBrowserTabShortcut(input)) return;
+    if (
+      remoteServerManager?.activeServerId !== "local" ||
+      !browserHost?.visible ||
+      !tabId ||
+      !isCloseBrowserTabShortcut(input)
+    ) {
+      return;
+    }
     event.preventDefault();
     setImmediate(() => void browserHost?.close(tabId).catch(() => undefined));
   });

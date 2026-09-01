@@ -9,19 +9,6 @@
   transition: padding-right var(--panel-resize-duration, var(--openbot-duration-overlay)) cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.conversation-panel.browser-panel-available::after {
-  position: absolute;
-  z-index: 13;
-  top: 0;
-  right: 1px;
-  bottom: 0;
-  width: 1px;
-  background: var(--openbot-accent);
-  box-shadow: -10px 0 28px var(--openbot-accent-soft);
-  content: "";
-  pointer-events: none;
-}
-
 .direct-conversation {
   position: relative;
   display: flex;
@@ -3050,7 +3037,6 @@
   }
 }
 
-.computer-button-available,
 .computer-button-agent-active {
   border-color: var(--openbot-accent);
   background: var(--openbot-accent-soft);

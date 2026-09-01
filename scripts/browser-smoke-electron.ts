@@ -1048,6 +1048,41 @@ async function main(): Promise<void> {
       arguments: { tabId: otherBotTab.id },
     });
     if (crossAgentSnapshot.success) throw new Error("Dynamic browser tools accessed another agent's tab.");
+    const crossAgentClose = await browser.handleDynamicTool({
+      threadId: "smoke-thread",
+      turnId: "browser-smoke-cross-agent-close-turn",
+      callId: "browser-smoke-cross-agent-close-call",
+      ownerBotId: "smoke-bot",
+      namespace: "openbot_browser",
+      tool: "close_tab",
+      arguments: { tabId: otherBotTab.id },
+    });
+    if (crossAgentClose.success || !browser.listTabs().some((candidate) => candidate.id === otherBotTab.id)) {
+      throw new Error("Dynamic browser tools closed another agent's tab.");
+    }
+    const closableToolTab = await browser.open(`${origin}/cookie`, "smoke-thread", "smoke-bot");
+    const firstClose = browser.handleDynamicTool({
+      threadId: "smoke-thread",
+      turnId: "browser-smoke-close-turn-1",
+      callId: "browser-smoke-close-call-1",
+      ownerBotId: "smoke-bot",
+      namespace: "openbot_browser",
+      tool: "close_tab",
+      arguments: { tabId: closableToolTab.id },
+    });
+    const repeatedClose = browser.handleDynamicTool({
+      threadId: "smoke-thread",
+      turnId: "browser-smoke-close-turn-2",
+      callId: "browser-smoke-close-call-2",
+      ownerBotId: "smoke-bot",
+      namespace: "openbot_browser",
+      tool: "close_tab",
+      arguments: { tabId: closableToolTab.id },
+    });
+    const closeResults = await Promise.all([firstClose, repeatedClose]);
+    if (closeResults.some((result) => !result.success)) {
+      throw new Error("Repeated agent tab close was not idempotent.");
+    }
     process.stdout.write("BrowserHost: agent tab isolation passed.\n");
     if (!controlPhases.includes("open:acting") || !controlPhases.includes("open:waiting")) {
       throw new Error(`Browser control lifecycle was not reported: ${controlPhases.join(", ")}`);
