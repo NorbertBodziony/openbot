@@ -18,6 +18,7 @@ const AUTOMATION_WORLD_NAME = "openbot-browser-automation";
 const DOCUMENT_ID_PROPERTY = "__openbot_browser_document_id__";
 const MAX_SNAPSHOT_FRAMES = 12;
 const MAX_SNAPSHOT_ELEMENTS = 200;
+const MAX_SNAPSHOT_CANDIDATES = MAX_SNAPSHOT_ELEMENTS * 2;
 const MAX_SNAPSHOT_TEXT = 100_000;
 const MAX_SNAPSHOT_SCANNED_NODES = 10_000;
 const MAX_SNAPSHOT_ELEMENT_VALUE = 2_000;
@@ -1376,40 +1377,39 @@ async function collectActionableNodes(
   const contextId = await automationContextId(send, capture.sessionId);
   const results: Array<{ backendNodeId: number; node: CdpResult; ax: CdpResult; role: string }> = [];
   const batchSize = MAX_SNAPSHOT_ELEMENTS;
-  let candidateOffset = 0;
-  while (results.length < limit) {
-    assertBeforeDeadline(deadline);
-    const collection = await send(
-      "Runtime.evaluate",
-      {
-        expression: actionableNodesExpression(candidateOffset, batchSize),
-        contextId,
-        returnByValue: false,
-      },
+  const collection = await send(
+    "Runtime.evaluate",
+    {
+      expression: actionableNodesExpression(MAX_SNAPSHOT_CANDIDATES),
+      contextId,
+      returnByValue: false,
+    },
+    capture.sessionId,
+  );
+  const exception = recordValue(collection.exceptionDetails);
+  if (exception) throw new Error(exceptionDescription(exception));
+  const collectionId = stringValue(recordValue(collection.result)?.objectId);
+  if (!collectionId) return results;
+  const objectIds: string[] = [];
+  try {
+    const properties = await send(
+      "Runtime.getProperties",
+      { objectId: collectionId, ownProperties: true },
       capture.sessionId,
     );
-    const exception = recordValue(collection.exceptionDetails);
-    if (exception) throw new Error(exceptionDescription(exception));
-    const collectionId = stringValue(recordValue(collection.result)?.objectId);
-    if (!collectionId) break;
-    const objectIds: string[] = [];
-    try {
-      const properties = await send(
-        "Runtime.getProperties",
-        { objectId: collectionId, ownProperties: true },
-        capture.sessionId,
-      );
-      const descriptors = Array.isArray(properties.result) ? properties.result.filter(isRecord) : [];
-      objectIds.push(
-        ...descriptors
-          .filter((descriptor) => /^\d+$/.test(stringValue(descriptor.name)))
-          .sort((left, right) => Number(left.name) - Number(right.name))
-          .map((descriptor) => stringValue(recordValue(descriptor.value)?.objectId))
-          .filter(Boolean)
-          .slice(0, batchSize),
-      );
+    const descriptors = Array.isArray(properties.result) ? properties.result.filter(isRecord) : [];
+    objectIds.push(
+      ...descriptors
+        .filter((descriptor) => /^\d+$/.test(stringValue(descriptor.name)))
+        .sort((left, right) => Number(left.name) - Number(right.name))
+        .map((descriptor) => stringValue(recordValue(descriptor.value)?.objectId))
+        .filter(Boolean)
+        .slice(0, MAX_SNAPSHOT_CANDIDATES),
+    );
+    for (let offset = 0; offset < objectIds.length && results.length < limit; offset += batchSize) {
+      const batch = objectIds.slice(offset, offset + batchSize);
       const resolved = await Promise.all(
-        objectIds.map(async (objectId) => {
+        batch.map(async (objectId) => {
           const [description, partialAxTree] = await Promise.all([
             send("DOM.describeNode", { objectId, depth: 0 }, capture.sessionId),
             send("Accessibility.getPartialAXTree", { objectId, fetchRelatives: false }, capture.sessionId),
@@ -1428,26 +1428,23 @@ async function collectActionableNodes(
       );
       results.push(...resolved.filter((candidate) => candidate !== null).slice(0, limit - results.length));
       assertBeforeDeadline(deadline);
-    } finally {
-      await Promise.allSettled([
-        ...objectIds.map((objectId) => send("Runtime.releaseObject", { objectId }, capture.sessionId)),
-        send("Runtime.releaseObject", { objectId: collectionId }, capture.sessionId),
-      ]);
     }
-    if (objectIds.length < batchSize) break;
-    candidateOffset += objectIds.length;
+  } finally {
+    await Promise.allSettled([
+      ...objectIds.map((objectId) => send("Runtime.releaseObject", { objectId }, capture.sessionId)),
+      send("Runtime.releaseObject", { objectId: collectionId }, capture.sessionId),
+    ]);
   }
   return results;
 }
 
-function actionableNodesExpression(candidateOffset: number, limit: number): string {
+function actionableNodesExpression(limit: number): string {
   return `(() => {
     const roles = new Set(${JSON.stringify([...ACTIONABLE_ROLES])});
     const roots = [document];
     const seenRoots = new Set();
     const matches = [];
     let scanned = 0;
-    let candidates = 0;
     const isCandidate = node => {
       if (node.nodeType !== 1) return false;
       let element = node;
@@ -1481,10 +1478,7 @@ function actionableNodesExpression(candidateOffset: number, limit: number): stri
         if (node.localName === 'iframe' || node.localName === 'frame') {
           try { if (node.contentDocument) roots.push(node.contentDocument); } catch {}
         }
-        if (isCandidate(node)) {
-          if (candidates >= ${Math.max(0, candidateOffset)}) matches.push(node);
-          candidates++;
-        }
+        if (isCandidate(node)) matches.push(node);
       }
     }
     return matches;

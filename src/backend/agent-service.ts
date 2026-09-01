@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { constants, createWriteStream } from "node:fs";
-import { chmod, lstat, mkdtemp, open, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, open, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -3095,7 +3095,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await chmod(stagingRoot, 0o700);
       const stagedPaths: string[] = [];
       for (const [index, source] of sources.entries()) {
-        const stagedPath = join(stagingRoot, `${index}-${basename(source.path)}`);
+        const stagedDirectory = join(stagingRoot, String(index));
+        await mkdir(stagedDirectory, { mode: 0o700 });
+        const stagedPath = join(stagedDirectory, basename(source.path));
         const expectedBytes = sizes[index];
         if (expectedBytes === 0) {
           await writeFile(stagedPath, "", { flag: "wx", mode: 0o600 });

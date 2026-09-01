@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
@@ -1029,6 +1029,7 @@ describe.sequential("AgentService", () => {
     await waitFor(() => client.responses.some((response) => response.id === "browser-upload"));
     expect(calls[0]).toMatchObject({ ownerBotId: "chief" });
     expect(stagedPaths[0]).not.toBe(uploadPath);
+    expect(basename(stagedPaths[0])).toBe(basename(uploadPath));
     expect(stagedContents[0]).toBe("safe upload");
     await expect(readFile(stagedPaths[0], "utf8")).resolves.toBe("safe upload");
 
