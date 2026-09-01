@@ -104,6 +104,39 @@ describe("ChatActionMarker", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Open routine Morning brief" }));
     expect(onOpenRoutine).toHaveBeenCalledWith({ routineId: "routine-1", name: "Morning brief" });
   });
+
+  it("opens a published site and keeps terminal failures noninteractive", async () => {
+    const onOpenHostedSite = vi.fn();
+    const { unmount } = render(() => (
+      <ChatActionMarker
+        marker={siteMarker("publish", "succeeded")}
+        bots={bots}
+        onSelectAgent={vi.fn()}
+        onOpenHostedSite={onOpenHostedSite}
+      />
+    ));
+
+    const restored = screen.getByRole("group", {
+      name: "Published site, launch-page-23456789ab.openbot.site",
+    });
+    expect(restored).toHaveAttribute("aria-live", "off");
+    await fireEvent.click(screen.getByRole("button", { name: "Open site launch-page-23456789ab.openbot.site" }));
+    expect(onOpenHostedSite).toHaveBeenCalledWith("https://launch-page-23456789ab.openbot.site");
+    unmount();
+
+    render(() => (
+      <ChatActionMarker
+        marker={siteMarker("replace", "failed")}
+        bots={bots}
+        announce
+        onSelectAgent={vi.fn()}
+        onOpenHostedSite={onOpenHostedSite}
+      />
+    ));
+    const live = screen.getByRole("status", { name: "Site update failed, launch-page-23456789ab.openbot.site" });
+    expect(live).toHaveAttribute("aria-live", "polite");
+    expect(screen.queryByRole("button", { name: /Open site/u })).not.toBeInTheDocument();
+  });
 });
 
 function agentMarker(
@@ -132,6 +165,24 @@ function routineMarker(
     runId: "run-1",
     routineName: "Morning brief",
     status,
+    timestamp: "2026-09-01T08:00:00.000Z",
+  };
+}
+
+function siteMarker(
+  action: Extract<ChatActionMarkerModel, { kind: "hosted-site" }>["action"],
+  status: Extract<ChatActionMarkerModel, { kind: "hosted-site" }>["status"],
+): Extract<ChatActionMarkerModel, { kind: "hosted-site" }> {
+  return {
+    kind: "hosted-site",
+    sourceAgentId: "chief",
+    action,
+    status,
+    operationId: "operation-1",
+    siteId: "site-1",
+    title: "Launch page",
+    hostname: "launch-page-23456789ab.openbot.site",
+    url: "https://launch-page-23456789ab.openbot.site",
     timestamp: "2026-09-01T08:00:00.000Z",
   };
 }

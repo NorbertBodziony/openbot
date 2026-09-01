@@ -5,6 +5,8 @@ import type {
   QueueDeliveryStatus,
 } from "@openbot/contracts/ipc";
 import {
+  hostedSiteConversationEvent,
+  isHostedSiteConversationEventMarker,
   isRoutineRunConversationEventMarker,
   ROUTINE_EVENT_ITEM_TYPE_PREFIX,
   routineConversationEvent,
@@ -38,7 +40,8 @@ export function toBotMessage(message: ConversationMessage, ownerAgentId?: string
   const exchangeSenderId = message.senderBotId ?? message.exchange?.senderBotId;
   const routineEvent = routineConversationEvent(message);
   const routineRunEvent = routineRunConversationEvent(message);
-  const actionMarker = chatActionMarker(message, ownerAgentId, routineEvent, routineRunEvent);
+  const hostedSiteEvent = hostedSiteConversationEvent(message);
+  const actionMarker = chatActionMarker(message, ownerAgentId, routineEvent, routineRunEvent, hostedSiteEvent);
   return {
     id: message.id,
     turnId: message.turnId,
@@ -130,7 +133,8 @@ export function readStateForMessages(
         message.itemType !== "commentary" &&
         message.itemType !== "agent_attachment" &&
         !message.itemType?.startsWith(ROUTINE_EVENT_ITEM_TYPE_PREFIX) &&
-        !isRoutineRunConversationEventMarker(message.itemType),
+        !isRoutineRunConversationEventMarker(message.itemType) &&
+        !isHostedSiteConversationEventMarker(message.itemType),
     );
   return {
     ...state,
@@ -208,6 +212,7 @@ function chatActionMarker(
   ownerAgentId: string | undefined,
   routineEvent: ReturnType<typeof routineConversationEvent>,
   routineRunEvent: ReturnType<typeof routineRunConversationEvent>,
+  hostedSiteEvent: ReturnType<typeof hostedSiteConversationEvent>,
 ): ChatActionMarkerModel | null {
   if (message.exchange) {
     const targetDeliveries = message.exchange.deliveries.map((delivery) => ({
@@ -262,9 +267,24 @@ function chatActionMarker(
       timestamp: message.createdAt,
     };
   }
+  if (hostedSiteEvent) {
+    return {
+      kind: "hosted-site",
+      sourceAgentId: ownerAgentId ?? null,
+      action: hostedSiteEvent.action,
+      status: hostedSiteEvent.status,
+      operationId: hostedSiteEvent.operationId,
+      siteId: hostedSiteEvent.siteId,
+      title: hostedSiteEvent.title,
+      hostname: hostedSiteEvent.hostname,
+      url: hostedSiteEvent.url,
+      timestamp: message.createdAt,
+    };
+  }
   if (
     message.itemType?.startsWith(ROUTINE_EVENT_ITEM_TYPE_PREFIX) ||
-    isRoutineRunConversationEventMarker(message.itemType)
+    isRoutineRunConversationEventMarker(message.itemType) ||
+    isHostedSiteConversationEventMarker(message.itemType)
   ) {
     return { kind: "unavailable", label: "Action unavailable", timestamp: message.createdAt };
   }

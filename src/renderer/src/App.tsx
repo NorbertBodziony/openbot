@@ -39,7 +39,11 @@ import type {
   UpdateStatus,
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
-import { ROUTINE_EVENT_ITEM_TYPE_PREFIX, ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX } from "@openbot/contracts/ipc";
+import {
+  HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX,
+  ROUTINE_EVENT_ITEM_TYPE_PREFIX,
+  ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX,
+} from "@openbot/contracts/ipc";
 import type { TeamProtocolV3Capability } from "@openbot/contracts/team-protocol/v3";
 import {
   createContext,
@@ -168,7 +172,8 @@ type BrowserTakeoverEvent = Extract<AgentEvent, { type: "browser-takeover-reques
 function isRoutineEventItem(message: { itemType?: string }): boolean {
   return (
     message.itemType?.startsWith(ROUTINE_EVENT_ITEM_TYPE_PREFIX) === true ||
-    message.itemType?.startsWith(ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX) === true
+    message.itemType?.startsWith(ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX) === true ||
+    message.itemType?.startsWith(HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX) === true
   );
 }
 

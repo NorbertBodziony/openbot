@@ -1,31 +1,51 @@
 import type { BotSummary, ConversationReadState, ConversationSnapshot } from "@openbot/contracts/ipc";
-import { ROUTINE_EVENT_ITEM_TYPE_PREFIX, ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX } from "@openbot/contracts/ipc";
+import {
+  HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX,
+  ROUTINE_EVENT_ITEM_TYPE_PREFIX,
+  ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX,
+} from "@openbot/contracts/ipc";
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import type { OpenBotDatabase } from "./openbot-database";
+
+export interface ConversationMarkerExclusions {
+  excludeRoutineEvents?: boolean;
+  excludeRoutineRunEvents?: boolean;
+  excludeHostedSiteEvents?: boolean;
+}
 
 export class ConversationReadStore {
   constructor(readonly database: OpenBotDatabase) {}
 
-  listStates(memberId: string, bots: BotSummary[]): Record<string, ConversationReadState> {
-    return Object.fromEntries(bots.map((bot) => [bot.id, this.readStateForThread(memberId, bot.threadId)]));
+  listStates(
+    memberId: string,
+    bots: BotSummary[],
+    options: ConversationMarkerExclusions = {},
+  ): Record<string, ConversationReadState> {
+    return Object.fromEntries(bots.map((bot) => [bot.id, this.readStateForThread(memberId, bot.threadId, options)]));
   }
 
-  readStateForThread(memberId: string, threadId: string | null): ConversationReadState {
+  readStateForThread(
+    memberId: string,
+    threadId: string | null,
+    options: ConversationMarkerExclusions = {},
+  ): ConversationReadState {
     if (!threadId) return emptyReadState();
     const stored = this.#storedCursor(threadId, memberId);
+    let state: ConversationReadState;
     if (stored === undefined) {
       const baseline = this.#migrationCursor(threadId);
       const initialCursor =
         baseline && !this.#messageExists(threadId, baseline) ? this.#latestMessageId(threadId) : baseline;
       this.#saveCursor(threadId, memberId, initialCursor, "initialized");
-      return this.#stateFromDatabase(threadId, initialCursor);
-    }
-    if (stored !== null && !this.#messageExists(threadId, stored)) {
+      state = this.#stateFromDatabase(threadId, initialCursor);
+    } else if (stored !== null && !this.#messageExists(threadId, stored)) {
       const latestMessageId = this.#latestMessageId(threadId);
       this.#saveCursor(threadId, memberId, latestMessageId, "initialized");
-      return this.#stateFromDatabase(threadId, latestMessageId);
+      state = this.#stateFromDatabase(threadId, latestMessageId);
+    } else {
+      state = this.#stateFromDatabase(threadId, stored);
     }
-    return this.#stateFromDatabase(threadId, stored);
+    return this.#withSupportedCursor(threadId, state, options);
   }
 
   adoptMemberState(sourceMemberId: string, targetMemberId: string): void {
@@ -68,7 +88,12 @@ export class ConversationReadStore {
     return stateFromSnapshot(snapshot, stored);
   }
 
-  markRead(memberId: string, snapshot: ConversationSnapshot, throughMessageId: string | null): ConversationReadState {
+  markRead(
+    memberId: string,
+    snapshot: ConversationSnapshot,
+    throughMessageId: string | null,
+    options: ConversationMarkerExclusions = {},
+  ): ConversationReadState {
     if (!snapshot.threadId) return emptyReadState();
     const requestedIndex = throughMessageId
       ? snapshot.messages.findIndex((message) => message.id === throughMessageId)
@@ -80,7 +105,18 @@ export class ConversationReadStore {
     const storedIndex = stored ? snapshot.messages.findIndex((message) => message.id === stored) : -1;
     const nextThroughMessageId = storedIndex > requestedIndex ? (stored ?? null) : (throughMessageId ?? null);
     this.#saveCursor(snapshot.threadId, memberId, nextThroughMessageId, "marked");
-    return stateFromSnapshot(snapshot, nextThroughMessageId);
+    return this.#withSupportedCursor(snapshot.threadId, stateFromSnapshot(snapshot, nextThroughMessageId), options);
+  }
+
+  #withSupportedCursor(
+    threadId: string,
+    state: ConversationReadState,
+    options: ConversationMarkerExclusions,
+  ): ConversationReadState {
+    return {
+      ...state,
+      throughMessageId: this.database.supportedConversationCursor(threadId, state.throughMessageId, options),
+    };
   }
 
   #storedCursor(threadId: string, memberId: string): string | null | undefined {
@@ -147,7 +183,8 @@ export class ConversationReadStore {
       AND COALESCE(item_type, '') != 'commentary'
       AND COALESCE(item_type, '') != 'agent_attachment'
       AND COALESCE(item_type, '') NOT LIKE '${ROUTINE_EVENT_ITEM_TYPE_PREFIX}%'
-      AND COALESCE(item_type, '') NOT LIKE '${ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX}%'`;
+      AND COALESCE(item_type, '') NOT LIKE '${ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX}%'
+      AND COALESCE(item_type, '') NOT LIKE '${HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX}%'`;
     const countRow = this.database.connection
       .prepare(
         `SELECT COUNT(*) AS unread_count FROM projection_thread_messages
@@ -247,7 +284,8 @@ function stateFromSnapshot(snapshot: ConversationSnapshot, throughMessageId: str
         message.itemType !== "commentary" &&
         message.itemType !== "agent_attachment" &&
         !message.itemType?.startsWith(ROUTINE_EVENT_ITEM_TYPE_PREFIX) &&
-        !message.itemType?.startsWith(ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX),
+        !message.itemType?.startsWith(ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX) &&
+        !message.itemType?.startsWith(HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX),
     );
   return {
     unreadCount: unread.length,
