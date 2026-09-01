@@ -52,7 +52,7 @@ export function encodeTeamProtocolV2CurrentHttpRequest(
   path: string,
   value: unknown,
 ): TeamProtocolV2Json {
-  return wireJson(decodeTeamProtocolV1CurrentHttpRequest(method, path, value === undefined ? null : value));
+  return decodeV2HttpRequest(method, path, value);
 }
 
 export function decodeTeamProtocolV2CurrentHttpRequest(
@@ -60,7 +60,53 @@ export function decodeTeamProtocolV2CurrentHttpRequest(
   path: string,
   value: unknown,
 ): TeamProtocolV2Json {
-  return wireJson(decodeTeamProtocolV1CurrentHttpRequest(method, path, value === undefined ? null : value));
+  return decodeV2HttpRequest(method, path, value);
+}
+
+function decodeV2HttpRequest(method: string, path: string, value: unknown): TeamProtocolV2Json {
+  const normalized = value === undefined ? null : value;
+  if (isEmptyRequest(normalized) && isTeamProtocolV2NoBodyRoute(method, path)) return {};
+  return wireJson(decodeTeamProtocolV1CurrentHttpRequest(method, path, normalized));
+}
+
+function isEmptyRequest(value: unknown): boolean {
+  return value === null || (isDynamicRecord(value) && Object.keys(value).length === 0);
+}
+
+function isTeamProtocolV2NoBodyRoute(method: string, path: string): boolean {
+  const pathname = new URL(path, "http://openbot.invalid").pathname;
+  if (method === "GET") {
+    if (
+      new Set([
+        "/v1/compatibility",
+        "/v1/identity",
+        "/v1/me",
+        "/v1/team/presence",
+        "/v1/remote-screen/capabilities",
+        "/v1/direct/threads",
+        "/v1/messages/search",
+        "/v1/browser/tabs",
+        "/v1/browser/control",
+        "/v1/team/members",
+        "/v1/team/invites",
+        "/v1/team/sessions",
+        "/v1/agents/status",
+        "/v1/sidebar-layout",
+        "/v1/agents/usage",
+        "/v1/agents/models",
+        "/v1/agents",
+        "/v1/agents/conversation-reads",
+      ]).has(pathname)
+    ) {
+      return true;
+    }
+    if (/^\/v1\/direct\/conversations\/[^/]+(?:\/page)?$/u.test(pathname)) return true;
+    return /^\/v1\/agents\/[^/]+\/(?:memories|routines|routines\/[^/]+\/runs|conversation|conversation-page|queue)$/u.test(
+      pathname,
+    );
+  }
+  if (method === "POST" && /^\/v1\/agents\/[^/]+\/routines\/[^/]+\/test$/u.test(pathname)) return true;
+  return method === "DELETE" && /^\/v1\/agents\/[^/]+\/avatar$/u.test(pathname);
 }
 
 export function encodeTeamProtocolV2CurrentHttpResponse(

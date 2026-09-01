@@ -71,6 +71,8 @@ export class TeamWebRtcHostGateway {
   #localSessionToken: string | null = null;
   #localSessionId: string | null = null;
   #eventsSocket: Ws.WebSocket | null = null;
+  #eventsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  #eventsReconnectAttempts = 0;
   #nextEventSequence = 1;
   #desktopSocket: Ws.WebSocket | null = null;
   #desktopStreamId: string | null = null;
@@ -524,6 +526,7 @@ export class TeamWebRtcHostGateway {
     ]);
     this.#eventsSocket = socket;
     socket.once("open", () => {
+      this.#eventsReconnectAttempts = 0;
       socket.send(
         encodeTeamProtocolV1ClientEvent({
           type: "agent-event-scope",
@@ -554,6 +557,22 @@ export class TeamWebRtcHostGateway {
       this.#events.set(sequence, frame);
       this.#sendRecoverable(this.#peerId, "events", frame);
     });
+    socket.once("error", () => socket.close());
+    socket.once("close", () => {
+      if (this.#eventsSocket !== socket) return;
+      this.#eventsSocket = null;
+      this.#scheduleLocalEventsReconnect();
+    });
+  }
+
+  #scheduleLocalEventsReconnect(): void {
+    if (this.#eventsReconnectTimer || !this.#localSessionToken || !this.#localSessionId || !this.#peerId) return;
+    const delay = Math.min(10_000, 250 * 2 ** this.#eventsReconnectAttempts++);
+    this.#eventsReconnectTimer = setTimeout(() => {
+      this.#eventsReconnectTimer = null;
+      const token = this.#localSessionToken;
+      if (token) this.#connectLocalEvents(token);
+    }, delay);
   }
 
   async #handleEventControl(data: string): Promise<void> {
@@ -688,6 +707,9 @@ export class TeamWebRtcHostGateway {
     if (this.#sessionExpirationTimer) clearTimeout(this.#sessionExpirationTimer);
     this.#sessionExpirationTimer = null;
     this.#closeDesktopSocket();
+    if (this.#eventsReconnectTimer) clearTimeout(this.#eventsReconnectTimer);
+    this.#eventsReconnectTimer = null;
+    this.#eventsReconnectAttempts = 0;
     this.#eventsSocket?.close();
     this.#eventsSocket = null;
     if (this.#localSessionId) {
