@@ -79,9 +79,20 @@ describe("Team protocol v2", () => {
     expect(
       encodeTeamProtocolV2CurrentHttpRequest("POST", "/v1/browser/visible", {
         visible: true,
+        bounds: undefined,
         futureRequestField: "ignored",
       }),
     ).toEqual({ visible: true });
+    expect(encodeTeamProtocolV2CurrentHttpRequest("DELETE", "/v1/attachments/attachment-1", undefined)).toEqual({});
+    expect(encodeTeamProtocolV2CurrentHttpRequest("DELETE", "/v1/agents/agent-1", undefined)).toEqual({});
+    expect(
+      encodeTeamProtocolV2CurrentHttpRequest("GET", "/v1/remote-screen/sessions/session-1/viewer", undefined),
+    ).toEqual({});
+    expect(
+      encodeTeamProtocolV2CurrentHttpRequest("POST", "/v1/remote-screen/sessions/session-1/authorize", {
+        grant: "viewer-grant",
+      }),
+    ).toEqual({ grant: "viewer-grant" });
     expect(
       decodeTeamProtocolV2CurrentHttpResponse("GET", "/v1/compatibility", 200, {
         appVersion: "1.0.0",
@@ -90,6 +101,12 @@ describe("Team protocol v2", () => {
         futureResponseField: "ignored",
       }),
     ).toEqual({ appVersion: "1.0.0", protocol: { minimum: 1, maximum: 2 }, capabilities: [] });
+    expect(decodeTeamProtocolV2CurrentHttpResponse("POST", "/v1/browser/visible", 204, {})).toEqual({});
+    expect(
+      decodeTeamProtocolV2CurrentHttpResponse("GET", "/v1/remote-screen/sessions/session-1/moonlight/api/role", 200, {
+        role: "stream",
+      }),
+    ).toEqual({ role: "stream" });
   });
 
   it("validates bounded authentication frames", () => {

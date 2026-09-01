@@ -82,7 +82,7 @@ export const Populated: Story = {
     const localMarker = local.querySelector<HTMLElement>(".server-rail-mark");
     const remoteMarker = remote.querySelector<HTMLElement>(".server-rail-mark");
     const list = rail.querySelector<HTMLElement>(".server-rail-list");
-    const localTile = local.querySelector<HTMLElement>(".server-rail-local");
+    const localTile = local.querySelector<HTMLElement>(".ui-server-gradient-logo");
     const dividerStyle = getComputedStyle(rail, "::after");
 
     await expect(getComputedStyle(rail).borderRightWidth).toBe("0px");
