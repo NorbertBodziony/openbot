@@ -7,7 +7,7 @@ import type {
 } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_GENERAL_SETTINGS } from "../app-settings";
 import { SettingsModal } from "./SettingsModal";
 
@@ -29,6 +29,11 @@ const idleUpdateStatus: UpdateStatus = {
 };
 
 describe("SettingsModal", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
   it("keeps dependent notch options selected but unavailable while the MacBook notch is disabled", () => {
     render(() => (
       <SettingsModal
@@ -375,7 +380,7 @@ describe("SettingsModal", () => {
     await waitFor(() => expect(onUpdateAccountAvatar).toHaveBeenLastCalledWith(null));
   });
 
-  it("lists sites and publishes a selected local directory", async () => {
+  it("lists a bot-published site with only Open and Delete actions", async () => {
     const site = {
       id: "site-1",
       hostname: "interactive-budget-planner-students-23456789ab.openbot.site",
@@ -396,6 +401,8 @@ describe("SettingsModal", () => {
       replace: vi.fn(async () => site),
       delete: vi.fn(async () => undefined),
     };
+    const openUrl = vi.fn(async () => undefined);
+    vi.stubGlobal("openbot", { openUrl });
     render(() => (
       <SettingsModal
         open
@@ -414,31 +421,27 @@ describe("SettingsModal", () => {
 
     await fireEvent.click(screen.getByRole("tab", { name: "Hosted sites" }));
     expect(await screen.findByText(site.hostname)).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "Choose" }));
-    await fireEvent.input(screen.getByRole("textbox", { name: "Title" }), {
-      target: { value: "Student budget planner" },
-    });
-    await fireEvent.input(screen.getByRole("textbox", { name: "Description" }), {
-      target: { value: "An interactive budget planner for university students." },
-    });
-    await fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+    await fireEvent.click(screen.getByRole("button", { name: site.hostname }));
+    await fireEvent.click(screen.getByRole("button", { name: `Open ${site.hostname}` }));
 
-    await waitFor(() =>
-      expect(hostedSitesApi.publish).toHaveBeenCalledWith({
-        sourcePath: "/tmp/student-budget-site",
-        title: "Student budget planner",
-        description: "An interactive budget planner for university students.",
-      }),
-    );
+    expect(openUrl).toHaveBeenNthCalledWith(1, site.url);
+    expect(openUrl).toHaveBeenNthCalledWith(2, site.url);
+    expect(screen.queryByRole("button", { name: "Publish" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Replace" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Refresh" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: `Copy ${site.hostname} URL` })).not.toBeInTheDocument();
+    expect(hostedSitesApi.chooseDirectory).not.toHaveBeenCalled();
+    expect(hostedSitesApi.publish).not.toHaveBeenCalled();
+    expect(hostedSitesApi.replace).not.toHaveBeenCalled();
   });
 
-  it("queues a hosted-site reload after a successful mutation", async () => {
+  it("confirms a hosted-site deletion and reloads the list", async () => {
     const site = {
-      id: "site-after-publish",
-      hostname: "queued-hosted-site-refresh-23456789ab.openbot.site",
-      url: "https://queued-hosted-site-refresh-23456789ab.openbot.site",
-      title: "Queued hosted site refresh",
-      description: "Verify a refresh after publication.",
+      id: "site-to-delete",
+      hostname: "temporary-project-site-23456789ab.openbot.site",
+      url: "https://temporary-project-site-23456789ab.openbot.site",
+      title: "Temporary project site",
+      description: "Verify deletion and list refresh.",
       framework: "vanilla" as const,
       status: "active" as const,
       fileCount: 1,
@@ -446,16 +449,59 @@ describe("SettingsModal", () => {
       expiresAt: "2026-09-30T12:00:00.000Z",
       updatedAt: "2026-08-31T12:00:00.000Z",
     };
-    let resolveInitialLoad: (sites: (typeof site)[]) => void = () => undefined;
-    const initialLoad = new Promise<(typeof site)[]>((resolve) => {
-      resolveInitialLoad = resolve;
-    });
     const hostedSitesApi: HostedSitesDesktopApi = {
-      list: vi
-        .fn()
-        .mockImplementationOnce(() => initialLoad)
-        .mockResolvedValue([site]),
+      list: vi.fn().mockResolvedValueOnce([site]).mockResolvedValue([]),
       chooseDirectory: vi.fn(async () => "/tmp/queued-site"),
+      publish: vi.fn(async () => site),
+      replace: vi.fn(async () => site),
+      delete: vi.fn(async () => undefined),
+    };
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(() => (
+      <SettingsModal
+        open
+        onOpenChange={() => undefined}
+        value={DEFAULT_GENERAL_SETTINGS}
+        onValueChange={() => undefined}
+        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
+        updateStatus={idleUpdateStatus}
+        onUpdateAction={vi.fn(async () => undefined)}
+        account={account}
+        onUpdateAccountName={vi.fn(async () => undefined)}
+        onUpdateAccountAvatar={vi.fn(async () => undefined)}
+        hostedSitesApi={hostedSitesApi}
+      />
+    ));
+
+    await fireEvent.click(screen.getByRole("tab", { name: "Hosted sites" }));
+    expect(await screen.findByText(site.hostname)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: `Delete ${site.hostname}` }));
+
+    expect(window.confirm).toHaveBeenCalledWith(
+      `Delete ${site.hostname}? This address will immediately return 410 Gone.`,
+    );
+    await waitFor(() => expect(hostedSitesApi.delete).toHaveBeenCalledWith({ siteId: site.id }));
+    await waitFor(() => expect(hostedSitesApi.list).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText(site.hostname)).not.toBeInTheDocument());
+  });
+
+  it("shows a blocked hosted site and disables Open", async () => {
+    const site = {
+      id: "blocked-site",
+      hostname: "blocked-project-site-23456789ab.openbot.site",
+      url: "https://blocked-project-site-23456789ab.openbot.site",
+      title: "Blocked project site",
+      description: "A blocked hosted site.",
+      framework: "vanilla" as const,
+      status: "blocked" as const,
+      fileCount: 1,
+      size: 256,
+      expiresAt: "2026-09-30T12:00:00.000Z",
+      updatedAt: "2026-08-31T12:00:00.000Z",
+    };
+    const hostedSitesApi: HostedSitesDesktopApi = {
+      list: vi.fn(async () => [site]),
+      chooseDirectory: vi.fn(async () => null),
       publish: vi.fn(async () => site),
       replace: vi.fn(async () => site),
       delete: vi.fn(async () => undefined),
@@ -477,20 +523,8 @@ describe("SettingsModal", () => {
     ));
 
     await fireEvent.click(screen.getByRole("tab", { name: "Hosted sites" }));
-    await waitFor(() => expect(hostedSitesApi.list).toHaveBeenCalledTimes(1));
-    await fireEvent.click(screen.getByRole("button", { name: "Choose" }));
-    await fireEvent.input(screen.getByRole("textbox", { name: "Title" }), {
-      target: { value: site.title },
-    });
-    await fireEvent.input(screen.getByRole("textbox", { name: "Description" }), {
-      target: { value: site.description },
-    });
-    await fireEvent.click(screen.getByRole("button", { name: "Publish" }));
-    await waitFor(() => expect(hostedSitesApi.publish).toHaveBeenCalledOnce());
-    resolveInitialLoad([]);
-
-    expect(await screen.findByText(site.hostname)).toBeInTheDocument();
-    expect(hostedSitesApi.list).toHaveBeenCalledTimes(2);
+    expect(await screen.findByText("Blocked")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: `Open ${site.hostname}` })).toBeDisabled();
   });
 
   it("generates a one-time QR code from Mobile Connect settings", async () => {
