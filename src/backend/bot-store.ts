@@ -1,6 +1,20 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
+import {
+  copyFile,
+  cp,
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  readlink,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { avatarFileExtension, isAvatarMimeType, isValidAvatarImage } from "@openbot/contracts/avatar-images";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
@@ -11,11 +25,14 @@ import {
   type AvatarImageInput,
   type BotSummary,
   type CreateBotInput,
+  type DuplicateBotResult,
   isAgentModel,
   isAvatarHue,
   isAvatarSeed,
   isReasoningEffort,
+  isSidebarLayoutSnapshot,
   providerForLegacyModel,
+  type SidebarLayoutSnapshot,
   type UpdateBotInput,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isNumber, isOneOf, isString } from "@openbot/contracts/runtime-values";
@@ -29,6 +46,11 @@ type PersistedStoredBot = Omit<StoredBot, "avatarUrl" | "provider"> & {
   provider?: AgentProviderId;
 };
 type StoredBotBase = Omit<PersistedStoredBot, "avatarSeed" | "avatarHue"> & DynamicRecord;
+
+interface BotDuplicationMarker {
+  operationId: string;
+  sourceBotId: string;
+}
 
 interface StoredState {
   version: 2;
@@ -66,9 +88,11 @@ export class BotStore {
   readonly #sharedRoot: string;
   readonly #downloadsRoot: string;
   readonly #avatarsRoot: string;
+  readonly #duplicationsRoot: string;
   readonly #database: OpenBotDatabase;
   #state: StoredState = { version: 2, examplesInitialized: false, bots: [] };
   #avatarUpdateQueue: Promise<void> = Promise.resolve();
+  #creationQueue: Promise<void> = Promise.resolve();
 
   constructor(userDataPath: string, homePath: string, database = new OpenBotDatabase(userDataPath)) {
     const openbotRoot = join(homePath, "OpenBot");
@@ -77,6 +101,7 @@ export class BotStore {
     this.#sharedRoot = join(openbotRoot, "Shared");
     this.#downloadsRoot = join(openbotRoot, "Downloads");
     this.#avatarsRoot = join(userDataPath, "avatars", "agents");
+    this.#duplicationsRoot = join(userDataPath, "agent-duplications");
     this.#database = database;
   }
 
@@ -98,6 +123,7 @@ export class BotStore {
       mkdir(this.#sharedRoot, { recursive: true, mode: 0o700 }),
       mkdir(this.#downloadsRoot, { recursive: true, mode: 0o700 }),
       mkdir(this.#avatarsRoot, { recursive: true, mode: 0o700 }),
+      mkdir(this.#duplicationsRoot, { recursive: true, mode: 0o700 }),
       mkdir(dirname(this.#statePath), { recursive: true, mode: 0o700 }),
     ]);
 
@@ -112,36 +138,40 @@ export class BotStore {
         examplesInitialized: true,
         bots: persisted.map(normalizeStoredBot),
       };
-      return;
-    }
-
-    const legacy = await this.#readState();
-    await this.#database.backupLegacyFile(this.#statePath);
-    const sessions: Array<{ bot: StoredBot; externalSessionId: string }> = [];
-    legacy.bots = legacy.bots.map((bot) => {
-      if (!bot.threadId) return bot;
-      sessions.push({ bot, externalSessionId: bot.threadId });
-      return { ...bot, threadId: stableThreadId(bot.id) };
-    });
-    legacy.examplesInitialized = true;
-    this.#state = legacy;
-    this.#database.replaceAgents("legacy-import:bots:v1", legacy.bots, "agents.legacy-imported");
-    for (const { bot, externalSessionId } of sessions) {
-      this.#database.bindProviderSession({
-        threadId: stableThreadId(bot.id),
-        provider: bot.provider,
-        externalSessionId,
-        model: bot.model,
-        effort: bot.reasoningEffort,
+    } else {
+      const legacy = await this.#readState();
+      await this.#database.backupLegacyFile(this.#statePath);
+      const sessions: Array<{ bot: StoredBot; externalSessionId: string }> = [];
+      legacy.bots = legacy.bots.map((bot) => {
+        if (!bot.threadId) return bot;
+        sessions.push({ bot, externalSessionId: bot.threadId });
+        return { ...bot, threadId: stableThreadId(bot.id) };
       });
+      legacy.examplesInitialized = true;
+      this.#state = legacy;
+      this.#database.replaceAgents("legacy-import:bots:v1", legacy.bots, "agents.legacy-imported");
+      for (const { bot, externalSessionId } of sessions) {
+        this.#database.bindProviderSession({
+          threadId: stableThreadId(bot.id),
+          provider: bot.provider,
+          externalSessionId,
+          model: bot.model,
+          effort: bot.reasoningEffort,
+        });
+      }
     }
+    await this.#recoverPendingDuplications();
   }
 
   list(): BotSummary[] {
     return this.#state.bots.map((bot) => ({ ...bot }));
   }
 
-  async createBot(input: Omit<CreateBotInput, "initialMessage">): Promise<BotSummary> {
+  createBot(input: Omit<CreateBotInput, "initialMessage">): Promise<BotSummary> {
+    return this.#enqueueCreation(() => this.#createBot(input));
+  }
+
+  async #createBot(input: Omit<CreateBotInput, "initialMessage">): Promise<BotSummary> {
     if (this.#state.bots.length >= INPUT_LIMITS.agents) {
       throw new Error(`A host can have up to ${INPUT_LIMITS.agents} agents.`);
     }
@@ -162,6 +192,169 @@ export class BotStore {
       throw error;
     }
     return { ...record };
+  }
+
+  duplicateBot(sourceId: string, operationId: string = randomUUID()): Promise<BotSummary> {
+    if (!isUuidV4(operationId)) throw new Error("Invalid agent duplication operation id.");
+    return this.#enqueueCreation(() => this.#duplicateBot(sourceId, operationId));
+  }
+
+  #enqueueCreation<T>(create: () => Promise<T>): Promise<T> {
+    const operation = this.#creationQueue.then(create);
+    this.#creationQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
+  }
+
+  async #duplicateBot(sourceId: string, operationId: string): Promise<BotSummary> {
+    if (this.#database.commandResult(duplicationCommandId(operationId)) !== undefined) {
+      throw new Error("This agent duplication operation is already committed.");
+    }
+    if (this.#state.bots.length >= INPUT_LIMITS.agents) {
+      throw new Error(`A host can have up to ${INPUT_LIMITS.agents} agents.`);
+    }
+    const source = this.#requireBot(sourceId);
+    const sourceProfileSignature = JSON.stringify(source);
+    const sourceWorkspaceManifest = await workspaceMetadataFingerprint(source.workspacePath);
+    const sourceAvatar = this.resolveAvatar(source.id);
+    const sourceAvatarSignature = sourceAvatar ? await fileFingerprint(sourceAvatar.path) : null;
+    const id = `bot-${randomUUID()}`;
+    const record = this.#createRecord(
+      id,
+      duplicateBotName(source.name, this.#state.bots),
+      source.title,
+      source.description,
+    );
+    record.notifications = source.notifications;
+    record.provider = source.provider;
+    record.model = source.model;
+    record.reasoningEffort = source.reasoningEffort;
+    record.avatarSeed = source.avatarSeed;
+    record.avatarHue = source.avatarHue;
+
+    const stagedWorkspace = `${record.workspacePath}.openbot-stage`;
+    const avatarDirectory = join(this.#avatarsRoot, record.id);
+    const stagedAvatarDirectory = `${avatarDirectory}.openbot-stage`;
+    const duplicationMarker = this.#duplicationMarkerPath(record.id);
+    let stagedAvatarPath: string | null = null;
+    try {
+      await writeFile(duplicationMarker, `${JSON.stringify({ operationId, sourceBotId: sourceId })}\n`, {
+        encoding: "utf8",
+        mode: 0o600,
+        flag: "wx",
+      });
+      await cp(source.workspacePath, stagedWorkspace, {
+        recursive: true,
+        dereference: false,
+        errorOnExist: true,
+        force: false,
+        verbatimSymlinks: true,
+      });
+      if (sourceAvatar) {
+        await mkdir(stagedAvatarDirectory, { recursive: true, mode: 0o700 });
+        const extension = avatarFileExtension(sourceAvatar.mimeType);
+        stagedAvatarPath = join(stagedAvatarDirectory, `${sourceAvatar.version}.${extension}`);
+        await copyFile(sourceAvatar.path, stagedAvatarPath);
+        record.avatarUrl = agentAvatarUrl(record.id, sourceAvatar.version, sourceAvatar.mimeType);
+      }
+      if (
+        JSON.stringify(source) !== sourceProfileSignature ||
+        (await workspaceMetadataFingerprint(source.workspacePath)) !== sourceWorkspaceManifest ||
+        (stagedAvatarPath ? await fileFingerprint(stagedAvatarPath) : null) !== sourceAvatarSignature ||
+        (sourceAvatar ? await fileFingerprint(sourceAvatar.path) : null) !== sourceAvatarSignature
+      ) {
+        throw new Error("The agent changed while it was being duplicated. Try again.");
+      }
+      await rewriteInternalWorkspaceSymlinks(source.workspacePath, stagedWorkspace, record.workspacePath);
+      if (this.#state.bots.length >= INPUT_LIMITS.agents) {
+        throw new Error(`A host can have up to ${INPUT_LIMITS.agents} agents.`);
+      }
+      record.name = duplicateBotName(source.name, this.#state.bots);
+      await rename(stagedWorkspace, record.workspacePath);
+      if (sourceAvatar) await rename(stagedAvatarDirectory, avatarDirectory);
+      this.#state.bots.unshift(record);
+      try {
+        this.#persist("agent.duplicated");
+      } catch (error) {
+        this.#state.bots = this.#state.bots.filter((candidate) => candidate.id !== record.id);
+        throw error;
+      }
+      return { ...record };
+    } catch (error) {
+      await Promise.all([
+        rm(stagedWorkspace, { recursive: true, force: true }),
+        rm(record.workspacePath, { recursive: true, force: true }),
+        rm(stagedAvatarDirectory, { recursive: true, force: true }),
+        rm(avatarDirectory, { recursive: true, force: true }),
+        rm(duplicationMarker, { force: true }),
+      ]);
+      throw error;
+    }
+  }
+
+  committedBotDuplication(operationId: string, sourceBotId: string): DuplicateBotResult | null {
+    if (!isUuidV4(operationId)) throw new Error("Invalid agent duplication operation id.");
+    const value = this.#database.commandResult(duplicationCommandId(operationId));
+    if (value === undefined) return null;
+    const result = isRecord(value) ? value.result : null;
+    const resultBot = isRecord(result) ? result.bot : null;
+    const resultLayout = isRecord(result) ? result.layout : null;
+    if (
+      !isRecord(value) ||
+      value.sourceBotId !== sourceBotId ||
+      !isRecord(result) ||
+      !isStoredBot(resultBot) ||
+      !isSidebarLayoutSnapshot(resultLayout)
+    ) {
+      throw new Error("The agent duplication receipt is invalid.");
+    }
+    const bot = this.#state.bots.find((candidate) => candidate.id === resultBot.id);
+    if (!bot) throw new Error("The duplicated agent no longer exists.");
+    return {
+      bot: { ...bot },
+      layout: structuredClone(resultLayout),
+    };
+  }
+
+  async commitBotDuplication(
+    id: string,
+    operationId: string,
+    sourceBotId: string,
+    layout: SidebarLayoutSnapshot,
+  ): Promise<DuplicateBotResult> {
+    const bot = this.#requireBot(id);
+    const marker = await this.#readDuplicationMarker(id);
+    if (!marker || marker.operationId !== operationId || marker.sourceBotId !== sourceBotId) {
+      throw new Error("This agent duplication marker is invalid.");
+    }
+    const result = { bot: { ...bot }, layout: structuredClone(layout) };
+    const receipt = this.#database.dispatch(
+      duplicationCommandId(operationId),
+      [
+        {
+          aggregateType: "agent-duplications",
+          aggregateId: id,
+          eventType: "agent-duplication.committed",
+          payload: { sourceBotId, duplicateBotId: id },
+        },
+      ],
+      () => ({ sourceBotId, result }),
+    );
+    await rm(this.#duplicationMarkerPath(id), { force: true }).catch(() => undefined);
+    if (
+      !isRecord(receipt) ||
+      !isRecord(receipt.result) ||
+      !isStoredBot(receipt.result.bot) ||
+      !isSidebarLayoutSnapshot(receipt.result.layout)
+    ) {
+      throw new Error("The agent duplication receipt is invalid.");
+    }
+    return {
+      bot: { ...normalizeStoredBot(receipt.result.bot) },
+      layout: structuredClone(receipt.result.layout),
+    };
   }
 
   async updateBot(input: UpdateBotInput): Promise<BotSummary> {
@@ -267,7 +460,10 @@ export class BotStore {
     this.#database.hardDeleteAgent(`agents:hard-delete:${randomUUID()}`, id, bot.threadId, this.#state.bots);
     await Promise.all([
       rm(join(this.#avatarsRoot, id), { recursive: true, force: true }),
+      rm(`${join(this.#avatarsRoot, id)}.openbot-stage`, { recursive: true, force: true }),
       rm(join(this.#botsRoot, id), { recursive: true, force: true }),
+      rm(`${join(this.#botsRoot, id)}.openbot-stage`, { recursive: true, force: true }),
+      rm(this.#duplicationMarkerPath(id), { force: true }),
     ]);
     return { ...bot };
   }
@@ -279,12 +475,76 @@ export class BotStore {
       await mkdir(existing.workspacePath, { recursive: true, mode: 0o700 });
       return { ...existing };
     }
+    return this.#enqueueCreation(() => this.#getOrCreate(id, name, title));
+  }
+
+  async #getOrCreate(id: string, name?: string, title?: string): Promise<BotSummary> {
+    validateBotId(id);
+    const existing = this.#state.bots.find((bot) => bot.id === id);
+    if (existing) {
+      await mkdir(existing.workspacePath, { recursive: true, mode: 0o700 });
+      return { ...existing };
+    }
+    if (this.#state.bots.length >= INPUT_LIMITS.agents) {
+      throw new Error(`A host can have up to ${INPUT_LIMITS.agents} agents.`);
+    }
 
     const record = this.#createRecord(id, name ?? titleFromId(id), title ?? "Local teammate");
     this.#state.bots.push(record);
     await mkdir(record.workspacePath, { recursive: true, mode: 0o700 });
     this.#persist("agent.created");
     return { ...record };
+  }
+
+  async #recoverPendingDuplications(): Promise<void> {
+    const entries = await readdir(this.#duplicationsRoot, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".pending")) continue;
+      const id = entry.name.slice(0, -".pending".length);
+      if (!isGeneratedBotId(id)) continue;
+      const bot = this.#state.bots.find((candidate) => candidate.id === id);
+      const marker = await this.#readDuplicationMarker(id);
+      if (bot && marker) {
+        const committed = this.committedBotDuplication(marker.operationId, marker.sourceBotId);
+        if (committed?.bot.id === id) {
+          await rm(join(this.#duplicationsRoot, entry.name), { force: true });
+          continue;
+        }
+      }
+      if (bot) {
+        this.#state.bots = this.#state.bots.filter((candidate) => candidate.id !== id);
+        this.#database.hardDeleteAgent(`agents:duplicate-recovery:${randomUUID()}`, id, bot.threadId, this.#state.bots);
+      }
+      await Promise.all([
+        rm(join(this.#botsRoot, id), { recursive: true, force: true }),
+        rm(`${join(this.#botsRoot, id)}.openbot-stage`, { recursive: true, force: true }),
+        rm(join(this.#avatarsRoot, id), { recursive: true, force: true }),
+        rm(`${join(this.#avatarsRoot, id)}.openbot-stage`, { recursive: true, force: true }),
+        rm(join(this.#duplicationsRoot, entry.name), { force: true }),
+      ]);
+    }
+  }
+
+  #duplicationMarkerPath(id: string): string {
+    return join(this.#duplicationsRoot, `${id}.pending`);
+  }
+
+  async #readDuplicationMarker(id: string): Promise<BotDuplicationMarker | null> {
+    try {
+      const value = JSON.parse(await readFile(this.#duplicationMarkerPath(id), "utf8"));
+      if (
+        !isRecord(value) ||
+        !isString(value.operationId) ||
+        !isUuidV4(value.operationId) ||
+        !isString(value.sourceBotId) ||
+        !value.sourceBotId
+      ) {
+        return null;
+      }
+      return { operationId: value.operationId, sourceBotId: value.sourceBotId };
+    } catch {
+      return null;
+    }
   }
 
   async ensureThreadId(id: string): Promise<string> {
@@ -406,6 +666,101 @@ function limitedText(value: string, label: string, maxLength: number): string {
   return trimmed;
 }
 
+function duplicateBotName(sourceName: string, bots: readonly StoredBot[]): string {
+  const match = /^(.*?)(?: copy(?: (\d+))?)$/iu.exec(sourceName);
+  const base = match?.[1]?.trim() || sourceName.trim();
+  const existing = new Set(bots.map((bot) => bot.name.toLocaleLowerCase()));
+  for (let index = 1; index <= INPUT_LIMITS.agents + 1; index += 1) {
+    const suffix = index === 1 ? " copy" : ` copy ${index}`;
+    const candidate = `${base.slice(0, Math.max(1, INPUT_LIMITS.agentName - suffix.length)).trimEnd()}${suffix}`;
+    if (!existing.has(candidate.toLocaleLowerCase())) return candidate;
+  }
+  throw new Error("OpenBot could not create a unique agent copy name.");
+}
+
+function duplicationCommandId(operationId: string): string {
+  return `agent-duplication:${operationId}`;
+}
+
+async function rewriteInternalWorkspaceSymlinks(
+  sourceRoot: string,
+  stagedRoot: string,
+  finalRoot: string,
+): Promise<void> {
+  const canonicalSourceRoot = await realpath(sourceRoot);
+  const visit = async (stagedDirectory: string, sourceDirectory: string, finalDirectory: string): Promise<void> => {
+    const entries = await readdir(stagedDirectory, { withFileTypes: true });
+    for (const entry of entries) {
+      const stagedPath = join(stagedDirectory, entry.name);
+      const sourcePath = join(sourceDirectory, entry.name);
+      const finalPath = join(finalDirectory, entry.name);
+      if (entry.isSymbolicLink()) {
+        const target = await readlink(stagedPath);
+        const resolvedSourceTarget = resolve(dirname(sourcePath), target);
+        let sourceRelativePath: string;
+        try {
+          const canonicalTarget = await realpath(resolvedSourceTarget);
+          if (!isPathWithin(canonicalSourceRoot, canonicalTarget)) continue;
+          sourceRelativePath = relative(canonicalSourceRoot, canonicalTarget);
+        } catch {
+          if (!isPathWithin(sourceRoot, resolvedSourceTarget)) continue;
+          sourceRelativePath = relative(sourceRoot, resolvedSourceTarget);
+        }
+        const finalTarget = join(finalRoot, sourceRelativePath);
+        const rewrittenTarget = isAbsolute(target) ? finalTarget : relative(dirname(finalPath), finalTarget) || ".";
+        await rm(stagedPath);
+        await symlink(rewrittenTarget, stagedPath);
+      } else if (entry.isDirectory()) {
+        await visit(stagedPath, sourcePath, finalPath);
+      }
+    }
+  };
+  await visit(stagedRoot, sourceRoot, finalRoot);
+}
+
+function isPathWithin(root: string, candidate: string): boolean {
+  const path = relative(resolve(root), resolve(candidate));
+  return path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
+}
+
+async function workspaceMetadataFingerprint(root: string): Promise<string> {
+  const hash = createHash("sha256");
+  const visit = async (directory: string, prefix: string): Promise<void> => {
+    const entries = await readdir(directory, { withFileTypes: true });
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      const path = join(directory, entry.name);
+      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const stats = await lstat(path, { bigint: true });
+      hash.update(`${relativePath}\0${stats.mode}\0${stats.size}\0${stats.mtimeNs}\0${stats.ctimeNs}\0`);
+      if (stats.isSymbolicLink()) {
+        hash.update(`link\0${await readlink(path)}\0`);
+      } else if (stats.isDirectory()) {
+        hash.update("directory\0");
+        await visit(path, relativePath);
+      } else if (stats.isFile()) {
+        hash.update("file\0");
+      } else {
+        hash.update("other\0");
+      }
+    }
+  };
+  await visit(root, "");
+  return hash.digest("hex");
+}
+
+async function fileFingerprint(path: string): Promise<string> {
+  const stats = await lstat(path);
+  const hash = createHash("sha256");
+  hash.update(`${stats.mode}\0`);
+  await updateHashFromFile(hash, path);
+  return hash.digest("hex");
+}
+
+async function updateHashFromFile(hash: ReturnType<typeof createHash>, path: string): Promise<void> {
+  for await (const chunk of createReadStream(path)) hash.update(chunk);
+}
+
 function validateBotId(id: string): void {
   if (!isValidBotId(id)) {
     throw new Error("Invalid bot id.");
@@ -414,6 +769,10 @@ function validateBotId(id: string): void {
 
 function isValidBotId(id: string): boolean {
   return /^[a-z0-9][a-z0-9-]{0,63}$/.test(id) && basename(id) === id;
+}
+
+function isGeneratedBotId(id: string): boolean {
+  return id.startsWith("bot-") && isUuidV4(id.slice("bot-".length));
 }
 
 function titleFromId(id: string): string {

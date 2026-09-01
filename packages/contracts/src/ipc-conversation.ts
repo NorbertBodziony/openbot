@@ -456,6 +456,11 @@ export interface UpdateBotInput {
   avatarHue?: BotAvatarHue | null;
 }
 
+export interface DuplicateBotResult {
+  bot: BotSummary;
+  layout: SidebarLayoutSnapshot;
+}
+
 export interface AvatarImageInput {
   mimeType: "image/png" | "image/jpeg" | "image/webp";
   bytes: Uint8Array;

@@ -230,6 +230,15 @@ export class OpenBotDatabase {
     }
   }
 
+  commandResult(commandId: string): unknown | undefined {
+    const receipt = decodeReceiptRow(
+      this.connection
+        .prepare("SELECT last_sequence, result_json FROM orchestration_command_receipts WHERE command_id = ?")
+        .get(commandId),
+    );
+    return receipt ? JSON.parse(receipt.result_json) : undefined;
+  }
+
   listAgents(): BotSummary[] {
     return databaseRows(
       this.connection.prepare("SELECT agent_json FROM projection_agents ORDER BY sort_order, agent_id").all(),
