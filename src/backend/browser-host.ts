@@ -35,7 +35,6 @@ interface InternalTab {
   ownerBotId: string | null;
   revision: number;
   queue: Promise<unknown>;
-  closing: boolean;
   focusOnVisible: boolean;
 }
 
@@ -330,8 +329,7 @@ export class BrowserHost {
 
   async close(tabId: string): Promise<void> {
     const tab = this.#tabs.get(tabId);
-    if (!tab || tab.closing) return;
-    tab.closing = true;
+    if (!tab) return;
     const tabIds = [...this.#tabs.keys()];
     const closedIndex = tabIds.indexOf(tabId);
     this.#unmountView(tab.view);
@@ -548,7 +546,6 @@ export class BrowserHost {
       ownerBotId,
       revision: 0,
       queue: Promise.resolve(),
-      closing: false,
       focusOnVisible: false,
     };
   }

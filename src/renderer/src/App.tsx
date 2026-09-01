@@ -2244,8 +2244,16 @@ export function createAppController(props: AppProps = {}) {
   async function closeBrowserTab(tabId: string) {
     const analytics = desktopAnalytics.scope();
     const serverId = activeServerSidebarKey();
+    const selectionGeneration = serverSelectionGeneration;
     try {
       await browserTabActivationOperations.get(tabId)?.catch(() => undefined);
+      if (
+        browserVisibilitySuspended() ||
+        serverSelectionGeneration !== selectionGeneration ||
+        activeServerSidebarKey() !== serverId
+      ) {
+        return;
+      }
       await window.openbot.browser.close(tabId);
       if (activeServerSidebarKey() === serverId) {
         browserChangeRevision += 1;

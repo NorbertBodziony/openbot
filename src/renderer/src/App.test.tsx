@@ -4843,6 +4843,69 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(window.openbot.browser.close).toHaveBeenCalledWith(secondTab.id));
   });
 
+  it("drops a pending tab close when a server switch begins", async () => {
+    const local = testServer("local", true);
+    const studio = testServer("remote-1", false);
+    let resolveActivation: (() => void) | undefined;
+    let resolveSelection: ((servers: ServerSummary[]) => void) | undefined;
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, studio]);
+    vi.mocked(window.openbot.servers.select).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSelection = resolve;
+        }),
+    );
+    vi.mocked(window.openbot.browser.activate).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveActivation = resolve;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const firstTab = {
+      id: "tab-switch-first",
+      title: "First switch page",
+      url: "https://example.com/first",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    const closingTab = {
+      id: "tab-switch-closing",
+      title: "Closing switch page",
+      url: "https://example.com/closing",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [firstTab, closingTab],
+      activeTabId: firstTab.id,
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    const closingTabElement = await screen.findByRole("tab", { name: "Closing switch page" });
+    await fireEvent.click(closingTabElement);
+    await waitFor(() => expect(resolveActivation).toBeDefined());
+    await fireEvent.keyDown(closingTabElement, { key: "Delete" });
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() => expect(resolveSelection).toBeDefined());
+
+    resolveActivation?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(window.openbot.browser.close).not.toHaveBeenCalled();
+
+    resolveSelection?.([
+      { ...local, active: false },
+      { ...studio, active: true },
+    ]);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true"),
+    );
+  });
+
   it("keeps the browser open when a new tab replaces the last tab during its delayed close", async () => {
     let resolveClose: (() => void) | undefined;
     vi.mocked(window.openbot.browser.close).mockImplementationOnce(
