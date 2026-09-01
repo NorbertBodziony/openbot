@@ -8,6 +8,7 @@ import type {
   BotSummary,
   ConversationQuestionPrompt,
   ConversationReaction,
+  HostedSiteConversationEvent,
   ImageGenerationInfo,
   MessageReaction,
   QueueDeliveryStatus,
@@ -57,6 +58,18 @@ export type ChatActionMarkerModel =
       runId: string;
       routineName: string;
       status: "queued" | RoutineRunConversationEvent["status"];
+      timestamp: string;
+    }
+  | {
+      kind: "hosted-site";
+      sourceAgentId: string | null;
+      action: HostedSiteConversationEvent["action"];
+      status: HostedSiteConversationEvent["status"];
+      operationId: string;
+      siteId: string | null;
+      title: string;
+      hostname: string | null;
+      url: string | null;
       timestamp: string;
     }
   | {

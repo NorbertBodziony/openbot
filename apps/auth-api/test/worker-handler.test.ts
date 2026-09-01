@@ -13,6 +13,45 @@ describe("worker handler", () => {
     expect(await response.text()).toBe("ok");
   });
 
+  it("serves locally published sites from the Auth API R2 binding", async () => {
+    const hostname = "example-project-page-long-name-23456789ab.openbot.site";
+    const route = {
+      version: 1,
+      status: "active",
+      siteId: "site-1",
+      deploymentId: "deployment-1",
+      expiresAt: Date.now() + 60_000,
+      spaFallback: false,
+      files: {
+        "index.html": {
+          key: "sites/site-1/deployments/deployment-1/index.html",
+          size: 19,
+          mimeType: "text/html",
+        },
+      },
+    };
+    const handler = createWorkerHandler(() => {
+      throw new Error("The application handler must not serve local hosted sites.");
+    });
+    const bindings = {
+      ...fakeBindings(),
+      SITE_LOCAL_ORIGIN: "http://openbot.localhost:3100",
+      SITES: fakeSiteBucket({
+        [`routes/${hostname}.json`]: JSON.stringify(route),
+        "sites/site-1/deployments/deployment-1/index.html": "<h1>Local site</h1>",
+      }),
+    };
+
+    const response = await handler.fetch(
+      new Request("http://example-project-page-long-name-23456789ab.openbot.localhost:3100/"),
+      bindings,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("<h1>Local site</h1>");
+    expect(response.headers.get("Content-Security-Policy")).toBe("worker-src 'none'");
+  });
+
   it("protects email delivery work with waitUntil", async () => {
     let finishRequest: ((response: Response) => void) | undefined;
     const pendingResponse = new Promise<Response>((resolve) => {
@@ -142,4 +181,59 @@ function fakeDatabase(): D1Database {
 function fakeBindings(): Pick<WorkerBindings, "MARKETPLACE_INGRESS_RATE_LIMITER"> {
   const limiter: RateLimit = { limit: async () => ({ success: true }) };
   return { MARKETPLACE_INGRESS_RATE_LIMITER: limiter };
+}
+
+function fakeSiteBucket(objects: Record<string, string>): R2Bucket {
+  const bucket: R2Bucket = {
+    async head() {
+      return null;
+    },
+    async get(key: string) {
+      const value = objects[key];
+      if (value === undefined) return null;
+      const bytes = new TextEncoder().encode(value);
+      const metadata = {
+        key,
+        version: "1",
+        size: bytes.byteLength,
+        etag: "etag",
+        httpEtag: '"etag"',
+        checksums: { toJSON: () => ({}) },
+        uploaded: new Date(),
+        storageClass: "Standard",
+        customMetadata: {},
+        httpMetadata: {},
+        range: undefined,
+        writeHttpMetadata() {},
+      } satisfies R2Object;
+      const body = new Response(bytes).body;
+      if (!body) throw new Error("The test response body is missing.");
+      return {
+        ...metadata,
+        body,
+        bodyUsed: false,
+        arrayBuffer: () => Promise.resolve(bytes.buffer),
+        bytes: () => Promise.resolve(bytes),
+        text: () => Promise.resolve(value),
+        json: () => Promise.resolve(JSON.parse(value)),
+        blob: () => Promise.resolve(new Blob([bytes])),
+      } satisfies R2ObjectBody;
+    },
+    async put() {
+      throw new Error("Unexpected put call.");
+    },
+    async createMultipartUpload() {
+      throw new Error("Unexpected multipart upload call.");
+    },
+    resumeMultipartUpload() {
+      throw new Error("Unexpected multipart resume call.");
+    },
+    async delete() {
+      throw new Error("Unexpected delete call.");
+    },
+    async list() {
+      throw new Error("Unexpected list call.");
+    },
+  };
+  return bucket;
 }

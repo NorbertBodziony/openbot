@@ -21,6 +21,7 @@ import {
   type DirectThreadSummary,
   type DirectTypingRealtimeEvent,
   type DuplicateBotResult,
+  HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX,
   type InviteSummary,
   isAgentModel,
   isAvatarHue,
@@ -930,7 +931,11 @@ export class TeamApiServer {
         return this.#json(response, 200, this.#options.agents.listBots());
       }
       if (method === "GET" && url.pathname === "/v1/agents/conversation-reads") {
-        return this.#json(response, 200, this.#options.agents.listConversationReads(member.id));
+        return this.#json(
+          response,
+          200,
+          this.#options.agents.listConversationReads(member.id, markerExclusionsForCapabilities(clientCapabilities)),
+        );
       }
       if (method === "POST" && url.pathname === "/v1/agents") {
         const body = await readJson(request);
@@ -1075,10 +1080,7 @@ export class TeamApiServer {
             member.id,
             pageAnchor(url),
             pageLimit(url),
-            {
-              excludeRoutineEvents: !clientCapabilities.has("routine-event-markers"),
-              excludeRoutineRunEvents: !clientCapabilities.has("routine-run-event-markers"),
-            },
+            markerExclusionsForCapabilities(clientCapabilities),
           );
           return this.#json(response, 200, page);
         }
@@ -1087,7 +1089,12 @@ export class TeamApiServer {
           return this.#json(
             response,
             200,
-            await this.#options.agents.markConversationRead(botId, member.id, nullableString(body, "throughMessageId")),
+            await this.#options.agents.markConversationRead(
+              botId,
+              member.id,
+              nullableString(body, "throughMessageId"),
+              markerExclusionsForCapabilities(clientCapabilities),
+            ),
           );
         }
         if (method === "POST" && action === "messages") {
@@ -1258,9 +1265,10 @@ export class TeamApiServer {
       } else if (
         event.type === "conversation" &&
         (!connection.capabilities.has("routine-event-markers") ||
-          !connection.capabilities.has("routine-run-event-markers"))
+          !connection.capabilities.has("routine-run-event-markers") ||
+          !connection.capabilities.has("hosted-site-event-markers"))
       ) {
-        const key = `${connection.capabilities.has("routine-event-markers")}:${connection.capabilities.has("routine-run-event-markers")}`;
+        const key = `${connection.capabilities.has("routine-event-markers")}:${connection.capabilities.has("routine-run-event-markers")}:${connection.capabilities.has("hosted-site-event-markers")}`;
         let filtered = filteredConversationPayloads.get(key);
         if (!filtered) {
           filtered =
@@ -1312,6 +1320,7 @@ export class TeamApiServer {
               (capability) =>
                 capability !== "routine-event-markers" &&
                 capability !== "routine-run-event-markers" &&
+                capability !== "hosted-site-event-markers" &&
                 (supportsSnapshotTransport || capability !== "agent-runtime-snapshots"),
             ),
       ),
@@ -1719,9 +1728,45 @@ function conversationForCapabilities(
   conversation: ConversationWithReadState,
   capabilities: ReadonlySet<string>,
 ): ConversationWithReadState {
+  const messages = conversation.messages.filter((message) => markerSupported(message.itemType, capabilities));
+  if (!conversation.readState) return { ...conversation, messages };
   return {
     ...conversation,
-    messages: conversation.messages.filter((message) => markerSupported(message.itemType, capabilities)),
+    messages,
+    readState: {
+      ...conversation.readState,
+      throughMessageId: supportedConversationCursor(
+        conversation.messages,
+        conversation.readState.throughMessageId,
+        capabilities,
+      ),
+    },
+  };
+}
+
+function supportedConversationCursor(
+  messages: ConversationSnapshot["messages"],
+  throughMessageId: string | null,
+  capabilities: ReadonlySet<string>,
+): string | null {
+  if (!throughMessageId) return null;
+  const boundary = messages.findIndex((message) => message.id === throughMessageId);
+  for (let index = boundary; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message && markerSupported(message.itemType, capabilities)) return message.id;
+  }
+  return null;
+}
+
+function markerExclusionsForCapabilities(capabilities: ReadonlySet<string>): {
+  excludeRoutineEvents: boolean;
+  excludeRoutineRunEvents: boolean;
+  excludeHostedSiteEvents: boolean;
+} {
+  return {
+    excludeRoutineEvents: !capabilities.has("routine-event-markers"),
+    excludeRoutineRunEvents: !capabilities.has("routine-run-event-markers"),
+    excludeHostedSiteEvents: !capabilities.has("hosted-site-event-markers"),
   };
 }
 
@@ -1729,6 +1774,9 @@ function markerSupported(itemType: string | undefined, capabilities: ReadonlySet
   if (itemType?.startsWith(ROUTINE_EVENT_ITEM_TYPE_PREFIX)) return capabilities.has("routine-event-markers");
   if (itemType?.startsWith(ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX)) {
     return capabilities.has("routine-run-event-markers");
+  }
+  if (itemType?.startsWith(HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX)) {
+    return capabilities.has("hosted-site-event-markers");
   }
   return true;
 }

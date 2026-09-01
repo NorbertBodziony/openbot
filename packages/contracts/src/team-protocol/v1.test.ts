@@ -48,10 +48,10 @@ describe("Team protocol v1", () => {
     const support = decodeTeamProtocolSupportV1({
       appVersion: "0.4.0",
       protocol: { minimum: 1, maximum: 3 },
-      capabilities: ["browser-control", "browser-control", "remote-desktop"],
+      capabilities: ["browser-control", "browser-control", "hosted-site-event-markers", "remote-desktop"],
     });
 
-    expect(support.capabilities).toEqual(["browser-control", "remote-desktop"]);
+    expect(support.capabilities).toEqual(["browser-control", "hosted-site-event-markers", "remote-desktop"]);
     expect(highestCommonTeamProtocol({ minimum: 1, maximum: 2 }, support.protocol)).toBe(2);
     expect(highestCommonTeamProtocol({ minimum: 4, maximum: 4 }, support.protocol)).toBeNull();
     expect(teamProtocolUpdateDirection({ minimum: 1, maximum: 1 }, { minimum: 2, maximum: 3 })).toBe(

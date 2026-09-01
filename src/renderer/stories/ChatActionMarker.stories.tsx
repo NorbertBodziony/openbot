@@ -7,6 +7,7 @@ import type { BotProfile, ChatActionMarkerModel } from "../src/data";
 const bots: BotProfile[] = [bot("research", "Research"), bot("sales", "Sales")];
 const onSelectAgent = fn();
 const onOpenRoutine = fn();
+const onOpenHostedSite = fn();
 
 const meta = {
   title: "Conversation/Chat Action Marker",
@@ -62,6 +63,16 @@ export const AllStates: Story = {
             onOpenRoutine={onOpenRoutine}
           />
         ))}
+        {siteActions.flatMap((action) =>
+          siteStatuses.map((status) => (
+            <ChatActionMarker
+              marker={siteMarker(action, status)}
+              bots={bots}
+              onSelectAgent={onSelectAgent}
+              onOpenHostedSite={onOpenHostedSite}
+            />
+          )),
+        )}
         <ChatActionMarker
           marker={{ kind: "unavailable", label: "Action unavailable", timestamp: timestamp }}
           bots={bots}
@@ -99,6 +110,15 @@ export const CompactAndUnavailable: Story = {
           bots={bots}
           onSelectAgent={onSelectAgent}
         />
+        <ChatActionMarker
+          marker={{
+            ...siteMarker("publish", "running"),
+            title: "A very long public launch page title that must remain compact in a narrow conversation",
+          }}
+          bots={bots}
+          onSelectAgent={onSelectAgent}
+          onOpenHostedSite={onOpenHostedSite}
+        />
       </section>
     </main>
   ),
@@ -112,10 +132,10 @@ export const ReducedMotion: Story = {
       </Heading>
       <section class="chat-primitives-stage chat-primitives-stage-narrow" aria-label="Reduced motion chat marker">
         <ChatActionMarker
-          marker={routineMarker("running")}
+          marker={siteMarker("replace", "running")}
           bots={bots}
           onSelectAgent={onSelectAgent}
-          onOpenRoutine={onOpenRoutine}
+          onOpenHostedSite={onOpenHostedSite}
         />
       </section>
     </main>
@@ -137,6 +157,18 @@ const routineActions: Array<Extract<ChatActionMarkerModel, { kind: "routine-life
   "created",
   "updated",
   "deleted",
+];
+const siteActions: Array<Extract<ChatActionMarkerModel, { kind: "hosted-site" }>["action"]> = [
+  "publish",
+  "replace",
+  "delete",
+];
+const siteStatuses: Array<Extract<ChatActionMarkerModel, { kind: "hosted-site" }>["status"]> = [
+  "running",
+  "succeeded",
+  "failed",
+  "interrupted",
+  "cancelled",
 ];
 
 function agentMarker(
@@ -179,6 +211,25 @@ function lifecycleMarker(
     routineId: "routine-1",
     routineName: "Morning brief",
     status: "completed",
+    timestamp,
+  };
+}
+
+function siteMarker(
+  action: Extract<ChatActionMarkerModel, { kind: "hosted-site" }>["action"],
+  status: Extract<ChatActionMarkerModel, { kind: "hosted-site" }>["status"],
+): Extract<ChatActionMarkerModel, { kind: "hosted-site" }> {
+  const hasPublishedSite = action !== "publish" || status === "succeeded";
+  return {
+    kind: "hosted-site",
+    sourceAgentId: "chief",
+    action,
+    status,
+    operationId: `${action}-${status}`,
+    siteId: hasPublishedSite ? "site-1" : null,
+    title: "Launch page",
+    hostname: hasPublishedSite ? "launch-page-23456789ab.openbot.site" : null,
+    url: hasPublishedSite ? "https://launch-page-23456789ab.openbot.site" : null,
     timestamp,
   };
 }

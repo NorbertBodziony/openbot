@@ -3779,7 +3779,7 @@
 }
 
 .chat-action-marker-time {
-  color: var(--openbot-text-dim);
+  color: var(--openbot-text-muted);
   font-size: var(--openbot-text-xs);
 }
 
@@ -3838,7 +3838,7 @@ button.chat-action-target:active,
 }
 
 .chat-action-target-unavailable {
-  color: var(--openbot-text-dim);
+  color: var(--openbot-text-muted);
 }
 
 .chat-action-target-name,

@@ -3,13 +3,18 @@ import {
   AGENT_RUNTIME_ATTENTION_LIMIT,
   AGENT_RUNTIME_TEXT_LIMIT,
   AGENT_RUNTIME_WORKING_ITEMS_LIMIT,
+  hostedSiteConversationEvent,
+  hostedSiteConversationEventItemType,
+  hostedSiteConversationEventText,
   isAgentEvent,
   isAvatarHue,
   isAvatarSeed,
   isBotMemory,
   isConversationMessage,
   isDynamicIslandAction,
+  isHostedSiteConversationEventUrl,
   isMessageReaction,
+  parseHostedSiteConversationEventItemType,
   parseRoutineConversationEventItemType,
   parseRoutineRunConversationEventItemType,
   routineConversationEvent,
@@ -386,6 +391,135 @@ describe("routine run conversation events", () => {
     expect(() => routineRunConversationEventItemType("running", "r".repeat(80), "x".repeat(80))).toThrow(
       "The routine run event item type is too long.",
     );
+  });
+});
+
+describe("hosted site conversation events", () => {
+  const publishedSite = {
+    siteId: "site-1",
+    title: "Launch page",
+    hostname: "launch-page-23456789ab.openbot.site",
+    url: "https://launch-page-23456789ab.openbot.site",
+  } as const;
+
+  it.each(["running", "succeeded", "failed", "interrupted", "cancelled"] as const)(
+    "encodes and decodes the publish %s state",
+    (status) => {
+      const details =
+        status === "succeeded"
+          ? publishedSite
+          : { siteId: null, title: publishedSite.title, hostname: null, url: null };
+      const itemType = hostedSiteConversationEventItemType("publish", status, "operation-1");
+      const message = {
+        id: `site-event-${status}`,
+        author: "system",
+        source: "system",
+        text: hostedSiteConversationEventText(details),
+        createdAt: "2026-09-01T12:00:00.000Z",
+        status: "completed",
+        itemType,
+      } as const;
+
+      expect(parseHostedSiteConversationEventItemType(itemType)).toEqual({
+        action: "publish",
+        status,
+        operationId: "operation-1",
+      });
+      expect(hostedSiteConversationEvent(message)).toEqual({
+        action: "publish",
+        status,
+        operationId: "operation-1",
+        ...details,
+      });
+      expect(isConversationMessage(message)).toBe(true);
+    },
+  );
+
+  it.each(["replace", "delete"] as const)("encodes every %s state with stored site data", (action) => {
+    for (const status of ["running", "succeeded", "failed", "interrupted", "cancelled"] as const) {
+      const itemType = hostedSiteConversationEventItemType(action, status, `operation-${status}`);
+      const message = {
+        id: `${action}-${status}`,
+        author: "system",
+        source: "system",
+        text: hostedSiteConversationEventText(publishedSite),
+        createdAt: "2026-09-01T12:00:00.000Z",
+        status: "completed",
+        itemType,
+      } as const;
+      expect(hostedSiteConversationEvent(message)).toMatchObject({ action, status, ...publishedSite });
+    }
+  });
+
+  it("accepts a matching local development URL for a canonical hosted-site hostname", () => {
+    const localUrl = "http://launch-page-23456789ab.openbot.localhost:3100/";
+    const details = { ...publishedSite, url: localUrl };
+    const message = {
+      id: "local-site-publish",
+      author: "system",
+      source: "system",
+      text: hostedSiteConversationEventText(details),
+      createdAt: "2026-09-01T12:00:00.000Z",
+      status: "completed",
+      itemType: hostedSiteConversationEventItemType("publish", "succeeded", "operation-local"),
+    } as const;
+
+    expect(hostedSiteConversationEvent(message)).toMatchObject({ ...details, status: "succeeded" });
+    expect(isHostedSiteConversationEventUrl(localUrl, publishedSite.hostname)).toBe(true);
+    expect(
+      isHostedSiteConversationEventUrl(
+        "http://different-page-23456789ab.openbot.localhost:3100/",
+        publishedSite.hostname,
+      ),
+    ).toBe(false);
+    expect(
+      isHostedSiteConversationEventUrl("http://launch-page-23456789ab.openbot.localhost/", publishedSite.hostname),
+    ).toBe(false);
+  });
+
+  it("keeps a terminal marker structured when legacy display metadata is unavailable", () => {
+    const details = { siteId: "site-1", title: "Hosted site", hostname: null, url: null };
+    const message = {
+      id: "legacy-delete",
+      author: "system",
+      source: "system",
+      text: hostedSiteConversationEventText(details),
+      createdAt: "2026-09-01T12:00:00.000Z",
+      status: "completed",
+      itemType: hostedSiteConversationEventItemType("delete", "succeeded", "operation-legacy"),
+    } as const;
+
+    expect(hostedSiteConversationEvent(message)).toMatchObject({
+      action: "delete",
+      status: "succeeded",
+      ...details,
+    });
+  });
+
+  it("rejects malformed metadata, invalid details, and unsafe links", () => {
+    expect(parseHostedSiteConversationEventItemType("hosted-site-event:deploy:running:operation-1")).toBeNull();
+    expect(parseHostedSiteConversationEventItemType("hosted-site-event:publish:queued:operation-1")).toBeNull();
+    expect(parseHostedSiteConversationEventItemType("hosted-site-event:publish:running:")).toBeNull();
+    expect(() => hostedSiteConversationEventItemType("publish", "running", "x".repeat(128))).toThrow(
+      "The hosted site event item type is too long.",
+    );
+    expect(() => hostedSiteConversationEventText({ ...publishedSite, title: "x".repeat(121) })).toThrow(
+      "Valid hosted site event details are required.",
+    );
+    expect(() => hostedSiteConversationEventText({ ...publishedSite, url: "https://example.com" })).toThrow(
+      "Valid hosted site event details are required.",
+    );
+    expect(
+      hostedSiteConversationEvent({
+        id: "bad-json",
+        author: "system",
+        source: "system",
+        text: "{",
+        createdAt: "2026-09-01T12:00:00.000Z",
+        status: "completed",
+        itemType: "hosted-site-event:publish:succeeded:operation-1",
+      }),
+    ).toBeNull();
   });
 });
 

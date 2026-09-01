@@ -72,6 +72,63 @@ describe("ConversationReadStore", () => {
     restoredDatabase.close();
   });
 
+  it("rebases a filtered marker cursor to the preceding supported message", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-conversation-read-filter-"));
+    roots.push(root);
+    const database = new OpenBotDatabase(root);
+    await database.initialize();
+    database.connection
+      .prepare(
+        `INSERT INTO projection_threads (
+          thread_id, agent_id, title, active_turn_id, created_at, updated_at, last_event_sequence
+        ) VALUES (?, ?, ?, NULL, ?, ?, ?)`,
+      )
+      .run("thread-chief", "chief", "Chief", "2026-08-19T09:00:00.000Z", "2026-08-19T09:00:00.000Z", 1);
+    const visible = message("message-1", "assistant");
+    const marker: ConversationSnapshot["messages"][number] = {
+      id: "hosted-site-marker",
+      author: "system",
+      source: "system",
+      text: "{}",
+      createdAt: "2026-08-19T09:02:00.000Z",
+      status: "completed",
+      itemType: "hosted-site-event:publish:running:operation-1",
+    };
+    const insert = database.connection.prepare(
+      `INSERT INTO projection_thread_messages (
+        thread_id, message_id, turn_id, author, status, item_type, created_at,
+        ordinal, message_json, last_event_sequence
+      ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    [visible, marker].forEach((entry, ordinal) => {
+      insert.run(
+        "thread-chief",
+        entry.id,
+        entry.author,
+        entry.status,
+        entry.itemType ?? null,
+        entry.createdAt,
+        ordinal,
+        JSON.stringify(entry),
+        ordinal + 1,
+      );
+    });
+    const reads = new ConversationReadStore(database);
+    reads.markRead("member-a", snapshot([visible, marker]), marker.id);
+
+    expect(
+      reads.markRead("member-a", snapshot([visible, marker]), visible.id, {
+        excludeHostedSiteEvents: true,
+      }),
+    ).toMatchObject({ unreadCount: 0, throughMessageId: visible.id });
+    expect(
+      reads.readStateForThread("member-a", "thread-chief", {
+        excludeHostedSiteEvents: true,
+      }),
+    ).toMatchObject({ unreadCount: 0, throughMessageId: visible.id });
+    database.close();
+  });
+
   it("baselines agent history that existed before the read-state migration", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-conversation-read-migration-"));
     roots.push(root);

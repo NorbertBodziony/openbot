@@ -11,6 +11,7 @@ import {
   CirclePause,
   Clock3,
   DropdownMenu,
+  Globe2,
   LoaderCircle,
   Marker,
   MarkerContent,
@@ -27,6 +28,7 @@ interface ChatActionMarkerProps {
   routineAvailable?: boolean;
   onSelectAgent: (botId: string) => void;
   onOpenRoutine?: (routine: { routineId: string; name: string }) => void;
+  onOpenHostedSite?: (url: string) => void;
 }
 
 const STATUS_LABELS: Record<ChatActionMarkerStatus, string> = {
@@ -77,11 +79,53 @@ export function ChatActionMarker(props: ChatActionMarkerProps) {
             />
           )}
         </Show>
+        <Show when={props.marker.kind === "hosted-site" && props.marker}>
+          {(marker) => <HostedSiteTarget marker={marker()} onOpenHostedSite={props.onOpenHostedSite} />}
+        </Show>
         <time class="chat-action-marker-time" datetime={props.marker.timestamp}>
           {formatMarkerTime(props.marker.timestamp)}
         </time>
       </MarkerContent>
     </Marker>
+  );
+}
+
+function HostedSiteTarget(props: {
+  marker: Extract<ChatActionMarkerModel, { kind: "hosted-site" }>;
+  onOpenHostedSite?: (url: string) => void;
+}) {
+  const name = () => props.marker.hostname ?? props.marker.title;
+  const status = () => hostedSiteMarkerStatus(props.marker.status);
+  const interactive = () =>
+    props.marker.status === "succeeded" &&
+    props.marker.action !== "delete" &&
+    Boolean(props.marker.url) &&
+    Boolean(props.onOpenHostedSite);
+  const content = (
+    <>
+      <MarkerIcon>
+        <Dynamic component={hostedSiteIcon(props.marker.status)} aria-hidden="true" />
+      </MarkerIcon>
+      <span class="chat-action-target-name">{name()}</span>
+    </>
+  );
+  return (
+    <Show
+      when={interactive()}
+      fallback={<span class={`chat-action-target chat-action-target-status-${status()}`}>{content}</span>}
+    >
+      <Button
+        variant="ghost"
+        type="button"
+        class={`chat-action-target chat-action-target-status-${status()}`}
+        aria-label={`Open site ${name()}`}
+        onClick={() => {
+          if (props.marker.url) props.onOpenHostedSite?.(props.marker.url);
+        }}
+      >
+        {content}
+      </Button>
+    </Show>
   );
 }
 
@@ -240,6 +284,27 @@ function markerLabel(marker: ChatActionMarkerModel): string {
         ? "Updated routine"
         : "Deleted routine";
   }
+  if (marker.kind === "hosted-site") {
+    if (marker.action === "publish") {
+      if (marker.status === "running") return "Deploying site";
+      if (marker.status === "succeeded") return "Published site";
+      if (marker.status === "failed") return "Site deploy failed";
+      if (marker.status === "interrupted") return "Site deploy interrupted";
+      return "Site deploy cancelled";
+    }
+    if (marker.action === "replace") {
+      if (marker.status === "running") return "Updating site";
+      if (marker.status === "succeeded") return "Updated site";
+      if (marker.status === "failed") return "Site update failed";
+      if (marker.status === "interrupted") return "Site update interrupted";
+      return "Site update cancelled";
+    }
+    if (marker.status === "running") return "Deleting site";
+    if (marker.status === "succeeded") return "Deleted site";
+    if (marker.status === "failed") return "Site deletion failed";
+    if (marker.status === "interrupted") return "Site deletion interrupted";
+    return "Site deletion cancelled";
+  }
   if (marker.status === "queued") return "Invoked routine";
   if (marker.status === "running") return "Running routine";
   if (marker.status === "needs-attention") return "Routine needs attention";
@@ -275,7 +340,23 @@ function markerAccessibleLabel(marker: ChatActionMarkerModel, bots: BotProfile[]
           : `${marker.targetDeliveries.length} agents`;
     return `${label} ${agentLabel}, ${STATUS_LABELS[marker.status]}`;
   }
+  if (marker.kind === "hosted-site") return `${label}, ${marker.hostname ?? marker.title}`;
   return `${label}, ${marker.routineName}`;
+}
+
+function hostedSiteMarkerStatus(
+  status: Extract<ChatActionMarkerModel, { kind: "hosted-site" }>["status"],
+): ChatActionMarkerStatus {
+  if (status === "running") return "in-progress";
+  if (status === "succeeded") return "completed";
+  return status;
+}
+
+function hostedSiteIcon(status: Extract<ChatActionMarkerModel, { kind: "hosted-site" }>["status"]) {
+  if (status === "running") return LoaderCircle;
+  if (status === "succeeded") return Globe2;
+  if (status === "failed") return X;
+  return CirclePause;
 }
 
 function routineMarkerStatus(
