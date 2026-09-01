@@ -224,6 +224,7 @@ async function handleSignal(state: PeerState, message: SignalMessage): Promise<v
       message.code === "host_busy"
     ) {
       disconnect(state.id);
+      post({ type: "peer-disconnected", peerId: state.id });
     }
     return;
   }

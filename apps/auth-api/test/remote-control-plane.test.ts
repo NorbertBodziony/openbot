@@ -210,6 +210,12 @@ describe("RemoteControlPlane", () => {
       ended_at: 1_000,
     });
     expect(database.prepare("SELECT COUNT(*) AS count FROM remote_auth_events").get()).toEqual({ count: 1 });
+    expect(database.prepare("SELECT auth_epoch FROM remote_hosts WHERE host_id = 'host-1'").get()).toEqual({
+      auth_epoch: 2,
+    });
+    expect(database.prepare("SELECT payload FROM remote_auth_events").get()).toEqual({
+      payload: JSON.stringify({ type: "remote-auth-changed", hostId: "host-1", authEpoch: 2 }),
+    });
   });
 
   it("protects the owner and validates only an active resume session", async () => {
@@ -387,6 +393,23 @@ describe("RemoteControlPlane", () => {
     expect(webhookBodies).toContain(
       JSON.stringify({ type: "remote-session-ended", hostId: "host-1", sessionId: memberSession.sessionId }),
     );
+    const logoutSession = await controlPlane.startSession("revoked-member", "host-1");
+    webhookAvailable = false;
+    await controlPlane.endUserSessions("revoked-member");
+    expect(
+      database.prepare("SELECT ended_at FROM remote_sessions WHERE session_id = ?").get(logoutSession.sessionId),
+    ).toEqual({ ended_at: 1_000 });
+    expect(
+      database
+        .prepare(
+          "SELECT payload FROM remote_auth_events WHERE payload LIKE '%remote-session-ended%' ORDER BY rowid DESC",
+        )
+        .get(),
+    ).toEqual({
+      payload: JSON.stringify({ type: "remote-session-ended", hostId: "host-1", sessionId: logoutSession.sessionId }),
+    });
+    webhookAvailable = true;
+    await deliverPendingRemoteAuthEvents(bindings, 61_001, webhookFetch);
     await controlPlane.changeMembership("revoked-member", {
       hostId: "host-1",
       membershipId: "revoked-membership",
