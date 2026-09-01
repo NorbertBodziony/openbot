@@ -1,0 +1,5 @@
+{
+  "name": "openbot-team-webrtc-live-smoke",
+  "private": true,
+  "main": "index.cjs"
+}
