@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createEmailCodeDelivery } from "../src/server/email-delivery";
 import { type SmtpConnector, sendPrivateEmailCode, sendPrivateTeamInvite } from "../src/server/smtp-email-delivery";
 
@@ -229,6 +229,45 @@ describe("Private Email SMTP delivery", () => {
 
     expect(attempts).toBe(2);
     expect(writes).toContain("QUIT\r\n");
+  });
+
+  it("does not retry a timed-out session when socket closure cannot be confirmed", async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    const connector: SmtpConnector = () => {
+      attempts += 1;
+      return {
+        opened: new Promise(() => undefined),
+        readable: new ReadableStream(),
+        writable: new WritableStream(),
+        close: () => new Promise(() => undefined),
+      };
+    };
+
+    try {
+      const delivery = sendPrivateEmailCode(
+        {
+          host: "mail.privateemail.com",
+          port: 465,
+          username: "hello@openbot.run",
+          password: "app-password-value",
+          from: "hello@openbot.run",
+        },
+        {
+          email: "person@example.com",
+          code: "ABCD-EFGH",
+          expiresAt: Date.now() + 10 * 60_000,
+        },
+        connector,
+      );
+      const outcome = expect(delivery).rejects.toThrow("smtp_delivery_unknown");
+
+      await vi.advanceTimersByTimeAsync(8_000);
+      await outcome;
+      expect(attempts).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not retry after message submission has started", async () => {

@@ -59,6 +59,11 @@ const DEFINITIVE_EMAIL_CODE_REQUEST_FAILURES = new Set([
   "invalid_idempotency_key",
   "sign_in_code_expired",
 ]);
+const UNCERTAIN_EMAIL_CODE_REQUEST_FAILURES = new Set([
+  "email_delivery_pending",
+  "email_delivery_timeout",
+  "email_delivery_unknown",
+]);
 const AUTH_API_UNAVAILABLE_MESSAGE =
   "OpenBot could not reach the account service. Check that the API is running, then try again.";
 const remoteTicketJwksSchema = z.object({
@@ -600,7 +605,7 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
         this.#emailCodeRequest = null;
       }
       const issue = emailCodeRequestIssue(error);
-      if (existingChallenge) {
+      if (existingChallenge && !UNCERTAIN_EMAIL_CODE_REQUEST_FAILURES.has(issue.code)) {
         return this.#setState({ ...existingChallenge, issue });
       }
       return this.#setState({

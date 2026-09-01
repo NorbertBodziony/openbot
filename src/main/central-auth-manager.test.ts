@@ -429,6 +429,48 @@ describe("CentralAuthManager", () => {
     expect(keys[1]).toBe(keys[0]);
   });
 
+  it("disables verification of the old challenge while resend delivery is uncertain", async () => {
+    const root = await createRoot();
+    const keys: string[] = [];
+    let requests = 0;
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      keys.push(new Headers(init?.headers).get("Idempotency-Key") ?? "");
+      requests += 1;
+      if (requests === 1) {
+        return Response.json({ challengeId: "challenge-1", expiresAt: 610_000, resendAt: 1_000 });
+      }
+      if (requests === 2) {
+        return Response.json(
+          { error: { code: "email_delivery_pending", message: "Delivery is still pending." } },
+          { status: 409 },
+        );
+      }
+      return Response.json({ challengeId: keys[1], expiresAt: 610_000 });
+    });
+    const manager = new CentralAuthManager({
+      apiUrl: "http://127.0.0.1:3100",
+      storagePath: join(root, "session.bin"),
+      encrypt: (value) => Buffer.from(value),
+      decrypt: (value) => value.toString(),
+      fetch: fetchMock,
+    });
+
+    await expect(manager.requestEmailCode("person@example.com")).resolves.toMatchObject({
+      status: "code_sent",
+      challengeId: "challenge-1",
+    });
+    await expect(manager.requestEmailCode("person@example.com")).resolves.toMatchObject({
+      status: "error",
+      issue: { code: "email_delivery_pending" },
+    });
+    await expect(manager.requestEmailCode("person@example.com")).resolves.toMatchObject({
+      status: "code_sent",
+      challengeId: keys[1],
+    });
+    expect(keys[1]).not.toBe(keys[0]);
+    expect(keys[2]).toBe(keys[1]);
+  });
+
   it("creates a new idempotency key after a confirmed delivery failure", async () => {
     const root = await createRoot();
     const keys: string[] = [];

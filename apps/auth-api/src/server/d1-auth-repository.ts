@@ -43,7 +43,7 @@ export class D1AuthRepository implements AuthRepository {
     const row = await this.database
       .prepare(
         `SELECT created_at FROM email_login_challenges
-         WHERE email = ? AND consumed_at IS NULL AND delivery_state IN ('pending', 'sent')
+         WHERE email = ? AND delivery_state IN ('pending', 'sent')
          ORDER BY created_at DESC LIMIT 1`,
       )
       .bind(email)

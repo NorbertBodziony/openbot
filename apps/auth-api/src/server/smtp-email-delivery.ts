@@ -146,21 +146,40 @@ async function sendPrivateEmailAttempt(
 ): Promise<void> {
   const socket = connect({ hostname: config.host, port: config.port }, { secureTransport: "on", allowHalfOpen: false });
   const state: SmtpAttemptState = { submissionStarted: false, accepted: false };
+  let attemptError: Error | null = null;
 
   try {
     await withTimeout(runSmtpSession(socket, config, message, state), SMTP_TIMEOUT_MS);
   } catch (error) {
     const smtpError = normalizeSmtpError(error);
-    if (state.accepted) return;
-    if (state.submissionStarted && smtpError.message !== "smtp_message_failed") {
-      throw new Error("smtp_delivery_unknown");
+    if (!state.accepted) {
+      attemptError =
+        state.submissionStarted && smtpError.message !== "smtp_message_failed"
+          ? new Error("smtp_delivery_unknown")
+          : smtpError;
     }
-    throw smtpError;
-  } finally {
-    await Promise.race([
-      Promise.resolve(socket.close()).catch(() => undefined),
-      new Promise<void>((resolve) => setTimeout(resolve, SMTP_CLOSE_TIMEOUT_MS)),
+  }
+  const closeConfirmed = await closeSmtpSocket(socket);
+  if (!closeConfirmed && !state.accepted) throw new Error("smtp_delivery_unknown");
+  if (attemptError) throw attemptError;
+}
+
+async function closeSmtpSocket(socket: SmtpSocket): Promise<boolean> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve()
+        .then(() => socket.close())
+        .then(
+          () => true,
+          () => false,
+        ),
+      new Promise<boolean>((resolve) => {
+        timeout = setTimeout(() => resolve(false), SMTP_CLOSE_TIMEOUT_MS);
+      }),
     ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
 }
 

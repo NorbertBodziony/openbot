@@ -34,7 +34,7 @@ class MemoryAuthRepository implements AuthRepository {
 
   async latestEmailChallengeAt(email: string): Promise<number | null> {
     const matches = [...this.challenges.values()].filter(
-      (value) => value.email === email && !value.consumed && value.deliveryState !== "failed",
+      (value) => value.email === email && value.deliveryState !== "failed",
     );
     return matches.length ? Math.max(...matches.map((value) => value.createdAt)) : null;
   }
@@ -456,6 +456,29 @@ describe("email one-time codes", () => {
 
     now += 61_000;
     await service.startEmailSignIn("person@example.com", "203.0.113.4");
+  });
+
+  it("keeps a verified challenge in the resend cooldown", async () => {
+    const repository = new MemoryAuthRepository();
+    const service = new AuthService({
+      repository,
+      delivery: null,
+      exposeDevelopmentCode: true,
+      now: () => 1_000,
+    });
+    const challenge = await service.startEmailSignIn("person@example.com", "203.0.113.4");
+    if (!challenge.developmentCode) throw new Error("Expected a development sign-in code.");
+
+    await service.verifyEmailCode({
+      challengeId: challenge.challengeId,
+      code: challenge.developmentCode,
+      sourceIp: "203.0.113.4",
+    });
+
+    await expect(service.startEmailSignIn("person@example.com", "203.0.113.4")).rejects.toMatchObject({
+      code: "code_recently_sent",
+      status: 429,
+    });
   });
 
   it("replays a completed delivery for the same idempotency key without sending twice", async () => {
