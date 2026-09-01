@@ -99,12 +99,6 @@ interface PeerState {
   closed: boolean;
 }
 
-declare global {
-  interface Window {
-    openbotTeamWebRtc: { readyForPort(): void };
-  }
-}
-
 const peers = new Map<string, PeerState>();
 const dataChannelNames = ["rpc", "events", "files", "desktop"] as const;
 let mainPort: MessagePort;
@@ -120,7 +114,6 @@ const receiveMainPort = (event: MessageEvent): void => {
   post({ type: "bridge-ready" });
 };
 window.addEventListener("message", receiveMainPort);
-window.openbotTeamWebRtc.readyForPort();
 
 async function handleCommand(command: BridgeCommand): Promise<void> {
   try {
