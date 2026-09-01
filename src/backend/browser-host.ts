@@ -178,11 +178,18 @@ export class BrowserHost {
     this.#syncAttachedView();
     this.#emitChanged();
 
+    const restoreTab = async (tab: InternalTab) => {
+      await tab.view.webContents.loadURL("about:blank");
+      await tab.engine.setEnvironment(tab.environment);
+      await tab.engine.navigate(tab.requestedUrl);
+      tab.view.webContents.navigationHistory.clear();
+    };
+    const activeTab = this.#activeTabId ? this.#tabs.get(this.#activeTabId) : undefined;
+    const activeReady = activeTab ? restoreTab(activeTab).catch(() => undefined) : Promise.resolve();
+    if (activeTab) activeTab.queue = activeReady;
     for (const tab of tabs) {
-      void tab.view.webContents
-        .loadURL(tab.requestedUrl, browserLoadOptions())
-        .then(() => tab.engine.setEnvironment(tab.environment))
-        .catch(() => undefined);
+      if (tab === activeTab) continue;
+      tab.queue = activeReady.then(() => restoreTab(tab)).catch(() => undefined);
     }
   }
 

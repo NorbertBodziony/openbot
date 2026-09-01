@@ -38,7 +38,9 @@ const server = createServer((request, response) => {
   if (url.pathname === "/cookie") {
     if (url.searchParams.has("set")) response.setHeader("set-cookie", "openbot=shared; Path=/");
     response.setHeader("content-type", "text/html; charset=utf-8");
-    response.end(`<main>cookie:${request.headers.cookie ?? "none"}</main>`);
+    response.end(`<main>cookie:${request.headers.cookie ?? "none"}</main><span data-load-environment></span><script>
+      document.querySelector('[data-load-environment]').textContent = 'load-environment:' + innerWidth + ':' + (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') + ':' + (matchMedia('(prefers-reduced-motion: reduce)').matches ? 'reduce' : 'motion');
+    </script>`);
     return;
   }
   if (url.pathname === "/headers") {
@@ -94,6 +96,7 @@ const server = createServer((request, response) => {
       <button aria-label="Duplicate">One</button><button aria-label="Duplicate">Two</button>
       <span style="position:relative;display:inline-block"><button aria-label="Covered">Covered</button><span style="position:absolute;inset:0;z-index:2" aria-hidden="true"></span></span>
       <span style="position:relative;display:inline-block"><button style="width:200px" aria-label="Partially covered" onclick="document.querySelector('output').textContent='partial:' + event.isTrusted">Partially covered</button><span style="position:absolute;left:70px;right:70px;top:0;bottom:0;z-index:2" aria-hidden="true"></span></span>
+      <span hidden data-hidden-wait>hidden wait sentinel</span>
       <button aria-label="SPA" onclick="setTimeout(() => { history.pushState({}, '', '/v2#done'); document.querySelector('output').textContent='SPA done'; }, 20)">SPA</button>
       <button draggable="true" aria-label="Drag source">Drag source</button><button aria-label="Drop target" ondragover="event.preventDefault()" ondrop="event.preventDefault();document.querySelector('output').textContent='drag:' + event.isTrusted">Drop target</button>
       <input type="file" aria-label="Files" onchange="document.querySelector('output').textContent=this.files[0]?.name || ''" />
@@ -135,13 +138,10 @@ async function main(): Promise<void> {
   app.setName("OpenBot");
   app.setPath("userData", userDataPath);
   app.setPath("sessionData", userDataPath);
-  const hardTimeout = setTimeout(
-    () => {
-      process.stderr.write("BrowserHost smoke test timed out.\n");
-      app.exit(1);
-    },
-    googleLive || xLive ? 60_000 : 20_000,
-  );
+  const hardTimeout = setTimeout(() => {
+    process.stderr.write("BrowserHost smoke test timed out.\n");
+    app.exit(1);
+  }, 60_000);
 
   try {
     if (persistencePhase) {
@@ -212,6 +212,17 @@ async function main(): Promise<void> {
     const v2Snapshot = toolTextPayload(v2SnapshotResult);
     if (!v2SnapshotResult.success || !isDynamicRecord(v2Snapshot) || !Array.isArray(v2Snapshot.elements)) {
       throw new Error("V2 snapshot failed.");
+    }
+    if (String(v2Snapshot.text).includes("hidden wait sentinel")) {
+      throw new Error("V2 snapshot included hidden DOM text.");
+    }
+    const hiddenTextWait = await callBrowserTool(browser, "wait_for", {
+      tabId: v2Tab.id,
+      text: "hidden wait sentinel",
+      timeoutMs: 200,
+    });
+    if (hiddenTextWait.success || !toolError(hiddenTextWait).includes("timed out")) {
+      throw new Error("V2 text wait matched hidden DOM text.");
     }
     if (!v2SnapshotResult.contentItems.some((item) => item.type === "inputImage")) {
       throw new Error("Adaptive snapshot did not include an image for canvas/iframe content.");
@@ -357,6 +368,19 @@ async function main(): Promise<void> {
     });
     if (!partiallyCovered.success || !String(toolTextPayload(partiallyCovered)?.text).includes("partial:true")) {
       throw new Error(`V2 hit testing did not use a visible target point: ${toolError(partiallyCovered)}`);
+    }
+    const freshTargetSetup = await callBrowserTool(browser, "evaluate", {
+      tabId: v2Tab.id,
+      expression:
+        "document.body.appendChild(Object.assign(document.createElement('button'), { ariaLabel: 'Fresh target', textContent: 'Fresh target', onclick: event => { document.querySelector('output').textContent = 'fresh:' + event.isTrusted; } })); true",
+    });
+    if (!freshTargetSetup.success) throw new Error(`V2 fresh target setup failed: ${toolError(freshTargetSetup)}`);
+    const freshTarget = await callBrowserTool(browser, "click", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "button", name: "Fresh target", exact: true },
+    });
+    if (!freshTarget.success || !String(toolTextPayload(freshTarget)?.text).includes("fresh:true")) {
+      throw new Error(`V2 semantic target did not refresh before the action: ${toolError(freshTarget)}`);
     }
     const canvasPoint = await callBrowserTool(browser, "evaluate", {
       tabId: v2Tab.id,
@@ -837,7 +861,16 @@ async function main(): Promise<void> {
     }
     process.stdout.write("BrowserHost: agent control lifecycle passed.\n");
 
-    const persistedTab = await browser.open(`${origin}/cookie`, "persisted-thread", "persisted-bot");
+    const persistedTab = await browser.open(`${origin}/cookie`, "smoke-thread", "smoke-bot");
+    const persistedEnvironment = await callBrowserTool(browser, "set_environment", {
+      tabId: persistedTab.id,
+      preset: "mobile",
+      colorScheme: "dark",
+      reducedMotion: true,
+    });
+    if (!persistedEnvironment.success) {
+      throw new Error(`Persisted environment setup failed: ${toolError(persistedEnvironment)}`);
+    }
     await browser.activate(persistedTab.id);
     const browserDestruction = browser.destroy();
     if (browser.listTabs().length !== 0) {
@@ -859,11 +892,15 @@ async function main(): Promise<void> {
     const restoredTabs = restoredBrowser.listTabs();
     const restoredTab = restoredTabs.find((candidate) => candidate.id === persistedTab.id);
     if (
-      restoredTab?.ownerThreadId !== "persisted-thread" ||
-      restoredTab?.ownerBotId !== "persisted-bot" ||
+      restoredTab?.ownerThreadId !== "smoke-thread" ||
+      restoredTab?.ownerBotId !== "smoke-bot" ||
       restoredBrowser.activeTabId !== persistedTab.id
     ) {
       throw new Error("Browser tabs did not survive a BrowserHost restart.");
+    }
+    const restoredEnvironmentSnapshot = await restoredBrowser.snapshot(persistedTab.id);
+    if (!restoredEnvironmentSnapshot.text.includes("load-environment:390:dark:reduce")) {
+      throw new Error("Restored browser environment was not applied before navigation.");
     }
     process.stdout.write("BrowserHost: persisted tabs passed.\n");
     await restoredBrowser.destroy();

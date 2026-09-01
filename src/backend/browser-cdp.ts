@@ -442,13 +442,29 @@ export class BrowserCdpEngine {
           else await this.#clearEnvironment(send);
           throw error;
         }
-      });
+      }, false);
       this.#environment = environment;
     } catch (error) {
       this.#retainDebugger = previousRetainDebugger;
       if (!this.#retainDebugger) this.#detachOwnedDebugger();
       throw error;
     }
+  }
+
+  async navigate(url: string): Promise<void> {
+    await this.#lease(async (send) => {
+      await send("Network.enable");
+      await send("Network.setCacheDisabled", { cacheDisabled: true });
+      try {
+        const result = await send("Page.navigate", { url });
+        const errorText = stringValue(result.errorText);
+        if (errorText) throw new Error(`Navigation failed: ${errorText}`);
+        await waitForLoading(this.#contents, WAIT_TIMEOUT_MS);
+      } finally {
+        await send("Network.setCacheDisabled", { cacheDisabled: false }).catch(() => undefined);
+        await send("Network.disable").catch(() => undefined);
+      }
+    }, false);
   }
 
   destroy(): void {
@@ -474,9 +490,6 @@ export class BrowserCdpEngine {
         }
         if (condition.target) {
           try {
-            if (condition.target.kind === "role" || condition.target.kind === "text") {
-              await this.#refreshSemanticTargets(send);
-            }
             await this.#resolveTarget(send, condition.target);
           } catch {
             matched = false;
@@ -583,6 +596,7 @@ export class BrowserCdpEngine {
         await send("Runtime.releaseObject", { objectId }).catch(() => undefined);
       }
     }
+    await this.#refreshSemanticTargets(send);
     const candidates = [...this.#targets.values()].filter(({ element }) => {
       if (target.kind === "role") {
         if (element.role?.toLowerCase() !== target.role.toLowerCase()) return false;
@@ -727,7 +741,7 @@ export class BrowserCdpEngine {
     ];
   }
 
-  async #lease<T>(operation: (send: SendCommand) => Promise<T>): Promise<T> {
+  async #lease<T>(operation: (send: SendCommand) => Promise<T>, attachFrames = true): Promise<T> {
     if (this.#contents.isDestroyed()) throw new Error("Browser tab was closed.");
     const attachedHere = !this.#contents.debugger.isAttached();
     if (attachedHere) {
@@ -741,12 +755,14 @@ export class BrowserCdpEngine {
     };
     try {
       await send("Emulation.setFocusEmulationEnabled", { enabled: true });
-      await send("Target.setAutoAttach", {
-        autoAttach: true,
-        waitForDebuggerOnStart: false,
-        flatten: true,
-        filter: [{ type: "iframe", exclude: false }],
-      }).catch(() => undefined);
+      if (attachFrames) {
+        await send("Target.setAutoAttach", {
+          autoAttach: true,
+          waitForDebuggerOnStart: false,
+          flatten: true,
+          filter: [{ type: "iframe", exclude: false }],
+        }).catch(() => undefined);
+      }
       if (this.#environment) await this.#applyEnvironment(send, this.#environment);
       return await operation(send);
     } finally {
@@ -882,6 +898,23 @@ async function collectPageSummary(
         let scanned = 0;
         let hasVisualSurface = false;
         let hasFrame = false;
+        const isVisibleText = node => {
+          let element = node.parentElement;
+          while (element) {
+            if (element.hidden || element.inert || String(element.getAttribute('aria-hidden')).toLowerCase() === 'true') return false;
+            const style = getComputedStyle(element);
+            if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.contentVisibility === 'hidden' || style.opacity === '0') return false;
+            const parent = element.parentElement;
+            if (parent) element = parent;
+            else {
+              const root = element.getRootNode();
+              element = root?.nodeType === Node.DOCUMENT_FRAGMENT_NODE ? root.host : null;
+            }
+          }
+          const range = node.ownerDocument.createRange();
+          range.selectNodeContents(node);
+          return range.getClientRects().length > 0;
+        };
         while (roots.length && scanned < maxNodes) {
           const root = roots.shift();
           if (!root || seen.has(root)) continue;
@@ -893,6 +926,7 @@ async function collectPageSummary(
             if (node.nodeType === Node.TEXT_NODE && chars < maxText) {
               const parentTag = node.parentElement?.localName;
               if (parentTag === 'script' || parentTag === 'style' || parentTag === 'noscript' || parentTag === 'template') continue;
+              if (!isVisibleText(node)) continue;
               const value = String(node.nodeValue || '').replace(/\\s+/g, ' ').trim();
               if (value) {
                 const part = value.slice(0, Math.max(0, maxText - chars));
@@ -937,6 +971,23 @@ async function pageContainsText(send: SendCommand, captures: SnapshotTarget[], t
           let combined = '';
           let chars = 0;
           let scanned = 0;
+          const isVisibleText = node => {
+            let element = node.parentElement;
+            while (element) {
+              if (element.hidden || element.inert || String(element.getAttribute('aria-hidden')).toLowerCase() === 'true') return false;
+              const style = getComputedStyle(element);
+              if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.contentVisibility === 'hidden' || style.opacity === '0') return false;
+              const parent = element.parentElement;
+              if (parent) element = parent;
+              else {
+                const root = element.getRootNode();
+                element = root?.nodeType === Node.DOCUMENT_FRAGMENT_NODE ? root.host : null;
+              }
+            }
+            const range = node.ownerDocument.createRange();
+            range.selectNodeContents(node);
+            return range.getClientRects().length > 0;
+          };
           while (roots.length && scanned < ${MAX_SNAPSHOT_SCANNED_NODES} && chars < ${MAX_SNAPSHOT_TEXT}) {
             const root = roots.shift();
             if (!root || seen.has(root)) continue;
@@ -948,6 +999,7 @@ async function pageContainsText(send: SendCommand, captures: SnapshotTarget[], t
               if (node.nodeType === Node.TEXT_NODE) {
                 const parentTag = node.parentElement?.localName;
                 if (parentTag === 'script' || parentTag === 'style' || parentTag === 'noscript' || parentTag === 'template') continue;
+                if (!isVisibleText(node)) continue;
                 const value = String(node.nodeValue || '').replace(/\\s+/g, ' ').trim();
                 if (value) {
                   const part = value.slice(0, Math.max(0, ${MAX_SNAPSHOT_TEXT} - chars));
