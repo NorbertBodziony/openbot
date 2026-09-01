@@ -1,7 +1,19 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { copyFile, cp, lstat, mkdir, readdir, readFile, readlink, rename, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import {
+  copyFile,
+  cp,
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  readlink,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { avatarFileExtension, isAvatarMimeType, isValidAvatarImage } from "@openbot/contracts/avatar-images";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
@@ -204,7 +216,6 @@ export class BotStore {
     }
     const source = this.#requireBot(sourceId);
     const sourceProfileSignature = JSON.stringify(source);
-    const sourceWorkspaceSignature = await workspaceFingerprint(source.workspacePath);
     const sourceAvatar = this.resolveAvatar(source.id);
     const sourceAvatarSignature = sourceAvatar ? await fileFingerprint(sourceAvatar.path) : null;
     const id = `bot-${randomUUID()}`;
@@ -248,13 +259,13 @@ export class BotStore {
       }
       if (
         JSON.stringify(source) !== sourceProfileSignature ||
-        (await workspaceFingerprint(stagedWorkspace)) !== sourceWorkspaceSignature ||
-        (await workspaceFingerprint(source.workspacePath)) !== sourceWorkspaceSignature ||
+        (await workspaceFingerprint(stagedWorkspace)) !== (await workspaceFingerprint(source.workspacePath)) ||
         (stagedAvatarPath ? await fileFingerprint(stagedAvatarPath) : null) !== sourceAvatarSignature ||
         (sourceAvatar ? await fileFingerprint(sourceAvatar.path) : null) !== sourceAvatarSignature
       ) {
         throw new Error("The agent changed while it was being duplicated. Try again.");
       }
+      await rewriteInternalWorkspaceSymlinks(source.workspacePath, stagedWorkspace, record.workspacePath);
       if (this.#state.bots.length >= INPUT_LIMITS.agents) {
         throw new Error(`A host can have up to ${INPUT_LIMITS.agents} agents.`);
       }
@@ -667,6 +678,38 @@ function duplicateBotName(sourceName: string, bots: readonly StoredBot[]): strin
 
 function duplicationCommandId(operationId: string): string {
   return `agent-duplication:${operationId}`;
+}
+
+async function rewriteInternalWorkspaceSymlinks(
+  sourceRoot: string,
+  stagedRoot: string,
+  finalRoot: string,
+): Promise<void> {
+  const visit = async (stagedDirectory: string, sourceDirectory: string, finalDirectory: string): Promise<void> => {
+    const entries = await readdir(stagedDirectory, { withFileTypes: true });
+    for (const entry of entries) {
+      const stagedPath = join(stagedDirectory, entry.name);
+      const sourcePath = join(sourceDirectory, entry.name);
+      const finalPath = join(finalDirectory, entry.name);
+      if (entry.isSymbolicLink()) {
+        const target = await readlink(stagedPath);
+        const resolvedSourceTarget = resolve(dirname(sourcePath), target);
+        if (!isPathWithin(sourceRoot, resolvedSourceTarget)) continue;
+        const finalTarget = join(finalRoot, relative(sourceRoot, resolvedSourceTarget));
+        const rewrittenTarget = isAbsolute(target) ? finalTarget : relative(dirname(finalPath), finalTarget) || ".";
+        await rm(stagedPath);
+        await symlink(rewrittenTarget, stagedPath);
+      } else if (entry.isDirectory()) {
+        await visit(stagedPath, sourcePath, finalPath);
+      }
+    }
+  };
+  await visit(stagedRoot, sourceRoot, finalRoot);
+}
+
+function isPathWithin(root: string, candidate: string): boolean {
+  const path = relative(resolve(root), resolve(candidate));
+  return path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
 }
 
 async function workspaceFingerprint(root: string): Promise<string> {

@@ -260,6 +260,9 @@ describe("BotStore", () => {
     await mkdir(join(source.workspacePath, "skills", "research"), { recursive: true });
     await writeFile(join(source.workspacePath, "skills", "research", "SKILL.md"), "Use primary sources.\n");
     await writeFile(join(source.workspacePath, "skills.lock"), "research@1\n");
+    await mkdir(join(source.workspacePath, "links"));
+    await symlink(join(source.workspacePath, "skills.lock"), join(source.workspacePath, "internal-absolute"));
+    await symlink("../skills.lock", join(source.workspacePath, "links", "internal-relative"));
     await writeFile(join(root, "outside.txt"), "outside\n");
     await symlink(join(root, "outside.txt"), join(source.workspacePath, "outside-link"));
 
@@ -291,10 +294,17 @@ describe("BotStore", () => {
       "Use primary sources.\n",
     );
     await expect(readFile(join(duplicate.workspacePath, "skills.lock"), "utf8")).resolves.toBe("research@1\n");
+    await expect(readlink(join(duplicate.workspacePath, "internal-absolute"))).resolves.toBe(
+      join(duplicate.workspacePath, "skills.lock"),
+    );
+    await expect(readlink(join(duplicate.workspacePath, "links", "internal-relative"))).resolves.toBe("../skills.lock");
     await expect(readlink(join(duplicate.workspacePath, "outside-link"))).resolves.toBe(join(root, "outside.txt"));
     await expect(readFile(store.resolveAvatar(duplicate.id)?.path ?? "")).resolves.toEqual(Buffer.from(image));
 
-    await writeFile(join(duplicate.workspacePath, "skills.lock"), "research@2\n");
+    await writeFile(join(duplicate.workspacePath, "internal-absolute"), "research@2\n");
+    await expect(readFile(join(duplicate.workspacePath, "links", "internal-relative"), "utf8")).resolves.toBe(
+      "research@2\n",
+    );
     await expect(readFile(join(source.workspacePath, "skills.lock"), "utf8")).resolves.toBe("research@1\n");
 
     const reloaded = new BotStore(userData, home);
