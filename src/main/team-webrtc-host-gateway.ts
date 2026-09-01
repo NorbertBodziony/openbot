@@ -2,7 +2,7 @@ import { randomBytes, verify } from "node:crypto";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
-import { encodeTeamProtocolV1ClientEvent, TEAM_PROTOCOL_V1_CAPABILITIES } from "@openbot/contracts/team-protocol/v1";
+import { encodeTeamProtocolV1ClientEvent } from "@openbot/contracts/team-protocol/v1";
 import {
   decodeTeamProtocolV2AuthFrame,
   decodeTeamProtocolV2EventFrame,
@@ -13,11 +13,12 @@ import {
   type TeamProtocolV2RpcFrame,
   teamProtocolV2AuthenticationTranscript,
 } from "@openbot/contracts/team-protocol/v2";
+import { createTeamProtocolV2Event } from "@openbot/contracts/team-protocol/v2-adapter";
+import { TEAM_PROTOCOL_V3_CAPABILITIES } from "@openbot/contracts/team-protocol/v3";
 import {
-  createTeamProtocolV2Event,
-  decodeTeamProtocolV2CurrentHttpRequest,
-  encodeTeamProtocolV2CurrentHttpResponse,
-} from "@openbot/contracts/team-protocol/v2-adapter";
+  decodeTeamProtocolV3WebRtcHttpRequest,
+  encodeTeamProtocolV3WebRtcHttpResponse,
+} from "@openbot/contracts/team-protocol/v3-webrtc-adapter";
 import type * as Ws from "ws";
 import type { VerifiedRemoteSessionTicket } from "./central-auth-manager";
 import {
@@ -472,7 +473,7 @@ export class TeamWebRtcHostGateway {
       headers: {
         Authorization: `Bearer ${this.#localSessionToken}`,
         "Content-Type": uploaded?.mimeType ?? input.contentType ?? "application/json",
-        "OpenBot-Protocol-Version": "2",
+        "OpenBot-Protocol-Version": /^\/v1\/agents\/[^/]+\/duplicate$/u.test(url.pathname) ? "3" : "2",
         "OpenBot-App-Version": this.#appVersion,
         ...(this.#localSessionId ? { "X-OpenBot-WebRTC-Session": this.#localSessionId } : {}),
       },
@@ -483,7 +484,7 @@ export class TeamWebRtcHostGateway {
             ? Buffer.from(uploaded.bytes)
             : input.body === null
               ? undefined
-              : JSON.stringify(decodeTeamProtocolV2CurrentHttpRequest(input.method, input.path, input.body)),
+              : JSON.stringify(decodeTeamProtocolV3WebRtcHttpRequest(input.method, input.path, input.body)),
     });
     const contentType = response.headers.get("content-type") ?? "";
     const body = response.status === 204 ? {} : contentType.includes("json") ? await response.json() : null;
@@ -513,7 +514,7 @@ export class TeamWebRtcHostGateway {
     }
     return {
       status: response.status,
-      body: encodeTeamProtocolV2CurrentHttpResponse(input.method, input.path, response.status, body),
+      body: encodeTeamProtocolV3WebRtcHttpResponse(input.method, input.path, response.status, body),
     };
   }
 
@@ -531,7 +532,7 @@ export class TeamWebRtcHostGateway {
         encodeTeamProtocolV1ClientEvent({
           type: "agent-event-scope",
           includeConversations: true,
-          capabilities: TEAM_PROTOCOL_V1_CAPABILITIES,
+          capabilities: TEAM_PROTOCOL_V3_CAPABILITIES,
         }),
       );
     });

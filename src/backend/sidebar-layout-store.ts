@@ -89,6 +89,35 @@ export class SidebarLayoutStore extends EventEmitter<SidebarLayoutStoreEvents> {
     });
   }
 
+  placeDuplicateAfter(
+    sourceAgentId: string,
+    duplicateAgentId: string,
+    orderedAgentIds: readonly string[],
+  ): Promise<SidebarLayoutSnapshot> {
+    return this.#enqueue(async () => {
+      const agentIds = new Set(orderedAgentIds);
+      if (!agentIds.has(sourceAgentId) || !agentIds.has(duplicateAgentId)) throw new Error("Unknown agent.");
+      const sectionId = this.#layout.agentAssignments[sourceAgentId] ?? null;
+      const order = normalizedAgentOrder(this.#layout.agentOrder, agentIds).filter(
+        (agentId) => agentId !== duplicateAgentId,
+      );
+      const sourceIndex = order.indexOf(sourceAgentId);
+      if (sourceIndex < 0) throw new Error("Unknown source agent order.");
+      const beforeAgentId =
+        order
+          .slice(sourceIndex + 1)
+          .find((agentId) => (this.#layout.agentAssignments[agentId] ?? null) === sectionId) ?? null;
+      const next = applySidebarLayoutAction(
+        this.#layout,
+        { type: "move-agent", agentId: duplicateAgentId, sectionId, beforeAgentId },
+        agentIds,
+      );
+      if (next === this.#layout) return this.getSnapshot();
+      await this.#commit(next);
+      return this.getSnapshot();
+    });
+  }
+
   reconcileAgents(agentIds: ReadonlySet<string>): Promise<SidebarLayoutSnapshot> {
     return this.#enqueue(async () => {
       const agentAssignments = Object.fromEntries(

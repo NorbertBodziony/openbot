@@ -73,6 +73,7 @@ export const IPC_CHANNELS = {
   agentGetSidebarLayout: "agent:get-sidebar-layout",
   agentMutateSidebarLayout: "agent:mutate-sidebar-layout",
   agentCreateBot: "agent:create-bot",
+  agentDuplicateBot: "agent:duplicate-bot",
   agentUpdateBot: "agent:update-bot",
   agentSetAvatar: "agent:set-avatar",
   agentDeleteBot: "agent:delete-bot",

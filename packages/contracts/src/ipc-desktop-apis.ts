@@ -45,6 +45,7 @@ import type {
   DeleteBotMemoryInput,
   DeleteRoutineInput,
   DraftAttachment,
+  DuplicateBotResult,
   FilePreview,
   InterruptTurnInput,
   ListRoutineRunsInput,
@@ -147,6 +148,7 @@ export interface AgentDesktopApi {
   getSidebarLayout: () => Promise<SidebarLayoutSnapshot>;
   mutateSidebarLayout: (action: SidebarLayoutAction) => Promise<SidebarLayoutSnapshot>;
   createBot: (input: CreateBotInput) => Promise<BotSummary>;
+  duplicateBot: (botId: string) => Promise<DuplicateBotResult>;
   updateBot: (input: UpdateBotInput) => Promise<BotSummary>;
   setAvatar: (input: SetAgentAvatarInput) => Promise<BotSummary>;
   deleteBot: (botId: string) => Promise<void>;

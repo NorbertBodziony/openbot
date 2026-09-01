@@ -30,6 +30,7 @@ import type {
   DirectTypingInput,
   DirectTypingRealtimeEvent,
   DraftAttachment,
+  DuplicateBotResult,
   InvitePreview,
   InviteSummary,
   JoinServerInput,
@@ -84,7 +85,6 @@ import {
   TEAM_APP_VERSION_HEADER,
   TEAM_CAPABILITIES_HEADER,
   TEAM_PROTOCOL_V1,
-  TEAM_PROTOCOL_V1_CAPABILITIES,
   TEAM_PROTOCOL_V1_WEBSOCKET,
   TEAM_PROTOCOL_VERSION_HEADER,
   type TeamProtocolSupportV1,
@@ -100,16 +100,28 @@ import {
   decodeTeamProtocolV2Json,
   TEAM_PROTOCOL_V2,
   TEAM_PROTOCOL_V2_CAPABILITIES,
-  type TeamProtocolV2Capability,
   type TeamProtocolV2Json,
 } from "@openbot/contracts/team-protocol/v2";
 import {
   decodeTeamProtocolV2CurrentHttpResponse,
   encodeTeamProtocolV2CurrentHttpRequest,
 } from "@openbot/contracts/team-protocol/v2-adapter";
+import {
+  TEAM_PROTOCOL_V3,
+  TEAM_PROTOCOL_V3_CAPABILITIES,
+  type TeamProtocolV3Capability,
+} from "@openbot/contracts/team-protocol/v3";
+import {
+  decodeTeamProtocolV3CurrentHttpResponse,
+  encodeTeamProtocolV3CurrentHttpRequest,
+} from "@openbot/contracts/team-protocol/v3-adapter";
 import { RemoteViewerProxy } from "./remote-viewer-proxy";
 import { fingerprint } from "./team-store";
-import { type TeamWebRtcClientTransport, TeamWebRtcRequestError } from "./team-webrtc-client-transport";
+import {
+  TEAM_WEBRTC_REMOTE_REQUEST_TIMEOUT_MILLISECONDS,
+  type TeamWebRtcClientTransport,
+  TeamWebRtcRequestError,
+} from "./team-webrtc-client-transport";
 
 export { isValidRemoteApiUrl } from "@openbot/contracts/invite-links";
 
@@ -176,6 +188,7 @@ export interface DevelopmentRemoteServerConnection {
 }
 
 const REMOTE_REQUEST_TIMEOUT_MS = 15_000;
+export const REMOTE_DUPLICATION_TIMEOUT_MS = TEAM_WEBRTC_REMOTE_REQUEST_TIMEOUT_MILLISECONDS;
 const REMOTE_EVENT_RECONNECT_BASE_MS = 1_000;
 const REMOTE_EVENT_RECONNECT_MAX_MS = 60_000;
 const REMOTE_EVENT_RECONNECT_JITTER = 0.2;
@@ -184,7 +197,7 @@ const REMOTE_EVENT_PAYLOAD_LIMIT = 1024 * 1024;
 const REMOTE_EVENT_INITIAL_BUFFER_LIMIT = 1_000;
 const REMOTE_EVENT_PROTOCOL = "openbot-events";
 const REMOTE_EVENT_SNAPSHOT_PROTOCOL = "openbot-events-v2";
-const LOCAL_TEAM_PROTOCOL = { minimum: TEAM_PROTOCOL_V1, maximum: 2 } as const;
+const LOCAL_TEAM_PROTOCOL = { minimum: TEAM_PROTOCOL_V1, maximum: TEAM_PROTOCOL_V3 } as const;
 
 type ResponseDecoder<T> = (value: unknown) => T;
 type TeamProtocolHttpValue = TeamProtocolV1JsonValue | TeamProtocolV2Json;
@@ -232,6 +245,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   #webrtcConnectionAttempts = new Set<string>();
   #conversationRefreshRequests = new Map<string, { revision: number }>();
   #queueRefreshRequests = new Map<string, { dirty: boolean }>();
+  #duplicateOperationIds = new Map<string, string>();
   #eventAuthenticationPaused = new Set<string>();
   #eventGenerations = new Map<string, number>();
   #eventsEnabled = false;
@@ -271,6 +285,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this.#issues.delete(serverId);
       this.#connectionSequences.set(serverId, (this.#connectionSequences.get(serverId) ?? 0) + 1);
       this.#emitChanged();
+      void this.#refreshWebRtcCompatibility(serverId).catch(() => undefined);
       const server = this.#state.servers.find((candidate) => candidate.id === serverId);
       if (server) {
         void this.#refreshRemoteDesktop(server)
@@ -648,7 +663,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   async request<T>(
     path: string,
-    init: { method?: string; body?: unknown } = {},
+    init: { method?: string; body?: unknown; timeoutMs?: number } = {},
     serverId = this.#state.activeServerId,
     decoder: ResponseDecoder<T>,
   ): Promise<T> {
@@ -669,11 +684,33 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       const value = await requestJson(server.apiUrl, path, decoder, {
         ...init,
         token: this.#token(server),
+        timeoutMs: init.timeoutMs,
         ...this.#requestProtocol(compatibility),
       });
       return addRemotePreviewUrls(value, server.id);
     } catch (error) {
       this.#applyConnectionError(server.id, error);
+      throw error;
+    }
+  }
+
+  async duplicateBot(botId: string, serverId = this.#state.activeServerId): Promise<DuplicateBotResult> {
+    const key = `${serverId}\0${botId}`;
+    const operationId = this.#duplicateOperationIds.get(key) ?? randomUUID();
+    this.#duplicateOperationIds.set(key, operationId);
+    try {
+      const result = await this.request(
+        `/v1/agents/${encodeURIComponent(botId)}/duplicate`,
+        { method: "POST", body: { operationId }, timeoutMs: REMOTE_DUPLICATION_TIMEOUT_MS },
+        serverId,
+        decodeDuplicateBotResult,
+      );
+      this.#duplicateOperationIds.delete(key);
+      return result;
+    } catch (error) {
+      if (error instanceof RemoteRequestError && error.status >= 400 && error.status < 500) {
+        this.#duplicateOperationIds.delete(key);
+      }
       throw error;
     }
   }
@@ -1222,6 +1259,20 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     };
   }
 
+  async #refreshWebRtcCompatibility(serverId: string): Promise<void> {
+    if (!this.#webrtcTransport) return;
+    const host = decodeTeamProtocolSupportV1(await this.#webrtcTransport.request(serverId, "/v1/compatibility"));
+    this.#compatibility.set(serverId, {
+      localAppVersion: this.#appVersion ?? "0.0.0",
+      hostAppVersion: host.appVersion,
+      localProtocol: LOCAL_TEAM_PROTOCOL,
+      hostProtocol: host.protocol,
+      negotiatedProtocol: highestCommonTeamProtocol(LOCAL_TEAM_PROTOCOL, host.protocol),
+      capabilities: host.capabilities,
+    });
+    this.#emitChanged();
+  }
+
   #handleWebRtcEvent(serverId: string, event: AgentEvent | TeamRealtimeEvent): void {
     if (event.type === "team-identity") {
       const server = this.#state.servers.find((candidate) => candidate.id === serverId);
@@ -1252,12 +1303,12 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   #requestProtocol(compatibility: ServerCompatibility): {
     protocol?: number;
     appVersion?: string;
-    capabilities?: readonly TeamProtocolV2Capability[];
+    capabilities?: readonly TeamProtocolV3Capability[];
   } {
     return {
       protocol: compatibility.negotiatedProtocol ?? undefined,
       appVersion: this.#appVersion ?? undefined,
-      capabilities: this.#appVersion ? TEAM_PROTOCOL_V2_CAPABILITIES : undefined,
+      capabilities: this.#appVersion ? TEAM_PROTOCOL_V3_CAPABILITIES : undefined,
     };
   }
 
@@ -1304,7 +1355,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       headers.set(TEAM_PROTOCOL_VERSION_HEADER, String(compatibility.negotiatedProtocol));
       if (this.#appVersion) {
         headers.set(TEAM_APP_VERSION_HEADER, this.#appVersion);
-        headers.set(TEAM_CAPABILITIES_HEADER, TEAM_PROTOCOL_V2_CAPABILITIES.join(","));
+        headers.set(TEAM_CAPABILITIES_HEADER, TEAM_PROTOCOL_V3_CAPABILITIES.join(","));
       }
       const response = await remoteFetch(input, { ...init, headers });
       if (!response.ok) {
@@ -1435,7 +1486,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       hostAppVersion: "0.0.0",
       hostProtocol: LOCAL_TEAM_PROTOCOL,
       negotiatedProtocol: TEAM_PROTOCOL_V1,
-      capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
+      capabilities: [...TEAM_PROTOCOL_V3_CAPABILITIES],
     };
   }
 
@@ -1751,7 +1802,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       encodeTeamProtocolV1ClientEvent({
         type: "agent-event-scope",
         includeConversations: this.#state.activeServerId === serverId,
-        ...(this.#appVersion ? { capabilities: TEAM_PROTOCOL_V1_CAPABILITIES } : {}),
+        ...(this.#appVersion ? { capabilities: TEAM_PROTOCOL_V3_CAPABILITIES } : {}),
       }),
     );
   }
@@ -1833,7 +1884,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     }
   }
 
-  #supportsCapability(serverId: string, capability: TeamProtocolV2Capability): boolean {
+  #supportsCapability(serverId: string, capability: TeamProtocolV3Capability): boolean {
     return this.#compatibility.get(serverId)?.capabilities.includes(capability) ?? false;
   }
 
@@ -2006,25 +2057,30 @@ async function requestJson<T>(
     token?: string;
     protocol?: number;
     appVersion?: string;
-    capabilities?: readonly TeamProtocolV2Capability[];
+    capabilities?: readonly TeamProtocolV3Capability[];
+    timeoutMs?: number;
   } = {},
 ): Promise<T> {
   const method = options.method ?? (options.body === undefined ? "GET" : "POST");
-  const response = await remoteFetch(new URL(path, apiUrl), {
-    method,
-    headers: {
-      Accept: "application/json",
-      ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
-      ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
-      ...(options.protocol ? { [TEAM_PROTOCOL_VERSION_HEADER]: String(options.protocol) } : {}),
-      ...(options.appVersion ? { [TEAM_APP_VERSION_HEADER]: options.appVersion } : {}),
-      ...(options.capabilities ? { [TEAM_CAPABILITIES_HEADER]: options.capabilities.join(",") } : {}),
+  const response = await remoteFetch(
+    new URL(path, apiUrl),
+    {
+      method,
+      headers: {
+        Accept: "application/json",
+        ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
+        ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+        ...(options.protocol ? { [TEAM_PROTOCOL_VERSION_HEADER]: String(options.protocol) } : {}),
+        ...(options.appVersion ? { [TEAM_APP_VERSION_HEADER]: options.appVersion } : {}),
+        ...(options.capabilities ? { [TEAM_CAPABILITIES_HEADER]: options.capabilities.join(",") } : {}),
+      },
+      body:
+        options.body === undefined
+          ? undefined
+          : encodeCurrentHttpRequest(options.protocol ?? TEAM_PROTOCOL_V1, method, path, options.body),
     },
-    body:
-      options.body === undefined
-        ? undefined
-        : encodeCurrentHttpRequest(options.protocol ?? TEAM_PROTOCOL_V1, method, path, options.body),
-  });
+    options.timeoutMs,
+  );
   let value: unknown;
   if (response.status !== 204) {
     try {
@@ -2068,6 +2124,9 @@ async function requestJson<T>(
 }
 
 function encodeCurrentHttpRequest(protocol: number, method: string, path: string, value: unknown): string {
+  if (protocol === TEAM_PROTOCOL_V3) {
+    return encodeTeamProtocolV3CurrentHttpRequest(method, path, value);
+  }
   if (protocol === TEAM_PROTOCOL_V2) {
     return JSON.stringify(encodeTeamProtocolV2CurrentHttpRequest(method, path, value));
   }
@@ -2081,9 +2140,13 @@ function decodeCurrentHttpResponse(
   status: number,
   value: unknown,
 ): TeamProtocolHttpValue {
-  return protocol === TEAM_PROTOCOL_V2
-    ? decodeTeamProtocolV2CurrentHttpResponse(method, path, status, value)
-    : decodeTeamProtocolV1CurrentHttpResponse(method, path, status, value);
+  if (protocol === TEAM_PROTOCOL_V3) {
+    return decodeTeamProtocolV3CurrentHttpResponse(method, path, status, value);
+  }
+  if (protocol === TEAM_PROTOCOL_V2) {
+    return decodeTeamProtocolV2CurrentHttpResponse(method, path, status, value);
+  }
+  return decodeTeamProtocolV1CurrentHttpResponse(method, path, status, value);
 }
 
 function decodeRecord(value: unknown, label: string): DynamicRecord {
@@ -2155,6 +2218,7 @@ export function decodeBotSummary(value: unknown): BotSummary {
   const avatarSeed = record.avatarSeed;
   const avatarHue = record.avatarHue;
   const provider = record.provider;
+  const marketplaceSource = decodeMarketplaceSource(record.marketplaceSource);
   if (!isAgentProvider(provider) || !isAgentModel(model) || !isReasoningEffort(reasoningEffort)) {
     throw new Error("Invalid agent model configuration.");
   }
@@ -2177,6 +2241,33 @@ export function decodeBotSummary(value: unknown): BotSummary {
     avatarSeed,
     avatarHue,
     avatarUrl: record.avatarUrl === undefined ? null : nullableString(record, "avatarUrl"),
+    ...(marketplaceSource === undefined ? {} : { marketplaceSource }),
+  };
+}
+
+function decodeMarketplaceSource(value: unknown): BotSummary["marketplaceSource"] {
+  if (value === undefined) return undefined;
+  const record = decodeRecord(value, "agent marketplace source");
+  const skillIds = record.skillIds;
+  const routineIds = record.routineIds;
+  if (
+    !isString(record.agentId) ||
+    !isString(record.versionId) ||
+    !isNumber(record.version) ||
+    !Number.isInteger(record.version) ||
+    !Array.isArray(skillIds) ||
+    !skillIds.every(isString) ||
+    !Array.isArray(routineIds) ||
+    !routineIds.every(isString)
+  ) {
+    throw new Error("Invalid agent marketplace source.");
+  }
+  return {
+    agentId: record.agentId,
+    versionId: record.versionId,
+    version: record.version,
+    skillIds: [...skillIds],
+    routineIds: [...routineIds],
   };
 }
 
@@ -2286,6 +2377,14 @@ export function decodeRoutineRuns(value: unknown): RoutineRun[] {
 export function decodeSidebarLayoutSnapshot(value: unknown): SidebarLayoutSnapshot {
   if (!isSidebarLayoutSnapshot(value)) throw new Error("Invalid sidebar layout response.");
   return value;
+}
+
+export function decodeDuplicateBotResult(value: unknown): DuplicateBotResult {
+  const record = decodeRecord(value, "agent duplication");
+  return {
+    bot: decodeBotSummary(record.bot),
+    layout: decodeSidebarLayoutSnapshot(record.layout),
+  };
 }
 
 export function decodeQueueSnapshot(value: unknown): QueueSnapshot {
@@ -2759,8 +2858,12 @@ function readStoredRemoteServer(value: unknown): StoredRemoteServer | null {
   };
 }
 
-function remoteFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
-  return fetch(input, { ...init, signal: AbortSignal.timeout(REMOTE_REQUEST_TIMEOUT_MS) });
+function remoteFetch(
+  input: string | URL,
+  init: RequestInit = {},
+  timeoutMs = REMOTE_REQUEST_TIMEOUT_MS,
+): Promise<Response> {
+  return fetch(input, { ...init, signal: AbortSignal.timeout(timeoutMs) });
 }
 
 function webRtcRequestBody(
