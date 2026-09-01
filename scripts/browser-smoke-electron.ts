@@ -436,7 +436,7 @@ async function main(): Promise<void> {
     const largeTargetSet = await callBrowserTool(browser, "evaluate", {
       tabId: v2Tab.id,
       expression:
-        "document.body.appendChild(Object.assign(document.createElement('div'), { innerHTML: Array.from({ length: 200 }, (_, index) => '<button aria-label=\"Bulk ' + index + '\">Bulk ' + index + '</button>').join('') })); true",
+        "(() => { const container = Object.assign(document.createElement('div'), { innerHTML: Array.from({ length: 200 }, (_, index) => '<button aria-label=\"Bulk ' + index + '\">Bulk ' + index + '</button>').join('') }); container.dataset.bulkTargets = ''; document.body.appendChild(container); return true; })()",
     });
     if (!largeTargetSet.success) throw new Error(`V2 large target setup failed: ${toolError(largeTargetSet)}`);
     const semanticWaitStarted = Date.now();
@@ -451,6 +451,13 @@ async function main(): Promise<void> {
       Date.now() - semanticWaitStarted > 1_000
     ) {
       throw new Error("V2 semantic wait did not enforce its collection deadline.");
+    }
+    const largeTargetCleanup = await callBrowserTool(browser, "evaluate", {
+      tabId: v2Tab.id,
+      expression: "document.querySelector('[data-bulk-targets]').remove(); true",
+    });
+    if (!largeTargetCleanup.success) {
+      throw new Error(`V2 large target cleanup failed: ${toolError(largeTargetCleanup)}`);
     }
     const noisyPage = await callBrowserTool(browser, "evaluate", {
       tabId: v2Tab.id,
