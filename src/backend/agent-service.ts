@@ -377,6 +377,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #interruptedTurns = new Set<string>();
   readonly #ignoredTurns = new Set<string>();
   readonly #stoppingTurns = new Set<string>();
+  readonly #deferredStoppingNotifications = new Map<
+    string,
+    Array<{ notification: AppServerNotification; source: AgentClient }>
+  >();
   readonly #inFlightTurnCommands = new Map<string, InFlightTurnCommands>();
   readonly #pendingTurnStarts = new Map<string, PendingTurnStart>();
   readonly #turnAssociations = new Map<string, Promise<void>>();
@@ -401,6 +405,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #accounts = new Map<AgentProvider, AccountReadResult["account"]>();
   readonly #providerStarts = new Map<AgentProvider, Promise<void>>();
   readonly #providerConnectionCommands = new Map<AgentProvider, Promise<void>>();
+  readonly #providerMaintenance = new Set<AgentProvider>();
   #providerRefresh: Promise<AgentStatus> | null = null;
   #codexLogin: PendingCodexLogin | null = null;
   #claudeLogin: PendingClaudeLogin | null = null;
@@ -1052,6 +1057,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#interruptedTurns.clear();
     this.#ignoredTurns.clear();
     this.#stoppingTurns.clear();
+    this.#deferredStoppingNotifications.clear();
+    this.#providerMaintenance.clear();
     this.#pendingTurnStarts.clear();
     this.#setStatus({ phase: "stopped", message: null });
   }
@@ -1281,6 +1288,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       session ? [...turnIds].map((turnId) => `${session.externalSessionId}:${turnId}`) : [],
     );
     for (const key of stoppingTurnKeys) this.#stoppingTurns.add(key);
+    let stopped = false;
     try {
       try {
         let restartClient = Boolean(client && activeDeliveries.length > 0 && !session);
@@ -1310,12 +1318,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           }
         }
         if (restartClient && client) {
-          if (this.#providerHasOtherActiveWork(client.provider, botId)) {
-            throw new Error(
-              `${providerLabel(client.provider)} is running another agent. Wait for that work to finish, then try stopping this agent again.`,
-            );
-          }
-          await this.#restartProviderClient(client, async () => {
+          await this.#restartProviderClient(client, botId, async () => {
             await this.#mailbox.stopPending(
               botId,
               "Stopped by the user.",
@@ -1345,8 +1348,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.#browser.endControl(bot.threadId ?? session.externalSessionId, turnId);
         }
       }
+      stopped = true;
     } finally {
       for (const key of stoppingTurnKeys) this.#stoppingTurns.delete(key);
+      for (const key of stoppingTurnKeys) {
+        const deferred = this.#deferredStoppingNotifications.get(key) ?? [];
+        this.#deferredStoppingNotifications.delete(key);
+        if (!stopped) {
+          for (const entry of deferred) this.#handleNotification(entry.notification, entry.source);
+        }
+      }
     }
 
     snapshot.activeTurnId = null;
@@ -2227,23 +2238,40 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }, delayMs);
   }
 
-  async #restartProviderClient(client: AgentClient, afterTeardown: () => Promise<void>): Promise<void> {
+  async #restartProviderClient(
+    client: AgentClient,
+    excludedBotId: string,
+    afterTeardown: () => Promise<void>,
+  ): Promise<void> {
     await this.#runProviderConnectionCommand(client.provider, async () => {
-      await client.stop();
-      if (this.#clients.get(client.provider) === client) this.#clients.delete(client.provider);
-      this.#loadedThreads.clear();
-      this.#clearCompactionRuntime();
-      this.#clearPendingPrompts(client);
-      this.#clearPendingBrowserTakeovers();
-      for (const [requestId, pending] of this.#pendingApprovals) {
-        if (pending.client === client) this.#pendingApprovals.delete(requestId);
-      }
-      this.#browser.clearControls();
-      this.#clearPendingTurnStartsForClient(client);
+      this.#providerMaintenance.add(client.provider);
       try {
-        await afterTeardown();
+        if (this.#providerHasOtherActiveWork(client.provider, excludedBotId)) {
+          throw new Error(
+            `${providerLabel(client.provider)} is running another agent. Wait for that work to finish, then try stopping this agent again.`,
+          );
+        }
+        await client.stop();
+        if (this.#clients.get(client.provider) === client) this.#clients.delete(client.provider);
+        this.#loadedThreads.clear();
+        this.#clearCompactionRuntime();
+        this.#clearPendingPrompts(client);
+        this.#clearPendingBrowserTakeovers();
+        for (const [requestId, pending] of this.#pendingApprovals) {
+          if (pending.client === client) this.#pendingApprovals.delete(requestId);
+        }
+        this.#browser.clearControls();
+        this.#clearPendingTurnStartsForClient(client);
+        try {
+          await afterTeardown();
+        } finally {
+          await this.#connect("restarting", [client.provider]);
+        }
       } finally {
-        await this.#connect("restarting", [client.provider]);
+        this.#providerMaintenance.delete(client.provider);
+        for (const bot of this.#store.list()) {
+          if (providerForBot(bot) === client.provider) this.#scheduleDrain(bot.id);
+        }
       }
       return this.getStatus();
     });
@@ -3067,9 +3095,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   #scheduleDrain(botId: string): void {
+    const bot = this.#store.list().find((candidate) => candidate.id === botId);
     if (
       this.#stopping ||
       this.#stoppingBots.has(botId) ||
+      (bot && this.#providerMaintenance.has(providerForBot(bot))) ||
       this.#status.phase !== "ready" ||
       this.#drainingBots.has(botId) ||
       this.#scheduledDrains.has(botId) ||
@@ -3089,9 +3119,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async #drainBot(botId: string): Promise<void> {
+    const bot = this.#store.list().find((candidate) => candidate.id === botId);
     if (
       this.#stopping ||
       this.#stoppingBots.has(botId) ||
+      (bot && this.#providerMaintenance.has(providerForBot(bot))) ||
       this.#drainingBots.has(botId) ||
       this.#compactingBots.has(botId) ||
       this.#status.phase !== "ready"
@@ -3538,6 +3570,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const params = notification.params;
     const threadId = getString(params, "threadId");
     const botId = threadId ? this.#threadToBot.get(threadId) : undefined;
+    const directTurnId = getString(params, "turnId");
+    const completedTurnId =
+      notification.method === "turn/completed" ? getString(getRecord(params, "turn"), "id") : null;
+    const turnId = directTurnId ?? completedTurnId;
+    const turnKey = threadId && turnId ? `${threadId}:${turnId}` : null;
+    if (
+      turnKey &&
+      this.#stoppingTurns.has(turnKey) &&
+      (notification.method === "item/started" ||
+        notification.method === "item/completed" ||
+        notification.method === "item/agentMessage/delta" ||
+        notification.method === "turn/completed")
+    ) {
+      const deferred = this.#deferredStoppingNotifications.get(turnKey) ?? [];
+      deferred.push({ notification, source });
+      this.#deferredStoppingNotifications.set(turnKey, deferred);
+      return;
+    }
 
     switch (notification.method) {
       case "account/login/completed": {
@@ -3562,7 +3612,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const pendingStart = this.#pendingTurnStarts.get(botId);
         if (pendingStart?.client === source && pendingStart.threadId === threadId) {
           this.#resolvePendingTurnStart(pendingStart, turnId);
-          if (this.#stoppingBots.has(botId)) return;
+          if (this.#stoppingBots.has(botId)) {
+            this.#stoppingTurns.add(`${threadId}:${turnId}`);
+            return;
+          }
         }
         const contextBudget = this.#contextBudgets.get(threadId);
         if (contextBudget?.phase === "requested" && this.#compactingBots.has(botId)) {

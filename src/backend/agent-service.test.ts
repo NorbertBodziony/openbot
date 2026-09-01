@@ -3894,6 +3894,55 @@ describe.sequential("AgentService", () => {
     expect(["queued", "starting", "running"]).toContain(service.listQueue("sales-outbound").deliveries[0]?.status);
   });
 
+  it("blocks another agent from starting while its shared provider is restarting", async () => {
+    const clients: FakeAgentClient[] = [];
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
+      const client =
+        clients.length === 0
+          ? new FakeAgentClient(
+              provider,
+              "",
+              false,
+              true,
+              {},
+              async (method) => {
+                if (method === "turn/interrupt") throw new Error("Runtime unavailable");
+              },
+              async () => {
+                await service?.sendMessage({ botId: "sales-outbound", text: "Start after recovery" });
+                await new Promise((resolve) => setTimeout(resolve, 0));
+              },
+            )
+          : new FakeAgentClient(provider, "", false);
+      clients.push(client);
+      return client;
+    });
+    await service.initialize();
+    await service.sendMessage({ botId: "sales-outbound", text: "Prime the provider session" });
+    await waitFor(() => service?.listQueue("sales-outbound").deliveries[0]?.status === "running");
+    const salesConversation = await service.readConversation("sales-outbound");
+    if (!salesConversation.activeTurnId) throw new Error("The sales turn did not start.");
+    const salesStart = clients[0]?.requests.find((request) => request.method === "turn/start");
+    clients[0]?.emit(
+      "notification",
+      notification("turn/completed", {
+        threadId: stringParam(salesStart?.params, "threadId"),
+        turn: { id: salesConversation.activeTurnId, status: "completed" },
+      }),
+    );
+    await waitFor(() => service?.listQueue("sales-outbound").deliveries[0]?.status === "completed");
+    await service.sendMessage({ botId: "chief", text: "Force a provider restart" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+
+    await service.stopAgent("chief");
+
+    expect(clients).toHaveLength(2);
+    expect(clients[0]?.requests.filter((request) => request.method === "turn/start")).toHaveLength(2);
+    await waitFor(() => clients[1]?.requests.some((request) => request.method === "turn/start"));
+    expect(service.listQueue("sales-outbound").deliveries[1]?.status).toBe("running");
+  });
+
   it("does not send a provider turn after a starting delivery is stopped during preflight", async () => {
     let releaseVerification: (() => void) | undefined;
     let verificationFinished = false;
@@ -3955,8 +4004,6 @@ describe.sequential("AgentService", () => {
     );
     expect(result.error).toEqual({ code: -32000, message: "The turn was stopped." });
 
-    rejectPersistence?.(new Error("Persistence failed"));
-    await stopRejected;
     client.emit(
       "notification",
       notification("turn/completed", {
@@ -3964,8 +4011,48 @@ describe.sequential("AgentService", () => {
         turn: { id: conversation.activeTurnId, status: "interrupted" },
       }),
     );
+    expect(service.listQueue("chief").deliveries[0]?.status).toBe("running");
+
+    rejectPersistence?.(new Error("Persistence failed"));
+    await stopRejected;
 
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "interrupted");
+    expect((await service.readConversation("chief")).activeTurnId).toBeNull();
+  });
+
+  it("discards completion that arrives while a successful force-stop is pending", async () => {
+    let releaseInterrupt: (() => void) | undefined;
+    const interruptPending = new Promise<void>((resolve) => {
+      releaseInterrupt = resolve;
+    });
+    const client = new FakeAgentClient("codex", "", false, true, {}, async (method) => {
+      if (method === "turn/interrupt") await interruptPending;
+    });
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", () => client);
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Stop before completion wins" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+    const conversation = await service.readConversation("chief");
+    if (!conversation.activeTurnId) throw new Error("The active turn did not start.");
+    const startRequest = client.requests.find((request) => request.method === "turn/start");
+    const externalThreadId = stringParam(startRequest?.params, "threadId");
+
+    const stopping = service.stopAgent("chief");
+    await waitFor(() => client.requests.some((request) => request.method === "turn/interrupt"));
+    client.emit(
+      "notification",
+      notification("turn/completed", {
+        threadId: externalThreadId,
+        turn: { id: conversation.activeTurnId, status: "completed" },
+      }),
+    );
+    expect(service.listQueue("chief").deliveries[0]?.status).toBe("running");
+
+    releaseInterrupt?.();
+    await stopping;
+
+    expect(service.listQueue("chief").deliveries[0]?.status).toBe("interrupted");
     expect((await service.readConversation("chief")).activeTurnId).toBeNull();
   });
 
