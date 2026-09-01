@@ -53,6 +53,7 @@ interface BrowserPanelProps {
 }
 
 export default function BrowserPanel(props: BrowserPanelProps) {
+  const actingControl = () => (props.activeControl?.phase === "acting" ? props.activeControl : undefined);
   const defaultPanelWidth = () =>
     Math.round(Math.min(BROWSER_PANEL_MAX, Math.max(BROWSER_PANEL_MIN, props.defaultWidth())));
   const storedPanelWidth = Number.parseFloat(window.localStorage.getItem(BROWSER_PANEL_STORAGE_KEY) ?? "");
@@ -125,7 +126,7 @@ export default function BrowserPanel(props: BrowserPanelProps) {
     <Tabs.Root
       as="aside"
       id="browser-side-panel"
-      class={["browser-panel", { "browser-panel-controlled": Boolean(props.activeControl) }]}
+      class={["browser-panel", { "browser-panel-controlled": Boolean(actingControl()) }]}
       aria-label="Browser"
       value={props.activeTab?.id ?? "__empty"}
       onChange={props.onActivateTab}
@@ -150,7 +151,10 @@ export default function BrowserPanel(props: BrowserPanelProps) {
           <Tabs.List class="browser-tab-strip" aria-label="Browser tabs">
             <For each={props.tabs}>
               {(tab) => {
-                const control = () => props.controlForTab(tab);
+                const control = () => {
+                  const session = props.controlForTab(tab);
+                  return session?.phase === "acting" ? session : undefined;
+                };
                 const controller = () => props.controllerForTab(tab);
                 const title = () => (tab.loading ? "Loading…" : tab.title || tab.url);
                 return (
@@ -179,10 +183,7 @@ export default function BrowserPanel(props: BrowserPanelProps) {
                       <Show when={control()}>
                         {(session) => (
                           <span
-                            class={[
-                              "browser-tab-control",
-                              { "browser-tab-control-acting": session().phase === "acting" },
-                            ]}
+                            class="browser-tab-control browser-tab-control-acting"
                             title={`${controller()?.name ?? "Agent"}: ${BROWSER_ACTION_LABELS[session().action]}`}
                           >
                             <BrowserControlIcon />
