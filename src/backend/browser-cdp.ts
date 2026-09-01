@@ -14,6 +14,7 @@ import type { WebContents } from "electron";
 const ACTION_TIMEOUT_MS = 10_000;
 const WAIT_TIMEOUT_MS = 30_000;
 const MAX_RESULT_BYTES = 64 * 1024;
+const EVALUATION_WORLD_NAME = "openbot-browser-evaluation";
 const ACTIONABLE_ROLES = new Set([
   "button",
   "checkbox",
@@ -61,10 +62,18 @@ export class BrowserCdpEngine {
   #targets = new Map<string, TargetRecord>();
   #lastSnapshot: BrowserSnapshot | null = null;
   #environment: BrowserEnvironment | null = null;
+  #evaluationContextId: number | null = null;
+  #evaluationFrameId: string | null = null;
   readonly #targetSessions = new Map<string, { sessionId: string; url: string }>();
 
   constructor(contents: WebContents) {
     this.#contents = contents;
+    contents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+      if (!isInPlace && isMainFrame) {
+        this.#evaluationContextId = null;
+        this.#evaluationFrameId = null;
+      }
+    });
     contents.debugger.on("message", (_event, method, params, sessionId) => {
       if (method === "Target.attachedToTarget" && isRecord(params)) {
         const attachedSessionId = stringValue(params.sessionId) || sessionId || "";
@@ -380,12 +389,17 @@ export class BrowserCdpEngine {
       const tree = await send("Page.getFrameTree");
       const frameId = frameTreeRootId(tree);
       if (!frameId) throw new Error("The page has no main frame.");
-      const world = await send("Page.createIsolatedWorld", {
-        frameId,
-        worldName: `openbot-browser-${Date.now()}`,
-        grantUniveralAccess: false,
-      });
-      const contextId = numberValue(world.executionContextId);
+      if (this.#evaluationContextId === null || this.#evaluationFrameId !== frameId) {
+        const world = await send("Page.createIsolatedWorld", {
+          frameId,
+          worldName: EVALUATION_WORLD_NAME,
+          grantUniveralAccess: false,
+        });
+        this.#evaluationContextId = numberValue(world.executionContextId);
+        this.#evaluationFrameId = frameId;
+      }
+      const contextId = this.#evaluationContextId;
+      if (!contextId) throw new Error("The browser evaluation world is unavailable.");
       const result = await withTimeout(
         send("Runtime.evaluate", {
           expression: `Promise.resolve((0, eval)(${JSON.stringify(expression)}))`,

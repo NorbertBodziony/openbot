@@ -159,7 +159,7 @@ export const BROWSER_TOOL_DEFINITIONS: readonly BrowserToolDefinition[] = [
   {
     name: "set_environment",
     description:
-      "Set viewport, color scheme, and reduced-motion emulation without changing browser identity or user agent.",
+      "Set a memory-bounded viewport, color scheme, and reduced-motion emulation without changing browser identity or user agent.",
     shape: {
       tabId,
       preset: z.enum(["fill", "desktop", "tablet", "mobile", "custom"]).optional(),

@@ -704,8 +704,22 @@ describe.sequential("AgentService", () => {
 
   it("authorizes browser uploads against the agent workspace and shared directory", async () => {
     const calls: DynamicToolCallParams[] = [];
+    let uploadPath = "";
+    let outsidePath = "";
+    let stagedPath = "";
+    let stagedContents = "";
     const browser = fakeBrowser();
     browser.handleDynamicTool = async (params) => {
+      if (
+        params.tool === "upload_files" &&
+        isDynamicRecord(params.arguments) &&
+        Array.isArray(params.arguments.paths)
+      ) {
+        stagedPath = String(params.arguments.paths[0]);
+        await rm(uploadPath);
+        await symlink(outsidePath, uploadPath);
+        stagedContents = await readFile(stagedPath, "utf8");
+      }
       calls.push(params);
       return { success: true, contentItems: [] };
     };
@@ -724,8 +738,10 @@ describe.sequential("AgentService", () => {
     const providerThreadId = store.activeProviderSession("chief")?.externalSessionId;
     const client = clients.get("codex");
     if (!providerThreadId || !client) throw new Error("Browser upload test thread was not created.");
-    const uploadPath = join(bot.workspacePath, "browser-upload.txt");
+    uploadPath = join(bot.workspacePath, "browser-upload.txt");
+    outsidePath = join(root, "private.txt");
     await writeFile(uploadPath, "safe upload");
+    await writeFile(outsidePath, "private");
 
     client.emit("request", {
       method: "item/tool/call",
@@ -740,14 +756,12 @@ describe.sequential("AgentService", () => {
       },
     });
 
-    await waitFor(() => calls.length === 1);
-    expect(calls[0]).toMatchObject({
-      ownerBotId: "chief",
-      arguments: { paths: [await realpath(uploadPath)] },
-    });
+    await waitFor(() => client.responses.some((response) => response.id === "browser-upload"));
+    expect(calls[0]).toMatchObject({ ownerBotId: "chief" });
+    expect(stagedPath).not.toBe(uploadPath);
+    expect(stagedContents).toBe("safe upload");
+    await expect(readFile(stagedPath)).rejects.toThrow();
 
-    const outsidePath = join(root, "private.txt");
-    await writeFile(outsidePath, "private");
     client.emit("request", {
       method: "item/tool/call",
       id: "browser-upload-denied",

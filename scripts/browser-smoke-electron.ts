@@ -346,6 +346,13 @@ async function main(): Promise<void> {
         "globalThis.__openbotNoise = setInterval(() => document.querySelector('output').toggleAttribute('data-noise'), 10); true",
     });
     if (!noisyPage.success) throw new Error(`V2 DOM noise setup failed: ${toolError(noisyPage)}`);
+    const sharedEvaluationWorld = await callBrowserTool(browser, "evaluate", {
+      tabId: v2Tab.id,
+      expression: "typeof globalThis.__openbotNoise === 'number'",
+    });
+    if (toolTextPayload(sharedEvaluationWorld)?.result !== true) {
+      throw new Error("V2 evaluation did not reuse its isolated world.");
+    }
     const quietWait = await callBrowserTool(browser, "wait_for", {
       tabId: v2Tab.id,
       state: "dom-quiet",
@@ -356,9 +363,16 @@ async function main(): Promise<void> {
     }
     const stoppedNoise = await callBrowserTool(browser, "evaluate", {
       tabId: v2Tab.id,
-      expression: "clearInterval(globalThis.__openbotNoise); true",
+      expression: "clearInterval(globalThis.__openbotNoise); delete globalThis.__openbotNoise; true",
     });
     if (!stoppedNoise.success) throw new Error(`V2 DOM noise cleanup failed: ${toolError(stoppedNoise)}`);
+    const clearedEvaluationWorld = await callBrowserTool(browser, "evaluate", {
+      tabId: v2Tab.id,
+      expression: "globalThis.__openbotNoise === undefined",
+    });
+    if (toolTextPayload(clearedEvaluationWorld)?.result !== true) {
+      throw new Error("V2 evaluation world did not preserve cross-call cleanup.");
+    }
     const timedOut = await callBrowserTool(browser, "wait_for", {
       tabId: v2Tab.id,
       text: "never appears",
@@ -392,6 +406,16 @@ async function main(): Promise<void> {
     if (!Array.isArray(environmentSnapshot.diagnostics) || environmentSnapshot.diagnostics.length === 0) {
       throw new Error("V2 snapshot omitted diagnostics.");
     }
+    const oversizedEnvironment = await callBrowserTool(browser, "set_environment", {
+      tabId: v2Tab.id,
+      preset: "custom",
+      width: 16_384,
+      height: 16_384,
+      deviceScaleFactor: 4,
+    });
+    if (oversizedEnvironment.success || !toolError(oversizedEnvironment).includes("physical viewport")) {
+      throw new Error("V2 environment accepted an unsafe physical pixel area.");
+    }
     const recordingStarted = await callBrowserTool(browser, "recording_start", { tabId: v2Tab.id });
     if (
       !recordingStarted.success ||
@@ -400,6 +424,10 @@ async function main(): Promise<void> {
       throw new Error(`V2 recording did not start: ${toolError(recordingStarted)}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 1_100));
+    const prematureRecordingRestart = await callBrowserTool(browser, "recording_start", { tabId: v2Tab.id });
+    if (prematureRecordingRestart.success || !toolError(prematureRecordingRestart).includes("recording_stop")) {
+      throw new Error("V2 recording restart replaced an unclaimed completed artifact.");
+    }
     const recordingStopped = await callBrowserTool(browser, "recording_stop", { tabId: v2Tab.id });
     const recordingPayload = toolTextPayload(recordingStopped);
     const artifact = isDynamicRecord(recordingPayload?.artifact) ? recordingPayload.artifact : undefined;
@@ -439,6 +467,13 @@ async function main(): Promise<void> {
       throw new Error(
         `V2 DOMContentLoaded wait returned before the document was ready: ${toolError(domContentLoaded)}`,
       );
+    }
+    const evaluationAfterNavigation = await callBrowserTool(browser, "evaluate", {
+      tabId: waitTab.id,
+      expression: "document.readyState",
+    });
+    if (!["interactive", "complete"].includes(String(toolTextPayload(evaluationAfterNavigation)?.result))) {
+      throw new Error(`V2 evaluation world was not restored after navigation: ${toolError(evaluationAfterNavigation)}`);
     }
     const timedNavigation = await callBrowserTool(browser, "navigate", {
       tabId: waitTab.id,

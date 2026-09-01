@@ -20,7 +20,15 @@ import type {
   BrowserVisibilityInput,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
-import { app, type BrowserWindow, type Session, session, type WebContents, WebContentsView } from "electron";
+import {
+  app,
+  type BrowserWindow,
+  type NativeImage,
+  type Session,
+  session,
+  type WebContents,
+  WebContentsView,
+} from "electron";
 import { BrowserCdpEngine, type SnapshotReadResult } from "./browser-cdp";
 import { BrowserDiagnostics } from "./browser-diagnostics";
 import { embeddedBrowserUserAgent, embeddedBrowserUserAgentForUrl } from "./browser-identity";
@@ -35,6 +43,9 @@ interface BrowserHostEvents {
   changed: [tabs: BrowserTab[], activeTabId: string | null];
   controlChanged: [state: BrowserControlState];
 }
+
+const MAX_PHYSICAL_VIEWPORT_PIXELS = 8_388_608;
+const MAX_ENCODED_CAPTURE_PIXELS = 4_194_304;
 
 interface BrowserConsoleMessageDetails {
   level: "info" | "warning" | "error" | "debug";
@@ -381,7 +392,7 @@ export class BrowserHost {
   async screenshot(tabId: string): Promise<string> {
     return this.#enqueue(tabId, async (tab) => {
       const image = await withTimeout(tab.view.webContents.capturePage(), 10_000, "Browser screenshot timed out.");
-      return image.toDataURL();
+      return boundedCaptureDataUrl(image);
     });
   }
 
@@ -451,7 +462,7 @@ export class BrowserHost {
               10_000,
               "Browser screenshot timed out.",
             );
-            return { result, imageUrl: image.toDataURL() };
+            return { result, imageUrl: boundedCaptureDataUrl(image) };
           });
           return this.#snapshotResult(capture.result, mode, capture.imageUrl);
         }
@@ -1439,6 +1450,7 @@ function isBrowserEnvironment(value: unknown): value is BrowserEnvironment {
     isNumber(viewport.deviceScaleFactor) &&
     viewport.deviceScaleFactor >= 0.5 &&
     viewport.deviceScaleFactor <= 4 &&
+    isSafeViewportSize(viewport.width, viewport.height, viewport.deviceScaleFactor) &&
     (viewport.preset === null ||
       viewport.preset === "desktop" ||
       viewport.preset === "tablet" ||
@@ -1455,17 +1467,22 @@ function parseEnvironment(
 ): BrowserEnvironment {
   const preset = optionalEnum(value, "preset", ["fill", "desktop", "tablet", "mobile", "custom"] as const);
   const presetSize = presetDimensions(preset);
-  const width =
+  const requestedWidth =
     optionalNumber(value, "width") ?? presetSize?.width ?? (preset === "fill" ? bounds.width : current.viewport.width);
-  const height =
+  const requestedHeight =
     optionalNumber(value, "height") ??
     presetSize?.height ??
     (preset === "fill" ? bounds.height : current.viewport.height);
+  const width = Math.round(requestedWidth);
+  const height = Math.round(requestedHeight);
   if (width < 320 || width > INPUT_LIMITS.browserDimension || height < 240 || height > INPUT_LIMITS.browserDimension) {
     throw new Error("Viewport dimensions are outside the supported range.");
   }
   const scale = optionalNumber(value, "deviceScaleFactor") ?? presetSize?.scale ?? current.viewport.deviceScaleFactor;
   if (scale < 0.5 || scale > 4) throw new Error("deviceScaleFactor must be between 0.5 and 4.");
+  if (!isSafeViewportSize(width, height, scale)) {
+    throw new Error(`The physical viewport must not exceed ${MAX_PHYSICAL_VIEWPORT_PIXELS.toLocaleString()} pixels.`);
+  }
   const resolvedPreset =
     preset === "desktop" || preset === "tablet" || preset === "mobile"
       ? preset
@@ -1480,14 +1497,33 @@ function parseEnvironment(
           : preset || value.width !== undefined || value.height !== undefined
             ? "custom"
             : current.viewport.mode,
-      width: Math.round(width),
-      height: Math.round(height),
+      width,
+      height,
       deviceScaleFactor: scale,
       preset: resolvedPreset,
     },
     colorScheme: optionalEnum(value, "colorScheme", ["light", "dark", "system"] as const) ?? current.colorScheme,
     reducedMotion: value.reducedMotion === undefined ? current.reducedMotion : requiredBoolean(value, "reducedMotion"),
   };
+}
+
+function isSafeViewportSize(width: number, height: number, deviceScaleFactor: number): boolean {
+  return width * height * deviceScaleFactor * deviceScaleFactor <= MAX_PHYSICAL_VIEWPORT_PIXELS;
+}
+
+function boundedCaptureDataUrl(image: NativeImage): string {
+  const size = image.getSize();
+  if (size.width <= 0 || size.height <= 0) throw new Error("Browser screenshot is empty.");
+  const area = size.width * size.height;
+  if (area <= MAX_ENCODED_CAPTURE_PIXELS) return image.toDataURL();
+  const scale = Math.sqrt(MAX_ENCODED_CAPTURE_PIXELS / area);
+  return image
+    .resize({
+      width: Math.max(1, Math.floor(size.width * scale)),
+      height: Math.max(1, Math.floor(size.height * scale)),
+      quality: "good",
+    })
+    .toDataURL();
 }
 
 function parseTarget(value: unknown): BrowserTarget {

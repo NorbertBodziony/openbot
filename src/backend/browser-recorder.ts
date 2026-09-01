@@ -62,10 +62,10 @@ export class BrowserRecorder {
       if (!existing.finalizing) throw new Error("This browser tab already has a recording.");
       await existing.finalizing.catch(() => undefined);
     }
+    if (this.#artifacts.has(tabId)) {
+      throw new Error("Retrieve the completed recording with recording_stop before starting another recording.");
+    }
     if (contents.isDestroyed()) throw new Error("Browser tab was closed.");
-    const previousArtifact = this.#artifacts.get(tabId);
-    if (previousArtifact) await rm(previousArtifact.path, { force: true }).catch(() => undefined);
-    this.#artifacts.delete(tabId);
     this.#errors.delete(tabId);
     await mkdir(this.#downloadsRoot, { recursive: true });
     const startedAt = Date.now();
@@ -194,8 +194,7 @@ export class BrowserRecorder {
     const session = this.#sessions.get(tabId);
     if (session) {
       if (session.finalizing) {
-        const artifact = await session.finalizing.catch(() => null);
-        if (artifact) await rm(artifact.path, { force: true }).catch(() => undefined);
+        await session.finalizing.catch(() => undefined);
       } else {
         session.discarding = true;
         try {
@@ -206,8 +205,6 @@ export class BrowserRecorder {
         await this.#discardSession(session, true);
       }
     }
-    const artifact = this.#artifacts.get(tabId);
-    if (artifact) await rm(artifact.path, { force: true }).catch(() => undefined);
     this.#artifacts.delete(tabId);
     this.#errors.delete(tabId);
   }

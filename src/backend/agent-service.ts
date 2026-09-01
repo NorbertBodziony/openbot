@@ -1,9 +1,11 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { constants } from "node:fs";
-import { lstat, open, realpath, stat } from "node:fs/promises";
-import { basename, isAbsolute } from "node:path";
+import { constants, createWriteStream } from "node:fs";
+import { chmod, lstat, mkdtemp, open, realpath, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, isAbsolute, join } from "node:path";
+import { pipeline } from "node:stream/promises";
 import { expandAttachmentReferences } from "@openbot/contracts/attachment-references";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
@@ -2691,13 +2693,33 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error(`paths must contain between 1 and ${INPUT_LIMITS.attachments} valid local file paths.`);
     }
     const sources = await this.#openAgentAttachmentSources(botId, args.paths);
+    let stagingRoot: string | null = null;
     try {
+      const sizes = await Promise.all(sources.map((source) => source.handle.stat().then((metadata) => metadata.size)));
+      if (sizes.some((size) => size > ATTACHMENT_LIMITS.fileBytes)) {
+        throw new Error(`Each browser upload file must not exceed ${ATTACHMENT_LIMITS.fileBytes} bytes.`);
+      }
+      if (sizes.reduce((total, size) => total + size, 0) > ATTACHMENT_LIMITS.totalBytes) {
+        throw new Error(`Browser upload files must not exceed ${ATTACHMENT_LIMITS.totalBytes} bytes in total.`);
+      }
+      stagingRoot = await mkdtemp(join(tmpdir(), "openbot-browser-upload-"));
+      await chmod(stagingRoot, 0o700);
+      const stagedPaths: string[] = [];
+      for (const [index, source] of sources.entries()) {
+        const stagedPath = join(stagingRoot, `${index}-${basename(source.path)}`);
+        await pipeline(
+          source.handle.createReadStream({ autoClose: false, start: 0 }),
+          createWriteStream(stagedPath, { flags: "wx", mode: 0o600 }),
+        );
+        stagedPaths.push(stagedPath);
+      }
       return await this.#browser.handleDynamicTool({
         ...params,
-        arguments: { ...args, paths: sources.map((source) => source.path) },
+        arguments: { ...args, paths: stagedPaths },
       });
     } finally {
       await Promise.allSettled(sources.map((source) => source.handle.close()));
+      if (stagingRoot) await rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined);
     }
   }
 
