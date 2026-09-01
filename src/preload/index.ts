@@ -16,6 +16,7 @@ import {
   type ConversationSearchPage,
   type ConversationWithReadState,
   type DraftAttachment,
+  type DuplicateBotResult,
   type DynamicIslandAction,
   type DynamicIslandGeometry,
   type DynamicIslandPreference,
@@ -444,6 +445,11 @@ function decodeMemories(value: unknown): BotMemory[] {
 function decodeSidebarLayout(value: unknown): SidebarLayoutSnapshot {
   if (!isSidebarLayoutSnapshot(value)) throw new Error("Invalid sidebar layout response.");
   return value;
+}
+
+function decodeDuplicateBotResult(value: unknown): DuplicateBotResult {
+  const item = record(value, "agent duplication");
+  return { bot: decodeBot(item.bot), layout: decodeSidebarLayout(item.layout) };
 }
 
 function decodeConversation(value: unknown): ConversationWithReadState {
@@ -982,6 +988,7 @@ const openbotApi: OpenBotDesktopApi = {
     getSidebarLayout: () => invokeAgent(IPC_CHANNELS.agentGetSidebarLayout, null, decodeSidebarLayout),
     mutateSidebarLayout: (action) => invokeAgent(IPC_CHANNELS.agentMutateSidebarLayout, action, decodeSidebarLayout),
     createBot: (input) => invokeAgent(IPC_CHANNELS.agentCreateBot, input, decodeBot),
+    duplicateBot: (botId) => invokeAgent(IPC_CHANNELS.agentDuplicateBot, botId, decodeDuplicateBotResult),
     updateBot: (input) => invokeAgent(IPC_CHANNELS.agentUpdateBot, input, decodeBot),
     setAvatar: (input) => invokeAgent(IPC_CHANNELS.agentSetAvatar, input, decodeBot),
     deleteBot: (botId) => invokeAgent(IPC_CHANNELS.agentDeleteBot, botId, decodeVoid),
