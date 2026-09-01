@@ -501,7 +501,6 @@ export class DesktopAnalytics {
     this.#identity = normalized;
     if (!this.#client || !this.#trackingEnabled) return;
     if (previous && (!normalized || previous.id !== normalized.id || previous.email !== normalized.email)) {
-      this.#clientQueue.operations = [];
       if (!normalized || previous.id !== normalized.id) {
         this.#enqueue(this.#clientQueue, "clear", () => this.#client?.clear());
       }
@@ -598,9 +597,10 @@ export class DesktopAnalytics {
   }
 
   #enqueue(queue: AnalyticsOperationQueue, kind: AnalyticsOperationKind, run: () => unknown): void {
-    if (kind === "clear") {
-      queue.operations = queue.operations.filter((operation) => operation.kind === "track");
-    } else if (kind === "identify") {
+    const hasPendingTrack = queue.operations.some((operation) => operation.kind === "track");
+    if (kind === "clear" && !hasPendingTrack) {
+      queue.operations = [];
+    } else if (kind === "identify" && !hasPendingTrack) {
       queue.operations = queue.operations.filter((operation) => operation.kind !== "identify");
     } else if (queue.operations.filter((operation) => operation.kind === "track").length >= MAX_PENDING_EVENTS) {
       const oldestTrack = queue.operations.findIndex((operation) => operation.kind === "track");

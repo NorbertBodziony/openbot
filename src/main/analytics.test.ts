@@ -615,7 +615,22 @@ describe("host analytics", () => {
     expect(client.identify).not.toHaveBeenCalled();
     expect(client.track).not.toHaveBeenCalled();
 
+    const running = hostedSiteMessage("hosted-running", "publish", "running", "operation-opted-out");
+    analytics.handleAgentEvent({
+      type: "conversation",
+      snapshot: { botId: BOT.id, threadId: BOT.threadId, activeTurnId: null, revision: 1, messages: [running] },
+    });
     analytics.setTrackingEnabled(true);
+    analytics.handleAgentEvent({
+      type: "conversation",
+      snapshot: {
+        botId: BOT.id,
+        threadId: BOT.threadId,
+        activeTurnId: null,
+        revision: 2,
+        messages: [running, hostedSiteMessage("hosted-succeeded", "publish", "succeeded", "operation-opted-out")],
+      },
+    });
     analytics.handleAgentEvent({
       type: "turn-started",
       botId: BOT.id,
@@ -624,6 +639,7 @@ describe("host analytics", () => {
       origin: "user",
     });
     expect(client.track).toHaveBeenCalledOnce();
+    expect(client.track).toHaveBeenCalledWith("system_turn_started", expect.anything());
   });
 
   it("clears the host OpenPanel client when tracking is disabled", () => {

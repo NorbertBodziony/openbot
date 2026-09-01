@@ -103,7 +103,9 @@ export class HostAnalytics {
   }
 
   handleAgentEvent(event: AgentEvent): void {
-    if (event.type === "conversation" && this.#client) this.#handleHostedSiteConversation(event.snapshot.messages);
+    if (event.type === "conversation" && this.#client && this.#trackingEnabled) {
+      this.#handleHostedSiteConversation(event.snapshot.messages);
+    }
     if (!this.#client || !this.#trackingEnabled) return;
     switch (event.type) {
       case "conversation":
@@ -183,6 +185,7 @@ export class HostAnalytics {
     if (this.#trackingEnabled === enabled) return;
     this.#trackingEnabled = enabled;
     if (!enabled) {
+      this.#hostedSiteOwners.clear();
       this.clear();
       this.#enqueue("clear", () => this.#client?.clear());
       return;
@@ -276,7 +279,6 @@ export class HostAnalytics {
     if (!this.#client) return;
     const previous = this.#identifiedOwner;
     if (previous?.id === owner.id && previous.email === owner.email) return;
-    if (previous) this.#operationQueue.operations = [];
     if (previous && previous.id !== owner.id) this.#enqueue("clear", () => this.#client?.clear());
     this.#identifiedOwner = { ...owner };
     this.#enqueue("identify", () => this.#client?.identify({ profileId: owner.id, email: owner.email }));
@@ -313,11 +315,10 @@ export class HostAnalytics {
   }
 
   #enqueue(kind: AnalyticsOperationKind, run: () => unknown): void {
-    if (kind === "clear") {
-      this.#operationQueue.operations = this.#operationQueue.operations.filter(
-        (operation) => operation.kind === "track",
-      );
-    } else if (kind === "identify") {
+    const hasPendingTrack = this.#operationQueue.operations.some((operation) => operation.kind === "track");
+    if (kind === "clear" && !hasPendingTrack) {
+      this.#operationQueue.operations = [];
+    } else if (kind === "identify" && !hasPendingTrack) {
       this.#operationQueue.operations = this.#operationQueue.operations.filter(
         (operation) => operation.kind !== "identify",
       );
