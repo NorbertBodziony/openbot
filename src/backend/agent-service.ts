@@ -4761,13 +4761,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const threadId = this.#store.ensureThreadIdNow(run.botId);
       const nextSnapshot = structuredClone(this.#ensureSnapshot(run.botId, threadId));
       nextSnapshot.threadId = threadId;
-      updated = this.#appendRoutineRunTransition(nextSnapshot, run, status, error);
+      const transition = this.#appendRoutineRunTransition(nextSnapshot, run, status, error);
+      updated = transition.run;
       sortConversationMessages(nextSnapshot.messages);
-      persisted = database.persistConversation(nextSnapshot, `routine.run-${status}`, {
-        routineId: run.routineId,
-        runId: run.id,
-        status,
+      nextSnapshot.revision = database.appendConversationMessage({
+        botId: run.botId,
+        threadId,
+        activeTurnId: nextSnapshot.activeTurnId,
+        message: transition.message,
+        eventType: `routine.run-${status}`,
+        detail: { routineId: run.routineId, runId: run.id, status },
       });
+      persisted = nextSnapshot;
       if (ownsTransaction) database.connection.exec("COMMIT");
     } catch (caught) {
       if (ownsTransaction && database.connection.isTransaction) database.connection.exec("ROLLBACK");
@@ -4788,9 +4793,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     run: RoutineRun,
     status: RoutineRunConversationEventStatus,
     error: string | null = null,
-  ): RoutineRun {
+  ): { run: RoutineRun; message: ConversationMessage } {
     const updated = this.#routines.updateRunStatus(run.id, status, error);
-    snapshot.messages.push({
+    const message: ConversationMessage = {
       id: randomUUID(),
       author: "system",
       source: "system",
@@ -4798,8 +4803,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       createdAt: updated.updatedAt,
       status: "completed",
       itemType: routineRunConversationEventItemType(status, run.routineId, run.id),
-    });
-    return updated;
+    };
+    snapshot.messages.push(message);
+    return { run: updated, message };
   }
 
   #mutateRoutineWithConversation<T>(

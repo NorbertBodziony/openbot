@@ -3135,14 +3135,14 @@ describe.sequential("AgentService", () => {
       timezone: "UTC",
       schedule: { kind: "daily", time: "09:00" },
     });
-    const persistConversation = store.database.persistConversation.bind(store.database);
+    const appendConversationMessage = store.database.appendConversationMessage.bind(store.database);
     let rejectRunningMarker = true;
-    vi.spyOn(store.database, "persistConversation").mockImplementation((...args) => {
-      if (rejectRunningMarker && args[1] === "routine.run-running") {
+    vi.spyOn(store.database, "appendConversationMessage").mockImplementation((input) => {
+      if (rejectRunningMarker && input.eventType === "routine.run-running") {
         rejectRunningMarker = false;
         throw new Error("running marker persistence failed");
       }
-      return persistConversation(...args);
+      return appendConversationMessage(input);
     });
 
     const run = await service.testRoutine({ botId: bot.id, routineId: routine.id });
@@ -3191,19 +3191,19 @@ describe.sequential("AgentService", () => {
     const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
     if (!delivery?.turnId || !client || !threadId) throw new Error("The routine turn did not start.");
 
-    const persistConversation = store.database.persistConversation.bind(store.database);
+    const appendConversationMessage = store.database.appendConversationMessage.bind(store.database);
     let rejectNeedsAttentionMarker = true;
     let rejectResumedRunningMarker = false;
-    vi.spyOn(store.database, "persistConversation").mockImplementation((...args) => {
-      if (rejectNeedsAttentionMarker && args[1] === "routine.run-needs-attention") {
+    vi.spyOn(store.database, "appendConversationMessage").mockImplementation((input) => {
+      if (rejectNeedsAttentionMarker && input.eventType === "routine.run-needs-attention") {
         rejectNeedsAttentionMarker = false;
         throw new Error("attention marker persistence failed");
       }
-      if (rejectResumedRunningMarker && args[1] === "routine.run-running") {
+      if (rejectResumedRunningMarker && input.eventType === "routine.run-running") {
         rejectResumedRunningMarker = false;
         throw new Error("resumed marker persistence failed");
       }
-      return persistConversation(...args);
+      return appendConversationMessage(input);
     });
 
     client.emit("request", {
@@ -3274,14 +3274,14 @@ describe.sequential("AgentService", () => {
     const firstDelivery = service.listQueue(bot.id).deliveries.find((delivery) => delivery.status === "running");
     const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
     if (!firstDelivery?.turnId || !client || !threadId) throw new Error("The first routine turn did not start.");
-    const persistConversation = store.database.persistConversation.bind(store.database);
+    const appendConversationMessage = store.database.appendConversationMessage.bind(store.database);
     let rejectTerminalMarker = true;
-    vi.spyOn(store.database, "persistConversation").mockImplementation((...args) => {
-      if (rejectTerminalMarker && args[1] === "routine.run-succeeded") {
+    vi.spyOn(store.database, "appendConversationMessage").mockImplementation((input) => {
+      if (rejectTerminalMarker && input.eventType === "routine.run-succeeded") {
         rejectTerminalMarker = false;
         throw new Error("terminal marker persistence failed");
       }
-      return persistConversation(...args);
+      return appendConversationMessage(input);
     });
 
     client.emit(
@@ -3426,14 +3426,14 @@ describe.sequential("AgentService", () => {
       .listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
       .find((run) => run.deliveryId === queued.id);
     if (!queuedRun) throw new Error("The queued routine run is missing.");
-    const persistConversation = store.database.persistConversation.bind(store.database);
+    const appendConversationMessage = store.database.appendConversationMessage.bind(store.database);
     let rejectCancellationMarker = true;
-    vi.spyOn(store.database, "persistConversation").mockImplementation((...args) => {
-      if (rejectCancellationMarker && args[1] === "routine.run-cancelled") {
+    vi.spyOn(store.database, "appendConversationMessage").mockImplementation((input) => {
+      if (rejectCancellationMarker && input.eventType === "routine.run-cancelled") {
         rejectCancellationMarker = false;
         throw new Error("transition marker persistence failed");
       }
-      return persistConversation(...args);
+      return appendConversationMessage(input);
     });
 
     await expect(service.cancelQueuedMessage(bot.id, queued.id)).rejects.toThrow(

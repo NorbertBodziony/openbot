@@ -825,6 +825,99 @@ export class OpenBotDatabase {
     return { ...structuredClone(snapshot), revision: result.revision };
   }
 
+  appendConversationMessage(input: {
+    botId: string;
+    threadId: string;
+    activeTurnId: string | null;
+    message: ConversationMessage;
+    eventType: string;
+    detail?: unknown;
+  }): number {
+    const result = this.dispatch(
+      `conversation:${input.eventType}:${randomUUID()}`,
+      [
+        {
+          aggregateType: "thread",
+          aggregateId: input.threadId,
+          eventType: input.eventType,
+          occurredAt: input.message.createdAt,
+          payload: {
+            detail: input.detail ?? {},
+            appendedMessage: input.message,
+            activeTurnId: input.activeTurnId,
+          },
+        },
+      ],
+      (db, sequences) => {
+        const sequence = sequences[0] ?? 0;
+        const agent = this.listAgents().find((candidate) => candidate.id === input.botId);
+        if (!agent || agent.threadId !== input.threadId) {
+          throw new Error(`Unknown agent thread for conversation append: ${input.botId}`);
+        }
+        this.#ensureThreadProjection(db, agent, sequence);
+        const ordinalRow = databaseRow(
+          db
+            .prepare(
+              `SELECT COALESCE(MAX(ordinal), -1) + 1 AS ordinal
+               FROM projection_thread_messages WHERE thread_id = ?`,
+            )
+            .get(input.threadId),
+        );
+        const ordinal = ordinalRow ? requiredNumberColumn(ordinalRow, "ordinal") : 0;
+        db.prepare(
+          `INSERT INTO projection_thread_messages (
+             thread_id, message_id, turn_id, author, status, item_type, created_at,
+             ordinal, message_json, last_event_sequence
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          input.threadId,
+          input.message.id,
+          input.message.turnId ?? null,
+          input.message.author,
+          input.message.status,
+          input.message.itemType ?? null,
+          input.message.createdAt,
+          ordinal,
+          JSON.stringify(input.message),
+          sequence,
+        );
+        for (const attachment of input.message.attachments ?? []) {
+          db.prepare(
+            `INSERT INTO projection_attachments
+               (attachment_id, owner_kind, owner_id, name, path, metadata_json, created_at, last_event_sequence)
+             VALUES (?, 'thread-message', ?, ?, '', ?, ?, ?)`,
+          ).run(
+            `${input.threadId}:${input.message.id}:${attachment.id}`,
+            `${input.threadId}:${input.message.id}`,
+            attachment.name,
+            JSON.stringify(attachment),
+            input.message.createdAt,
+            sequence,
+          );
+        }
+        db.prepare(
+          `UPDATE projection_threads
+           SET active_turn_id = ?, updated_at = ?, last_event_sequence = ? WHERE thread_id = ?`,
+        ).run(input.activeTurnId, input.message.createdAt, sequence, input.threadId);
+        db.prepare(
+          `INSERT INTO projection_thread_activities
+             (activity_id, thread_id, turn_id, activity_type, payload_json, created_at, last_event_sequence)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          randomUUID(),
+          input.threadId,
+          input.message.turnId ?? input.activeTurnId,
+          input.eventType,
+          JSON.stringify(input.detail ?? {}),
+          input.message.createdAt,
+          sequence,
+        );
+        return { revision: sequence };
+      },
+    );
+    return result.revision;
+  }
+
   persistConversationAndMailbox(
     snapshot: ConversationSnapshot,
     eventType: string,
@@ -1089,6 +1182,8 @@ export class OpenBotDatabase {
         if (summary) summaries.push({ ...summary, sequence: event.sequence });
       }
       const snapshot = conversationSnapshotValue(objectValue(record?.snapshot));
+      const appendedMessage = record?.appendedMessage;
+      const appendedActiveTurnId = record?.activeTurnId;
       if (snapshot) {
         latest = snapshot;
         latestSequence = event.sequence;
@@ -1099,6 +1194,14 @@ export class OpenBotDatabase {
           const activeSession = [...sessions.values()].find((session) => session.state === "active");
           turnSessions.set(snapshot.activeTurnId, activeSession?.id ?? null);
         }
+      } else if (latest && isConversationMessage(appendedMessage)) {
+        if (!latest.messages.some((message) => message.id === appendedMessage.id)) {
+          latest.messages.push(structuredClone(appendedMessage));
+        }
+        if (isString(appendedActiveTurnId) || appendedActiveTurnId === null) {
+          latest.activeTurnId = appendedActiveTurnId;
+        }
+        latestSequence = event.sequence;
       }
     }
     if (!latest) throw new Error(`Thread ${threadId} has no conversation events to replay.`);
@@ -1225,9 +1328,11 @@ export class OpenBotDatabase {
       for (const event of events) {
         const eventPayload = JSON.parse(event.payload_json);
         const eventRecord = objectValue(eventPayload);
-        const activityPayload = conversationSnapshotValue(objectValue(eventRecord?.snapshot))
-          ? (eventRecord?.detail ?? {})
-          : eventPayload;
+        const activityPayload =
+          conversationSnapshotValue(objectValue(eventRecord?.snapshot)) ||
+          isConversationMessage(eventRecord?.appendedMessage)
+            ? (eventRecord?.detail ?? {})
+            : eventPayload;
         activityInsert.run(
           randomUUID(),
           threadId,
