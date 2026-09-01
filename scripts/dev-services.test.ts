@@ -1,10 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
+  configureMobileConnectDevelopmentNetwork,
   createDevelopmentServiceSpec,
   developmentEnvironmentForTarget,
   parseDevelopmentTarget,
   projectRoot,
+  selectMobileConnectLanAddress,
   servicesForTarget,
+  signalOwnedProcess,
+  stopOwnedProcesses,
 } from "./dev-services";
 
 describe("development service runner", () => {
@@ -59,6 +63,36 @@ describe("development service runner", () => {
     expect(app.env.OPENBOT_DEV_REMOTE_DEBUGGING_PORT).toBe("9340");
   });
 
+  it("advertises the preferred private LAN address for Mobile Connect development", () => {
+    const interfaces = {
+      utun3: [{ address: "10.8.0.2", family: "IPv4" as const, internal: false }],
+      en0: [{ address: "192.168.1.143", family: "IPv4" as const, internal: false }],
+      lo0: [{ address: "127.0.0.1", family: "IPv4" as const, internal: true }],
+    };
+    expect(selectMobileConnectLanAddress(interfaces)).toBe("192.168.1.143");
+    const environment = { OPENBOT_API_PORT: "3100", OPENBOT_AUTH_API_URL: "http://127.0.0.1:3100" };
+
+    configureMobileConnectDevelopmentNetwork(["api", "app"], environment, interfaces);
+
+    expect(environment).toMatchObject({
+      OPENBOT_API_HOST: "0.0.0.0",
+      OPENBOT_MOBILE_AUTH_API_URL: "http://192.168.1.143:3100",
+    });
+  });
+
+  it("keeps API-only and explicitly loopback development private", () => {
+    const interfaces = {
+      en0: [{ address: "192.168.1.143", family: "IPv4" as const, internal: false }],
+    };
+    const apiOnly = { OPENBOT_API_PORT: "3100" };
+    configureMobileConnectDevelopmentNetwork(["api"], apiOnly, interfaces);
+    expect(apiOnly).not.toHaveProperty("OPENBOT_API_HOST");
+
+    const loopback = { OPENBOT_API_PORT: "3100", OPENBOT_API_HOST: "127.0.0.1" };
+    configureMobileConnectDevelopmentNetwork(["api", "app"], loopback, interfaces);
+    expect(loopback).not.toHaveProperty("OPENBOT_MOBILE_AUTH_API_URL");
+  });
+
   it("keeps an explicit development remote role override", () => {
     const app = createDevelopmentServiceSpec("app", { OPENBOT_DEV_REMOTE_ROLE: "none" });
 
@@ -68,5 +102,63 @@ describe("development service runner", () => {
   it("rejects unknown targets and options", () => {
     expect(() => parseDevelopmentTarget(["other"])).toThrow("Unknown development target");
     expect(() => parseDevelopmentTarget(["all", "--watch"])).toThrow("Unknown option");
+  });
+
+  it("signals a detached POSIX process group after its launcher exits", () => {
+    const kill = vi.fn<typeof process.kill>(() => true);
+    const child = { pid: 321, exitCode: 0, kill: vi.fn(() => true) };
+
+    signalOwnedProcess(child, "SIGTERM", "darwin", kill);
+
+    expect(kill).toHaveBeenCalledWith(-321, "SIGTERM");
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  it("gives a surviving POSIX process group time to exit cleanly", async () => {
+    let time = 0;
+    let probes = 0;
+    const kill = vi.fn((_pid: number, signal?: NodeJS.Signals | number) => {
+      if (signal === 0) {
+        probes += 1;
+        if (probes > 2) throw Object.assign(new Error("missing process"), { code: "ESRCH" });
+      }
+      return true;
+    });
+    const child = { pid: 321, exitCode: 0, kill: vi.fn(() => true) };
+
+    await stopOwnedProcesses([child], "SIGTERM", {
+      platform: "darwin",
+      killProcess: kill,
+      timeoutMs: 100,
+      pollIntervalMs: 25,
+      now: () => time,
+      wait: async (milliseconds) => {
+        time += milliseconds;
+      },
+    });
+
+    expect(kill).toHaveBeenCalledWith(-321, "SIGTERM");
+    expect(kill).not.toHaveBeenCalledWith(-321, "SIGKILL");
+    expect(time).toBe(50);
+  });
+
+  it("escalates only after a surviving process group misses the deadline", async () => {
+    let time = 0;
+    const kill = vi.fn(() => true);
+    const child = { pid: 321, exitCode: 0, kill: vi.fn(() => true) };
+
+    await stopOwnedProcesses([child], "SIGTERM", {
+      platform: "darwin",
+      killProcess: kill,
+      timeoutMs: 100,
+      pollIntervalMs: 25,
+      now: () => time,
+      wait: async (milliseconds) => {
+        time += milliseconds;
+      },
+    });
+
+    expect(time).toBe(100);
+    expect(kill).toHaveBeenCalledWith(-321, "SIGKILL");
   });
 });

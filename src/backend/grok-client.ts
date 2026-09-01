@@ -71,6 +71,8 @@ interface GrokModel {
   description: string;
   defaultReasoningEffort: string;
   supportedReasoningEfforts: string[];
+  reasoningEffortWireValues: Map<string, string>;
+  usesModelReasoningEffort: boolean | null;
 }
 
 export class GrokAgentClient extends EventEmitter<ClientEvents> {
@@ -335,6 +337,19 @@ export class GrokAgentClient extends EventEmitter<ClientEvents> {
       ["thought_level", effort],
     ] as const) {
       if (!value) continue;
+      if (category === "thought_level" && thread.currentModelId) {
+        const currentModel = this.#models.find((candidate) => candidate.id === thread.currentModelId);
+        if (currentModel && currentModel.usesModelReasoningEffort !== null) {
+          if (currentModel.usesModelReasoningEffort && currentModel.supportedReasoningEfforts.includes(value)) {
+            await this.#requireConnection().request("session/set_model", {
+              sessionId: thread.id,
+              modelId: thread.currentModelId,
+              _meta: { reasoningEffort: currentModel.reasoningEffortWireValues.get(value) ?? value },
+            });
+          }
+          continue;
+        }
+      }
       const option = thread.configOptions.find(
         (candidate): candidate is Extract<SessionConfigOption, { type: "select" }> =>
           candidate.category === category && candidate.type === "select",
@@ -628,15 +643,31 @@ interface SessionSetupResponse {
 
 function modelsFromSessionSetup(response: SessionSetupResponse): GrokModel[] {
   const options = sessionConfigOptions(response);
-  const discovered = legacyAvailableModels(response);
+  const discovered = availableModels(response);
   if (discovered.length === 0) return modelsFromConfig(options);
-  const reasoning = reasoningFromConfig(options);
-  return discovered.map((model) => ({
-    id: model.id,
-    name: model.name,
-    description: model.description ?? "Model discovered from Grok CLI through ACP.",
-    ...reasoning,
-  }));
+  const configReasoning = reasoningFromConfig(options);
+  return discovered.map((model) => {
+    const supportedReasoningEfforts = model.supportedReasoningEfforts ?? configReasoning.supportedReasoningEfforts;
+    const reasoningEffortWireValues = model.reasoningEffortWireValues;
+    const defaultReasoningEffort =
+      model.defaultReasoningEffort && supportedReasoningEfforts.includes(model.defaultReasoningEffort)
+        ? model.defaultReasoningEffort
+        : supportedReasoningEfforts.includes(configReasoning.defaultReasoningEffort)
+          ? configReasoning.defaultReasoningEffort
+          : (supportedReasoningEfforts[0] ?? "medium");
+    return {
+      id: model.id,
+      name: model.name,
+      description: model.description ?? "Model discovered from Grok CLI through ACP.",
+      defaultReasoningEffort,
+      supportedReasoningEfforts,
+      reasoningEffortWireValues:
+        reasoningEffortWireValues && reasoningEffortWireValues.size > 0
+          ? reasoningEffortWireValues
+          : configReasoning.reasoningEffortWireValues,
+      usesModelReasoningEffort: model.usesModelReasoningEffort,
+    };
+  });
 }
 
 function modelsFromConfig(options: SessionConfigOption[]): GrokModel[] {
@@ -651,22 +682,24 @@ function modelsFromConfig(options: SessionConfigOption[]): GrokModel[] {
     name: option.name,
     description: option.description ?? "Model discovered from Grok CLI through ACP.",
     ...reasoning,
+    usesModelReasoningEffort: null,
   }));
 }
 
 function reasoningFromConfig(
   options: SessionConfigOption[],
-): Pick<GrokModel, "defaultReasoningEffort" | "supportedReasoningEfforts"> {
+): Pick<GrokModel, "defaultReasoningEffort" | "supportedReasoningEfforts" | "reasoningEffortWireValues"> {
   const thought = options.find((option) => option.category === "thought_level" && option.type === "select");
-  const efforts =
-    thought && thought.type === "select"
-      ? selectValues(thought).map((option) => normalizeEffort(option.value))
-      : ["medium"];
-  const supported = [...new Set(efforts.filter(Boolean))];
-  const currentEffort = thought && thought.type === "select" ? normalizeEffort(thought.currentValue) : "medium";
+  const wireValues = reasoningEffortWireValues(
+    thought && thought.type === "select" ? selectValues(thought).map((option) => option.value) : ["medium"],
+  );
+  const supported = [...wireValues.keys()];
+  const currentEffort =
+    thought && thought.type === "select" ? (normalizeEffort(thought.currentValue) ?? "medium") : "medium";
   return {
     defaultReasoningEffort: supported.includes(currentEffort) ? currentEffort : (supported[0] ?? "medium"),
     supportedReasoningEfforts: supported.length > 0 ? supported : ["medium"],
+    reasoningEffortWireValues: wireValues.size > 0 ? wireValues : new Map([["medium", "medium"]]),
   };
 }
 
@@ -681,9 +714,15 @@ function currentModelFromSessionSetup(response: SessionSetupResponse): string | 
     : null;
 }
 
-function legacyAvailableModels(
-  response: SessionSetupResponse,
-): Array<{ id: string; name: string; description: string | null }> {
+function availableModels(response: SessionSetupResponse): Array<{
+  id: string;
+  name: string;
+  description: string | null;
+  defaultReasoningEffort: string | null;
+  supportedReasoningEfforts: string[] | null;
+  reasoningEffortWireValues: Map<string, string> | null;
+  usesModelReasoningEffort: boolean | null;
+}> {
   if (!isRecord(response.models) || !Array.isArray(response.models.availableModels)) return [];
   const seen = new Set<string>();
   return response.models.availableModels.flatMap((value) => {
@@ -691,11 +730,33 @@ function legacyAvailableModels(
     const id = value.modelId.trim();
     if (seen.has(id)) return [];
     seen.add(id);
+    const metadata = isRecord(value._meta) ? value._meta : null;
+    const reasoningEffortValues = Array.isArray(metadata?.reasoningEfforts)
+      ? metadata.reasoningEfforts.filter(isRecord).flatMap((effort) => (isString(effort.value) ? [effort.value] : []))
+      : null;
+    const wireValues = reasoningEffortValues ? reasoningEffortWireValues(reasoningEffortValues) : null;
+    const supportedReasoningEfforts = wireValues ? [...wireValues.keys()] : null;
+    const usesModelReasoningEffort =
+      metadata?.supportsReasoningEffort === false
+        ? false
+        : metadata?.supportsReasoningEffort === true || (supportedReasoningEfforts?.length ?? 0) > 0
+          ? true
+          : null;
     return [
       {
         id,
         name: isString(value.name) && value.name.trim() ? value.name.trim() : id,
         description: isString(value.description) && value.description.trim() ? value.description.trim() : null,
+        defaultReasoningEffort:
+          metadata && isString(metadata.reasoningEffort) ? normalizeEffort(metadata.reasoningEffort) : null,
+        supportedReasoningEfforts:
+          metadata?.supportsReasoningEffort === false
+            ? ["medium"]
+            : supportedReasoningEfforts && supportedReasoningEfforts.length > 0
+              ? supportedReasoningEfforts
+              : null,
+        reasoningEffortWireValues: wireValues,
+        usesModelReasoningEffort,
       },
     ];
   });
@@ -705,12 +766,21 @@ function selectValues(option: Extract<SessionConfigOption, { type: "select" }>) 
   return option.options.flatMap((entry) => ("options" in entry ? entry.options : [entry]));
 }
 
-function normalizeEffort(value: string): string {
+function reasoningEffortWireValues(values: string[]): Map<string, string> {
+  const result = new Map<string, string>();
+  for (const value of values) {
+    const normalized = normalizeEffort(value);
+    if (normalized && !result.has(normalized)) result.set(normalized, value);
+  }
+  return result;
+}
+
+function normalizeEffort(value: string): string | null {
   const normalized = value.toLowerCase().replaceAll("-", "_");
   if (["low", "medium", "high", "xhigh", "max"].includes(normalized)) return normalized;
   if (["minimal", "none", "off"].includes(normalized)) return "low";
   if (["extra_high", "very_high"].includes(normalized)) return "xhigh";
-  return "medium";
+  return null;
 }
 
 async function promptBlocks(params: unknown): Promise<ContentBlock[]> {

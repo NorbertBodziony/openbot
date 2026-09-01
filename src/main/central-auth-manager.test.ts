@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CentralAuthManager, readCentralAuthApiUrl } from "./central-auth-manager";
+import { CentralAuthManager, readCentralAuthApiUrl, readMobileConnectApiUrl } from "./central-auth-manager";
 
 const roots: string[] = [];
 
@@ -44,6 +44,28 @@ describe("CentralAuthManager", () => {
       if (url.pathname === "/v1/team-auth/ticket") {
         return Response.json({ ticket: "one-time-ticket", expiresAt: 20_000 });
       }
+      if (url.pathname === "/v1/mobile-auth/ticket") {
+        return Response.json({
+          ticket: "mobile-ticket_1234567890abcdefghijklmnop",
+          expiresAt: Date.now() + 120_000,
+        });
+      }
+      if (url.pathname === "/v1/mobile-auth/devices" && init?.method === "GET") {
+        return Response.json({
+          devices: [
+            {
+              sessionId: "11111111-1111-4111-8111-111111111111",
+              name: "Norbert’s iPhone",
+              platform: "ios",
+              connectedAt: 1_000,
+              lastActiveAt: 2_000,
+            },
+          ],
+        });
+      }
+      if (url.pathname === "/v1/mobile-auth/devices/11111111-1111-4111-8111-111111111111") {
+        return new Response(null, { status: 204 });
+      }
       return Response.json({
         id: "user-1",
         email: "person@example.com",
@@ -53,6 +75,7 @@ describe("CentralAuthManager", () => {
     });
     const options = {
       apiUrl: "http://127.0.0.1:3100",
+      mobileConnectApiUrl: "http://192.168.1.143:3100",
       storagePath,
       encrypt: (value: string) => Buffer.from(`encrypted:${value}`),
       decrypt: (value: Buffer) => value.toString().replace("encrypted:", ""),
@@ -73,6 +96,21 @@ describe("CentralAuthManager", () => {
     expect(await manager.redeemTeamAuthTicket("one-time-ticket", serverId)).toMatchObject({
       email: "person@example.com",
     });
+    expect(await manager.createMobileConnect()).toMatchObject({
+      qrData: expect.stringMatching(
+        /^openbot:\/\/mobile-connect\?api=http%3A%2F%2F192\.168\.1\.143%3A3100&ticket=mobile-ticket_1234567890abcdefghijklmnop$/u,
+      ),
+    });
+    expect(await manager.listMobileConnectedDevices()).toEqual([
+      {
+        sessionId: "11111111-1111-4111-8111-111111111111",
+        name: "Norbert’s iPhone",
+        platform: "ios",
+        connectedAt: 1_000,
+        lastActiveAt: 2_000,
+      },
+    ]);
+    await manager.revokeMobileConnectedDevice("11111111-1111-4111-8111-111111111111");
     await manager.sendTeamInviteEmail({
       email: "alice@example.com",
       serverName: "Studio Mac",
@@ -92,6 +130,18 @@ describe("CentralAuthManager", () => {
       authorization: null,
     });
     expect(requests[5]).toMatchObject({
+      path: "/v1/mobile-auth/ticket",
+      authorization: "Bearer session-secret",
+    });
+    expect(requests[6]).toMatchObject({
+      path: "/v1/mobile-auth/devices",
+      authorization: "Bearer session-secret",
+    });
+    expect(requests[7]).toMatchObject({
+      path: "/v1/mobile-auth/devices/11111111-1111-4111-8111-111111111111",
+      authorization: "Bearer session-secret",
+    });
+    expect(requests[8]).toMatchObject({
       path: "/v1/team-invitations/email",
       authorization: "Bearer session-secret",
     });
@@ -266,6 +316,188 @@ describe("CentralAuthManager", () => {
       challengeId: "challenge-2",
       resendAvailableAt: 661_000,
     });
+  });
+
+  it("uses one in-flight request and one idempotency key for concurrent submits", async () => {
+    const root = await createRoot();
+    let finishRequest: ((response: Response) => void) | undefined;
+    const response = new Promise<Response>((resolve) => {
+      finishRequest = resolve;
+    });
+    const fetchMock = vi.fn((_input: string | URL | Request, _init?: RequestInit) => response);
+    const manager = new CentralAuthManager({
+      apiUrl: "http://127.0.0.1:3100",
+      storagePath: join(root, "session.bin"),
+      encrypt: (value) => Buffer.from(value),
+      decrypt: (value) => value.toString(),
+      fetch: fetchMock,
+    });
+
+    const first = manager.requestEmailCode("person@example.com");
+    const second = manager.requestEmailCode(" Person@Example.com ");
+
+    expect(second).toBe(first);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers);
+    expect(headers.get("Idempotency-Key")).toMatch(/^[0-9a-f-]{36}$/u);
+    finishRequest?.(Response.json({ challengeId: "challenge-1", expiresAt: 610_000 }));
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+  });
+
+  it("allows 35 seconds for email delivery", async () => {
+    const root = await createRoot();
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const manager = new CentralAuthManager({
+      apiUrl: "http://127.0.0.1:3100",
+      storagePath: join(root, "session.bin"),
+      encrypt: (value) => Buffer.from(value),
+      decrypt: (value) => value.toString(),
+      fetch: vi.fn(async () => Response.json({ challengeId: "challenge-1", expiresAt: 610_000 })),
+    });
+
+    try {
+      await manager.requestEmailCode("person@example.com");
+      expect(timeout).toHaveBeenCalledWith(35_000);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
+  it("reuses the idempotency key after a timeout and accepts the replay", async () => {
+    const root = await createRoot();
+    const keys: string[] = [];
+    let requests = 0;
+    const fetchMock = vi.fn((_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      keys.push(new Headers(init?.headers).get("Idempotency-Key") ?? "");
+      requests += 1;
+      if (requests === 2) {
+        return Promise.resolve(Response.json({ challengeId: keys[0], expiresAt: 610_000 }));
+      }
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+      });
+    });
+    const manager = new CentralAuthManager({
+      apiUrl: "http://127.0.0.1:3100",
+      storagePath: join(root, "session.bin"),
+      encrypt: (value) => Buffer.from(value),
+      decrypt: (value) => value.toString(),
+      fetch: fetchMock,
+      emailCodeRequestTimeoutMs: 5,
+    });
+
+    await expect(manager.requestEmailCode("person@example.com")).resolves.toMatchObject({
+      status: "error",
+      issue: { code: "email_delivery_timeout" },
+    });
+    await expect(manager.requestEmailCode("person@example.com")).resolves.toMatchObject({
+      status: "code_sent",
+      challengeId: keys[0],
+    });
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).toBe(keys[0]);
+  });
+
+  it("keeps the idempotency key while delivery is pending", async () => {
+    const root = await createRoot();
+    const keys: string[] = [];
+    let requests = 0;
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      keys.push(new Headers(init?.headers).get("Idempotency-Key") ?? "");
+      requests += 1;
+      if (requests === 1) {
+        return Response.json(
+          { error: { code: "email_delivery_pending", message: "Delivery is still pending." } },
+          { status: 409, headers: { "Retry-After": "25" } },
+        );
+      }
+      return Response.json({ challengeId: "challenge-1", expiresAt: 610_000 });
+    });
+    const manager = new CentralAuthManager({
+      apiUrl: "http://127.0.0.1:3100",
+      storagePath: join(root, "session.bin"),
+      encrypt: (value) => Buffer.from(value),
+      decrypt: (value) => value.toString(),
+      fetch: fetchMock,
+    });
+
+    await expect(manager.requestEmailCode("person@example.com")).resolves.toMatchObject({
+      status: "error",
+      issue: { code: "email_delivery_pending", retryAfterSeconds: 25 },
+    });
+    await expect(manager.requestEmailCode("person@example.com")).resolves.toMatchObject({ status: "code_sent" });
+    expect(keys[1]).toBe(keys[0]);
+  });
+
+  it("disables verification of the old challenge while resend delivery is uncertain", async () => {
+    const root = await createRoot();
+    const keys: string[] = [];
+    let requests = 0;
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      keys.push(new Headers(init?.headers).get("Idempotency-Key") ?? "");
+      requests += 1;
+      if (requests === 1) {
+        return Response.json({ challengeId: "challenge-1", expiresAt: 610_000, resendAt: 1_000 });
+      }
+      if (requests === 2) {
+        return Response.json(
+          { error: { code: "email_delivery_pending", message: "Delivery is still pending." } },
+          { status: 409 },
+        );
+      }
+      return Response.json({ challengeId: keys[1], expiresAt: 610_000 });
+    });
+    const manager = new CentralAuthManager({
+      apiUrl: "http://127.0.0.1:3100",
+      storagePath: join(root, "session.bin"),
+      encrypt: (value) => Buffer.from(value),
+      decrypt: (value) => value.toString(),
+      fetch: fetchMock,
+    });
+
+    await expect(manager.requestEmailCode("person@example.com")).resolves.toMatchObject({
+      status: "code_sent",
+      challengeId: "challenge-1",
+    });
+    await expect(manager.requestEmailCode("person@example.com")).resolves.toMatchObject({
+      status: "error",
+      issue: { code: "email_delivery_pending" },
+    });
+    await expect(manager.requestEmailCode("person@example.com")).resolves.toMatchObject({
+      status: "code_sent",
+      challengeId: keys[1],
+    });
+    expect(keys[1]).not.toBe(keys[0]);
+    expect(keys[2]).toBe(keys[1]);
+  });
+
+  it("creates a new idempotency key after a confirmed delivery failure", async () => {
+    const root = await createRoot();
+    const keys: string[] = [];
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      keys.push(new Headers(init?.headers).get("Idempotency-Key") ?? "");
+      if (keys.length === 1) {
+        return Response.json(
+          { error: { code: "email_delivery_failed", message: "Delivery failed." } },
+          { status: 502 },
+        );
+      }
+      return Response.json({ challengeId: "challenge-2", expiresAt: 610_000 });
+    });
+    const manager = new CentralAuthManager({
+      apiUrl: "http://127.0.0.1:3100",
+      storagePath: join(root, "session.bin"),
+      encrypt: (value) => Buffer.from(value),
+      decrypt: (value) => value.toString(),
+      fetch: fetchMock,
+    });
+
+    await expect(manager.requestEmailCode("person@example.com")).resolves.toMatchObject({
+      status: "error",
+      issue: { code: "email_delivery_failed" },
+    });
+    await expect(manager.requestEmailCode("person@example.com")).resolves.toMatchObject({ status: "code_sent" });
+    expect(keys[1]).not.toBe(keys[0]);
   });
 
   it("accepts an HTTP-date Retry-After value", async () => {
@@ -642,6 +874,12 @@ describe("CentralAuthManager", () => {
     expect(readCentralAuthApiUrl(undefined, "https://api.openbot.run")).toBe("https://api.openbot.run");
     expect(readCentralAuthApiUrl("https://auth.example.com")).toBe("https://auth.example.com");
     expect(() => readCentralAuthApiUrl("http://auth.example.com")).toThrow("HTTPS");
+    expect(readMobileConnectApiUrl("http://192.168.1.143:3100", "https://api.openbot.run")).toBe(
+      "http://192.168.1.143:3100",
+    );
+    expect(() => readMobileConnectApiUrl("http://203.0.113.10:3100", "https://api.openbot.run")).toThrow(
+      "Invalid Mobile Connect payload",
+    );
   });
 });
 

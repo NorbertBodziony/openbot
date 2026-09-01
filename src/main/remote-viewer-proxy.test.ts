@@ -16,14 +16,19 @@ describe("RemoteViewerProxy", () => {
     const proxy = new RemoteViewerProxy({
       transport,
       fetchResource: async () =>
-        new Response('<script>fetch("/v1/remote-screen/session")</script>', {
-          headers: { "Content-Type": "text/html" },
-        }),
+        new Response(
+          '<script>const session=/^\\/v1\\/remote-screen\\/sessions\\/([A-Za-z0-9-]+)/.exec(location.pathname);fetch("/v1/remote-screen/session")</script>',
+          {
+            headers: { "Content-Type": "text/html" },
+          },
+        ),
     });
     const viewerUrl = await proxy.viewerUrl("host-1", "/v1/remote-screen/sessions/session-1/viewer");
     expect(new URL(viewerUrl).hostname).toBe("127.0.0.1");
     const html = await (await fetch(viewerUrl)).text();
-    expect(html).toContain(`${new URL(viewerUrl).pathname.split("/v1/")[0]}/v1/remote-screen/session`);
+    const localPrefix = new URL(viewerUrl).pathname.split("/v1/")[0];
+    expect(html).toContain(`${localPrefix}/v1/remote-screen/session`);
+    expect(html).toContain(`^${localPrefix.replaceAll("/", "\\/")}\\/v1\\/remote-screen\\/sessions\\/([A-Za-z0-9-]+)`);
 
     const socketUrl = new URL(viewerUrl);
     socketUrl.protocol = "ws:";

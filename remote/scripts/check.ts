@@ -1,8 +1,13 @@
-import { resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { delimiter, join, resolve } from "node:path";
 
 const root = resolve(import.meta.dir, "../..");
+const runtimeNodeBin = resolve(root, "runtime/node/bin");
 const environment = {
   ...process.env,
+  PATH: existsSync(join(runtimeNodeBin, "node"))
+    ? `${runtimeNodeBin}${delimiter}${process.env.PATH ?? ""}`
+    : process.env.PATH,
   ACME_EMAIL: process.env.ACME_EMAIL ?? "remote-check@example.com",
   SIGNAL_DOMAIN: process.env.SIGNAL_DOMAIN ?? "signal.example.com",
   TURN_DOMAIN: process.env.TURN_DOMAIN ?? "turn.example.com",

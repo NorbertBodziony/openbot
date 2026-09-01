@@ -1,4 +1,4 @@
-FROM oven/bun:1.3.11-alpine AS dependencies
+FROM oven/bun:1.4.0-alpine AS dependencies
 WORKDIR /app
 COPY package.json bun.lock ./
 COPY patches ./patches
@@ -8,10 +8,11 @@ COPY packages/contracts/package.json ./packages/contracts/package.json
 COPY remote/api/package.json ./remote/api/package.json
 RUN bun install --production --ignore-scripts --frozen-lockfile --filter @openbot/remote-api
 
-FROM oven/bun:1.3.11-alpine
+FROM oven/bun:1.4.0-alpine
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=dependencies /app/node_modules ./node_modules
+COPY --from=dependencies /app/remote/api/node_modules ./remote/api/node_modules
 COPY remote/api ./remote/api
 USER bun
 WORKDIR /app/remote/api

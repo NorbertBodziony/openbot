@@ -23,7 +23,6 @@ import {
   IPC_CHANNELS,
   isSkillCategory,
   type MacPermissionId,
-  type MacPermissionsState,
   type SendMessageInput,
   type SidebarLayoutSnapshot,
   type UpdateBotInput,
@@ -36,7 +35,6 @@ import {
   app,
   BrowserWindow,
   type Display,
-  desktopCapturer,
   dialog,
   Menu,
   Notification,
@@ -49,7 +47,6 @@ import {
   screen,
   session,
   shell,
-  systemPreferences,
 } from "electron";
 import electronUpdater from "electron-updater";
 import { z } from "zod";
@@ -67,8 +64,11 @@ import { HostAnalytics } from "./analytics";
 import { readAnalyticsPreference, writeAnalyticsPreference } from "./analytics-preference-store";
 import { readAppVariant, resolveAppIconPath } from "./app-icon";
 import { BrowserPictureInPicture } from "./browser-picture-in-picture";
-import { CentralAuthManager, readCentralAuthApiUrl } from "./central-auth-manager";
+import { CentralAuthManager, readCentralAuthApiUrl, readMobileConnectApiUrl } from "./central-auth-manager";
+import { ComputerUseMacSetupService } from "./computer-use-mac-setup";
+import { ComputerUseMacSetupWindowController } from "./computer-use-mac-setup-window";
 import { buildContentSecurityPolicy } from "./content-security-policy";
+import { guardDevelopmentOutput } from "./development-output";
 import {
   developmentUserDataName,
   readDevelopmentInstanceId,
@@ -163,6 +163,7 @@ import {
   decodeVoid,
   RemoteServerManager,
 } from "./remote-server-manager";
+import { sendToRenderer } from "./renderer-ipc";
 import { canCheckRendererPermission, canRequestRendererPermission } from "./renderer-permissions";
 import { readSetupState, writeSetupState } from "./setup-store";
 import { SkillMarketplaceService } from "./skill-marketplace-service";
@@ -209,6 +210,7 @@ app.enableSandbox();
 if (process.platform === "win32") app.setAppUserModelId("app.openbot.desktop");
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 const appVariant = readAppVariant(process.env.OPENBOT_APP_VARIANT, app.isPackaged);
+if (!app.isPackaged) guardDevelopmentOutput([process.stdout, process.stderr], () => app.quit());
 const appIconPath = resolveAppIconPath({
   variant: appVariant,
   platform: process.platform,
@@ -265,6 +267,7 @@ let hostAnalytics: HostAnalytics | null = null;
 let teamWebRtcBridge: TeamWebRtcBridge | null = null;
 let voiceTranscriptionService: VoiceTranscriptionService | null = null;
 let dynamicIslandController: DynamicIslandWindowController | null = null;
+let computerUseMacSetupController: ComputerUseMacSetupWindowController | null = null;
 const macHapticFeedback = new MacHapticFeedback();
 let isQuitting = false;
 let shutdownStarted = false;
@@ -327,6 +330,7 @@ function registerIpcHandlers(
   marketplaceAgents: AgentMarketplaceService,
   voice: VoiceTranscriptionService,
   dynamicIsland: DynamicIslandWindowController,
+  computerUseMacSetup: ComputerUseMacSetupWindowController,
 ): void {
   handleTrusted(IPC_CHANNELS.getAppInfo, (): AppInfo => {
     const platform = process.platform;
@@ -381,10 +385,15 @@ function registerIpcHandlers(
     await initializeAgent();
     return state;
   });
-  handleTrusted(IPC_CHANNELS.getMacPermissions, readMacPermissions);
-  handleTrusted(IPC_CHANNELS.requestMacPermission, (permission: unknown) =>
-    requestMacPermission(parseMacPermission(permission)),
+  handleTrusted(IPC_CHANNELS.computerUseGetMacSetupState, () => computerUseMacSetup.getState());
+  handleTrusted(IPC_CHANNELS.computerUseOpenMacPermissionSetup, (permission: unknown) =>
+    computerUseMacSetup.open(parseMacPermission(permission)),
   );
+  handleTrustedWithEvent(IPC_CHANNELS.computerUseStartHelperDrag, (event) =>
+    computerUseMacSetup.startDrag(event.sender),
+  );
+  handleTrusted(IPC_CHANNELS.computerUseRevealHelper, () => computerUseMacSetup.revealHelper());
+  handleTrusted(IPC_CHANNELS.computerUseCloseMacPermissionSetup, () => computerUseMacSetup.close());
   handleTrusted(IPC_CHANNELS.openExternal, (destination: unknown) => {
     return shell.openExternal(EXTERNAL_DESTINATIONS[parseExternalDestination(destination)]);
   });
@@ -441,6 +450,11 @@ function registerIpcHandlers(
     return centralAuth.updateName(validation.name);
   });
   handleTrusted(IPC_CHANNELS.authUpdateAvatar, (input: unknown) => centralAuth.updateAvatar(parseAvatarImage(input)));
+  handleTrusted(IPC_CHANNELS.authCreateMobileConnect, () => centralAuth.createMobileConnect());
+  handleTrusted(IPC_CHANNELS.authListMobileConnectedDevices, () => centralAuth.listMobileConnectedDevices());
+  handleTrusted(IPC_CHANNELS.authRevokeMobileConnectedDevice, (input: unknown) =>
+    centralAuth.revokeMobileConnectedDevice(requireString(input, "sessionId", INPUT_LIMITS.identifier)),
+  );
   handleTrusted(IPC_CHANNELS.authLogout, () => centralAuth.logout());
   handleTrusted(IPC_CHANNELS.skillsList, (input: unknown) => {
     if (input === null || input === undefined) return skills.list();
@@ -1215,6 +1229,7 @@ function createWindow(): BrowserWindow {
   window.on("closed", () => {
     if (mainWindow === window) mainWindow = null;
   });
+  window.on("hide", () => computerUseMacSetupController?.close());
 
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("before-input-event", (event, input) => {
@@ -1303,6 +1318,48 @@ function createDynamicIslandWindow(bounds: Rectangle, _display: Display): Browse
   return window;
 }
 
+function createComputerUseMacSetupWindow(): BrowserWindow {
+  const workArea =
+    mainWindow && !mainWindow.isDestroyed()
+      ? screen.getDisplayMatching(mainWindow.getBounds()).workArea
+      : screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+  const width = 360;
+  const height = 300;
+  const window = new BrowserWindow({
+    width,
+    height,
+    x: workArea.x + workArea.width - width - 16,
+    y: workArea.y + 52,
+    show: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    backgroundColor: "#0b0d0e",
+    title: "Set up Computer Use",
+    icon: appIconPath,
+    ...(process.platform === "darwin"
+      ? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 12, y: 13 } }
+      : {}),
+    webPreferences: {
+      preload: join(__dirname, "../preload/index.cjs"),
+      contextIsolation: true,
+      devTools: true,
+      sandbox: true,
+      nodeIntegration: false,
+      webSecurity: true,
+    },
+  });
+  window.setAlwaysOnTop(true, "floating");
+  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.on("will-navigate", (event, targetUrl) => {
+    if (!isTrustedRendererUrl(targetUrl)) event.preventDefault();
+  });
+  return window;
+}
+
 function loadRenderer(window: BrowserWindow): Promise<void> {
   inviteReceiverReady = false;
   const developmentUrl = process.env.ELECTRON_RENDERER_URL;
@@ -1341,6 +1398,14 @@ function loadDynamicIslandRenderer(window: BrowserWindow, display: Display): Pro
   return window.loadURL(url.toString());
 }
 
+function loadComputerUseMacSetupRenderer(window: BrowserWindow, permission: MacPermissionId): Promise<void> {
+  const developmentUrl = process.env.ELECTRON_RENDERER_URL;
+  const url = new URL(developmentUrl ?? "openbot-app://app/index.html");
+  url.searchParams.set("surface", "computer-use-setup");
+  url.searchParams.set("permission", permission);
+  return window.loadURL(url.toString());
+}
+
 function configureApplicationMenu(service: AgentService, updater: UpdateService): void {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
@@ -1375,7 +1440,8 @@ function configureApplicationMenu(service: AgentService, updater: UpdateService)
 function forwardAgentEvent(serverId: string, event: AgentEvent, bufferedLive = false): void {
   if (serverId === "local") hostAnalytics?.handleAgentEvent(event);
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(
+  sendToRenderer(
+    mainWindow,
     IPC_CHANNELS.agentEvent,
     bufferedLive ? { serverId, event, bufferedLive } : { serverId, event },
   );
@@ -1395,41 +1461,42 @@ function forwardAgentEvent(serverId: string, event: AgentEvent, bufferedLive = f
 
 function forwardBrowserDisplayState(state: BrowserDisplayState): void {
   for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.browserDisplayStateEvent, state);
+    sendToRenderer(window, IPC_CHANNELS.browserDisplayStateEvent, state);
   }
 }
 
 function forwardUpdateStatus(status: import("@openbot/contracts/ipc").UpdateStatus): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.updateEvent, status);
+  sendToRenderer(mainWindow, IPC_CHANNELS.updateEvent, status);
 }
 
 function forwardVoiceModelStatus(status: VoiceModelStatus): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.voiceModelStatus, status);
+  sendToRenderer(mainWindow, IPC_CHANNELS.voiceModelStatus, status);
 }
 
 function forwardProviderRuntimeStatus(snapshot: import("@openbot/contracts/ipc").ProviderRuntimeSnapshot): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.providerRuntimesEvent, snapshot);
+  sendToRenderer(mainWindow, IPC_CHANNELS.providerRuntimesEvent, snapshot);
 }
 
 function forwardHostStatus(status: import("@openbot/contracts/ipc").HostStatus): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.hostEvent, status);
+  sendToRenderer(mainWindow, IPC_CHANNELS.hostEvent, status);
   if (remoteServerManager) {
-    mainWindow.webContents.send(IPC_CHANNELS.serversEvent, withLocalHostSummary(remoteServerManager.list(), status));
+    sendToRenderer(mainWindow, IPC_CHANNELS.serversEvent, withLocalHostSummary(remoteServerManager.list(), status));
   }
 }
 
 function forwardRemoteDesktopSessions(sessions: import("@openbot/contracts/ipc").RemoteDesktopSession[]): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.remoteDesktopEvent, sessions);
+  sendToRenderer(mainWindow, IPC_CHANNELS.remoteDesktopEvent, sessions);
 }
 
 function forwardServers(servers: import("@openbot/contracts/ipc").ServerSummary[]): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(
+  sendToRenderer(
+    mainWindow,
     IPC_CHANNELS.serversEvent,
     hostService ? withLocalHostSummary(servers, hostService.getStatus()) : servers,
   );
@@ -1437,7 +1504,7 @@ function forwardServers(servers: import("@openbot/contracts/ipc").ServerSummary[
 
 function forwardTeamPresence(serverId: string, snapshot: import("@openbot/contracts/ipc").TeamPresenceSnapshot): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.serversPresence, { serverId, snapshot });
+  sendToRenderer(mainWindow, IPC_CHANNELS.serversPresence, { serverId, snapshot });
 }
 
 function forwardDirectMessage(
@@ -1445,7 +1512,7 @@ function forwardDirectMessage(
   event: import("@openbot/contracts/ipc").DirectMessageRealtimeEvent,
 ): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.serversDirectMessage, { serverId, event });
+  sendToRenderer(mainWindow, IPC_CHANNELS.serversDirectMessage, { serverId, event });
 }
 
 function forwardDirectTyping(
@@ -1453,7 +1520,7 @@ function forwardDirectTyping(
   event: import("@openbot/contracts/ipc").DirectTypingRealtimeEvent,
 ): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.serversDirectTyping, { serverId, event });
+  sendToRenderer(mainWindow, IPC_CHANNELS.serversDirectTyping, { serverId, event });
 }
 
 function forwardCentralAuth(state: CentralAuthState): void {
@@ -1480,7 +1547,7 @@ function forwardCentralAuth(state: CentralAuthState): void {
       console.error("Unable to synchronize the signed-in account:", error);
     });
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.authEvent, state);
+  sendToRenderer(mainWindow, IPC_CHANNELS.authEvent, state);
 }
 
 function acceptInviteUrl(value: string): void {
@@ -1493,8 +1560,7 @@ function acceptInviteUrl(value: string): void {
   if (mainWindow && !mainWindow.isDestroyed() && inviteReceiverReady) {
     mainWindow.show();
     mainWindow.focus();
-    mainWindow.webContents.send(IPC_CHANNELS.serversInvite, value);
-    pendingInviteUrl = null;
+    if (sendToRenderer(mainWindow, IPC_CHANNELS.serversInvite, value)) pendingInviteUrl = null;
   }
 }
 
@@ -1556,6 +1622,17 @@ if (!hasSingleInstanceLock) {
       configureContentSecurityPolicy();
       configureRendererPermissions();
       mainWindow = createWindow();
+      const computerUseMacSetupService = new ComputerUseMacSetupService({
+        getIconDataUrl: async (path) => (await app.getFileIcon(path, { size: "normal" })).toDataURL(),
+      });
+      computerUseMacSetupController = new ComputerUseMacSetupWindowController({
+        service: computerUseMacSetupService,
+        createWindow: createComputerUseMacSetupWindow,
+        loadWindow: loadComputerUseMacSetupRenderer,
+        openExternal: (url) => shell.openExternal(url),
+        revealPath: (path) => shell.showItemInFolder(path),
+        loadDragIcon: (path) => app.getFileIcon(path, { size: "normal" }),
+      });
       dynamicIslandController = new DynamicIslandWindowController({
         platform: process.platform,
         preferencePath: join(app.getPath("userData"), DYNAMIC_ISLAND_PREFERENCE_FILE),
@@ -1570,11 +1647,13 @@ if (!hasSingleInstanceLock) {
           await performDynamicIslandCriticalAction(action, agentService, remoteServerManager, decodeVoid);
         },
       });
+      const centralAuthApiUrl = readCentralAuthApiUrl(
+        process.env.OPENBOT_AUTH_API_URL,
+        app.isPackaged ? "https://api.openbot.run" : "http://127.0.0.1:3100",
+      );
       centralAuthManager = new CentralAuthManager({
-        apiUrl: readCentralAuthApiUrl(
-          process.env.OPENBOT_AUTH_API_URL,
-          app.isPackaged ? "https://api.openbot.run" : "http://127.0.0.1:3100",
-        ),
+        apiUrl: centralAuthApiUrl,
+        mobileConnectApiUrl: readMobileConnectApiUrl(process.env.OPENBOT_MOBILE_AUTH_API_URL, centralAuthApiUrl),
         storagePath: join(app.getPath("userData"), CENTRAL_AUTH_FILE),
         canPersist: () => safeStorage.isEncryptionAvailable(),
         encrypt: (value) => {
@@ -1612,7 +1691,7 @@ if (!hasSingleInstanceLock) {
         developmentUrl: process.env.ELECTRON_RENDERER_URL,
         onEvent: (event) => {
           if (!mainWindow || mainWindow.isDestroyed()) return;
-          mainWindow.webContents.send(IPC_CHANNELS.browserPictureInPictureEvent, event);
+          sendToRenderer(mainWindow, IPC_CHANNELS.browserPictureInPictureEvent, event);
         },
       });
       browserHost.onChanged((tabs, activeTabId) => forwardBrowserDisplayState({ tabs, activeTabId }));
@@ -1628,7 +1707,6 @@ if (!hasSingleInstanceLock) {
         store,
         mailboxStore,
         browserHost,
-        readComputerUsePrerequisites,
         30_000,
         setupState.preferredProvider ?? "codex",
         null,
@@ -1956,6 +2034,7 @@ if (!hasSingleInstanceLock) {
         agentMarketplace,
         voiceTranscriptionService,
         dynamicIslandController,
+        computerUseMacSetupController,
       );
       configureApplicationMenu(service, updateService);
       await dynamicIslandController
@@ -2059,45 +2138,6 @@ async function connectDevelopmentRemoteServer(manager: RemoteServerManager): Pro
     }
   }
   throw lastError;
-}
-
-function readComputerUsePrerequisites(): {
-  screenRecording: boolean;
-  accessibility: boolean;
-} {
-  if (process.platform !== "darwin") {
-    return { screenRecording: false, accessibility: false };
-  }
-  return {
-    screenRecording: systemPreferences.getMediaAccessStatus("screen") === "granted",
-    accessibility: systemPreferences.isTrustedAccessibilityClient(false),
-  };
-}
-
-function readMacPermissions(): MacPermissionsState {
-  if (process.platform !== "darwin") {
-    return { screenRecording: "unknown", accessibility: "unknown" };
-  }
-  return {
-    screenRecording: systemPreferences.getMediaAccessStatus("screen"),
-    accessibility: systemPreferences.isTrustedAccessibilityClient(false) ? "granted" : "not-determined",
-  };
-}
-
-async function requestMacPermission(permission: MacPermissionId): Promise<MacPermissionsState> {
-  if (process.platform !== "darwin") return readMacPermissions();
-  if (permission === "accessibility") {
-    systemPreferences.isTrustedAccessibilityClient(true);
-    return readMacPermissions();
-  }
-
-  const state = systemPreferences.getMediaAccessStatus("screen");
-  if (state === "not-determined") {
-    await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width: 0, height: 0 } });
-  } else if (state === "denied" || state === "unknown") {
-    await shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture");
-  }
-  return readMacPermissions();
 }
 
 app.on("window-all-closed", () => {

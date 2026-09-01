@@ -87,8 +87,20 @@ For setup problems, data reset, and uninstall instructions, see
 
 ## Development
 
-Development requires [Bun](https://bun.sh/) 1.3.11, Node.js 22.12 or newer, and at least one
+Development requires stable [Bun](https://bun.sh/) 1.4.0, Node.js 22.12 or newer, and at least one
 supported agent CLI.
+
+Install the exact Bun version on macOS or Linux:
+
+```bash
+curl -fsSL https://bun.com/install | bash -s "bun-v1.4.0"
+```
+
+Install it on Windows in PowerShell:
+
+```powershell
+iex "& {$(irm https://bun.com/install.ps1)} -Version 1.4.0"
+```
 
 ```bash
 git clone https://github.com/NorbertBodziony/openbot.git

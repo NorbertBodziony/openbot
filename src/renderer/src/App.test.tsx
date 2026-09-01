@@ -260,14 +260,21 @@ describe("OpenBot connected desktop shell", () => {
           completed: true,
           preferredProvider,
         })),
-        getMacPermissions: vi.fn().mockResolvedValue({
-          screenRecording: "granted",
-          accessibility: "granted",
+        getComputerUseMacSetupState: vi.fn().mockResolvedValue({
+          status: "available",
+          helperName: "Codex Computer Use",
+          helperIconDataUrl: null,
+          message: null,
         }),
-        requestMacPermission: vi.fn().mockResolvedValue({
-          screenRecording: "granted",
-          accessibility: "granted",
+        openComputerUsePermissionSetup: vi.fn().mockResolvedValue({
+          status: "available",
+          helperName: "Codex Computer Use",
+          helperIconDataUrl: null,
+          message: null,
         }),
+        startComputerUseHelperDrag: vi.fn().mockResolvedValue(undefined),
+        revealComputerUseHelper: vi.fn().mockResolvedValue(undefined),
+        closeComputerUsePermissionSetup: vi.fn().mockResolvedValue(undefined),
         openExternal: vi.fn().mockResolvedValue(undefined),
         connectChatGPT: vi.fn().mockResolvedValue({
           phase: "blocked",
@@ -2279,40 +2286,28 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("heading", { name: "Chief" })).not.toBeInTheDocument();
   });
 
-  it("requests optional macOS permissions and shows the new state", async () => {
+  it("opens optional Computer Use setup without blocking onboarding", async () => {
     vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
       completed: false,
       preferredProvider: null,
     });
-    vi.mocked(window.openbot.getMacPermissions).mockResolvedValueOnce({
-      screenRecording: "not-determined",
-      accessibility: "not-determined",
-    });
-    vi.mocked(window.openbot.requestMacPermission).mockResolvedValueOnce({
-      screenRecording: "granted",
-      accessibility: "not-determined",
-    });
     render(() => <App />);
 
     await fireEvent.click(await screen.findByRole("button", { name: "Next" }));
-    const row = (await screen.findByText("Screen Recording")).closest(".onboarding-permission-row");
+    const row = (await screen.findByText("Screen Recording")).closest(".computer-use-row");
     const action = row?.querySelector("button");
     expect(action).not.toBeNull();
     if (!(action instanceof HTMLButtonElement)) throw new Error("Permission action is missing.");
     await fireEvent.click(action);
-    expect(window.openbot.requestMacPermission).toHaveBeenCalledWith("screen-recording");
-    await waitFor(() => expect(action).toHaveTextContent("Allowed"));
+    expect(window.openbot.openComputerUsePermissionSetup).toHaveBeenCalledWith("screen-recording");
+    expect(await screen.findByText("System Settings opened")).toBeInTheDocument();
 
-    vi.mocked(window.openbot.requestMacPermission).mockResolvedValueOnce({
-      screenRecording: "granted",
-      accessibility: "granted",
-    });
-    const accessibilityRow = screen.getByText("Accessibility").closest(".onboarding-permission-row");
+    const accessibilityRow = screen.getByText("Accessibility").closest(".computer-use-row");
     const accessibilityAction = accessibilityRow?.querySelector("button");
     expect(accessibilityAction).not.toBeNull();
     if (!(accessibilityAction instanceof HTMLButtonElement)) throw new Error("Accessibility action is missing.");
     await fireEvent.click(accessibilityAction);
-    await waitFor(() => expect(accessibilityAction).toHaveTextContent("Allowed"));
+    expect(window.openbot.openComputerUsePermissionSetup).toHaveBeenCalledWith("accessibility");
   });
 
   it("hides macOS permissions on other platforms", async () => {
@@ -2330,8 +2325,8 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(await screen.findByRole("heading", { name: "Meet OpenBot" })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    await waitFor(() => expect(screen.queryByText("Optional computer control")).not.toBeInTheDocument());
-    expect(window.openbot.getMacPermissions).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByText("Enable Computer Use")).not.toBeInTheDocument());
+    expect(window.openbot.getComputerUseMacSetupState).not.toHaveBeenCalled();
   });
 
   it("guides signed-out users before enabling chat", async () => {
@@ -2494,7 +2489,7 @@ describe("OpenBot connected desktop shell", () => {
     });
     render(() => <App />);
 
-    expect(await screen.findByText("OpenBot update available")).toBeInTheDocument();
+    expect(await screen.findByText("New update available")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open account actions" }));
     fireEvent.click(await screen.findByRole("button", { name: /Download update/ }));
     await waitFor(() => expect(window.openbot.update.download).toHaveBeenCalledOnce());
@@ -2549,6 +2544,25 @@ describe("OpenBot connected desktop shell", () => {
         failure_code: "download_failed",
       }),
     );
+    expect(await screen.findByRole("button", { name: /Retry update.*Could not check for updates/ })).toBeEnabled();
+  });
+
+  it("keeps the update retry visible when downloading rejects", async () => {
+    vi.mocked(window.openbot.update.getStatus).mockResolvedValueOnce({
+      phase: "available",
+      currentVersion: "0.1.0",
+      availableVersion: "0.2.0",
+      progress: null,
+      checkedAt: null,
+      message: null,
+      errorCode: null,
+    });
+    vi.mocked(window.openbot.update.download).mockRejectedValueOnce(new Error("Could not download update. Try again."));
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Download update/ }));
+
+    expect(await screen.findByRole("button", { name: /Retry update.*Could not download update/ })).toBeEnabled();
   });
 
   it("confirms an installed app version on the next launch", async () => {

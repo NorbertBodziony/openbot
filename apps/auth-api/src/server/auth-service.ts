@@ -8,13 +8,24 @@ import {
 } from "@openbot/contracts/validation";
 
 import { randomToken, sha256 } from "./crypto";
-import type { AuthRepository, AuthUser, EmailCodeDelivery, EmailVerificationResult } from "./types";
+import { EMAIL_CODE_DELIVERY_BUDGET_MS } from "./smtp-email-delivery";
+import type {
+  AuthRepository,
+  AuthUser,
+  EmailChallengeRecord,
+  EmailCodeDelivery,
+  EmailVerificationResult,
+  MobileAuthDevice,
+  MobileAuthDeviceIdentity,
+} from "./types";
 
 const CHALLENGE_TTL_MS = 10 * 60_000;
 const RESEND_COOLDOWN_MS = 60_000;
 const SESSION_TTL_MS = 30 * 24 * 60 * 60_000;
 const TEAM_TICKET_TTL_MS = 2 * 60_000;
+const MOBILE_CONNECT_SERVER_ID = "00000000-0000-4000-8000-000000000002";
 const RATE_WINDOW_MS = 15 * 60_000;
+const AMBIGUOUS_DELIVERY_ERRORS = new Set(["smtp_delivery_unknown", "email_delivery_unknown"]);
 
 interface AuthServiceOptions {
   repository: AuthRepository;
@@ -47,14 +58,29 @@ export class AuthService {
     return this.#delivery !== null || this.#exposeDevelopmentCode;
   }
 
-  async startEmailSignIn(emailInput: string, sourceIp: string): Promise<EmailSignInStart> {
+  async startEmailSignIn(emailInput: string, sourceIp: string, idempotencyKey?: string): Promise<EmailSignInStart> {
     if (!this.configured) {
       throw new AuthServiceError(503, "email_delivery_not_configured", "Email sign-in delivery is not configured.");
     }
     const email = normalizeEmail(emailInput);
     const now = this.#now();
+    if (idempotencyKey !== undefined && !isUuidV4(idempotencyKey)) {
+      throw new AuthServiceError(400, "invalid_idempotency_key", "The sign-in request identifier is invalid.");
+    }
+    const challengeId = idempotencyKey ?? randomToken();
+    const challengeHash = await sha256(challengeId);
+    if (idempotencyKey) {
+      const existing = await this.#repository.findEmailChallenge(challengeHash);
+      if (existing) return this.#replayEmailSignIn(existing, email, challengeId, now);
+    }
+
     await this.#enforceRateLimit(`start:email:${email}`, 5, now);
     await this.#enforceRateLimit(`start:ip:${normalizeSourceIp(sourceIp)}`, 20, now);
+
+    if (idempotencyKey) {
+      const existing = await this.#repository.findEmailChallenge(challengeHash);
+      if (existing) return this.#replayEmailSignIn(existing, email, challengeId, now);
+    }
 
     const latestChallenge = await this.#repository.latestEmailChallengeAt(email);
     if (latestChallenge !== null && latestChallenge > now - RESEND_COOLDOWN_MS) {
@@ -67,11 +93,9 @@ export class AuthService {
       );
     }
 
-    const challengeId = randomToken();
-    const code = generateOneTimeCode();
+    const code = this.#exposeDevelopmentCode ? await developmentOneTimeCode(challengeId) : generateOneTimeCode();
     const expiresAt = now + CHALLENGE_TTL_MS;
-    const challengeHash = await sha256(challengeId);
-    await this.#repository.createEmailChallenge({
+    const created = await this.#repository.createEmailChallenge({
       idHash: challengeHash,
       email,
       codeHash: await sha256(normalizeOneTimeCode(code)),
@@ -80,19 +104,77 @@ export class AuthService {
       expiresAt,
       maxAttempts: 5,
     });
+    if (!created) {
+      const existing = await this.#repository.findEmailChallenge(challengeHash);
+      if (!existing) throw new Error("The sign-in challenge could not be claimed.");
+      return this.#replayEmailSignIn(existing, email, challengeId, now);
+    }
     try {
       if (this.#delivery) await this.#delivery.send({ email, code, expiresAt });
     } catch (error) {
-      console.error("Email code delivery failed:", safeDeliveryError(error));
-      await this.#repository.cancelEmailChallenge(challengeHash, now);
+      const deliveryError = safeDeliveryError(error);
+      console.error("Email code delivery failed:", deliveryError);
+      if (AMBIGUOUS_DELIVERY_ERRORS.has(deliveryError)) {
+        const retryAfterSeconds = Math.max(1, Math.ceil((now + EMAIL_CODE_DELIVERY_BUDGET_MS - this.#now()) / 1_000));
+        throw new AuthServiceError(
+          409,
+          "email_delivery_pending",
+          "OpenBot could not confirm delivery. Check again when the countdown ends.",
+          retryAfterSeconds,
+        );
+      }
+      await this.#repository.completeEmailChallengeDelivery(challengeHash, "failed", this.#now());
       throw new AuthServiceError(502, "email_delivery_failed", "OpenBot could not send the sign-in code.");
     }
+    await this.#repository.completeEmailChallengeDelivery(challengeHash, "sent", this.#now());
 
     return {
       challengeId,
       expiresAt,
       resendAt: now + RESEND_COOLDOWN_MS,
       ...(this.#exposeDevelopmentCode ? { developmentCode: code } : {}),
+    };
+  }
+
+  async #replayEmailSignIn(
+    challenge: EmailChallengeRecord,
+    email: string,
+    challengeId: string,
+    now: number,
+  ): Promise<EmailSignInStart> {
+    if (challenge.email !== email) {
+      throw new AuthServiceError(
+        409,
+        "idempotency_conflict",
+        "This sign-in request identifier was already used for another email address.",
+      );
+    }
+    if (challenge.deliveryState === "failed") {
+      throw new AuthServiceError(502, "email_delivery_failed", "OpenBot could not send the sign-in code.");
+    }
+    if (challenge.deliveryState === "pending") {
+      const remainingMs = challenge.createdAt + EMAIL_CODE_DELIVERY_BUDGET_MS - now;
+      if (remainingMs > 0) {
+        const retryAfterSeconds = Math.max(1, Math.ceil(remainingMs / 1_000));
+        throw new AuthServiceError(
+          409,
+          "email_delivery_pending",
+          "OpenBot is still confirming delivery. Check again when the countdown ends.",
+          retryAfterSeconds,
+        );
+      }
+    }
+    if (challenge.consumedAt !== null) {
+      throw new AuthServiceError(409, "idempotency_key_completed", "This sign-in request has already completed.");
+    }
+    if (challenge.expiresAt <= now) {
+      throw new AuthServiceError(410, "sign_in_code_expired", "The sign-in code expired. Request a new code.");
+    }
+    return {
+      challengeId,
+      expiresAt: challenge.expiresAt,
+      resendAt: challenge.createdAt + RESEND_COOLDOWN_MS,
+      ...(this.#exposeDevelopmentCode ? { developmentCode: await developmentOneTimeCode(challengeId) } : {}),
     };
   }
 
@@ -121,6 +203,10 @@ export class AuthService {
 
   authenticate(sessionToken: string): Promise<AuthUser | null> {
     return this.#repository.authenticate(sessionToken, this.#now());
+  }
+
+  authenticateDesktopSession(sessionToken: string): Promise<AuthUser | null> {
+    return this.#repository.authenticateDesktopSession(sessionToken, this.#now());
   }
 
   async updateName(sessionToken: string, nameInput: string): Promise<AuthUser> {
@@ -170,7 +256,7 @@ export class AuthService {
     serverId: string,
     sourceIp: string,
   ): Promise<{ ticket: string; expiresAt: number }> {
-    validateServerId(serverId);
+    validateTeamServerId(serverId);
     const user = await this.authenticate(sessionToken);
     if (!user) throw new AuthServiceError(401, "unauthorized", "The session is invalid.");
     const now = this.#now();
@@ -189,7 +275,7 @@ export class AuthService {
   }
 
   async redeemTeamAuthTicket(ticket: string, serverId: string, sourceIp: string): Promise<AuthUser | null> {
-    validateServerId(serverId);
+    validateTeamServerId(serverId);
     if (!ticket || ticket.length > 128) return null;
     const now = this.#now();
     await this.#enforceRateLimit(`team-ticket-redeem:ip:${normalizeSourceIp(sourceIp)}`, 120, now);
@@ -200,8 +286,72 @@ export class AuthService {
     });
   }
 
+  async issueMobileAuthTicket(sessionToken: string, sourceIp: string): Promise<{ ticket: string; expiresAt: number }> {
+    const user = await this.authenticateDesktopSession(sessionToken);
+    if (!user) throw new AuthServiceError(401, "unauthorized", "The session is invalid.");
+    const now = this.#now();
+    await this.#enforceRateLimit(`mobile-ticket:user:${user.id}`, 30, now);
+    await this.#enforceRateLimit(`mobile-ticket:ip:${normalizeSourceIp(sourceIp)}`, 60, now);
+    const ticket = randomToken();
+    const expiresAt = now + TEAM_TICKET_TTL_MS;
+    await this.#repository.replaceMobileAuthTicket({
+      ticketHash: await sha256(ticket),
+      userId: user.id,
+      serverId: MOBILE_CONNECT_SERVER_ID,
+      createdAt: now,
+      expiresAt,
+    });
+    return { ticket, expiresAt };
+  }
+
+  async redeemMobileAuthTicket(
+    ticket: string,
+    deviceInput: MobileAuthDeviceIdentity,
+    sourceIp: string,
+  ): Promise<{ sessionToken: string; user: AuthUser } | null> {
+    if (!ticket || ticket.length > 128) return null;
+    const device = normalizeMobileDevice(deviceInput);
+    const now = this.#now();
+    await this.#enforceRateLimit(`mobile-ticket-redeem:ip:${normalizeSourceIp(sourceIp)}`, 60, now);
+    return this.#repository.redeemMobileAuthTicket({
+      ticketHash: await sha256(ticket),
+      serverId: MOBILE_CONNECT_SERVER_ID,
+      now,
+      session: {
+        id: crypto.randomUUID(),
+        token: randomToken(),
+        expiresAt: now + SESSION_TTL_MS,
+      },
+      device,
+    });
+  }
+
+  async listMobileAuthDevices(sessionToken: string): Promise<MobileAuthDevice[]> {
+    const user = await this.authenticate(sessionToken);
+    if (!user) throw new AuthServiceError(401, "unauthorized", "The session is invalid.");
+    return this.#repository.listMobileAuthDevices(user.id, this.#now());
+  }
+
+  authenticateMobileSession(sessionToken: string): Promise<AuthUser | null> {
+    return this.#repository.authenticateMobileSession(sessionToken, this.#now());
+  }
+
+  async revokeMobileAuthDevice(sessionToken: string, sessionId: string): Promise<void> {
+    if (!isUuidV4(sessionId)) {
+      throw new AuthServiceError(400, "invalid_mobile_session", "The mobile session ID is invalid.");
+    }
+    const user = await this.authenticate(sessionToken);
+    if (!user) throw new AuthServiceError(401, "unauthorized", "The session is invalid.");
+    await this.#repository.revokeMobileAuthDevice(user.id, sessionId, this.#now());
+  }
+
   logout(sessionToken: string): Promise<void> {
     return this.#repository.revokeSession(sessionToken, this.#now());
+  }
+
+  async logoutMobileSession(sessionToken: string): Promise<void> {
+    const revoked = await this.#repository.revokeMobileSession(sessionToken, this.#now());
+    if (!revoked) throw new AuthServiceError(401, "unauthorized", "The mobile session is invalid.");
   }
 
   async #enforceRateLimit(key: string, limit: number, now: number): Promise<void> {
@@ -219,7 +369,7 @@ export class AuthService {
 
 function safeDeliveryError(error: unknown): string {
   if (!(error instanceof Error)) return "unknown_delivery_error";
-  return /^smtp_[a-z_]+$/u.test(error.message) || error.message === "email_delivery_webhook_failed"
+  return /^smtp_[a-z_]+$/u.test(error.message) || /^email_delivery_[a-z_]+$/u.test(error.message)
     ? error.message
     : "unknown_delivery_error";
 }
@@ -239,6 +389,14 @@ export function generateOneTimeCode(): string {
   const bytes = new Uint8Array(ONE_TIME_CODE_LENGTH);
   crypto.getRandomValues(bytes);
   const raw = [...bytes].map((byte) => ONE_TIME_CODE_ALPHABET[byte & 31]).join("");
+  return `${raw.slice(0, 4)}-${raw.slice(4)}`;
+}
+
+async function developmentOneTimeCode(challengeId: string): Promise<string> {
+  const digest = await sha256(`development-code:${challengeId}`);
+  const raw = [...digest.slice(0, ONE_TIME_CODE_LENGTH)]
+    .map((character) => ONE_TIME_CODE_ALPHABET[character.charCodeAt(0) & 31])
+    .join("");
   return `${raw.slice(0, 4)}-${raw.slice(4)}`;
 }
 
@@ -275,6 +433,27 @@ function validateServerId(value: string): void {
   if (!isUuidV4(value)) {
     throw new AuthServiceError(400, "invalid_server_id", "The team server ID is invalid.");
   }
+}
+
+function validateTeamServerId(value: string): void {
+  validateServerId(value);
+  if (value === MOBILE_CONNECT_SERVER_ID) {
+    throw new AuthServiceError(400, "invalid_server_id", "The team server ID is invalid.");
+  }
+}
+
+function normalizeMobileDevice(input: MobileAuthDeviceIdentity): MobileAuthDeviceIdentity {
+  if (!isUuidV4(input.id)) {
+    throw new AuthServiceError(400, "invalid_mobile_device", "The mobile device ID is invalid.");
+  }
+  const name = input.name.normalize("NFC").trim().replace(/\s+/gu, " ");
+  if (!name || name.length > 80 || /[\p{Cc}\p{Cf}]/u.test(name)) {
+    throw new AuthServiceError(400, "invalid_mobile_device", "The mobile device name is invalid.");
+  }
+  if (input.platform !== "ios" && input.platform !== "android" && input.platform !== "unknown") {
+    throw new AuthServiceError(400, "invalid_mobile_device", "The mobile device platform is invalid.");
+  }
+  return { id: input.id, name, platform: input.platform };
 }
 
 function verificationResult(result: EmailVerificationResult): {

@@ -69,6 +69,20 @@ export interface AuthUser {
   avatarUrl: string | null;
 }
 
+export interface MobileAuthDevice {
+  sessionId: string;
+  name: string;
+  platform: "ios" | "android" | "unknown";
+  connectedAt: number;
+  lastActiveAt: number;
+}
+
+export interface MobileAuthDeviceIdentity {
+  id: string;
+  name: string;
+  platform: MobileAuthDevice["platform"];
+}
+
 export interface EmailCodeDelivery {
   send(message: { email: string; code: string; expiresAt: number }): Promise<void>;
 }
@@ -87,8 +101,19 @@ export type EmailVerificationResult =
   | { status: "verified"; session: { sessionToken: string; user: AuthUser } }
   | { status: "invalid" | "expired" | "too_many_attempts" };
 
+export type EmailChallengeDeliveryState = "pending" | "sent" | "failed";
+
+export interface EmailChallengeRecord {
+  email: string;
+  createdAt: number;
+  expiresAt: number;
+  consumedAt: number | null;
+  deliveryState: EmailChallengeDeliveryState;
+}
+
 export interface AuthRepository {
   latestEmailChallengeAt(email: string): Promise<number | null>;
+  findEmailChallenge(idHash: string): Promise<EmailChallengeRecord | null>;
   createEmailChallenge(input: {
     idHash: string;
     email: string;
@@ -97,8 +122,8 @@ export interface AuthRepository {
     createdAt: number;
     expiresAt: number;
     maxAttempts: number;
-  }): Promise<void>;
-  cancelEmailChallenge(idHash: string, now: number): Promise<void>;
+  }): Promise<boolean>;
+  completeEmailChallengeDelivery(idHash: string, state: "sent" | "failed", now: number): Promise<void>;
   verifyEmailChallenge(input: {
     idHash: string;
     codeHash: string;
@@ -111,7 +136,9 @@ export interface AuthRepository {
     limit: number,
   ): Promise<{ allowed: boolean; count: number; windowStart: number }>;
   authenticate(sessionToken: string, now: number): Promise<AuthUser | null>;
+  authenticateDesktopSession(sessionToken: string, now: number): Promise<AuthUser | null>;
   revokeSession(sessionToken: string, now: number): Promise<void>;
+  revokeMobileSession(sessionToken: string, now: number): Promise<boolean>;
   updateUserName(userId: string, name: string, now: number): Promise<AuthUser>;
   updateUserAvatar(
     userId: string,
@@ -126,5 +153,22 @@ export interface AuthRepository {
     createdAt: number;
     expiresAt: number;
   }): Promise<void>;
+  replaceMobileAuthTicket(input: {
+    ticketHash: string;
+    userId: string;
+    serverId: string;
+    createdAt: number;
+    expiresAt: number;
+  }): Promise<void>;
   redeemTeamAuthTicket(input: { ticketHash: string; serverId: string; now: number }): Promise<AuthUser | null>;
+  redeemMobileAuthTicket(input: {
+    ticketHash: string;
+    serverId: string;
+    now: number;
+    session: { id: string; token: string; expiresAt: number };
+    device: MobileAuthDeviceIdentity;
+  }): Promise<{ sessionToken: string; user: AuthUser } | null>;
+  authenticateMobileSession(sessionToken: string, now: number): Promise<AuthUser | null>;
+  listMobileAuthDevices(userId: string, now: number): Promise<MobileAuthDevice[]>;
+  revokeMobileAuthDevice(userId: string, sessionId: string, now: number): Promise<boolean>;
 }
