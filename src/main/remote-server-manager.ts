@@ -244,7 +244,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #remoteViewerProxy: RemoteViewerProxy | null;
   #presence = new Map<string, TeamPresenceSnapshot>();
   #writeChain = Promise.resolve();
-  #persistenceRevision = 0;
+  #activeServerRevision = 0;
   #selectChain = Promise.resolve();
 
   constructor(
@@ -405,14 +405,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         throw new Error("Remote server not found.");
       }
       const previousServerId = this.#state.activeServerId;
-      this.#state.activeServerId = serverId;
+      const selectionRevision = this.#setActiveServerId(serverId);
       this.#syncEventScopes();
-      const persistence = this.#queuePersistence();
       try {
-        await persistence.completion;
+        await this.#persist();
       } catch (error) {
-        if (this.#persistenceRevision === persistence.revision) {
-          this.#state.activeServerId = previousServerId;
+        if (this.#activeServerRevision === selectionRevision) {
+          this.#setActiveServerId(previousServerId);
           this.#syncEventScopes();
         }
         throw error;
@@ -469,7 +468,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       if (!synchronized || synchronized.fingerprint !== invite.fingerprint) {
         throw new Error("The invitation host identity changed while it was accepted.");
       }
-      this.#state.activeServerId = accepted.hostId;
+      this.#setActiveServerId(accepted.hostId);
       this.#states.set(accepted.hostId, "connecting");
       await this.#persist();
       await this.#webrtcTransport.connect(accepted.hostId);
@@ -501,7 +500,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#state.servers = [...this.#state.servers.filter((server) => server.id !== stored.id), stored];
     this.#compatibility.set(stored.id, verifiedIdentity.compatibility);
     this.#issues.delete(stored.id);
-    this.#state.activeServerId = stored.id;
+    this.#setActiveServerId(stored.id);
     this.#syncEventScopes();
     this.#states.set(stored.id, "online");
     await this.#refreshRemoteDesktop(stored);
@@ -531,7 +530,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#state.servers = [...this.#state.servers.filter((server) => server.id !== stored.id), stored];
     this.#compatibility.set(stored.id, verifiedIdentity.compatibility);
     this.#issues.delete(stored.id);
-    this.#state.activeServerId = stored.id;
+    this.#setActiveServerId(stored.id);
     this.#syncEventScopes();
     this.#states.set(stored.id, "online");
     await this.#refreshRemoteDesktop(stored);
@@ -641,7 +640,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     }
     this.#clearServerConnectionState(serverId);
     this.#state.servers = this.#state.servers.filter((server) => server.id !== serverId);
-    if (this.#state.activeServerId === serverId) this.#state.activeServerId = "local";
+    if (this.#state.activeServerId === serverId) this.#setActiveServerId("local");
     await this.#persist();
     this.#emitChanged();
   }
@@ -1245,7 +1244,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this.#state.activeServerId !== "local" &&
       !this.#state.servers.some((server) => server.id === this.#state.activeServerId)
     ) {
-      this.#state.activeServerId = "local";
+      this.#setActiveServerId("local");
     }
     await this.#persist();
   }
@@ -2005,12 +2004,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async #persist(): Promise<void> {
-    await this.#queuePersistence().completion;
-  }
-
-  #queuePersistence(): { revision: number; completion: Promise<void> } {
     const snapshot = structuredClone(this.#state);
-    const revision = ++this.#persistenceRevision;
     const operation = this.#writeChain.then(async () => {
       const temporary = `${this.#path}.${randomUUID()}.tmp`;
       try {
@@ -2024,7 +2018,15 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       }
     });
     this.#writeChain = operation.catch(() => undefined);
-    return { revision, completion: operation };
+    await operation;
+  }
+
+  #setActiveServerId(serverId: string): number {
+    if (this.#state.activeServerId !== serverId) {
+      this.#state.activeServerId = serverId;
+      this.#activeServerRevision += 1;
+    }
+    return this.#activeServerRevision;
   }
 
   #emitChanged(): void {
