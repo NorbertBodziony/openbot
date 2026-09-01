@@ -27,6 +27,7 @@
     "required": [
       "EMAIL_SMTP_PASSWORD",
       "SKILLS_ADMIN_TOKEN",
+      "SITE_REPORT_HASH_SECRET",
       "REMOTE_TICKET_PRIVATE_JWK",
       "REMOTE_TICKET_PUBLIC_JWKS",
       "REMOTE_AUTH_WEBHOOK_SECRET"
@@ -60,6 +61,11 @@
       "binding": "SKILLS",
       "bucket_name": "openbot-skills",
       "preview_bucket_name": "openbot-skills-test"
+    },
+    {
+      "binding": "SITES",
+      "bucket_name": "openbot-sites",
+      "preview_bucket_name": "openbot-sites-test"
     }
   ],
   "ratelimits": [
@@ -77,6 +83,11 @@
       "name": "MARKETPLACE_UPLOAD_RATE_LIMITER",
       "namespace_id": "2026082703",
       "simple": { "limit": 5, "period": 60 }
+    },
+    {
+      "name": "SITE_REPORT_RATE_LIMITER",
+      "namespace_id": "2026083101",
+      "simple": { "limit": 10, "period": 60 }
     }
   ],
   "env": {
@@ -97,6 +108,8 @@
         "EMAIL_SMTP_PORT": "465",
         "EMAIL_SMTP_USERNAME": "hello@openbot.run",
         "EMAIL_FROM": "hello@openbot.run",
+        "SITE_PUBLISH_ENABLED": "false",
+        "SITE_COOKIE_ISOLATION_READY": "false",
         "REMOTE_TICKET_KEY_ID": "openbot-remote-1",
         "REMOTE_SIGNAL_URL": "ws://127.0.0.1:8081/v1/signal",
         "REMOTE_AUTH_WEBHOOK_URL": "http://127.0.0.1:8081/internal/auth-events"
@@ -117,6 +130,10 @@
         {
           "binding": "SKILLS",
           "bucket_name": "openbot-skills-test"
+        },
+        {
+          "binding": "SITES",
+          "bucket_name": "openbot-sites-test"
         }
       ],
       "ratelimits": [
@@ -134,6 +151,11 @@
           "name": "MARKETPLACE_UPLOAD_RATE_LIMITER",
           "namespace_id": "2026082706",
           "simple": { "limit": 5, "period": 60 }
+        },
+        {
+          "name": "SITE_REPORT_RATE_LIMITER",
+          "namespace_id": "2026083102",
+          "simple": { "limit": 10, "period": 60 }
         }
       ]
     },
@@ -149,6 +171,7 @@
         "required": [
           "EMAIL_SMTP_PASSWORD",
           "SKILLS_ADMIN_TOKEN",
+          "SITE_REPORT_HASH_SECRET",
           "REMOTE_TICKET_PRIVATE_JWK",
           "REMOTE_TICKET_PUBLIC_JWKS",
           "REMOTE_AUTH_WEBHOOK_SECRET"
@@ -160,6 +183,8 @@
         "EMAIL_SMTP_PORT": "465",
         "EMAIL_SMTP_USERNAME": "hello@openbot.run",
         "EMAIL_FROM": "hello@openbot.run",
+        "SITE_PUBLISH_ENABLED": "false",
+        "SITE_COOKIE_ISOLATION_READY": "false",
         "REMOTE_TICKET_KEY_ID": "openbot-remote-1",
         "REMOTE_SIGNAL_URL": "wss://signal.openbot.run/v1/signal",
         "REMOTE_AUTH_WEBHOOK_URL": "https://signal.openbot.run/internal/auth-events"
@@ -180,6 +205,10 @@
         {
           "binding": "SKILLS",
           "bucket_name": "openbot-skills-test"
+        },
+        {
+          "binding": "SITES",
+          "bucket_name": "openbot-sites-test"
         }
       ],
       "ratelimits": [
@@ -197,6 +226,11 @@
           "name": "MARKETPLACE_UPLOAD_RATE_LIMITER",
           "namespace_id": "2026082709",
           "simple": { "limit": 5, "period": 60 }
+        },
+        {
+          "name": "SITE_REPORT_RATE_LIMITER",
+          "namespace_id": "2026083103",
+          "simple": { "limit": 10, "period": 60 }
         }
       ]
     }

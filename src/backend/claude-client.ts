@@ -601,6 +601,38 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
         name: "openbot",
         version: "0.1.0",
         tools: [
+          tool("list_sites", "List static sites hosted by the signed-in OpenBot user.", {}, (args) =>
+            call("openbot", "list_sites", args),
+          ),
+          tool(
+            "publish_site",
+            "Publish a static site only after the user explicitly asks to publish it.",
+            {
+              sourcePath: z.string().min(1).max(INPUT_LIMITS.path),
+              title: z.string().min(1).max(120),
+              description: z.string().min(1).max(500),
+              spaFallback: z.boolean().optional(),
+            },
+            (args) => call("openbot", "publish_site", args),
+          ),
+          tool(
+            "replace_site",
+            "Replace an owned static site only after the user explicitly asks. The URL stays the same.",
+            {
+              siteId: z.string().min(1).max(INPUT_LIMITS.identifier),
+              sourcePath: z.string().min(1).max(INPUT_LIMITS.path),
+              title: z.string().min(1).max(120),
+              description: z.string().min(1).max(500),
+              spaFallback: z.boolean().optional(),
+            },
+            (args) => call("openbot", "replace_site", args),
+          ),
+          tool(
+            "delete_site",
+            "Delete an owned static site only after the user explicitly asks to delete it.",
+            { siteId: z.string().min(1).max(INPUT_LIMITS.identifier) },
+            (args) => call("openbot", "delete_site", args),
+          ),
           tool(
             "attach_files_to_response",
             "Attach existing local files to the current response for the user. Use this for screenshots, charts, diagrams, reports, and other files that the user should receive.",

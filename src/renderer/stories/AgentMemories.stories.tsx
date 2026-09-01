@@ -91,6 +91,11 @@ const meta = {
   component: AgentSettingsPanel,
   args: {
     bot: STORY_BOTS[0],
+    runtimeSettings: {
+      provider: STORY_BOTS[0].provider,
+      model: STORY_BOTS[0].model,
+      reasoningEffort: STORY_BOTS[0].reasoningEffort,
+    },
     agentStatus: STORY_AGENT_STATUS,
     modelOptions: STORY_MODELS,
     working: false,
@@ -98,6 +103,7 @@ const meta = {
     onClose: fn(),
     onWidthChange: fn(),
     onUpdateBot: fn(async () => undefined),
+    onUpdateRuntimeSettings: fn(async () => true),
     onSetAgentAvatar: fn(async () => undefined),
   },
   parameters: { layout: "fullscreen", a11y: { test: "error" } },
