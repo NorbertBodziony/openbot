@@ -210,6 +210,7 @@ interface OpenBotToolResponse {
 interface InFlightTurnCommands {
   botId: string;
   commands: Set<Promise<unknown>>;
+  browserCommands: Set<Promise<unknown>>;
 }
 
 interface PendingTurnStart {
@@ -1349,6 +1350,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.#browser.endControl(bot.threadId ?? session.externalSessionId, turnId);
         }
       }
+      await this.#waitForBrowserTurnCommands(stoppingTurnKeys);
       stopped = true;
     } finally {
       for (const key of stoppingTurnKeys) this.#stoppingTurns.delete(key);
@@ -1666,7 +1668,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           const primaryAccount = this.#accounts.get(primaryProvider);
           const codexClient = this.#clients.get("codex");
           const computerUse = codexClient ? await this.#probeComputerUse(codexClient) : "unavailable";
-          this.#loadedThreads.clear();
+          this.#clearLoadedThreads(provider);
           this.#setStatus({
             phase: "ready",
             cliVersion: this.#cli.get(primaryProvider)?.version ?? null,
@@ -2183,7 +2185,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#clients.delete(client.provider);
     void client.stop().catch(() => undefined);
     this.#clearPendingTurnStartsForClient(client);
-    this.#loadedThreads.clear();
+    this.#clearLoadedThreads(client.provider);
     this.#clearCompactionRuntime(client.provider);
     this.#clearPendingPrompts(client);
     this.#clearPendingBrowserTakeovers(client.provider);
@@ -2254,7 +2256,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
         await client.stop();
         if (this.#clients.get(client.provider) === client) this.#clients.delete(client.provider);
-        this.#loadedThreads.clear();
+        this.#clearLoadedThreads(client.provider);
         this.#clearCompactionRuntime(client.provider);
         this.#clearPendingPrompts(client);
         this.#clearPendingBrowserTakeovers(client.provider);
@@ -2420,6 +2422,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
                   request.params.threadId,
                   request.params.turnId,
                   this.#surfaceBrowserTakeover(request),
+                  true,
                 ),
               );
               return;
@@ -2435,6 +2438,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
                   threadId: this.#publicThreadId(botId, request.params.threadId),
                   ownerBotId: botId,
                 }),
+                true,
               ),
             );
             return;
@@ -2496,21 +2500,33 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.#turnIsStopped(`${threadId}:${turnId}`)) throw new StoppedTurnError();
   }
 
-  async #trackTurnCommand<T>(botId: string, threadId: string, turnId: string, command: Promise<T>): Promise<T> {
+  async #trackTurnCommand<T>(
+    botId: string,
+    threadId: string,
+    turnId: string,
+    command: Promise<T>,
+    browser = false,
+  ): Promise<T> {
     const turnKey = `${threadId}:${turnId}`;
-    const entry = this.#inFlightTurnCommands.get(turnKey) ?? { botId, commands: new Set<Promise<unknown>>() };
+    const entry = this.#inFlightTurnCommands.get(turnKey) ?? {
+      botId,
+      commands: new Set<Promise<unknown>>(),
+      browserCommands: new Set<Promise<unknown>>(),
+    };
     if (entry.botId !== botId) throw new Error("The turn belongs to a different OpenBot agent.");
     let finishTracking: (() => void) | undefined;
     const tracked = new Promise<void>((resolve) => {
       finishTracking = resolve;
     });
     entry.commands.add(tracked);
+    if (browser) entry.browserCommands.add(tracked);
     this.#inFlightTurnCommands.set(turnKey, entry);
     try {
       return await command;
     } finally {
       finishTracking?.();
       entry.commands.delete(tracked);
+      entry.browserCommands.delete(tracked);
       if (entry.commands.size === 0 && this.#inFlightTurnCommands.get(turnKey) === entry) {
         this.#inFlightTurnCommands.delete(turnKey);
       }
@@ -2519,6 +2535,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   #hasInFlightTurnCommand(botId: string): boolean {
     return [...this.#inFlightTurnCommands.values()].some((entry) => entry.botId === botId && entry.commands.size > 0);
+  }
+
+  async #waitForBrowserTurnCommands(turnKeys: ReadonlySet<string>): Promise<void> {
+    const commands = [...turnKeys].flatMap((turnKey) => [
+      ...(this.#inFlightTurnCommands.get(turnKey)?.browserCommands ?? []),
+    ]);
+    await Promise.all(commands);
   }
 
   async #handleOpenBotTool(params: DynamicToolCallParams): Promise<OpenBotToolResponse> {
@@ -3955,6 +3978,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     for (const threadId of threadIds) {
       this.#clearCompactionTimer(threadId);
       this.#contextBudgets.delete(threadId);
+    }
+  }
+
+  #clearLoadedThreads(provider: AgentProvider): void {
+    const botIds = new Set(
+      this.#store
+        .list()
+        .filter((bot) => providerForBot(bot) === provider)
+        .map((bot) => bot.id),
+    );
+    for (const [threadId, botId] of this.#threadToBot) {
+      if (botIds.has(botId)) this.#loadedThreads.delete(threadId);
+    }
+    for (const botId of botIds) {
+      const session = this.#store.activeProviderSession(botId);
+      if (session) this.#loadedThreads.delete(session.externalSessionId);
     }
   }
 

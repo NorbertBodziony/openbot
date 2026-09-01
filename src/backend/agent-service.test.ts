@@ -3946,8 +3946,13 @@ describe.sequential("AgentService", () => {
   it("does not reconcile active work owned by another provider during restart", async () => {
     process.env.OPENBOT_CLAUDE_PATH = await createFakeClaude(root);
     const codexClients: FakeAgentClient[] = [];
+    let claudeClient: FakeAgentClient | undefined;
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
+      if (provider === "claude") {
+        claudeClient = new FakeAgentClient(provider, "", false);
+        return claudeClient;
+      }
       if (provider !== "codex") return new FakeAgentClient(provider, "", false);
       const client = new FakeAgentClient(provider, "", false, true, {}, async (method) => {
         if (codexClients.length === 1 && method === "turn/interrupt") throw new Error("Runtime unavailable");
@@ -3960,7 +3965,9 @@ describe.sequential("AgentService", () => {
     await service.updateBot({ botId: "sales-outbound", provider: "claude", model: "claude-sonnet-5" });
     await service.sendMessage({ botId: "sales-outbound", text: "Keep Claude working" });
     await waitFor(() => service?.listQueue("sales-outbound").deliveries[0]?.status === "running");
+    const salesSession = store.activeProviderSession("sales-outbound");
     const salesTurnId = (await service.readConversation("sales-outbound")).activeTurnId;
+    if (!claudeClient || !salesSession || !salesTurnId) throw new Error("The Claude turn did not start.");
 
     await service.sendMessage({ botId: "chief", text: "Restart Codex" });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
@@ -3969,6 +3976,17 @@ describe.sequential("AgentService", () => {
     expect(codexClients).toHaveLength(2);
     expect(service.listQueue("sales-outbound").deliveries[0]?.status).toBe("running");
     expect((await service.readConversation("sales-outbound")).activeTurnId).toBe(salesTurnId);
+    claudeClient.emit(
+      "notification",
+      notification("turn/completed", {
+        threadId: salesSession.externalSessionId,
+        turn: { id: salesTurnId, status: "completed" },
+      }),
+    );
+    await waitFor(() => service?.listQueue("sales-outbound").deliveries[0]?.status === "completed");
+    await service.sendMessage({ botId: "sales-outbound", text: "Continue without resuming Claude" });
+    await waitFor(() => claudeClient?.requests.filter((request) => request.method === "turn/start").length === 2);
+    expect(claudeClient.requests.filter((request) => request.method === "thread/resume")).toHaveLength(0);
   });
 
   it("preserves another provider's active compaction during restart", async () => {
@@ -4223,6 +4241,58 @@ describe.sequential("AgentService", () => {
 
     expect(service.listQueue("chief").deliveries[0]?.status).toBe("interrupted");
     expect((await service.readConversation("chief")).activeTurnId).toBeNull();
+  });
+
+  it("waits for an in-flight browser action before force-stop returns", async () => {
+    const browser = fakeBrowser();
+    type BrowserToolResult = Awaited<ReturnType<typeof browser.handleDynamicTool>>;
+    let releaseBrowserAction: (() => void) | undefined;
+    let actionStarted = false;
+    let actionFinished = false;
+    const actionPending = new Promise<BrowserToolResult>((resolve) => {
+      releaseBrowserAction = () => {
+        actionFinished = true;
+        resolve({ success: true, contentItems: [] });
+      };
+    });
+    browser.handleDynamicTool = async () => {
+      actionStarted = true;
+      return actionPending;
+    };
+    const client = new FakeAgentClient("codex", "", false);
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, browser, 30_000, "codex", () => client);
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Use the browser" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+    const session = store.activeProviderSession("chief");
+    const turnId = (await service.readConversation("chief")).activeTurnId;
+    if (!session || !turnId) throw new Error("The browser turn did not start.");
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "browser-click",
+      params: {
+        threadId: session.externalSessionId,
+        turnId,
+        callId: "browser-click",
+        namespace: "openbot_browser",
+        tool: "click",
+        arguments: { tabId: "tab-1", selector: "button" },
+      },
+    });
+    await waitFor(() => actionStarted);
+
+    let stopReturned = false;
+    const stopping = service.stopAgent("chief").then(() => {
+      stopReturned = true;
+    });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "interrupted");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(stopReturned).toBe(false);
+
+    releaseBrowserAction?.();
+    await stopping;
+    expect(actionFinished).toBe(true);
   });
 
   it("rejects tool requests while a turn is stopping", async () => {
