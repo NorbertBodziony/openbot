@@ -15,11 +15,13 @@ export interface WorkerBindings {
   EMAIL_FROM?: string;
   EMAIL_DELIVERY_WEBHOOK_URL?: string;
   EMAIL_DELIVERY_WEBHOOK_SECRET?: string;
-  CLOUDFLARE_ACCOUNT_ID?: string;
-  CLOUDFLARE_ZONE_ID?: string;
-  CLOUDFLARE_TUNNEL_DOMAIN?: string;
-  CLOUDFLARE_API_TOKEN?: string;
   SKILLS_ADMIN_TOKEN?: string;
+  REMOTE_TICKET_PRIVATE_JWK?: string;
+  REMOTE_TICKET_PUBLIC_JWKS?: string;
+  REMOTE_TICKET_KEY_ID?: string;
+  REMOTE_SIGNAL_URL?: string;
+  REMOTE_AUTH_WEBHOOK_URL?: string;
+  REMOTE_AUTH_WEBHOOK_SECRET?: string;
 }
 
 export function isWorkerBindings(value: unknown): value is WorkerBindings {
@@ -67,6 +69,20 @@ export interface AuthUser {
   avatarUrl: string | null;
 }
 
+export interface MobileAuthDevice {
+  sessionId: string;
+  name: string;
+  platform: "ios" | "android" | "unknown";
+  connectedAt: number;
+  lastActiveAt: number;
+}
+
+export interface MobileAuthDeviceIdentity {
+  id: string;
+  name: string;
+  platform: MobileAuthDevice["platform"];
+}
+
 export interface EmailCodeDelivery {
   send(message: { email: string; code: string; expiresAt: number }): Promise<void>;
 }
@@ -109,7 +125,9 @@ export interface AuthRepository {
     limit: number,
   ): Promise<{ allowed: boolean; count: number; windowStart: number }>;
   authenticate(sessionToken: string, now: number): Promise<AuthUser | null>;
+  authenticateDesktopSession(sessionToken: string, now: number): Promise<AuthUser | null>;
   revokeSession(sessionToken: string, now: number): Promise<void>;
+  revokeMobileSession(sessionToken: string, now: number): Promise<boolean>;
   updateUserName(userId: string, name: string, now: number): Promise<AuthUser>;
   updateUserAvatar(
     userId: string,
@@ -124,5 +142,22 @@ export interface AuthRepository {
     createdAt: number;
     expiresAt: number;
   }): Promise<void>;
+  replaceMobileAuthTicket(input: {
+    ticketHash: string;
+    userId: string;
+    serverId: string;
+    createdAt: number;
+    expiresAt: number;
+  }): Promise<void>;
   redeemTeamAuthTicket(input: { ticketHash: string; serverId: string; now: number }): Promise<AuthUser | null>;
+  redeemMobileAuthTicket(input: {
+    ticketHash: string;
+    serverId: string;
+    now: number;
+    session: { id: string; token: string; expiresAt: number };
+    device: MobileAuthDeviceIdentity;
+  }): Promise<{ sessionToken: string; user: AuthUser } | null>;
+  authenticateMobileSession(sessionToken: string, now: number): Promise<AuthUser | null>;
+  listMobileAuthDevices(userId: string, now: number): Promise<MobileAuthDevice[]>;
+  revokeMobileAuthDevice(userId: string, sessionId: string, now: number): Promise<boolean>;
 }

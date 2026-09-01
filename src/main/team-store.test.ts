@@ -204,6 +204,131 @@ describe("TeamStore", () => {
     expect(store.authenticate(joined.sessionToken)?.email).toBe("alice@example.com");
   });
 
+  it("uses control-plane membership IDs for remote sessions and direct-message recipients", async () => {
+    const { store, path } = await createStore();
+    await store.configureWithAccount("Studio Mac", {
+      id: "owner-account",
+      email: "owner@example.com",
+      name: "Owner",
+      avatarUrl: null,
+    });
+    const ownerMembershipId = store.getOwnerMemberId();
+    expect(ownerMembershipId).toBeTruthy();
+    await store.syncRemoteDirectory([
+      {
+        membershipId: ownerMembershipId ?? "missing-owner",
+        email: "owner@example.com",
+        name: "Owner",
+        avatarUrl: null,
+        role: "owner",
+        status: "active",
+        createdAt: 1_900_000_000_000,
+      },
+      {
+        membershipId: "d1-member",
+        email: "alice@example.com",
+        name: "Alice",
+        avatarUrl: null,
+        role: "member",
+        status: "active",
+        createdAt: 1_900_000_000_000,
+      },
+    ]);
+
+    const remote = store.openRemoteSession({
+      sessionId: "remote-session",
+      membershipId: "d1-member",
+      userId: "alice-account",
+      role: "member",
+    });
+    expect(remote.member).toMatchObject({ id: "d1-member", email: "alice@example.com", name: "Alice" });
+    expect(store.listSessions()).toEqual([
+      expect.objectContaining({ id: "remote-session", memberId: "d1-member", username: "alice@example.com" }),
+    ]);
+    await store.revokeSession("remote-session");
+    expect(store.listSessions()).toHaveLength(0);
+    expect(store.authenticate(remote.sessionToken)).toBeNull();
+    expect(store.getMember("d1-member")).toMatchObject({ email: "alice@example.com", disabled: false });
+
+    const restored = new TeamStore(path);
+    await restored.initialize();
+    expect(restored.getMember("d1-member")).toMatchObject({ email: "alice@example.com", disabled: false });
+  });
+
+  it("maps a migrated control-plane owner to the verified local owner", async () => {
+    const { store } = await createStore();
+    await store.configureWithAccount("Studio Mac", {
+      id: "owner-account",
+      email: "owner@example.com",
+      name: "Owner",
+      avatarUrl: null,
+    });
+    const ownerSession = await store.loginWithAccount({
+      id: "owner-account",
+      email: "owner@example.com",
+      name: "Owner",
+      avatarUrl: null,
+    });
+    const previousOwnerId = store.getOwnerMemberId();
+    await store.syncRemoteDirectory([
+      {
+        membershipId: "host-1:owner",
+        email: "owner@example.com",
+        name: "Owner",
+        avatarUrl: null,
+        role: "owner",
+        status: "active",
+        createdAt: 1_900_000_000_000,
+      },
+    ]);
+
+    expect(previousOwnerId).not.toBe("host-1:owner");
+    expect(store.getOwnerMemberId()).toBe("host-1:owner");
+    expect(store.getMember("host-1:owner")).toMatchObject({ email: "owner@example.com", role: "owner" });
+    expect(store.authenticateSession(ownerSession.sessionToken)?.member.id).toBe("host-1:owner");
+  });
+
+  it("uses verified Signal claims when the local remote directory is stale", async () => {
+    const { store } = await createStore();
+    await store.configureWithAccount("Studio Mac", {
+      id: "owner-account",
+      email: "owner@example.com",
+      name: "Owner",
+      avatarUrl: null,
+    });
+    const ownerMembershipId = store.getOwnerMemberId();
+    await store.syncRemoteDirectory([
+      {
+        membershipId: ownerMembershipId ?? "missing-owner",
+        email: "owner@example.com",
+        name: "Owner",
+        avatarUrl: null,
+        role: "owner",
+        status: "active",
+        createdAt: 1_900_000_000_000,
+      },
+      {
+        membershipId: "remote-member",
+        email: "member@example.com",
+        name: "Member",
+        avatarUrl: null,
+        role: "member",
+        status: "revoked",
+        createdAt: 1_900_000_000_000,
+      },
+    ]);
+
+    const remote = store.openRemoteSession({
+      sessionId: "verified-session",
+      membershipId: "remote-member",
+      userId: "member-account",
+      role: "admin",
+    });
+
+    expect(remote.member).toMatchObject({ id: "remote-member", role: "admin", disabled: false });
+    expect(store.getMember("remote-member")).toMatchObject({ role: "member", disabled: true });
+  });
+
   it("lets an existing account member connect another client with an invitation", async () => {
     const { store } = await createStore();
     await store.configureWithAccount("Studio Mac", {

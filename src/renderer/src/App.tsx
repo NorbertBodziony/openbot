@@ -2926,6 +2926,18 @@ export function createAppController(props: AppProps = {}) {
     applyCentralAuthState(await window.openbot.auth.updateName(name));
   }
 
+  function createMobileConnect() {
+    return window.openbot.auth.createMobileConnect();
+  }
+
+  function listMobileConnectedDevices() {
+    return window.openbot.auth.listMobileConnectedDevices();
+  }
+
+  function revokeMobileConnectedDevice(sessionId: string) {
+    return window.openbot.auth.revokeMobileConnectedDevice(sessionId);
+  }
+
   async function runUpdateAction(): Promise<void> {
     const analytics = desktopAnalytics.scope();
     const phase = updateStatus().phase;
@@ -3862,6 +3874,9 @@ export function createAppController(props: AppProps = {}) {
     runUpdateAction,
     updateAccountName,
     updateAccountAvatar,
+    createMobileConnect,
+    listMobileConnectedDevices,
+    revokeMobileConnectedDevice,
     setPermissionsOpen,
     appSettingsOpen,
     setAppSettingsOpen,

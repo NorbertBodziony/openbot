@@ -5,12 +5,11 @@ import type {
   AppSetupState,
   BotAvatarHue,
   DesktopPlatform,
-  MacPermissionId,
-  MacPermissionsState,
   ProviderRuntimeStatus,
 } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, Match, onCleanup, Show, Switch } from "solid-js";
 import { AgentAvatar } from "./AgentAvatar";
+import { ComputerUseMacSetup } from "./ComputerUseMacSetup";
 import { PlusIcon } from "./conversation/ConversationIcons";
 import { ProviderPicker, type ProviderPickerOption } from "./ProviderPicker";
 import { Button } from "./ui";
@@ -39,28 +38,6 @@ const PROVIDERS: Array<{ id: AgentProviderId; name: string; description: string 
   { id: "grok", name: "Grok", description: "Included with OpenBot" },
 ];
 
-const PERMISSIONS: Array<{
-  id: MacPermissionId;
-  title: string;
-  description: string;
-}> = [
-  {
-    id: "screen-recording",
-    title: "Screen Recording",
-    description: "Let OpenBot see what is on your screen.",
-  },
-  {
-    id: "accessibility",
-    title: "Accessibility",
-    description: "Let OpenBot control apps on your Mac.",
-  },
-];
-
-const EMPTY_PERMISSIONS: MacPermissionsState = {
-  screenRecording: "unknown",
-  accessibility: "unknown",
-};
-
 const ONBOARDING_AVATAR_HUES: readonly BotAvatarHue[] = [0, 30, 55, 100, 150, 185, 215, 245, 280, 320];
 
 type OnboardingAvatarVariant = {
@@ -83,8 +60,6 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
   const [direction, setDirection] = createSignal<StepDirection>("forward");
   const [selectedProvider, setSelectedProvider] = createSignal<AgentProviderId | null>(null);
   const [providerSelectedByUser, setProviderSelectedByUser] = createSignal(false);
-  const [permissions, setPermissions] = createSignal(EMPTY_PERMISSIONS);
-  const [permissionBusy, setPermissionBusy] = createSignal<MacPermissionId | null>(null);
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal("");
   const [providerErrors, setProviderErrors] = createSignal<Partial<Record<AgentProviderId, string>>>({});
@@ -92,7 +67,6 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
     () => error() || PROVIDERS.map((provider) => providerErrors()[provider.id]).find(Boolean) || "",
   );
   const avatarVariants = createOnboardingAvatarVariants();
-  let permissionRevision = 0;
   const previousConnectionStates = new Map<AgentProviderId, boolean>();
   const connectionStartingMessages = new Map<AgentProviderId, string | null>();
   const refreshedConnectionStates = new Set<AgentProviderId>();
@@ -150,13 +124,6 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
   );
 
   createEffect(
-    () => ({ currentStep: step(), platform: props.platform }),
-    ({ currentStep, platform }) => {
-      if (currentStep === "computer" && platform === "darwin") void loadPermissions();
-    },
-  );
-
-  createEffect(
     () => props.agentStatus.providers,
     (providers) => {
       for (const provider of PROVIDERS) {
@@ -202,36 +169,10 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
   window.addEventListener("focus", handleWindowFocus);
 
   onCleanup(() => {
-    permissionRevision += 1;
     window.removeEventListener("blur", handleWindowBlur);
     window.removeEventListener("focus", handleWindowFocus);
     if (focusRefreshTimer) clearTimeout(focusRefreshTimer);
   });
-
-  async function loadPermissions(): Promise<void> {
-    const revision = ++permissionRevision;
-    try {
-      const next = await window.openbot.getMacPermissions();
-      if (revision === permissionRevision) setPermissions(next);
-    } catch (cause) {
-      if (revision === permissionRevision) setError(errorMessage(cause, "OpenBot could not read Mac permissions."));
-    }
-  }
-
-  async function requestPermission(permission: MacPermissionId): Promise<void> {
-    if (permissionBusy()) return;
-    const revision = ++permissionRevision;
-    setPermissionBusy(permission);
-    setError("");
-    try {
-      const next = await window.openbot.requestMacPermission(permission);
-      if (revision === permissionRevision) setPermissions(next);
-    } catch (cause) {
-      if (revision === permissionRevision) setError(errorMessage(cause, "OpenBot could not open this Mac permission."));
-    } finally {
-      setPermissionBusy(null);
-    }
-  }
 
   async function openProviderGuide(
     provider: AgentProviderId,
@@ -522,37 +463,7 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
                   </div>
                 </div>
 
-                <Show when={props.platform === "darwin"}>
-                  <section class="onboarding-permissions" aria-label="Computer permissions">
-                    <div class="onboarding-permission-list">
-                      <For each={PERMISSIONS}>
-                        {(permission) => {
-                          const state = () => permissionState(permissions(), permission.id);
-                          return (
-                            <div class="onboarding-permission-row">
-                              <span>
-                                <strong>{permission.title}</strong>
-                                <small>{permission.description}</small>
-                              </span>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                class="onboarding-permission-action"
-                                disabled={
-                                  permissionBusy() !== null || state() === "granted" || state() === "restricted"
-                                }
-                                onClick={() => void requestPermission(permission.id)}
-                              >
-                                {permissionBusy() === permission.id ? "Checking…" : permissionLabel(state())}
-                              </Button>
-                            </div>
-                          );
-                        }}
-                      </For>
-                    </div>
-                  </section>
-                </Show>
+                <ComputerUseMacSetup platform={props.platform} variant="compact" />
               </section>
             </Match>
 
@@ -628,22 +539,6 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
       </div>
     </main>
   );
-}
-
-function permissionState(
-  permissions: MacPermissionsState,
-  permission: MacPermissionId,
-): MacPermissionsState["screenRecording"] {
-  return permission === "screen-recording" ? permissions.screenRecording : permissions.accessibility;
-}
-
-function permissionLabel(
-  state: MacPermissionsState["screenRecording"],
-): "Allowed" | "Open Settings" | "Restricted" | "Allow" {
-  if (state === "granted") return "Allowed";
-  if (state === "denied" || state === "unknown") return "Open Settings";
-  if (state === "restricted") return "Restricted";
-  return "Allow";
 }
 
 function fallbackProviderState(status: AgentStatus): AgentProviderState {

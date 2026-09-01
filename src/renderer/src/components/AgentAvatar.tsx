@@ -1,15 +1,7 @@
-import {
-  type Block,
-  BloubBot,
-  defaultCycle,
-  makeBlock,
-  POSES,
-  type ShapeId,
-  type StateId,
-} from "@norbert_bodziony/bloub";
+import { type Block, BloubBot, defaultCycle, makeBlock, POSES, type StateId } from "@norbert_bodziony/bloub";
 import type { BotAvatarHue } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, onSettled, Show } from "solid-js";
-import { type AvatarMotion, bloubAvatarProfile } from "../bloub-avatar";
+import { type AvatarMotion, bloubAvatarProfile, type SupportedAvatarSilhouetteId } from "../bloub-avatar";
 import type { BotProfile } from "../data";
 
 const DEFAULT_CYCLE: Block[] = defaultCycle().blocks;
@@ -32,7 +24,7 @@ interface AgentAvatarProps {
   cycleOffset?: number;
   animationOffset?: number;
   animationState?: StateId;
-  shape?: ShapeId;
+  shape?: SupportedAvatarSilhouetteId;
   class?: string;
   style?: Record<string, string>;
 }
@@ -81,7 +73,7 @@ function GeneratedAvatar(props: {
   cycleOffset?: number;
   animationOffset?: number;
   animationState?: StateId;
-  shape?: ShapeId;
+  shape?: SupportedAvatarSilhouetteId;
   class: string;
   style?: Record<string, string>;
 }) {

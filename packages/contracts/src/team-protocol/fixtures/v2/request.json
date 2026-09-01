@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "type": "request",
+  "requestId": "request-1",
+  "operation": "conversation.send-message",
+  "payload": {
+    "botId": "bot-1",
+    "text": "Hello"
+  }
+}

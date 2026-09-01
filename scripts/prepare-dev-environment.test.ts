@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   assertDevelopmentSecrets,
+  assertSupportedBunVersion,
   type DevelopmentCommandRunner,
   prepareDevelopmentEnvironment,
 } from "./prepare-dev-environment";
@@ -15,6 +16,14 @@ afterEach(() => {
 });
 
 describe("development environment preparation", () => {
+  it("accepts the supported stable Bun version", () => {
+    expect(() => assertSupportedBunVersion("1.4.0")).not.toThrow();
+  });
+
+  it.each(["1.4.0-canary.1", "1.3.11"])("rejects unsupported Bun %s with upgrade instructions", (version) => {
+    expect(() => assertSupportedBunVersion(version)).toThrow("OpenBot development requires stable Bun 1.4.0");
+  });
+
   it("fails with an actionable error when worktree secrets were not copied", () => {
     const root = createTemporaryRoot();
 
@@ -27,7 +36,7 @@ describe("development environment preparation", () => {
     const calls: string[][] = [];
     const run: DevelopmentCommandRunner = (_executable, args) => calls.push(args);
 
-    prepareDevelopmentEnvironment({ projectRoot: root, executable: "bun", run });
+    prepareDevelopmentEnvironment({ projectRoot: root, executable: "bun", bunVersion: "1.4.0", run });
 
     expect(calls).toEqual([
       ["install", "--frozen-lockfile"],
