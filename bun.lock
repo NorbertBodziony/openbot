@@ -148,6 +148,19 @@
         "typescript": "7.0.2",
       },
     },
+    "apps/site-router": {
+      "name": "@openbot/site-router",
+      "version": "0.0.0",
+      "dependencies": {
+        "@openbot/contracts": "workspace:*",
+      },
+      "devDependencies": {
+        "@cloudflare/workers-types": "5.20260815.1",
+        "typescript": "5.9.3",
+        "vitest": "4.1.10",
+        "wrangler": "4.123.0",
+      },
+    },
     "packages/brand": {
       "name": "@openbot/brand",
       "version": "0.0.0",
@@ -728,6 +741,8 @@
     "@openbot/mobile": ["@openbot/mobile@workspace:apps/mobile"],
 
     "@openbot/remote-api": ["@openbot/remote-api@workspace:remote/api"],
+
+    "@openbot/site-router": ["@openbot/site-router@workspace:apps/site-router"],
 
     "@openbot/team-client": ["@openbot/team-client@workspace:packages/team-client"],
 
@@ -2774,6 +2789,8 @@
     "@modelcontextprotocol/sdk/jose": ["jose@6.2.8", "", {}, "sha512-Bsdjwm3Qsd/P0jR+BHDe3LytDfY7WBq2HmCCLIwuVRHMuEC9ae7/R474GIUdF1NgCyZjzVo/A9DOiOBtXq8ZoQ=="],
 
     "@openbot/mobile/zod": ["zod@4.5.4", "", {}, "sha512-sC95tT5iHHH9gtpj6A81kh+NEaRAUFN+qlUPDUbRfOMvNf5QCBqsb3WgvnpVtK5Y+4UfA6KqufotuTvMGiTlsA=="],
+
+    "@openbot/site-router/typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
 
     "@openbot/team-client/typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
 

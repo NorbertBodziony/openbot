@@ -874,6 +874,58 @@
   padding: var(--openbot-space-3) var(--openbot-space-6);
 }
 
+.hosted-sites-overview {
+  display: grid;
+  gap: var(--openbot-space-1);
+}
+
+.hosted-sites-list .hosted-sites-row {
+  min-height: 72px;
+  align-items: center;
+}
+
+.hosted-sites-list .ui-item-content {
+  min-width: 0;
+}
+
+.hosted-sites-link.ui-button {
+  width: min(100%, 320px);
+  justify-content: flex-start;
+  color: var(--openbot-accent-text);
+  font-size: var(--openbot-text-md);
+  font-weight: var(--openbot-weight-regular);
+  line-height: var(--openbot-leading-md);
+  text-align: left;
+}
+
+.hosted-sites-link-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hosted-sites-actions {
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+
+@media (max-width: 700px) {
+  .hosted-sites-list .hosted-sites-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .hosted-sites-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .hosted-sites-actions > .ui-button {
+    flex: 1;
+  }
+}
+
 .settings-modal-save-actions {
   display: flex;
   align-items: center;

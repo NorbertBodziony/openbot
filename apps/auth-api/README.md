@@ -43,17 +43,19 @@ EMAIL_SMTP_PORT=465
 EMAIL_SMTP_USERNAME=hello@openbot.run
 EMAIL_SMTP_PASSWORD=<PRIVATE_EMAIL_APP_PASSWORD>
 EMAIL_FROM=hello@openbot.run
+SITE_REPORT_HASH_SECRET=<AT_LEAST_32_RANDOM_CHARACTERS>
 ```
 
 For a deployed Worker, `bun run api:deploy` decrypts `.env.production`. It sends
 `EMAIL_SMTP_PASSWORD`, `SKILLS_ADMIN_TOKEN`, `REMOTE_TICKET_PRIVATE_JWK`,
-`REMOTE_TICKET_PUBLIC_JWKS`, and `REMOTE_AUTH_WEBHOOK_SECRET` to
+`REMOTE_TICKET_PUBLIC_JWKS`, `REMOTE_AUTH_WEBHOOK_SECRET`, and `SITE_REPORT_HASH_SECRET` to
 `wrangler secret put` through standard input. It then builds and deploys the Worker.
 Secrets are never passed as process arguments. The other values are Worker
 variables. The SMTP connection uses TLS from the start and accepts only port 465.
 
-GitHub Actions reads `SKILLS_ADMIN_TOKEN` from the `cloudflare-production`
-Environment and includes it in Wrangler's temporary runtime secrets file.
+GitHub Actions reads the remote-control secrets, `SKILLS_ADMIN_TOKEN`, `SITE_REPORT_HASH_SECRET`, and the optional
+`SITE_OPERATIONS_ADMIN_TOKEN` from the `cloudflare-production` Environment. It includes them in Wrangler's temporary
+runtime secrets file.
 
 Use `bun run api:deploy:test` for the isolated `openbot-auth-api-test` Worker
 and the `openbot-auth-test` D1 database.
@@ -87,18 +89,18 @@ The service applies limits per email, per IP, per challenge, and per resend.
 
 ## Authentication data retention
 
-The production Worker runs `17 3 * * *`, which is once each day at 03:17 UTC.
-The scheduled handler deletes expired or consumed email challenges, expired or
-revoked sessions, expired or consumed team authentication tickets, and rate-limit
-records after their 15-minute window ends. A successful run logs only aggregate
-deletion counts.
+The production Worker runs once each minute. Each run delivers pending remote
+authorization events and cleans up hosted sites. The midnight UTC run also deletes
+expired or consumed email challenges, expired or revoked sessions, expired or
+consumed team authentication tickets, and expired rate-limit records. A successful
+retention run logs only aggregate deletion counts.
 
 The `preview` and `test` environments do not install an automatic Cron Trigger.
 To run the scheduled handler during local development, start the API and request
 the Cloudflare scheduled-handler test route:
 
 ```bash
-curl "http://127.0.0.1:3100/cdn-cgi/handler/scheduled?cron=17+3+*+*+*"
+curl "http://127.0.0.1:3100/cdn-cgi/handler/scheduled?cron=*+*+*+*+*"
 ```
 
 ## Remote control plane

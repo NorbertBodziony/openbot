@@ -1,0 +1,14 @@
+{
+  "Rules": [
+    {
+      "ID": "delete-orphaned-site-deployments",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "sites/"
+      },
+      "Expiration": {
+        "Days": 32
+      }
+    }
+  ]
+}

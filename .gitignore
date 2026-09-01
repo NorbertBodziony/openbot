@@ -4,6 +4,7 @@ out-*/
 dist/
 apps/*/dist/
 apps/*/.wrangler/
+apps/*/worker-configuration.d.ts
 coverage/
 .DS_Store
 *.log
