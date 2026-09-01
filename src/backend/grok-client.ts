@@ -71,6 +71,7 @@ interface GrokModel {
   description: string;
   defaultReasoningEffort: string;
   supportedReasoningEfforts: string[];
+  reasoningEffortWireValues: Map<string, string>;
   usesModelReasoningEffort: boolean | null;
 }
 
@@ -343,7 +344,7 @@ export class GrokAgentClient extends EventEmitter<ClientEvents> {
             await this.#requireConnection().request("session/set_model", {
               sessionId: thread.id,
               modelId: thread.currentModelId,
-              _meta: { reasoningEffort: value },
+              _meta: { reasoningEffort: currentModel.reasoningEffortWireValues.get(value) ?? value },
             });
           }
           continue;
@@ -647,6 +648,7 @@ function modelsFromSessionSetup(response: SessionSetupResponse): GrokModel[] {
   const configReasoning = reasoningFromConfig(options);
   return discovered.map((model) => {
     const supportedReasoningEfforts = model.supportedReasoningEfforts ?? configReasoning.supportedReasoningEfforts;
+    const reasoningEffortWireValues = model.reasoningEffortWireValues;
     const defaultReasoningEffort =
       model.defaultReasoningEffort && supportedReasoningEfforts.includes(model.defaultReasoningEffort)
         ? model.defaultReasoningEffort
@@ -659,6 +661,10 @@ function modelsFromSessionSetup(response: SessionSetupResponse): GrokModel[] {
       description: model.description ?? "Model discovered from Grok CLI through ACP.",
       defaultReasoningEffort,
       supportedReasoningEfforts,
+      reasoningEffortWireValues:
+        reasoningEffortWireValues && reasoningEffortWireValues.size > 0
+          ? reasoningEffortWireValues
+          : configReasoning.reasoningEffortWireValues,
       usesModelReasoningEffort: model.usesModelReasoningEffort,
     };
   });
@@ -682,18 +688,18 @@ function modelsFromConfig(options: SessionConfigOption[]): GrokModel[] {
 
 function reasoningFromConfig(
   options: SessionConfigOption[],
-): Pick<GrokModel, "defaultReasoningEffort" | "supportedReasoningEfforts"> {
+): Pick<GrokModel, "defaultReasoningEffort" | "supportedReasoningEfforts" | "reasoningEffortWireValues"> {
   const thought = options.find((option) => option.category === "thought_level" && option.type === "select");
-  const efforts =
-    thought && thought.type === "select"
-      ? selectValues(thought).map((option) => normalizeEffort(option.value))
-      : ["medium"];
-  const supported = [...new Set(efforts.filter((effort): effort is string => effort !== null))];
+  const wireValues = reasoningEffortWireValues(
+    thought && thought.type === "select" ? selectValues(thought).map((option) => option.value) : ["medium"],
+  );
+  const supported = [...wireValues.keys()];
   const currentEffort =
     thought && thought.type === "select" ? (normalizeEffort(thought.currentValue) ?? "medium") : "medium";
   return {
     defaultReasoningEffort: supported.includes(currentEffort) ? currentEffort : (supported[0] ?? "medium"),
     supportedReasoningEfforts: supported.length > 0 ? supported : ["medium"],
+    reasoningEffortWireValues: wireValues.size > 0 ? wireValues : new Map([["medium", "medium"]]),
   };
 }
 
@@ -714,6 +720,7 @@ function availableModels(response: SessionSetupResponse): Array<{
   description: string | null;
   defaultReasoningEffort: string | null;
   supportedReasoningEfforts: string[] | null;
+  reasoningEffortWireValues: Map<string, string> | null;
   usesModelReasoningEffort: boolean | null;
 }> {
   if (!isRecord(response.models) || !Array.isArray(response.models.availableModels)) return [];
@@ -724,16 +731,11 @@ function availableModels(response: SessionSetupResponse): Array<{
     if (seen.has(id)) return [];
     seen.add(id);
     const metadata = isRecord(value._meta) ? value._meta : null;
-    const supportedReasoningEfforts = Array.isArray(metadata?.reasoningEfforts)
-      ? [
-          ...new Set(
-            metadata.reasoningEfforts
-              .filter(isRecord)
-              .map((effort) => (isString(effort.value) ? normalizeEffort(effort.value) : null))
-              .filter((effort): effort is string => effort !== null),
-          ),
-        ]
+    const reasoningEffortValues = Array.isArray(metadata?.reasoningEfforts)
+      ? metadata.reasoningEfforts.filter(isRecord).flatMap((effort) => (isString(effort.value) ? [effort.value] : []))
       : null;
+    const wireValues = reasoningEffortValues ? reasoningEffortWireValues(reasoningEffortValues) : null;
+    const supportedReasoningEfforts = wireValues ? [...wireValues.keys()] : null;
     const usesModelReasoningEffort =
       metadata?.supportsReasoningEffort === false
         ? false
@@ -753,6 +755,7 @@ function availableModels(response: SessionSetupResponse): Array<{
             : supportedReasoningEfforts && supportedReasoningEfforts.length > 0
               ? supportedReasoningEfforts
               : null,
+        reasoningEffortWireValues: wireValues,
         usesModelReasoningEffort,
       },
     ];
@@ -761,6 +764,15 @@ function availableModels(response: SessionSetupResponse): Array<{
 
 function selectValues(option: Extract<SessionConfigOption, { type: "select" }>) {
   return option.options.flatMap((entry) => ("options" in entry ? entry.options : [entry]));
+}
+
+function reasoningEffortWireValues(values: string[]): Map<string, string> {
+  const result = new Map<string, string>();
+  for (const value of values) {
+    const normalized = normalizeEffort(value);
+    if (normalized && !result.has(normalized)) result.set(normalized, value);
+  }
+  return result;
 }
 
 function normalizeEffort(value: string): string | null {
