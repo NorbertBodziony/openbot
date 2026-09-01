@@ -645,6 +645,17 @@ export interface RoutineConversationEvent {
   routineName: string;
 }
 
+export const ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX = "routine-run-event:";
+
+export type RoutineRunConversationEventStatus = Exclude<RoutineRunStatus, "queued">;
+
+export interface RoutineRunConversationEvent {
+  status: RoutineRunConversationEventStatus;
+  routineId: string;
+  runId: string;
+  routineName: string;
+}
+
 export function routineConversationEventItemType(action: RoutineConversationEventAction, routineId: string): string {
   if (!isIdentifier(routineId)) throw new Error("A valid routine id is required.");
   const itemType = `${ROUTINE_EVENT_ITEM_TYPE_PREFIX}${action}:${routineId}`;
@@ -672,6 +683,57 @@ export function routineConversationEvent(message: ConversationMessage): RoutineC
   const routineName = message.text.trim();
   if (!event || !routineName || routineName.length > INPUT_LIMITS.routineName) return null;
   return { ...event, routineName };
+}
+
+export function routineRunConversationEventItemType(
+  status: RoutineRunConversationEventStatus,
+  routineId: string,
+  runId: string,
+): string {
+  if (!isIdentifier(routineId)) throw new Error("A valid routine id is required.");
+  if (!isIdentifier(runId)) throw new Error("A valid routine run id is required.");
+  const itemType = `${ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX}${status}:${routineId}:${runId}`;
+  if (itemType.length > INPUT_LIMITS.identifier) throw new Error("The routine run event item type is too long.");
+  return itemType;
+}
+
+export function parseRoutineRunConversationEventItemType(
+  itemType: string | undefined,
+): Pick<RoutineRunConversationEvent, "status" | "routineId" | "runId"> | null {
+  if (!itemType?.startsWith(ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX)) return null;
+  const [status, routineId, runId, ...extra] = itemType.slice(ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX.length).split(":");
+  if (
+    extra.length > 0 ||
+    !isRoutineRunConversationEventStatus(status) ||
+    !isIdentifier(routineId) ||
+    !isIdentifier(runId)
+  ) {
+    return null;
+  }
+  return { status, routineId, runId };
+}
+
+export function routineRunConversationEvent(message: ConversationMessage): RoutineRunConversationEvent | null {
+  if (message.author !== "system" || message.source !== "system" || message.status !== "completed") return null;
+  const event = parseRoutineRunConversationEventItemType(message.itemType);
+  const routineName = message.text.trim();
+  if (!event || !routineName || routineName.length > INPUT_LIMITS.routineName) return null;
+  return { ...event, routineName };
+}
+
+export function isRoutineRunConversationEventMarker(itemType: string | undefined): boolean {
+  return itemType?.startsWith(ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX) === true;
+}
+
+function isRoutineRunConversationEventStatus(value: unknown): value is RoutineRunConversationEventStatus {
+  return (
+    value === "running" ||
+    value === "needs-attention" ||
+    value === "succeeded" ||
+    value === "failed" ||
+    value === "interrupted" ||
+    value === "cancelled"
+  );
 }
 
 function isAgentPromptQuestion(value: unknown): value is AgentPromptQuestion {

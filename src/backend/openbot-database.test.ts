@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { BotSummary, ConversationSnapshot } from "@openbot/contracts/ipc";
-import { routineConversationEventItemType } from "@openbot/contracts/ipc";
+import { routineConversationEventItemType, routineRunConversationEventItemType } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it } from "vitest";
 import { OpenBotDatabase } from "./openbot-database";
@@ -293,7 +293,7 @@ describe("OpenBotDatabase", () => {
     database.close();
   });
 
-  it("fills legacy pages after excluding routine event markers", async () => {
+  it("fills legacy pages after excluding routine action markers", async () => {
     const database = await createDatabase();
     const bot = testBot();
     database.replaceAgents("agents-routine-history", [bot], "agents.imported");
@@ -305,6 +305,15 @@ describe("OpenBotDatabase", () => {
       createdAt,
       status: "completed" as const,
       itemType: routineConversationEventItemType("updated", "routine-1"),
+    });
+    const routineRunEvent = (id: string, createdAt: string) => ({
+      id,
+      author: "system" as const,
+      source: "system" as const,
+      text: "Morning brief",
+      createdAt,
+      status: "completed" as const,
+      itemType: routineRunConversationEventItemType("running", "routine-1", "run-1"),
     });
     database.persistConversation(
       {
@@ -329,7 +338,8 @@ describe("OpenBotDatabase", () => {
             status: "completed",
           },
           routineEvent("routine-event-2", "2026-08-29T10:03:00.000Z"),
-          routineEvent("routine-event-3", "2026-08-29T10:04:00.000Z"),
+          routineRunEvent("routine-run-event-1", "2026-08-29T10:04:00.000Z"),
+          routineEvent("routine-event-3", "2026-08-29T10:05:00.000Z"),
         ],
       },
       "conversation.routine-history",
@@ -337,6 +347,7 @@ describe("OpenBotDatabase", () => {
 
     const latest = database.readConversationPage(bot.id, bot.threadId, { type: "latest" }, 1, {
       excludeRoutineEvents: true,
+      excludeRoutineRunEvents: true,
     });
     expect(latest.messages.map((message) => message.id)).toEqual(["reply-new"]);
     expect(latest.pageInfo.hasOlder).toBe(true);
@@ -347,10 +358,11 @@ describe("OpenBotDatabase", () => {
       bot.threadId,
       { type: "before", cursor: latest.pageInfo.olderCursor },
       1,
-      { excludeRoutineEvents: true },
+      { excludeRoutineEvents: true, excludeRoutineRunEvents: true },
     );
     expect(older.messages.map((message) => message.id)).toEqual(["reply-old"]);
     expect(older.pageInfo.hasOlder).toBe(false);
+    expect(database.searchConversationMessages("Morning brief", bot.id).total).toBe(0);
     database.close();
   });
 

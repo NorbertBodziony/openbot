@@ -39,7 +39,7 @@ import type {
   UpdateStatus,
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
-import { parseRoutineConversationEventItemType } from "@openbot/contracts/ipc";
+import { ROUTINE_EVENT_ITEM_TYPE_PREFIX, ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX } from "@openbot/contracts/ipc";
 import type { TeamProtocolV3Capability } from "@openbot/contracts/team-protocol/v3";
 import {
   createContext,
@@ -166,7 +166,10 @@ type PromptEvent = Extract<AgentEvent, { type: "prompt" }>;
 type BrowserTakeoverEvent = Extract<AgentEvent, { type: "browser-takeover-requested" }>;
 
 function isRoutineEventItem(message: { itemType?: string }): boolean {
-  return parseRoutineConversationEventItemType(message.itemType) !== null;
+  return (
+    message.itemType?.startsWith(ROUTINE_EVENT_ITEM_TYPE_PREFIX) === true ||
+    message.itemType?.startsWith(ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX) === true
+  );
 }
 
 function preserveKnownAgentUnread(
@@ -1508,7 +1511,7 @@ export function createAppController(props: AppProps = {}) {
     setLiveMessages((current) => {
       const previous = current[botId] ?? [];
       const previousById = new Map(previous.map((message) => [message.id, message]));
-      const allMappedMessages = toBotMessages(snapshot.messages);
+      const allMappedMessages = toBotMessages(snapshot.messages, snapshot.botId);
       const pageInfo = conversationPages()[botId];
       const windowMode = conversationWindowModes()[botId] ?? "latest";
       const mappedMessages = retainThinkingMessages(
@@ -1601,7 +1604,7 @@ export function createAppController(props: AppProps = {}) {
       if (message.author !== "user" && message.status === "streaming") rawAgentMessageBodies.set(key, message.text);
       else rawAgentMessageBodies.delete(key);
     }
-    const mapped = toBotMessages(page.messages);
+    const mapped = toBotMessages(page.messages, page.botId);
     setLiveMessages((current) => {
       const currentMessages = current[page.botId] ?? [];
       const currentById = new Map(currentMessages.map((message) => [message.id, message]));
@@ -1627,7 +1630,9 @@ export function createAppController(props: AppProps = {}) {
       ...current,
       [page.botId]: {
         ...(merge === "replace" ? {} : current[page.botId]),
-        ...Object.fromEntries(Object.entries(page.references).map(([id, message]) => [id, toBotMessage(message)])),
+        ...Object.fromEntries(
+          Object.entries(page.references).map(([id, message]) => [id, toBotMessage(message, page.botId)]),
+        ),
       },
     }));
     setConversationPages((current) => ({ ...current, [page.botId]: page.pageInfo }));
@@ -1766,7 +1771,10 @@ export function createAppController(props: AppProps = {}) {
     try {
       const page = await window.openbot.agent.searchConversationMessages({ query, limit: 100 });
       analytics.track("search_action", { scope: "global", result: "succeeded", result_count: page.total });
-      return page.results.map((result) => ({ botId: result.botId, message: toBotMessage(result.message) }));
+      return page.results.map((result) => ({
+        botId: result.botId,
+        message: toBotMessage(result.message, result.botId),
+      }));
     } catch (error) {
       analytics.track("search_action", { scope: "global", result: "failed", failure_code: "search_failed" });
       throw error;

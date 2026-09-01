@@ -1,5 +1,5 @@
 import type { BotSummary, ConversationReadState, ConversationSnapshot } from "@openbot/contracts/ipc";
-import { parseRoutineConversationEventItemType, ROUTINE_EVENT_ITEM_TYPE_PREFIX } from "@openbot/contracts/ipc";
+import { ROUTINE_EVENT_ITEM_TYPE_PREFIX, ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import type { OpenBotDatabase } from "./openbot-database";
 
@@ -146,7 +146,8 @@ export class ConversationReadStore {
     const unreadFilter = `author != 'user'
       AND COALESCE(item_type, '') != 'commentary'
       AND COALESCE(item_type, '') != 'agent_attachment'
-      AND COALESCE(item_type, '') NOT LIKE '${ROUTINE_EVENT_ITEM_TYPE_PREFIX}%'`;
+      AND COALESCE(item_type, '') NOT LIKE '${ROUTINE_EVENT_ITEM_TYPE_PREFIX}%'
+      AND COALESCE(item_type, '') NOT LIKE '${ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX}%'`;
     const countRow = this.database.connection
       .prepare(
         `SELECT COUNT(*) AS unread_count FROM projection_thread_messages
@@ -245,7 +246,8 @@ function stateFromSnapshot(snapshot: ConversationSnapshot, throughMessageId: str
         message.author !== "user" &&
         message.itemType !== "commentary" &&
         message.itemType !== "agent_attachment" &&
-        parseRoutineConversationEventItemType(message.itemType) === null,
+        !message.itemType?.startsWith(ROUTINE_EVENT_ITEM_TYPE_PREFIX) &&
+        !message.itemType?.startsWith(ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX),
     );
   return {
     unreadCount: unread.length,

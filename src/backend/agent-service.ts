@@ -55,6 +55,7 @@ import type {
   Routine,
   RoutineConversationEventAction,
   RoutineRun,
+  RoutineRunConversationEventStatus,
   RoutineSchedule,
   SendMessageInput,
   SetMessageReactionInput,
@@ -78,6 +79,7 @@ import {
   isReasoningEffort,
   isRoutineSchedule,
   routineConversationEventItemType,
+  routineRunConversationEventItemType,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
 import type { AgentClient, AgentProvider } from "./agent-client";
@@ -628,9 +630,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (ownsTransaction) database.connection.exec("BEGIN IMMEDIATE");
       try {
         for (const run of activeRuns) {
-          if (run.status !== "queued" || !run.deliveryId) continue;
-          if (this.#mailbox.getDelivery(run.deliveryId)?.delivery.status !== "queued") continue;
-          this.#mailbox.cancelNow(input.botId, run.deliveryId);
+          if (run.status === "queued" && run.deliveryId) {
+            if (this.#mailbox.getDelivery(run.deliveryId)?.delivery.status === "queued") {
+              this.#mailbox.cancelNow(input.botId, run.deliveryId);
+            }
+          }
           this.#routines.updateRunStatus(run.id, "cancelled");
         }
         this.#routines.delete(input.botId, input.routineId);
@@ -648,12 +652,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         () => routine,
         options.turnId,
         {
-          beforeMutate: () => {
+          beforeMutate: (snapshot) => {
             for (const run of activeRuns) {
-              if (run.status !== "queued" || !run.deliveryId) continue;
-              if (this.#mailbox.getDelivery(run.deliveryId)?.delivery.status !== "queued") continue;
-              this.#mailbox.cancelNow(input.botId, run.deliveryId);
-              this.#routines.updateRunStatus(run.id, "cancelled");
+              if (run.status === "queued" && run.deliveryId) {
+                if (this.#mailbox.getDelivery(run.deliveryId)?.delivery.status === "queued") {
+                  this.#mailbox.cancelNow(input.botId, run.deliveryId);
+                }
+              }
+              this.#appendRoutineRunTransition(snapshot, run, "cancelled");
             }
           },
           onRollback: () => this.#mailbox.restorePersistedState(),
@@ -1037,6 +1043,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       "starting",
       BUILT_IN_PROVIDER_DRIVERS.map((driver) => driver.id),
     );
+    for (const bot of this.#store.list()) this.#emitQueue(bot.id);
     await this.#resumePendingRoutineRuns();
     this.#armRoutineTimer();
   }
@@ -1212,7 +1219,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     memberId: string,
     anchor: ConversationPageAnchor = { type: "latest" },
     limit = 50,
-    options: { excludeRoutineEvents?: boolean } = {},
+    options: { excludeRoutineEvents?: boolean; excludeRoutineRunEvents?: boolean } = {},
   ): Promise<ConversationPage> {
     const bot = await this.#store.getOrCreate(botId);
     this.#reconcilePersistedMailboxMessages(bot);
@@ -3382,7 +3389,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const status = routineStatusForDelivery(delivery.status);
       if (run.status === "needs-attention" && ["starting", "running"].includes(delivery.status)) continue;
       if (run.status === status && run.error === delivery.error) continue;
-      this.#routines.updateRunStatus(run.id, status, delivery.error);
+      if (status === "queued") this.#routines.updateRunStatus(run.id, status, delivery.error);
+      else this.#transitionRoutineRunWithConversation(run, status, delivery.error);
       routinesChanged = true;
     }
     this.#emit({ type: "queue-changed", snapshot: queue });
@@ -3391,8 +3399,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     for (const affectedBotId of affectedBots) {
       const snapshot = this.#snapshots.get(affectedBotId);
       if (!snapshot) continue;
+      const previousSignature = conversationContentSignature(snapshot);
       this.#syncMailboxMessages(snapshot);
-      this.#emitConversation(snapshot);
+      if (conversationContentSignature(snapshot) !== previousSignature) this.#emitConversation(snapshot);
+      else if (!this.#lastConversationSignatures.has(affectedBotId)) this.#publishConversation(snapshot);
     }
   }
 
@@ -4537,7 +4547,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.#emitQueue(bot.id);
       this.#scheduleDrain(bot.id);
     } catch (error) {
-      this.#routines.updateRunStatus(run.id, "failed", error instanceof Error ? error.message : String(error));
+      this.#transitionRoutineRunWithConversation(run, "failed", error instanceof Error ? error.message : String(error));
       this.#routineStateChanged(run.botId);
       throw error;
     }
@@ -4598,7 +4608,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (delivery?.delivery.sender.kind !== "routine") return;
     const run = this.#routines.runForDelivery(delivery.delivery.id);
     if (!run || run.status === "needs-attention") return;
-    this.#routines.updateRunStatus(run.id, "needs-attention");
+    this.#transitionRoutineRunWithConversation(run, "needs-attention");
     this.#routineStateChanged(run.botId);
   }
 
@@ -4608,7 +4618,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (delivery?.delivery.sender.kind !== "routine") return;
     const run = this.#routines.runForDelivery(delivery.delivery.id);
     if (run?.status !== "needs-attention") return;
-    this.#routines.updateRunStatus(run.id, "running");
+    this.#transitionRoutineRunWithConversation(run, "running");
     this.#routineStateChanged(run.botId);
   }
 
@@ -4633,13 +4643,72 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#emit({ type: "routines-changed", botId });
   }
 
+  #transitionRoutineRunWithConversation(
+    run: RoutineRun,
+    status: RoutineRunConversationEventStatus,
+    error: string | null = null,
+  ): RoutineRun {
+    if (run.status === status && run.error === error) return run;
+    const previousBot = this.#requireKnownBot(run.botId);
+    const previousSnapshot = this.#snapshots.get(run.botId);
+    const previousSnapshotState = previousSnapshot ? structuredClone(previousSnapshot) : undefined;
+    const database = this.#store.database;
+    const ownsTransaction = !database.connection.isTransaction;
+    if (ownsTransaction) database.connection.exec("BEGIN IMMEDIATE");
+    let updated: RoutineRun;
+    let persisted: ConversationSnapshot;
+    try {
+      const threadId = this.#store.ensureThreadIdNow(run.botId);
+      const nextSnapshot = structuredClone(this.#ensureSnapshot(run.botId, threadId));
+      nextSnapshot.threadId = threadId;
+      updated = this.#appendRoutineRunTransition(nextSnapshot, run, status, error);
+      sortConversationMessages(nextSnapshot.messages);
+      persisted = database.persistConversation(nextSnapshot, `routine.run-${status}`, {
+        routineId: run.routineId,
+        runId: run.id,
+        status,
+      });
+      if (ownsTransaction) database.connection.exec("COMMIT");
+    } catch (caught) {
+      if (ownsTransaction && database.connection.isTransaction) database.connection.exec("ROLLBACK");
+      if (previousBot.threadId === null) {
+        this.#store.restoreThreadIdentity(run.botId, previousBot.threadId, previousBot.updatedAt);
+      }
+      if (previousSnapshotState) this.#snapshots.set(run.botId, previousSnapshotState);
+      else this.#snapshots.delete(run.botId);
+      throw caught;
+    }
+    this.#snapshots.set(run.botId, persisted);
+    this.#publishConversation(persisted);
+    return updated;
+  }
+
+  #appendRoutineRunTransition(
+    snapshot: ConversationSnapshot,
+    run: RoutineRun,
+    status: RoutineRunConversationEventStatus,
+    error: string | null = null,
+  ): RoutineRun {
+    const updated = this.#routines.updateRunStatus(run.id, status, error);
+    snapshot.messages.push({
+      id: randomUUID(),
+      author: "system",
+      source: "system",
+      text: run.routineName,
+      createdAt: updated.updatedAt,
+      status: "completed",
+      itemType: routineRunConversationEventItemType(status, run.routineId, run.id),
+    });
+    return updated;
+  }
+
   #mutateRoutineWithConversation<T>(
     botId: string,
     action: RoutineConversationEventAction,
     mutate: () => T,
     eventRoutine: (result: T) => Pick<Routine, "id" | "name">,
     turnId?: string,
-    transactionHooks?: { beforeMutate?: () => void; onRollback?: () => void },
+    transactionHooks?: { beforeMutate?: (snapshot: ConversationSnapshot) => void; onRollback?: () => void },
   ): T {
     const previousBot = this.#requireKnownBot(botId);
     const previousSnapshot = this.#snapshots.get(botId);
@@ -4653,7 +4722,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const threadId = this.#store.ensureThreadIdNow(botId);
       const nextSnapshot = structuredClone(this.#ensureSnapshot(botId, threadId));
       nextSnapshot.threadId = threadId;
-      transactionHooks?.beforeMutate?.();
+      transactionHooks?.beforeMutate?.(nextSnapshot);
       result = mutate();
       const routine = eventRoutine(result);
       const createdAt = new Date().toISOString();
