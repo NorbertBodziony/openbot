@@ -2987,6 +2987,7 @@ export function createAppController(props: AppProps = {}) {
     const previousServerId = servers().find((server) => server.active)?.id;
     if (previousServerId && previousServerId !== serverId) {
       await disconnectRemoteDesktopWorkspace(false);
+      await window.openbot.browser.setVisible({ visible: false }).catch(() => undefined);
     }
     directConversationRequest += 1;
     const previousDynamicIslandLoadedServerId = dynamicIslandLoadedServerId();

@@ -4718,11 +4718,42 @@ describe("OpenBot connected desktop shell", () => {
 
   it("closes the active remote browser tab with Control W", async () => {
     vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([
+      testServer("local", true),
+      testServer("remote-1", false),
+    ]);
+    vi.mocked(window.openbot.servers.select).mockResolvedValueOnce([
       testServer("local", false),
       testServer("remote-1", true),
     ]);
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "local-tab",
+          title: "Local page",
+          url: "https://example.com/local",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "local-tab",
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    await screen.findByRole("tab", { name: "Local page" });
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() => expect(window.openbot.servers.select).toHaveBeenCalledWith("remote-1"));
+    const hideBrowserCall = vi
+      .mocked(window.openbot.browser.setVisible)
+      .mock.calls.findIndex(([input]) => input.visible === false);
+    expect(hideBrowserCall).toBeGreaterThanOrEqual(0);
+    expect(vi.mocked(window.openbot.browser.setVisible).mock.invocationCallOrder[hideBrowserCall]).toBeLessThan(
+      vi.mocked(window.openbot.servers.select).mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+
     emitAgentEvent?.({
       type: "browser-changed",
       tabs: [
@@ -4737,8 +4768,7 @@ describe("OpenBot connected desktop shell", () => {
       ],
       activeTabId: "remote-tab",
     });
-
-    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    await fireEvent.click(await screen.findByRole("button", { name: "Open computer" }));
     await screen.findByRole("tab", { name: "Remote page" });
     await fireEvent.keyDown(window, { key: "w", ctrlKey: true });
 
