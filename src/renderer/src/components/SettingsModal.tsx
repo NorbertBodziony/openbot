@@ -18,10 +18,16 @@ import { presentUpdateStatus } from "../update-status";
 import { ProviderPicker, type ProviderPickerOption } from "./ProviderPicker";
 import { SettingsDialogShell } from "./SettingsDialogShell";
 import {
+  Alert,
+  AlertContent,
+  AlertDescription,
+  AlertIcon,
+  AlertTitle,
   Button,
   CircleArrowDown,
   CircleCheck,
   ImageRemoveButton,
+  Info,
   Input,
   Item,
   ItemActions,
@@ -91,6 +97,8 @@ type UpdateTrack = "Stable";
 const updateTrackOptions: UpdateTrack[] = ["Stable"];
 const MOBILE_CONNECT_SUCCESS_FEEDBACK_MS = 900;
 const MOBILE_CONNECT_COLLAPSE_MS = 240;
+const MOBILE_DEVICES_REFRESH_INTERVAL_MS = 60_000;
+const MOBILE_CONNECT_PENDING_REFRESH_INTERVAL_MS = 2_000;
 
 export function SettingsModal(props: SettingsModalProps) {
   const [activeTab, setActiveTab] = createSignal<SettingsTab>("general");
@@ -141,15 +149,32 @@ export function SettingsModal(props: SettingsModalProps) {
       open: props.open,
       active: activeTab() === "mobile-connect",
       list: props.onListMobileConnectedDevices,
+      ticketExpiresAt: mobileConnect()?.expiresAt ?? null,
     }),
     ({ open, active, list }) => {
       mobileDevicesRequestRevision += 1;
       if (!open || !active || !list) return;
+      let running = true;
+      let timer: number | undefined;
+
+      const scheduleRefresh = () => {
+        const ticket = mobileConnect();
+        const refreshInterval =
+          ticket && ticket.expiresAt > Date.now()
+            ? MOBILE_CONNECT_PENDING_REFRESH_INTERVAL_MS
+            : MOBILE_DEVICES_REFRESH_INTERVAL_MS;
+        timer = window.setTimeout(async () => {
+          await refreshMobileDevices(false);
+          if (running) scheduleRefresh();
+        }, refreshInterval);
+      };
+
       void refreshMobileDevices(true);
-      const timer = window.setInterval(() => void refreshMobileDevices(false), 2_000);
+      scheduleRefresh();
       return () => {
+        running = false;
         mobileDevicesRequestRevision += 1;
-        window.clearInterval(timer);
+        if (timer !== undefined) window.clearTimeout(timer);
       };
     },
   );
@@ -864,6 +889,18 @@ export function SettingsModal(props: SettingsModalProps) {
                   </Text>
                 </Show>
               </div>
+              <Alert tone="neutral">
+                <AlertIcon>
+                  <Info />
+                </AlertIcon>
+                <AlertContent>
+                  <AlertTitle>Disconnecting a device</AlertTitle>
+                  <AlertDescription>
+                    Access is revoked immediately. The mobile app may keep showing its current screen until it is
+                    reopened or brought back from the background.
+                  </AlertDescription>
+                </AlertContent>
+              </Alert>
               <div class="settings-mobile-devices-states">
                 <div
                   class="settings-mobile-devices-state"

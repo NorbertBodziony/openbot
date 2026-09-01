@@ -400,6 +400,11 @@ describe("SettingsModal", () => {
     expect(screen.getByRole("button", { name: "Generate new code" })).toBeEnabled();
     expect(screen.getByRole("heading", { name: "Connected devices" })).toBeInTheDocument();
     expect(screen.getByText("No connected devices")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Access is revoked immediately. The mobile app may keep showing its current screen until it is reopened or brought back from the background.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("confirms a new mobile connection before collapsing the QR code", async () => {
@@ -449,6 +454,41 @@ describe("SettingsModal", () => {
 
       await vi.advanceTimersByTimeAsync(1_200);
       expect(screen.queryByRole("img", { name: "Mobile Connect sign-in QR code" })).not.toBeInTheDocument();
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("refreshes connected mobile devices once per minute while no QR code is active", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const onListMobileConnectedDevices = vi.fn(async () => []);
+    const view = render(() => (
+      <SettingsModal
+        open
+        onOpenChange={() => undefined}
+        value={DEFAULT_GENERAL_SETTINGS}
+        onValueChange={() => undefined}
+        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
+        updateStatus={idleUpdateStatus}
+        onUpdateAction={vi.fn(async () => undefined)}
+        account={account}
+        onUpdateAccountName={vi.fn(async () => undefined)}
+        onUpdateAccountAvatar={vi.fn(async () => undefined)}
+        onListMobileConnectedDevices={onListMobileConnectedDevices}
+      />
+    ));
+
+    try {
+      await fireEvent.click(screen.getByRole("tab", { name: "Mobile Connect" }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onListMobileConnectedDevices).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(onListMobileConnectedDevices).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(onListMobileConnectedDevices).toHaveBeenCalledTimes(2);
     } finally {
       view.unmount();
       vi.useRealTimers();
