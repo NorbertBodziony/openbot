@@ -6,7 +6,7 @@ import type {
   ProviderRuntimeSnapshot,
   UpdateStatus,
 } from "@openbot/contracts/ipc";
-import { createSignal } from "solid-js";
+import { createSignal, onCleanup } from "solid-js";
 import { expect, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { DEFAULT_GENERAL_SETTINGS } from "../src/app-settings";
@@ -64,6 +64,7 @@ function SettingsModalStory(props: {
   initialUpdateStatus?: UpdateStatus;
   mockDownloadUpdate?: boolean;
   providerDownloads?: boolean;
+  simulateMobileConnection?: boolean;
 }) {
   const [open, setOpen] = createSignal(props.initialOpen);
   const [value, setValue] = createSignal({ ...DEFAULT_GENERAL_SETTINGS });
@@ -78,6 +79,11 @@ function SettingsModalStory(props: {
       lastActiveAt: Date.now() - 45_000,
     },
   ]);
+  let mobileConnectionTimer: number | undefined;
+
+  onCleanup(() => {
+    if (mobileConnectionTimer !== undefined) window.clearTimeout(mobileConnectionTimer);
+  });
 
   async function updateAccountAvatar(image: AvatarImageInput | null): Promise<void> {
     const avatarUrl = image
@@ -106,6 +112,28 @@ function SettingsModalStory(props: {
     setUpdateStatus({ ...downloadingStatus, phase: "ready", progress: 100 });
   }
 
+  async function createMobileConnect(): Promise<{ qrData: string; expiresAt: number }> {
+    if (props.simulateMobileConnection) {
+      mobileConnectionTimer = window.setTimeout(() => {
+        setMobileDevices((current) => [
+          ...current,
+          {
+            sessionId: "22222222-2222-4222-8222-222222222222",
+            name: "OpenBot iPhone",
+            platform: "ios",
+            connectedAt: Date.now(),
+            lastActiveAt: Date.now(),
+          },
+        ]);
+      }, 500);
+    }
+    return {
+      qrData:
+        "openbot://mobile-connect?api=https%3A%2F%2Fapi.openbot.run&ticket=storybook-mobile-ticket_1234567890abcdef",
+      expiresAt: Date.now() + 120_000,
+    };
+  }
+
   return (
     <main class="foundation-story foundation-interaction-stage">
       <Heading as="h1" size="lg">
@@ -125,11 +153,7 @@ function SettingsModalStory(props: {
         account={account()}
         onUpdateAccountName={updateAccountName}
         onUpdateAccountAvatar={updateAccountAvatar}
-        onCreateMobileConnect={async () => ({
-          qrData:
-            "openbot://mobile-connect?api=https%3A%2F%2Fapi.openbot.run&ticket=storybook-mobile-ticket_1234567890abcdef",
-          expiresAt: Date.now() + 120_000,
-        })}
+        onCreateMobileConnect={createMobileConnect}
         onListMobileConnectedDevices={async () => mobileDevices()}
         onRevokeMobileConnectedDevice={async (sessionId) => {
           setMobileDevices((current) => current.filter((device) => device.sessionId !== sessionId));
@@ -227,6 +251,16 @@ export const MobileConnect: Story = {
     await userEvent.click(await body.findByRole("tab", { name: "Mobile Connect" }));
     await userEvent.click(await body.findByRole("button", { name: "Generate QR code" }));
     await expect(await body.findByRole("img", { name: "Mobile Connect sign-in QR code" })).toBeVisible();
+  },
+};
+
+export const MobileConnectSuccess: Story = {
+  render: () => <SettingsModalStory initialOpen simulateMobileConnection />,
+  play: async ({ userEvent }) => {
+    const body = within(document.body);
+    await userEvent.click(await body.findByRole("tab", { name: "Mobile Connect" }));
+    await userEvent.click(await body.findByRole("button", { name: "Generate QR code" }));
+    await expect(await body.findByText("Phone connected", undefined, { timeout: 3_000 })).toBeVisible();
   },
 };
 

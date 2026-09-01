@@ -11,7 +11,7 @@ import type {
   UpdateStatus,
 } from "@openbot/contracts/ipc";
 import { normalizeAccountName, validateProfileName } from "@openbot/contracts/validation";
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import type { GeneralSettingsValue } from "../app-settings";
 import { normalizeAvatarFile } from "../avatar-image";
 import { presentUpdateStatus } from "../update-status";
@@ -20,6 +20,7 @@ import { SettingsDialogShell } from "./SettingsDialogShell";
 import {
   Button,
   CircleArrowDown,
+  CircleCheck,
   ImageRemoveButton,
   Input,
   Item,
@@ -88,6 +89,8 @@ const tabDetails: Record<SettingsTab, { title: string; description: string }> = 
 const linkTargetOptions: GeneralSettingsValue["externalLinkTarget"][] = ["Default browser", "OpenBot"];
 type UpdateTrack = "Stable";
 const updateTrackOptions: UpdateTrack[] = ["Stable"];
+const MOBILE_CONNECT_SUCCESS_FEEDBACK_MS = 900;
+const MOBILE_CONNECT_COLLAPSE_MS = 240;
 
 export function SettingsModal(props: SettingsModalProps) {
   const [activeTab, setActiveTab] = createSignal<SettingsTab>("general");
@@ -103,7 +106,11 @@ export function SettingsModal(props: SettingsModalProps) {
   const [mobileConnectBusy, setMobileConnectBusy] = createSignal(false);
   const [mobileConnectError, setMobileConnectError] = createSignal<string | null>(null);
   const [mobileConnectNow, setMobileConnectNow] = createSignal(Date.now());
+  const [mobileConnectStartedAt, setMobileConnectStartedAt] = createSignal<number | null>(null);
+  const [mobileConnectSuccessDeviceName, setMobileConnectSuccessDeviceName] = createSignal<string | null>(null);
+  const [mobileConnectCollapsing, setMobileConnectCollapsing] = createSignal(false);
   const [mobileDevices, setMobileDevices] = createSignal<MobileConnectedDevice[]>([]);
+  const [mobileDevicesLoaded, setMobileDevicesLoaded] = createSignal(false);
   const [mobileDevicesLoading, setMobileDevicesLoading] = createSignal(false);
   const [mobileDevicesError, setMobileDevicesError] = createSignal<string | null>(null);
   const [revokingMobileSessionId, setRevokingMobileSessionId] = createSignal<string | null>(null);
@@ -112,6 +119,9 @@ export function SettingsModal(props: SettingsModalProps) {
   let avatarFileInput: HTMLInputElement | undefined;
   let profileNameInput: HTMLInputElement | undefined;
   let mobileDevicesRequestRevision = 0;
+  let mobileConnectBaselineSessionIds = new Set<string>();
+  let mobileConnectSuccessTimer: number | undefined;
+  let mobileConnectCleanupTimer: number | undefined;
 
   const accountName = () => props.account.name?.trim() || props.account.email.split("@")[0] || props.account.email;
 
@@ -274,14 +284,21 @@ export function SettingsModal(props: SettingsModalProps) {
 
   async function createMobileConnect(): Promise<void> {
     if (mobileConnectBusy() || !props.onCreateMobileConnect) return;
+    clearMobileConnectFeedbackTimers();
     setMobileConnectBusy(true);
     setMobileConnectError(null);
+    setMobileConnectSuccessDeviceName(null);
+    setMobileConnectCollapsing(false);
     try {
       const ticket = await props.onCreateMobileConnect();
+      const now = Date.now();
+      mobileConnectBaselineSessionIds = new Set(mobileDevices().map((device) => device.sessionId));
       setMobileConnect(ticket);
-      setMobileConnectNow(Date.now());
+      setMobileConnectStartedAt(now);
+      setMobileConnectNow(now);
     } catch (error) {
       setMobileConnect(null);
+      setMobileConnectStartedAt(null);
       setMobileConnectError(error instanceof Error ? error.message : "Could not generate a Mobile Connect code.");
     } finally {
       setMobileConnectBusy(false);
@@ -296,9 +313,12 @@ export function SettingsModal(props: SettingsModalProps) {
     try {
       const devices = await list();
       if (revision !== mobileDevicesRequestRevision) return;
+      const connectedDevice = newlyConnectedMobileDevice(devices);
       setMobileDevices(devices);
+      setMobileDevicesLoaded(true);
       setMobileDevicesError(null);
       setMobileConnectNow(Date.now());
+      if (connectedDevice) showMobileConnectSuccess(connectedDevice);
     } catch (error) {
       if (revision !== mobileDevicesRequestRevision) return;
       setMobileDevicesError(error instanceof Error ? error.message : "Could not load connected devices.");
@@ -306,6 +326,44 @@ export function SettingsModal(props: SettingsModalProps) {
       if (revision === mobileDevicesRequestRevision) setMobileDevicesLoading(false);
     }
   }
+
+  function newlyConnectedMobileDevice(devices: MobileConnectedDevice[]): MobileConnectedDevice | null {
+    const startedAt = mobileConnectStartedAt();
+    const ticket = mobileConnect();
+    if (!ticket || startedAt === null || mobileConnectSuccessDeviceName() || Date.now() > ticket.expiresAt + 5_000) {
+      return null;
+    }
+    return (
+      devices.find(
+        (device) =>
+          !mobileConnectBaselineSessionIds.has(device.sessionId) &&
+          (mobileDevicesLoaded() || device.connectedAt >= startedAt - 5_000),
+      ) ?? null
+    );
+  }
+
+  function showMobileConnectSuccess(device: MobileConnectedDevice): void {
+    clearMobileConnectFeedbackTimers();
+    setMobileConnectSuccessDeviceName(device.name);
+    mobileConnectSuccessTimer = window.setTimeout(() => {
+      setMobileConnectCollapsing(true);
+      mobileConnectCleanupTimer = window.setTimeout(() => {
+        setMobileConnect(null);
+        setMobileConnectStartedAt(null);
+        setMobileConnectSuccessDeviceName(null);
+        setMobileConnectCollapsing(false);
+      }, MOBILE_CONNECT_COLLAPSE_MS);
+    }, MOBILE_CONNECT_SUCCESS_FEEDBACK_MS);
+  }
+
+  function clearMobileConnectFeedbackTimers(): void {
+    if (mobileConnectSuccessTimer !== undefined) window.clearTimeout(mobileConnectSuccessTimer);
+    if (mobileConnectCleanupTimer !== undefined) window.clearTimeout(mobileConnectCleanupTimer);
+    mobileConnectSuccessTimer = undefined;
+    mobileConnectCleanupTimer = undefined;
+  }
+
+  onCleanup(clearMobileConnectFeedbackTimers);
 
   async function revokeMobileDevice(device: MobileConnectedDevice): Promise<void> {
     if (!props.onRevokeMobileConnectedDevice || revokingMobileSessionId()) return;
@@ -725,104 +783,170 @@ export function SettingsModal(props: SettingsModalProps) {
 
               <Show when={mobileConnect()}>
                 {(ticket) => (
-                  <div class="settings-mobile-connect-code" aria-live="polite">
-                    <Show
-                      when={!mobileConnectExpired()}
-                      fallback={
-                        <div class="settings-mobile-connect-expired" role="status">
-                          <Smartphone aria-hidden="true" />
-                          <Text class="settings-mobile-connect-code-title" variant="body">
-                            This code has expired
-                          </Text>
-                          <Text variant="caption" tone="muted">
-                            Generate a new code to connect your phone.
-                          </Text>
-                        </div>
-                      }
-                    >
-                      <QrCode value={ticket().qrData} label="Mobile Connect sign-in QR code" />
-                      <div class="settings-mobile-connect-code-copy">
-                        <Text class="settings-mobile-connect-code-title" variant="body">
-                          Open OpenBot on your phone
-                        </Text>
-                        <Text variant="caption" tone="muted">
-                          Choose Scan QR code and point your camera at this code.
-                        </Text>
-                        <Text class="settings-mobile-connect-expiry" variant="caption" aria-atomic="true">
-                          Expires in {mobileConnectExpiryLabel()}
-                        </Text>
+                  <div
+                    class="settings-mobile-connect-code-collapse"
+                    data-collapsing={mobileConnectCollapsing() ? "" : undefined}
+                    aria-hidden={mobileConnectCollapsing() ? "true" : undefined}
+                  >
+                    <div class="settings-mobile-connect-code-collapse-body">
+                      <div class="settings-mobile-connect-code" aria-live="polite">
+                        <Show
+                          when={!mobileConnectExpired()}
+                          fallback={
+                            <div class="settings-mobile-connect-expired" role="status">
+                              <Smartphone aria-hidden="true" />
+                              <Text class="settings-mobile-connect-code-title" variant="body">
+                                This code has expired
+                              </Text>
+                              <Text variant="caption" tone="muted">
+                                Generate a new code to connect your phone.
+                              </Text>
+                            </div>
+                          }
+                        >
+                          <div
+                            class="settings-mobile-connect-qr-stage"
+                            data-success={mobileConnectSuccessDeviceName() ? "" : undefined}
+                          >
+                            <QrCode value={ticket().qrData} label="Mobile Connect sign-in QR code" />
+                            <Show when={mobileConnectSuccessDeviceName()}>
+                              <div class="settings-mobile-connect-success-mark" aria-hidden="true">
+                                <CircleCheck />
+                              </div>
+                            </Show>
+                          </div>
+                          <div class="settings-mobile-connect-code-copy">
+                            <Show
+                              when={mobileConnectSuccessDeviceName()}
+                              fallback={
+                                <>
+                                  <Text class="settings-mobile-connect-code-title" variant="body">
+                                    Open OpenBot on your phone
+                                  </Text>
+                                  <Text variant="caption" tone="muted">
+                                    Choose Scan QR code and point your camera at this code.
+                                  </Text>
+                                  <Text class="settings-mobile-connect-expiry" variant="caption" aria-atomic="true">
+                                    Expires in {mobileConnectExpiryLabel()}
+                                  </Text>
+                                </>
+                              }
+                            >
+                              {(deviceName) => (
+                                <>
+                                  <Text
+                                    class="settings-mobile-connect-code-title settings-mobile-connect-success-title"
+                                    variant="body"
+                                  >
+                                    Phone connected
+                                  </Text>
+                                  <Text variant="caption" tone="muted" role="status">
+                                    {deviceName()} is ready to use OpenBot.
+                                  </Text>
+                                </>
+                              )}
+                            </Show>
+                          </div>
+                        </Show>
                       </div>
-                    </Show>
+                    </div>
                   </div>
                 )}
               </Show>
             </ItemGroup>
 
-            <Show when={mobileDevices().length > 0}>
-              <section class="settings-mobile-devices" aria-labelledby="settings-mobile-devices-title">
-                <div class="settings-mobile-devices-heading">
-                  <h3 id="settings-mobile-devices-title">Connected devices</h3>
-                  <Show when={mobileDevicesLoading()}>
-                    <Text as="span" variant="caption" tone="muted" role="status">
-                      Refreshing…
-                    </Text>
-                  </Show>
-                </div>
-                <div class="settings-mobile-devices-table-frame">
-                  <table class="settings-mobile-devices-table">
-                    <thead>
-                      <tr>
-                        <th scope="col">Device</th>
-                        <th scope="col">Platform</th>
-                        <th scope="col">Connected</th>
-                        <th scope="col">Last active</th>
-                        <th scope="col">
-                          <span class="sr-only">Actions</span>
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <For each={mobileDevices()}>
-                        {(device) => (
-                          <tr>
-                            <td>
-                              <span class="settings-mobile-device-name">
-                                <Smartphone aria-hidden="true" />
-                                {device.name}
-                              </span>
-                            </td>
-                            <td>{mobileDevicePlatformLabel(device.platform)}</td>
-                            <td>{mobileDeviceTimeLabel(device.connectedAt)}</td>
-                            <td>{mobileDeviceTimeLabel(device.lastActiveAt)}</td>
-                            <td class="settings-mobile-device-action">
-                              <Button
-                                type="button"
-                                variant="destructive-ghost"
-                                size="xs"
-                                loading={revokingMobileSessionId() === device.sessionId}
-                                loadingLabel="Disconnecting…"
-                                disabled={!props.onRevokeMobileConnectedDevice}
-                                aria-label={`Disconnect ${device.name}`}
-                                onClick={() => void revokeMobileDevice(device)}
-                              >
-                                Disconnect
-                              </Button>
-                            </td>
-                          </tr>
-                        )}
-                      </For>
-                    </tbody>
-                  </table>
-                </div>
-                <Show when={mobileDevicesError()}>
-                  {(error) => (
-                    <Text class="settings-modal-error" variant="caption" role="alert">
-                      {error()}
-                    </Text>
-                  )}
+            <section class="settings-mobile-devices" aria-labelledby="settings-mobile-devices-title">
+              <div class="settings-mobile-devices-heading">
+                <h3 id="settings-mobile-devices-title">Connected devices</h3>
+                <Show when={mobileDevicesLoading()}>
+                  <Text as="span" variant="caption" tone="muted" role="status">
+                    Refreshing…
+                  </Text>
                 </Show>
-              </section>
-            </Show>
+              </div>
+              <div class="settings-mobile-devices-states">
+                <div
+                  class="settings-mobile-devices-state"
+                  data-expanded={mobileDevices().length === 0 ? "" : undefined}
+                  aria-hidden={mobileDevices().length > 0 ? "true" : undefined}
+                >
+                  <div class="settings-mobile-devices-state-body">
+                    <div class="settings-mobile-devices-empty" role="status">
+                      <Smartphone aria-hidden="true" />
+                      <div>
+                        <Text class="settings-mobile-devices-empty-title" variant="body">
+                          No connected devices
+                        </Text>
+                        <Text variant="caption" tone="muted">
+                          Devices connected with Mobile Connect will appear here.
+                        </Text>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div
+                  class="settings-mobile-devices-state"
+                  data-expanded={mobileDevices().length > 0 ? "" : undefined}
+                  aria-hidden={mobileDevices().length === 0 ? "true" : undefined}
+                >
+                  <div class="settings-mobile-devices-state-body">
+                    <div class="settings-mobile-devices-table-frame">
+                      <table class="settings-mobile-devices-table">
+                        <thead>
+                          <tr>
+                            <th scope="col">Device</th>
+                            <th scope="col">Platform</th>
+                            <th scope="col">Connected</th>
+                            <th scope="col">Last active</th>
+                            <th scope="col">
+                              <span class="sr-only">Actions</span>
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <For each={mobileDevices()}>
+                            {(device) => (
+                              <tr>
+                                <td>
+                                  <span class="settings-mobile-device-name">
+                                    <Smartphone aria-hidden="true" />
+                                    {device.name}
+                                  </span>
+                                </td>
+                                <td>{mobileDevicePlatformLabel(device.platform)}</td>
+                                <td>{mobileDeviceTimeLabel(device.connectedAt)}</td>
+                                <td>{mobileDeviceTimeLabel(device.lastActiveAt)}</td>
+                                <td class="settings-mobile-device-action">
+                                  <Button
+                                    type="button"
+                                    variant="destructive-ghost"
+                                    size="xs"
+                                    loading={revokingMobileSessionId() === device.sessionId}
+                                    loadingLabel="Disconnecting…"
+                                    disabled={!props.onRevokeMobileConnectedDevice}
+                                    aria-label={`Disconnect ${device.name}`}
+                                    onClick={() => void revokeMobileDevice(device)}
+                                  >
+                                    Disconnect
+                                  </Button>
+                                </td>
+                              </tr>
+                            )}
+                          </For>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <Show when={mobileDevicesError()}>
+                {(error) => (
+                  <Text class="settings-modal-error" variant="caption" role="alert">
+                    {error()}
+                  </Text>
+                )}
+              </Show>
+            </section>
           </SettingsSection>
         </Tabs.Content>
 

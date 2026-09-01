@@ -8,11 +8,9 @@ import {
   useRef,
   useState,
 } from "react";
-import { AppState } from "react-native";
+import { AppState, type AppStateStatus } from "react-native";
 
 import { logoutMobileSession, type MobileSession, readMobileSession, validateMobileSession } from "@/lib/mobile-auth";
-
-const SESSION_CHECK_INTERVAL_MS = 5 * 60_000;
 
 interface MobileSessionContextValue {
   loading: boolean;
@@ -57,10 +55,9 @@ export function MobileSessionProvider({ children }: PropsWithChildren) {
   }, [setCurrentSession]);
 
   useEffect(() => {
-    if (!sessionState) return;
     let active = true;
     let checking = false;
-    let foreground = AppState.currentState === "active";
+    let appState: AppStateStatus = AppState.currentState;
 
     async function checkSession(): Promise<void> {
       const current = sessionRef.current;
@@ -78,20 +75,17 @@ export function MobileSessionProvider({ children }: PropsWithChildren) {
       }
     }
 
-    const timer = setInterval(() => {
-      if (foreground) void checkSession();
-    }, SESSION_CHECK_INTERVAL_MS);
-    const appStateSubscription = AppState.addEventListener("change", (state) => {
-      foreground = state === "active";
-      if (foreground) void checkSession();
+    const appStateSubscription = AppState.addEventListener("change", (nextAppState) => {
+      const resumed = (appState === "background" || appState === "inactive") && nextAppState === "active";
+      appState = nextAppState;
+      if (resumed) void checkSession();
     });
 
     return () => {
       active = false;
-      clearInterval(timer);
       appStateSubscription.remove();
     };
-  }, [sessionState, setCurrentSession]);
+  }, [setCurrentSession]);
 
   const signOut = useCallback(async () => {
     const current = sessionRef.current;

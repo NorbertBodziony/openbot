@@ -516,6 +516,32 @@
   color: var(--openbot-danger);
 }
 
+.settings-mobile-connect-code-collapse {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-rows var(--openbot-duration-overlay) var(--openbot-ease-out),
+    opacity var(--openbot-duration-normal) ease-out;
+}
+
+@starting-style {
+  .settings-mobile-connect-code-collapse {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+
+.settings-mobile-connect-code-collapse[data-collapsing] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+.settings-mobile-connect-code-collapse-body {
+  min-height: 0;
+  overflow: hidden;
+}
+
 .settings-mobile-connect-code {
   min-height: 244px;
   display: flex;
@@ -523,6 +549,62 @@
   justify-content: center;
   gap: var(--openbot-space-6);
   padding: var(--openbot-space-6);
+}
+
+.settings-mobile-connect-qr-stage {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.settings-mobile-connect-qr-stage .ui-qr-code {
+  transition:
+    opacity var(--openbot-duration-normal) ease-out,
+    filter var(--openbot-duration-overlay) ease-out,
+    transform var(--openbot-duration-overlay) var(--openbot-ease-out);
+}
+
+.settings-mobile-connect-qr-stage[data-success] .ui-qr-code {
+  opacity: 0.18;
+  filter: blur(2px);
+  transform: scale(0.97);
+}
+
+.settings-mobile-connect-success-mark {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--openbot-success);
+  animation: settings-mobile-connect-success-enter var(--openbot-duration-overlay) var(--openbot-ease-out) both;
+}
+
+.settings-mobile-connect-success-mark::before {
+  position: absolute;
+  width: 84px;
+  height: 84px;
+  border: 1px solid var(--openbot-success);
+  border-radius: var(--openbot-radius-pill);
+  background: var(--openbot-success-soft);
+  content: "";
+  animation: settings-mobile-connect-success-ring 600ms var(--openbot-ease-out) both;
+}
+
+.settings-mobile-connect-success-mark > svg {
+  position: relative;
+  width: 58px;
+  height: 58px;
+  padding: var(--openbot-space-2);
+  border-radius: var(--openbot-radius-pill);
+  background: var(--openbot-bg-surface-raised);
+  filter: drop-shadow(0 6px 16px var(--openbot-shadow-popover-key));
+  stroke-width: 1.75;
+  animation: settings-mobile-connect-success-pop 420ms var(--openbot-ease-out) both;
+}
+
+.settings-mobile-connect-success-mark > svg path {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+  animation: settings-mobile-connect-check-draw 360ms var(--openbot-duration-fast) var(--openbot-ease-out) forwards;
 }
 
 .settings-mobile-connect-code-copy {
@@ -538,6 +620,10 @@
 .settings-mobile-connect-expiry {
   color: var(--openbot-settings-accent-text);
   font-variant-numeric: tabular-nums;
+}
+
+.settings-mobile-connect-success-title {
+  color: var(--openbot-success);
 }
 
 .settings-mobile-connect-expired {
@@ -570,6 +656,60 @@
 
 .settings-mobile-devices-heading h3 {
   margin: 0;
+  font-weight: var(--openbot-weight-medium);
+}
+
+.settings-mobile-devices-states {
+  display: grid;
+}
+
+.settings-mobile-devices-state {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition:
+    grid-template-rows var(--openbot-duration-overlay) var(--openbot-ease-out),
+    opacity var(--openbot-duration-normal) ease-out,
+    transform var(--openbot-duration-overlay) var(--openbot-ease-out);
+}
+
+.settings-mobile-devices-state[data-expanded] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.settings-mobile-devices-state-body {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.settings-mobile-devices-empty {
+  min-height: 88px;
+  display: flex;
+  align-items: center;
+  gap: var(--openbot-space-3);
+  border: 1px solid var(--openbot-border);
+  border-radius: var(--openbot-radius-lg);
+  background: var(--openbot-bg-surface);
+  padding: var(--openbot-space-4);
+  color: var(--openbot-text-muted);
+}
+
+.settings-mobile-devices-empty > svg {
+  width: var(--openbot-icon-lg);
+  height: var(--openbot-icon-lg);
+  flex: 0 0 auto;
+}
+
+.settings-mobile-devices-empty > div {
+  display: grid;
+  gap: var(--openbot-space-1);
+}
+
+.settings-mobile-devices-empty-title {
+  color: var(--openbot-text-secondary);
   font-weight: var(--openbot-weight-medium);
 }
 
@@ -623,6 +763,46 @@
 .settings-mobile-devices-table td.settings-mobile-device-action {
   width: 1%;
   text-align: right;
+}
+
+@keyframes settings-mobile-connect-success-enter {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes settings-mobile-connect-success-ring {
+  from {
+    opacity: 0.8;
+    transform: scale(0.72);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(1.35);
+  }
+}
+
+@keyframes settings-mobile-connect-success-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.62) rotate(-8deg);
+  }
+
+  70% {
+    transform: scale(1.08) rotate(1deg);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(0);
+  }
+}
+
+@keyframes settings-mobile-connect-check-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
 }
 
 .settings-identity-name-row.ui-item,
@@ -976,5 +1156,22 @@
   .settings-identity-name-input.is-shaking {
     animation: none;
     transform: none;
+  }
+
+  .settings-mobile-connect-code-collapse,
+  .settings-mobile-connect-qr-stage .ui-qr-code,
+  .settings-mobile-devices-state {
+    transition: none;
+  }
+
+  .settings-mobile-connect-success-mark,
+  .settings-mobile-connect-success-mark::before,
+  .settings-mobile-connect-success-mark > svg,
+  .settings-mobile-connect-success-mark > svg path {
+    animation: none;
+  }
+
+  .settings-mobile-connect-success-mark > svg path {
+    stroke-dashoffset: 0;
   }
 }
