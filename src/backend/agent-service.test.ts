@@ -1015,7 +1015,7 @@ describe.sequential("AgentService", () => {
     const hostedSite = {
       id: "site-1",
       hostname: "approved-public-site-for-students-k7m2q9tzab.openbot.site",
-      url: "https://approved-public-site-for-students-k7m2q9tzab.openbot.site",
+      url: "http://approved-public-site-for-students-k7m2q9tzab.openbot.localhost:3100/",
       title: "Approved public site",
       description: "A public test site.",
       framework: "vanilla" as const,

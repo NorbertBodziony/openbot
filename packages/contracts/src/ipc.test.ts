@@ -12,6 +12,7 @@ import {
   isBotMemory,
   isConversationMessage,
   isDynamicIslandAction,
+  isHostedSiteConversationEventUrl,
   isMessageReaction,
   parseHostedSiteConversationEventItemType,
   parseRoutineConversationEventItemType,
@@ -448,6 +449,32 @@ describe("hosted site conversation events", () => {
       } as const;
       expect(hostedSiteConversationEvent(message)).toMatchObject({ action, status, ...publishedSite });
     }
+  });
+
+  it("accepts a matching local development URL for a canonical hosted-site hostname", () => {
+    const localUrl = "http://launch-page-23456789ab.openbot.localhost:3100/";
+    const details = { ...publishedSite, url: localUrl };
+    const message = {
+      id: "local-site-publish",
+      author: "system",
+      source: "system",
+      text: hostedSiteConversationEventText(details),
+      createdAt: "2026-09-01T12:00:00.000Z",
+      status: "completed",
+      itemType: hostedSiteConversationEventItemType("publish", "succeeded", "operation-local"),
+    } as const;
+
+    expect(hostedSiteConversationEvent(message)).toMatchObject({ ...details, status: "succeeded" });
+    expect(isHostedSiteConversationEventUrl(localUrl, publishedSite.hostname)).toBe(true);
+    expect(
+      isHostedSiteConversationEventUrl(
+        "http://different-page-23456789ab.openbot.localhost:3100/",
+        publishedSite.hostname,
+      ),
+    ).toBe(false);
+    expect(
+      isHostedSiteConversationEventUrl("http://launch-page-23456789ab.openbot.localhost/", publishedSite.hostname),
+    ).toBe(false);
   });
 
   it("keeps a terminal marker structured when legacy display metadata is unavailable", () => {

@@ -80,6 +80,7 @@ import {
   AGENT_RUNTIME_TEXT_LIMIT,
   hostedSiteConversationEventItemType,
   hostedSiteConversationEventText,
+  isHostedSiteConversationEventUrl,
   isImageGenerationAspectRatio,
   isMessageReaction,
   isReasoningEffort,
@@ -5953,7 +5954,7 @@ function hostedSiteEventDetails(site: HostedSiteSummary, siteId = site.id): Host
   const titleSource = site.title.trim() || site.hostname.trim() || "Hosted site";
   const title = titleSource.slice(0, 120).trim() || "Hosted site";
   const hostname = hostedSiteMarkerHostname(site.hostname);
-  const url = hostname && hostedSiteMarkerUrl(site.url, hostname) ? site.url : null;
+  const url = hostname && isHostedSiteConversationEventUrl(site.url, hostname) ? site.url : null;
   const details: HostedSiteConversationEventDetails = {
     siteId: siteId.trim() && siteId.length <= INPUT_LIMITS.identifier ? siteId.trim() : null,
     title,
@@ -5971,24 +5972,5 @@ function hostedSiteMarkerHostname(value: string): string | null {
     return parsed.hostname === value && parsed.port === "" && value.endsWith(".openbot.site") ? value : null;
   } catch {
     return null;
-  }
-}
-
-function hostedSiteMarkerUrl(value: string, hostname: string): boolean {
-  if (value.length > INPUT_LIMITS.browserUrl) return false;
-  try {
-    const parsed = new URL(value);
-    return (
-      parsed.protocol === "https:" &&
-      parsed.username === "" &&
-      parsed.password === "" &&
-      parsed.hostname === hostname &&
-      parsed.port === "" &&
-      parsed.pathname === "/" &&
-      parsed.search === "" &&
-      parsed.hash === ""
-    );
-  } catch {
-    return false;
   }
 }
