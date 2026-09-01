@@ -91,10 +91,7 @@ interface ClaudeQuery extends AsyncIterable<ClaudeStreamMessage> {
   interrupt(): Promise<unknown>;
   supportedModels(): Promise<ModelInfo[]>;
   setModel(model?: string): Promise<void>;
-  setMaxThinkingTokens(
-    maxThinkingTokens: number | null,
-    thinkingDisplay?: "summarized" | "omitted" | null,
-  ): Promise<void>;
+  applyFlagSettings(settings: { effortLevel?: ClaudeEffort | null }): Promise<void>;
   close(): void;
 }
 
@@ -362,10 +359,10 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     const requestedEffort = getString(params, "effort");
     const selectedEffort = requestedEffort ?? runtime.config.effort;
     if (!this.#modelSupportsEffort(runtime.config.model)) {
-      if (runtime.appliedEffort !== undefined) await runtime.query.setMaxThinkingTokens(null);
+      if (runtime.appliedEffort !== undefined) await runtime.query.applyFlagSettings({ effortLevel: null });
       runtime.appliedEffort = undefined;
     } else if (selectedEffort && (modelChanged || selectedEffort !== runtime.appliedEffort)) {
-      await runtime.query.setMaxThinkingTokens(thinkingTokens(selectedEffort));
+      await runtime.query.applyFlagSettings({ effortLevel: normalizeClaudeEffort(selectedEffort) });
       runtime.appliedEffort = selectedEffort;
     }
     if (requestedEffort) runtime.config.effort = requestedEffort;
@@ -857,10 +854,6 @@ function normalizeClaudeModel(model: string): string {
 
 function normalizeClaudeEffort(effort: string): ClaudeEffort {
   return isOneOf(CLAUDE_EFFORTS, effort) ? effort : "high";
-}
-
-function thinkingTokens(effort: string): number {
-  return { low: 2_000, medium: 8_000, high: 16_000, xhigh: 32_000, max: 64_000 }[effort] ?? 16_000;
 }
 
 function isUuid(value: string): value is UUID {
