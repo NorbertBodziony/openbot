@@ -302,6 +302,9 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
                             >
                               <span class="provider-model-option-name">
                                 <span>{displayModelName(model.name, model.id)}</span>
+                                <Show when={model.id === DEFAULT_MODELS[provider]}>
+                                  <small>default</small>
+                                </Show>
                               </span>
                               <Show when={selected()}>
                                 <CheckIcon />
