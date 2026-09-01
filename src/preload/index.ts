@@ -884,6 +884,10 @@ const openbotApi: OpenBotDesktopApi = {
     verifyEmailCode: (challengeId, code) => ipcRenderer.invoke(IPC_CHANNELS.authVerifyEmailCode, { challengeId, code }),
     updateName: (name) => ipcRenderer.invoke(IPC_CHANNELS.authUpdateName, name),
     updateAvatar: (image) => ipcRenderer.invoke(IPC_CHANNELS.authUpdateAvatar, image),
+    createMobileConnect: () => ipcRenderer.invoke(IPC_CHANNELS.authCreateMobileConnect),
+    listMobileConnectedDevices: () => ipcRenderer.invoke(IPC_CHANNELS.authListMobileConnectedDevices),
+    revokeMobileConnectedDevice: (sessionId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.authRevokeMobileConnectedDevice, sessionId),
     logout: () => ipcRenderer.invoke(IPC_CHANNELS.authLogout),
     onEvent: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, state: Parameters<typeof listener>[0]) => listener(state);

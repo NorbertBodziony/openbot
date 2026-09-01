@@ -17,6 +17,7 @@ export { default as CircleQuestionMark } from "lucide-solid/icons/circle-questio
 export { default as Clock3 } from "lucide-solid/icons/clock-3";
 export { default as Copy } from "lucide-solid/icons/copy";
 export { default as CornerDownLeft } from "lucide-solid/icons/corner-down-left";
+export { default as Download } from "lucide-solid/icons/download";
 export { default as Ellipsis } from "lucide-solid/icons/ellipsis";
 export { default as ExternalLink } from "lucide-solid/icons/external-link";
 export { default as File } from "lucide-solid/icons/file";
@@ -58,6 +59,7 @@ export { default as Search } from "lucide-solid/icons/search";
 export { default as Settings } from "lucide-solid/icons/settings";
 export { default as ShieldCheck } from "lucide-solid/icons/shield-check";
 export { default as SlidersHorizontal } from "lucide-solid/icons/sliders-horizontal";
+export { default as Smartphone } from "lucide-solid/icons/smartphone";
 export { default as Trash2 } from "lucide-solid/icons/trash-2";
 export { default as TriangleAlert } from "lucide-solid/icons/triangle-alert";
 export { default as Upload } from "lucide-solid/icons/upload";

@@ -97,10 +97,24 @@ export interface AuthenticatedMember {
   sessionExpiresAt: string;
 }
 
+export interface RemoteDirectoryMember {
+  membershipId: string;
+  email: string;
+  name: string | null;
+  avatarUrl: string | null;
+  role: TeamRole;
+  status: "active" | "revoked";
+  createdAt: number;
+}
+
 export class TeamStore {
   readonly #path: string;
   readonly #logoRoot: string;
   #state: StoredTeam | null = null;
+  readonly #remoteSessions = new Map<
+    string,
+    { member: TeamMemberSummary; sessionId: string; createdAt: string; sessionExpiresAt: string }
+  >();
   #writeChain = Promise.resolve();
 
   constructor(path: string) {
@@ -138,6 +152,10 @@ export class TeamStore {
     return this.#state?.members.find((member) => member.role === "owner")?.email ?? null;
   }
 
+  getOwnerMemberId(): string | null {
+    return this.#state?.members.find((member) => member.role === "owner")?.id ?? null;
+  }
+
   getOwnerAnalyticsIdentity(): Pick<CentralAuthUser, "id" | "email"> | null {
     const owner = this.#state?.members.find((member) => member.role === "owner");
     return owner?.accountId && owner.email ? { id: owner.accountId, email: owner.email } : null;
@@ -158,6 +176,11 @@ export class TeamStore {
     if (!identity || !this.#state || !/^[A-Za-z0-9_-]{16,128}$/.test(challenge)) return null;
     const signature = sign(null, Buffer.from(challenge), this.#state.privateKey).toString("base64url");
     return { ...identity, challenge, signature };
+  }
+
+  signRemoteAuthentication(transcript: string): string {
+    if (!this.#state) throw new TeamStoreError("The team host is not configured.");
+    return sign(null, Buffer.from(transcript), this.#state.privateKey).toString("base64url");
   }
 
   async configure(serverName: string, username: string, password: string): Promise<TeamIdentity> {
@@ -315,7 +338,96 @@ export class TeamStore {
   }
 
   listMembers(): TeamMemberSummary[] {
-    return this.#requireState().members.map(publicMember);
+    const members = this.#requireState().members.map(publicMember);
+    const known = new Set(members.map((member) => member.id));
+    for (const remote of this.#remoteSessions.values()) {
+      if (!known.has(remote.member.id) && Date.parse(remote.sessionExpiresAt) > Date.now()) {
+        members.push(structuredClone(remote.member));
+        known.add(remote.member.id);
+      }
+    }
+    return members;
+  }
+
+  async syncRemoteDirectory(remoteMembers: RemoteDirectoryMember[]): Promise<void> {
+    const state = this.#requireState();
+    const remoteOwner = remoteMembers.find((member) => member.role === "owner");
+    const localOwner = state.members.find((member) => member.role === "owner");
+    if (remoteOwner && localOwner && remoteOwner.membershipId !== localOwner.id) {
+      if (state.members.some((member) => member.id === remoteOwner.membershipId)) {
+        throw new TeamStoreError("The control-plane owner membership conflicts with this host.");
+      }
+      const previousOwnerId = localOwner.id;
+      localOwner.id = remoteOwner.membershipId;
+      for (const session of state.sessions) {
+        if (session.memberId === previousOwnerId) session.memberId = remoteOwner.membershipId;
+      }
+    }
+    const remoteIds = new Set(remoteMembers.map((member) => member.membershipId));
+    for (const remote of remoteMembers) {
+      const member = state.members.find((candidate) => candidate.id === remote.membershipId);
+      if (!member) {
+        if (remote.role === "owner")
+          throw new TeamStoreError("The control-plane owner identity does not match this host.");
+        state.members.push({
+          id: remote.membershipId,
+          username: normalizeEmail(remote.email),
+          email: normalizeEmail(remote.email),
+          name: normalizeName(remote.name),
+          avatarUrl: normalizeAvatarUrl(remote.avatarUrl),
+          role: remote.role,
+          disabled: remote.status !== "active",
+          createdAt: new Date(remote.createdAt).toISOString(),
+        });
+        continue;
+      }
+      member.username = normalizeEmail(remote.email);
+      member.email = normalizeEmail(remote.email);
+      member.name = normalizeName(remote.name);
+      member.avatarUrl = normalizeAvatarUrl(remote.avatarUrl);
+      member.role = remote.role;
+      member.disabled = remote.status !== "active";
+    }
+    for (const member of state.members) {
+      if (member.role !== "owner" && !remoteIds.has(member.id)) member.disabled = true;
+    }
+    await this.#persist();
+  }
+
+  openRemoteSession(input: {
+    sessionId: string;
+    membershipId: string;
+    userId: string;
+    role: TeamRole;
+    expiresAt?: number;
+  }): AuthenticatedMember {
+    const sessionToken = randomBytes(32).toString("base64url");
+    const sessionExpiresAt = new Date(input.expiresAt ?? Date.now() + SESSION_TTL_MS).toISOString();
+    const stored = this.#requireState().members.find((member) => member.id === input.membershipId);
+    const member: TeamMemberSummary = stored
+      ? { ...publicMember(stored), role: input.role, disabled: false }
+      : {
+          id: input.membershipId,
+          username: input.userId,
+          email: null,
+          name: null,
+          role: input.role,
+          createdAt: new Date().toISOString(),
+          disabled: false,
+        };
+    this.#remoteSessions.set(hashToken(sessionToken), {
+      member,
+      sessionId: input.sessionId,
+      createdAt: new Date().toISOString(),
+      sessionExpiresAt,
+    });
+    return { member: structuredClone(member), sessionToken, sessionExpiresAt };
+  }
+
+  closeRemoteSession(sessionId: string): void {
+    for (const [tokenHash, session] of this.#remoteSessions) {
+      if (session.sessionId === sessionId) this.#remoteSessions.delete(tokenHash);
+    }
   }
 
   getMember(memberId: string): TeamMemberSummary | null {
@@ -335,13 +447,29 @@ export class TeamStore {
 
   listSessions(): TeamSessionSummary[] {
     const state = this.#requireState();
-    return state.sessions.map((session) => ({
+    const persisted = state.sessions.map((session) => ({
       id: session.id,
       memberId: session.memberId,
       username: state.members.find((member) => member.id === session.memberId)?.username ?? "unknown",
       createdAt: session.createdAt,
       expiresAt: session.expiresAt,
     }));
+    const now = Date.now();
+    const remote: TeamSessionSummary[] = [];
+    for (const [tokenHash, session] of this.#remoteSessions) {
+      if (Date.parse(session.sessionExpiresAt) <= now) {
+        this.#remoteSessions.delete(tokenHash);
+        continue;
+      }
+      remote.push({
+        id: session.sessionId,
+        memberId: session.member.id,
+        username: session.member.username,
+        createdAt: session.createdAt,
+        expiresAt: session.sessionExpiresAt,
+      });
+    }
+    return [...persisted, ...remote];
   }
 
   async createInvite(role: Exclude<TeamRole, "owner">, emailInput?: string): Promise<CreatedInvite> {
@@ -492,6 +620,11 @@ export class TeamStore {
   ): { member: TeamMemberSummary; sessionId: string; sessionExpiresAt: string } | null {
     if (!this.#state || !token) return null;
     const tokenHash = hashToken(token);
+    const remote = this.#remoteSessions.get(tokenHash);
+    if (remote) {
+      if (Date.parse(remote.sessionExpiresAt) > Date.now()) return structuredClone(remote);
+      this.#remoteSessions.delete(tokenHash);
+    }
     const session = this.#state.sessions.find(
       (candidate) => Date.parse(candidate.expiresAt) > Date.now() && safeTextEqual(candidate.tokenHash, tokenHash),
     );
@@ -552,6 +685,7 @@ export class TeamStore {
   async revokeSession(sessionId: string): Promise<void> {
     const state = this.#requireState();
     state.sessions = state.sessions.filter((session) => session.id !== sessionId);
+    this.closeRemoteSession(sessionId);
     await this.#persist();
   }
 

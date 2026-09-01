@@ -64,11 +64,11 @@ import { HostAnalytics } from "./analytics";
 import { readAnalyticsPreference, writeAnalyticsPreference } from "./analytics-preference-store";
 import { readAppVariant, resolveAppIconPath } from "./app-icon";
 import { BrowserPictureInPicture } from "./browser-picture-in-picture";
-import { CentralAuthManager, readCentralAuthApiUrl } from "./central-auth-manager";
-import { resolveOpenBotCloudflaredExecutable } from "./cloudflared-artifact";
+import { CentralAuthManager, readCentralAuthApiUrl, readMobileConnectApiUrl } from "./central-auth-manager";
 import { ComputerUseMacSetupService } from "./computer-use-mac-setup";
 import { ComputerUseMacSetupWindowController } from "./computer-use-mac-setup-window";
 import { buildContentSecurityPolicy } from "./content-security-policy";
+import { guardDevelopmentOutput } from "./development-output";
 import {
   developmentUserDataName,
   readDevelopmentInstanceId,
@@ -163,10 +163,13 @@ import {
   decodeVoid,
   RemoteServerManager,
 } from "./remote-server-manager";
+import { sendToRenderer } from "./renderer-ipc";
 import { canCheckRendererPermission, canRequestRendererPermission } from "./renderer-permissions";
 import { readSetupState, writeSetupState } from "./setup-store";
 import { SkillMarketplaceService } from "./skill-marketplace-service";
 import { TeamStore } from "./team-store";
+import { TeamWebRtcBridge } from "./team-webrtc-bridge";
+import { TeamWebRtcClientTransport } from "./team-webrtc-client-transport";
 import { handleTrusted, handleTrustedWithEvent } from "./trusted-ipc";
 import { isTrustedRendererUrl } from "./trusted-renderer";
 import { supportsInstalledUpdates, UpdateService } from "./update-service";
@@ -207,6 +210,7 @@ app.enableSandbox();
 if (process.platform === "win32") app.setAppUserModelId("app.openbot.desktop");
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 const appVariant = readAppVariant(process.env.OPENBOT_APP_VARIANT, app.isPackaged);
+if (!app.isPackaged) guardDevelopmentOutput([process.stdout, process.stderr], () => app.quit());
 const appIconPath = resolveAppIconPath({
   variant: appVariant,
   platform: process.platform,
@@ -257,7 +261,10 @@ let hostService: HostService | null = null;
 let remoteDesktopManager: RemoteDesktopManager | null = null;
 let remoteServerManager: RemoteServerManager | null = null;
 let centralAuthManager: CentralAuthManager | null = null;
+let activeRemotePrincipalId: string | null = null;
+let remoteAccountSync = Promise.resolve();
 let hostAnalytics: HostAnalytics | null = null;
+let teamWebRtcBridge: TeamWebRtcBridge | null = null;
 let voiceTranscriptionService: VoiceTranscriptionService | null = null;
 let dynamicIslandController: DynamicIslandWindowController | null = null;
 let computerUseMacSetupController: ComputerUseMacSetupWindowController | null = null;
@@ -443,6 +450,11 @@ function registerIpcHandlers(
     return centralAuth.updateName(validation.name);
   });
   handleTrusted(IPC_CHANNELS.authUpdateAvatar, (input: unknown) => centralAuth.updateAvatar(parseAvatarImage(input)));
+  handleTrusted(IPC_CHANNELS.authCreateMobileConnect, () => centralAuth.createMobileConnect());
+  handleTrusted(IPC_CHANNELS.authListMobileConnectedDevices, () => centralAuth.listMobileConnectedDevices());
+  handleTrusted(IPC_CHANNELS.authRevokeMobileConnectedDevice, (input: unknown) =>
+    centralAuth.revokeMobileConnectedDevice(requireString(input, "sessionId", INPUT_LIMITS.identifier)),
+  );
   handleTrusted(IPC_CHANNELS.authLogout, () => centralAuth.logout());
   handleTrusted(IPC_CHANNELS.skillsList, (input: unknown) => {
     if (input === null || input === undefined) return skills.list();
@@ -1428,7 +1440,8 @@ function configureApplicationMenu(service: AgentService, updater: UpdateService)
 function forwardAgentEvent(serverId: string, event: AgentEvent, bufferedLive = false): void {
   if (serverId === "local") hostAnalytics?.handleAgentEvent(event);
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(
+  sendToRenderer(
+    mainWindow,
     IPC_CHANNELS.agentEvent,
     bufferedLive ? { serverId, event, bufferedLive } : { serverId, event },
   );
@@ -1448,41 +1461,42 @@ function forwardAgentEvent(serverId: string, event: AgentEvent, bufferedLive = f
 
 function forwardBrowserDisplayState(state: BrowserDisplayState): void {
   for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send(IPC_CHANNELS.browserDisplayStateEvent, state);
+    sendToRenderer(window, IPC_CHANNELS.browserDisplayStateEvent, state);
   }
 }
 
 function forwardUpdateStatus(status: import("@openbot/contracts/ipc").UpdateStatus): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.updateEvent, status);
+  sendToRenderer(mainWindow, IPC_CHANNELS.updateEvent, status);
 }
 
 function forwardVoiceModelStatus(status: VoiceModelStatus): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.voiceModelStatus, status);
+  sendToRenderer(mainWindow, IPC_CHANNELS.voiceModelStatus, status);
 }
 
 function forwardProviderRuntimeStatus(snapshot: import("@openbot/contracts/ipc").ProviderRuntimeSnapshot): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.providerRuntimesEvent, snapshot);
+  sendToRenderer(mainWindow, IPC_CHANNELS.providerRuntimesEvent, snapshot);
 }
 
 function forwardHostStatus(status: import("@openbot/contracts/ipc").HostStatus): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.hostEvent, status);
+  sendToRenderer(mainWindow, IPC_CHANNELS.hostEvent, status);
   if (remoteServerManager) {
-    mainWindow.webContents.send(IPC_CHANNELS.serversEvent, withLocalHostSummary(remoteServerManager.list(), status));
+    sendToRenderer(mainWindow, IPC_CHANNELS.serversEvent, withLocalHostSummary(remoteServerManager.list(), status));
   }
 }
 
 function forwardRemoteDesktopSessions(sessions: import("@openbot/contracts/ipc").RemoteDesktopSession[]): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.remoteDesktopEvent, sessions);
+  sendToRenderer(mainWindow, IPC_CHANNELS.remoteDesktopEvent, sessions);
 }
 
 function forwardServers(servers: import("@openbot/contracts/ipc").ServerSummary[]): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(
+  sendToRenderer(
+    mainWindow,
     IPC_CHANNELS.serversEvent,
     hostService ? withLocalHostSummary(servers, hostService.getStatus()) : servers,
   );
@@ -1490,7 +1504,7 @@ function forwardServers(servers: import("@openbot/contracts/ipc").ServerSummary[
 
 function forwardTeamPresence(serverId: string, snapshot: import("@openbot/contracts/ipc").TeamPresenceSnapshot): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.serversPresence, { serverId, snapshot });
+  sendToRenderer(mainWindow, IPC_CHANNELS.serversPresence, { serverId, snapshot });
 }
 
 function forwardDirectMessage(
@@ -1498,7 +1512,7 @@ function forwardDirectMessage(
   event: import("@openbot/contracts/ipc").DirectMessageRealtimeEvent,
 ): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.serversDirectMessage, { serverId, event });
+  sendToRenderer(mainWindow, IPC_CHANNELS.serversDirectMessage, { serverId, event });
 }
 
 function forwardDirectTyping(
@@ -1506,27 +1520,34 @@ function forwardDirectTyping(
   event: import("@openbot/contracts/ipc").DirectTypingRealtimeEvent,
 ): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.serversDirectTyping, { serverId, event });
+  sendToRenderer(mainWindow, IPC_CHANNELS.serversDirectTyping, { serverId, event });
 }
 
 function forwardCentralAuth(state: CentralAuthState): void {
-  if (state.status === "signed_in") {
-    const host = hostService;
-    if (host) {
-      void host
-        .syncSignedInAccount(state.user)
-        .then(async () => {
-          hostAnalytics?.flushPending();
-          const status = host.getStatus();
-          if (shouldAutoStartHost(status)) await host.start();
-        })
-        .catch((error) => {
-          console.error("Unable to synchronize or republish this OpenBot:", error);
-        });
-    }
-  }
+  remoteAccountSync = remoteAccountSync
+    .then(async () => {
+      const nextPrincipalId = state.status === "signed_in" ? state.user.id : null;
+      if (activeRemotePrincipalId && activeRemotePrincipalId !== nextPrincipalId) {
+        await remoteServerManager?.disconnectRemoteSessions();
+      }
+      activeRemotePrincipalId = nextPrincipalId;
+      if (state.status !== "signed_in") {
+        if (state.status === "signed_out") await hostService?.stop(false);
+        return;
+      }
+      await remoteServerManager?.syncRemoteHosts();
+      const host = hostService;
+      if (!host) return;
+      await host.syncSignedInAccount(state.user);
+      hostAnalytics?.flushPending();
+      const status = host.getStatus();
+      if (shouldAutoStartHost(status)) await host.start();
+    })
+    .catch((error) => {
+      console.error("Unable to synchronize the signed-in account:", error);
+    });
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send(IPC_CHANNELS.authEvent, state);
+  sendToRenderer(mainWindow, IPC_CHANNELS.authEvent, state);
 }
 
 function acceptInviteUrl(value: string): void {
@@ -1539,8 +1560,7 @@ function acceptInviteUrl(value: string): void {
   if (mainWindow && !mainWindow.isDestroyed() && inviteReceiverReady) {
     mainWindow.show();
     mainWindow.focus();
-    mainWindow.webContents.send(IPC_CHANNELS.serversInvite, value);
-    pendingInviteUrl = null;
+    if (sendToRenderer(mainWindow, IPC_CHANNELS.serversInvite, value)) pendingInviteUrl = null;
   }
 }
 
@@ -1627,11 +1647,13 @@ if (!hasSingleInstanceLock) {
           await performDynamicIslandCriticalAction(action, agentService, remoteServerManager, decodeVoid);
         },
       });
+      const centralAuthApiUrl = readCentralAuthApiUrl(
+        process.env.OPENBOT_AUTH_API_URL,
+        app.isPackaged ? "https://api.openbot.run" : "http://127.0.0.1:3100",
+      );
       centralAuthManager = new CentralAuthManager({
-        apiUrl: readCentralAuthApiUrl(
-          process.env.OPENBOT_AUTH_API_URL,
-          app.isPackaged ? "https://api.openbot.run" : "http://127.0.0.1:3100",
-        ),
+        apiUrl: centralAuthApiUrl,
+        mobileConnectApiUrl: readMobileConnectApiUrl(process.env.OPENBOT_MOBILE_AUTH_API_URL, centralAuthApiUrl),
         storagePath: join(app.getPath("userData"), CENTRAL_AUTH_FILE),
         canPersist: () => safeStorage.isEncryptionAvailable(),
         encrypt: (value) => {
@@ -1643,6 +1665,7 @@ if (!hasSingleInstanceLock) {
         decrypt: (value) => safeStorage.decryptString(value),
       });
       centralAuthManager.on("changed", forwardCentralAuth);
+      const centralAuth = centralAuthManager;
       const centralAuthInitialization = centralAuthManager.initialize();
       const store = new BotStore(app.getPath("userData"), homedir());
       await store.initialize();
@@ -1652,6 +1675,12 @@ if (!hasSingleInstanceLock) {
       mailboxStore = new MailboxStore(app.getPath("userData"), store.sharedRoot, store.database);
       await mailboxStore.initialize();
       configureApplicationProtocol();
+      const developmentUrl = process.env.ELECTRON_RENDERER_URL;
+      teamWebRtcBridge = new TeamWebRtcBridge({
+        developmentUrl,
+        iceTransportPolicy:
+          developmentUrl && process.env.OPENBOT_DEV_ICE_TRANSPORT_POLICY === "relay" ? "relay" : "all",
+      });
       browserHost = new BrowserHost(mainWindow, store.downloadsRoot, join(app.getPath("userData"), BROWSER_STATE_FILE));
       await browserHost.restore();
       browserPictureInPicture = new BrowserPictureInPicture({
@@ -1662,7 +1691,7 @@ if (!hasSingleInstanceLock) {
         developmentUrl: process.env.ELECTRON_RENDERER_URL,
         onEvent: (event) => {
           if (!mainWindow || mainWindow.isDestroyed()) return;
-          mainWindow.webContents.send(IPC_CHANNELS.browserPictureInPictureEvent, event);
+          sendToRenderer(mainWindow, IPC_CHANNELS.browserPictureInPictureEvent, event);
         },
       });
       browserHost.onChanged((tabs, activeTabId) => forwardBrowserDisplayState({ tabs, activeTabId }));
@@ -1739,6 +1768,32 @@ if (!hasSingleInstanceLock) {
         mailbox: mailboxStore,
         browser: browserHost,
         chat: teamChatStore,
+        teamWebRtcBridge,
+        registerRemoteHost: (input) => {
+          if (!centralAuthManager) throw new Error("The account service is not ready.");
+          return centralAuthManager.registerRemoteHost(input);
+        },
+        issueRemoteHostTicket: (hostId) => {
+          if (!centralAuthManager) throw new Error("The account service is not ready.");
+          return centralAuthManager.issueRemoteHostTicket(hostId);
+        },
+        verifyRemoteSessionTicket: (ticket) => {
+          if (!centralAuthManager) throw new Error("The account service is not ready.");
+          return centralAuthManager.verifyRemoteSessionTicket(ticket);
+        },
+        endRemoteSession: (sessionId) => {
+          if (!centralAuthManager) throw new Error("The account service is not ready.");
+          return centralAuthManager.endRemoteSession(sessionId);
+        },
+        remoteControlPlaneUrl: centralAuth.resolveApiUrl("/"),
+        createRemoteInvite: (hostId, input) => centralAuth.createRemoteInvite(hostId, input),
+        listRemoteInvites: (hostId) => centralAuth.listRemoteInvites(hostId),
+        revokeRemoteInvite: (inviteId) => centralAuth.revokeRemoteInvite(inviteId),
+        listRemoteMembers: (hostId) => centralAuth.listRemoteMembers(hostId),
+        updateRemoteMember: (hostId, membershipId, role, reactivate) =>
+          centralAuth.updateRemoteMember(hostId, membershipId, role, reactivate),
+        removeRemoteMember: (hostId, membershipId) => centralAuth.removeRemoteMember(hostId, membershipId),
+        updateRemoteHostLogo: (hostId, image, version) => centralAuth.updateRemoteHostLogo(hostId, image, version),
         allowLocalDevelopmentInvites: developmentRemoteRole === "host",
         logDirectory: join(app.getPath("userData"), "logs", "remote"),
         removeLegacyRemoteDesktopCredential: async () => {
@@ -1759,13 +1814,6 @@ if (!hasSingleInstanceLock) {
         },
         platform: process.platform === "darwin" || process.platform === "win32" ? process.platform : "linux",
         unattended: false,
-        resolveCloudflared: () =>
-          resolveOpenBotCloudflaredExecutable({
-            isPackaged: app.isPackaged,
-            resourcesPath: process.resourcesPath,
-            sourceRoot: resolve(__dirname, "../.."),
-            overridePath: process.env.OPENBOT_CLOUDFLARED_PATH,
-          }),
         remoteDesktopRuntimePaths: remoteDesktopRuntime,
         remoteDesktopStateDirectory: join(app.getPath("userData"), "remote-desktop-runtime"),
         getRemoteDesktopRuntimeCredentials: () => {
@@ -1791,12 +1839,10 @@ if (!hasSingleInstanceLock) {
         getRemoteDesktopIceServers: () => {
           if (developmentRemoteRole === "host") return Promise.resolve([]);
           const identity = teamStore.getIdentity();
-          if (!identity || !centralAuthManager) throw new Error("The account service is not ready.");
-          return centralAuthManager.getTeamHostIceServers(identity.serverId);
-        },
-        provisionTeamTunnel: (input) => {
-          if (!centralAuthManager) throw new Error("The account service is not ready.");
-          return centralAuthManager.provisionTeamTunnel(input);
+          if (!identity) throw new Error("The remote host identity is unavailable.");
+          const iceServers = teamWebRtcBridge?.getIceServers(identity.serverId) ?? [];
+          if (iceServers.length === 0) throw new Error("Remote Signal has not supplied ICE servers yet.");
+          return Promise.resolve(iceServers);
         },
       });
       const signedInState = centralAuthManager.getState();
@@ -1845,10 +1891,73 @@ if (!hasSingleInstanceLock) {
             if (!centralAuthManager) throw new Error("The account service is not ready.");
             return centralAuthManager.getSignedInUser().email;
           },
+          sendTeamInviteEmail: (input) => {
+            if (!centralAuthManager) throw new Error("The account service is not ready.");
+            return centralAuthManager.sendTeamInviteEmail(input);
+          },
         },
         {
           allowLocalDevelopmentInvites: developmentRemoteRole !== null,
           appVersion: app.getVersion(),
+          getLocalHostId: () => teamStore.getIdentity()?.serverId ?? null,
+          webrtcTransport: new TeamWebRtcClientTransport({
+            bridge: teamWebRtcBridge,
+            listHosts: () => {
+              if (!centralAuthManager) throw new Error("The account service is not ready.");
+              return centralAuthManager.listRemoteHosts();
+            },
+            startSession: (hostId) => {
+              if (!centralAuthManager) throw new Error("The account service is not ready.");
+              return centralAuthManager.startRemoteSession(hostId);
+            },
+            issueTicket: (sessionId, clientPublicKey) => {
+              if (!centralAuthManager) throw new Error("The account service is not ready.");
+              return centralAuthManager.issueRemoteSessionTicket(sessionId, clientPublicKey);
+            },
+            endSession: (sessionId) => {
+              if (!centralAuthManager) return Promise.resolve();
+              return centralAuthManager.endRemoteSession(sessionId);
+            },
+            createInvite: (hostId, input) => {
+              if (!centralAuthManager) throw new Error("The account service is not ready.");
+              return centralAuthManager.createRemoteInvite(hostId, input);
+            },
+            listInvites: (hostId) => {
+              if (!centralAuthManager) throw new Error("The account service is not ready.");
+              return centralAuthManager.listRemoteInvites(hostId);
+            },
+            previewInvite: (token) => {
+              if (!centralAuthManager) throw new Error("The account service is not ready.");
+              return centralAuthManager.previewRemoteInvite(token);
+            },
+            acceptInvite: (token) => {
+              if (!centralAuthManager) throw new Error("The account service is not ready.");
+              return centralAuthManager.acceptRemoteInvite(token);
+            },
+            revokeInvite: (inviteId) => {
+              if (!centralAuthManager) throw new Error("The account service is not ready.");
+              return centralAuthManager.revokeRemoteInvite(inviteId);
+            },
+            listMembers: (hostId) => {
+              if (!centralAuthManager) throw new Error("The account service is not ready.");
+              return centralAuthManager.listRemoteMembers(hostId);
+            },
+            updateMember: (hostId, membershipId, role, reactivate) => {
+              if (!centralAuthManager) throw new Error("The account service is not ready.");
+              return centralAuthManager.updateRemoteMember(hostId, membershipId, role, reactivate);
+            },
+            removeMember: (hostId, membershipId) => {
+              if (!centralAuthManager) throw new Error("The account service is not ready.");
+              return centralAuthManager.removeRemoteMember(hostId, membershipId);
+            },
+            getPrincipalId: () => {
+              if (!centralAuthManager) throw new Error("The account service is not ready.");
+              return centralAuthManager.getSignedInUser().id;
+            },
+            controlPlaneUrl: centralAuth.resolveApiUrl("/"),
+            downloadHostLogo: (hostId, version) => centralAuth.downloadRemoteHostLogo(hostId, version),
+            transferDirectory: join(app.getPath("userData"), "remote-transfers"),
+          }),
         },
       );
       await remoteServerManager.initialize();
@@ -2064,10 +2173,11 @@ async function prepareForShutdown(browserAlreadyDestroyed = false): Promise<void
   if (!browserAlreadyDestroyed) await destroyBrowserForShutdown();
   browserPictureInPicture?.destroy();
   await (providerRuntimeManager?.stop() ?? Promise.resolve());
-  remoteServerManager?.stop();
+  await (remoteServerManager?.stop() ?? Promise.resolve());
   voiceTranscriptionService?.shutdown();
   await (remoteDesktopManager?.stop() ?? Promise.resolve());
   await (hostService?.shutdown() ?? Promise.resolve());
+  await (teamWebRtcBridge?.stop() ?? Promise.resolve());
   await (agentService?.stop() ?? Promise.resolve());
 }
 

@@ -155,6 +155,8 @@ describe("dynamic island window geometry", () => {
     await controller.initialize();
     expect(windows).toHaveLength(2);
     expect(controller.overlayRendererIds).toEqual(new Set([42, 43]));
+    expect(windows[0]?.setHiddenInMissionControl).toHaveBeenCalledWith(true);
+    expect(windows[1]?.setHiddenInMissionControl).toHaveBeenCalledWith(true);
 
     controller.publish({ serverId: "local", mode: "working", working: [] });
     controller.publish({ serverId: "local", mode: "working", working: [] });
@@ -218,6 +220,42 @@ describe("dynamic island window geometry", () => {
     await controller.reconcileWindow();
     expect(loadWindow).toHaveBeenCalledOnce();
     expect(windows[0]?.webContents.send).toHaveBeenLastCalledWith(IPC_CHANNELS.dynamicIslandGeometry, null);
+  });
+
+  it("retries a skipped geometry update after the overlay renderer reloads", async () => {
+    const root = await temporaryRoot();
+    const windows: FakeWindow[] = [];
+    let displays = [display({ id: 1 })];
+    const controller = new DynamicIslandWindowController({
+      platform: "darwin",
+      preferencePath: join(root, "preference.json"),
+      createWindow: (bounds) => {
+        const window = new FakeWindow(48, bounds);
+        windows.push(window);
+        // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
+        return window as unknown as BrowserWindow;
+      },
+      loadWindow: async () => undefined,
+      getDisplays: () => displays,
+      getMainWindow: () => null,
+      performHaptic: () => undefined,
+      performCriticalAction: async () => undefined,
+    });
+    await controller.initialize();
+    const window = windows[0];
+    if (!window) throw new Error("Expected an overlay window.");
+    window.webContents.isLoadingMainFrame.mockReturnValue(true);
+    displays = [display({ id: 1, bounds: { x: 0, y: 0, width: 1800, height: 1169 } })];
+
+    await controller.reconcileWindow();
+    expect(window.webContents.send).not.toHaveBeenCalled();
+
+    window.webContents.isLoadingMainFrame.mockReturnValue(false);
+    window.webContents.emit("did-finish-load");
+    expect(window.webContents.send).toHaveBeenCalledWith(IPC_CHANNELS.dynamicIslandGeometry, {
+      width: 220,
+      height: 38,
+    });
   });
 
   it("continues loading other displays when one overlay fails", async () => {
@@ -550,6 +588,37 @@ describe("dynamic island window geometry", () => {
     expect(mainWindow.show).not.toHaveBeenCalled();
   });
 
+  it("keeps a navigation action retryable while the main renderer reloads", async () => {
+    const mainWindow = new FakeWindow(75, { x: 0, y: 0, width: 1200, height: 800 });
+    const controller = new DynamicIslandWindowController({
+      platform: "darwin",
+      preferencePath: "/tmp/dynamic-island-preference.json",
+      createWindow: () => {
+        throw new Error("An overlay window is not needed for this test.");
+      },
+      loadWindow: async () => undefined,
+      getDisplays: () => [],
+      // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
+      getMainWindow: () => mainWindow as unknown as BrowserWindow,
+      performHaptic: () => undefined,
+      performCriticalAction: async () => undefined,
+    });
+    const action = {
+      type: "open-failure",
+      serverId: "local",
+      botId: "research",
+      turnId: "turn-failed",
+    } satisfies DynamicIslandAction;
+    mainWindow.webContents.isLoadingMainFrame.mockReturnValue(true);
+
+    await expect(controller.performAction(action)).rejects.toThrow("temporarily unavailable");
+    expect(mainWindow.webContents.send).not.toHaveBeenCalled();
+
+    mainWindow.webContents.isLoadingMainFrame.mockReturnValue(false);
+    await expect(controller.performAction(action)).resolves.toBeUndefined();
+    expect(mainWindow.webContents.send).toHaveBeenCalledWith(IPC_CHANNELS.dynamicIslandAction, action);
+  });
+
   it("accepts every overlay renderer and rejects unrelated senders", () => {
     expect(() => requireDynamicIslandSender(10, new Set([10]), "main renderer")).not.toThrow();
     expect(() => requireDynamicIslandSender(12, new Set([11, 12]), "Dynamic Island renderer")).not.toThrow();
@@ -563,7 +632,13 @@ describe("dynamic island window geometry", () => {
 });
 
 class FakeWindow extends EventEmitter {
-  readonly webContents: { id: number; send: ReturnType<typeof vi.fn> };
+  readonly webContents: EventEmitter & {
+    id: number;
+    send: ReturnType<typeof vi.fn>;
+    isDestroyed: ReturnType<typeof vi.fn>;
+    isLoadingMainFrame: ReturnType<typeof vi.fn>;
+    mainFrame: { isDestroyed: ReturnType<typeof vi.fn>; detached: boolean };
+  };
   readonly setBounds = vi.fn();
   readonly showInactive = vi.fn();
   readonly destroy = vi.fn(() => this.emit("closed"));
@@ -571,6 +646,7 @@ class FakeWindow extends EventEmitter {
   readonly setWindowButtonVisibility = vi.fn();
   readonly setAlwaysOnTop = vi.fn();
   readonly setVisibleOnAllWorkspaces = vi.fn();
+  readonly setHiddenInMissionControl = vi.fn();
   readonly setFocusable = vi.fn();
   readonly setIgnoreMouseEvents = vi.fn();
   readonly isMinimized = vi.fn(() => false);
@@ -584,7 +660,13 @@ class FakeWindow extends EventEmitter {
     readonly bounds: Rectangle,
   ) {
     super();
-    this.webContents = { id, send: vi.fn() };
+    this.webContents = Object.assign(new EventEmitter(), {
+      id,
+      send: vi.fn(),
+      isDestroyed: vi.fn(() => false),
+      isLoadingMainFrame: vi.fn(() => false),
+      mainFrame: { isDestroyed: vi.fn(() => false), detached: false },
+    });
   }
 }
 

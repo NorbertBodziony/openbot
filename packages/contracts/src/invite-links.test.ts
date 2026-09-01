@@ -37,6 +37,7 @@ describe("OpenBot invite links", () => {
   });
 
   it("accepts approved root tunnel URLs only", () => {
+    expect(isValidRemoteApiUrl("https://api.openbot.run/")).toBe(true);
     expect(isValidRemoteApiUrl("https://team-host.trycloudflare.com/")).toBe(true);
     expect(isValidRemoteApiUrl(payload.apiUrl)).toBe(true);
     expect(isValidRemoteApiUrl("http://team-host.trycloudflare.com/")).toBe(false);

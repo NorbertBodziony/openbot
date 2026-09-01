@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repository_root=$(CDPATH= cd -- "$script_dir/../.." && pwd)
+dotenvx_cli="${DOTENVX_CLI:-$repository_root/node_modules/@dotenvx/dotenvx/src/cli/dotenvx.js}"
+
+if [ -x "$repository_root/runtime/node/bin/node" ]; then
+  node_executable="$repository_root/runtime/node/bin/node"
+else
+  node_executable=$(command -v node)
+fi
+
+exec "$node_executable" "$dotenvx_cli" "$@"

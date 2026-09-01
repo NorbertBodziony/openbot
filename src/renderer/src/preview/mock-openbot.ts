@@ -468,6 +468,21 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         emitAuthState(authState);
         return clone(authState);
       },
+      createMobileConnect: async () => ({
+        qrData:
+          "openbot://mobile-connect?api=https%3A%2F%2Fapi.openbot.run&ticket=preview-mobile-ticket_1234567890abcdef",
+        expiresAt: Date.now() + 120_000,
+      }),
+      listMobileConnectedDevices: async () => [
+        {
+          sessionId: "11111111-1111-4111-8111-111111111111",
+          name: "Norbert’s iPhone",
+          platform: "ios",
+          connectedAt: Date.now() - 86_400_000,
+          lastActiveAt: Date.now() - 60_000,
+        },
+      ],
+      revokeMobileConnectedDevice: async () => undefined,
       logout: async () => {
         authState = { status: "signed_out" };
         emitAuthState(authState);

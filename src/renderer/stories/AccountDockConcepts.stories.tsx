@@ -1,10 +1,15 @@
-import type { AccountUsage, BotSummary, ServerSummary } from "@openbot/contracts/ipc";
-import { onCleanup } from "solid-js";
+import type { AccountUsage, BotSummary, ServerSummary, UpdateStatus } from "@openbot/contracts/ipc";
+import { Portal } from "@solidjs/web";
+import { createEffect, createSignal, onCleanup, onSettled, Show } from "solid-js";
+import { fn } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import productionLogoUrl from "../src/assets/openbot-logo-production.png";
+import { AccountUpdateIsland } from "../src/components/AccountUpdateIsland";
 import { STORY_BOT_SUMMARIES, STORY_SERVERS, STORY_UPDATE_STATUS, STORY_USAGE } from "../src/preview/fixtures";
 import { OpenBotPlayground } from "../src/preview/OpenBotPlayground";
 import "./AccountDockConcepts.css";
+
+type UpdateIslandState = "none" | "available" | "ready";
 
 const CONCEPT_BOT_NAMES = [
   "Launch planner",
@@ -83,6 +88,102 @@ const CONCEPT_SERVERS: ServerSummary[] = [
 
 interface AccountDockConceptPlaygroundProps {
   remainingPercent: number;
+  updateState: UpdateIslandState;
+  previewMotion: boolean;
+  onUpdateAction: () => void;
+}
+
+const NEUTRAL_UPDATE_STATUS: UpdateStatus = {
+  ...STORY_UPDATE_STATUS,
+  phase: "idle",
+  availableVersion: null,
+};
+
+function updateStatusForState(state: UpdateIslandState): UpdateStatus {
+  if (state === "none") return NEUTRAL_UPDATE_STATUS;
+  return {
+    ...STORY_UPDATE_STATUS,
+    phase: state,
+    progress: state === "ready" ? 100 : null,
+  };
+}
+
+function StoryUpdateIsland(props: Pick<AccountDockConceptPlaygroundProps, "updateState" | "onUpdateAction">) {
+  const [updateStatus, setUpdateStatus] = createSignal(updateStatusForState(props.updateState));
+  let progressTimer: number | undefined;
+  let completeTimer: number | undefined;
+
+  function clearTimers(): void {
+    if (progressTimer !== undefined) window.clearInterval(progressTimer);
+    if (completeTimer !== undefined) window.clearTimeout(completeTimer);
+    progressTimer = undefined;
+    completeTimer = undefined;
+  }
+
+  function resetStatus(): void {
+    clearTimers();
+    setUpdateStatus(updateStatusForState(props.updateState));
+  }
+
+  function startDownload(): void {
+    setUpdateStatus((current) => ({ ...current, phase: "downloading", progress: 0 }));
+    progressTimer = window.setInterval(() => {
+      setUpdateStatus((current) => {
+        const nextProgress = Math.min((current.progress ?? 0) + 5, 100);
+        if (nextProgress === 100) {
+          if (progressTimer !== undefined) window.clearInterval(progressTimer);
+          progressTimer = undefined;
+          completeTimer = window.setTimeout(() => {
+            completeTimer = undefined;
+            setUpdateStatus((complete) => ({ ...complete, phase: "ready", progress: 100 }));
+          }, 500);
+        }
+        return { ...current, progress: nextProgress };
+      });
+    }, 240);
+  }
+
+  async function handleUpdateAction(): Promise<void> {
+    props.onUpdateAction();
+    if (updateStatus().phase === "available") startDownload();
+  }
+
+  createEffect(
+    () => props.updateState,
+    () => resetStatus(),
+  );
+  onCleanup(clearTimers);
+
+  return <AccountUpdateIsland updateStatus={updateStatus()} onUpdateAction={handleUpdateAction} />;
+}
+
+function UpdateIslandPortal(props: Pick<AccountDockConceptPlaygroundProps, "updateState" | "onUpdateAction">) {
+  const [mount, setMount] = createSignal<HTMLElement | null>(null);
+
+  onSettled(() => {
+    const storyRoot = document.querySelector<HTMLElement>(".account-dock-concept");
+    if (!storyRoot) return;
+
+    const syncMount = () => {
+      const nextMount = storyRoot.querySelector<HTMLElement>(".account-dock.account-dock-hybrid");
+      setMount(nextMount);
+    };
+
+    syncMount();
+    const observer = new MutationObserver(syncMount);
+    observer.observe(storyRoot, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  });
+
+  return (
+    <Show when={mount()}>
+      {(mountElement) => (
+        <Portal mount={mountElement()}>
+          <StoryUpdateIsland updateState={props.updateState} onUpdateAction={props.onUpdateAction} />
+        </Portal>
+      )}
+    </Show>
+  );
 }
 
 function usageWithRemaining(remainingPercent: number): AccountUsage {
@@ -96,13 +197,41 @@ function usageWithRemaining(remainingPercent: number): AccountUsage {
 }
 
 function AccountDockConceptPlayground(props: AccountDockConceptPlaygroundProps) {
+  const [previewUpdateState, setPreviewUpdateState] = createSignal<UpdateIslandState>("none");
+  let previewTimer: number | undefined;
+
+  function clearMotionPreview(): void {
+    if (previewTimer !== undefined) window.clearTimeout(previewTimer);
+    previewTimer = undefined;
+  }
+
+  function openMotionPreview(): void {
+    setPreviewUpdateState("available");
+    previewTimer = window.setTimeout(() => {
+      setPreviewUpdateState("none");
+      previewTimer = window.setTimeout(openMotionPreview, 900);
+    }, 1_800);
+  }
+
+  createEffect(
+    () => props.previewMotion,
+    (previewMotion) => {
+      clearMotionPreview();
+      setPreviewUpdateState("none");
+      if (previewMotion) previewTimer = window.setTimeout(openMotionPreview, 700);
+    },
+  );
+
   const storageKey = "openbot:left-panel-collapsed";
   const previous = window.localStorage.getItem(storageKey);
   window.localStorage.setItem(storageKey, "false");
   onCleanup(() => {
+    clearMotionPreview();
     if (previous === null) window.localStorage.removeItem(storageKey);
     else window.localStorage.setItem(storageKey, previous);
   });
+
+  const renderedUpdateState = () => (props.previewMotion ? previewUpdateState() : props.updateState);
 
   return (
     <div class="account-dock-concept">
@@ -120,9 +249,10 @@ function AccountDockConceptPlayground(props: AccountDockConceptPlaygroundProps) 
           bots: CONCEPT_BOTS,
           servers: CONCEPT_SERVERS,
           usage: usageWithRemaining(props.remainingPercent),
-          updateStatus: STORY_UPDATE_STATUS,
+          updateStatus: NEUTRAL_UPDATE_STATUS,
         }}
       />
+      <UpdateIslandPortal updateState={renderedUpdateState()} onUpdateAction={props.onUpdateAction} />
     </div>
   );
 }
@@ -132,11 +262,27 @@ const meta = {
   component: AccountDockConceptPlayground,
   args: {
     remainingPercent: 59,
+    updateState: "none",
+    previewMotion: false,
+    onUpdateAction: fn(),
   },
   argTypes: {
     remainingPercent: {
       control: { type: "range", min: 0, max: 100, step: 1 },
       description: "Weekly usage remaining percentage.",
+    },
+    updateState: {
+      control: "inline-radio",
+      options: ["none", "available", "ready"],
+      description: "Automatic update island state.",
+    },
+    previewMotion: {
+      control: false,
+      table: { disable: true },
+    },
+    onUpdateAction: {
+      control: false,
+      description: "Storybook-only update action.",
     },
   },
   parameters: {
@@ -185,6 +331,34 @@ export const WeeklyUsageCritical: Story = {
     docs: {
       description: {
         story: "Critical state: below 10% remaining, the gauge and percentage use the danger color.",
+      },
+    },
+  },
+};
+
+export const UpdateIsland: Story = {
+  args: {
+    updateState: "available",
+  },
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "The production update island rises from behind the real account dock without moving the sidebar content.",
+      },
+    },
+  },
+};
+
+export const UpdateIslandMotion: Story = {
+  args: {
+    previewMotion: true,
+    updateState: "available",
+  },
+  parameters: {
+    docs: {
+      description: {
+        story: "The real update island repeatedly opens and closes so both panel-reveal directions can be reviewed.",
       },
     },
   },
