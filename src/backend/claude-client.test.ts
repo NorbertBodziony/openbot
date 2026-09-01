@@ -337,7 +337,7 @@ fi
         displayName: "Claude Sonnet 5",
         description: "Balanced",
         supportsEffort: true,
-        supportedEffortLevels: ["low", "medium", "high", "max"],
+        supportedEffortLevels: ["low", "medium", "max"],
       },
     ]);
     const unsupportedQuery = new TestQuery(new TestQueue<TestStreamMessage>());
@@ -385,17 +385,18 @@ fi
     );
     await client.request(
       "turn/start",
-      { threadId: switchingThread.thread.id, model: "claude-sonnet-5", effort: "medium", input: [] },
+      { threadId: switchingThread.thread.id, model: "claude-sonnet-5", effort: "high", input: [] },
       decodeTurnResponse,
     );
     expect(switchingQuery.models).toEqual(["sonnet"]);
-    expect(switchingQuery.flagSettings).toEqual([{ effortLevel: "medium" }]);
+    expect(switchingQuery.flagSettings).toEqual([{ effortLevel: "low" }]);
 
     const effortChangingThread = await client.request(
       "thread/start",
-      { cwd: root, model: "claude-sonnet-5", effort: "medium" },
+      { cwd: root, model: "claude-sonnet-5", effort: "high" },
       decodeThreadResponse,
     );
+    expect(runtimeOptions[2]).toMatchObject({ effort: "low" });
     await client.request(
       "turn/start",
       { threadId: effortChangingThread.thread.id, model: "claude-sonnet-5", effort: "max", input: [] },
