@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { copyFile, cp, lstat, mkdir, readdir, readFile, readlink, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { avatarFileExtension, isAvatarMimeType, isValidAvatarImage } from "@openbot/contracts/avatar-images";
@@ -200,6 +201,7 @@ export class BotStore {
     const stagedWorkspace = `${record.workspacePath}.openbot-stage-${randomUUID()}`;
     const avatarDirectory = join(this.#avatarsRoot, record.id);
     const stagedAvatarDirectory = `${avatarDirectory}.openbot-stage-${randomUUID()}`;
+    let stagedAvatarPath: string | null = null;
     try {
       await cp(source.workspacePath, stagedWorkspace, {
         recursive: true,
@@ -211,12 +213,15 @@ export class BotStore {
       if (sourceAvatar) {
         await mkdir(stagedAvatarDirectory, { recursive: true, mode: 0o700 });
         const extension = avatarFileExtension(sourceAvatar.mimeType);
-        await copyFile(sourceAvatar.path, join(stagedAvatarDirectory, `${sourceAvatar.version}.${extension}`));
+        stagedAvatarPath = join(stagedAvatarDirectory, `${sourceAvatar.version}.${extension}`);
+        await copyFile(sourceAvatar.path, stagedAvatarPath);
         record.avatarUrl = agentAvatarUrl(record.id, sourceAvatar.version, sourceAvatar.mimeType);
       }
       if (
         JSON.stringify(source) !== sourceProfileSignature ||
+        (await workspaceFingerprint(stagedWorkspace)) !== sourceWorkspaceSignature ||
         (await workspaceFingerprint(source.workspacePath)) !== sourceWorkspaceSignature ||
+        (stagedAvatarPath ? await fileFingerprint(stagedAvatarPath) : null) !== sourceAvatarSignature ||
         (sourceAvatar ? await fileFingerprint(sourceAvatar.path) : null) !== sourceAvatarSignature
       ) {
         throw new Error("The agent changed while it was being duplicated. Try again.");
@@ -517,7 +522,7 @@ async function workspaceFingerprint(root: string): Promise<string> {
         await visit(path, relativePath);
       } else if (stats.isFile()) {
         hash.update("file\0");
-        hash.update(await readFile(path));
+        await updateHashFromFile(hash, path);
         hash.update("\0");
       } else {
         hash.update(`other\0${stats.size}\0${stats.mtimeMs}\0`);
@@ -532,8 +537,12 @@ async function fileFingerprint(path: string): Promise<string> {
   const stats = await lstat(path);
   const hash = createHash("sha256");
   hash.update(`${stats.mode}\0`);
-  hash.update(await readFile(path));
+  await updateHashFromFile(hash, path);
   return hash.digest("hex");
+}
+
+async function updateHashFromFile(hash: ReturnType<typeof createHash>, path: string): Promise<void> {
+  for await (const chunk of createReadStream(path)) hash.update(chunk);
 }
 
 function validateBotId(id: string): void {

@@ -1193,7 +1193,7 @@ describe("Team API compatibility negotiation", () => {
       .mockResolvedValueOnce(
         Response.json({
           appVersion: "0.5.0",
-          protocol: { minimum: 3, maximum: 3 },
+          protocol: { minimum: 4, maximum: 4 },
           capabilities: [],
         }),
       )
@@ -1216,7 +1216,7 @@ describe("Team API compatibility negotiation", () => {
   });
 
   it("blocks a host range with no shared protocol", async () => {
-    const protocol = { minimum: 3, maximum: 3 };
+    const protocol = { minimum: 4, maximum: 4 };
     const directory = await mkdtemp(join(tmpdir(), "openbot-compatibility-range-"));
     const statePath = join(directory, "servers.json");
     await writeRemoteEventState(statePath, "compatibility-range");
@@ -1270,7 +1270,7 @@ describe("Team API compatibility negotiation", () => {
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = new URL(input instanceof Request ? input.url : input.toString());
       if (url.pathname === "/v1/compatibility") {
-        return Response.json({ appVersion: "0.3.0", protocol: { minimum: 1, maximum: 3 }, capabilities: [] });
+        return Response.json({ appVersion: "0.3.0", protocol: { minimum: 1, maximum: 2 }, capabilities: [] });
       }
       const headers = new Headers(init?.headers);
       expect(headers.get("OpenBot-Protocol-Version")).toBe("2");
