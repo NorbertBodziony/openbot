@@ -98,6 +98,7 @@ type TeamApiAgentMethods = Pick<
   | "listConversationReads"
   | "createBot"
   | "duplicateBot"
+  | "commitBotDuplication"
   | "updateBot"
   | "deleteBot"
   | "listMemories"
@@ -944,12 +945,14 @@ export class TeamApiServer {
           await readJson(request);
           const bot = await this.#options.agents.duplicateBot(botId);
           try {
-            const layout = await this.#options.sidebarLayout.placeDuplicateAfter(
-              botId,
+            const layout = await this.#options.sidebarLayout.placeDuplicateAfter(botId, bot.id, [
+              ...this.#options.agents.listBots().map((candidate) => candidate.id),
               bot.id,
-              this.#options.agents.listBots().map((candidate) => candidate.id),
-            );
-            return this.#json(response, 201, { bot, layout });
+            ]);
+            return this.#json(response, 201, {
+              bot: this.#options.agents.commitBotDuplication(bot.id),
+              layout,
+            });
           } catch (error) {
             let rollbackError: unknown;
             try {

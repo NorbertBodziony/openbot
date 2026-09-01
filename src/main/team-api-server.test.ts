@@ -90,6 +90,7 @@ function createAgents(overrides: Partial<TestAgents> = {}, events = new EventEmi
     listConversationReads: unimplemented,
     createBot: unimplemented,
     duplicateBot: unimplemented,
+    commitBotDuplication: unimplemented,
     updateBot: unimplemented,
     deleteBot: unimplemented,
     setAvatar: unimplemented,
@@ -225,10 +226,11 @@ describe("TeamApiServer administration", () => {
       bots = [duplicate, source];
       return duplicate;
     });
+    const commitBotDuplication = vi.fn(() => duplicate);
     const deleteBot = vi.fn(async (botId: string) => {
       bots = bots.filter((bot) => bot.id !== botId);
     });
-    const agents = createAgents({ listBots: () => bots, duplicateBot, deleteBot });
+    const agents = createAgents({ listBots: () => bots, duplicateBot, commitBotDuplication, deleteBot });
     const section = await sidebarLayout.mutate(
       { type: "create", name: "Core", agentId: source.id },
       new Set([source.id]),
@@ -270,6 +272,7 @@ describe("TeamApiServer administration", () => {
         },
       });
       expect(duplicateBot).toHaveBeenCalledWith(source.id);
+      expect(commitBotDuplication).toHaveBeenCalledWith(duplicate.id);
       expect(deleteBot).not.toHaveBeenCalled();
     } finally {
       await api.stop();

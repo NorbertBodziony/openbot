@@ -199,8 +199,22 @@ describe.sequential("AgentService", () => {
       routineIds: [activeRoutine.id],
     });
     const duplicateStartedAt = Date.now();
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
 
     const duplicate = await service.duplicateBot(source.id);
+
+    expect(service.listBots().some((bot) => bot.id === duplicate.id)).toBe(false);
+    expect(events).toEqual([]);
+    service.commitBotDuplication(duplicate.id);
+    expect(service.listBots().some((bot) => bot.id === duplicate.id)).toBe(true);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "bots-changed" }),
+        expect.objectContaining({ type: "memories-changed", botId: duplicate.id }),
+        expect.objectContaining({ type: "routines-changed", botId: duplicate.id }),
+      ]),
+    );
 
     expect(duplicate.id).not.toBe(source.id);
     expect(duplicate).toMatchObject({

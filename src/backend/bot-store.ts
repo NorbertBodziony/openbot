@@ -70,7 +70,7 @@ export class BotStore {
   readonly #database: OpenBotDatabase;
   #state: StoredState = { version: 2, examplesInitialized: false, bots: [] };
   #avatarUpdateQueue: Promise<void> = Promise.resolve();
-  #duplicationQueue: Promise<void> = Promise.resolve();
+  #creationQueue: Promise<void> = Promise.resolve();
 
   constructor(userDataPath: string, homePath: string, database = new OpenBotDatabase(userDataPath)) {
     const openbotRoot = join(homePath, "OpenBot");
@@ -143,7 +143,11 @@ export class BotStore {
     return this.#state.bots.map((bot) => ({ ...bot }));
   }
 
-  async createBot(input: Omit<CreateBotInput, "initialMessage">): Promise<BotSummary> {
+  createBot(input: Omit<CreateBotInput, "initialMessage">): Promise<BotSummary> {
+    return this.#enqueueCreation(() => this.#createBot(input));
+  }
+
+  async #createBot(input: Omit<CreateBotInput, "initialMessage">): Promise<BotSummary> {
     if (this.#state.bots.length >= INPUT_LIMITS.agents) {
       throw new Error(`A host can have up to ${INPUT_LIMITS.agents} agents.`);
     }
@@ -167,8 +171,12 @@ export class BotStore {
   }
 
   duplicateBot(sourceId: string): Promise<BotSummary> {
-    const operation = this.#duplicationQueue.then(() => this.#duplicateBot(sourceId));
-    this.#duplicationQueue = operation.then(
+    return this.#enqueueCreation(() => this.#duplicateBot(sourceId));
+  }
+
+  #enqueueCreation<T>(create: () => Promise<T>): Promise<T> {
+    const operation = this.#creationQueue.then(create);
+    this.#creationQueue = operation.then(
       () => undefined,
       () => undefined,
     );
@@ -359,12 +367,19 @@ export class BotStore {
     return { ...bot };
   }
 
-  async getOrCreate(id: string, name?: string, title?: string): Promise<BotSummary> {
+  getOrCreate(id: string, name?: string, title?: string): Promise<BotSummary> {
+    return this.#enqueueCreation(() => this.#getOrCreate(id, name, title));
+  }
+
+  async #getOrCreate(id: string, name?: string, title?: string): Promise<BotSummary> {
     validateBotId(id);
     const existing = this.#state.bots.find((bot) => bot.id === id);
     if (existing) {
       await mkdir(existing.workspacePath, { recursive: true, mode: 0o700 });
       return { ...existing };
+    }
+    if (this.#state.bots.length >= INPUT_LIMITS.agents) {
+      throw new Error(`A host can have up to ${INPUT_LIMITS.agents} agents.`);
     }
 
     const record = this.#createRecord(id, name ?? titleFromId(id), title ?? "Local teammate");

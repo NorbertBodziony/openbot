@@ -2253,12 +2253,11 @@ async function routeDuplicateBot(
   }
   const bot = await service.duplicateBot(botId);
   try {
-    const layout = await sidebarLayout.placeDuplicateAfter(
-      botId,
+    const layout = await sidebarLayout.placeDuplicateAfter(botId, bot.id, [
+      ...service.listBots().map((candidate) => candidate.id),
       bot.id,
-      service.listBots().map((candidate) => candidate.id),
-    );
-    return { bot, layout };
+    ]);
+    return { bot: service.commitBotDuplication(bot.id), layout };
   } catch (error) {
     let rollbackError: unknown;
     try {
