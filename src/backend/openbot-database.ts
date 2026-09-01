@@ -272,8 +272,8 @@ export class OpenBotDatabase {
       `hosted-site-terminal-pending:${event.botId}:${event.operationId}:${event.status}`,
       [
         {
-          aggregateType: "thread",
-          aggregateId: event.threadId,
+          aggregateType: "hosted-site-terminal",
+          aggregateId: event.botId,
           eventType: "hosted-site.terminal-pending",
           occurredAt: event.createdAt,
           payload: event,
@@ -292,7 +292,8 @@ export class OpenBotDatabase {
            FROM orchestration_events pending
            LEFT JOIN orchestration_command_receipts marker
              ON marker.command_id = json_extract(pending.payload_json, '$.markerCommandId')
-           WHERE pending.event_type = 'hosted-site.terminal-pending'
+           WHERE pending.aggregate_type = 'hosted-site-terminal'
+             AND pending.event_type = 'hosted-site.terminal-pending'
              AND marker.command_id IS NULL
            ORDER BY pending.sequence`,
         )
@@ -455,13 +456,15 @@ export class OpenBotDatabase {
         db.prepare(
           `DELETE FROM orchestration_command_receipts WHERE command_id IN (
              SELECT DISTINCT command_id FROM orchestration_events
-             WHERE event_type = 'hosted-site.terminal-pending'
+             WHERE aggregate_type = 'hosted-site-terminal'
+               AND event_type = 'hosted-site.terminal-pending'
                AND json_extract(payload_json, '$.botId') = ?
            )`,
         ).run(botId);
         db.prepare(
           `DELETE FROM orchestration_events
-           WHERE event_type = 'hosted-site.terminal-pending'
+           WHERE aggregate_type = 'hosted-site-terminal'
+             AND event_type = 'hosted-site.terminal-pending'
              AND json_extract(payload_json, '$.botId') = ?`,
         ).run(botId);
         const sensitiveFilter = threadId

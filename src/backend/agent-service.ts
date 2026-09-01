@@ -1304,9 +1304,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     botId: string,
     memberId: string,
     throughMessageId: string | null,
+    options: ConversationMarkerExclusions = {},
   ): Promise<ConversationReadState> {
     const snapshot = await this.readConversation(botId);
-    return this.#conversationReads.markRead(memberId, snapshot, throughMessageId);
+    return this.#conversationReads.markRead(memberId, snapshot, throughMessageId, options);
   }
 
   prepareAttachments(paths: string[]): Promise<DraftAttachment[]> {

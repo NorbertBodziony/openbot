@@ -45,10 +45,7 @@ export class ConversationReadStore {
     } else {
       state = this.#stateFromDatabase(threadId, stored);
     }
-    return {
-      ...state,
-      throughMessageId: this.database.supportedConversationCursor(threadId, state.throughMessageId, options),
-    };
+    return this.#withSupportedCursor(threadId, state, options);
   }
 
   adoptMemberState(sourceMemberId: string, targetMemberId: string): void {
@@ -91,7 +88,12 @@ export class ConversationReadStore {
     return stateFromSnapshot(snapshot, stored);
   }
 
-  markRead(memberId: string, snapshot: ConversationSnapshot, throughMessageId: string | null): ConversationReadState {
+  markRead(
+    memberId: string,
+    snapshot: ConversationSnapshot,
+    throughMessageId: string | null,
+    options: ConversationMarkerExclusions = {},
+  ): ConversationReadState {
     if (!snapshot.threadId) return emptyReadState();
     const requestedIndex = throughMessageId
       ? snapshot.messages.findIndex((message) => message.id === throughMessageId)
@@ -103,7 +105,18 @@ export class ConversationReadStore {
     const storedIndex = stored ? snapshot.messages.findIndex((message) => message.id === stored) : -1;
     const nextThroughMessageId = storedIndex > requestedIndex ? (stored ?? null) : (throughMessageId ?? null);
     this.#saveCursor(snapshot.threadId, memberId, nextThroughMessageId, "marked");
-    return stateFromSnapshot(snapshot, nextThroughMessageId);
+    return this.#withSupportedCursor(snapshot.threadId, stateFromSnapshot(snapshot, nextThroughMessageId), options);
+  }
+
+  #withSupportedCursor(
+    threadId: string,
+    state: ConversationReadState,
+    options: ConversationMarkerExclusions,
+  ): ConversationReadState {
+    return {
+      ...state,
+      throughMessageId: this.database.supportedConversationCursor(threadId, state.throughMessageId, options),
+    };
   }
 
   #storedCursor(threadId: string, memberId: string): string | null | undefined {

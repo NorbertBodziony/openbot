@@ -1566,10 +1566,15 @@ describe("TeamApiServer administration", () => {
         readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "hosted-site-event-1" },
       }),
       readConversationPageFor,
-      markConversationRead: async (_botId: string, _memberId: string, throughMessageId: string | null) => ({
+      markConversationRead: async (
+        _botId: string,
+        _memberId: string,
+        throughMessageId: string | null,
+        options: { excludeHostedSiteEvents?: boolean } = {},
+      ) => ({
         unreadCount: 0,
         firstUnreadMessageId: null,
-        throughMessageId,
+        throughMessageId: options.excludeHostedSiteEvents ? throughMessageId : "hosted-site-event-1",
       }),
     });
     const api = new TeamApiServer({
@@ -1668,6 +1673,17 @@ describe("TeamApiServer administration", () => {
         unreadCount: 0,
         firstUnreadMessageId: null,
         throughMessageId: "message-1",
+      });
+      await expect(
+        jsonRequest(base, "/v1/agents/chief/conversation/read", {
+          token: login.sessionToken,
+          capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
+          body: { throughMessageId: "message-1" },
+        }),
+      ).resolves.toEqual({
+        unreadCount: 0,
+        firstUnreadMessageId: null,
+        throughMessageId: "hosted-site-event-1",
       });
     } finally {
       await api.stop();

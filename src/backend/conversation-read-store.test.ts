@@ -117,6 +117,11 @@ describe("ConversationReadStore", () => {
     reads.markRead("member-a", snapshot([visible, marker]), marker.id);
 
     expect(
+      reads.markRead("member-a", snapshot([visible, marker]), visible.id, {
+        excludeHostedSiteEvents: true,
+      }),
+    ).toMatchObject({ unreadCount: 0, throughMessageId: visible.id });
+    expect(
       reads.readStateForThread("member-a", "thread-chief", {
         excludeHostedSiteEvents: true,
       }),

@@ -1089,7 +1089,12 @@ export class TeamApiServer {
           return this.#json(
             response,
             200,
-            await this.#options.agents.markConversationRead(botId, member.id, nullableString(body, "throughMessageId")),
+            await this.#options.agents.markConversationRead(
+              botId,
+              member.id,
+              nullableString(body, "throughMessageId"),
+              markerExclusionsForCapabilities(clientCapabilities),
+            ),
           );
         }
         if (method === "POST" && action === "messages") {

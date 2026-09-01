@@ -123,6 +123,13 @@ describe("OpenBotDatabase", () => {
     database.recordPendingHostedSiteTerminalEvent(pending);
     database.recordPendingHostedSiteTerminalEvent(pending);
     expect(database.pendingHostedSiteTerminalEvents()).toEqual([pending]);
+    expect(
+      database.connection
+        .prepare(
+          "SELECT aggregate_type, aggregate_id FROM orchestration_events WHERE event_type = 'hosted-site.terminal-pending'",
+        )
+        .get(),
+    ).toEqual({ aggregate_type: "hosted-site-terminal", aggregate_id: pending.botId });
 
     database.dispatch(pending.markerCommandId, [], () => ({ recorded: true }));
     expect(database.pendingHostedSiteTerminalEvents()).toEqual([]);
