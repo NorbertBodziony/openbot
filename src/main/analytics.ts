@@ -62,7 +62,12 @@ const HOST_ALLOWLIST = {
 type HostPropertyName = (typeof HOST_ALLOWLIST)[HostEventName][number];
 type HostProperties = Partial<Record<HostPropertyName, string | number | boolean>>;
 type HostPendingEvent = { name: HostEventName; properties: HostProperties; timestamp: string };
-type ActiveTurn = { startedAt: number; origin: string; owner: AnalyticsIdentity | null };
+type ActiveTurn = {
+  startedAt: number;
+  origin: string;
+  owner: AnalyticsIdentity | null;
+  ownerResolutionPending: boolean;
+};
 
 export class HostAnalytics {
   readonly #resolveOwner: HostAnalyticsOptions["resolveOwner"];
@@ -117,7 +122,12 @@ export class HostAnalytics {
         if (this.#activeTurns.has(event.turnId)) return;
         this.#makeTurnCapacity();
         const owner = normalizeAnalyticsIdentity(this.#resolveOwner());
-        this.#activeTurns.set(event.turnId, { startedAt: now, origin: event.origin ?? "unknown", owner });
+        this.#activeTurns.set(event.turnId, {
+          startedAt: now,
+          origin: event.origin ?? "unknown",
+          owner,
+          ownerResolutionPending: owner === null && this.#bufferOwnerlessEvents,
+        });
         this.#track(
           "system_turn_started",
           {
@@ -189,12 +199,20 @@ export class HostAnalytics {
     const owner = normalizeAnalyticsIdentity(this.#resolveOwner());
     if (!owner) return;
     this.#bufferOwnerlessEvents = true;
+    for (const activeTurn of this.#activeTurns.values()) {
+      if (!activeTurn.ownerResolutionPending) continue;
+      activeTurn.owner = owner;
+      activeTurn.ownerResolutionPending = false;
+    }
     this.#flushPendingForOwner(owner);
   }
 
   clear(): void {
     this.#pending = [];
     this.#bufferOwnerlessEvents = false;
+    for (const activeTurn of this.#activeTurns.values()) {
+      if (activeTurn.owner === null) activeTurn.ownerResolutionPending = false;
+    }
     this.#identifiedOwner = null;
     if (this.#trackingEnabled) this.#enqueue("clear", () => this.#client?.clear());
   }

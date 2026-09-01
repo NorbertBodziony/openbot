@@ -160,6 +160,18 @@ describe("host analytics", () => {
         __timestamp: expect.any(String),
       }),
     );
+    analytics.handleAgentEvent({
+      type: "turn-completed",
+      botId: BOT.id,
+      threadId: BOT.threadId ?? "",
+      turnId: "turn-1",
+      origin: "unknown",
+      status: "completed",
+    });
+    expect(client.track).toHaveBeenLastCalledWith(
+      "system_turn_completed",
+      expect.objectContaining({ profileId: "owner-account" }),
+    );
   });
 
   it("clears pending host events and the identified session on logout", () => {
