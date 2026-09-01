@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { constants, createWriteStream } from "node:fs";
-import { chmod, lstat, mkdtemp, open, realpath, rm, stat } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, open, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -3025,10 +3025,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const stagedPaths: string[] = [];
       for (const [index, source] of sources.entries()) {
         const stagedPath = join(stagingRoot, `${index}-${basename(source.path)}`);
-        await pipeline(
-          source.handle.createReadStream({ autoClose: false, start: 0 }),
-          createWriteStream(stagedPath, { flags: "wx", mode: 0o600 }),
-        );
+        const expectedBytes = sizes[index];
+        if (expectedBytes === 0) {
+          await writeFile(stagedPath, "", { flag: "wx", mode: 0o600 });
+        } else {
+          await pipeline(
+            source.handle.createReadStream({ autoClose: false, start: 0, end: expectedBytes - 1 }),
+            createWriteStream(stagedPath, { flags: "wx", mode: 0o600 }),
+          );
+        }
+        const copiedBytes = (await stat(stagedPath)).size;
+        if (copiedBytes !== expectedBytes) {
+          throw new Error("A browser upload file changed while it was staged.");
+        }
         stagedPaths.push(stagedPath);
       }
       if (reservation.invalidated) throw new Error("The browser document changed during upload staging.");

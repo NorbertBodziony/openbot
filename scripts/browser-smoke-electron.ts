@@ -66,7 +66,7 @@ const server = createServer((request, response) => {
     response.end(
       `<button aria-label="Frame action" onclick="this.textContent='Frame clicked:' + event.isTrusted">Frame action</button>
        <button aria-label="Schedule frame navigation" onclick="setTimeout(() => location.href='/frame-next', 1000)">Schedule frame navigation</button>
-       <input aria-label="Frame field" oninput="document.querySelector('output').textContent='Frame input:' + this.value + ':' + event.isTrusted" onkeydown="if (event.key === 'Enter') document.querySelector('output').textContent='Frame key:' + event.isTrusted" />
+       <input aria-label="Frame field" oninput="document.querySelector('output').textContent='Frame input:' + this.value + ':' + event.isTrusted" onkeydown="if (event.key === 'Enter') document.querySelector('output').textContent += '|Frame key:' + event.isTrusted" />
        <output>Frame ready</output>`,
     );
     return;
@@ -263,12 +263,28 @@ async function main(): Promise<void> {
       timeoutMs: 2_000,
     });
     if (!frameTextWait.success) throw new Error(`V2 iframe text wait failed: ${toolError(frameTextWait)}`);
+    const legacyFrameSnapshot = await browser.snapshot(v2Tab.id);
+    const legacyFrameField = legacyFrameSnapshot.elements.find((element) => element.name === "Frame field");
+    if (!legacyFrameField) throw new Error("V2 legacy iframe submit target was not available.");
+    const legacyFrameSubmitted = await browser.act(v2Tab.id, legacyFrameSnapshot.revision, {
+      type: "type",
+      ref: legacyFrameField.ref,
+      text: "legacy iframe input",
+      submit: true,
+    });
+    if (!legacyFrameSubmitted.text.includes("Frame key:true")) {
+      throw new Error("V2 legacy iframe submit used the wrong CDP session.");
+    }
     const frameTyped = await callBrowserTool(browser, "type", {
       tabId: v2Tab.id,
       target: { kind: "role", role: "textbox", name: "Frame field", exact: true },
       text: "iframe input",
+      submit: true,
     });
-    if (!frameTyped.success || !String(toolTextPayload(frameTyped)?.text).includes("Frame input:iframe input:true")) {
+    if (
+      !frameTyped.success ||
+      !String(toolTextPayload(frameTyped)?.text).includes("Frame input:iframe input:true|Frame key:true")
+    ) {
       throw new Error(`V2 iframe text input used the wrong CDP session: ${toolError(frameTyped)}`);
     }
     const framePressed = await callBrowserTool(browser, "press", {
@@ -666,6 +682,20 @@ async function main(): Promise<void> {
       paths: [uploadPath],
     });
     if (!uploaded.success) throw new Error(`V2 upload failed: ${toolError(uploaded)}`);
+    const scaledFillEnvironment = await callBrowserTool(browser, "set_environment", {
+      tabId: v2Tab.id,
+      preset: "fill",
+      deviceScaleFactor: 2,
+    });
+    const scaledFillSnapshot = toolTextPayload(scaledFillEnvironment);
+    if (
+      !scaledFillEnvironment.success ||
+      !isDynamicRecord(scaledFillSnapshot?.viewport) ||
+      scaledFillSnapshot.viewport.mode !== "custom" ||
+      scaledFillSnapshot.viewport.deviceScaleFactor !== 2
+    ) {
+      throw new Error("V2 fill environment reported a device scale factor without applying it.");
+    }
     const environment = await callBrowserTool(browser, "set_environment", {
       tabId: v2Tab.id,
       preset: "mobile",

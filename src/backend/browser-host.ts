@@ -384,7 +384,7 @@ export class BrowserHost {
           case "type":
             if (!target) throw new Error("Legacy type requires a target.");
             await tab.engine.type(target, action.text, "replace");
-            if (action.submit) await tab.engine.press("Enter");
+            if (action.submit) await tab.engine.press("Enter", target);
             break;
           case "key":
             await tab.engine.press(action.key);
@@ -581,7 +581,7 @@ export class BrowserHost {
               target,
               async (tab) => {
                 await tab.engine.type(target, text, mode);
-                if (args.submit === true) await tab.engine.press("Enter");
+                if (args.submit === true) await tab.engine.press("Enter", target);
               },
               readTimeout(args),
             ),
@@ -1604,12 +1604,17 @@ function parseEnvironment(
 ): BrowserEnvironment {
   const preset = optionalEnum(value, "preset", ["fill", "desktop", "tablet", "mobile", "custom"] as const);
   const presetSize = presetDimensions(preset);
+  const explicitScale = value.deviceScaleFactor !== undefined;
+  const scaleConvertsFill =
+    explicitScale && (preset === "fill" || (preset === undefined && current.viewport.mode === "fill"));
   const requestedWidth =
-    optionalNumber(value, "width") ?? presetSize?.width ?? (preset === "fill" ? bounds.width : current.viewport.width);
+    optionalNumber(value, "width") ??
+    presetSize?.width ??
+    (preset === "fill" || scaleConvertsFill ? bounds.width : current.viewport.width);
   const requestedHeight =
     optionalNumber(value, "height") ??
     presetSize?.height ??
-    (preset === "fill" ? bounds.height : current.viewport.height);
+    (preset === "fill" || scaleConvertsFill ? bounds.height : current.viewport.height);
   const width = Math.round(requestedWidth);
   const height = Math.round(requestedHeight);
   if (width < 320 || width > INPUT_LIMITS.browserDimension || height < 240 || height > INPUT_LIMITS.browserDimension) {
@@ -1629,9 +1634,9 @@ function parseEnvironment(
   return {
     viewport: {
       mode:
-        preset === "fill"
+        preset === "fill" && !explicitScale
           ? "fill"
-          : preset || value.width !== undefined || value.height !== undefined
+          : preset || value.width !== undefined || value.height !== undefined || explicitScale
             ? "custom"
             : current.viewport.mode,
       width,
