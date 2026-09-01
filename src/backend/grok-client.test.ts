@@ -210,7 +210,7 @@ describe.sequential("GrokAgentClient", () => {
         expect.objectContaining({
           method: "session/set_model",
           modelId: "grok-4.6",
-          reasoningEffort: "xhigh",
+          reasoningEffort: "extra_high",
         }),
       ]),
     );
@@ -424,7 +424,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
                     { value: "low" },
                     { value: "medium" },
                     { value: "high" },
-                    { value: "xhigh" },
+                    { value: "extra_high" },
                     { value: "unsupported" },
                   ],
                 },
