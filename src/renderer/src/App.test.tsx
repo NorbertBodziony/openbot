@@ -4876,6 +4876,63 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.browser.close).toHaveBeenCalledWith("remote-tab");
   });
 
+  it("ignores Control W while the remote browser is suspended during a server switch", async () => {
+    const local = testServer("local", true);
+    const studio = testServer("remote-1", false);
+    const office = { ...testServer("remote-2", false), name: "Office PC", apiUrl: "https://office.example.com" };
+    let resolveOfficeSelection: ((servers: ServerSummary[]) => void) | undefined;
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, studio, office]);
+    vi.mocked(window.openbot.servers.select)
+      .mockResolvedValueOnce([
+        { ...local, active: false },
+        { ...studio, active: true },
+        { ...office, active: false },
+      ])
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveOfficeSelection = resolve;
+          }),
+      );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() => expect(window.openbot.servers.select).toHaveBeenCalledWith("remote-1"));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true"),
+    );
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "remote-tab-during-switch",
+          title: "Remote page",
+          url: "https://example.com/remote",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "remote-tab-during-switch",
+    });
+    await fireEvent.click(await screen.findByRole("button", { name: "Open computer" }));
+    await screen.findByRole("tab", { name: "Remote page" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Office PC server" }));
+    await waitFor(() => expect(resolveOfficeSelection).toBeDefined());
+    await fireEvent.keyDown(window, { key: "w", ctrlKey: true });
+
+    expect(window.openbot.browser.close).not.toHaveBeenCalled();
+    resolveOfficeSelection?.([
+      { ...local, active: false },
+      { ...studio, active: false },
+      { ...office, active: true },
+    ]);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Office PC server" })).toHaveAttribute("aria-pressed", "true"),
+    );
+  });
+
   it("restores the visible browser after a server switch fails", async () => {
     vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([
       testServer("local", true),

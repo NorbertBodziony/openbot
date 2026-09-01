@@ -1319,6 +1319,7 @@ function createConversationViewScope(props: ConversationProps) {
       if (
         props.server?.kind !== "remote" ||
         !screenOpen() ||
+        props.browserVisibilitySuspended ||
         event.key.toLowerCase() !== "w" ||
         (!event.ctrlKey && !event.metaKey) ||
         event.altKey ||
