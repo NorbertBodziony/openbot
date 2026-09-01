@@ -10,7 +10,7 @@ import { expect, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { DEFAULT_GENERAL_SETTINGS } from "../src/app-settings";
 import { SettingsModal } from "../src/components/SettingsModal";
-import { Button, Heading, Text } from "../src/components/ui";
+import { Button, Heading, Text, Toaster, toast } from "../src/components/ui";
 import { createMockOpenBot } from "./mock-openbot";
 
 const storyAppInfo = { name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" } as const;
@@ -70,6 +70,7 @@ function SettingsModalStory(props: {
   window.openbot = mock.api;
   onCleanup(() => {
     mock.dispose();
+    toast.dismiss();
     window.openbot = previousApi;
   });
   const [open, setOpen] = createSignal(props.initialOpen);
@@ -105,32 +106,35 @@ function SettingsModalStory(props: {
   }
 
   return (
-    <main class="foundation-story foundation-interaction-stage">
-      <Heading as="h1" size="lg">
-        Workspace settings
-      </Heading>
-      <Text tone="secondary">Preview the global settings surface with session-scoped preferences.</Text>
-      <Button variant="outline" type="button" onClick={() => setOpen(true)}>
-        Open settings
-      </Button>
-      <SettingsModal
-        open={open()}
-        onOpenChange={setOpen}
-        value={value()}
-        onValueChange={setValue}
-        appInfo={storyAppInfo}
-        updateStatus={updateStatus()}
-        account={account()}
-        onUpdateAccountName={updateAccountName}
-        onUpdateAccountAvatar={updateAccountAvatar}
-        onUpdateAction={runUpdateAction}
-        agentStatus={props.providerDownloads ? providerAgentStatus : undefined}
-        providerRuntimeStatuses={props.providerDownloads ? providerRuntimeStatuses : undefined}
-        onDownloadProvider={props.providerDownloads ? fn() : undefined}
-        onCancelProviderDownload={props.providerDownloads ? fn() : undefined}
-        onConnectProvider={props.providerDownloads ? fn() : undefined}
-      />
-    </main>
+    <>
+      <main class="foundation-story foundation-interaction-stage">
+        <Heading as="h1" size="lg">
+          Workspace settings
+        </Heading>
+        <Text tone="secondary">Preview the global settings surface with session-scoped preferences.</Text>
+        <Button variant="outline" type="button" onClick={() => setOpen(true)}>
+          Open settings
+        </Button>
+        <SettingsModal
+          open={open()}
+          onOpenChange={setOpen}
+          value={value()}
+          onValueChange={setValue}
+          appInfo={storyAppInfo}
+          updateStatus={updateStatus()}
+          account={account()}
+          onUpdateAccountName={updateAccountName}
+          onUpdateAccountAvatar={updateAccountAvatar}
+          onUpdateAction={runUpdateAction}
+          agentStatus={props.providerDownloads ? providerAgentStatus : undefined}
+          providerRuntimeStatuses={props.providerDownloads ? providerRuntimeStatuses : undefined}
+          onDownloadProvider={props.providerDownloads ? fn() : undefined}
+          onCancelProviderDownload={props.providerDownloads ? fn() : undefined}
+          onConnectProvider={props.providerDownloads ? fn() : undefined}
+        />
+      </main>
+      <Toaster />
+    </>
   );
 }
 

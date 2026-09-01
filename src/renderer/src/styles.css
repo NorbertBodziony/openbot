@@ -243,6 +243,8 @@
   --openbot-duration-normal: 160ms;
   --openbot-duration-slow: 200ms;
   --openbot-duration-overlay: 240ms;
+  --openbot-duration-toast-enter: 340ms;
+  --openbot-duration-toast-exit: 220ms;
   --openbot-duration-island-content: 340ms;
   --openbot-duration-island-content-exit: 220ms;
   --stream-gap: 60ms;

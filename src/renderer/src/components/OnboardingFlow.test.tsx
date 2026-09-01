@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { STORY_AGENT_STATUS } from "../preview/fixtures";
 import { createMockOpenBot, type MockOpenBotControls } from "../preview/mock-openbot";
 import { OnboardingFlow } from "./OnboardingFlow";
+import { Toaster, toast } from "./ui";
 
 let activeMock: MockOpenBotControls | undefined;
 const previousApi = window.openbot;
@@ -13,6 +14,7 @@ afterEach(() => {
   activeMock?.dispose();
   activeMock = undefined;
   window.openbot = previousApi;
+  toast.dismiss();
   vi.restoreAllMocks();
 });
 
@@ -22,12 +24,15 @@ function renderFlow(
   activeMock = createMockOpenBot();
   window.openbot = activeMock.api;
   const view = render(() => (
-    <OnboardingFlow
-      state={{ completed: false, preferredProvider: null }}
-      agentStatus={STORY_AGENT_STATUS}
-      platform={options.platform ?? "darwin"}
-      onSave={options.onSave ?? (async (_provider: AgentProviderId) => undefined)}
-    />
+    <>
+      <OnboardingFlow
+        state={{ completed: false, preferredProvider: null }}
+        agentStatus={STORY_AGENT_STATUS}
+        platform={options.platform ?? "darwin"}
+        onSave={options.onSave ?? (async (_provider: AgentProviderId) => undefined)}
+      />
+      <Toaster />
+    </>
   ));
   return view;
 }

@@ -3,6 +3,7 @@ import { onCleanup } from "solid-js";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { ComputerUseSetupSurface } from "../src/ComputerUseSetupSurface";
 import { ComputerUseMacSetup } from "../src/components/ComputerUseMacSetup";
+import { Toaster, toast } from "../src/components/ui";
 import { createMockOpenBot } from "./mock-openbot";
 
 const availableState: ComputerUseMacSetupState = {
@@ -25,11 +26,13 @@ function MockedSetup(props: { state?: ComputerUseMacSetupState; error?: Error; l
   window.openbot = mock.api;
   onCleanup(() => {
     mock.dispose();
+    toast.dismiss();
     window.openbot = previousApi;
   });
   return (
     <main class="foundation-story foundation-interaction-stage">
       <ComputerUseMacSetup platform="darwin" variant="compact" />
+      <Toaster />
     </main>
   );
 }

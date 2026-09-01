@@ -24,6 +24,7 @@ import {
   SettingsSection,
   Skeleton,
   TriangleAlert,
+  toast,
 } from "./ui";
 
 export interface ComputerUseMacSetupProps {
@@ -56,7 +57,6 @@ export function ComputerUseMacSetup(props: ComputerUseMacSetupProps) {
   const [state, setState] = createSignal<ComputerUseMacSetupState | null>(null);
   const [loading, setLoading] = createSignal(false);
   const [busyPermission, setBusyPermission] = createSignal<MacPermissionId | null>(null);
-  const [openedPermission, setOpenedPermission] = createSignal<MacPermissionId | null>(null);
   const [error, setError] = createSignal<string | null>(null);
   let disposed = false;
 
@@ -77,13 +77,16 @@ export function ComputerUseMacSetup(props: ComputerUseMacSetupProps) {
   async function openPermission(permission: MacPermissionId): Promise<void> {
     if (busyPermission() || state()?.status !== "available") return;
     setBusyPermission(permission);
-    setOpenedPermission(null);
     setError(null);
     try {
       const next = await desktopApi.openComputerUsePermissionSetup(permission);
       if (disposed) return;
       setState(next);
-      if (next.status === "available") setOpenedPermission(permission);
+      if (next.status === "available") {
+        toast.success("System Settings opened", {
+          description: "Drag the Computer Use app into the list to finish setup.",
+        });
+      }
     } catch (cause) {
       if (!disposed) setError(errorMessage(cause, "OpenBot could not open System Settings."));
     } finally {
@@ -176,18 +179,6 @@ export function ComputerUseMacSetup(props: ComputerUseMacSetupProps) {
           <SettingsSection title="System permissions" description="Permissions are managed by macOS.">
             <PermissionGroup actionLabel="Open settings" busy={busyPermission()} onOpen={openPermission} />
           </SettingsSection>
-        </Show>
-
-        <Show when={openedPermission()}>
-          <Alert tone="success" class="computer-use-alert computer-use-opened" role="status">
-            <AlertIcon>
-              <CircleCheck />
-            </AlertIcon>
-            <AlertContent>
-              <AlertTitle>System Settings opened</AlertTitle>
-              <AlertDescription>Drag the Computer Use app into the list to finish setup.</AlertDescription>
-            </AlertContent>
-          </Alert>
         </Show>
       </Show>
 

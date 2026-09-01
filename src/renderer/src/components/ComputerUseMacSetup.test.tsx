@@ -2,6 +2,7 @@ import { fireEvent, render, waitFor, within } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMockOpenBot, type MockOpenBotControls } from "../preview/mock-openbot";
 import { ComputerUseMacSetup } from "./ComputerUseMacSetup";
+import { Toaster, toast } from "./ui";
 
 let mock: MockOpenBotControls | undefined;
 const previousApi = window.openbot;
@@ -10,6 +11,7 @@ afterEach(() => {
   mock?.dispose();
   mock = undefined;
   window.openbot = previousApi;
+  toast.dismiss();
   vi.restoreAllMocks();
 });
 
@@ -18,7 +20,12 @@ describe("ComputerUseMacSetup", () => {
     mock = createMockOpenBot();
     window.openbot = mock.api;
     const openSetup = vi.spyOn(mock.api, "openComputerUsePermissionSetup");
-    const view = render(() => <ComputerUseMacSetup platform="darwin" variant="settings" />);
+    const view = render(() => (
+      <>
+        <ComputerUseMacSetup platform="darwin" variant="settings" />
+        <Toaster />
+      </>
+    ));
 
     expect(await view.findByText("Codex Computer Use")).toBeInTheDocument();
     const permissions = view.getByRole("heading", { name: "System permissions" }).closest("section");
