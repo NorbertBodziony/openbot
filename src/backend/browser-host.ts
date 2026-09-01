@@ -42,11 +42,11 @@ import { isRecord } from "./protocol";
 interface BrowserHostEvents {
   changed: [tabs: BrowserTab[], activeTabId: string | null];
   controlChanged: [state: BrowserControlState];
-  documentChanged: [tabId: string];
+  documentChanged: [tabId: string, documentIds: ReadonlySet<string>];
 }
 
 interface BrowserDynamicToolHooks {
-  onUploadAssigned?: (inputId: string) => void;
+  onUploadAssigned?: (inputId: string, documentId: string) => void;
   onUploadOperationStarted?: (completion: Promise<void>) => void;
 }
 
@@ -140,7 +140,11 @@ export class BrowserHost {
     window: BrowserWindow,
     downloadsRoot: string,
     statePath: string,
-    options: { recordingDurationMs?: number } = {},
+    options: {
+      recordingDurationMs?: number;
+      recordingMaxConcurrent?: number;
+      recordingMaxAggregateBytes?: number;
+    } = {},
   ) {
     this.#window = window;
     this.#downloadsRoot = downloadsRoot;
@@ -154,7 +158,11 @@ export class BrowserHost {
         tab.recording = recording;
         this.#emitChanged();
       },
-      { maxRecordingMs: options.recordingDurationMs },
+      {
+        maxRecordingMs: options.recordingDurationMs,
+        maxConcurrentRecordings: options.recordingMaxConcurrent,
+        maxAggregateBytes: options.recordingMaxAggregateBytes,
+      },
     );
     this.#configureSession();
   }
@@ -688,8 +696,8 @@ export class BrowserHost {
               "upload-files",
               target,
               async (tab) => {
-                const inputId = await tab.engine.uploadFiles(target, paths);
-                hooks.onUploadAssigned?.(inputId);
+                const assignment = await tab.engine.uploadFiles(target, paths);
+                hooks.onUploadAssigned?.(assignment.inputId, assignment.documentId);
               },
               readTimeout(args),
               hooks.onUploadOperationStarted,
@@ -799,13 +807,19 @@ export class BrowserHost {
   async #destroyPersistentStorageAndViews(): Promise<void> {
     const statePersistence = this.#persistState();
     const closingTabDrains = [...this.#closingTabDrains.values()];
-    const recorderDestruction = Promise.allSettled(closingTabDrains).then(() => this.#recorder.destroy());
+    const activeTabDrains: Promise<void>[] = [];
     this.#session.flushStorageData();
     for (const tab of this.#tabs.values()) {
       this.#unmountView(tab.view);
-      tab.engine.destroy();
-      tab.view.webContents.close();
+      const drain = tab.queue.then(() => {
+        tab.engine.destroy();
+        if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
+      });
+      activeTabDrains.push(drain);
+      tab.queue = drain.catch(() => undefined);
     }
+    const tabDrains = [...closingTabDrains, ...activeTabDrains];
+    const recorderDestruction = Promise.allSettled(tabDrains).then(() => this.#recorder.destroy());
     this.#tabs.clear();
     this.#listeners.clear();
     this.clearControls();
@@ -815,7 +829,7 @@ export class BrowserHost {
       this.#session.cookies.flushStore(),
       statePersistence,
       recorderDestruction,
-      ...closingTabDrains,
+      ...tabDrains,
     ]);
     this.#closingTabDrains.clear();
     this.#session.flushStorageData();
@@ -921,9 +935,28 @@ export class BrowserHost {
   #bindTabEvents(tab: InternalTab): void {
     const contents = tab.view.webContents;
     const changed = () => this.#emitChanged();
-    contents.on("did-start-navigation", (_event, _url, isInPlace) => {
-      if (isInPlace) return;
-      for (const listener of this.#documentListeners) listener(tab.id);
+    let documentGeneration = 0;
+    contents.on("did-frame-navigate", (_event, _url, _code, _status, isMainFrame) => {
+      const generation = ++documentGeneration;
+      if (!tab.engine.hasUploadDocuments()) {
+        if (this.#tabs.get(tab.id) !== tab) return;
+        for (const listener of this.#documentListeners) listener(tab.id, new Set());
+        return;
+      }
+      const documentIds = tab.queue.then(() => tab.engine.documentIds());
+      tab.queue = documentIds.then(
+        () => undefined,
+        () => undefined,
+      );
+      void documentIds
+        .then((documentIds) => {
+          if (generation !== documentGeneration || this.#tabs.get(tab.id) !== tab) return;
+          for (const listener of this.#documentListeners) listener(tab.id, documentIds);
+        })
+        .catch(() => {
+          if (!isMainFrame || generation !== documentGeneration || this.#tabs.get(tab.id) !== tab) return;
+          for (const listener of this.#documentListeners) listener(tab.id, new Set());
+        });
     });
     contents.on("before-input-event", (event, input) => {
       if (isToggleDevToolsShortcut(input)) {
@@ -966,12 +999,14 @@ export class BrowserHost {
     });
     contents.on("page-title-updated", changed);
     contents.on("did-navigate", (_event, url) => {
+      if (this.#tabs.get(tab.id) !== tab) return;
       if (isPersistableBrowserUrl(url)) tab.requestedUrl = persistentBrowserUrl(url);
       tab.revision += 1;
       changed();
       this.#schedulePersist();
     });
     contents.on("did-navigate-in-page", (_event, url) => {
+      if (this.#tabs.get(tab.id) !== tab) return;
       if (isPersistableBrowserUrl(url)) tab.requestedUrl = persistentBrowserUrl(url);
       tab.revision += 1;
       changed();

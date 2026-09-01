@@ -15,6 +15,7 @@ const WAIT_TIMEOUT_MS = 30_000;
 const MAX_RESULT_BYTES = 64 * 1024;
 const EVALUATION_WORLD_NAME = "openbot-browser-evaluation";
 const AUTOMATION_WORLD_NAME = "openbot-browser-automation";
+const DOCUMENT_ID_PROPERTY = "__openbot_browser_document_id__";
 const MAX_SNAPSHOT_FRAMES = 12;
 const MAX_SNAPSHOT_ELEMENTS = 200;
 const MAX_SNAPSHOT_TEXT = 100_000;
@@ -59,6 +60,11 @@ export interface SnapshotReadResult {
   imageReason: string;
 }
 
+export interface BrowserUploadAssignment {
+  inputId: string;
+  documentId: string;
+}
+
 export interface SnapshotContext {
   tabId: string;
   revision: number;
@@ -78,6 +84,7 @@ export class BrowserCdpEngine {
   #retainDebugger = false;
   #ownsDebugger = false;
   #highlightSessionId: string | undefined;
+  readonly #uploadDocumentIds = new Set<string>();
   readonly #targetSessions = new Map<string, { sessionId: string; url: string }>();
 
   constructor(contents: WebContents) {
@@ -369,7 +376,7 @@ export class BrowserCdpEngine {
     });
   }
 
-  async uploadFiles(target: BrowserTarget, paths: string[]): Promise<string> {
+  async uploadFiles(target: BrowserTarget, paths: string[]): Promise<BrowserUploadAssignment> {
     if (paths.length === 0 || paths.length > 10) throw new Error("Upload requires between 1 and 10 files.");
     if (Buffer.byteLength(JSON.stringify(paths)) > MAX_RESULT_BYTES)
       throw new Error("Upload path arguments exceed 64 KB.");
@@ -380,8 +387,54 @@ export class BrowserCdpEngine {
     return this.#lease(async (send) => {
       const resolved = await this.#resolveElement(send, target);
       await send("DOM.setFileInputFiles", { backendNodeId: resolved.backendNodeId, files: paths }, resolved.sessionId);
-      return `${resolved.sessionId ?? "main"}:${resolved.backendNodeId}`;
+      const documentId = await this.#callOnNode(
+        send,
+        resolved.backendNodeId,
+        documentIdFunctionDeclaration(),
+        [],
+        resolved.sessionId,
+      );
+      if (!isString(documentId)) throw new Error("Unable to identify the upload document.");
+      this.#uploadDocumentIds.add(documentId);
+      return {
+        inputId: `${resolved.sessionId ?? "main"}:${resolved.backendNodeId}`,
+        documentId,
+      };
     });
+  }
+
+  async documentIds(): Promise<Set<string>> {
+    return this.#lease(async (send) => {
+      const ids = new Set<string>();
+      for (const capture of this.#snapshotTargets()) {
+        if (ids.size === this.#uploadDocumentIds.size) break;
+        const contextId = await automationContextId(send, capture.sessionId);
+        const result = await send(
+          "Runtime.evaluate",
+          {
+            expression: documentIdsExpression([...this.#uploadDocumentIds]),
+            contextId,
+            returnByValue: true,
+          },
+          capture.sessionId,
+        );
+        const exception = recordValue(result.exceptionDetails);
+        if (exception) throw new Error(exceptionDescription(exception));
+        const values = recordValue(result.result)?.value;
+        if (!Array.isArray(values)) throw new Error("Browser documents returned invalid identities.");
+        for (const value of values) {
+          if (isString(value)) ids.add(value);
+        }
+      }
+      for (const documentId of this.#uploadDocumentIds) {
+        if (!ids.has(documentId)) this.#uploadDocumentIds.delete(documentId);
+      }
+      return ids;
+    });
+  }
+
+  hasUploadDocuments(): boolean {
+    return this.#uploadDocumentIds.size > 0;
   }
 
   async evaluate(expression: string, timeoutMs = ACTION_TIMEOUT_MS): Promise<unknown> {
@@ -476,6 +529,7 @@ export class BrowserCdpEngine {
     this.#targets.clear();
     this.#lastSnapshot = null;
     this.#highlightSessionId = undefined;
+    this.#uploadDocumentIds.clear();
   }
 
   async waitFor(
@@ -1520,6 +1574,43 @@ async function automationContextId(send: SendCommand, sessionId?: string): Promi
   const contextId = numberValue(world.executionContextId);
   if (!contextId) throw new Error("The browser automation world is unavailable.");
   return contextId;
+}
+
+function documentIdFunctionDeclaration(): string {
+  return `function() {
+    const documentNode = this.nodeType === Node.DOCUMENT_NODE ? this : this.ownerDocument;
+    if (!documentNode) return null;
+    const key = ${JSON.stringify(DOCUMENT_ID_PROPERTY)};
+    if (typeof documentNode[key] !== 'string') {
+      const values = crypto.getRandomValues(new Uint32Array(4));
+      const value = Array.from(values, number => number.toString(16).padStart(8, '0')).join('');
+      Object.defineProperty(documentNode, key, { value });
+    }
+    return documentNode[key];
+  }`;
+}
+
+function documentIdsExpression(documentIds: string[]): string {
+  return `(() => {
+    const key = ${JSON.stringify(DOCUMENT_ID_PROPERTY)};
+    const wanted = new Set(${JSON.stringify(documentIds)});
+    const pending = [document];
+    const seen = new Set();
+    const ids = [];
+    while (pending.length && seen.size < ${MAX_SNAPSHOT_SCANNED_NODES} && wanted.size > 0) {
+      const documentNode = pending.shift();
+      if (!documentNode || seen.has(documentNode)) continue;
+      seen.add(documentNode);
+      if (typeof documentNode[key] === 'string' && wanted.has(documentNode[key])) {
+        ids.push(documentNode[key]);
+        wanted.delete(documentNode[key]);
+      }
+      for (const frame of documentNode.querySelectorAll('iframe,frame')) {
+        try { if (frame.contentDocument) pending.push(frame.contentDocument); } catch {}
+      }
+    }
+    return ids;
+  })()`;
 }
 
 function waitForPageSignal(contents: WebContents, timeoutMs: number): Promise<void> {

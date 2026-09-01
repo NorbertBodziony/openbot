@@ -150,7 +150,7 @@ export interface ResolvedSharedFile {
 
 interface AgentBrowserHost {
   onChanged(listener: (tabs: BrowserTab[], activeTabId: string | null) => void): () => void;
-  onDocumentChanged(listener: (tabId: string) => void): () => void;
+  onDocumentChanged(listener: (tabId: string, documentIds: ReadonlySet<string>) => void): () => void;
   onControlChanged(listener: (state: BrowserControlState) => void): () => void;
   clearControls(): void;
   endControl(threadId: string, turnId: string): void;
@@ -158,7 +158,7 @@ interface AgentBrowserHost {
   handleDynamicTool(
     params: DynamicToolCallParams,
     hooks?: {
-      onUploadAssigned?: (inputId: string) => void;
+      onUploadAssigned?: (inputId: string, documentId: string) => void;
       onUploadOperationStarted?: (completion: Promise<void>) => void;
     },
   ): Promise<DynamicToolResult>;
@@ -240,6 +240,7 @@ interface OpenBotToolResponse {
 interface BrowserUploadRoot {
   path: string;
   bytes: number;
+  documentId: string;
 }
 
 interface BrowserUploadReservation {
@@ -482,7 +483,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       this.#emit({ type: "browser-changed", tabs, activeTabId });
     });
-    this.#browser.onDocumentChanged((tabId) => this.#discardBrowserUploadResources(tabId));
+    this.#browser.onDocumentChanged((tabId, documentIds) => this.#discardBrowserUploadDocuments(tabId, documentIds));
     this.#browser.onControlChanged((state) => {
       this.#emit({ type: "browser-control-changed", state });
     });
@@ -3047,11 +3048,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           arguments: { ...args, paths: stagedPaths },
         },
         {
-          onUploadAssigned: (inputId) => {
+          onUploadAssigned: (inputId, documentId) => {
             if (!stagingRoot || this.#stopping || !reservation || reservation.invalidated) return;
             const roots = this.#browserUploadRoots.get(tabId) ?? new Map<string, BrowserUploadRoot>();
             const previousRoot = roots.get(inputId);
-            roots.set(inputId, { path: stagingRoot, bytes: stagedBytes });
+            roots.set(inputId, { path: stagingRoot, bytes: stagedBytes, documentId });
             this.#browserUploadRoots.set(tabId, roots);
             reservation.root = null;
             stagingRoot = null;
@@ -3106,6 +3107,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#browserUploadRoots.delete(tabId);
     for (const root of roots?.values() ?? []) {
       void rm(root.path, { recursive: true, force: true }).catch(() => undefined);
+    }
+    const reservations = this.#browserUploadReservations.get(tabId);
+    this.#browserUploadReservations.delete(tabId);
+    for (const reservation of reservations?.values() ?? []) {
+      reservation.invalidated = true;
+      if (reservation.root) void rm(reservation.root, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  #discardBrowserUploadDocuments(tabId: string, documentIds: ReadonlySet<string>): void {
+    const roots = this.#browserUploadRoots.get(tabId);
+    if (roots) {
+      for (const [inputId, root] of roots) {
+        if (documentIds.has(root.documentId)) continue;
+        roots.delete(inputId);
+        void rm(root.path, { recursive: true, force: true }).catch(() => undefined);
+      }
+      if (roots.size === 0) this.#browserUploadRoots.delete(tabId);
     }
     const reservations = this.#browserUploadReservations.get(tabId);
     this.#browserUploadReservations.delete(tabId);

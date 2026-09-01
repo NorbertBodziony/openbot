@@ -8,6 +8,8 @@ import { z } from "zod";
 const MAX_RECORDING_MS = 5 * 60 * 1_000;
 const MAX_RECORDING_BYTES = 100 * 1024 * 1024;
 const RECORDING_STOP_BYTES = MAX_RECORDING_BYTES - 10 * 1024 * 1024;
+const MAX_CONCURRENT_RECORDINGS = 2;
+const MAX_AGGREGATE_RECORDING_BYTES = 200 * 1024 * 1024;
 const stoppedReasonSchema = z.enum(["requested", "duration-limit", "size-limit", "tab-closed", "error"]);
 const recorderResultSchema = z.object({
   durationMs: z.number(),
@@ -39,17 +41,22 @@ export class BrowserRecorder {
   readonly #sessions = new Map<string, RecorderSession>();
   readonly #artifacts = new Map<string, BrowserRecordingArtifact>();
   readonly #errors = new Map<string, Error>();
+  readonly #starting = new Set<string>();
   readonly #onStateChanged: (tabId: string, recording: boolean) => void;
   readonly #maxRecordingMs: number;
+  readonly #maxConcurrentRecordings: number;
+  readonly #maxAggregateBytes: number;
 
   constructor(
     downloadsRoot: string,
     onStateChanged: (tabId: string, recording: boolean) => void,
-    options: { maxRecordingMs?: number } = {},
+    options: { maxRecordingMs?: number; maxConcurrentRecordings?: number; maxAggregateBytes?: number } = {},
   ) {
     this.#downloadsRoot = downloadsRoot;
     this.#onStateChanged = onStateChanged;
     this.#maxRecordingMs = options.maxRecordingMs ?? MAX_RECORDING_MS;
+    this.#maxConcurrentRecordings = options.maxConcurrentRecordings ?? MAX_CONCURRENT_RECORDINGS;
+    this.#maxAggregateBytes = options.maxAggregateBytes ?? MAX_AGGREGATE_RECORDING_BYTES;
   }
 
   isRecording(tabId: string): boolean {
@@ -65,106 +72,115 @@ export class BrowserRecorder {
     if (this.#artifacts.has(tabId)) {
       throw new Error("Retrieve the completed recording with recording_stop before starting another recording.");
     }
-    if (contents.isDestroyed()) throw new Error("Browser tab was closed.");
-    this.#errors.delete(tabId);
-    await mkdir(this.#downloadsRoot, { recursive: true });
-    const startedAt = Date.now();
-    const path = join(
-      this.#downloadsRoot,
-      `openbot-browser-${new Date(startedAt).toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}.webm`,
-    );
-    const file = await open(path, "wx", 0o600);
-    const recorderPartition = `openbot-recorder-${randomUUID()}`;
-    let recorderWindow: BrowserWindow;
+    let startReserved = false;
     try {
-      recorderWindow = new BrowserWindow({
-        show: false,
-        width: 1,
-        height: 1,
-        webPreferences: {
-          sandbox: true,
-          contextIsolation: true,
-          nodeIntegration: false,
-          backgroundThrottling: false,
-          webSecurity: true,
-          partition: recorderPartition,
-        },
-      });
-    } catch (error) {
-      await file.close().catch(() => undefined);
-      await rm(path, { force: true }).catch(() => undefined);
-      throw error;
-    }
-    recorderWindow.webContents.session.setPermissionCheckHandler((_webContents, permission) => permission === "media");
-    recorderWindow.webContents.session.setPermissionRequestHandler((_webContents, permission, callback) =>
-      callback(permission === "media" || permission === "display-capture"),
-    );
-    recorderWindow.webContents.session.setDisplayMediaRequestHandler(
-      (_request, callback) => callback({ video: contents.mainFrame }),
-      { useSystemPicker: false },
-    );
-    const session: RecorderSession = {
-      tabId,
-      window: recorderWindow,
-      startedAt,
-      path,
-      file,
-      bytes: 0,
-      writeQueue: Promise.resolve(),
-      writeError: null,
-      stoppedReason: null,
-      finalizing: null,
-      discarding: false,
-    };
-    this.#sessions.set(tabId, session);
-    recorderWindow.on("closed", () => {
-      if (this.#sessions.get(tabId) !== session) return;
-      void this.#discardSession(session, false);
-    });
-    recorderWindow.webContents.on("page-title-updated", (_event, title) => {
-      if (!title.startsWith("openbot-recorder:stopped:")) return;
-      const reason = title.slice("openbot-recorder:stopped:".length);
-      session.stoppedReason = parseStoppedReason(reason);
-      this.#onStateChanged(tabId, false);
-      if (session.discarding || session.finalizing) return;
-      session.finalizing = this.#finalizeSession(session, session.stoppedReason);
-      void session.finalizing.catch(() => undefined);
-    });
-    try {
-      await recorderWindow.webContents.session.protocol.handle("https", async (request) => {
-        const url = new URL(request.url);
-        if (request.method === "POST" && url.pathname === "/chunk") {
-          const chunk = Buffer.from(await request.arrayBuffer());
-          const writing = session.writeQueue.then(() => this.#writeChunk(session, chunk));
-          session.writeQueue = writing.catch(() => undefined);
-          try {
-            await writing;
-            return new Response(null, { status: 204 });
-          } catch (error) {
-            session.writeError = error instanceof Error ? error : new Error(String(error));
-            return new Response("Unable to save recording chunk.", { status: 500 });
-          }
-        }
-        return new Response("<!doctype html><title>openbot-recorder:ready</title>", {
-          headers: {
-            "content-type": "text/html; charset=utf-8",
-            "content-security-policy": "default-src 'none'; connect-src 'self'",
+      this.#reserveStart(tabId);
+      startReserved = true;
+      if (contents.isDestroyed()) throw new Error("Browser tab was closed.");
+      this.#errors.delete(tabId);
+      await mkdir(this.#downloadsRoot, { recursive: true });
+      const startedAt = Date.now();
+      const path = join(
+        this.#downloadsRoot,
+        `openbot-browser-${new Date(startedAt).toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}.webm`,
+      );
+      const file = await open(path, "wx", 0o600);
+      const recorderPartition = `openbot-recorder-${randomUUID()}`;
+      let recorderWindow: BrowserWindow;
+      try {
+        recorderWindow = new BrowserWindow({
+          show: false,
+          width: 1,
+          height: 1,
+          webPreferences: {
+            sandbox: true,
+            contextIsolation: true,
+            nodeIntegration: false,
+            backgroundThrottling: false,
+            webSecurity: true,
+            partition: recorderPartition,
           },
         });
-      });
-      await recorderWindow.loadURL("https://recorder.openbot.invalid/");
-      const sourceId = contents.getMediaSourceId(recorderWindow.webContents);
-      const started = recorderStartErrorSchema.safeParse(
-        await recorderWindow.webContents.executeJavaScript(startScript(sourceId, this.#maxRecordingMs), true),
+      } catch (error) {
+        await file.close().catch(() => undefined);
+        await rm(path, { force: true }).catch(() => undefined);
+        throw error;
+      }
+      recorderWindow.webContents.session.setPermissionCheckHandler(
+        (_webContents, permission) => permission === "media",
       );
-      if (started.success) throw new Error(`${started.data.name}: ${started.data.message}`);
-      this.#onStateChanged(tabId, true);
-    } catch (error) {
-      this.#sessions.delete(tabId);
-      if (!recorderWindow.isDestroyed()) recorderWindow.destroy();
-      await file.close().catch(() => undefined);
-      await rm(path, { force: true }).catch(() => undefined);
-      throw new Error(`Unable to start browser recording: ${String(error)}`);
+      recorderWindow.webContents.session.setPermissionRequestHandler((_webContents, permission, callback) =>
+        callback(permission === "media" || permission === "display-capture"),
+      );
+      recorderWindow.webContents.session.setDisplayMediaRequestHandler(
+        (_request, callback) => callback({ video: contents.mainFrame }),
+        { useSystemPicker: false },
+      );
+      const session: RecorderSession = {
+        tabId,
+        window: recorderWindow,
+        startedAt,
+        path,
+        file,
+        bytes: 0,
+        writeQueue: Promise.resolve(),
+        writeError: null,
+        stoppedReason: null,
+        finalizing: null,
+        discarding: false,
+      };
+      this.#sessions.set(tabId, session);
+      recorderWindow.on("closed", () => {
+        if (this.#sessions.get(tabId) !== session) return;
+        void this.#discardSession(session, false);
+      });
+      recorderWindow.webContents.on("page-title-updated", (_event, title) => {
+        if (!title.startsWith("openbot-recorder:stopped:")) return;
+        const reason = title.slice("openbot-recorder:stopped:".length);
+        session.stoppedReason = parseStoppedReason(reason);
+        this.#onStateChanged(tabId, false);
+        if (session.discarding || session.finalizing) return;
+        session.finalizing = this.#finalizeSession(session, session.stoppedReason);
+        void session.finalizing.catch(() => undefined);
+      });
+      try {
+        await recorderWindow.webContents.session.protocol.handle("https", async (request) => {
+          const url = new URL(request.url);
+          if (request.method === "POST" && url.pathname === "/chunk") {
+            const chunk = Buffer.from(await request.arrayBuffer());
+            const writing = session.writeQueue.then(() => this.#writeChunk(session, chunk));
+            session.writeQueue = writing.catch(() => undefined);
+            try {
+              await writing;
+              return new Response(null, { status: 204 });
+            } catch (error) {
+              session.writeError = error instanceof Error ? error : new Error(String(error));
+              return new Response("Unable to save recording chunk.", { status: 500 });
+            }
+          }
+          return new Response("<!doctype html><title>openbot-recorder:ready</title>", {
+            headers: {
+              "content-type": "text/html; charset=utf-8",
+              "content-security-policy": "default-src 'none'; connect-src 'self'",
+            },
+          });
+        });
+        await recorderWindow.loadURL("https://recorder.openbot.invalid/");
+        const sourceId = contents.getMediaSourceId(recorderWindow.webContents);
+        const started = recorderStartErrorSchema.safeParse(
+          await recorderWindow.webContents.executeJavaScript(startScript(sourceId, this.#maxRecordingMs), true),
+        );
+        if (started.success) throw new Error(`${started.data.name}: ${started.data.message}`);
+        this.#onStateChanged(tabId, true);
+      } catch (error) {
+        this.#sessions.delete(tabId);
+        if (!recorderWindow.isDestroyed()) recorderWindow.destroy();
+        await file.close().catch(() => undefined);
+        await rm(path, { force: true }).catch(() => undefined);
+        throw new Error(`Unable to start browser recording: ${String(error)}`);
+      }
+    } finally {
+      if (startReserved) this.#starting.delete(tabId);
     }
   }
 
@@ -216,6 +232,22 @@ export class BrowserRecorder {
     await Promise.allSettled([...tabIds].map((tabId) => this.discard(tabId, "tab-closed")));
     this.#artifacts.clear();
     this.#errors.clear();
+  }
+
+  #reserveStart(tabId: string): void {
+    if (this.#starting.has(tabId) || this.#sessions.has(tabId)) {
+      throw new Error("This browser tab already has a recording.");
+    }
+    const activeRecordings = this.#sessions.size + this.#starting.size;
+    if (activeRecordings >= this.#maxConcurrentRecordings) {
+      throw new Error(`At most ${this.#maxConcurrentRecordings} browser recordings can run at the same time.`);
+    }
+    const artifactBytes = [...this.#artifacts.values()].reduce((total, artifact) => total + artifact.bytes, 0);
+    const reservedBytes = activeRecordings * MAX_RECORDING_BYTES;
+    if (artifactBytes + reservedBytes + MAX_RECORDING_BYTES > this.#maxAggregateBytes) {
+      throw new Error(`Browser recordings can use up to ${this.#maxAggregateBytes} bytes in total.`);
+    }
+    this.#starting.add(tabId);
   }
 
   async #writeChunk(session: RecorderSession, chunk: Buffer): Promise<void> {

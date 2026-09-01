@@ -936,7 +936,8 @@ describe.sequential("AgentService", () => {
       releaseHeldUploads = resolve;
     });
     const browser = fakeBrowser();
-    let documentChanged: (tabId: string) => void = (_tabId) => undefined;
+    let documentChanged: (tabId: string, documentIds: ReadonlySet<string>) => void = (_tabId, _documentIds) =>
+      undefined;
     browser.onDocumentChanged = (listener) => {
       documentChanged = listener;
       return () => undefined;
@@ -955,7 +956,9 @@ describe.sequential("AgentService", () => {
         }
         stagedContents.push(await readFile(stagedPath, "utf8"));
         const target = isDynamicRecord(params.arguments.target) ? params.arguments.target : {};
-        const assign = () => hooks?.onUploadAssigned?.(String(target.selector ?? target.ref ?? "input"));
+        const inputId = String(target.selector ?? target.ref ?? "input");
+        const documentId = inputId === "#second" ? "frame-document" : "main-document";
+        const assign = () => hooks?.onUploadAssigned?.(inputId, documentId);
         if (holdUploads) {
           const completion = heldUploads.then(assign);
           hooks?.onUploadOperationStarted?.(completion);
@@ -1037,6 +1040,14 @@ describe.sequential("AgentService", () => {
     if (!delayedUpload.complete || !delayedUpload.completion) throw new Error("Delayed upload did not start.");
     delayedUpload.complete();
     await delayedUpload.completion;
+    documentChanged("tab", new Set(["main-document"]));
+    await expect(readFile(stagedPaths[0], "utf8")).resolves.toBe("safe upload");
+    await waitFor(() =>
+      readFile(stagedPaths[1]).then(
+        () => false,
+        () => true,
+      ),
+    );
 
     client.emit("request", {
       method: "item/tool/call",
@@ -1062,10 +1073,10 @@ describe.sequential("AgentService", () => {
         () => true,
       ),
     );
-    await expect(readFile(stagedPaths[1], "utf8")).resolves.toBe("second upload");
+    await expect(readFile(stagedPaths[1], "utf8")).rejects.toThrow();
     await expect(readFile(stagedPaths[2], "utf8")).resolves.toBe("replacement upload");
 
-    for (let index = 0; index < 8; index++) {
+    for (let index = 0; index < 9; index++) {
       const id = `browser-upload-extra-${index}`;
       client.emit("request", {
         method: "item/tool/call",
@@ -1124,8 +1135,8 @@ describe.sequential("AgentService", () => {
     expect(client.errors.find((response) => response.id === "browser-upload-denied")?.error.message).toContain(
       "workspace or the OpenBot shared directory",
     );
-    expect(calls).toHaveLength(11);
-    documentChanged("tab");
+    expect(calls).toHaveLength(12);
+    documentChanged("tab", new Set());
     await waitFor(async () =>
       (await Promise.allSettled(stagedPaths.slice(1).map((path) => readFile(path)))).every(
         (result) => result.status === "rejected",
@@ -1163,13 +1174,13 @@ describe.sequential("AgentService", () => {
         client.responses.filter((response) => String(response.id).startsWith("browser-upload-concurrent-")).length ===
         10,
     );
-    expect(calls).toHaveLength(21);
+    expect(calls).toHaveLength(22);
     releaseHeldUploads();
     await heldUploads;
     await Promise.resolve();
-    documentChanged("tab");
+    documentChanged("tab", new Set());
     await waitFor(async () =>
-      (await Promise.allSettled(stagedPaths.slice(11).map((path) => readFile(path)))).every(
+      (await Promise.allSettled(stagedPaths.slice(12).map((path) => readFile(path)))).every(
         (result) => result.status === "rejected",
       ),
     );
@@ -4857,7 +4868,7 @@ function stores(): { store: BotStore; mailbox: MailboxStore } {
 function fakeBrowser(tabs: BrowserTab[] = []) {
   return {
     onChanged: (_listener: (tabs: BrowserTab[], activeTabId: string | null) => void) => () => undefined,
-    onDocumentChanged: (_listener: (tabId: string) => void) => () => undefined,
+    onDocumentChanged: (_listener: (tabId: string, documentIds: ReadonlySet<string>) => void) => () => undefined,
     onControlChanged: (_listener: (state: BrowserControlState) => void) => () => undefined,
     clearControls: () => undefined,
     endControl: () => undefined,
@@ -4865,7 +4876,7 @@ function fakeBrowser(tabs: BrowserTab[] = []) {
     handleDynamicTool: async (
       _params: DynamicToolCallParams,
       _hooks?: {
-        onUploadAssigned?: (inputId: string) => void;
+        onUploadAssigned?: (inputId: string, documentId: string) => void;
         onUploadOperationStarted?: (completion: Promise<void>) => void;
       },
     ) => ({

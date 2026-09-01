@@ -174,7 +174,11 @@ async function main(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 100));
     const downloadsRoot = join(temporaryRoot, "downloads");
     const statePath = join(temporaryRoot, "browser-tabs.json");
-    const browser = new BrowserHost(window, downloadsRoot, statePath, { recordingDurationMs: 500 });
+    const browser = new BrowserHost(window, downloadsRoot, statePath, {
+      recordingDurationMs: 500,
+      recordingMaxConcurrent: 1,
+      recordingMaxAggregateBytes: 100 * 1024 * 1024,
+    });
     await browser.setVisible({ visible: true, bounds: { x: 0, y: 0, width: 800, height: 600 } });
     const documentChangedTabs: string[] = [];
     browser.onDocumentChanged((tabId) => documentChangedTabs.push(tabId));
@@ -759,10 +763,18 @@ async function main(): Promise<void> {
     ) {
       throw new Error(`V2 recording did not start: ${toolError(recordingStarted)}`);
     }
+    const concurrentRecording = await callBrowserTool(browser, "recording_start", { tabId: tab.id });
+    if (concurrentRecording.success || !toolError(concurrentRecording).includes("At most 1")) {
+      throw new Error("V2 recorder did not enforce its concurrent recording limit.");
+    }
     await new Promise((resolve) => setTimeout(resolve, 1_100));
     const prematureRecordingRestart = await callBrowserTool(browser, "recording_start", { tabId: v2Tab.id });
     if (prematureRecordingRestart.success || !toolError(prematureRecordingRestart).includes("recording_stop")) {
       throw new Error("V2 recording restart replaced an unclaimed completed artifact.");
+    }
+    const aggregateRecording = await callBrowserTool(browser, "recording_start", { tabId: tab.id });
+    if (aggregateRecording.success || !toolError(aggregateRecording).includes("in total")) {
+      throw new Error("V2 recorder did not reserve its aggregate byte budget.");
     }
     const recordingStopped = await callBrowserTool(browser, "recording_stop", { tabId: v2Tab.id });
     const recordingPayload = toolTextPayload(recordingStopped);
