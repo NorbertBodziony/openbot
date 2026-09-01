@@ -46,6 +46,7 @@ interface BrowserHostEvents {
 
 interface BrowserDynamicToolHooks {
   onUploadAssigned?: (inputId: string) => void;
+  onUploadOperationStarted?: (completion: Promise<void>) => void;
 }
 
 type KeepQueueBlocked = (promise: Promise<unknown>) => void;
@@ -630,6 +631,7 @@ export class BrowserHost {
                 hooks.onUploadAssigned?.(inputId);
               },
               readTimeout(args),
+              hooks.onUploadOperationStarted,
             ),
           );
         }
@@ -951,6 +953,7 @@ export class BrowserHost {
     target: BrowserTarget | undefined,
     operation: (tab: InternalTab) => Promise<void>,
     timeoutMs = 10_000,
+    onOperationStarted?: (completion: Promise<void>) => void,
   ): Promise<BrowserSnapshot> {
     const tab = this.#requireTab(tabId);
     const started = tab.queue.then(() => {
@@ -959,6 +962,7 @@ export class BrowserHost {
         if (target && target.kind !== "point") await tab.engine.highlight(target).catch(() => undefined);
         await operation(tab);
       })();
+      onOperationStarted?.(operationCompletion);
       const response = withTimeout(operationCompletion, timeoutMs, `Browser ${action} timed out.`)
         .then(async () => {
           await tab.engine.settle(Math.min(timeoutMs, 10_000));

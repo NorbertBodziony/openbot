@@ -908,17 +908,19 @@ async function collectActionableNodes(
         const seen = new Set();
         const elements = [];
         let scanned = 0;
-        while (roots.length && scanned < ${MAX_SNAPSHOT_SCANNED_NODES} && elements.length < ${limit}) {
+        while (roots.length && scanned < ${MAX_SNAPSHOT_SCANNED_NODES}) {
           const root = roots.shift();
           if (!root || seen.has(root)) continue;
           seen.add(root);
           const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
           let node;
-          while ((node = walker.nextNode()) && scanned < ${MAX_SNAPSHOT_SCANNED_NODES} && elements.length < ${limit}) {
+          while ((node = walker.nextNode()) && scanned < ${MAX_SNAPSHOT_SCANNED_NODES}) {
             scanned++;
             const nativeAction = node.matches('button, input:not([type="hidden"]), select, textarea, a[href], summary, [contenteditable]');
-            const explicitRoles = String(node.getAttribute('role') || '').toLowerCase().split(/s+/).filter(Boolean);
-            if (nativeAction || explicitRoles.some(role => actionableRoles.has(role))) {
+            const explicitRoles = String(node.getAttribute('role') || '').toLowerCase().split(/\\s+/).filter(Boolean);
+            const style = getComputedStyle(node);
+            const visible = !node.closest('[hidden], [inert], [aria-hidden="true"]') && style.display !== 'none' && style.visibility !== 'hidden' && style.visibility !== 'collapse' && node.getClientRects().length > 0;
+            if (visible && (nativeAction || explicitRoles.some(role => actionableRoles.has(role)))) {
               elements.push(node);
             }
             if ((node.localName === 'iframe' || node.localName === 'frame')) {
@@ -946,8 +948,8 @@ async function collectActionableNodes(
       },
       capture.sessionId,
     );
-    const length = Math.min(limit, numberValue(recordValue(lengthResult.result)?.value));
-    for (let index = 0; index < length; index++) {
+    const length = Math.min(MAX_SNAPSHOT_SCANNED_NODES, numberValue(recordValue(lengthResult.result)?.value));
+    for (let index = 0; index < length && candidates.length < limit; index++) {
       const remoteResult = await send(
         "Runtime.callFunctionOn",
         {

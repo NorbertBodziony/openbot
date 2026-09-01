@@ -708,6 +708,7 @@ describe.sequential("AgentService", () => {
     let outsidePath = "";
     const stagedPaths: string[] = [];
     const stagedContents: string[] = [];
+    const delayedUpload: { complete?: () => void; completion?: Promise<void> } = {};
     const browser = fakeBrowser();
     browser.handleDynamicTool = async (params, hooks) => {
       if (
@@ -723,7 +724,19 @@ describe.sequential("AgentService", () => {
         }
         stagedContents.push(await readFile(stagedPath, "utf8"));
         const target = isDynamicRecord(params.arguments.target) ? params.arguments.target : {};
-        hooks?.onUploadAssigned?.(String(target.selector ?? target.ref ?? "input"));
+        const assign = () => hooks?.onUploadAssigned?.(String(target.selector ?? target.ref ?? "input"));
+        if (stagedPaths.length === 2) {
+          delayedUpload.completion = new Promise<void>((resolve) => {
+            delayedUpload.complete = () => {
+              assign();
+              resolve();
+            };
+          });
+          hooks?.onUploadOperationStarted?.(delayedUpload.completion);
+        } else {
+          hooks?.onUploadOperationStarted?.(Promise.resolve());
+          assign();
+        }
       }
       calls.push(params);
       return { success: stagedPaths.length !== 2, contentItems: [] };
@@ -787,6 +800,9 @@ describe.sequential("AgentService", () => {
     await waitFor(() => client.responses.some((response) => response.id === "browser-upload-second"));
     await expect(readFile(stagedPaths[0], "utf8")).resolves.toBe("safe upload");
     await expect(readFile(stagedPaths[1], "utf8")).resolves.toBe("second upload");
+    if (!delayedUpload.complete || !delayedUpload.completion) throw new Error("Delayed upload did not start.");
+    delayedUpload.complete();
+    await delayedUpload.completion;
 
     client.emit("request", {
       method: "item/tool/call",
@@ -4063,7 +4079,10 @@ function fakeBrowser(tabs: BrowserTab[] = []) {
     listTabs: () => tabs,
     handleDynamicTool: async (
       _params: DynamicToolCallParams,
-      _hooks?: { onUploadAssigned?: (inputId: string) => void },
+      _hooks?: {
+        onUploadAssigned?: (inputId: string) => void;
+        onUploadOperationStarted?: (completion: Promise<void>) => void;
+      },
     ) => ({
       success: true,
       contentItems: [],

@@ -151,7 +151,10 @@ interface AgentBrowserHost {
   listTabs(): BrowserTab[];
   handleDynamicTool(
     params: DynamicToolCallParams,
-    hooks?: { onUploadAssigned?: (inputId: string) => void },
+    hooks?: {
+      onUploadAssigned?: (inputId: string) => void;
+      onUploadOperationStarted?: (completion: Promise<void>) => void;
+    },
   ): Promise<DynamicToolResult>;
 }
 
@@ -2713,6 +2716,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const tabId = args.tabId;
     const sources = await this.#openAgentAttachmentSources(botId, args.paths);
     let stagingRoot: string | null = null;
+    const uploadState: { completion?: Promise<void> } = {};
     try {
       const sizes = await Promise.all(sources.map((source) => source.handle.stat().then((metadata) => metadata.size)));
       if (sizes.some((size) => size > ATTACHMENT_LIMITS.fileBytes)) {
@@ -2739,7 +2743,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         },
         {
           onUploadAssigned: (inputId) => {
-            if (!stagingRoot) return;
+            if (!stagingRoot || this.#stopping) return;
             const roots = this.#browserUploadRoots.get(tabId) ?? new Map<string, string>();
             const previousRoot = roots.get(inputId);
             roots.set(inputId, stagingRoot);
@@ -2747,11 +2751,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             stagingRoot = null;
             if (previousRoot) void rm(previousRoot, { recursive: true, force: true }).catch(() => undefined);
           },
+          onUploadOperationStarted: (completion) => {
+            uploadState.completion = completion;
+          },
         },
       );
     } finally {
       await Promise.allSettled(sources.map((source) => source.handle.close()));
-      if (stagingRoot) await rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined);
+      if (stagingRoot) {
+        const unassignedRoot = stagingRoot;
+        const cleanup = async () => {
+          if (stagingRoot !== unassignedRoot) return;
+          stagingRoot = null;
+          await rm(unassignedRoot, { recursive: true, force: true }).catch(() => undefined);
+        };
+        if (uploadState.completion) void uploadState.completion.then(cleanup, cleanup);
+        else await cleanup();
+      }
     }
   }
 

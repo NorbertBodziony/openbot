@@ -588,12 +588,15 @@ async function main(): Promise<void> {
     const largeDom = await callBrowserTool(browser, "evaluate", {
       tabId: boundedTab.id,
       expression:
-        "document.body.replaceChildren(...Array.from({ length: 200 }, (_, index) => Object.assign(document.createElement('div'), { role: 'presentation', tabIndex: 0, textContent: 'Decoration ' + index })), ...Array.from({ length: 250 }, (_, index) => Object.assign(document.createElement('button'), { textContent: 'Bounded ' + index }))); true",
+        "document.body.replaceChildren(...Array.from({ length: 200 }, (_, index) => Object.assign(document.createElement('div'), { role: 'presentation', tabIndex: 0, textContent: 'Decoration ' + index })), ...Array.from({ length: 200 }, (_, index) => Object.assign(document.createElement('button'), { hidden: true, textContent: 'Hidden ' + index })), Object.assign(document.createElement('div'), { role: 'switch', ariaLabel: 'Bounded switch', textContent: 'Switch' }), ...Array.from({ length: 250 }, (_, index) => Object.assign(document.createElement('button'), { textContent: 'Bounded ' + index }))); true",
     });
     if (!largeDom.success) throw new Error(`V2 bounded DOM setup failed: ${toolError(largeDom)}`);
     const boundedSnapshot = await browser.snapshot(boundedTab.id);
     if (boundedSnapshot.elements.length !== 200) {
       throw new Error(`V2 snapshot did not enforce its global element cap: ${boundedSnapshot.elements.length}`);
+    }
+    if (!boundedSnapshot.elements.some((element) => element.role === "switch" && element.name === "Bounded switch")) {
+      throw new Error("V2 snapshot candidate cap hid an actionable ARIA role.");
     }
     await browser.close(boundedTab.id);
     process.stdout.write("BrowserHost: V2 semantics, adaptive image, iframe, upload, waits, and emulation passed.\n");
