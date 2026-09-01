@@ -1929,7 +1929,7 @@ if (!hasSingleInstanceLock) {
           const state = centralAuthManager?.getState();
           if (state?.status !== "signed_in") return null;
           const storedOwner = teamStore.getOwnerAnalyticsIdentity();
-          if (storedOwner) return storedOwner;
+          if (storedOwner) return storedOwner.id === state.user.id ? storedOwner : null;
           const ownerEmail = teamStore.getOwnerEmail();
           return !teamStore.configured || ownerEmail?.trim().toLowerCase() === state.user.email.trim().toLowerCase()
             ? state.user
