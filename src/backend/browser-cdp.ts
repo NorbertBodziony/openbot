@@ -310,13 +310,15 @@ export class BrowserCdpEngine {
           const uniqueDesiredIndices = [...new Set(desiredIndices)];
           const desiredIndex = uniqueDesiredIndices[0];
           const desiredLabel = desiredIndex === undefined ? '' : this.options[desiredIndex].label || this.options[desiredIndex].text;
-          const keyboardAnchorIndex = desiredIndex === undefined ? -1 :
-            enabledIndices.find(index => (this.options[index].label || this.options[index].text) === desiredLabel) ?? -1;
+          const desiredInitial = Array.from(desiredLabel)[0]?.toLocaleLowerCase() || '';
+          const typeaheadCycleIndices = desiredInitial === '' ? [] : enabledIndices.filter(index =>
+            (this.options[index].label || this.options[index].text).toLocaleLowerCase().startsWith(desiredInitial));
           return {
             multiple: this.multiple,
             desiredIndices: this.multiple ? uniqueDesiredIndices : uniqueDesiredIndices.slice(0, 1),
             desiredLabel,
-            keyboardAnchorIndex,
+            selectedIndex: this.selectedIndex,
+            typeaheadCycleIndices,
             enabledIndices,
           };
         }`,
@@ -334,14 +336,32 @@ export class BrowserCdpEngine {
       }
       await send("DOM.focus", { backendNodeId: resolved.backendNodeId }, resolved.sessionId);
       if (!plan.multiple) {
-        if (!isString(plan.desiredLabel) || !isNumber(plan.keyboardAnchorIndex) || plan.keyboardAnchorIndex < 0) {
+        const cycleIndices = Array.isArray(plan.typeaheadCycleIndices)
+          ? plan.typeaheadCycleIndices.filter(isNumber)
+          : [];
+        if (!isString(plan.desiredLabel) || !isNumber(plan.selectedIndex)) {
           throw new Error("Select target returned an invalid keyboard navigation plan.");
         }
-        for (const character of plan.desiredLabel) await dispatchTextKey(send, character, resolved.sessionId);
-        const anchorRank = enabledIndices.indexOf(plan.keyboardAnchorIndex);
+        const selectedIndex = plan.selectedIndex;
         const targetRank = enabledIndices.indexOf(desiredIndices[0]);
-        for (let index = anchorRank; index < targetRank; index++) {
-          await dispatchShortcut(send, "ArrowDown", resolved.sessionId);
+        if (desiredIndices[0] !== selectedIndex && cycleIndices.length > 0) {
+          const firstCycleRank = cycleIndices.findIndex((index) => index > selectedIndex);
+          const startCycleRank = firstCycleRank < 0 ? 0 : firstCycleRank;
+          const targetCycleRank = cycleIndices.indexOf(desiredIndices[0]);
+          if (targetCycleRank < 0) {
+            throw new Error("Select target returned an invalid typeahead navigation plan.");
+          }
+          const steps = ((targetCycleRank - startCycleRank + cycleIndices.length) % cycleIndices.length) + 1;
+          const initial = Array.from(plan.desiredLabel)[0];
+          if (!initial) throw new Error("Select target returned an empty typeahead key.");
+          for (let index = 0; index < steps; index++) {
+            await dispatchTextKey(send, initial, resolved.sessionId);
+          }
+        } else if (desiredIndices[0] !== selectedIndex) {
+          await dispatchShortcut(send, "Home", resolved.sessionId);
+          for (let index = 0; index < targetRank; index++) {
+            await dispatchShortcut(send, "ArrowDown", resolved.sessionId);
+          }
         }
       } else {
         const additiveModifiers = process.platform === "darwin" ? ["Meta"] : ["Control"];
@@ -1603,6 +1623,15 @@ async function dispatchShortcut(send: SendCommand, shortcut: string, sessionId?:
   }
 }
 
+function normalizeModifier(value: string) {
+  const lower = value.toLowerCase();
+  if (lower === "cmd" || lower === "command" || lower === "meta") return "Meta";
+  if (lower === "ctrl" || lower === "control") return "Control";
+  if (lower === "alt" || lower === "option") return "Alt";
+  if (lower === "shift") return "Shift";
+  return null;
+}
+
 async function dispatchTextKey(send: SendCommand, character: string, sessionId?: string): Promise<void> {
   const upper = character.toUpperCase();
   const code = /^[a-z]$/i.test(character) ? `Key${upper}` : "Unidentified";
@@ -1617,15 +1646,6 @@ async function dispatchTextKey(send: SendCommand, character: string, sessionId?:
     sessionId,
   );
   await send("Input.dispatchKeyEvent", { type: "keyUp", key: character, code }, sessionId);
-}
-
-function normalizeModifier(value: string) {
-  const lower = value.toLowerCase();
-  if (lower === "cmd" || lower === "command" || lower === "meta") return "Meta";
-  if (lower === "ctrl" || lower === "control") return "Control";
-  if (lower === "alt" || lower === "option") return "Alt";
-  if (lower === "shift") return "Shift";
-  return null;
 }
 
 function normalizeKey(key: string): {
@@ -1652,12 +1672,14 @@ function normalizeKey(key: string): {
     pagedown: ["PageDown", "PageDown", 34],
   };
   const alias = aliases[key.toLowerCase()];
+  const macNativeVirtualKeyCode =
+    process.platform === "darwin" ? { ArrowUp: 126, ArrowDown: 125, Home: 115 }[alias?.[0] ?? ""] : undefined;
   if (alias)
     return {
       key: alias[0],
       code: alias[1],
       windowsVirtualKeyCode: alias[2],
-      nativeVirtualKeyCode: process.platform === "darwin" && alias[0] === "ArrowDown" ? 125 : undefined,
+      nativeVirtualKeyCode: macNativeVirtualKeyCode,
     };
   if (!/^[\w\-.,/;='[\]`]{1,20}$/u.test(key)) throw new Error(`Unsupported browser key: ${key}`);
   const upper = key.length === 1 ? key.toUpperCase() : key;
