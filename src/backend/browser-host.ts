@@ -378,6 +378,11 @@ export class BrowserHost {
     }
   }
 
+  async discardRecording(tabId: string): Promise<void> {
+    if (!this.#tabs.has(tabId)) return;
+    await this.#enqueue(tabId, () => this.#recorder.discard(tabId, "tab-closed"));
+  }
+
   async setVisible(input: BrowserVisibilityInput): Promise<void> {
     const restoreRendererFocus = !input.visible && this.#attachedView?.webContents.isFocused();
     this.#visible = input.visible;
@@ -893,7 +898,7 @@ export class BrowserHost {
         kind: "network",
         level: details.statusCode >= 400 ? "error" : "info",
         message: `${details.method} ${details.statusCode}`,
-        url: details.url.slice(0, INPUT_LIMITS.browserUrl),
+        url: diagnosticUrl(details.url),
         method: details.method,
         status: details.statusCode,
       });
@@ -905,7 +910,7 @@ export class BrowserHost {
         kind: "network",
         level: "error",
         message: `${details.method} ${details.error}`,
-        url: details.url.slice(0, INPUT_LIMITS.browserUrl),
+        url: diagnosticUrl(details.url),
         method: details.method,
       });
     });
@@ -1558,6 +1563,19 @@ function isPersistableBrowserUrl(value: string): boolean {
     return url.protocol === "http:" || url.protocol === "https:";
   } catch {
     return false;
+  }
+}
+
+function diagnosticUrl(value: string): string | undefined {
+  try {
+    const url = new URL(value);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString().slice(0, INPUT_LIMITS.browserUrl);
+  } catch {
+    return undefined;
   }
 }
 

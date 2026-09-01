@@ -19,6 +19,8 @@ const MAX_SNAPSHOT_FRAMES = 12;
 const MAX_SNAPSHOT_ELEMENTS = 200;
 const MAX_SNAPSHOT_TEXT = 100_000;
 const MAX_SNAPSHOT_SCANNED_NODES = 10_000;
+const MAX_SNAPSHOT_ELEMENT_VALUE = 2_000;
+const MAX_SERIALIZED_SNAPSHOT_BYTES = 1024 * 1024;
 const ACTIONABLE_ROLES = new Set([
   "button",
   "checkbox",
@@ -124,7 +126,6 @@ export class BrowserCdpEngine {
       if (navigationGeneration !== this.#navigationGeneration) {
         throw new Error("Page navigated during the browser snapshot. Take a fresh snapshot.");
       }
-      this.#targets = parsed.targets;
       const viewport = readViewport(metrics, context.environment);
       const snapshot: BrowserSnapshot = {
         tabId: context.tabId,
@@ -138,6 +139,9 @@ export class BrowserCdpEngine {
         diagnostics: context.diagnostics,
         actions: context.actions,
       };
+      boundSerializedSnapshot(snapshot);
+      const retainedRefs = new Set(snapshot.elements.map((element) => element.ref));
+      this.#targets = new Map([...parsed.targets].filter(([ref]) => retainedRefs.has(ref)));
       this.#lastSnapshot = snapshot;
       const lowCoverage = parsed.elements.length < 3 && parsed.text.length > 200;
       const recommendImage = parsed.hasVisualSurface || parsed.hasFrame || lowCoverage;
@@ -187,7 +191,7 @@ export class BrowserCdpEngine {
       const resolved = await this.#resolveTarget(send, target);
       if (!resolved.backendNodeId) throw new Error("Typing requires an element target.");
       await send("DOM.focus", { backendNodeId: resolved.backendNodeId }, resolved.sessionId);
-      await this.#callOnNode(
+      const useEndKey = await this.#callOnNode(
         send,
         resolved.backendNodeId,
         `function(mode) {
@@ -199,15 +203,20 @@ export class BrowserCdpEngine {
               range.selectNodeContents(this); selection.removeAllRanges(); selection.addRange(range);
             }
           } else if ('value' in this && typeof this.setSelectionRange === 'function') {
+            const selectable = this instanceof HTMLTextAreaElement ||
+              (this instanceof HTMLInputElement && ['text', 'search', 'tel', 'url', 'password'].includes(this.type));
+            if (!selectable) return true;
             const end = String(this.value).length; this.setSelectionRange(end, end);
           } else if (this.isContentEditable) {
             const selection = this.ownerDocument.getSelection(); const range = this.ownerDocument.createRange();
             range.selectNodeContents(this); range.collapse(false); selection.removeAllRanges(); selection.addRange(range);
           }
+          return false;
         }`,
         [mode],
         resolved.sessionId,
       );
+      if (useEndKey === true) await dispatchShortcut(send, "End", resolved.sessionId);
       await send("Input.insertText", { text }, resolved.sessionId);
     });
   }
@@ -351,24 +360,36 @@ export class BrowserCdpEngine {
         { type: "mousePressed", x: from.x, y: from.y, button: "left", clickCount: 1 },
         sessionId,
       );
-      for (let step = 1; step <= 8; step++) {
+      let released = false;
+      try {
+        for (let step = 1; step <= 8; step++) {
+          await send(
+            "Input.dispatchMouseEvent",
+            {
+              type: "mouseMoved",
+              x: from.x + ((to.x - from.x) * step) / 8,
+              y: from.y + ((to.y - from.y) * step) / 8,
+              button: "left",
+              buttons: 1,
+            },
+            sessionId,
+          );
+        }
         await send(
           "Input.dispatchMouseEvent",
-          {
-            type: "mouseMoved",
-            x: from.x + ((to.x - from.x) * step) / 8,
-            y: from.y + ((to.y - from.y) * step) / 8,
-            button: "left",
-            buttons: 1,
-          },
+          { type: "mouseReleased", x: to.x, y: to.y, button: "left", clickCount: 1 },
           sessionId,
         );
+        released = true;
+      } finally {
+        if (!released) {
+          await send(
+            "Input.dispatchMouseEvent",
+            { type: "mouseReleased", x: to.x, y: to.y, button: "left", clickCount: 1 },
+            sessionId,
+          ).catch(() => undefined);
+        }
       }
-      await send(
-        "Input.dispatchMouseEvent",
-        { type: "mouseReleased", x: to.x, y: to.y, button: "left", clickCount: 1 },
-        sessionId,
-      );
     });
   }
 
@@ -932,7 +953,7 @@ async function collectBoundedSnapshot(
         name: axValue(candidate.ax.name).slice(0, 500),
         description: axValue(candidate.ax.description).slice(0, 500),
         tag: (stringValue(candidate.node.localName) || stringValue(candidate.node.nodeName)).toLowerCase(),
-        value: axValue(candidate.ax.value) || null,
+        value: axValue(candidate.ax.value).slice(0, MAX_SNAPSHOT_ELEMENT_VALUE) || null,
         states,
         disabled: states.includes("disabled:true"),
         bounds: null,
@@ -1250,6 +1271,22 @@ async function collectActionableNodes(
 function snapshotString(strings: string[], value: unknown): string {
   const index = numberValue(value);
   return strings[index] ?? "";
+}
+
+function boundSerializedSnapshot(snapshot: BrowserSnapshot): void {
+  let bytes = Buffer.byteLength(JSON.stringify(snapshot));
+  while (bytes > MAX_SERIALIZED_SNAPSHOT_BYTES) {
+    if (snapshot.diagnostics.length > 20) snapshot.diagnostics.shift();
+    else if (snapshot.actions.length > 20) snapshot.actions.shift();
+    else if (snapshot.elements.length > 0) snapshot.elements.pop();
+    else if (snapshot.text.length > 0) {
+      const excess = bytes - MAX_SERIALIZED_SNAPSHOT_BYTES;
+      snapshot.text = snapshot.text.slice(0, Math.max(0, snapshot.text.length - Math.max(1, excess)));
+    } else if (snapshot.diagnostics.length > 0) snapshot.diagnostics.shift();
+    else if (snapshot.actions.length > 0) snapshot.actions.shift();
+    else throw new Error("Browser snapshot exceeds its serialized size limit.");
+    bytes = Buffer.byteLength(JSON.stringify(snapshot));
+  }
 }
 
 function assertBeforeDeadline(deadline: number | undefined): void {

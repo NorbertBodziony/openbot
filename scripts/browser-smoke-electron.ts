@@ -101,6 +101,7 @@ const server = createServer((request, response) => {
       <label><input type="radio" name="choice" aria-label="Primary choice" checked />Primary</label>
       <label><input type="radio" name="choice" aria-label="Secondary choice" />Secondary</label>
       <div contenteditable="true" role="textbox" aria-label="Notes"></div>
+      <input type="number" aria-label="Quantity" value="12" />
       <button aria-label="Duplicate">One</button><button aria-label="Duplicate">Two</button>
       <span style="position:relative;display:inline-block"><button aria-label="Covered">Covered</button><span style="position:absolute;inset:0;z-index:2" aria-hidden="true"></span></span>
       <span style="position:relative;display:inline-block"><button style="width:200px" aria-label="Partially covered" onclick="document.querySelector('output').textContent='partial:' + event.isTrusted">Partially covered</button><span style="position:absolute;left:70px;right:70px;top:0;bottom:0;z-index:2" aria-hidden="true"></span></span>
@@ -115,7 +116,7 @@ const server = createServer((request, response) => {
         const root = document.querySelector('#shadow').attachShadow({ mode: 'open' });
         root.innerHTML = '<button aria-label="Shadow action">Shadow action</button>';
         document.addEventListener('keydown', event => { if (event.ctrlKey && event.key.toLowerCase() === 'k') document.querySelector('output').textContent = 'shortcut:' + event.isTrusted; });
-        console.error('v2 diagnostic marker'); fetch('/diagnostic-error').catch(() => {});
+        console.error('v2 diagnostic marker'); fetch('/diagnostic-error?access_token=diagnostic-secret').catch(() => {});
       </script>`);
     return;
   }
@@ -397,6 +398,19 @@ async function main(): Promise<void> {
     );
     if (editableValue !== "editable text appended") {
       throw new Error("V2 contenteditable target did not receive text.");
+    }
+    const appendedNumber = await callBrowserTool(browser, "type", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "spinbutton", name: "Quantity", exact: true },
+      text: "3",
+      mode: "append",
+    });
+    const numberValue = await v2Contents.executeJavaScript(
+      "document.querySelector('[aria-label=\"Quantity\"]').value",
+      true,
+    );
+    if (!appendedNumber.success || numberValue !== "123") {
+      throw new Error(`V2 number append did not use a trusted end-key fallback: ${toolError(appendedNumber)}`);
     }
     const shortcut = await callBrowserTool(browser, "press", { tabId: v2Tab.id, key: "Control+k" });
     if (!shortcut.success) throw new Error(`V2 keyboard shortcut failed: ${toolError(shortcut)}`);
@@ -705,6 +719,9 @@ async function main(): Promise<void> {
     if (!Array.isArray(environmentSnapshot.diagnostics) || environmentSnapshot.diagnostics.length === 0) {
       throw new Error("V2 snapshot omitted diagnostics.");
     }
+    if (JSON.stringify(environmentSnapshot.diagnostics).includes("diagnostic-secret")) {
+      throw new Error("V2 diagnostics exposed request query credentials.");
+    }
     const oversizedEnvironment = await callBrowserTool(browser, "set_environment", {
       tabId: v2Tab.id,
       preset: "custom",
@@ -875,7 +892,7 @@ async function main(): Promise<void> {
       "smoke-bot",
     );
     await boundedContents.executeJavaScript(
-      "document.body.replaceChildren(...Array.from({ length: 200 }, (_, index) => Object.assign(document.createElement('div'), { role: 'presentation', tabIndex: 0, textContent: 'Decoration ' + index })), ...Array.from({ length: 200 }, (_, index) => Object.assign(document.createElement('button'), { hidden: true, textContent: 'Hidden ' + index })), Object.assign(document.createElement('div'), { role: 'switch', ariaLabel: 'Bounded switch', textContent: 'Switch' }), ...Array.from({ length: 250 }, (_, index) => Object.assign(document.createElement('button'), { textContent: 'Bounded ' + index }))); true",
+      "document.body.replaceChildren(Object.assign(document.createElement('textarea'), { ariaLabel: 'Large value', value: 'x'.repeat(2_000_000) }), ...Array.from({ length: 200 }, (_, index) => Object.assign(document.createElement('div'), { role: 'presentation', tabIndex: 0, textContent: 'Decoration ' + index })), ...Array.from({ length: 200 }, (_, index) => Object.assign(document.createElement('button'), { hidden: true, textContent: 'Hidden ' + index })), Object.assign(document.createElement('div'), { role: 'switch', ariaLabel: 'Bounded switch', textContent: 'Switch' }), ...Array.from({ length: 250 }, (_, index) => Object.assign(document.createElement('button'), { textContent: 'Bounded ' + index }))); true",
       true,
     );
     const boundedSnapshot = await browser.snapshot(boundedTab.id);
@@ -884,6 +901,10 @@ async function main(): Promise<void> {
     }
     if (!boundedSnapshot.elements.some((element) => element.role === "switch" && element.name === "Bounded switch")) {
       throw new Error("V2 snapshot candidate cap hid an actionable ARIA role.");
+    }
+    const largeValue = boundedSnapshot.elements.find((element) => element.name === "Large value")?.value;
+    if (!largeValue || largeValue.length > 2_000 || Buffer.byteLength(JSON.stringify(boundedSnapshot)) > 1024 * 1024) {
+      throw new Error("V2 snapshot did not enforce its value and aggregate serialization limits.");
     }
     await browser.close(boundedTab.id);
     process.stdout.write("BrowserHost: V2 semantics, adaptive image, iframe, upload, waits, and emulation passed.\n");

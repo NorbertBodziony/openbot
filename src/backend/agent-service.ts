@@ -155,6 +155,7 @@ interface AgentBrowserHost {
   clearControls(): void;
   endControl(threadId: string, turnId: string): void;
   listTabs(): BrowserTab[];
+  discardRecording(tabId: string): Promise<void>;
   handleDynamicTool(
     params: DynamicToolCallParams,
     hooks?: {
@@ -2984,6 +2985,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async #handleBrowserDynamicTool(botId: string, params: DynamicToolCallParams): Promise<DynamicToolResult> {
+    const recordingTabId =
+      isRecord(params.arguments) && isString(params.arguments.tabId) ? params.arguments.tabId : null;
+    if (
+      params.tool === "recording_start" &&
+      recordingTabId !== null &&
+      [...this.#pendingBrowserTakeovers.values()].some((pending) => pending.request.tabId === recordingTabId)
+    ) {
+      return {
+        success: false,
+        contentItems: [{ type: "inputText", text: "Browser recording is unavailable during user takeover." }],
+      };
+    }
     if (params.tool !== "upload_files") return this.#browser.handleDynamicTool(params);
     const args = params.arguments;
     if (
@@ -4437,13 +4450,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       tabId,
     };
     return new Promise((resolve) => {
-      this.#pendingBrowserTakeovers.set(request.id, {
+      const pending: PendingBrowserTakeover = {
         params,
         request: takeover,
         resolve,
-      });
-      this.#markRoutineNeedsAttention(turnId);
-      this.#emit({ type: "browser-takeover-requested", request: takeover });
+      };
+      this.#pendingBrowserTakeovers.set(request.id, pending);
+      void this.#browser.discardRecording(tabId).then(
+        () => {
+          if (this.#pendingBrowserTakeovers.get(request.id) !== pending) return;
+          this.#markRoutineNeedsAttention(turnId);
+          this.#emit({ type: "browser-takeover-requested", request: takeover });
+        },
+        () => {
+          if (this.#pendingBrowserTakeovers.get(request.id) !== pending) return;
+          this.#pendingBrowserTakeovers.delete(request.id);
+          resolve(browserTakeoverError());
+          this.#emitRuntimeSnapshot();
+        },
+      );
     });
   }
 

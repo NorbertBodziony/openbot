@@ -1947,7 +1947,13 @@ describe.sequential("AgentService", () => {
   it("pauses a browser tool call until the user resolves the takeover", async () => {
     const clients = new Map<AgentProvider, FakeAgentClient>();
     const tabs: BrowserTab[] = [];
+    const discardedRecordings: string[] = [];
     const browser = fakeBrowser(tabs);
+    browser.discardRecording = async (tabId) => {
+      discardedRecordings.push(tabId);
+      const tab = tabs.find((candidate) => candidate.id === tabId);
+      if (tab) tab.recording = false;
+    };
     browser.handleDynamicTool = async (params) => {
       if (params.tool === "open") {
         tabs.push({
@@ -1957,6 +1963,7 @@ describe.sequential("AgentService", () => {
           loading: false,
           ownerThreadId: params.threadId,
           ownerBotId: params.ownerBotId ?? null,
+          recording: true,
         });
       }
       return { success: true, contentItems: [] };
@@ -2012,10 +2019,27 @@ describe.sequential("AgentService", () => {
     expect(events.find((event) => event.type === "browser-takeover-requested")).toMatchObject({
       request: { requestId: "takeover-call", botId: "chief", tabId: "protected-tab" },
     });
+    expect(discardedRecordings).toEqual(["protected-tab"]);
+    expect(tabs[0]?.recording).toBe(false);
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "recording-during-takeover",
+      params: {
+        threadId: externalThreadId,
+        turnId: started.turnId,
+        callId: "recording-during-takeover",
+        namespace: "openbot_browser",
+        tool: "recording_start",
+        arguments: { tabId: "protected-tab" },
+      },
+    });
+    await waitFor(() => client.responses.length === 2);
+    expect(client.responses[1]?.result).toMatchObject({ success: false });
 
     await service.respondToBrowserTakeover({ requestId: "takeover-call", decision: "complete" });
-    await waitFor(() => client.responses.length === 2);
-    expect(openBotToolPayload(client.responses[1]?.result)).toEqual({
+    await waitFor(() => client.responses.length === 3);
+    expect(openBotToolPayload(client.responses[2]?.result)).toEqual({
       status: "completed",
       next: "Take a fresh snapshot and continue the task.",
     });
@@ -2046,8 +2070,8 @@ describe.sequential("AgentService", () => {
       ),
     );
     await service.respondToBrowserTakeover({ requestId: "takeover-cancel", decision: "cancel" });
-    await waitFor(() => client.responses.length === 3);
-    expect(openBotToolPayload(client.responses[2]?.result)).toEqual({ status: "cancelled" });
+    await waitFor(() => client.responses.length === 4);
+    expect(openBotToolPayload(client.responses[3]?.result)).toEqual({ status: "cancelled" });
   });
 
   it("commits an automatic memory only after a successful turn and refreshes the next turn context", async () => {
@@ -4873,6 +4897,7 @@ function fakeBrowser(tabs: BrowserTab[] = []) {
     clearControls: () => undefined,
     endControl: () => undefined,
     listTabs: () => tabs,
+    discardRecording: async (_tabId: string) => undefined,
     handleDynamicTool: async (
       _params: DynamicToolCallParams,
       _hooks?: {
