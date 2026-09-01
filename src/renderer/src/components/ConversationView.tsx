@@ -737,7 +737,7 @@ function createConversationViewScope(props: ConversationProps) {
         tabId,
         tabExists: Boolean(tabId && browserTabs().some((tab) => tab.id === tabId)),
         activeTabId: props.activeBrowserTabId,
-        activateTab: props.onActivateBrowserTab,
+        activateTab: activateBrowserTab,
       };
     },
     ({ tabId, tabExists, activeTabId, activateTab }) => {
@@ -1621,7 +1621,7 @@ function createConversationViewScope(props: ConversationProps) {
       addressEditing: browserAddressEditing(),
       screenOpen: screenOpen(),
       activeBrowserTabId: props.activeBrowserTabId,
-      onActivateBrowserTab: props.onActivateBrowserTab,
+      onActivateBrowserTab: activateBrowserTab,
     }),
     ({ activeTab, addressEditing, screenOpen, activeBrowserTabId, onActivateBrowserTab }) => {
       if (props.browserEnabled === false) return;
@@ -2210,6 +2210,11 @@ function createConversationViewScope(props: ConversationProps) {
     }
   }
 
+  function activateBrowserTab(tabId: string) {
+    if (closingBrowserTabIds.has(tabId) || !browserTabs().some((tab) => tab.id === tabId)) return;
+    props.onActivateBrowserTab(tabId);
+  }
+
   async function reloadBrowserTab(tabId: string) {
     if (closingBrowserTabIds.has(tabId) || !browserTabs().some((tab) => tab.id === tabId)) return;
     const analytics = desktopAnalytics.scope();
@@ -2414,6 +2419,7 @@ function createConversationViewScope(props: ConversationProps) {
     agentActivityShowTimer,
     agentActivitySlot,
     agentActivitySpaceReserved,
+    activateBrowserTab,
     attachmentAction,
     attachmentBusy,
     browserAddress,
@@ -3592,6 +3598,7 @@ export function ConversationComposer() {
 /** @internal Stable HMR boundary for conversation panels. */
 export function ConversationPanels() {
   const {
+    activateBrowserTab,
     activeBrowserControl,
     activeBrowserTab,
     agentActivity,
@@ -3685,7 +3692,7 @@ export function ConversationPanels() {
           onOpenAddress={(address) => void openBrowserAddress(address)}
           onNavigate={(tabId, direction) => void navigateBrowserTab(tabId, direction)}
           onReload={(tabId) => void reloadBrowserTab(tabId)}
-          onActivateTab={props.onActivateBrowserTab}
+          onActivateTab={activateBrowserTab}
           onCloseTab={(tabId) => void closeBrowserTab(tabId)}
           onSurface={setBrowserSurfaceElement}
           onWidthChange={setBrowserPanelWidth}

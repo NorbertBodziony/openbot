@@ -448,6 +448,7 @@ export function createAppController(props: AppProps = {}) {
   const conversationPageRequests = new Map<string, number>();
   const conversationReadOperations = new Map<string, Promise<void>>();
   const directConversationReadOperations = new Map<string, Promise<void>>();
+  const browserTabActivationOperations = new Map<string, Promise<void>>();
   const queueSnapshotRequests = new Map<string, number>();
   const routineSnapshotRequests = new Map<string, number>();
   const completedTurnByBot = new Map<string, string>();
@@ -2222,8 +2223,9 @@ export function createAppController(props: AppProps = {}) {
 
   function activateBrowserTab(tabId: string) {
     const analytics = desktopAnalytics.scope();
-    void window.openbot.browser
-      .activate(tabId)
+    const operation = window.openbot.browser.activate(tabId);
+    browserTabActivationOperations.set(tabId, operation);
+    void operation
       .then(() => analytics.track("browser_action", { action: "activate", result: "succeeded" }))
       .catch(() =>
         analytics.track("browser_action", {
@@ -2231,13 +2233,19 @@ export function createAppController(props: AppProps = {}) {
           result: "failed",
           failure_code: "browser_activate_failed",
         }),
-      );
+      )
+      .finally(() => {
+        if (browserTabActivationOperations.get(tabId) === operation) {
+          browserTabActivationOperations.delete(tabId);
+        }
+      });
   }
 
   async function closeBrowserTab(tabId: string) {
     const analytics = desktopAnalytics.scope();
     const serverId = activeServerSidebarKey();
     try {
+      await browserTabActivationOperations.get(tabId)?.catch(() => undefined);
       await window.openbot.browser.close(tabId);
       if (activeServerSidebarKey() === serverId) {
         browserChangeRevision += 1;

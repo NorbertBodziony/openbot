@@ -4800,6 +4800,49 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("tab", { name: "First page" })).toHaveAttribute("aria-selected", "true");
   });
 
+  it("waits for tab activation before it closes the same tab", async () => {
+    let resolveActivation: (() => void) | undefined;
+    vi.mocked(window.openbot.browser.activate).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveActivation = resolve;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const firstTab = {
+      id: "tab-activation-first",
+      title: "First activation page",
+      url: "https://example.com/first",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    const secondTab = {
+      id: "tab-activation-closing",
+      title: "Closing activation page",
+      url: "https://example.com/closing",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [firstTab, secondTab],
+      activeTabId: firstTab.id,
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    const closingTab = await screen.findByRole("tab", { name: "Closing activation page" });
+    await fireEvent.click(closingTab);
+    await waitFor(() => expect(window.openbot.browser.activate).toHaveBeenCalledWith(secondTab.id));
+    await fireEvent.keyDown(closingTab, { key: "Delete" });
+    expect(window.openbot.browser.close).not.toHaveBeenCalled();
+
+    resolveActivation?.();
+    await waitFor(() => expect(window.openbot.browser.close).toHaveBeenCalledWith(secondTab.id));
+  });
+
   it("keeps the browser open when a new tab replaces the last tab during its delayed close", async () => {
     let resolveClose: (() => void) | undefined;
     vi.mocked(window.openbot.browser.close).mockImplementationOnce(
