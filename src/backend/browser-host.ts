@@ -762,7 +762,7 @@ export class BrowserHost {
         case "recording_stop": {
           const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
           this.#requireToolTab(params, tabId);
-          return textResult({ artifact: await this.#recorder.stop(tabId) });
+          return textResult({ artifact: await this.#enqueue(tabId, () => this.#recorder.stop(tabId)) });
         }
         case "act": {
           const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
@@ -902,6 +902,7 @@ export class BrowserHost {
         method: details.method,
         status: details.statusCode,
       });
+      if (details.statusCode >= 400) this.#emitChanged();
     });
     this.#session.webRequest.onErrorOccurred((details) => {
       const tab = [...this.#tabs.values()].find((candidate) => candidate.view.webContents.id === details.webContentsId);
@@ -913,6 +914,7 @@ export class BrowserHost {
         url: diagnosticUrl(details.url),
         method: details.method,
       });
+      this.#emitChanged();
     });
     this.#session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
     this.#session.setPermissionCheckHandler(() => false);
@@ -985,13 +987,18 @@ export class BrowserHost {
         kind: "console",
         level: details.level,
         message: details.message.slice(0, 2_000),
-        url: details.sourceId?.slice(0, INPUT_LIMITS.browserUrl),
+        url: diagnosticUrl(details.sourceId),
       });
       if (details.level === "error") this.#emitChanged();
     });
     contents.on("did-fail-load", (_event, code, description, url, isMainFrame) => {
       if (!isMainFrame || code === -3) return;
-      tab.diagnostics.add({ kind: "load", level: "error", message: `${code}: ${description}`, url });
+      tab.diagnostics.add({
+        kind: "load",
+        level: "error",
+        message: `${code}: ${description}`,
+        url: diagnosticUrl(url),
+      });
       this.#emitChanged();
     });
     contents.on("page-title-updated", changed);
@@ -1651,13 +1658,15 @@ function defaultBrowserEnvironment(): BrowserEnvironment {
 function isBrowserEnvironment(value: unknown): value is BrowserEnvironment {
   if (!isRecord(value) || !isRecord(value.viewport)) return false;
   const viewport = value.viewport;
+  const minimumWidth = viewport.mode === "fill" ? 1 : 320;
+  const minimumHeight = viewport.mode === "fill" ? 1 : 240;
   return (
     (viewport.mode === "fill" || viewport.mode === "custom") &&
     isNumber(viewport.width) &&
-    viewport.width >= 320 &&
+    viewport.width >= minimumWidth &&
     viewport.width <= INPUT_LIMITS.browserDimension &&
     isNumber(viewport.height) &&
-    viewport.height >= 240 &&
+    viewport.height >= minimumHeight &&
     viewport.height <= INPUT_LIMITS.browserDimension &&
     isNumber(viewport.deviceScaleFactor) &&
     viewport.deviceScaleFactor >= 0.5 &&
@@ -1692,7 +1701,20 @@ function parseEnvironment(
     (preset === "fill" || scaleConvertsFill ? bounds.height : current.viewport.height);
   const width = Math.round(requestedWidth);
   const height = Math.round(requestedHeight);
-  if (width < 320 || width > INPUT_LIMITS.browserDimension || height < 240 || height > INPUT_LIMITS.browserDimension) {
+  const mode =
+    preset === "fill" && !explicitScale
+      ? "fill"
+      : preset || value.width !== undefined || value.height !== undefined || explicitScale
+        ? "custom"
+        : current.viewport.mode;
+  const minimumWidth = mode === "fill" ? 1 : 320;
+  const minimumHeight = mode === "fill" ? 1 : 240;
+  if (
+    width < minimumWidth ||
+    width > INPUT_LIMITS.browserDimension ||
+    height < minimumHeight ||
+    height > INPUT_LIMITS.browserDimension
+  ) {
     throw new Error("Viewport dimensions are outside the supported range.");
   }
   const scale = optionalNumber(value, "deviceScaleFactor") ?? presetSize?.scale ?? current.viewport.deviceScaleFactor;
@@ -1708,12 +1730,7 @@ function parseEnvironment(
         : current.viewport.preset;
   return {
     viewport: {
-      mode:
-        preset === "fill" && !explicitScale
-          ? "fill"
-          : preset || value.width !== undefined || value.height !== undefined || explicitScale
-            ? "custom"
-            : current.viewport.mode,
+      mode,
       width,
       height,
       deviceScaleFactor: scale,

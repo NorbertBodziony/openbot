@@ -2037,9 +2037,24 @@ describe.sequential("AgentService", () => {
     await waitFor(() => client.responses.length === 2);
     expect(client.responses[1]?.result).toMatchObject({ success: false });
 
-    await service.respondToBrowserTakeover({ requestId: "takeover-call", decision: "complete" });
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "snapshot-during-takeover",
+      params: {
+        threadId: externalThreadId,
+        turnId: started.turnId,
+        callId: "snapshot-during-takeover",
+        namespace: "openbot_browser",
+        tool: "snapshot",
+        arguments: { tabId: "protected-tab" },
+      },
+    });
     await waitFor(() => client.responses.length === 3);
-    expect(openBotToolPayload(client.responses[2]?.result)).toEqual({
+    expect(client.responses[2]?.result).toMatchObject({ success: false });
+
+    await service.respondToBrowserTakeover({ requestId: "takeover-call", decision: "complete" });
+    await waitFor(() => client.responses.length === 4);
+    expect(openBotToolPayload(client.responses[3]?.result)).toEqual({
       status: "completed",
       next: "Take a fresh snapshot and continue the task.",
     });
@@ -2070,8 +2085,8 @@ describe.sequential("AgentService", () => {
       ),
     );
     await service.respondToBrowserTakeover({ requestId: "takeover-cancel", decision: "cancel" });
-    await waitFor(() => client.responses.length === 4);
-    expect(openBotToolPayload(client.responses[3]?.result)).toEqual({ status: "cancelled" });
+    await waitFor(() => client.responses.length === 5);
+    expect(openBotToolPayload(client.responses[4]?.result)).toEqual({ status: "cancelled" });
   });
 
   it("commits an automatic memory only after a successful turn and refreshes the next turn context", async () => {

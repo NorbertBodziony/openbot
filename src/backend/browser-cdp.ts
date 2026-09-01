@@ -1,4 +1,5 @@
 import { stat } from "node:fs/promises";
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   BrowserActionHistoryEntry,
   BrowserDiagnosticEntry,
@@ -957,7 +958,7 @@ async function collectBoundedSnapshot(
         states,
         disabled: states.includes("disabled:true"),
         bounds: null,
-        frame: frameId ? { id: frameId, url: capture.url ?? "" } : null,
+        frame: frameId ? { id: frameId, url: redactedMetadataUrl(capture.url) } : null,
       };
       elements.push(element);
       targets.set(ref, { backendNodeId: candidate.backendNodeId, targetId: capture.targetId, element });
@@ -1271,6 +1272,20 @@ async function collectActionableNodes(
 function snapshotString(strings: string[], value: unknown): string {
   const index = numberValue(value);
   return strings[index] ?? "";
+}
+
+function redactedMetadataUrl(value: string | undefined): string {
+  if (!value) return "";
+  try {
+    const url = new URL(value);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString().slice(0, INPUT_LIMITS.browserUrl);
+  } catch {
+    return "";
+  }
 }
 
 function boundSerializedSnapshot(snapshot: BrowserSnapshot): void {

@@ -81,6 +81,11 @@ const server = createServer((request, response) => {
     response.end("expected diagnostic failure");
     return;
   }
+  if (url.pathname === "/console-script") {
+    response.setHeader("content-type", "text/javascript; charset=utf-8");
+    response.end("console.error('external diagnostic marker');");
+    return;
+  }
   if (url.pathname === "/slow-document") {
     slowDocumentVersion += 1;
     const version = slowDocumentVersion;
@@ -110,8 +115,9 @@ const server = createServer((request, response) => {
       <button draggable="true" aria-label="Drag source">Drag source</button><button aria-label="Drop target" ondragover="event.preventDefault()" ondrop="event.preventDefault();document.querySelector('output').textContent='drag:' + event.isTrusted">Drop target</button>
       <input type="file" aria-label="Files" onchange="document.querySelector('output').textContent=this.files[0]?.name || ''" />
       <canvas width="40" height="20" style="display:block;width:80px;height:40px" onclick="document.querySelector('output').textContent='canvas:' + event.isTrusted"></canvas>
-      <iframe title="Cross origin frame" src="http://localhost:${port}/frame"></iframe>
+      <iframe title="Cross origin frame" src="http://localhost:${port}/frame?frame_token=frame-secret"></iframe>
       <div id="shadow"></div><output>ready</output>
+      <script src="/console-script?console_token=console-secret"></script>
       <script>
         const root = document.querySelector('#shadow').attachShadow({ mode: 'open' });
         root.innerHTML = '<button aria-label="Shadow action">Shadow action</button>';
@@ -183,6 +189,10 @@ async function main(): Promise<void> {
     await browser.setVisible({ visible: true, bounds: { x: 0, y: 0, width: 800, height: 600 } });
     const documentChangedTabs: string[] = [];
     browser.onDocumentChanged((tabId) => documentChangedTabs.push(tabId));
+    let changedEventCount = 0;
+    browser.onChanged(() => {
+      changedEventCount += 1;
+    });
 
     const controlPhases: string[] = [];
     const controlledTabIds: Array<string | null> = [];
@@ -676,6 +686,21 @@ async function main(): Promise<void> {
       paths: [uploadPath],
     });
     if (!uploaded.success) throw new Error(`V2 upload failed: ${toolError(uploaded)}`);
+    await browser.setVisible({ visible: true, bounds: { x: 0, y: 0, width: 220, height: 560 } });
+    const narrowFillEnvironment = await callBrowserTool(browser, "set_environment", {
+      tabId: v2Tab.id,
+      preset: "fill",
+    });
+    const narrowFillSnapshot = toolTextPayload(narrowFillEnvironment);
+    if (
+      !narrowFillEnvironment.success ||
+      !isDynamicRecord(narrowFillSnapshot?.viewport) ||
+      narrowFillSnapshot.viewport.mode !== "fill" ||
+      narrowFillSnapshot.viewport.width !== 220
+    ) {
+      throw new Error("V2 fill environment rejected a supported narrow panel.");
+    }
+    await browser.setVisible({ visible: true, bounds: { x: 0, y: 0, width: 800, height: 600 } });
     const scaledFillEnvironment = await callBrowserTool(browser, "set_environment", {
       tabId: v2Tab.id,
       preset: "fill",
@@ -719,9 +744,23 @@ async function main(): Promise<void> {
     if (!Array.isArray(environmentSnapshot.diagnostics) || environmentSnapshot.diagnostics.length === 0) {
       throw new Error("V2 snapshot omitted diagnostics.");
     }
-    if (JSON.stringify(environmentSnapshot.diagnostics).includes("diagnostic-secret")) {
-      throw new Error("V2 diagnostics exposed request query credentials.");
+    const serializedEnvironmentSnapshot = JSON.stringify(environmentSnapshot);
+    if (
+      serializedEnvironmentSnapshot.includes("diagnostic-secret") ||
+      serializedEnvironmentSnapshot.includes("console-secret") ||
+      serializedEnvironmentSnapshot.includes("frame-secret")
+    ) {
+      throw new Error("V2 snapshot metadata exposed URL credentials.");
     }
+    const changesBeforeDiagnosticError = changedEventCount;
+    const errorsBeforeDiagnosticError =
+      browser.listTabs().find((candidate) => candidate.id === v2Tab.id)?.diagnosticErrorCount ?? 0;
+    await v2Contents.executeJavaScript("fetch('/diagnostic-error?ui_token=ui-secret'); true", true);
+    await waitFor(async () => {
+      const currentErrors =
+        browser.listTabs().find((candidate) => candidate.id === v2Tab.id)?.diagnosticErrorCount ?? 0;
+      return changedEventCount > changesBeforeDiagnosticError && currentErrors > errorsBeforeDiagnosticError;
+    });
     const oversizedEnvironment = await callBrowserTool(browser, "set_environment", {
       tabId: v2Tab.id,
       preset: "custom",
@@ -731,6 +770,18 @@ async function main(): Promise<void> {
     });
     if (oversizedEnvironment.success || !toolError(oversizedEnvironment).includes("physical viewport")) {
       throw new Error("V2 environment accepted an unsafe physical pixel area.");
+    }
+    const racingRecordingStart = callBrowserTool(browser, "recording_start", { tabId: v2Tab.id });
+    const racingRecordingStop = callBrowserTool(browser, "recording_stop", { tabId: v2Tab.id });
+    const [racingStarted, racingStopped] = await Promise.all([racingRecordingStart, racingRecordingStop]);
+    if (
+      !racingStarted.success ||
+      toolError(racingStopped).includes("not being recorded") ||
+      browser.listTabs().find((candidate) => candidate.id === v2Tab.id)?.recording !== false
+    ) {
+      throw new Error(
+        `V2 parallel recording stop did not wait for recording start: start=${toolError(racingStarted)} stop=${toolError(racingStopped)} recording=${browser.listTabs().find((candidate) => candidate.id === v2Tab.id)?.recording}`,
+      );
     }
     const recordingStarted = await callBrowserTool(browser, "recording_start", { tabId: v2Tab.id });
     if (
@@ -892,7 +943,7 @@ async function main(): Promise<void> {
       "smoke-bot",
     );
     await boundedContents.executeJavaScript(
-      "document.body.replaceChildren(Object.assign(document.createElement('textarea'), { ariaLabel: 'Large value', value: 'x'.repeat(2_000_000) }), ...Array.from({ length: 200 }, (_, index) => Object.assign(document.createElement('div'), { role: 'presentation', tabIndex: 0, textContent: 'Decoration ' + index })), ...Array.from({ length: 200 }, (_, index) => Object.assign(document.createElement('button'), { hidden: true, textContent: 'Hidden ' + index })), Object.assign(document.createElement('div'), { role: 'switch', ariaLabel: 'Bounded switch', textContent: 'Switch' }), ...Array.from({ length: 250 }, (_, index) => Object.assign(document.createElement('button'), { textContent: 'Bounded ' + index }))); true",
+      "document.body.replaceChildren(Object.assign(document.createElement('textarea'), { ariaLabel: 'Large value', value: 'x'.repeat(5_000) }), ...Array.from({ length: 200 }, (_, index) => Object.assign(document.createElement('div'), { role: 'presentation', tabIndex: 0, textContent: 'Decoration ' + index })), ...Array.from({ length: 200 }, (_, index) => Object.assign(document.createElement('button'), { hidden: true, textContent: 'Hidden ' + index })), Object.assign(document.createElement('div'), { role: 'switch', ariaLabel: 'Bounded switch', textContent: 'Switch' }), ...Array.from({ length: 250 }, (_, index) => Object.assign(document.createElement('button'), { textContent: 'Bounded ' + index }))); true",
       true,
     );
     const boundedSnapshot = await browser.snapshot(boundedTab.id);

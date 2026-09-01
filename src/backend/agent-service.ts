@@ -2985,16 +2985,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async #handleBrowserDynamicTool(botId: string, params: DynamicToolCallParams): Promise<DynamicToolResult> {
-    const recordingTabId =
+    const requestedTabId =
       isRecord(params.arguments) && isString(params.arguments.tabId) ? params.arguments.tabId : null;
     if (
-      params.tool === "recording_start" &&
-      recordingTabId !== null &&
-      [...this.#pendingBrowserTakeovers.values()].some((pending) => pending.request.tabId === recordingTabId)
+      requestedTabId !== null &&
+      [...this.#pendingBrowserTakeovers.values()].some((pending) => pending.request.tabId === requestedTabId)
     ) {
       return {
         success: false,
-        contentItems: [{ type: "inputText", text: "Browser recording is unavailable during user takeover." }],
+        contentItems: [{ type: "inputText", text: "Browser tools are unavailable during user takeover." }],
       };
     }
     if (params.tool !== "upload_files") return this.#browser.handleDynamicTool(params);
