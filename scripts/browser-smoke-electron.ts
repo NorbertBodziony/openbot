@@ -65,7 +65,9 @@ const server = createServer((request, response) => {
     response.setHeader("content-type", "text/html; charset=utf-8");
     response.end(
       `<button aria-label="Frame action" onclick="this.textContent='Frame clicked:' + event.isTrusted">Frame action</button>
-       <button aria-label="Schedule frame navigation" onclick="setTimeout(() => location.href='/frame-next', 1000)">Schedule frame navigation</button>`,
+       <button aria-label="Schedule frame navigation" onclick="setTimeout(() => location.href='/frame-next', 1000)">Schedule frame navigation</button>
+       <input aria-label="Frame field" oninput="document.querySelector('output').textContent='Frame input:' + this.value + ':' + event.isTrusted" onkeydown="if (event.key === 'Enter') document.querySelector('output').textContent='Frame key:' + event.isTrusted" />
+       <output>Frame ready</output>`,
     );
     return;
   }
@@ -189,6 +191,12 @@ async function main(): Promise<void> {
     window.webContents.focus();
     const tab = await openingTab;
     await waitFor(async () => webContents.getFocusedWebContents()?.getURL() === `${origin}/`);
+    await browser.setVisible({ visible: true, bounds: { x: 0, y: 0, width: 760, height: 560 } });
+    const resizedFillViewport = browser.listTabs().find((candidate) => candidate.id === tab.id)?.environment?.viewport;
+    if (resizedFillViewport?.width !== 760 || resizedFillViewport?.height !== 560) {
+      throw new Error("Browser fill-mode status did not use the current panel bounds.");
+    }
+    await browser.setVisible({ visible: true, bounds: { x: 0, y: 0, width: 800, height: 600 } });
     process.stdout.write("BrowserHost: local tab opened.\n");
     const first = await browser.snapshot(tab.id);
     const input = first.elements.find((element) => element.name === "Task");
@@ -255,6 +263,22 @@ async function main(): Promise<void> {
       timeoutMs: 2_000,
     });
     if (!frameTextWait.success) throw new Error(`V2 iframe text wait failed: ${toolError(frameTextWait)}`);
+    const frameTyped = await callBrowserTool(browser, "type", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "textbox", name: "Frame field", exact: true },
+      text: "iframe input",
+    });
+    if (!frameTyped.success || !String(toolTextPayload(frameTyped)?.text).includes("Frame input:iframe input:true")) {
+      throw new Error(`V2 iframe text input used the wrong CDP session: ${toolError(frameTyped)}`);
+    }
+    const framePressed = await callBrowserTool(browser, "press", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "textbox", name: "Frame field", exact: true },
+      key: "Enter",
+    });
+    if (!framePressed.success || !String(toolTextPayload(framePressed)?.text).includes("Frame key:true")) {
+      throw new Error(`V2 iframe key input used the wrong CDP session: ${toolError(framePressed)}`);
+    }
     const scheduledFrameNavigation = await callBrowserTool(browser, "click", {
       tabId: v2Tab.id,
       target: { kind: "role", role: "button", name: "Schedule frame navigation", exact: true },
@@ -737,6 +761,30 @@ async function main(): Promise<void> {
         () => true,
       ),
     );
+    const actionNavigationTab = await browser.open(origin, "smoke-thread", "smoke-bot");
+    const actionNavigationSetup = await callBrowserTool(browser, "evaluate", {
+      tabId: actionNavigationTab.id,
+      expression: `(() => { const button = document.createElement('button'); button.setAttribute('aria-label', 'Slow action navigation'); button.onclick = () => { location.href = ${JSON.stringify(`${origin}/slow-document?action`)}; }; document.body.append(button); return true; })()`,
+    });
+    if (!actionNavigationSetup.success) {
+      throw new Error(`V2 action navigation setup failed: ${toolError(actionNavigationSetup)}`);
+    }
+    const timedActionNavigation = await callBrowserTool(browser, "click", {
+      tabId: actionNavigationTab.id,
+      target: { kind: "role", role: "button", name: "Slow action navigation", exact: true },
+      timeoutMs: 10,
+    });
+    if (timedActionNavigation.success || !toolError(timedActionNavigation).includes("timed out")) {
+      throw new Error("V2 action-triggered navigation did not return its bounded timeout error.");
+    }
+    const snapshotAfterTimedAction = await callBrowserTool(browser, "snapshot", { tabId: actionNavigationTab.id });
+    if (
+      !snapshotAfterTimedAction.success ||
+      browser.listTabs().find((candidate) => candidate.id === actionNavigationTab.id)?.loading === true
+    ) {
+      throw new Error("V2 action-triggered navigation escaped tab serialization.");
+    }
+    await browser.close(actionNavigationTab.id);
     const waitTab = await browser.open(origin, "smoke-thread", "smoke-bot");
     const beforeNavigation = await browser.snapshot(waitTab.id);
     const staleNavigationTarget = beforeNavigation.elements.find((element) => element.name === "Save");

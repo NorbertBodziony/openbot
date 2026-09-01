@@ -205,18 +205,19 @@ export class BrowserCdpEngine {
         [mode],
         resolved.sessionId,
       );
-      await send("Input.insertText", { text });
+      await send("Input.insertText", { text }, resolved.sessionId);
     });
   }
 
   async press(key: string, target?: BrowserTarget): Promise<void> {
     await this.#lease(async (send) => {
+      let sessionId: string | undefined;
       if (target) {
         const resolved = await this.#resolveTarget(send, target);
-        if (resolved.backendNodeId)
-          await send("DOM.focus", { backendNodeId: resolved.backendNodeId }, resolved.sessionId);
+        sessionId = resolved.sessionId;
+        if (resolved.backendNodeId) await send("DOM.focus", { backendNodeId: resolved.backendNodeId }, sessionId);
       }
-      await dispatchShortcut(send, key);
+      await dispatchShortcut(send, key, sessionId);
     });
   }
 
@@ -529,6 +530,10 @@ export class BrowserCdpEngine {
         throw error;
       });
     });
+  }
+
+  async stopLoading(): Promise<void> {
+    await stopLoadingAndWait(this.#contents);
   }
 
   async highlight(target: BrowserTarget): Promise<void> {
@@ -1281,7 +1286,7 @@ function readViewport(metrics: CdpResult, environment: BrowserEnvironment): Brow
   };
 }
 
-async function dispatchShortcut(send: SendCommand, shortcut: string): Promise<void> {
+async function dispatchShortcut(send: SendCommand, shortcut: string, sessionId?: string): Promise<void> {
   const parts = shortcut
     .split("+")
     .map((part) => part.trim())
@@ -1297,20 +1302,28 @@ async function dispatchShortcut(send: SendCommand, shortcut: string): Promise<vo
   }
   const modifiers = modifierMask(modifierNames);
   for (const modifier of modifierNames) {
-    await send("Input.dispatchKeyEvent", {
-      type: "rawKeyDown",
-      key: modifier,
-      code: `${modifier}Left`,
-      modifiers: modifierMask([modifier]),
-    });
+    await send(
+      "Input.dispatchKeyEvent",
+      {
+        type: "rawKeyDown",
+        key: modifier,
+        code: `${modifier}Left`,
+        modifiers: modifierMask([modifier]),
+      },
+      sessionId,
+    );
   }
   const keyInfo = normalizeKey(key);
-  await send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...keyInfo, modifiers });
+  await send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...keyInfo, modifiers }, sessionId);
   if (key.length === 1 && modifiers === 0)
-    await send("Input.dispatchKeyEvent", { type: "char", ...keyInfo, text: key });
-  await send("Input.dispatchKeyEvent", { type: "keyUp", ...keyInfo, modifiers });
+    await send("Input.dispatchKeyEvent", { type: "char", ...keyInfo, text: key }, sessionId);
+  await send("Input.dispatchKeyEvent", { type: "keyUp", ...keyInfo, modifiers }, sessionId);
   for (const modifier of [...modifierNames].reverse()) {
-    await send("Input.dispatchKeyEvent", { type: "keyUp", key: modifier, code: `${modifier}Left`, modifiers: 0 });
+    await send(
+      "Input.dispatchKeyEvent",
+      { type: "keyUp", key: modifier, code: `${modifier}Left`, modifiers: 0 },
+      sessionId,
+    );
   }
 }
 
@@ -1392,33 +1405,76 @@ async function isNodeOrDescendant(
 
 function waitForLoading(contents: WebContents, timeoutMs: number): Promise<void> {
   if (!contents.isLoading()) return Promise.resolve();
-  return withTimeout(
-    new Promise<void>((resolve, reject) => {
-      const stopped = () => {
+  return new Promise<void>((resolve, reject) => {
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        contents.stop();
+      } catch (error) {
         cleanup();
-        resolve();
-      };
-      const failed = (_event: unknown, code: number, description: string, _url: string, isMainFrame: boolean) => {
-        if (!isMainFrame) return;
-        cleanup();
-        reject(new Error(`Navigation failed (${code}): ${description}`));
-      };
-      const destroyed = () => {
-        cleanup();
-        reject(new Error("Browser tab was closed during navigation."));
-      };
-      const cleanup = () => {
-        contents.off("did-stop-loading", stopped);
-        contents.off("did-fail-load", failed);
-        contents.off("destroyed", destroyed);
-      };
-      contents.once("did-stop-loading", stopped);
-      contents.on("did-fail-load", failed);
-      contents.once("destroyed", destroyed);
-    }),
-    timeoutMs,
-    "Navigation timed out.",
-  );
+        reject(error);
+      }
+    }, timeoutMs);
+    timer.unref();
+    const stopped = () => {
+      cleanup();
+      if (timedOut) reject(new Error("Navigation timed out."));
+      else resolve();
+    };
+    const failed = (_event: unknown, code: number, description: string, _url: string, isMainFrame: boolean) => {
+      if (!isMainFrame) return;
+      cleanup();
+      if (timedOut) reject(new Error("Navigation timed out."));
+      else reject(new Error(`Navigation failed (${code}): ${description}`));
+    };
+    const destroyed = () => {
+      cleanup();
+      reject(new Error("Browser tab was closed during navigation."));
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      contents.off("did-stop-loading", stopped);
+      contents.off("did-fail-load", failed);
+      contents.off("destroyed", destroyed);
+    };
+    contents.once("did-stop-loading", stopped);
+    contents.on("did-fail-load", failed);
+    contents.once("destroyed", destroyed);
+  });
+}
+
+function stopLoadingAndWait(contents: WebContents): Promise<void> {
+  if (!contents.isLoading()) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      contents.off("did-stop-loading", stopped);
+      contents.off("destroyed", destroyed);
+    };
+    const stopped = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const destroyed = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error("Browser tab was closed during navigation."));
+    };
+    contents.once("did-stop-loading", stopped);
+    contents.once("destroyed", destroyed);
+    try {
+      contents.stop();
+      if (!contents.isLoading()) setImmediate(stopped);
+    } catch (error) {
+      settled = true;
+      cleanup();
+      reject(error);
+    }
+  });
 }
 
 async function waitForDomQuiet(send: SendCommand, timeoutMs: number): Promise<void> {

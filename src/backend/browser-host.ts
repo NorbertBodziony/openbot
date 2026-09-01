@@ -1072,6 +1072,7 @@ export class BrowserHost {
           throw error;
         });
       const drained = Promise.allSettled([operationCompletion, response])
+        .then(() => (tab.view.webContents.isLoading() ? tab.engine.stopLoading().catch(() => undefined) : undefined))
         .then(() => Promise.allSettled(snapshotDrains))
         .then(() => undefined);
       return { drained, response };
@@ -1514,6 +1515,17 @@ function validateBounds(bounds: BrowserBounds): BrowserBounds {
 }
 
 function toPublicTab(tab: InternalTab): BrowserTab {
+  const environment =
+    tab.environment.viewport.mode === "fill"
+      ? {
+          ...tab.environment,
+          viewport: {
+            ...tab.environment.viewport,
+            width: tab.view.getBounds().width,
+            height: tab.view.getBounds().height,
+          },
+        }
+      : tab.environment;
   return {
     id: tab.id,
     title: tab.view.webContents.getTitle() || "New tab",
@@ -1521,7 +1533,7 @@ function toPublicTab(tab: InternalTab): BrowserTab {
     loading: tab.view.webContents.isLoading(),
     ownerThreadId: tab.ownerThreadId,
     ownerBotId: tab.ownerBotId,
-    environment: tab.environment,
+    environment,
     recording: tab.recording,
     diagnosticErrorCount: tab.diagnostics.errorCount,
   };
