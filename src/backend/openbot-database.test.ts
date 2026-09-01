@@ -129,6 +129,53 @@ describe("OpenBotDatabase", () => {
     database.close();
   });
 
+  it("reads only hosted-site operations whose latest projected state is running", async () => {
+    const database = await createDatabase();
+    const bot = testBot();
+    database.replaceAgents("agents-running-sites", [bot], "agents.imported");
+    if (!bot.threadId) throw new Error("The test bot needs a thread.");
+    const threadId = bot.threadId;
+    const details = {
+      siteId: "site-1",
+      title: "Launch page",
+      hostname: "launch-page-23456789ab.openbot.site",
+      url: "https://launch-page-23456789ab.openbot.site",
+    };
+    const appendMarker = (operationId: string, status: "running" | "succeeded", createdAt: string) => {
+      database.appendConversationMessage({
+        botId: bot.id,
+        threadId,
+        activeTurnId: null,
+        message: {
+          id: `hosted-site-event:${operationId}:${status}`,
+          turnId: `turn-${operationId}`,
+          author: "system",
+          source: "system",
+          text: hostedSiteConversationEventText(details),
+          createdAt,
+          status: "completed",
+          itemType: hostedSiteConversationEventItemType("replace", status, operationId),
+        },
+        eventType: `hosted-site.replace-${status}`,
+        commandId: `hosted-site-event:${bot.id}:${operationId}:${status}`,
+      });
+    };
+
+    appendMarker("operation-complete", "running", "2026-09-01T12:00:00.000Z");
+    appendMarker("operation-complete", "succeeded", "2026-09-01T12:00:01.000Z");
+    appendMarker("operation-running", "running", "2026-09-01T12:00:02.000Z");
+
+    expect(database.runningHostedSiteConversationEvents()).toEqual([
+      expect.objectContaining({
+        botId: bot.id,
+        threadId: bot.threadId,
+        turnId: "turn-operation-running",
+        event: expect.objectContaining({ operationId: "operation-running", status: "running" }),
+      }),
+    ]);
+    database.close();
+  });
+
   it("returns the durable command receipt without running a command twice", async () => {
     const database = await createDatabase();
     let projections = 0;

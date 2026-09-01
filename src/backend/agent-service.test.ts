@@ -1452,14 +1452,22 @@ describe.sequential("AgentService", () => {
       }
       return appendConversationMessage(input);
     });
+    const pendingSpy = vi.spyOn(store.database, "recordPendingHostedSiteTerminalEvent").mockImplementation(() => {
+      throw new Error("The terminal outbox is temporarily unavailable.");
+    });
     await service.respondToApproval({ requestId: "publish-site-durable-result", decision: "accept" });
 
     expect(hostedSites.publish).toHaveBeenCalledTimes(1);
+    expect(client.responses).toHaveLength(0);
     expect(
       (await service.readConversation(bot.id)).messages
         .flatMap((message) => hostedSiteConversationEvent(message) ?? [])
         .map((marker) => marker.status),
     ).toEqual(["running"]);
+    expect(store.database.pendingHostedSiteTerminalEvents()).toEqual([]);
+
+    pendingSpy.mockRestore();
+    await waitFor(() => client.responses.length === 1);
     expect(store.database.pendingHostedSiteTerminalEvents()).toEqual([
       expect.objectContaining({ action: "publish", status: "succeeded" }),
     ]);
@@ -4610,9 +4618,28 @@ describe.sequential("AgentService", () => {
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
 
-    await store.getOrCreate("sales-outbound");
+    const deletedBot = await store.getOrCreate("sales-outbound");
+    store.ensureThreadIdNow(deletedBot.id);
+    store.database.recordPendingHostedSiteTerminalEvent({
+      botId: deletedBot.id,
+      threadId: "provider-thread-sales-outbound",
+      turnId: "turn-delete-agent",
+      operationId: "operation-delete-agent",
+      action: "replace",
+      status: "succeeded",
+      details: {
+        siteId: "site-delete-agent",
+        title: "Deleted agent site",
+        hostname: null,
+        url: null,
+      },
+      markerCommandId: `hosted-site-event:${deletedBot.id}:operation-delete-agent:succeeded`,
+      createdAt: "2026-09-01T12:00:00.000Z",
+    });
+    expect(store.database.pendingHostedSiteTerminalEvents()).toHaveLength(1);
     await service.deleteBot("sales-outbound");
     expect(service.listBots().some((bot) => bot.id === "sales-outbound")).toBe(false);
+    expect(store.database.pendingHostedSiteTerminalEvents()).toEqual([]);
     expect(
       store.database.connection
         .prepare(

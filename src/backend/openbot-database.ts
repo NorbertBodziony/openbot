@@ -10,6 +10,7 @@ import type {
   ConversationPageAnchor,
   ConversationSearchPage,
   ConversationSnapshot,
+  HostedSiteConversationEvent,
   HostedSiteConversationEventAction,
   HostedSiteConversationEventDetails,
   HostedSiteConversationEventStatus,
@@ -66,6 +67,13 @@ export interface PendingHostedSiteTerminalEvent {
   details: HostedSiteConversationEventDetails;
   markerCommandId: string;
   createdAt: string;
+}
+
+export interface RunningHostedSiteConversationEvent {
+  botId: string;
+  threadId: string;
+  turnId: string | null;
+  event: HostedSiteConversationEvent & { status: "running" };
 }
 
 interface ReceiptRow {
@@ -291,6 +299,50 @@ export class OpenBotDatabase {
     return pending;
   }
 
+  runningHostedSiteConversationEvents(): RunningHostedSiteConversationEvent[] {
+    const latest = new Map<
+      string,
+      {
+        botId: string;
+        threadId: string;
+        turnId: string | null;
+        event: HostedSiteConversationEvent;
+      }
+    >();
+    for (const row of databaseRows(
+      this.connection
+        .prepare(
+          `SELECT thread.agent_id, message.thread_id, message.turn_id, message.message_json
+           FROM projection_thread_messages message
+           JOIN projection_threads thread ON thread.thread_id = message.thread_id
+           WHERE message.item_type LIKE '${HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX}%'
+           ORDER BY message.created_at, message.ordinal, message.message_id`,
+        )
+        .all(),
+    )) {
+      const message = decodeConversationMessageJson(requiredStringColumn(row, "message_json"));
+      const event = hostedSiteConversationEvent(message);
+      if (!event) continue;
+      const botId = requiredStringColumn(row, "agent_id");
+      latest.set(`${botId}\0${event.operationId}`, {
+        botId,
+        threadId: requiredStringColumn(row, "thread_id"),
+        turnId: optionalStringColumn(row, "turn_id"),
+        event,
+      });
+    }
+    return [...latest.values()].flatMap((entry) =>
+      entry.event.status === "running"
+        ? [
+            {
+              ...entry,
+              event: { ...entry.event, status: "running" as const },
+            },
+          ]
+        : [],
+    );
+  }
+
   listAgents(): BotSummary[] {
     return databaseRows(
       this.connection.prepare("SELECT agent_json FROM projection_agents ORDER BY sort_order, agent_id").all(),
@@ -378,6 +430,18 @@ export class OpenBotDatabase {
              WHERE aggregate_type IN ('agent-routine', 'routine-run') AND aggregate_id IN (${placeholders})`,
           ).run(...routineIds);
         }
+        db.prepare(
+          `DELETE FROM orchestration_command_receipts WHERE command_id IN (
+             SELECT DISTINCT command_id FROM orchestration_events
+             WHERE event_type = 'hosted-site.terminal-pending'
+               AND json_extract(payload_json, '$.botId') = ?
+           )`,
+        ).run(botId);
+        db.prepare(
+          `DELETE FROM orchestration_events
+           WHERE event_type = 'hosted-site.terminal-pending'
+             AND json_extract(payload_json, '$.botId') = ?`,
+        ).run(botId);
         const sensitiveFilter = threadId
           ? `(aggregate_id = ? OR aggregate_id = ? OR
               (aggregate_type = 'agents' AND aggregate_id = 'agents' AND sequence < ?))`
