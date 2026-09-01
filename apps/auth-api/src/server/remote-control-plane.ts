@@ -616,7 +616,7 @@ export class RemoteControlPlane {
     await this.#flushAuthEvents();
   }
 
-  async startSession(userId: string, hostId: string) {
+  async startSession(userId: string, hostId: string, authSessionHash: string) {
     const membership = await this.#requireRole(hostId, userId, ["owner", "admin", "member"]);
     const now = this.#now();
     await this.#database
@@ -629,9 +629,13 @@ export class RemoteControlPlane {
       .prepare(
         `SELECT session_id, expires_at FROM remote_sessions
          WHERE host_id = ? AND user_id = ? AND membership_id = ? AND ended_at IS NULL AND expires_at > ?
+           AND EXISTS(
+             SELECT 1 FROM auth_sessions
+              WHERE token_hash = ? AND user_id = ? AND revoked_at IS NULL AND expires_at > ?
+           )
          ORDER BY started_at DESC LIMIT 1`,
       )
-      .bind(hostId, userId, membership.membership_id, now)
+      .bind(hostId, userId, membership.membership_id, now, authSessionHash, userId, now)
       .first<{ session_id: string; expires_at: number }>();
     if (existing) return { sessionId: existing.session_id, hostId, expiresAt: existing.expires_at };
     const sessionId = crypto.randomUUID();
@@ -639,19 +643,27 @@ export class RemoteControlPlane {
     await this.#database
       .prepare(
         `INSERT OR IGNORE INTO remote_sessions(session_id, host_id, user_id, membership_id, started_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+         SELECT ?, ?, ?, ?, ?, ?
+          WHERE EXISTS(
+            SELECT 1 FROM auth_sessions
+             WHERE token_hash = ? AND user_id = ? AND revoked_at IS NULL AND expires_at > ?
+          )`,
       )
-      .bind(sessionId, hostId, userId, membership.membership_id, now, expiresAt)
+      .bind(sessionId, hostId, userId, membership.membership_id, now, expiresAt, authSessionHash, userId, now)
       .run();
     const active = await this.#database
       .prepare(
         `SELECT session_id, expires_at FROM remote_sessions
          WHERE host_id = ? AND user_id = ? AND ended_at IS NULL AND expires_at > ?
+           AND EXISTS(
+             SELECT 1 FROM auth_sessions
+              WHERE token_hash = ? AND user_id = ? AND revoked_at IS NULL AND expires_at > ?
+           )
          ORDER BY started_at DESC LIMIT 1`,
       )
-      .bind(hostId, userId, now)
+      .bind(hostId, userId, now, authSessionHash, userId, now)
       .first<{ session_id: string; expires_at: number }>();
-    if (!active) throw new RemoteControlPlaneError(503, "session_unavailable", "The remote session could not start.");
+    if (!active) throw new RemoteControlPlaneError(401, "auth_session_revoked", "The account session has ended.");
     return { sessionId: active.session_id, hostId, expiresAt: active.expires_at };
   }
 

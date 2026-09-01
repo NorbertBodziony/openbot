@@ -132,6 +132,8 @@ export class HostService extends EventEmitter<HostEvents> {
   readonly #remoteScreen: RemoteScreenGateway;
   readonly #webrtcGateway: TeamWebRtcHostGateway | null;
   #status: HostStatus;
+  #runtimeGeneration = 0;
+  #startOperation: Promise<HostStatus> | null = null;
   #legacyCredentialRemoved = false;
 
   constructor(options: HostServiceOptions) {
@@ -310,11 +312,22 @@ export class HostService extends EventEmitter<HostEvents> {
     return this.getStatus();
   }
 
-  async start(): Promise<HostStatus> {
+  start(): Promise<HostStatus> {
+    if (this.#startOperation) return this.#startOperation;
+    const operation = this.#startRuntimeOperation().finally(() => {
+      if (this.#startOperation === operation) this.#startOperation = null;
+    });
+    this.#startOperation = operation;
+    return operation;
+  }
+
+  async #startRuntimeOperation(): Promise<HostStatus> {
     if (!this.#options.store.configured) throw new Error("Name this OpenBot before publishing it.");
     if (this.#status.phase === "online" || this.#status.phase === "starting") {
       return this.getStatus();
     }
+    if (this.#status.phase === "stopping") return this.getStatus();
+    const generation = ++this.#runtimeGeneration;
     const signedInUser = this.#options.getSignedInUser();
     this.#options.store.assertOwnerAccount(signedInUser);
     await this.syncSignedInAccount(signedInUser);
@@ -322,6 +335,7 @@ export class HostService extends EventEmitter<HostEvents> {
 
     try {
       const apiPort = await this.#api.start();
+      if (await this.#cancelSupersededStart(generation)) return this.getStatus();
       const identity = this.#options.store.getIdentity();
       if (!identity) throw new Error("Name this OpenBot before publishing it.");
       if (!this.#webrtcGateway || !this.#options.registerRemoteHost || !this.#options.issueRemoteHostTicket) {
@@ -333,24 +347,33 @@ export class HostService extends EventEmitter<HostEvents> {
         ownerMembershipId: this.#requiredOwnerMemberId(),
         devicePublicKey: identity.publicKey,
       });
+      if (await this.#cancelSupersededStart(generation)) return this.getStatus();
       if (this.#options.listRemoteMembers) {
         await this.#options.store.syncRemoteDirectory(await this.#options.listRemoteMembers(identity.serverId));
+        if (await this.#cancelSupersededStart(generation)) return this.getStatus();
       }
       const bootstrap = await this.#options.issueRemoteHostTicket(identity.serverId);
+      if (await this.#cancelSupersededStart(generation)) return this.getStatus();
       await this.#webrtcGateway.start({
         hostId: identity.serverId,
         signalUrl: bootstrap.signalUrl,
         ticket: bootstrap.ticket,
         localApiPort: apiPort,
       });
+      if (await this.#cancelSupersededStart(generation)) return this.getStatus();
       this.#setStatus({
         apiUrl: bootstrap.signalUrl,
         apiOnline: true,
         message: "This OpenBot is ready for WebRTC connections.",
       });
       await this.#options.store.setEnabledOnLaunch(true);
+      if (await this.#cancelSupersededStart(generation)) return this.getStatus();
       this.#setStatus({ phase: "online", enabledOnLaunch: true });
     } catch (error) {
+      if (generation !== this.#runtimeGeneration) {
+        await this.#stopRuntime();
+        return this.getStatus();
+      }
       await this.#stopRuntime();
       this.#setStatus({
         phase: "error",
@@ -409,8 +432,11 @@ export class HostService extends EventEmitter<HostEvents> {
 
   async stop(persistPreference = true): Promise<HostStatus> {
     if (this.#status.phase === "unconfigured") return this.getStatus();
+    this.#runtimeGeneration += 1;
     if (persistPreference) this.#options.store.assertOwnerAccount(this.#options.getSignedInUser());
     this.#setStatus({ phase: "stopping", message: "Making this OpenBot private…" });
+    await this.#stopRuntime();
+    await this.#startOperation;
     await this.#stopRuntime();
     if (persistPreference) await this.#options.store.setEnabledOnLaunch(false);
     this.#setStatus({
@@ -681,6 +707,12 @@ export class HostService extends EventEmitter<HostEvents> {
   async #stopRuntime(): Promise<void> {
     await this.#webrtcGateway?.stop();
     await this.#api.stop();
+  }
+
+  async #cancelSupersededStart(generation: number): Promise<boolean> {
+    if (generation === this.#runtimeGeneration) return false;
+    await this.#stopRuntime();
+    return true;
   }
 
   #setStatus(patch: Partial<HostStatus>): void {

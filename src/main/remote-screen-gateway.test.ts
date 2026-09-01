@@ -146,15 +146,9 @@ describe("RemoteScreenGateway", () => {
     const gateway = createGateway({ runtimeBaseUrl: `http://127.0.0.1:${upstreamAddress.port}` });
     const { origin, close } = await serveGateway(gateway);
     const session = await createSession(gateway, origin);
-    const authorize = await fetch(`${origin}/v1/remote-screen/sessions/${session.id}/authorize`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ grant: session.viewerGrant }),
-    });
-    const cookie = authorize.headers.get("set-cookie")?.split(";")[0] ?? "";
     const client = new webSockets.WebSocket(
       `${origin.replace(/^http/, "ws")}/v1/remote-screen/sessions/${session.id}/stream`,
-      { headers: { Cookie: cookie } },
+      { headers: { "X-OpenBot-WebRTC-Session": "team-member-a" } },
     );
     await new Promise<void>((resolve, reject) => {
       client.once("open", resolve);

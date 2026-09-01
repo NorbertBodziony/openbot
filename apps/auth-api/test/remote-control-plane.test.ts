@@ -16,6 +16,12 @@ describe("remote control plane migration", () => {
     database.exec("PRAGMA foreign_keys = ON");
     database.exec(`
       CREATE TABLE users (id TEXT PRIMARY KEY);
+      CREATE TABLE auth_sessions (
+        token_hash TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        expires_at INTEGER NOT NULL,
+        revoked_at INTEGER
+      );
       CREATE TABLE team_tunnels (
         server_id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES users(id),
@@ -223,6 +229,12 @@ describe("RemoteControlPlane", () => {
     database.exec("PRAGMA foreign_keys = ON");
     database.exec(`
       CREATE TABLE users (id TEXT PRIMARY KEY);
+      CREATE TABLE auth_sessions (
+        token_hash TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        expires_at INTEGER NOT NULL,
+        revoked_at INTEGER
+      );
       CREATE TABLE team_tunnels (
         server_id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES users(id),
@@ -235,6 +247,7 @@ describe("RemoteControlPlane", () => {
         machine_token_hash TEXT
       );
       INSERT INTO users(id) VALUES ('owner');
+      INSERT INTO auth_sessions(token_hash, user_id, expires_at) VALUES ('owner-auth', 'owner', 5000);
       INSERT INTO team_tunnels(
         server_id, user_id, tunnel_name, api_hostname, status, created_at, updated_at, machine_token_hash
       ) VALUES ('host-1', 'owner', 'Studio Mac', 'old.example.test', 'active', 100, 200, '${"a".repeat(64)}');
@@ -303,8 +316,8 @@ describe("RemoteControlPlane", () => {
       role: "owner",
     });
 
-    const session = await controlPlane.startSession(owner.id, "host-1");
-    await expect(controlPlane.startSession(owner.id, "host-1")).resolves.toEqual(session);
+    const session = await controlPlane.startSession(owner.id, "host-1", "owner-auth");
+    await expect(controlPlane.startSession(owner.id, "host-1", "owner-auth")).resolves.toEqual(session);
     const claims = {
       sessionId: session.sessionId,
       hostId: "host-1",
@@ -329,6 +342,11 @@ describe("RemoteControlPlane", () => {
     database.prepare("INSERT INTO users(id) VALUES ('revoked-member')").run();
     database
       .prepare(
+        "INSERT INTO auth_sessions(token_hash, user_id, expires_at) VALUES ('member-auth', 'revoked-member', 5000)",
+      )
+      .run();
+    database
+      .prepare(
         `INSERT INTO remote_memberships(
            membership_id, host_id, user_id, role, status, created_at, updated_at
          ) VALUES ('revoked-membership', 'host-1', 'revoked-member', 'member', 'revoked', 1, 1)`,
@@ -351,7 +369,7 @@ describe("RemoteControlPlane", () => {
     expect(
       database.prepare("SELECT status FROM remote_memberships WHERE membership_id = 'revoked-membership'").get(),
     ).toEqual({ status: "active" });
-    const memberSession = await controlPlane.startSession("revoked-member", "host-1");
+    const memberSession = await controlPlane.startSession("revoked-member", "host-1", "member-auth");
     await controlPlane.endSession(owner.id, memberSession.sessionId);
     expect(
       database.prepare("SELECT ended_at FROM remote_sessions WHERE session_id = ?").get(memberSession.sessionId),
@@ -393,9 +411,13 @@ describe("RemoteControlPlane", () => {
     expect(webhookBodies).toContain(
       JSON.stringify({ type: "remote-session-ended", hostId: "host-1", sessionId: memberSession.sessionId }),
     );
-    const logoutSession = await controlPlane.startSession("revoked-member", "host-1");
+    const logoutSession = await controlPlane.startSession("revoked-member", "host-1", "member-auth");
     webhookAvailable = false;
+    database.prepare("UPDATE auth_sessions SET revoked_at = 1000 WHERE token_hash = 'member-auth'").run();
     await controlPlane.endUserSessions("revoked-member");
+    await expect(controlPlane.startSession("revoked-member", "host-1", "member-auth")).rejects.toMatchObject({
+      code: "auth_session_revoked",
+    });
     expect(
       database.prepare("SELECT ended_at FROM remote_sessions WHERE session_id = ?").get(logoutSession.sessionId),
     ).toEqual({ ended_at: 1_000 });
