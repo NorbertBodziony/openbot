@@ -381,6 +381,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #drainingBots = new Set<string>();
   readonly #scheduledDrains = new Set<string>();
   readonly #drainTasks = new Map<string, Promise<void>>();
+  readonly #routineDeletionBots = new Set<string>();
   readonly #lastConversationSignatures = new Map<string, string>();
   readonly #contextBudgets = new Map<string, ThreadContextBudget>();
   readonly #compactingBots = new Set<string>();
@@ -623,55 +624,64 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#requireKnownBot(input.botId);
     const routine = this.#routines.get(input.botId, input.routineId);
     if (!routine) throw new Error("This routine no longer exists.");
-    const activeRuns = await this.#interruptRoutineRunsBeforeDeletion(
-      input.botId,
-      this.#routines.activeRuns(input.botId, input.routineId),
-    );
-    if (options.recordConversationEvent === false) {
-      const database = this.#store.database;
-      const ownsTransaction = !database.connection.isTransaction;
-      if (ownsTransaction) database.connection.exec("BEGIN IMMEDIATE");
-      try {
-        for (const run of activeRuns) {
-          if (run.status === "queued" && run.deliveryId) {
-            if (this.#mailbox.getDelivery(run.deliveryId)?.delivery.status === "queued") {
-              this.#mailbox.cancelNow(input.botId, run.deliveryId);
-            }
-          }
-          this.#routines.updateRunStatus(run.id, "cancelled");
-        }
-        this.#routines.delete(input.botId, input.routineId);
-        if (ownsTransaction) database.connection.exec("COMMIT");
-      } catch (error) {
-        if (ownsTransaction && database.connection.isTransaction) database.connection.exec("ROLLBACK");
-        this.#mailbox.restorePersistedState();
-        throw error;
-      }
-    } else {
-      this.#mutateRoutineWithConversation(
-        input.botId,
-        "deleted",
-        () => this.#routines.delete(input.botId, input.routineId),
-        () => routine,
-        options.turnId,
-        {
-          beforeMutate: (snapshot) => {
-            for (const run of activeRuns) {
-              if (run.status === "queued" && run.deliveryId) {
-                if (this.#mailbox.getDelivery(run.deliveryId)?.delivery.status === "queued") {
-                  this.#mailbox.cancelNow(input.botId, run.deliveryId);
-                }
-              }
-              this.#appendRoutineRunTransition(snapshot, run, "cancelled");
-            }
-          },
-          onRollback: () => this.#mailbox.restorePersistedState(),
-        },
-      );
+    if (this.#routineDeletionBots.has(input.botId)) {
+      throw new Error("Another routine deletion is already in progress for this agent.");
     }
-    this.#emitQueue(input.botId);
-    this.#routineStateChanged(input.botId);
-    this.#armRoutineTimer();
+    this.#routineDeletionBots.add(input.botId);
+    try {
+      const activeRuns = await this.#interruptRoutineRunsBeforeDeletion(
+        input.botId,
+        this.#routines.activeRuns(input.botId, input.routineId),
+      );
+      if (options.recordConversationEvent === false) {
+        const database = this.#store.database;
+        const ownsTransaction = !database.connection.isTransaction;
+        if (ownsTransaction) database.connection.exec("BEGIN IMMEDIATE");
+        try {
+          for (const run of activeRuns) {
+            if (run.status === "queued" && run.deliveryId) {
+              if (this.#mailbox.getDelivery(run.deliveryId)?.delivery.status === "queued") {
+                this.#mailbox.cancelNow(input.botId, run.deliveryId);
+              }
+            }
+            this.#routines.updateRunStatus(run.id, "cancelled");
+          }
+          this.#routines.delete(input.botId, input.routineId);
+          if (ownsTransaction) database.connection.exec("COMMIT");
+        } catch (error) {
+          if (ownsTransaction && database.connection.isTransaction) database.connection.exec("ROLLBACK");
+          this.#mailbox.restorePersistedState();
+          throw error;
+        }
+      } else {
+        this.#mutateRoutineWithConversation(
+          input.botId,
+          "deleted",
+          () => this.#routines.delete(input.botId, input.routineId),
+          () => routine,
+          options.turnId,
+          {
+            beforeMutate: (snapshot) => {
+              for (const run of activeRuns) {
+                if (run.status === "queued" && run.deliveryId) {
+                  if (this.#mailbox.getDelivery(run.deliveryId)?.delivery.status === "queued") {
+                    this.#mailbox.cancelNow(input.botId, run.deliveryId);
+                  }
+                }
+                this.#appendRoutineRunTransition(snapshot, run, "cancelled");
+              }
+            },
+            onRollback: () => this.#mailbox.restorePersistedState(),
+          },
+        );
+      }
+      this.#emitQueue(input.botId);
+      this.#routineStateChanged(input.botId);
+      this.#armRoutineTimer();
+    } finally {
+      this.#routineDeletionBots.delete(input.botId);
+      if (this.#mailbox.nextQueued(input.botId)) this.#scheduleDrain(input.botId);
+    }
   }
 
   async testRoutine(input: TestRoutineInput): Promise<RoutineRun> {
@@ -2962,6 +2972,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.#stopping ||
       this.#status.phase !== "ready" ||
       this.#pendingDuplicateBots.has(botId) ||
+      this.#routineDeletionBots.has(botId) ||
       this.#drainingBots.has(botId) ||
       this.#scheduledDrains.has(botId) ||
       this.#compactingBots.has(botId)
@@ -2983,6 +2994,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (
       this.#stopping ||
       this.#pendingDuplicateBots.has(botId) ||
+      this.#routineDeletionBots.has(botId) ||
       this.#drainingBots.has(botId) ||
       this.#compactingBots.has(botId) ||
       this.#status.phase !== "ready"
