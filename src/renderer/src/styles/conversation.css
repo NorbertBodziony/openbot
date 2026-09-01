@@ -9,6 +9,19 @@
   transition: padding-right var(--panel-resize-duration, var(--openbot-duration-overlay)) cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+.conversation-panel.browser-panel-available::after {
+  position: absolute;
+  z-index: 13;
+  top: 0;
+  right: 1px;
+  bottom: 0;
+  width: 1px;
+  background: var(--openbot-accent);
+  box-shadow: -10px 0 28px var(--openbot-accent-soft);
+  content: "";
+  pointer-events: none;
+}
+
 .direct-conversation {
   position: relative;
   display: flex;
@@ -260,7 +273,7 @@
   align-items: center;
   justify-content: space-between;
   border-bottom: 0;
-  padding: 0 8px;
+  padding: 0 12px 0 8px;
   background: transparent;
 }
 
@@ -2991,9 +3004,11 @@
   }
 }
 
+.computer-button-available,
 .computer-button-agent-active {
   border-color: var(--openbot-accent);
   background: var(--openbot-accent-soft);
+  box-shadow: 0 0 10px var(--openbot-accent-strong);
   color: var(--openbot-accent);
 }
 
