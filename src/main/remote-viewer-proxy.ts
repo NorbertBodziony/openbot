@@ -124,7 +124,11 @@ export class RemoteViewerProxy {
       let bytes = new Uint8Array(await upstream.arrayBuffer());
       if (contentType.includes("text/html") || contentType.includes("javascript")) {
         const prefix = this.#basePath(route.serverId);
-        const text = new TextDecoder().decode(bytes).replaceAll("/v1/remote-screen", `${prefix}/v1/remote-screen`);
+        const escapedPrefix = prefix.replaceAll("/", "\\/");
+        const text = new TextDecoder()
+          .decode(bytes)
+          .replaceAll("\\/v1\\/remote-screen", `${escapedPrefix}\\/v1\\/remote-screen`)
+          .replaceAll("/v1/remote-screen", `${prefix}/v1/remote-screen`);
         bytes = new TextEncoder().encode(text);
       }
       const responseHeaders: OutgoingHttpHeaders = {

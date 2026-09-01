@@ -16,7 +16,7 @@ import {
 } from "./remote-server-manager";
 import { fingerprint } from "./team-store";
 import { TeamWebRtcBridge } from "./team-webrtc-bridge";
-import { TeamWebRtcClientTransport } from "./team-webrtc-client-transport";
+import { TeamWebRtcClientTransport, TeamWebRtcRequestError } from "./team-webrtc-client-transport";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -369,6 +369,115 @@ describe("remote server links", () => {
         state: "error",
         issue: { code: "authentication_required", retryable: false },
       });
+    } finally {
+      await manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("sends viewer JSON through RPC and keeps viewer authorization errors scoped to Remote Desktop", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-webrtc-viewer-"));
+    const statePath = join(directory, "servers.json");
+    const hostId = "viewer-host";
+    const publicKey = "viewer-host-public-key";
+    await writeFile(
+      statePath,
+      JSON.stringify({
+        version: 3,
+        activeServerId: hostId,
+        servers: [
+          {
+            id: hostId,
+            name: "Viewer host",
+            apiUrl: `webrtc://${hostId}`,
+            fingerprint: fingerprint(publicKey),
+            publicKey,
+            username: "person@example.com",
+            encryptedToken: "",
+            remoteDesktopAvailable: true,
+            logoVersion: null,
+            role: "member",
+            transport: "webrtc-v2",
+          },
+        ],
+      }),
+    );
+    const bridge = new TeamWebRtcBridge();
+    vi.spyOn(bridge, "disconnect").mockResolvedValue();
+    const transport = new TeamWebRtcClientTransport({
+      bridge,
+      listHosts: async () => [
+        {
+          hostId,
+          name: "Viewer host",
+          logoKey: null,
+          devicePublicKey: publicKey,
+          authEpoch: 1,
+          membershipId: "member-1",
+          role: "member",
+        },
+      ],
+      startSession: async () => ({ sessionId: "session-1", hostId, expiresAt: Date.now() + 60_000 }),
+      issueTicket: async () => ({
+        ticket: "ticket",
+        expiresAt: Date.now() + 60_000,
+        signalUrl: "wss://signal.openbot.run/v1/signal",
+      }),
+      endSession: async () => undefined,
+      createInvite: async () => ({ inviteId: "invite-1", token: "token", expiresAt: Date.now() + 60_000 }),
+      listInvites: async () => [],
+      previewInvite: async () => {
+        throw new Error("Unexpected invite preview.");
+      },
+      acceptInvite: async () => {
+        throw new Error("Unexpected invite acceptance.");
+      },
+      revokeInvite: async () => undefined,
+      listMembers: async () => [],
+      updateMember: async () => undefined,
+      removeMember: async () => undefined,
+      getPrincipalId: () => "person-1",
+      controlPlaneUrl: "https://api.openbot.run",
+      downloadHostLogo: async () => ({ bytes: new Uint8Array(), mimeType: "image/png" }),
+      transferDirectory: join(directory, "transfers"),
+    });
+    const requestResponse = vi
+      .spyOn(transport, "requestResponse")
+      .mockResolvedValueOnce({ status: 204, body: {} })
+      .mockRejectedValueOnce(new TeamWebRtcRequestError(401, "session_expired", "Viewer grant expired."));
+    const manager = new RemoteServerManager(
+      statePath,
+      { encrypt: (value) => Buffer.from(value), decrypt: (value) => value.toString() },
+      { createTeamAuthTicket: async () => "ticket", getEmail: () => "person@example.com" },
+      { webrtcTransport: transport },
+    );
+
+    try {
+      await manager.initialize();
+      const authorization = await manager.fetchRemoteViewerResource(
+        hostId,
+        "/v1/remote-screen/sessions/desktop-1/authorize",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: new TextEncoder().encode(JSON.stringify({ grant: "viewer-grant" })),
+        },
+      );
+      expect(authorization.status).toBe(204);
+      expect(requestResponse).toHaveBeenNthCalledWith(1, hostId, "/v1/remote-screen/sessions/desktop-1/authorize", {
+        method: "POST",
+        body: { grant: "viewer-grant" },
+        contentType: "application/json",
+      });
+
+      await expect(
+        manager.fetchRemoteViewerResource(hostId, "/v1/remote-screen/sessions/desktop-1/authorize", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: new TextEncoder().encode(JSON.stringify({ grant: "expired" })),
+        }),
+      ).rejects.toThrow("Viewer grant expired.");
+      expect(manager.list().find((server) => server.id === hostId)?.issue).toBeNull();
     } finally {
       await manager.stop();
       await rm(directory, { recursive: true, force: true });
