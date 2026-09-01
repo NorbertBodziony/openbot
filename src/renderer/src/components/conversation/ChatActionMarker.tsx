@@ -273,7 +273,7 @@ function markerAccessibleLabel(marker: ChatActionMarkerModel, bots: BotProfile[]
         : marker.targetDeliveries.length === 1
           ? (bots.find((bot) => bot.id === marker.targetDeliveries[0]?.agentId)?.name ?? "Unavailable agent")
           : `${marker.targetDeliveries.length} agents`;
-    return `${label} ${agentLabel}`;
+    return `${label} ${agentLabel}, ${STATUS_LABELS[marker.status]}`;
   }
   return `${label}, ${marker.routineName}`;
 }

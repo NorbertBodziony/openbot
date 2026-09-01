@@ -623,7 +623,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#requireKnownBot(input.botId);
     const routine = this.#routines.get(input.botId, input.routineId);
     if (!routine) throw new Error("This routine no longer exists.");
-    const activeRuns = this.#routines.activeRuns(input.botId, input.routineId);
+    const activeRuns = await this.#interruptRoutineRunsBeforeDeletion(
+      input.botId,
+      this.#routines.activeRuns(input.botId, input.routineId),
+    );
     if (options.recordConversationEvent === false) {
       const database = this.#store.database;
       const ownsTransaction = !database.connection.isTransaction;
@@ -3006,6 +3009,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async #startDelivery(context: DeliveryContext): Promise<void> {
     const { delivery, managedAttachments } = context;
+    let confirmedTurnId: string | null = null;
     try {
       await this.#mailbox.markStarting(delivery.id);
       this.#emitQueue(delivery.recipientBotId);
@@ -3135,13 +3139,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         decodeTurnResponse,
       );
       await this.#mailbox.markRunning(delivery.id, response.turn.id);
+      confirmedTurnId = response.turn.id;
       const currentDelivery = this.#mailbox.getDelivery(delivery.id)?.delivery;
       if (currentDelivery?.status !== "running" || currentDelivery.turnId !== response.turn.id) return;
       snapshot.activeTurnId = response.turn.id;
       this.#syncDeliveryMessage(snapshot, delivery.id);
       this.#emitQueue(bot.id);
-      this.#emitConversation(snapshot);
+      this.#emitConversation(this.#snapshots.get(bot.id) ?? snapshot);
     } catch (error) {
+      const currentDelivery = this.#mailbox.getDelivery(delivery.id)?.delivery;
+      if (confirmedTurnId && currentDelivery?.status === "running" && currentDelivery.turnId === confirmedTurnId) {
+        this.#emitError("delivery_reconciliation_pending", error, delivery.recipientBotId);
+        this.#retryStartedDeliveryReconciliation(delivery.recipientBotId);
+        return;
+      }
       if (isRequestTimeout(error, "turn/start")) {
         this.#emitError(
           "delivery_start_unconfirmed",
@@ -3404,6 +3415,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (conversationContentSignature(snapshot) !== previousSignature) this.#emitConversation(snapshot);
       else if (!this.#lastConversationSignatures.has(affectedBotId)) this.#publishConversation(snapshot);
     }
+  }
+
+  #retryStartedDeliveryReconciliation(botId: string): void {
+    queueMicrotask(() => {
+      try {
+        this.#emitQueue(botId);
+        const snapshot = this.#snapshots.get(botId);
+        if (snapshot) this.#emitConversation(snapshot);
+      } catch (error) {
+        this.#emitError("delivery_reconciliation_pending", error, botId);
+      }
+    });
   }
 
   #handleNotification(notification: AppServerNotification, source: AgentClient): void {
@@ -4610,6 +4633,42 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!run || run.status === "needs-attention") return;
     this.#transitionRoutineRunWithConversation(run, "needs-attention");
     this.#routineStateChanged(run.botId);
+  }
+
+  async #interruptRoutineRunsBeforeDeletion(botId: string, runs: RoutineRun[]): Promise<RoutineRun[]> {
+    const startingRun = runs.find((run) => {
+      if (!run.deliveryId) return false;
+      const delivery = this.#mailbox.getDelivery(run.deliveryId)?.delivery;
+      return delivery?.status === "starting" && !delivery.turnId;
+    });
+    if (startingRun) await this.#drainTasks.get(botId);
+
+    const cancellableRuns: RoutineRun[] = [];
+    const activeTurnIds = new Set<string>();
+    for (const run of runs) {
+      if (!run.deliveryId) {
+        cancellableRuns.push(run);
+        continue;
+      }
+      const delivery = this.#mailbox.getDelivery(run.deliveryId)?.delivery;
+      if (!delivery) continue;
+      if (delivery.status === "queued") {
+        cancellableRuns.push(run);
+        continue;
+      }
+      if (delivery.status !== "starting" && delivery.status !== "running") continue;
+      if (!delivery.turnId) {
+        throw new Error("This routine run is still starting. Try again after its turn starts.");
+      }
+      cancellableRuns.push(run);
+      activeTurnIds.add(delivery.turnId);
+    }
+    if (activeTurnIds.size === 0) return cancellableRuns;
+    if (!this.#store.activeProviderSession(botId)) {
+      throw new Error("OpenBot cannot interrupt the active routine run because its provider session is unavailable.");
+    }
+    for (const turnId of activeTurnIds) await this.interrupt(botId, turnId);
+    return cancellableRuns;
   }
 
   #markRoutineRunningForTurn(turnId: string | null): void {

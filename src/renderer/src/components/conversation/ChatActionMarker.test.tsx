@@ -16,7 +16,7 @@ describe("ChatActionMarker", () => {
       />
     ));
 
-    expect(screen.getByRole("group", { name: "Messaged Research" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Messaged Research, In progress" })).toBeInTheDocument();
     expect(screen.queryByText("In progress")).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Open chat with Research" }));
     expect(onSelectAgent).toHaveBeenCalledWith("research");
@@ -36,7 +36,7 @@ describe("ChatActionMarker", () => {
     ));
 
     expect(screen.getByText("Message from")).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Message from Research" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Message from Research, Completed" })).toBeInTheDocument();
     expect(screen.queryByText("Completed")).not.toBeInTheDocument();
   });
 
