@@ -65,6 +65,25 @@ describe("SidebarLayoutStore", () => {
     expect(restored.getSnapshot().agentOrder).toEqual(["research", "chief", "sales"]);
   });
 
+  it("places a duplicate after its source in the same section", async () => {
+    const { store } = await createStore();
+    const agents = new Set(["chief", "chief-copy", "research", "sales"]);
+    const created = await store.mutate({ type: "create", name: "Core", agentId: "chief" }, agents);
+    const sectionId = created.sections[0]?.id ?? "";
+    await store.mutate({ type: "assign", agentId: "research", sectionId }, agents);
+    await store.mutate({ type: "move-agent", agentId: "sales", sectionId: null, beforeAgentId: null }, agents);
+
+    const duplicated = await store.placeDuplicateAfter("chief", "chief-copy", [
+      "chief",
+      "chief-copy",
+      "research",
+      "sales",
+    ]);
+
+    expect(duplicated.agentAssignments).toMatchObject({ chief: sectionId, "chief-copy": sectionId });
+    expect(duplicated.agentOrder.filter((agentId) => agentId !== "sales")).toEqual(["chief", "chief-copy", "research"]);
+  });
+
   it("loads a version 1 layout with an empty agent order", async () => {
     const { path } = await createStore();
     await writeFile(

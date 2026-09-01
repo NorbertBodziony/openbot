@@ -14,11 +14,11 @@ import {
   type TeamProtocolV2RpcFrame,
   teamProtocolV2AuthenticationTranscript,
 } from "@openbot/contracts/team-protocol/v2";
+import { createTeamProtocolV2Event } from "@openbot/contracts/team-protocol/v2-adapter";
 import {
-  createTeamProtocolV2Event,
-  decodeTeamProtocolV2CurrentHttpRequest,
-  encodeTeamProtocolV2CurrentHttpResponse,
-} from "@openbot/contracts/team-protocol/v2-adapter";
+  decodeTeamProtocolV3WebRtcHttpRequest,
+  encodeTeamProtocolV3WebRtcHttpResponse,
+} from "@openbot/contracts/team-protocol/v3-webrtc-adapter";
 import type * as Ws from "ws";
 import type { VerifiedRemoteSessionTicket } from "./central-auth-manager";
 import {
@@ -477,7 +477,7 @@ export class TeamWebRtcHostGateway {
       headers: {
         Authorization: `Bearer ${this.#localSessionToken}`,
         "Content-Type": uploaded?.mimeType ?? input.contentType ?? "application/json",
-        "OpenBot-Protocol-Version": "1",
+        "OpenBot-Protocol-Version": /^\/v1\/agents\/[^/]+\/duplicate$/u.test(url.pathname) ? "3" : "1",
         "OpenBot-App-Version": this.#appVersion,
         "OpenBot-Capabilities": [...this.#peerCapabilities].join(","),
         ...(this.#localSessionId ? { "X-OpenBot-WebRTC-Session": this.#localSessionId } : {}),
@@ -490,7 +490,7 @@ export class TeamWebRtcHostGateway {
             : input.body === null
               ? undefined
               : JSON.stringify(
-                  decodeTeamProtocolV2CurrentHttpRequest(input.method, input.path, input.body, {
+                  decodeTeamProtocolV3WebRtcHttpRequest(input.method, input.path, input.body, {
                     preserveSemanticTags,
                   }),
                 ),
@@ -523,7 +523,7 @@ export class TeamWebRtcHostGateway {
     }
     return {
       status: response.status,
-      body: encodeTeamProtocolV2CurrentHttpResponse(input.method, input.path, response.status, body, {
+      body: encodeTeamProtocolV3WebRtcHttpResponse(input.method, input.path, response.status, body, {
         preserveSemanticTags,
       }),
     };

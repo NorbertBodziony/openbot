@@ -193,6 +193,8 @@ function WorkspaceShell(props: {
     openBotSetup,
     cancelBotSetup,
     editBot,
+    duplicateBot,
+    duplicatingBotIds,
     deleteBot,
     setSidebarCollapsed,
     expandSidebar,
@@ -365,6 +367,9 @@ function WorkspaceShell(props: {
         onPreloadDirectConversation={activePeopleEnabled() ? () => void DirectConversation.preload() : undefined}
         onCreateBot={openBotSetup}
         onEditBot={editBot}
+        duplicateSupported={activeServerSupportsCapability("agent-duplication")}
+        duplicatingBotIds={duplicatingBotIds()}
+        onDuplicateBot={duplicateBot}
         onDeleteBot={deleteBot}
         compact={leftPanelCompact()}
         onExpand={expandSidebar}

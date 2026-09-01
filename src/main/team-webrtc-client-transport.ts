@@ -13,11 +13,11 @@ import {
   type TeamProtocolV2RpcFrame,
   teamProtocolV2AuthenticationTranscript,
 } from "@openbot/contracts/team-protocol/v2";
+import { decodeTeamProtocolV2CurrentEvent } from "@openbot/contracts/team-protocol/v2-adapter";
 import {
-  decodeTeamProtocolV2CurrentEvent,
-  decodeTeamProtocolV2CurrentHttpResponse,
-  encodeTeamProtocolV2CurrentHttpRequest,
-} from "@openbot/contracts/team-protocol/v2-adapter";
+  decodeTeamProtocolV3WebRtcHttpResponse,
+  encodeTeamProtocolV3WebRtcHttpRequest,
+} from "@openbot/contracts/team-protocol/v3-webrtc-adapter";
 import type {
   RemoteConnectionBootstrap,
   RemoteHostSummary,
@@ -28,7 +28,7 @@ import type {
 import type { TeamWebRtcBridge } from "./team-webrtc-bridge";
 import { TeamWebRtcFileTransfer } from "./team-webrtc-file-transfer";
 
-const REMOTE_REQUEST_TIMEOUT_MILLISECONDS = 10 * 60_000 + 30_000;
+export const TEAM_WEBRTC_REMOTE_REQUEST_TIMEOUT_MILLISECONDS = 10 * 60_000 + 30_000;
 
 interface TeamWebRtcClientTransportEvents {
   connected: [hostId: string];
@@ -230,7 +230,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
         path,
         body: binary
           ? null
-          : encodeTeamProtocolV2CurrentHttpRequest(method, path, init.body, {
+          : encodeTeamProtocolV3WebRtcHttpRequest(method, path, init.body, {
               preserveSemanticTags: init.preserveSemanticTags,
             }),
         capabilities: [...TEAM_CURRENT_CAPABILITIES],
@@ -242,7 +242,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       const timer = setTimeout(() => {
         this.#pending.delete(requestId);
         reject(new TeamWebRtcRequestError(504, "remote_timeout", "The remote request timed out."));
-      }, REMOTE_REQUEST_TIMEOUT_MILLISECONDS);
+      }, TEAM_WEBRTC_REMOTE_REQUEST_TIMEOUT_MILLISECONDS);
       this.#pending.set(requestId, { hostId, resolve, reject, timer });
     });
     try {
@@ -266,7 +266,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
         : undefined;
     return {
       status: envelope.status,
-      body: file ? null : decodeTeamProtocolV2CurrentHttpResponse(method, path, envelope.status, envelope.body),
+      body: file ? null : decodeTeamProtocolV3WebRtcHttpResponse(method, path, envelope.status, envelope.body),
       ...(file ? { file } : {}),
     };
   }

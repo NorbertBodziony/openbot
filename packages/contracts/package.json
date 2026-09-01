@@ -19,6 +19,9 @@
     "./team-protocol/v1-adapter": "./src/team-protocol/v1-adapter.ts",
     "./team-protocol/v2": "./src/team-protocol/v2.ts",
     "./team-protocol/v2-adapter": "./src/team-protocol/v2-adapter.ts",
+    "./team-protocol/v3": "./src/team-protocol/v3.ts",
+    "./team-protocol/v3-adapter": "./src/team-protocol/v3-adapter.ts",
+    "./team-protocol/v3-webrtc-adapter": "./src/team-protocol/v3-webrtc-adapter.ts",
     "./validation": "./src/validation.ts"
   },
   "scripts": {

@@ -33,6 +33,7 @@ function sidebarProps(pinnedItems: SidebarPinnedItem[] = []) {
     onSelectPerson: vi.fn(),
     onCreateBot: vi.fn(),
     onEditBot: vi.fn(),
+    onDuplicateBot: vi.fn(async () => undefined),
     onDeleteBot: vi.fn(async () => undefined),
     compact: false,
     onExpand: vi.fn(),
@@ -145,13 +146,29 @@ describe("Sidebar pinned chats", () => {
     await fireEvent.contextMenu(screen.getByRole("button", { name: "Chief, pinned agent" }));
     const agentMenu = await screen.findByRole("menu", { name: "Agent actions" });
     const editItem = within(agentMenu).getByRole("menuitem", { name: "Edit agent" });
+    const duplicateItem = within(agentMenu).getByRole("menuitem", { name: "Duplicate agent" });
     const deleteItem = within(agentMenu).getByRole("menuitem", { name: "Delete agent" });
     const divider = within(agentMenu).getByRole("separator");
     expect(editItem).toBeInTheDocument();
+    expect(duplicateItem).toBeInTheDocument();
     expect(deleteItem).toBeInTheDocument();
     expect(divider.nextElementSibling).toBe(deleteItem);
     await fireEvent.pointerUp(within(agentMenu).getByRole("menuitem", { name: "Unpin" }), { button: 0 });
     expect(props.onUnpin).toHaveBeenCalledWith({ kind: "agent", id: "chief" });
+  });
+
+  it("disables duplication while it runs and hides it for an old host", async () => {
+    const props = sidebarProps();
+    const { unmount } = render(() => <Sidebar {...props} duplicatingBotIds={new Set(["chief"])} />);
+
+    await fireEvent.contextMenu(screen.getByRole("button", { name: /Chief/ }));
+    expect(screen.getByRole("menuitem", { name: "Duplicating…" })).toHaveAttribute("aria-disabled", "true");
+    expect(props.onDuplicateBot).not.toHaveBeenCalled();
+    unmount();
+
+    render(() => <Sidebar {...props} duplicateSupported={false} />);
+    await fireEvent.contextMenu(screen.getByRole("button", { name: /Chief/ }));
+    expect(screen.queryByRole("menuitem", { name: "Duplicate agent" })).not.toBeInTheDocument();
   });
 
   it("disables agent pin actions after six chats are pinned", async () => {
