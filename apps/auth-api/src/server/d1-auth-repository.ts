@@ -23,6 +23,12 @@ interface ChallengeRow {
   consumed_at: number | null;
 }
 
+interface MobileSessionUserRow extends UserRow {
+  last_used_at: number;
+}
+
+const MOBILE_SESSION_ACTIVITY_UPDATE_INTERVAL_MS = 15 * 60_000;
+
 export class D1AuthRepository implements AuthRepository {
   constructor(private readonly database: D1Database) {}
 
@@ -304,7 +310,7 @@ export class D1AuthRepository implements AuthRepository {
     const tokenHash = await sha256(sessionToken);
     const row = await this.database
       .prepare(
-        `SELECT users.id, users.email, users.name, users.avatar_url
+        `SELECT users.id, users.email, users.name, users.avatar_url, auth_sessions.last_used_at
          FROM auth_sessions
          JOIN mobile_auth_sessions ON mobile_auth_sessions.session_id = auth_sessions.id
          JOIN users ON users.id = auth_sessions.user_id
@@ -313,8 +319,16 @@ export class D1AuthRepository implements AuthRepository {
            AND auth_sessions.expires_at > ?`,
       )
       .bind(tokenHash, now)
-      .first<UserRow>();
-    return row ? mapUser(row) : null;
+      .first<MobileSessionUserRow>();
+    if (!row) return null;
+    const activityCutoff = now - MOBILE_SESSION_ACTIVITY_UPDATE_INTERVAL_MS;
+    if (row.last_used_at <= activityCutoff) {
+      await this.database
+        .prepare("UPDATE auth_sessions SET last_used_at = ? WHERE token_hash = ? AND last_used_at <= ?")
+        .bind(now, tokenHash, activityCutoff)
+        .run();
+    }
+    return mapUser(row);
   }
 
   async listMobileAuthDevices(userId: string, now: number): Promise<MobileAuthDevice[]> {

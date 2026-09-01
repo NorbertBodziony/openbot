@@ -10,6 +10,8 @@ import { Platform } from "react-native";
 const MOBILE_SESSION_KEY = "openbot.mobile.session.v1";
 const MOBILE_DEVICE_ID_KEY = "openbot.mobile.device-id.v1";
 
+let mobileSessionStorageTail = Promise.resolve();
+
 export interface MobileSession {
   apiUrl: string;
   sessionToken: string;
@@ -55,14 +57,16 @@ export async function redeemMobileConnectUrl(value: string): Promise<MobileSessi
 }
 
 export async function readMobileSession(): Promise<MobileSession | null> {
-  const stored = await SecureStore.getItemAsync(MOBILE_SESSION_KEY);
-  if (!stored) return null;
-  try {
-    return decodeStoredMobileSession(JSON.parse(stored));
-  } catch {
-    await SecureStore.deleteItemAsync(MOBILE_SESSION_KEY);
-    return null;
-  }
+  return serializeMobileSessionStorage(async () => {
+    const stored = await SecureStore.getItemAsync(MOBILE_SESSION_KEY);
+    if (!stored) return null;
+    try {
+      return decodeStoredMobileSession(JSON.parse(stored));
+    } catch {
+      await SecureStore.deleteItemAsync(MOBILE_SESSION_KEY);
+      return null;
+    }
+  });
 }
 
 export async function validateMobileSession(session: MobileSession): Promise<MobileSession | null> {
@@ -70,7 +74,7 @@ export async function validateMobileSession(session: MobileSession): Promise<Mob
     headers: { Authorization: `Bearer ${session.sessionToken}` },
   });
   if (response.status === 401) {
-    await SecureStore.deleteItemAsync(MOBILE_SESSION_KEY);
+    await deleteMobileSessionIfCurrent(session.sessionToken);
     return null;
   }
   const body = await response.json().catch(() => null);
@@ -80,25 +84,63 @@ export async function validateMobileSession(session: MobileSession): Promise<Mob
   const user = decodeUser(body);
   if (sameUser(user, session.user)) return session;
   const updated = { ...session, user };
-  await saveMobileSession(updated);
+  await saveMobileSessionIfCurrent(updated);
   return updated;
 }
 
 export async function logoutMobileSession(session: MobileSession): Promise<void> {
-  try {
-    await fetch(new URL("/v1/auth/logout", session.apiUrl).toString(), {
+  await Promise.all([
+    deleteMobileSessionIfCurrent(session.sessionToken),
+    fetch(new URL("/v1/auth/logout", session.apiUrl).toString(), {
       method: "POST",
       headers: { Authorization: `Bearer ${session.sessionToken}` },
-    });
-  } finally {
-    await SecureStore.deleteItemAsync(MOBILE_SESSION_KEY);
-  }
+    }),
+  ]);
 }
 
 async function saveMobileSession(session: MobileSession): Promise<void> {
-  await SecureStore.setItemAsync(MOBILE_SESSION_KEY, JSON.stringify(session), {
-    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+  await serializeMobileSessionStorage(() =>
+    SecureStore.setItemAsync(MOBILE_SESSION_KEY, JSON.stringify(session), {
+      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+    }),
+  );
+}
+
+async function saveMobileSessionIfCurrent(session: MobileSession): Promise<void> {
+  await serializeMobileSessionStorage(async () => {
+    const stored = await SecureStore.getItemAsync(MOBILE_SESSION_KEY);
+    if (!stored) return;
+    try {
+      if (decodeStoredMobileSession(JSON.parse(stored)).sessionToken !== session.sessionToken) return;
+    } catch {
+      return;
+    }
+    await SecureStore.setItemAsync(MOBILE_SESSION_KEY, JSON.stringify(session), {
+      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+    });
   });
+}
+
+async function deleteMobileSessionIfCurrent(sessionToken: string): Promise<void> {
+  await serializeMobileSessionStorage(async () => {
+    const stored = await SecureStore.getItemAsync(MOBILE_SESSION_KEY);
+    if (!stored) return;
+    try {
+      if (decodeStoredMobileSession(JSON.parse(stored)).sessionToken !== sessionToken) return;
+    } catch {
+      // Corrupt session data cannot represent a newer valid session while storage operations are serialized.
+    }
+    await SecureStore.deleteItemAsync(MOBILE_SESSION_KEY);
+  });
+}
+
+function serializeMobileSessionStorage<T>(operation: () => Promise<T>): Promise<T> {
+  const result = mobileSessionStorageTail.then(operation, operation);
+  mobileSessionStorageTail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
 }
 
 async function mobileDeviceIdentity(): Promise<{

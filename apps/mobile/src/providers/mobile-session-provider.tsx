@@ -12,7 +12,7 @@ import { AppState } from "react-native";
 
 import { logoutMobileSession, type MobileSession, readMobileSession, validateMobileSession } from "@/lib/mobile-auth";
 
-const SESSION_CHECK_INTERVAL_MS = 2_000;
+const SESSION_CHECK_INTERVAL_MS = 5 * 60_000;
 
 interface MobileSessionContextValue {
   loading: boolean;
