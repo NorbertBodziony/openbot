@@ -17,6 +17,7 @@ export * from "./qr-code";
 export * from "./questionnaire";
 export * from "./radial-progress";
 export * from "./select";
+export * from "./server-gradient-logo";
 export * from "./settings";
 export * from "./sliding-tabs";
 export * from "./surface";
