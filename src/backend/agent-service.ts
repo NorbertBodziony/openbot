@@ -3162,7 +3162,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const currentDelivery = this.#mailbox.getDelivery(delivery.id)?.delivery;
       if (confirmedTurnId && currentDelivery?.status === "running" && currentDelivery.turnId === confirmedTurnId) {
         this.#emitError("delivery_reconciliation_pending", error, delivery.recipientBotId);
-        this.#retryStartedDeliveryReconciliation(delivery.recipientBotId);
+        this.#retryDeliveryReconciliation(delivery.recipientBotId);
         return;
       }
       if (isRequestTimeout(error, "turn/start")) {
@@ -3429,7 +3429,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  #retryStartedDeliveryReconciliation(botId: string): void {
+  #retryDeliveryReconciliation(botId: string): void {
     queueMicrotask(() => {
       try {
         this.#emitQueue(botId);
@@ -3549,7 +3549,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.#finishContextCompaction(botId, threadId, status);
           return;
         }
-        void this.#completeTurn(botId, threadId, turnId, status);
+        void this.#completeTurn(botId, threadId, turnId, status).catch((error) => {
+          this.#emitError("turn_completion_failed", error, botId);
+        });
         return;
       }
       case "thread/tokenUsage/updated": {
@@ -3629,7 +3631,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.#emit({ type: "bots-changed", bots: this.listBots() });
     }
     this.#emitConversation(snapshot, "turn.completed", { turnId, status });
-    if (deliveries.length > 0) this.#emitQueue(botId);
+    if (deliveries.length > 0) {
+      try {
+        this.#emitQueue(botId);
+      } catch (error) {
+        this.#emitError("delivery_reconciliation_pending", error, botId);
+        this.#retryDeliveryReconciliation(botId);
+      }
+    }
     this.#emit({
       type: "turn-completed",
       botId,

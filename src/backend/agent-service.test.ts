@@ -3162,6 +3162,80 @@ describe.sequential("AgentService", () => {
     expect(runningMarkers).toHaveLength(1);
   });
 
+  it("continues turn completion while a terminal routine marker retries", async () => {
+    const { store, mailbox } = stores();
+    let client: FakeAgentClient | undefined;
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
+      client = new FakeAgentClient(provider, "", false);
+      return client;
+    });
+    const emitted: AgentEvent[] = [];
+    service.on("event", (event: AgentEvent) => emitted.push(event));
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    const routine = service.createRoutine({
+      botId: bot.id,
+      name: "Retry terminal marker",
+      instruction: "Continue queued work after terminal marker persistence retries.",
+      active: true,
+      timezone: "UTC",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    const firstRun = await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await waitFor(() => {
+      const deliveries = service?.listQueue(bot.id).deliveries ?? [];
+      return (
+        deliveries.some((delivery) => delivery.status === "running") &&
+        deliveries.some((delivery) => delivery.status === "queued")
+      );
+    });
+    const firstDelivery = service.listQueue(bot.id).deliveries.find((delivery) => delivery.status === "running");
+    const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
+    if (!firstDelivery?.turnId || !client || !threadId) throw new Error("The first routine turn did not start.");
+    const persistConversation = store.database.persistConversation.bind(store.database);
+    let rejectTerminalMarker = true;
+    vi.spyOn(store.database, "persistConversation").mockImplementation((...args) => {
+      if (rejectTerminalMarker && args[1] === "routine.run-succeeded") {
+        rejectTerminalMarker = false;
+        throw new Error("terminal marker persistence failed");
+      }
+      return persistConversation(...args);
+    });
+
+    client.emit(
+      "notification",
+      notification("turn/completed", {
+        threadId,
+        turn: { id: firstDelivery.turnId, status: "completed" },
+      }),
+    );
+
+    await waitFor(() =>
+      emitted.some(
+        (event) => event.type === "turn-completed" && event.botId === bot.id && event.turnId === firstDelivery.turnId,
+      ),
+    );
+    await waitFor(() =>
+      service
+        ?.listQueue(bot.id)
+        .deliveries.some((delivery) => delivery.id !== firstDelivery.id && delivery.status === "running"),
+    );
+    expect(
+      service
+        .listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .find((run) => run.id === firstRun.id),
+    ).toMatchObject({ status: "succeeded" });
+    expect(emitted).toContainEqual(
+      expect.objectContaining({ type: "error", code: "delivery_reconciliation_pending", botId: bot.id }),
+    );
+    const terminalMarkers = (await service.readConversation(bot.id)).messages.filter((message) => {
+      const event = routineRunConversationEvent(message);
+      return event?.runId === firstRun.id && event.status === "succeeded";
+    });
+    expect(terminalMarkers).toHaveLength(1);
+  });
+
   it("rolls back a routine mutation when its transcript marker cannot persist", async () => {
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());

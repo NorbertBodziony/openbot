@@ -2910,6 +2910,14 @@ export function ConversationTimeline() {
                           : "none",
                       }}
                     >
+                      <Show when={message()?.id === props.firstUnreadMessageId}>
+                        <UnreadMessagesDivider
+                          elementRef={(element) => {
+                            setUnreadMessagesDividerElement(element);
+                            scheduleUnreadDividerVisibilityUpdate();
+                          }}
+                        />
+                      </Show>
                       <article
                         data-chat-search-message={message()?.id}
                         class={{ "chat-action-entry-animated": animateEntrance }}
