@@ -23,16 +23,24 @@ export function decodeTeamProtocolV1CurrentEvent(value: unknown): TeamProtocolV1
   return { kind: "known", event: structuredClone(decoded.event) as AgentEvent | TeamRealtimeEvent };
 }
 
-export function encodeTeamProtocolV1CurrentEvent(event: AgentEvent | TeamRealtimeEvent): string | null {
+export function encodeTeamProtocolV1CurrentEvent(
+  event: AgentEvent | TeamRealtimeEvent,
+  options: { preserveSemanticTags?: boolean } = {},
+): string | null {
   const wireValue: TeamProtocolV1JsonValue = JSON.parse(JSON.stringify(event));
-  const downconvertedValue = downconvertCurrentTags(wireValue);
+  const downconvertedValue = options.preserveSemanticTags ? wireValue : downconvertCurrentTags(wireValue);
   const decoded = decodeTeamProtocolV1Event(downconvertedValue);
   return decoded.kind === "known" ? encodeTeamProtocolV1Event(decoded.event) : null;
 }
 
-export function encodeTeamProtocolV1CurrentHttpRequest(method: string, path: string, value: unknown): string {
+export function encodeTeamProtocolV1CurrentHttpRequest(
+  method: string,
+  path: string,
+  value: unknown,
+  options: { preserveSemanticTags?: boolean } = {},
+): string {
   const wireValue: TeamProtocolV1JsonValue = JSON.parse(JSON.stringify(value));
-  const downconvertedValue = downconvertCurrentTags(wireValue);
+  const downconvertedValue = options.preserveSemanticTags ? wireValue : downconvertCurrentTags(wireValue);
   return JSON.stringify(decodeTeamProtocolV1HttpRequest(method, path, downconvertedValue));
 }
 
@@ -49,10 +57,11 @@ export function encodeTeamProtocolV1CurrentHttpResponse(
   path: string,
   status: number,
   value: unknown,
+  options: { preserveSemanticTags?: boolean } = {},
 ): string {
   const wireValue: TeamProtocolV1JsonValue = JSON.parse(JSON.stringify(value));
   if (status < 400 && isInstalledSkillsRoute(method, path)) return JSON.stringify(wireValue);
-  const downconvertedValue = downconvertCurrentTags(wireValue);
+  const downconvertedValue = options.preserveSemanticTags ? wireValue : downconvertCurrentTags(wireValue);
   return JSON.stringify(decodeTeamProtocolV1HttpResponse(method, path, status, downconvertedValue));
 }
 

@@ -5,7 +5,9 @@ import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseInviteUrl } from "@openbot/contracts/invite-links";
+import { TEAM_CURRENT_CAPABILITIES } from "@openbot/contracts/team-protocol/current";
 import { TEAM_CAPABILITIES_HEADER } from "@openbot/contracts/team-protocol/v1";
+import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   decodeBrowserPreview,
@@ -307,17 +309,28 @@ describe("remote server links", () => {
       downloadHostLogo: async () => ({ bytes: new Uint8Array(), mimeType: "image/png" }),
       transferDirectory: join(directory, "transfers"),
     });
-    const request = vi.spyOn(transport, "request").mockResolvedValue({
-      ready: true,
-      platform: "linux",
-      unattended: true,
-      runtime: "sunshine-moonlight",
-      protocolVersion: 2,
-      displays: [],
-      selectedDisplayId: null,
-      activeSessions: 0,
-      maxSessions: 1,
-    });
+    const request = vi
+      .spyOn(transport, "request")
+      .mockImplementation(async (_hostId, path): Promise<TeamProtocolV2Json> => {
+        if (path === "/v1/compatibility") {
+          return {
+            appVersion: "0.4.0",
+            protocol: { minimum: 1, maximum: 1 },
+            capabilities: [...TEAM_CURRENT_CAPABILITIES],
+          } satisfies TeamProtocolV2Json;
+        }
+        return {
+          ready: true,
+          platform: "linux",
+          unattended: true,
+          runtime: "sunshine-moonlight",
+          protocolVersion: 2,
+          displays: [],
+          selectedDisplayId: null,
+          activeSessions: 0,
+          maxSessions: 1,
+        } satisfies TeamProtocolV2Json;
+      });
     const manager = new RemoteServerManager(
       statePath,
       { encrypt: (value) => Buffer.from(value), decrypt: (value) => value.toString() },
@@ -326,7 +339,7 @@ describe("remote server links", () => {
         getEmail: () => "person@example.com",
         sendTeamInviteEmail,
       },
-      { webrtcTransport: transport },
+      { appVersion: "0.4.0", webrtcTransport: transport },
     );
 
     try {
@@ -337,15 +350,17 @@ describe("remote server links", () => {
           .slice(1)
           .map((server) => server.id),
       ).toEqual([betaId, alphaId, gammaId]);
-      const compatibility = manager.list().find((server) => server.id === betaId)?.compatibility;
-      expect(compatibility).toMatchObject({ negotiatedProtocol: 2 });
-      expect(compatibility?.capabilities).not.toContain("installed-skills");
       expect(manager.list().find((server) => server.id === betaId)?.remoteDesktopAvailable).toBe(false);
       transport.emit("connected", betaId);
       await vi.waitFor(() =>
         expect(manager.list().find((server) => server.id === betaId)?.remoteDesktopAvailable).toBe(true),
       );
-      expect(request).toHaveBeenCalledWith(betaId, "/v1/remote-screen/capabilities", {});
+      const compatibility = manager.list().find((server) => server.id === betaId)?.compatibility;
+      expect(compatibility).toMatchObject({ negotiatedProtocol: 2 });
+      expect(compatibility?.capabilities).toContain("installed-skills");
+      expect(request).toHaveBeenCalledWith(betaId, "/v1/remote-screen/capabilities", {
+        preserveSemanticTags: true,
+      });
       const invite = await manager.createInvite(betaId, { role: "member", email: "friend@example.com" });
       expect(sendTeamInviteEmail).toHaveBeenCalledWith({
         email: "friend@example.com",

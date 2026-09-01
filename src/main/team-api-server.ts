@@ -41,8 +41,12 @@ import {
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import {
+  isTeamCurrentCapability,
+  supportsTeamSemanticTags,
+  TEAM_CURRENT_CAPABILITIES,
+} from "@openbot/contracts/team-protocol/current";
+import {
   decodeTeamProtocolV1ClientEvent,
-  isTeamProtocolV1Capability,
   TEAM_APP_VERSION_HEADER,
   TEAM_CAPABILITIES_HEADER,
   TEAM_PROTOCOL_V1,
@@ -220,7 +224,7 @@ export class TeamApiServer {
   readonly #options: Omit<TeamApiOptions, "sidebarLayout"> & { sidebarLayout: TeamApiSidebarLayout };
   readonly #rateLimits = new Map<string, RateEntry>();
   readonly #eventClients = new Map<Ws.WebSocket, EventClientState>();
-  readonly #responseRoutes = new WeakMap<ServerResponse, { method: string; path: string }>();
+  readonly #responseRoutes = new WeakMap<ServerResponse, { method: string; path: string; capabilities: Set<string> }>();
   readonly #webSockets = new webSockets.WebSocketServer({
     noServer: true,
     maxPayload: EVENT_PAYLOAD_LIMIT,
@@ -457,7 +461,7 @@ export class TeamApiServer {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       const method = request.method ?? "GET";
       const clientCapabilities = requestCapabilities(request);
-      this.#responseRoutes.set(response, { method, path: url.pathname });
+      this.#responseRoutes.set(response, { method, path: url.pathname, capabilities: clientCapabilities });
 
       if (method === "GET" && url.pathname === "/v1/compatibility") {
         return this.#json(response, 200, this.#protocolSupport());
@@ -1217,12 +1221,10 @@ export class TeamApiServer {
   }
 
   #broadcastAgentEvent(event: AgentEvent): void {
-    let payload: string | undefined;
-    let routineEventFilteredPayload: string | undefined;
     let conversationInvalidation: string | undefined;
     let queueInvalidation: string | undefined;
-    let completionSnapshot: string | undefined;
     for (const [client, connection] of this.#eventClients) {
+      const encodingOptions = { preserveSemanticTags: supportsTeamSemanticTags(connection.capabilities) };
       const supportsRuntimeSnapshots = connection.capabilities.has("agent-runtime-snapshots");
       const requiredCapability = eventCapability(event);
       if (requiredCapability && !connection.capabilities.has(requiredCapability)) continue;
@@ -1246,15 +1248,18 @@ export class TeamApiServer {
         if (!queueInvalidation) continue;
         outgoing = queueInvalidation;
       } else if (event.type === "conversation" && !connection.capabilities.has("routine-event-markers")) {
-        routineEventFilteredPayload ??=
-          encodeTeamProtocolV1CurrentEvent({
-            ...event,
-            snapshot: conversationSnapshotWithoutRoutineEvents(event.snapshot),
-          }) ?? undefined;
+        const routineEventFilteredPayload =
+          encodeTeamProtocolV1CurrentEvent(
+            {
+              ...event,
+              snapshot: conversationSnapshotWithoutRoutineEvents(event.snapshot),
+            },
+            encodingOptions,
+          ) ?? undefined;
         if (!routineEventFilteredPayload) continue;
         outgoing = routineEventFilteredPayload;
       } else {
-        payload ??= encodeTeamProtocolV1CurrentEvent(event) ?? undefined;
+        const payload = encodeTeamProtocolV1CurrentEvent(event, encodingOptions) ?? undefined;
         if (!payload) continue;
         outgoing = payload;
       }
@@ -1265,11 +1270,14 @@ export class TeamApiServer {
       if (event.type !== "turn-completed" || !supportsRuntimeSnapshots || connection.includeConversationEvents) {
         continue;
       }
-      completionSnapshot ??=
-        encodeTeamProtocolV1CurrentEvent({
-          type: "runtime-snapshot",
-          snapshot: this.#options.agents.getRuntimeSnapshot(),
-        }) ?? undefined;
+      const completionSnapshot =
+        encodeTeamProtocolV1CurrentEvent(
+          {
+            type: "runtime-snapshot",
+            snapshot: this.#options.agents.getRuntimeSnapshot(),
+          },
+          encodingOptions,
+        ) ?? undefined;
       if (!completionSnapshot) continue;
       if (Buffer.byteLength(completionSnapshot) > AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return;
       client.send(completionSnapshot);
@@ -1333,7 +1341,7 @@ export class TeamApiServer {
           if (acceptsCapabilityDeclaration) {
             if (!event.capabilities) throw new Error("Invalid client capabilities.");
             const snapshotsWereEnabled = connection.capabilities.has("agent-runtime-snapshots");
-            connection.capabilities = new Set(event.capabilities.filter(isTeamProtocolV1Capability));
+            connection.capabilities = new Set(event.capabilities.filter(isTeamCurrentCapability));
             if (connection.capabilities.has("agent-runtime-snapshots") && !snapshotsWereEnabled) {
               this.#sendRuntimeSnapshot(client, connection, false);
             }
@@ -1542,14 +1550,18 @@ export class TeamApiServer {
     const route = this.#responseRoutes.get(response);
     if (!route) throw new Error("Team API response route is unavailable.");
     response.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
-    response.end(`${encodeTeamProtocolV1CurrentHttpResponse(route.method, route.path, status, value)}\n`);
+    response.end(
+      `${encodeTeamProtocolV1CurrentHttpResponse(route.method, route.path, status, value, {
+        preserveSemanticTags: supportsTeamSemanticTags(route.capabilities),
+      })}\n`,
+    );
   }
 
   #protocolSupport(): TeamProtocolSupportV1 {
     return {
       appVersion: this.#options.appVersion ?? "0.0.0",
       protocol: { minimum: TEAM_PROTOCOL_V1, maximum: TEAM_PROTOCOL_V1 },
-      capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
+      capabilities: [...TEAM_CURRENT_CAPABILITIES],
     };
   }
 
@@ -1632,7 +1644,7 @@ function requestCapabilities(request: import("node:http").IncomingMessage): Set<
   if (!value || value.length > 4_096) return new Set();
   const capabilities = value.split(",").map((capability) => capability.trim());
   if (capabilities.length > 64) return new Set();
-  return new Set(capabilities.filter(isTeamProtocolV1Capability));
+  return new Set(capabilities.filter(isTeamCurrentCapability));
 }
 
 function conversationSnapshotWithoutRoutineEvents(snapshot: ConversationSnapshot): ConversationSnapshot {

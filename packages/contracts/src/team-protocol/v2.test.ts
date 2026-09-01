@@ -55,6 +55,41 @@ describe("Team protocol v2", () => {
     });
   });
 
+  it("preserves semantic tags only when the current capability is negotiated", () => {
+    const text = "Ask @[Research](agent:research) to use @[Sources](skill:sources).";
+    const request = encodeTeamProtocolV2CurrentHttpRequest(
+      "POST",
+      "/v1/agents/chief/messages",
+      { text, attachmentDraftIds: [], replyToMessageId: null },
+      { preserveSemanticTags: true },
+    );
+    const response = encodeTeamProtocolV2CurrentHttpResponse(
+      "GET",
+      "/v1/agents/chief/conversation",
+      200,
+      {
+        botId: "chief",
+        threadId: "thread-1",
+        activeTurnId: null,
+        revision: 1,
+        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
+        messages: [
+          {
+            id: "message-1",
+            author: "assistant",
+            text,
+            createdAt: "2026-08-29T10:00:00.000Z",
+            status: "completed",
+          },
+        ],
+      },
+      { preserveSemanticTags: true },
+    );
+
+    expect(request).toMatchObject({ text });
+    expect(response).toMatchObject({ messages: [{ text }] });
+  });
+
   it("passes installed skill summaries through the v2 HTTP adapter", () => {
     const skills = [
       {

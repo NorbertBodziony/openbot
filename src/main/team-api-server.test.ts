@@ -16,6 +16,7 @@ import type {
 } from "@openbot/contracts/ipc";
 import { AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT, routineConversationEventItemType } from "@openbot/contracts/ipc";
 import { isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { TEAM_CURRENT_CAPABILITIES, TEAM_SEMANTIC_TAGS_CAPABILITY } from "@openbot/contracts/team-protocol/current";
 import {
   TEAM_APP_VERSION_HEADER,
   TEAM_CAPABILITIES_HEADER,
@@ -161,7 +162,7 @@ describe("TeamApiServer compatibility", () => {
       await expect(compatibility.json()).resolves.toMatchObject({
         appVersion: "0.4.0",
         protocol: { minimum: 1, maximum: 1 },
-        capabilities: expect.arrayContaining(["browser-control", "remote-desktop"]),
+        capabilities: expect.arrayContaining(["browser-control", "remote-desktop", TEAM_SEMANTIC_TAGS_CAPABILITY]),
       });
 
       const missing = await fetch(`${base}/v1/identity`);
@@ -1301,7 +1302,7 @@ describe("TeamApiServer administration", () => {
         {
           id: "message-1",
           author: "assistant",
-          text: "Stored locally",
+          text: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
           createdAt: "2026-08-19T10:00:00.000Z",
           status: "completed",
         },
@@ -1327,6 +1328,13 @@ describe("TeamApiServer administration", () => {
         avatarHue: input.avatarHue,
       }),
     );
+    const legacyConversation = {
+      ...localConversation,
+      messages: [
+        { ...localConversation.messages[0], text: "Ask @Research to use Sources (skill)." },
+        localConversation.messages[1],
+      ],
+    };
     const agents = createAgents({
       listBots: () => localBots,
       createBot,
@@ -1375,14 +1383,23 @@ describe("TeamApiServer administration", () => {
       expect(createBot).toHaveBeenCalledWith(createInput);
       await expect(jsonRequest(base, "/v1/agents", { token: login.sessionToken })).resolves.toEqual(localBots);
       await expect(jsonRequest(base, "/v1/agents/chief/conversation", { token: login.sessionToken })).resolves.toEqual({
-        ...localConversation,
-        messages: [localConversation.messages[0]],
+        ...legacyConversation,
+        messages: [legacyConversation.messages[0]],
         readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
       });
       await expect(
         jsonRequest(base, "/v1/agents/chief/conversation", {
           token: login.sessionToken,
           capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
+        }),
+      ).resolves.toEqual({
+        ...legacyConversation,
+        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
+      });
+      await expect(
+        jsonRequest(base, "/v1/agents/chief/conversation", {
+          token: login.sessionToken,
+          capabilities: [...TEAM_CURRENT_CAPABILITIES],
         }),
       ).resolves.toEqual({
         ...localConversation,

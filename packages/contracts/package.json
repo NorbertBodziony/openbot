@@ -14,6 +14,7 @@
     "./mobile-connect": "./src/mobile-connect.ts",
     "./runtime-values": "./src/runtime-values.ts",
     "./team-protocol": "./src/team-protocol/index.ts",
+    "./team-protocol/current": "./src/team-protocol/current.ts",
     "./team-protocol/v1": "./src/team-protocol/v1.ts",
     "./team-protocol/v1-adapter": "./src/team-protocol/v1-adapter.ts",
     "./team-protocol/v2": "./src/team-protocol/v2.ts",
