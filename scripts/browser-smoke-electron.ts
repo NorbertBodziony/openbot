@@ -64,7 +64,7 @@ const server = createServer((request, response) => {
   if (url.pathname === "/frame") {
     response.setHeader("content-type", "text/html; charset=utf-8");
     response.end(
-      `<button aria-label="Frame action" onclick="this.textContent='Frame clicked:' + event.isTrusted">Frame action</button>
+      `<button aria-label="Frame action" onclick="let count=0;const trusted=event.isTrusted;const timer=setInterval(()=>{this.textContent='Frame settled:'+(++count)+':'+trusted;if(count===5)clearInterval(timer)},40)">Frame action</button>
        <button aria-label="Schedule frame navigation" onclick="setTimeout(() => location.href='/frame-next', 1000)">Schedule frame navigation</button>
        <input aria-label="Frame field" oninput="document.querySelector('output').textContent='Frame input:' + this.value + ':' + event.isTrusted" onkeydown="if (event.key === 'Enter') document.querySelector('output').textContent += '|Frame key:' + event.isTrusted" />
        <input type="file" aria-label="Frame files" />
@@ -124,6 +124,7 @@ const server = createServer((request, response) => {
       <script>
         const root = document.querySelector('#shadow').attachShadow({ mode: 'open' });
         root.innerHTML = '<button aria-label="Shadow action">Shadow action</button>';
+        root.querySelector('button').onclick = event => { let count = 0; const trusted = event.isTrusted; const timer = setInterval(() => { root.querySelector('button').textContent = 'Shadow settled:' + (++count) + ':' + trusted; if (count === 5) clearInterval(timer); }, 40); };
         document.addEventListener('keydown', event => { if (event.ctrlKey && event.key.toLowerCase() === 'k') document.querySelector('output').textContent = 'shortcut:' + event.isTrusted; });
         console.error('v2 diagnostic marker'); fetch('/diagnostic-error?access_token=diagnostic-secret').catch(() => {});
       </script>`);
@@ -270,18 +271,26 @@ async function main(): Promise<void> {
     if (!v2Elements.some((element) => element.name === "Frame action")) {
       throw new Error("V2 snapshot did not include a cross-origin iframe control.");
     }
+    const shadowClick = await callBrowserTool(browser, "click", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "button", name: "Shadow action", exact: true },
+      timeoutMs: 30_000,
+    });
+    if (!shadowClick.success || !String(toolTextPayload(shadowClick)?.text).includes("Shadow settled:5:true")) {
+      throw new Error(`V2 shadow DOM settling failed: ${toolError(shadowClick)}`);
+    }
     const frameClick = await callBrowserTool(browser, "click", {
       tabId: v2Tab.id,
       target: { kind: "role", role: "button", name: "Frame action", exact: true },
       timeoutMs: 30_000,
     });
     const frameClickSnapshot = toolTextPayload(frameClick);
-    if (!frameClick.success || !String(frameClickSnapshot?.text).includes("Frame clicked:true")) {
+    if (!frameClick.success || !String(frameClickSnapshot?.text).includes("Frame settled:5:true")) {
       throw new Error(`V2 cross-origin iframe click failed: ${toolError(frameClick)}`);
     }
     const frameTextWait = await callBrowserTool(browser, "wait_for", {
       tabId: v2Tab.id,
-      text: "Frame clicked:true",
+      text: "Frame settled:5:true",
       timeoutMs: 2_000,
     });
     if (!frameTextWait.success) throw new Error(`V2 iframe text wait failed: ${toolError(frameTextWait)}`);

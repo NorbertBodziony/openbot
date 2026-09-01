@@ -942,6 +942,12 @@ describe.sequential("AgentService", () => {
       documentChanged = listener;
       return () => undefined;
     };
+    browser.resolveUploadTarget = async (params) => {
+      const target =
+        isDynamicRecord(params.arguments) && isDynamicRecord(params.arguments.target) ? params.arguments.target : {};
+      const inputId = String(target.selector ?? target.ref ?? "input");
+      return { inputId, documentId: inputId === "#second" ? "frame-document" : "main-document" };
+    };
     browser.handleDynamicTool = async (params, hooks) => {
       if (
         params.tool === "upload_files" &&
@@ -958,6 +964,7 @@ describe.sequential("AgentService", () => {
         const target = isDynamicRecord(params.arguments.target) ? params.arguments.target : {};
         const inputId = String(target.selector ?? target.ref ?? "input");
         const documentId = inputId === "#second" ? "frame-document" : "main-document";
+        hooks?.onUploadTargetResolved?.(inputId, documentId);
         const assign = () => hooks?.onUploadAssigned?.(inputId, documentId);
         if (holdUploads) {
           const completion = heldUploads.then(assign);
@@ -1099,6 +1106,24 @@ describe.sequential("AgentService", () => {
 
     client.emit("request", {
       method: "item/tool/call",
+      id: "browser-upload-full-replacement",
+      params: {
+        threadId: providerThreadId,
+        turnId: "turn-browser-upload",
+        callId: "browser-upload-full-replacement",
+        namespace: "openbot_browser",
+        tool: "upload_files",
+        arguments: {
+          tabId: "tab",
+          target: { kind: "css", selector: "input" },
+          paths: [replacementUploadPath],
+        },
+      },
+    });
+    await waitFor(() => client.responses.some((response) => response.id === "browser-upload-full-replacement"));
+
+    client.emit("request", {
+      method: "item/tool/call",
       id: "browser-upload-overflow",
       params: {
         threadId: providerThreadId,
@@ -1135,7 +1160,7 @@ describe.sequential("AgentService", () => {
     expect(client.errors.find((response) => response.id === "browser-upload-denied")?.error.message).toContain(
       "workspace or the OpenBot shared directory",
     );
-    expect(calls).toHaveLength(12);
+    expect(calls).toHaveLength(13);
     documentChanged("tab", new Set());
     await waitFor(async () =>
       (await Promise.allSettled(stagedPaths.slice(1).map((path) => readFile(path)))).every(
@@ -1174,13 +1199,13 @@ describe.sequential("AgentService", () => {
         client.responses.filter((response) => String(response.id).startsWith("browser-upload-concurrent-")).length ===
         10,
     );
-    expect(calls).toHaveLength(22);
+    expect(calls).toHaveLength(23);
     releaseHeldUploads();
     await heldUploads;
     await Promise.resolve();
     documentChanged("tab", new Set());
     await waitFor(async () =>
-      (await Promise.allSettled(stagedPaths.slice(12).map((path) => readFile(path)))).every(
+      (await Promise.allSettled(stagedPaths.slice(13).map((path) => readFile(path)))).every(
         (result) => result.status === "rejected",
       ),
     );
@@ -4920,9 +4945,16 @@ function fakeBrowser(tabs: BrowserTab[] = []) {
     listTabs: () => tabs,
     beginTakeover: async (_tabId: string) => undefined,
     endTakeover: (_tabId: string) => undefined,
+    resolveUploadTarget: async (params: DynamicToolCallParams) => {
+      const target =
+        isDynamicRecord(params.arguments) && isDynamicRecord(params.arguments.target) ? params.arguments.target : {};
+      const inputId = String(target.selector ?? target.ref ?? "input");
+      return { inputId, documentId: inputId === "#second" ? "frame-document" : "main-document" };
+    },
     handleDynamicTool: async (
       _params: DynamicToolCallParams,
       _hooks?: {
+        onUploadTargetResolved?: (inputId: string, documentId: string) => void;
         onUploadAssigned?: (inputId: string, documentId: string) => void;
         onUploadOperationStarted?: (completion: Promise<void>) => void;
       },

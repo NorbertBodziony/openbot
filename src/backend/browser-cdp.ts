@@ -394,7 +394,18 @@ export class BrowserCdpEngine {
     });
   }
 
-  async uploadFiles(target: BrowserTarget, paths: string[]): Promise<BrowserUploadAssignment> {
+  async resolveUploadTarget(target: BrowserTarget): Promise<BrowserUploadAssignment> {
+    return this.#lease(async (send) => {
+      const resolved = await this.#resolveElement(send, target);
+      return this.#identifyUploadTarget(send, resolved);
+    });
+  }
+
+  async uploadFiles(
+    target: BrowserTarget,
+    paths: string[],
+    onTargetResolved?: (assignment: BrowserUploadAssignment) => void,
+  ): Promise<BrowserUploadAssignment> {
     if (paths.length === 0 || paths.length > 10) throw new Error("Upload requires between 1 and 10 files.");
     if (Buffer.byteLength(JSON.stringify(paths)) > MAX_RESULT_BYTES)
       throw new Error("Upload path arguments exceed 64 KB.");
@@ -404,21 +415,30 @@ export class BrowserCdpEngine {
     }
     return this.#lease(async (send) => {
       const resolved = await this.#resolveElement(send, target);
+      const assignment = await this.#identifyUploadTarget(send, resolved);
+      onTargetResolved?.(assignment);
       await send("DOM.setFileInputFiles", { backendNodeId: resolved.backendNodeId, files: paths }, resolved.sessionId);
-      const documentId = await this.#callOnNode(
-        send,
-        resolved.backendNodeId,
-        documentIdFunctionDeclaration(),
-        [],
-        resolved.sessionId,
-      );
-      if (!isString(documentId)) throw new Error("Unable to identify the upload document.");
-      this.#uploadDocumentIds.add(documentId);
-      return {
-        inputId: `${documentId}:${resolved.backendNodeId}`,
-        documentId,
-      };
+      return assignment;
     });
+  }
+
+  async #identifyUploadTarget(
+    send: SendCommand,
+    resolved: { backendNodeId: number; sessionId?: string },
+  ): Promise<BrowserUploadAssignment> {
+    const documentId = await this.#callOnNode(
+      send,
+      resolved.backendNodeId,
+      documentIdFunctionDeclaration(),
+      [],
+      resolved.sessionId,
+    );
+    if (!isString(documentId)) throw new Error("Unable to identify the upload document.");
+    this.#uploadDocumentIds.add(documentId);
+    return {
+      inputId: `${documentId}:${resolved.backendNodeId}`,
+      documentId,
+    };
   }
 
   async documentIds(): Promise<Set<string>> {
@@ -537,7 +557,7 @@ export class BrowserCdpEngine {
       while (true) {
         if (await matches()) {
           if (condition.state !== "dom-quiet") return;
-          await waitForDomQuiet(send, deadline - Date.now());
+          await waitForDomQuietAcrossTargets(send, this.#snapshotTargets(), deadline - Date.now());
           if (await matches()) return;
         }
         const remaining = deadline - Date.now();
@@ -550,7 +570,7 @@ export class BrowserCdpEngine {
   async settle(timeoutMs = ACTION_TIMEOUT_MS): Promise<void> {
     await this.#lease(async (send) => {
       if (this.#contents.isLoading()) await waitForLoading(this.#contents, timeoutMs);
-      await waitForDomQuiet(send, Math.min(timeoutMs, 1_500)).catch((error) => {
+      await waitForDomQuietAcrossTargets(send, this.#snapshotTargets(), Math.min(timeoutMs, 1_500)).catch((error) => {
         if (error instanceof Error && error.message === "DOM did not become quiet.") return;
         throw error;
       });
@@ -1578,36 +1598,85 @@ function stopLoadingAndWait(contents: WebContents): Promise<void> {
   });
 }
 
-async function waitForDomQuiet(send: SendCommand, timeoutMs: number): Promise<void> {
+async function waitForDomQuietAcrossTargets(
+  send: SendCommand,
+  captures: SnapshotTarget[],
+  timeoutMs: number,
+): Promise<void> {
   if (timeoutMs <= 0) throw new Error("DOM did not become quiet.");
   const deadlineMs = Math.max(1, Math.floor(timeoutMs));
-  const contextId = await automationContextId(send);
-  const result = await send("Runtime.evaluate", {
-    expression: `new Promise(resolve => {
+  const results = await Promise.all(
+    captures.map(async (capture) => {
+      const contextId = await automationContextId(send, capture.sessionId);
+      return send(
+        "Runtime.evaluate",
+        {
+          expression: `new Promise(resolve => {
       let quietTimer;
       let deadlineTimer;
+      let discoveryTimer;
       let completed = false;
+      const observers = [];
+      const observedRoots = new Set();
       const done = value => {
         if (completed) return;
         completed = true;
         clearTimeout(quietTimer);
         clearTimeout(deadlineTimer);
-        observer.disconnect();
+        clearInterval(discoveryTimer);
+        for (const observer of observers) observer.disconnect();
         resolve(value);
       };
-      const observer = new MutationObserver(() => {
+      const changed = () => {
+        discoverRoots();
         clearTimeout(quietTimer);
         quietTimer = setTimeout(() => done(true), 120);
-      });
-      observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+      };
+      const discoverRoots = () => {
+        const pending = [document];
+        let discovered = false;
+        let scanned = 0;
+        while (pending.length && scanned < ${MAX_SNAPSHOT_SCANNED_NODES}) {
+          const root = pending.shift();
+          if (!root) continue;
+          if (!observedRoots.has(root)) {
+            const observer = new MutationObserver(changed);
+            observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true });
+            observedRoots.add(root);
+            observers.push(observer);
+            discovered = true;
+          }
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+          let node;
+          while ((node = walker.nextNode()) && scanned < ${MAX_SNAPSHOT_SCANNED_NODES}) {
+            scanned++;
+            if (node.shadowRoot) pending.push(node.shadowRoot);
+            if (node.localName === 'iframe' || node.localName === 'frame') {
+              try { if (node.contentDocument) pending.push(node.contentDocument); } catch {}
+            }
+          }
+        }
+        if (discovered) {
+          clearTimeout(quietTimer);
+          quietTimer = setTimeout(() => done(true), 120);
+        }
+      };
+      discoverRoots();
+      discoveryTimer = setInterval(discoverRoots, 25);
       quietTimer = setTimeout(() => done(true), 120);
       deadlineTimer = setTimeout(() => done(false), ${deadlineMs});
     })`,
-    contextId,
-    awaitPromise: true,
-    returnByValue: true,
-  });
-  if (recordValue(result.result)?.value !== true) throw new Error("DOM did not become quiet.");
+          contextId,
+          awaitPromise: true,
+          returnByValue: true,
+        },
+        capture.sessionId,
+      );
+    }),
+  );
+  if (results.some((result) => recordValue(result.result)?.value !== true)) {
+    throw new Error("DOM did not become quiet.");
+  }
 }
 
 async function automationContextId(send: SendCommand, sessionId?: string): Promise<number> {

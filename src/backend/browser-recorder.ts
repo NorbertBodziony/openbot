@@ -238,7 +238,7 @@ export class BrowserRecorder {
     if (this.#starting.has(tabId) || this.#sessions.has(tabId)) {
       throw new Error("This browser tab already has a recording.");
     }
-    const activeRecordings = this.#sessions.size + this.#starting.size;
+    const activeRecordings = new Set([...this.#sessions.keys(), ...this.#starting]).size;
     if (activeRecordings >= this.#maxConcurrentRecordings) {
       throw new Error(`At most ${this.#maxConcurrentRecordings} browser recordings can run at the same time.`);
     }

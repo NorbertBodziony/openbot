@@ -157,9 +157,11 @@ interface AgentBrowserHost {
   listTabs(): BrowserTab[];
   beginTakeover(tabId: string): Promise<void>;
   endTakeover(tabId: string): void;
+  resolveUploadTarget(params: DynamicToolCallParams): Promise<{ inputId: string; documentId: string }>;
   handleDynamicTool(
     params: DynamicToolCallParams,
     hooks?: {
+      onUploadTargetResolved?: (inputId: string, documentId: string) => void;
       onUploadAssigned?: (inputId: string, documentId: string) => void;
       onUploadOperationStarted?: (completion: Promise<void>) => void;
     },
@@ -247,6 +249,8 @@ interface BrowserUploadRoot {
 
 interface BrowserUploadReservation {
   bytes: number;
+  inputId: string;
+  documentId: string;
   invalidated: boolean;
   root: string | null;
 }
@@ -3012,6 +3016,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error(`paths must contain between 1 and ${INPUT_LIMITS.attachments} valid local file paths.`);
     }
     const tabId = args.tabId;
+    const uploadTarget = await this.#browser.resolveUploadTarget(params);
     const sources = await this.#openAgentAttachmentSources(botId, args.paths);
     let stagingRoot: string | null = null;
     const reservationId = Symbol("browser-upload");
@@ -3031,7 +3036,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (stagedBytes > ATTACHMENT_LIMITS.totalBytes) {
         throw new Error(`Browser upload files must not exceed ${ATTACHMENT_LIMITS.totalBytes} bytes in total.`);
       }
-      reservation = { bytes: stagedBytes, invalidated: false, root: null };
+      reservation = {
+        bytes: stagedBytes,
+        inputId: uploadTarget.inputId,
+        documentId: uploadTarget.documentId,
+        invalidated: false,
+        root: null,
+      };
       this.#reserveBrowserUpload(tabId, reservationId, reservation);
       stagingRoot = await mkdtemp(join(tmpdir(), "openbot-browser-upload-"));
       reservation.root = stagingRoot;
@@ -3062,8 +3073,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           arguments: { ...args, paths: stagedPaths },
         },
         {
+          onUploadTargetResolved: (inputId, documentId) => {
+            if (!reservation || reservation.invalidated) {
+              throw new Error("The browser document changed while files were being staged.");
+            }
+            if (inputId !== uploadTarget.inputId || documentId !== uploadTarget.documentId) {
+              reservation.invalidated = true;
+              throw new Error("The browser upload target changed while files were being staged.");
+            }
+          },
           onUploadAssigned: (inputId, documentId) => {
-            if (!stagingRoot || this.#stopping || !reservation || reservation.invalidated) return;
+            if (!stagingRoot || this.#stopping || !reservation || reservation.invalidated) {
+              throw new Error("The browser document changed while files were being staged.");
+            }
             const roots = this.#browserUploadRoots.get(tabId) ?? new Map<string, BrowserUploadRoot>();
             const previousRoot = roots.get(inputId);
             roots.set(inputId, { path: stagingRoot, bytes: stagedBytes, documentId });
@@ -3098,23 +3120,39 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   #reserveBrowserUpload(tabId: string, id: symbol, reservation: BrowserUploadReservation): void {
     const roots = this.#browserUploadRoots.get(tabId);
     const reservations = this.#browserUploadReservations.get(tabId) ?? new Map<symbol, BrowserUploadReservation>();
-    if ((roots?.size ?? 0) + reservations.size >= MAX_BROWSER_UPLOAD_INPUTS_PER_TAB) {
+    if ([...reservations.values()].some((value) => value.inputId === reservation.inputId)) {
+      throw new Error("Another upload to this browser input is already in progress.");
+    }
+    const reservedNewInputs = [...reservations.values()].filter((value) => !roots?.has(value.inputId)).length;
+    const additionalInput = roots?.has(reservation.inputId) ? 0 : 1;
+    if ((roots?.size ?? 0) + reservedNewInputs + additionalInput > MAX_BROWSER_UPLOAD_INPUTS_PER_TAB) {
       throw new Error(`A browser tab can retain files for up to ${MAX_BROWSER_UPLOAD_INPUTS_PER_TAB} inputs.`);
     }
     const retainedBytes = [...(roots?.values() ?? [])].reduce((total, root) => total + root.bytes, 0);
-    const reservedBytes = [...reservations.values()].reduce((total, value) => total + value.bytes, 0);
-    if (retainedBytes + reservedBytes + reservation.bytes > MAX_BROWSER_UPLOAD_BYTES_PER_TAB) {
+    const reservedDeltaBytes = [...reservations.values()].reduce(
+      (total, value) => total + Math.max(0, value.bytes - (roots?.get(value.inputId)?.bytes ?? 0)),
+      0,
+    );
+    const reservationDeltaBytes = reservation.bytes - (roots?.get(reservation.inputId)?.bytes ?? 0);
+    if (retainedBytes + reservedDeltaBytes + reservationDeltaBytes > MAX_BROWSER_UPLOAD_BYTES_PER_TAB) {
       throw new Error(`A browser tab can retain up to ${MAX_BROWSER_UPLOAD_BYTES_PER_TAB} upload bytes.`);
     }
     const totalRetainedBytes = [...this.#browserUploadRoots.values()].reduce(
       (total, values) => total + [...values.values()].reduce((sum, value) => sum + value.bytes, 0),
       0,
     );
-    const totalReservedBytes = [...this.#browserUploadReservations.values()].reduce(
-      (total, values) => total + [...values.values()].reduce((sum, value) => sum + value.bytes, 0),
+    const totalReservedDeltaBytes = [...this.#browserUploadReservations].reduce(
+      (total, [reservedTabId, values]) =>
+        total +
+        [...values.values()].reduce(
+          (sum, value) =>
+            sum +
+            Math.max(0, value.bytes - (this.#browserUploadRoots.get(reservedTabId)?.get(value.inputId)?.bytes ?? 0)),
+          0,
+        ),
       0,
     );
-    if (totalRetainedBytes + totalReservedBytes + reservation.bytes > MAX_BROWSER_UPLOAD_BYTES_TOTAL) {
+    if (totalRetainedBytes + totalReservedDeltaBytes + reservationDeltaBytes > MAX_BROWSER_UPLOAD_BYTES_TOTAL) {
       throw new Error(`Browser uploads can retain up to ${MAX_BROWSER_UPLOAD_BYTES_TOTAL} bytes in total.`);
     }
     reservations.set(id, reservation);
@@ -3152,10 +3190,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (roots.size === 0) this.#browserUploadRoots.delete(tabId);
     }
     const reservations = this.#browserUploadReservations.get(tabId);
-    this.#browserUploadReservations.delete(tabId);
-    for (const reservation of reservations?.values() ?? []) {
-      reservation.invalidated = true;
-      if (reservation.root) void rm(reservation.root, { recursive: true, force: true }).catch(() => undefined);
+    if (reservations) {
+      for (const [id, reservation] of reservations) {
+        if (documentIds.has(reservation.documentId)) continue;
+        reservations.delete(id);
+        reservation.invalidated = true;
+        if (reservation.root) void rm(reservation.root, { recursive: true, force: true }).catch(() => undefined);
+      }
+      if (reservations.size === 0) this.#browserUploadReservations.delete(tabId);
     }
   }
 

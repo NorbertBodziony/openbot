@@ -29,7 +29,7 @@ import {
   type WebContents,
   WebContentsView,
 } from "electron";
-import { BrowserCdpEngine, type SnapshotReadResult } from "./browser-cdp";
+import { BrowserCdpEngine, type BrowserUploadAssignment, type SnapshotReadResult } from "./browser-cdp";
 import { BrowserDiagnostics } from "./browser-diagnostics";
 import { embeddedBrowserUserAgent, embeddedBrowserUserAgentForUrl } from "./browser-identity";
 import { BrowserRecorder } from "./browser-recorder";
@@ -46,6 +46,7 @@ interface BrowserHostEvents {
 }
 
 interface BrowserDynamicToolHooks {
+  onUploadTargetResolved?: (inputId: string, documentId: string) => void;
   onUploadAssigned?: (inputId: string, documentId: string) => void;
   onUploadOperationStarted?: (completion: Promise<void>) => void;
 }
@@ -720,7 +721,9 @@ export class BrowserHost {
               "upload-files",
               target,
               async (tab) => {
-                const assignment = await tab.engine.uploadFiles(target, paths);
+                const assignment = await tab.engine.uploadFiles(target, paths, (resolved) =>
+                  hooks.onUploadTargetResolved?.(resolved.inputId, resolved.documentId),
+                );
                 hooks.onUploadAssigned?.(assignment.inputId, assignment.documentId);
               },
               readTimeout(args),
@@ -813,6 +816,14 @@ export class BrowserHost {
     } finally {
       this.#finishControl(params);
     }
+  }
+
+  async resolveUploadTarget(params: DynamicToolCallParams): Promise<BrowserUploadAssignment> {
+    const args = isRecord(params.arguments) ? params.arguments : {};
+    const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+    this.#requireToolTab(params, tabId);
+    const target = parseTarget(args.target);
+    return this.#enqueue(tabId, (tab) => tab.engine.resolveUploadTarget(target));
   }
 
   destroy(): Promise<void> {
