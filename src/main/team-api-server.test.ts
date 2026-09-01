@@ -112,6 +112,7 @@ function createAgents(overrides: Partial<TestAgents> = {}, events = new EventEmi
     steerQueuedMessage: unimplemented,
     updateQueuedMessage: unimplemented,
     reorderQueue: unimplemented,
+    stopAgent: unimplemented,
     interrupt: unimplemented,
     respondToPrompt: unimplemented,
     respondToApproval: unimplemented,
@@ -165,7 +166,12 @@ describe("TeamApiServer compatibility", () => {
       await expect(compatibility.json()).resolves.toMatchObject({
         appVersion: "0.4.0",
         protocol: { minimum: 1, maximum: 3 },
-        capabilities: expect.arrayContaining(["browser-control", "remote-desktop"]),
+        capabilities: expect.arrayContaining([
+          "browser-control",
+          "remote-desktop",
+          "agent-force-stop",
+          "agent-duplication",
+        ]),
       });
 
       const missing = await fetch(`${base}/v1/identity`);
@@ -182,6 +188,62 @@ describe("TeamApiServer compatibility", () => {
         headers: { [TEAM_PROTOCOL_VERSION_HEADER]: "1", [TEAM_APP_VERSION_HEADER]: "0.3.9" },
       });
       expect(compatible.status).toBe(200);
+    } finally {
+      await api.stop();
+    }
+  });
+
+  it("dispatches force-stop for protocol v2 and newer", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-force-stop-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const member = await store.login("owner", "correct horse battery");
+    const stopAgent = vi.fn(async () => undefined);
+    const api = new TeamApiServer({
+      appVersion: "0.5.0",
+      store,
+      agents: createAgents({ stopAgent }),
+      mailbox: createMailbox(),
+      browser: createBrowser(),
+    });
+    const port = await api.start();
+    const url = `http://127.0.0.1:${port}/v1/agents/chief/stop`;
+    const headers = (protocol: string) => ({
+      Authorization: `Bearer ${member.sessionToken}`,
+      [TEAM_PROTOCOL_VERSION_HEADER]: protocol,
+      [TEAM_APP_VERSION_HEADER]: "0.5.0",
+    });
+
+    try {
+      const v1 = await fetch(url, { method: "POST", headers: headers("1") });
+      expect(v1.status).toBe(404);
+      expect(stopAgent).not.toHaveBeenCalled();
+
+      const v2 = await fetch(url, {
+        method: "POST",
+        headers: { ...headers("2"), "Content-Type": "application/json" },
+        body: "{}",
+      });
+      expect(v2.status).toBe(204);
+      expect(stopAgent).toHaveBeenCalledWith("chief");
+
+      const v3 = await fetch(url, {
+        method: "POST",
+        headers: { ...headers("3"), "Content-Type": "application/json" },
+        body: "{}",
+      });
+      expect(v3.status).toBe(204);
+      expect(stopAgent).toHaveBeenCalledTimes(2);
+
+      const invalidV2 = await fetch(url, {
+        method: "POST",
+        headers: { ...headers("2"), "Content-Type": "application/json" },
+        body: JSON.stringify({ unexpected: true }),
+      });
+      expect(invalidV2.status).toBe(400);
+      expect(stopAgent).toHaveBeenCalledTimes(2);
     } finally {
       await api.stop();
     }

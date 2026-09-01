@@ -5949,6 +5949,13 @@
   padding: 0 12px 15px;
 }
 
+.composer-stop-row {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  padding: 0 22px 6px;
+}
+
 .team-typing-dots {
   display: flex;
   align-items: center;
@@ -6133,6 +6140,17 @@
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.composer-stop-button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+
+.composer-stop-button svg {
+  width: 16px;
+  height: 16px;
 }
 
 .voice-model-progress {

@@ -114,7 +114,12 @@ function isTeamProtocolV2NoBodyRoute(method: string, path: string): boolean {
       pathname,
     );
   }
-  if (method === "POST" && /^\/v1\/agents\/[^/]+\/routines\/[^/]+\/test$/u.test(pathname)) return true;
+  if (
+    method === "POST" &&
+    (/^\/v1\/agents\/[^/]+\/routines\/[^/]+\/test$/u.test(pathname) || /^\/v1\/agents\/[^/]+\/stop$/u.test(pathname))
+  ) {
+    return true;
+  }
   if (method !== "DELETE") return false;
   return (
     /^\/v1\/attachments\/[^/]+$/u.test(pathname) ||

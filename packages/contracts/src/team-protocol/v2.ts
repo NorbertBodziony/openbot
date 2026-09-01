@@ -1,6 +1,10 @@
 import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } from "../runtime-values";
+import { TEAM_PROTOCOL_V1_CAPABILITIES } from "./v1";
 
 export const TEAM_PROTOCOL_V2 = 2 as const;
+export const TEAM_PROTOCOL_V2_CAPABILITIES = [...TEAM_PROTOCOL_V1_CAPABILITIES, "agent-force-stop"] as const;
+export type TeamProtocolV2Capability = (typeof TEAM_PROTOCOL_V2_CAPABILITIES)[number];
+export type TeamProtocolCapability = TeamProtocolV2Capability;
 export const TEAM_PROTOCOL_V2_CHANNELS = {
   rpc: "openbot-team-v2-rpc",
   events: "openbot-team-v2-events",

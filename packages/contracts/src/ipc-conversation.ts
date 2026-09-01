@@ -985,6 +985,10 @@ export interface InterruptTurnInput {
   turnId: string;
 }
 
+export interface StopAgentInput {
+  botId: string;
+}
+
 export interface RespondToPromptInput {
   requestId: string | number;
   answers: Record<string, string[]>;

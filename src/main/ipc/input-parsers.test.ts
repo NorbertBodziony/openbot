@@ -27,6 +27,7 @@ import {
   parseSendMessage,
   parseSidebarLayoutAction,
   parseSteerQueuedMessage,
+  parseStopAgent,
   parseUpdateBot,
   parseUpdateBotMemory,
   parseUpdateQueuedMessage,
@@ -290,6 +291,7 @@ describe("agent IPC input parsing", () => {
       botId: "bot-1",
       turnId: "turn-1",
     });
+    expect(parseStopAgent({ botId: "bot-1" })).toEqual({ botId: "bot-1" });
     expect(parseAcknowledgeFailedTurn({ botId: "bot-1", turnId: "turn-1" })).toEqual({
       botId: "bot-1",
       turnId: "turn-1",
@@ -454,6 +456,7 @@ describe("agent IPC input parsing", () => {
       "Duplicate delivery ids.",
     );
     expect(() => parseInterrupt(null)).toThrowError("Invalid interrupt request.");
+    expect(() => parseStopAgent(null)).toThrowError("Invalid stop request.");
     expect(() => parseMarkConversationRead({ botId: "bot-1", throughMessageId: 1 })).toThrowError(
       "Invalid conversation read boundary.",
     );

@@ -156,7 +156,7 @@ const EMPTY_TEAM_PRESENCE: TeamPresenceSnapshot = {
 };
 
 function serverSupportsCapability(server: ServerSummary | undefined, capability: TeamProtocolV3Capability): boolean {
-  if (capability === "agent-duplication" && server?.kind === "remote") {
+  if ((capability === "agent-force-stop" || capability === "agent-duplication") && server?.kind === "remote") {
     return server.compatibility?.capabilities.includes(capability) === true;
   }
   return server?.kind !== "remote" || !server.compatibility || server.compatibility.capabilities.includes(capability);
@@ -2686,23 +2686,25 @@ export function createAppController(props: AppProps = {}) {
       });
   }
 
-  function stopActiveTurn() {
+  async function stopActiveTurn(): Promise<void> {
     const bot = activeBot();
-    const turnId = bot ? activeTurns()[bot.id] : null;
-    if (!bot || !turnId) return;
+    if (!bot) return;
     const serverId = activeServerSidebarKey();
     const analytics = desktopAnalytics.scope();
-    void window.openbot.agent
-      .interrupt({ botId: bot.id, turnId })
-      .then(() => analytics.track("queue_action", { action: "interrupt", result: "succeeded" }))
-      .catch((error) => {
-        analytics.track("queue_action", {
-          action: "interrupt",
-          result: "failed",
-          failure_code: "interrupt_failed",
-        });
-        appendUiError(bot.id, error, "Stop failed", serverId);
+    try {
+      if (!activeServerSupportsCapability("agent-force-stop")) {
+        throw new Error("Update OpenBot on the host to stop this agent.");
+      }
+      await window.openbot.agent.stop({ botId: bot.id });
+      analytics.track("queue_action", { action: "stop", result: "succeeded" });
+    } catch (error) {
+      analytics.track("queue_action", {
+        action: "stop",
+        result: "failed",
+        failure_code: "stop_failed",
       });
+      appendUiError(bot.id, error, "Stop failed", serverId);
+    }
   }
 
   async function refreshAccountUsage(): Promise<AccountUsage> {

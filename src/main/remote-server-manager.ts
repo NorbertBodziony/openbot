@@ -85,10 +85,10 @@ import {
   TEAM_APP_VERSION_HEADER,
   TEAM_CAPABILITIES_HEADER,
   TEAM_PROTOCOL_V1,
-  TEAM_PROTOCOL_V1_CAPABILITIES,
   TEAM_PROTOCOL_V1_WEBSOCKET,
   TEAM_PROTOCOL_VERSION_HEADER,
   type TeamProtocolSupportV1,
+  type TeamProtocolV1JsonValue,
   teamProtocolUpdateDirection,
 } from "@openbot/contracts/team-protocol/v1";
 import {
@@ -96,7 +96,16 @@ import {
   decodeTeamProtocolV1CurrentHttpResponse,
   encodeTeamProtocolV1CurrentHttpRequest,
 } from "@openbot/contracts/team-protocol/v1-adapter";
-import { decodeTeamProtocolV2Json, type TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
+import {
+  decodeTeamProtocolV2Json,
+  TEAM_PROTOCOL_V2,
+  TEAM_PROTOCOL_V2_CAPABILITIES,
+  type TeamProtocolV2Json,
+} from "@openbot/contracts/team-protocol/v2";
+import {
+  decodeTeamProtocolV2CurrentHttpResponse,
+  encodeTeamProtocolV2CurrentHttpRequest,
+} from "@openbot/contracts/team-protocol/v2-adapter";
 import {
   TEAM_PROTOCOL_V3,
   TEAM_PROTOCOL_V3_CAPABILITIES,
@@ -191,6 +200,7 @@ const REMOTE_EVENT_SNAPSHOT_PROTOCOL = "openbot-events-v2";
 const LOCAL_TEAM_PROTOCOL = { minimum: TEAM_PROTOCOL_V1, maximum: TEAM_PROTOCOL_V3 } as const;
 
 type ResponseDecoder<T> = (value: unknown) => T;
+type TeamProtocolHttpValue = TeamProtocolV1JsonValue | TeamProtocolV2Json;
 
 class RemoteRequestError extends Error {
   readonly status: number;
@@ -1031,7 +1041,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       },
       body: Buffer.from(bytes),
     });
-    const value = decodeTeamProtocolV1CurrentHttpResponse("POST", url.pathname, response.status, await response.json());
+    const value = decodeCurrentHttpResponse(
+      this.#compatibility.get(server.id)?.negotiatedProtocol ?? TEAM_PROTOCOL_V1,
+      "POST",
+      url.pathname,
+      response.status,
+      await response.json(),
+    );
     return addRemotePreviewUrls(decodeDraftAttachment(value), server.id);
   }
 
@@ -1049,7 +1065,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       headers,
       body: image ? Buffer.from(image.bytes) : undefined,
     });
-    const value = decodeTeamProtocolV1CurrentHttpResponse(
+    const value = decodeCurrentHttpResponse(
+      this.#compatibility.get(server.id)?.negotiatedProtocol ?? TEAM_PROTOCOL_V1,
       image ? "PUT" : "DELETE",
       url.pathname,
       response.status,
@@ -1238,7 +1255,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       localProtocol: LOCAL_TEAM_PROTOCOL,
       hostProtocol: { minimum: 2, maximum: 2 },
       negotiatedProtocol: 2,
-      capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
+      capabilities: [...TEAM_PROTOCOL_V2_CAPABILITIES],
     };
   }
 
@@ -1359,7 +1376,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           throw new RemoteRequestError(response.status, `Remote server request failed (${response.status}).`);
         }
         try {
-          const value = decodeTeamProtocolV1CurrentHttpResponse(method, path, response.status, body);
+          const value = decodeCurrentHttpResponse(
+            compatibility.negotiatedProtocol ?? TEAM_PROTOCOL_V1,
+            method,
+            path,
+            response.status,
+            body,
+          );
           if (!isDynamicRecord(value) || !isString(value.error)) throw new Error("Invalid error envelope.");
           throw new RemoteRequestError(response.status, value.error, isString(value.code) ? value.code : null);
         } catch (error) {
@@ -2054,9 +2077,7 @@ async function requestJson<T>(
       body:
         options.body === undefined
           ? undefined
-          : options.protocol === TEAM_PROTOCOL_V3
-            ? encodeTeamProtocolV3CurrentHttpRequest(method, path, options.body)
-            : encodeTeamProtocolV1CurrentHttpRequest(method, path, options.body),
+          : encodeCurrentHttpRequest(options.protocol ?? TEAM_PROTOCOL_V1, method, path, options.body),
     },
     options.timeoutMs,
   );
@@ -2070,10 +2091,7 @@ async function requestJson<T>(
   }
   if (value !== undefined) {
     try {
-      value =
-        options.protocol === TEAM_PROTOCOL_V3
-          ? decodeTeamProtocolV3CurrentHttpResponse(method, path, response.status, value)
-          : decodeTeamProtocolV1CurrentHttpResponse(method, path, response.status, value);
+      value = decodeCurrentHttpResponse(options.protocol ?? TEAM_PROTOCOL_V1, method, path, response.status, value);
     } catch (error) {
       throw new RemoteProtocolError(
         "protocol_error",
@@ -2103,6 +2121,32 @@ async function requestJson<T>(
       },
     );
   }
+}
+
+function encodeCurrentHttpRequest(protocol: number, method: string, path: string, value: unknown): string {
+  if (protocol === TEAM_PROTOCOL_V3) {
+    return encodeTeamProtocolV3CurrentHttpRequest(method, path, value);
+  }
+  if (protocol === TEAM_PROTOCOL_V2) {
+    return JSON.stringify(encodeTeamProtocolV2CurrentHttpRequest(method, path, value));
+  }
+  return encodeTeamProtocolV1CurrentHttpRequest(method, path, value);
+}
+
+function decodeCurrentHttpResponse(
+  protocol: number,
+  method: string,
+  path: string,
+  status: number,
+  value: unknown,
+): TeamProtocolHttpValue {
+  if (protocol === TEAM_PROTOCOL_V3) {
+    return decodeTeamProtocolV3CurrentHttpResponse(method, path, status, value);
+  }
+  if (protocol === TEAM_PROTOCOL_V2) {
+    return decodeTeamProtocolV2CurrentHttpResponse(method, path, status, value);
+  }
+  return decodeTeamProtocolV1CurrentHttpResponse(method, path, status, value);
 }
 
 function decodeRecord(value: unknown, label: string): DynamicRecord {

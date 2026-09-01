@@ -113,6 +113,7 @@ import {
   parseSetAgentAvatar,
   parseSidebarLayoutAction,
   parseSteerQueuedMessage,
+  parseStopAgent,
   parseTestRoutine,
   parseUpdateBot,
   parseUpdateBotMemory,
@@ -1063,6 +1064,24 @@ function registerIpcHandlers(
           scoped.serverId,
           decodeVoid,
         );
+  });
+  handleTrusted(IPC_CHANNELS.agentStop, (input: unknown) => {
+    const scoped = parseAgentRequest(input);
+    const parsed = parseStopAgent(scoped.payload);
+    return scoped.serverId === "local"
+      ? service.stopAgent(parsed.botId)
+      : (() => {
+          const server = remoteServers.list().find((candidate) => candidate.id === scoped.serverId);
+          if (!server?.compatibility?.capabilities.includes("agent-force-stop")) {
+            throw new Error("Update OpenBot on the host to stop this agent.");
+          }
+          return remoteServers.request(
+            `/v1/agents/${encodeURIComponent(parsed.botId)}/stop`,
+            { method: "POST", body: {} },
+            scoped.serverId,
+            decodeVoid,
+          );
+        })();
   });
   handleTrusted(IPC_CHANNELS.agentRespondToPrompt, (input: unknown) => {
     const scoped = parseAgentRequest(input);

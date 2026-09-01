@@ -610,6 +610,7 @@ describe("OpenBot connected desktop shell", () => {
           steerQueuedMessage: vi.fn().mockResolvedValue(undefined),
           updateQueuedMessage: vi.fn().mockResolvedValue(undefined),
           reorderQueue: vi.fn().mockResolvedValue(undefined),
+          stop: vi.fn().mockResolvedValue(undefined),
           interrupt: vi.fn().mockResolvedValue(undefined),
           respondToPrompt: vi.fn().mockResolvedValue(undefined),
           respondToApproval: vi.fn().mockResolvedValue(undefined),
@@ -7701,6 +7702,130 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(window.openbot.agent.deleteBot).toHaveBeenCalledWith("sales-outbound"));
     await waitFor(() => expect(screen.queryByRole("button", { name: /Sales Outbound/ })).not.toBeInTheDocument());
+  });
+
+  it("stops queued work when conversation loading and the runtime are unavailable", async () => {
+    vi.mocked(window.openbot.agent.readConversationPage).mockRejectedValue(new Error("OpenBot is not signed in."));
+    vi.mocked(window.openbot.agent.listQueue).mockResolvedValue({
+      botId: "chief",
+      deliveries: [
+        queuedDelivery("running-delivery", "Stuck work", null, {
+          status: "running",
+          turnId: "turn-stuck",
+        }),
+        queuedDelivery("queued-delivery", "Later work", 1),
+      ],
+    });
+
+    render(() => <App />);
+    await confirmOnboardingModel();
+    const composer = await screen.findByRole("textbox", { name: "Message Chief" });
+    composer.textContent = "Keep this draft";
+    await fireEvent.input(composer);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Stop agent" }));
+
+    await waitFor(() => expect(window.openbot.agent.stop).toHaveBeenCalledWith({ botId: "chief" }));
+  });
+
+  it("keeps force-stop available across every pending agent input surface", async () => {
+    vi.mocked(window.openbot.agent.listQueue).mockResolvedValue({
+      botId: "chief",
+      deliveries: [
+        queuedDelivery("running-delivery", "Stuck work", null, {
+          status: "running",
+          turnId: "turn-stuck",
+        }),
+      ],
+    });
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+
+    emitAgentEvent?.({
+      type: "prompt",
+      requestId: "prompt-stop",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-stuck",
+      questions: [{ id: "scope", header: "Scope", question: "Which scope?", isSecret: false, options: null }],
+    });
+    await screen.findByRole("textbox", { name: "Custom answer for: Which scope?" });
+    expect(screen.getByRole("button", { name: "Stop agent" })).toBeVisible();
+    emitAgentEvent?.({
+      type: "agent-input-resolved",
+      kind: "prompt",
+      requestId: "prompt-stop",
+      botId: "chief",
+    });
+
+    emitAgentEvent?.({
+      type: "approval",
+      approval: {
+        requestId: "approval-stop",
+        botId: "chief",
+        threadId: "thread-chief",
+        turnId: "turn-stuck",
+        kind: "command",
+        command: "bun test",
+        cwd: null,
+        reason: null,
+        grantRoot: null,
+        permissions: null,
+      },
+    });
+    await screen.findByText("Run this command?");
+    expect(screen.getByRole("button", { name: "Stop agent" })).toBeVisible();
+    emitAgentEvent?.({
+      type: "agent-input-resolved",
+      kind: "approval",
+      requestId: "approval-stop",
+      botId: "chief",
+    });
+
+    emitAgentEvent?.({
+      type: "browser-takeover-requested",
+      request: {
+        requestId: "takeover-stop",
+        botId: "chief",
+        threadId: "thread-chief",
+        turnId: "turn-stuck",
+        tabId: "missing-tab",
+      },
+    });
+    await screen.findByRole("region", { name: "Browser takeover" });
+    await fireEvent.click(screen.getByRole("button", { name: "Stop agent" }));
+
+    await waitFor(() => expect(window.openbot.agent.stop).toHaveBeenCalledWith({ botId: "chief" }));
+  });
+
+  it("disables force-stop on a remote host that does not advertise the capability", async () => {
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([
+      testServer("local", false),
+      {
+        ...testServer("remote-1", true),
+        compatibility: {
+          localAppVersion: "0.5.0",
+          hostAppVersion: "0.4.0",
+          localProtocol: { minimum: 1, maximum: 2 },
+          hostProtocol: { minimum: 1, maximum: 1 },
+          negotiatedProtocol: 1,
+          capabilities: [],
+        },
+      },
+    ]);
+    vi.mocked(window.openbot.agent.listQueue).mockResolvedValue({
+      botId: "chief",
+      deliveries: [queuedDelivery("running-delivery", "Stuck work", null, { status: "running", turnId: "turn-stuck" })],
+    });
+
+    render(() => <App />);
+    const stopButton = await screen.findByRole("button", { name: "Stop agent" });
+    expect(stopButton).toBeDisabled();
+    expect(stopButton).toHaveAttribute("title", "Update OpenBot on the host to stop this agent.");
+    await fireEvent.click(stopButton);
+    expect(window.openbot.agent.stop).not.toHaveBeenCalled();
+    expect(window.openbot.agent.interrupt).not.toHaveBeenCalled();
   });
 
   it("shows the server rail and opens the join flow", async () => {

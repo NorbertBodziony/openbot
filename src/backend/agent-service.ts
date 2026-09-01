@@ -146,6 +146,8 @@ export interface ResolvedSharedFile {
 interface AgentBrowserHost {
   onChanged(listener: (tabs: BrowserTab[], activeTabId: string | null) => void): () => void;
   onControlChanged(listener: (state: BrowserControlState) => void): () => void;
+  getControlState(): BrowserControlState;
+  cancelTurn(threadId: string, turnId: string): void;
   clearControls(): void;
   endControl(threadId: string, turnId: string): void;
   listTabs(): BrowserTab[];
@@ -208,7 +210,30 @@ interface OpenBotToolResponse {
   contentItems: Array<{ type: "inputText"; text: string }>;
 }
 
+interface InFlightTurnCommands {
+  botId: string;
+  commands: Set<Promise<unknown>>;
+  browserCommands: Set<Promise<unknown>>;
+}
+
+interface PendingTurnStart {
+  botId: string;
+  deliveryId: string;
+  threadId: string;
+  client: AgentClient;
+  turnId: string | null;
+  turnIdPromise: Promise<string>;
+  resolveTurnId: (turnId: string) => void;
+}
+
+class StoppedTurnError extends Error {
+  constructor() {
+    super("The turn was stopped.");
+  }
+}
+
 export interface RoutineMutationOptions {
+  beforeCommit?: () => void;
   recordConversationEvent?: boolean;
   turnId?: string;
 }
@@ -355,8 +380,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #itemTurns = new Map<string, string>();
   readonly #imageGenerationOperations = new Map<string, ImageGenerationOperation>();
   readonly #interruptedTurns = new Set<string>();
+  readonly #ignoredTurns = new Set<string>();
+  readonly #stoppingTurns = new Set<string>();
+  readonly #deferredStoppingNotifications = new Map<
+    string,
+    Array<{ notification: AppServerNotification; source: AgentClient }>
+  >();
+  readonly #inFlightTurnCommands = new Map<string, InFlightTurnCommands>();
+  readonly #pendingTurnStarts = new Map<string, PendingTurnStart>();
   readonly #turnAssociations = new Map<string, Promise<void>>();
   readonly #drainingBots = new Set<string>();
+  readonly #stoppingBots = new Map<string, Promise<void>>();
   readonly #scheduledDrains = new Set<string>();
   readonly #drainTasks = new Map<string, Promise<void>>();
   readonly #lastConversationSignatures = new Map<string, string>();
@@ -381,6 +415,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #accounts = new Map<AgentProvider, AccountReadResult["account"]>();
   readonly #providerStarts = new Map<AgentProvider, Promise<void>>();
   readonly #providerConnectionCommands = new Map<AgentProvider, Promise<void>>();
+  readonly #providerMaintenance = new Set<AgentProvider>();
   #providerRefresh: Promise<AgentStatus> | null = null;
   #codexLogin: PendingCodexLogin | null = null;
   #claudeLogin: PendingClaudeLogin | null = null;
@@ -561,6 +596,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   createRoutine(input: CreateRoutineInput, options: RoutineMutationOptions = {}): Routine {
     this.#requireKnownBot(input.botId);
+    options.beforeCommit?.();
     const routine =
       options.recordConversationEvent === false
         ? this.#routines.create(input)
@@ -578,6 +614,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   updateRoutine(input: UpdateRoutineInput, options: RoutineMutationOptions = {}): Routine {
     this.#requireKnownBot(input.botId);
+    options.beforeCommit?.();
     const routine =
       options.recordConversationEvent === false
         ? this.#routines.update(input)
@@ -597,6 +634,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#requireKnownBot(input.botId);
     const routine = this.#routines.get(input.botId, input.routineId);
     if (!routine) throw new Error("This routine no longer exists.");
+    options.beforeCommit?.();
     const activeRuns = this.#routines.activeRuns(input.botId, input.routineId);
     if (options.recordConversationEvent === false) {
       const database = this.#store.database;
@@ -641,12 +679,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#armRoutineTimer();
   }
 
-  async testRoutine(input: TestRoutineInput): Promise<RoutineRun> {
+  async testRoutine(input: TestRoutineInput, beforeCommit: () => void = () => undefined): Promise<RoutineRun> {
     this.#requireKnownBot(input.botId);
     const routine = this.#routines.get(input.botId, input.routineId);
     if (!routine) throw new Error("This routine no longer exists.");
+    beforeCommit();
     const run = this.#routines.createRun(routine, null, "manual", new Date().toISOString());
-    await this.#enqueueRoutineRun(run);
+    await this.#enqueueRoutineRun(run, beforeCommit);
     this.#routineStateChanged(input.botId);
     return this.#routines.listRuns(input.botId, input.routineId, 1)[0] ?? run;
   }
@@ -906,7 +945,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const hasPendingWork = this.#mailbox
       .listQueue(botId)
       .deliveries.some((delivery) => ["queued", "starting", "running"].includes(delivery.status));
-    if (hasPendingWork || this.#snapshots.get(botId)?.activeTurnId) {
+    if (
+      this.#stoppingBots.has(botId) ||
+      this.#pendingTurnStarts.has(botId) ||
+      this.#hasInFlightTurnCommand(botId) ||
+      hasPendingWork ||
+      this.#snapshots.get(botId)?.activeTurnId
+    ) {
       throw new Error("Stop the agent and cancel its queued messages before deleting it.");
     }
 
@@ -1155,6 +1200,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await Promise.allSettled([...this.#responseAttachmentCommands.values()]);
     this.#responseAttachmentCommands.clear();
     this.#interruptedTurns.clear();
+    this.#ignoredTurns.clear();
+    this.#stoppingTurns.clear();
+    this.#deferredStoppingNotifications.clear();
+    this.#providerMaintenance.clear();
+    this.#pendingTurnStarts.clear();
     this.#setStatus({ phase: "stopped", message: null });
   }
 
@@ -1346,6 +1396,138 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!session) return;
     this.#interruptImageGenerations(botId, session.externalSessionId, turnId);
     await client.request("turn/interrupt", { threadId: session.externalSessionId, turnId }, decodeRecordResponse);
+  }
+
+  stopAgent(botId: string): Promise<void> {
+    const existing = this.#stoppingBots.get(botId);
+    if (existing) return existing;
+    const stopping = this.#stopAgent(botId).finally(() => {
+      if (this.#stoppingBots.get(botId) !== stopping) return;
+      this.#stoppingBots.delete(botId);
+      if (this.#mailbox.nextQueued(botId)) this.#scheduleDrain(botId);
+    });
+    this.#stoppingBots.set(botId, stopping);
+    return stopping;
+  }
+
+  async #stopAgent(botId: string): Promise<void> {
+    const bot = this.#store.list().find((candidate) => candidate.id === botId);
+    if (!bot) throw new Error(`Unknown bot: ${botId}`);
+    const snapshot = this.#ensureSnapshot(bot.id, bot.threadId);
+    const session = this.#store.activeProviderSession(botId);
+    const activeTurnId = snapshot.activeTurnId;
+    const pendingDeliveries = this.#mailbox
+      .listQueue(botId)
+      .deliveries.filter((delivery) => ["queued", "starting", "running"].includes(delivery.status));
+    const activeDeliveries = pendingDeliveries.filter(
+      (delivery) => delivery.status === "starting" || delivery.status === "running",
+    );
+    const turnIds = new Set(
+      activeDeliveries.map((delivery) => delivery.turnId).filter((turnId): turnId is string => Boolean(turnId)),
+    );
+    if (activeTurnId) turnIds.add(activeTurnId);
+
+    const pendingStart = this.#pendingTurnStarts.get(botId);
+    const client = this.#clientForBot(bot) ?? pendingStart?.client ?? null;
+
+    const stoppingTurnKeys = new Set(
+      session ? [...turnIds].map((turnId) => `${session.externalSessionId}:${turnId}`) : [],
+    );
+    for (const key of stoppingTurnKeys) this.#stoppingTurns.add(key);
+    let stopped = false;
+    try {
+      try {
+        let restartClient = Boolean(client && activeDeliveries.length > 0 && !session);
+        if (pendingStart && client) {
+          const pendingTurnId = await this.#waitForPendingTurnStart(pendingStart, 2_000);
+          if (pendingTurnId) {
+            turnIds.add(pendingTurnId);
+            const turnKey = `${pendingStart.threadId}:${pendingTurnId}`;
+            stoppingTurnKeys.add(turnKey);
+            this.#stoppingTurns.add(turnKey);
+          } else {
+            restartClient = true;
+          }
+        }
+        if (!restartClient && session && client) {
+          try {
+            for (const turnId of turnIds) {
+              await client.request(
+                "turn/interrupt",
+                { threadId: session.externalSessionId, turnId },
+                decodeRecordResponse,
+                2_000,
+              );
+            }
+          } catch {
+            restartClient = true;
+          }
+        }
+        if (restartClient && client) {
+          await this.#restartProviderClient(client, botId, async () => {
+            await this.#mailbox.stopPending(
+              botId,
+              "Stopped by the user.",
+              pendingDeliveries.map((delivery) => delivery.id),
+            );
+          });
+        } else {
+          await this.#mailbox.stopPending(
+            botId,
+            "Stopped by the user.",
+            pendingDeliveries.map((delivery) => delivery.id),
+          );
+        }
+      } catch (error) {
+        this.#emitError("force_stop_interrupt_failed", error, botId);
+        throw error;
+      }
+
+      if (pendingStart) this.#clearPendingTurnStart(pendingStart);
+
+      if (session) {
+        for (const turnId of turnIds) {
+          this.#finishMemoryMutations(turnId, "interrupted");
+          this.#ignoredTurns.add(`${session.externalSessionId}:${turnId}`);
+          this.#interruptImageGenerations(botId, session.externalSessionId, turnId);
+          this.#clearPendingRequestsForTurn(session.externalSessionId, turnId);
+          this.#browser.cancelTurn(bot.threadId ?? session.externalSessionId, turnId);
+          this.#browser.endControl(bot.threadId ?? session.externalSessionId, turnId);
+        }
+      }
+      await this.#waitForBrowserTurnCommands(stoppingTurnKeys);
+      stopped = true;
+    } finally {
+      for (const key of stoppingTurnKeys) this.#stoppingTurns.delete(key);
+      for (const key of stoppingTurnKeys) {
+        const deferred = this.#deferredStoppingNotifications.get(key) ?? [];
+        this.#deferredStoppingNotifications.delete(key);
+        if (!stopped) {
+          for (const entry of deferred) this.#handleNotification(entry.notification, entry.source);
+        }
+      }
+    }
+
+    snapshot.activeTurnId = null;
+    for (const message of snapshot.messages) {
+      if (message.status !== "streaming") continue;
+      if (turnIds.size > 0 && (!message.turnId || !turnIds.has(message.turnId))) continue;
+      message.status = "interrupted";
+      markIncompleteImageGeneration(message, "interrupted");
+    }
+    this.#syncMailboxMessages(snapshot);
+    this.#emitQueue(botId);
+    this.#emitConversation(snapshot, "agent.stopped", { turnIds: [...turnIds] });
+    for (const turnId of turnIds) {
+      this.#emit({
+        type: "turn-completed",
+        botId,
+        threadId: bot.threadId ?? session?.externalSessionId ?? "",
+        turnId,
+        status: "interrupted",
+        origin: "unknown",
+      });
+    }
   }
 
   async interruptAll(): Promise<void> {
@@ -1631,7 +1813,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           const primaryAccount = this.#accounts.get(primaryProvider);
           const codexClient = this.#clients.get("codex");
           const computerUse = codexClient ? await this.#probeComputerUse(codexClient) : "unavailable";
-          this.#loadedThreads.clear();
+          this.#clearLoadedThreads(provider);
           this.#setStatus({
             phase: "ready",
             cliVersion: this.#cli.get(primaryProvider)?.version ?? null,
@@ -1658,7 +1840,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
         if (previousClient && previousClient !== client) await previousClient.stop().catch(() => undefined);
         if (provider === "codex") void this.#refreshUsage(client).catch(() => undefined);
-        await this.#reconcileUnresolvedDeliveries();
+        await this.#reconcileUnresolvedDeliveries([provider]);
         void this.#backfillProviderHistory();
         for (const bot of this.#store.list()) this.#scheduleDrain(bot.id);
       });
@@ -2121,7 +2303,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         });
       }
       if (codexClient) void this.#refreshUsage(codexClient).catch(() => undefined);
-      await this.#reconcileUnresolvedDeliveries();
+      await this.#reconcileUnresolvedDeliveries(requestedProviders);
       void this.#backfillProviderHistory();
       for (const bot of this.#store.list()) this.#scheduleDrain(bot.id);
     };
@@ -2147,12 +2329,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.#clients.get(client.provider) !== client || this.#stopping) return;
     this.#clients.delete(client.provider);
     void client.stop().catch(() => undefined);
-    this.#loadedThreads.clear();
-    this.#clearCompactionRuntime();
+    this.#clearPendingTurnStartsForClient(client);
+    this.#clearLoadedThreads(client.provider);
+    this.#clearCompactionRuntime(client.provider);
     this.#clearPendingPrompts(client);
-    this.#clearPendingBrowserTakeovers();
+    this.#clearPendingBrowserTakeovers(client.provider);
     this.#pendingApprovals.clear();
-    this.#browser.clearControls();
+    this.#clearBrowserControls(client.provider);
     this.#emitError(`${client.provider}_exited`, error);
     const providers = updateProviderStatus(this.#status.providers, client.provider, {
       state: "error",
@@ -2201,6 +2384,67 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.#restartTimer = null;
       void this.#connect("restarting", [client.provider]);
     }, delayMs);
+  }
+
+  async #restartProviderClient(
+    client: AgentClient,
+    excludedBotId: string,
+    afterTeardown: () => Promise<void>,
+  ): Promise<void> {
+    await this.#runProviderConnectionCommand(client.provider, async () => {
+      this.#providerMaintenance.add(client.provider);
+      try {
+        if (this.#providerHasOtherActiveWork(client.provider, excludedBotId)) {
+          throw new Error(
+            `${providerLabel(client.provider)} is running another agent. Wait for that work to finish, then try stopping this agent again.`,
+          );
+        }
+        await client.stop();
+        if (this.#clients.get(client.provider) === client) this.#clients.delete(client.provider);
+        this.#clearLoadedThreads(client.provider);
+        this.#clearCompactionRuntime(client.provider);
+        this.#clearPendingPrompts(client);
+        this.#clearPendingBrowserTakeovers(client.provider);
+        for (const [requestId, pending] of this.#pendingApprovals) {
+          if (pending.client === client) this.#pendingApprovals.delete(requestId);
+        }
+        this.#clearBrowserControls(client.provider);
+        this.#clearPendingTurnStartsForClient(client);
+        try {
+          await afterTeardown();
+        } finally {
+          await this.#connect("restarting", [client.provider]);
+        }
+      } finally {
+        this.#providerMaintenance.delete(client.provider);
+        for (const bot of this.#store.list()) {
+          if (providerForBot(bot) === client.provider) this.#scheduleDrain(bot.id);
+        }
+      }
+      return this.getStatus();
+    });
+  }
+
+  #providerHasOtherActiveWork(provider: AgentProvider, excludedBotId: string): boolean {
+    for (const bot of this.#store.list()) {
+      if (bot.id === excludedBotId || providerForBot(bot) !== provider) continue;
+      const hasActiveDelivery = this.#mailbox
+        .listQueue(bot.id)
+        .deliveries.some((delivery) => delivery.status === "starting" || delivery.status === "running");
+      if (
+        hasActiveDelivery ||
+        this.#snapshots.get(bot.id)?.activeTurnId ||
+        this.#pendingTurnStarts.has(bot.id) ||
+        this.#hasInFlightTurnCommand(bot.id) ||
+        this.#compactingBots.has(bot.id) ||
+        [...this.#pendingPrompts.values()].some((pending) => pending.botId === bot.id) ||
+        [...this.#pendingApprovals.values()].some((pending) => pending.approval.botId === bot.id) ||
+        [...this.#pendingBrowserTakeovers.values()].some((pending) => pending.request.botId === bot.id)
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   async #ensureThread(bot: BotSummary, client: AgentClient): Promise<string> {
@@ -2288,6 +2532,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async #handleServerRequest(client: AgentClient, request: AppServerRequest): Promise<void> {
     try {
+      const threadId = getString(request.params, "threadId");
+      const turnId = getString(request.params, "turnId");
+      const turnKey = threadId && turnId ? `${threadId}:${turnId}` : null;
+      const requestBotId = this.#threadToBot.get(threadId ?? getString(request.params, "conversationId") ?? "");
+      if ((requestBotId && this.#stoppingBots.has(requestBotId)) || (turnKey && this.#turnIsStopped(turnKey))) {
+        client.respondError(request.id, { code: -32000, message: "The turn was stopped." });
+        return;
+      }
       switch (request.method) {
         case "item/commandExecution/requestApproval":
           this.#surfaceApproval(client, request, "command");
@@ -2304,20 +2556,35 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           return;
         case "item/tool/call": {
           if (!isDynamicToolCall(request.params)) throw new Error("Invalid dynamic tool request.");
+          const botId = this.#threadToBot.get(request.params.threadId);
+          if (!botId) throw new Error("The sending OpenBot agent is unknown.");
           if (request.params.namespace === OPENBOT_BROWSER_NAMESPACE) {
-            const botId = this.#threadToBot.get(request.params.threadId);
-            if (!botId) throw new Error("The browsing OpenBot agent is unknown.");
             if (request.params.tool === "request_takeover") {
-              client.respond(request.id, await this.#surfaceBrowserTakeover(request));
+              client.respond(
+                request.id,
+                await this.#trackTurnCommand(
+                  botId,
+                  request.params.threadId,
+                  request.params.turnId,
+                  this.#surfaceBrowserTakeover(request),
+                  true,
+                ),
+              );
               return;
             }
             client.respond(
               request.id,
-              await this.#browser.handleDynamicTool({
-                ...request.params,
-                threadId: this.#publicThreadId(botId, request.params.threadId),
-                ownerBotId: botId,
-              }),
+              await this.#trackTurnCommand(
+                botId,
+                request.params.threadId,
+                request.params.turnId,
+                this.#browser.handleDynamicTool({
+                  ...request.params,
+                  threadId: this.#publicThreadId(botId, request.params.threadId),
+                  ownerBotId: botId,
+                }),
+                true,
+              ),
             );
             return;
           }
@@ -2326,7 +2593,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               this.#surfaceDynamicPrompt(client, request);
               return;
             }
-            client.respond(request.id, await this.#handleOpenBotTool(request.params));
+            client.respond(
+              request.id,
+              await this.#trackTurnCommand(
+                botId,
+                request.params.threadId,
+                request.params.turnId,
+                this.#handleOpenBotTool(request.params),
+              ),
+            );
             return;
           }
           throw new Error(`Unsupported dynamic tool namespace: ${request.params.namespace}`);
@@ -2347,6 +2622,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           });
       }
     } catch (error) {
+      if (error instanceof StoppedTurnError) {
+        client.respondError(request.id, { code: -32000, message: "The turn was stopped." });
+        return;
+      }
       if (client.running) {
         try {
           client.respondError(request.id, { code: -32603, message: String(error) });
@@ -2355,6 +2634,69 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
       }
       this.#emitError("server_request_failed", error);
+    }
+  }
+
+  #turnIsStopped(turnKey: string): boolean {
+    return this.#stoppingTurns.has(turnKey) || this.#ignoredTurns.has(turnKey);
+  }
+
+  #assertTurnActive(threadId: string, turnId: string): void {
+    if (this.#turnIsStopped(`${threadId}:${turnId}`)) throw new StoppedTurnError();
+  }
+
+  async #trackTurnCommand<T>(
+    botId: string,
+    threadId: string,
+    turnId: string,
+    command: Promise<T>,
+    browser = false,
+  ): Promise<T> {
+    const turnKey = `${threadId}:${turnId}`;
+    const entry = this.#inFlightTurnCommands.get(turnKey) ?? {
+      botId,
+      commands: new Set<Promise<unknown>>(),
+      browserCommands: new Set<Promise<unknown>>(),
+    };
+    if (entry.botId !== botId) throw new Error("The turn belongs to a different OpenBot agent.");
+    let finishTracking: (() => void) | undefined;
+    const tracked = new Promise<void>((resolve) => {
+      finishTracking = resolve;
+    });
+    entry.commands.add(tracked);
+    if (browser) entry.browserCommands.add(tracked);
+    this.#inFlightTurnCommands.set(turnKey, entry);
+    try {
+      return await command;
+    } finally {
+      finishTracking?.();
+      entry.commands.delete(tracked);
+      entry.browserCommands.delete(tracked);
+      if (entry.commands.size === 0 && this.#inFlightTurnCommands.get(turnKey) === entry) {
+        this.#inFlightTurnCommands.delete(turnKey);
+      }
+    }
+  }
+
+  #hasInFlightTurnCommand(botId: string): boolean {
+    return [...this.#inFlightTurnCommands.values()].some((entry) => entry.botId === botId && entry.commands.size > 0);
+  }
+
+  async #waitForBrowserTurnCommands(turnKeys: ReadonlySet<string>): Promise<void> {
+    const commands = [...turnKeys].flatMap((turnKey) => [
+      ...(this.#inFlightTurnCommands.get(turnKey)?.browserCommands ?? []),
+    ]);
+    if (commands.length === 0) return;
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        Promise.all(commands),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, 1_000);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
@@ -2424,6 +2766,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (value !== undefined && !isString(value)) throw new Error(`${field} must be a string.`);
         if (value !== undefined) input[field] = value;
       }
+      this.#assertTurnActive(params.threadId, params.turnId);
       const updated = await this.updateBot(input);
       return {
         success: true,
@@ -2477,7 +2820,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           timezone,
           schedule: routineToolSchedule(args.schedule),
         },
-        { turnId: botId === senderBotId ? params.turnId : undefined },
+        {
+          beforeCommit: () => this.#assertTurnActive(params.threadId, params.turnId),
+          turnId: botId === senderBotId ? params.turnId : undefined,
+        },
       );
       return openBotToolResult(routine);
     }
@@ -2520,7 +2866,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       if (!hasUpdate) throw new Error("At least one routine update is required.");
       return openBotToolResult(
-        this.updateRoutine(input, { turnId: input.botId === senderBotId ? params.turnId : undefined }),
+        this.updateRoutine(input, {
+          beforeCommit: () => this.#assertTurnActive(params.threadId, params.turnId),
+          turnId: input.botId === senderBotId ? params.turnId : undefined,
+        }),
       );
     }
 
@@ -2533,7 +2882,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         INPUT_LIMITS.identifier,
         "routineId is required.",
       );
-      await this.deleteRoutine({ botId, routineId }, { turnId: botId === senderBotId ? params.turnId : undefined });
+      await this.deleteRoutine(
+        { botId, routineId },
+        {
+          beforeCommit: () => this.#assertTurnActive(params.threadId, params.turnId),
+          turnId: botId === senderBotId ? params.turnId : undefined,
+        },
+      );
       return openBotToolResult({ deleted: true, botId, routineId });
     }
 
@@ -2546,7 +2901,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         INPUT_LIMITS.identifier,
         "routineId is required.",
       );
-      return openBotToolResult(await this.testRoutine({ botId, routineId }));
+      return openBotToolResult(
+        await this.testRoutine({ botId, routineId }, () => this.#assertTurnActive(params.threadId, params.turnId)),
+      );
     }
 
     if (params.tool === "remember") {
@@ -2564,6 +2921,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       const current = memoryId ? this.#memories.get(senderBotId, memoryId) : null;
       if (memoryId && !current) throw new Error("This memory does not belong to the current agent.");
+      this.#assertTurnActive(params.threadId, params.turnId);
       this.#stageMemoryMutation(params.turnId, {
         callId: params.callId,
         type: "remember",
@@ -2597,6 +2955,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       const current = this.#memories.get(senderBotId, args.memoryId);
       if (!current) throw new Error("This memory does not belong to the current agent.");
+      this.#assertTurnActive(params.threadId, params.turnId);
       this.#stageMemoryMutation(params.turnId, {
         callId: params.callId,
         type: "forget",
@@ -2620,6 +2979,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         .findDeliveriesByTurn(senderBotId, params.turnId)
         .find((candidate) => candidate.delivery.sender.kind === "user");
       if (!delivery) throw new Error("Only the current user message can receive an agent reaction.");
+      this.#assertTurnActive(params.threadId, params.turnId);
       await this.#mailbox.setReaction(
         senderBotId,
         delivery.delivery.id,
@@ -2664,6 +3024,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       sourcePaths: paths,
       replyToMessageId: replyToMessageId ?? null,
       idempotencyKey: `${params.threadId}:${params.turnId}:${params.callId}`,
+      beforeCommit: () => this.#assertTurnActive(params.threadId, params.turnId),
     });
     for (const recipient of recipientValues) {
       this.#emitQueue(recipient);
@@ -2708,6 +3069,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       });
     } finally {
       await Promise.allSettled(sources.map((source) => source.handle.close()));
+    }
+    try {
+      this.#assertTurnActive(params.threadId, params.turnId);
+    } catch (error) {
+      await this.#mailbox.discardStagedGeneratedAttachments(attachments.map((attachment) => attachment.id));
+      throw error;
     }
     const message: ConversationSnapshot["messages"][number] = {
       id: messageId,
@@ -2852,9 +3219,67 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return this.#memoryEpochs.get(botId) ?? 0;
   }
 
+  #registerPendingTurnStart(
+    botId: string,
+    deliveryId: string,
+    threadId: string,
+    client: AgentClient,
+  ): PendingTurnStart {
+    if (this.#pendingTurnStarts.has(botId)) throw new Error("The agent already has a pending turn start.");
+    let resolveTurnId: (turnId: string) => void = () => undefined;
+    const turnIdPromise = new Promise<string>((resolve) => {
+      resolveTurnId = resolve;
+    });
+    const pending: PendingTurnStart = {
+      botId,
+      deliveryId,
+      threadId,
+      client,
+      turnId: null,
+      turnIdPromise,
+      resolveTurnId,
+    };
+    this.#pendingTurnStarts.set(botId, pending);
+    return pending;
+  }
+
+  #resolvePendingTurnStart(pending: PendingTurnStart, turnId: string): void {
+    if (pending.turnId) return;
+    pending.turnId = turnId;
+    pending.resolveTurnId(turnId);
+  }
+
+  #clearPendingTurnStart(pending: PendingTurnStart): void {
+    if (this.#pendingTurnStarts.get(pending.botId) === pending) this.#pendingTurnStarts.delete(pending.botId);
+  }
+
+  #clearPendingTurnStartsForClient(client: AgentClient): void {
+    for (const pending of this.#pendingTurnStarts.values()) {
+      if (pending.client === client) this.#clearPendingTurnStart(pending);
+    }
+  }
+
+  async #waitForPendingTurnStart(pending: PendingTurnStart, timeoutMs: number): Promise<string | null> {
+    if (pending.turnId) return pending.turnId;
+    let timer: NodeJS.Timeout | null = null;
+    try {
+      return await Promise.race([
+        pending.turnIdPromise,
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
   #scheduleDrain(botId: string): void {
+    const bot = this.#store.list().find((candidate) => candidate.id === botId);
     if (
       this.#stopping ||
+      this.#stoppingBots.has(botId) ||
+      (bot && this.#providerMaintenance.has(providerForBot(bot))) ||
       this.#status.phase !== "ready" ||
       this.#pendingDuplicateBots.has(botId) ||
       this.#drainingBots.has(botId) ||
@@ -2875,8 +3300,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async #drainBot(botId: string): Promise<void> {
+    const bot = this.#store.list().find((candidate) => candidate.id === botId);
     if (
       this.#stopping ||
+      this.#stoppingBots.has(botId) ||
+      (bot && this.#providerMaintenance.has(providerForBot(bot))) ||
       this.#pendingDuplicateBots.has(botId) ||
       this.#drainingBots.has(botId) ||
       this.#compactingBots.has(botId) ||
@@ -2904,6 +3332,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async #startDelivery(context: DeliveryContext): Promise<void> {
     const { delivery, managedAttachments } = context;
+    let pendingStart: PendingTurnStart | null = null;
     try {
       await this.#mailbox.markStarting(delivery.id);
       this.#emitQueue(delivery.recipientBotId);
@@ -3015,6 +3444,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       this.#emitConversation(snapshot);
 
+      const deliveryBeforeStart = this.#mailbox.getDelivery(delivery.id)?.delivery;
+      if (deliveryBeforeStart?.status !== "starting" || this.#stoppingBots.has(bot.id)) return;
+      pendingStart = this.#registerPendingTurnStart(bot.id, delivery.id, threadId, client);
       const response = await this.#requestWithArchivedThreadRecovery(
         bot,
         client,
@@ -3032,9 +3464,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         },
         decodeTurnResponse,
       );
+      this.#resolvePendingTurnStart(pendingStart, response.turn.id);
+      const deliveryBeforeMarkRunning = this.#mailbox.getDelivery(delivery.id);
+      if (!deliveryBeforeMarkRunning || !["starting", "running"].includes(deliveryBeforeMarkRunning.delivery.status)) {
+        this.#ignoredTurns.add(`${threadId}:${response.turn.id}`);
+        try {
+          await client.request("turn/interrupt", { threadId, turnId: response.turn.id }, decodeRecordResponse, 2_000);
+          this.#clearPendingTurnStart(pendingStart);
+        } catch (error) {
+          this.#emitError("orphaned_turn_interrupt_failed", error, bot.id);
+        }
+        return;
+      }
       await this.#mailbox.markRunning(delivery.id, response.turn.id);
       const currentDelivery = this.#mailbox.getDelivery(delivery.id)?.delivery;
       if (currentDelivery?.status !== "running" || currentDelivery.turnId !== response.turn.id) return;
+      this.#clearPendingTurnStart(pendingStart);
       snapshot.activeTurnId = response.turn.id;
       this.#syncDeliveryMessage(snapshot, delivery.id);
       this.#emitQueue(bot.id);
@@ -3048,6 +3493,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         );
         return;
       }
+      if (this.#stoppingBots.has(delivery.recipientBotId)) return;
+      if (pendingStart) this.#clearPendingTurnStart(pendingStart);
       await this.#mailbox.markTerminal(delivery.id, "failed", error instanceof Error ? error.message : String(error));
       this.#emitQueue(delivery.recipientBotId);
       this.#emitError("delivery_start_failed", error, delivery.recipientBotId);
@@ -3117,15 +3564,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ];
   }
 
-  async #reconcileUnresolvedDeliveries(): Promise<void> {
+  async #reconcileUnresolvedDeliveries(providers: readonly AgentProvider[]): Promise<void> {
     for (const context of this.#mailbox.unresolvedDeliveries()) {
       const { delivery } = context;
+      const bot = this.#store.list().find((candidate) => candidate.id === delivery.recipientBotId);
+      if (!bot || !providers.includes(providerForBot(bot))) continue;
       let terminal: "completed" | "failed" | "interrupted" = "interrupted";
       let reason = "OpenBot restarted before this delivery reached a confirmed terminal state.";
       try {
-        const bot = this.#store.list().find((candidate) => candidate.id === delivery.recipientBotId);
-        const client = bot ? this.#clientForBot(bot) : null;
-        const session = bot ? this.#store.activeProviderSession(bot.id) : null;
+        const client = this.#clientForBot(bot);
+        const session = this.#store.activeProviderSession(bot.id);
         if (session && client) {
           const response = await client.request(
             "thread/read",
@@ -3152,8 +3600,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         // Conservatively keep the interrupted result; never repeat uncertain side effects.
       }
       await this.#mailbox.markTerminal(delivery.id, terminal, terminal === "completed" ? null : reason);
-      const bot = this.#store.list().find((candidate) => candidate.id === delivery.recipientBotId);
-      if (bot?.threadId) {
+      if (bot.threadId) {
         const snapshot = this.#store.database.readConversation(bot.id, bot.threadId);
         snapshot.activeTurnId = null;
         for (const message of snapshot.messages) {
@@ -3305,6 +3752,24 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const params = notification.params;
     const threadId = getString(params, "threadId");
     const botId = threadId ? this.#threadToBot.get(threadId) : undefined;
+    const directTurnId = getString(params, "turnId");
+    const completedTurnId =
+      notification.method === "turn/completed" ? getString(getRecord(params, "turn"), "id") : null;
+    const turnId = directTurnId ?? completedTurnId;
+    const turnKey = threadId && turnId ? `${threadId}:${turnId}` : null;
+    if (
+      turnKey &&
+      this.#stoppingTurns.has(turnKey) &&
+      (notification.method === "item/started" ||
+        notification.method === "item/completed" ||
+        notification.method === "item/agentMessage/delta" ||
+        notification.method === "turn/completed")
+    ) {
+      const deferred = this.#deferredStoppingNotifications.get(turnKey) ?? [];
+      deferred.push({ notification, source });
+      this.#deferredStoppingNotifications.set(turnKey, deferred);
+      return;
+    }
 
     switch (notification.method) {
       case "account/login/completed": {
@@ -3326,10 +3791,26 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const turn = getRecord(params, "turn");
         const turnId = getString(turn, "id");
         if (!turnId) return;
+        const pendingStart = this.#pendingTurnStarts.get(botId);
+        if (pendingStart?.client === source && pendingStart.threadId === threadId) {
+          this.#resolvePendingTurnStart(pendingStart, turnId);
+          if (this.#stoppingBots.has(botId)) {
+            this.#stoppingTurns.add(`${threadId}:${turnId}`);
+            return;
+          }
+        }
         const contextBudget = this.#contextBudgets.get(threadId);
         if (contextBudget?.phase === "requested" && this.#compactingBots.has(botId)) {
           contextBudget.phase = "running";
           contextBudget.compactionTurnId = turnId;
+          return;
+        }
+        const delivery = this.#mailbox.startingDeliveryForBot(botId) ?? this.#mailbox.findDeliveryByTurn(turnId);
+        if (!delivery || !["starting", "running"].includes(delivery.delivery.status)) {
+          this.#ignoredTurns.add(`${threadId}:${turnId}`);
+          void source
+            .request("turn/interrupt", { threadId, turnId }, decodeRecordResponse, 2_000)
+            .catch((error) => this.#emitError("orphaned_turn_interrupt_failed", error, botId));
           return;
         }
         const publicThreadId = this.#publicThreadId(botId, threadId);
@@ -3354,6 +3835,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const turnId = getString(params, "turnId");
         const item = getRecord(params, "item");
         if (!turnId || !item) return;
+        if (this.#ignoredTurns.has(`${threadId}:${turnId}`)) return;
         const itemId = getString(item, "id");
         if (itemId) this.#itemTurns.set(itemId, turnId);
         if (item.type === "contextCompaction") {
@@ -3376,6 +3858,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const itemId = getString(params, "itemId");
         const delta = getString(params, "delta");
         if (!turnId || !itemId || delta === null) return;
+        if (this.#ignoredTurns.has(`${threadId}:${turnId}`)) return;
         this.#itemTurns.set(itemId, turnId);
         const publicThreadId = this.#publicThreadId(botId, threadId);
         const snapshot = this.#ensureSnapshot(botId, publicThreadId);
@@ -3403,6 +3886,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const turn = getRecord(params, "turn");
         const turnId = getString(turn, "id");
         if (!turnId) return;
+        if (this.#ignoredTurns.delete(`${threadId}:${turnId}`)) return;
         const status = getString(turn, "status") ?? "completed";
         this.#clearPendingRequestsForTurn(threadId, turnId);
         if (this.#contextBudgets.get(threadId)?.compactionTurnId === turnId) {
@@ -3450,6 +3934,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#flushTurnDeltas(turnId);
     await this.#waitForImageGenerationOperations(threadId, turnId);
     await this.#turnAssociations.get(turnId)?.catch(() => undefined);
+    if (this.#turnIsStopped(`${threadId}:${turnId}`)) return;
     this.#finishMemoryMutations(turnId, status);
     const shouldCompact = this.#reserveContextCompaction(botId, threadId);
     this.#browser.endControl(this.#publicThreadId(botId, threadId), turnId);
@@ -3507,6 +3992,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!delivery) return;
     try {
       await this.#mailbox.markRunning(delivery.delivery.id, turnId);
+      const pendingStart = this.#pendingTurnStarts.get(botId);
+      if (pendingStart?.deliveryId === delivery.delivery.id) this.#clearPendingTurnStart(pendingStart);
       this.#syncDeliveryMessage(snapshot, delivery.delivery.id);
       this.#emitQueue(botId);
     } catch (error) {
@@ -3624,11 +4111,49 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#compactionTimers.delete(threadId);
   }
 
-  #clearCompactionRuntime(): void {
-    for (const timer of this.#compactionTimers.values()) clearTimeout(timer);
-    this.#compactionTimers.clear();
-    this.#compactingBots.clear();
-    this.#contextBudgets.clear();
+  #clearCompactionRuntime(provider?: AgentProvider): void {
+    if (!provider) {
+      for (const timer of this.#compactionTimers.values()) clearTimeout(timer);
+      this.#compactionTimers.clear();
+      this.#compactingBots.clear();
+      this.#contextBudgets.clear();
+      return;
+    }
+    const botIds = new Set(
+      this.#store
+        .list()
+        .filter((bot) => providerForBot(bot) === provider)
+        .map((bot) => bot.id),
+    );
+    const threadIds = new Set<string>();
+    for (const botId of botIds) {
+      this.#compactingBots.delete(botId);
+      const session = this.#store.activeProviderSession(botId);
+      if (session) threadIds.add(session.externalSessionId);
+    }
+    for (const [threadId, botId] of this.#threadToBot) {
+      if (botIds.has(botId)) threadIds.add(threadId);
+    }
+    for (const threadId of threadIds) {
+      this.#clearCompactionTimer(threadId);
+      this.#contextBudgets.delete(threadId);
+    }
+  }
+
+  #clearLoadedThreads(provider: AgentProvider): void {
+    const botIds = new Set(
+      this.#store
+        .list()
+        .filter((bot) => providerForBot(bot) === provider)
+        .map((bot) => bot.id),
+    );
+    for (const [threadId, botId] of this.#threadToBot) {
+      if (botIds.has(botId)) this.#loadedThreads.delete(threadId);
+    }
+    for (const botId of botIds) {
+      const session = this.#store.activeProviderSession(botId);
+      if (session) this.#loadedThreads.delete(session.externalSessionId);
+    }
   }
 
   async #relayAgentResult(botId: string, turnId: string, delivery: DeliveryContext, text: string): Promise<void> {
@@ -3947,9 +4472,28 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  #clearPendingBrowserTakeovers(): void {
+  #clearPendingBrowserTakeovers(provider?: AgentProvider): void {
     for (const [requestId, pending] of this.#pendingBrowserTakeovers) {
+      const bot = this.#store.list().find((candidate) => candidate.id === pending.request.botId);
+      if (provider && (!bot || providerForBot(bot) !== provider)) continue;
       this.#resolveBrowserTakeover(requestId, pending, "cancel");
+    }
+  }
+
+  #clearBrowserControls(provider?: AgentProvider): void {
+    if (!provider) {
+      this.#browser.clearControls();
+      return;
+    }
+    const bots = new Map(this.#store.list().map((bot) => [bot.id, bot]));
+    const botByPublicThread = new Map(
+      [...bots.values()].flatMap((bot) => (bot.threadId ? [[bot.threadId, bot] as const] : [])),
+    );
+    for (const session of this.#browser.getControlState().sessions) {
+      const botId = this.#threadToBot.get(session.threadId);
+      const bot = (botId ? bots.get(botId) : undefined) ?? botByPublicThread.get(session.threadId);
+      if (!bot || providerForBot(bot) !== provider) continue;
+      this.#browser.endControl(session.threadId, session.turnId);
     }
   }
 
@@ -4333,9 +4877,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ].join("\n");
   }
 
-  async #enqueueRoutineRun(run: RoutineRun): Promise<void> {
+  async #enqueueRoutineRun(run: RoutineRun, beforeCommit: () => void = () => undefined): Promise<void> {
     const bot = await this.#store.getOrCreate(run.botId);
     try {
+      beforeCommit();
       const receipt = await this.#mailbox.enqueue({
         sender: {
           kind: "routine",
@@ -4349,6 +4894,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         draftIds: [],
         replyToMessageId: null,
         idempotencyKey: run.triggerId ? `routine:${run.triggerId}:${run.scheduledFor}` : `routine:manual:${run.id}`,
+        beforeCommit,
       });
       const deliveryId = receipt.deliveries[0]?.id;
       if (!deliveryId) throw new Error("Unable to create the routine delivery.");

@@ -10,6 +10,7 @@ import {
   decodeTeamProtocolV2RpcFrame,
   encodeTeamProtocolV2FileChunk,
   encodeTeamProtocolV2Frame,
+  TEAM_PROTOCOL_V2_CAPABILITIES,
   TEAM_PROTOCOL_V2_MAX_BINARY_FRAME_BYTES,
   TEAM_PROTOCOL_V2_MAX_FILE_BYTES,
   TEAM_PROTOCOL_V2_MAX_JSON_FRAME_BYTES,
@@ -85,6 +86,7 @@ describe("Team protocol v2", () => {
     ).toEqual({ visible: true });
     expect(encodeTeamProtocolV2CurrentHttpRequest("DELETE", "/v1/attachments/attachment-1", undefined)).toEqual({});
     expect(encodeTeamProtocolV2CurrentHttpRequest("DELETE", "/v1/agents/agent-1", undefined)).toEqual({});
+    expect(encodeTeamProtocolV2CurrentHttpRequest("POST", "/v1/agents/agent-1/stop", {})).toEqual({});
     expect(
       encodeTeamProtocolV2CurrentHttpRequest("GET", "/v1/remote-screen/sessions/session-1/viewer", undefined),
     ).toEqual({});
@@ -107,6 +109,10 @@ describe("Team protocol v2", () => {
         role: "stream",
       }),
     ).toEqual({ role: "stream" });
+  });
+
+  it("advertises force-stop without changing protocol v1", () => {
+    expect(TEAM_PROTOCOL_V2_CAPABILITIES).toContain("agent-force-stop");
   });
 
   it("validates bounded authentication frames", () => {

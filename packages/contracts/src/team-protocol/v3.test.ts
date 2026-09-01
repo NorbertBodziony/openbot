@@ -46,6 +46,7 @@ describe("Team protocol v3", () => {
       "Invalid Team protocol v1 HTTP request",
     );
     expect(TEAM_PROTOCOL_V1_CAPABILITIES).not.toContain("agent-duplication");
+    expect(TEAM_PROTOCOL_V3_CAPABILITIES).toContain("agent-force-stop");
     expect(TEAM_PROTOCOL_V3_CAPABILITIES).toContain("agent-duplication");
   });
 

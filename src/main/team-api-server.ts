@@ -56,6 +56,11 @@ import {
   encodeTeamProtocolV1CurrentEvent,
   encodeTeamProtocolV1CurrentHttpResponse,
 } from "@openbot/contracts/team-protocol/v1-adapter";
+import { TEAM_PROTOCOL_V2 } from "@openbot/contracts/team-protocol/v2";
+import {
+  decodeTeamProtocolV2CurrentHttpRequest,
+  encodeTeamProtocolV2CurrentHttpResponse,
+} from "@openbot/contracts/team-protocol/v2-adapter";
 import { TEAM_PROTOCOL_V3, TEAM_PROTOCOL_V3_CAPABILITIES } from "@openbot/contracts/team-protocol/v3";
 import {
   decodeTeamProtocolV3CurrentHttpRequest,
@@ -132,6 +137,7 @@ type TeamApiAgentMethods = Pick<
   | "steerQueuedMessage"
   | "updateQueuedMessage"
   | "reorderQueue"
+  | "stopAgent"
   | "interrupt"
   | "respondToPrompt"
   | "respondToApproval"
@@ -1162,6 +1168,11 @@ export class TeamApiServer {
           await this.#options.agents.interrupt(botId, stringField(body, "turnId"));
           return this.#empty(response, 204);
         }
+        if (method === "POST" && action === "stop" && requestProtocol(request) >= TEAM_PROTOCOL_V2) {
+          await readJson(request);
+          await this.#options.agents.stopAgent(botId);
+          return this.#empty(response, 204);
+        }
       }
 
       if (method === "POST" && url.pathname === "/v1/prompts/respond") {
@@ -1600,7 +1611,9 @@ export class TeamApiServer {
     const body =
       route.protocol === TEAM_PROTOCOL_V3
         ? encodeTeamProtocolV3CurrentHttpResponse(route.method, route.path, status, value)
-        : encodeTeamProtocolV1CurrentHttpResponse(route.method, route.path, status, value);
+        : route.protocol === TEAM_PROTOCOL_V2
+          ? JSON.stringify(encodeTeamProtocolV2CurrentHttpResponse(route.method, route.path, status, value))
+          : encodeTeamProtocolV1CurrentHttpResponse(route.method, route.path, status, value);
     response.end(`${body}\n`);
   }
 
@@ -1789,9 +1802,18 @@ async function readJson(request: import("node:http").IncomingMessage): Promise<D
   }
   try {
     const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    return requestProtocol(request) === TEAM_PROTOCOL_V3
-      ? decodeTeamProtocolV3CurrentHttpRequest(request.method ?? "GET", request.url ?? "/", value)
-      : decodeTeamProtocolV1CurrentHttpRequest(request.method ?? "GET", request.url ?? "/", value);
+    const protocol = requestProtocol(request);
+    if (protocol === TEAM_PROTOCOL_V3) {
+      const decoded = decodeTeamProtocolV3CurrentHttpRequest(request.method ?? "GET", request.url ?? "/", value);
+      if (!isDynamicRecord(decoded)) throw new Error("The request body must be an object.");
+      return decoded;
+    }
+    if (protocol === TEAM_PROTOCOL_V2) {
+      const decoded = decodeTeamProtocolV2CurrentHttpRequest(request.method ?? "GET", request.url ?? "/", value);
+      if (!isDynamicRecord(decoded)) throw new Error("The request body must be an object.");
+      return decoded;
+    }
+    return decodeTeamProtocolV1CurrentHttpRequest(request.method ?? "GET", request.url ?? "/", value);
   } catch {
     throw new HttpError(400, "A valid JSON object is required.");
   }

@@ -64,6 +64,12 @@ interface BrowserSnapshot {
   }>;
 }
 
+interface BrowserToolOperation {
+  controller: AbortController;
+  tabId: string | null;
+  closesTabOnCancel: boolean;
+}
+
 type BrowserAction =
   | { type: "click"; ref: string }
   | { type: "type"; ref: string; text: string; submit?: boolean }
@@ -156,6 +162,7 @@ export class BrowserHost {
   readonly #controlListeners = new Set<(...args: BrowserHostEvents["controlChanged"]) => void>();
   readonly #controlSessions = new Map<string, BrowserControlSession>();
   readonly #controlTimers = new Map<string, NodeJS.Timeout>();
+  readonly #toolOperations = new Map<string, Set<BrowserToolOperation>>();
   readonly #reservedDownloadPaths = new Set<string>();
   #activeTabId: string | null = null;
   #visible = false;
@@ -222,6 +229,24 @@ export class BrowserHost {
     this.#emitControlChanged();
   }
 
+  cancelTurn(threadId: string, turnId: string): void {
+    const id = controlSessionId(threadId, turnId);
+    for (const operation of this.#toolOperations.get(id) ?? []) {
+      operation.controller.abort();
+      const tab = operation.tabId ? this.#tabs.get(operation.tabId) : undefined;
+      if (tab) {
+        if (operation.closesTabOnCancel) {
+          void this.close(tab.id).catch(() => undefined);
+        } else if (!tab.view.webContents.isDestroyed()) {
+          tab.view.webContents.stop();
+          tab.view.webContents.reload();
+        }
+      }
+    }
+    this.#toolOperations.delete(id);
+    this.endControl(threadId, turnId);
+  }
+
   clearControls(): void {
     for (const timer of this.#controlTimers.values()) clearTimeout(timer);
     this.#controlTimers.clear();
@@ -269,7 +294,10 @@ export class BrowserHost {
     ownerThreadId: string | null = null,
     ownerBotId: string | null = null,
     focus = false,
+    signal?: AbortSignal,
+    onTabCreated?: (tabId: string) => void,
   ): Promise<BrowserTab> {
+    signal?.throwIfAborted();
     if (this.#tabs.size >= INPUT_LIMITS.browserTabs) {
       throw new Error(`The browser can have up to ${INPUT_LIMITS.browserTabs} open tabs.`);
     }
@@ -277,6 +305,7 @@ export class BrowserHost {
     const tab = this.#createTab(randomUUID(), normalizedUrl, ownerThreadId, ownerBotId);
 
     this.#tabs.set(tab.id, tab);
+    onTabCreated?.(tab.id);
     this.#bindTabEvents(tab);
     this.#activeTabId = tab.id;
     tab.focusOnVisible = focus;
@@ -349,59 +378,74 @@ export class BrowserHost {
     this.#syncAttachedView();
   }
 
-  async snapshot(tabId: string): Promise<BrowserSnapshot> {
-    return this.#enqueue(tabId, async (tab) => {
-      const revision = tab.revision + 1;
-      return this.#readSnapshot(tab, revision);
-    });
+  async snapshot(tabId: string, signal?: AbortSignal): Promise<BrowserSnapshot> {
+    return this.#enqueue(
+      tabId,
+      async (tab) => {
+        const revision = tab.revision + 1;
+        return this.#readSnapshot(tab, revision);
+      },
+      signal,
+    );
   }
 
-  async act(tabId: string, revision: number, action: BrowserAction): Promise<BrowserSnapshot> {
-    return this.#enqueue(tabId, async (tab) => {
-      if (revision !== tab.revision) {
-        throw new Error("Stale browser references. Take a fresh snapshot before acting.");
-      }
-
-      const wasVisible = tab.view.getVisible();
-      const previousBounds = tab.view.getBounds();
-      const restoreRendererFocus = !wasVisible && this.#window.webContents.isFocused();
-      if (!wasVisible) {
-        tab.view.setBounds({
-          ...previousBounds,
-          x: 1 - previousBounds.width,
-          y: 1 - previousBounds.height,
-        });
-        tab.view.setVisible(true);
-        tab.view.webContents.invalidate();
-      }
-      tab.view.webContents.focus();
-      try {
-        if (!wasVisible) await delay(250);
-        await withTimeout(
-          performAction(tab.view.webContents, action, this.#session.getUserAgent()),
-          10_000,
-          "Browser action timed out.",
-        );
-        await delay(50);
-      } finally {
-        if (!wasVisible) {
-          tab.view.setVisible(false);
-          tab.view.setBounds(previousBounds);
-          this.#syncAttachedView();
-          if (restoreRendererFocus) this.#window.webContents.focus();
+  async act(tabId: string, revision: number, action: BrowserAction, signal?: AbortSignal): Promise<BrowserSnapshot> {
+    return this.#enqueue(
+      tabId,
+      async (tab) => {
+        if (revision !== tab.revision) {
+          throw new Error("Stale browser references. Take a fresh snapshot before acting.");
         }
-      }
-      await delay(250);
-      const nextRevision = tab.revision + 1;
-      return this.#readSnapshot(tab, nextRevision);
-    });
+
+        const wasVisible = tab.view.getVisible();
+        const previousBounds = tab.view.getBounds();
+        const restoreRendererFocus = !wasVisible && this.#window.webContents.isFocused();
+        if (!wasVisible) {
+          tab.view.setBounds({
+            ...previousBounds,
+            x: 1 - previousBounds.width,
+            y: 1 - previousBounds.height,
+          });
+          tab.view.setVisible(true);
+          tab.view.webContents.invalidate();
+        }
+        tab.view.webContents.focus();
+        try {
+          if (!wasVisible) await delay(250);
+          signal?.throwIfAborted();
+          await withTimeout(
+            performAction(tab.view.webContents, action, this.#session.getUserAgent()),
+            10_000,
+            "Browser action timed out.",
+          );
+          signal?.throwIfAborted();
+          await delay(50);
+        } finally {
+          if (!wasVisible) {
+            tab.view.setVisible(false);
+            tab.view.setBounds(previousBounds);
+            this.#syncAttachedView();
+            if (restoreRendererFocus) this.#window.webContents.focus();
+          }
+        }
+        await delay(250);
+        signal?.throwIfAborted();
+        const nextRevision = tab.revision + 1;
+        return this.#readSnapshot(tab, nextRevision);
+      },
+      signal,
+    );
   }
 
-  async screenshot(tabId: string): Promise<string> {
-    return this.#enqueue(tabId, async (tab) => {
-      const image = await withTimeout(tab.view.webContents.capturePage(), 10_000, "Browser screenshot timed out.");
-      return image.toDataURL();
-    });
+  async screenshot(tabId: string, signal?: AbortSignal): Promise<string> {
+    return this.#enqueue(
+      tabId,
+      async (tab) => {
+        const image = await withTimeout(tab.view.webContents.capturePage(), 10_000, "Browser screenshot timed out.");
+        return image.toDataURL();
+      },
+      signal,
+    );
   }
 
   async capturePreview(tabId: string): Promise<BrowserPreview> {
@@ -431,57 +475,90 @@ export class BrowserHost {
 
   async handleDynamicTool(params: DynamicToolCallParams): Promise<DynamicToolResult> {
     const args = isRecord(params.arguments) ? params.arguments : {};
+    const operationId = controlSessionId(params.threadId, params.turnId);
+    const controller = new AbortController();
+    const operation: BrowserToolOperation = {
+      controller,
+      tabId: isString(args.tabId) ? args.tabId : null,
+      closesTabOnCancel: params.tool === "open",
+    };
+    const operations = this.#toolOperations.get(operationId) ?? new Set<BrowserToolOperation>();
+    operations.add(operation);
+    this.#toolOperations.set(operationId, operations);
     this.#beginControl(params, args);
     try {
-      switch (params.tool) {
-        case "open": {
-          const url = requiredString(args, "url", INPUT_LIMITS.browserUrl);
-          const tab = await this.open(url, params.threadId, params.ownerBotId ?? null);
-          this.#updateControlTab(params, tab.id);
-          return textResult({ tab });
-        }
-        case "list_tabs": {
-          const tabs = this.listTabs().filter((tab) => this.#canUseToolTab(params, tab));
-          const activeTabId = tabs.some((tab) => tab.id === this.#activeTabId)
-            ? this.#activeTabId
-            : (tabs.at(-1)?.id ?? null);
-          return textResult({ tabs, activeTabId });
-        }
-        case "snapshot": {
-          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
-          this.#requireToolTab(params, tabId);
-          const snapshot = await this.snapshot(tabId);
-          return textResult(snapshot);
-        }
-        case "act": {
-          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
-          this.#requireToolTab(params, tabId);
-          const revision = requiredNumber(args, "revision");
-          const action = parseAction(args.action);
-          return textResult(await this.act(tabId, revision, action));
-        }
-        case "screenshot": {
-          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
-          this.#requireToolTab(params, tabId);
-          const imageUrl = await this.screenshot(tabId);
-          return { success: true, contentItems: [{ type: "inputImage", imageUrl }] };
-        }
-        case "close_tab": {
-          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
-          this.#requireToolTab(params, tabId);
-          await this.close(tabId);
-          return textResult({ closed: true });
-        }
-        default:
-          throw new Error(`Unknown browser tool: ${params.tool}`);
-      }
+      const aborted = new Promise<never>((_resolve, reject) => {
+        controller.signal.addEventListener("abort", () => reject(new Error("Browser action was stopped.")), {
+          once: true,
+        });
+      });
+      return await Promise.race([this.#runDynamicTool(params, args, operation), aborted]);
     } catch (error) {
       return {
         success: false,
         contentItems: [{ type: "inputText", text: String(error) }],
       };
     } finally {
+      operations.delete(operation);
+      if (operations.size === 0 && this.#toolOperations.get(operationId) === operations) {
+        this.#toolOperations.delete(operationId);
+      }
       this.#finishControl(params);
+    }
+  }
+
+  async #runDynamicTool(
+    params: DynamicToolCallParams,
+    args: DynamicRecord,
+    operation: BrowserToolOperation,
+  ): Promise<DynamicToolResult> {
+    const signal = operation.controller.signal;
+    signal.throwIfAborted();
+    switch (params.tool) {
+      case "open": {
+        const url = requiredString(args, "url", INPUT_LIMITS.browserUrl);
+        const tab = await this.open(url, params.threadId, params.ownerBotId ?? null, false, signal, (tabId) => {
+          operation.tabId = tabId;
+          this.#updateControlTab(params, tabId);
+        });
+        this.#updateControlTab(params, tab.id);
+        return textResult({ tab });
+      }
+      case "list_tabs": {
+        const tabs = this.listTabs().filter((tab) => this.#canUseToolTab(params, tab));
+        const activeTabId = tabs.some((tab) => tab.id === this.#activeTabId)
+          ? this.#activeTabId
+          : (tabs.at(-1)?.id ?? null);
+        return textResult({ tabs, activeTabId });
+      }
+      case "snapshot": {
+        const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+        this.#requireToolTab(params, tabId);
+        const snapshot = await this.snapshot(tabId, signal);
+        return textResult(snapshot);
+      }
+      case "act": {
+        const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+        this.#requireToolTab(params, tabId);
+        const revision = requiredNumber(args, "revision");
+        const action = parseAction(args.action);
+        return textResult(await this.act(tabId, revision, action, signal));
+      }
+      case "screenshot": {
+        const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+        this.#requireToolTab(params, tabId);
+        const imageUrl = await this.screenshot(tabId, signal);
+        return { success: true, contentItems: [{ type: "inputImage", imageUrl }] };
+      }
+      case "close_tab": {
+        const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+        this.#requireToolTab(params, tabId);
+        signal.throwIfAborted();
+        await this.close(tabId);
+        return textResult({ closed: true });
+      }
+      default:
+        throw new Error(`Unknown browser tool: ${params.tool}`);
     }
   }
 
@@ -492,6 +569,10 @@ export class BrowserHost {
 
   async #destroyPersistentStorageAndViews(): Promise<void> {
     const statePersistence = this.#persistState();
+    for (const operations of this.#toolOperations.values()) {
+      for (const operation of operations) operation.controller.abort();
+    }
+    this.#toolOperations.clear();
     this.#session.flushStorageData();
     for (const tab of this.#tabs.values()) {
       this.#unmountView(tab.view);
@@ -746,9 +827,12 @@ export class BrowserHost {
     );
   }
 
-  #enqueue<T>(tabId: string, operation: (tab: InternalTab) => Promise<T>): Promise<T> {
+  #enqueue<T>(tabId: string, operation: (tab: InternalTab) => Promise<T>, signal?: AbortSignal): Promise<T> {
     const tab = this.#requireTab(tabId);
-    const result = tab.queue.then(() => operation(tab));
+    const result = tab.queue.then(() => {
+      signal?.throwIfAborted();
+      return operation(tab);
+    });
     tab.queue = result.catch(() => undefined);
     return result;
   }

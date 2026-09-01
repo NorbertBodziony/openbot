@@ -959,6 +959,33 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         queues.set(input.botId, queue);
         emitAgentEvent({ type: "queue-changed", snapshot: queue });
       },
+      stop: async (input) => {
+        const snapshot = getSnapshot(input.botId);
+        const turnId = snapshot.activeTurnId;
+        const queue = queues.get(input.botId) ?? emptyQueue(input.botId);
+        queue.deliveries = queue.deliveries.map((delivery) => ({
+          ...delivery,
+          status:
+            delivery.status === "queued"
+              ? "cancelled"
+              : delivery.status === "starting" || delivery.status === "running"
+                ? "interrupted"
+                : delivery.status,
+        }));
+        snapshot.activeTurnId = null;
+        queues.set(input.botId, queue);
+        emitAgentEvent({ type: "queue-changed", snapshot: queue });
+        emitAgentEvent({ type: "conversation", snapshot });
+        if (turnId) {
+          emitAgentEvent({
+            type: "turn-completed",
+            botId: input.botId,
+            threadId: snapshot.threadId ?? `thread-${input.botId}`,
+            turnId,
+            status: "interrupted",
+          });
+        }
+      },
       interrupt: async (input) => {
         emitAgentEvent({
           type: "turn-completed",

@@ -115,6 +115,7 @@ interface EnqueueInput {
   draftIds?: string[];
   sourcePaths?: string[];
   idempotencyKey?: string;
+  beforeCommit?: () => void;
 }
 
 interface TransferManifest {
@@ -358,6 +359,12 @@ export class MailboxStore {
       createdAt,
       sourcePaths,
     );
+    try {
+      input.beforeCommit?.();
+    } catch (error) {
+      await rm(join(this.#transfersRoot, messageId), { recursive: true, force: true });
+      throw error;
+    }
     const committedByDraftId = new Map(drafts.map((draft, index) => [draft.id, attachments[index]] as const));
     const message: StoredMessage = {
       id: messageId,
@@ -801,6 +808,40 @@ export class MailboxStore {
     const persisted = this.#database.readMailboxState();
     if (!isStoredState(persisted)) throw new Error("Stored mailbox projection is invalid.");
     this.#state = normalizeStoredState(persisted);
+  }
+
+  async stopPending(botId: string, reason: string, deliveryIds?: readonly string[]): Promise<{ turnIds: string[] }> {
+    const selected = deliveryIds ? new Set(deliveryIds) : null;
+    const turnIds = new Set<string>();
+    const changed: Array<{
+      delivery: StoredDelivery;
+      status: QueueDeliveryStatus;
+      error: string | null;
+    }> = [];
+    for (const delivery of this.#state.deliveries) {
+      if (delivery.recipientBotId !== botId) continue;
+      if (selected && !selected.has(delivery.id)) continue;
+      if (delivery.status === "queued") {
+        changed.push({ delivery, status: delivery.status, error: delivery.error });
+        delivery.status = "cancelled";
+      } else if (delivery.status === "starting" || delivery.status === "running") {
+        changed.push({ delivery, status: delivery.status, error: delivery.error });
+        if (delivery.turnId) turnIds.add(delivery.turnId);
+        delivery.status = "interrupted";
+        delivery.error = reason;
+      }
+    }
+    if (changed.length === 0) return { turnIds: [] };
+    try {
+      await this.#persist("agent.stopped");
+    } catch (error) {
+      for (const previous of changed) {
+        previous.delivery.status = previous.status;
+        previous.delivery.error = previous.error;
+      }
+      throw error;
+    }
+    return { turnIds: [...turnIds] };
   }
 
   async updateQueuedMessage(

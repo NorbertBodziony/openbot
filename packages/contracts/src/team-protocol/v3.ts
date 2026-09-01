@@ -3,13 +3,13 @@ import { isUuidV4 } from "../validation";
 import {
   decodeTeamProtocolV1HttpRequest,
   decodeTeamProtocolV1HttpResponse,
-  TEAM_PROTOCOL_V1_CAPABILITIES,
   type TeamProtocolV1JsonObject,
   type TeamProtocolV1JsonValue,
 } from "./v1";
+import { TEAM_PROTOCOL_V2_CAPABILITIES } from "./v2";
 
 export const TEAM_PROTOCOL_V3 = 3 as const;
-export const TEAM_PROTOCOL_V3_CAPABILITIES = [...TEAM_PROTOCOL_V1_CAPABILITIES, "agent-duplication"] as const;
+export const TEAM_PROTOCOL_V3_CAPABILITIES = [...TEAM_PROTOCOL_V2_CAPABILITIES, "agent-duplication"] as const;
 export type TeamProtocolV3Capability = (typeof TEAM_PROTOCOL_V3_CAPABILITIES)[number];
 
 export function decodeTeamProtocolV3HttpRequest(

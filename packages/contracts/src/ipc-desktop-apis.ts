@@ -70,6 +70,7 @@ import type {
   SidebarLayoutAction,
   SidebarLayoutSnapshot,
   SteerQueuedMessageInput,
+  StopAgentInput,
   TestRoutineInput,
   UpdateBotInput,
   UpdateBotMemoryInput,
@@ -183,6 +184,7 @@ export interface AgentDesktopApi {
   steerQueuedMessage: (input: SteerQueuedMessageInput) => Promise<void>;
   updateQueuedMessage: (input: UpdateQueuedMessageInput, serverId?: string) => Promise<void>;
   reorderQueue: (input: ReorderQueueInput) => Promise<void>;
+  stop: (input: StopAgentInput) => Promise<void>;
   interrupt: (input: InterruptTurnInput) => Promise<void>;
   respondToPrompt: (input: RespondToPromptInput) => Promise<void>;
   respondToApproval: (input: RespondToApprovalInput) => Promise<void>;

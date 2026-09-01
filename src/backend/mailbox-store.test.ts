@@ -6,8 +6,9 @@ import { join } from "node:path";
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { AGENT_RUNTIME_TEXT_LIMIT, AGENT_RUNTIME_WORKING_ITEMS_LIMIT } from "@openbot/contracts/ipc";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MailboxStore } from "./mailbox-store";
+import { OpenBotDatabase } from "./openbot-database";
 
 let root: string;
 let store: MailboxStore;
@@ -246,6 +247,60 @@ describe("MailboxStore", () => {
     expect(restored.listQueue("sales-outbound")).toMatchObject({
       deliveries: [{ status: "cancelled" }],
     });
+  });
+
+  it("persists one stop across active and queued deliveries", async () => {
+    const first = await store.enqueue({
+      sender: { kind: "user" },
+      recipientBotIds: ["chief"],
+      text: "Active work",
+    });
+    const second = await store.enqueue({
+      sender: { kind: "user" },
+      recipientBotIds: ["chief"],
+      text: "Queued work",
+    });
+    await store.markStarting(first.deliveries[0].id);
+    await store.markRunning(first.deliveries[0].id, "turn-1");
+
+    await expect(store.stopPending("chief", "Stopped by the user.")).resolves.toEqual({ turnIds: ["turn-1"] });
+
+    const restored = new MailboxStore(join(root, "user-data"), join(root, "Shared"));
+    await restored.initialize();
+    const restoredById = new Map(restored.listQueue("chief").deliveries.map((delivery) => [delivery.id, delivery]));
+    expect(restoredById.get(first.deliveries[0].id)).toMatchObject({
+      status: "interrupted",
+      error: "Stopped by the user.",
+    });
+    expect(restoredById.get(second.deliveries[0].id)).toMatchObject({ status: "cancelled" });
+  });
+
+  it("restores only changed delivery fields when stop persistence fails", async () => {
+    const userDataPath = join(root, "rollback-user-data");
+    const database = new OpenBotDatabase(userDataPath);
+    const rollbackStore = new MailboxStore(userDataPath, join(root, "Rollback Shared"), database);
+    await rollbackStore.initialize();
+    const active = await rollbackStore.enqueue({
+      sender: { kind: "user" },
+      recipientBotIds: ["chief"],
+      text: "Active work",
+    });
+    const queued = await rollbackStore.enqueue({
+      sender: { kind: "user" },
+      recipientBotIds: ["chief"],
+      text: "Queued work",
+    });
+    await rollbackStore.markStarting(active.deliveries[0].id);
+    await rollbackStore.markRunning(active.deliveries[0].id, "turn-1");
+    vi.spyOn(database, "replaceMailboxState").mockImplementationOnce(() => {
+      throw new Error("Persistence failed");
+    });
+
+    await expect(rollbackStore.stopPending("chief", "Stopped by the user.")).rejects.toThrow("Persistence failed");
+
+    const deliveries = new Map(rollbackStore.listQueue("chief").deliveries.map((delivery) => [delivery.id, delivery]));
+    expect(deliveries.get(active.deliveries[0].id)).toMatchObject({ status: "running", error: null });
+    expect(deliveries.get(queued.deliveries[0].id)).toMatchObject({ status: "queued", error: null });
   });
 
   it("keeps enqueue idempotent in SQLite", async () => {
