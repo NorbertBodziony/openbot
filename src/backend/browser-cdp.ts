@@ -465,7 +465,7 @@ export class BrowserCdpEngine {
   ): Promise<void> {
     await this.#lease(async (send) => {
       const deadline = Date.now() + clamp(timeoutMs, 1, WAIT_TIMEOUT_MS);
-      while (true) {
+      const matches = async () => {
         let matched = true;
         if (condition.url) matched &&= this.#contents.getURL().includes(condition.url);
         if (condition.text) {
@@ -489,9 +489,13 @@ export class BrowserCdpEngine {
           });
           matched &&= recordValue(result.result)?.value === true;
         }
-        if (matched) {
-          if (condition.state === "dom-quiet") await waitForDomQuiet(send, deadline - Date.now());
-          return;
+        return matched;
+      };
+      while (true) {
+        if (await matches()) {
+          if (condition.state !== "dom-quiet") return;
+          await waitForDomQuiet(send, deadline - Date.now());
+          if (await matches()) return;
         }
         const remaining = deadline - Date.now();
         if (remaining <= 0) throw new Error("Browser wait condition timed out.");
@@ -678,21 +682,25 @@ export class BrowserCdpEngine {
     const resolved = await send("DOM.resolveNode", { backendNodeId }, sessionId);
     const objectId = stringValue(recordValue(resolved.object)?.objectId);
     if (!objectId) throw new Error("Element is no longer attached to the document.");
-    const result = await send(
-      "Runtime.callFunctionOn",
-      {
-        objectId,
-        functionDeclaration: declaration,
-        arguments: args.map((value) => ({ value })),
-        awaitPromise: true,
-        returnByValue: true,
-        userGesture: true,
-      },
-      sessionId,
-    );
-    const exception = recordValue(result.exceptionDetails);
-    if (exception) throw new Error(exceptionDescription(exception));
-    return recordValue(result.result)?.value;
+    try {
+      const result = await send(
+        "Runtime.callFunctionOn",
+        {
+          objectId,
+          functionDeclaration: declaration,
+          arguments: args.map((value) => ({ value })),
+          awaitPromise: true,
+          returnByValue: true,
+          userGesture: true,
+        },
+        sessionId,
+      );
+      const exception = recordValue(result.exceptionDetails);
+      if (exception) throw new Error(exceptionDescription(exception));
+      return recordValue(result.result)?.value;
+    } finally {
+      await send("Runtime.releaseObject", { objectId }, sessionId).catch(() => undefined);
+    }
   }
 
   async #refreshSemanticTargets(send: SendCommand): Promise<void> {

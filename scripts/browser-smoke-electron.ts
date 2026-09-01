@@ -473,6 +473,23 @@ async function main(): Promise<void> {
     if (!patientQuietWait.success) {
       throw new Error(`V2 DOM-quiet wait ignored the requested timeout: ${toolError(patientQuietWait)}`);
     }
+    const transientCondition = await callBrowserTool(browser, "evaluate", {
+      tabId: v2Tab.id,
+      expression:
+        "globalThis.__openbotTransient = document.body.appendChild(Object.assign(document.createElement('span'), { textContent: 'transient quiet condition' })); globalThis.__openbotTransientNoise = setInterval(() => document.body.toggleAttribute('data-transient-noise'), 20); setTimeout(() => { clearInterval(globalThis.__openbotTransientNoise); globalThis.__openbotTransient.remove(); delete globalThis.__openbotTransient; delete globalThis.__openbotTransientNoise; }, 300); true",
+    });
+    if (!transientCondition.success) {
+      throw new Error(`V2 transient wait setup failed: ${toolError(transientCondition)}`);
+    }
+    const invalidatedQuietWait = await callBrowserTool(browser, "wait_for", {
+      tabId: v2Tab.id,
+      text: "transient quiet condition",
+      state: "dom-quiet",
+      timeoutMs: 700,
+    });
+    if (invalidatedQuietWait.success || !toolError(invalidatedQuietWait).includes("timed out")) {
+      throw new Error("V2 DOM-quiet wait did not recheck its matched text condition.");
+    }
     const clearedEvaluationWorld = await callBrowserTool(browser, "evaluate", {
       tabId: v2Tab.id,
       expression: "globalThis.__openbotNoise === undefined",
