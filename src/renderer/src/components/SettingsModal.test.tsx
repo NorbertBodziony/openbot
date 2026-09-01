@@ -447,7 +447,7 @@ describe("SettingsModal", () => {
         connectedAt: Date.now(),
         lastActiveAt: Date.now(),
       });
-      await vi.advanceTimersByTimeAsync(59_999);
+      await vi.advanceTimersByTimeAsync(4_999);
       expect(onListMobileConnectedDevices).toHaveBeenCalledTimes(requestsBeforePolling);
       expect(screen.queryByText("Phone connected")).not.toBeInTheDocument();
 
@@ -515,7 +515,7 @@ describe("SettingsModal", () => {
       expect(onCreateMobileConnect).toHaveBeenCalledOnce();
       expect(screen.getByRole("img", { name: "Mobile Connect sign-in QR code" })).toBeInTheDocument();
 
-      await vi.advanceTimersByTimeAsync(60_000);
+      await vi.advanceTimersByTimeAsync(5_000);
       expect(screen.queryByText("Phone connected")).not.toBeInTheDocument();
       expect(screen.getByRole("img", { name: "Mobile Connect sign-in QR code" })).toBeInTheDocument();
     } finally {
