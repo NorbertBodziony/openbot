@@ -500,8 +500,12 @@ export class DesktopAnalytics {
     if (previous?.id === normalized?.id && previous?.email === normalized?.email) return;
     this.#identity = normalized;
     if (!this.#client || !this.#trackingEnabled) return;
-    if (previous && (!normalized || previous.id !== normalized.id))
-      this.#enqueue(this.#clientQueue, "clear", () => this.#client?.clear());
+    if (previous && (!normalized || previous.id !== normalized.id || previous.email !== normalized.email)) {
+      this.#clientQueue.operations = [];
+      if (!normalized || previous.id !== normalized.id) {
+        this.#enqueue(this.#clientQueue, "clear", () => this.#client?.clear());
+      }
+    }
     if (normalized) this.#identifyClient(normalized);
   }
 

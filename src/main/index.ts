@@ -1926,10 +1926,10 @@ if (!hasSingleInstanceLock) {
         appVersion: app.getVersion(),
         platform: analyticsPlatform,
         resolveOwner: () => {
-          const storedOwner = teamStore.getOwnerAnalyticsIdentity();
-          if (storedOwner) return storedOwner;
           const state = centralAuthManager?.getState();
           if (state?.status !== "signed_in") return null;
+          const storedOwner = teamStore.getOwnerAnalyticsIdentity();
+          if (storedOwner) return storedOwner;
           const ownerEmail = teamStore.getOwnerEmail();
           return !teamStore.configured || ownerEmail?.trim().toLowerCase() === state.user.email.trim().toLowerCase()
             ? state.user

@@ -225,6 +225,7 @@ export class HostAnalytics {
               : {}),
         },
         owner,
+        false,
       );
     }
     while (this.#hostedSiteOwners.size > MAX_HOSTED_SITE_OPERATIONS) {
@@ -239,9 +240,10 @@ export class HostAnalytics {
     }
   }
 
-  #trackForOwner(name: HostEventName, properties: HostProperties, owner: AnalyticsIdentity): void {
+  #trackForOwner(name: HostEventName, properties: HostProperties, owner: AnalyticsIdentity, flushPending = true): void {
     const sanitized = sanitizeHostEvent(name, properties);
-    this.#flushPendingForOwner(owner);
+    if (flushPending) this.#flushPendingForOwner(owner);
+    else this.#identify(owner);
     this.#send(name, sanitized, owner.id);
     if (name === "hosted_site_action") {
       const currentOwner = normalizeAnalyticsIdentity(this.#resolveOwner());
@@ -274,6 +276,7 @@ export class HostAnalytics {
     if (!this.#client) return;
     const previous = this.#identifiedOwner;
     if (previous?.id === owner.id && previous.email === owner.email) return;
+    if (previous) this.#operationQueue.operations = [];
     if (previous && previous.id !== owner.id) this.#enqueue("clear", () => this.#client?.clear());
     this.#identifiedOwner = { ...owner };
     this.#enqueue("identify", () => this.#client?.identify({ profileId: owner.id, email: owner.email }));

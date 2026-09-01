@@ -420,6 +420,51 @@ describe("host analytics", () => {
     expect(client.clear).toHaveBeenCalledTimes(2);
   });
 
+  it("does not flush ownerless events with a captured hosted-site owner", () => {
+    const client = fakeClient();
+    let owner: { id: string; email: string } | null = { id: "owner-1", email: "one@example.com" };
+    const analytics = new HostAnalytics(
+      {
+        enabled: true,
+        appVersion: "1.2.3",
+        platform: "darwin",
+        resolveOwner: () => owner,
+        resolveBot: () => BOT,
+      },
+      () => client,
+    );
+    const running = hostedSiteMessage("hosted-running", "publish", "running", "operation-pending");
+    analytics.handleAgentEvent({
+      type: "conversation",
+      snapshot: { botId: BOT.id, threadId: BOT.threadId, activeTurnId: null, revision: 1, messages: [running] },
+    });
+
+    owner = null;
+    analytics.handleAgentEvent({ type: "error", code: "provider_error", message: "private" });
+    analytics.handleAgentEvent({
+      type: "conversation",
+      snapshot: {
+        botId: BOT.id,
+        threadId: BOT.threadId,
+        activeTurnId: null,
+        revision: 2,
+        messages: [running, hostedSiteMessage("hosted-succeeded", "publish", "succeeded", "operation-pending")],
+      },
+    });
+
+    expect(client.track).toHaveBeenCalledOnce();
+    expect(client.track).toHaveBeenCalledWith("hosted_site_action", expect.objectContaining({ profileId: "owner-1" }));
+
+    owner = { id: "owner-2", email: "two@example.com" };
+    analytics.flushPending();
+
+    expect(client.track).toHaveBeenCalledTimes(2);
+    expect(client.track).toHaveBeenLastCalledWith(
+      "system_operation_failed",
+      expect.objectContaining({ profileId: "owner-2" }),
+    );
+  });
+
   it("preserves identity transitions when the queue overflows", async () => {
     const client = fakeClient();
     let releaseIdentify!: () => void;
