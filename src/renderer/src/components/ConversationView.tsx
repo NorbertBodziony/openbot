@@ -210,6 +210,7 @@ export interface ConversationProps {
   onConnectProvider?: (provider: AgentProviderId) => void | Promise<void>;
   bot: BotProfile | undefined;
   bots: BotProfile[];
+  availableRoutineIds?: readonly string[];
   modelOptions: AgentModelOption[];
   messages: BotMessage[];
   messageReferences?: Record<string, BotMessage>;
@@ -2708,8 +2709,13 @@ export function ConversationHeader() {
   );
 }
 
-function routineMarkerAvailable(marker: ChatActionMarkerModel, deletedRoutineIds: ReadonlySet<string>): boolean {
-  return !("routineId" in marker) || !deletedRoutineIds.has(marker.routineId);
+function routineMarkerAvailable(
+  marker: ChatActionMarkerModel,
+  availableRoutineIds: readonly string[] | undefined,
+): boolean {
+  if (!("routineId" in marker)) return true;
+  if (marker.kind === "routine-lifecycle" && marker.action === "deleted") return false;
+  return availableRoutineIds?.includes(marker.routineId) === true;
 }
 
 /** @internal Stable HMR boundary for conversation timeline. */
@@ -2771,16 +2777,6 @@ export function ConversationTimeline() {
     setVirtualRootElement,
   } = useConversationViewScope();
   const virtualMessageRows = createMemo(() => messageVirtualizer.getVirtualItems());
-  const deletedRoutineIds = createMemo(
-    () =>
-      new Set(
-        props.messages.flatMap((message) =>
-          message.actionMarker?.kind === "routine-lifecycle" && message.actionMarker.action === "deleted"
-            ? [message.actionMarker.routineId]
-            : [],
-        ),
-      ),
-  );
   let cachedPrompt: { key: string; prompt: NonNullable<ConversationProps["prompt"]> } | null = null;
   const keyedPrompt = createMemo(() => {
     const prompt = props.prompt;
@@ -2928,7 +2924,7 @@ export function ConversationTimeline() {
                               marker={marker()}
                               bots={props.bots}
                               announce={animateEntrance}
-                              routineAvailable={routineMarkerAvailable(marker(), deletedRoutineIds())}
+                              routineAvailable={routineMarkerAvailable(marker(), props.availableRoutineIds)}
                               onSelectAgent={props.onSelectAgent}
                               onOpenRoutine={openRoutineSettings}
                             />
@@ -2995,7 +2991,7 @@ export function ConversationTimeline() {
                                     marker={marker()}
                                     bots={props.bots}
                                     announce={animateEntrance}
-                                    routineAvailable={routineMarkerAvailable(marker(), deletedRoutineIds())}
+                                    routineAvailable={routineMarkerAvailable(marker(), props.availableRoutineIds)}
                                     onSelectAgent={props.onSelectAgent}
                                     onOpenRoutine={openRoutineSettings}
                                   />

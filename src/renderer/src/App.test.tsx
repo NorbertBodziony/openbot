@@ -941,6 +941,29 @@ describe("OpenBot connected desktop shell", () => {
     });
   });
 
+  it("keeps an old routine marker unavailable when paginated history omits its deletion", async () => {
+    vi.mocked(window.openbot.agent.listRoutines).mockResolvedValue([]);
+    vi.mocked(window.openbot.agent.readConversation).mockResolvedValue(
+      testConversationPage("chief", [
+        {
+          id: "old-routine-event",
+          author: "system",
+          source: "system",
+          text: "Archived brief",
+          createdAt: "2026-08-30T10:00:00.000Z",
+          status: "completed",
+          itemType: routineConversationEventItemType("updated", "deleted-routine"),
+        },
+      ]),
+    );
+
+    render(() => <App />);
+
+    expect(await screen.findByText("Archived brief")).toBeInTheDocument();
+    await waitFor(() => expect(window.openbot.agent.listRoutines).toHaveBeenCalledWith("chief"));
+    expect(screen.queryByRole("button", { name: "Open routine Archived brief" })).not.toBeInTheDocument();
+  });
+
   it("restores the active server before loading its workspace data", async () => {
     let resolveServers: ((servers: ServerSummary[]) => void) | undefined;
     vi.mocked(window.openbot.servers.list).mockReturnValueOnce(

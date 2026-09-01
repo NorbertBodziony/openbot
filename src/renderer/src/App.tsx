@@ -340,6 +340,9 @@ export function createAppController(props: AppProps = {}) {
   const [conversationReads, setConversationReads] = createSignal<Record<string, ConversationReadState>>({});
   const [recentReplies, setRecentReplies] = createSignal<Record<string, boolean>>({});
   const [queues, setQueues] = createSignal<Record<string, QueueSnapshot>>({});
+  const [routineIdsByConversation, setRoutineIdsByConversation] = createSignal<Record<string, string[] | undefined>>(
+    {},
+  );
   const [browserTabs, setBrowserTabs] = createSignal<BrowserTab[]>([]);
   const [activeBrowserTabId, setActiveBrowserTabId] = createSignal<string | null>(null);
   let browserChangeRevision = 0;
@@ -444,6 +447,7 @@ export function createAppController(props: AppProps = {}) {
   const conversationReadOperations = new Map<string, Promise<void>>();
   const directConversationReadOperations = new Map<string, Promise<void>>();
   const queueSnapshotRequests = new Map<string, number>();
+  const routineSnapshotRequests = new Map<string, number>();
   const completedTurnByBot = new Map<string, string>();
   const pendingProviderConnections = new Map<AgentProviderId, ReturnType<typeof desktopAnalytics.scope>>();
   const dynamicIslandCoordinator = new DynamicIslandCoordinator();
@@ -1044,6 +1048,27 @@ export function createAppController(props: AppProps = {}) {
     },
   );
 
+  function refreshRoutineIds(botId: string, serverId: string): void {
+    const key = agentConversationKey(serverId, botId);
+    const request = (routineSnapshotRequests.get(key) ?? 0) + 1;
+    routineSnapshotRequests.set(key, request);
+    setRoutineIdsByConversation((current) => ({ ...current, [key]: undefined }));
+    void window.openbot.agent
+      .listRoutines(botId)
+      .then((routines) => {
+        if (routineSnapshotRequests.get(key) !== request) return;
+        setRoutineIdsByConversation((current) => ({ ...current, [key]: routines.map((routine) => routine.id) }));
+      })
+      .catch(() => undefined);
+  }
+
+  createEffect(
+    () => ({ botId: activeBotId(), agentPhase: agentStatus().phase, serverId: activeServerSidebarKey() }),
+    ({ botId, serverId }) => {
+      if (botId) refreshRoutineIds(botId, serverId);
+    },
+  );
+
   function handleAgentEvent(event: AgentEvent) {
     switch (event.type) {
       case "status":
@@ -1105,6 +1130,9 @@ export function createAppController(props: AppProps = {}) {
           ...current,
           [event.snapshot.botId]: event.snapshot,
         }));
+        return;
+      case "routines-changed":
+        refreshRoutineIds(event.botId, activeServerSidebarKey());
         return;
       case "browser-changed":
         if (props.landingPreview) return;
@@ -2741,6 +2769,10 @@ export function createAppController(props: AppProps = {}) {
     const bot = activeBot();
     return bot ? queues()[bot.id] : undefined;
   });
+  const activeRoutineIds = createMemo(() => {
+    const bot = activeBot();
+    return bot ? routineIdsByConversation()[agentConversationKey(activeServerSidebarKey(), bot.id)] : undefined;
+  });
   const sidebarAgentStates = createMemo<Record<string, SidebarAgentState>>(() => {
     const turns = activeTurns();
     const queueSnapshots = queues();
@@ -3963,6 +3995,7 @@ export function createAppController(props: AppProps = {}) {
     conversationOlderLoading,
     conversationOlderErrors,
     activeQueue,
+    activeRoutineIds,
     browserTabs,
     activeBrowserTabId,
     browserControlState,
