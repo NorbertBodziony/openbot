@@ -449,8 +449,9 @@ function createConversationViewScope(props: ConversationProps) {
     const botId = props.bot?.id;
     return botId ? (rightPanels()[botId] ?? "none") : "none";
   });
-  const browserSidebarOpen = () => props.browserEnabled !== false && activeRightPanel() === "browser";
-  const browserPipOpen = () => props.browserEnabled !== false && activeRightPanel() === "browser-pip";
+  const browserInteractionAvailable = () => props.browserEnabled !== false && !props.browserVisibilitySuspended;
+  const browserSidebarOpen = () => browserInteractionAvailable() && activeRightPanel() === "browser";
+  const browserPipOpen = () => browserInteractionAvailable() && activeRightPanel() === "browser-pip";
   const screenOpen = () => browserSidebarOpen() || browserPipOpen();
   const settingsOpen = () => activeRightPanel() === "settings";
   const filePreviewOpen = () =>
@@ -500,9 +501,9 @@ function createConversationViewScope(props: ConversationProps) {
   let browserTakeoverPreviewKey: string | null = null;
   let browserTakeoverPreviewGeneration = 0;
   createEffect(
-    () => ({ request: props.browserTakeover, tab: browserTakeoverTab() }),
-    ({ request, tab }) => {
-      if (!request) {
+    () => ({ request: props.browserTakeover, tab: browserTakeoverTab(), suspended: props.browserVisibilitySuspended }),
+    ({ request, tab, suspended }) => {
+      if (!request || suspended) {
         browserTakeoverPreviewKey = null;
         browserTakeoverPreviewGeneration += 1;
         setBrowserTakeoverPreview({ status: "idle", preview: null });
@@ -1622,9 +1623,10 @@ function createConversationViewScope(props: ConversationProps) {
       screenOpen: screenOpen(),
       activeBrowserTabId: props.activeBrowserTabId,
       onActivateBrowserTab: activateBrowserTab,
+      suspended: props.browserVisibilitySuspended,
     }),
-    ({ activeTab, addressEditing, screenOpen, activeBrowserTabId, onActivateBrowserTab }) => {
-      if (props.browserEnabled === false) return;
+    ({ activeTab, addressEditing, screenOpen, activeBrowserTabId, onActivateBrowserTab, suspended }) => {
+      if (props.browserEnabled === false || suspended) return;
       if (!addressEditing) setBrowserAddress(activeTab?.url ?? "https://www.google.com");
       if (screenOpen && activeTab && activeTab.id !== activeBrowserTabId) {
         onActivateBrowserTab(activeTab.id);
@@ -2119,6 +2121,7 @@ function createConversationViewScope(props: ConversationProps) {
   }
 
   async function openBrowserAddress(address = browserAddress()) {
+    if (!browserInteractionAvailable()) return;
     const value = address.trim();
     if (!value) return;
     setBrowserAddressEditing(false);
@@ -2175,13 +2178,13 @@ function createConversationViewScope(props: ConversationProps) {
   }
 
   function showBrowserPanel() {
-    if (props.browserEnabled === false) return;
+    if (!browserInteractionAvailable()) return;
     setActiveRightPanel("browser");
     if (browserTabs().length === 0) void openBrowserAddress();
   }
 
   function showBrowserPip() {
-    if (props.browserEnabled === false) return;
+    if (!browserInteractionAvailable()) return;
     setActiveRightPanel("browser-pip");
   }
 
@@ -2199,7 +2202,13 @@ function createConversationViewScope(props: ConversationProps) {
   }
 
   async function closeBrowserTab(tabId: string) {
-    if (closingBrowserTabIds.has(tabId) || !browserTabs().some((tab) => tab.id === tabId)) return;
+    if (
+      !browserInteractionAvailable() ||
+      closingBrowserTabIds.has(tabId) ||
+      !browserTabs().some((tab) => tab.id === tabId)
+    ) {
+      return;
+    }
     closingBrowserTabIds.add(tabId);
     try {
       await props.onCloseBrowserTab(tabId);
@@ -2211,12 +2220,24 @@ function createConversationViewScope(props: ConversationProps) {
   }
 
   function activateBrowserTab(tabId: string) {
-    if (closingBrowserTabIds.has(tabId) || !browserTabs().some((tab) => tab.id === tabId)) return;
+    if (
+      !browserInteractionAvailable() ||
+      closingBrowserTabIds.has(tabId) ||
+      !browserTabs().some((tab) => tab.id === tabId)
+    ) {
+      return;
+    }
     props.onActivateBrowserTab(tabId);
   }
 
   async function reloadBrowserTab(tabId: string) {
-    if (closingBrowserTabIds.has(tabId) || !browserTabs().some((tab) => tab.id === tabId)) return;
+    if (
+      !browserInteractionAvailable() ||
+      closingBrowserTabIds.has(tabId) ||
+      !browserTabs().some((tab) => tab.id === tabId)
+    ) {
+      return;
+    }
     const analytics = desktopAnalytics.scope();
     try {
       await window.openbot.browser.reload(tabId);
@@ -2232,7 +2253,13 @@ function createConversationViewScope(props: ConversationProps) {
   }
 
   async function navigateBrowserTab(tabId: string, direction: "back" | "forward") {
-    if (closingBrowserTabIds.has(tabId) || !browserTabs().some((tab) => tab.id === tabId)) return;
+    if (
+      !browserInteractionAvailable() ||
+      closingBrowserTabIds.has(tabId) ||
+      !browserTabs().some((tab) => tab.id === tabId)
+    ) {
+      return;
+    }
     try {
       await window.openbot.browser.navigate({ tabId, direction });
     } catch {
@@ -2720,6 +2747,7 @@ export function ConversationHeader() {
                   : "Open computer"
             }
             aria-expanded={screenOpen() ? "true" : "false"}
+            disabled={props.browserVisibilitySuspended}
             onClick={() => {
               if (screenOpen()) hideBrowserPanel();
               else showBrowserPanel();

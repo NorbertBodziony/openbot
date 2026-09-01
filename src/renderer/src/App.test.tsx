@@ -4942,7 +4942,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.browser.close).toHaveBeenCalledWith("remote-tab");
   });
 
-  it("ignores Control W while the remote browser is suspended during a server switch", async () => {
+  it("blocks browser controls while the remote browser is suspended during a server switch", async () => {
     const local = testServer("local", true);
     const studio = testServer("remote-1", false);
     const office = { ...testServer("remote-2", false), name: "Office PC", apiUrl: "https://office.example.com" };
@@ -4982,13 +4982,36 @@ describe("OpenBot connected desktop shell", () => {
       activeTabId: "remote-tab-during-switch",
     });
     await fireEvent.click(await screen.findByRole("button", { name: "Open computer" }));
-    await screen.findByRole("tab", { name: "Remote page" });
+    const remoteTab = await screen.findByRole("tab", { name: "Remote page" });
+    const address = screen.getByRole("textbox", { name: "Browser address" });
+    const addressForm = address.closest("form");
+    if (!addressForm) throw new Error("Browser address form was not rendered.");
+    const backButton = screen.getByRole("button", { name: "Go back" });
+    const reloadButton = screen.getByRole("button", { name: "Reload page" });
+    vi.mocked(window.openbot.browser.open).mockClear();
+    vi.mocked(window.openbot.browser.activate).mockClear();
+    vi.mocked(window.openbot.browser.close).mockClear();
+    vi.mocked(window.openbot.browser.reload).mockClear();
+    vi.mocked(window.openbot.browser.navigate).mockClear();
 
     await fireEvent.click(screen.getByRole("button", { name: "Office PC server" }));
     await waitFor(() => expect(resolveOfficeSelection).toBeDefined());
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
+    const computerButton = screen.getByRole("button", { name: "Open computer" });
+    expect(computerButton).toBeDisabled();
+    await fireEvent.click(computerButton);
+    await fireEvent.click(remoteTab);
+    await fireEvent.keyDown(remoteTab, { key: "Delete" });
+    await fireEvent.click(backButton);
+    await fireEvent.click(reloadButton);
+    await fireEvent.submit(addressForm);
     await fireEvent.keyDown(window, { key: "w", ctrlKey: true });
 
+    expect(window.openbot.browser.open).not.toHaveBeenCalled();
+    expect(window.openbot.browser.activate).not.toHaveBeenCalled();
     expect(window.openbot.browser.close).not.toHaveBeenCalled();
+    expect(window.openbot.browser.reload).not.toHaveBeenCalled();
+    expect(window.openbot.browser.navigate).not.toHaveBeenCalled();
     resolveOfficeSelection?.([
       { ...local, active: false },
       { ...studio, active: false },
@@ -5023,7 +5046,7 @@ describe("OpenBot connected desktop shell", () => {
     });
 
     await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
-    const browserPanel = await screen.findByRole("complementary", { name: "Browser" });
+    await screen.findByRole("complementary", { name: "Browser" });
     const surface = document.querySelector(".browser-surface");
     if (!(surface instanceof HTMLElement)) throw new Error("Browser surface was not rendered.");
     vi.spyOn(surface, "getBoundingClientRect").mockReturnValue({
@@ -5050,6 +5073,21 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
 
     await screen.findByText("Could not select the server");
+    const restoredBrowserPanel = await screen.findByRole("complementary", { name: "Browser" });
+    const restoredSurface = document.querySelector(".browser-surface");
+    if (!(restoredSurface instanceof HTMLElement)) throw new Error("Restored browser surface was not rendered.");
+    vi.spyOn(restoredSurface, "getBoundingClientRect").mockReturnValue({
+      x: 640,
+      y: 73,
+      width: 380,
+      height: 600,
+      top: 73,
+      right: 1020,
+      bottom: 673,
+      left: 640,
+      toJSON: () => ({}),
+    });
+    window.dispatchEvent(new Event("resize"));
     await waitFor(() =>
       expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({
         visible: true,
@@ -5057,7 +5095,7 @@ describe("OpenBot connected desktop shell", () => {
         bounds: { x: 640, y: 73, width: 380, height: 600 },
       }),
     );
-    expect(browserPanel).toBeInTheDocument();
+    expect(restoredBrowserPanel).toBeInTheDocument();
   });
 
   it("keeps the latest workspace when an older server load resolves late", async () => {

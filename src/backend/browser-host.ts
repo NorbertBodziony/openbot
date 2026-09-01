@@ -484,7 +484,7 @@ export class BrowserHost {
         }
         case "close_tab": {
           const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
-          this.#requireToolTab(params, tabId);
+          if (this.#tabs.has(tabId)) this.#requireToolTab(params, tabId);
           await this.close(tabId);
           return textResult({ closed: true });
         }
