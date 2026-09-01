@@ -13,6 +13,7 @@ export * from "./item";
 export * from "./marker";
 export * from "./message";
 export * from "./progress";
+export * from "./qr-code";
 export * from "./questionnaire";
 export * from "./radial-progress";
 export * from "./select";

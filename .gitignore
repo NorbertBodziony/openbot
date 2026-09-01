@@ -20,7 +20,12 @@ coverage/
 *.p12
 *.pem
 .idea/
-.vscode/
+# Keep shared VS Code settings while ignoring other editor state.
+**/.vscode/*
+!/.vscode/settings.json
+!/.vscode/extensions.json
+!/apps/mobile/.vscode/settings.json
+!/apps/mobile/.vscode/extensions.json
 playwright-report/
 test-results/
 storybook-static/

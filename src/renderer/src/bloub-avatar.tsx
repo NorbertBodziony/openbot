@@ -12,13 +12,18 @@ import { render } from "@solidjs/web";
 import { flush } from "solid-js";
 
 export type AvatarMotion = "hover" | "always" | "idle" | "working" | "connecting";
+export type SupportedAvatarSilhouetteId = Exclude<ShapeId, "goutte">;
 export interface BloubAvatarProfile {
-  shape: ShapeId;
+  shape: SupportedAvatarSilhouetteId;
   color: ColorId;
   expression: ExpressionId;
 }
 
 const AUTOMATIC_COLORS = ["rouge", "orange", "ambre", "vert", "turquoise", "bleu", "violet", "rose"] as const;
+const UNSUPPORTED_AVATAR_SILHOUETTE = "goutte" as const satisfies ShapeId;
+const SUPPORTED_AVATAR_SILHOUETTES = SHAPES.map((option) => option.id).filter(
+  (silhouette): silhouette is SupportedAvatarSilhouetteId => silhouette !== UNSUPPORTED_AVATAR_SILHOUETTE,
+);
 
 const HUE_COLORS: Readonly<Record<BotAvatarHue, ColorId>> = {
   0: "rouge",
@@ -50,10 +55,17 @@ export const AVATAR_HUE_OPTIONS: ReadonlyArray<{
 ];
 
 export function bloubAvatarProfile(seed: string, hue: BotAvatarHue | null): BloubAvatarProfile {
-  const silhouetteId = requiredItem(SHAPES, stableIndex(`${seed}:shape`, SHAPES.length)).id;
+  const storedSilhouette = requiredItem(SHAPES, stableIndex(`${seed}:shape`, SHAPES.length)).id;
+  const silhouette =
+    storedSilhouette === UNSUPPORTED_AVATAR_SILHOUETTE
+      ? requiredItem(
+          SUPPORTED_AVATAR_SILHOUETTES,
+          stableIndex(`${seed}:shape:replacement`, SUPPORTED_AVATAR_SILHOUETTES.length),
+        )
+      : storedSilhouette;
   const expression = requiredItem(EXPRESSIONS, stableIndex(`${seed}:expression`, EXPRESSIONS.length)).id;
   return {
-    shape: silhouetteId,
+    shape: silhouette,
     expression,
     color:
       hue === null
@@ -73,7 +85,7 @@ export function avatarHeadColor(seed: string, hue: BotAvatarHue | null): string 
 export function avatarCandidateSeeds(botId: string, currentSeed: string, batch: number): string[] {
   const candidates = [currentSeed];
   const firstProfile = bloubAvatarProfile(currentSeed, null);
-  const unseenSilhouetteIds = new Set<ShapeId>(SHAPES.map((option) => option.id));
+  const unseenSilhouetteIds = new Set<SupportedAvatarSilhouetteId>(SUPPORTED_AVATAR_SILHOUETTES);
   const usedExpressions = new Set<ExpressionId>([firstProfile.expression]);
   unseenSilhouetteIds.delete(firstProfile.shape);
   let index = 1;
