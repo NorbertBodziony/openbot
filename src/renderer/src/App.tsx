@@ -3033,7 +3033,11 @@ export function createAppController(props: AppProps = {}) {
     setAppSettingsOpen(true);
   }
 
-  async function selectServer(serverId: string, trackSelection = true): Promise<boolean> {
+  async function selectServer(
+    serverId: string,
+    trackSelection = true,
+    recoverAuthoritativeServer = true,
+  ): Promise<boolean> {
     if (botSetupOpen() && creatingAgent()) return false;
     const selectionGeneration = ++serverSelectionGeneration;
     const selectionIsCurrent = () => selectionGeneration === serverSelectionGeneration;
@@ -3072,6 +3076,14 @@ export function createAppController(props: AppProps = {}) {
           });
         }
         setDynamicIslandLoadedServerId(previousDynamicIslandLoadedServerId);
+        if (recoverAuthoritativeServer) {
+          const authoritativeServers = await window.openbot.servers.list().catch(() => null);
+          if (!selectionIsCurrent()) return false;
+          const authoritativeServerId = authoritativeServers?.find((server) => server.active)?.id;
+          if (authoritativeServerId && authoritativeServerId !== previousServerId) {
+            await selectServer(authoritativeServerId, false, false);
+          }
+        }
         throw error;
       }
       const dynamicIslandState = dynamicIslandCoordinator.serverState(serverId);

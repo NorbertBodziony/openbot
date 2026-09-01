@@ -2022,10 +2022,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   #setActiveServerId(serverId: string): number {
-    if (this.#state.activeServerId !== serverId) {
-      this.#state.activeServerId = serverId;
-      this.#activeServerRevision += 1;
-    }
+    this.#state.activeServerId = serverId;
+    this.#activeServerRevision += 1;
     return this.#activeServerRevision;
   }
 

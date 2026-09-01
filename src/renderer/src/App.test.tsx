@@ -4979,6 +4979,51 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("heading", { name: "Studio Chief" })).not.toBeInTheDocument();
   });
 
+  it("restores the authoritative workspace when a newer server selection fails", async () => {
+    const local = testServer("local", true);
+    const studio = { ...testServer("remote-1", false), name: "Studio Mac" };
+    const office = { ...testServer("remote-2", false), name: "Office PC", apiUrl: "https://office.example.com" };
+    const studioActive = [
+      { ...local, active: false },
+      { ...studio, active: true },
+      { ...office, active: false },
+    ];
+    let resolveStudioSelection: ((servers: ServerSummary[]) => void) | undefined;
+    let rejectOfficeSelection: ((error: Error) => void) | undefined;
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, studio, office]);
+    vi.mocked(window.openbot.servers.select)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveStudioSelection = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            rejectOfficeSelection = reject;
+          }),
+      )
+      .mockResolvedValueOnce(studioActive);
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    vi.mocked(window.openbot.agent.listBots).mockResolvedValueOnce([{ ...BOTS[0], name: "Studio Chief" }]);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() => expect(resolveStudioSelection).toBeDefined());
+    await fireEvent.click(screen.getByRole("button", { name: "Office PC server" }));
+    await waitFor(() => expect(rejectOfficeSelection).toBeDefined());
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce(studioActive);
+    resolveStudioSelection?.(studioActive);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    rejectOfficeSelection?.(new Error("Office unavailable"));
+
+    expect(await screen.findByRole("heading", { name: "Studio Chief" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true");
+    expect(window.openbot.servers.select).toHaveBeenCalledTimes(3);
+  });
+
   it("closes the browser panel when its last tab is closed from the embedded page", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
