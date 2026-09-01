@@ -132,7 +132,6 @@ jobs:
           bun run install:codex-runtime
           bun run install:claude-runtime
           bun run install:grok-runtime
-          bun run install:cloudflared
           bun run install:remote-desktop-runtime
           bun run verify:remote-desktop-runtime
 
@@ -333,7 +332,6 @@ jobs:
             "dist/win-unpacked/resources/remote-desktop-runtime/win32/x64/streamer.exe"
           )
           $vendorRuntimeExecutables = @(
-            "dist/win-unpacked/resources/cloudflared/win/x64/cloudflared.exe",
             "build/codex/win/x64/bin/codex.exe",
             "build/codex/win/x64/bin/codex-code-mode-host.exe",
             "build/claude/win/x64/bin/claude.exe",

@@ -73,6 +73,9 @@ type BridgeCommand =
   | { type: "disconnect" | "disconnect-peer" | "restart-ice" | "close"; peerId: string }
   | { type: "send"; peerId: string; channel: TeamWebRtcChannel; data: string | ArrayBuffer };
 
+const COMMAND_TIMEOUT_MS = 15_000;
+const SEND_COMMAND_TIMEOUT_MS = 75_000;
+
 export class TeamWebRtcBridge extends EventEmitter<TeamWebRtcBridgeEvents> {
   readonly #options: TeamWebRtcBridgeOptions;
   readonly #pending = new Map<
@@ -190,10 +193,13 @@ export class TeamWebRtcBridge extends EventEmitter<TeamWebRtcBridgeEvents> {
     if (!port) return Promise.reject(new Error("The Team WebRTC bridge is not ready."));
     const commandId = crypto.randomUUID();
     return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.#pending.delete(commandId);
-        reject(new Error(`The Team WebRTC ${command.type} command timed out.`));
-      }, 15_000);
+      const timer = setTimeout(
+        () => {
+          this.#pending.delete(commandId);
+          reject(new Error(`The Team WebRTC ${command.type} command timed out.`));
+        },
+        command.type === "send" ? SEND_COMMAND_TIMEOUT_MS : COMMAND_TIMEOUT_MS,
+      );
       this.#pending.set(commandId, { resolve, reject, timer });
       port.postMessage({ ...command, commandId });
     });

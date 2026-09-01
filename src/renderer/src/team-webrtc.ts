@@ -426,15 +426,22 @@ async function sendChannelPayload(
 function waitForWritableChannel(channel: RTCDataChannel): Promise<void> {
   if (channel.bufferedAmount <= 4 * 1024 * 1024) return Promise.resolve();
   return new Promise((resolve, reject) => {
+    let settled = false;
     const timer = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
       channel.removeEventListener("bufferedamountlow", onLow);
       reject(new Error("The WebRTC channel stayed under backpressure."));
-    }, 10_000);
+    }, 60_000);
     const onLow = () => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
+      channel.removeEventListener("bufferedamountlow", onLow);
       resolve();
     };
-    channel.addEventListener("bufferedamountlow", onLow, { once: true });
+    channel.addEventListener("bufferedamountlow", onLow);
+    if (channel.bufferedAmount <= channel.bufferedAmountLowThreshold) onLow();
   });
 }
 
@@ -482,14 +489,17 @@ function requiredDescriptionSdp(description: RTCSessionDescriptionInit): string 
 
 async function reportSelectedPath(state: PeerState, connection: RTCPeerConnection): Promise<void> {
   const stats = await connection.getStats();
-  let path: "p2p" | "relay" = "p2p";
-  for (const report of stats.values()) {
-    if (report.type !== "candidate-pair" || report.state !== "succeeded" || !report.nominated) continue;
-    const local = stats.get(report.localCandidateId);
-    const remote = stats.get(report.remoteCandidateId);
-    if (local?.candidateType === "relay" || remote?.candidateType === "relay") path = "relay";
-    break;
-  }
+  const transport = [...stats.values()].find((report) => report.type === "transport" && report.selectedCandidatePairId);
+  const selectedPair = transport ? stats.get(transport.selectedCandidatePairId) : null;
+  const pair =
+    selectedPair ??
+    [...stats.values()].find(
+      (report) => report.type === "candidate-pair" && report.state === "succeeded" && report.nominated,
+    ) ??
+    [...stats.values()].find((report) => report.type === "candidate-pair" && report.state === "succeeded");
+  const local = pair ? stats.get(pair.localCandidateId) : null;
+  const remote = pair ? stats.get(pair.remoteCandidateId) : null;
+  const path = local?.candidateType === "relay" || remote?.candidateType === "relay" ? "relay" : "p2p";
   post({ type: "ice-path", peerId: state.id, path });
 }
 

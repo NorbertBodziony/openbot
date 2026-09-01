@@ -58,8 +58,8 @@ Prywatny klucz deszyfrujący znajduje się tylko w ignorowanym pliku `remote/.en
 zaszyfrowanego pliku bezpośrednio przez `docker compose --env-file`, ponieważ Compose nie odszyfruje wartości.
 Skrypty `remote:*` uruchamiają Compose przez Dotenvx i odszyfrowują wartości tylko w pamięci procesu.
 Opcja `--overload` zapobiega zastąpieniu odszyfrowanych wartości przez puste zmienne środowiska hosta.
-Na serwerze ze starszym systemowym Node użyj `remote/bin/dotenvx`. Ten wrapper uruchamia przypięty pakiet
-Dotenvx przez Bun.
+Skrypty używają `remote/bin/dotenvx`. Wrapper wybiera przypięty Node z runtime aplikacji, jeżeli systemowy
+Node jest za stary.
 
 Sprawdź środowisko i uruchom usługi:
 

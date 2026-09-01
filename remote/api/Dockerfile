@@ -12,6 +12,7 @@ FROM oven/bun:1.3.11-alpine
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=dependencies /app/node_modules ./node_modules
+COPY --from=dependencies /app/remote/api/node_modules ./remote/api/node_modules
 COPY remote/api ./remote/api
 USER bun
 WORKDIR /app/remote/api
