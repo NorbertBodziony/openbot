@@ -6619,6 +6619,59 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
   });
 
+  it("cancels a Dynamic Island action when its server selection is superseded", async () => {
+    const local = testServer("local", true);
+    const studio = testServer("remote-1", false);
+    const office = { ...testServer("remote-2", false), name: "Office PC", apiUrl: "https://office.example.com" };
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, studio, office]);
+    vi.mocked(window.openbot.servers.select)
+      .mockResolvedValueOnce([
+        { ...local, active: false },
+        { ...studio, active: true },
+        { ...office, active: false },
+      ])
+      .mockResolvedValueOnce([
+        { ...local, active: false },
+        { ...studio, active: false },
+        { ...office, active: true },
+      ]);
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+
+    let resolveStudioBots: ((bots: BotSummary[]) => void) | undefined;
+    vi.mocked(window.openbot.agent.listBots)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveStudioBots = resolve;
+          }),
+      )
+      .mockResolvedValueOnce([{ ...BOTS[0], name: "Office Chief" }]);
+    emitDynamicIslandAction?.({
+      type: "open-message",
+      serverId: "remote-1",
+      botId: "chief",
+      messageId: "stale-remote-message",
+    });
+    await waitFor(() => expect(resolveStudioBots).toBeDefined());
+    await fireEvent.click(screen.getByRole("button", { name: "Office PC server" }));
+    expect(await screen.findByRole("heading", { name: "Office Chief" })).toBeInTheDocument();
+
+    resolveStudioBots?.([{ ...BOTS[0], name: "Studio Chief" }]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(
+      vi
+        .mocked(window.openbot.agent.readConversationPage)
+        .mock.calls.some(
+          ([input]) => input.anchor?.type === "around" && input.anchor.messageId === "stale-remote-message",
+        ),
+    ).toBe(false);
+    expect(screen.getByRole("button", { name: "Office PC server" })).toHaveAttribute("aria-pressed", "true");
+  });
+
   it("discards a chat-open reload that resolves during a server switch", async () => {
     const local = testServer("local", true);
     const remote = testServer("remote-1", false);

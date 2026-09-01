@@ -3022,8 +3022,8 @@ export function createAppController(props: AppProps = {}) {
     setAppSettingsOpen(true);
   }
 
-  async function selectServer(serverId: string, trackSelection = true): Promise<void> {
-    if (botSetupOpen() && creatingAgent()) return;
+  async function selectServer(serverId: string, trackSelection = true): Promise<boolean> {
+    if (botSetupOpen() && creatingAgent()) return false;
     const selectionGeneration = ++serverSelectionGeneration;
     const selectionIsCurrent = () => selectionGeneration === serverSelectionGeneration;
     const analytics = desktopAnalytics.scope();
@@ -3033,9 +3033,9 @@ export function createAppController(props: AppProps = {}) {
     try {
       if (switchingServers) {
         await disconnectRemoteDesktopWorkspace(false);
-        if (!selectionIsCurrent()) return;
+        if (!selectionIsCurrent()) return false;
         await window.openbot.browser.setVisible({ visible: false }).catch(() => undefined);
-        if (!selectionIsCurrent()) return;
+        if (!selectionIsCurrent()) return false;
       }
       directConversationRequest += 1;
       const previousDynamicIslandLoadedServerId = dynamicIslandLoadedServerId() ?? previousServerId ?? null;
@@ -3043,7 +3043,7 @@ export function createAppController(props: AppProps = {}) {
       let nextServers: ServerSummary[];
       try {
         nextServers = await window.openbot.servers.select(serverId);
-        if (!selectionIsCurrent()) return;
+        if (!selectionIsCurrent()) return false;
         if (trackSelection) {
           analytics.track("team_action", {
             action: "server_selected",
@@ -3052,7 +3052,7 @@ export function createAppController(props: AppProps = {}) {
           });
         }
       } catch (error) {
-        if (!selectionIsCurrent()) return;
+        if (!selectionIsCurrent()) return false;
         if (trackSelection) {
           analytics.track("team_action", {
             action: "server_selected",
@@ -3096,7 +3096,7 @@ export function createAppController(props: AppProps = {}) {
         selectedServer?.kind === "remote" &&
         (selectedServer.state === "incompatible" || selectedServer.issue?.code === "protocol_error")
       ) {
-        return;
+        return true;
       }
       const browserRequestedAtRevision = browserChangeRevision;
       const browserSupported = serverSupportsCapability(selectedServer, "browser-control");
@@ -3120,7 +3120,7 @@ export function createAppController(props: AppProps = {}) {
           : window.openbot.browser.getControlState(),
         window.openbot.servers.getPresence(),
       ]);
-      if (!selectionIsCurrent()) return;
+      if (!selectionIsCurrent()) return false;
       setAgentStatus(status);
       setModelOptions(models);
       if (browserChangeRevision === browserRequestedAtRevision) {
@@ -3133,6 +3133,7 @@ export function createAppController(props: AppProps = {}) {
       applyStoredBots(storedBots);
       applyConversationReads(reads);
       setDynamicIslandLoadedServerId(serverId);
+      return true;
     } finally {
       if (selectionIsCurrent()) setBrowserVisibilitySuspended(false);
     }
@@ -3151,7 +3152,7 @@ export function createAppController(props: AppProps = {}) {
   }
 
   async function openInstalledMarketplaceAgent(bot: BotSummary): Promise<void> {
-    await selectServer("local", false);
+    if (!(await selectServer("local", false))) return;
     selectBot(bot.id);
     setSkillsMarketplaceOpen(false);
   }
@@ -3711,7 +3712,7 @@ export function createAppController(props: AppProps = {}) {
       publishDynamicIslandPresentation();
       return;
     }
-    if (activeServerSidebarKey() !== action.serverId) await selectServer(action.serverId, false);
+    if (activeServerSidebarKey() !== action.serverId && !(await selectServer(action.serverId, false))) return;
     selectBot(action.botId);
     if (action.type === "open-message") await openAgentMessage(action.botId, action.messageId);
     if (action.type === "open-failure") {

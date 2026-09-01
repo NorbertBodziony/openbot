@@ -153,6 +153,7 @@ export class BrowserHost {
   readonly #downloadsRoot: string;
   readonly #statePath: string;
   readonly #tabs = new Map<string, InternalTab>();
+  readonly #closingTabDrains = new Map<string, Promise<void>>();
   readonly #listeners = new Set<(...args: BrowserHostEvents["changed"]) => void>();
   readonly #controlListeners = new Set<(...args: BrowserHostEvents["controlChanged"]) => void>();
   readonly #controlSessions = new Map<string, BrowserControlSession>();
@@ -344,8 +345,15 @@ export class BrowserHost {
     const destroy = tab.queue.then(() => {
       if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
     });
+    this.#closingTabDrains.set(tab.id, destroy);
     tab.queue = destroy.catch(() => undefined);
-    await Promise.all([destroy, this.#persistState()]);
+    const statePersistence = this.#persistState();
+    try {
+      await destroy;
+      await statePersistence;
+    } finally {
+      if (this.#closingTabDrains.get(tab.id) === destroy) this.#closingTabDrains.delete(tab.id);
+    }
   }
 
   async setVisible(input: BrowserVisibilityInput): Promise<void> {
@@ -500,6 +508,7 @@ export class BrowserHost {
 
   async #destroyPersistentStorageAndViews(): Promise<void> {
     const statePersistence = this.#persistState();
+    const closingTabDrains = [...this.#closingTabDrains.values()];
     this.#session.flushStorageData();
     for (const tab of this.#tabs.values()) {
       this.#unmountView(tab.view);
@@ -509,8 +518,15 @@ export class BrowserHost {
     this.#listeners.clear();
     this.clearControls();
     this.#controlListeners.clear();
+    const results = await Promise.allSettled([
+      this.#session.cookies.flushStore(),
+      statePersistence,
+      ...closingTabDrains,
+    ]);
+    this.#closingTabDrains.clear();
     this.#session.flushStorageData();
-    await Promise.all([this.#session.cookies.flushStore(), statePersistence]);
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
   }
 
   async flushPersistentStorage(): Promise<void> {
