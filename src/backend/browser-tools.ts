@@ -132,7 +132,7 @@ export const BROWSER_TOOL_DEFINITIONS: readonly BrowserToolDefinition[] = [
   {
     name: "upload_files",
     description:
-      "Set local files on a file input after validating paths, count, and argument size, then return a fresh snapshot.",
+      "Set workspace or OpenBot shared files on a file input after authorizing paths, then return a fresh snapshot.",
     shape: {
       ...targetAction,
       paths: z.array(z.string().min(1).max(INPUT_LIMITS.path)).min(1).max(INPUT_LIMITS.attachments),

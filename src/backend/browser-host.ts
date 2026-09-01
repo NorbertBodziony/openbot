@@ -115,17 +115,26 @@ export class BrowserHost {
   #persistQueue: Promise<void> = Promise.resolve();
   #destroyPromise: Promise<void> | null = null;
 
-  constructor(window: BrowserWindow, downloadsRoot: string, statePath: string) {
+  constructor(
+    window: BrowserWindow,
+    downloadsRoot: string,
+    statePath: string,
+    options: { recordingDurationMs?: number } = {},
+  ) {
     this.#window = window;
     this.#downloadsRoot = downloadsRoot;
     this.#statePath = statePath;
     this.#session = session.fromPartition("persist:openbot-browser", { cache: true });
-    this.#recorder = new BrowserRecorder(downloadsRoot, (tabId, recording) => {
-      const tab = this.#tabs.get(tabId);
-      if (!tab) return;
-      tab.recording = recording;
-      this.#emitChanged();
-    });
+    this.#recorder = new BrowserRecorder(
+      downloadsRoot,
+      (tabId, recording) => {
+        const tab = this.#tabs.get(tabId);
+        if (!tab) return;
+        tab.recording = recording;
+        this.#emitChanged();
+      },
+      { maxRecordingMs: options.recordingDurationMs },
+    );
     this.#configureSession();
   }
 
@@ -433,8 +442,18 @@ export class BrowserHost {
           const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
           this.#requireToolTab(params, tabId);
           const mode = parseImageMode(args.image);
-          const result = await this.#enqueue(tabId, (tab) => this.#readSnapshot(tab, tab.revision + 1));
-          return this.#snapshotResult(tabId, result, mode);
+          const capture = await this.#enqueue(tabId, async (tab) => {
+            const result = await this.#readSnapshot(tab, tab.revision + 1);
+            const includeImage = mode === "always" || (mode === "auto" && result.recommendImage);
+            if (!includeImage) return { result, imageUrl: null };
+            const image = await withTimeout(
+              tab.view.webContents.capturePage(),
+              10_000,
+              "Browser screenshot timed out.",
+            );
+            return { result, imageUrl: image.toDataURL() };
+          });
+          return this.#snapshotResult(capture.result, mode, capture.imageUrl);
         }
         case "navigate": {
           const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
@@ -944,10 +963,8 @@ export class BrowserHost {
     return result;
   }
 
-  async #snapshotResult(tabId: string, result: SnapshotReadResult, mode: BrowserImageMode): Promise<DynamicToolResult> {
-    const includeImage = mode === "always" || (mode === "auto" && result.recommendImage);
-    if (!includeImage) return textResult(result.snapshot);
-    const imageUrl = await this.screenshot(tabId);
+  #snapshotResult(result: SnapshotReadResult, mode: BrowserImageMode, imageUrl: string | null): DynamicToolResult {
+    if (!imageUrl) return textResult(result.snapshot);
     result.snapshot.image = {
       included: true,
       reason: mode === "always" ? "requested" : result.imageReason,
@@ -1500,7 +1517,7 @@ function parseImageMode(value: unknown): BrowserImageMode {
     : (optionalEnum({ value }, "value", ["auto", "always", "never"] as const) ?? "auto");
 }
 
-function readTimeout(value: DynamicRecord, maximum = 10_000): number {
+function readTimeout(value: DynamicRecord, maximum = 30_000): number {
   const timeout = optionalNumber(value, "timeoutMs") ?? Math.min(maximum, 10_000);
   if (!Number.isInteger(timeout) || timeout < 0 || timeout > maximum)
     throw new Error(`timeoutMs must be between 0 and ${maximum}.`);

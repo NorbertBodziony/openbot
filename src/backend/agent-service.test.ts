@@ -702,6 +702,72 @@ describe.sequential("AgentService", () => {
     expect(calls[0]).toMatchObject({ threadId: openbotThreadId, ownerBotId: "chief" });
   });
 
+  it("authorizes browser uploads against the agent workspace and shared directory", async () => {
+    const calls: DynamicToolCallParams[] = [];
+    const browser = fakeBrowser();
+    browser.handleDynamicTool = async (params) => {
+      calls.push(params);
+      return { success: true, contentItems: [] };
+    };
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, browser, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Upload a workspace file" });
+    await waitFor(() => Boolean(store.activeProviderSession("chief")));
+
+    const bot = await store.getOrCreate("chief");
+    const providerThreadId = store.activeProviderSession("chief")?.externalSessionId;
+    const client = clients.get("codex");
+    if (!providerThreadId || !client) throw new Error("Browser upload test thread was not created.");
+    const uploadPath = join(bot.workspacePath, "browser-upload.txt");
+    await writeFile(uploadPath, "safe upload");
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "browser-upload",
+      params: {
+        threadId: providerThreadId,
+        turnId: "turn-browser-upload",
+        callId: "browser-upload",
+        namespace: "openbot_browser",
+        tool: "upload_files",
+        arguments: { tabId: "tab", target: { kind: "css", selector: "input" }, paths: [uploadPath] },
+      },
+    });
+
+    await waitFor(() => calls.length === 1);
+    expect(calls[0]).toMatchObject({
+      ownerBotId: "chief",
+      arguments: { paths: [await realpath(uploadPath)] },
+    });
+
+    const outsidePath = join(root, "private.txt");
+    await writeFile(outsidePath, "private");
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "browser-upload-denied",
+      params: {
+        threadId: providerThreadId,
+        turnId: "turn-browser-upload",
+        callId: "browser-upload-denied",
+        namespace: "openbot_browser",
+        tool: "upload_files",
+        arguments: { tabId: "tab", target: { kind: "css", selector: "input" }, paths: [outsidePath] },
+      },
+    });
+
+    await waitFor(() => client.errors.some((response) => response.id === "browser-upload-denied"));
+    expect(client.errors.find((response) => response.id === "browser-upload-denied")?.error.message).toContain(
+      "workspace or the OpenBot shared directory",
+    );
+    expect(calls).toHaveLength(1);
+  });
+
   it("surfaces Codex approvals without auto-accepting and maps one-shot decisions", async () => {
     const clients = new Map<AgentProvider, FakeAgentClient>();
     const { store, mailbox } = stores();

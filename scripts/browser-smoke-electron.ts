@@ -159,7 +159,7 @@ async function main(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 100));
     const downloadsRoot = join(temporaryRoot, "downloads");
     const statePath = join(temporaryRoot, "browser-tabs.json");
-    const browser = new BrowserHost(window, downloadsRoot, statePath);
+    const browser = new BrowserHost(window, downloadsRoot, statePath, { recordingDurationMs: 500 });
     await browser.setVisible({ visible: true, bounds: { x: 0, y: 0, width: 800, height: 600 } });
 
     const controlPhases: string[] = [];
@@ -215,6 +215,7 @@ async function main(): Promise<void> {
     const frameClick = await callBrowserTool(browser, "click", {
       tabId: v2Tab.id,
       target: { kind: "role", role: "button", name: "Frame action", exact: true },
+      timeoutMs: 30_000,
     });
     const frameClickSnapshot = toolTextPayload(frameClick);
     if (!frameClick.success || !String(frameClickSnapshot?.text).includes("Frame clicked:true")) {
@@ -339,6 +340,25 @@ async function main(): Promise<void> {
       timeoutMs: 2_000,
     });
     if (!semanticWait.success) throw new Error(`V2 semantic wait failed: ${toolError(semanticWait)}`);
+    const noisyPage = await callBrowserTool(browser, "evaluate", {
+      tabId: v2Tab.id,
+      expression:
+        "globalThis.__openbotNoise = setInterval(() => document.querySelector('output').toggleAttribute('data-noise'), 10); true",
+    });
+    if (!noisyPage.success) throw new Error(`V2 DOM noise setup failed: ${toolError(noisyPage)}`);
+    const quietWait = await callBrowserTool(browser, "wait_for", {
+      tabId: v2Tab.id,
+      state: "dom-quiet",
+      timeoutMs: 200,
+    });
+    if (quietWait.success || !toolError(quietWait).includes("DOM did not become quiet")) {
+      throw new Error("V2 DOM-quiet wait suppressed its timeout.");
+    }
+    const stoppedNoise = await callBrowserTool(browser, "evaluate", {
+      tabId: v2Tab.id,
+      expression: "clearInterval(globalThis.__openbotNoise); true",
+    });
+    if (!stoppedNoise.success) throw new Error(`V2 DOM noise cleanup failed: ${toolError(stoppedNoise)}`);
     const timedOut = await callBrowserTool(browser, "wait_for", {
       tabId: v2Tab.id,
       text: "never appears",
@@ -393,6 +413,15 @@ async function main(): Promise<void> {
     }
     if (browser.listTabs().find((candidate) => candidate.id === v2Tab.id)?.recording !== false) {
       throw new Error("V2 recording state was not cleaned up.");
+    }
+    const recordingRestarted = await callBrowserTool(browser, "recording_start", { tabId: v2Tab.id });
+    if (!recordingRestarted.success) {
+      throw new Error(`V2 recording did not restart after an automatic stop: ${toolError(recordingRestarted)}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const restartedRecordingStopped = await callBrowserTool(browser, "recording_stop", { tabId: v2Tab.id });
+    if (!restartedRecordingStopped.success) {
+      throw new Error(`V2 restarted recording did not stop: ${toolError(restartedRecordingStopped)}`);
     }
     const waitTab = await browser.open(origin, "smoke-thread", "smoke-bot");
     const navigationStarted = await callBrowserTool(browser, "evaluate", {

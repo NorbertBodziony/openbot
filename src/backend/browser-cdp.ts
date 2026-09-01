@@ -462,7 +462,10 @@ export class BrowserCdpEngine {
   async settle(timeoutMs = ACTION_TIMEOUT_MS): Promise<void> {
     await this.#lease(async (send) => {
       if (this.#contents.isLoading()) await waitForLoading(this.#contents, timeoutMs);
-      await waitForDomQuiet(send, Math.min(timeoutMs, 1_500));
+      await waitForDomQuiet(send, Math.min(timeoutMs, 1_500)).catch((error) => {
+        if (error instanceof Error && error.message === "DOM did not become quiet.") return;
+        throw error;
+      });
     });
   }
 
@@ -945,7 +948,7 @@ function waitForLoading(contents: WebContents, timeoutMs: number): Promise<void>
 }
 
 async function waitForDomQuiet(send: SendCommand, timeoutMs: number): Promise<void> {
-  if (timeoutMs <= 0) return;
+  if (timeoutMs <= 0) throw new Error("DOM did not become quiet.");
   await withTimeout(
     send("Runtime.evaluate", {
       expression: `new Promise(resolve => {
@@ -959,10 +962,7 @@ async function waitForDomQuiet(send: SendCommand, timeoutMs: number): Promise<vo
     }),
     timeoutMs,
     "DOM did not become quiet.",
-  ).catch((error) => {
-    if (error instanceof Error && error.message === "DOM did not become quiet.") return;
-    throw error;
-  });
+  );
 }
 
 function waitForPageSignal(contents: WebContents, timeoutMs: number): Promise<void> {

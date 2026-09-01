@@ -2170,7 +2170,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             }
             client.respond(
               request.id,
-              await this.#browser.handleDynamicTool({
+              await this.#handleBrowserDynamicTool(botId, {
                 ...request.params,
                 threadId: this.#publicThreadId(botId, request.params.threadId),
                 ownerBotId: botId,
@@ -2676,6 +2676,29 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
     }
     throw new Error("Attachment files must exist inside this agent's workspace or the OpenBot shared directory.");
+  }
+
+  async #handleBrowserDynamicTool(botId: string, params: DynamicToolCallParams): Promise<DynamicToolResult> {
+    if (params.tool !== "upload_files") return this.#browser.handleDynamicTool(params);
+    const args = params.arguments;
+    if (
+      !isRecord(args) ||
+      !Array.isArray(args.paths) ||
+      args.paths.length === 0 ||
+      args.paths.length > INPUT_LIMITS.attachments ||
+      !args.paths.every((path) => isString(path) && path.length > 0 && path.length <= INPUT_LIMITS.path)
+    ) {
+      throw new Error(`paths must contain between 1 and ${INPUT_LIMITS.attachments} valid local file paths.`);
+    }
+    const sources = await this.#openAgentAttachmentSources(botId, args.paths);
+    try {
+      return await this.#browser.handleDynamicTool({
+        ...params,
+        arguments: { ...args, paths: sources.map((source) => source.path) },
+      });
+    } finally {
+      await Promise.allSettled(sources.map((source) => source.handle.close()));
+    }
   }
 
   #stageMemoryMutation(turnId: string, mutation: PendingMemoryMutation): void {
