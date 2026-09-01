@@ -5,6 +5,8 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-01
+
 ### Added
 
 - Add a self-hosted Bun Signal service, coturn, DNS-01 certificate renewal, and Docker Compose deployment under `remote/`.
@@ -12,6 +14,7 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ### Changed
 
+- Identify signed-in desktop accounts in OpenPanel with normalized email profile traits and ordered event delivery; keep development builds and localhost analytics-free.
 - Keep accounts, host configuration, memberships, invitations, logical sessions, and public assets in Cloudflare while remote data uses WebRTC only.
 - Remove `cloudflared` from the active host transport and from macOS and Windows application packages.
 - Require old Team API clients and hosts to update before they can use the retired tunnel endpoints.
