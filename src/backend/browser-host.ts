@@ -44,6 +44,12 @@ interface BrowserHostEvents {
   controlChanged: [state: BrowserControlState];
 }
 
+interface BrowserDynamicToolHooks {
+  onUploadAssigned?: (inputId: string) => void;
+}
+
+type KeepQueueBlocked = (promise: Promise<unknown>) => void;
+
 const MAX_PHYSICAL_VIEWPORT_PIXELS = 8_388_608;
 const MAX_ENCODED_CAPTURE_PIXELS = 4_194_304;
 
@@ -333,14 +339,14 @@ export class BrowserHost {
   }
 
   async snapshot(tabId: string): Promise<BrowserSnapshot> {
-    return this.#enqueue(tabId, async (tab) => {
+    return this.#enqueue(tabId, async (tab, keepQueueBlocked) => {
       const revision = tab.revision + 1;
-      return (await this.#readSnapshot(tab, revision)).snapshot;
+      return (await this.#readSnapshot(tab, revision, keepQueueBlocked)).snapshot;
     });
   }
 
   async act(tabId: string, revision: number, action: BrowserAction): Promise<BrowserSnapshot> {
-    return this.#enqueue(tabId, async (tab) => {
+    return this.#enqueue(tabId, async (tab, keepQueueBlocked) => {
       if (revision !== tab.revision) {
         throw new Error("Stale browser references. Take a fresh snapshot before acting.");
       }
@@ -385,7 +391,7 @@ export class BrowserHost {
         throw error;
       }
       const nextRevision = tab.revision + 1;
-      return (await this.#readSnapshot(tab, nextRevision)).snapshot;
+      return (await this.#readSnapshot(tab, nextRevision, keepQueueBlocked)).snapshot;
     });
   }
 
@@ -421,7 +427,10 @@ export class BrowserHost {
     });
   }
 
-  async handleDynamicTool(params: DynamicToolCallParams): Promise<DynamicToolResult> {
+  async handleDynamicTool(
+    params: DynamicToolCallParams,
+    hooks: BrowserDynamicToolHooks = {},
+  ): Promise<DynamicToolResult> {
     const args = isRecord(params.arguments) ? params.arguments : {};
     this.#beginControl(params, args);
     try {
@@ -453,8 +462,8 @@ export class BrowserHost {
           const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
           this.#requireToolTab(params, tabId);
           const mode = parseImageMode(args.image);
-          const capture = await this.#enqueue(tabId, async (tab) => {
-            const result = await this.#readSnapshot(tab, tab.revision + 1);
+          const capture = await this.#enqueue(tabId, async (tab, keepQueueBlocked) => {
+            const result = await this.#readSnapshot(tab, tab.revision + 1, keepQueueBlocked);
             const includeImage = mode === "always" || (mode === "auto" && result.recommendImage);
             if (!includeImage) return { result, imageUrl: null };
             const image = await withTimeout(
@@ -616,7 +625,10 @@ export class BrowserHost {
               tabId,
               "upload-files",
               target,
-              (tab) => tab.engine.uploadFiles(target, paths),
+              async (tab) => {
+                const inputId = await tab.engine.uploadFiles(target, paths);
+                hooks.onUploadAssigned?.(inputId);
+              },
               readTimeout(args),
             ),
           );
@@ -634,9 +646,9 @@ export class BrowserHost {
           if (!condition.target && !condition.text && !condition.url && !condition.state)
             throw new Error("wait_for requires a condition.");
           return textResult(
-            await this.#enqueue(tabId, async (tab) => {
+            await this.#enqueue(tabId, async (tab, keepQueueBlocked) => {
               await tab.engine.waitFor(condition, readTimeout(args, 30_000));
-              return (await this.#readSnapshot(tab, tab.revision + 1)).snapshot;
+              return (await this.#readSnapshot(tab, tab.revision + 1, keepQueueBlocked)).snapshot;
             }),
           );
         }
@@ -652,12 +664,12 @@ export class BrowserHost {
           const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
           this.#requireToolTab(params, tabId);
           return textResult(
-            await this.#enqueue(tabId, async (tab) => {
+            await this.#enqueue(tabId, async (tab, keepQueueBlocked) => {
               tab.environment = parseEnvironment(args, tab.environment, tab.view.getBounds());
               await tab.engine.setEnvironment(tab.environment);
               await this.#persistState();
               this.#emitChanged();
-              return (await this.#readSnapshot(tab, tab.revision + 1)).snapshot;
+              return (await this.#readSnapshot(tab, tab.revision + 1, keepQueueBlocked)).snapshot;
             }),
           );
         }
@@ -914,19 +926,21 @@ export class BrowserHost {
     }
   }
 
-  async #readSnapshot(tab: InternalTab, revision: number): Promise<SnapshotReadResult> {
+  async #readSnapshot(
+    tab: InternalTab,
+    revision: number,
+    keepQueueBlocked: KeepQueueBlocked,
+  ): Promise<SnapshotReadResult> {
     const history = tab.diagnostics.snapshot();
-    const result = await withTimeout(
-      tab.engine.snapshot({
-        tabId: tab.id,
-        revision,
-        environment: tab.environment,
-        diagnostics: history.diagnostics,
-        actions: history.actions,
-      }),
-      10_000,
-      "Browser snapshot timed out.",
-    );
+    const completion = tab.engine.snapshot({
+      tabId: tab.id,
+      revision,
+      environment: tab.environment,
+      diagnostics: history.diagnostics,
+      actions: history.actions,
+    });
+    keepQueueBlocked(completion);
+    const result = await withTimeout(completion, 10_000, "Browser snapshot timed out.");
     tab.revision = revision;
     return result;
   }
@@ -940,6 +954,7 @@ export class BrowserHost {
   ): Promise<BrowserSnapshot> {
     const tab = this.#requireTab(tabId);
     const started = tab.queue.then(() => {
+      const snapshotDrains: Promise<unknown>[] = [];
       const operationCompletion = (async () => {
         if (target && target.kind !== "point") await tab.engine.highlight(target).catch(() => undefined);
         await operation(tab);
@@ -952,7 +967,7 @@ export class BrowserHost {
             target: target ? describeBrowserTarget(target) : undefined,
             outcome: "success",
           });
-          return (await this.#readSnapshot(tab, tab.revision + 1)).snapshot;
+          return (await this.#readSnapshot(tab, tab.revision + 1, (promise) => snapshotDrains.push(promise))).snapshot;
         })
         .catch((error) => {
           tab.diagnostics.action({
@@ -963,7 +978,9 @@ export class BrowserHost {
           });
           throw error;
         });
-      const drained = Promise.allSettled([operationCompletion, response]).then(() => undefined);
+      const drained = Promise.allSettled([operationCompletion, response])
+        .then(() => Promise.allSettled(snapshotDrains))
+        .then(() => undefined);
       return { drained, response };
     });
     const result = started.then(({ response }) => response);
@@ -1075,10 +1092,25 @@ export class BrowserHost {
     );
   }
 
-  #enqueue<T>(tabId: string, operation: (tab: InternalTab) => Promise<T>): Promise<T> {
+  #enqueue<T>(
+    tabId: string,
+    operation: (tab: InternalTab, keepQueueBlocked: KeepQueueBlocked) => Promise<T>,
+  ): Promise<T> {
     const tab = this.#requireTab(tabId);
-    const result = tab.queue.then(() => operation(tab));
-    tab.queue = result.catch(() => undefined);
+    const started = tab.queue.then(() => {
+      const drains: Promise<unknown>[] = [];
+      const result = operation(tab, (promise) => drains.push(promise));
+      const drained = result
+        .catch(() => undefined)
+        .then(() => Promise.allSettled(drains))
+        .then(() => undefined);
+      return { drained, result };
+    });
+    const result = started.then(({ result }) => result);
+    tab.queue = started.then(
+      ({ drained }) => drained,
+      () => undefined,
+    );
     return result;
   }
 

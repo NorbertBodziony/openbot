@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
+import { type DynamicRecord, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { app, BrowserWindow, webContents } from "electron";
 import { BrowserHost } from "../src/backend/browser-host";
 import { type DynamicToolResult, getString } from "../src/backend/protocol";
@@ -61,8 +61,14 @@ const server = createServer((request, response) => {
   if (url.pathname === "/frame") {
     response.setHeader("content-type", "text/html; charset=utf-8");
     response.end(
-      `<button aria-label="Frame action" onclick="this.textContent='Frame clicked:' + event.isTrusted">Frame action</button>`,
+      `<button aria-label="Frame action" onclick="this.textContent='Frame clicked:' + event.isTrusted">Frame action</button>
+       <button aria-label="Schedule frame navigation" onclick="setTimeout(() => location.href='/frame-next', 1000)">Schedule frame navigation</button>`,
     );
+    return;
+  }
+  if (url.pathname === "/frame-next") {
+    response.setHeader("content-type", "text/html; charset=utf-8");
+    response.end(`<button aria-label="Replacement frame action">Replacement frame action</button>`);
     return;
   }
   if (url.pathname === "/diagnostic-error") {
@@ -227,6 +233,28 @@ async function main(): Promise<void> {
       timeoutMs: 2_000,
     });
     if (!frameTextWait.success) throw new Error(`V2 iframe text wait failed: ${toolError(frameTextWait)}`);
+    const scheduledFrameNavigation = await callBrowserTool(browser, "click", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "button", name: "Schedule frame navigation", exact: true },
+    });
+    const scheduledFrameSnapshot = toolTextPayload(scheduledFrameNavigation);
+    const scheduledFrameElements = Array.isArray(scheduledFrameSnapshot?.elements)
+      ? scheduledFrameSnapshot.elements.filter(isDynamicRecord)
+      : [];
+    const staleFrameTarget = scheduledFrameElements.find((element) => element.name === "Frame action");
+    const staleFrameRevision = scheduledFrameSnapshot?.revision;
+    if (!scheduledFrameNavigation.success || !staleFrameTarget || !isNumber(staleFrameRevision)) {
+      throw new Error(`V2 iframe navigation setup failed: ${toolError(scheduledFrameNavigation)}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    const staleFrameClick = await callBrowserTool(browser, "click", {
+      tabId: v2Tab.id,
+      target: { kind: "ref", ref: String(staleFrameTarget.ref), revision: staleFrameRevision },
+    });
+    if (staleFrameClick.success || !toolError(staleFrameClick).includes("Stale browser reference")) {
+      throw new Error("V2 iframe navigation did not invalidate revision-bound references.");
+    }
+    await browser.snapshot(v2Tab.id);
     const noDomRefs = await callBrowserTool(browser, "evaluate", {
       tabId: v2Tab.id,
       expression: "document.querySelector('[data-openbot-ref]') === null",
@@ -488,6 +516,27 @@ async function main(): Promise<void> {
     if (!restartedRecordingStopped.success) {
       throw new Error(`V2 restarted recording did not stop: ${toolError(restartedRecordingStopped)}`);
     }
+    const filesBeforeAbandonedRecording = new Set(await readdir(downloadsRoot));
+    const abandonedRecordingTab = await browser.open(`${origin}/v2`, "smoke-thread", "smoke-bot");
+    const abandonedRecordingStarted = await callBrowserTool(browser, "recording_start", {
+      tabId: abandonedRecordingTab.id,
+    });
+    if (!abandonedRecordingStarted.success) {
+      throw new Error(`V2 abandoned recording did not start: ${toolError(abandonedRecordingStarted)}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    const abandonedRecordingName = (await readdir(downloadsRoot)).find(
+      (name) => !filesBeforeAbandonedRecording.has(name) && name.endsWith(".webm"),
+    );
+    if (!abandonedRecordingName) throw new Error("V2 automatic recording did not create an artifact.");
+    const abandonedRecordingPath = join(downloadsRoot, abandonedRecordingName);
+    await browser.close(abandonedRecordingTab.id);
+    await waitFor(async () =>
+      readFile(abandonedRecordingPath).then(
+        () => false,
+        () => true,
+      ),
+    );
     const waitTab = await browser.open(origin, "smoke-thread", "smoke-bot");
     const beforeNavigation = await browser.snapshot(waitTab.id);
     const staleNavigationTarget = beforeNavigation.elements.find((element) => element.name === "Save");

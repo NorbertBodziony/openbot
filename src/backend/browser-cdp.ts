@@ -78,10 +78,8 @@ export class BrowserCdpEngine {
   constructor(contents: WebContents) {
     this.#contents = contents;
     contents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
-      if (isMainFrame) {
-        this.#targets.clear();
-        this.#lastSnapshot = null;
-      }
+      this.#targets.clear();
+      this.#lastSnapshot = null;
       if (!isInPlace && isMainFrame) {
         this.#evaluationContextId = null;
         this.#evaluationFrameId = null;
@@ -359,7 +357,7 @@ export class BrowserCdpEngine {
     });
   }
 
-  async uploadFiles(target: BrowserTarget, paths: string[]): Promise<void> {
+  async uploadFiles(target: BrowserTarget, paths: string[]): Promise<string> {
     if (paths.length === 0 || paths.length > 10) throw new Error("Upload requires between 1 and 10 files.");
     if (Buffer.byteLength(JSON.stringify(paths)) > MAX_RESULT_BYTES)
       throw new Error("Upload path arguments exceed 64 KB.");
@@ -367,9 +365,16 @@ export class BrowserCdpEngine {
       const info = await stat(path).catch(() => null);
       if (!info?.isFile()) throw new Error(`Upload file does not exist or is not a regular file: ${path}`);
     }
-    await this.#lease(async (send) => {
+    return this.#lease(async (send) => {
       const resolved = await this.#resolveElement(send, target);
+      const described = await send(
+        "DOM.describeNode",
+        { backendNodeId: resolved.backendNodeId, depth: 0 },
+        resolved.sessionId,
+      );
+      const frameId = stringValue(recordValue(described.node)?.frameId) || "main";
       await send("DOM.setFileInputFiles", { backendNodeId: resolved.backendNodeId, files: paths }, resolved.sessionId);
+      return `${frameId}:${resolved.backendNodeId}`;
     });
   }
 

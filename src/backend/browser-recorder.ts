@@ -205,12 +205,15 @@ export class BrowserRecorder {
         await this.#discardSession(session, true);
       }
     }
+    const artifact = this.#artifacts.get(tabId);
+    if (artifact) await rm(artifact.path, { force: true }).catch(() => undefined);
     this.#artifacts.delete(tabId);
     this.#errors.delete(tabId);
   }
 
   async destroy(): Promise<void> {
-    await Promise.allSettled([...this.#sessions.keys()].map((tabId) => this.discard(tabId, "tab-closed")));
+    const tabIds = new Set([...this.#sessions.keys(), ...this.#artifacts.keys(), ...this.#errors.keys()]);
+    await Promise.allSettled([...tabIds].map((tabId) => this.discard(tabId, "tab-closed")));
     this.#artifacts.clear();
     this.#errors.clear();
   }

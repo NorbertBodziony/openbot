@@ -706,22 +706,27 @@ describe.sequential("AgentService", () => {
     const calls: DynamicToolCallParams[] = [];
     let uploadPath = "";
     let outsidePath = "";
-    let stagedPath = "";
-    let stagedContents = "";
+    const stagedPaths: string[] = [];
+    const stagedContents: string[] = [];
     const browser = fakeBrowser();
-    browser.handleDynamicTool = async (params) => {
+    browser.handleDynamicTool = async (params, hooks) => {
       if (
         params.tool === "upload_files" &&
         isDynamicRecord(params.arguments) &&
         Array.isArray(params.arguments.paths)
       ) {
-        stagedPath = String(params.arguments.paths[0]);
-        await rm(uploadPath);
-        await symlink(outsidePath, uploadPath);
-        stagedContents = await readFile(stagedPath, "utf8");
+        const stagedPath = String(params.arguments.paths[0]);
+        stagedPaths.push(stagedPath);
+        if (stagedPaths.length === 1) {
+          await rm(uploadPath);
+          await symlink(outsidePath, uploadPath);
+        }
+        stagedContents.push(await readFile(stagedPath, "utf8"));
+        const target = isDynamicRecord(params.arguments.target) ? params.arguments.target : {};
+        hooks?.onUploadAssigned?.(String(target.selector ?? target.ref ?? "input"));
       }
       calls.push(params);
-      return { success: true, contentItems: [] };
+      return { success: stagedPaths.length !== 2, contentItems: [] };
     };
     const clients = new Map<AgentProvider, FakeAgentClient>();
     const { store, mailbox } = stores();
@@ -739,8 +744,12 @@ describe.sequential("AgentService", () => {
     const client = clients.get("codex");
     if (!providerThreadId || !client) throw new Error("Browser upload test thread was not created.");
     uploadPath = join(bot.workspacePath, "browser-upload.txt");
+    const secondUploadPath = join(bot.workspacePath, "browser-upload-second.txt");
+    const replacementUploadPath = join(bot.workspacePath, "browser-upload-replacement.txt");
     outsidePath = join(root, "private.txt");
     await writeFile(uploadPath, "safe upload");
+    await writeFile(secondUploadPath, "second upload");
+    await writeFile(replacementUploadPath, "replacement upload");
     await writeFile(outsidePath, "private");
 
     client.emit("request", {
@@ -758,9 +767,53 @@ describe.sequential("AgentService", () => {
 
     await waitFor(() => client.responses.some((response) => response.id === "browser-upload"));
     expect(calls[0]).toMatchObject({ ownerBotId: "chief" });
-    expect(stagedPath).not.toBe(uploadPath);
-    expect(stagedContents).toBe("safe upload");
-    await expect(readFile(stagedPath, "utf8")).resolves.toBe("safe upload");
+    expect(stagedPaths[0]).not.toBe(uploadPath);
+    expect(stagedContents[0]).toBe("safe upload");
+    await expect(readFile(stagedPaths[0], "utf8")).resolves.toBe("safe upload");
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "browser-upload-second",
+      params: {
+        threadId: providerThreadId,
+        turnId: "turn-browser-upload",
+        callId: "browser-upload-second",
+        namespace: "openbot_browser",
+        tool: "upload_files",
+        arguments: { tabId: "tab", target: { kind: "css", selector: "#second" }, paths: [secondUploadPath] },
+      },
+    });
+
+    await waitFor(() => client.responses.some((response) => response.id === "browser-upload-second"));
+    await expect(readFile(stagedPaths[0], "utf8")).resolves.toBe("safe upload");
+    await expect(readFile(stagedPaths[1], "utf8")).resolves.toBe("second upload");
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "browser-upload-replacement",
+      params: {
+        threadId: providerThreadId,
+        turnId: "turn-browser-upload",
+        callId: "browser-upload-replacement",
+        namespace: "openbot_browser",
+        tool: "upload_files",
+        arguments: {
+          tabId: "tab",
+          target: { kind: "css", selector: "input" },
+          paths: [replacementUploadPath],
+        },
+      },
+    });
+
+    await waitFor(() => client.responses.some((response) => response.id === "browser-upload-replacement"));
+    await waitFor(async () =>
+      readFile(stagedPaths[0]).then(
+        () => false,
+        () => true,
+      ),
+    );
+    await expect(readFile(stagedPaths[1], "utf8")).resolves.toBe("second upload");
+    await expect(readFile(stagedPaths[2], "utf8")).resolves.toBe("replacement upload");
 
     client.emit("request", {
       method: "item/tool/call",
@@ -779,9 +832,10 @@ describe.sequential("AgentService", () => {
     expect(client.errors.find((response) => response.id === "browser-upload-denied")?.error.message).toContain(
       "workspace or the OpenBot shared directory",
     );
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(3);
     await service.stop();
-    await expect(readFile(stagedPath)).rejects.toThrow();
+    await expect(readFile(stagedPaths[1])).rejects.toThrow();
+    await expect(readFile(stagedPaths[2])).rejects.toThrow();
   });
 
   it("surfaces Codex approvals without auto-accepting and maps one-shot decisions", async () => {
@@ -4007,7 +4061,13 @@ function fakeBrowser(tabs: BrowserTab[] = []) {
     clearControls: () => undefined,
     endControl: () => undefined,
     listTabs: () => tabs,
-    handleDynamicTool: async (_params: DynamicToolCallParams) => ({ success: true, contentItems: [] }),
+    handleDynamicTool: async (
+      _params: DynamicToolCallParams,
+      _hooks?: { onUploadAssigned?: (inputId: string) => void },
+    ) => ({
+      success: true,
+      contentItems: [],
+    }),
   };
 }
 

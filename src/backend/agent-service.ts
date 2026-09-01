@@ -149,7 +149,10 @@ interface AgentBrowserHost {
   clearControls(): void;
   endControl(threadId: string, turnId: string): void;
   listTabs(): BrowserTab[];
-  handleDynamicTool(params: DynamicToolCallParams): Promise<DynamicToolResult>;
+  handleDynamicTool(
+    params: DynamicToolCallParams,
+    hooks?: { onUploadAssigned?: (inputId: string) => void },
+  ): Promise<DynamicToolResult>;
 }
 
 interface PendingPrompt {
@@ -368,7 +371,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #pendingDeltas = new Map<string, PendingDelta>();
   readonly #pendingMemoryMutations = new Map<string, PendingMemoryMutation[]>();
   readonly #responseAttachmentCommands = new Map<string, Promise<OpenBotToolResponse>>();
-  readonly #browserUploadRoots = new Map<string, string>();
+  readonly #browserUploadRoots = new Map<string, Map<string, string>>();
   readonly #memoryEpochs = new Map<string, number>();
   #routineTimer: NodeJS.Timeout | null = null;
   #status: AgentStatus = structuredClone(INITIAL_STATUS);
@@ -415,10 +418,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#preferredProvider = preferredProvider;
     this.#browser.onChanged((tabs, activeTabId) => {
       const currentTabIds = new Set(tabs.map((tab) => tab.id));
-      for (const [tabId, root] of this.#browserUploadRoots) {
+      for (const [tabId, roots] of this.#browserUploadRoots) {
         if (currentTabIds.has(tabId)) continue;
         this.#browserUploadRoots.delete(tabId);
-        void rm(root, { recursive: true, force: true }).catch(() => undefined);
+        for (const root of roots.values()) {
+          void rm(root, { recursive: true, force: true }).catch(() => undefined);
+        }
       }
       for (const [requestId, pending] of this.#pendingBrowserTakeovers) {
         if (!tabs.some((tab) => tab.id === pending.request.tabId)) {
@@ -1021,7 +1026,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#imageGenerationOperations.clear();
     await Promise.allSettled([...this.#responseAttachmentCommands.values()]);
     this.#responseAttachmentCommands.clear();
-    const browserUploadRoots = [...this.#browserUploadRoots.values()];
+    const browserUploadRoots = [...this.#browserUploadRoots.values()].flatMap((roots) => [...roots.values()]);
     this.#browserUploadRoots.clear();
     await Promise.allSettled(browserUploadRoots.map((root) => rm(root, { recursive: true, force: true })));
     this.#interruptedTurns.clear();
@@ -2705,6 +2710,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ) {
       throw new Error(`paths must contain between 1 and ${INPUT_LIMITS.attachments} valid local file paths.`);
     }
+    const tabId = args.tabId;
     const sources = await this.#openAgentAttachmentSources(botId, args.paths);
     let stagingRoot: string | null = null;
     try {
@@ -2726,16 +2732,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         );
         stagedPaths.push(stagedPath);
       }
-      const result = await this.#browser.handleDynamicTool({
-        ...params,
-        arguments: { ...args, paths: stagedPaths },
-      });
-      if (!result.success) return result;
-      const previousRoot = this.#browserUploadRoots.get(args.tabId);
-      this.#browserUploadRoots.set(args.tabId, stagingRoot);
-      stagingRoot = null;
-      if (previousRoot) await rm(previousRoot, { recursive: true, force: true }).catch(() => undefined);
-      return result;
+      return await this.#browser.handleDynamicTool(
+        {
+          ...params,
+          arguments: { ...args, paths: stagedPaths },
+        },
+        {
+          onUploadAssigned: (inputId) => {
+            if (!stagingRoot) return;
+            const roots = this.#browserUploadRoots.get(tabId) ?? new Map<string, string>();
+            const previousRoot = roots.get(inputId);
+            roots.set(inputId, stagingRoot);
+            this.#browserUploadRoots.set(tabId, roots);
+            stagingRoot = null;
+            if (previousRoot) void rm(previousRoot, { recursive: true, force: true }).catch(() => undefined);
+          },
+        },
+      );
     } finally {
       await Promise.allSettled(sources.map((source) => source.handle.close()));
       if (stagingRoot) await rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined);
