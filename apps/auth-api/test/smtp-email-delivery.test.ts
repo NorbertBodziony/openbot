@@ -365,6 +365,44 @@ describe("Private Email SMTP delivery", () => {
     expect(attempts).toBe(1);
   });
 
+  it("reports a confirmed post-DATA rejection as a delivery failure", async () => {
+    let attempts = 0;
+    const responses = `${SUCCESS_RESPONSES.split("\r\n").slice(0, 9).join("\r\n")}\r\n550 Message rejected`;
+    const connector: SmtpConnector = () => {
+      attempts += 1;
+      return {
+        opened: Promise.resolve(),
+        readable: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(`${responses}\r\n`));
+            controller.close();
+          },
+        }),
+        writable: new WritableStream(),
+        close() {},
+      };
+    };
+
+    await expect(
+      sendPrivateEmailCode(
+        {
+          host: "mail.privateemail.com",
+          port: 465,
+          username: "hello@openbot.run",
+          password: "app-password-value",
+          from: "hello@openbot.run",
+        },
+        {
+          email: "person@example.com",
+          code: "ABCD-EFGH",
+          expiresAt: Date.now() + 10 * 60_000,
+        },
+        connector,
+      ),
+    ).rejects.toThrow("smtp_message_failed");
+    expect(attempts).toBe(1);
+  });
+
   it("accepts confirmed delivery when the QUIT response is lost", async () => {
     let attempts = 0;
     const responses = SUCCESS_RESPONSES.split("\r\n").slice(0, 10).join("\r\n");
