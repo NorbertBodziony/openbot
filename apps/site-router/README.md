@@ -18,7 +18,7 @@ R2 bindings do not have a per-binding read-only mode. The router has no mutation
 
 1. Keep `SITE_PUBLISH_ENABLED`, `SITE_COOKIE_ISOLATION_READY`, and `SITE_SERVE_ENABLED` absent or set to `false`.
 2. Deploy the router with `bun run sites:deploy`.
-3. Deploy the Auth API. Its deployment command applies D1 migration `0014_hosted_sites.sql` before the Worker update.
+3. Deploy the Auth API. Its deployment command applies D1 migration `0015_hosted_sites.sql` before the Worker update.
 4. Confirm that `openbot.site` is present in the Public Suffix List.
 5. Set all three launch flags to `true` and deploy the router and Auth API again.
 6. Check three generated hostnames over HTTPS.
@@ -27,5 +27,7 @@ R2 bindings do not have a per-binding read-only mode. The router has no mutation
 9. Delete one site and confirm `410 Gone` and `X-Robots-Tag: noindex, nofollow`.
 
 Set the three launch switches as protected production Worker variables in Cloudflare. Production deploys use `--keep-vars`, so later releases do not overwrite these values with repository defaults. An absent value remains disabled. Set `SITE_PUBLISH_ENABLED` to `false` on the Auth API to stop new uploads and activations. Set `SITE_SERVE_ENABLED` to `false` on the router to stop public serving. The admin endpoint `POST /v1/sites/admin/:siteId/block` blocks one site. `DELETE` on the same endpoint removes the block when the deployment is still valid.
+
+Create a dedicated GitHub production-environment secret named `CLOUDFLARE_SITE_ROUTER_DEPLOY_TOKEN`. Restrict it to deployment of the public router Worker and its binding configuration. Do not reuse the Auth API token. Set the protected production-environment variable `SITE_HOSTING_EXPECTED_ENABLED` to `false` before launch and to `true` when public serving is enabled. Production verification fails when this variable is absent or when the router response does not match the expected state.
 
 Set a dedicated `SITE_OPERATIONS_ADMIN_TOKEN` secret before using the block endpoint. If the secret is absent, the endpoint stays closed. Do not reuse `SKILLS_ADMIN_TOKEN`.

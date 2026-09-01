@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/solid-router";
+import { isSameOriginReportRequest } from "../../../server/hosted-site-report-request";
 import { readRequestBytes } from "../../../server/json-body";
 import {
   apiError,
@@ -14,6 +15,9 @@ export const Route = createFileRoute("/v1/sites/reports")({
     handlers: {
       POST: async ({ request }) => {
         try {
+          if (!isSameOriginReportRequest(request)) {
+            return apiError(403, "invalid_report_origin", "Open the report form on openbot.run.");
+          }
           const sourceIp = requestSourceIp(request);
           await enforceHostedSiteReportRateLimit(sourceIp);
           const contentType = request.headers.get("Content-Type") ?? "";

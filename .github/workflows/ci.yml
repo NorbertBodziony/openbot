@@ -201,7 +201,7 @@ jobs:
       - name: Deploy public site router
         working-directory: apps/site-router
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PRODUCTION_DEPLOY_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_SITE_ROUTER_DEPLOY_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
         run: ./node_modules/.bin/wrangler deploy --config wrangler.jsonc --keep-vars
 
@@ -265,6 +265,8 @@ jobs:
 
       - name: Verify production deployment
         shell: bash
+        env:
+          SITE_HOSTING_EXPECTED_ENABLED: ${{ vars.SITE_HOSTING_EXPECTED_ENABLED }}
         run: |
           verification_dir="$(mktemp -d)"
           trap 'rm -rf "$verification_dir"' EXIT
@@ -290,7 +292,11 @@ jobs:
             --max-redirs 0 --dump-header "$verification_dir/site-router.headers" \
             --output "$verification_dir/site-router.txt" --write-out '%{http_code}' \
             https://deployment-smoke-check.openbot.site/)"
-          test "$site_status" = "404" || test "$site_status" = "503"
+          case "$SITE_HOSTING_EXPECTED_ENABLED" in
+            true) test "$site_status" = "404" ;;
+            false) test "$site_status" = "503" ;;
+            *) echo "SITE_HOSTING_EXPECTED_ENABLED must be true or false." >&2; exit 1 ;;
+          esac
           tr -d '\r' < "$verification_dir/site-router.headers" | grep -Eiq '^cache-control:.*no-store'
           tr -d '\r' < "$verification_dir/site-router.headers" | grep -Eiq '^x-content-type-options:.*nosniff'
           tr -d '\r' < "$verification_dir/site-router.headers" | grep -Eiq '^x-robots-tag:.*noindex'

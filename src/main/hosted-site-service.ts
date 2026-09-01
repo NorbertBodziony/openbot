@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open, readdir, readFile, realpath } from "node:fs/promises";
 import { extname, isAbsolute, join, relative, resolve } from "node:path";
@@ -9,7 +9,6 @@ import type {
   ReplaceHostedSiteInput,
 } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
-import type { CentralAuthManager } from "./central-auth-manager";
 
 const MAX_FILES = 20;
 const MAX_TOTAL_BYTES = 2 * 1024 * 1024;
@@ -34,6 +33,21 @@ interface UploadSession {
   expiresAt: string;
 }
 
+interface PendingUpload {
+  uploadKey: string;
+  activationKey: string;
+  session: UploadSession | null;
+  uploadedPaths: Set<string>;
+  createdAt: number;
+  inFlight: Promise<HostedSiteSummary> | null;
+}
+
+export interface HostedSiteAuthClient {
+  requestAuthorized<T>(path: string, init: RequestInit, decoder: (value: unknown) => T, timeoutMs?: number): Promise<T>;
+}
+
+const UPLOAD_SESSION_TTL_MS = 15 * 60 * 1_000;
+
 const MIME_TYPES: Readonly<Record<string, string>> = {
   ".html": "text/html",
   ".css": "text/css",
@@ -52,7 +66,9 @@ const MIME_TYPES: Readonly<Record<string, string>> = {
 };
 
 export class HostedSiteDesktopService {
-  constructor(private readonly auth: CentralAuthManager) {}
+  readonly #pendingUploads = new Map<string, PendingUpload>();
+
+  constructor(private readonly auth: HostedSiteAuthClient) {}
 
   async list(): Promise<HostedSiteSummary[]> {
     const result = await this.auth.requestAuthorized("/v1/sites/", { method: "GET" }, decodeSiteList);
@@ -81,44 +97,96 @@ export class HostedSiteDesktopService {
     allowedRoots?: readonly string[],
   ): Promise<HostedSiteSummary> {
     const prepared = await prepareSite(input.sourcePath, allowedRoots);
-    const uploadKey = operationKey(siteId ? "replace" : "publish");
-    const session = await this.auth.requestAuthorized(
-      "/v1/sites/",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": uploadKey },
-        body: JSON.stringify({
-          title: input.title,
-          description: input.description,
-          framework: prepared.framework,
-          ...(siteId === null || input.spaFallback !== undefined ? { spaFallback: input.spaFallback ?? false } : {}),
-          siteId,
-          files: prepared.files.map(({ path, size, mimeType }) => ({ path, size, mimeType })),
-        }),
-      },
-      decodeUploadSession,
-    );
-    for (const file of prepared.files) {
-      await this.auth.requestAuthorized(
-        `/v1/sites/uploads/${encodeURIComponent(session.uploadId)}/file?path=${encodeURIComponent(file.path)}`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": file.mimeType,
-            "Content-Length": String(file.size),
-          },
-          body: arrayBuffer(file.bytes),
-        },
-        decodeUploadResult,
-        30_000,
-      );
+    this.prunePendingUploads();
+    const signature = uploadSignature(input, siteId, prepared);
+    let pending = this.#pendingUploads.get(signature);
+    if (!pending) {
+      pending = {
+        uploadKey: operationKey(siteId ? "replace" : "publish"),
+        activationKey: operationKey("activate"),
+        session: null,
+        uploadedPaths: new Set(),
+        createdAt: Date.now(),
+        inFlight: null,
+      };
+      this.#pendingUploads.set(signature, pending);
     }
-    return this.auth.requestAuthorized(
-      `/v1/sites/uploads/${encodeURIComponent(session.uploadId)}/activate`,
-      { method: "POST", headers: { "Idempotency-Key": operationKey("activate") } },
-      decodeSite,
-      30_000,
+    if (!pending.inFlight) pending.inFlight = this.performUpload(input, siteId, prepared, pending);
+    try {
+      const site = await pending.inFlight;
+      this.#pendingUploads.delete(signature);
+      return site;
+    } catch (error) {
+      pending.inFlight = null;
+      throw error;
+    }
+  }
+
+  private async performUpload(
+    input: PublishHostedSiteInput,
+    siteId: string | null,
+    prepared: PreparedSite,
+    pending: PendingUpload,
+  ): Promise<HostedSiteSummary> {
+    const session =
+      pending.session ??
+      (await retryTransport(() =>
+        this.auth.requestAuthorized(
+          "/v1/sites/",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Idempotency-Key": pending.uploadKey },
+            body: JSON.stringify({
+              title: input.title,
+              description: input.description,
+              framework: prepared.framework,
+              ...(siteId === null || input.spaFallback !== undefined
+                ? { spaFallback: input.spaFallback ?? false }
+                : {}),
+              siteId,
+              files: prepared.files.map(({ path, size, mimeType }) => ({ path, size, mimeType })),
+            }),
+          },
+          decodeUploadSession,
+        ),
+      ));
+    pending.session = session;
+    for (const file of prepared.files) {
+      if (pending.uploadedPaths.has(file.path)) continue;
+      await retryTransport(() =>
+        this.auth.requestAuthorized(
+          `/v1/sites/uploads/${encodeURIComponent(session.uploadId)}/file?path=${encodeURIComponent(file.path)}`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": file.mimeType,
+              "Content-Length": String(file.size),
+            },
+            body: arrayBuffer(file.bytes),
+          },
+          decodeUploadResult,
+          30_000,
+        ),
+      );
+      pending.uploadedPaths.add(file.path);
+    }
+    return retryTransport(() =>
+      this.auth.requestAuthorized(
+        `/v1/sites/uploads/${encodeURIComponent(session.uploadId)}/activate`,
+        { method: "POST", headers: { "Idempotency-Key": pending.activationKey } },
+        decodeSite,
+        30_000,
+      ),
     );
+  }
+
+  private prunePendingUploads(): void {
+    const now = Date.now();
+    for (const [signature, pending] of this.#pendingUploads) {
+      const serverExpiry = pending.session ? Date.parse(pending.session.expiresAt) : Number.NaN;
+      const expiresAt = Number.isFinite(serverExpiry) ? serverExpiry : pending.createdAt + UPLOAD_SESSION_TTL_MS;
+      if (pending.inFlight === null && expiresAt <= now) this.#pendingUploads.delete(signature);
+    }
   }
 }
 
@@ -297,6 +365,38 @@ function decodeDeleteResult(value: unknown): undefined {
 
 function operationKey(operation: string): string {
   return `desktop:${operation}:${randomUUID()}`;
+}
+
+function uploadSignature(input: PublishHostedSiteInput, siteId: string | null, prepared: PreparedSite): string {
+  const hash = createHash("sha256");
+  hash.update(
+    JSON.stringify({
+      siteId,
+      title: input.title,
+      description: input.description,
+      spaFallback: input.spaFallback,
+      framework: prepared.framework,
+      files: prepared.files.map(({ path, size, mimeType }) => ({ path, size, mimeType })),
+    }),
+  );
+  for (const file of prepared.files) hash.update(file.bytes);
+  return hash.digest("hex");
+}
+
+async function retryTransport<T>(request: () => Promise<T>): Promise<T> {
+  try {
+    return await request();
+  } catch (error) {
+    if (!isTransportFailure(error)) throw error;
+    return request();
+  }
+}
+
+function isTransportFailure(error: unknown): boolean {
+  return (
+    error instanceof TypeError ||
+    (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))
+  );
 }
 
 function arrayBuffer(bytes: Uint8Array): ArrayBuffer {
