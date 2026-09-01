@@ -19,6 +19,11 @@ const activeRoute = {
       size: 17,
       mimeType: "text/javascript",
     },
+    "graphic.svg": {
+      key: "sites/site-1/deployments/deployment-1/graphic.svg",
+      size: 11,
+      mimeType: "image/svg+xml",
+    },
   },
 };
 
@@ -55,6 +60,24 @@ describe("site router", () => {
     );
     expect(expiredResponse.status).toBe(410);
     expect(expiredResponse.headers.get("X-Robots-Tag")).toContain("noindex");
+  });
+
+  it("blocks service workers from an SVG document", async () => {
+    const hostname = "example-project-page-long-name-23456789ab.openbot.site";
+    const response = await routeRequest(
+      new Request(`https://${hostname}/graphic.svg`),
+      {
+        SITES: fakeBucket({
+          [`routes/${hostname}.json`]: JSON.stringify(activeRoute),
+          "sites/site-1/deployments/deployment-1/graphic.svg": "<svg></svg>",
+        }),
+        SITE_SERVE_ENABLED: "true",
+      },
+      1_000,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Security-Policy")).toBe("worker-src 'none'");
   });
 
   it("fails closed when a block marker exists before the route is updated", async () => {

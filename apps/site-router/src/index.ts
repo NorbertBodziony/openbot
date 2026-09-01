@@ -79,7 +79,6 @@ export async function routeRequest(request: Request, env: SiteRouterEnv, now: nu
     "Content-Type": file.mimeType,
     "Cache-Control": file.mimeType === "text/html" ? "no-store" : "public, no-cache",
   });
-  if (file.mimeType === "text/html") headers.set("Content-Security-Policy", "worker-src 'none'");
   if (file.mimeType !== "text/html") headers.set("ETag", object.httpEtag);
   if (!hasBody(object)) return new Response(null, { status: 304, headers });
   headers.set("Content-Length", String(object.size));
@@ -190,6 +189,7 @@ function errorResponse(status: number, message: string): Response {
 
 function secureHeaders(input: HeadersInit): Headers {
   const headers = new Headers(input);
+  headers.set("Content-Security-Policy", "worker-src 'none'");
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
   headers.delete("Set-Cookie");
