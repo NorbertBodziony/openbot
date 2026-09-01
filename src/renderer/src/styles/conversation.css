@@ -2978,6 +2978,17 @@
   line-height: 18px;
 }
 
+.provider-model-option-name small {
+  flex: 0 0 auto;
+  border-radius: var(--openbot-radius-xs);
+  background: var(--openbot-bg-sidebar);
+  padding: 1px 5px;
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-2xs);
+  font-weight: 500;
+  line-height: 15px;
+}
+
 .provider-model-check {
   width: 15px;
   height: 15px;
