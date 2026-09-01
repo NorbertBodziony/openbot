@@ -3162,6 +3162,87 @@ describe.sequential("AgentService", () => {
     expect(runningMarkers).toHaveLength(1);
   });
 
+  it("keeps routine approvals interactive while attention markers retry", async () => {
+    const { store, mailbox } = stores();
+    let client: FakeAgentClient | undefined;
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
+      client = new FakeAgentClient(provider, "", false);
+      return client;
+    });
+    const emitted: AgentEvent[] = [];
+    service.on("event", (event: AgentEvent) => emitted.push(event));
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    const routine = service.createRoutine({
+      botId: bot.id,
+      name: "Approval marker retry",
+      instruction: "Request approval and continue after the response.",
+      active: true,
+      timezone: "UTC",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    const run = await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await waitFor(() =>
+      service
+        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .some((candidate) => candidate.id === run.id && candidate.status === "running"),
+    );
+    const delivery = service.listQueue(bot.id).deliveries.find((candidate) => candidate.status === "running");
+    const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
+    if (!delivery?.turnId || !client || !threadId) throw new Error("The routine turn did not start.");
+
+    const persistConversation = store.database.persistConversation.bind(store.database);
+    let rejectNeedsAttentionMarker = true;
+    let rejectResumedRunningMarker = false;
+    vi.spyOn(store.database, "persistConversation").mockImplementation((...args) => {
+      if (rejectNeedsAttentionMarker && args[1] === "routine.run-needs-attention") {
+        rejectNeedsAttentionMarker = false;
+        throw new Error("attention marker persistence failed");
+      }
+      if (rejectResumedRunningMarker && args[1] === "routine.run-running") {
+        rejectResumedRunningMarker = false;
+        throw new Error("resumed marker persistence failed");
+      }
+      return persistConversation(...args);
+    });
+
+    client.emit("request", {
+      id: "retry-routine-approval",
+      method: "item/commandExecution/requestApproval",
+      params: { threadId, turnId: delivery.turnId, command: "echo routine" },
+    });
+
+    await waitFor(() => emitted.some((event) => event.type === "approval"));
+    await waitFor(() =>
+      service
+        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .some((candidate) => candidate.id === run.id && candidate.status === "needs-attention"),
+    );
+    expect(client.responses).toEqual([]);
+
+    rejectResumedRunningMarker = true;
+    await service.respondToApproval({ requestId: "retry-routine-approval", decision: "accept" });
+    expect(client.responses).toContainEqual(
+      expect.objectContaining({ id: "retry-routine-approval", result: { decision: "accept" } }),
+    );
+    await waitFor(() =>
+      service
+        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .some((candidate) => candidate.id === run.id && candidate.status === "running"),
+    );
+
+    expect(
+      emitted.filter(
+        (event) => event.type === "error" && event.code === "delivery_reconciliation_pending" && event.botId === bot.id,
+      ),
+    ).toHaveLength(2);
+    const transitions = (await service.readConversation(bot.id)).messages.flatMap(
+      (message) => routineRunConversationEvent(message) ?? [],
+    );
+    expect(transitions.filter((event) => event.runId === run.id && event.status === "needs-attention")).toHaveLength(1);
+    expect(transitions.filter((event) => event.runId === run.id && event.status === "running")).toHaveLength(2);
+  });
+
   it("continues turn completion while a terminal routine marker retries", async () => {
     const { store, mailbox } = stores();
     let client: FakeAgentClient | undefined;

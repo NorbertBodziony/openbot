@@ -4652,8 +4652,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (delivery?.delivery.sender.kind !== "routine") return;
     const run = this.#routines.runForDelivery(delivery.delivery.id);
     if (!run || run.status === "needs-attention") return;
-    this.#transitionRoutineRunWithConversation(run, "needs-attention");
-    this.#routineStateChanged(run.botId);
+    this.#transitionRoutineInteractionWithReconciliation(run, "needs-attention");
   }
 
   async #interruptRoutineRunsBeforeDeletion(botId: string, runs: RoutineRun[]): Promise<RoutineRun[]> {
@@ -4698,8 +4697,29 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (delivery?.delivery.sender.kind !== "routine") return;
     const run = this.#routines.runForDelivery(delivery.delivery.id);
     if (run?.status !== "needs-attention") return;
-    this.#transitionRoutineRunWithConversation(run, "running");
-    this.#routineStateChanged(run.botId);
+    this.#transitionRoutineInteractionWithReconciliation(run, "running");
+  }
+
+  #transitionRoutineInteractionWithReconciliation(run: RoutineRun, status: "needs-attention" | "running"): void {
+    try {
+      this.#transitionRoutineRunWithConversation(run, status);
+      this.#routineStateChanged(run.botId);
+    } catch (error) {
+      this.#emitError("delivery_reconciliation_pending", error, run.botId);
+      queueMicrotask(() => {
+        if (!run.deliveryId) return;
+        const current = this.#routines.runForDelivery(run.deliveryId);
+        if (!current || current.status === status) return;
+        if (status === "running" && current.status !== "needs-attention") return;
+        if (status === "needs-attention" && current.status !== "running") return;
+        try {
+          this.#transitionRoutineRunWithConversation(current, status);
+          this.#routineStateChanged(current.botId);
+        } catch (retryError) {
+          this.#emitError("delivery_reconciliation_pending", retryError, current.botId);
+        }
+      });
+    }
   }
 
   #clientForBot(bot: BotSummary): AgentClient | null {
