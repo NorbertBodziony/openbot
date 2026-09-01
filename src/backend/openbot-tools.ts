@@ -8,6 +8,59 @@ export const OPENBOT_DYNAMIC_TOOLS = {
   tools: [
     {
       type: "function",
+      name: "list_sites",
+      description:
+        "List static sites hosted by the signed-in OpenBot user. Use this before retrying a hosting mutation.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    },
+    {
+      type: "function",
+      name: "publish_site",
+      description:
+        "Publish a new static site after the user explicitly asks to publish it. The source must be inside this bot's workspace or OpenBot Shared.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          sourcePath: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.path },
+          title: { type: "string", minLength: 1, maxLength: 120 },
+          description: { type: "string", minLength: 1, maxLength: 500 },
+          spaFallback: { type: "boolean" },
+        },
+        required: ["sourcePath", "title", "description"],
+        additionalProperties: false,
+      },
+    },
+    {
+      type: "function",
+      name: "replace_site",
+      description:
+        "Replace an owned static site after the user explicitly asks to replace it. This keeps the URL and resets expiry to 30 days.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          siteId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier },
+          sourcePath: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.path },
+          title: { type: "string", minLength: 1, maxLength: 120 },
+          description: { type: "string", minLength: 1, maxLength: 500 },
+          spaFallback: { type: "boolean" },
+        },
+        required: ["siteId", "sourcePath", "title", "description"],
+        additionalProperties: false,
+      },
+    },
+    {
+      type: "function",
+      name: "delete_site",
+      description: "Delete an owned static site after the user explicitly asks to delete it.",
+      inputSchema: {
+        type: "object",
+        properties: { siteId: { type: "string", minLength: 1, maxLength: INPUT_LIMITS.identifier } },
+        required: ["siteId"],
+        additionalProperties: false,
+      },
+    },
+    {
+      type: "function",
       name: "attach_files_to_response",
       description:
         "Attach existing local files to the current response for the user. Use this after creating screenshots, charts, diagrams, reports, or other files that the user should receive. OpenBot copies each file and shows image previews in the conversation.",

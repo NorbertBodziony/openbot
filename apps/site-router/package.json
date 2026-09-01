@@ -1,0 +1,22 @@
+{
+  "name": "@openbot/site-router",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@openbot/contracts": "workspace:*"
+  },
+  "scripts": {
+    "cf:typegen": "wrangler types",
+    "deploy": "wrangler deploy --keep-vars",
+    "dev": "wrangler dev",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260815.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10",
+    "wrangler": "4.123.0"
+  }
+}

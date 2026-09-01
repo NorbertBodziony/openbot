@@ -813,6 +813,7 @@ function WorkspaceOverlays(props: {
                   provider === "codex" ? connectChatGPT() : provider === "claude" ? connectClaude() : connectGrok()
               : undefined
           }
+          hostedSitesApi={window.openbot.hostedSites}
           restoreFocusTarget={appSettingsRestoreTarget()}
         />
       </Loading>

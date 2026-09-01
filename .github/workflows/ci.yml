@@ -198,12 +198,21 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
         run: ./node_modules/.bin/wrangler d1 migrations apply DB --remote --config wrangler.jsonc
 
+      - name: Deploy public site router
+        working-directory: apps/site-router
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_SITE_ROUTER_DEPLOY_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: ./node_modules/.bin/wrangler deploy --config wrangler.jsonc --keep-vars
+
       - name: Prepare runtime secrets
         id: runtime-secrets
         shell: bash
         env:
           EMAIL_SMTP_PASSWORD: ${{ secrets.EMAIL_SMTP_PASSWORD }}
           SKILLS_ADMIN_TOKEN: ${{ secrets.SKILLS_ADMIN_TOKEN }}
+          SITE_OPERATIONS_ADMIN_TOKEN: ${{ secrets.SITE_OPERATIONS_ADMIN_TOKEN }}
+          SITE_REPORT_HASH_SECRET: ${{ secrets.SITE_REPORT_HASH_SECRET }}
           REMOTE_TICKET_PRIVATE_JWK: ${{ secrets.REMOTE_TICKET_PRIVATE_JWK }}
           REMOTE_TICKET_PUBLIC_JWKS: ${{ secrets.REMOTE_TICKET_PUBLIC_JWKS }}
           REMOTE_AUTH_WEBHOOK_SECRET: ${{ secrets.REMOTE_AUTH_WEBHOOK_SECRET }}
@@ -213,20 +222,33 @@ jobs:
           SECRETS_PATH="$secrets_path" bun -e '
             const smtp = process.env.EMAIL_SMTP_PASSWORD;
             const skillsAdmin = process.env.SKILLS_ADMIN_TOKEN;
+            const siteOperationsAdmin = process.env.SITE_OPERATIONS_ADMIN_TOKEN;
+            const siteReportHash = process.env.SITE_REPORT_HASH_SECRET;
             const remotePrivateJwk = process.env.REMOTE_TICKET_PRIVATE_JWK;
             const remotePublicJwks = process.env.REMOTE_TICKET_PUBLIC_JWKS;
             const remoteWebhookSecret = process.env.REMOTE_AUTH_WEBHOOK_SECRET;
             const path = process.env.SECRETS_PATH;
-            if (!smtp || !skillsAdmin || !remotePrivateJwk || !remotePublicJwks || !remoteWebhookSecret || !path) {
+            if (
+              !smtp ||
+              !skillsAdmin ||
+              !siteReportHash ||
+              !remotePrivateJwk ||
+              !remotePublicJwks ||
+              !remoteWebhookSecret ||
+              !path
+            ) {
               throw new Error("Required production secrets are missing.");
             }
-            await Bun.write(path, JSON.stringify({
+            const secrets = {
               EMAIL_SMTP_PASSWORD: smtp,
               SKILLS_ADMIN_TOKEN: skillsAdmin,
+              SITE_REPORT_HASH_SECRET: siteReportHash,
+              ...(siteOperationsAdmin ? { SITE_OPERATIONS_ADMIN_TOKEN: siteOperationsAdmin } : {}),
               REMOTE_TICKET_PRIVATE_JWK: remotePrivateJwk,
               REMOTE_TICKET_PUBLIC_JWKS: remotePublicJwks,
               REMOTE_AUTH_WEBHOOK_SECRET: remoteWebhookSecret,
-            }));
+            };
+            await Bun.write(path, JSON.stringify(secrets));
           '
           echo "path=$secrets_path" >> "$GITHUB_OUTPUT"
 
@@ -235,7 +257,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PRODUCTION_DEPLOY_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-        run: ./node_modules/.bin/wrangler deploy --config dist/server/wrangler.json --secrets-file "${{ steps.runtime-secrets.outputs.path }}"
+        run: ./node_modules/.bin/wrangler deploy --config dist/server/wrangler.json --keep-vars --secrets-file "${{ steps.runtime-secrets.outputs.path }}"
 
       - name: Remove temporary runtime secrets
         if: always() && steps.runtime-secrets.outputs.path != ''
@@ -243,6 +265,8 @@ jobs:
 
       - name: Verify production deployment
         shell: bash
+        env:
+          SITE_HOSTING_EXPECTED_ENABLED: ${{ vars.SITE_HOSTING_EXPECTED_ENABLED }}
         run: |
           verification_dir="$(mktemp -d)"
           trap 'rm -rf "$verification_dir"' EXIT
@@ -264,3 +288,15 @@ jobs:
             "$verification_dir/association.json" >/dev/null
           curl --fail --silent --show-error --retry 5 --retry-all-errors https://api.openbot.run/health/live >/dev/null
           curl --fail --silent --show-error --retry 5 --retry-all-errors https://api.openbot.run/health/ready >/dev/null
+          site_status="$(curl --silent --show-error --retry 5 --retry-all-errors \
+            --max-redirs 0 --dump-header "$verification_dir/site-router.headers" \
+            --output "$verification_dir/site-router.txt" --write-out '%{http_code}' \
+            https://deployment-smoke-check.openbot.site/)"
+          case "$SITE_HOSTING_EXPECTED_ENABLED" in
+            true) test "$site_status" = "404" ;;
+            false) test "$site_status" = "503" ;;
+            *) echo "SITE_HOSTING_EXPECTED_ENABLED must be true or false." >&2; exit 1 ;;
+          esac
+          tr -d '\r' < "$verification_dir/site-router.headers" | grep -Eiq '^cache-control:.*no-store'
+          tr -d '\r' < "$verification_dir/site-router.headers" | grep -Eiq '^x-content-type-options:.*nosniff'
+          tr -d '\r' < "$verification_dir/site-router.headers" | grep -Eiq '^x-robots-tag:.*noindex'

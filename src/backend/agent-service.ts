@@ -45,6 +45,7 @@ import type {
   DuplicateBotResult,
   ImageGenerationInfo,
   ListRoutineRunsInput,
+  PublishHostedSiteInput,
   QueueDeliveryStatus,
   QueuedMessageReceipt,
   QueueSnapshot,
@@ -153,6 +154,13 @@ interface AgentBrowserHost {
   handleDynamicTool(params: DynamicToolCallParams): Promise<DynamicToolResult>;
 }
 
+interface AgentHostedSites {
+  list(): Promise<unknown[]>;
+  publish(input: PublishHostedSiteInput, allowedRoots: readonly string[]): Promise<unknown>;
+  replace(input: PublishHostedSiteInput & { siteId: string }, allowedRoots: readonly string[]): Promise<unknown>;
+  delete(siteId: string): Promise<void>;
+}
+
 interface PendingPrompt {
   client: AgentClient;
   id: RequestId;
@@ -171,12 +179,22 @@ interface PendingApproval {
   method: string;
   params: unknown;
   approval: AgentApproval;
+  hostedSiteMutation?: DynamicToolCallParams;
 }
+
+type HostedSiteMutationTool = "publish_site" | "replace_site" | "delete_site";
+
+const HOSTED_SITE_APPROVAL_METHOD = "openbot/hosted-site-mutation";
 
 interface PendingBrowserTakeover {
   params: DynamicToolCallParams;
   request: BrowserTakeoverRequest;
   resolve: (result: DynamicToolResult) => void;
+}
+
+interface HostedSiteApprovalDetails {
+  reason: string;
+  permissions: AgentApprovalPermissions;
 }
 
 interface ThreadContextBudget {
@@ -346,6 +364,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #bundledCodexExecutable: string | null | undefined;
   readonly #bundledClaudeExecutable: string | null | undefined;
   readonly #bundledGrokExecutable: string | null | undefined;
+  readonly #prepareBotWorkspace: (bot: BotSummary) => Promise<void>;
+  readonly #hostedSites: AgentHostedSites | null;
   readonly #snapshots = new Map<string, ConversationSnapshot>();
   readonly #threadToBot = new Map<string, string>();
   readonly #loadedThreads = new Set<string>();
@@ -404,6 +424,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     bundledCodexExecutable: string | null | undefined = undefined,
     bundledClaudeExecutable: string | null | undefined = null,
     bundledGrokExecutable: string | null | undefined = null,
+    prepareBotWorkspace: (bot: BotSummary) => Promise<void> = async () => undefined,
+    hostedSites: AgentHostedSites | null = null,
   ) {
     super();
     this.#store = store;
@@ -417,6 +439,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#bundledCodexExecutable = bundledCodexExecutable;
     this.#bundledClaudeExecutable = bundledClaudeExecutable;
     this.#bundledGrokExecutable = bundledGrokExecutable;
+    this.#prepareBotWorkspace = prepareBotWorkspace;
+    this.#hostedSites = hostedSites;
     this.#preferredProvider = preferredProvider;
     this.#browser.onChanged((tabs, activeTabId) => {
       for (const [requestId, pending] of this.#pendingBrowserTakeovers) {
@@ -668,6 +692,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (input.initialMessage.length > INPUT_LIMITS.messageText) throw new Error("Initial message is too long.");
     let bot = await this.#store.createBot(input);
     try {
+      await this.#prepareBotWorkspace(bot);
       if (this.#preferredProvider !== bot.provider) {
         const preferredDefault =
           this.#preferredProvider === "codex"
@@ -708,9 +733,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async createBotProfile(input: Omit<CreateBotInput, "initialMessage"> & { title?: string }): Promise<BotSummary> {
     let bot = await this.#store.createBot(input);
-    if (input.title) bot = await this.#store.updateBot({ botId: bot.id, title: input.title });
-    this.#emit({ type: "bots-changed", bots: this.listBots() });
-    return bot;
+    try {
+      await this.#prepareBotWorkspace(bot);
+      if (input.title) bot = await this.#store.updateBot({ botId: bot.id, title: input.title });
+      this.#emit({ type: "bots-changed", bots: this.listBots() });
+      return bot;
+    } catch (error) {
+      await this.#deleteBotData(bot);
+      throw error;
+    }
   }
 
   committedBotDuplication(operationId: string, sourceBotId: string): DuplicateBotResult | null {
@@ -1413,7 +1444,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!pending) throw new Error("This approval is no longer active.");
     this.#markRoutineRunningForTurn(getString(pending.params, "turnId"));
 
-    if (pending.approval.kind === "permissions") {
+    if (pending.hostedSiteMutation) {
+      this.#pendingApprovals.delete(input.requestId);
+      if (input.decision === "decline") {
+        pending.client.respondError(pending.id, {
+          code: -32001,
+          message: "The user declined this hosted site change.",
+        });
+      } else {
+        try {
+          pending.client.respond(pending.id, await this.#handleOpenBotTool(pending.hostedSiteMutation));
+        } catch (error) {
+          pending.client.respondError(pending.id, { code: -32603, message: String(error) });
+          this.#emitError("server_request_failed", error, pending.approval.botId);
+        }
+      }
+    } else if (pending.approval.kind === "permissions") {
       const permissions = getRecord(pending.params, "permissions") ?? {};
       pending.client.respond(pending.id, {
         permissions: input.decision === "accept" ? permissions : {},
@@ -2330,6 +2376,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               this.#surfaceDynamicPrompt(client, request);
               return;
             }
+            if (isHostedSiteMutationTool(request.params.tool)) {
+              await this.#surfaceHostedSiteApproval(client, request, request.params, request.params.tool);
+              return;
+            }
             client.respond(request.id, await this.#handleOpenBotTool(request.params));
             return;
           }
@@ -2365,6 +2415,46 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async #handleOpenBotTool(params: DynamicToolCallParams): Promise<OpenBotToolResponse> {
     const senderBotId = this.#threadToBot.get(params.threadId);
     if (!senderBotId) throw new Error("The sending OpenBot agent is unknown.");
+
+    if (params.tool === "list_sites") {
+      return openBotToolResult({ sites: await this.#requireHostedSites().list(), limit: 10 });
+    }
+
+    if (params.tool === "publish_site" || params.tool === "replace_site") {
+      const args = params.arguments;
+      if (!isRecord(args)) throw new Error("Site publishing arguments are required.");
+      const sourcePath = siteToolString(args.sourcePath, "sourcePath", INPUT_LIMITS.path);
+      const title = siteToolString(args.title, "title", 120);
+      const description = siteToolString(args.description, "description", 500);
+      if (args.spaFallback !== undefined && !isBoolean(args.spaFallback)) {
+        throw new Error("spaFallback must be a boolean.");
+      }
+      const bot = this.#store.list().find((candidate) => candidate.id === senderBotId);
+      if (!bot) throw new Error("The publishing OpenBot agent is unknown.");
+      const input = {
+        sourcePath,
+        title,
+        description,
+        ...(isBoolean(args.spaFallback) ? { spaFallback: args.spaFallback } : {}),
+      };
+      const roots = [bot.workspacePath, this.#store.sharedRoot];
+      const site =
+        params.tool === "publish_site"
+          ? await this.#requireHostedSites().publish(input, roots)
+          : await this.#requireHostedSites().replace(
+              { ...input, siteId: siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier) },
+              roots,
+            );
+      return openBotToolResult(site);
+    }
+
+    if (params.tool === "delete_site") {
+      const args = params.arguments;
+      if (!isRecord(args)) throw new Error("Site deletion arguments are required.");
+      const siteId = siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier);
+      await this.#requireHostedSites().delete(siteId);
+      return openBotToolResult({ deleted: true, siteId });
+    }
 
     if (params.tool === "attach_files_to_response") {
       const args = params.arguments;
@@ -2680,6 +2770,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       success: true,
       contentItems: [{ type: "inputText", text: JSON.stringify(receipt) }],
     };
+  }
+
+  #requireHostedSites(): AgentHostedSites {
+    if (!this.#hostedSites) throw new Error("OpenBot site hosting is unavailable.");
+    return this.#hostedSites;
   }
 
   async #attachFilesToResponse(
@@ -3875,6 +3970,87 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#emit({ type: "approval", approval });
   }
 
+  async #surfaceHostedSiteApproval(
+    client: AgentClient,
+    request: AppServerRequest,
+    params: DynamicToolCallParams,
+    tool: HostedSiteMutationTool,
+  ): Promise<void> {
+    const threadId = params.threadId;
+    const turnId = params.turnId;
+    const botId = this.#threadToBot.get(threadId);
+    if (!turnId || !botId) {
+      client.respondError(request.id, {
+        code: -32602,
+        message: "OpenBot could not identify this hosted site request.",
+      });
+      return;
+    }
+    const details = await this.#hostedSiteApprovalDetails(params, tool);
+    const approval: AgentApproval = {
+      requestId: request.id,
+      botId,
+      threadId: this.#publicThreadId(botId, threadId),
+      turnId,
+      kind: "permissions",
+      command: null,
+      cwd: null,
+      reason: details.reason,
+      grantRoot: null,
+      permissions: details.permissions,
+    };
+    this.#pendingApprovals.set(request.id, {
+      client,
+      id: request.id,
+      method: HOSTED_SITE_APPROVAL_METHOD,
+      params,
+      approval,
+      hostedSiteMutation: params,
+    });
+    this.#markRoutineNeedsAttention(turnId);
+    this.#emit({ type: "approval", approval });
+  }
+
+  async #hostedSiteApprovalDetails(
+    params: DynamicToolCallParams,
+    tool: HostedSiteMutationTool,
+  ): Promise<HostedSiteApprovalDetails> {
+    const args = params.arguments;
+    if (!isRecord(args)) throw new Error("Hosted site arguments are required.");
+    if (tool === "delete_site") {
+      const siteId = siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier);
+      const hostname = await this.#ownedHostedSiteHostname(siteId);
+      return {
+        reason: `Delete ${hostname} from openbot.site.`,
+        permissions: { fileSystem: { read: [], write: [] }, network: true },
+      };
+    }
+
+    const sourcePath = siteToolString(args.sourcePath, "sourcePath", INPUT_LIMITS.path);
+    const title = siteToolString(args.title, "title", 120);
+    siteToolString(args.description, "description", 500);
+    if (args.spaFallback !== undefined && !isBoolean(args.spaFallback)) {
+      throw new Error("spaFallback must be a boolean.");
+    }
+    const permissions = { fileSystem: { read: [sourcePath], write: [] }, network: true };
+    if (tool === "publish_site") {
+      return { reason: `Publish ${JSON.stringify(title)} as a public site on openbot.site.`, permissions };
+    }
+    const siteId = siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier);
+    const hostname = await this.#ownedHostedSiteHostname(siteId);
+    return { reason: `Replace ${hostname} with ${JSON.stringify(title)}.`, permissions };
+  }
+
+  async #ownedHostedSiteHostname(siteId: string): Promise<string> {
+    const sites = await this.#requireHostedSites().list();
+    for (const site of sites) {
+      if (!isRecord(site) || getString(site, "id") !== siteId) continue;
+      const hostname = getString(site, "hostname");
+      if (hostname) return hostname;
+    }
+    throw new Error("The hosted site was not found.");
+  }
+
   #surfaceLegacyApproval(client: AgentClient, request: AppServerRequest): void {
     const threadId = getString(request.params, "conversationId");
     const botId = threadId ? this.#threadToBot.get(threadId) : undefined;
@@ -4715,6 +4891,12 @@ function routineToolString(value: unknown, field: string, limit: number, require
   return value;
 }
 
+function siteToolString(value: unknown, field: string, limit: number): string {
+  if (!isString(value) || !value.trim()) throw new Error(`${field} is required.`);
+  if (value.length > limit) throw new Error(`${field} is too long.`);
+  return value.trim();
+}
+
 function routineToolSchedule(value: unknown): RoutineSchedule {
   if (!isRoutineSchedule(value)) throw new Error("The routine schedule is invalid.");
   return structuredClone(value);
@@ -5287,4 +5469,8 @@ function approvalPermissions(params: unknown): AgentApprovalPermissions {
     fileSystem: { read, write },
     network: network?.enabled === true,
   };
+}
+
+function isHostedSiteMutationTool(value: string): value is HostedSiteMutationTool {
+  return value === "publish_site" || value === "replace_site" || value === "delete_site";
 }

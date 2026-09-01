@@ -37,7 +37,7 @@ export async function readMultipartFormData(request: Request, limit: number): Pr
   }
 }
 
-async function readRequestBytes(request: Request, limit: number): Promise<Uint8Array> {
+export async function readRequestBytes(request: Request, limit: number): Promise<Uint8Array> {
   const declaredLength = request.headers.get("Content-Length");
   if (declaredLength !== null) {
     const parsedLength = Number(declaredLength);

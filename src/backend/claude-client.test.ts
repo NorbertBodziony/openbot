@@ -94,6 +94,10 @@ fi
           "delete_routine",
           "test_routine",
           "react_to_user_message",
+          "list_sites",
+          "publish_site",
+          "replace_site",
+          "delete_site",
         ]),
       );
       return generator;

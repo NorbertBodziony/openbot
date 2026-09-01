@@ -85,6 +85,12 @@ import type {
   SetDynamicIslandPreferenceInput,
 } from "./ipc-dynamic-island";
 import type {
+  DeleteHostedSiteInput,
+  HostedSiteSummary,
+  PublishHostedSiteInput,
+  ReplaceHostedSiteInput,
+} from "./ipc-hosted-sites";
+import type {
   AgentPublicationPreview,
   AgentSubmission,
   InstallMarketplaceAgentInput,
@@ -331,6 +337,14 @@ export interface SkillsDesktopApi {
   uninstall: (input: UninstallSkillInput) => Promise<void>;
 }
 
+export interface HostedSitesDesktopApi {
+  list: () => Promise<HostedSiteSummary[]>;
+  chooseDirectory: () => Promise<string | null>;
+  publish: (input: PublishHostedSiteInput) => Promise<HostedSiteSummary>;
+  replace: (input: ReplaceHostedSiteInput) => Promise<HostedSiteSummary>;
+  delete: (input: DeleteHostedSiteInput) => Promise<void>;
+}
+
 export interface OpenBotDesktopApi {
   getAppInfo: () => Promise<AppInfo>;
   getSetupState: () => Promise<AppSetupState>;
@@ -352,6 +366,7 @@ export interface OpenBotDesktopApi {
   openUrl: (url: string) => Promise<void>;
   voice: VoiceDesktopApi;
   skills: SkillsDesktopApi;
+  hostedSites: HostedSitesDesktopApi;
   marketplaceAgents: MarketplaceAgentsDesktopApi;
   auth: CentralAuthDesktopApi;
   agent: AgentDesktopApi;

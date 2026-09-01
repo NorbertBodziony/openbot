@@ -3,6 +3,9 @@ import { AgentMarketplace, AgentMarketplaceError } from "./agent-marketplace";
 import { AuthService, AuthServiceError } from "./auth-service";
 import { D1AuthRepository } from "./d1-auth-repository";
 import { createEmailCodeDelivery, createTeamInviteEmailDelivery } from "./email-delivery";
+import { HostedSiteInputError } from "./hosted-site-contract";
+import { enforceHostedSiteReportRateLimit as enforceReportRateLimit } from "./hosted-site-request-policy";
+import { HostedSiteService } from "./hosted-site-service";
 import { JsonBodyError } from "./json-body";
 import { MarketplaceQueryError } from "./marketplace-pagination";
 import {
@@ -38,8 +41,44 @@ export function requestAgentMarketplace(): AgentMarketplace {
   return new AgentMarketplace(requireWorkerBindings(env));
 }
 
+export function requestHostedSiteService(): HostedSiteService {
+  const bindings = requireWorkerBindings(env);
+  return new HostedSiteService(bindings.DB, bindings.SITES, Date.now, bindings.SITE_REPORT_HASH_SECRET);
+}
+
+export function requireSitePublishingEnabled(): void {
+  const bindings = requireWorkerBindings(env);
+  if (bindings.SITE_PUBLISH_ENABLED !== "true") {
+    throw new HostedSiteInputError(409, "publishing_disabled", "Site publishing is temporarily disabled.");
+  }
+  if (bindings.SITE_COOKIE_ISOLATION_READY !== "true") {
+    throw new HostedSiteInputError(
+      409,
+      "cookie_isolation_unavailable",
+      "Site publishing is disabled until openbot.site has public-suffix cookie isolation.",
+    );
+  }
+}
+
+export function hostedSiteErrorResponse(error: unknown): Response {
+  if (error instanceof HostedSiteInputError) return apiError(error.status, error.code, error.message);
+  return authErrorResponse(error);
+}
+
+export function requireIdempotencyKey(request: Request): string {
+  const key = request.headers.get("Idempotency-Key")?.trim() ?? "";
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/u.test(key)) {
+    throw new HostedSiteInputError(400, "invalid_idempotency_key", "A valid Idempotency-Key header is required.");
+  }
+  return key;
+}
+
 export function enforceMarketplaceMutationRateLimit(kind: MarketplaceMutationKind, principal: string): Promise<void> {
   return enforceMarketplaceMutation(requireWorkerBindings(env), kind, principal);
+}
+
+export function enforceHostedSiteReportRateLimit(sourceIp: string): Promise<void> {
+  return enforceReportRateLimit(requireWorkerBindings(env), sourceIp);
 }
 
 export function marketplaceErrorResponse(error: unknown): Response {
@@ -68,6 +107,19 @@ export function requireSkillsAdmin(request: Request): boolean {
   const bindings = requireWorkerBindings(env);
   const expected = bindings.SKILLS_ADMIN_TOKEN;
   return Boolean(expected && bearerToken(request) === expected);
+}
+
+export async function requireOperationsAdmin(request: Request): Promise<boolean> {
+  const bindings = requireWorkerBindings(env);
+  const expected = bindings.SITE_OPERATIONS_ADMIN_TOKEN;
+  const provided = bearerToken(request);
+  if (!expected || !provided) return false;
+  const encoder = new TextEncoder();
+  const [expectedHash, providedHash] = await Promise.all([
+    crypto.subtle.digest("SHA-256", encoder.encode(expected)),
+    crypto.subtle.digest("SHA-256", encoder.encode(provided)),
+  ]);
+  return constantTimeEqual(new Uint8Array(expectedHash), new Uint8Array(providedHash));
 }
 
 export function requestTeamInviteEmailDelivery(): TeamInviteEmailDelivery | null {
@@ -113,6 +165,13 @@ export function bearerToken(request: Request): string | null {
   if (!authorization?.startsWith("Bearer ")) return null;
   const token = authorization.slice("Bearer ".length);
   return token && token.length <= 512 ? token : null;
+}
+
+function constantTimeEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.byteLength !== right.byteLength) return false;
+  let difference = 0;
+  for (let index = 0; index < left.byteLength; index += 1) difference |= left[index] ^ right[index];
+  return difference === 0;
 }
 
 export function json(value: unknown, status = 200): Response {
