@@ -83,7 +83,8 @@ const server = createServer((request, response) => {
     response.setHeader("content-type", "text/html; charset=utf-8");
     response.end(
       `<button aria-label="Same-origin action" onclick="document.querySelector('output').textContent='Same-origin:' + event.isTrusted">Same-origin action</button>
-       <label>Mode <select aria-label="Same-origin mode"><option value="a">Alpha</option><option value="b">Beta</option></select></label>
+       <label>Mode <select aria-label="Same-origin mode" oninput="this.dataset.inputTrusted=String(event.isTrusted)" onchange="this.dataset.changeTrusted=String(event.isTrusted)"><option value="a">Alpha</option><option value="b">Beta</option></select></label>
+       <label>Tags <select multiple size="3" aria-label="Same-origin tags" oninput="this.dataset.inputTrusted=String(event.isTrusted)" onchange="this.dataset.changeTrusted=String(event.isTrusted)"><option value="a">Alpha</option><option value="b">Beta</option><option value="c">Gamma</option></select></label>
        <label><input type="radio" name="same-choice" aria-label="Same-origin primary choice" checked />Primary</label>
        <input aria-label="Same-origin field" value="a" />
        <output>Same-origin ready</output>`,
@@ -115,7 +116,7 @@ const server = createServer((request, response) => {
     const port = request.socket.localPort;
     response.setHeader("content-type", "text/html; charset=utf-8");
     response.end(`<!doctype html>
-      <label>Mode <select aria-label="Mode"><option value="a">Alpha</option><option value="b">Beta</option></select></label>
+      <label>Mode <select aria-label="Mode" oninput="this.dataset.inputTrusted=String(event.isTrusted)" onchange="this.dataset.changeTrusted=String(event.isTrusted)"><option value="a">Alpha</option><option value="b">Beta</option></select></label>
       <label><input type="checkbox" aria-label="Agree" />Agree</label>
       <label><input type="radio" name="choice" aria-label="Primary choice" checked />Primary</label>
       <label><input type="radio" name="choice" aria-label="Secondary choice" />Secondary</label>
@@ -299,11 +300,36 @@ async function main(): Promise<void> {
       values: ["b"],
     });
     const sameOriginSelection = await v2Contents.executeJavaScript(
-      `document.querySelector('iframe[title="Same origin frame"]').contentDocument.querySelector('select').value`,
+      `(() => { const select = document.querySelector('iframe[title="Same origin frame"]').contentDocument.querySelector('[aria-label="Same-origin mode"]'); return { value: select.value, inputTrusted: select.dataset.inputTrusted, changeTrusted: select.dataset.changeTrusted }; })()`,
       true,
     );
-    if (!sameOriginSelect.success || sameOriginSelection !== "b") {
+    if (
+      !sameOriginSelect.success ||
+      !isDynamicRecord(sameOriginSelection) ||
+      sameOriginSelection.value !== "b" ||
+      sameOriginSelection.inputTrusted !== "true" ||
+      sameOriginSelection.changeTrusted !== "true"
+    ) {
       throw new Error(`V2 same-origin iframe select failed: ${toolError(sameOriginSelect)}`);
+    }
+    const sameOriginMultiSelect = await callBrowserTool(browser, "select_option", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "listbox", name: "Same-origin tags", exact: true },
+      values: ["b", "c"],
+    });
+    const sameOriginMultiSelection = await v2Contents.executeJavaScript(
+      `(() => { const select = document.querySelector('iframe[title="Same origin frame"]').contentDocument.querySelector('[aria-label="Same-origin tags"]'); return { values: Array.from(select.selectedOptions, option => option.value), inputTrusted: select.dataset.inputTrusted, changeTrusted: select.dataset.changeTrusted }; })()`,
+      true,
+    );
+    if (
+      !sameOriginMultiSelect.success ||
+      !isDynamicRecord(sameOriginMultiSelection) ||
+      !Array.isArray(sameOriginMultiSelection.values) ||
+      sameOriginMultiSelection.values.join(",") !== "b,c" ||
+      sameOriginMultiSelection.inputTrusted !== "true" ||
+      sameOriginMultiSelection.changeTrusted !== "true"
+    ) {
+      throw new Error(`V2 same-origin iframe multi-select failed: ${toolError(sameOriginMultiSelect)}`);
     }
     const sameOriginRadio = await callBrowserTool(browser, "set_checked", {
       tabId: v2Tab.id,
@@ -330,18 +356,18 @@ async function main(): Promise<void> {
     await v2Contents.executeJavaScript(
       `(() => {
         const container = document.createElement('div');
-        container.dataset.anchorNoise = '';
-        container.innerHTML = Array.from({ length: 250 }, () => '<a>Not a link</a>').join('') +
-          '<button aria-label="Action after anchor noise">Action after anchor noise</button>';
+        container.dataset.rejectedCandidateNoise = '';
+        container.innerHTML = Array.from({ length: 250 }, () => '<button style="visibility:hidden">Hidden action</button>').join('') +
+          '<button aria-label="Action after rejected candidates">Action after rejected candidates</button>';
         document.body.appendChild(container);
       })()`,
       true,
     );
-    const anchorNoiseSnapshot = await browser.snapshot(v2Tab.id);
-    if (!anchorNoiseSnapshot.elements.some((element) => element.name === "Action after anchor noise")) {
-      throw new Error("V2 non-link anchors consumed the actionable-element limit.");
+    const rejectedCandidateSnapshot = await browser.snapshot(v2Tab.id);
+    if (!rejectedCandidateSnapshot.elements.some((element) => element.name === "Action after rejected candidates")) {
+      throw new Error("V2 rejected candidates consumed the actionable-element limit.");
     }
-    await v2Contents.executeJavaScript(`document.querySelector('[data-anchor-noise]').remove()`, true);
+    await v2Contents.executeJavaScript(`document.querySelector('[data-rejected-candidate-noise]').remove()`, true);
     const shadowClick = await callBrowserTool(browser, "click", {
       tabId: v2Tab.id,
       target: { kind: "role", role: "button", name: "Shadow action", exact: true },
@@ -437,8 +463,18 @@ async function main(): Promise<void> {
       values: ["b"],
     });
     if (!selected.success) throw new Error(`V2 select failed: ${toolError(selected)}`);
-    const selectionValue = await v2Contents.executeJavaScript("document.querySelector('select').value", true);
-    if (selectionValue !== "b") throw new Error("V2 select did not change the native control.");
+    const selectionValue = await v2Contents.executeJavaScript(
+      `(() => { const select = document.querySelector('[aria-label="Mode"]'); return { value: select.value, inputTrusted: select.dataset.inputTrusted, changeTrusted: select.dataset.changeTrusted }; })()`,
+      true,
+    );
+    if (
+      !isDynamicRecord(selectionValue) ||
+      selectionValue.value !== "b" ||
+      selectionValue.inputTrusted !== "true" ||
+      selectionValue.changeTrusted !== "true"
+    ) {
+      throw new Error("V2 select did not use trusted native input.");
+    }
     const partialSelection = await callBrowserTool(browser, "select_option", {
       tabId: v2Tab.id,
       target: { kind: "role", role: "combobox", name: "Mode", exact: true },

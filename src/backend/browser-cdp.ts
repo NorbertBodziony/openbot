@@ -276,7 +276,7 @@ export class BrowserCdpEngine {
   async selectOption(target: BrowserTarget, values: string[]): Promise<void> {
     await this.#lease(async (send) => {
       const resolved = await this.#resolveElement(send, target);
-      await this.#callOnNode(
+      const plan = await this.#callOnNode(
         send,
         resolved.backendNodeId,
         `function(values) {
@@ -284,23 +284,86 @@ export class BrowserCdpEngine {
           if (!this.multiple && values.length > 1) throw new Error('A single-select accepts only one requested value.');
           const wanted = new Set(values);
           const matched = new Set();
-          const selected = new Set();
-          for (const option of this.options) {
+          const desiredIndices = [];
+          const enabledIndices = [];
+          for (let index = 0; index < this.options.length; index++) {
+            const option = this.options[index];
+            const disabled = option.disabled || option.parentElement?.disabled === true;
+            if (!disabled) enabledIndices.push(index);
             for (const value of wanted) {
               if (value === option.value || value === option.label || value === option.text) {
                 matched.add(value);
-                selected.add(option);
+                if (disabled) throw new Error('A requested option is disabled.');
+                desiredIndices.push(index);
               }
             }
           }
           if (matched.size !== wanted.size) throw new Error('One or more requested options do not exist.');
-          for (const option of this.options) option.selected = selected.has(option);
-          this.dispatchEvent(new Event('input', { bubbles: true }));
-          this.dispatchEvent(new Event('change', { bubbles: true }));
+          const uniqueDesiredIndices = [...new Set(desiredIndices)];
+          return {
+            multiple: this.multiple,
+            desiredIndices: this.multiple ? uniqueDesiredIndices : uniqueDesiredIndices.slice(0, 1),
+            desiredLabels: uniqueDesiredIndices.map(index => this.options[index].label || this.options[index].text),
+            enabledIndices,
+          };
         }`,
         [values],
         resolved.sessionId,
       );
+      if (!isDynamicRecord(plan) || !isBoolean(plan.multiple)) {
+        throw new Error("Select target returned an invalid option plan.");
+      }
+      const desiredIndices = Array.isArray(plan.desiredIndices) ? plan.desiredIndices.filter(isNumber) : [];
+      const enabledIndices = Array.isArray(plan.enabledIndices) ? plan.enabledIndices.filter(isNumber) : [];
+      if (desiredIndices.length === 0 || desiredIndices.some((index) => !enabledIndices.includes(index))) {
+        throw new Error("Select target returned an invalid option plan.");
+      }
+      await send("DOM.focus", { backendNodeId: resolved.backendNodeId }, resolved.sessionId);
+      if (!plan.multiple) {
+        const desiredLabels = Array.isArray(plan.desiredLabels) ? plan.desiredLabels.filter(isString) : [];
+        const label = desiredLabels[0];
+        if (!label) throw new Error("Select target returned an invalid option label.");
+        for (const character of label) await dispatchTextKey(send, character, resolved.sessionId);
+      } else {
+        const additiveModifiers = process.platform === "darwin" ? ["Meta"] : ["Control"];
+        for (let index = 0; index < desiredIndices.length; index++) {
+          const optionNodeId = await this.#optionBackendNodeId(
+            send,
+            resolved.backendNodeId,
+            desiredIndices[index],
+            resolved.sessionId,
+          );
+          const point = await this.#elementPoint(send, optionNodeId, false, resolved.sessionId);
+          const { sessionId, ...coordinates } = point;
+          const modifiers = index === 0 ? 0 : modifierMask(additiveModifiers);
+          await send(
+            "Input.dispatchMouseEvent",
+            { type: "mousePressed", ...coordinates, button: "left", clickCount: 1, modifiers },
+            sessionId,
+          );
+          await send(
+            "Input.dispatchMouseEvent",
+            { type: "mouseReleased", ...coordinates, button: "left", clickCount: 1, modifiers },
+            sessionId,
+          );
+        }
+      }
+      const selected = await this.#callOnNode(
+        send,
+        resolved.backendNodeId,
+        "function() { return Array.from(this.options, (option, index) => option.selected ? index : -1).filter(index => index >= 0); }",
+        [],
+        resolved.sessionId,
+      );
+      const selectedIndices = Array.isArray(selected) ? selected.filter(isNumber) : [];
+      if (
+        selectedIndices.length !== desiredIndices.length ||
+        selectedIndices.some((index, position) => index !== desiredIndices[position])
+      ) {
+        throw new Error(
+          `Native select interaction did not produce the requested selection (expected ${desiredIndices.join(",")}, got ${selectedIndices.join(",")}).`,
+        );
+      }
     });
   }
 
@@ -835,6 +898,42 @@ export class BrowserCdpEngine {
     }
   }
 
+  async #optionBackendNodeId(
+    send: SendCommand,
+    selectBackendNodeId: number,
+    optionIndex: number,
+    sessionId?: string,
+  ): Promise<number> {
+    const executionContextId = await automationContextId(send, sessionId);
+    const select = await send("DOM.resolveNode", { backendNodeId: selectBackendNodeId, executionContextId }, sessionId);
+    const selectObjectId = stringValue(recordValue(select.object)?.objectId);
+    if (!selectObjectId) throw new Error("Select element is no longer attached to the document.");
+    let optionObjectId = "";
+    try {
+      const option = await send(
+        "Runtime.callFunctionOn",
+        {
+          objectId: selectObjectId,
+          functionDeclaration: "function(index) { return this.options[index]; }",
+          arguments: [{ value: optionIndex }],
+          returnByValue: false,
+        },
+        sessionId,
+      );
+      optionObjectId = stringValue(recordValue(option.result)?.objectId);
+      if (!optionObjectId) throw new Error("Requested select option is no longer available.");
+      const described = await send("DOM.describeNode", { objectId: optionObjectId, depth: 0 }, sessionId);
+      const backendNodeId = numberValue(recordValue(described.node)?.backendNodeId);
+      if (!backendNodeId) throw new Error("Requested select option is no longer attached to the document.");
+      return backendNodeId;
+    } finally {
+      await Promise.allSettled([
+        optionObjectId ? send("Runtime.releaseObject", { objectId: optionObjectId }, sessionId) : Promise.resolve(),
+        send("Runtime.releaseObject", { objectId: selectObjectId }, sessionId),
+      ]);
+    }
+  }
+
   async #refreshSemanticTargets(send: SendCommand, deadline?: number): Promise<void> {
     const navigationGeneration = this.#navigationGeneration;
     const parsed = await collectBoundedSnapshot(
@@ -1310,7 +1409,19 @@ function actionableNodesExpression(limit: number): string {
     const matches = [];
     let scanned = 0;
     const isCandidate = node => {
-      if (node.nodeType !== 1 || node.hidden || node.closest('[hidden],[inert],[aria-hidden="true"]')) return false;
+      if (node.nodeType !== 1) return false;
+      let element = node;
+      while (element) {
+        if (element.hidden || element.inert || String(element.getAttribute('aria-hidden')).toLowerCase() === 'true') return false;
+        const style = element.ownerDocument.defaultView?.getComputedStyle(element);
+        if (!style || style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.contentVisibility === 'hidden' || style.opacity === '0') return false;
+        const parent = element.parentElement;
+        if (parent) element = parent;
+        else {
+          const root = element.getRootNode();
+          element = root?.nodeType === Node.DOCUMENT_FRAGMENT_NODE ? root.host : null;
+        }
+      }
       const explicitRole = (node.getAttribute('role') || '').trim().split(/\\s+/)[0].toLowerCase();
       const tag = node.localName;
       const semantic = tag === 'button' || tag === 'summary' || (tag === 'a' && node.hasAttribute('href')) ||
@@ -1453,6 +1564,22 @@ async function dispatchShortcut(send: SendCommand, shortcut: string, sessionId?:
       ).catch(() => undefined);
     }
   }
+}
+
+async function dispatchTextKey(send: SendCommand, character: string, sessionId?: string): Promise<void> {
+  const upper = character.toUpperCase();
+  const code = /^[a-z]$/i.test(character) ? `Key${upper}` : "Unidentified";
+  await send(
+    "Input.dispatchKeyEvent",
+    { type: "rawKeyDown", key: character, code, text: character, unmodifiedText: character },
+    sessionId,
+  );
+  await send(
+    "Input.dispatchKeyEvent",
+    { type: "char", key: character, code, text: character, unmodifiedText: character },
+    sessionId,
+  );
+  await send("Input.dispatchKeyEvent", { type: "keyUp", key: character, code }, sessionId);
 }
 
 function normalizeModifier(value: string) {
