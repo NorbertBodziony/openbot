@@ -64,7 +64,8 @@ export function decodeTeamProtocolV2CurrentHttpRequest(
 }
 
 function decodeV2HttpRequest(method: string, path: string, value: unknown): TeamProtocolV2Json {
-  const normalized = value === undefined ? null : value;
+  const normalized = value === undefined ? null : wireJson(value);
+  if (isRemoteViewerRoute(path)) return isEmptyRequest(normalized) ? {} : normalized;
   if (isEmptyRequest(normalized) && isTeamProtocolV2NoBodyRoute(method, path)) return {};
   return wireJson(decodeTeamProtocolV1CurrentHttpRequest(method, path, normalized));
 }
@@ -100,13 +101,36 @@ function isTeamProtocolV2NoBodyRoute(method: string, path: string): boolean {
     ) {
       return true;
     }
+    if (
+      /^\/v1\/attachments\/[^/]+$/u.test(pathname) ||
+      pathname === "/v1/shared-files" ||
+      pathname === "/v1/workspace-files" ||
+      isRemoteViewerRoute(pathname)
+    ) {
+      return true;
+    }
     if (/^\/v1\/direct\/conversations\/[^/]+(?:\/page)?$/u.test(pathname)) return true;
     return /^\/v1\/agents\/[^/]+\/(?:memories|routines|routines\/[^/]+\/runs|conversation|conversation-page|queue)$/u.test(
       pathname,
     );
   }
   if (method === "POST" && /^\/v1\/agents\/[^/]+\/routines\/[^/]+\/test$/u.test(pathname)) return true;
-  return method === "DELETE" && /^\/v1\/agents\/[^/]+\/avatar$/u.test(pathname);
+  if (method !== "DELETE") return false;
+  return (
+    /^\/v1\/attachments\/[^/]+$/u.test(pathname) ||
+    /^\/v1\/remote-screen\/sessions\/[A-Za-z0-9-]+$/u.test(pathname) ||
+    /^\/v1\/agents\/[^/]+$/u.test(pathname) ||
+    /^\/v1\/agents\/[^/]+\/avatar$/u.test(pathname) ||
+    /^\/v1\/agents\/[^/]+\/memories(?:\/[^/]+)?$/u.test(pathname) ||
+    /^\/v1\/agents\/[^/]+\/routines\/[^/]+$/u.test(pathname)
+  );
+}
+
+function isRemoteViewerRoute(path: string): boolean {
+  const pathname = new URL(path, "http://openbot.invalid").pathname;
+  return /^\/v1\/remote-screen\/sessions\/[A-Za-z0-9-]+\/(?:viewer|authorize|viewer-state|moonlight(?:\/.*)?)$/u.test(
+    pathname,
+  );
 }
 
 export function encodeTeamProtocolV2CurrentHttpResponse(
@@ -115,6 +139,8 @@ export function encodeTeamProtocolV2CurrentHttpResponse(
   status: number,
   value: unknown,
 ): TeamProtocolV2Json {
+  if (status === 204) return {};
+  if (isRemoteViewerRoute(path)) return wireJson(value === undefined ? null : value);
   return wireJson(decodeTeamProtocolV1CurrentHttpResponse(method, path, status, value === undefined ? null : value));
 }
 
@@ -124,6 +150,8 @@ export function decodeTeamProtocolV2CurrentHttpResponse(
   status: number,
   value: unknown,
 ): TeamProtocolV2Json {
+  if (status === 204) return {};
+  if (isRemoteViewerRoute(path)) return wireJson(value === undefined ? null : value);
   return wireJson(decodeTeamProtocolV1CurrentHttpResponse(method, path, status, value === undefined ? null : value));
 }
 
