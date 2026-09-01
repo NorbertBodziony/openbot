@@ -1948,11 +1948,15 @@ describe.sequential("AgentService", () => {
     const clients = new Map<AgentProvider, FakeAgentClient>();
     const tabs: BrowserTab[] = [];
     const discardedRecordings: string[] = [];
+    const endedTakeovers: string[] = [];
     const browser = fakeBrowser(tabs);
-    browser.discardRecording = async (tabId) => {
+    browser.beginTakeover = async (tabId) => {
       discardedRecordings.push(tabId);
       const tab = tabs.find((candidate) => candidate.id === tabId);
       if (tab) tab.recording = false;
+    };
+    browser.endTakeover = (tabId) => {
+      endedTakeovers.push(tabId);
     };
     browser.handleDynamicTool = async (params) => {
       if (params.tool === "open") {
@@ -2058,6 +2062,7 @@ describe.sequential("AgentService", () => {
       status: "completed",
       next: "Take a fresh snapshot and continue the task.",
     });
+    expect(endedTakeovers).toEqual(["protected-tab"]);
     expect(events).toContainEqual({
       type: "browser-takeover-resolved",
       requestId: "takeover-call",
@@ -2087,6 +2092,7 @@ describe.sequential("AgentService", () => {
     await service.respondToBrowserTakeover({ requestId: "takeover-cancel", decision: "cancel" });
     await waitFor(() => client.responses.length === 5);
     expect(openBotToolPayload(client.responses[4]?.result)).toEqual({ status: "cancelled" });
+    expect(endedTakeovers).toEqual(["protected-tab", "protected-tab"]);
   });
 
   it("commits an automatic memory only after a successful turn and refreshes the next turn context", async () => {
@@ -4912,7 +4918,8 @@ function fakeBrowser(tabs: BrowserTab[] = []) {
     clearControls: () => undefined,
     endControl: () => undefined,
     listTabs: () => tabs,
-    discardRecording: async (_tabId: string) => undefined,
+    beginTakeover: async (_tabId: string) => undefined,
+    endTakeover: (_tabId: string) => undefined,
     handleDynamicTool: async (
       _params: DynamicToolCallParams,
       _hooks?: {

@@ -415,7 +415,7 @@ export class BrowserCdpEngine {
       if (!isString(documentId)) throw new Error("Unable to identify the upload document.");
       this.#uploadDocumentIds.add(documentId);
       return {
-        inputId: `${resolved.sessionId ?? "main"}:${resolved.backendNodeId}`,
+        inputId: `${documentId}:${resolved.backendNodeId}`,
         documentId,
       };
     });
@@ -1218,60 +1218,96 @@ async function collectActionableNodes(
   assertBeforeDeadline(deadline);
   await Promise.all([send("DOM.enable", {}, capture.sessionId), send("Accessibility.enable", {}, capture.sessionId)]);
   assertBeforeDeadline(deadline);
-  const [domSnapshot, fullAxTree] = await Promise.all([
-    send(
-      "DOMSnapshot.captureSnapshot",
-      { computedStyles: [], includePaintOrder: false, includeDOMRects: false },
+  const contextId = await automationContextId(send, capture.sessionId);
+  const collection = await send(
+    "Runtime.evaluate",
+    {
+      expression: actionableNodesExpression(limit),
+      contextId,
+      returnByValue: false,
+    },
+    capture.sessionId,
+  );
+  const exception = recordValue(collection.exceptionDetails);
+  if (exception) throw new Error(exceptionDescription(exception));
+  const collectionId = stringValue(recordValue(collection.result)?.objectId);
+  if (!collectionId) return [];
+  const objectIds: string[] = [];
+  try {
+    const properties = await send(
+      "Runtime.getProperties",
+      { objectId: collectionId, ownProperties: true },
       capture.sessionId,
-    ),
-    send("Accessibility.getFullAXTree", {}, capture.sessionId),
-  ]);
-  assertBeforeDeadline(deadline);
-  const strings = Array.isArray(domSnapshot.strings) ? domSnapshot.strings.filter(isString) : [];
-  const domNodes = new Map<number, CdpResult>();
-  const documents = Array.isArray(domSnapshot.documents) ? domSnapshot.documents.filter(isRecord) : [];
-  for (const document of documents) {
-    const nodes = recordValue(document.nodes);
-    const backendNodeIds = Array.isArray(nodes?.backendNodeId) ? nodes.backendNodeId : [];
-    const nodeNames = Array.isArray(nodes?.nodeName) ? nodes.nodeName : [];
-    const attributes = Array.isArray(nodes?.attributes) ? nodes.attributes : [];
-    const frameId = snapshotString(strings, document.frameId);
-    for (let index = 0; index < backendNodeIds.length && domNodes.size < MAX_SNAPSHOT_SCANNED_NODES; index++) {
-      const backendNodeId = numberValue(backendNodeIds[index]);
-      if (!backendNodeId) continue;
-      const nodeName = snapshotString(strings, nodeNames[index]);
-      const rawAttributes = Array.isArray(attributes[index]) ? attributes[index] : [];
-      domNodes.set(backendNodeId, {
-        backendNodeId,
-        nodeName,
-        localName: nodeName.toLowerCase(),
-        attributes: rawAttributes.map((value: unknown) => snapshotString(strings, value)),
-        frameId,
-      });
-    }
-  }
-  const candidates: Array<{ backendNodeId: number; node: CdpResult; ax: CdpResult; role: string }> = [];
-  const seen = new Set<number>();
-  const axNodes = Array.isArray(fullAxTree.nodes) ? fullAxTree.nodes.filter(isRecord) : [];
-  for (const ax of axNodes) {
+    );
+    const descriptors = Array.isArray(properties.result) ? properties.result.filter(isRecord) : [];
+    objectIds.push(
+      ...descriptors
+        .filter((descriptor) => /^\d+$/.test(stringValue(descriptor.name)))
+        .sort((left, right) => Number(left.name) - Number(right.name))
+        .map((descriptor) => stringValue(recordValue(descriptor.value)?.objectId))
+        .filter(Boolean)
+        .slice(0, limit),
+    );
+    const resolved = await Promise.all(
+      objectIds.map(async (objectId) => {
+        const [description, partialAxTree] = await Promise.all([
+          send("DOM.describeNode", { objectId, depth: 0 }, capture.sessionId),
+          send("Accessibility.getPartialAXTree", { objectId, fetchRelatives: false }, capture.sessionId),
+        ]);
+        const node = recordValue(description.node);
+        const backendNodeId = numberValue(node?.backendNodeId);
+        if (!node || !backendNodeId) return null;
+        const axNodes = Array.isArray(partialAxTree.nodes) ? partialAxTree.nodes.filter(isRecord) : [];
+        const ax = axNodes.find((candidate) => numberValue(candidate.backendDOMNodeId) === backendNodeId) ?? axNodes[0];
+        if (!ax || ax.ignored === true) return null;
+        const role = axValue(ax.role).toLowerCase() || fallbackRole(node);
+        if (!ACTIONABLE_ROLES.has(role)) return null;
+        return { backendNodeId, node, ax, role };
+      }),
+    );
     assertBeforeDeadline(deadline);
-    if (ax.ignored === true) continue;
-    const backendNodeId = numberValue(ax.backendDOMNodeId);
-    if (!backendNodeId || seen.has(backendNodeId)) continue;
-    const node = domNodes.get(backendNodeId);
-    if (!node) continue;
-    const role = axValue(ax.role).toLowerCase() || fallbackRole(node);
-    if (!ACTIONABLE_ROLES.has(role)) continue;
-    seen.add(backendNodeId);
-    candidates.push({ backendNodeId, node, ax, role });
-    if (candidates.length >= limit) break;
+    return resolved.filter((candidate) => candidate !== null).slice(0, limit);
+  } finally {
+    await Promise.allSettled([
+      ...objectIds.map((objectId) => send("Runtime.releaseObject", { objectId }, capture.sessionId)),
+      send("Runtime.releaseObject", { objectId: collectionId }, capture.sessionId),
+    ]);
   }
-  return candidates;
 }
 
-function snapshotString(strings: string[], value: unknown): string {
-  const index = numberValue(value);
-  return strings[index] ?? "";
+function actionableNodesExpression(limit: number): string {
+  return `(() => {
+    const roles = new Set(${JSON.stringify([...ACTIONABLE_ROLES])});
+    const roots = [document];
+    const seenRoots = new Set();
+    const matches = [];
+    let scanned = 0;
+    const isCandidate = node => {
+      if (!(node instanceof Element) || node.hidden || node.closest('[hidden],[inert],[aria-hidden="true"]')) return false;
+      const explicitRole = (node.getAttribute('role') || '').trim().split(/\\s+/)[0].toLowerCase();
+      const tag = node.localName;
+      const semantic = tag === 'button' || tag === 'summary' || tag === 'a' || tag === 'select' ||
+        tag === 'textarea' || (tag === 'input' && node.type !== 'hidden') || node.isContentEditable;
+      if (!semantic && !roles.has(explicitRole)) return false;
+      return node.getClientRects().length > 0;
+    };
+    while (roots.length && scanned < ${MAX_SNAPSHOT_SCANNED_NODES} && matches.length < ${Math.max(0, limit)}) {
+      const root = roots.shift();
+      if (!root || seenRoots.has(root)) continue;
+      seenRoots.add(root);
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+      let node;
+      while ((node = walker.nextNode()) && scanned < ${MAX_SNAPSHOT_SCANNED_NODES} && matches.length < ${Math.max(0, limit)}) {
+        scanned++;
+        if (node.shadowRoot) roots.push(node.shadowRoot);
+        if (node.localName === 'iframe' || node.localName === 'frame') {
+          try { if (node.contentDocument) roots.push(node.contentDocument); } catch {}
+        }
+        if (isCandidate(node)) matches.push(node);
+      }
+    }
+    return matches;
+  })()`;
 }
 
 function redactedMetadataUrl(value: string | undefined): string {

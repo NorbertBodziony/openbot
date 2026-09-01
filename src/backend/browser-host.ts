@@ -133,6 +133,7 @@ export class BrowserHost {
   #pictureInPictureOverlayView: WebContentsView | null = null;
   #target: BrowserViewTarget = "main";
   readonly #mountedViews = new Map<WebContentsView, BrowserWindow>();
+  readonly #takeoverTabIds = new Set<string>();
   #persistQueue: Promise<void> = Promise.resolve();
   #destroyPromise: Promise<void> | null = null;
 
@@ -353,6 +354,7 @@ export class BrowserHost {
     const closedIndex = tabIds.indexOf(tabId);
     this.#unmountView(tab.view);
     this.#tabs.delete(tabId);
+    this.#takeoverTabIds.delete(tabId);
 
     if (this.#activeTabId === tabId) {
       this.#activeTabId = tabIds[closedIndex + 1] ?? tabIds[closedIndex - 1] ?? null;
@@ -378,9 +380,26 @@ export class BrowserHost {
     }
   }
 
-  async discardRecording(tabId: string): Promise<void> {
-    if (!this.#tabs.has(tabId)) return;
-    await this.#enqueue(tabId, () => this.#recorder.discard(tabId, "tab-closed"));
+  async beginTakeover(tabId: string): Promise<void> {
+    const tab = this.#tabs.get(tabId);
+    if (!tab) throw new Error("Browser tab not found.");
+    this.#takeoverTabIds.add(tabId);
+    tab.diagnostics.clearDiagnostics();
+    this.#emitChanged();
+    try {
+      await this.#enqueue(tabId, () => this.#recorder.discard(tabId, "tab-closed"));
+    } catch (error) {
+      tab.diagnostics.clearDiagnostics();
+      this.#takeoverTabIds.delete(tabId);
+      throw error;
+    }
+  }
+
+  endTakeover(tabId: string): void {
+    const tab = this.#tabs.get(tabId);
+    if (tab) tab.diagnostics.clearDiagnostics();
+    this.#takeoverTabIds.delete(tabId);
+    this.#emitChanged();
   }
 
   async setVisible(input: BrowserVisibilityInput): Promise<void> {
@@ -981,6 +1000,7 @@ export class BrowserHost {
       void this.#syncViewBackground(tab);
     });
     contents.on("console-message", (...eventArgs) => {
+      if (this.#takeoverTabIds.has(tab.id)) return;
       const details = readConsoleMessage(eventArgs);
       if (!details) return;
       tab.diagnostics.add({

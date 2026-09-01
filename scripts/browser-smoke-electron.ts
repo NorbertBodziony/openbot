@@ -67,13 +67,16 @@ const server = createServer((request, response) => {
       `<button aria-label="Frame action" onclick="this.textContent='Frame clicked:' + event.isTrusted">Frame action</button>
        <button aria-label="Schedule frame navigation" onclick="setTimeout(() => location.href='/frame-next', 1000)">Schedule frame navigation</button>
        <input aria-label="Frame field" oninput="document.querySelector('output').textContent='Frame input:' + this.value + ':' + event.isTrusted" onkeydown="if (event.key === 'Enter') document.querySelector('output').textContent += '|Frame key:' + event.isTrusted" />
+       <input type="file" aria-label="Frame files" />
        <output>Frame ready</output>`,
     );
     return;
   }
   if (url.pathname === "/frame-next") {
     response.setHeader("content-type", "text/html; charset=utf-8");
-    response.end(`<button aria-label="Replacement frame action">Replacement frame action</button>`);
+    response.end(
+      `<button aria-label="Replacement frame action">Replacement frame action</button><input type="file" aria-label="Frame files" />`,
+    );
     return;
   }
   if (url.pathname === "/diagnostic-error") {
@@ -682,10 +685,27 @@ async function main(): Promise<void> {
     await writeFile(uploadPath, "upload fixture");
     const uploaded = await callBrowserTool(browser, "upload_files", {
       tabId: v2Tab.id,
-      target: { kind: "role", role: "button", name: "Files" },
+      target: { kind: "role", role: "button", name: "Files", exact: true },
       paths: [uploadPath],
     });
     if (!uploaded.success) throw new Error(`V2 upload failed: ${toolError(uploaded)}`);
+    const frameUploadInputIds: string[] = [];
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const frameUpload = await callBrowserTool(
+        browser,
+        "upload_files",
+        {
+          tabId: v2Tab.id,
+          target: { kind: "css", selector: 'input[aria-label="Frame files"]' },
+          paths: [uploadPath],
+        },
+        { onUploadAssigned: (inputId) => frameUploadInputIds.push(inputId) },
+      );
+      if (!frameUpload.success) throw new Error(`V2 frame upload failed: ${toolError(frameUpload)}`);
+    }
+    if (frameUploadInputIds.length !== 2 || frameUploadInputIds[0] !== frameUploadInputIds[1]) {
+      throw new Error("V2 frame upload input identity changed between CDP sessions.");
+    }
     await browser.setVisible({ visible: true, bounds: { x: 0, y: 0, width: 220, height: 560 } });
     const narrowFillEnvironment = await callBrowserTool(browser, "set_environment", {
       tabId: v2Tab.id,
@@ -770,6 +790,14 @@ async function main(): Promise<void> {
     });
     if (oversizedEnvironment.success || !toolError(oversizedEnvironment).includes("physical viewport")) {
       throw new Error("V2 environment accepted an unsafe physical pixel area.");
+    }
+    await browser.beginTakeover(v2Tab.id);
+    await v2Contents.executeJavaScript("console.error('takeover-console-secret'); true", true);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    browser.endTakeover(v2Tab.id);
+    const postTakeoverSnapshot = await browser.snapshot(v2Tab.id);
+    if (JSON.stringify(postTakeoverSnapshot.diagnostics).includes("takeover-console-secret")) {
+      throw new Error("V2 takeover exposed console messages captured while the user had control.");
     }
     const racingRecordingStart = callBrowserTool(browser, "recording_start", { tabId: v2Tab.id });
     const racingRecordingStop = callBrowserTool(browser, "recording_stop", { tabId: v2Tab.id });
@@ -1322,17 +1350,25 @@ async function openTabWithContents(
   return { tab, contents };
 }
 
-function callBrowserTool(browser: BrowserHost, tool: string, argumentsValue: unknown): Promise<DynamicToolResult> {
+function callBrowserTool(
+  browser: BrowserHost,
+  tool: string,
+  argumentsValue: unknown,
+  hooks?: Parameters<BrowserHost["handleDynamicTool"]>[1],
+): Promise<DynamicToolResult> {
   browserToolCall += 1;
-  return browser.handleDynamicTool({
-    threadId: "smoke-thread",
-    turnId: `browser-v2-${browserToolCall}`,
-    callId: `browser-v2-call-${browserToolCall}`,
-    ownerBotId: "smoke-bot",
-    namespace: "openbot_browser",
-    tool,
-    arguments: argumentsValue,
-  });
+  return browser.handleDynamicTool(
+    {
+      threadId: "smoke-thread",
+      turnId: `browser-v2-${browserToolCall}`,
+      callId: `browser-v2-call-${browserToolCall}`,
+      ownerBotId: "smoke-bot",
+      namespace: "openbot_browser",
+      tool,
+      arguments: argumentsValue,
+    },
+    hooks,
+  );
 }
 
 function toolTextPayload(result: DynamicToolResult): DynamicRecord | undefined {

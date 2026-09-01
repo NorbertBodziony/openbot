@@ -155,7 +155,8 @@ interface AgentBrowserHost {
   clearControls(): void;
   endControl(threadId: string, turnId: string): void;
   listTabs(): BrowserTab[];
-  discardRecording(tabId: string): Promise<void>;
+  beginTakeover(tabId: string): Promise<void>;
+  endTakeover(tabId: string): void;
   handleDynamicTool(
     params: DynamicToolCallParams,
     hooks?: {
@@ -4411,6 +4412,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     decision: RespondToBrowserTakeoverInput["decision"],
   ): void {
     this.#pendingBrowserTakeovers.delete(requestId);
+    if (
+      ![...this.#pendingBrowserTakeovers.values()].some(
+        (candidate) => candidate.request.tabId === pending.request.tabId,
+      )
+    ) {
+      this.#browser.endTakeover(pending.request.tabId);
+    }
     this.#emit({
       type: "browser-takeover-resolved",
       requestId: pending.request.requestId,
@@ -4436,7 +4444,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       !publicThreadId ||
       !tab ||
       tab.ownerThreadId !== publicThreadId ||
-      tab.ownerBotId !== botId
+      tab.ownerBotId !== botId ||
+      [...this.#pendingBrowserTakeovers.values()].some((pending) => pending.request.tabId === tabId)
     ) {
       return Promise.resolve(browserTakeoverError());
     }
@@ -4455,7 +4464,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         resolve,
       };
       this.#pendingBrowserTakeovers.set(request.id, pending);
-      void this.#browser.discardRecording(tabId).then(
+      void this.#browser.beginTakeover(tabId).then(
         () => {
           if (this.#pendingBrowserTakeovers.get(request.id) !== pending) return;
           this.#markRoutineNeedsAttention(turnId);

@@ -19,6 +19,10 @@ export class BrowserDiagnostics {
     return { diagnostics: this.#diagnostics.slice(-50), actions: this.#actions.slice(-50) };
   }
 
+  clearDiagnostics(): void {
+    this.#diagnostics.length = 0;
+  }
+
   get errorCount(): number {
     return this.#diagnostics.filter((entry) => entry.level === "error").length;
   }
