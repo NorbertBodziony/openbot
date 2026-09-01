@@ -1047,7 +1047,7 @@
   gap: 4px;
   border-radius: var(--openbot-radius-sm);
   padding: 0 5px;
-  font-size: 10px;
+  font-size: var(--openbot-text-2xs);
   line-height: 1;
 }
 

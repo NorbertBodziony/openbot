@@ -908,27 +908,40 @@ export class BrowserHost {
     operation: (tab: InternalTab) => Promise<void>,
     timeoutMs = 10_000,
   ): Promise<BrowserSnapshot> {
-    return this.#enqueue(tabId, async (tab) => {
-      try {
+    const tab = this.#requireTab(tabId);
+    const started = tab.queue.then(() => {
+      const operationCompletion = (async () => {
         if (target && target.kind !== "point") await tab.engine.highlight(target).catch(() => undefined);
-        await withTimeout(operation(tab), timeoutMs, `Browser ${action} timed out.`);
-        await tab.engine.settle(Math.min(timeoutMs, 10_000));
-        tab.diagnostics.action({
-          action,
-          target: target ? describeBrowserTarget(target) : undefined,
-          outcome: "success",
+        await operation(tab);
+      })();
+      const response = withTimeout(operationCompletion, timeoutMs, `Browser ${action} timed out.`)
+        .then(async () => {
+          await tab.engine.settle(Math.min(timeoutMs, 10_000));
+          tab.diagnostics.action({
+            action,
+            target: target ? describeBrowserTarget(target) : undefined,
+            outcome: "success",
+          });
+          return (await this.#readSnapshot(tab, tab.revision + 1)).snapshot;
+        })
+        .catch((error) => {
+          tab.diagnostics.action({
+            action,
+            target: target ? describeBrowserTarget(target) : undefined,
+            outcome: "error",
+            detail: String(error).slice(0, 2_000),
+          });
+          throw error;
         });
-      } catch (error) {
-        tab.diagnostics.action({
-          action,
-          target: target ? describeBrowserTarget(target) : undefined,
-          outcome: "error",
-          detail: String(error).slice(0, 2_000),
-        });
-        throw error;
-      }
-      return (await this.#readSnapshot(tab, tab.revision + 1)).snapshot;
+      const drained = Promise.allSettled([operationCompletion, response]).then(() => undefined);
+      return { drained, response };
     });
+    const result = started.then(({ response }) => response);
+    tab.queue = started.then(
+      ({ drained }) => drained,
+      () => undefined,
+    );
+    return result;
   }
 
   async #snapshotResult(tabId: string, result: SnapshotReadResult, mode: BrowserImageMode): Promise<DynamicToolResult> {

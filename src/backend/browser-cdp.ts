@@ -284,14 +284,26 @@ export class BrowserCdpEngine {
   async setChecked(target: BrowserTarget, checked: boolean): Promise<void> {
     await this.#lease(async (send) => {
       const resolved = await this.#resolveElement(send, target);
-      const current = await this.#callOnNode(
+      const state = await this.#callOnNode(
         send,
         resolved.backendNodeId,
-        "function() { if (!('checked' in this)) throw new Error('Target is not checkable.'); return Boolean(this.checked); }",
+        `function() {
+          if (!('checked' in this)) throw new Error('Target is not checkable.');
+          return {
+            checked: Boolean(this.checked),
+            radio: this instanceof HTMLInputElement && this.type === 'radio',
+          };
+        }`,
         [],
         resolved.sessionId,
       );
-      if (current !== checked) {
+      if (!isDynamicRecord(state) || !isBoolean(state.checked) || !isBoolean(state.radio)) {
+        throw new Error("Target returned an invalid checked state.");
+      }
+      if (state.radio && state.checked && !checked) {
+        throw new Error("A selected radio button cannot be cleared directly. Select another radio option instead.");
+      }
+      if (state.checked !== checked) {
         const point = await this.#elementPoint(send, resolved.backendNodeId, true, resolved.sessionId);
         const { sessionId, ...coordinates } = point;
         await send(
@@ -305,6 +317,14 @@ export class BrowserCdpEngine {
           sessionId,
         );
       }
+      const updated = await this.#callOnNode(
+        send,
+        resolved.backendNodeId,
+        "function() { return Boolean(this.checked); }",
+        [],
+        resolved.sessionId,
+      );
+      if (updated !== checked) throw new Error("Target did not reach the requested checked state.");
     });
   }
 
@@ -412,12 +432,22 @@ export class BrowserCdpEngine {
         }
         if (condition.target) {
           try {
+            if (condition.target.kind === "role" || condition.target.kind === "text") {
+              await this.#refreshSemanticTargets(send);
+            }
             await this.#resolveTarget(send, condition.target);
           } catch {
             matched = false;
           }
         }
         if (condition.state === "load") matched &&= !this.#contents.isLoading();
+        if (condition.state === "domcontentloaded") {
+          const result = await send("Runtime.evaluate", {
+            expression: "document.readyState !== 'loading'",
+            returnByValue: true,
+          });
+          matched &&= recordValue(result.result)?.value === true;
+        }
         if (matched) {
           if (condition.state === "dom-quiet") await waitForDomQuiet(send, Math.min(1_000, deadline - Date.now()));
           return;
@@ -595,6 +625,36 @@ export class BrowserCdpEngine {
     const exception = recordValue(result.exceptionDetails);
     if (exception) throw new Error(exceptionDescription(exception));
     return recordValue(result.result)?.value;
+  }
+
+  async #refreshSemanticTargets(send: SendCommand): Promise<void> {
+    const frames = await send("Page.getFrameTree");
+    const rootAxTrees = await Promise.all(
+      allFrameIds(frames).map((frameId) =>
+        send("Accessibility.getFullAXTree", { frameId }).catch(() => ({ nodes: [] })),
+      ),
+    );
+    const childCaptures = await Promise.all(
+      [...this.#targetSessions.entries()].map(async ([targetId, target]) => ({
+        targetId,
+        sessionId: target.sessionId,
+        url: target.url,
+        ax: await send("Accessibility.getFullAXTree", {}, target.sessionId).catch(() => ({ nodes: [] })),
+        dom: { documents: [], strings: [] },
+      })),
+    );
+    const parsed = parseSnapshot(
+      [
+        {
+          ax: { nodes: rootAxTrees.flatMap((tree) => (Array.isArray(tree.nodes) ? tree.nodes : [])) },
+          dom: { documents: [], strings: [] },
+        },
+        ...childCaptures,
+      ],
+      frames,
+      this.#lastSnapshot?.revision ?? 0,
+    );
+    this.#targets = parsed.targets;
   }
 
   async #lease<T>(operation: (send: SendCommand) => Promise<T>): Promise<T> {

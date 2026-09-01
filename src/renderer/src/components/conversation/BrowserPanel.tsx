@@ -5,11 +5,19 @@ import type {
   BrowserControlSession,
   BrowserTab,
 } from "@openbot/contracts/ipc";
-import { CircleDot, MonitorSmartphone, TriangleAlert } from "lucide-solid";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import type { BotProfile } from "../../data";
 import { PanelResizer, readPanelWidth, savePanelWidth } from "../PanelResizer";
-import { Button, buttonVariants, Input, PictureInPicture2, Tabs } from "../ui";
+import {
+  Button,
+  buttonVariants,
+  CircleDot,
+  Input,
+  MonitorSmartphone,
+  PictureInPicture2,
+  Tabs,
+  TriangleAlert,
+} from "../ui";
 import {
   BrowserBackIcon,
   BrowserControlIcon,

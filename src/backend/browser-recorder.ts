@@ -7,6 +7,7 @@ import { z } from "zod";
 
 const MAX_RECORDING_MS = 5 * 60 * 1_000;
 const MAX_RECORDING_BYTES = 100 * 1024 * 1024;
+const RECORDING_STOP_BYTES = MAX_RECORDING_BYTES - 10 * 1024 * 1024;
 const stoppedReasonSchema = z.enum(["requested", "duration-limit", "size-limit", "tab-closed", "error"]);
 const recorderResultSchema = z.object({
   base64: z.string(),
@@ -165,7 +166,7 @@ function startScript(sourceId: string): string {
   return `(async () => {
     let stage = 'initialization';
     try {
-    const MAX_BYTES = ${MAX_RECORDING_BYTES};
+    const STOP_BYTES = ${RECORDING_STOP_BYTES};
     const MAX_MS = ${MAX_RECORDING_MS};
     const sourceId = ${JSON.stringify(sourceId)};
     stage = 'getUserMedia';
@@ -201,7 +202,7 @@ function startScript(sourceId: string): string {
     recorder.addEventListener('dataavailable', event => {
       if (!event.data || event.data.size === 0) return;
       state.chunks.push(event.data); state.bytes += event.data.size;
-      if (state.bytes >= MAX_BYTES) state.stop('size-limit');
+      if (state.bytes >= STOP_BYTES) state.stop('size-limit');
     });
     globalThis.__openbotRecorder = state;
     stage = 'start'; recorder.start(1000);

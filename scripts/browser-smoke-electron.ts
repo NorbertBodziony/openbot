@@ -70,12 +70,20 @@ const server = createServer((request, response) => {
     response.end("expected diagnostic failure");
     return;
   }
+  if (url.pathname === "/slow-document") {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    response.write("<!doctype html><main>loading</main>");
+    setTimeout(() => response.end("<script>document.querySelector('main').textContent='ready'</script>"), 250);
+    return;
+  }
   if (url.pathname === "/v2") {
     const port = request.socket.localPort;
     response.setHeader("content-type", "text/html; charset=utf-8");
     response.end(`<!doctype html>
       <label>Mode <select aria-label="Mode"><option value="a">Alpha</option><option value="b">Beta</option></select></label>
       <label><input type="checkbox" aria-label="Agree" />Agree</label>
+      <label><input type="radio" name="choice" aria-label="Primary choice" checked />Primary</label>
+      <label><input type="radio" name="choice" aria-label="Secondary choice" />Secondary</label>
       <div contenteditable="true" role="textbox" aria-label="Notes"></div>
       <button aria-label="Duplicate">One</button><button aria-label="Duplicate">Two</button>
       <span style="position:relative;display:inline-block"><button aria-label="Covered">Covered</button><span style="position:absolute;inset:0;z-index:2" aria-hidden="true"></span></span>
@@ -235,6 +243,14 @@ async function main(): Promise<void> {
       checked: true,
     });
     if (!checked.success) throw new Error(`V2 checkbox failed: ${toolError(checked)}`);
+    const clearedRadio = await callBrowserTool(browser, "set_checked", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "radio", name: "Primary choice", exact: true },
+      checked: false,
+    });
+    if (clearedRadio.success || !toolError(clearedRadio).includes("cannot be cleared directly")) {
+      throw new Error("V2 selected radio clearing did not return a truthful error.");
+    }
     const contentEditable = await callBrowserTool(browser, "type", {
       tabId: v2Tab.id,
       target: { kind: "role", role: "textbox", name: "Notes", exact: true },
@@ -311,6 +327,18 @@ async function main(): Promise<void> {
     if (!spaClick.success) throw new Error(`V2 SPA click failed: ${toolError(spaClick)}`);
     const spaWait = await callBrowserTool(browser, "wait_for", { tabId: v2Tab.id, text: "SPA done", timeoutMs: 2_000 });
     if (!spaWait.success) throw new Error(`V2 event wait failed: ${toolError(spaWait)}`);
+    const scheduledTarget = await callBrowserTool(browser, "evaluate", {
+      tabId: v2Tab.id,
+      expression:
+        "setTimeout(() => { const button = document.createElement('button'); button.setAttribute('aria-label', 'Late action'); document.body.append(button); }, 100); true",
+    });
+    if (!scheduledTarget.success) throw new Error(`V2 late target setup failed: ${toolError(scheduledTarget)}`);
+    const semanticWait = await callBrowserTool(browser, "wait_for", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "button", name: "Late action", exact: true },
+      timeoutMs: 2_000,
+    });
+    if (!semanticWait.success) throw new Error(`V2 semantic wait failed: ${toolError(semanticWait)}`);
     const timedOut = await callBrowserTool(browser, "wait_for", {
       tabId: v2Tab.id,
       text: "never appears",
@@ -365,6 +393,36 @@ async function main(): Promise<void> {
     }
     if (browser.listTabs().find((candidate) => candidate.id === v2Tab.id)?.recording !== false) {
       throw new Error("V2 recording state was not cleaned up.");
+    }
+    const waitTab = await browser.open(origin, "smoke-thread", "smoke-bot");
+    const navigationStarted = await callBrowserTool(browser, "evaluate", {
+      tabId: waitTab.id,
+      expression: `location.href = ${JSON.stringify(`${origin}/slow-document?domcontentloaded`)}; true`,
+    });
+    if (!navigationStarted.success) throw new Error(`V2 readiness navigation failed: ${toolError(navigationStarted)}`);
+    const readinessStartedAt = Date.now();
+    const domContentLoaded = await callBrowserTool(browser, "wait_for", {
+      tabId: waitTab.id,
+      state: "domcontentloaded",
+      timeoutMs: 2_000,
+    });
+    if (!domContentLoaded.success || Date.now() - readinessStartedAt < 150) {
+      throw new Error(
+        `V2 DOMContentLoaded wait returned before the document was ready: ${toolError(domContentLoaded)}`,
+      );
+    }
+    const timedNavigation = await callBrowserTool(browser, "navigate", {
+      tabId: waitTab.id,
+      url: `${origin}/slow-document?serialized`,
+      timeoutMs: 10,
+    });
+    if (timedNavigation.success || !toolError(timedNavigation).includes("timed out")) {
+      throw new Error("V2 slow navigation did not return its bounded timeout error.");
+    }
+    const queuedSnapshotStartedAt = Date.now();
+    const queuedSnapshot = await callBrowserTool(browser, "snapshot", { tabId: waitTab.id });
+    if (!queuedSnapshot.success || Date.now() - queuedSnapshotStartedAt < 150) {
+      throw new Error("V2 timed-out navigation escaped tab serialization.");
     }
     process.stdout.write("BrowserHost: V2 semantics, adaptive image, iframe, upload, waits, and emulation passed.\n");
 
