@@ -1685,6 +1685,7 @@ textarea {
   transition:
     border-color var(--openbot-duration-hover) ease,
     background-color var(--openbot-duration-hover) ease,
+    box-shadow var(--openbot-duration-hover) ease,
     color var(--openbot-duration-hover) ease,
     transform var(--openbot-duration-fast) cubic-bezier(0.23, 1, 0.32, 1);
 }
@@ -3378,11 +3379,13 @@ textarea {
 }
 
 .account-dock-usage-chip > strong {
+  min-width: 4ch;
   color: inherit;
   font-size: var(--openbot-text-xs);
   font-weight: var(--openbot-weight-semibold);
   font-variant-numeric: tabular-nums;
   line-height: 14px;
+  text-align: right;
 }
 
 .account-usage-popover {

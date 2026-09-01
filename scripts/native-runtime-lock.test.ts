@@ -13,7 +13,6 @@ describe("native runtime lock", () => {
   it("loads pinned native dependencies", async () => {
     const lock = await loadNativeRuntimeLock();
 
-    expect(lock.cloudflared.version).toBe("2026.5.2");
     expect(lock.remoteDesktop.sunshine.version).toBe("v2026.516.143833");
     expect(lock.remoteDesktop.moonlightWeb.version).toBe("v2.10.0");
     expect(lock.remoteDesktop.sunshine.sourceMode).toBe("openbot-fork");

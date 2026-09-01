@@ -24,20 +24,24 @@ describe("local auth runtime variables", () => {
     expect(readLocalRuntimeVars({ OTHER_SECRET: "do-not-copy" })).toEqual({});
   });
 
-  it("copies only explicit Cloudflare tunnel settings", () => {
+  it("copies only explicit Remote control-plane settings", () => {
     expect(
       readLocalRuntimeVars({
-        CLOUDFLARE_ACCOUNT_ID: "account",
-        CLOUDFLARE_ZONE_ID: "zone",
-        CLOUDFLARE_TUNNEL_DOMAIN: "openbot.run",
-        CLOUDFLARE_API_TOKEN: "secret",
+        REMOTE_TICKET_PRIVATE_JWK: "private",
+        REMOTE_TICKET_PUBLIC_JWKS: "public",
+        REMOTE_TICKET_KEY_ID: "key-1",
+        REMOTE_SIGNAL_URL: "ws://127.0.0.1:8081/v1/signal",
+        REMOTE_AUTH_WEBHOOK_URL: "http://127.0.0.1:8081/internal/auth-events",
+        REMOTE_AUTH_WEBHOOK_SECRET: "secret",
         OTHER_CLOUDFLARE_SECRET: "blocked",
       }),
     ).toEqual({
-      CLOUDFLARE_ACCOUNT_ID: "account",
-      CLOUDFLARE_ZONE_ID: "zone",
-      CLOUDFLARE_TUNNEL_DOMAIN: "openbot.run",
-      CLOUDFLARE_API_TOKEN: "secret",
+      REMOTE_TICKET_PRIVATE_JWK: "private",
+      REMOTE_TICKET_PUBLIC_JWKS: "public",
+      REMOTE_TICKET_KEY_ID: "key-1",
+      REMOTE_SIGNAL_URL: "ws://127.0.0.1:8081/v1/signal",
+      REMOTE_AUTH_WEBHOOK_URL: "http://127.0.0.1:8081/internal/auth-events",
+      REMOTE_AUTH_WEBHOOK_SECRET: "secret",
     });
   });
 });

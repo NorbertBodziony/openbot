@@ -165,6 +165,14 @@ function isCompleteRuntimeSettingsPatch(updates: AgentRuntimeSettingsPatch): upd
   return "provider" in updates && "model" in updates;
 }
 
+function canonicalBrowserUrl(url: string): string {
+  try {
+    return new URL(url).toString();
+  } catch {
+    return url;
+  }
+}
+
 function rendererDuration(property: string, fallback: number): number {
   if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return 0;
   const value = getComputedStyle(document.documentElement).getPropertyValue(property).trim();
@@ -453,6 +461,20 @@ function createConversationViewScope(props: ConversationProps) {
       tab.ownerBotId ? tab.ownerBotId === bot.id : Boolean(bot.threadId && tab.ownerThreadId === bot.threadId),
     );
   });
+  createEffect(
+    () => browserTabs().map((tab) => ({ id: tab.id, url: tab.url })),
+    (tabs) => {
+      const serverId = props.server?.id ?? "local";
+      const botId = props.bot?.id ?? null;
+      for (const [requestKey, request] of resources.browserOpenRequests) {
+        if (request.serverId !== serverId || request.botId !== botId) continue;
+        const tabAppeared = tabs.some(
+          (tab) => canonicalBrowserUrl(tab.url) === request.url && !request.existingTabIds.has(tab.id),
+        );
+        if (tabAppeared) resources.browserOpenRequests.delete(requestKey);
+      }
+    },
+  );
   const activeBrowserTab = createMemo(
     () => browserTabs().find((tab) => tab.id === props.activeBrowserTabId) ?? browserTabs()[0],
   );
@@ -1595,33 +1617,6 @@ function createConversationViewScope(props: ConversationProps) {
   );
 
   createEffect(
-    () =>
-      new Set(
-        props.browserControlState.sessions
-          .map((session) => props.bots.find((bot) => bot.threadId === session.threadId)?.id)
-          .filter((botId): botId is string => Boolean(botId)),
-      ),
-    (controlledBotIds) => {
-      if (props.browserEnabled === false) return;
-      const newlyControlledBotIds = [...controlledBotIds].filter(
-        (botId) => !resources.controlledBrowserBotIds.has(botId),
-      );
-      resources.controlledBrowserBotIds = controlledBotIds;
-      if (newlyControlledBotIds.length === 0) return;
-      setRightPanels((current) => {
-        const next = { ...current };
-        let changed = false;
-        for (const botId of newlyControlledBotIds) {
-          if (next[botId] === "browser" || next[botId] === "browser-pip") continue;
-          next[botId] = "browser";
-          changed = true;
-        }
-        return changed ? next : current;
-      });
-    },
-  );
-
-  createEffect(
     () => ({
       botId: props.bot?.id,
       visible: browserSidebarOpen() && !props.globalOverlayOpen && !props.remoteDesktopVisible && !mediaPreview(),
@@ -2108,23 +2103,45 @@ function createConversationViewScope(props: ConversationProps) {
     setBrowserAddressEditing(false);
     const analytics = desktopAnalytics.scope();
     const url = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+    const serverId = props.server?.id ?? "local";
+    const botId = props.bot?.id ?? null;
+    const canonicalUrl = canonicalBrowserUrl(url);
+    const requestKey = JSON.stringify([serverId, botId, canonicalUrl]);
+    const pendingRequest = resources.browserOpenRequests.get(requestKey);
+    if (pendingRequest) return pendingRequest.promise;
+    const request = (async () => {
+      try {
+        const tab = await window.openbot.browser.open({
+          url,
+          ownerThreadId: props.bot?.threadId ?? null,
+          ownerBotId: props.bot?.id ?? null,
+          focus: true,
+        });
+        setBrowserAddress(tab.url);
+        analytics.track("browser_action", { action: "open", result: "succeeded" });
+      } catch {
+        setBrowserAddress(url);
+        analytics.track("browser_action", {
+          action: "open",
+          result: "failed",
+          failure_code: "browser_open_failed",
+        });
+      }
+    })();
+    const pendingRequestState = {
+      promise: request,
+      serverId,
+      botId,
+      url: canonicalUrl,
+      existingTabIds: new Set(browserTabs().map((tab) => tab.id)),
+    };
+    resources.browserOpenRequests.set(requestKey, pendingRequestState);
     try {
-      const tab = await window.openbot.browser.open({
-        url,
-        ownerThreadId: props.bot?.threadId ?? null,
-        ownerBotId: props.bot?.id ?? null,
-        focus: true,
-      });
-      setBrowserAddress(tab.url);
-      if (!screenOpen()) setActiveRightPanel("browser");
-      analytics.track("browser_action", { action: "open", result: "succeeded" });
-    } catch {
-      setBrowserAddress(url);
-      analytics.track("browser_action", {
-        action: "open",
-        result: "failed",
-        failure_code: "browser_open_failed",
-      });
+      await request;
+    } finally {
+      if (resources.browserOpenRequests.get(requestKey) === pendingRequestState) {
+        resources.browserOpenRequests.delete(requestKey);
+      }
     }
   }
 
@@ -2578,6 +2595,7 @@ export function ConversationHeader() {
     activeBrowserControl,
     agentActivity,
     browserControlBot,
+    browserTabs,
     hideBrowserPanel,
     props,
     screenOpen,
@@ -2661,7 +2679,10 @@ export function ConversationHeader() {
             type="button"
             class={[
               "header-panel-toggle computer-button",
-              { "computer-button-agent-active": Boolean(activeBrowserControl()) },
+              {
+                "computer-button-available": !screenOpen() && browserTabs().length > 0,
+                "computer-button-agent-active": Boolean(activeBrowserControl()),
+              },
             ]}
             aria-label={
               activeBrowserControl()
@@ -3748,9 +3769,11 @@ export function ConversationOverlays() {
 export function ConversationView(props: ConversationProps) {
   const scope = createConversationViewScope(props);
   const {
+    activeBrowserControl,
     agentReady,
     browserPanelWidth,
     browserSidebarOpen,
+    browserTabs,
     dropActive,
     filePreviewOpen,
     handleChatSearchShortcut,
@@ -3758,6 +3781,7 @@ export function ConversationView(props: ConversationProps) {
     setConversationPanelElement,
     setDropActive,
     settingsPanelWidth,
+    screenOpen,
     submitting,
   } = scope;
   createEffect(
@@ -3777,6 +3801,7 @@ export function ConversationView(props: ConversationProps) {
           {
             "conversation-drop-active": dropActive(),
             "browser-panel-active": browserSidebarOpen() || filePreviewOpen(),
+            "browser-panel-available": !screenOpen() && (browserTabs().length > 0 || Boolean(activeBrowserControl())),
           },
         ]}
         style={`--settings-panel-width: ${settingsPanelWidth()}px; --browser-panel-width: ${browserPanelWidth()}px`}

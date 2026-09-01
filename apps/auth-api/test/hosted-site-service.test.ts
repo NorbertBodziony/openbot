@@ -845,7 +845,7 @@ function serviceFixture(): {
   const sqlite = new DatabaseSync(":memory:");
   databases.push(sqlite);
   sqlite.exec("PRAGMA foreign_keys = ON; CREATE TABLE users(id TEXT PRIMARY KEY);");
-  sqlite.exec(migration("0012_hosted_sites.sql"));
+  sqlite.exec(migration("0014_hosted_sites.sql"));
   sqlite.prepare("INSERT INTO users(id) VALUES (?), (?)").run("alice", "bob");
   const database = new FakeD1Database(sqlite);
   const bucket = new FakeR2Bucket();

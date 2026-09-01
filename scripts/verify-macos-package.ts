@@ -55,14 +55,10 @@ await Promise.all([
   access(resolve(remoteRuntimePath, "streamer")),
   access(resolve(remoteRuntimePath, "static/stream.html")),
   access(resolve(remoteRuntimePath, "SHA256SUMS.txt")),
-  access(resolve(resourcesPath, "cloudflared/mac/arm64/cloudflared")),
-  access(resolve(resourcesPath, "cloudflared/mac/arm64/SHA256SUMS.txt")),
-  access(resolve(resourcesPath, "cloudflared/mac/arm64/VERSION.txt")),
-  access(resolve(resourcesPath, "cloudflared/licenses/cloudflared-Apache-2.0.txt")),
-  access(resolve(resourcesPath, "cloudflared/source-manifest.json")),
 ]);
 await verifyPackagedIcon(packagedIconPath, sourceIconPath);
 await Promise.all(["codex", "claude", "grok"].map((name) => assertAbsent(resolve(resourcesPath, name))));
+await assertAbsent(resolve(resourcesPath, "cloudflared"));
 await assertAbsent(
   resolve(resourcesPath, "app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64"),
 );
@@ -122,7 +118,7 @@ await verifyLaunch(executablePath);
 
 console.log(`Verified ${appPath}`);
 console.log(
-  `OpenBot ${String(packageJson.version)} · ARM64 · icon · GPL remote runtime · bundled cloudflared · ASAR integrity · hardened fuses · launch`,
+  `OpenBot ${String(packageJson.version)} · ARM64 · icon · GPL remote runtime · WebRTC remote stack · ASAR integrity · hardened fuses · launch`,
 );
 
 function expectEqual(actual: unknown, expected: unknown, label: string): void {

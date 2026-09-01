@@ -2,6 +2,7 @@ import { isOpenBotTeamApiHostname } from "./validation";
 
 export const OPENBOT_INVITE_ORIGIN = "https://openbot.run";
 export const OPENBOT_INVITE_PATH = "/join";
+export const OPENBOT_CONTROL_PLANE_ORIGIN = "https://api.openbot.run";
 
 const INVITE_FIELDS = ["api", "fingerprint", "invite", "server"] as const;
 const BASE64URL_SECRET_PATTERN = /^[A-Za-z0-9_-]{32,64}$/u;
@@ -97,7 +98,9 @@ export function isValidRemoteApiUrl(value: string, options: InviteLinkOptions = 
       (localDevelopmentApi ||
         (url.protocol === "https:" &&
           url.port === "" &&
-          (TRY_CLOUDFLARE_HOST_PATTERN.test(url.hostname) || isOpenBotTeamApiHostname(url.hostname))))
+          (url.origin === OPENBOT_CONTROL_PLANE_ORIGIN ||
+            TRY_CLOUDFLARE_HOST_PATTERN.test(url.hostname) ||
+            isOpenBotTeamApiHostname(url.hostname))))
     );
   } catch {
     return false;

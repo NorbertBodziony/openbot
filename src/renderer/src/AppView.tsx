@@ -379,43 +379,33 @@ function WorkspaceShell(props: {
             : undefined
         }
       />
-      <Show
-        when={!appProps.landingPreview}
+      <Loading
         fallback={
           <StaticAccountDock
             account={props.account()}
             compact={leftPanelCompact()}
+            hybrid={appInfo()?.platform === "darwin" && !leftPanelCompact()}
             withServerRail={appInfo()?.platform === "darwin" || appInfo()?.platform === "win32"}
           />
         }
       >
-        <Loading
-          fallback={
-            <StaticAccountDock
-              account={props.account()}
-              compact={leftPanelCompact()}
-              withServerRail={appInfo()?.platform === "darwin" || appInfo()?.platform === "win32"}
-            />
-          }
-        >
-          <AccountDock
-            account={props.account()}
-            appInfo={appInfo()}
-            agentStatus={agentStatus()}
-            accountUsage={accountUsage()}
-            updateStatus={updateStatus()}
-            compact={leftPanelCompact()}
-            withServerRail={appInfo()?.platform === "darwin" || appInfo()?.platform === "win32"}
-            onRefreshUsage={refreshAccountUsage}
-            onUpdateAction={runUpdateAction}
-            onLogout={logoutCentralAccount}
-            onOpenExternal={(destination) => window.openbot.openExternal(destination)}
-            onOpenPermissions={() => setPermissionsOpen(true)}
-            onOpenSettings={openAppSettings}
-            onOpenSkills={() => setSkillsMarketplaceOpen(true)}
-          />
-        </Loading>
-      </Show>
+        <AccountDock
+          account={props.account()}
+          appInfo={appInfo()}
+          agentStatus={agentStatus()}
+          accountUsage={accountUsage()}
+          updateStatus={updateStatus()}
+          compact={leftPanelCompact()}
+          withServerRail={appInfo()?.platform === "darwin" || appInfo()?.platform === "win32"}
+          onRefreshUsage={refreshAccountUsage}
+          onUpdateAction={runUpdateAction}
+          onLogout={appProps.landingPreview ? undefined : logoutCentralAccount}
+          onOpenExternal={(destination) => window.openbot.openExternal(destination)}
+          onOpenPermissions={() => setPermissionsOpen(true)}
+          onOpenSettings={openAppSettings}
+          onOpenSkills={() => setSkillsMarketplaceOpen(true)}
+        />
+      </Loading>
       <PanelResizer
         class="left-panel-resizer"
         label="Resize left sidebar"
@@ -715,7 +705,7 @@ function WorkspaceOverlays(props: {
             onSave={saveSetup}
             onPreviewInvite={previewInvite}
             onJoinRemote={joinRemoteDuringSetup}
-            onLogout={logoutCentralAccount}
+            onLogout={appProps.landingPreview ? undefined : logoutCentralAccount}
             onClose={() => setPermissionsOpen(false)}
           />
         </Loading>

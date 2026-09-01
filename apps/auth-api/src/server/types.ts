@@ -17,15 +17,17 @@ export interface WorkerBindings {
   EMAIL_FROM?: string;
   EMAIL_DELIVERY_WEBHOOK_URL?: string;
   EMAIL_DELIVERY_WEBHOOK_SECRET?: string;
-  CLOUDFLARE_ACCOUNT_ID?: string;
-  CLOUDFLARE_ZONE_ID?: string;
-  CLOUDFLARE_TUNNEL_DOMAIN?: string;
-  CLOUDFLARE_API_TOKEN?: string;
   SKILLS_ADMIN_TOKEN?: string;
   SITE_OPERATIONS_ADMIN_TOKEN?: string;
   SITE_REPORT_HASH_SECRET?: string;
   SITE_COOKIE_ISOLATION_READY?: string;
   SITE_PUBLISH_ENABLED?: string;
+  REMOTE_TICKET_PRIVATE_JWK?: string;
+  REMOTE_TICKET_PUBLIC_JWKS?: string;
+  REMOTE_TICKET_KEY_ID?: string;
+  REMOTE_SIGNAL_URL?: string;
+  REMOTE_AUTH_WEBHOOK_URL?: string;
+  REMOTE_AUTH_WEBHOOK_SECRET?: string;
 }
 
 export function isWorkerBindings(value: unknown): value is WorkerBindings {

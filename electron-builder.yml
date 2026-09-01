@@ -49,12 +49,6 @@ extraResources:
     to: whisper/bin
   - from: build/remote-desktop-runtime
     to: remote-desktop-runtime
-  - from: build/cloudflared/${os}/${arch}
-    to: cloudflared/${os}/${arch}
-  - from: build/cloudflared/licenses
-    to: cloudflared/licenses
-  - from: build/cloudflared/source-manifest.json
-    to: cloudflared/source-manifest.json
 directories:
   output: dist
 mac:

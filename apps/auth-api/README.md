@@ -46,14 +46,16 @@ EMAIL_FROM=hello@openbot.run
 SITE_REPORT_HASH_SECRET=<AT_LEAST_32_RANDOM_CHARACTERS>
 ```
 
-For a deployed Worker, `bun run api:deploy` decrypts `.env.production`, sends
-`EMAIL_SMTP_PASSWORD`, `CLOUDFLARE_API_TOKEN`, `SKILLS_ADMIN_TOKEN`, and `SITE_REPORT_HASH_SECRET` to
-`wrangler secret put` through standard input, builds the Worker, and deploys it.
+For a deployed Worker, `bun run api:deploy` decrypts `.env.production`. It sends
+`EMAIL_SMTP_PASSWORD`, `SKILLS_ADMIN_TOKEN`, `REMOTE_TICKET_PRIVATE_JWK`,
+`REMOTE_TICKET_PUBLIC_JWKS`, `REMOTE_AUTH_WEBHOOK_SECRET`, and `SITE_REPORT_HASH_SECRET` to
+`wrangler secret put` through standard input. It then builds and deploys the Worker.
 Secrets are never passed as process arguments. The other values are Worker
 variables. The SMTP connection uses TLS from the start and accepts only port 465.
 
-GitHub Actions reads `SKILLS_ADMIN_TOKEN` and `SITE_REPORT_HASH_SECRET` from the
-`cloudflare-production` Environment and includes them in Wrangler's temporary runtime secrets file.
+GitHub Actions reads the remote-control secrets, `SKILLS_ADMIN_TOKEN`, `SITE_REPORT_HASH_SECRET`, and the optional
+`SITE_OPERATIONS_ADMIN_TOKEN` from the `cloudflare-production` Environment. It includes them in Wrangler's temporary
+runtime secrets file.
 
 Use `bun run api:deploy:test` for the isolated `openbot-auth-api-test` Worker
 and the `openbot-auth-test` D1 database.
@@ -87,36 +89,29 @@ The service applies limits per email, per IP, per challenge, and per resend.
 
 ## Authentication data retention
 
-The production Worker runs `17 3 * * *`, which is once each day at 03:17 UTC.
-The scheduled handler deletes expired or consumed email challenges, expired or
-revoked sessions, expired or consumed team authentication tickets, and rate-limit
-records after their 15-minute window ends. A successful run logs only aggregate
-deletion counts.
+The production Worker runs once each minute. Each run delivers pending remote
+authorization events and cleans up hosted sites. The midnight UTC run also deletes
+expired or consumed email challenges, expired or revoked sessions, expired or
+consumed team authentication tickets, and expired rate-limit records. A successful
+retention run logs only aggregate deletion counts.
 
 The `preview` and `test` environments do not install an automatic Cron Trigger.
 To run the scheduled handler during local development, start the API and request
 the Cloudflare scheduled-handler test route:
 
 ```bash
-curl "http://127.0.0.1:3100/cdn-cgi/handler/scheduled?cron=17+3+*+*+*"
+curl "http://127.0.0.1:3100/cdn-cgi/handler/scheduled?cron=*+*+*+*+*"
 ```
 
-## Named team tunnels
+## Remote control plane
 
-The Auth API provisions one remotely managed Cloudflare Tunnel for each OpenBot
-team server. Each server receives stable API and Remote Mac hostnames under
-`openbot.run`. The desktop app receives only the connector token for its tunnel.
-It never receives the Cloudflare account API token.
+The Auth API stores remote hosts, memberships, invitations, and logical sessions.
+It issues short-lived ES256 connection tickets. `/.well-known/jwks.json` publishes
+the public key so the separate Signal service can verify tickets without a D1
+request. The old Team Tunnel provisioning endpoint returns `426` and does not
+create a Cloudflare Tunnel.
 
-Each OpenBot account can own one team server. The D1 database enforces this
-limit with a unique user constraint, including concurrent provisioning requests.
-Deleting the owned server releases the account so it can create a replacement.
-
-Create a scoped Cloudflare API token with these permissions:
-
-- Account · Cloudflare Tunnel · Edit for the OpenBot account.
-- Zone · DNS · Edit for `openbot.run`.
-
-Set `CLOUDFLARE_API_TOKEN` in the encrypted production environment. The deploy
-script sends it to `wrangler secret put` through standard input. The account ID,
-zone ID, and domain are non-secret Worker variables in `wrangler.jsonc`.
+Set the private JWK, public JWKS, active key ID, Signal URL, and webhook secret in
+the encrypted environment. The private and public keys must use ES256. The Signal
+URL must point to a DNS-only host. Cloudflare carries only account and configuration
+requests. It does not carry Team API or Remote Desktop data.
