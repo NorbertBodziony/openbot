@@ -339,11 +339,9 @@ export class BrowserCdpEngine {
         for (const character of plan.desiredLabel) await dispatchTextKey(send, character, resolved.sessionId);
         const anchorRank = enabledIndices.indexOf(plan.keyboardAnchorIndex);
         const targetRank = enabledIndices.indexOf(desiredIndices[0]);
-        if (targetRank > anchorRank) await dispatchShortcut(send, "Space", resolved.sessionId);
         for (let index = anchorRank; index < targetRank; index++) {
           await dispatchSelectArrowDown(send, resolved.sessionId);
         }
-        if (targetRank > anchorRank) await dispatchShortcut(send, "Enter", resolved.sessionId);
       } else {
         const additiveModifiers = process.platform === "darwin" ? ["Meta"] : ["Control"];
         for (let index = 0; index < desiredIndices.length; index++) {
