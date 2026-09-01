@@ -3943,6 +3943,118 @@ describe.sequential("AgentService", () => {
     expect(service.listQueue("sales-outbound").deliveries[1]?.status).toBe("running");
   });
 
+  it("does not reconcile active work owned by another provider during restart", async () => {
+    process.env.OPENBOT_CLAUDE_PATH = await createFakeClaude(root);
+    const codexClients: FakeAgentClient[] = [];
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
+      if (provider !== "codex") return new FakeAgentClient(provider, "", false);
+      const client = new FakeAgentClient(provider, "", false, true, {}, async (method) => {
+        if (codexClients.length === 1 && method === "turn/interrupt") throw new Error("Runtime unavailable");
+      });
+      codexClients.push(client);
+      return client;
+    });
+    await service.initialize();
+    await store.getOrCreate("sales-outbound");
+    await service.updateBot({ botId: "sales-outbound", provider: "claude", model: "claude-sonnet-5" });
+    await service.sendMessage({ botId: "sales-outbound", text: "Keep Claude working" });
+    await waitFor(() => service?.listQueue("sales-outbound").deliveries[0]?.status === "running");
+    const salesTurnId = (await service.readConversation("sales-outbound")).activeTurnId;
+
+    await service.sendMessage({ botId: "chief", text: "Restart Codex" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+    await service.stopAgent("chief");
+
+    expect(codexClients).toHaveLength(2);
+    expect(service.listQueue("sales-outbound").deliveries[0]?.status).toBe("running");
+    expect((await service.readConversation("sales-outbound")).activeTurnId).toBe(salesTurnId);
+  });
+
+  it("preserves browser takeover and control state owned by another provider during restart", async () => {
+    process.env.OPENBOT_CLAUDE_PATH = await createFakeClaude(root);
+    const tabs: BrowserTab[] = [];
+    const controls: BrowserControlState["sessions"] = [];
+    const browser = {
+      ...fakeBrowser(tabs),
+      getControlState: (): BrowserControlState => ({ sessions: controls.map((session) => ({ ...session })) }),
+      clearControls: (): void => {
+        controls.splice(0);
+      },
+      endControl: (threadId: string, turnId: string): void => {
+        const index = controls.findIndex((session) => session.threadId === threadId && session.turnId === turnId);
+        if (index >= 0) controls.splice(index, 1);
+      },
+    };
+    const codexClients: FakeAgentClient[] = [];
+    let claudeClient: FakeAgentClient | undefined;
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, browser, 30_000, "codex", (provider) => {
+      if (provider === "claude") {
+        claudeClient = new FakeAgentClient(provider, "", false);
+        return claudeClient;
+      }
+      const client = new FakeAgentClient(provider, "", false, true, {}, async (method) => {
+        if (provider === "codex" && codexClients.length === 1 && method === "turn/interrupt") {
+          throw new Error("Runtime unavailable");
+        }
+      });
+      if (provider === "codex") codexClients.push(client);
+      return client;
+    });
+    await service.initialize();
+    await store.getOrCreate("sales-outbound");
+    await service.updateBot({ botId: "sales-outbound", provider: "claude", model: "claude-sonnet-5" });
+    await service.sendMessage({ botId: "sales-outbound", text: "Keep browser state active" });
+    await waitFor(() => service?.listQueue("sales-outbound").deliveries[0]?.status === "running");
+    const salesBot = service.listBots().find((bot) => bot.id === "sales-outbound");
+    const salesSession = store.activeProviderSession("sales-outbound");
+    const salesTurnId = (await service.readConversation("sales-outbound")).activeTurnId;
+    if (!claudeClient || !salesBot?.threadId || !salesSession || !salesTurnId) {
+      throw new Error("The Claude browser turn did not start.");
+    }
+    tabs.push({
+      id: "claude-tab",
+      title: "Claude task",
+      url: "https://example.com/claude",
+      loading: false,
+      ownerThreadId: salesBot.threadId,
+      ownerBotId: salesBot.id,
+    });
+    controls.push({
+      id: `${salesBot.threadId}:${salesTurnId}`,
+      threadId: salesBot.threadId,
+      turnId: salesTurnId,
+      callId: "claude-control",
+      tabId: "claude-tab",
+      action: "click",
+      phase: "waiting",
+      startedAt: new Date().toISOString(),
+    });
+    claudeClient.emit("request", {
+      method: "item/tool/call",
+      id: "claude-takeover",
+      params: {
+        threadId: salesSession.externalSessionId,
+        turnId: salesTurnId,
+        callId: "claude-takeover",
+        namespace: "openbot_browser",
+        tool: "request_takeover",
+        arguments: { tabId: "claude-tab" },
+      },
+    });
+    await waitFor(() => service?.getRuntimeSnapshot().pendingBrowserTakeovers.length === 1);
+
+    await service.sendMessage({ botId: "chief", text: "Restart Codex only" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+    await service.stopAgent("chief");
+
+    expect(service.getRuntimeSnapshot().pendingBrowserTakeovers).toHaveLength(1);
+    expect(controls).toEqual([expect.objectContaining({ threadId: salesBot.threadId, turnId: salesTurnId })]);
+    await service.respondToBrowserTakeover({ requestId: "claude-takeover", decision: "complete" });
+    await waitFor(() => claudeClient?.responses.some((response) => response.id === "claude-takeover"));
+  });
+
   it("does not send a provider turn after a starting delivery is stopped during preflight", async () => {
     let releaseVerification: (() => void) | undefined;
     let verificationFinished = false;
@@ -4533,6 +4645,7 @@ function fakeBrowser(tabs: BrowserTab[] = []) {
   return {
     onChanged: (_listener: (tabs: BrowserTab[], activeTabId: string | null) => void) => () => undefined,
     onControlChanged: (_listener: (state: BrowserControlState) => void) => () => undefined,
+    getControlState: (): BrowserControlState => ({ sessions: [] }),
     clearControls: () => undefined,
     endControl: () => undefined,
     listTabs: () => tabs,

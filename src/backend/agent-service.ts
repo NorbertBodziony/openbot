@@ -144,6 +144,7 @@ export interface ResolvedSharedFile {
 interface AgentBrowserHost {
   onChanged(listener: (tabs: BrowserTab[], activeTabId: string | null) => void): () => void;
   onControlChanged(listener: (state: BrowserControlState) => void): () => void;
+  getControlState(): BrowserControlState;
   clearControls(): void;
   endControl(threadId: string, turnId: string): void;
   listTabs(): BrowserTab[];
@@ -1692,7 +1693,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
         if (previousClient && previousClient !== client) await previousClient.stop().catch(() => undefined);
         if (provider === "codex") void this.#refreshUsage(client).catch(() => undefined);
-        await this.#reconcileUnresolvedDeliveries();
+        await this.#reconcileUnresolvedDeliveries([provider]);
         void this.#backfillProviderHistory();
         for (const bot of this.#store.list()) this.#scheduleDrain(bot.id);
       });
@@ -2155,7 +2156,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         });
       }
       if (codexClient) void this.#refreshUsage(codexClient).catch(() => undefined);
-      await this.#reconcileUnresolvedDeliveries();
+      await this.#reconcileUnresolvedDeliveries(requestedProviders);
       void this.#backfillProviderHistory();
       for (const bot of this.#store.list()) this.#scheduleDrain(bot.id);
     };
@@ -2185,9 +2186,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#loadedThreads.clear();
     this.#clearCompactionRuntime();
     this.#clearPendingPrompts(client);
-    this.#clearPendingBrowserTakeovers();
+    this.#clearPendingBrowserTakeovers(client.provider);
     this.#pendingApprovals.clear();
-    this.#browser.clearControls();
+    this.#clearBrowserControls(client.provider);
     this.#emitError(`${client.provider}_exited`, error);
     const providers = updateProviderStatus(this.#status.providers, client.provider, {
       state: "error",
@@ -2256,11 +2257,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.#loadedThreads.clear();
         this.#clearCompactionRuntime();
         this.#clearPendingPrompts(client);
-        this.#clearPendingBrowserTakeovers();
+        this.#clearPendingBrowserTakeovers(client.provider);
         for (const [requestId, pending] of this.#pendingApprovals) {
           if (pending.client === client) this.#pendingApprovals.delete(requestId);
         }
-        this.#browser.clearControls();
+        this.#clearBrowserControls(client.provider);
         this.#clearPendingTurnStartsForClient(client);
         try {
           await afterTeardown();
@@ -3382,15 +3383,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     ];
   }
 
-  async #reconcileUnresolvedDeliveries(): Promise<void> {
+  async #reconcileUnresolvedDeliveries(providers: readonly AgentProvider[]): Promise<void> {
     for (const context of this.#mailbox.unresolvedDeliveries()) {
       const { delivery } = context;
+      const bot = this.#store.list().find((candidate) => candidate.id === delivery.recipientBotId);
+      if (!bot || !providers.includes(providerForBot(bot))) continue;
       let terminal: "completed" | "failed" | "interrupted" = "interrupted";
       let reason = "OpenBot restarted before this delivery reached a confirmed terminal state.";
       try {
-        const bot = this.#store.list().find((candidate) => candidate.id === delivery.recipientBotId);
-        const client = bot ? this.#clientForBot(bot) : null;
-        const session = bot ? this.#store.activeProviderSession(bot.id) : null;
+        const client = this.#clientForBot(bot);
+        const session = this.#store.activeProviderSession(bot.id);
         if (session && client) {
           const response = await client.request(
             "thread/read",
@@ -3417,8 +3419,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         // Conservatively keep the interrupted result; never repeat uncertain side effects.
       }
       await this.#mailbox.markTerminal(delivery.id, terminal, terminal === "completed" ? null : reason);
-      const bot = this.#store.list().find((candidate) => candidate.id === delivery.recipientBotId);
-      if (bot?.threadId) {
+      if (bot.threadId) {
         const snapshot = this.#store.database.readConversation(bot.id, bot.threadId);
         snapshot.activeTurnId = null;
         for (const message of snapshot.messages) {
@@ -4251,9 +4252,28 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  #clearPendingBrowserTakeovers(): void {
+  #clearPendingBrowserTakeovers(provider?: AgentProvider): void {
     for (const [requestId, pending] of this.#pendingBrowserTakeovers) {
+      const bot = this.#store.list().find((candidate) => candidate.id === pending.request.botId);
+      if (provider && (!bot || providerForBot(bot) !== provider)) continue;
       this.#resolveBrowserTakeover(requestId, pending, "cancel");
+    }
+  }
+
+  #clearBrowserControls(provider?: AgentProvider): void {
+    if (!provider) {
+      this.#browser.clearControls();
+      return;
+    }
+    const bots = new Map(this.#store.list().map((bot) => [bot.id, bot]));
+    const botByPublicThread = new Map(
+      [...bots.values()].flatMap((bot) => (bot.threadId ? [[bot.threadId, bot] as const] : [])),
+    );
+    for (const session of this.#browser.getControlState().sessions) {
+      const botId = this.#threadToBot.get(session.threadId);
+      const bot = (botId ? bots.get(botId) : undefined) ?? botByPublicThread.get(session.threadId);
+      if (!bot || providerForBot(bot) !== provider) continue;
+      this.#browser.endControl(session.threadId, session.turnId);
     }
   }
 
