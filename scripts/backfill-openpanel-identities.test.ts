@@ -24,6 +24,24 @@ describe("OpenPanel identity backfill", () => {
     ]);
   });
 
+  it("counts profiles using the same normalized ids as the update join", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-openpanel-backfill-test-"));
+    try {
+      await writeFile(join(directory, "users.json"), JSON.stringify([{ id: " account-1 ", email: "one@example.com" }]));
+      await writeFile(join(directory, "profiles.json"), JSON.stringify([{ profileId: " account-1 ", email: null }]));
+
+      await expect(
+        runBackfill({
+          authUsersPath: join(directory, "users.json"),
+          openPanelProfilesPath: join(directory, "profiles.json"),
+          apply: false,
+        }),
+      ).resolves.toEqual({ authUsers: 1, openPanelProfiles: 1, matchedProfiles: 1, updates: 1, applied: 0 });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("rejects duplicate ids and malformed auth emails, while repairing malformed profiles", () => {
     expect(() =>
       buildBackfillUpdates(
@@ -98,6 +116,20 @@ describe("OpenPanel identity backfill", () => {
       payload: { profileId: "account-1", email: "person@example.com" },
     });
     expect(JSON.stringify(requests[0])).not.toContain("track");
+  });
+
+  it("rejects non-loopback HTTP before sending the client secret", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+
+    await expect(
+      applyBackfill([{ profileId: "account-1", email: "person@example.com" }], {
+        apiUrl: "http://analytics.example.com/api",
+        clientId: "client-id",
+        clientSecret: "client-secret",
+        fetcher,
+      }),
+    ).rejects.toThrow("requires an HTTPS API URL");
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it("stops immediately on an authorization failure", async () => {

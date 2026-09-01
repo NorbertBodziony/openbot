@@ -49,7 +49,7 @@ export async function runBackfill(options: BackfillOptions): Promise<BackfillSum
     readRecords(options.openPanelProfilesPath, "OpenPanel profiles"),
   ]);
   const updates = buildBackfillUpdates(authUsers, profiles);
-  const authIds = new Set(authUsers.map((user) => parseAuthUser(user).id));
+  const authIds = new Set(authUsers.map((user) => requiredIdentifier(parseAuthUser(user).id, "auth user id")));
   let applied = 0;
   if (options.apply) {
     applied = await applyBackfill(updates, options);
@@ -57,7 +57,9 @@ export async function runBackfill(options: BackfillOptions): Promise<BackfillSum
   return {
     authUsers: authUsers.length,
     openPanelProfiles: profiles.length,
-    matchedProfiles: profiles.filter((profile) => authIds.has(parseOpenPanelProfile(profile).profileId)).length,
+    matchedProfiles: profiles.filter((profile) =>
+      authIds.has(requiredIdentifier(parseOpenPanelProfile(profile).profileId, "OpenPanel profile id")),
+    ).length,
     updates: updates.length,
     applied,
   };
@@ -237,12 +239,17 @@ async function readStdin(): Promise<string> {
 }
 
 function trackEndpoint(apiUrl: string): string {
+  let base: URL;
   try {
-    const base = new URL(apiUrl);
-    return new URL("track", `${base.toString().replace(/\/+$/u, "")}/`).toString();
+    base = new URL(apiUrl);
   } catch {
     throw new Error("OPENPANEL_API_URL is invalid.");
   }
+  const loopbackHttp = base.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]", "::1"].includes(base.hostname);
+  if (base.protocol !== "https:" && !loopbackHttp) {
+    throw new Error("OpenPanel backfill requires an HTTPS API URL (HTTP is allowed only for loopback hosts).");
+  }
+  return new URL("track", `${base.toString().replace(/\/+$/u, "")}/`).toString();
 }
 
 function requiredIdentifier(value: string, label: string): string {
