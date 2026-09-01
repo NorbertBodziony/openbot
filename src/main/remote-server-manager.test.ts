@@ -494,7 +494,7 @@ describe("remote server order", () => {
       statePath,
       JSON.stringify({
         version: 2,
-        activeServerId: "server-1",
+        activeServerId: "local",
         servers: [
           {
             id: "server-1",
@@ -525,6 +525,7 @@ describe("remote server order", () => {
       await manager.initialize();
       await rename(directory, unavailableDirectory);
       await expect(manager.select("server-1")).rejects.toThrow();
+      expect(manager.activeServerId).toBe("local");
       await rename(unavailableDirectory, directory);
 
       await expect(manager.select("local")).resolves.toBeDefined();

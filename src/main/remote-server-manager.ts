@@ -229,6 +229,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #remoteViewerProxy: RemoteViewerProxy | null;
   #presence = new Map<string, TeamPresenceSnapshot>();
   #writeChain = Promise.resolve();
+  #selectChain = Promise.resolve();
 
   constructor(
     path: string,
@@ -381,16 +382,30 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     }
   }
 
-  async select(serverId: string): Promise<ServerSummary[]> {
-    if (serverId !== "local" && !this.#state.servers.some((server) => server.id === serverId)) {
-      throw new Error("Remote server not found.");
-    }
-    this.#state.activeServerId = serverId;
-    this.#syncEventScopes();
-    await this.#persist();
-    this.#emitChanged();
-    this.startEventConnections();
-    return this.list();
+  select(serverId: string): Promise<ServerSummary[]> {
+    const operation = this.#selectChain.then(async () => {
+      if (serverId !== "local" && !this.#state.servers.some((server) => server.id === serverId)) {
+        throw new Error("Remote server not found.");
+      }
+      const previousServerId = this.#state.activeServerId;
+      this.#state.activeServerId = serverId;
+      this.#syncEventScopes();
+      try {
+        await this.#persist();
+      } catch (error) {
+        this.#state.activeServerId = previousServerId;
+        this.#syncEventScopes();
+        throw error;
+      }
+      this.#emitChanged();
+      this.startEventConnections();
+      return this.list();
+    });
+    this.#selectChain = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
   }
 
   async reorder(serverIds: string[]): Promise<ServerSummary[]> {

@@ -35,6 +35,7 @@ interface InternalTab {
   ownerBotId: string | null;
   revision: number;
   queue: Promise<unknown>;
+  closing: boolean;
   focusOnVisible: boolean;
 }
 
@@ -328,19 +329,23 @@ export class BrowserHost {
 
   async close(tabId: string): Promise<void> {
     const tab = this.#tabs.get(tabId);
-    if (!tab) return;
+    if (!tab || tab.closing) return;
+    tab.closing = true;
     const tabIds = [...this.#tabs.keys()];
     const closedIndex = tabIds.indexOf(tabId);
     this.#unmountView(tab.view);
     this.#tabs.delete(tabId);
-    tab.view.webContents.close();
 
     if (this.#activeTabId === tabId) {
       this.#activeTabId = tabIds[closedIndex + 1] ?? tabIds[closedIndex - 1] ?? null;
     }
     this.#syncAttachedView();
     this.#emitChanged();
-    await this.#persistState();
+    const destroy = tab.queue.then(() => {
+      if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
+    });
+    tab.queue = destroy.catch(() => undefined);
+    await Promise.all([destroy, this.#persistState()]);
   }
 
   async setVisible(input: BrowserVisibilityInput): Promise<void> {
@@ -527,6 +532,7 @@ export class BrowserHost {
       ownerBotId,
       revision: 0,
       queue: Promise.resolve(),
+      closing: false,
       focusOnVisible: false,
     };
   }
