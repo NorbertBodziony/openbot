@@ -4773,8 +4773,8 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.browser.navigate).not.toHaveBeenCalled();
 
     resolveClose?.();
-    emitAgentEvent?.({ type: "browser-changed", tabs: [firstTab], activeTabId: firstTab.id });
     await waitFor(() => expect(screen.queryByRole("tab", { name: "Second page" })).not.toBeInTheDocument());
+    expect(screen.getByRole("tab", { name: "First page" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("keeps the browser open when a new tab replaces the last tab during its delayed close", async () => {

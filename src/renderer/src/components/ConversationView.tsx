@@ -2202,8 +2202,9 @@ function createConversationViewScope(props: ConversationProps) {
     try {
       await props.onCloseBrowserTab(tabId);
     } catch {
-      closingBrowserTabIds.delete(tabId);
       setComposerError("Could not close the browser tab.");
+    } finally {
+      closingBrowserTabIds.delete(tabId);
     }
   }
 

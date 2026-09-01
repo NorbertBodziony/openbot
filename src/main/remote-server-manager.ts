@@ -244,6 +244,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #remoteViewerProxy: RemoteViewerProxy | null;
   #presence = new Map<string, TeamPresenceSnapshot>();
   #writeChain = Promise.resolve();
+  #persistenceRevision = 0;
   #selectChain = Promise.resolve();
 
   constructor(
@@ -406,11 +407,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       const previousServerId = this.#state.activeServerId;
       this.#state.activeServerId = serverId;
       this.#syncEventScopes();
+      const persistence = this.#queuePersistence();
       try {
-        await this.#persist();
+        await persistence.completion;
       } catch (error) {
-        this.#state.activeServerId = previousServerId;
-        this.#syncEventScopes();
+        if (this.#persistenceRevision === persistence.revision) {
+          this.#state.activeServerId = previousServerId;
+          this.#syncEventScopes();
+        }
         throw error;
       }
       this.#emitChanged();
@@ -2001,7 +2005,12 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async #persist(): Promise<void> {
+    await this.#queuePersistence().completion;
+  }
+
+  #queuePersistence(): { revision: number; completion: Promise<void> } {
     const snapshot = structuredClone(this.#state);
+    const revision = ++this.#persistenceRevision;
     const operation = this.#writeChain.then(async () => {
       const temporary = `${this.#path}.${randomUUID()}.tmp`;
       try {
@@ -2015,7 +2024,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       }
     });
     this.#writeChain = operation.catch(() => undefined);
-    await operation;
+    return { revision, completion: operation };
   }
 
   #emitChanged(): void {

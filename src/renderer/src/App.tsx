@@ -2200,8 +2200,19 @@ export function createAppController(props: AppProps = {}) {
 
   async function closeBrowserTab(tabId: string) {
     const analytics = desktopAnalytics.scope();
+    const serverId = activeServerSidebarKey();
     try {
       await window.openbot.browser.close(tabId);
+      if (activeServerSidebarKey() === serverId) {
+        browserChangeRevision += 1;
+        const currentTabs = browserTabs();
+        const closedIndex = currentTabs.findIndex((tab) => tab.id === tabId);
+        const nextTabs = currentTabs.filter((tab) => tab.id !== tabId);
+        setBrowserTabs(nextTabs);
+        setActiveBrowserTabId((current) =>
+          current === tabId ? (nextTabs[closedIndex]?.id ?? nextTabs[closedIndex - 1]?.id ?? null) : current,
+        );
+      }
       analytics.track("browser_action", { action: "close", result: "succeeded" });
     } catch (error) {
       analytics.track("browser_action", {
