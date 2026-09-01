@@ -338,6 +338,26 @@ async function main(): Promise<void> {
     if (ambiguousOption.success || !toolError(ambiguousOption).includes("ambiguous")) {
       throw new Error("V2 select accepted an ambiguous option label.");
     }
+    const laterDuplicateLabel = await callBrowserTool(browser, "select_option", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "combobox", name: "Same-origin collision", exact: true },
+      values: ["third"],
+    });
+    const laterDuplicateSelection = await v2Contents.executeJavaScript(
+      `(() => { const select = document.querySelector('iframe[title="Same origin frame"]').contentDocument.querySelector('[aria-label="Same-origin collision"]'); return { value: select.value, labels: Array.from(select.options, option => option.label), text: Array.from(select.options, option => option.text) }; })()`,
+      true,
+    );
+    if (
+      !laterDuplicateLabel.success ||
+      !isDynamicRecord(laterDuplicateSelection) ||
+      laterDuplicateSelection.value !== "third" ||
+      !Array.isArray(laterDuplicateSelection.labels) ||
+      laterDuplicateSelection.labels.join(",") !== "target,Second,Second" ||
+      !Array.isArray(laterDuplicateSelection.text) ||
+      laterDuplicateSelection.text.join(",") !== "target,Second,Second"
+    ) {
+      throw new Error(`V2 select could not choose a later duplicate label: ${toolError(laterDuplicateLabel)}`);
+    }
     const sameOriginMultiSelect = await callBrowserTool(browser, "select_option", {
       tabId: v2Tab.id,
       target: { kind: "role", role: "listbox", name: "Same-origin tags", exact: true },
@@ -356,6 +376,22 @@ async function main(): Promise<void> {
       sameOriginMultiSelection.changeTrusted !== "true"
     ) {
       throw new Error(`V2 same-origin iframe multi-select failed: ${toolError(sameOriginMultiSelect)}`);
+    }
+    const outOfOrderMultiSelect = await callBrowserTool(browser, "select_option", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "listbox", name: "Same-origin tags", exact: true },
+      values: ["c", "a"],
+    });
+    const outOfOrderMultiSelection = await v2Contents.executeJavaScript(
+      `Array.from(document.querySelector('iframe[title="Same origin frame"]').contentDocument.querySelector('[aria-label="Same-origin tags"]').selectedOptions, option => option.value)`,
+      true,
+    );
+    if (
+      !outOfOrderMultiSelect.success ||
+      !Array.isArray(outOfOrderMultiSelection) ||
+      outOfOrderMultiSelection.join(",") !== "a,c"
+    ) {
+      throw new Error(`V2 multi-select depended on request order: ${toolError(outOfOrderMultiSelect)}`);
     }
     const sameOriginRadio = await callBrowserTool(browser, "set_checked", {
       tabId: v2Tab.id,
@@ -531,6 +567,14 @@ async function main(): Promise<void> {
     if (clearedRadio.success || !toolError(clearedRadio).includes("cannot be cleared directly")) {
       throw new Error("V2 selected radio clearing did not return a truthful error.");
     }
+    const nonCheckable = await callBrowserTool(browser, "set_checked", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "spinbutton", name: "Quantity", exact: true },
+      checked: false,
+    });
+    if (nonCheckable.success || !toolError(nonCheckable).includes("not checkable")) {
+      throw new Error("V2 set_checked accepted a non-checkable input.");
+    }
     const contentEditable = await callBrowserTool(browser, "type", {
       tabId: v2Tab.id,
       target: { kind: "role", role: "textbox", name: "Notes", exact: true },
@@ -572,6 +616,14 @@ async function main(): Promise<void> {
     const shortcutValue = await v2Contents.executeJavaScript("document.querySelector('output').textContent", true);
     if (shortcutValue !== "shortcut:true") {
       throw new Error("V2 keyboard shortcut was not a trusted page event.");
+    }
+    const pointPress = await callBrowserTool(browser, "press", {
+      tabId: v2Tab.id,
+      target: { kind: "point", x: 1, y: 1 },
+      key: "Enter",
+    });
+    if (pointPress.success || !toolError(pointPress).includes("element target")) {
+      throw new Error("V2 press silently accepted a point target.");
     }
     await v2Contents.executeJavaScript("document.querySelector('output').textContent = ''", true);
     const invalidShortcut = await callBrowserTool(browser, "press", { tabId: v2Tab.id, key: "Control+💥" });
@@ -654,6 +706,13 @@ async function main(): Promise<void> {
     const canvasValue = await v2Contents.executeJavaScript("document.querySelector('output').textContent", true);
     if (canvasValue !== "canvas:true") {
       throw new Error("V2 canvas coordinate click was not trusted.");
+    }
+    const offViewportClick = await callBrowserTool(browser, "click", {
+      tabId: v2Tab.id,
+      target: { kind: "point", x: 10_000, y: 10_000 },
+    });
+    if (offViewportClick.success || !toolError(offViewportClick).includes("outside the current viewport")) {
+      throw new Error("V2 click accepted an off-viewport point target.");
     }
     const dragged = await callBrowserTool(browser, "drag", {
       tabId: v2Tab.id,

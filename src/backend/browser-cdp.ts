@@ -228,6 +228,7 @@ export class BrowserCdpEngine {
     await this.#lease(async (send) => {
       let sessionId: string | undefined;
       if (target) {
+        if (target.kind === "point") throw new Error("Press requires an element target, not coordinates.");
         const resolved = await this.#resolveTarget(send, target);
         sessionId = resolved.sessionId;
         if (resolved.backendNodeId) await send("DOM.focus", { backendNodeId: resolved.backendNodeId }, sessionId);
@@ -308,7 +309,6 @@ export class BrowserCdpEngine {
           return {
             multiple: this.multiple,
             desiredIndices: this.multiple ? uniqueDesiredIndices : uniqueDesiredIndices.slice(0, 1),
-            desiredLabels: uniqueDesiredIndices.map(index => this.options[index].label || this.options[index].text),
             enabledIndices,
           };
         }`,
@@ -319,16 +319,52 @@ export class BrowserCdpEngine {
         throw new Error("Select target returned an invalid option plan.");
       }
       const desiredIndices = Array.isArray(plan.desiredIndices) ? plan.desiredIndices.filter(isNumber) : [];
+      if (plan.multiple) desiredIndices.sort((left, right) => left - right);
       const enabledIndices = Array.isArray(plan.enabledIndices) ? plan.enabledIndices.filter(isNumber) : [];
       if (desiredIndices.length === 0 || desiredIndices.some((index) => !enabledIndices.includes(index))) {
         throw new Error("Select target returned an invalid option plan.");
       }
       await send("DOM.focus", { backendNodeId: resolved.backendNodeId }, resolved.sessionId);
       if (!plan.multiple) {
-        const desiredLabels = Array.isArray(plan.desiredLabels) ? plan.desiredLabels.filter(isString) : [];
-        const label = desiredLabels[0];
-        if (!label) throw new Error("Select target returned an invalid option label.");
-        for (const character of label) await dispatchTextKey(send, character, resolved.sessionId);
+        const selectionToken = `OpenBotSelect${Date.now()}${Math.floor(Math.random() * 1_000_000)}`;
+        const previousLabel = await this.#callOnNode(
+          send,
+          resolved.backendNodeId,
+          `function(index, label) {
+            const option = this.options[index];
+            const previous = {
+              hadLabel: option.hasAttribute('label'),
+              label: option.getAttribute('label'),
+              text: option.textContent,
+            };
+            option.setAttribute('label', label);
+            option.textContent = label;
+            this.blur();
+            return previous;
+          }`,
+          [desiredIndices[0], selectionToken],
+          resolved.sessionId,
+        );
+        if (!isDynamicRecord(previousLabel) || !isBoolean(previousLabel.hadLabel)) {
+          throw new Error("Select target returned an invalid option label state.");
+        }
+        try {
+          await send("DOM.focus", { backendNodeId: resolved.backendNodeId }, resolved.sessionId);
+          for (const character of selectionToken) await dispatchTextKey(send, character, resolved.sessionId);
+        } finally {
+          await this.#callOnNode(
+            send,
+            resolved.backendNodeId,
+            `function(index, hadLabel, label, text) {
+              const option = this.options[index];
+              option.textContent = text;
+              if (hadLabel) option.setAttribute('label', label);
+              else option.removeAttribute('label');
+            }`,
+            [desiredIndices[0], previousLabel.hadLabel, previousLabel.label ?? "", previousLabel.text ?? ""],
+            resolved.sessionId,
+          );
+        }
       } else {
         const additiveModifiers = process.platform === "darwin" ? ["Meta"] : ["Control"];
         for (let index = 0; index < desiredIndices.length; index++) {
@@ -379,7 +415,9 @@ export class BrowserCdpEngine {
         send,
         resolved.backendNodeId,
         `function() {
-          if (!('checked' in this)) throw new Error('Target is not checkable.');
+          if (this.localName !== 'input' || (this.type !== 'checkbox' && this.type !== 'radio')) {
+            throw new Error('Target is not checkable.');
+          }
           return {
             checked: Boolean(this.checked),
             radio: this.localName === 'input' && this.type === 'radio',
@@ -696,7 +734,16 @@ export class BrowserCdpEngine {
     target: BrowserTarget,
     deadline?: number,
   ): Promise<{ backendNodeId?: number; sessionId?: string; x: number; y: number }> {
-    if (target.kind === "point") return { x: target.x, y: target.y };
+    if (target.kind === "point") {
+      const metrics = await send("Page.getLayoutMetrics");
+      const viewport = recordValue(metrics.cssLayoutViewport);
+      const width = numberValue(viewport?.clientWidth);
+      const height = numberValue(viewport?.clientHeight);
+      if (target.x < 0 || target.y < 0 || target.x >= width || target.y >= height) {
+        throw new Error(`Point target is outside the current viewport (${width}x${height}).`);
+      }
+      return { x: target.x, y: target.y };
+    }
     if (target.kind === "ref") {
       if (!this.#lastSnapshot || target.revision !== this.#lastSnapshot.revision) {
         throw new Error("Stale browser reference. Take a fresh snapshot before acting.");
