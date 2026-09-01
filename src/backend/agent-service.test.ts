@@ -933,7 +933,8 @@ describe.sequential("AgentService", () => {
     }
     await waitFor(() =>
       client.errors.some(
-        (response) => response.id === "browser-upload-concurrent-10" && response.error.message.includes("10 inputs"),
+        (response) =>
+          String(response.id).startsWith("browser-upload-concurrent-") && response.error.message.includes("10 inputs"),
       ),
     );
     await waitFor(

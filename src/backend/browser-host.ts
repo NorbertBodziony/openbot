@@ -849,8 +849,8 @@ export class BrowserHost {
   #bindTabEvents(tab: InternalTab): void {
     const contents = tab.view.webContents;
     const changed = () => this.#emitChanged();
-    contents.on("did-start-navigation", (_event, _url, isInPlace) => {
-      if (isInPlace) return;
+    contents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
+      if (isInPlace || !isMainFrame) return;
       for (const listener of this.#documentListeners) listener(tab.id);
     });
     contents.on("before-input-event", (event, input) => {

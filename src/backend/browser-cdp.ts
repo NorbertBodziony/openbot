@@ -110,6 +110,7 @@ export class BrowserCdpEngine {
         }
       }
     });
+    contents.debugger.on("detach", () => this.#clearDebuggerSessions());
   }
 
   async snapshot(context: SnapshotContext): Promise<SnapshotReadResult> {
@@ -756,8 +757,14 @@ export class BrowserCdpEngine {
   #detachOwnedDebugger(): void {
     if (!this.#ownsDebugger) return;
     this.#ownsDebugger = false;
+    this.#clearDebuggerSessions();
     if (this.#contents.isDestroyed() || !this.#contents.debugger.isAttached()) return;
     this.#contents.debugger.detach();
+  }
+
+  #clearDebuggerSessions(): void {
+    this.#targetSessions.clear();
+    this.#highlightSessionId = undefined;
   }
 
   async #applyEnvironment(send: SendCommand, environment: BrowserEnvironment): Promise<void> {
