@@ -160,8 +160,10 @@ async function sendPrivateEmailAttempt(
     }
   }
   const closeConfirmed = await closeSmtpSocket(socket);
-  if (!closeConfirmed && !state.accepted) throw new Error("smtp_delivery_unknown");
+  if (state.accepted) return;
+  if (state.submissionStarted || !closeConfirmed) throw new Error("smtp_delivery_unknown");
   if (attemptError) throw attemptError;
+  throw new Error("smtp_delivery_unknown");
 }
 
 async function closeSmtpSocket(socket: SmtpSocket): Promise<boolean> {

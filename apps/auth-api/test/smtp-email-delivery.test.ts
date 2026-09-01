@@ -270,6 +270,63 @@ describe("Private Email SMTP delivery", () => {
     }
   });
 
+  it("uses the final delivery state when a timed-out session advances during socket closure", async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    const connector: SmtpConnector = () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return {
+          opened: new Promise((resolve) => setTimeout(resolve, 7_600)),
+          readable: new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(`${SUCCESS_RESPONSES}\r\n`));
+              controller.close();
+            },
+          }),
+          writable: new WritableStream(),
+          close: () => new Promise<void>((resolve) => setTimeout(resolve, 200)),
+        };
+      }
+      return {
+        opened: Promise.resolve(),
+        readable: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(`${SUCCESS_RESPONSES}\r\n`));
+            controller.close();
+          },
+        }),
+        writable: new WritableStream(),
+        close() {},
+      };
+    };
+
+    try {
+      const delivery = sendPrivateEmailCode(
+        {
+          host: "mail.privateemail.com",
+          port: 465,
+          username: "hello@openbot.run",
+          password: "app-password-value",
+          from: "hello@openbot.run",
+        },
+        {
+          email: "person@example.com",
+          code: "ABCD-EFGH",
+          expiresAt: Date.now() + 10 * 60_000,
+        },
+        connector,
+      );
+      const outcome = expect(delivery).resolves.toBeUndefined();
+
+      await vi.advanceTimersByTimeAsync(8_000);
+      await outcome;
+      expect(attempts).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not retry after message submission has started", async () => {
     let attempts = 0;
     const responses = SUCCESS_RESPONSES.split("\r\n").slice(0, 9).join("\r\n");
