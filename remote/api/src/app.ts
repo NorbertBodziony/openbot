@@ -18,6 +18,7 @@ const authEventSchema = z.discriminatedUnion("type", [
 ]);
 
 export function createRemoteApiApp(config: RemoteApiConfig, signal: SignalService) {
+  const socketIds = new SignalSocketIds();
   const app = new Elysia()
     .get("/health/live", () => ({ service: "openbot-remote-api", status: "live" }))
     .get("/health/ready", () => ({ service: "openbot-remote-api", status: "ready" }))
@@ -47,11 +48,10 @@ export function createRemoteApiApp(config: RemoteApiConfig, signal: SignalServic
       perMessageDeflate: false,
       sendPings: true,
       open(ws) {
-        ws.raw.data.id = crypto.randomUUID();
-        signal.connect(socketAdapter(ws, config.trustProxy));
+        signal.connect(socketAdapter(ws, config.trustProxy, socketIds.create(ws.raw)));
       },
       async message(ws, message) {
-        const socket = socketAdapter(ws, config.trustProxy);
+        const socket = socketAdapter(ws, config.trustProxy, socketIds.get(ws.raw));
         const textMessage = z.string().safeParse(message);
         const input = textMessage.success
           ? textMessage.data
@@ -61,7 +61,8 @@ export function createRemoteApiApp(config: RemoteApiConfig, signal: SignalServic
         await signal.receive(socket, input);
       },
       close(ws) {
-        signal.disconnect(socketAdapter(ws, config.trustProxy));
+        signal.disconnect(socketAdapter(ws, config.trustProxy, socketIds.get(ws.raw)));
+        socketIds.delete(ws.raw);
       },
       error({ error }) {
         console.error("Remote signal WebSocket failed.", error instanceof Error ? error.message : "Unknown error");
@@ -70,17 +71,39 @@ export function createRemoteApiApp(config: RemoteApiConfig, signal: SignalServic
   return app;
 }
 
+interface SignalSocketOwner {
+  readonly data?: unknown;
+}
+
 interface ElysiaSocketLike {
-  raw: { data: { id?: string } };
+  raw: SignalSocketOwner;
   data?: { request?: Request };
   remoteAddress?: string;
   send(data: string): unknown;
   close(code?: number, reason?: string): void;
 }
 
-function socketAdapter(ws: ElysiaSocketLike, trustProxy: boolean): SignalSocket {
-  const id = ws.raw.data.id;
-  if (!id) throw new Error("Signal socket has no identifier.");
+export class SignalSocketIds {
+  readonly #values = new WeakMap<SignalSocketOwner, string>();
+
+  create(socket: SignalSocketOwner): string {
+    const id = crypto.randomUUID();
+    this.#values.set(socket, id);
+    return id;
+  }
+
+  get(socket: SignalSocketOwner): string {
+    const id = this.#values.get(socket);
+    if (!id) throw new Error("Signal socket has no identifier.");
+    return id;
+  }
+
+  delete(socket: SignalSocketOwner): void {
+    this.#values.delete(socket);
+  }
+}
+
+function socketAdapter(ws: ElysiaSocketLike, trustProxy: boolean, id: string): SignalSocket {
   return {
     id,
     ip: signalClientIp(ws.remoteAddress, ws.data?.request?.headers.get("x-forwarded-for"), trustProxy),

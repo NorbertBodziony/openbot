@@ -101,7 +101,7 @@ interface PeerState {
 
 declare global {
   interface Window {
-    openbotTeamWebRtc: { receivePort(callback: (port: MessagePort) => void): void };
+    openbotTeamWebRtc: { readyForPort(): void };
   }
 }
 
@@ -109,12 +109,18 @@ const peers = new Map<string, PeerState>();
 const dataChannelNames = ["rpc", "events", "files", "desktop"] as const;
 let mainPort: MessagePort;
 
-window.openbotTeamWebRtc.receivePort((port) => {
+const receiveMainPort = (event: MessageEvent): void => {
+  if (event.source !== window || event.data !== "openbot-team-webrtc-port") return;
+  const port = event.ports[0];
+  if (!port) throw new Error("The Team WebRTC message port is missing.");
+  window.removeEventListener("message", receiveMainPort);
   mainPort = port;
   mainPort.onmessage = (event: MessageEvent<BridgeCommand>) => void handleCommand(event.data);
   mainPort.start();
   post({ type: "bridge-ready" });
-});
+};
+window.addEventListener("message", receiveMainPort);
+window.openbotTeamWebRtc.readyForPort();
 
 async function handleCommand(command: BridgeCommand): Promise<void> {
   try {
