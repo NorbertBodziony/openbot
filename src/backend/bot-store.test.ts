@@ -361,6 +361,10 @@ describe("BotStore", () => {
 
     expect(restored.committedBotDuplication(operationId, source.id)).toEqual({ ...committed, bot: currentBot });
     expect(restored.list().filter((bot) => bot.name === duplicate.name)).toHaveLength(1);
+
+    await restored.deleteBot(duplicate.id);
+
+    expect(restored.committedBotDuplication(operationId, source.id)).toBeNull();
   });
 
   it("removes a partial duplicate when profile persistence fails", async () => {

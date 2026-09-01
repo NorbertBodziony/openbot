@@ -310,7 +310,7 @@ describe("TeamApiServer administration", () => {
     }
   });
 
-  it("deletes the duplicate when sidebar layout persistence fails", async () => {
+  it("attempts layout cleanup when duplicate deletion reports an error", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-team-api-duplicate-rollback-"));
     roots.push(root);
     const store = new TeamStore(join(root, "team.json"));
@@ -335,13 +335,16 @@ describe("TeamApiServer administration", () => {
       avatarHue: null,
       avatarUrl: null,
     } satisfies BotSummary;
-    const deleteBot = vi.fn(async () => undefined);
+    const deleteBot = vi.fn(async () => {
+      throw new Error("agent cleanup failed");
+    });
     const agents = createAgents({
       listBots: () => [duplicate],
       duplicateBot: vi.fn(async () => duplicate),
       deleteBot,
     });
     vi.spyOn(sidebarLayout, "placeDuplicateAfter").mockRejectedValueOnce(new Error("layout persistence failed"));
+    const removeAgent = vi.spyOn(sidebarLayout, "removeAgent");
     const api = new TeamApiServer({
       store,
       agents,
@@ -372,6 +375,7 @@ describe("TeamApiServer administration", () => {
 
       expect(response.status).toBe(500);
       expect(deleteBot).toHaveBeenCalledWith(duplicate.id);
+      expect(removeAgent).toHaveBeenCalledWith(duplicate.id);
     } finally {
       await api.stop();
     }

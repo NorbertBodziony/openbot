@@ -217,6 +217,7 @@ export class BotStore {
     }
     const source = this.#requireBot(sourceId);
     const sourceProfileSignature = JSON.stringify(source);
+    const sourceWorkspaceManifest = await workspaceMetadataFingerprint(source.workspacePath);
     const sourceAvatar = this.resolveAvatar(source.id);
     const sourceAvatarSignature = sourceAvatar ? await fileFingerprint(sourceAvatar.path) : null;
     const id = `bot-${randomUUID()}`;
@@ -260,7 +261,7 @@ export class BotStore {
       }
       if (
         JSON.stringify(source) !== sourceProfileSignature ||
-        (await workspaceFingerprint(stagedWorkspace)) !== (await workspaceFingerprint(source.workspacePath)) ||
+        (await workspaceMetadataFingerprint(source.workspacePath)) !== sourceWorkspaceManifest ||
         (stagedAvatarPath ? await fileFingerprint(stagedAvatarPath) : null) !== sourceAvatarSignature ||
         (sourceAvatar ? await fileFingerprint(sourceAvatar.path) : null) !== sourceAvatarSignature
       ) {
@@ -334,7 +335,7 @@ export class BotStore {
       [
         {
           aggregateType: "agent-duplications",
-          aggregateId: operationId,
+          aggregateId: id,
           eventType: "agent-duplication.committed",
           payload: { sourceBotId, duplicateBotId: id },
         },
@@ -722,7 +723,7 @@ function isPathWithin(root: string, candidate: string): boolean {
   return path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
 }
 
-async function workspaceFingerprint(root: string): Promise<string> {
+async function workspaceMetadataFingerprint(root: string): Promise<string> {
   const hash = createHash("sha256");
   const visit = async (directory: string, prefix: string): Promise<void> => {
     const entries = await readdir(directory, { withFileTypes: true });
@@ -730,8 +731,8 @@ async function workspaceFingerprint(root: string): Promise<string> {
     for (const entry of entries) {
       const path = join(directory, entry.name);
       const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
-      const stats = await lstat(path);
-      hash.update(`${relativePath}\0${stats.mode}\0`);
+      const stats = await lstat(path, { bigint: true });
+      hash.update(`${relativePath}\0${stats.mode}\0${stats.size}\0${stats.mtimeNs}\0${stats.ctimeNs}\0`);
       if (stats.isSymbolicLink()) {
         hash.update(`link\0${await readlink(path)}\0`);
       } else if (stats.isDirectory()) {
@@ -739,10 +740,8 @@ async function workspaceFingerprint(root: string): Promise<string> {
         await visit(path, relativePath);
       } else if (stats.isFile()) {
         hash.update("file\0");
-        await updateHashFromFile(hash, path);
-        hash.update("\0");
       } else {
-        hash.update(`other\0${stats.size}\0${stats.mtimeMs}\0`);
+        hash.update("other\0");
       }
     }
   };

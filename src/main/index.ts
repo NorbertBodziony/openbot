@@ -2253,16 +2253,11 @@ async function routeDuplicateBot(
     ]);
     return service.commitBotDuplication(bot.id, layout);
   } catch (error) {
-    let rollbackError: unknown;
-    try {
-      await service.deleteBot(bot.id);
-      await sidebarLayout.removeAgent(bot.id);
-    } catch (caught) {
-      rollbackError = caught;
-    }
-    if (rollbackError) {
+    const rollbackResults = await Promise.allSettled([service.deleteBot(bot.id), sidebarLayout.removeAgent(bot.id)]);
+    const rollbackErrors = rollbackResults.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
+    if (rollbackErrors.length > 0) {
       throw new AggregateError(
-        [error, rollbackError],
+        [error, ...rollbackErrors],
         "Agent duplication failed and the incomplete copy could not be removed.",
       );
     }

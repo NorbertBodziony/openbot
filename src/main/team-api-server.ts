@@ -1567,16 +1567,14 @@ export class TeamApiServer {
       ]);
       return await this.#options.agents.commitBotDuplication(bot.id, layout);
     } catch (error) {
-      let rollbackError: unknown;
-      try {
-        await this.#options.agents.deleteBot(bot.id);
-        await this.#options.sidebarLayout.removeAgent(bot.id);
-      } catch (caught) {
-        rollbackError = caught;
-      }
-      if (rollbackError) {
+      const rollbackResults = await Promise.allSettled([
+        this.#options.agents.deleteBot(bot.id),
+        this.#options.sidebarLayout.removeAgent(bot.id),
+      ]);
+      const rollbackErrors = rollbackResults.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
+      if (rollbackErrors.length > 0) {
         throw new AggregateError(
-          [error, rollbackError],
+          [error, ...rollbackErrors],
           "Agent duplication failed and the incomplete copy could not be removed.",
         );
       }
