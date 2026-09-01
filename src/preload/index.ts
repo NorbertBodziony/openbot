@@ -16,6 +16,7 @@ import {
   type ConversationWithReadState,
   type DraftAttachment,
   type DynamicIslandAction,
+  type DynamicIslandGeometry,
   type DynamicIslandPreference,
   type DynamicIslandPresentation,
   type FilePreview,
@@ -28,6 +29,7 @@ import {
   isBotMemory,
   isConversationMessage,
   isDynamicIslandAction,
+  isDynamicIslandNotchSize,
   isDynamicIslandPreference,
   isDynamicIslandPresentation,
   isReasoningEffort,
@@ -100,7 +102,8 @@ function emitAttachmentImport(event: AttachmentImportEvent): void {
 async function importFiles(files: File[]): Promise<void> {
   if (files.length === 0) return;
   const requestId = crypto.randomUUID();
-  emitAttachmentImport({ type: "started", requestId });
+  const serverId = selectedServerId;
+  emitAttachmentImport({ type: "started", requestId, serverId });
   try {
     const input: ImportAttachmentsInput = { paths: [], data: [] };
     for (const file of files) {
@@ -114,12 +117,18 @@ async function importFiles(files: File[]): Promise<void> {
         });
       }
     }
-    const attachments = await invokeAgent(IPC_CHANNELS.agentImportAttachments, input, decodeDraftAttachments);
-    emitAttachmentImport({ type: "completed", requestId, attachments });
+    const attachments = await invokeAgentForServer(
+      serverId,
+      IPC_CHANNELS.agentImportAttachments,
+      input,
+      decodeDraftAttachments,
+    );
+    emitAttachmentImport({ type: "completed", requestId, serverId, attachments });
   } catch (error) {
     emitAttachmentImport({
       type: "error",
       requestId,
+      serverId,
       message: error instanceof Error ? error.message : String(error),
     });
   }
@@ -162,6 +171,12 @@ function decodeVoid(value: unknown): undefined {
 
 function decodeDynamicIslandPreference(value: unknown): DynamicIslandPreference {
   if (!isDynamicIslandPreference(value)) throw new Error("Invalid Dynamic Island preference response.");
+  return value;
+}
+
+function decodeDynamicIslandGeometry(value: unknown): DynamicIslandGeometry {
+  if (value === null) return null;
+  if (!isDynamicIslandNotchSize(value)) throw new Error("Invalid Dynamic Island geometry.");
   return value;
 }
 
@@ -790,6 +805,12 @@ const openbotApi: OpenBotDesktopApi = {
       ipcRenderer.on(IPC_CHANNELS.dynamicIslandPresentation, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.dynamicIslandPresentation, handler);
     },
+    onGeometry: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, geometry: unknown) =>
+        listener(decodeDynamicIslandGeometry(geometry));
+      ipcRenderer.on(IPC_CHANNELS.dynamicIslandGeometry, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.dynamicIslandGeometry, handler);
+    },
     performAction: (action) => ipcRenderer.invoke(IPC_CHANNELS.dynamicIslandPerformAction, action).then(decodeVoid),
     performHaptic: () => ipcRenderer.invoke(IPC_CHANNELS.dynamicIslandPerformHaptic).then(decodeVoid),
     onAction: (listener) => {
@@ -836,6 +857,7 @@ const openbotApi: OpenBotDesktopApi = {
     retry: () => ipcRenderer.invoke(IPC_CHANNELS.authRetry),
     requestEmailCode: (email) => ipcRenderer.invoke(IPC_CHANNELS.authRequestEmailCode, email),
     verifyEmailCode: (challengeId, code) => ipcRenderer.invoke(IPC_CHANNELS.authVerifyEmailCode, { challengeId, code }),
+    updateName: (name) => ipcRenderer.invoke(IPC_CHANNELS.authUpdateName, name),
     updateAvatar: (image) => ipcRenderer.invoke(IPC_CHANNELS.authUpdateAvatar, image),
     logout: () => ipcRenderer.invoke(IPC_CHANNELS.authLogout),
     onEvent: (listener) => {
@@ -903,20 +925,22 @@ const openbotApi: OpenBotDesktopApi = {
       attachmentImportListeners.add(listener);
       return () => attachmentImportListeners.delete(listener);
     },
-    discardDraftAttachment: (attachmentId) =>
-      invokeAgent(IPC_CHANNELS.agentDiscardDraftAttachment, attachmentId, decodeVoid),
+    discardDraftAttachment: (attachmentId, serverId = selectedServerId) =>
+      invokeAgentForServer(serverId, IPC_CHANNELS.agentDiscardDraftAttachment, attachmentId, decodeVoid),
     openAttachment: (input) => invokeAgent(IPC_CHANNELS.agentOpenAttachment, input, decodeVoid),
     openSharedFile: (input) => invokeAgent(IPC_CHANNELS.agentOpenSharedFile, input, decodeVoid),
     openWorkspaceFile: (input) => invokeAgent(IPC_CHANNELS.agentOpenWorkspaceFile, input, decodeVoid),
     previewSharedFile: (input) => invokeAgent(IPC_CHANNELS.agentPreviewSharedFile, input, decodeFilePreview),
     previewWorkspaceFile: (input) => invokeAgent(IPC_CHANNELS.agentPreviewWorkspaceFile, input, decodeFilePreview),
-    sendMessage: (input) => invokeAgent(IPC_CHANNELS.agentSendMessage, input, decodeReceipt),
+    sendMessage: (input, serverId = selectedServerId) =>
+      invokeAgentForServer(serverId, IPC_CHANNELS.agentSendMessage, input, decodeReceipt),
     setMessageReaction: (input) => invokeAgent(IPC_CHANNELS.agentSetMessageReaction, input, decodeVoid),
     listQueue: (botId) => invokeAgent(IPC_CHANNELS.agentListQueue, botId, decodeQueue),
     acknowledgeFailedTurn: (input) => invokeAgent(IPC_CHANNELS.agentAcknowledgeFailedTurn, input, decodeVoid),
     cancelQueuedMessage: (input) => invokeAgent(IPC_CHANNELS.agentCancelQueuedMessage, input, decodeVoid),
     steerQueuedMessage: (input) => invokeAgent(IPC_CHANNELS.agentSteerQueuedMessage, input, decodeVoid),
-    updateQueuedMessage: (input) => invokeAgent(IPC_CHANNELS.agentUpdateQueuedMessage, input, decodeVoid),
+    updateQueuedMessage: (input, serverId = selectedServerId) =>
+      invokeAgentForServer(serverId, IPC_CHANNELS.agentUpdateQueuedMessage, input, decodeVoid),
     reorderQueue: (input) => invokeAgent(IPC_CHANNELS.agentReorderQueue, input, decodeVoid),
     interrupt: (input) => invokeAgent(IPC_CHANNELS.agentInterrupt, input, decodeVoid),
     respondToPrompt: (input) => invokeAgent(IPC_CHANNELS.agentRespondToPrompt, input, decodeVoid),

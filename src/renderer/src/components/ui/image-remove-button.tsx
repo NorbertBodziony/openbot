@@ -5,6 +5,7 @@ import { cx } from "./utils";
 export interface ImageRemoveButtonProps {
   label: string;
   class?: string;
+  disabled?: boolean;
   onClick: () => void;
 }
 
@@ -17,6 +18,7 @@ export function ImageRemoveButton(props: ImageRemoveButtonProps) {
       class={cx("ui-image-remove-button", props.class)}
       aria-label={props.label}
       title={props.label}
+      disabled={props.disabled}
       onClick={props.onClick}
     >
       <X aria-hidden="true" />

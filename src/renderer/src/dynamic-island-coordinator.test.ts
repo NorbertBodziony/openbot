@@ -154,6 +154,56 @@ describe("DynamicIslandCoordinator", () => {
     });
   });
 
+  it("removes a citation marker split across Dynamic Island deltas", () => {
+    const coordinator = new DynamicIslandCoordinator();
+    seedBots(coordinator, "remote", [bot("research", "Research")]);
+    coordinator.applyEvent(scoped("remote", conversation("research", 0, [])), "local");
+    coordinator.applyEvent(
+      scoped(
+        "remote",
+        conversation("research", 1, [
+          { id: "message-1", text: "Storms are likely.", createdAt: "2026-08-29T10:00:00.000Z" },
+        ]),
+      ),
+      "local",
+    );
+    coordinator.applyEvent(
+      scoped("remote", {
+        type: "conversation-delta",
+        botId: "research",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        messageId: "message-1",
+        delta: "\u{e200}cite\u{e202}turn0fore",
+        createdAt: "2026-08-29T10:00:00.000Z",
+        revision: 2,
+      }),
+      "local",
+    );
+    expect(coordinator.presentation(["remote"])).toMatchObject({
+      mode: "message",
+      message: { text: "Storms are likely." },
+    });
+
+    coordinator.applyEvent(
+      scoped("remote", {
+        type: "conversation-delta",
+        botId: "research",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        messageId: "message-1",
+        delta: "cast0\u{e201} Take care.",
+        createdAt: "2026-08-29T10:00:00.000Z",
+        revision: 3,
+      }),
+      "local",
+    );
+    expect(coordinator.presentation(["remote"])).toMatchObject({
+      mode: "message",
+      message: { text: "Storms are likely. Take care." },
+    });
+  });
+
   it("does not count or display non-reply items from a full conversation", () => {
     const coordinator = new DynamicIslandCoordinator();
     seedBots(coordinator, "remote", [bot("research", "Research")]);

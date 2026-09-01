@@ -11,7 +11,12 @@ import type {
   ConversationSearchPage,
   ConversationSnapshot,
 } from "@openbot/contracts/ipc";
-import { isAgentProvider, isConversationMessage, providerForLegacyModel } from "@openbot/contracts/ipc";
+import {
+  isAgentProvider,
+  isConversationMessage,
+  providerForLegacyModel,
+  ROUTINE_EVENT_ITEM_TYPE_PREFIX,
+} from "@openbot/contracts/ipc";
 import { type DynamicRecord, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { migrateOpenBotDatabase } from "./openbot-database-schema";
 
@@ -401,6 +406,7 @@ export class OpenBotDatabase {
     threadId: string | null,
     anchor: ConversationPageAnchor = { type: "latest" },
     requestedLimit = 50,
+    options: { excludeRoutineEvents?: boolean } = {},
   ): ConversationPage {
     if (!threadId) {
       return {
@@ -422,7 +428,7 @@ export class OpenBotDatabase {
         )
         .get(threadId, botId),
     );
-    const rows = this.#conversationPageRows(threadId, anchor, limit);
+    const rows = this.#conversationPageRows(threadId, anchor, limit, options.excludeRoutineEvents === true);
     const messages = rows.map((row) => decodeConversationMessageJson(requiredStringColumn(row, "message_json")));
     const messageIds = new Set(messages.map((message) => message.id));
     const referenceIdSet = new Set<string>();
@@ -438,7 +444,8 @@ export class OpenBotDatabase {
         this.connection
           .prepare(
             `SELECT message_id, message_json FROM projection_thread_messages
-             WHERE thread_id = ? AND message_id IN (${placeholders})`,
+             WHERE thread_id = ? AND message_id IN (${placeholders})
+             ${options.excludeRoutineEvents ? `AND COALESCE(item_type, '') NOT LIKE '${ROUTINE_EVENT_ITEM_TYPE_PREFIX}%'` : ""}`,
           )
           .all(threadId, ...referenceIds),
       );
@@ -449,7 +456,9 @@ export class OpenBotDatabase {
       }
     }
     const first = rows[0];
-    const hasOlder = first ? this.#hasConversationRowsBefore(threadId, conversationRowCursor(first)) : false;
+    const hasOlder = first
+      ? this.#hasConversationRowsBefore(threadId, conversationRowCursor(first), options.excludeRoutineEvents === true)
+      : false;
     return {
       botId,
       threadId,
@@ -485,6 +494,7 @@ export class OpenBotDatabase {
            JOIN projection_threads thread ON thread.thread_id = message.thread_id
            WHERE LOWER(json_extract(message.message_json, '$.text')) LIKE ? ESCAPE '\\'
              AND COALESCE(json_extract(message.message_json, '$.delivery.status'), '') NOT IN ('queued', 'cancelled')
+             AND COALESCE(message.item_type, '') NOT LIKE '${ROUTINE_EVENT_ITEM_TYPE_PREFIX}%'
              ${filter}`,
         )
         .get(...parameters),
@@ -498,6 +508,7 @@ export class OpenBotDatabase {
            JOIN projection_threads thread ON thread.thread_id = message.thread_id
            WHERE LOWER(json_extract(message.message_json, '$.text')) LIKE ? ESCAPE '\\'
              AND COALESCE(json_extract(message.message_json, '$.delivery.status'), '') NOT IN ('queued', 'cancelled')
+             AND COALESCE(message.item_type, '') NOT LIKE '${ROUTINE_EVENT_ITEM_TYPE_PREFIX}%'
              ${filter}
            ORDER BY message.created_at DESC, message.ordinal DESC, message.message_id DESC
            LIMIT ? OFFSET ?`,
@@ -516,14 +527,23 @@ export class OpenBotDatabase {
     };
   }
 
-  #conversationPageRows(threadId: string, anchor: ConversationPageAnchor, limit: number): DynamicRecord[] {
+  #conversationPageRows(
+    threadId: string,
+    anchor: ConversationPageAnchor,
+    limit: number,
+    excludeRoutineEvents: boolean,
+  ): DynamicRecord[] {
     const columns = "created_at, ordinal, message_id, message_json";
+    const routineFilter = excludeRoutineEvents
+      ? `AND COALESCE(item_type, '') NOT LIKE '${ROUTINE_EVENT_ITEM_TYPE_PREFIX}%'`
+      : "";
     if (anchor.type === "latest") {
       return databaseRows(
         this.connection
           .prepare(
             `SELECT ${columns} FROM projection_thread_messages
              WHERE thread_id = ?
+             ${routineFilter}
              ORDER BY created_at DESC, ordinal DESC, message_id DESC LIMIT ?`,
           )
           .all(threadId, limit),
@@ -540,6 +560,7 @@ export class OpenBotDatabase {
                (created_at = ? AND ordinal < ?) OR
                (created_at = ? AND ordinal = ? AND message_id < ?)
              )
+             ${routineFilter}
              ORDER BY created_at DESC, ordinal DESC, message_id DESC LIMIT ?`,
           )
           .all(
@@ -558,7 +579,8 @@ export class OpenBotDatabase {
       this.connection
         .prepare(
           `SELECT created_at, ordinal, message_id FROM projection_thread_messages
-           WHERE thread_id = ? AND message_id = ?`,
+           WHERE thread_id = ? AND message_id = ?
+           ${routineFilter}`,
         )
         .get(threadId, anchor.messageId),
     );
@@ -574,6 +596,7 @@ export class OpenBotDatabase {
              (created_at = ? AND ordinal < ?) OR
              (created_at = ? AND ordinal = ? AND message_id <= ?)
            )
+           ${routineFilter}
            ORDER BY created_at DESC, ordinal DESC, message_id DESC LIMIT ?`,
         )
         .all(
@@ -596,6 +619,7 @@ export class OpenBotDatabase {
              (created_at = ? AND ordinal > ?) OR
              (created_at = ? AND ordinal = ? AND message_id > ?)
            )
+           ${routineFilter}
            ORDER BY created_at, ordinal, message_id LIMIT ?`,
         )
         .all(
@@ -612,7 +636,10 @@ export class OpenBotDatabase {
     return [...older, ...newer];
   }
 
-  #hasConversationRowsBefore(threadId: string, cursor: ConversationPageCursor): boolean {
+  #hasConversationRowsBefore(threadId: string, cursor: ConversationPageCursor, excludeRoutineEvents: boolean): boolean {
+    const routineFilter = excludeRoutineEvents
+      ? `AND COALESCE(item_type, '') NOT LIKE '${ROUTINE_EVENT_ITEM_TYPE_PREFIX}%'`
+      : "";
     return Boolean(
       this.connection
         .prepare(
@@ -621,7 +648,9 @@ export class OpenBotDatabase {
              created_at < ? OR
              (created_at = ? AND ordinal < ?) OR
              (created_at = ? AND ordinal = ? AND message_id < ?)
-           ) LIMIT 1`,
+           )
+           ${routineFilter}
+           LIMIT 1`,
         )
         .get(
           threadId,

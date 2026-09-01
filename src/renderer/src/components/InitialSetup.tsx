@@ -25,7 +25,7 @@ interface InitialSetupProps {
   onSave: (provider: AgentProviderId) => Promise<void>;
   onPreviewInvite: (input: JoinServerInput) => Promise<InvitePreview>;
   onJoinRemote: (input: JoinServerInput, provider: AgentProviderId) => Promise<void>;
-  onLogout: () => Promise<void>;
+  onLogout?: () => Promise<void>;
   onClose?: () => void;
 }
 
@@ -253,9 +253,16 @@ export function InitialSetup(props: InitialSetupProps) {
                 <i aria-hidden="true" />
                 {props.accountEmail}
               </span>
-              <Button variant="ghost" type="button" class="initial-setup-signout" onClick={() => void props.onLogout()}>
-                Sign out
-              </Button>
+              <Show when={props.onLogout}>
+                <Button
+                  variant="ghost"
+                  type="button"
+                  class="initial-setup-signout"
+                  onClick={() => void props.onLogout?.()}
+                >
+                  Sign out
+                </Button>
+              </Show>
             </div>
             <p class="initial-setup-eyebrow">OpenBot setup</p>
             <Dialog.Title as="h1" id="initial-setup-title">

@@ -21,6 +21,7 @@ import { Route as V1MeRouteImport } from './routes/v1/me'
 import { Route as V1AuthLogoutRouteImport } from './routes/v1/auth/logout'
 import { Route as V1AvatarsUserIdRouteImport } from './routes/v1/avatars/$userId'
 import { Route as V1MeAvatarRouteImport } from './routes/v1/me/avatar'
+import { Route as V1MeProfileRouteImport } from './routes/v1/me/profile'
 import { Route as V1SkillsIndexRouteImport } from './routes/v1/skills/index'
 import { Route as V1SkillsSkillIdRouteImport } from './routes/v1/skills/$skillId'
 import { Route as V1SkillsMineRouteImport } from './routes/v1/skills/mine'
@@ -107,6 +108,11 @@ const V1AvatarsUserIdRoute = V1AvatarsUserIdRouteImport.update({
 const V1MeAvatarRoute = V1MeAvatarRouteImport.update({
   id: '/avatar',
   path: '/avatar',
+  getParentRoute: () => V1MeRoute,
+} as any)
+const V1MeProfileRoute = V1MeProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
   getParentRoute: () => V1MeRoute,
 } as any)
 const V1SkillsIndexRoute = V1SkillsIndexRouteImport.update({
@@ -265,6 +271,7 @@ export interface FileRoutesByFullPath {
   '/v1/auth/logout': typeof V1AuthLogoutRoute
   '/v1/avatars/$userId': typeof V1AvatarsUserIdRoute
   '/v1/me/avatar': typeof V1MeAvatarRoute
+  '/v1/me/profile': typeof V1MeProfileRoute
   '/v1/skills/$skillId': typeof V1SkillsSkillIdRouteWithChildren
   '/v1/skills/mine': typeof V1SkillsMineRoute
   '/v1/team-auth/redeem': typeof V1TeamAuthRedeemRoute
@@ -305,6 +312,7 @@ export interface FileRoutesByTo {
   '/v1/auth/logout': typeof V1AuthLogoutRoute
   '/v1/avatars/$userId': typeof V1AvatarsUserIdRoute
   '/v1/me/avatar': typeof V1MeAvatarRoute
+  '/v1/me/profile': typeof V1MeProfileRoute
   '/v1/skills/$skillId': typeof V1SkillsSkillIdRouteWithChildren
   '/v1/skills/mine': typeof V1SkillsMineRoute
   '/v1/team-auth/redeem': typeof V1TeamAuthRedeemRoute
@@ -346,6 +354,7 @@ export interface FileRoutesById {
   '/v1/auth/logout': typeof V1AuthLogoutRoute
   '/v1/avatars/$userId': typeof V1AvatarsUserIdRoute
   '/v1/me/avatar': typeof V1MeAvatarRoute
+  '/v1/me/profile': typeof V1MeProfileRoute
   '/v1/skills/$skillId': typeof V1SkillsSkillIdRouteWithChildren
   '/v1/skills/mine': typeof V1SkillsMineRoute
   '/v1/team-auth/redeem': typeof V1TeamAuthRedeemRoute
@@ -388,6 +397,7 @@ export interface FileRouteTypes {
     | '/v1/auth/logout'
     | '/v1/avatars/$userId'
     | '/v1/me/avatar'
+    | '/v1/me/profile'
     | '/v1/skills/$skillId'
     | '/v1/skills/mine'
     | '/v1/team-auth/redeem'
@@ -428,6 +438,7 @@ export interface FileRouteTypes {
     | '/v1/auth/logout'
     | '/v1/avatars/$userId'
     | '/v1/me/avatar'
+    | '/v1/me/profile'
     | '/v1/skills/$skillId'
     | '/v1/skills/mine'
     | '/v1/team-auth/redeem'
@@ -468,6 +479,7 @@ export interface FileRouteTypes {
     | '/v1/auth/logout'
     | '/v1/avatars/$userId'
     | '/v1/me/avatar'
+    | '/v1/me/profile'
     | '/v1/skills/$skillId'
     | '/v1/skills/mine'
     | '/v1/team-auth/redeem'
@@ -611,6 +623,13 @@ declare module '@tanstack/solid-router' {
       path: '/avatar'
       fullPath: '/v1/me/avatar'
       preLoaderRoute: typeof V1MeAvatarRouteImport
+      parentRoute: typeof V1MeRoute
+    }
+    '/v1/me/profile': {
+      id: '/v1/me/profile'
+      path: '/profile'
+      fullPath: '/v1/me/profile'
+      preLoaderRoute: typeof V1MeProfileRouteImport
       parentRoute: typeof V1MeRoute
     }
     '/v1/skills/': {
@@ -800,10 +819,12 @@ declare module '@tanstack/solid-router' {
 
 interface V1MeRouteChildren {
   V1MeAvatarRoute: typeof V1MeAvatarRoute
+  V1MeProfileRoute: typeof V1MeProfileRoute
 }
 
 const V1MeRouteChildren: V1MeRouteChildren = {
   V1MeAvatarRoute: V1MeAvatarRoute,
+  V1MeProfileRoute: V1MeProfileRoute,
 }
 
 const V1MeRouteWithChildren = V1MeRoute._addFileChildren(V1MeRouteChildren)

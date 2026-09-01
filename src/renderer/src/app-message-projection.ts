@@ -1,4 +1,6 @@
 import type { BotSummary, ConversationMessage, ConversationReadState } from "@openbot/contracts/ipc";
+import { parseRoutineConversationEventItemType, routineConversationEvent } from "@openbot/contracts/ipc";
+import { cleanAgentMessageText } from "./agent-message-text";
 import type { BotMessage, BotProfile } from "./data";
 
 export function toBotProfile(stored: BotSummary): BotProfile {
@@ -24,16 +26,17 @@ export function toBotProfile(stored: BotSummary): BotProfile {
 
 export function toBotMessage(message: ConversationMessage): BotMessage {
   const exchangeSenderId = message.senderBotId ?? message.exchange?.senderBotId;
+  const routineEvent = routineConversationEvent(message);
   return {
     id: message.id,
     turnId: message.turnId,
     author: message.author === "user" ? "you" : "bot",
-    body: message.text,
+    body: message.author === "user" ? message.text : cleanAgentMessageText(message.text),
     time: formatTime(message.createdAt),
     createdAt: message.createdAt,
     streaming: message.status === "streaming",
     itemType: message.itemType,
-    kind: message.questionPrompt ? "question" : message.exchange ? "exchange" : "text",
+    kind: message.questionPrompt ? "question" : message.exchange ? "exchange" : routineEvent ? "routine-event" : "text",
     senderBotId: exchangeSenderId,
     replyToMessageId: message.replyToMessageId,
     attachments: message.attachments,
@@ -44,6 +47,7 @@ export function toBotMessage(message: ConversationMessage): BotMessage {
     reactions:
       message.reactions ?? (message.reaction ? [{ emoji: message.reaction, actor: { kind: "user" as const } }] : []),
     routine: message.routine,
+    routineEvent: routineEvent ?? undefined,
     status: message.exchange
       ? undefined
       : message.delivery?.status === "queued"
@@ -71,11 +75,13 @@ export function toBotMessages(messages: ConversationMessage[]): BotMessage[] {
     const key = message.turnId ?? message.id;
     const existing = thinkingByTurn.get(key);
     if (existing) {
-      if (message.text.trim()) existing.items = [...(existing.items ?? []), message.text];
+      const text = cleanAgentMessageText(message.text);
+      if (text.trim()) existing.items = [...(existing.items ?? []), text];
       existing.streaming = existing.streaming || message.status === "streaming";
       continue;
     }
 
+    const text = cleanAgentMessageText(message.text);
     const thinking: BotMessage = {
       id: `thinking:${key}`,
       turnId: message.turnId,
@@ -86,7 +92,7 @@ export function toBotMessages(messages: ConversationMessage[]): BotMessage[] {
       streaming: message.status === "streaming",
       itemType: "commentary",
       kind: "thinking",
-      items: message.text.trim() ? [message.text] : [],
+      items: text.trim() ? [text] : [],
     };
     thinkingByTurn.set(key, thinking);
     result.push(thinking);
@@ -105,7 +111,10 @@ export function readStateForMessages(
     .slice(throughIndex + 1)
     .filter(
       (message) =>
-        message.author !== "user" && message.itemType !== "commentary" && message.itemType !== "agent_attachment",
+        message.author !== "user" &&
+        message.itemType !== "commentary" &&
+        message.itemType !== "agent_attachment" &&
+        parseRoutineConversationEventItemType(message.itemType) === null,
     );
   return {
     ...state,
@@ -173,6 +182,7 @@ export function botMessagesEqual(left: BotMessage, right: BotMessage): boolean {
     JSON.stringify(left.questionPrompt) === JSON.stringify(right.questionPrompt) &&
     JSON.stringify(left.exchange) === JSON.stringify(right.exchange) &&
     JSON.stringify(left.routine) === JSON.stringify(right.routine) &&
+    JSON.stringify(left.routineEvent) === JSON.stringify(right.routineEvent) &&
     JSON.stringify(left.items) === JSON.stringify(right.items)
   );
 }
@@ -201,7 +211,7 @@ export function withoutBot<T>(values: Record<string, T>, botId: string): Record<
 }
 
 function cleanPreview(preview: string): string {
-  const cleaned = preview
+  const cleaned = cleanAgentMessageText(preview)
     .replace(/\binbox\s+at\s+zero\b[:,]?\s*/gi, "")
     .replace(/\s{2,}/g, " ")
     .trim();

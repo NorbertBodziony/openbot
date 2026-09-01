@@ -9,6 +9,19 @@
   transition: padding-right var(--panel-resize-duration, var(--openbot-duration-overlay)) cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+.conversation-panel.browser-panel-available::after {
+  position: absolute;
+  z-index: 13;
+  top: 0;
+  right: 1px;
+  bottom: 0;
+  width: 1px;
+  background: var(--openbot-accent);
+  box-shadow: -10px 0 28px var(--openbot-accent-soft);
+  content: "";
+  pointer-events: none;
+}
+
 .direct-conversation {
   position: relative;
   display: flex;
@@ -260,7 +273,7 @@
   align-items: center;
   justify-content: space-between;
   border-bottom: 0;
-  padding: 0 8px;
+  padding: 0 12px 0 8px;
   background: transparent;
 }
 
@@ -2315,25 +2328,6 @@
   background: var(--openbot-hover);
 }
 
-.provider-picker-embedded {
-  border-bottom: 1px solid var(--openbot-border);
-}
-
-.provider-picker-embedded .provider-picker-list {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-}
-
-.provider-picker-embedded .provider-picker-option {
-  min-height: 39px;
-  padding: 7px 12px;
-}
-
-.provider-picker-embedded .provider-picker-option + .provider-picker-option {
-  border-color: var(--openbot-border);
-}
-
 .agent-settings-model-option {
   min-width: 0;
 }
@@ -2910,6 +2904,27 @@
   gap: 3px;
 }
 
+.provider-model-effort {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 9px 4px 0;
+  border-top: 1px solid var(--openbot-border);
+  padding-top: 10px;
+  color: var(--openbot-text-secondary);
+  font-size: var(--openbot-text-sm);
+  line-height: 17px;
+}
+
+.provider-model-effort-select {
+  width: 128px;
+}
+
+.provider-model-effort-select .ui-select-trigger {
+  background: var(--openbot-bg-sidebar);
+}
+
 .provider-model-option {
   display: flex;
   width: 100%;
@@ -3000,9 +3015,11 @@
   }
 }
 
+.computer-button-available,
 .computer-button-agent-active {
   border-color: var(--openbot-accent);
   background: var(--openbot-accent-soft);
+  box-shadow: 0 0 10px var(--openbot-accent-strong);
   color: var(--openbot-accent);
 }
 
@@ -3685,6 +3702,121 @@
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   animation: image-generation-shine 2.25s cubic-bezier(0.25, 0.1, 0.25, 1) infinite;
+}
+
+.routine-event-marker {
+  width: min(88%, 640px);
+  min-height: 40px;
+  justify-content: center;
+  margin: 0 auto;
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-sm);
+  line-height: var(--openbot-leading-sm);
+  text-align: center;
+}
+
+.routine-event-content {
+  max-width: 100%;
+  gap: var(--openbot-space-1);
+}
+
+.routine-event-label {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.routine-event-pill {
+  position: relative;
+  box-sizing: border-box;
+  display: inline-flex;
+  min-width: 0;
+  max-width: min(320px, 100%);
+  height: 24px;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: var(--openbot-space-1);
+  border: 0;
+  border-radius: var(--openbot-radius-pill);
+  background: transparent;
+  box-shadow: none;
+  padding: 0 var(--openbot-space-2) 0 var(--openbot-space-1-5);
+  color: var(--openbot-text-secondary);
+  font: inherit;
+  line-height: inherit;
+  outline: none;
+  white-space: nowrap;
+  transition:
+    background-color var(--openbot-duration-normal) var(--openbot-ease-out),
+    box-shadow var(--openbot-duration-normal) var(--openbot-ease-out),
+    color var(--openbot-duration-normal) var(--openbot-ease-out),
+    scale var(--openbot-duration-fast) var(--openbot-ease-out);
+}
+
+.routine-event-pill .ui-marker-icon,
+.routine-event-pill .ui-marker-icon svg {
+  width: var(--openbot-icon-xs);
+  height: var(--openbot-icon-xs);
+}
+
+.routine-event-pill-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transform: translateY(-0.5px);
+  white-space: nowrap;
+}
+
+.routine-event-pill-interactive {
+  cursor: pointer;
+}
+
+.routine-event-pill-interactive::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 40px;
+  min-width: 100%;
+  height: 40px;
+  content: "";
+  translate: -50% -50%;
+}
+
+.routine-event-pill-interactive:hover {
+  background: var(--openbot-bg-control-hover);
+  box-shadow: 0 0 0 1px var(--openbot-border-strong);
+  color: var(--openbot-text-primary);
+}
+
+.routine-event-pill-interactive:focus-visible {
+  background: var(--openbot-bg-control-hover);
+  box-shadow: var(--openbot-focus-ring);
+  color: var(--openbot-text-primary);
+}
+
+.routine-event-pill-interactive:active {
+  background: var(--openbot-bg-control-active);
+  scale: 0.96;
+}
+
+.routine-event-pill-deleted {
+  cursor: default;
+}
+
+.routine-event-pill-deleted:hover,
+.routine-event-pill-deleted:focus-visible {
+  background: var(--openbot-danger-soft);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--openbot-danger) 42%, transparent);
+  color: var(--openbot-danger);
+}
+
+.routine-event-pill-deleted:focus-visible {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--openbot-danger) 55%, transparent),
+    0 0 0 3px var(--openbot-danger-soft);
+}
+
+.routine-event-tooltip::after {
+  content: none;
 }
 
 .exchange-system-row {

@@ -7,7 +7,9 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ### Fixed
 
+- Keep the embedded browser panel closed until requested and prevent repeated toggles from opening duplicate tabs.
 - Restore embedded X sign-in with persistent cookie consent, a compatible browser identity, and current login routing.
+- Flush the embedded browser profile before restarts, system shutdowns, and application updates so authenticated sessions persist.
 
 ## [0.4.0] - 2026-08-30
 

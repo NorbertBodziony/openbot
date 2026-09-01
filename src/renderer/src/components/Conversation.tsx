@@ -1,4 +1,4 @@
-import type { AgentModelId, AgentReasoningEffort, BrowserBounds } from "@openbot/contracts/ipc";
+import type { AgentModelId, AgentProviderId, AgentReasoningEffort, BrowserBounds } from "@openbot/contracts/ipc";
 import { createContext, createSignal, onCleanup, type ParentProps, useContext } from "solid-js";
 import {
   type ComposerDraft,
@@ -25,8 +25,17 @@ function readBrowserPipBounds(): BrowserBounds | null {
 
 interface ConversationResources {
   agentActivityPresentations: Map<string, { activityId: string; presentation: AgentActivityPresentation }>;
-  controlledBrowserBotIds: Set<string>;
-  importTargetBots: Map<string, string>;
+  browserOpenRequests: Map<
+    string,
+    {
+      promise: Promise<void>;
+      serverId: string;
+      botId: string | null;
+      url: string;
+      existingTabIds: Set<string>;
+    }
+  >;
+  importTargetBots: Map<string, { botId: string; serverId: string }>;
   seenMessageIds: Set<string>;
   typingIdleTimer: ReturnType<typeof setTimeout> | undefined;
   typingBotId: string | null;
@@ -36,19 +45,45 @@ interface ConversationResources {
   voiceElapsedTimer: ReturnType<typeof setInterval> | undefined;
   voiceChunks: Blob[];
   voiceBotId: string | undefined;
+  voiceServerId: string | undefined;
+  voiceSubmitRequest:
+    | {
+        botId: string;
+        serverId: string;
+        draft: ComposerDraft;
+        queuedEdit: { deliveryId: string; originalAttachmentIds: string[] } | undefined;
+      }
+    | undefined;
   voiceDisposed: boolean;
   filePreviewRequestGeneration: number;
+  runtimeSettingsSaveTails: Map<string, Promise<boolean>>;
+  runtimeSettingsAttempts: Map<
+    string,
+    {
+      generation: number;
+      pending: boolean;
+      settings: {
+        provider: AgentProviderId;
+        model: AgentModelId;
+        reasoningEffort: AgentReasoningEffort;
+      };
+    }
+  >;
 }
 
 /** @internal Stable owner for renderer state that must survive Conversation view HMR. */
 export function createConversationController(props: Pick<ConversationProps, "onTypingChange">) {
   const [drafts, setDrafts] = createSignal<Record<string, ComposerDraft>>({});
+  const [editingBotId, setEditingBotId] = createSignal<string | null>(null);
+  const [editingServerId, setEditingServerId] = createSignal<string | null>(null);
   const [editingDeliveryId, setEditingDeliveryId] = createSignal<string | null>(null);
   const [editingDraftBackup, setEditingDraftBackup] = createSignal<ComposerDraft | null>(null);
+  const [editingOriginalAttachmentIds, setEditingOriginalAttachmentIds] = createSignal<string[]>([]);
   const [composerFocusRequest, setComposerFocusRequest] = createSignal(0);
   const [showComposerActions, setShowComposerActions] = createSignal(false);
   const [attachmentBusy, setAttachmentBusy] = createSignal(false);
   const [composerError, setComposerError] = createSignal<string | null>(null);
+  const [conversationErrors, setConversationErrors] = createSignal<Record<string, string>>({});
   const [voicePhase, setVoicePhase] = createSignal<"idle" | "preparing" | "requesting" | "recording" | "transcribing">(
     "idle",
   );
@@ -59,6 +94,7 @@ export function createConversationController(props: Pick<ConversationProps, "onT
   const [selectionSending, setSelectionSending] = createSignal(false);
   const [dropActive, setDropActive] = createSignal(false);
   const [rightPanels, setRightPanels] = createSignal<Record<string, RightPanelMode>>({});
+  const [settingsProvider, setSettingsProvider] = createSignal<AgentProviderId>("codex");
   const [settingsModel, setSettingsModel] = createSignal<AgentModelId>("gpt-5.6-luna");
   const [settingsReasoning, setSettingsReasoning] = createSignal<AgentReasoningEffort>("medium");
   const [browserAddress, setBrowserAddress] = createSignal("https://www.google.com");
@@ -81,8 +117,8 @@ export function createConversationController(props: Pick<ConversationProps, "onT
   const [browserPanelWidth, setBrowserPanelWidth] = createSignal(BROWSER_PANEL_DEFAULT);
   const resources: ConversationResources = {
     agentActivityPresentations: new Map(),
-    controlledBrowserBotIds: new Set<string>(),
-    importTargetBots: new Map<string, string>(),
+    browserOpenRequests: new Map(),
+    importTargetBots: new Map<string, { botId: string; serverId: string }>(),
     seenMessageIds: new Set<string>(),
     typingIdleTimer: undefined,
     typingBotId: null,
@@ -92,8 +128,12 @@ export function createConversationController(props: Pick<ConversationProps, "onT
     voiceElapsedTimer: undefined,
     voiceChunks: [],
     voiceBotId: undefined,
+    voiceServerId: undefined,
+    voiceSubmitRequest: undefined,
     voiceDisposed: false,
     filePreviewRequestGeneration: 0,
+    runtimeSettingsSaveTails: new Map(),
+    runtimeSettingsAttempts: new Map(),
   };
 
   onCleanup(() => {
@@ -109,10 +149,16 @@ export function createConversationController(props: Pick<ConversationProps, "onT
   return {
     drafts,
     setDrafts,
+    editingBotId,
+    setEditingBotId,
+    editingServerId,
+    setEditingServerId,
     editingDeliveryId,
     setEditingDeliveryId,
     editingDraftBackup,
     setEditingDraftBackup,
+    editingOriginalAttachmentIds,
+    setEditingOriginalAttachmentIds,
     composerFocusRequest,
     setComposerFocusRequest,
     showComposerActions,
@@ -121,6 +167,8 @@ export function createConversationController(props: Pick<ConversationProps, "onT
     setAttachmentBusy,
     composerError,
     setComposerError,
+    conversationErrors,
+    setConversationErrors,
     voicePhase,
     setVoicePhase,
     voiceModelProgress,
@@ -137,6 +185,8 @@ export function createConversationController(props: Pick<ConversationProps, "onT
     setDropActive,
     rightPanels,
     setRightPanels,
+    settingsProvider,
+    setSettingsProvider,
     settingsModel,
     setSettingsModel,
     settingsReasoning,

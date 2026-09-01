@@ -4,11 +4,23 @@ import type {
   AgentModelOption,
   AgentProviderId,
   AgentProviderStatus,
+  AgentReasoningEffort,
   AgentStatus,
   ProviderRuntimeStatus,
 } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, onSettled, Show, untrack } from "solid-js";
-import { Button, Listbox, Popover, Progress, Tabs } from "./ui";
+import {
+  Button,
+  Listbox,
+  Popover,
+  Progress,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Tabs,
+} from "./ui";
 
 interface ProviderModelPickerProps {
   provider: AgentProviderId;
@@ -18,6 +30,8 @@ interface ProviderModelPickerProps {
   variant?: "pill" | "field";
   ariaLabel?: string;
   label?: string;
+  reasoningEffort?: AgentReasoningEffort;
+  onReasoningEffortChange?: (effort: AgentReasoningEffort) => void;
   disabled?: boolean;
   disabledReason?: string;
   runtimeStatuses?: Partial<Record<AgentProviderId, ProviderRuntimeStatus>>;
@@ -54,7 +68,13 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
   onSettled(() => {
     const closeOnOutsidePointer = (event: PointerEvent) => {
       const target = event.target;
-      if (!open() || (target instanceof Node && root?.contains(target))) return;
+      if (
+        !open() ||
+        (target instanceof Node && root?.contains(target)) ||
+        (target instanceof Element && target.closest(".provider-model-effort-content"))
+      ) {
+        return;
+      }
       setOpen(false);
     };
     window.addEventListener("pointerdown", closeOnOutsidePointer);
@@ -76,7 +96,7 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
 
   function selectModel(model: AgentModelId, provider: AgentProviderId): void {
     if (providerAvailability(props.agentStatus, props.modelOptions, provider).state !== "available") return;
-    setOpen(false);
+    if (!showsReasoningEffort()) setOpen(false);
     props.onChange(model, provider);
   }
 
@@ -86,6 +106,7 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
 
   const triggerModelName = () => displayModelName(selectedModel()?.name, props.value);
   const field = () => props.variant === "field";
+  const showsReasoningEffort = () => props.reasoningEffort !== undefined && props.onReasoningEffortChange !== undefined;
 
   return (
     <div
@@ -293,6 +314,36 @@ export function ProviderModelPicker(props: ProviderModelPickerProps) {
                         }}
                       />
                     </Show>
+                    <Show when={showsReasoningEffort() && provider === props.provider ? selectedModel() : undefined}>
+                      {(model) => (
+                        <div class="provider-model-effort">
+                          <span>Effort</span>
+                          <Select<AgentReasoningEffort>
+                            class="provider-model-effort-select"
+                            options={model().supportedReasoningEfforts}
+                            value={props.reasoningEffort}
+                            onChange={(effort) => {
+                              if (effort && effort !== props.reasoningEffort) {
+                                props.onReasoningEffortChange?.(effort);
+                              }
+                            }}
+                            itemComponent={(item) => (
+                              <SelectItem item={item.item}>{reasoningLabel(item.item.rawValue)}</SelectItem>
+                            )}
+                          >
+                            <SelectTrigger size="sm" aria-label="Agent reasoning effort">
+                              <SelectValue<AgentReasoningEffort>>
+                                {(state) => {
+                                  const effort = state.selectedOption();
+                                  return effort ? reasoningLabel(effort) : "Select effort";
+                                }}
+                              </SelectValue>
+                            </SelectTrigger>
+                            <SelectContent class="provider-model-effort-content" />
+                          </Select>
+                        </div>
+                      )}
+                    </Show>
                   </Tabs.Content>
                 );
               }}
@@ -359,6 +410,11 @@ function providerCliName(provider: AgentProviderId): "Claude Code" | "Codex CLI"
 
 function displayModelName(name: string | undefined, fallback: string): string {
   return name?.replace(/^[\s:–—-]+/, "") || fallback;
+}
+
+function reasoningLabel(effort: AgentReasoningEffort): string {
+  if (effort === "xhigh") return "Extra high";
+  return `${effort.slice(0, 1).toUpperCase()}${effort.slice(1)}`;
 }
 
 function ProviderMark(props: { provider: AgentProviderId; large?: boolean }) {

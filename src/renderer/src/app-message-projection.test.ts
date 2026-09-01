@@ -1,6 +1,7 @@
 import type { BotSummary, ConversationMessage } from "@openbot/contracts/ipc";
+import { routineConversationEventItemType } from "@openbot/contracts/ipc";
 import { describe, expect, it } from "vitest";
-import { botProfilesEqual, readStateForMessages, toBotProfile } from "./app-message-projection";
+import { botProfilesEqual, readStateForMessages, toBotMessage, toBotProfile } from "./app-message-projection";
 
 describe("toBotProfile", () => {
   it("preserves marketplace installation metadata for the renderer", () => {
@@ -65,6 +66,58 @@ describe("readStateForMessages", () => {
     expect(
       readStateForMessages({ unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null }, messages),
     ).toMatchObject({ unreadCount: 1, firstUnreadMessageId: "answer" });
+  });
+
+  it("does not count routine event markers as unread replies", () => {
+    const messages: ConversationMessage[] = [
+      {
+        id: "routine-event",
+        author: "system",
+        source: "system",
+        text: "Morning brief",
+        createdAt: "2026-08-30T11:00:00.000Z",
+        status: "completed",
+        itemType: routineConversationEventItemType("created", "routine-1"),
+      },
+    ];
+
+    expect(
+      readStateForMessages({ unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null }, messages),
+    ).toMatchObject({ unreadCount: 0, firstUnreadMessageId: null });
+  });
+});
+
+describe("toBotMessage", () => {
+  it("removes internal citation markers from completed and streaming agent text", () => {
+    const message = {
+      id: "forecast",
+      author: "assistant",
+      text: "Storms are likely. \u{e200}cite\u{e202}turn0forecast0\u{e201}",
+      createdAt: "2026-08-31T10:00:00.000Z",
+      status: "completed",
+    } satisfies ConversationMessage;
+
+    expect(toBotMessage(message).body).toBe("Storms are likely. ");
+    expect(
+      toBotMessage({ ...message, text: "Storms are likely. \u{e200}cite\u{e202}turn0fore", status: "streaming" }).body,
+    ).toBe("Storms are likely. ");
+  });
+
+  it("projects routine event metadata for the conversation timeline", () => {
+    const message = {
+      id: "routine-event",
+      author: "system",
+      source: "system",
+      text: "Morning brief",
+      createdAt: "2026-08-31T10:00:00.000Z",
+      status: "completed",
+      itemType: routineConversationEventItemType("created", "routine-1"),
+    } satisfies ConversationMessage;
+
+    expect(toBotMessage(message)).toMatchObject({
+      kind: "routine-event",
+      routineEvent: { action: "created", routineId: "routine-1", routineName: "Morning brief" },
+    });
   });
 });
 

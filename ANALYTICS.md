@@ -18,11 +18,11 @@ Every event has these low-cardinality properties:
 
 - `surface`: `desktop`, `desktop_host`, or `landing`;
 - `environment`: currently `production` only;
-- `event_schema_version`: the integer schema generation, currently `2`;
+- `event_schema_version`: the integer schema generation, currently `3`;
 - `app_version` and `platform` on desktop surfaces;
 - `acquisition_source` on landing surfaces: `direct`, `search`, `social`, `github`, or `other`.
 
-Reports must filter to `event_schema_version = 2`. Historical events remain available but must not
+Reports must filter to `event_schema_version = 3`. Historical events remain available but must not
 be mixed into current conversion or reliability metrics.
 
 ## Identity
@@ -31,8 +31,10 @@ be mixed into current conversion or reliability metrics.
 - A local host emits one lifecycle event under its owner's account.
 - Clients observing a remote host do not re-emit host lifecycle.
 - Landing, invitation, and pre-authentication events are anonymous.
-- OpenPanel receives the central account ID as `profileId`. Email is not sent as an analytics profile
-  property.
+- OpenPanel receives the central account ID as `profileId` and the normalized account email as the
+  profile email. Email is not copied into individual event properties.
+- Existing profiles receive their email the next time the production app identifies them. There is
+  no historical backfill.
 - Local IDs for agents, servers, members, messages, threads, turns, files, or deliveries are never
   analytics properties.
 
@@ -73,6 +75,7 @@ lifecycle. A malformed preference fails closed; a missing preference uses the do
 | `voice_transcription` | Is local voice input reliable and fast? | Transcription returned text without sending it to analytics |
 | `reaction_action` | Are reactions used? | Reaction operation completed |
 | `maintenance_action` | Can accounts export data and diagnostics? | Export reported a saved artifact |
+| `screen_view` | Which public website routes are viewed in a session? | One safe view for `/` or `/join`, without a query or hash |
 | `landing_viewed` | How much qualified landing traffic arrives? | Non-automation production page view |
 | `landing_download_clicked` | Which safe channel/placement drives downloads? | Allowlisted download link clicked |
 | `landing_link_clicked` | Which public resources are useful? | Allowlisted public link clicked |
@@ -84,9 +87,10 @@ Payloads are validated at runtime as well as by TypeScript. String enums are all
 version values use bounded safe formats, arrays are filtered and capped, and numeric values reject
 non-finite, negative, or implausibly large inputs. Failure codes are static and allowlisted.
 
-Never send message content, prompts, answers, generated content, search terms, URLs, referrers, file
-names, paths, commands, tokens, invitation values, raw errors, or local identifiers. Session replay
-and automatic interaction capture remain disabled.
+Never send message content, prompts, answers, generated content, search terms, arbitrary URLs,
+referrers, file names, local paths, commands, tokens, invitation values, raw errors, or local
+identifiers. Website screen views use only the fixed paths `/` and `/join`. Session replay and
+automatic interaction capture remain disabled.
 
 ## Required dashboards
 
@@ -95,15 +99,20 @@ and automatic interaction capture remain disabled.
 2. Activation: app opened, onboarding completed, provider available, agent created, message sent,
    and first successful user-originated turn.
 3. Retention: W1 and W4 return to another successful user-originated turn.
-4. Growth: landing view to download and invitation view to open/download, segmented only by coarse
-   acquisition source, placement, and platform.
+4. Growth: landing view to download and invitation view to open/download, plus engaged sessions that
+   contain a download click, an allowlisted public-link click, or an invitation open/download action;
+   segment only by coarse acquisition source, placement, and platform.
 5. Reliability: failed outcomes, safe failure codes, P90/P99 durations, and update/provider health.
 
-Every dashboard must filter by the intended `surface` and `event_schema_version = 2`.
+Every dashboard must filter by the intended `surface` and `event_schema_version = 3`. Website bounce
+uses OpenPanel's standard single-`screen_view` definition. Do not emit synthetic screen views to
+change it; use the engaged-session report for meaningful landing activity.
 
 ## Quality checks
 
 - Anonymous SDK requests must not contain `profileId` after any account was identified.
+- Every identified profile request contains the central account ID and normalized email.
+- Website `screen_view` events contain only `/` or `/join` and never an invitation query or hash.
 - A duplicate host turn start produces one `system_turn_started` event.
 - A known stored turn origin wins over a completion payload whose origin is `unknown`.
 - `system_turn_completed` never exceeds starts for the same reporting window without a documented

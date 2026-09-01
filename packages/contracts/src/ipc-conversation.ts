@@ -523,9 +523,9 @@ export interface ImportAttachmentsInput {
 }
 
 export type AttachmentImportEvent =
-  | { type: "started"; requestId: string }
-  | { type: "completed"; requestId: string; attachments: DraftAttachment[] }
-  | { type: "error"; requestId: string; message: string };
+  | { type: "started"; requestId: string; serverId: string }
+  | { type: "completed"; requestId: string; serverId: string; attachments: DraftAttachment[] }
+  | { type: "error"; requestId: string; serverId: string; message: string };
 
 export interface OpenAttachmentInput {
   attachmentId: string;
@@ -628,6 +628,45 @@ export interface ConversationMessage {
     scheduledFor: string;
   };
   questionPrompt?: ConversationQuestionPrompt;
+}
+
+export const ROUTINE_EVENT_ITEM_TYPE_PREFIX = "routine-event:";
+
+export type RoutineConversationEventAction = "created" | "updated" | "deleted";
+
+export interface RoutineConversationEvent {
+  action: RoutineConversationEventAction;
+  routineId: string;
+  routineName: string;
+}
+
+export function routineConversationEventItemType(action: RoutineConversationEventAction, routineId: string): string {
+  if (!isIdentifier(routineId)) throw new Error("A valid routine id is required.");
+  const itemType = `${ROUTINE_EVENT_ITEM_TYPE_PREFIX}${action}:${routineId}`;
+  if (itemType.length > INPUT_LIMITS.identifier) throw new Error("The routine event item type is too long.");
+  return itemType;
+}
+
+export function parseRoutineConversationEventItemType(
+  itemType: string | undefined,
+): Pick<RoutineConversationEvent, "action" | "routineId"> | null {
+  if (!itemType?.startsWith(ROUTINE_EVENT_ITEM_TYPE_PREFIX)) return null;
+  const separator = itemType.indexOf(":", ROUTINE_EVENT_ITEM_TYPE_PREFIX.length);
+  if (separator < 0) return null;
+  const action = itemType.slice(ROUTINE_EVENT_ITEM_TYPE_PREFIX.length, separator);
+  const routineId = itemType.slice(separator + 1);
+  if ((action !== "created" && action !== "updated" && action !== "deleted") || !isIdentifier(routineId)) {
+    return null;
+  }
+  return { action, routineId };
+}
+
+export function routineConversationEvent(message: ConversationMessage): RoutineConversationEvent | null {
+  if (message.author !== "system" || message.source !== "system" || message.status !== "completed") return null;
+  const event = parseRoutineConversationEventItemType(message.itemType);
+  const routineName = message.text.trim();
+  if (!event || !routineName || routineName.length > INPUT_LIMITS.routineName) return null;
+  return { ...event, routineName };
 }
 
 function isAgentPromptQuestion(value: unknown): value is AgentPromptQuestion {

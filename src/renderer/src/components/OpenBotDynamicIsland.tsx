@@ -44,6 +44,7 @@ import {
   Check,
   DynamicIsland,
   DynamicIslandIdentity,
+  type DynamicIslandNotchSize,
   type DynamicIslandStateChangeReason,
   type DynamicIslandViewState,
   ExternalLink,
@@ -58,6 +59,7 @@ export interface OpenBotDynamicIslandProps {
   presentation: DynamicIslandPresentation;
   state: DynamicIslandViewState;
   displayMode?: "notch" | "island";
+  notchSize?: DynamicIslandNotchSize;
   extendedHoverArea?: boolean;
   suppressInitialHover?: boolean;
   onStateChange: (state: DynamicIslandViewState, reason: DynamicIslandStateChangeReason) => void;
@@ -230,7 +232,10 @@ const OPENBOT_ISLAND_MODE_CONFIG: Record<DynamicIslandPresentation["mode"], Open
   },
 };
 
-function compactStatusGeometry(presentation: DynamicIslandPresentation): StatusCompactGeometry | undefined {
+function compactStatusGeometry(
+  presentation: DynamicIslandPresentation,
+  physicalNotchWidth = STATUS_COMPACT_NOTCH_WIDTH,
+): StatusCompactGeometry | undefined {
   const mode = statusMode(presentation.mode);
   if (!mode) return undefined;
 
@@ -256,10 +261,11 @@ function compactStatusGeometry(presentation: DynamicIslandPresentation): StatusC
     : workingAvatarStackWidth;
   const notchLeadingWidth = STATUS_COMPACT_NOTCH_EDGE_PADDING + notchLeadingContentWidth;
   const notchTrailingWidth = STATUS_COMPACT_NOTCH_EDGE_PADDING + badgeWidth;
+  const notchWidthDelta = physicalNotchWidth - STATUS_COMPACT_NOTCH_WIDTH;
   const notchWidth = clampCompactWidth(
-    STATUS_COMPACT_NOTCH_WIDTH + 2 * Math.max(notchLeadingWidth, notchTrailingWidth),
-    STATUS_COMPACT_NOTCH_MIN_WIDTH,
-    STATUS_COMPACT_BASE_WIDTH.notch,
+    physicalNotchWidth + 2 * Math.max(notchLeadingWidth, notchTrailingWidth),
+    STATUS_COMPACT_NOTCH_MIN_WIDTH + notchWidthDelta,
+    STATUS_COMPACT_BASE_WIDTH.notch + notchWidthDelta,
   );
   const islandSideWidth = Math.max(islandLeadingContentWidth, badgeWidth);
   const islandWidth = clampCompactWidth(
@@ -328,7 +334,7 @@ export function OpenBotDynamicIsland(props: OpenBotDynamicIslandProps): JSX.Elem
   let modeTransitionVersion = 0;
   let modeTransitionFrame: number | undefined;
   let modeTransitionDisposed = false;
-  const compactGeometry = createMemo(() => compactStatusGeometry(compactLayoutPresentation()));
+  const compactGeometry = createMemo(() => compactStatusGeometry(compactLayoutPresentation(), props.notchSize?.width));
   const compactWidth = () => {
     const geometry = compactGeometry();
     if (!geometry) return undefined;
@@ -467,6 +473,7 @@ export function OpenBotDynamicIsland(props: OpenBotDynamicIslandProps): JSX.Elem
         ariaLive={config().ariaLive}
         state={props.state}
         displayMode={props.displayMode}
+        notchSize={props.notchSize}
         extendedHoverArea={props.extendedHoverArea}
         suppressInitialHover={props.suppressInitialHover}
         onStateChange={changeState}

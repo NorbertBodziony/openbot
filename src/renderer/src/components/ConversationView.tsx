@@ -9,6 +9,7 @@ import type {
   AgentModelId,
   AgentModelOption,
   AgentProviderId,
+  AgentReasoningEffort,
   AgentStatus,
   AttachmentSummary,
   AvatarImageInput,
@@ -54,6 +55,7 @@ import {
   nextAgentActivityPresentation,
   ThinkingDisclosure,
 } from "./conversation/AgentActivity";
+import type { AgentRuntimeSettings, AgentRuntimeSettingsPatch } from "./conversation/AgentSettingsPanel";
 import { AttachmentCards, fileBadge, formatFileSize } from "./conversation/AttachmentCards";
 import { attachmentReferenceTone } from "./conversation/AttachmentReference";
 import { ChatSearch } from "./conversation/ChatSearch";
@@ -74,6 +76,7 @@ import { calculateChatScrollMargin, createChatVirtualizer } from "./conversation
 import { messageContentBlocks } from "./conversation/DataTable";
 import { ScrollToLatestButton, scrollToLatestMessage } from "./conversation/MessageNavigation";
 import { ExchangeSystemRow, MessageActions, MessageBody } from "./conversation/MessageRendering";
+import { RoutineEventMarker } from "./conversation/RoutineEventMarker";
 import { MessageSelectionActions } from "./conversation/SelectionActions";
 import {
   scrollToUnreadBoundary,
@@ -152,6 +155,24 @@ interface RoutineSettingsRequest {
   nonce: number;
 }
 
+function runtimeSettingsEqual(left: AgentRuntimeSettings, right: AgentRuntimeSettings): boolean {
+  return (
+    left.provider === right.provider && left.model === right.model && left.reasoningEffort === right.reasoningEffort
+  );
+}
+
+function isCompleteRuntimeSettingsPatch(updates: AgentRuntimeSettingsPatch): updates is AgentRuntimeSettings {
+  return "provider" in updates && "model" in updates;
+}
+
+function canonicalBrowserUrl(url: string): string {
+  try {
+    return new URL(url).toString();
+  } catch {
+    return url;
+  }
+}
+
 function rendererDuration(property: string, fallback: number): number {
   if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return 0;
   const value = getComputedStyle(document.documentElement).getPropertyValue(property).trim();
@@ -174,6 +195,11 @@ function agentActivityExitDelay(): number {
 
 function followConversationBottom(element: HTMLDivElement): void {
   element.scrollTop = element.scrollHeight;
+}
+
+interface ConversationTarget {
+  botId: string;
+  serverId: string;
 }
 
 export interface ConversationProps {
@@ -215,7 +241,12 @@ export interface ConversationProps {
   onSelectAgent: (botId: string) => void;
   onUpdateBot: (botId: string, updates: Omit<UpdateBotInput, "botId">) => Promise<void>;
   onSetAgentAvatar: (botId: string, image: AvatarImageInput | null) => Promise<void>;
-  onSendMessage: (body: string, attachmentDraftIds: string[], replyToMessageId: string | null) => Promise<boolean>;
+  onSendMessage: (
+    body: string,
+    attachmentDraftIds: string[],
+    replyToMessageId: string | null,
+    target?: ConversationTarget,
+  ) => Promise<boolean>;
   onMarkRead: () => Promise<void>;
   onLoadOlder?: () => void;
   onLoadLatest?: () => Promise<void>;
@@ -233,6 +264,7 @@ export interface ConversationProps {
     text: string,
     keepAttachmentIds: string[],
     attachmentDraftIds: string[],
+    target?: ConversationTarget,
   ) => Promise<boolean>;
   onReorderQueue: (deliveryIds: string[]) => void;
   onActivateBrowserTab: (tabId: string) => void;
@@ -274,6 +306,18 @@ const EMPTY_DRAFT: ComposerDraft = {
   attachments: [],
   replyToMessageId: null,
 };
+
+function copyComposerDraft(draft: ComposerDraft): ComposerDraft {
+  return {
+    text: draft.text,
+    attachments: [...draft.attachments],
+    replyToMessageId: draft.replyToMessageId,
+  };
+}
+
+function composerDraftKey(target: ConversationTarget): string {
+  return target.serverId === "local" ? target.botId : `${target.serverId}:${target.botId}`;
+}
 const SETTINGS_PANEL_MIN = 180;
 const SETTINGS_PANEL_MAX = 1600;
 const BROWSER_PANEL_DEFAULT_RATIO = 0.5;
@@ -286,10 +330,16 @@ function createConversationViewScope(props: ConversationProps) {
   const {
     drafts,
     setDrafts,
+    editingBotId,
+    setEditingBotId,
+    editingServerId,
+    setEditingServerId,
     editingDeliveryId,
     setEditingDeliveryId,
     editingDraftBackup,
     setEditingDraftBackup,
+    editingOriginalAttachmentIds,
+    setEditingOriginalAttachmentIds,
     composerFocusRequest,
     setComposerFocusRequest,
     showComposerActions,
@@ -298,6 +348,8 @@ function createConversationViewScope(props: ConversationProps) {
     setAttachmentBusy,
     composerError,
     setComposerError,
+    conversationErrors,
+    setConversationErrors,
     voicePhase,
     setVoicePhase,
     voiceModelProgress,
@@ -314,6 +366,8 @@ function createConversationViewScope(props: ConversationProps) {
     setDropActive,
     rightPanels,
     setRightPanels,
+    settingsProvider,
+    setSettingsProvider,
     settingsModel,
     setSettingsModel,
     settingsReasoning,
@@ -360,9 +414,23 @@ function createConversationViewScope(props: ConversationProps) {
   let routineSettingsRequestNonce = 0;
   let imageAttachmentPicker: HTMLInputElement | undefined;
   let contextAttachmentPicker: HTMLInputElement | undefined;
+  const currentTarget = (): ConversationTarget | undefined => {
+    const botId = props.bot?.id;
+    return botId ? { botId, serverId: props.server?.id ?? "local" } : undefined;
+  };
+  const currentEditingDeliveryId = createMemo(() => {
+    const target = currentTarget();
+    return target && editingBotId() === target.botId && editingServerId() === target.serverId
+      ? editingDeliveryId()
+      : null;
+  });
   const currentDraft = createMemo(() => {
-    const id = props.bot?.id;
-    return id ? (drafts()[id] ?? EMPTY_DRAFT) : EMPTY_DRAFT;
+    const target = currentTarget();
+    return target ? (drafts()[composerDraftKey(target)] ?? EMPTY_DRAFT) : EMPTY_DRAFT;
+  });
+  const currentConversationError = createMemo(() => {
+    const target = currentTarget();
+    return target ? (conversationErrors()[composerDraftKey(target)] ?? null) : null;
   });
   const unreferencedDraftAttachments = createMemo(() => {
     const referencedIds = attachmentReferenceIds(currentDraft().text);
@@ -393,6 +461,20 @@ function createConversationViewScope(props: ConversationProps) {
       tab.ownerBotId ? tab.ownerBotId === bot.id : Boolean(bot.threadId && tab.ownerThreadId === bot.threadId),
     );
   });
+  createEffect(
+    () => browserTabs().map((tab) => ({ id: tab.id, url: tab.url })),
+    (tabs) => {
+      const serverId = props.server?.id ?? "local";
+      const botId = props.bot?.id ?? null;
+      for (const [requestKey, request] of resources.browserOpenRequests) {
+        if (request.serverId !== serverId || request.botId !== botId) continue;
+        const tabAppeared = tabs.some(
+          (tab) => canonicalBrowserUrl(tab.url) === request.url && !request.existingTabIds.has(tab.id),
+        );
+        if (tabAppeared) resources.browserOpenRequests.delete(requestKey);
+      }
+    },
+  );
   const activeBrowserTab = createMemo(
     () => browserTabs().find((tab) => tab.id === props.activeBrowserTabId) ?? browserTabs()[0],
   );
@@ -734,7 +816,7 @@ function createConversationViewScope(props: ConversationProps) {
   let chatSearchRequest = 0;
   let lastChatSearchQuery = "";
   let stickToLatest = true;
-  let lastConversationBotId: string | undefined;
+  let lastConversationIdentity: string | undefined;
   let lastPanelBotId: string | undefined;
   let lastHandledSettingsRequestNonce: number | undefined;
   let lastHandledMessageFocusNonce: number | undefined;
@@ -817,6 +899,78 @@ function createConversationViewScope(props: ConversationProps) {
     }
   }
 
+  async function saveRuntimeSettings(
+    settings: AgentRuntimeSettings,
+    updates: AgentRuntimeSettingsPatch,
+    errorMessage: string | null,
+    targetBotId = props.bot?.id,
+  ): Promise<boolean> {
+    const botId = targetBotId;
+    if (!botId) return false;
+    const previousAttempt = resources.runtimeSettingsAttempts.get(botId);
+    const generation = (previousAttempt?.generation ?? 0) + 1;
+    resources.runtimeSettingsAttempts.set(botId, { generation, pending: true, settings });
+    if (errorMessage) setComposerError(null);
+
+    const previousSave = resources.runtimeSettingsSaveTails.get(botId);
+    let releaseSave!: (baseValid: boolean) => void;
+    const saveTail = new Promise<boolean>((resolve) => {
+      releaseSave = resolve;
+    });
+    resources.runtimeSettingsSaveTails.set(botId, saveTail);
+    let saved: boolean;
+    let baseValid = true;
+    try {
+      if (previousSave) baseValid = await previousSave;
+      const completePatch = isCompleteRuntimeSettingsPatch(updates);
+      saved = baseValid || completePatch ? await saveBotPatch(updates, botId) : false;
+      if (completePatch) baseValid = saved;
+    } finally {
+      releaseSave(baseValid);
+      if (resources.runtimeSettingsSaveTails.get(botId) === saveTail) {
+        resources.runtimeSettingsSaveTails.delete(botId);
+      }
+    }
+    const latestAttempt = resources.runtimeSettingsAttempts.get(botId);
+    if (latestAttempt?.generation !== generation) return true;
+    latestAttempt.pending = false;
+    if (saved) {
+      const activeBot = props.bot;
+      if (activeBot?.id === botId) {
+        setSettingsProvider(activeBot.provider);
+        setSettingsModel(activeBot.model);
+        setSettingsReasoning(activeBot.reasoningEffort);
+      }
+      return true;
+    }
+
+    const activeBot = props.bot;
+    const currentSettings = {
+      provider: settingsProvider(),
+      model: settingsModel(),
+      reasoningEffort: settingsReasoning(),
+    };
+    if (activeBot?.id !== botId || !runtimeSettingsEqual(currentSettings, settings)) return false;
+    setSettingsProvider(activeBot.provider);
+    setSettingsModel(activeBot.model);
+    setSettingsReasoning(activeBot.reasoningEffort);
+    if (errorMessage) setComposerError(errorMessage);
+    return false;
+  }
+
+  async function updateRuntimeSettings(
+    botId: string,
+    settings: AgentRuntimeSettings,
+    updates: AgentRuntimeSettingsPatch,
+  ): Promise<boolean> {
+    if (props.bot?.id === botId) {
+      setSettingsProvider(settings.provider);
+      setSettingsModel(settings.model);
+      setSettingsReasoning(settings.reasoningEffort);
+    }
+    return saveRuntimeSettings(settings, updates, null, botId);
+  }
+
   async function selectModel(
     model: AgentModelId,
     provider: AgentProviderId,
@@ -828,22 +982,33 @@ function createConversationViewScope(props: ConversationProps) {
     const reasoningEffort = option.supportedReasoningEfforts.includes(settingsReasoning())
       ? settingsReasoning()
       : option.defaultReasoningEffort;
-    const previousModel = settingsModel();
-    const previousReasoning = settingsReasoning();
+    setSettingsProvider(provider);
     setSettingsModel(model);
     setSettingsReasoning(reasoningEffort);
     if (!persist) return true;
-    if (reportComposerError) setComposerError(null);
-    const saved = await saveBotPatch({ provider, model, reasoningEffort });
-    if (saved) return true;
-    setSettingsModel(previousModel);
-    setSettingsReasoning(previousReasoning);
-    if (reportComposerError) setComposerError("Could not change model. Try again.");
-    return false;
+    return saveRuntimeSettings(
+      { provider, model, reasoningEffort },
+      { provider, model, reasoningEffort },
+      reportComposerError ? "Could not change model. Try again." : null,
+    );
   }
 
   async function selectAndConfirmModel(model: AgentModelId, provider: AgentProviderId): Promise<void> {
     await selectModel(model, provider, true, true);
+  }
+
+  async function selectAndConfirmReasoning(effort: AgentReasoningEffort): Promise<void> {
+    const option = props.modelOptions.find(
+      (candidate) => candidate.provider === settingsProvider() && candidate.id === settingsModel(),
+    );
+    if (!option?.supportedReasoningEfforts.includes(effort)) return;
+    const settings = {
+      provider: settingsProvider(),
+      model: settingsModel(),
+      reasoningEffort: effort,
+    };
+    setSettingsReasoning(effort);
+    await saveRuntimeSettings(settings, { reasoningEffort: effort }, "Could not change effort. Try again.");
   }
 
   function updateScrollFade(element = scrollElement) {
@@ -885,17 +1050,63 @@ function createConversationViewScope(props: ConversationProps) {
   };
 
   const updateCurrentDraft = (patch: Partial<ComposerDraft>) => {
-    const id = props.bot?.id;
-    if (!id) return;
+    const target = currentTarget();
+    if (!target) return;
+    clearConversationError(target);
+    const key = composerDraftKey(target);
     setDrafts((current) => ({
       ...current,
-      [id]: { ...(current[id] ?? EMPTY_DRAFT), ...patch },
+      [key]: { ...(current[key] ?? EMPTY_DRAFT), ...patch },
     }));
   };
 
+  function clearSubmittedDraft(target: ConversationTarget, submitted: ComposerDraft): void {
+    const key = composerDraftKey(target);
+    const submittedAttachmentIds = new Set(submitted.attachments.map((attachment) => attachment.id));
+    setDrafts((current) => {
+      const draft = current[key] ?? EMPTY_DRAFT;
+      const next: ComposerDraft = {
+        text: draft.text === submitted.text ? "" : draft.text,
+        attachments: draft.attachments.filter((attachment) => !submittedAttachmentIds.has(attachment.id)),
+        replyToMessageId: draft.replyToMessageId === submitted.replyToMessageId ? null : draft.replyToMessageId,
+      };
+      return { ...current, [key]: next };
+    });
+  }
+
+  function clearConversationError(target: ConversationTarget): void {
+    const key = composerDraftKey(target);
+    setConversationErrors((current) => {
+      const { [key]: _removed, ...next } = current;
+      return next;
+    });
+  }
+
+  function setConversationError(target: ConversationTarget, message: string): void {
+    setConversationErrors((current) => ({
+      ...current,
+      [composerDraftKey(target)]: message,
+    }));
+  }
+
+  function restoreVoiceTranscript(target: ConversationTarget, transcript: string): void {
+    const key = composerDraftKey(target);
+    setDrafts((current) => {
+      const draft = current[key] ?? EMPTY_DRAFT;
+      return {
+        ...current,
+        [key]: { ...draft, text: appendVoiceTranscript(draft.text, transcript) },
+      };
+    });
+  }
+
   async function startVoiceRecording(): Promise<void> {
     const botId = props.bot?.id;
+    const serverId = props.server?.id ?? "local";
     if (!botId || voicePhase() !== "idle") return;
+    const target = { botId, serverId };
+    clearConversationError(target);
+    resources.voiceSubmitRequest = undefined;
     setComposerError(null);
     setVoicePhase("preparing");
     setVoiceModelProgress(0);
@@ -905,7 +1116,7 @@ function createConversationViewScope(props: ConversationProps) {
       if (modelStatus.phase !== "ready") {
         setVoicePhase("idle");
         setVoiceModelProgress(null);
-        setComposerError(modelStatus.message ?? "Could not prepare the voice model.");
+        setConversationError(target, modelStatus.message ?? "Could not prepare the voice model.");
         return;
       }
       setVoicePhase("requesting");
@@ -919,6 +1130,7 @@ function createConversationViewScope(props: ConversationProps) {
       resources.voiceStream = stream;
       resources.voiceRecorder = recorder;
       resources.voiceBotId = botId;
+      resources.voiceServerId = serverId;
       resources.voiceChunks = [];
       recorder.addEventListener("dataavailable", (event) => {
         if (event.data.size > 0) resources.voiceChunks.push(event.data);
@@ -930,7 +1142,7 @@ function createConversationViewScope(props: ConversationProps) {
       resources.voiceRecordingTimer = setTimeout(stopVoiceRecording, VOICE_AUDIO_LIMITS.maximumSeconds * 1_000);
     } catch (error) {
       setVoicePhase("idle");
-      setComposerError(voiceCaptureError(error));
+      setConversationError(target, voiceCaptureError(error));
     }
   }
 
@@ -952,11 +1164,15 @@ function createConversationViewScope(props: ConversationProps) {
 
   async function finishVoiceRecording(mimeType: string): Promise<void> {
     const targetBotId = resources.voiceBotId;
+    const targetServerId = resources.voiceServerId;
     const chunks = resources.voiceChunks;
+    const submitRequest = resources.voiceSubmitRequest;
     resources.voiceRecorder = undefined;
     resources.voiceBotId = undefined;
+    resources.voiceServerId = undefined;
     resources.voiceChunks = [];
-    if (!targetBotId || resources.voiceDisposed) return;
+    resources.voiceSubmitRequest = undefined;
+    if (!targetBotId || !targetServerId || resources.voiceDisposed) return;
     const analytics = desktopAnalytics.scope();
     const audioDurationSeconds = voiceElapsedSeconds();
     const startedAt = performance.now();
@@ -970,15 +1186,34 @@ function createConversationViewScope(props: ConversationProps) {
         audio_duration_seconds: audioDurationSeconds,
         duration_ms: Math.max(0, Math.round(performance.now() - startedAt)),
       });
-      if (resources.voiceDisposed || !props.bots.some((bot) => bot.id === targetBotId)) return;
-      setDrafts((current) => {
-        const draft = current[targetBotId] ?? EMPTY_DRAFT;
-        return {
-          ...current,
-          [targetBotId]: { ...draft, text: appendVoiceTranscript(draft.text, result.text) },
-        };
-      });
-      if (props.bot?.id === targetBotId) setComposerFocusRequest((current) => current + 1);
+      if (resources.voiceDisposed) return;
+      const recordingTarget = { botId: targetBotId, serverId: targetServerId };
+      clearConversationError(recordingTarget);
+      const draft = submitRequest?.draft ?? drafts()[composerDraftKey(recordingTarget)] ?? EMPTY_DRAFT;
+      const transcribedDraft = { ...draft, text: appendVoiceTranscript(draft.text, result.text) };
+      if (submitRequest) {
+        const target = { botId: submitRequest.botId, serverId: submitRequest.serverId };
+        let delivered: boolean;
+        if (submitRequest.queuedEdit) {
+          delivered = await saveQueuedMessageEdit(
+            transcribedDraft,
+            {
+              ...target,
+              ...submitRequest.queuedEdit,
+            },
+            submitRequest.draft,
+          );
+        } else {
+          delivered = await submitMessage(transcribedDraft, target, submitRequest.draft);
+        }
+        if (!delivered) restoreVoiceTranscript(target, result.text);
+      } else {
+        const key = composerDraftKey(recordingTarget);
+        setDrafts((current) => ({ ...current, [key]: transcribedDraft }));
+        if (props.bot?.id === targetBotId && (props.server?.id ?? "local") === targetServerId) {
+          setComposerFocusRequest((current) => current + 1);
+        }
+      }
     } catch (error) {
       analytics.track("voice_transcription", {
         result: "failed",
@@ -986,7 +1221,13 @@ function createConversationViewScope(props: ConversationProps) {
         duration_ms: Math.max(0, Math.round(performance.now() - startedAt)),
         failure_code: "transcription_failed",
       });
-      if (!resources.voiceDisposed && props.bot?.id === targetBotId) setComposerError(voiceTranscriptionError(error));
+      if (!resources.voiceDisposed) {
+        const target = { botId: targetBotId, serverId: targetServerId };
+        setConversationErrors((current) => ({
+          ...current,
+          [composerDraftKey(target)]: voiceTranscriptionError(error),
+        }));
+      }
     } finally {
       if (!resources.voiceDisposed) setVoicePhase("idle");
     }
@@ -1014,23 +1255,32 @@ function createConversationViewScope(props: ConversationProps) {
   onSettled(() => {
     const unsubscribeImport = window.openbot.agent.onAttachmentImport((event) => {
       if (event.type === "started") {
-        const botId = props.bot?.id;
-        if (botId) resources.importTargetBots.set(event.requestId, botId);
+        const target = currentTarget();
+        if (target?.serverId === event.serverId) {
+          resources.importTargetBots.set(event.requestId, target);
+          clearConversationError(target);
+        }
         setAttachmentBusy(true);
         setComposerError(null);
       } else if (event.type === "error") {
+        const target = resources.importTargetBots.get(event.requestId);
         resources.importTargetBots.delete(event.requestId);
         setAttachmentBusy(false);
-        setComposerError(event.message);
+        if (target) {
+          setConversationErrors((current) => ({
+            ...current,
+            [composerDraftKey(target)]: event.message,
+          }));
+        }
       } else {
         setAttachmentBusy(false);
-        const botId = resources.importTargetBots.get(event.requestId);
+        const target = resources.importTargetBots.get(event.requestId);
         resources.importTargetBots.delete(event.requestId);
-        if (botId && props.bots.some((bot) => bot.id === botId)) {
-          addAttachments(event.attachments, botId);
+        if (target) {
+          addAttachments(event.attachments, target);
         } else {
           for (const attachment of event.attachments) {
-            void window.openbot.agent.discardDraftAttachment(attachment.id);
+            void window.openbot.agent.discardDraftAttachment(attachment.id, event.serverId);
           }
         }
       }
@@ -1042,7 +1292,7 @@ function createConversationViewScope(props: ConversationProps) {
         closeChatSearch();
         return;
       }
-      if (editingDeliveryId()) {
+      if (currentEditingDeliveryId()) {
         cancelQueuedMessageEdit();
         return;
       }
@@ -1232,6 +1482,7 @@ function createConversationViewScope(props: ConversationProps) {
       const lastMessage = props.messages[props.messages.length - 1];
       return {
         botId: props.bot?.id,
+        serverId: props.server?.id ?? "local",
         activeTurnId: props.activeTurnId,
         queueSignature: props.queue?.deliveries.map((delivery) => `${delivery.id}:${delivery.status}`).join("|"),
         lastMessageBody: lastMessage?.body,
@@ -1244,15 +1495,14 @@ function createConversationViewScope(props: ConversationProps) {
         unreadCount: props.unreadCount,
       };
     },
-    ({ botId, unreadCount }) => {
+    ({ botId, serverId, unreadCount }) => {
       currentUnreadCount = unreadCount;
-      if (botId !== lastConversationBotId) {
-        if (lastConversationBotId !== undefined) closeChatSearch(false);
-        lastConversationBotId = botId;
+      const conversationIdentity = `${serverId}:${botId ?? ""}`;
+      if (conversationIdentity !== lastConversationIdentity) {
+        if (lastConversationIdentity !== undefined) closeChatSearch(false);
+        lastConversationIdentity = conversationIdentity;
         stickToLatest = true;
         setAgentActivitySpaceReserved(false);
-        setEditingDeliveryId(null);
-        setEditingDraftBackup(null);
       }
       if (latestScrollFrame !== undefined) cancelAnimationFrame(latestScrollFrame);
       if (latestScrollSettleFrame !== undefined) cancelAnimationFrame(latestScrollSettleFrame);
@@ -1288,14 +1538,31 @@ function createConversationViewScope(props: ConversationProps) {
       const bot = props.bot;
       if (!bot) return null;
       return {
-        signature: [bot.id, bot.model, bot.reasoningEffort].join("\u0000"),
+        signature: [bot.id, bot.provider, bot.model, bot.reasoningEffort].join("\u0000"),
+        provider: bot.provider,
         model: bot.model,
         reasoningEffort: bot.reasoningEffort,
       };
     },
     (bot) => {
-      if (!bot || bot.signature === lastRuntimeSettingsSignature) return;
+      if (!bot) return;
+      const pendingSettings = resources.runtimeSettingsAttempts.get(props.bot?.id ?? "");
+      if (
+        pendingSettings?.pending &&
+        !runtimeSettingsEqual(pendingSettings.settings, {
+          provider: bot.provider,
+          model: bot.model,
+          reasoningEffort: bot.reasoningEffort,
+        })
+      ) {
+        setSettingsProvider(pendingSettings.settings.provider);
+        setSettingsModel(pendingSettings.settings.model);
+        setSettingsReasoning(pendingSettings.settings.reasoningEffort);
+        return;
+      }
+      if (bot.signature === lastRuntimeSettingsSignature) return;
       lastRuntimeSettingsSignature = bot.signature;
+      setSettingsProvider(bot.provider);
       setSettingsModel(bot.model);
       setSettingsReasoning(bot.reasoningEffort);
     },
@@ -1346,33 +1613,6 @@ function createConversationViewScope(props: ConversationProps) {
       if (screenOpen && activeTab && activeTab.id !== activeBrowserTabId) {
         onActivateBrowserTab(activeTab.id);
       }
-    },
-  );
-
-  createEffect(
-    () =>
-      new Set(
-        props.browserControlState.sessions
-          .map((session) => props.bots.find((bot) => bot.threadId === session.threadId)?.id)
-          .filter((botId): botId is string => Boolean(botId)),
-      ),
-    (controlledBotIds) => {
-      if (props.browserEnabled === false) return;
-      const newlyControlledBotIds = [...controlledBotIds].filter(
-        (botId) => !resources.controlledBrowserBotIds.has(botId),
-      );
-      resources.controlledBrowserBotIds = controlledBotIds;
-      if (newlyControlledBotIds.length === 0) return;
-      setRightPanels((current) => {
-        const next = { ...current };
-        let changed = false;
-        for (const botId of newlyControlledBotIds) {
-          if (next[botId] === "browser" || next[botId] === "browser-pip") continue;
-          next[botId] = "browser";
-          changed = true;
-        }
-        return changed ? next : current;
-      });
     },
   );
 
@@ -1499,18 +1739,20 @@ function createConversationViewScope(props: ConversationProps) {
     resources.typingBotId = null;
   }
 
-  function addAttachments(selected: DraftAttachment[], botId = props.bot?.id) {
-    if (!botId) return;
-    const draft = drafts()[botId] ?? EMPTY_DRAFT;
+  function addAttachments(selected: DraftAttachment[], target = currentTarget()) {
+    if (!target) return;
+    clearConversationError(target);
+    const key = composerDraftKey(target);
+    const draft = drafts()[key] ?? EMPTY_DRAFT;
     const available = Math.max(0, 10 - draft.attachments.length);
     const accepted = selected.slice(0, available);
     for (const attachment of selected.slice(available)) {
-      void window.openbot.agent.discardDraftAttachment(attachment.id);
+      void window.openbot.agent.discardDraftAttachment(attachment.id, target.serverId);
     }
     setDrafts((current) => ({
       ...current,
-      [botId]: {
-        ...(current[botId] ?? EMPTY_DRAFT),
+      [key]: {
+        ...(current[key] ?? EMPTY_DRAFT),
         attachments: [...draft.attachments, ...accepted],
       },
     }));
@@ -1533,16 +1775,22 @@ function createConversationViewScope(props: ConversationProps) {
 
   function editQueuedMessage(delivery: QueueDelivery) {
     const botId = props.bot?.id;
+    const serverId = props.server?.id ?? "local";
     if (!botId || delivery.status !== "queued") return;
+    if (editingDeliveryId()) cancelQueuedMessageEdit();
+    clearConversationError({ botId, serverId });
+    setEditingBotId(botId);
+    setEditingServerId(serverId);
     setEditingDraftBackup({
       text: currentDraft().text,
       attachments: [...currentDraft().attachments],
       replyToMessageId: currentDraft().replyToMessageId,
     });
+    setEditingOriginalAttachmentIds(delivery.attachments.map((attachment) => attachment.id));
     setEditingDeliveryId(delivery.id);
     setDrafts((current) => ({
       ...current,
-      [botId]: {
+      [composerDraftKey({ botId, serverId })]: {
         text: delivery.text,
         attachments: [...delivery.attachments],
         replyToMessageId: delivery.replyToMessageId,
@@ -1554,61 +1802,88 @@ function createConversationViewScope(props: ConversationProps) {
   }
 
   function cancelQueuedMessageEdit() {
-    const botId = props.bot?.id;
+    const botId = editingBotId() ?? props.bot?.id;
+    const serverId = editingServerId() ?? props.server?.id ?? "local";
+    const target = botId ? { botId, serverId } : undefined;
     const backup = editingDraftBackup();
-    const editedDelivery = props.queue?.deliveries.find((delivery) => delivery.id === editingDeliveryId());
+    const draft = target ? (drafts()[composerDraftKey(target)] ?? EMPTY_DRAFT) : EMPTY_DRAFT;
     const preservedAttachmentIds = new Set([
       ...(backup?.attachments.map((attachment) => attachment.id) ?? []),
-      ...(editedDelivery?.attachments.map((attachment) => attachment.id) ?? []),
+      ...editingOriginalAttachmentIds(),
     ]);
-    for (const attachment of currentDraft().attachments) {
+    for (const attachment of draft.attachments) {
       if (!preservedAttachmentIds.has(attachment.id)) {
-        void window.openbot.agent.discardDraftAttachment(attachment.id);
+        void window.openbot.agent.discardDraftAttachment(attachment.id, serverId);
       }
     }
-    if (botId) {
-      setDrafts((current) => ({ ...current, [botId]: backup ?? EMPTY_DRAFT }));
+    if (target) {
+      setDrafts((current) => ({ ...current, [composerDraftKey(target)]: backup ?? EMPTY_DRAFT }));
     }
+    setEditingBotId(null);
+    setEditingServerId(null);
     setEditingDeliveryId(null);
     setEditingDraftBackup(null);
+    setEditingOriginalAttachmentIds([]);
   }
 
-  async function saveQueuedMessageEdit(): Promise<void> {
-    const botId = props.bot?.id;
-    const deliveryId = editingDeliveryId();
-    const draft = currentDraft();
-    if (!botId || !deliveryId || submitting()) return;
-    const delivery = props.queue?.deliveries.find((item) => item.id === deliveryId);
-    if (delivery?.status !== "queued") {
+  async function saveQueuedMessageEdit(
+    draftOverride?: ComposerDraft,
+    target?: ConversationTarget & { deliveryId: string; originalAttachmentIds: string[] },
+    submittedSnapshot?: ComposerDraft,
+  ): Promise<boolean> {
+    const botId = target?.botId ?? editingBotId() ?? props.bot?.id;
+    const serverId = target?.serverId ?? editingServerId() ?? props.server?.id ?? "local";
+    const deliveryId = target?.deliveryId ?? editingDeliveryId();
+    const draft = draftOverride ?? currentDraft();
+    if (!botId || !deliveryId || submitting()) return false;
+    const delivery = target ? undefined : props.queue?.deliveries.find((item) => item.id === deliveryId);
+    if (!target && delivery?.status !== "queued") {
       setComposerError("This queued message is no longer available.");
       cancelQueuedMessageEdit();
-      return;
+      return false;
     }
     const text = expandComposerMentions(draft.text);
-    const originalAttachmentIds = new Set(delivery.attachments.map((attachment) => attachment.id));
+    const originalAttachmentIds = new Set(
+      target?.originalAttachmentIds ?? delivery?.attachments.map((attachment) => attachment.id) ?? [],
+    );
     const keepAttachmentIds = draft.attachments
       .filter((attachment) => originalAttachmentIds.has(attachment.id))
       .map((attachment) => attachment.id);
     const attachmentDraftIds = draft.attachments
       .filter((attachment) => !originalAttachmentIds.has(attachment.id))
       .map((attachment) => attachment.id);
-    if (!text.trim() && keepAttachmentIds.length === 0 && attachmentDraftIds.length === 0) return;
+    if (!text.trim() && keepAttachmentIds.length === 0 && attachmentDraftIds.length === 0) return false;
 
     stopTeamTyping();
     setSubmitting(true);
     setComposerError(null);
     let saved = false;
     try {
-      saved = await props.onUpdateQueuedMessage(deliveryId, text, keepAttachmentIds, attachmentDraftIds);
+      saved = await props.onUpdateQueuedMessage(
+        deliveryId,
+        text,
+        keepAttachmentIds,
+        attachmentDraftIds,
+        target ?? (botId ? { botId, serverId } : undefined),
+      );
     } catch (error) {
       setComposerError(error instanceof Error ? error.message : String(error));
     } finally {
       setSubmitting(false);
     }
-    if (!saved) return;
-    setDrafts((current) => ({ ...current, [botId]: EMPTY_DRAFT }));
-    setEditingDeliveryId(null);
-    setEditingDraftBackup(null);
+    if (!saved) return false;
+    const savedTarget = { botId, serverId };
+    clearConversationError(savedTarget);
+    if (submittedSnapshot) clearSubmittedDraft(savedTarget, submittedSnapshot);
+    else setDrafts((current) => ({ ...current, [composerDraftKey(savedTarget)]: EMPTY_DRAFT }));
+    if (editingBotId() === botId && editingServerId() === serverId && editingDeliveryId() === deliveryId) {
+      setEditingBotId(null);
+      setEditingServerId(null);
+      setEditingDeliveryId(null);
+      setEditingDraftBackup(null);
+      setEditingOriginalAttachmentIds([]);
+    }
+    return true;
   }
 
   function reorderPresentedQueue(deliveryIds: string[]) {
@@ -1630,17 +1905,21 @@ function createConversationViewScope(props: ConversationProps) {
     );
   }
 
-  async function submitMessage(override?: string) {
-    if (selectionSending()) return;
-    if (!override && editingDeliveryId()) {
-      await saveQueuedMessageEdit();
-      return;
+  async function submitMessage(
+    draftOverride?: ComposerDraft,
+    targetOverride?: ConversationTarget,
+    submittedSnapshot?: ComposerDraft,
+  ): Promise<boolean> {
+    if (selectionSending()) return false;
+    if (!draftOverride && currentEditingDeliveryId()) {
+      return saveQueuedMessageEdit();
     }
-    const botId = props.bot?.id;
-    const draft = currentDraft();
-    const text = override ?? expandComposerMentions(draft.text);
-    const attachments = override ? [] : draft.attachments;
-    if (!botId || submitting() || (!text.trim() && attachments.length === 0)) return;
+    const botId = targetOverride?.botId ?? props.bot?.id;
+    const target = targetOverride ?? (botId ? { botId, serverId: props.server?.id ?? "local" } : undefined);
+    const draft = draftOverride ?? currentDraft();
+    const text = expandComposerMentions(draft.text);
+    const attachments = draft.attachments;
+    if (!botId || !target || submitting() || (!text.trim() && attachments.length === 0)) return false;
     stopTeamTyping();
     stickToLatest = true;
     setSubmitting(true);
@@ -1648,12 +1927,54 @@ function createConversationViewScope(props: ConversationProps) {
     const sent = await props.onSendMessage(
       text,
       attachments.map((item) => item.id),
-      override ? null : draft.replyToMessageId,
+      draft.replyToMessageId,
+      target,
     );
     setSubmitting(false);
     if (sent) {
-      setDrafts((current) => ({ ...current, [botId]: EMPTY_DRAFT }));
+      clearConversationError(target);
+      if (submittedSnapshot) clearSubmittedDraft(target, submittedSnapshot);
+      else setDrafts((current) => ({ ...current, [composerDraftKey(target)]: EMPTY_DRAFT }));
     }
+    return sent;
+  }
+
+  function submitComposer(): void {
+    const phase = voicePhase();
+    if (phase === "recording") {
+      const botId = resources.voiceBotId;
+      const serverId = resources.voiceServerId;
+      if (!botId || !serverId) return;
+      const target = { botId, serverId };
+      const draft = copyComposerDraft(drafts()[composerDraftKey(target)] ?? EMPTY_DRAFT);
+      const deliveryId = editingBotId() === botId && editingServerId() === serverId ? editingDeliveryId() : null;
+      const activeTarget = currentTarget();
+      const targetIsActive = activeTarget?.botId === target.botId && activeTarget.serverId === target.serverId;
+      const delivery =
+        deliveryId && targetIsActive ? props.queue?.deliveries.find((item) => item.id === deliveryId) : undefined;
+      if (deliveryId && targetIsActive && delivery?.status !== "queued") {
+        setComposerError("This queued message is no longer available.");
+        cancelQueuedMessageEdit();
+        return;
+      }
+      resources.voiceSubmitRequest = {
+        botId,
+        serverId,
+        draft,
+        queuedEdit: deliveryId
+          ? {
+              deliveryId,
+              originalAttachmentIds: delivery
+                ? delivery.attachments.map((attachment) => attachment.id)
+                : [...editingOriginalAttachmentIds()],
+            }
+          : undefined,
+      };
+      stopVoiceRecording();
+      return;
+    }
+    if (phase !== "idle") return;
+    void submitMessage();
   }
 
   async function sendSelectionInstruction(messageId: string, body: string): Promise<boolean> {
@@ -1768,11 +2089,12 @@ function createConversationViewScope(props: ConversationProps) {
   }
 
   function removeAttachment(id: string) {
+    const serverId = currentTarget()?.serverId;
     updateCurrentDraft({
       attachments: currentDraft().attachments.filter((attachment) => attachment.id !== id),
       text: removeAttachmentReferences(currentDraft().text, id),
     });
-    void window.openbot.agent.discardDraftAttachment(id);
+    void window.openbot.agent.discardDraftAttachment(id, serverId);
   }
 
   async function openBrowserAddress(address = browserAddress()) {
@@ -1781,23 +2103,45 @@ function createConversationViewScope(props: ConversationProps) {
     setBrowserAddressEditing(false);
     const analytics = desktopAnalytics.scope();
     const url = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+    const serverId = props.server?.id ?? "local";
+    const botId = props.bot?.id ?? null;
+    const canonicalUrl = canonicalBrowserUrl(url);
+    const requestKey = JSON.stringify([serverId, botId, canonicalUrl]);
+    const pendingRequest = resources.browserOpenRequests.get(requestKey);
+    if (pendingRequest) return pendingRequest.promise;
+    const request = (async () => {
+      try {
+        const tab = await window.openbot.browser.open({
+          url,
+          ownerThreadId: props.bot?.threadId ?? null,
+          ownerBotId: props.bot?.id ?? null,
+          focus: true,
+        });
+        setBrowserAddress(tab.url);
+        analytics.track("browser_action", { action: "open", result: "succeeded" });
+      } catch {
+        setBrowserAddress(url);
+        analytics.track("browser_action", {
+          action: "open",
+          result: "failed",
+          failure_code: "browser_open_failed",
+        });
+      }
+    })();
+    const pendingRequestState = {
+      promise: request,
+      serverId,
+      botId,
+      url: canonicalUrl,
+      existingTabIds: new Set(browserTabs().map((tab) => tab.id)),
+    };
+    resources.browserOpenRequests.set(requestKey, pendingRequestState);
     try {
-      const tab = await window.openbot.browser.open({
-        url,
-        ownerThreadId: props.bot?.threadId ?? null,
-        ownerBotId: props.bot?.id ?? null,
-        focus: true,
-      });
-      setBrowserAddress(tab.url);
-      if (!screenOpen()) setActiveRightPanel("browser");
-      analytics.track("browser_action", { action: "open", result: "succeeded" });
-    } catch {
-      setBrowserAddress(url);
-      analytics.track("browser_action", {
-        action: "open",
-        result: "failed",
-        failure_code: "browser_open_failed",
-      });
+      await request;
+    } finally {
+      if (resources.browserOpenRequests.get(requestKey) === pendingRequestState) {
+        resources.browserOpenRequests.delete(requestKey);
+      }
     }
   }
 
@@ -2083,11 +2427,12 @@ function createConversationViewScope(props: ConversationProps) {
     copiedMessageId,
     copyMessage,
     currentDraft,
+    currentConversationError,
     currentUnreadCount,
     drafts,
     dropActive,
     editQueuedMessage,
-    editingDeliveryId,
+    editingDeliveryId: currentEditingDeliveryId,
     editingDraftBackup,
     expandedEmojiMessageId,
     expandedThinkingMessages,
@@ -2100,7 +2445,7 @@ function createConversationViewScope(props: ConversationProps) {
     jumpToLatestMessage,
     jumpToUnreadMessages,
     lastChatSearchQuery,
-    lastConversationBotId,
+    lastConversationIdentity,
     lastHandledMessageFocusNonce,
     lastHandledSettingsRequestNonce,
     lastPanelBotId,
@@ -2145,12 +2490,14 @@ function createConversationViewScope(props: ConversationProps) {
     rightPanels,
     routineSettingsRequest,
     saveBotPatch,
+    updateRuntimeSettings,
     saveQueuedMessageEdit,
     scheduleUnreadDividerVisibilityUpdate,
     screenOpen,
     scrollElement,
     scrollResizeObserver,
     selectAndConfirmModel,
+    selectAndConfirmReasoning,
     selectModel,
     selectionSending,
     sendSelectionInstruction,
@@ -2189,6 +2536,7 @@ function createConversationViewScope(props: ConversationProps) {
     setSidebarFilePreview,
     setSettingsModel,
     setSettingsPanelWidth,
+    setSettingsProvider,
     setSettingsReasoning,
     setShowComposerActions,
     setShowScrollToLatest,
@@ -2197,6 +2545,7 @@ function createConversationViewScope(props: ConversationProps) {
     setVoiceElapsedSeconds,
     setVoicePhase,
     settingsModel,
+    settingsProvider,
     settingsOpen,
     settingsPanelWidth,
     settingsReasoning,
@@ -2213,7 +2562,7 @@ function createConversationViewScope(props: ConversationProps) {
     stopVoiceRecording,
     stopVoiceStream,
     streamingAgentMessage,
-    submitMessage,
+    submitComposer,
     submitting,
     unreadDividerVisible,
     unreadMessagesDivider,
@@ -2246,12 +2595,16 @@ export function ConversationHeader() {
     activeBrowserControl,
     agentActivity,
     browserControlBot,
+    browserTabs,
     hideBrowserPanel,
     props,
     screenOpen,
     selectAndConfirmModel,
+    selectAndConfirmReasoning,
     setActiveRightPanel,
     settingsModel,
+    settingsProvider,
+    settingsReasoning,
     showBrowserPanel,
   } = useConversationViewScope();
   return (
@@ -2278,8 +2631,9 @@ export function ConversationHeader() {
       <div class="conversation-header-actions no-drag">
         <Show when={props.bot}>
           <ProviderModelPicker
-            provider={props.bot?.provider ?? "codex"}
+            provider={settingsProvider()}
             value={settingsModel()}
+            reasoningEffort={settingsReasoning()}
             modelOptions={props.modelOptions}
             agentStatus={props.agentStatus}
             runtimeStatuses={props.providerRuntimeStatuses}
@@ -2293,6 +2647,7 @@ export function ConversationHeader() {
                 : "Models are available after an agent CLI connects."
             }
             onChange={(model, provider) => void selectAndConfirmModel(model, provider)}
+            onReasoningEffortChange={(effort) => void selectAndConfirmReasoning(effort)}
           />
         </Show>
         <Show when={props.remoteDesktopEnabled !== false && props.server?.kind === "remote" ? props.server : undefined}>
@@ -2324,7 +2679,10 @@ export function ConversationHeader() {
             type="button"
             class={[
               "header-panel-toggle computer-button",
-              { "computer-button-agent-active": Boolean(activeBrowserControl()) },
+              {
+                "computer-button-available": !screenOpen() && browserTabs().length > 0,
+                "computer-button-agent-active": Boolean(activeBrowserControl()),
+              },
             ]}
             aria-label={
               activeBrowserControl()
@@ -2518,6 +2876,43 @@ export function ConversationTimeline() {
                 const message = createMemo(() => props.messages[virtualRow.index]);
                 const initialMessage = untrack(message);
                 if (!initialMessage) return null;
+                const routineEvent = initialMessage.routineEvent;
+                if (initialMessage.kind === "routine-event" && routineEvent) {
+                  return (
+                    <div
+                      data-index={virtualRow.index}
+                      ref={messageVirtualizer.measureElement}
+                      class="virtual-chat-row"
+                      style={{
+                        transform: messageVirtualizer.isVirtualized()
+                          ? `translateY(${virtualRow.start - messageVirtualizer.scrollMargin()}px)`
+                          : "none",
+                      }}
+                    >
+                      <article aria-label={`${routineEvent.routineName}, ${routineEvent.action}`}>
+                        <Show
+                          when={routineEvent.action === "deleted"}
+                          fallback={
+                            <RoutineEventMarker
+                              action={routineEvent.action === "created" ? "created" : "updated"}
+                              routineId={routineEvent.routineId}
+                              routineName={routineEvent.routineName}
+                              onOpenRoutine={(routineId) =>
+                                openRoutineSettings({ routineId, name: routineEvent.routineName })
+                              }
+                            />
+                          }
+                        >
+                          <RoutineEventMarker
+                            action="deleted"
+                            routineId={routineEvent.routineId}
+                            routineName={routineEvent.routineName}
+                          />
+                        </Show>
+                      </article>
+                    </div>
+                  );
+                }
                 const displayedReactions = createMemo(() => {
                   const currentMessage = message();
                   if (currentMessage?.reactions?.length) return currentMessage.reactions;
@@ -2842,6 +3237,7 @@ export function ConversationComposer() {
     composerFocusRequest,
     composerHasContent,
     currentDraft,
+    currentConversationError,
     editQueuedMessage,
     editingDeliveryId,
     openAttachmentPicker,
@@ -2861,7 +3257,7 @@ export function ConversationComposer() {
     showComposerActions,
     startVoiceRecording,
     stopVoiceRecording,
-    submitMessage,
+    submitComposer,
     submitting,
     unreferencedDraftAttachments,
     updateCurrentDraft,
@@ -2906,6 +3302,7 @@ export function ConversationComposer() {
                 variant="ghost"
                 type="button"
                 aria-label="Cancel reply"
+                disabled={voicePhase() === "transcribing"}
                 onClick={() => updateCurrentDraft({ replyToMessageId: null })}
               >
                 <CloseIcon />
@@ -2913,9 +3310,9 @@ export function ConversationComposer() {
             </div>
           )}
         </Show>
-        <Show when={composerError()}>
+        <Show when={composerError() ?? currentConversationError()}>
           <div class="composer-error" role="alert">
-            {composerError()}
+            {composerError() ?? currentConversationError()}
           </div>
         </Show>
         <div
@@ -2952,6 +3349,7 @@ export function ConversationComposer() {
                     </Show>
                     <ImageRemoveButton
                       label={`Remove ${attachment.name}`}
+                      disabled={voicePhase() === "transcribing"}
                       onClick={() => removeAttachment(attachment.id)}
                     />
                   </div>
@@ -2965,7 +3363,7 @@ export function ConversationComposer() {
               bots={props.bots}
               attachments={currentDraft().attachments}
               value={currentDraft().text}
-              disabled={submitting() || selectionSending() || !agentReady()}
+              disabled={submitting() || selectionSending() || voicePhase() === "transcribing" || !agentReady()}
               placeholder={
                 !agentReady()
                   ? "Complete agent CLI setup to start"
@@ -2979,7 +3377,7 @@ export function ConversationComposer() {
                 updateCurrentDraft({ text });
                 updateTeamTyping(text);
               }}
-              onSubmit={() => void submitMessage()}
+              onSubmit={submitComposer}
               onOpenAttachment={(attachment) =>
                 attachment.previewKind === "none"
                   ? attachmentAction(attachment, "open")
@@ -3016,7 +3414,13 @@ export function ConversationComposer() {
               <DropdownMenu.Trigger
                 class="composer-button"
                 aria-label="Add to prompt"
-                disabled={attachmentBusy() || submitting() || selectionSending() || !agentReady()}
+                disabled={
+                  attachmentBusy() ||
+                  submitting() ||
+                  selectionSending() ||
+                  voicePhase() === "transcribing" ||
+                  !agentReady()
+                }
               >
                 <PlusIcon />
               </DropdownMenu.Trigger>
@@ -3099,15 +3503,30 @@ export function ConversationComposer() {
                 </fieldset>
               </Show>
               <Show
-                when={props.activeTurnId && !editingDeliveryId() && !composerHasContent()}
+                when={
+                  props.activeTurnId && !editingDeliveryId() && !composerHasContent() && voicePhase() !== "recording"
+                }
                 fallback={
                   <Button
                     variant="ghost"
                     type="button"
                     class="voice-button"
-                    aria-label={editingDeliveryId() ? "Save queued message" : "Send message"}
-                    disabled={submitting() || selectionSending() || !agentReady()}
-                    onClick={() => void submitMessage()}
+                    aria-label={
+                      editingDeliveryId()
+                        ? "Save queued message"
+                        : voicePhase() === "recording"
+                          ? "Send voice message"
+                          : "Send message"
+                    }
+                    disabled={
+                      submitting() ||
+                      selectionSending() ||
+                      !agentReady() ||
+                      voicePhase() === "preparing" ||
+                      voicePhase() === "requesting" ||
+                      voicePhase() === "transcribing"
+                    }
+                    onClick={submitComposer}
                   >
                     {submitting() ? "…" : "↑"}
                   </Button>
@@ -3166,6 +3585,10 @@ export function ConversationPanels() {
     sidebarFilePreview,
     settingsOpen,
     routineSettingsRequest,
+    settingsModel,
+    settingsProvider,
+    settingsReasoning,
+    updateRuntimeSettings,
   } = useConversationViewScope();
   return (
     <>
@@ -3236,6 +3659,11 @@ export function ConversationPanels() {
           <Loading>
             <AgentSettingsPanel
               bot={bot()}
+              runtimeSettings={{
+                provider: settingsProvider(),
+                model: settingsModel(),
+                reasoningEffort: settingsReasoning(),
+              }}
               agentStatus={props.agentStatus}
               providerRuntimeStatuses={props.providerRuntimeStatuses}
               onDownloadProvider={props.onDownloadProvider}
@@ -3255,6 +3683,7 @@ export function ConversationPanels() {
               onClose={() => setActiveRightPanel("none")}
               onWidthChange={setSettingsPanelWidth}
               onUpdateBot={props.onUpdateBot}
+              onUpdateRuntimeSettings={updateRuntimeSettings}
               onSetAgentAvatar={props.onSetAgentAvatar}
               routineSelectionRequest={routineSettingsRequest()?.botId === bot().id ? routineSettingsRequest() : null}
               onRoutineSelectionRequestHandled={handleRoutineSettingsRequest}
@@ -3340,9 +3769,11 @@ export function ConversationOverlays() {
 export function ConversationView(props: ConversationProps) {
   const scope = createConversationViewScope(props);
   const {
+    activeBrowserControl,
     agentReady,
     browserPanelWidth,
     browserSidebarOpen,
+    browserTabs,
     dropActive,
     filePreviewOpen,
     handleChatSearchShortcut,
@@ -3350,6 +3781,7 @@ export function ConversationView(props: ConversationProps) {
     setConversationPanelElement,
     setDropActive,
     settingsPanelWidth,
+    screenOpen,
     submitting,
   } = scope;
   createEffect(
@@ -3369,6 +3801,7 @@ export function ConversationView(props: ConversationProps) {
           {
             "conversation-drop-active": dropActive(),
             "browser-panel-active": browserSidebarOpen() || filePreviewOpen(),
+            "browser-panel-available": !screenOpen() && (browserTabs().length > 0 || Boolean(activeBrowserControl())),
           },
         ]}
         style={`--settings-panel-width: ${settingsPanelWidth()}px; --browser-panel-width: ${browserPanelWidth()}px`}

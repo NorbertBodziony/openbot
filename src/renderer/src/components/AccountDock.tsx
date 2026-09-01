@@ -39,7 +39,7 @@ interface AccountDockProps {
   withServerRail: boolean;
   onRefreshUsage: () => Promise<AccountUsage>;
   onUpdateAction: () => Promise<void>;
-  onLogout: () => Promise<void>;
+  onLogout?: () => Promise<void>;
   onOpenExternal: (destination: ExternalDestination) => Promise<void>;
   onOpenPermissions: () => void;
   onOpenSettings: (trigger: HTMLElement) => void;
@@ -177,11 +177,12 @@ export function AccountDock(props: AccountDockProps) {
   }
 
   async function logout() {
-    if (loggingOut()) return;
+    const onLogout = props.onLogout;
+    if (!onLogout || loggingOut()) return;
     setLoggingOut(true);
     setMenuError(null);
     try {
-      await props.onLogout();
+      await onLogout();
     } catch (cause) {
       setMenuError(cause instanceof Error ? cause.message : "Could not sign out.");
       setLoggingOut(false);
@@ -279,17 +280,19 @@ export function AccountDock(props: AccountDockProps) {
           </Button>
         </section>
 
-        <div class="account-menu-separator" />
-        <Button
-          variant="ghost"
-          type="button"
-          class="account-menu-row account-menu-danger"
-          onClick={() => void logout()}
-          disabled={loggingOut()}
-        >
-          <LogOut class="account-menu-icon" aria-hidden="true" />
-          <span>{loggingOut() ? "Signing out…" : "Sign out"}</span>
-        </Button>
+        <Show when={props.onLogout}>
+          <div class="account-menu-separator" />
+          <Button
+            variant="ghost"
+            type="button"
+            class="account-menu-row account-menu-danger"
+            onClick={() => void logout()}
+            disabled={loggingOut()}
+          >
+            <LogOut class="account-menu-icon" aria-hidden="true" />
+            <span>{loggingOut() ? "Signing out…" : "Sign out"}</span>
+          </Button>
+        </Show>
         <Show when={accountMenuError()}>{(message) => <p class="account-popover-error">{message()}</p>}</Show>
         <Show when={includeDockActions ? usageError() : null}>
           {(message) => <p class="account-popover-error">{message()}</p>}
@@ -507,7 +510,7 @@ export function AccountDock(props: AccountDockProps) {
             </Popover.Root>
           </Tooltip.Trigger>
           <Tooltip.Portal>
-            <Tooltip.Content class="account-dock-tooltip">Weekly usage</Tooltip.Content>
+            <Tooltip.Content class="ui-tooltip">Weekly usage</Tooltip.Content>
           </Tooltip.Portal>
         </Tooltip.Root>
 
@@ -529,7 +532,7 @@ export function AccountDock(props: AccountDockProps) {
             </Button>
           </Tooltip.Trigger>
           <Tooltip.Portal>
-            <Tooltip.Content class="account-dock-tooltip">Settings</Tooltip.Content>
+            <Tooltip.Content class="ui-tooltip">Settings</Tooltip.Content>
           </Tooltip.Portal>
         </Tooltip.Root>
       </div>

@@ -1,3 +1,4 @@
+import type { DynamicIslandNotchSize } from "@openbot/contracts/ipc";
 import type { JSX } from "@solidjs/web";
 import { createEffect, createSignal, createUniqueId, onCleanup, onSettled, Show, untrack } from "solid-js";
 import { cx } from "./utils";
@@ -6,6 +7,8 @@ export type DynamicIslandViewState = "compact" | "expanded";
 export type DynamicIslandHoverBehavior = "none" | "grow" | "expand";
 export type DynamicIslandDisplayMode = "notch" | "island";
 export type DynamicIslandStateChangeReason = "pointer" | "keyboard" | "hover" | "hover-exit" | "escape";
+
+export type { DynamicIslandNotchSize } from "@openbot/contracts/ipc";
 
 export interface DynamicIslandHoverContentMotion {
   leadingScale: number;
@@ -40,6 +43,7 @@ export interface DynamicIslandProps {
   pointerToggle?: boolean;
   sharedMotion?: DynamicIslandSharedMotion;
   displayMode?: DynamicIslandDisplayMode;
+  notchSize?: DynamicIslandNotchSize;
   ariaLive?: "off" | "polite" | "assertive";
   class?: string;
 }
@@ -70,6 +74,8 @@ const DEFAULT_HOVER_CONTENT_MOTION: DynamicIslandHoverContentMotion = {
   outwardTranslateX: 10,
   translateY: 6,
 };
+
+const COMPACT_EAR_TRACK_WIDTH = 38;
 
 /**
  * A macOS-notch adaptation of SmoothUI's Dynamic Island pattern.
@@ -280,7 +286,7 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
   return (
     <section
       class={cx("dynamic-island", local.class, local.displayMode === "island" && "dynamic-island-external")}
-      style={local.compactWidth === undefined ? undefined : `--dynamic-island-compact-width: ${local.compactWidth}px`}
+      style={dynamicIslandStyle(local)}
       data-slot="dynamic-island"
       data-state={viewState()}
       data-layout-state={layoutState()}
@@ -383,6 +389,20 @@ export function DynamicIsland(props: DynamicIslandProps): JSX.Element {
       </div>
     </section>
   );
+}
+
+function dynamicIslandStyle(props: DynamicIslandProps): string | undefined {
+  const compactWidth =
+    props.compactWidth ??
+    (props.displayMode !== "island" && props.notchSize !== undefined
+      ? props.notchSize.width + COMPACT_EAR_TRACK_WIDTH * 2
+      : undefined);
+  const styles = [
+    compactWidth === undefined ? undefined : `--dynamic-island-compact-width: ${compactWidth}px`,
+    props.notchSize === undefined ? undefined : `--dynamic-island-notch-width: ${props.notchSize.width}px`,
+    props.notchSize === undefined ? undefined : `--dynamic-island-notch-height: ${props.notchSize.height}px`,
+  ].filter((style): style is string => style !== undefined);
+  return styles.length > 0 ? styles.join("; ") : undefined;
 }
 
 interface SmoothSizeResizeOptions {

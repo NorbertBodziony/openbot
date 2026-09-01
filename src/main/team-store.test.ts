@@ -29,6 +29,19 @@ describe("TeamStore", () => {
     expect(store.configured).toBe(false);
   });
 
+  it("accepts legacy account names outside the editable profile limits", async () => {
+    const { store } = await createStore();
+
+    await store.configureWithAccount("Studio Mac", {
+      id: "owner-account",
+      email: "owner@example.com",
+      name: "x",
+      avatarUrl: null,
+    });
+
+    expect(store.listMembers()[0]?.name).toBe("x");
+  });
+
   it("creates an owner and authenticates without storing the password", async () => {
     const { store, path } = await createStore();
     const identity = await store.configure("Studio Mac", "owner", "correct horse battery");

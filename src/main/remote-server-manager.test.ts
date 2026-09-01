@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseInviteUrl } from "@openbot/contracts/invite-links";
+import { TEAM_CAPABILITIES_HEADER } from "@openbot/contracts/team-protocol/v1";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   decodeBrowserPreview,
@@ -997,6 +998,7 @@ describe("Team API compatibility negotiation", () => {
       const headers = new Headers(init?.headers);
       expect(headers.get("OpenBot-Protocol-Version")).toBe("1");
       expect(headers.get("OpenBot-App-Version")).toBe("0.4.0");
+      expect(headers.get(TEAM_CAPABILITIES_HEADER)).toContain("routine-event-markers");
       return Response.json({
         phase: "ready",
         cliVersion: "1.0.0",

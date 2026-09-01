@@ -49,7 +49,7 @@ describe("desktop analytics", () => {
       __referrer: "",
       surface: "desktop",
       environment: "production",
-      event_schema_version: 2,
+      event_schema_version: 3,
       app_version: "1.2.3",
       platform: "darwin",
     });
@@ -63,7 +63,7 @@ describe("desktop analytics", () => {
 
     analytics.configure(PRODUCTION_APP);
 
-    expect(client.identify).toHaveBeenCalledWith({ profileId: "account-1" });
+    expect(client.identify).toHaveBeenCalledWith({ profileId: "account-1", email: "person@example.com" });
     expect(client.track).toHaveBeenCalledWith("agent_action", {
       action: "delete",
       result: "succeeded",
@@ -89,7 +89,21 @@ describe("desktop analytics", () => {
     analytics.setUser({ id: "account-2", email: "two@example.com" });
 
     expect(order).toEqual(["clear", "identify"]);
-    expect(client.identify).toHaveBeenLastCalledWith({ profileId: "account-2" });
+    expect(client.identify).toHaveBeenLastCalledWith({ profileId: "account-2", email: "two@example.com" });
+  });
+
+  it("updates the email for the same account without clearing its session", () => {
+    const client = fakeClient();
+    const analytics = new DesktopAnalytics(() => client, true);
+    analytics.configure(PRODUCTION_APP);
+    analytics.setUser({ id: "account-1", email: "old@example.com" });
+    vi.mocked(client.clear).mockClear();
+    vi.mocked(client.identify).mockClear();
+
+    analytics.setUser({ id: "account-1", email: "new@example.com" });
+
+    expect(client.clear).not.toHaveBeenCalled();
+    expect(client.identify).toHaveBeenCalledWith({ profileId: "account-1", email: "new@example.com" });
   });
 
   it("keeps the captured profile through a logout race", () => {
@@ -145,6 +159,39 @@ describe("desktop analytics", () => {
       expect(isDynamicRecord(request) && isDynamicRecord(request.payload) ? request.payload.profileId : undefined).toBe(
         undefined,
       );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("sends the account email through the real SDK transport", async () => {
+    const requests: unknown[] = [];
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body)));
+      return new Response(null, { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const analytics = new DesktopAnalytics((options) => new OpenPanelBase(options), true);
+      analytics.configure(PRODUCTION_APP);
+      analytics.setUser({ id: "account-1", email: "person@example.com" });
+      analytics.track("agent_action", { action: "delete", result: "succeeded" });
+
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+      const identifyRequest = requests.find((candidate) => isDynamicRecord(candidate) && candidate.type === "identify");
+      const trackRequest = requests.find(
+        (candidate) =>
+          isDynamicRecord(candidate) && isDynamicRecord(candidate.payload) && candidate.payload.name === "agent_action",
+      );
+      expect(
+        isDynamicRecord(identifyRequest) && isDynamicRecord(identifyRequest.payload) ? identifyRequest.payload : null,
+      ).toMatchObject({ profileId: "account-1", email: "person@example.com" });
+      expect(
+        isDynamicRecord(trackRequest) && isDynamicRecord(trackRequest.payload)
+          ? trackRequest.payload.profileId
+          : undefined,
+      ).toBe("account-1");
+      expect(JSON.stringify(trackRequest)).not.toContain("person@example.com");
     } finally {
       vi.unstubAllGlobals();
     }
@@ -227,7 +274,10 @@ describe("desktop analytics", () => {
 
     analytics.setTrackingEnabled(true);
     analytics.track("agent_action", { action: "delete", result: "succeeded" });
-    expect(identifiedClient.identify).toHaveBeenCalledWith({ profileId: "account-1" });
+    expect(identifiedClient.identify).toHaveBeenCalledWith({
+      profileId: "account-1",
+      email: "person@example.com",
+    });
     expect(identifiedClient.track).toHaveBeenCalledOnce();
   });
 });

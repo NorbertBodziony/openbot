@@ -1329,7 +1329,7 @@ export const SevenQueuedMessages: Story = {
     activeTurnId: "turn-active",
   },
   render: (storyArgs) => {
-    const [queueState, setQueueState] = createSignal(storyArgs.queue ?? referenceQueue);
+    const [queueState, setQueueState] = createSignal<QueueSnapshot>(storyArgs.queue ?? referenceQueue);
     let nextStoryDeliveryId = 1;
     const normalizePositions = (deliveries: QueueSnapshot["deliveries"]) =>
       deliveries.map((delivery, index) => ({ ...delivery, position: index + 1 }));

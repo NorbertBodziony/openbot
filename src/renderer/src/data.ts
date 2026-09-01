@@ -10,9 +10,10 @@ import type {
   ConversationReaction,
   ImageGenerationInfo,
   MessageReaction,
+  RoutineConversationEvent,
 } from "@openbot/contracts/ipc";
 
-export type MessageKind = "text" | "thinking" | "exchange" | "question";
+export type MessageKind = "text" | "thinking" | "exchange" | "question" | "routine-event";
 
 export interface MessageCitation {
   number: number;
@@ -54,6 +55,7 @@ export interface BotMessage {
     name: string;
     scheduledFor: string;
   };
+  routineEvent?: RoutineConversationEvent;
   items?: string[];
 }
 
