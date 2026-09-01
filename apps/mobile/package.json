@@ -19,6 +19,7 @@
     "@openbot/team-client": "workspace:*",
     "@tanstack/react-query": "^5.102.8",
     "expo": "~57.0.18",
+    "expo-build-properties": "~57.0.15",
     "expo-camera": "~57.0.4",
     "expo-constants": "~57.0.16",
     "expo-crypto": "~57.0.2",

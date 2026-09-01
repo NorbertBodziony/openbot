@@ -1,5 +1,11 @@
 import { sha256 } from "./crypto";
-import type { AuthRepository, AuthUser, EmailVerificationResult } from "./types";
+import type {
+  AuthRepository,
+  AuthUser,
+  EmailVerificationResult,
+  MobileAuthDevice,
+  MobileAuthDeviceIdentity,
+} from "./types";
 
 interface UserRow {
   id: string;
@@ -229,6 +235,127 @@ export class D1AuthRepository implements AuthRepository {
       .bind(input.ticketHash)
       .first<UserRow>();
     return row ? mapUser(row) : null;
+  }
+
+  async redeemMobileAuthTicket(input: {
+    ticketHash: string;
+    serverId: string;
+    now: number;
+    session: { id: string; token: string; expiresAt: number };
+    device: MobileAuthDeviceIdentity;
+  }): Promise<{ sessionToken: string; user: AuthUser } | null> {
+    const tokenHash = await sha256(input.session.token);
+    const [created, registered, , , consumed] = await this.database.batch([
+      this.database
+        .prepare(
+          `INSERT INTO auth_sessions(id, user_id, token_hash, expires_at, created_at, last_used_at)
+           SELECT ?, user_id, ?, ?, ?, ?
+           FROM team_auth_tickets
+           WHERE ticket_hash = ? AND server_id = ? AND consumed_at IS NULL AND expires_at > ?`,
+        )
+        .bind(
+          input.session.id,
+          tokenHash,
+          input.session.expiresAt,
+          input.now,
+          input.now,
+          input.ticketHash,
+          input.serverId,
+          input.now,
+        ),
+      this.database
+        .prepare(
+          `INSERT INTO mobile_auth_sessions(session_id, user_id, device_id, device_name, platform, created_at)
+           SELECT id, user_id, ?, ?, ?, ? FROM auth_sessions WHERE id = ?`,
+        )
+        .bind(input.device.id, input.device.name, input.device.platform, input.now, input.session.id),
+      this.database
+        .prepare(
+          `UPDATE auth_sessions SET revoked_at = ?
+           WHERE id <> ? AND revoked_at IS NULL
+             AND id IN (
+               SELECT session_id FROM mobile_auth_sessions
+               WHERE user_id = (SELECT user_id FROM mobile_auth_sessions WHERE session_id = ?)
+                 AND device_id = ?
+             )`,
+        )
+        .bind(input.now, input.session.id, input.session.id, input.device.id),
+      this.database
+        .prepare(
+          `DELETE FROM mobile_auth_sessions
+           WHERE session_id <> ?
+             AND user_id = (SELECT user_id FROM mobile_auth_sessions WHERE session_id = ?)
+             AND device_id = ?`,
+        )
+        .bind(input.session.id, input.session.id, input.device.id),
+      this.database
+        .prepare(
+          `UPDATE team_auth_tickets SET consumed_at = ?
+           WHERE ticket_hash = ? AND server_id = ? AND consumed_at IS NULL AND expires_at > ?`,
+        )
+        .bind(input.now, input.ticketHash, input.serverId, input.now),
+    ]);
+    if (created.meta.changes !== 1 || registered.meta.changes !== 1 || consumed.meta.changes !== 1) return null;
+    const user = await this.authenticate(input.session.token, input.now);
+    return user ? { sessionToken: input.session.token, user } : null;
+  }
+
+  async authenticateMobileSession(sessionToken: string, now: number): Promise<AuthUser | null> {
+    const tokenHash = await sha256(sessionToken);
+    const row = await this.database
+      .prepare(
+        `SELECT users.id, users.email, users.name, users.avatar_url
+         FROM auth_sessions
+         JOIN mobile_auth_sessions ON mobile_auth_sessions.session_id = auth_sessions.id
+         JOIN users ON users.id = auth_sessions.user_id
+         WHERE auth_sessions.token_hash = ?
+           AND auth_sessions.revoked_at IS NULL
+           AND auth_sessions.expires_at > ?`,
+      )
+      .bind(tokenHash, now)
+      .first<UserRow>();
+    return row ? mapUser(row) : null;
+  }
+
+  async listMobileAuthDevices(userId: string, now: number): Promise<MobileAuthDevice[]> {
+    const result = await this.database
+      .prepare(
+        `SELECT mobile_auth_sessions.session_id, mobile_auth_sessions.device_name,
+                mobile_auth_sessions.platform, auth_sessions.created_at, auth_sessions.last_used_at
+         FROM mobile_auth_sessions
+         JOIN auth_sessions ON auth_sessions.id = mobile_auth_sessions.session_id
+         WHERE mobile_auth_sessions.user_id = ?
+           AND auth_sessions.revoked_at IS NULL
+           AND auth_sessions.expires_at > ?
+         ORDER BY auth_sessions.last_used_at DESC, auth_sessions.created_at DESC`,
+      )
+      .bind(userId, now)
+      .all<{
+        session_id: string;
+        device_name: string;
+        platform: MobileAuthDevice["platform"];
+        created_at: number;
+        last_used_at: number;
+      }>();
+    return result.results.map((row) => ({
+      sessionId: row.session_id,
+      name: row.device_name,
+      platform: row.platform,
+      connectedAt: row.created_at,
+      lastActiveAt: row.last_used_at,
+    }));
+  }
+
+  async revokeMobileAuthDevice(userId: string, sessionId: string, now: number): Promise<boolean> {
+    const result = await this.database
+      .prepare(
+        `UPDATE auth_sessions SET revoked_at = ?
+         WHERE id = ? AND user_id = ? AND revoked_at IS NULL
+           AND id IN (SELECT session_id FROM mobile_auth_sessions)`,
+      )
+      .bind(now, sessionId, userId)
+      .run();
+    return result.meta.changes === 1;
   }
 
   private async upsertEmailUser(email: string, now: number): Promise<AuthUser> {

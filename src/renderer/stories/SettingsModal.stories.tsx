@@ -2,6 +2,7 @@ import type {
   AgentStatus,
   AvatarImageInput,
   CentralAuthUser,
+  MobileConnectedDevice,
   ProviderRuntimeSnapshot,
   UpdateStatus,
 } from "@openbot/contracts/ipc";
@@ -68,6 +69,15 @@ function SettingsModalStory(props: {
   const [value, setValue] = createSignal({ ...DEFAULT_GENERAL_SETTINGS });
   const [updateStatus, setUpdateStatus] = createSignal<UpdateStatus>(props.initialUpdateStatus ?? storyUpdateStatus);
   const [account, setAccount] = createSignal<CentralAuthUser>({ ...storyAccount });
+  const [mobileDevices, setMobileDevices] = createSignal<MobileConnectedDevice[]>([
+    {
+      sessionId: "11111111-1111-4111-8111-111111111111",
+      name: "Norbert’s iPhone",
+      platform: "ios",
+      connectedAt: Date.now() - 86_400_000,
+      lastActiveAt: Date.now() - 45_000,
+    },
+  ]);
 
   async function updateAccountAvatar(image: AvatarImageInput | null): Promise<void> {
     const avatarUrl = image
@@ -115,6 +125,15 @@ function SettingsModalStory(props: {
         account={account()}
         onUpdateAccountName={updateAccountName}
         onUpdateAccountAvatar={updateAccountAvatar}
+        onCreateMobileConnect={async () => ({
+          qrData:
+            "openbot://mobile-connect?api=https%3A%2F%2Fapi.openbot.run&ticket=storybook-mobile-ticket_1234567890abcdef",
+          expiresAt: Date.now() + 120_000,
+        })}
+        onListMobileConnectedDevices={async () => mobileDevices()}
+        onRevokeMobileConnectedDevice={async (sessionId) => {
+          setMobileDevices((current) => current.filter((device) => device.sessionId !== sessionId));
+        }}
         onUpdateAction={runUpdateAction}
         agentStatus={props.providerDownloads ? providerAgentStatus : undefined}
         providerRuntimeStatuses={props.providerDownloads ? providerRuntimeStatuses : undefined}
@@ -140,6 +159,11 @@ const meta = {
     account: storyAccount,
     onUpdateAccountName: fn(async () => undefined),
     onUpdateAccountAvatar: fn(async () => undefined),
+    onCreateMobileConnect: fn(async () => ({
+      qrData:
+        "openbot://mobile-connect?api=https%3A%2F%2Fapi.openbot.run&ticket=storybook-mobile-ticket_1234567890abcdef",
+      expiresAt: Date.now() + 120_000,
+    })),
   },
   parameters: {
     layout: "fullscreen",
@@ -193,6 +217,16 @@ export const Updates: Story = {
   play: async ({ userEvent }) => {
     const body = within(document.body);
     await userEvent.click(await body.findByRole("tab", { name: "Updates" }));
+  },
+};
+
+export const MobileConnect: Story = {
+  render: () => <SettingsModalStory initialOpen />,
+  play: async ({ userEvent }) => {
+    const body = within(document.body);
+    await userEvent.click(await body.findByRole("tab", { name: "Mobile Connect" }));
+    await userEvent.click(await body.findByRole("button", { name: "Generate QR code" }));
+    await expect(await body.findByRole("img", { name: "Mobile Connect sign-in QR code" })).toBeVisible();
   },
 };
 

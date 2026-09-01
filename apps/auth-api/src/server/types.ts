@@ -67,6 +67,20 @@ export interface AuthUser {
   avatarUrl: string | null;
 }
 
+export interface MobileAuthDevice {
+  sessionId: string;
+  name: string;
+  platform: "ios" | "android" | "unknown";
+  connectedAt: number;
+  lastActiveAt: number;
+}
+
+export interface MobileAuthDeviceIdentity {
+  id: string;
+  name: string;
+  platform: MobileAuthDevice["platform"];
+}
+
 export interface EmailCodeDelivery {
   send(message: { email: string; code: string; expiresAt: number }): Promise<void>;
 }
@@ -125,4 +139,14 @@ export interface AuthRepository {
     expiresAt: number;
   }): Promise<void>;
   redeemTeamAuthTicket(input: { ticketHash: string; serverId: string; now: number }): Promise<AuthUser | null>;
+  redeemMobileAuthTicket(input: {
+    ticketHash: string;
+    serverId: string;
+    now: number;
+    session: { id: string; token: string; expiresAt: number };
+    device: MobileAuthDeviceIdentity;
+  }): Promise<{ sessionToken: string; user: AuthUser } | null>;
+  authenticateMobileSession(sessionToken: string, now: number): Promise<AuthUser | null>;
+  listMobileAuthDevices(userId: string, now: number): Promise<MobileAuthDevice[]>;
+  revokeMobileAuthDevice(userId: string, sessionId: string, now: number): Promise<boolean>;
 }

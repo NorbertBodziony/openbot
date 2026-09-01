@@ -6,6 +6,11 @@ import { ChevronLeft, QrCode } from "lucide-react-native";
 import { useState } from "react";
 import { ActivityIndicator, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 
+import { redeemMobileConnectUrl } from "@/lib/mobile-auth";
+import { useMobileSession } from "@/providers/mobile-session-provider";
+
+type ScanState = { status: "idle" } | { status: "connecting" } | { status: "error"; message: string };
+
 function ScreenBackButton({ iconColor }: { iconColor: string }) {
   return (
     <Link href="/" dismissTo asChild>
@@ -24,10 +29,24 @@ function ScreenBackButton({ iconColor }: { iconColor: string }) {
 
 export default function ScanQrCode() {
   const [permission, requestPermission] = useCameraPermissions();
-  const [scannedData, setScannedData] = useState<string | null>(null);
+  const [scanState, setScanState] = useState<ScanState>({ status: "idle" });
   const foreground = useThemeColor("foreground");
   const { width: windowWidth } = useWindowDimensions();
   const scannerFrameSize = Math.min(windowWidth - 80, 280);
+  const { connect: finishSignIn } = useMobileSession();
+
+  async function connect(data: string): Promise<void> {
+    if (scanState.status !== "idle") return;
+    setScanState({ status: "connecting" });
+    try {
+      finishSignIn(await redeemMobileConnectUrl(data));
+    } catch (error) {
+      setScanState({
+        status: "error",
+        message: error instanceof Error ? error.message : "OpenBot could not connect this phone.",
+      });
+    }
+  }
 
   if (!permission) {
     return (
@@ -75,7 +94,7 @@ export default function ScanQrCode() {
         style={StyleSheet.absoluteFill}
         facing="back"
         barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
-        onBarcodeScanned={scannedData ? undefined : ({ data }) => setScannedData(data)}
+        onBarcodeScanned={scanState.status === "idle" ? ({ data }) => void connect(data) : undefined}
       />
 
       <View className="absolute inset-x-0 top-0 flex-row items-center justify-between px-5 pt-safe-offset-3">
@@ -94,17 +113,23 @@ export default function ScanQrCode() {
         </Text>
       </View>
 
-      {scannedData ? (
+      {scanState.status !== "idle" ? (
         <View className="absolute inset-x-5 bottom-safe-offset-5 gap-4 rounded-3xl border border-border bg-background p-5">
           <View className="gap-1">
-            <Text className="font-sans text-body font-semibold text-foreground">QR code scanned</Text>
-            <Text numberOfLines={1} className="font-mono text-caption text-muted">
-              {scannedData}
+            <Text className="font-sans text-body font-semibold text-foreground">
+              {scanState.status === "connecting" ? "Connecting your phone…" : "Couldn’t connect"}
             </Text>
+            {scanState.status === "connecting" ? (
+              <ActivityIndicator color={foreground} accessibilityLabel="Signing in" className="mt-3 self-start" />
+            ) : (
+              <Text className="font-sans text-caption text-muted">{scanState.message}</Text>
+            )}
           </View>
-          <Button size="md" variant="secondary" onPress={() => setScannedData(null)}>
-            <Button.Label className="font-sans">Scan again</Button.Label>
-          </Button>
+          {scanState.status === "error" ? (
+            <Button size="md" variant="secondary" onPress={() => setScanState({ status: "idle" })}>
+              <Button.Label className="font-sans">Scan again</Button.Label>
+            </Button>
+          ) : null}
         </View>
       ) : null}
     </View>

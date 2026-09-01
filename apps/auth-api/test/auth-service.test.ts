@@ -1,7 +1,13 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { describe, expect, it } from "vitest";
 import { AuthService, generateOneTimeCode, normalizeOneTimeCode } from "../src/server/auth-service";
-import type { AuthRepository, AuthUser, EmailVerificationResult } from "../src/server/types";
+import type {
+  AuthRepository,
+  AuthUser,
+  EmailVerificationResult,
+  MobileAuthDevice,
+  MobileAuthDeviceIdentity,
+} from "../src/server/types";
 
 class MemoryAuthRepository implements AuthRepository {
   readonly challenges = new Map<
@@ -17,8 +23,9 @@ class MemoryAuthRepository implements AuthRepository {
     }
   >();
   readonly limits = new Map<string, number>();
-  readonly sessions = new Map<string, { user: AuthUser; expiresAt: number; revoked: boolean }>();
+  readonly sessions = new Map<string, { id: string; user: AuthUser; expiresAt: number; revoked: boolean }>();
   readonly teamTickets = new Map<string, { user: AuthUser; serverId: string; expiresAt: number; consumed: boolean }>();
+  readonly mobileDevices = new Map<string, MobileAuthDevice & { userId: string; deviceId: string }>();
 
   async latestEmailChallengeAt(email: string): Promise<number | null> {
     const matches = [...this.challenges.values()].filter((value) => value.email === email);
@@ -53,7 +60,7 @@ class MemoryAuthRepository implements AuthRepository {
     idHash: string;
     codeHash: string;
     now: number;
-    session: { token: string; expiresAt: number };
+    session: { id: string; token: string; expiresAt: number };
   }): Promise<EmailVerificationResult> {
     const challenge = this.challenges.get(input.idHash);
     if (!challenge || challenge.consumed) return { status: "invalid" };
@@ -71,6 +78,7 @@ class MemoryAuthRepository implements AuthRepository {
       avatarUrl: null,
     };
     this.sessions.set(input.session.token, {
+      id: input.session.id,
       user,
       expiresAt: input.session.expiresAt,
       revoked: false,
@@ -141,6 +149,67 @@ class MemoryAuthRepository implements AuthRepository {
     }
     ticket.consumed = true;
     return ticket.user;
+  }
+
+  async redeemMobileAuthTicket(input: {
+    ticketHash: string;
+    serverId: string;
+    now: number;
+    session: { id: string; token: string; expiresAt: number };
+    device: MobileAuthDeviceIdentity;
+  }): Promise<{ sessionToken: string; user: AuthUser } | null> {
+    const ticket = this.teamTickets.get(input.ticketHash);
+    if (!ticket || ticket.consumed || ticket.serverId !== input.serverId || ticket.expiresAt <= input.now) {
+      return null;
+    }
+    ticket.consumed = true;
+    for (const [token, session] of this.sessions) {
+      const device = this.mobileDevices.get(session.id);
+      if (device?.userId === ticket.user.id && device.deviceId === input.device.id) {
+        session.revoked = true;
+        this.mobileDevices.delete(session.id);
+        this.sessions.set(token, session);
+      }
+    }
+    this.sessions.set(input.session.token, {
+      id: input.session.id,
+      user: ticket.user,
+      expiresAt: input.session.expiresAt,
+      revoked: false,
+    });
+    this.mobileDevices.set(input.session.id, {
+      sessionId: input.session.id,
+      userId: ticket.user.id,
+      deviceId: input.device.id,
+      name: input.device.name,
+      platform: input.device.platform,
+      connectedAt: input.now,
+      lastActiveAt: input.now,
+    });
+    return { sessionToken: input.session.token, user: ticket.user };
+  }
+
+  async authenticateMobileSession(sessionToken: string, now: number): Promise<AuthUser | null> {
+    const session = this.sessions.get(sessionToken);
+    return session && !session.revoked && session.expiresAt > now && this.mobileDevices.has(session.id)
+      ? session.user
+      : null;
+  }
+
+  async listMobileAuthDevices(userId: string, now: number): Promise<MobileAuthDevice[]> {
+    return [...this.mobileDevices.values()].filter((device) => {
+      const session = [...this.sessions.values()].find((candidate) => candidate.id === device.sessionId);
+      return device.userId === userId && Boolean(session && !session.revoked && session.expiresAt > now);
+    });
+  }
+
+  async revokeMobileAuthDevice(userId: string, sessionId: string): Promise<boolean> {
+    const device = this.mobileDevices.get(sessionId);
+    if (!device || device.userId !== userId) return false;
+    const session = [...this.sessions.values()].find((candidate) => candidate.id === sessionId);
+    if (!session || session.revoked) return false;
+    session.revoked = true;
+    return true;
   }
 }
 
@@ -220,6 +289,29 @@ describe("email one-time codes", () => {
       name: "Nörbert Bot",
     });
     expect(await service.redeemTeamAuthTicket(ticket.ticket, serverId, "203.0.113.5")).toBeNull();
+    const mobileTicket = await service.issueMobileAuthTicket(session.sessionToken, "203.0.113.4");
+    expect(mobileTicket.expiresAt).toBe(121_000);
+    const device = {
+      id: "11111111-1111-4111-8111-111111111111",
+      name: "Norbert’s iPhone",
+      platform: "ios" as const,
+    };
+    const mobileSession = await service.redeemMobileAuthTicket(mobileTicket.ticket, device, "203.0.113.5");
+    expect(mobileSession).toMatchObject({ user: { id: session.user.id, name: "Nörbert Bot" } });
+    expect(await service.authenticateMobileSession(mobileSession?.sessionToken ?? "missing")).toMatchObject({
+      id: session.user.id,
+    });
+    expect(await service.authenticate(mobileSession?.sessionToken ?? "missing")).toMatchObject({ id: session.user.id });
+    expect(await service.listMobileAuthDevices(session.sessionToken)).toMatchObject([
+      { name: "Norbert’s iPhone", platform: "ios", connectedAt: 1_000 },
+    ]);
+    expect(await service.redeemMobileAuthTicket(mobileTicket.ticket, device, "203.0.113.5")).toBeNull();
+    const connectedDevice = (await service.listMobileAuthDevices(session.sessionToken))[0];
+    expect(connectedDevice).toBeDefined();
+    await service.revokeMobileAuthDevice(session.sessionToken, connectedDevice?.sessionId ?? "missing");
+    expect(await service.listMobileAuthDevices(session.sessionToken)).toEqual([]);
+    expect(await service.authenticateMobileSession(mobileSession?.sessionToken ?? "missing")).toBeNull();
+    expect(await service.authenticate(mobileSession?.sessionToken ?? "missing")).toBeNull();
     await expect(service.updateAvatar(session.sessionToken, "/v1/avatars/user?v=avatar", null)).resolves.toMatchObject({
       avatarUrl: "/v1/avatars/user?v=avatar",
     });

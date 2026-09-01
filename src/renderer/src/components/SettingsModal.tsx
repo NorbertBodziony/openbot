@@ -5,11 +5,13 @@ import type {
   AppInfo,
   AvatarImageInput,
   CentralAuthUser,
+  MobileConnectedDevice,
+  MobileConnectTicket,
   ProviderRuntimeStatus,
   UpdateStatus,
 } from "@openbot/contracts/ipc";
 import { normalizeAccountName, validateProfileName } from "@openbot/contracts/validation";
-import { createEffect, createMemo, createSignal, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import type { GeneralSettingsValue } from "../app-settings";
 import { normalizeAvatarFile } from "../avatar-image";
 import { presentUpdateStatus } from "../update-status";
@@ -26,6 +28,7 @@ import {
   ItemDescription,
   ItemGroup,
   ItemTitle,
+  QrCode,
   Select,
   SelectContent,
   SelectItem,
@@ -33,6 +36,7 @@ import {
   SelectValue,
   Settings,
   SettingsSection,
+  Smartphone,
   SwitchField,
   Tabs,
   Text,
@@ -51,6 +55,9 @@ export interface SettingsModalProps {
   account: CentralAuthUser;
   onUpdateAccountName: (name: string) => Promise<void>;
   onUpdateAccountAvatar: (image: AvatarImageInput | null) => Promise<void>;
+  onCreateMobileConnect?: () => Promise<MobileConnectTicket>;
+  onListMobileConnectedDevices?: () => Promise<MobileConnectedDevice[]>;
+  onRevokeMobileConnectedDevice?: (sessionId: string) => Promise<void>;
   processAvatarFile?: (file: File) => Promise<AvatarImageInput>;
   agentStatus?: AgentStatus;
   providerRuntimeStatuses?: Partial<Record<AgentProviderId, ProviderRuntimeStatus>>;
@@ -60,19 +67,21 @@ export interface SettingsModalProps {
   restoreFocusTarget?: HTMLElement | null;
 }
 
-type SettingsTab = "general" | "profile" | "updates";
+type SettingsTab = "general" | "profile" | "mobile-connect" | "updates";
 
 type SettingsNavItem = { value: SettingsTab; label: string; icon: typeof Settings };
 
 const navItems: ReadonlyArray<SettingsNavItem> = [
   { value: "general", label: "General", icon: Settings },
   { value: "profile", label: "Profile", icon: UserRound },
+  { value: "mobile-connect", label: "Mobile Connect", icon: Smartphone },
   { value: "updates", label: "Updates", icon: CircleArrowDown },
 ];
 
 const tabDetails: Record<SettingsTab, { title: string; description: string }> = {
   general: { title: "General", description: "Control how OpenBot behaves on this computer." },
   profile: { title: "Profile", description: "Manage how you appear in OpenBot." },
+  "mobile-connect": { title: "Mobile Connect", description: "Sign in securely on your phone." },
   updates: { title: "Updates", description: "Keep OpenBot current on this computer." },
 };
 
@@ -90,10 +99,19 @@ export function SettingsModal(props: SettingsModalProps) {
   const [avatarBusy, setAvatarBusy] = createSignal(false);
   const [avatarError, setAvatarError] = createSignal<string | null>(null);
   const [updateError, setUpdateError] = createSignal<string | null>(null);
+  const [mobileConnect, setMobileConnect] = createSignal<MobileConnectTicket | null>(null);
+  const [mobileConnectBusy, setMobileConnectBusy] = createSignal(false);
+  const [mobileConnectError, setMobileConnectError] = createSignal<string | null>(null);
+  const [mobileConnectNow, setMobileConnectNow] = createSignal(Date.now());
+  const [mobileDevices, setMobileDevices] = createSignal<MobileConnectedDevice[]>([]);
+  const [mobileDevicesLoading, setMobileDevicesLoading] = createSignal(false);
+  const [mobileDevicesError, setMobileDevicesError] = createSignal<string | null>(null);
+  const [revokingMobileSessionId, setRevokingMobileSessionId] = createSignal<string | null>(null);
   const [selectedProvider, setSelectedProvider] = createSignal<AgentProviderId | null>(null);
   let modalElement: HTMLElement | undefined;
   let avatarFileInput: HTMLInputElement | undefined;
   let profileNameInput: HTMLInputElement | undefined;
+  let mobileDevicesRequestRevision = 0;
 
   const accountName = () => props.account.name?.trim() || props.account.email.split("@")[0] || props.account.email;
 
@@ -105,6 +123,24 @@ export function SettingsModal(props: SettingsModalProps) {
       setProfileName(name);
       setProfileNameTouched(false);
       setProfileSaveError(null);
+    },
+  );
+
+  createEffect(
+    () => ({
+      open: props.open,
+      active: activeTab() === "mobile-connect",
+      list: props.onListMobileConnectedDevices,
+    }),
+    ({ open, active, list }) => {
+      mobileDevicesRequestRevision += 1;
+      if (!open || !active || !list) return;
+      void refreshMobileDevices(true);
+      const timer = window.setInterval(() => void refreshMobileDevices(false), 2_000);
+      return () => {
+        mobileDevicesRequestRevision += 1;
+        window.clearInterval(timer);
+      };
     },
   );
 
@@ -126,6 +162,25 @@ export function SettingsModal(props: SettingsModalProps) {
   };
   const visibleProfileNameError = () => profileSaveError() ?? (profileNameTouched() ? profileNameError() : null);
   const profileNameDirty = () => normalizedProfileName() !== savedProfileName();
+  const mobileConnectSecondsRemaining = createMemo(() =>
+    Math.max(0, Math.ceil(((mobileConnect()?.expiresAt ?? 0) - mobileConnectNow()) / 1_000)),
+  );
+  const mobileConnectExpired = () => Boolean(mobileConnect() && mobileConnectSecondsRemaining() === 0);
+  const mobileConnectExpiryLabel = () => {
+    const seconds = mobileConnectSecondsRemaining();
+    const minutes = Math.floor(seconds / 60);
+    return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
+  };
+
+  createEffect(
+    () => ({ open: props.open, ticket: mobileConnect() }),
+    ({ open, ticket }) => {
+      if (!open || !ticket) return;
+      setMobileConnectNow(Date.now());
+      const timer = window.setInterval(() => setMobileConnectNow(Date.now()), 1_000);
+      return () => window.clearInterval(timer);
+    },
+  );
 
   const title = () => tabDetails[activeTab()].title;
   const description = () => tabDetails[activeTab()].description;
@@ -195,7 +250,9 @@ export function SettingsModal(props: SettingsModalProps) {
       return activeTab();
     },
     onChange(value: string) {
-      if (value === "general" || value === "profile" || value === "updates") setActiveTab(value);
+      if (value === "general" || value === "profile" || value === "mobile-connect" || value === "updates") {
+        setActiveTab(value);
+      }
     },
     orientation: "vertical" as const,
     activationMode: "automatic" as const,
@@ -213,6 +270,73 @@ export function SettingsModal(props: SettingsModalProps) {
     } catch (error) {
       setUpdateError(error instanceof Error ? error.message : "Could not update OpenBot.");
     }
+  }
+
+  async function createMobileConnect(): Promise<void> {
+    if (mobileConnectBusy() || !props.onCreateMobileConnect) return;
+    setMobileConnectBusy(true);
+    setMobileConnectError(null);
+    try {
+      const ticket = await props.onCreateMobileConnect();
+      setMobileConnect(ticket);
+      setMobileConnectNow(Date.now());
+    } catch (error) {
+      setMobileConnect(null);
+      setMobileConnectError(error instanceof Error ? error.message : "Could not generate a Mobile Connect code.");
+    } finally {
+      setMobileConnectBusy(false);
+    }
+  }
+
+  async function refreshMobileDevices(showLoading: boolean): Promise<void> {
+    const list = props.onListMobileConnectedDevices;
+    if (!list || revokingMobileSessionId()) return;
+    const revision = ++mobileDevicesRequestRevision;
+    if (showLoading) setMobileDevicesLoading(true);
+    try {
+      const devices = await list();
+      if (revision !== mobileDevicesRequestRevision) return;
+      setMobileDevices(devices);
+      setMobileDevicesError(null);
+      setMobileConnectNow(Date.now());
+    } catch (error) {
+      if (revision !== mobileDevicesRequestRevision) return;
+      setMobileDevicesError(error instanceof Error ? error.message : "Could not load connected devices.");
+    } finally {
+      if (revision === mobileDevicesRequestRevision) setMobileDevicesLoading(false);
+    }
+  }
+
+  async function revokeMobileDevice(device: MobileConnectedDevice): Promise<void> {
+    if (!props.onRevokeMobileConnectedDevice || revokingMobileSessionId()) return;
+    mobileDevicesRequestRevision += 1;
+    setMobileDevicesLoading(false);
+    setRevokingMobileSessionId(device.sessionId);
+    setMobileDevicesError(null);
+    try {
+      await props.onRevokeMobileConnectedDevice(device.sessionId);
+      setMobileDevices((current) => current.filter((candidate) => candidate.sessionId !== device.sessionId));
+    } catch (error) {
+      setMobileDevicesError(error instanceof Error ? error.message : "Could not disconnect this device.");
+    } finally {
+      setRevokingMobileSessionId(null);
+    }
+  }
+
+  function mobileDevicePlatformLabel(platform: MobileConnectedDevice["platform"]): "iOS" | "Android" | "Mobile" {
+    if (platform === "ios") return "iOS";
+    if (platform === "android") return "Android";
+    return "Mobile";
+  }
+
+  function mobileDeviceTimeLabel(timestamp: number): string {
+    const elapsedSeconds = Math.max(0, Math.floor((mobileConnectNow() - timestamp) / 1_000));
+    if (elapsedSeconds < 60) return "Just now";
+    const elapsedMinutes = Math.floor(elapsedSeconds / 60);
+    if (elapsedMinutes < 60) return `${elapsedMinutes}m ago`;
+    const elapsedHours = Math.floor(elapsedMinutes / 60);
+    if (elapsedHours < 24) return `${elapsedHours}h ago`;
+    return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(timestamp);
   }
 
   async function updateAvatar(image: AvatarImageInput | null): Promise<void> {
@@ -562,6 +686,143 @@ export function SettingsModal(props: SettingsModalProps) {
                 </ItemActions>
               </Item>
             </ItemGroup>
+          </SettingsSection>
+        </Tabs.Content>
+
+        <Tabs.Content value="mobile-connect" class="settings-modal-tab-panel" data-tab="mobile-connect">
+          <SettingsSection
+            title="Connect your phone"
+            description="Scan a one-time code with the OpenBot mobile app to use this account on your phone."
+          >
+            <ItemGroup class="settings-modal-card settings-mobile-connect-card">
+              <Item class="settings-modal-row settings-mobile-connect-action-row">
+                <ItemContent>
+                  <ItemTitle>Mobile sign-in</ItemTitle>
+                  <ItemDescription>
+                    The code expires after two minutes and stops working after the first successful scan.
+                  </ItemDescription>
+                  <Show when={mobileConnectError()}>
+                    {(error) => (
+                      <ItemDescription class="settings-modal-error" role="alert">
+                        {error()}
+                      </ItemDescription>
+                    )}
+                  </Show>
+                </ItemContent>
+                <ItemActions>
+                  <Button
+                    type="button"
+                    size="sm"
+                    loading={mobileConnectBusy()}
+                    loadingLabel="Generating…"
+                    disabled={!props.onCreateMobileConnect}
+                    onClick={() => void createMobileConnect()}
+                  >
+                    {mobileConnect() ? "Generate new code" : "Generate QR code"}
+                  </Button>
+                </ItemActions>
+              </Item>
+
+              <Show when={mobileConnect()}>
+                {(ticket) => (
+                  <div class="settings-mobile-connect-code" aria-live="polite">
+                    <Show
+                      when={!mobileConnectExpired()}
+                      fallback={
+                        <div class="settings-mobile-connect-expired" role="status">
+                          <Smartphone aria-hidden="true" />
+                          <Text class="settings-mobile-connect-code-title" variant="body">
+                            This code has expired
+                          </Text>
+                          <Text variant="caption" tone="muted">
+                            Generate a new code to connect your phone.
+                          </Text>
+                        </div>
+                      }
+                    >
+                      <QrCode value={ticket().qrData} label="Mobile Connect sign-in QR code" />
+                      <div class="settings-mobile-connect-code-copy">
+                        <Text class="settings-mobile-connect-code-title" variant="body">
+                          Open OpenBot on your phone
+                        </Text>
+                        <Text variant="caption" tone="muted">
+                          Choose Scan QR code and point your camera at this code.
+                        </Text>
+                        <Text class="settings-mobile-connect-expiry" variant="caption" aria-atomic="true">
+                          Expires in {mobileConnectExpiryLabel()}
+                        </Text>
+                      </div>
+                    </Show>
+                  </div>
+                )}
+              </Show>
+            </ItemGroup>
+
+            <Show when={mobileDevices().length > 0}>
+              <section class="settings-mobile-devices" aria-labelledby="settings-mobile-devices-title">
+                <div class="settings-mobile-devices-heading">
+                  <h3 id="settings-mobile-devices-title">Connected devices</h3>
+                  <Show when={mobileDevicesLoading()}>
+                    <Text as="span" variant="caption" tone="muted" role="status">
+                      Refreshing…
+                    </Text>
+                  </Show>
+                </div>
+                <div class="settings-mobile-devices-table-frame">
+                  <table class="settings-mobile-devices-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Device</th>
+                        <th scope="col">Platform</th>
+                        <th scope="col">Connected</th>
+                        <th scope="col">Last active</th>
+                        <th scope="col">
+                          <span class="sr-only">Actions</span>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <For each={mobileDevices()}>
+                        {(device) => (
+                          <tr>
+                            <td>
+                              <span class="settings-mobile-device-name">
+                                <Smartphone aria-hidden="true" />
+                                {device.name}
+                              </span>
+                            </td>
+                            <td>{mobileDevicePlatformLabel(device.platform)}</td>
+                            <td>{mobileDeviceTimeLabel(device.connectedAt)}</td>
+                            <td>{mobileDeviceTimeLabel(device.lastActiveAt)}</td>
+                            <td class="settings-mobile-device-action">
+                              <Button
+                                type="button"
+                                variant="destructive-ghost"
+                                size="xs"
+                                loading={revokingMobileSessionId() === device.sessionId}
+                                loadingLabel="Disconnecting…"
+                                disabled={!props.onRevokeMobileConnectedDevice}
+                                aria-label={`Disconnect ${device.name}`}
+                                onClick={() => void revokeMobileDevice(device)}
+                              >
+                                Disconnect
+                              </Button>
+                            </td>
+                          </tr>
+                        )}
+                      </For>
+                    </tbody>
+                  </table>
+                </div>
+                <Show when={mobileDevicesError()}>
+                  {(error) => (
+                    <Text class="settings-modal-error" variant="caption" role="alert">
+                      {error()}
+                    </Text>
+                  )}
+                </Show>
+              </section>
+            </Show>
           </SettingsSection>
         </Tabs.Content>
 

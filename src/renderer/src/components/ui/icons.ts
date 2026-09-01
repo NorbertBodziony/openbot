@@ -55,6 +55,7 @@ export { default as Search } from "lucide-solid/icons/search";
 export { default as Settings } from "lucide-solid/icons/settings";
 export { default as ShieldCheck } from "lucide-solid/icons/shield-check";
 export { default as SlidersHorizontal } from "lucide-solid/icons/sliders-horizontal";
+export { default as Smartphone } from "lucide-solid/icons/smartphone";
 export { default as Trash2 } from "lucide-solid/icons/trash-2";
 export { default as TriangleAlert } from "lucide-solid/icons/triangle-alert";
 export { default as Upload } from "lucide-solid/icons/upload";
