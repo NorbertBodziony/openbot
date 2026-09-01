@@ -619,18 +619,45 @@ export class BrowserCdpEngine {
       };
     }
     if (target.kind === "css") {
-      const objectId = await uniqueCssObjectId(send, target.selector);
+      const matches: Array<{ objectId: string; sessionId?: string }> = [];
+      let ambiguous = false;
       try {
-        const node = await send("DOM.requestNode", { objectId });
-        const backendNodeId = numberValue(node.backendNodeId);
-        const nodeId = numberValue(node.nodeId);
-        if (backendNodeId) return { backendNodeId, x: 0, y: 0 };
-        if (!nodeId) throw new Error(`Unable to resolve CSS selector: ${target.selector}`);
-        const described = await send("DOM.describeNode", { nodeId });
+        for (const capture of this.#snapshotTargets()) {
+          const match = await cssObjectMatch(send, target.selector, capture.sessionId);
+          ambiguous ||= match.ambiguous;
+          if (match.objectId) matches.push({ objectId: match.objectId, sessionId: capture.sessionId });
+        }
+      } catch (error) {
+        await Promise.allSettled(
+          matches.map((match) =>
+            send("Runtime.releaseObject", { objectId: match.objectId }, match.sessionId).catch(() => undefined),
+          ),
+        );
+        throw error;
+      }
+      if (ambiguous || matches.length > 1) {
+        await Promise.allSettled(
+          matches.map((match) =>
+            send("Runtime.releaseObject", { objectId: match.objectId }, match.sessionId).catch(() => undefined),
+          ),
+        );
+        throw new Error(`CSS selector is ambiguous (at least 2 matches): ${target.selector}`);
+      }
+      const match = matches[0];
+      if (!match) throw new Error(`No element matches CSS selector: ${target.selector}`);
+      try {
+        const described = await send("DOM.describeNode", { objectId: match.objectId, depth: 0 }, match.sessionId);
         const describedNode = recordValue(described.node);
-        return { backendNodeId: numberValue(describedNode?.backendNodeId), x: 0, y: 0 };
+        const backendNodeId = numberValue(describedNode?.backendNodeId);
+        if (!backendNodeId) throw new Error(`Unable to resolve CSS selector: ${target.selector}`);
+        return {
+          backendNodeId,
+          sessionId: match.sessionId,
+          x: 0,
+          y: 0,
+        };
       } finally {
-        await send("Runtime.releaseObject", { objectId }).catch(() => undefined);
+        await send("Runtime.releaseObject", { objectId: match.objectId }, match.sessionId).catch(() => undefined);
       }
     }
     await this.#refreshSemanticTargets(send, deadline);
@@ -1086,55 +1113,74 @@ async function pageContainsText(
   return false;
 }
 
-async function uniqueCssObjectId(send: SendCommand, selector: string): Promise<string> {
-  const contextId = await automationContextId(send);
-  const collection = await send("Runtime.evaluate", {
-    expression: `(() => {
-      const selector = ${JSON.stringify(selector)};
-      const roots = [document];
-      const seen = new Set();
-      const matches = [];
-      let scanned = 0;
-      while (roots.length && scanned < ${MAX_SNAPSHOT_SCANNED_NODES} && matches.length < 2) {
-        const root = roots.shift();
-        if (!root || seen.has(root)) continue;
-        seen.add(root);
-        const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-        let node;
-        while ((node = walker.nextNode()) && scanned < ${MAX_SNAPSHOT_SCANNED_NODES} && matches.length < 2) {
-          scanned++;
-          if (node.matches(selector)) matches.push(node);
-          if (node.shadowRoot) roots.push(node.shadowRoot);
+async function cssObjectMatch(
+  send: SendCommand,
+  selector: string,
+  sessionId?: string,
+): Promise<{ objectId?: string; ambiguous: boolean }> {
+  const contextId = await automationContextId(send, sessionId);
+  const collection = await send(
+    "Runtime.evaluate",
+    {
+      expression: `(() => {
+        const selector = ${JSON.stringify(selector)};
+        const roots = [document];
+        const seen = new Set();
+        const matches = [];
+        let scanned = 0;
+        while (roots.length && scanned < ${MAX_SNAPSHOT_SCANNED_NODES} && matches.length < 2) {
+          const root = roots.shift();
+          if (!root || seen.has(root)) continue;
+          seen.add(root);
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+          let node;
+          while ((node = walker.nextNode()) && scanned < ${MAX_SNAPSHOT_SCANNED_NODES} && matches.length < 2) {
+            scanned++;
+            if (node.matches(selector)) matches.push(node);
+            if (node.localName === 'iframe' || node.localName === 'frame') {
+              try { if (node.contentDocument) roots.push(node.contentDocument); } catch {}
+            }
+            if (node.shadowRoot) roots.push(node.shadowRoot);
+          }
         }
-      }
-      return matches;
-    })()`,
-    contextId,
-    returnByValue: false,
-  });
+        return matches;
+      })()`,
+      contextId,
+      returnByValue: false,
+    },
+    sessionId,
+  );
   const exception = recordValue(collection.exceptionDetails);
   if (exception) throw new Error(exceptionDescription(exception));
   const collectionId = stringValue(recordValue(collection.result)?.objectId);
-  if (!collectionId) throw new Error(`No element matches CSS selector: ${selector}`);
+  if (!collectionId) return { ambiguous: false };
   try {
-    const lengthResult = await send("Runtime.callFunctionOn", {
-      objectId: collectionId,
-      functionDeclaration: "function() { return this.length; }",
-      returnByValue: true,
-    });
+    const lengthResult = await send(
+      "Runtime.callFunctionOn",
+      {
+        objectId: collectionId,
+        functionDeclaration: "function() { return this.length; }",
+        returnByValue: true,
+      },
+      sessionId,
+    );
     const length = numberValue(recordValue(lengthResult.result)?.value);
-    if (length === 0) throw new Error(`No element matches CSS selector: ${selector}`);
-    if (length > 1) throw new Error(`CSS selector is ambiguous (at least 2 matches): ${selector}`);
-    const element = await send("Runtime.callFunctionOn", {
-      objectId: collectionId,
-      functionDeclaration: "function() { return this[0]; }",
-      returnByValue: false,
-    });
+    if (length === 0) return { ambiguous: false };
+    if (length > 1) return { ambiguous: true };
+    const element = await send(
+      "Runtime.callFunctionOn",
+      {
+        objectId: collectionId,
+        functionDeclaration: "function() { return this[0]; }",
+        returnByValue: false,
+      },
+      sessionId,
+    );
     const objectId = stringValue(recordValue(element.result)?.objectId);
     if (!objectId) throw new Error(`Unable to resolve CSS selector: ${selector}`);
-    return objectId;
+    return { objectId, ambiguous: false };
   } finally {
-    await send("Runtime.releaseObject", { objectId: collectionId }).catch(() => undefined);
+    await send("Runtime.releaseObject", { objectId: collectionId }, sessionId).catch(() => undefined);
   }
 }
 
@@ -1147,107 +1193,60 @@ async function collectActionableNodes(
   assertBeforeDeadline(deadline);
   await Promise.all([send("DOM.enable", {}, capture.sessionId), send("Accessibility.enable", {}, capture.sessionId)]);
   assertBeforeDeadline(deadline);
-  const contextId = await automationContextId(send, capture.sessionId);
-  const scanBudgetMs = deadline === undefined ? 60_000 : Math.max(1, deadline - Date.now());
-  const collection = await send(
-    "Runtime.evaluate",
-    {
-      expression: `(() => {
-        const actionableRoles = new Set(${JSON.stringify([...ACTIONABLE_ROLES])});
-        const roots = [document];
-        const seen = new Set();
-        const elements = [];
-        let scanned = 0;
-        const stopAt = performance.now() + ${scanBudgetMs};
-        while (roots.length && scanned < ${MAX_SNAPSHOT_SCANNED_NODES} && performance.now() < stopAt) {
-          const root = roots.shift();
-          if (!root || seen.has(root)) continue;
-          seen.add(root);
-          const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-          let node;
-          while ((node = walker.nextNode()) && scanned < ${MAX_SNAPSHOT_SCANNED_NODES} && performance.now() < stopAt) {
-            scanned++;
-            const nativeAction = node.matches('button, input:not([type="hidden"]), select, textarea, a[href], summary, [contenteditable]');
-            const explicitRoles = String(node.getAttribute('role') || '').toLowerCase().split(/\\s+/).filter(Boolean);
-            const style = getComputedStyle(node);
-            const visible = !node.closest('[hidden], [inert], [aria-hidden="true"]') && style.display !== 'none' && style.visibility !== 'hidden' && style.visibility !== 'collapse' && node.getClientRects().length > 0;
-            if (visible && (nativeAction || explicitRoles.some(role => actionableRoles.has(role)))) {
-              elements.push(node);
-            }
-            if ((node.localName === 'iframe' || node.localName === 'frame')) {
-              try { if (node.contentDocument) roots.push(node.contentDocument); } catch {}
-            }
-            if (node.shadowRoot) roots.push(node.shadowRoot);
-          }
-        }
-        return { elements };
-      })()`,
-      contextId,
-      returnByValue: false,
-    },
-    capture.sessionId,
-  );
-  const collectionId = stringValue(recordValue(collection.result)?.objectId);
-  if (!collectionId) return [];
-  const candidates: Array<{ backendNodeId: number; node: CdpResult; ax: CdpResult; role: string }> = [];
-  try {
-    assertBeforeDeadline(deadline);
-    const lengthResult = await send(
-      "Runtime.callFunctionOn",
-      {
-        objectId: collectionId,
-        functionDeclaration: "function() { return this.elements.length; }",
-        returnByValue: true,
-      },
+  const [domSnapshot, fullAxTree] = await Promise.all([
+    send(
+      "DOMSnapshot.captureSnapshot",
+      { computedStyles: [], includePaintOrder: false, includeDOMRects: false },
       capture.sessionId,
-    );
-    const length = Math.min(MAX_SNAPSHOT_SCANNED_NODES, numberValue(recordValue(lengthResult.result)?.value));
-    for (let index = 0; index < length && candidates.length < limit; index++) {
-      assertBeforeDeadline(deadline);
-      const remoteResult = await send(
-        "Runtime.callFunctionOn",
-        {
-          objectId: collectionId,
-          functionDeclaration: "function(index) { return this.elements[index]; }",
-          arguments: [{ value: index }],
-          returnByValue: false,
-        },
-        capture.sessionId,
-      );
-      const objectId = stringValue(recordValue(remoteResult.result)?.objectId);
-      if (!objectId) continue;
-      const described = await send("DOM.describeNode", { objectId, depth: 0 }, capture.sessionId).catch(() => null);
-      const node = recordValue(described?.node);
-      if (!node) {
-        await send("Runtime.releaseObject", { objectId }, capture.sessionId).catch(() => undefined);
-        continue;
-      }
-      const backendNodeId = numberValue(node.backendNodeId);
-      if (!backendNodeId) {
-        await send("Runtime.releaseObject", { objectId }, capture.sessionId).catch(() => undefined);
-        continue;
-      }
-      const partial = await send(
-        "Accessibility.getPartialAXTree",
-        { objectId, fetchRelatives: false },
-        capture.sessionId,
-      ).catch(() => ({ nodes: [] }));
-      await send("Runtime.releaseObject", { objectId }, capture.sessionId).catch(() => undefined);
-      const axNodes = Array.isArray(partial.nodes) ? partial.nodes.filter(isRecord) : [];
-      const ax =
-        axNodes.find(
-          (candidate) => numberValue(candidate.backendDOMNodeId) === backendNodeId && candidate.ignored !== true,
-        ) ??
-        axNodes.find((candidate) => candidate.ignored !== true) ??
-        {};
-      const role = axValue(ax.role).toLowerCase() || fallbackRole(node);
-      if (!role || !ACTIONABLE_ROLES.has(role)) continue;
-      candidates.push({ backendNodeId, node, ax, role });
+    ),
+    send("Accessibility.getFullAXTree", {}, capture.sessionId),
+  ]);
+  assertBeforeDeadline(deadline);
+  const strings = Array.isArray(domSnapshot.strings) ? domSnapshot.strings.filter(isString) : [];
+  const domNodes = new Map<number, CdpResult>();
+  const documents = Array.isArray(domSnapshot.documents) ? domSnapshot.documents.filter(isRecord) : [];
+  for (const document of documents) {
+    const nodes = recordValue(document.nodes);
+    const backendNodeIds = Array.isArray(nodes?.backendNodeId) ? nodes.backendNodeId : [];
+    const nodeNames = Array.isArray(nodes?.nodeName) ? nodes.nodeName : [];
+    const attributes = Array.isArray(nodes?.attributes) ? nodes.attributes : [];
+    const frameId = snapshotString(strings, document.frameId);
+    for (let index = 0; index < backendNodeIds.length && domNodes.size < MAX_SNAPSHOT_SCANNED_NODES; index++) {
+      const backendNodeId = numberValue(backendNodeIds[index]);
+      if (!backendNodeId) continue;
+      const nodeName = snapshotString(strings, nodeNames[index]);
+      const rawAttributes = Array.isArray(attributes[index]) ? attributes[index] : [];
+      domNodes.set(backendNodeId, {
+        backendNodeId,
+        nodeName,
+        localName: nodeName.toLowerCase(),
+        attributes: rawAttributes.map((value: unknown) => snapshotString(strings, value)),
+        frameId,
+      });
     }
-  } finally {
-    await send("Runtime.releaseObject", { objectId: collectionId }, capture.sessionId).catch(() => undefined);
+  }
+  const candidates: Array<{ backendNodeId: number; node: CdpResult; ax: CdpResult; role: string }> = [];
+  const seen = new Set<number>();
+  const axNodes = Array.isArray(fullAxTree.nodes) ? fullAxTree.nodes.filter(isRecord) : [];
+  for (const ax of axNodes) {
+    assertBeforeDeadline(deadline);
+    if (ax.ignored === true) continue;
+    const backendNodeId = numberValue(ax.backendDOMNodeId);
+    if (!backendNodeId || seen.has(backendNodeId)) continue;
+    const node = domNodes.get(backendNodeId);
+    if (!node) continue;
+    const role = axValue(ax.role).toLowerCase() || fallbackRole(node);
+    if (!ACTIONABLE_ROLES.has(role)) continue;
+    seen.add(backendNodeId);
+    candidates.push({ backendNodeId, node, ax, role });
+    if (candidates.length >= limit) break;
   }
   return candidates;
+}
+
+function snapshotString(strings: string[], value: unknown): string {
+  const index = numberValue(value);
+  return strings[index] ?? "";
 }
 
 function assertBeforeDeadline(deadline: number | undefined): void {

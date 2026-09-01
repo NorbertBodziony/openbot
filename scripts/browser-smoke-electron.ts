@@ -176,10 +176,14 @@ async function main(): Promise<void> {
     const statePath = join(temporaryRoot, "browser-tabs.json");
     const browser = new BrowserHost(window, downloadsRoot, statePath, { recordingDurationMs: 500 });
     await browser.setVisible({ visible: true, bounds: { x: 0, y: 0, width: 800, height: 600 } });
+    const documentChangedTabs: string[] = [];
+    browser.onDocumentChanged((tabId) => documentChangedTabs.push(tabId));
 
     const controlPhases: string[] = [];
     const controlledTabIds: Array<string | null> = [];
+    const observedControlActions: string[] = [];
     browser.onControlChanged((state) => {
+      observedControlActions.push(...state.sessions.map((session) => session.action));
       const session = state.sessions.find((item) => item.turnId === "browser-smoke-turn");
       if (session) {
         controlPhases.push(`${session.action}:${session.phase}`);
@@ -287,14 +291,24 @@ async function main(): Promise<void> {
     ) {
       throw new Error(`V2 iframe text input used the wrong CDP session: ${toolError(frameTyped)}`);
     }
+    const frameTypedActions = toolTextPayload(frameTyped)?.actions;
+    if (
+      !Array.isArray(frameTypedActions) ||
+      !frameTypedActions.some(
+        (entry) => isDynamicRecord(entry) && entry.action === "type" && entry.outcome === "success",
+      )
+    ) {
+      throw new Error("V2 action snapshot omitted the action that produced it.");
+    }
     const framePressed = await callBrowserTool(browser, "press", {
       tabId: v2Tab.id,
-      target: { kind: "role", role: "textbox", name: "Frame field", exact: true },
+      target: { kind: "css", selector: 'input[aria-label="Frame field"]' },
       key: "Enter",
     });
     if (!framePressed.success || !String(toolTextPayload(framePressed)?.text).includes("Frame key:true")) {
       throw new Error(`V2 iframe key input used the wrong CDP session: ${toolError(framePressed)}`);
     }
+    const documentChangesBeforeFrameNavigation = documentChangedTabs.length;
     const scheduledFrameNavigation = await callBrowserTool(browser, "click", {
       tabId: v2Tab.id,
       target: { kind: "role", role: "button", name: "Schedule frame navigation", exact: true },
@@ -309,6 +323,9 @@ async function main(): Promise<void> {
       throw new Error(`V2 iframe navigation setup failed: ${toolError(scheduledFrameNavigation)}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 1_200));
+    if (!documentChangedTabs.slice(documentChangesBeforeFrameNavigation).includes(v2Tab.id)) {
+      throw new Error("V2 iframe navigation did not notify document cleanup listeners.");
+    }
     const staleFrameClick = await callBrowserTool(browser, "click", {
       tabId: v2Tab.id,
       target: { kind: "ref", ref: String(staleFrameTarget.ref), revision: staleFrameRevision },
@@ -1034,6 +1051,9 @@ async function main(): Promise<void> {
     process.stdout.write("BrowserHost: agent tab isolation passed.\n");
     if (!controlPhases.includes("open:acting") || !controlPhases.includes("open:waiting")) {
       throw new Error(`Browser control lifecycle was not reported: ${controlPhases.join(", ")}`);
+    }
+    if (!observedControlActions.includes("reload")) {
+      throw new Error("Browser control reported reload navigation as the wrong legacy action.");
     }
     if (!controlledTabIds.some(Boolean)) {
       throw new Error("Opening a page did not bind browser control to the new tab.");

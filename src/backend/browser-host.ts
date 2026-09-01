@@ -895,8 +895,8 @@ export class BrowserHost {
   #bindTabEvents(tab: InternalTab): void {
     const contents = tab.view.webContents;
     const changed = () => this.#emitChanged();
-    contents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
-      if (isInPlace || !isMainFrame) return;
+    contents.on("did-start-navigation", (_event, _url, isInPlace) => {
+      if (isInPlace) return;
       for (const listener of this.#documentListeners) listener(tab.id);
     });
     contents.on("before-input-event", (event, input) => {
@@ -1024,6 +1024,7 @@ export class BrowserHost {
       const deadline = Date.now() + timeoutMs;
       const timeoutMessage = `Browser ${action} timed out.`;
       const snapshotDrains: Promise<unknown>[] = [];
+      let actionRecorded = false;
       const operationCompletion = (async () => {
         let highlighted = false;
         try {
@@ -1046,6 +1047,12 @@ export class BrowserHost {
           snapshotDrains.push(settleCompletion);
           await withTimeout(settleCompletion, settleTimeout, timeoutMessage);
           const snapshotTimeout = remainingTime(deadline, timeoutMessage);
+          tab.diagnostics.action({
+            action,
+            target: target ? describeBrowserTarget(target) : undefined,
+            outcome: "success",
+          });
+          actionRecorded = true;
           const snapshot = (
             await this.#readSnapshot(
               tab,
@@ -1055,20 +1062,17 @@ export class BrowserHost {
               timeoutMessage,
             )
           ).snapshot;
-          tab.diagnostics.action({
-            action,
-            target: target ? describeBrowserTarget(target) : undefined,
-            outcome: "success",
-          });
           return snapshot;
         })
         .catch((error) => {
-          tab.diagnostics.action({
-            action,
-            target: target ? describeBrowserTarget(target) : undefined,
-            outcome: "error",
-            detail: String(error).slice(0, 2_000),
-          });
+          if (!actionRecorded) {
+            tab.diagnostics.action({
+              action,
+              target: target ? describeBrowserTarget(target) : undefined,
+              outcome: "error",
+              detail: String(error).slice(0, 2_000),
+            });
+          }
           throw error;
         });
       const drained = Promise.allSettled([operationCompletion, response])
@@ -1318,7 +1322,10 @@ function browserControlAction(tool: string, args: DynamicRecord): BrowserControl
     case "status":
       return "list-tabs";
     case "navigate":
-      return "back";
+      if (args.direction === "back") return "back";
+      if (args.direction === "forward") return "forward";
+      if (args.direction === "reload") return "reload";
+      return "open";
     case "click":
       return "click";
     case "type":
