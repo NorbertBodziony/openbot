@@ -1,7 +1,13 @@
 import type { BotSummary, ConversationMessage } from "@openbot/contracts/ipc";
-import { routineConversationEventItemType } from "@openbot/contracts/ipc";
+import { routineConversationEventItemType, routineRunConversationEventItemType } from "@openbot/contracts/ipc";
 import { describe, expect, it } from "vitest";
-import { botProfilesEqual, readStateForMessages, toBotMessage, toBotProfile } from "./app-message-projection";
+import {
+  botProfilesEqual,
+  readStateForMessages,
+  toBotMessage,
+  toBotMessages,
+  toBotProfile,
+} from "./app-message-projection";
 
 describe("toBotProfile", () => {
   it("preserves marketplace installation metadata for the renderer", () => {
@@ -85,6 +91,33 @@ describe("readStateForMessages", () => {
       readStateForMessages({ unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null }, messages),
     ).toMatchObject({ unreadCount: 0, firstUnreadMessageId: null });
   });
+
+  it("does not count routine run markers, including malformed markers, as unread replies", () => {
+    const messages: ConversationMessage[] = [
+      {
+        id: "routine-run-event",
+        author: "system",
+        source: "system",
+        text: "Morning brief",
+        createdAt: "2026-08-30T11:00:00.000Z",
+        status: "completed",
+        itemType: routineRunConversationEventItemType("running", "routine-1", "run-1"),
+      },
+      {
+        id: "malformed-routine-run-event",
+        author: "system",
+        source: "system",
+        text: "Morning brief",
+        createdAt: "2026-08-30T11:01:00.000Z",
+        status: "completed",
+        itemType: "routine-run-event:unknown",
+      },
+    ];
+
+    expect(
+      readStateForMessages({ unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null }, messages),
+    ).toMatchObject({ unreadCount: 0, firstUnreadMessageId: null });
+  });
 });
 
 describe("toBotMessage", () => {
@@ -114,10 +147,81 @@ describe("toBotMessage", () => {
       itemType: routineConversationEventItemType("created", "routine-1"),
     } satisfies ConversationMessage;
 
-    expect(toBotMessage(message)).toMatchObject({
-      kind: "routine-event",
-      routineEvent: { action: "created", routineId: "routine-1", routineName: "Morning brief" },
+    expect(toBotMessage(message, "chief")).toMatchObject({
+      kind: "action-marker",
+      actionMarker: {
+        kind: "routine-lifecycle",
+        action: "created",
+        sourceAgentId: "chief",
+        routineId: "routine-1",
+      },
     });
+  });
+
+  it("projects routine invocation, transitions, and malformed fallback markers", () => {
+    const invocation = {
+      id: "routine-delivery",
+      author: "user",
+      source: "routine",
+      text: "Prepare the brief.",
+      createdAt: "2026-09-01T08:00:00.000Z",
+      status: "completed",
+      delivery: { id: "delivery-1", status: "queued", position: 1 },
+      routine: {
+        routineId: "routine-1",
+        runId: "run-1",
+        name: "Morning brief",
+        scheduledFor: "2026-09-01T08:00:00.000Z",
+      },
+    } satisfies ConversationMessage;
+    const running = {
+      id: "routine-running",
+      author: "system",
+      source: "system",
+      text: "Morning brief",
+      createdAt: "2026-09-01T08:00:01.000Z",
+      status: "completed",
+      itemType: routineRunConversationEventItemType("running", "routine-1", "run-1"),
+    } satisfies ConversationMessage;
+
+    expect(toBotMessages([invocation], "chief")[0]).toMatchObject({
+      body: "Prepare the brief.",
+      actionMarker: { kind: "routine-run", status: "queued", runId: "run-1" },
+    });
+    expect(toBotMessage(running, "chief").actionMarker).toMatchObject({
+      kind: "routine-run",
+      status: "running",
+      runId: "run-1",
+    });
+    expect(toBotMessage({ ...running, itemType: "routine-run-event:future" }, "chief").actionMarker).toEqual({
+      kind: "unavailable",
+      label: "Action unavailable",
+      timestamp: running.createdAt,
+    });
+  });
+
+  it("aggregates outgoing agent delivery states", () => {
+    const message = {
+      id: "exchange-1",
+      author: "agent",
+      source: "agent",
+      text: "",
+      createdAt: "2026-09-01T08:00:00.000Z",
+      status: "completed",
+      exchange: {
+        direction: "outgoing",
+        messageId: "message-1",
+        senderBotId: "chief",
+        recipientBotIds: ["research", "sales"],
+        replyToMessageId: null,
+        deliveries: [
+          { id: "delivery-1", recipientBotId: "research", status: "completed", position: null, error: null },
+          { id: "delivery-2", recipientBotId: "sales", status: "failed", position: null, error: "No" },
+        ],
+      },
+    } satisfies ConversationMessage;
+
+    expect(toBotMessage(message).actionMarker).toMatchObject({ kind: "agent-message", status: "partial" });
   });
 });
 

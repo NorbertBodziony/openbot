@@ -14,7 +14,11 @@ import type {
   RoutineRun,
   TeamPresenceSnapshot,
 } from "@openbot/contracts/ipc";
-import { AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT, routineConversationEventItemType } from "@openbot/contracts/ipc";
+import {
+  AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT,
+  routineConversationEventItemType,
+  routineRunConversationEventItemType,
+} from "@openbot/contracts/ipc";
 import { isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import {
   TEAM_APP_VERSION_HEADER,
@@ -663,6 +667,15 @@ describe("TeamApiServer administration", () => {
               createdAt: "2026-08-29T10:01:00.000Z",
               status: "completed",
               itemType: routineConversationEventItemType("created", "routine-1"),
+            },
+            {
+              id: "routine-run-event-1",
+              author: "system",
+              source: "system",
+              text: "Morning brief",
+              createdAt: "2026-08-29T10:02:00.000Z",
+              status: "completed",
+              itemType: routineRunConversationEventItemType("running", "routine-1", "run-1"),
             },
           ],
         },
@@ -1463,6 +1476,15 @@ describe("TeamApiServer administration", () => {
           createdAt: "2026-08-19T10:01:00.000Z",
           status: "completed",
           itemType: routineConversationEventItemType("created", "routine-1"),
+        },
+        {
+          id: "routine-run-event-1",
+          author: "system",
+          source: "system",
+          text: "Morning brief",
+          createdAt: "2026-08-19T10:02:00.000Z",
+          status: "completed",
+          itemType: routineRunConversationEventItemType("running", "routine-1", "run-1"),
         },
       ],
     };

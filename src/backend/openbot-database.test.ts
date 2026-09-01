@@ -5,8 +5,8 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { BotSummary, ConversationSnapshot } from "@openbot/contracts/ipc";
-import { routineConversationEventItemType } from "@openbot/contracts/ipc";
+import type { BotSummary, ConversationMessage, ConversationSnapshot } from "@openbot/contracts/ipc";
+import { routineConversationEventItemType, routineRunConversationEventItemType } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it } from "vitest";
 import { OpenBotDatabase } from "./openbot-database";
@@ -177,6 +177,69 @@ describe("OpenBotDatabase", () => {
     restored.close();
   });
 
+  it("appends one conversation marker and replays it without another full snapshot", async () => {
+    const database = await createDatabase();
+    const bot = testBot();
+    database.replaceAgents("agents-append-marker", [bot], "agents.imported");
+    if (!bot.threadId) throw new Error("The test bot has no thread.");
+    const saved = database.persistConversation(
+      {
+        botId: bot.id,
+        threadId: bot.threadId,
+        activeTurnId: "turn-1",
+        revision: 0,
+        messages: [
+          {
+            id: "user-before-marker",
+            author: "user",
+            text: "Run the routine",
+            createdAt: "2026-08-18T10:00:00.000Z",
+            status: "completed",
+          },
+        ],
+      },
+      "turn.started",
+    );
+    const marker: ConversationMessage = {
+      id: "routine-marker",
+      author: "system",
+      source: "system",
+      text: "Morning brief",
+      createdAt: "2026-08-18T10:00:01.000Z",
+      status: "completed",
+      itemType: "routine-run-event:running:routine-1:run-1",
+    };
+
+    const revision = database.appendConversationMessage({
+      botId: bot.id,
+      threadId: bot.threadId,
+      activeTurnId: "turn-1",
+      message: marker,
+      eventType: "routine.run-running",
+      detail: { routineId: "routine-1", runId: "run-1", status: "running" },
+    });
+
+    expect(revision).toBeGreaterThan(saved.revision);
+    expect(database.readConversation(bot.id, bot.threadId)).toMatchObject({
+      revision,
+      messages: [{ id: "user-before-marker" }, { id: marker.id, itemType: marker.itemType }],
+    });
+    const event = database.connection
+      .prepare("SELECT payload_json FROM orchestration_events WHERE event_type = 'routine.run-running'")
+      .get();
+    if (!isDynamicRecord(event) || !isString(event.payload_json)) throw new Error("The marker event is invalid.");
+    const eventPayload = JSON.parse(event.payload_json);
+    expect(eventPayload).toMatchObject({ appendedMessage: { id: marker.id } });
+    expect(eventPayload).not.toHaveProperty("snapshot");
+
+    database.connection.prepare("DELETE FROM projection_thread_messages WHERE thread_id = ?").run(bot.threadId);
+    expect(database.rebuildThreadProjection(bot.threadId)).toMatchObject({
+      revision,
+      messages: [{ id: "user-before-marker" }, { id: marker.id, itemType: marker.itemType }],
+    });
+    database.close();
+  });
+
   it("reads bounded runtime metadata without loading a full conversation", async () => {
     const database = await createDatabase();
     const bot = testBot();
@@ -293,7 +356,7 @@ describe("OpenBotDatabase", () => {
     database.close();
   });
 
-  it("fills legacy pages after excluding routine event markers", async () => {
+  it("fills legacy pages after excluding routine action markers", async () => {
     const database = await createDatabase();
     const bot = testBot();
     database.replaceAgents("agents-routine-history", [bot], "agents.imported");
@@ -305,6 +368,15 @@ describe("OpenBotDatabase", () => {
       createdAt,
       status: "completed" as const,
       itemType: routineConversationEventItemType("updated", "routine-1"),
+    });
+    const routineRunEvent = (id: string, createdAt: string) => ({
+      id,
+      author: "system" as const,
+      source: "system" as const,
+      text: "Morning brief",
+      createdAt,
+      status: "completed" as const,
+      itemType: routineRunConversationEventItemType("running", "routine-1", "run-1"),
     });
     database.persistConversation(
       {
@@ -329,7 +401,8 @@ describe("OpenBotDatabase", () => {
             status: "completed",
           },
           routineEvent("routine-event-2", "2026-08-29T10:03:00.000Z"),
-          routineEvent("routine-event-3", "2026-08-29T10:04:00.000Z"),
+          routineRunEvent("routine-run-event-1", "2026-08-29T10:04:00.000Z"),
+          routineEvent("routine-event-3", "2026-08-29T10:05:00.000Z"),
         ],
       },
       "conversation.routine-history",
@@ -337,6 +410,7 @@ describe("OpenBotDatabase", () => {
 
     const latest = database.readConversationPage(bot.id, bot.threadId, { type: "latest" }, 1, {
       excludeRoutineEvents: true,
+      excludeRoutineRunEvents: true,
     });
     expect(latest.messages.map((message) => message.id)).toEqual(["reply-new"]);
     expect(latest.pageInfo.hasOlder).toBe(true);
@@ -347,10 +421,11 @@ describe("OpenBotDatabase", () => {
       bot.threadId,
       { type: "before", cursor: latest.pageInfo.olderCursor },
       1,
-      { excludeRoutineEvents: true },
+      { excludeRoutineEvents: true, excludeRoutineRunEvents: true },
     );
     expect(older.messages.map((message) => message.id)).toEqual(["reply-old"]);
     expect(older.pageInfo.hasOlder).toBe(false);
+    expect(database.searchConversationMessages("Morning brief", bot.id).total).toBe(0);
     database.close();
   });
 

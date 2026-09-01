@@ -1386,6 +1386,7 @@ describe("Team API compatibility negotiation", () => {
       expect(headers.get("OpenBot-Protocol-Version")).toBe("2");
       expect(headers.get("OpenBot-App-Version")).toBe("0.4.0");
       expect(headers.get(TEAM_CAPABILITIES_HEADER)).toContain("routine-event-markers");
+      expect(headers.get(TEAM_CAPABILITIES_HEADER)).toContain("routine-run-event-markers");
       return Response.json({
         phase: "ready",
         cliVersion: "1.0.0",

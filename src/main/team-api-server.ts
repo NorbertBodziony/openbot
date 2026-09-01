@@ -27,10 +27,11 @@ import {
   isAvatarSeed,
   isMessageReaction,
   isReasoningEffort,
-  parseRoutineConversationEventItemType,
   type ReorderQueueInput,
   type RespondToApprovalInput,
   type RespondToBrowserTakeoverInput,
+  ROUTINE_EVENT_ITEM_TYPE_PREFIX,
+  ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX,
   type SidebarLayoutSnapshot,
   type SteerQueuedMessageInput,
   type TeamMemberSummary,
@@ -1066,13 +1067,7 @@ export class TeamApiServer {
         }
         if (method === "GET" && action === "conversation") {
           const conversation = await this.#options.agents.readConversationFor(botId, member.id);
-          return this.#json(
-            response,
-            200,
-            clientCapabilities.has("routine-event-markers")
-              ? conversation
-              : conversationWithoutRoutineEvents(conversation),
-          );
+          return this.#json(response, 200, conversationForCapabilities(conversation, clientCapabilities));
         }
         if (method === "GET" && action === "conversation-page") {
           const page = await this.#options.agents.readConversationPageFor(
@@ -1080,7 +1075,10 @@ export class TeamApiServer {
             member.id,
             pageAnchor(url),
             pageLimit(url),
-            { excludeRoutineEvents: !clientCapabilities.has("routine-event-markers") },
+            {
+              excludeRoutineEvents: !clientCapabilities.has("routine-event-markers"),
+              excludeRoutineRunEvents: !clientCapabilities.has("routine-run-event-markers"),
+            },
           );
           return this.#json(response, 200, page);
         }
@@ -1230,7 +1228,7 @@ export class TeamApiServer {
 
   #broadcastAgentEvent(event: AgentEvent): void {
     let payload: string | undefined;
-    let routineEventFilteredPayload: string | undefined;
+    const filteredConversationPayloads = new Map<string, string>();
     let conversationInvalidation: string | undefined;
     let queueInvalidation: string | undefined;
     let completionSnapshot: string | undefined;
@@ -1257,14 +1255,23 @@ export class TeamApiServer {
           encodeTeamProtocolV1CurrentEvent({ type: "queue-invalidated", botId: event.snapshot.botId }) ?? undefined;
         if (!queueInvalidation) continue;
         outgoing = queueInvalidation;
-      } else if (event.type === "conversation" && !connection.capabilities.has("routine-event-markers")) {
-        routineEventFilteredPayload ??=
-          encodeTeamProtocolV1CurrentEvent({
-            ...event,
-            snapshot: conversationSnapshotWithoutRoutineEvents(event.snapshot),
-          }) ?? undefined;
-        if (!routineEventFilteredPayload) continue;
-        outgoing = routineEventFilteredPayload;
+      } else if (
+        event.type === "conversation" &&
+        (!connection.capabilities.has("routine-event-markers") ||
+          !connection.capabilities.has("routine-run-event-markers"))
+      ) {
+        const key = `${connection.capabilities.has("routine-event-markers")}:${connection.capabilities.has("routine-run-event-markers")}`;
+        let filtered = filteredConversationPayloads.get(key);
+        if (!filtered) {
+          filtered =
+            encodeTeamProtocolV1CurrentEvent({
+              ...event,
+              snapshot: conversationSnapshotForCapabilities(event.snapshot, connection.capabilities),
+            }) ?? undefined;
+          if (filtered) filteredConversationPayloads.set(key, filtered);
+        }
+        if (!filtered) continue;
+        outgoing = filtered;
       } else {
         payload ??= encodeTeamProtocolV1CurrentEvent(event) ?? undefined;
         if (!payload) continue;
@@ -1304,6 +1311,7 @@ export class TeamApiServer {
           : TEAM_PROTOCOL_V1_CAPABILITIES.filter(
               (capability) =>
                 capability !== "routine-event-markers" &&
+                capability !== "routine-run-event-markers" &&
                 (supportsSnapshotTransport || capability !== "agent-runtime-snapshots"),
             ),
       ),
@@ -1697,20 +1705,32 @@ function requestCapabilities(request: import("node:http").IncomingMessage): Set<
   return new Set(capabilities.filter(isTeamProtocolV1Capability));
 }
 
-function conversationSnapshotWithoutRoutineEvents(snapshot: ConversationSnapshot): ConversationSnapshot {
+function conversationSnapshotForCapabilities(
+  snapshot: ConversationSnapshot,
+  capabilities: ReadonlySet<string>,
+): ConversationSnapshot {
   return {
     ...snapshot,
-    messages: snapshot.messages.filter((message) => parseRoutineConversationEventItemType(message.itemType) === null),
+    messages: snapshot.messages.filter((message) => markerSupported(message.itemType, capabilities)),
   };
 }
 
-function conversationWithoutRoutineEvents(conversation: ConversationWithReadState): ConversationWithReadState {
+function conversationForCapabilities(
+  conversation: ConversationWithReadState,
+  capabilities: ReadonlySet<string>,
+): ConversationWithReadState {
   return {
     ...conversation,
-    messages: conversation.messages.filter(
-      (message) => parseRoutineConversationEventItemType(message.itemType) === null,
-    ),
+    messages: conversation.messages.filter((message) => markerSupported(message.itemType, capabilities)),
   };
+}
+
+function markerSupported(itemType: string | undefined, capabilities: ReadonlySet<string>): boolean {
+  if (itemType?.startsWith(ROUTINE_EVENT_ITEM_TYPE_PREFIX)) return capabilities.has("routine-event-markers");
+  if (itemType?.startsWith(ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX)) {
+    return capabilities.has("routine-run-event-markers");
+  }
+  return true;
 }
 
 function eventCapability(event: AgentEvent): (typeof TEAM_PROTOCOL_V1_CAPABILITIES)[number] | null {

@@ -15,6 +15,7 @@ import {
   type BrowserTab,
   isAgentEvent,
   routineConversationEvent,
+  routineRunConversationEvent,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -3073,6 +3074,249 @@ describe.sequential("AgentService", () => {
     ).toHaveLength(3);
   });
 
+  it("appends a cancellation marker before deleting an active routine run", async () => {
+    const { store, mailbox } = stores();
+    let client: FakeAgentClient | undefined;
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
+      client = new FakeAgentClient(provider, "", false);
+      return client;
+    });
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    const routine = service.createRoutine({
+      botId: bot.id,
+      name: "Active routine",
+      instruction: "Remain active until deletion.",
+      active: true,
+      timezone: "UTC",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    const run = await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await waitFor(() =>
+      service
+        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .some((candidate) => candidate.id === run.id && candidate.status === "running"),
+    );
+    const runningDelivery = service.listQueue(bot.id).deliveries.find((delivery) => delivery.status === "running");
+    if (!runningDelivery?.turnId || !client) throw new Error("The active routine turn did not start.");
+
+    await service.deleteRoutine({ botId: bot.id, routineId: routine.id });
+
+    expect(client.requests).toContainEqual(
+      expect.objectContaining({
+        method: "turn/interrupt",
+        params: expect.objectContaining({ turnId: runningDelivery.turnId }),
+      }),
+    );
+    const events = (await service.readConversation(bot.id)).messages.flatMap(
+      (message) => routineRunConversationEvent(message) ?? [],
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({ routineId: routine.id, runId: run.id, status: "cancelled" }),
+    );
+  });
+
+  it("keeps a started routine delivery running while its transition marker retries", async () => {
+    const { store, mailbox } = stores();
+    let client: FakeAgentClient | undefined;
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
+      client = new FakeAgentClient(provider, "", false);
+      return client;
+    });
+    const emitted: AgentEvent[] = [];
+    service.on("event", (event: AgentEvent) => emitted.push(event));
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    const routine = service.createRoutine({
+      botId: bot.id,
+      name: "Retry running marker",
+      instruction: "Keep the provider turn active while marker persistence retries.",
+      active: true,
+      timezone: "UTC",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    const appendConversationMessage = store.database.appendConversationMessage.bind(store.database);
+    let rejectRunningMarker = true;
+    vi.spyOn(store.database, "appendConversationMessage").mockImplementation((input) => {
+      if (rejectRunningMarker && input.eventType === "routine.run-running") {
+        rejectRunningMarker = false;
+        throw new Error("running marker persistence failed");
+      }
+      return appendConversationMessage(input);
+    });
+
+    const run = await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await waitFor(() => {
+      const currentRun = service?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })[0];
+      return currentRun?.id === run.id && currentRun.status === "running";
+    });
+
+    expect(service.listQueue(bot.id).deliveries).toContainEqual(expect.objectContaining({ status: "running" }));
+    expect(client?.requests.filter((request) => request.method === "turn/start")).toHaveLength(1);
+    expect(emitted).toContainEqual(
+      expect.objectContaining({ type: "error", code: "delivery_reconciliation_pending", botId: bot.id }),
+    );
+    const runningMarkers = (await service.readConversation(bot.id)).messages.filter(
+      (message) => routineRunConversationEvent(message)?.status === "running",
+    );
+    expect(runningMarkers).toHaveLength(1);
+  });
+
+  it("keeps routine approvals interactive while attention markers retry", async () => {
+    const { store, mailbox } = stores();
+    let client: FakeAgentClient | undefined;
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
+      client = new FakeAgentClient(provider, "", false);
+      return client;
+    });
+    const emitted: AgentEvent[] = [];
+    service.on("event", (event: AgentEvent) => emitted.push(event));
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    const routine = service.createRoutine({
+      botId: bot.id,
+      name: "Approval marker retry",
+      instruction: "Request approval and continue after the response.",
+      active: true,
+      timezone: "UTC",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    const run = await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await waitFor(() =>
+      service
+        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .some((candidate) => candidate.id === run.id && candidate.status === "running"),
+    );
+    const delivery = service.listQueue(bot.id).deliveries.find((candidate) => candidate.status === "running");
+    const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
+    if (!delivery?.turnId || !client || !threadId) throw new Error("The routine turn did not start.");
+
+    const appendConversationMessage = store.database.appendConversationMessage.bind(store.database);
+    let rejectNeedsAttentionMarker = true;
+    let rejectResumedRunningMarker = false;
+    vi.spyOn(store.database, "appendConversationMessage").mockImplementation((input) => {
+      if (rejectNeedsAttentionMarker && input.eventType === "routine.run-needs-attention") {
+        rejectNeedsAttentionMarker = false;
+        throw new Error("attention marker persistence failed");
+      }
+      if (rejectResumedRunningMarker && input.eventType === "routine.run-running") {
+        rejectResumedRunningMarker = false;
+        throw new Error("resumed marker persistence failed");
+      }
+      return appendConversationMessage(input);
+    });
+
+    client.emit("request", {
+      id: "retry-routine-approval",
+      method: "item/commandExecution/requestApproval",
+      params: { threadId, turnId: delivery.turnId, command: "echo routine" },
+    });
+
+    await waitFor(() => emitted.some((event) => event.type === "approval"));
+    await waitFor(() =>
+      service
+        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .some((candidate) => candidate.id === run.id && candidate.status === "needs-attention"),
+    );
+    expect(client.responses).toEqual([]);
+
+    rejectResumedRunningMarker = true;
+    await service.respondToApproval({ requestId: "retry-routine-approval", decision: "accept" });
+    expect(client.responses).toContainEqual(
+      expect.objectContaining({ id: "retry-routine-approval", result: { decision: "accept" } }),
+    );
+    await waitFor(() =>
+      service
+        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .some((candidate) => candidate.id === run.id && candidate.status === "running"),
+    );
+
+    expect(
+      emitted.filter(
+        (event) => event.type === "error" && event.code === "delivery_reconciliation_pending" && event.botId === bot.id,
+      ),
+    ).toHaveLength(2);
+    const transitions = (await service.readConversation(bot.id)).messages.flatMap(
+      (message) => routineRunConversationEvent(message) ?? [],
+    );
+    expect(transitions.filter((event) => event.runId === run.id && event.status === "needs-attention")).toHaveLength(1);
+    expect(transitions.filter((event) => event.runId === run.id && event.status === "running")).toHaveLength(2);
+  });
+
+  it("continues turn completion while a terminal routine marker retries", async () => {
+    const { store, mailbox } = stores();
+    let client: FakeAgentClient | undefined;
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
+      client = new FakeAgentClient(provider, "", false);
+      return client;
+    });
+    const emitted: AgentEvent[] = [];
+    service.on("event", (event: AgentEvent) => emitted.push(event));
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    const routine = service.createRoutine({
+      botId: bot.id,
+      name: "Retry terminal marker",
+      instruction: "Continue queued work after terminal marker persistence retries.",
+      active: true,
+      timezone: "UTC",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    const firstRun = await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await waitFor(() => {
+      const deliveries = service?.listQueue(bot.id).deliveries ?? [];
+      return (
+        deliveries.some((delivery) => delivery.status === "running") &&
+        deliveries.some((delivery) => delivery.status === "queued")
+      );
+    });
+    const firstDelivery = service.listQueue(bot.id).deliveries.find((delivery) => delivery.status === "running");
+    const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
+    if (!firstDelivery?.turnId || !client || !threadId) throw new Error("The first routine turn did not start.");
+    const appendConversationMessage = store.database.appendConversationMessage.bind(store.database);
+    let rejectTerminalMarker = true;
+    vi.spyOn(store.database, "appendConversationMessage").mockImplementation((input) => {
+      if (rejectTerminalMarker && input.eventType === "routine.run-succeeded") {
+        rejectTerminalMarker = false;
+        throw new Error("terminal marker persistence failed");
+      }
+      return appendConversationMessage(input);
+    });
+
+    client.emit(
+      "notification",
+      notification("turn/completed", {
+        threadId,
+        turn: { id: firstDelivery.turnId, status: "completed" },
+      }),
+    );
+
+    await waitFor(() =>
+      emitted.some(
+        (event) => event.type === "turn-completed" && event.botId === bot.id && event.turnId === firstDelivery.turnId,
+      ),
+    );
+    await waitFor(() =>
+      service
+        ?.listQueue(bot.id)
+        .deliveries.some((delivery) => delivery.id !== firstDelivery.id && delivery.status === "running"),
+    );
+    expect(
+      service
+        .listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .find((run) => run.id === firstRun.id),
+    ).toMatchObject({ status: "succeeded" });
+    expect(emitted).toContainEqual(
+      expect.objectContaining({ type: "error", code: "delivery_reconciliation_pending", botId: bot.id }),
+    );
+    const terminalMarkers = (await service.readConversation(bot.id)).messages.filter((message) => {
+      const event = routineRunConversationEvent(message);
+      return event?.runId === firstRun.id && event.status === "succeeded";
+    });
+    expect(terminalMarkers).toHaveLength(1);
+  });
+
   it("rolls back a routine mutation when its transcript marker cannot persist", async () => {
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());
@@ -3119,22 +3363,103 @@ describe.sequential("AgentService", () => {
     await waitFor(() => service?.listQueue(bot.id).deliveries.some((delivery) => delivery.status === "queued"));
     const queuedDelivery = service.listQueue(bot.id).deliveries.find((delivery) => delivery.status === "queued");
     if (!queuedDelivery) throw new Error("The queued routine delivery is missing.");
-    vi.spyOn(store.database, "persistConversation").mockImplementationOnce(() => {
-      throw new Error("delete marker persistence failed");
+    const queuedRun = service
+      .listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+      .find((run) => run.deliveryId === queuedDelivery.id);
+    if (!queuedRun) throw new Error("The queued routine run is missing.");
+    const persistConversation = store.database.persistConversation.bind(store.database);
+    vi.spyOn(store.database, "persistConversation").mockImplementation((...args) => {
+      if (args[1] === "routine.deleted") throw new Error("delete marker persistence failed");
+      return persistConversation(...args);
     });
 
     await expect(service.deleteRoutine({ botId: bot.id, routineId: routine.id })).rejects.toThrow(
       "delete marker persistence failed",
     );
     expect(service.listRoutines(bot.id)).toEqual([expect.objectContaining({ id: routine.id })]);
-    expect(service.listQueue(bot.id).deliveries).toContainEqual(
-      expect.objectContaining({ id: queuedDelivery.id, status: "queued" }),
+    const restoredDelivery = service.listQueue(bot.id).deliveries.find((delivery) => delivery.id === queuedDelivery.id);
+    expect(restoredDelivery).toBeDefined();
+    expect(["queued", "starting", "running"]).toContain(restoredDelivery?.status);
+    const restoredRun = service
+      .listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+      .find((run) => run.id === queuedRun.id);
+    expect(restoredRun).toBeDefined();
+    expect(["queued", "running"]).toContain(restoredRun?.status);
+    await waitFor(() =>
+      service
+        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .some((run) => run.status === "interrupted"),
+    );
+    expect(service.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })).toEqual(
+      expect.arrayContaining([expect.objectContaining({ status: "interrupted" })]),
+    );
+  });
+
+  it("rolls back a routine transition and retries without a duplicate marker", async () => {
+    const { store, mailbox } = stores();
+    const createService = () =>
+      new AgentService(
+        store,
+        mailbox,
+        fakeBrowser(),
+        30_000,
+        "codex",
+        (provider) => new FakeAgentClient(provider, "", false),
+      );
+    service = createService();
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    const routine = service.createRoutine({
+      botId: bot.id,
+      name: "Atomic run",
+      instruction: "Keep run state and history together.",
+      active: true,
+      timezone: "UTC",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await waitFor(() => service?.listQueue(bot.id).deliveries.some((delivery) => delivery.status === "queued"));
+    const queued = service.listQueue(bot.id).deliveries.find((delivery) => delivery.status === "queued");
+    if (!queued) throw new Error("The queued routine delivery is missing.");
+    const queuedRun = service
+      .listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+      .find((run) => run.deliveryId === queued.id);
+    if (!queuedRun) throw new Error("The queued routine run is missing.");
+    const appendConversationMessage = store.database.appendConversationMessage.bind(store.database);
+    let rejectCancellationMarker = true;
+    vi.spyOn(store.database, "appendConversationMessage").mockImplementation((input) => {
+      if (rejectCancellationMarker && input.eventType === "routine.run-cancelled") {
+        rejectCancellationMarker = false;
+        throw new Error("transition marker persistence failed");
+      }
+      return appendConversationMessage(input);
+    });
+
+    await expect(service.cancelQueuedMessage(bot.id, queued.id)).rejects.toThrow(
+      "transition marker persistence failed",
     );
     expect(
       service
         .listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
-        .filter((run) => run.status === "queued"),
-    ).toHaveLength(2);
+        .find((run) => run.deliveryId === queued.id),
+    ).toMatchObject({ status: "queued" });
+    const cancelledMarkers = async () =>
+      (await service?.readConversation(bot.id))?.messages.filter((message) => {
+        const event = routineRunConversationEvent(message);
+        return event?.runId === queuedRun.id && event.status === "cancelled";
+      }) ?? [];
+
+    await service.stop();
+    service = createService();
+    await service.initialize();
+
+    expect(
+      service
+        .listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .find((run) => run.deliveryId === queued.id),
+    ).toMatchObject({ status: "cancelled" });
+    expect(await cancelledMarkers()).toHaveLength(1);
   });
 
   it("rejects invalid or cross-agent routine tool mutations", async () => {
@@ -3956,6 +4281,13 @@ describe.sequential("AgentService", () => {
         ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
         .some((run) => run.status === "interrupted"),
     );
+    const transitionStatuses = (await service.readConversation(bot.id)).messages.flatMap(
+      (message) => routineRunConversationEvent(message)?.status ?? [],
+    );
+    expect(transitionStatuses).toEqual(
+      expect.arrayContaining(["running", "needs-attention", "cancelled", "failed", "interrupted"]),
+    );
+    expect(transitionStatuses.filter((status) => status === "running")).toHaveLength(3);
   });
 
   it("persists a completed routine turn as terminal", async () => {
@@ -3990,6 +4322,11 @@ describe.sequential("AgentService", () => {
         .get(turnId),
     ).toMatchObject({ status: "completed", completed_at: expect.any(String) });
     expect((await service.readConversation(bot.id)).activeTurnId).toBeNull();
+    expect(
+      (await service.readConversation(bot.id)).messages.flatMap(
+        (message) => routineRunConversationEvent(message)?.status ?? [],
+      ),
+    ).toContain("succeeded");
   });
 
   it("queues only the last missed run after sleep and does not duplicate it after restart", async () => {

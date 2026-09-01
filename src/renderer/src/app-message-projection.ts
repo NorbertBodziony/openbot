@@ -1,7 +1,17 @@
-import type { BotSummary, ConversationMessage, ConversationReadState } from "@openbot/contracts/ipc";
-import { parseRoutineConversationEventItemType, routineConversationEvent } from "@openbot/contracts/ipc";
+import type {
+  BotSummary,
+  ConversationMessage,
+  ConversationReadState,
+  QueueDeliveryStatus,
+} from "@openbot/contracts/ipc";
+import {
+  isRoutineRunConversationEventMarker,
+  ROUTINE_EVENT_ITEM_TYPE_PREFIX,
+  routineConversationEvent,
+  routineRunConversationEvent,
+} from "@openbot/contracts/ipc";
 import { cleanAgentMessageText } from "./agent-message-text";
-import type { BotMessage, BotProfile } from "./data";
+import type { AgentDeliveryMarkerStatus, BotMessage, BotProfile, ChatActionMarkerModel } from "./data";
 
 export function toBotProfile(stored: BotSummary): BotProfile {
   return {
@@ -24,9 +34,11 @@ export function toBotProfile(stored: BotSummary): BotProfile {
   };
 }
 
-export function toBotMessage(message: ConversationMessage): BotMessage {
+export function toBotMessage(message: ConversationMessage, ownerAgentId?: string): BotMessage {
   const exchangeSenderId = message.senderBotId ?? message.exchange?.senderBotId;
   const routineEvent = routineConversationEvent(message);
+  const routineRunEvent = routineRunConversationEvent(message);
+  const actionMarker = chatActionMarker(message, ownerAgentId, routineEvent, routineRunEvent);
   return {
     id: message.id,
     turnId: message.turnId,
@@ -36,7 +48,7 @@ export function toBotMessage(message: ConversationMessage): BotMessage {
     createdAt: message.createdAt,
     streaming: message.status === "streaming",
     itemType: message.itemType,
-    kind: message.questionPrompt ? "question" : message.exchange ? "exchange" : routineEvent ? "routine-event" : "text",
+    kind: message.questionPrompt ? "question" : actionMarker ? "action-marker" : "text",
     senderBotId: exchangeSenderId,
     replyToMessageId: message.replyToMessageId,
     attachments: message.attachments,
@@ -47,28 +59,31 @@ export function toBotMessage(message: ConversationMessage): BotMessage {
     reactions:
       message.reactions ?? (message.reaction ? [{ emoji: message.reaction, actor: { kind: "user" as const } }] : []),
     routine: message.routine,
-    routineEvent: routineEvent ?? undefined,
-    status: message.exchange
-      ? undefined
-      : message.delivery?.status === "queued"
-        ? `Queued #${message.delivery.position}`
-        : message.delivery?.status === "cancelled"
-          ? "Cancelled"
-          : message.status === "failed"
-            ? "Failed"
-            : message.status === "interrupted"
-              ? "Stopped"
-              : undefined,
+    actionMarker: actionMarker ?? undefined,
+    status:
+      message.exchange || message.routine
+        ? undefined
+        : message.delivery?.status === "queued"
+          ? `Queued #${message.delivery.position}`
+          : message.delivery?.status === "cancelled"
+            ? "Cancelled"
+            : message.status === "failed"
+              ? "Failed"
+              : message.status === "interrupted"
+                ? "Stopped"
+                : undefined,
   };
 }
 
-export function toBotMessages(messages: ConversationMessage[]): BotMessage[] {
+export function toBotMessages(messages: ConversationMessage[], ownerAgentId?: string): BotMessage[] {
   const result: BotMessage[] = [];
   const thinkingByTurn = new Map<string, BotMessage>();
   for (const message of messages) {
-    if (message.delivery?.status === "queued" || message.delivery?.status === "cancelled") continue;
+    if ((message.delivery?.status === "queued" || message.delivery?.status === "cancelled") && !message.routine) {
+      continue;
+    }
     if (message.author !== "assistant" || message.itemType !== "commentary") {
-      result.push(toBotMessage(message));
+      result.push(toBotMessage(message, ownerAgentId));
       continue;
     }
 
@@ -114,7 +129,8 @@ export function readStateForMessages(
         message.author !== "user" &&
         message.itemType !== "commentary" &&
         message.itemType !== "agent_attachment" &&
-        parseRoutineConversationEventItemType(message.itemType) === null,
+        !message.itemType?.startsWith(ROUTINE_EVENT_ITEM_TYPE_PREFIX) &&
+        !isRoutineRunConversationEventMarker(message.itemType),
     );
   return {
     ...state,
@@ -182,9 +198,98 @@ export function botMessagesEqual(left: BotMessage, right: BotMessage): boolean {
     JSON.stringify(left.questionPrompt) === JSON.stringify(right.questionPrompt) &&
     JSON.stringify(left.exchange) === JSON.stringify(right.exchange) &&
     JSON.stringify(left.routine) === JSON.stringify(right.routine) &&
-    JSON.stringify(left.routineEvent) === JSON.stringify(right.routineEvent) &&
+    JSON.stringify(left.actionMarker) === JSON.stringify(right.actionMarker) &&
     JSON.stringify(left.items) === JSON.stringify(right.items)
   );
+}
+
+function chatActionMarker(
+  message: ConversationMessage,
+  ownerAgentId: string | undefined,
+  routineEvent: ReturnType<typeof routineConversationEvent>,
+  routineRunEvent: ReturnType<typeof routineRunConversationEvent>,
+): ChatActionMarkerModel | null {
+  if (message.exchange) {
+    const targetDeliveries = message.exchange.deliveries.map((delivery) => ({
+      agentId: delivery.recipientBotId,
+      status: delivery.status,
+    }));
+    const status =
+      message.exchange.direction === "incoming"
+        ? deliveryStatus(message.delivery?.status ?? targetDeliveries[0]?.status)
+        : aggregateDeliveryStatus(targetDeliveries.map((delivery) => delivery.status));
+    return {
+      kind: "agent-message",
+      direction: message.exchange.direction,
+      sourceAgentId: message.exchange.senderBotId,
+      targetDeliveries,
+      status,
+      timestamp: message.createdAt,
+      messageId: message.exchange.messageId,
+      replyToMessageId: message.exchange.replyToMessageId,
+    };
+  }
+  if (routineEvent) {
+    return {
+      kind: "routine-lifecycle",
+      action: routineEvent.action,
+      sourceAgentId: ownerAgentId ?? null,
+      routineId: routineEvent.routineId,
+      routineName: routineEvent.routineName,
+      status: "completed",
+      timestamp: message.createdAt,
+    };
+  }
+  if (routineRunEvent) {
+    return {
+      kind: "routine-run",
+      sourceAgentId: ownerAgentId ?? null,
+      routineId: routineRunEvent.routineId,
+      runId: routineRunEvent.runId,
+      routineName: routineRunEvent.routineName,
+      status: routineRunEvent.status,
+      timestamp: message.createdAt,
+    };
+  }
+  if (message.routine) {
+    return {
+      kind: "routine-run",
+      sourceAgentId: ownerAgentId ?? null,
+      routineId: message.routine.routineId,
+      runId: message.routine.runId,
+      routineName: message.routine.name,
+      status: "queued",
+      timestamp: message.createdAt,
+    };
+  }
+  if (
+    message.itemType?.startsWith(ROUTINE_EVENT_ITEM_TYPE_PREFIX) ||
+    isRoutineRunConversationEventMarker(message.itemType)
+  ) {
+    return { kind: "unavailable", label: "Action unavailable", timestamp: message.createdAt };
+  }
+  return null;
+}
+
+function aggregateDeliveryStatus(statuses: QueueDeliveryStatus[]): AgentDeliveryMarkerStatus {
+  if (statuses.length === 0) return "unavailable";
+  const normalized = statuses.map(deliveryStatus);
+  if (normalized.every((status) => status === "queued")) return "queued";
+  if (normalized.some((status) => status === "in-progress")) return "in-progress";
+  if (normalized.every((status) => status === "completed")) return "completed";
+  if (normalized.every((status) => status === "failed")) return "failed";
+  if (normalized.every((status) => status === "interrupted")) return "interrupted";
+  if (normalized.every((status) => status === "cancelled")) return "cancelled";
+  if (normalized.every((status) => ["completed", "failed", "interrupted", "cancelled"].includes(status))) {
+    return "partial";
+  }
+  return "in-progress";
+}
+
+function deliveryStatus(status: QueueDeliveryStatus | undefined): Exclude<AgentDeliveryMarkerStatus, "partial"> {
+  if (!status) return "unavailable";
+  if (status === "starting" || status === "running") return "in-progress";
+  return status;
 }
 
 export function retainThinkingMessages(previous: BotMessage[], next: BotMessage[]): BotMessage[] {

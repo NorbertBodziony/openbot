@@ -941,6 +941,29 @@ describe("OpenBot connected desktop shell", () => {
     });
   });
 
+  it("keeps an old routine marker unavailable when paginated history omits its deletion", async () => {
+    vi.mocked(window.openbot.agent.listRoutines).mockResolvedValue([]);
+    vi.mocked(window.openbot.agent.readConversation).mockResolvedValue(
+      testConversationPage("chief", [
+        {
+          id: "old-routine-event",
+          author: "system",
+          source: "system",
+          text: "Archived brief",
+          createdAt: "2026-08-30T10:00:00.000Z",
+          status: "completed",
+          itemType: routineConversationEventItemType("updated", "deleted-routine"),
+        },
+      ]),
+    );
+
+    render(() => <App />);
+
+    expect(await screen.findByText("Archived brief")).toBeInTheDocument();
+    await waitFor(() => expect(window.openbot.agent.listRoutines).toHaveBeenCalledWith("chief"));
+    expect(screen.queryByRole("button", { name: "Open routine Archived brief" })).not.toBeInTheDocument();
+  });
+
   it("restores the active server before loading its workspace data", async () => {
     let resolveServers: ((servers: ServerSummary[]) => void) | undefined;
     vi.mocked(window.openbot.servers.list).mockReturnValueOnce(
@@ -7892,10 +7915,28 @@ describe("OpenBot connected desktop shell", () => {
         },
         {
           id: "agent-new-1",
-          author: "assistant",
-          text: "First unseen answer",
+          author: "agent",
+          source: "agent",
+          senderBotId: "sales-outbound",
+          text: "First unseen agent answer",
           createdAt: "2026-08-19T09:01:00.000Z",
           status: "completed",
+          exchange: {
+            direction: "incoming",
+            messageId: "agent-new-1",
+            senderBotId: "sales-outbound",
+            recipientBotIds: ["chief"],
+            replyToMessageId: null,
+            deliveries: [
+              {
+                id: "agent-new-1",
+                recipientBotId: "chief",
+                status: "completed",
+                position: null,
+                error: null,
+              },
+            ],
+          },
         },
         {
           id: "agent-new-2",
@@ -7914,7 +7955,7 @@ describe("OpenBot connected desktop shell", () => {
 
     render(() => <App />);
     expect(await screen.findByRole("status", { name: "2 new messages" })).toBeInTheDocument();
-    await screen.findByText("First unseen answer");
+    await screen.findByText("Message from");
     expect(screen.getByRole("separator", { name: "New messages" })).toBeInTheDocument();
     const scrollElement = document.querySelector<HTMLElement>(".conversation-scroll");
     const divider = document.querySelector<HTMLElement>(".unread-messages-divider");

@@ -3,11 +3,11 @@ import type { AttachmentSummary } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
-import type { BotMessage, BotProfile } from "../../data";
+import type { BotProfile } from "../../data";
 import { triggerResize } from "../../setupTests";
 import { ImageGeneration } from "./ImageGeneration";
 import { MarkdownMessageText } from "./MarkdownMessageText";
-import { ExchangeSystemRow, MessageBody } from "./MessageRendering";
+import { MessageBody } from "./MessageRendering";
 
 const bots: BotProfile[] = [
   {
@@ -43,66 +43,6 @@ const bots: BotProfile[] = [
     preview: "",
   },
 ];
-
-const message = {
-  id: "exchange-1",
-  author: "bot",
-  body: "",
-  time: "10:00",
-  kind: "exchange",
-  exchange: {
-    direction: "outgoing",
-    messageId: "message-1",
-    senderBotId: "chief",
-    recipientBotIds: bots.map((bot) => bot.id),
-    replyToMessageId: null,
-    deliveries: [],
-  },
-} satisfies BotMessage;
-
-describe("ExchangeSystemRow", () => {
-  it("opens the chat for a single outgoing recipient", async () => {
-    const onSelectAgent = vi.fn();
-    render(() => (
-      <ExchangeSystemRow
-        message={{
-          ...message,
-          exchange: {
-            ...message.exchange,
-            recipientBotIds: [bots[0].id],
-          },
-        }}
-        bots={bots}
-        onSelectAgent={onSelectAgent}
-      />
-    ));
-
-    await fireEvent.click(screen.getByRole("button", { name: "Open chat with Research" }));
-    expect(onSelectAgent).toHaveBeenCalledWith("research");
-  });
-
-  it("opens the chat for an incoming sender", async () => {
-    const onSelectAgent = vi.fn();
-    render(() => (
-      <ExchangeSystemRow
-        message={{
-          ...message,
-          exchange: {
-            ...message.exchange,
-            direction: "incoming",
-            senderBotId: "sales",
-            recipientBotIds: ["chief"],
-          },
-        }}
-        bots={bots}
-        onSelectAgent={onSelectAgent}
-      />
-    ));
-
-    await fireEvent.click(screen.getByRole("button", { name: "Open chat with Sales" }));
-    expect(onSelectAgent).toHaveBeenCalledWith("sales");
-  });
-});
 
 describe("MessageBody", () => {
   it("renders referenced files inline without duplicating their attachment cards", async () => {
@@ -1075,8 +1015,7 @@ describe("MessageBody", () => {
     expect(screen.getByText(/\| --- \| --- \|/u)).toBeInTheDocument();
   });
 
-  it("opens a routine from its message tag and keeps the full instruction", async () => {
-    const onOpenRoutine = vi.fn();
+  it("keeps the full routine instruction in its message body", () => {
     render(() => (
       <MessageBody
         message={{
@@ -1097,13 +1036,9 @@ describe("MessageBody", () => {
         onOpenLink={vi.fn()}
         onPreview={vi.fn()}
         onAttachmentAction={vi.fn()}
-        onOpenRoutine={onOpenRoutine}
       />
     ));
 
-    const routineTag = screen.getByRole("button", { name: "Open routine Morning brief" });
-    await fireEvent.click(routineTag);
-    expect(onOpenRoutine).toHaveBeenCalledWith({ routineId: "routine-1", name: "Morning brief" });
     expect(screen.getByText("Prepare the full morning brief with every required section.")).toBeInTheDocument();
     expect(screen.getByText("Queued #1")).toBeInTheDocument();
   });
