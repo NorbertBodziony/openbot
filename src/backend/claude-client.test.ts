@@ -239,15 +239,41 @@ fi
     expect(query.closed).toBe(true);
   });
 
-  it("bounds model discovery with the caller's timeout and closes the query", async () => {
-    const query = new TestQuery(new TestQueue<TestStreamMessage>(), new Promise<ModelInfo[]>(() => {}));
-    const client = new ClaudeAgentClient({ executable: "/bin/true", version: "2.1.251" }, () => query);
+  it("clears discovered model capabilities when a later refresh times out", async () => {
+    const discoveryQuery = new TestQuery(new TestQueue<TestStreamMessage>(), [
+      {
+        value: "fable",
+        resolvedModel: "claude-fable-5",
+        displayName: "Claude Fable 5",
+        description: "Fast",
+        supportsEffort: false,
+      },
+    ]);
+    const timeoutQuery = new TestQuery(new TestQueue<TestStreamMessage>(), new Promise<ModelInfo[]>(() => {}));
+    const runtimeQuery = new TestQuery(new TestQueue<TestStreamMessage>());
+    const queries = [discoveryQuery, timeoutQuery, runtimeQuery];
+    let runtimeOptions: DynamicRecord | null = null;
+    const client = new ClaudeAgentClient({ executable: "/bin/true", version: "2.1.251" }, (params) => {
+      const next = queries.shift();
+      if (!next) throw new Error("Unexpected Claude query.");
+      if (next === runtimeQuery && isDynamicRecord(params.options)) runtimeOptions = params.options;
+      return next;
+    });
     client.start();
 
+    await client.request("model/list", {}, decodeModelListResponse);
     await expect(client.request("model/list", {}, decodeModelListResponse, 10)).rejects.toThrow(
       "Claude request timed out: model/list",
     );
-    expect(query.closed).toBe(true);
+    await client.request(
+      "thread/start",
+      { cwd: process.cwd(), model: "claude-fable-5", effort: "medium" },
+      decodeThreadResponse,
+    );
+
+    expect(runtimeOptions).toMatchObject({ model: "claude-fable-5", effort: "medium" });
+    expect(timeoutQuery.closed).toBe(true);
+    await client.stop();
   });
 
   it("uses alias-only discovery values for Claude SDK model selection", async () => {

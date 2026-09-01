@@ -266,6 +266,10 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
           supportedReasoningEfforts: supportedReasoningEfforts.map((reasoningEffort) => ({ reasoningEffort })),
         };
       });
+    } catch (error) {
+      this.#modelEffortSupport.clear();
+      this.#modelSdkValues.clear();
+      throw error;
     } finally {
       if (timeout) clearTimeout(timeout);
       input.close();
