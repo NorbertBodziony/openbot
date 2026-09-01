@@ -2982,6 +2982,7 @@ export function ConversationTimeline() {
                               routineAvailable={routineMarkerAvailable(marker(), props.availableRoutineIds)}
                               onSelectAgent={props.onSelectAgent}
                               onOpenRoutine={openRoutineSettings}
+                              onOpenHostedSite={(url) => void openExternalMessageUrl(url)}
                             />
                           )}
                         </Show>
@@ -3049,6 +3050,7 @@ export function ConversationTimeline() {
                                     routineAvailable={routineMarkerAvailable(marker(), props.availableRoutineIds)}
                                     onSelectAgent={props.onSelectAgent}
                                     onOpenRoutine={openRoutineSettings}
+                                    onOpenHostedSite={(url) => void openExternalMessageUrl(url)}
                                   />
                                 )}
                               </Show>

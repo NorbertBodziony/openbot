@@ -656,6 +656,25 @@ export interface RoutineRunConversationEvent {
   routineName: string;
 }
 
+export const HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX = "hosted-site-event:";
+
+export type HostedSiteConversationEventAction = "publish" | "replace" | "delete";
+
+export type HostedSiteConversationEventStatus = "running" | "succeeded" | "failed" | "interrupted" | "cancelled";
+
+export interface HostedSiteConversationEventDetails {
+  siteId: string | null;
+  title: string;
+  hostname: string | null;
+  url: string | null;
+}
+
+export interface HostedSiteConversationEvent extends HostedSiteConversationEventDetails {
+  action: HostedSiteConversationEventAction;
+  status: HostedSiteConversationEventStatus;
+  operationId: string;
+}
+
 export function routineConversationEventItemType(action: RoutineConversationEventAction, routineId: string): string {
   if (!isIdentifier(routineId)) throw new Error("A valid routine id is required.");
   const itemType = `${ROUTINE_EVENT_ITEM_TYPE_PREFIX}${action}:${routineId}`;
@@ -725,6 +744,56 @@ export function isRoutineRunConversationEventMarker(itemType: string | undefined
   return itemType?.startsWith(ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX) === true;
 }
 
+export function hostedSiteConversationEventItemType(
+  action: HostedSiteConversationEventAction,
+  status: HostedSiteConversationEventStatus,
+  operationId: string,
+): string {
+  if (!isIdentifier(operationId)) throw new Error("A valid hosted site operation id is required.");
+  const itemType = `${HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX}${action}:${status}:${operationId}`;
+  if (itemType.length > INPUT_LIMITS.identifier) throw new Error("The hosted site event item type is too long.");
+  return itemType;
+}
+
+export function hostedSiteConversationEventText(details: HostedSiteConversationEventDetails): string {
+  if (!isHostedSiteConversationEventDetails(details)) throw new Error("Valid hosted site event details are required.");
+  return JSON.stringify(details);
+}
+
+export function parseHostedSiteConversationEventItemType(
+  itemType: string | undefined,
+): Pick<HostedSiteConversationEvent, "action" | "status" | "operationId"> | null {
+  if (!itemType?.startsWith(HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX)) return null;
+  const [action, status, operationId, ...extra] = itemType.slice(HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX.length).split(":");
+  if (
+    extra.length > 0 ||
+    !isHostedSiteConversationEventAction(action) ||
+    !isHostedSiteConversationEventStatus(status) ||
+    !isIdentifier(operationId)
+  ) {
+    return null;
+  }
+  return { action, status, operationId };
+}
+
+export function hostedSiteConversationEvent(message: ConversationMessage): HostedSiteConversationEvent | null {
+  if (message.author !== "system" || message.source !== "system" || message.status !== "completed") return null;
+  const event = parseHostedSiteConversationEventItemType(message.itemType);
+  if (!event) return null;
+  let details: unknown;
+  try {
+    details = JSON.parse(message.text);
+  } catch {
+    return null;
+  }
+  if (!isHostedSiteConversationEventDetails(details) || !hostedSiteDetailsMatchEvent(event, details)) return null;
+  return { ...event, ...details };
+}
+
+export function isHostedSiteConversationEventMarker(itemType: string | undefined): boolean {
+  return itemType?.startsWith(HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX) === true;
+}
+
 function isRoutineRunConversationEventStatus(value: unknown): value is RoutineRunConversationEventStatus {
   return (
     value === "running" ||
@@ -734,6 +803,80 @@ function isRoutineRunConversationEventStatus(value: unknown): value is RoutineRu
     value === "interrupted" ||
     value === "cancelled"
   );
+}
+
+function isHostedSiteConversationEventAction(value: unknown): value is HostedSiteConversationEventAction {
+  return value === "publish" || value === "replace" || value === "delete";
+}
+
+function isHostedSiteConversationEventStatus(value: unknown): value is HostedSiteConversationEventStatus {
+  return (
+    value === "running" ||
+    value === "succeeded" ||
+    value === "failed" ||
+    value === "interrupted" ||
+    value === "cancelled"
+  );
+}
+
+function isHostedSiteConversationEventDetails(value: unknown): value is HostedSiteConversationEventDetails {
+  if (
+    !isDynamicRecord(value) ||
+    (value.siteId !== null && !isIdentifier(value.siteId)) ||
+    !isBoundedString(value.title, 120) ||
+    value.title.trim().length === 0 ||
+    (value.hostname !== null && (!isString(value.hostname) || !isHostedSiteHostname(value.hostname))) ||
+    (value.url !== null && !isHostedSiteUrl(value.url, value.hostname))
+  ) {
+    return false;
+  }
+  return value.hostname !== null || value.url === null;
+}
+
+function hostedSiteDetailsMatchEvent(
+  event: Pick<HostedSiteConversationEvent, "action" | "status">,
+  details: HostedSiteConversationEventDetails,
+): boolean {
+  if (event.action === "publish" && event.status !== "succeeded") {
+    return details.siteId === null && details.hostname === null && details.url === null;
+  }
+  return details.siteId !== null && details.hostname !== null && details.url !== null;
+}
+
+function isHostedSiteHostname(value: string): boolean {
+  if (value.length === 0 || value.length > INPUT_LIMITS.hostname || value !== value.toLowerCase()) return false;
+  try {
+    const parsed = new URL(`https://${value}`);
+    return (
+      parsed.hostname === value &&
+      parsed.port === "" &&
+      parsed.pathname === "/" &&
+      parsed.search === "" &&
+      parsed.hash === "" &&
+      value.endsWith(".openbot.site")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isHostedSiteUrl(value: unknown, hostname: unknown): value is string {
+  if (!isBoundedString(value, INPUT_LIMITS.browserUrl) || !isString(hostname)) return false;
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.protocol === "https:" &&
+      parsed.username === "" &&
+      parsed.password === "" &&
+      parsed.hostname === hostname &&
+      parsed.port === "" &&
+      parsed.pathname === "/" &&
+      parsed.search === "" &&
+      parsed.hash === ""
+    );
+  } catch {
+    return false;
+  }
 }
 
 function isAgentPromptQuestion(value: unknown): value is AgentPromptQuestion {

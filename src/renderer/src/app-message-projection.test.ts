@@ -1,5 +1,10 @@
 import type { BotSummary, ConversationMessage } from "@openbot/contracts/ipc";
-import { routineConversationEventItemType, routineRunConversationEventItemType } from "@openbot/contracts/ipc";
+import {
+  hostedSiteConversationEventItemType,
+  hostedSiteConversationEventText,
+  routineConversationEventItemType,
+  routineRunConversationEventItemType,
+} from "@openbot/contracts/ipc";
 import { describe, expect, it } from "vitest";
 import {
   botProfilesEqual,
@@ -118,6 +123,17 @@ describe("readStateForMessages", () => {
       readStateForMessages({ unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null }, messages),
     ).toMatchObject({ unreadCount: 0, firstUnreadMessageId: null });
   });
+
+  it("does not count hosted site markers, including malformed markers, as unread replies", () => {
+    const messages: ConversationMessage[] = [
+      hostedSiteMessage("succeeded"),
+      { ...hostedSiteMessage("succeeded"), id: "malformed-site-event", text: "{" },
+    ];
+
+    expect(
+      readStateForMessages({ unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null }, messages),
+    ).toMatchObject({ unreadCount: 0, firstUnreadMessageId: null });
+  });
 });
 
 describe("toBotMessage", () => {
@@ -200,6 +216,26 @@ describe("toBotMessage", () => {
     });
   });
 
+  it("projects hosted site events and falls back for malformed data", () => {
+    const published = hostedSiteMessage("succeeded");
+    expect(toBotMessage(published, "chief")).toMatchObject({
+      kind: "action-marker",
+      actionMarker: {
+        kind: "hosted-site",
+        sourceAgentId: "chief",
+        action: "publish",
+        status: "succeeded",
+        siteId: "site-1",
+        hostname: "launch-page-23456789ab.openbot.site",
+      },
+    });
+    expect(toBotMessage({ ...published, text: "{" }, "chief").actionMarker).toEqual({
+      kind: "unavailable",
+      label: "Action unavailable",
+      timestamp: published.createdAt,
+    });
+  });
+
   it("aggregates outgoing agent delivery states", () => {
     const message = {
       id: "exchange-1",
@@ -224,6 +260,23 @@ describe("toBotMessage", () => {
     expect(toBotMessage(message).actionMarker).toMatchObject({ kind: "agent-message", status: "partial" });
   });
 });
+
+function hostedSiteMessage(status: "succeeded"): ConversationMessage {
+  return {
+    id: `hosted-site-${status}`,
+    author: "system",
+    source: "system",
+    text: hostedSiteConversationEventText({
+      siteId: "site-1",
+      title: "Launch page",
+      hostname: "launch-page-23456789ab.openbot.site",
+      url: "https://launch-page-23456789ab.openbot.site",
+    }),
+    createdAt: "2026-09-01T08:00:00.000Z",
+    status: "completed",
+    itemType: hostedSiteConversationEventItemType("publish", status, "operation-1"),
+  };
+}
 
 function botSummary(updatedAt: string): BotSummary {
   return {

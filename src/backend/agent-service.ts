@@ -42,6 +42,10 @@ import type {
   DeleteRoutineInput,
   DraftAttachment,
   DuplicateBotResult,
+  HostedSiteConversationEventAction,
+  HostedSiteConversationEventDetails,
+  HostedSiteConversationEventStatus,
+  HostedSiteSummary,
   ImageGenerationInfo,
   ListRoutineRunsInput,
   PublishHostedSiteInput,
@@ -74,6 +78,9 @@ import {
   AGENT_RUNTIME_QUESTION_HEADER_LIMIT,
   AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT,
   AGENT_RUNTIME_TEXT_LIMIT,
+  hostedSiteConversationEvent,
+  hostedSiteConversationEventItemType,
+  hostedSiteConversationEventText,
   isImageGenerationAspectRatio,
   isMessageReaction,
   isReasoningEffort,
@@ -156,9 +163,12 @@ interface AgentBrowserHost {
 }
 
 interface AgentHostedSites {
-  list(): Promise<unknown[]>;
-  publish(input: PublishHostedSiteInput, allowedRoots: readonly string[]): Promise<unknown>;
-  replace(input: PublishHostedSiteInput & { siteId: string }, allowedRoots: readonly string[]): Promise<unknown>;
+  list(): Promise<HostedSiteSummary[]>;
+  publish(input: PublishHostedSiteInput, allowedRoots: readonly string[]): Promise<HostedSiteSummary>;
+  replace(
+    input: PublishHostedSiteInput & { siteId: string },
+    allowedRoots: readonly string[],
+  ): Promise<HostedSiteSummary>;
   delete(siteId: string): Promise<void>;
 }
 
@@ -180,7 +190,7 @@ interface PendingApproval {
   method: string;
   params: unknown;
   approval: AgentApproval;
-  hostedSiteMutation?: DynamicToolCallParams;
+  hostedSiteMutation?: HostedSiteMutationContext;
 }
 
 type HostedSiteMutationTool = "publish_site" | "replace_site" | "delete_site";
@@ -196,6 +206,20 @@ interface PendingBrowserTakeover {
 interface HostedSiteApprovalDetails {
   reason: string;
   permissions: AgentApprovalPermissions;
+  eventDetails: HostedSiteConversationEventDetails;
+}
+
+interface HostedSiteMutationContext {
+  botId: string;
+  operationId: string;
+  action: HostedSiteConversationEventAction;
+  params: DynamicToolCallParams;
+  eventDetails: HostedSiteConversationEventDetails;
+}
+
+interface HostedSiteMutationResult {
+  response: OpenBotToolResponse;
+  eventDetails: HostedSiteConversationEventDetails;
 }
 
 interface ThreadContextBudget {
@@ -1050,6 +1074,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await this.#store.initialize();
     await this.#mailbox.initialize();
     this.#recoverPersistedTurns();
+    this.#reconcileHostedSiteEventsAfterRestart();
     this.#routines.skipMissed(new Date());
     this.#initialized = true;
     await this.#connect(
@@ -1232,7 +1257,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     memberId: string,
     anchor: ConversationPageAnchor = { type: "latest" },
     limit = 50,
-    options: { excludeRoutineEvents?: boolean; excludeRoutineRunEvents?: boolean } = {},
+    options: {
+      excludeRoutineEvents?: boolean;
+      excludeRoutineRunEvents?: boolean;
+      excludeHostedSiteEvents?: boolean;
+    } = {},
   ): Promise<ConversationPage> {
     const bot = await this.#store.getOrCreate(botId);
     this.#reconcilePersistedMailboxMessages(bot);
@@ -1462,15 +1491,37 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
     if (pending.hostedSiteMutation) {
       this.#pendingApprovals.delete(input.requestId);
+      const mutation = pending.hostedSiteMutation;
       if (input.decision === "decline") {
+        this.#tryRecordHostedSiteEvent(mutation, "cancelled", mutation.eventDetails);
         pending.client.respondError(pending.id, {
           code: -32001,
           message: "The user declined this hosted site change.",
         });
       } else {
         try {
-          pending.client.respond(pending.id, await this.#handleOpenBotTool(pending.hostedSiteMutation));
+          this.#recordHostedSiteEvent(mutation, "running", mutation.eventDetails);
         } catch (error) {
+          pending.client.respondError(pending.id, {
+            code: -32603,
+            message: "The hosted site change could not be recorded.",
+          });
+          this.#emitError("hosted_site_marker_persistence_failed", error, pending.approval.botId);
+          this.#emit({
+            type: "agent-input-resolved",
+            kind: "approval",
+            requestId: input.requestId,
+            botId: pending.approval.botId,
+          });
+          this.#emitRuntimeSnapshot();
+          return;
+        }
+        try {
+          const result = await this.#executeHostedSiteMutation(mutation);
+          this.#tryRecordHostedSiteEvent(mutation, "succeeded", result.eventDetails);
+          pending.client.respond(pending.id, result.response);
+        } catch (error) {
+          this.#tryRecordHostedSiteEvent(mutation, "failed", mutation.eventDetails);
           pending.client.respondError(pending.id, { code: -32603, message: String(error) });
           this.#emitError("server_request_failed", error, pending.approval.botId);
         }
@@ -2436,41 +2487,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return openBotToolResult({ sites: await this.#requireHostedSites().list(), limit: 10 });
     }
 
-    if (params.tool === "publish_site" || params.tool === "replace_site") {
-      const args = params.arguments;
-      if (!isRecord(args)) throw new Error("Site publishing arguments are required.");
-      const sourcePath = siteToolString(args.sourcePath, "sourcePath", INPUT_LIMITS.path);
-      const title = siteToolString(args.title, "title", 120);
-      const description = siteToolString(args.description, "description", 500);
-      if (args.spaFallback !== undefined && !isBoolean(args.spaFallback)) {
-        throw new Error("spaFallback must be a boolean.");
-      }
-      const bot = this.#store.list().find((candidate) => candidate.id === senderBotId);
-      if (!bot) throw new Error("The publishing OpenBot agent is unknown.");
-      const input = {
-        sourcePath,
-        title,
-        description,
-        ...(isBoolean(args.spaFallback) ? { spaFallback: args.spaFallback } : {}),
-      };
-      const roots = [bot.workspacePath, this.#store.sharedRoot];
-      const site =
-        params.tool === "publish_site"
-          ? await this.#requireHostedSites().publish(input, roots)
-          : await this.#requireHostedSites().replace(
-              { ...input, siteId: siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier) },
-              roots,
-            );
-      return openBotToolResult(site);
-    }
-
-    if (params.tool === "delete_site") {
-      const args = params.arguments;
-      if (!isRecord(args)) throw new Error("Site deletion arguments are required.");
-      const siteId = siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier);
-      await this.#requireHostedSites().delete(siteId);
-      return openBotToolResult({ deleted: true, siteId });
-    }
+    if (isHostedSiteMutationTool(params.tool)) throw new Error("Hosted site changes require user approval.");
 
     if (params.tool === "attach_files_to_response") {
       const args = params.arguments;
@@ -4036,6 +4053,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return;
     }
     const details = await this.#hostedSiteApprovalDetails(params, tool);
+    const mutation: HostedSiteMutationContext = {
+      botId,
+      operationId: randomUUID(),
+      action: hostedSiteAction(tool),
+      params,
+      eventDetails: details.eventDetails,
+    };
     const approval: AgentApproval = {
       requestId: request.id,
       botId,
@@ -4054,7 +4078,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       method: HOSTED_SITE_APPROVAL_METHOD,
       params,
       approval,
-      hostedSiteMutation: params,
+      hostedSiteMutation: mutation,
     });
     this.#markRoutineNeedsAttention(turnId);
     this.#emit({ type: "approval", approval });
@@ -4068,10 +4092,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!isRecord(args)) throw new Error("Hosted site arguments are required.");
     if (tool === "delete_site") {
       const siteId = siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier);
-      const hostname = await this.#ownedHostedSiteHostname(siteId);
+      const site = await this.#ownedHostedSite(siteId);
       return {
-        reason: `Delete ${hostname} from openbot.site.`,
+        reason: `Delete ${site.hostname} from openbot.site.`,
         permissions: { fileSystem: { read: [], write: [] }, network: true },
+        eventDetails: hostedSiteEventDetails(site),
       };
     }
 
@@ -4083,21 +4108,59 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const permissions = { fileSystem: { read: [sourcePath], write: [] }, network: true };
     if (tool === "publish_site") {
-      return { reason: `Publish ${JSON.stringify(title)} as a public site on openbot.site.`, permissions };
+      return {
+        reason: `Publish ${JSON.stringify(title)} as a public site on openbot.site.`,
+        permissions,
+        eventDetails: { siteId: null, title, hostname: null, url: null },
+      };
     }
     const siteId = siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier);
-    const hostname = await this.#ownedHostedSiteHostname(siteId);
-    return { reason: `Replace ${hostname} with ${JSON.stringify(title)}.`, permissions };
+    const site = await this.#ownedHostedSite(siteId);
+    return {
+      reason: `Replace ${site.hostname} with ${JSON.stringify(title)}.`,
+      permissions,
+      eventDetails: { ...hostedSiteEventDetails(site), title },
+    };
   }
 
-  async #ownedHostedSiteHostname(siteId: string): Promise<string> {
+  async #ownedHostedSite(siteId: string): Promise<HostedSiteSummary> {
     const sites = await this.#requireHostedSites().list();
-    for (const site of sites) {
-      if (!isRecord(site) || getString(site, "id") !== siteId) continue;
-      const hostname = getString(site, "hostname");
-      if (hostname) return hostname;
-    }
+    for (const site of sites) if (site.id === siteId) return site;
     throw new Error("The hosted site was not found.");
+  }
+
+  async #executeHostedSiteMutation(context: HostedSiteMutationContext): Promise<HostedSiteMutationResult> {
+    const { params } = context;
+    const args = params.arguments;
+    if (!isRecord(args)) throw new Error("Hosted site arguments are required.");
+    if (context.action === "delete") {
+      const siteId = siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier);
+      await this.#requireHostedSites().delete(siteId);
+      return { response: openBotToolResult({ deleted: true, siteId }), eventDetails: context.eventDetails };
+    }
+
+    const sourcePath = siteToolString(args.sourcePath, "sourcePath", INPUT_LIMITS.path);
+    const title = siteToolString(args.title, "title", 120);
+    const description = siteToolString(args.description, "description", 500);
+    if (args.spaFallback !== undefined && !isBoolean(args.spaFallback)) {
+      throw new Error("spaFallback must be a boolean.");
+    }
+    const bot = this.#requireKnownBot(context.botId);
+    const input = {
+      sourcePath,
+      title,
+      description,
+      ...(isBoolean(args.spaFallback) ? { spaFallback: args.spaFallback } : {}),
+    };
+    const roots = [bot.workspacePath, this.#store.sharedRoot];
+    const site =
+      context.action === "publish"
+        ? await this.#requireHostedSites().publish(input, roots)
+        : await this.#requireHostedSites().replace(
+            { ...input, siteId: siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier) },
+            roots,
+          );
+    return { response: openBotToolResult(site), eventDetails: hostedSiteEventDetails(site) };
   }
 
   #surfaceLegacyApproval(client: AgentClient, request: AppServerRequest): void {
@@ -4741,6 +4804,130 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   #routineStateChanged(botId: string): void {
     this.#emit({ type: "routines-changed", botId });
+  }
+
+  #recordHostedSiteEvent(
+    context: HostedSiteMutationContext,
+    status: HostedSiteConversationEventStatus,
+    details: HostedSiteConversationEventDetails,
+  ): void {
+    const createdAt = new Date().toISOString();
+    let failure: unknown;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        this.#appendHostedSiteEvent(context, status, details, createdAt);
+        return;
+      } catch (error) {
+        failure = error;
+      }
+    }
+    throw failure;
+  }
+
+  #tryRecordHostedSiteEvent(
+    context: HostedSiteMutationContext,
+    status: HostedSiteConversationEventStatus,
+    details: HostedSiteConversationEventDetails,
+  ): boolean {
+    try {
+      this.#recordHostedSiteEvent(context, status, details);
+      return true;
+    } catch (error) {
+      this.#emitError("hosted_site_marker_persistence_failed", error, context.botId);
+      return false;
+    }
+  }
+
+  #appendHostedSiteEvent(
+    context: HostedSiteMutationContext,
+    status: HostedSiteConversationEventStatus,
+    details: HostedSiteConversationEventDetails,
+    createdAt: string,
+  ): void {
+    const previousBot = this.#requireKnownBot(context.botId);
+    const previousSnapshot = this.#snapshots.get(context.botId);
+    const previousSnapshotState = previousSnapshot ? structuredClone(previousSnapshot) : undefined;
+    const database = this.#store.database;
+    const ownsTransaction = !database.connection.isTransaction;
+    if (ownsTransaction) database.connection.exec("BEGIN IMMEDIATE");
+    try {
+      const threadId = this.#store.ensureThreadIdNow(context.botId);
+      const messageId = `hosted-site-event:${context.operationId}:${status}`;
+      const current = structuredClone(this.#ensureSnapshot(context.botId, threadId));
+      current.threadId = threadId;
+      if (!current.messages.some((message) => message.id === messageId)) {
+        const message: ConversationMessage = {
+          id: messageId,
+          turnId: context.params.turnId,
+          author: "system",
+          source: "system",
+          text: hostedSiteConversationEventText(details),
+          createdAt,
+          status: "completed",
+          itemType: hostedSiteConversationEventItemType(context.action, status, context.operationId),
+        };
+        current.messages.push(message);
+        sortConversationMessages(current.messages);
+        current.revision = database.appendConversationMessage({
+          botId: context.botId,
+          threadId,
+          activeTurnId: current.activeTurnId,
+          message,
+          eventType: `hosted-site.${context.action}-${status}`,
+          commandId: `hosted-site-event:${context.operationId}:${status}`,
+          detail: { action: context.action, status, operationId: context.operationId, siteId: details.siteId },
+        });
+      }
+      if (ownsTransaction) database.connection.exec("COMMIT");
+      this.#snapshots.set(context.botId, current);
+      this.#publishConversation(current);
+    } catch (error) {
+      if (ownsTransaction && database.connection.isTransaction) database.connection.exec("ROLLBACK");
+      if (previousBot.threadId === null) {
+        this.#store.restoreThreadIdentity(context.botId, previousBot.threadId, previousBot.updatedAt);
+      }
+      if (previousSnapshotState) this.#snapshots.set(context.botId, previousSnapshotState);
+      else this.#snapshots.delete(context.botId);
+      throw error;
+    }
+  }
+
+  #reconcileHostedSiteEventsAfterRestart(): void {
+    for (const bot of this.#store.list()) {
+      if (!bot.threadId) continue;
+      const snapshot = this.#store.database.readConversation(bot.id, bot.threadId);
+      const latestByOperation = new Map<
+        string,
+        { event: NonNullable<ReturnType<typeof hostedSiteConversationEvent>>; turnId: string | undefined }
+      >();
+      for (const message of snapshot.messages) {
+        const event = hostedSiteConversationEvent(message);
+        if (event) latestByOperation.set(event.operationId, { event, turnId: message.turnId });
+      }
+      for (const { event, turnId } of latestByOperation.values()) {
+        if (event.status !== "running") continue;
+        const context: HostedSiteMutationContext = {
+          botId: bot.id,
+          operationId: event.operationId,
+          action: event.action,
+          params: {
+            threadId: bot.threadId,
+            turnId: turnId ?? `hosted-site-${event.operationId}`,
+            callId: event.operationId,
+            namespace: "openbot",
+            tool: hostedSiteTool(event.action),
+            arguments: {},
+          },
+          eventDetails: {
+            siteId: event.siteId,
+            title: event.title,
+            hostname: event.hostname,
+            url: event.url,
+          },
+        };
+        this.#tryRecordHostedSiteEvent(context, "interrupted", context.eventDetails);
+      }
+    }
   }
 
   #transitionRoutineRunWithConversation(
@@ -5621,4 +5808,25 @@ function approvalPermissions(params: unknown): AgentApprovalPermissions {
 
 function isHostedSiteMutationTool(value: string): value is HostedSiteMutationTool {
   return value === "publish_site" || value === "replace_site" || value === "delete_site";
+}
+
+function hostedSiteAction(tool: HostedSiteMutationTool): HostedSiteConversationEventAction {
+  if (tool === "publish_site") return "publish";
+  if (tool === "replace_site") return "replace";
+  return "delete";
+}
+
+function hostedSiteTool(action: HostedSiteConversationEventAction): HostedSiteMutationTool {
+  if (action === "publish") return "publish_site";
+  if (action === "replace") return "replace_site";
+  return "delete_site";
+}
+
+function hostedSiteEventDetails(site: HostedSiteSummary): HostedSiteConversationEventDetails {
+  return {
+    siteId: site.id,
+    title: site.title,
+    hostname: site.hostname,
+    url: site.url,
+  };
 }

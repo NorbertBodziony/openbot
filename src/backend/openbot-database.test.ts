@@ -6,7 +6,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { BotSummary, ConversationMessage, ConversationSnapshot } from "@openbot/contracts/ipc";
-import { routineConversationEventItemType, routineRunConversationEventItemType } from "@openbot/contracts/ipc";
+import {
+  hostedSiteConversationEventItemType,
+  hostedSiteConversationEventText,
+  routineConversationEventItemType,
+  routineRunConversationEventItemType,
+} from "@openbot/contracts/ipc";
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it } from "vitest";
 import { OpenBotDatabase } from "./openbot-database";
@@ -356,7 +361,7 @@ describe("OpenBotDatabase", () => {
     database.close();
   });
 
-  it("fills legacy pages after excluding routine action markers", async () => {
+  it("fills legacy pages after excluding action markers", async () => {
     const database = await createDatabase();
     const bot = testBot();
     database.replaceAgents("agents-routine-history", [bot], "agents.imported");
@@ -377,6 +382,20 @@ describe("OpenBotDatabase", () => {
       createdAt,
       status: "completed" as const,
       itemType: routineRunConversationEventItemType("running", "routine-1", "run-1"),
+    });
+    const hostedSiteEvent = (id: string, createdAt: string) => ({
+      id,
+      author: "system" as const,
+      source: "system" as const,
+      text: hostedSiteConversationEventText({
+        siteId: null,
+        title: "Launch page",
+        hostname: null,
+        url: null,
+      }),
+      createdAt,
+      status: "completed" as const,
+      itemType: hostedSiteConversationEventItemType("publish", "running", "operation-1"),
     });
     database.persistConversation(
       {
@@ -403,6 +422,7 @@ describe("OpenBotDatabase", () => {
           routineEvent("routine-event-2", "2026-08-29T10:03:00.000Z"),
           routineRunEvent("routine-run-event-1", "2026-08-29T10:04:00.000Z"),
           routineEvent("routine-event-3", "2026-08-29T10:05:00.000Z"),
+          hostedSiteEvent("hosted-site-event-1", "2026-08-29T10:06:00.000Z"),
         ],
       },
       "conversation.routine-history",
@@ -411,6 +431,7 @@ describe("OpenBotDatabase", () => {
     const latest = database.readConversationPage(bot.id, bot.threadId, { type: "latest" }, 1, {
       excludeRoutineEvents: true,
       excludeRoutineRunEvents: true,
+      excludeHostedSiteEvents: true,
     });
     expect(latest.messages.map((message) => message.id)).toEqual(["reply-new"]);
     expect(latest.pageInfo.hasOlder).toBe(true);
@@ -421,11 +442,12 @@ describe("OpenBotDatabase", () => {
       bot.threadId,
       { type: "before", cursor: latest.pageInfo.olderCursor },
       1,
-      { excludeRoutineEvents: true, excludeRoutineRunEvents: true },
+      { excludeRoutineEvents: true, excludeRoutineRunEvents: true, excludeHostedSiteEvents: true },
     );
     expect(older.messages.map((message) => message.id)).toEqual(["reply-old"]);
     expect(older.pageInfo.hasOlder).toBe(false);
     expect(database.searchConversationMessages("Morning brief", bot.id).total).toBe(0);
+    expect(database.searchConversationMessages("Launch page", bot.id).total).toBe(0);
     database.close();
   });
 

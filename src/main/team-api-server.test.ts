@@ -16,6 +16,8 @@ import type {
 } from "@openbot/contracts/ipc";
 import {
   AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT,
+  hostedSiteConversationEventItemType,
+  hostedSiteConversationEventText,
   routineConversationEventItemType,
   routineRunConversationEventItemType,
 } from "@openbot/contracts/ipc";
@@ -676,6 +678,20 @@ describe("TeamApiServer administration", () => {
               createdAt: "2026-08-29T10:02:00.000Z",
               status: "completed",
               itemType: routineRunConversationEventItemType("running", "routine-1", "run-1"),
+            },
+            {
+              id: "hosted-site-event-1",
+              author: "system",
+              source: "system",
+              text: hostedSiteConversationEventText({
+                siteId: null,
+                title: "Launch page",
+                hostname: null,
+                url: null,
+              }),
+              createdAt: "2026-08-29T10:03:00.000Z",
+              status: "completed",
+              itemType: hostedSiteConversationEventItemType("publish", "running", "operation-1"),
             },
           ],
         },
@@ -1486,6 +1502,20 @@ describe("TeamApiServer administration", () => {
           status: "completed",
           itemType: routineRunConversationEventItemType("running", "routine-1", "run-1"),
         },
+        {
+          id: "hosted-site-event-1",
+          author: "system",
+          source: "system",
+          text: hostedSiteConversationEventText({
+            siteId: null,
+            title: "Launch page",
+            hostname: null,
+            url: null,
+          }),
+          createdAt: "2026-08-19T10:03:00.000Z",
+          status: "completed",
+          itemType: hostedSiteConversationEventItemType("publish", "running", "operation-1"),
+        },
       ],
     };
     const createBot = vi.fn(
@@ -1499,6 +1529,22 @@ describe("TeamApiServer administration", () => {
         avatarHue: input.avatarHue,
       }),
     );
+    const readConversationPageFor = vi.fn(async (...args: unknown[]) => {
+      const options = isDynamicRecord(args[4]) ? args[4] : {};
+      const messages = localConversation.messages.filter((message) => {
+        if (options.excludeRoutineEvents && message.itemType?.startsWith("routine-event:")) return false;
+        if (options.excludeRoutineRunEvents && message.itemType?.startsWith("routine-run-event:")) return false;
+        if (options.excludeHostedSiteEvents && message.itemType?.startsWith("hosted-site-event:")) return false;
+        return true;
+      });
+      return {
+        ...localConversation,
+        messages,
+        references: {},
+        pageInfo: { hasOlder: false, olderCursor: null },
+        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
+      };
+    });
     const agents = createAgents({
       listBots: () => localBots,
       createBot,
@@ -1510,6 +1556,7 @@ describe("TeamApiServer administration", () => {
         botId,
         readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
       }),
+      readConversationPageFor,
       markConversationRead: async (_botId: string, _memberId: string, throughMessageId: string | null) => ({
         unreadCount: 0,
         firstUnreadMessageId: null,
@@ -1559,6 +1606,25 @@ describe("TeamApiServer administration", () => {
       ).resolves.toEqual({
         ...localConversation,
         readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
+      });
+      await expect(
+        jsonRequest(base, "/v1/agents/chief/conversation-page?limit=10", { token: login.sessionToken }),
+      ).resolves.toMatchObject({ messages: [{ id: "message-1" }] });
+      expect(readConversationPageFor.mock.calls.at(-1)?.[4]).toEqual({
+        excludeRoutineEvents: true,
+        excludeRoutineRunEvents: true,
+        excludeHostedSiteEvents: true,
+      });
+      await expect(
+        jsonRequest(base, "/v1/agents/chief/conversation-page?limit=10", {
+          token: login.sessionToken,
+          capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
+        }),
+      ).resolves.toMatchObject({ messages: localConversation.messages });
+      expect(readConversationPageFor.mock.calls.at(-1)?.[4]).toEqual({
+        excludeRoutineEvents: false,
+        excludeRoutineRunEvents: false,
+        excludeHostedSiteEvents: false,
       });
       await expect(jsonRequest(base, "/v1/agents/conversation-reads", { token: login.sessionToken })).resolves.toEqual({
         chief: { unreadCount: 1, firstUnreadMessageId: "message-1", throughMessageId: null },

@@ -21,6 +21,7 @@ import {
   type DirectThreadSummary,
   type DirectTypingRealtimeEvent,
   type DuplicateBotResult,
+  HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX,
   type InviteSummary,
   isAgentModel,
   isAvatarHue,
@@ -1078,6 +1079,7 @@ export class TeamApiServer {
             {
               excludeRoutineEvents: !clientCapabilities.has("routine-event-markers"),
               excludeRoutineRunEvents: !clientCapabilities.has("routine-run-event-markers"),
+              excludeHostedSiteEvents: !clientCapabilities.has("hosted-site-event-markers"),
             },
           );
           return this.#json(response, 200, page);
@@ -1258,9 +1260,10 @@ export class TeamApiServer {
       } else if (
         event.type === "conversation" &&
         (!connection.capabilities.has("routine-event-markers") ||
-          !connection.capabilities.has("routine-run-event-markers"))
+          !connection.capabilities.has("routine-run-event-markers") ||
+          !connection.capabilities.has("hosted-site-event-markers"))
       ) {
-        const key = `${connection.capabilities.has("routine-event-markers")}:${connection.capabilities.has("routine-run-event-markers")}`;
+        const key = `${connection.capabilities.has("routine-event-markers")}:${connection.capabilities.has("routine-run-event-markers")}:${connection.capabilities.has("hosted-site-event-markers")}`;
         let filtered = filteredConversationPayloads.get(key);
         if (!filtered) {
           filtered =
@@ -1312,6 +1315,7 @@ export class TeamApiServer {
               (capability) =>
                 capability !== "routine-event-markers" &&
                 capability !== "routine-run-event-markers" &&
+                capability !== "hosted-site-event-markers" &&
                 (supportsSnapshotTransport || capability !== "agent-runtime-snapshots"),
             ),
       ),
@@ -1729,6 +1733,9 @@ function markerSupported(itemType: string | undefined, capabilities: ReadonlySet
   if (itemType?.startsWith(ROUTINE_EVENT_ITEM_TYPE_PREFIX)) return capabilities.has("routine-event-markers");
   if (itemType?.startsWith(ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX)) {
     return capabilities.has("routine-run-event-markers");
+  }
+  if (itemType?.startsWith(HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX)) {
+    return capabilities.has("hosted-site-event-markers");
   }
   return true;
 }

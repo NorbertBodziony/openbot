@@ -12,6 +12,7 @@ import type {
   ConversationSnapshot,
 } from "@openbot/contracts/ipc";
 import {
+  HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX,
   isAgentProvider,
   isConversationMessage,
   providerForLegacyModel,
@@ -416,7 +417,11 @@ export class OpenBotDatabase {
     threadId: string | null,
     anchor: ConversationPageAnchor = { type: "latest" },
     requestedLimit = 50,
-    options: { excludeRoutineEvents?: boolean; excludeRoutineRunEvents?: boolean } = {},
+    options: {
+      excludeRoutineEvents?: boolean;
+      excludeRoutineRunEvents?: boolean;
+      excludeHostedSiteEvents?: boolean;
+    } = {},
   ): ConversationPage {
     if (!threadId) {
       return {
@@ -444,6 +449,7 @@ export class OpenBotDatabase {
       limit,
       options.excludeRoutineEvents === true,
       options.excludeRoutineRunEvents === true,
+      options.excludeHostedSiteEvents === true,
     );
     const messages = rows.map((row) => decodeConversationMessageJson(requiredStringColumn(row, "message_json")));
     const messageIds = new Set(messages.map((message) => message.id));
@@ -461,7 +467,11 @@ export class OpenBotDatabase {
           .prepare(
             `SELECT message_id, message_json FROM projection_thread_messages
              WHERE thread_id = ? AND message_id IN (${placeholders})
-             ${routineEventSqlFilter(options.excludeRoutineEvents === true, options.excludeRoutineRunEvents === true)}`,
+             ${conversationMarkerSqlFilter(
+               options.excludeRoutineEvents === true,
+               options.excludeRoutineRunEvents === true,
+               options.excludeHostedSiteEvents === true,
+             )}`,
           )
           .all(threadId, ...referenceIds),
       );
@@ -478,6 +488,7 @@ export class OpenBotDatabase {
           conversationRowCursor(first),
           options.excludeRoutineEvents === true,
           options.excludeRoutineRunEvents === true,
+          options.excludeHostedSiteEvents === true,
         )
       : false;
     return {
@@ -517,6 +528,7 @@ export class OpenBotDatabase {
              AND COALESCE(json_extract(message.message_json, '$.delivery.status'), '') NOT IN ('queued', 'cancelled')
              AND COALESCE(message.item_type, '') NOT LIKE '${ROUTINE_EVENT_ITEM_TYPE_PREFIX}%'
              AND COALESCE(message.item_type, '') NOT LIKE '${ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX}%'
+             AND COALESCE(message.item_type, '') NOT LIKE '${HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX}%'
              ${filter}`,
         )
         .get(...parameters),
@@ -532,6 +544,7 @@ export class OpenBotDatabase {
              AND COALESCE(json_extract(message.message_json, '$.delivery.status'), '') NOT IN ('queued', 'cancelled')
              AND COALESCE(message.item_type, '') NOT LIKE '${ROUTINE_EVENT_ITEM_TYPE_PREFIX}%'
              AND COALESCE(message.item_type, '') NOT LIKE '${ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX}%'
+             AND COALESCE(message.item_type, '') NOT LIKE '${HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX}%'
              ${filter}
            ORDER BY message.created_at DESC, message.ordinal DESC, message.message_id DESC
            LIMIT ? OFFSET ?`,
@@ -556,9 +569,14 @@ export class OpenBotDatabase {
     limit: number,
     excludeRoutineEvents: boolean,
     excludeRoutineRunEvents: boolean,
+    excludeHostedSiteEvents: boolean,
   ): DynamicRecord[] {
     const columns = "created_at, ordinal, message_id, message_json";
-    const routineFilter = routineEventSqlFilter(excludeRoutineEvents, excludeRoutineRunEvents);
+    const routineFilter = conversationMarkerSqlFilter(
+      excludeRoutineEvents,
+      excludeRoutineRunEvents,
+      excludeHostedSiteEvents,
+    );
     if (anchor.type === "latest") {
       return databaseRows(
         this.connection
@@ -663,8 +681,13 @@ export class OpenBotDatabase {
     cursor: ConversationPageCursor,
     excludeRoutineEvents: boolean,
     excludeRoutineRunEvents: boolean,
+    excludeHostedSiteEvents: boolean,
   ): boolean {
-    const routineFilter = routineEventSqlFilter(excludeRoutineEvents, excludeRoutineRunEvents);
+    const routineFilter = conversationMarkerSqlFilter(
+      excludeRoutineEvents,
+      excludeRoutineRunEvents,
+      excludeHostedSiteEvents,
+    );
     return Boolean(
       this.connection
         .prepare(
@@ -832,9 +855,10 @@ export class OpenBotDatabase {
     message: ConversationMessage;
     eventType: string;
     detail?: unknown;
+    commandId?: string;
   }): number {
     const result = this.dispatch(
-      `conversation:${input.eventType}:${randomUUID()}`,
+      input.commandId ?? `conversation:${input.eventType}:${randomUUID()}`,
       [
         {
           aggregateType: "thread",
@@ -1653,10 +1677,15 @@ function conversationRowCursor(row: DynamicRecord): ConversationPageCursor {
   };
 }
 
-function routineEventSqlFilter(excludeRoutineEvents: boolean, excludeRoutineRunEvents: boolean): string {
+function conversationMarkerSqlFilter(
+  excludeRoutineEvents: boolean,
+  excludeRoutineRunEvents: boolean,
+  excludeHostedSiteEvents: boolean,
+): string {
   return [
     excludeRoutineEvents ? `AND COALESCE(item_type, '') NOT LIKE '${ROUTINE_EVENT_ITEM_TYPE_PREFIX}%'` : "",
     excludeRoutineRunEvents ? `AND COALESCE(item_type, '') NOT LIKE '${ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX}%'` : "",
+    excludeHostedSiteEvents ? `AND COALESCE(item_type, '') NOT LIKE '${HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX}%'` : "",
   ]
     .filter(Boolean)
     .join("\n");

@@ -46,7 +46,9 @@ describe("Team protocol v3", () => {
       "Invalid Team protocol v1 HTTP request",
     );
     expect(TEAM_PROTOCOL_V1_CAPABILITIES).not.toContain("agent-duplication");
+    expect(TEAM_PROTOCOL_V1_CAPABILITIES).toContain("hosted-site-event-markers");
     expect(TEAM_PROTOCOL_V3_CAPABILITIES).toContain("agent-duplication");
+    expect(TEAM_PROTOCOL_V3_CAPABILITIES).toContain("hosted-site-event-markers");
   });
 
   it("registers the v3 route on the WebRTC adapter", () => {
