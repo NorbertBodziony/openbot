@@ -4357,7 +4357,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.#routineTimer) clearTimeout(this.#routineTimer);
     this.#routineTimer = null;
     if (!this.#initialized || this.#stopping) return;
-    const nextDueAt = this.#routines.nextDueAt();
+    const nextDueAt = this.#routines.nextDueAt(this.#pendingDuplicateBots);
     if (!nextDueAt) return;
     const delay = Math.max(0, Math.min(new Date(nextDueAt).getTime() - Date.now(), 2_147_000_000));
     this.#routineTimer = setTimeout(() => {
@@ -4370,7 +4370,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async #processDueRoutines(now = new Date()): Promise<void> {
     const changedBots = new Set<string>();
     try {
-      for (const due of this.#routines.due(now)) {
+      for (const due of this.#routines.due(now, this.#pendingDuplicateBots)) {
         let scheduledFor = new Date(due.nextRunAt);
         let nextRunAt = nextRoutineOccurrence(due.schedule, due.routine.timezone, scheduledFor);
         while (nextRunAt.getTime() <= now.getTime()) {
