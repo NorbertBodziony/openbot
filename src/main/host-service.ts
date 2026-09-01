@@ -208,7 +208,7 @@ export class HostService extends EventEmitter<HostEvents> {
       onDirectMessage: (event) => this.emit("directMessage", event),
       onDirectTyping: (event) => this.emit("directTyping", event),
       createInvite: (input) => this.createInvite(input),
-      onSessionRevoked: (sessionId) => this.#webrtcGateway?.revokeSession(sessionId),
+      onSessionRevoked: (sessionId) => this.#revokeWebRtcSession(sessionId),
     });
     this.#webrtcGateway = options.teamWebRtcBridge
       ? new TeamWebRtcHostGateway({

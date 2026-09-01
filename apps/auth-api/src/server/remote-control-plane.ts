@@ -600,6 +600,9 @@ export class RemoteControlPlane {
           input.membershipId,
         ),
       this.#database
+        .prepare("UPDATE remote_hosts SET auth_epoch = auth_epoch + 1, updated_at = ? WHERE host_id = ?")
+        .bind(now, input.hostId),
+      this.#database
         .prepare("UPDATE remote_sessions SET ended_at = ? WHERE host_id = ? AND user_id = ? AND ended_at IS NULL")
         .bind(now, input.hostId, membership.user_id),
       ...activeSessions.results.map((session) =>
@@ -608,6 +611,7 @@ export class RemoteControlPlane {
           now,
         ),
       ),
+      this.#authEpochEventStatement(input.hostId, now),
     ]);
     await this.#flushAuthEvents();
   }

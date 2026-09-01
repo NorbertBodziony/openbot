@@ -267,13 +267,16 @@ describe("remote server links", () => {
       { hostId: alphaId, name: "Alpha", devicePublicKey: `${alphaId}-public-key` },
       { hostId: betaId, name: "Beta", devicePublicKey: `${betaId}-public-key` },
       { hostId: gammaId, name: "Gamma", devicePublicKey: `${gammaId}-public-key` },
-    ].map((host) => ({
-      ...host,
-      logoKey: null,
-      authEpoch: 1,
-      membershipId: `${host.hostId}-member`,
-      role: "member" as const,
-    }));
+    ].map((host) => {
+      const role: "owner" | "member" = host.hostId === gammaId ? "owner" : "member";
+      return {
+        ...host,
+        logoKey: null,
+        authEpoch: 1,
+        membershipId: `${host.hostId}-member`,
+        role,
+      };
+    });
     const bridge = new TeamWebRtcBridge();
     vi.spyOn(bridge, "disconnect").mockResolvedValue();
     const removeMember = vi.fn(async (hostId: string) => {
@@ -356,6 +359,11 @@ describe("remote server links", () => {
       expect(removeMember).toHaveBeenCalledWith(alphaId, `${alphaId}-member`);
       await manager.syncRemoteHosts();
       expect(manager.list().some((server) => server.id === alphaId)).toBe(false);
+      await manager.remove(gammaId);
+      await manager.syncRemoteHosts();
+      expect(manager.list().some((server) => server.id === gammaId)).toBe(false);
+      expect(removeMember).not.toHaveBeenCalledWith(gammaId, `${gammaId}-member`);
+      expect(JSON.parse(await readFile(statePath, "utf8"))).toMatchObject({ hiddenHostIds: [gammaId] });
       transport.emit("error", betaId, "session_revoked", "The remote session was revoked.");
       expect(manager.list().find((server) => server.id === betaId)).toMatchObject({
         state: "error",

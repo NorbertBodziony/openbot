@@ -350,16 +350,17 @@ describe("RemoteControlPlane", () => {
     expect(
       database.prepare("SELECT ended_at FROM remote_sessions WHERE session_id = ?").get(memberSession.sessionId),
     ).toEqual({ ended_at: 1_000 });
+    const currentAuthEpoch = (await controlPlane.listHosts(owner.id))[0]?.authEpoch;
+    if (currentAuthEpoch === undefined) throw new Error("The host auth epoch is missing.");
     const hostClaims = {
       sessionId: "host-host-1",
       hostId: "host-1",
       userId: owner.id,
       membershipId: "host-1:host",
       role: "host" as const,
-      authEpoch: registration.authEpoch,
+      authEpoch: currentAuthEpoch,
       sessionExpiresAt: 100,
     };
-    const currentAuthEpoch = registration.authEpoch;
     await expect(controlPlane.validateResumeClaims({ ...hostClaims, authEpoch: currentAuthEpoch - 1 })).resolves.toBe(
       false,
     );
@@ -381,7 +382,7 @@ describe("RemoteControlPlane", () => {
       }),
     ]);
     expect(database.prepare("SELECT auth_epoch FROM remote_hosts WHERE host_id = 'host-1'").get()).toEqual({
-      auth_epoch: currentAuthEpoch,
+      auth_epoch: currentAuthEpoch + 2,
     });
     expect(webhookBodies).toContain(
       JSON.stringify({ type: "remote-session-ended", hostId: "host-1", sessionId: memberSession.sessionId }),

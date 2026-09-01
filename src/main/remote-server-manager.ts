@@ -120,6 +120,7 @@ interface StoredRemoteServers {
   version: 3;
   activeServerId: string;
   servers: StoredRemoteServer[];
+  hiddenHostIds: string[];
 }
 
 interface RemoteServerEvents {
@@ -206,7 +207,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #centralAccount: CentralAccountSession;
   readonly #allowLocalDevelopmentInvites: boolean;
   readonly #appVersion: string | null;
-  #state: StoredRemoteServers = { version: 3, activeServerId: "local", servers: [] };
+  #state: StoredRemoteServers = { version: 3, activeServerId: "local", servers: [], hiddenHostIds: [] };
   #states = new Map<string, ServerSummary["state"]>();
   #compatibility = new Map<string, ServerCompatibility>();
   #issues = new Map<string, ServerConnectionIssue>();
@@ -426,6 +427,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       }
       const accepted = await this.#webrtcTransport.acceptInvite(invite.token);
       if (accepted.hostId !== invite.serverId) throw new Error("The account service accepted a different host.");
+      this.#state.hiddenHostIds = this.#state.hiddenHostIds.filter((hostId) => hostId !== accepted.hostId);
       await this.#syncWebRtcHosts();
       const synchronized = this.#state.servers.find((server) => server.id === accepted.hostId);
       if (!synchronized || synchronized.fingerprint !== invite.fingerprint) {
@@ -591,9 +593,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   async remove(serverId: string): Promise<void> {
     if (serverId === "local") throw new Error("The local server cannot be removed.");
-    if (this.#state.servers.find((server) => server.id === serverId)?.transport === "webrtc-v2") {
+    const server = this.#state.servers.find((candidate) => candidate.id === serverId);
+    if (server?.transport === "webrtc-v2") {
       if (!this.#webrtcTransport) throw new Error("The WebRTC transport is unavailable.");
-      await this.#webrtcTransport.leaveHost(serverId);
+      if (server.role === "owner") {
+        if (!this.#state.hiddenHostIds.includes(serverId)) this.#state.hiddenHostIds.push(serverId);
+      } else {
+        await this.#webrtcTransport.leaveHost(serverId);
+      }
       await this.#webrtcTransport.disconnect(serverId).catch(() => undefined);
     }
     this.#clearServerConnectionState(serverId);
@@ -1127,7 +1134,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     if (!this.#webrtcTransport) return;
     const hosts = await this.#webrtcTransport.listHosts();
     const synchronizedServers = hosts
-      .filter((host) => host.hostId !== this.#getLocalHostId())
+      .filter((host) => host.hostId !== this.#getLocalHostId() && !this.#state.hiddenHostIds.includes(host.hostId))
       .map<StoredRemoteServer>((host) => {
         const existing = this.#state.servers.find((server) => server.id === host.hostId);
         const advertisedFingerprint = host.devicePublicKey ? fingerprint(host.devicePublicKey) : "";
@@ -2661,7 +2668,10 @@ function readStoredRemoteServers(value: unknown): StoredRemoteServers | null {
     if (!server) return null;
     servers.push(server);
   }
-  return { version: 3, activeServerId: value.activeServerId, servers };
+  const hiddenHostIds = Array.isArray(value.hiddenHostIds)
+    ? value.hiddenHostIds.filter((hostId): hostId is string => isString(hostId))
+    : [];
+  return { version: 3, activeServerId: value.activeServerId, servers, hiddenHostIds };
 }
 
 function readStoredRemoteServer(value: unknown): StoredRemoteServer | null {
