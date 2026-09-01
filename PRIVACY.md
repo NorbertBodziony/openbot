@@ -2,8 +2,8 @@
 
 OpenBot is local-first, but it is not offline-only. Agent workspaces, conversations, attachments,
 browser data, and team data stay on the computer that runs OpenBot. The optional OpenBot account
-service stores the minimum central data needed for email sign-in, account avatars, team invitations,
-and published team addresses.
+service stores the minimum central data needed for email sign-in, account avatars, remote host
+configuration, memberships, invitations, and logical sessions.
 
 Production builds of OpenBot and the website use a self-hosted OpenPanel service for product
 analytics. Development builds, previews, tests, and Storybook do not send analytics.
@@ -59,9 +59,11 @@ The service stores:
 - rate-limit keys as hashes, their fixed window start time, and the attempt count;
 - short-lived team authentication tickets with a ticket hash, account ID, team server ID, lifecycle
   times, and optional consumption time;
-- published team tunnel records with the account ID, team server ID, Cloudflare tunnel ID and name,
-  public API and Remote Mac hostnames, status, and lifecycle times;
+- remote host records with the owner, name, optional logo, device public key, and authorization epoch;
+- remote memberships and invitations with roles, states, hashed invitation tokens, and lifecycle times;
+- logical remote session records with the account, host, start, end, and expiration times;
 - the current account avatar file and its content type when the user uploads an avatar.
+- optional host logo files and their content types when the owner uploads a logo.
 
 The service does not store plaintext one-time codes, account session tokens, or team authentication
 tickets in D1. It returns a new plaintext secret only to the client that requested it. The desktop
@@ -84,9 +86,8 @@ These technical records are normally removed within 24 hours after they become i
 maintenance run can keep them until a later successful run. The task logs only aggregate deletion
 counts. It does not log account IDs, email addresses, IP addresses, tokens, or ticket values.
 
-Replacing or deleting an account avatar removes the previous R2 object on a best-effort basis.
-Making a team server private removes its central tunnel record and requests removal of its managed
-Cloudflare tunnel and DNS records.
+Replacing or deleting an account avatar or host logo removes the previous R2 object on a best-effort
+basis. An abandoned logical remote session expires without a heartbeat.
 
 ## Email delivery and infrastructure providers
 
@@ -95,7 +96,8 @@ provider receives the recipient address and the message content. A sign-in messa
 one-time code and its expiration time. A team invitation can contain the inviter address, team name,
 role, and invite URL.
 
-Cloudflare processes account API requests and published Team API traffic. Cloudflare and the email
+Cloudflare processes account and configuration API requests. It does not carry Team API, file,
+message, command, Remote Desktop media, or Remote Desktop input traffic. Cloudflare and the email
 provider can keep their own security, delivery, and network logs under their own policies. These
 provider logs are outside the OpenBot application database and its daily maintenance task.
 
@@ -118,15 +120,18 @@ provider logs are outside the OpenBot application database and its daily mainten
 Attachments copied into OpenBot remain in managed storage after their original file is moved or
 deleted. All agents share the embedded browser profile, including cookies and website sessions.
 
-## Published Team API
+## Remote Team API
 
-When the owner publishes OpenBot, the app starts an authenticated Team API on a localhost port and
-connects it to a managed Cloudflare Tunnel. Invited team members can use this API according to their
-role. The API can provide access to agents, conversations, queues, direct messages, attachments,
-browser tabs, usage information, prompts, approvals, and optional Remote Desktop access.
+When the owner publishes OpenBot, the app starts an authenticated Team API on a localhost port. The
+client and host use a separate OpenBot Signal service to establish WebRTC. Signal carries only
+short-lived authentication, SDP, and ICE messages. Team API data uses WebRTC DataChannels. Remote
+Desktop media and input use a separate WebRTC connection. ICE uses a direct peer-to-peer path when
+possible. If a direct path is not possible, encrypted WebRTC traffic uses an OpenBot coturn relay.
 
-These resources remain on the OpenBot host. The central account service does not copy them into D1
-or R2. Their network traffic passes through Cloudflare while the team server is public.
+Agents, conversations, queues, direct messages, attachments, browser data, prompts, approvals, and
+Remote Desktop data remain on the host. The central account service does not copy them into D1 or
+R2. The Signal service does not proxy them or write them to logs. The host does not need a public
+inbound port.
 
 ## Other network connections
 

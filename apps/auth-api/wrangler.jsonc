@@ -11,7 +11,7 @@
     "cross_version_cache": false
   },
   "triggers": {
-    "crons": ["17 3 * * *"]
+    "crons": ["* * * * *"]
   },
   "routes": [
     {
@@ -24,7 +24,13 @@
     }
   ],
   "secrets": {
-    "required": ["EMAIL_SMTP_PASSWORD", "CLOUDFLARE_API_TOKEN", "SKILLS_ADMIN_TOKEN"]
+    "required": [
+      "EMAIL_SMTP_PASSWORD",
+      "SKILLS_ADMIN_TOKEN",
+      "REMOTE_TICKET_PRIVATE_JWK",
+      "REMOTE_TICKET_PUBLIC_JWKS",
+      "REMOTE_AUTH_WEBHOOK_SECRET"
+    ]
   },
   "vars": {
     "AUTH_EXPOSE_DEVELOPMENT_CODE": "false",
@@ -32,9 +38,9 @@
     "EMAIL_SMTP_PORT": "465",
     "EMAIL_SMTP_USERNAME": "hello@openbot.run",
     "EMAIL_FROM": "hello@openbot.run",
-    "CLOUDFLARE_ACCOUNT_ID": "1727745925da016ed083b7537389c98e",
-    "CLOUDFLARE_ZONE_ID": "bac5e044ba951c390229f0e93673ebd3",
-    "CLOUDFLARE_TUNNEL_DOMAIN": "openbot.run"
+    "REMOTE_TICKET_KEY_ID": "openbot-remote-1",
+    "REMOTE_SIGNAL_URL": "wss://signal.openbot.run/v1/signal",
+    "REMOTE_AUTH_WEBHOOK_URL": "https://signal.openbot.run/internal/auth-events"
   },
   "d1_databases": [
     {
@@ -91,9 +97,9 @@
         "EMAIL_SMTP_PORT": "465",
         "EMAIL_SMTP_USERNAME": "hello@openbot.run",
         "EMAIL_FROM": "hello@openbot.run",
-        "CLOUDFLARE_ACCOUNT_ID": "1727745925da016ed083b7537389c98e",
-        "CLOUDFLARE_ZONE_ID": "bac5e044ba951c390229f0e93673ebd3",
-        "CLOUDFLARE_TUNNEL_DOMAIN": "openbot.run"
+        "REMOTE_TICKET_KEY_ID": "openbot-remote-1",
+        "REMOTE_SIGNAL_URL": "ws://127.0.0.1:8081/v1/signal",
+        "REMOTE_AUTH_WEBHOOK_URL": "http://127.0.0.1:8081/internal/auth-events"
       },
       "d1_databases": [
         {
@@ -140,7 +146,13 @@
         "crons": []
       },
       "secrets": {
-        "required": ["EMAIL_SMTP_PASSWORD", "CLOUDFLARE_API_TOKEN", "SKILLS_ADMIN_TOKEN"]
+        "required": [
+          "EMAIL_SMTP_PASSWORD",
+          "SKILLS_ADMIN_TOKEN",
+          "REMOTE_TICKET_PRIVATE_JWK",
+          "REMOTE_TICKET_PUBLIC_JWKS",
+          "REMOTE_AUTH_WEBHOOK_SECRET"
+        ]
       },
       "vars": {
         "AUTH_EXPOSE_DEVELOPMENT_CODE": "false",
@@ -148,9 +160,9 @@
         "EMAIL_SMTP_PORT": "465",
         "EMAIL_SMTP_USERNAME": "hello@openbot.run",
         "EMAIL_FROM": "hello@openbot.run",
-        "CLOUDFLARE_ACCOUNT_ID": "1727745925da016ed083b7537389c98e",
-        "CLOUDFLARE_ZONE_ID": "bac5e044ba951c390229f0e93673ebd3",
-        "CLOUDFLARE_TUNNEL_DOMAIN": "openbot.run"
+        "REMOTE_TICKET_KEY_ID": "openbot-remote-1",
+        "REMOTE_SIGNAL_URL": "wss://signal.openbot.run/v1/signal",
+        "REMOTE_AUTH_WEBHOOK_URL": "https://signal.openbot.run/internal/auth-events"
       },
       "d1_databases": [
         {

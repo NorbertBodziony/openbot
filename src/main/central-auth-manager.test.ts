@@ -66,15 +66,6 @@ describe("CentralAuthManager", () => {
       if (url.pathname === "/v1/mobile-auth/devices/11111111-1111-4111-8111-111111111111") {
         return new Response(null, { status: 204 });
       }
-      if (url.pathname === "/v1/team-tunnels/provision") {
-        return Response.json({
-          tunnelId: "11111111-1111-4111-8111-111111111111",
-          tunnelName: "openbot-00000000000040008000000000000000",
-          apiUrl: "https://studio-mac-k7m4q2pz-host.openbot.run",
-          token: "x".repeat(40),
-          machineToken: "a".repeat(64),
-        });
-      }
       return Response.json({
         id: "user-1",
         email: "person@example.com",
@@ -127,15 +118,6 @@ describe("CentralAuthManager", () => {
         "https://openbot.run/join?api=https%3A%2F%2Fstudio-mac-k7m4q2pz-host.openbot.run%2F&server=00000000-0000-4000-8000-000000000000&fingerprint=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&invite=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       role: "member",
     });
-    await expect(
-      manager.provisionTeamTunnel({
-        serverId,
-        serverName: "Studio Mac",
-        apiPort: 43_123,
-      }),
-    ).resolves.toMatchObject({
-      apiUrl: "https://studio-mac-k7m4q2pz-host.openbot.run",
-    });
     expect(requests[0]).toMatchObject({ path: "/health/live", authorization: null });
     expect(requests[2]?.body).toEqual({ challengeId: "challenge-1", code: "ABCD-EFGH" });
     expect(await readFile(storagePath, "utf8")).not.toContain("session-secret");
@@ -163,12 +145,6 @@ describe("CentralAuthManager", () => {
       path: "/v1/team-invitations/email",
       authorization: "Bearer session-secret",
     });
-    expect(requests[9]).toMatchObject({
-      path: "/v1/team-tunnels/provision",
-      authorization: "Bearer session-secret",
-      body: { serverId, serverName: "Studio Mac", apiPort: 43_123 },
-    });
-
     const restored = new CentralAuthManager(options);
     expect(await restored.initialize()).toMatchObject({ status: "signed_in" });
     expect(requests.at(-1)).toMatchObject({

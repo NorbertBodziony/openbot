@@ -34,7 +34,7 @@ const gateway = new RemoteScreenGateway({
   runtimeStateDirectory: stateDirectory,
   getRuntimeCredentials: async () => ({ username: "openbot-e2e", password: "openbot-local-e2e-only" }),
   getDisplays: () => [{ id: "1", label: "Primary display", width: 1920, height: 1080, primary: true }],
-  getIceServers: async () => [{ urls: "stun:stun.cloudflare.com:3478" }],
+  getIceServers: async () => [{ urls: "stun:127.0.0.1:3478" }],
   audit: (event) => console.log(`OPENBOT_REMOTE_E2E_AUDIT=${JSON.stringify(event)}`),
   onDiagnostic: (source, message) => process.stdout.write(`[${source}] ${message}`),
 });

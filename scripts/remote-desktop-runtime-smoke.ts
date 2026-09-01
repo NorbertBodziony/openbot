@@ -23,7 +23,7 @@ const runtime = new SunshineMoonlightRuntime({
     password: process.env.OPENBOT_SMOKE_PASSWORD ?? randomBytes(24).toString("base64url"),
   },
   getDisplays: () => [],
-  getIceServers: async () => [{ urls: "stun:stun.cloudflare.com:3478" }],
+  getIceServers: async () => [{ urls: "stun:127.0.0.1:3478" }],
   onDiagnostic: (source, message) => process.stderr.write(`[${source}] ${message}`),
 });
 
