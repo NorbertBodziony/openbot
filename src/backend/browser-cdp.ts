@@ -76,6 +76,7 @@ export class BrowserCdpEngine {
   #navigationGeneration = 0;
   #retainDebugger = false;
   #ownsDebugger = false;
+  #highlightSessionId: string | undefined;
   readonly #targetSessions = new Map<string, { sessionId: string; url: string }>();
 
   constructor(contents: WebContents) {
@@ -428,15 +429,23 @@ export class BrowserCdpEngine {
   }
 
   async setEnvironment(environment: BrowserEnvironment): Promise<void> {
-    this.#environment = environment;
+    const previousEnvironment = this.#environment;
+    const previousRetainDebugger = this.#retainDebugger;
     this.#retainDebugger = true;
     try {
       await this.#lease(async (send) => {
-        await this.#applyEnvironment(send, environment);
+        try {
+          await this.#applyEnvironment(send, environment);
+        } catch (error) {
+          if (previousEnvironment) await this.#applyEnvironment(send, previousEnvironment);
+          else await this.#clearEnvironment(send);
+          throw error;
+        }
       });
+      this.#environment = environment;
     } catch (error) {
-      this.#retainDebugger = false;
-      this.#detachOwnedDebugger();
+      this.#retainDebugger = previousRetainDebugger;
+      if (!this.#retainDebugger) this.#detachOwnedDebugger();
       throw error;
     }
   }
@@ -447,6 +456,7 @@ export class BrowserCdpEngine {
     this.#targetSessions.clear();
     this.#targets.clear();
     this.#lastSnapshot = null;
+    this.#highlightSessionId = undefined;
   }
 
   async waitFor(
@@ -480,7 +490,7 @@ export class BrowserCdpEngine {
           matched &&= recordValue(result.result)?.value === true;
         }
         if (matched) {
-          if (condition.state === "dom-quiet") await waitForDomQuiet(send, Math.min(1_000, deadline - Date.now()));
+          if (condition.state === "dom-quiet") await waitForDomQuiet(send, deadline - Date.now());
           return;
         }
         const remaining = deadline - Date.now();
@@ -516,7 +526,14 @@ export class BrowserCdpEngine {
         },
         resolved.sessionId,
       );
+      this.#highlightSessionId = resolved.sessionId;
     });
+  }
+
+  async hideHighlight(): Promise<void> {
+    const sessionId = this.#highlightSessionId;
+    this.#highlightSessionId = undefined;
+    await this.#lease((send) => send("Overlay.hideHighlight", {}, sessionId).then(() => undefined));
   }
 
   async #resolveElement(
@@ -755,6 +772,11 @@ export class BrowserCdpEngine {
     }
     if (environment.reducedMotion) features.push({ name: "prefers-reduced-motion", value: "reduce" });
     await send("Emulation.setEmulatedMedia", { features });
+  }
+
+  async #clearEnvironment(send: SendCommand): Promise<void> {
+    await send("Emulation.clearDeviceMetricsOverride");
+    await send("Emulation.setEmulatedMedia", { features: [] });
   }
 }
 

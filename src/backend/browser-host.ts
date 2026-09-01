@@ -676,8 +676,9 @@ export class BrowserHost {
           this.#requireToolTab(params, tabId);
           return textResult(
             await this.#enqueue(tabId, async (tab, keepQueueBlocked) => {
-              tab.environment = parseEnvironment(args, tab.environment, tab.view.getBounds());
-              await tab.engine.setEnvironment(tab.environment);
+              const environment = parseEnvironment(args, tab.environment, tab.view.getBounds());
+              await tab.engine.setEnvironment(environment);
+              tab.environment = environment;
               await this.#persistState();
               this.#emitChanged();
               return (await this.#readSnapshot(tab, tab.revision + 1, keepQueueBlocked)).snapshot;
@@ -848,8 +849,8 @@ export class BrowserHost {
   #bindTabEvents(tab: InternalTab): void {
     const contents = tab.view.webContents;
     const changed = () => this.#emitChanged();
-    contents.on("did-start-navigation", (_event, _url, isInPlace, isMainFrame) => {
-      if (isInPlace || !isMainFrame) return;
+    contents.on("did-start-navigation", (_event, _url, isInPlace) => {
+      if (isInPlace) return;
       for (const listener of this.#documentListeners) listener(tab.id);
     });
     contents.on("before-input-event", (event, input) => {
@@ -974,8 +975,18 @@ export class BrowserHost {
     const started = tab.queue.then(() => {
       const snapshotDrains: Promise<unknown>[] = [];
       const operationCompletion = (async () => {
-        if (target && target.kind !== "point") await tab.engine.highlight(target).catch(() => undefined);
-        await operation(tab);
+        let highlighted = false;
+        try {
+          if (target && target.kind !== "point") {
+            highlighted = await tab.engine.highlight(target).then(
+              () => true,
+              () => false,
+            );
+          }
+          await operation(tab);
+        } finally {
+          if (highlighted) await tab.engine.hideHighlight().catch(() => undefined);
+        }
       })();
       onOperationStarted?.(operationCompletion);
       const response = withTimeout(operationCompletion, timeoutMs, `Browser ${action} timed out.`)

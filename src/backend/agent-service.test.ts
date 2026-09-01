@@ -709,6 +709,11 @@ describe.sequential("AgentService", () => {
     const stagedPaths: string[] = [];
     const stagedContents: string[] = [];
     const delayedUpload: { complete?: () => void; completion?: Promise<void> } = {};
+    let holdUploads = false;
+    let releaseHeldUploads: () => void = () => undefined;
+    const heldUploads = new Promise<void>((resolve) => {
+      releaseHeldUploads = resolve;
+    });
     const browser = fakeBrowser();
     let documentChanged: (tabId: string) => void = (_tabId) => undefined;
     browser.onDocumentChanged = (listener) => {
@@ -730,7 +735,10 @@ describe.sequential("AgentService", () => {
         stagedContents.push(await readFile(stagedPath, "utf8"));
         const target = isDynamicRecord(params.arguments.target) ? params.arguments.target : {};
         const assign = () => hooks?.onUploadAssigned?.(String(target.selector ?? target.ref ?? "input"));
-        if (stagedPaths.length === 2) {
+        if (holdUploads) {
+          const completion = heldUploads.then(assign);
+          hooks?.onUploadOperationStarted?.(completion);
+        } else if (stagedPaths.length === 2) {
           delayedUpload.completion = new Promise<void>((resolve) => {
             delayedUpload.complete = () => {
               assign();
@@ -899,6 +907,47 @@ describe.sequential("AgentService", () => {
     documentChanged("tab");
     await waitFor(async () =>
       (await Promise.allSettled(stagedPaths.slice(1).map((path) => readFile(path)))).every(
+        (result) => result.status === "rejected",
+      ),
+    );
+
+    holdUploads = true;
+    for (let index = 0; index < 11; index++) {
+      const id = `browser-upload-concurrent-${index}`;
+      client.emit("request", {
+        method: "item/tool/call",
+        id,
+        params: {
+          threadId: providerThreadId,
+          turnId: "turn-browser-upload",
+          callId: id,
+          namespace: "openbot_browser",
+          tool: "upload_files",
+          arguments: {
+            tabId: "tab",
+            target: { kind: "css", selector: `#concurrent-${index}` },
+            paths: [replacementUploadPath],
+          },
+        },
+      });
+    }
+    await waitFor(() =>
+      client.errors.some(
+        (response) => response.id === "browser-upload-concurrent-10" && response.error.message.includes("10 inputs"),
+      ),
+    );
+    await waitFor(
+      () =>
+        client.responses.filter((response) => String(response.id).startsWith("browser-upload-concurrent-")).length ===
+        10,
+    );
+    expect(calls).toHaveLength(21);
+    releaseHeldUploads();
+    await heldUploads;
+    await Promise.resolve();
+    documentChanged("tab");
+    await waitFor(async () =>
+      (await Promise.allSettled(stagedPaths.slice(11).map((path) => readFile(path)))).every(
         (result) => result.status === "rejected",
       ),
     );

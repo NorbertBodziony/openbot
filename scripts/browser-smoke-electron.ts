@@ -459,6 +459,20 @@ async function main(): Promise<void> {
       expression: "clearInterval(globalThis.__openbotNoise); delete globalThis.__openbotNoise; true",
     });
     if (!stoppedNoise.success) throw new Error(`V2 DOM noise cleanup failed: ${toolError(stoppedNoise)}`);
+    const slowNoise = await callBrowserTool(browser, "evaluate", {
+      tabId: v2Tab.id,
+      expression:
+        "globalThis.__openbotSlowNoise = setInterval(() => document.body.toggleAttribute('data-slow-noise'), 10); setTimeout(() => { clearInterval(globalThis.__openbotSlowNoise); delete globalThis.__openbotSlowNoise; }, 1200); true",
+    });
+    if (!slowNoise.success) throw new Error(`V2 slow DOM noise setup failed: ${toolError(slowNoise)}`);
+    const patientQuietWait = await callBrowserTool(browser, "wait_for", {
+      tabId: v2Tab.id,
+      state: "dom-quiet",
+      timeoutMs: 2_500,
+    });
+    if (!patientQuietWait.success) {
+      throw new Error(`V2 DOM-quiet wait ignored the requested timeout: ${toolError(patientQuietWait)}`);
+    }
     const clearedEvaluationWorld = await callBrowserTool(browser, "evaluate", {
       tabId: v2Tab.id,
       expression: "globalThis.__openbotNoise === undefined",
