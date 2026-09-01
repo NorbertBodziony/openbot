@@ -155,6 +155,8 @@ describe("dynamic island window geometry", () => {
     await controller.initialize();
     expect(windows).toHaveLength(2);
     expect(controller.overlayRendererIds).toEqual(new Set([42, 43]));
+    expect(windows[0]?.setHiddenInMissionControl).toHaveBeenCalledWith(true);
+    expect(windows[1]?.setHiddenInMissionControl).toHaveBeenCalledWith(true);
 
     controller.publish({ serverId: "local", mode: "working", working: [] });
     controller.publish({ serverId: "local", mode: "working", working: [] });
@@ -571,6 +573,7 @@ class FakeWindow extends EventEmitter {
   readonly setWindowButtonVisibility = vi.fn();
   readonly setAlwaysOnTop = vi.fn();
   readonly setVisibleOnAllWorkspaces = vi.fn();
+  readonly setHiddenInMissionControl = vi.fn();
   readonly setFocusable = vi.fn();
   readonly setIgnoreMouseEvents = vi.fn();
   readonly isMinimized = vi.fn(() => false);
