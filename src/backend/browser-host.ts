@@ -6,25 +6,40 @@ import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   BrowserBounds,
   BrowserControlAction,
+  BrowserControlDetailAction,
   BrowserControlSession,
   BrowserControlState,
+  BrowserEnvironment,
+  BrowserImageMode,
   BrowserNavigationDirection,
   BrowserPreview,
+  BrowserSnapshot,
   BrowserTab,
+  BrowserTarget,
   BrowserViewTarget,
   BrowserVisibilityInput,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { app, type BrowserWindow, type Session, session, type WebContents, WebContentsView } from "electron";
+import { BrowserCdpEngine, type SnapshotReadResult } from "./browser-cdp";
+import { BrowserDiagnostics } from "./browser-diagnostics";
 import { embeddedBrowserUserAgent, embeddedBrowserUserAgentForUrl } from "./browser-identity";
+import { BrowserRecorder } from "./browser-recorder";
 import { isCloseBrowserTabShortcut, isGlobalSearchShortcut, isToggleDevToolsShortcut } from "./browser-shortcuts";
 import { persistentBrowserUrl } from "./browser-state";
+import { browserTargetSchema } from "./browser-tools";
 import type { DynamicToolCallParams, DynamicToolResult } from "./protocol";
 import { isRecord } from "./protocol";
 
 interface BrowserHostEvents {
   changed: [tabs: BrowserTab[], activeTabId: string | null];
   controlChanged: [state: BrowserControlState];
+}
+
+interface BrowserConsoleMessageDetails {
+  level: "info" | "warning" | "error" | "debug";
+  message: string;
+  sourceId: string;
 }
 
 interface InternalTab {
@@ -36,9 +51,13 @@ interface InternalTab {
   revision: number;
   queue: Promise<unknown>;
   focusOnVisible: boolean;
+  environment: BrowserEnvironment;
+  engine: BrowserCdpEngine;
+  diagnostics: BrowserDiagnostics;
+  recording: boolean;
 }
 
-interface StoredBrowserState {
+interface StoredBrowserStateV1 {
   version: 1;
   activeTabId: string | null;
   tabs: Array<{
@@ -49,18 +68,15 @@ interface StoredBrowserState {
   }>;
 }
 
-interface BrowserSnapshot {
-  tabId: string;
-  revision: number;
-  title: string;
-  url: string;
-  text: string;
-  elements: Array<{
-    ref: string;
-    tag: string;
-    role: string | null;
-    name: string;
-    disabled: boolean;
+interface StoredBrowserStateV2 {
+  version: 2;
+  activeTabId: string | null;
+  tabs: Array<{
+    id: string;
+    url: string;
+    ownerThreadId: string | null;
+    ownerBotId: string | null;
+    environment: BrowserEnvironment;
   }>;
 }
 
@@ -73,77 +89,7 @@ type BrowserAction =
   | { type: "forward" }
   | { type: "reload" };
 
-export const OPENBOT_BROWSER_NAMESPACE = "openbot_browser";
-
-export const BROWSER_DYNAMIC_TOOLS = [
-  {
-    type: "namespace",
-    name: OPENBOT_BROWSER_NAMESPACE,
-    description: "Operate OpenBot's private, persistent local browser.",
-    tools: [
-      functionTool("open", "Open an HTTP(S) URL in a new tab.", {
-        type: "object",
-        properties: { url: { type: "string", maxLength: INPUT_LIMITS.browserUrl } },
-        required: ["url"],
-        additionalProperties: false,
-      }),
-      functionTool("list_tabs", "List the browser tabs.", emptySchema()),
-      functionTool("snapshot", "Read a page and obtain current element references.", {
-        type: "object",
-        properties: { tabId: { type: "string", maxLength: INPUT_LIMITS.identifier } },
-        required: ["tabId"],
-        additionalProperties: false,
-      }),
-      functionTool(
-        "request_takeover",
-        "Pause and ask the user to take over the current browser tab for login, consent, CAPTCHA, passkey, two-factor authentication, or another authorization step. The call waits until the user finishes or cancels.",
-        {
-          type: "object",
-          properties: { tabId: { type: "string", maxLength: INPUT_LIMITS.identifier } },
-          required: ["tabId"],
-          additionalProperties: false,
-        },
-      ),
-      functionTool("act", "Click, type, press a key, scroll, navigate back/forward, or reload.", {
-        type: "object",
-        properties: {
-          tabId: { type: "string", maxLength: INPUT_LIMITS.identifier },
-          revision: { type: "integer" },
-          action: {
-            type: "object",
-            properties: {
-              type: {
-                type: "string",
-                enum: ["click", "type", "key", "scroll", "back", "forward", "reload"],
-              },
-              ref: { type: "string", maxLength: INPUT_LIMITS.identifier },
-              text: { type: "string", maxLength: INPUT_LIMITS.browserActionText },
-              submit: { type: "boolean" },
-              key: { type: "string", maxLength: 32 },
-              deltaY: { type: "number" },
-            },
-            required: ["type"],
-            additionalProperties: false,
-          },
-        },
-        required: ["tabId", "revision", "action"],
-        additionalProperties: false,
-      }),
-      functionTool("screenshot", "Capture the visible page as an image.", {
-        type: "object",
-        properties: { tabId: { type: "string", maxLength: INPUT_LIMITS.identifier } },
-        required: ["tabId"],
-        additionalProperties: false,
-      }),
-      functionTool("close_tab", "Close a browser tab.", {
-        type: "object",
-        properties: { tabId: { type: "string", maxLength: INPUT_LIMITS.identifier } },
-        required: ["tabId"],
-        additionalProperties: false,
-      }),
-    ],
-  },
-] as const;
+export { BROWSER_DYNAMIC_TOOLS, OPENBOT_BROWSER_NAMESPACE } from "./browser-tools";
 
 export class BrowserHost {
   static readonly CONTROL_IDLE_GRACE_MS = 1_200;
@@ -157,6 +103,7 @@ export class BrowserHost {
   readonly #controlSessions = new Map<string, BrowserControlSession>();
   readonly #controlTimers = new Map<string, NodeJS.Timeout>();
   readonly #reservedDownloadPaths = new Set<string>();
+  readonly #recorder: BrowserRecorder;
   #activeTabId: string | null = null;
   #visible = false;
   #bounds: BrowserBounds | null = null;
@@ -173,6 +120,12 @@ export class BrowserHost {
     this.#downloadsRoot = downloadsRoot;
     this.#statePath = statePath;
     this.#session = session.fromPartition("persist:openbot-browser", { cache: true });
+    this.#recorder = new BrowserRecorder(downloadsRoot, (tabId, recording) => {
+      const tab = this.#tabs.get(tabId);
+      if (!tab) return;
+      tab.recording = recording;
+      this.#emitChanged();
+    });
     this.#configureSession();
   }
 
@@ -181,7 +134,13 @@ export class BrowserHost {
     if (state.tabs.length === 0) return;
 
     const tabs = state.tabs.slice(0, INPUT_LIMITS.browserTabs).map((stored) => {
-      const tab = this.#createTab(stored.id, stored.url, stored.ownerThreadId, stored.ownerBotId);
+      const tab = this.#createTab(
+        stored.id,
+        stored.url,
+        stored.ownerThreadId,
+        stored.ownerBotId,
+        "environment" in stored ? stored.environment : defaultBrowserEnvironment(),
+      );
       this.#tabs.set(tab.id, tab);
       this.#bindTabEvents(tab);
       return tab;
@@ -191,7 +150,10 @@ export class BrowserHost {
     this.#emitChanged();
 
     for (const tab of tabs) {
-      void tab.view.webContents.loadURL(tab.requestedUrl, browserLoadOptions()).catch(() => undefined);
+      void tab.view.webContents
+        .loadURL(tab.requestedUrl, browserLoadOptions())
+        .then(() => tab.engine.setEnvironment(tab.environment))
+        .catch(() => undefined);
     }
   }
 
@@ -328,6 +290,7 @@ export class BrowserHost {
 
   async close(tabId: string): Promise<void> {
     const tab = this.#requireTab(tabId);
+    await this.#recorder.discard(tabId, "tab-closed");
     const tabIds = [...this.#tabs.keys()];
     const closedIndex = tabIds.indexOf(tabId);
     this.#unmountView(tab.view);
@@ -352,7 +315,7 @@ export class BrowserHost {
   async snapshot(tabId: string): Promise<BrowserSnapshot> {
     return this.#enqueue(tabId, async (tab) => {
       const revision = tab.revision + 1;
-      return this.#readSnapshot(tab, revision);
+      return (await this.#readSnapshot(tab, revision)).snapshot;
     });
   }
 
@@ -361,39 +324,48 @@ export class BrowserHost {
       if (revision !== tab.revision) {
         throw new Error("Stale browser references. Take a fresh snapshot before acting.");
       }
-
-      const wasVisible = tab.view.getVisible();
-      const previousBounds = tab.view.getBounds();
-      const restoreRendererFocus = !wasVisible && this.#window.webContents.isFocused();
-      if (!wasVisible) {
-        tab.view.setBounds({
-          ...previousBounds,
-          x: 1 - previousBounds.width,
-          y: 1 - previousBounds.height,
-        });
-        tab.view.setVisible(true);
-        tab.view.webContents.invalidate();
-      }
-      tab.view.webContents.focus();
+      const target = "ref" in action ? ({ kind: "ref", ref: action.ref, revision } as const) : undefined;
       try {
-        if (!wasVisible) await delay(250);
-        await withTimeout(
-          performAction(tab.view.webContents, action, this.#session.getUserAgent()),
-          10_000,
-          "Browser action timed out.",
-        );
-        await delay(50);
-      } finally {
-        if (!wasVisible) {
-          tab.view.setVisible(false);
-          tab.view.setBounds(previousBounds);
-          this.#syncAttachedView();
-          if (restoreRendererFocus) this.#window.webContents.focus();
+        switch (action.type) {
+          case "click":
+            if (!target) throw new Error("Legacy click requires a target.");
+            await tab.engine.click(target);
+            break;
+          case "type":
+            if (!target) throw new Error("Legacy type requires a target.");
+            await tab.engine.type(target, action.text, "replace");
+            if (action.submit) await tab.engine.press("Enter");
+            break;
+          case "key":
+            await tab.engine.press(action.key);
+            break;
+          case "scroll":
+            await tab.engine.scroll(undefined, 0, action.deltaY);
+            break;
+          case "back":
+          case "forward":
+            navigateHistory(tab.view.webContents, action.type, this.#session.getUserAgent());
+            break;
+          case "reload":
+            tab.view.webContents.reload();
         }
+        await tab.engine.settle();
+        tab.diagnostics.action({
+          action: action.type,
+          target: target ? describeBrowserTarget(target) : undefined,
+          outcome: "success",
+        });
+      } catch (error) {
+        tab.diagnostics.action({
+          action: action.type,
+          target: target ? describeBrowserTarget(target) : undefined,
+          outcome: "error",
+          detail: String(error),
+        });
+        throw error;
       }
-      await delay(250);
       const nextRevision = tab.revision + 1;
-      return this.#readSnapshot(tab, nextRevision);
+      return (await this.#readSnapshot(tab, nextRevision)).snapshot;
     });
   }
 
@@ -447,11 +419,228 @@ export class BrowserHost {
             : (tabs.at(-1)?.id ?? null);
           return textResult({ tabs, activeTabId });
         }
+        case "status": {
+          const tabs = this.listTabs().filter((tab) => this.#canUseToolTab(params, tab));
+          const activeTabId = tabs.some((tab) => tab.id === this.#activeTabId)
+            ? this.#activeTabId
+            : (tabs.at(-1)?.id ?? null);
+          const control = {
+            sessions: this.getControlState().sessions.filter((session) => session.threadId === params.threadId),
+          };
+          return textResult({ tabs, activeTabId, control });
+        }
         case "snapshot": {
           const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
           this.#requireToolTab(params, tabId);
-          const snapshot = await this.snapshot(tabId);
-          return textResult(snapshot);
+          const mode = parseImageMode(args.image);
+          const result = await this.#enqueue(tabId, (tab) => this.#readSnapshot(tab, tab.revision + 1));
+          return this.#snapshotResult(tabId, result, mode);
+        }
+        case "navigate": {
+          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+          this.#requireToolTab(params, tabId);
+          const url = optionalString(args, "url", INPUT_LIMITS.browserUrl);
+          const direction = optionalEnum(args, "direction", ["back", "forward", "reload"] as const);
+          if (!url && !direction) throw new Error("navigate requires url or direction.");
+          return textResult(
+            await this.#runAction(
+              tabId,
+              "navigate",
+              undefined,
+              async (tab) => {
+                if (url) {
+                  const normalizedUrl = normalizeBrowserUrl(url);
+                  tab.requestedUrl = normalizedUrl;
+                  tab.view.webContents.setUserAgent(
+                    embeddedBrowserUserAgentForUrl(this.#session.getUserAgent(), normalizedUrl),
+                  );
+                  await tab.view.webContents.loadURL(normalizedUrl, browserLoadOptions());
+                } else if (direction === "reload") {
+                  tab.view.webContents.reload();
+                } else if (direction) {
+                  navigateHistory(tab.view.webContents, direction, this.#session.getUserAgent());
+                }
+              },
+              readTimeout(args, 30_000),
+            ),
+          );
+        }
+        case "click": {
+          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+          this.#requireToolTab(params, tabId);
+          const target = parseTarget(args.target);
+          return textResult(
+            await this.#runAction(
+              tabId,
+              "click",
+              target,
+              (tab) =>
+                tab.engine.click(target, {
+                  button: optionalEnum(args, "button", ["left", "middle", "right"] as const),
+                  clickCount: optionalNumber(args, "clickCount"),
+                  modifiers: optionalStringArray(args, "modifiers", 4),
+                }),
+              readTimeout(args),
+            ),
+          );
+        }
+        case "type": {
+          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+          this.#requireToolTab(params, tabId);
+          const target = parseTarget(args.target);
+          const text = stringValue(args, "text", INPUT_LIMITS.browserActionText);
+          const mode = optionalEnum(args, "mode", ["replace", "append"] as const) ?? "replace";
+          return textResult(
+            await this.#runAction(
+              tabId,
+              "type",
+              target,
+              async (tab) => {
+                await tab.engine.type(target, text, mode);
+                if (args.submit === true) await tab.engine.press("Enter");
+              },
+              readTimeout(args),
+            ),
+          );
+        }
+        case "press": {
+          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+          this.#requireToolTab(params, tabId);
+          const target = args.target === undefined ? undefined : parseTarget(args.target);
+          const key = requiredString(args, "key", 128);
+          return textResult(
+            await this.#runAction(tabId, "press", target, (tab) => tab.engine.press(key, target), readTimeout(args)),
+          );
+        }
+        case "hover": {
+          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+          this.#requireToolTab(params, tabId);
+          const target = parseTarget(args.target);
+          return textResult(
+            await this.#runAction(tabId, "hover", target, (tab) => tab.engine.hover(target), readTimeout(args)),
+          );
+        }
+        case "scroll": {
+          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+          this.#requireToolTab(params, tabId);
+          const target = args.target === undefined ? undefined : parseTarget(args.target);
+          const deltaX = optionalNumber(args, "deltaX") ?? 0;
+          const deltaY = optionalNumber(args, "deltaY") ?? 0;
+          if (deltaX === 0 && deltaY === 0) throw new Error("scroll requires deltaX or deltaY.");
+          return textResult(
+            await this.#runAction(
+              tabId,
+              "scroll",
+              target,
+              (tab) => tab.engine.scroll(target, deltaX, deltaY),
+              readTimeout(args),
+            ),
+          );
+        }
+        case "select_option": {
+          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+          this.#requireToolTab(params, tabId);
+          const target = parseTarget(args.target);
+          const values = requiredStringArray(args, "values", 100, 1_000);
+          return textResult(
+            await this.#runAction(
+              tabId,
+              "select-option",
+              target,
+              (tab) => tab.engine.selectOption(target, values),
+              readTimeout(args),
+            ),
+          );
+        }
+        case "set_checked": {
+          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+          this.#requireToolTab(params, tabId);
+          const target = parseTarget(args.target);
+          const checked = requiredBoolean(args, "checked");
+          return textResult(
+            await this.#runAction(
+              tabId,
+              "set-checked",
+              target,
+              (tab) => tab.engine.setChecked(target, checked),
+              readTimeout(args),
+            ),
+          );
+        }
+        case "drag": {
+          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+          this.#requireToolTab(params, tabId);
+          const source = parseTarget(args.source);
+          const target = parseTarget(args.target);
+          return textResult(
+            await this.#runAction(tabId, "drag", source, (tab) => tab.engine.drag(source, target), readTimeout(args)),
+          );
+        }
+        case "upload_files": {
+          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+          this.#requireToolTab(params, tabId);
+          const target = parseTarget(args.target);
+          const paths = requiredStringArray(args, "paths", INPUT_LIMITS.attachments, INPUT_LIMITS.path);
+          return textResult(
+            await this.#runAction(
+              tabId,
+              "upload-files",
+              target,
+              (tab) => tab.engine.uploadFiles(target, paths),
+              readTimeout(args),
+            ),
+          );
+        }
+        case "wait_for": {
+          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+          this.#requireToolTab(params, tabId);
+          const target = args.target === undefined ? undefined : parseTarget(args.target);
+          const condition = {
+            target,
+            text: optionalString(args, "text", 2_000),
+            url: optionalString(args, "url", INPUT_LIMITS.browserUrl),
+            state: optionalEnum(args, "state", ["load", "domcontentloaded", "dom-quiet"] as const),
+          };
+          if (!condition.target && !condition.text && !condition.url && !condition.state)
+            throw new Error("wait_for requires a condition.");
+          return textResult(
+            await this.#enqueue(tabId, async (tab) => {
+              await tab.engine.waitFor(condition, readTimeout(args, 30_000));
+              return (await this.#readSnapshot(tab, tab.revision + 1)).snapshot;
+            }),
+          );
+        }
+        case "evaluate": {
+          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+          this.#requireToolTab(params, tabId);
+          const expression = requiredString(args, "expression", INPUT_LIMITS.browserActionText);
+          return textResult({
+            result: await this.#enqueue(tabId, (tab) => tab.engine.evaluate(expression, readTimeout(args))),
+          });
+        }
+        case "set_environment": {
+          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+          this.#requireToolTab(params, tabId);
+          return textResult(
+            await this.#enqueue(tabId, async (tab) => {
+              tab.environment = parseEnvironment(args, tab.environment, tab.view.getBounds());
+              await tab.engine.setEnvironment(tab.environment);
+              await this.#persistState();
+              this.#emitChanged();
+              return (await this.#readSnapshot(tab, tab.revision + 1)).snapshot;
+            }),
+          );
+        }
+        case "recording_start": {
+          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+          this.#requireToolTab(params, tabId);
+          await this.#enqueue(tabId, (tab) => this.#recorder.start(tabId, tab.view.webContents));
+          return textResult({ recording: true, tabId, limits: { durationMs: 300_000, bytes: 104_857_600 } });
+        }
+        case "recording_stop": {
+          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+          this.#requireToolTab(params, tabId);
+          return textResult({ artifact: await this.#recorder.stop(tabId) });
         }
         case "act": {
           const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
@@ -492,6 +681,7 @@ export class BrowserHost {
 
   async #destroyPersistentStorageAndViews(): Promise<void> {
     const statePersistence = this.#persistState();
+    const recorderDestruction = this.#recorder.destroy();
     this.#session.flushStorageData();
     for (const tab of this.#tabs.values()) {
       this.#unmountView(tab.view);
@@ -502,7 +692,7 @@ export class BrowserHost {
     this.clearControls();
     this.#controlListeners.clear();
     this.#session.flushStorageData();
-    await Promise.all([this.#session.cookies.flushStore(), statePersistence]);
+    await Promise.all([this.#session.cookies.flushStore(), statePersistence, recorderDestruction]);
   }
 
   async flushPersistentStorage(): Promise<void> {
@@ -511,11 +701,18 @@ export class BrowserHost {
     await this.#persistState();
   }
 
-  #createTab(id: string, requestedUrl: string, ownerThreadId: string | null, ownerBotId: string | null): InternalTab {
+  #createTab(
+    id: string,
+    requestedUrl: string,
+    ownerThreadId: string | null,
+    ownerBotId: string | null,
+    environment = defaultBrowserEnvironment(),
+  ): InternalTab {
     if (this.#destroyPromise) throw new Error("BrowserHost is shutting down.");
     const view = this.#createView();
     view.webContents.setUserAgent(embeddedBrowserUserAgentForUrl(this.#session.getUserAgent(), requestedUrl));
     this.#mountView(view);
+    const diagnostics = new BrowserDiagnostics();
     return {
       id,
       view,
@@ -525,6 +722,10 @@ export class BrowserHost {
       revision: 0,
       queue: Promise.resolve(),
       focusOnVisible: false,
+      environment,
+      engine: new BrowserCdpEngine(view.webContents),
+      diagnostics,
+      recording: false,
     };
   }
 
@@ -549,6 +750,29 @@ export class BrowserHost {
     this.#session.webRequest.onBeforeSendHeaders((details, callback) => {
       callback({
         requestHeaders: browserRequestHeaders(details.requestHeaders),
+      });
+    });
+    this.#session.webRequest.onCompleted((details) => {
+      const tab = [...this.#tabs.values()].find((candidate) => candidate.view.webContents.id === details.webContentsId);
+      if (!tab) return;
+      tab.diagnostics.add({
+        kind: "network",
+        level: details.statusCode >= 400 ? "error" : "info",
+        message: `${details.method} ${details.statusCode}`,
+        url: details.url.slice(0, INPUT_LIMITS.browserUrl),
+        method: details.method,
+        status: details.statusCode,
+      });
+    });
+    this.#session.webRequest.onErrorOccurred((details) => {
+      const tab = [...this.#tabs.values()].find((candidate) => candidate.view.webContents.id === details.webContentsId);
+      if (!tab) return;
+      tab.diagnostics.add({
+        kind: "network",
+        level: "error",
+        message: `${details.method} ${details.error}`,
+        url: details.url.slice(0, INPUT_LIMITS.browserUrl),
+        method: details.method,
       });
     });
     this.#session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
@@ -591,6 +815,22 @@ export class BrowserHost {
     contents.on("did-stop-loading", () => {
       changed();
       void this.#syncViewBackground(tab);
+    });
+    contents.on("console-message", (...eventArgs) => {
+      const details = readConsoleMessage(eventArgs);
+      if (!details) return;
+      tab.diagnostics.add({
+        kind: "console",
+        level: details.level,
+        message: details.message.slice(0, 2_000),
+        url: details.sourceId?.slice(0, INPUT_LIMITS.browserUrl),
+      });
+      if (details.level === "error") this.#emitChanged();
+    });
+    contents.on("did-fail-load", (_event, code, description, url, isMainFrame) => {
+      if (!isMainFrame || code === -3) return;
+      tab.diagnostics.add({ kind: "load", level: "error", message: `${code}: ${description}`, url });
+      this.#emitChanged();
     });
     contents.on("page-title-updated", changed);
     contents.on("did-navigate", (_event, url) => {
@@ -644,21 +884,69 @@ export class BrowserHost {
     }
   }
 
-  async #readSnapshot(tab: InternalTab, revision: number): Promise<BrowserSnapshot> {
-    const raw = await withTimeout(
-      tab.view.webContents.executeJavaScript(snapshotScript(revision), true),
+  async #readSnapshot(tab: InternalTab, revision: number): Promise<SnapshotReadResult> {
+    const history = tab.diagnostics.snapshot();
+    const result = await withTimeout(
+      tab.engine.snapshot({
+        tabId: tab.id,
+        revision,
+        environment: tab.environment,
+        diagnostics: history.diagnostics,
+        actions: history.actions,
+      }),
       10_000,
       "Browser snapshot timed out.",
     );
-    if (!isRecord(raw)) throw new Error("Browser returned an invalid snapshot.");
     tab.revision = revision;
+    return result;
+  }
+
+  async #runAction(
+    tabId: string,
+    action: string,
+    target: BrowserTarget | undefined,
+    operation: (tab: InternalTab) => Promise<void>,
+    timeoutMs = 10_000,
+  ): Promise<BrowserSnapshot> {
+    return this.#enqueue(tabId, async (tab) => {
+      try {
+        if (target && target.kind !== "point") await tab.engine.highlight(target).catch(() => undefined);
+        await withTimeout(operation(tab), timeoutMs, `Browser ${action} timed out.`);
+        await tab.engine.settle(Math.min(timeoutMs, 10_000));
+        tab.diagnostics.action({
+          action,
+          target: target ? describeBrowserTarget(target) : undefined,
+          outcome: "success",
+        });
+      } catch (error) {
+        tab.diagnostics.action({
+          action,
+          target: target ? describeBrowserTarget(target) : undefined,
+          outcome: "error",
+          detail: String(error).slice(0, 2_000),
+        });
+        throw error;
+      }
+      return (await this.#readSnapshot(tab, tab.revision + 1)).snapshot;
+    });
+  }
+
+  async #snapshotResult(tabId: string, result: SnapshotReadResult, mode: BrowserImageMode): Promise<DynamicToolResult> {
+    const includeImage = mode === "always" || (mode === "auto" && result.recommendImage);
+    if (!includeImage) return textResult(result.snapshot);
+    const imageUrl = await this.screenshot(tabId);
+    result.snapshot.image = {
+      included: true,
+      reason: mode === "always" ? "requested" : result.imageReason,
+      width: result.snapshot.viewport.width,
+      height: result.snapshot.viewport.height,
+    };
     return {
-      tabId: tab.id,
-      revision,
-      title: isString(raw.title) ? raw.title.slice(0, 500) : "",
-      url: isString(raw.url) ? raw.url : tab.view.webContents.getURL(),
-      text: isString(raw.text) ? raw.text.slice(0, 100_000) : "",
-      elements: Array.isArray(raw.elements) ? raw.elements.filter(isSnapshotElement).slice(0, 500) : [],
+      success: true,
+      contentItems: [
+        { type: "inputText", text: JSON.stringify(result.snapshot) },
+        { type: "inputImage", imageUrl },
+      ],
     };
   }
 
@@ -771,6 +1059,7 @@ export class BrowserHost {
       callId: params.callId,
       tabId: isString(args.tabId) ? args.tabId : null,
       action: browserControlAction(params.tool, args),
+      detailAction: browserControlDetailAction(params.tool),
       phase: "acting",
       startedAt: previous?.startedAt ?? new Date().toISOString(),
     });
@@ -814,14 +1103,15 @@ export class BrowserHost {
   }
 
   #persistState(): Promise<void> {
-    const state: StoredBrowserState = {
-      version: 1,
+    const state: StoredBrowserStateV2 = {
+      version: 2,
       activeTabId: this.#activeTabId,
       tabs: [...this.#tabs.values()].map((tab) => ({
         id: tab.id,
         url: persistentBrowserUrl(currentTabUrl(tab)),
         ownerThreadId: tab.ownerThreadId,
         ownerBotId: tab.ownerBotId,
+        environment: tab.environment,
       })),
     };
     this.#persistQueue = this.#persistQueue
@@ -858,6 +1148,38 @@ function browserControlAction(tool: string, args: DynamicRecord): BrowserControl
       return "screenshot";
     case "close_tab":
       return "close-tab";
+    case "status":
+      return "list-tabs";
+    case "navigate":
+      return "back";
+    case "click":
+      return "click";
+    case "type":
+      return "type";
+    case "press":
+      return "key";
+    case "hover":
+      return "click";
+    case "scroll":
+      return "scroll";
+    case "select_option":
+      return "click";
+    case "set_checked":
+      return "click";
+    case "drag":
+      return "click";
+    case "upload_files":
+      return "type";
+    case "wait_for":
+      return "snapshot";
+    case "evaluate":
+      return "snapshot";
+    case "set_environment":
+      return "snapshot";
+    case "recording_start":
+      return "screenshot";
+    case "recording_stop":
+      return "screenshot";
     case "act": {
       const action = isRecord(args.action) ? args.action.type : null;
       if (
@@ -878,12 +1200,32 @@ function browserControlAction(tool: string, args: DynamicRecord): BrowserControl
   }
 }
 
-function functionTool(name: string, description: string, inputSchema: DynamicRecord) {
-  return { type: "function" as const, name, description, inputSchema };
-}
-
-function emptySchema() {
-  return { type: "object", properties: {}, additionalProperties: false };
+function browserControlDetailAction(tool: string): BrowserControlDetailAction | undefined {
+  switch (tool) {
+    case "status":
+    case "navigate":
+    case "press":
+    case "hover":
+    case "drag":
+    case "evaluate":
+      return tool;
+    case "select_option":
+      return "select-option";
+    case "set_checked":
+      return "set-checked";
+    case "upload_files":
+      return "upload-files";
+    case "wait_for":
+      return "wait-for";
+    case "set_environment":
+      return "set-environment";
+    case "recording_start":
+      return "recording-start";
+    case "recording_stop":
+      return "recording-stop";
+    default:
+      return undefined;
+  }
 }
 
 function normalizeBrowserUrl(input: string): string {
@@ -926,29 +1268,36 @@ function setRequestHeader(headers: Record<string, string>, name: string, value: 
   headers[name] = value;
 }
 
-async function readBrowserState(path: string): Promise<StoredBrowserState> {
+async function readBrowserState(path: string): Promise<StoredBrowserStateV2> {
   try {
     const parsed = JSON.parse(await readFile(path, "utf8"));
-    if (!isRecord(parsed) || parsed.version !== 1) {
-      return { version: 1, activeTabId: null, tabs: [] };
+    if (!isRecord(parsed) || (parsed.version !== 1 && parsed.version !== 2)) {
+      return { version: 2, activeTabId: null, tabs: [] };
     }
     const tabs = Array.isArray(parsed.tabs)
-      ? parsed.tabs.filter(isStoredBrowserTab).map((tab) => ({ ...tab, url: persistentBrowserUrl(tab.url) }))
+      ? parsed.tabs.filter(isStoredBrowserTab).map((tab) => ({
+          ...tab,
+          url: persistentBrowserUrl(tab.url),
+          environment:
+            parsed.version === 2 && isBrowserEnvironment(tab.environment)
+              ? tab.environment
+              : defaultBrowserEnvironment(),
+        }))
       : [];
     return {
-      version: 1,
+      version: 2,
       activeTabId: isString(parsed.activeTabId) ? parsed.activeTabId : null,
       tabs: tabs.filter((tab, index) => tabs.findIndex((candidate) => candidate.id === tab.id) === index),
     };
   } catch (error) {
     if (isMissingFile(error) || error instanceof SyntaxError) {
-      return { version: 1, activeTabId: null, tabs: [] };
+      return { version: 2, activeTabId: null, tabs: [] };
     }
     throw error;
   }
 }
 
-function isStoredBrowserTab(value: unknown): value is StoredBrowserState["tabs"][number] {
+function isStoredBrowserTab(value: unknown): value is StoredBrowserStateV1["tabs"][number] & { environment?: unknown } {
   if (
     !isRecord(value) ||
     !isString(value.id) ||
@@ -1006,6 +1355,9 @@ function toPublicTab(tab: InternalTab): BrowserTab {
     loading: tab.view.webContents.isLoading(),
     ownerThreadId: tab.ownerThreadId,
     ownerBotId: tab.ownerBotId,
+    environment: tab.environment,
+    recording: tab.recording,
+    diagnosticErrorCount: tab.diagnostics.errorCount,
   };
 }
 
@@ -1014,172 +1366,195 @@ function currentTabUrl(tab: InternalTab): string {
   return isPersistableBrowserUrl(currentUrl) ? currentUrl : tab.requestedUrl;
 }
 
-function snapshotScript(revision: number): string {
-  return `(() => {
-    const revision = ${revision};
-    const isHitTestVisible = (node, rect) => {
-      const left = Math.max(0, rect.left);
-      const right = Math.min(innerWidth, rect.right);
-      const top = Math.max(0, rect.top);
-      const bottom = Math.min(innerHeight, rect.bottom);
-      if (left >= right || top >= bottom) return true;
-      const insetX = Math.min(4, (right - left) / 4);
-      const insetY = Math.min(4, (bottom - top) / 4);
-      const points = [
-        [(left + right) / 2, (top + bottom) / 2],
-        [left + insetX, top + insetY],
-        [right - insetX, top + insetY],
-        [left + insetX, bottom - insetY],
-        [right - insetX, bottom - insetY],
-      ];
-      return points.some(([x, y]) => {
-        const hit = document.elementFromPoint(x, y);
-        return hit === node || (hit instanceof Node && node.contains(hit));
-      });
-    };
-    const nodes = [...document.querySelectorAll('a,button,input,textarea,select,[role],[contenteditable="true"],[tabindex]')]
-      .filter((node) => {
-        const style = getComputedStyle(node);
-        const rect = node.getBoundingClientRect();
-        return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0 && isHitTestVisible(node, rect);
-      })
-      .slice(0, 500);
-    document.querySelectorAll('[data-openbot-ref]').forEach((node) => node.removeAttribute('data-openbot-ref'));
-    const elements = nodes.map((node, index) => {
-      const ref = revision + ':' + index;
-      node.setAttribute('data-openbot-ref', ref);
-      const name = (node.getAttribute('aria-label') || node.getAttribute('title') || node.getAttribute('placeholder') || node.innerText || node.value || '').trim().slice(0, 500);
-      return {
-        ref,
-        tag: node.tagName.toLowerCase(),
-        role: node.getAttribute('role'),
-        name,
-        disabled: Boolean(node.disabled || node.getAttribute('aria-disabled') === 'true'),
-      };
-    });
-    return {
-      title: document.title,
-      url: location.href,
-      text: (document.body?.innerText || '').slice(0, 100000),
-      elements,
-    };
-  })()`;
+function readConsoleMessage(args: unknown[]): BrowserConsoleMessageDetails | null {
+  const modern = args[1];
+  if (
+    isRecord(modern) &&
+    (modern.level === "info" || modern.level === "warning" || modern.level === "error" || modern.level === "debug") &&
+    isString(modern.message) &&
+    isString(modern.sourceId)
+  ) {
+    return { level: modern.level, message: modern.message, sourceId: modern.sourceId };
+  }
+  const level = args[1];
+  const message = args[2];
+  const sourceId = args[4];
+  if (!isNumber(level) || !isString(message)) return null;
+  return {
+    level: level >= 3 ? "error" : level === 2 ? "warning" : level === 0 ? "debug" : "info",
+    message,
+    sourceId: isString(sourceId) ? sourceId : "",
+  };
 }
 
-async function performAction(contents: WebContents, action: BrowserAction, sessionUserAgent: string): Promise<void> {
-  switch (action.type) {
-    case "click": {
-      await withDevToolsDebugger(contents, async () => {
-        const point = await contents.executeJavaScript(
-          `(() => {
-            const node = document.querySelector('[data-openbot-ref=${JSON.stringify(action.ref)}]');
-            if (!(node instanceof HTMLElement)) throw new Error('Element reference is no longer available.');
-            node.scrollIntoView({ block: 'center', inline: 'center' });
-            node.focus();
-            const rect = node.getBoundingClientRect();
-            const left = Math.max(0, rect.left);
-            const right = Math.min(innerWidth, rect.right);
-            const top = Math.max(0, rect.top);
-            const bottom = Math.min(innerHeight, rect.bottom);
-            if (left >= right || top >= bottom) throw new Error('Element is outside the visible page.');
-            const insetX = Math.min(4, (right - left) / 4);
-            const insetY = Math.min(4, (bottom - top) / 4);
-            const points = [
-              [(left + right) / 2, (top + bottom) / 2],
-              [left + insetX, top + insetY],
-              [right - insetX, top + insetY],
-              [left + insetX, bottom - insetY],
-              [right - insetX, bottom - insetY],
-            ];
-            const point = points.find(([x, y]) => {
-              const hit = document.elementFromPoint(x, y);
-              return hit === node || (hit instanceof Node && node.contains(hit));
-            });
-            if (!point) throw new Error('Element is covered by another page layer. Take a fresh snapshot.');
-            return {
-              x: Math.round(point[0]),
-              y: Math.round(point[1]),
-              direct: node instanceof HTMLAnchorElement && node.hasAttribute('download'),
-            };
-          })()`,
-          true,
-        );
-        if (!isInputPoint(point)) throw new Error("Element does not have a clickable position.");
-        if (point.direct === true) {
-          await contents.executeJavaScript(
-            `document.querySelector('[data-openbot-ref=${JSON.stringify(action.ref)}]')?.click()`,
-            true,
-          );
-          return;
-        }
-        await contents.debugger.sendCommand("Input.dispatchMouseEvent", {
-          type: "mouseMoved",
-          x: point.x,
-          y: point.y,
-        });
-        await contents.debugger.sendCommand("Input.dispatchMouseEvent", {
-          type: "mousePressed",
-          x: point.x,
-          y: point.y,
-          button: "left",
-          clickCount: 1,
-        });
-        await contents.debugger.sendCommand("Input.dispatchMouseEvent", {
-          type: "mouseReleased",
-          x: point.x,
-          y: point.y,
-          button: "left",
-          clickCount: 1,
-        });
-      });
-      return;
-    }
-    case "type": {
-      await withDevToolsDebugger(contents, async () => {
-        await contents.executeJavaScript(
-          `(() => {
-            const node = document.querySelector('[data-openbot-ref=${JSON.stringify(action.ref)}]');
-            if (!(node instanceof HTMLElement)) throw new Error('Element reference is no longer available.');
-            node.focus();
-            if ('value' in node) {
-              if (typeof node.select === 'function') node.select();
-            } else if (node.isContentEditable) {
-              const selection = getSelection();
-              const range = document.createRange();
-              range.selectNodeContents(node);
-              selection?.removeAllRanges();
-              selection?.addRange(range);
-            } else {
-              throw new Error('Element does not accept text.');
-            }
-          })()`,
-          true,
-        );
-        await contents.debugger.sendCommand("Input.insertText", {
-          text: action.text,
-        });
-      });
-      if (action.submit) pressKey(contents, "Enter");
-      return;
-    }
-    case "key":
-      pressKey(contents, action.key);
-      return;
-    case "scroll":
-      await contents.executeJavaScript(
-        `window.scrollBy({ top: ${Math.max(-10_000, Math.min(10_000, action.deltaY))}, behavior: 'instant' })`,
-        true,
-      );
-      return;
-    case "back":
-      navigateHistory(contents, "back", sessionUserAgent);
-      return;
-    case "forward":
-      navigateHistory(contents, "forward", sessionUserAgent);
-      return;
-    case "reload":
-      contents.reload();
+function defaultBrowserEnvironment(): BrowserEnvironment {
+  return {
+    viewport: { mode: "fill", width: 1200, height: 800, deviceScaleFactor: 1, preset: null },
+    colorScheme: "system",
+    reducedMotion: false,
+  };
+}
+
+function isBrowserEnvironment(value: unknown): value is BrowserEnvironment {
+  if (!isRecord(value) || !isRecord(value.viewport)) return false;
+  const viewport = value.viewport;
+  return (
+    (viewport.mode === "fill" || viewport.mode === "custom") &&
+    isNumber(viewport.width) &&
+    viewport.width >= 320 &&
+    viewport.width <= INPUT_LIMITS.browserDimension &&
+    isNumber(viewport.height) &&
+    viewport.height >= 240 &&
+    viewport.height <= INPUT_LIMITS.browserDimension &&
+    isNumber(viewport.deviceScaleFactor) &&
+    viewport.deviceScaleFactor >= 0.5 &&
+    viewport.deviceScaleFactor <= 4 &&
+    (viewport.preset === null ||
+      viewport.preset === "desktop" ||
+      viewport.preset === "tablet" ||
+      viewport.preset === "mobile") &&
+    (value.colorScheme === "light" || value.colorScheme === "dark" || value.colorScheme === "system") &&
+    isBoolean(value.reducedMotion)
+  );
+}
+
+function parseEnvironment(
+  value: DynamicRecord,
+  current: BrowserEnvironment,
+  bounds: BrowserBounds,
+): BrowserEnvironment {
+  const preset = optionalEnum(value, "preset", ["fill", "desktop", "tablet", "mobile", "custom"] as const);
+  const presetSize = presetDimensions(preset);
+  const width =
+    optionalNumber(value, "width") ?? presetSize?.width ?? (preset === "fill" ? bounds.width : current.viewport.width);
+  const height =
+    optionalNumber(value, "height") ??
+    presetSize?.height ??
+    (preset === "fill" ? bounds.height : current.viewport.height);
+  if (width < 320 || width > INPUT_LIMITS.browserDimension || height < 240 || height > INPUT_LIMITS.browserDimension) {
+    throw new Error("Viewport dimensions are outside the supported range.");
   }
+  const scale = optionalNumber(value, "deviceScaleFactor") ?? presetSize?.scale ?? current.viewport.deviceScaleFactor;
+  if (scale < 0.5 || scale > 4) throw new Error("deviceScaleFactor must be between 0.5 and 4.");
+  const resolvedPreset =
+    preset === "desktop" || preset === "tablet" || preset === "mobile"
+      ? preset
+      : preset === "custom" || preset === "fill"
+        ? null
+        : current.viewport.preset;
+  return {
+    viewport: {
+      mode:
+        preset === "fill"
+          ? "fill"
+          : preset || value.width !== undefined || value.height !== undefined
+            ? "custom"
+            : current.viewport.mode,
+      width: Math.round(width),
+      height: Math.round(height),
+      deviceScaleFactor: scale,
+      preset: resolvedPreset,
+    },
+    colorScheme: optionalEnum(value, "colorScheme", ["light", "dark", "system"] as const) ?? current.colorScheme,
+    reducedMotion: value.reducedMotion === undefined ? current.reducedMotion : requiredBoolean(value, "reducedMotion"),
+  };
+}
+
+function parseTarget(value: unknown): BrowserTarget {
+  const parsed = browserTargetSchema.safeParse(value);
+  if (!parsed.success) throw new Error(`Invalid browser target: ${parsed.error.issues[0]?.message ?? "unknown error"}`);
+  return parsed.data;
+}
+
+function describeBrowserTarget(target: BrowserTarget): string {
+  switch (target.kind) {
+    case "ref":
+      return `ref ${target.ref}@${target.revision}`;
+    case "role":
+      return `${target.role}${target.name ? ` “${target.name}”` : ""}`;
+    case "text":
+      return `text “${target.text}”`;
+    case "css":
+      return `css ${target.selector}`;
+    case "point":
+      return `point ${target.x},${target.y}`;
+  }
+}
+
+function parseImageMode(value: unknown): BrowserImageMode {
+  return value === undefined
+    ? "auto"
+    : (optionalEnum({ value }, "value", ["auto", "always", "never"] as const) ?? "auto");
+}
+
+function readTimeout(value: DynamicRecord, maximum = 10_000): number {
+  const timeout = optionalNumber(value, "timeoutMs") ?? Math.min(maximum, 10_000);
+  if (!Number.isInteger(timeout) || timeout < 0 || timeout > maximum)
+    throw new Error(`timeoutMs must be between 0 and ${maximum}.`);
+  return Math.max(1, timeout);
+}
+
+function optionalString(value: DynamicRecord, key: string, maxLength: number): string | undefined {
+  if (value[key] === undefined) return undefined;
+  return requiredString(value, key, maxLength);
+}
+
+function stringValue(value: DynamicRecord, key: string, maxLength: number): string {
+  const raw = value[key];
+  if (!isString(raw)) throw new Error(`${key} must be a string.`);
+  if (raw.length > maxLength) throw new Error(`${key} is too long.`);
+  return raw;
+}
+
+function optionalNumber(value: DynamicRecord, key: string): number | undefined {
+  if (value[key] === undefined) return undefined;
+  return requiredNumber(value, key);
+}
+
+function requiredBoolean(value: DynamicRecord, key: string): boolean {
+  if (!isBoolean(value[key])) throw new Error(`${key} must be a boolean.`);
+  return value[key];
+}
+
+function optionalEnum<const T extends readonly string[]>(
+  value: DynamicRecord,
+  key: string,
+  options: T,
+): T[number] | undefined {
+  const raw = value[key];
+  if (raw === undefined) return undefined;
+  if (!isString(raw)) throw new Error(`${key} must be one of: ${options.join(", ")}.`);
+  const match = options.find((option) => option === raw);
+  if (match === undefined) throw new Error(`${key} must be one of: ${options.join(", ")}.`);
+  return match;
+}
+
+function presetDimensions(preset: "fill" | "desktop" | "tablet" | "mobile" | "custom" | undefined) {
+  switch (preset) {
+    case "desktop":
+      return { width: 1440, height: 900, scale: 1 };
+    case "tablet":
+      return { width: 820, height: 1180, scale: 2 };
+    case "mobile":
+      return { width: 390, height: 844, scale: 3 };
+    default:
+      return null;
+  }
+}
+
+function requiredStringArray(value: DynamicRecord, key: string, maximum: number, maxLength: number): string[] {
+  const raw = value[key];
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > maximum)
+    throw new Error(`${key} must contain between 1 and ${maximum} strings.`);
+  return raw.map((entry) => {
+    if (!isString(entry) || !entry || entry.length > maxLength) throw new Error(`${key} contains an invalid string.`);
+    return entry;
+  });
+}
+
+function optionalStringArray(value: DynamicRecord, key: string, maximum: number): string[] | undefined {
+  if (value[key] === undefined) return undefined;
+  return requiredStringArray(value, key, maximum, 64);
 }
 
 function navigateHistory(contents: WebContents, direction: BrowserNavigationDirection, sessionUserAgent: string): void {
@@ -1190,32 +1565,6 @@ function navigateHistory(contents: WebContents, direction: BrowserNavigationDire
   if (!entry?.url) return;
   contents.setUserAgent(embeddedBrowserUserAgentForUrl(sessionUserAgent, entry.url));
   history.goToOffset(offset);
-}
-
-function isInputPoint(value: unknown): value is { x: number; y: number; direct?: boolean } {
-  return (
-    isRecord(value) && isNumber(value.x) && Number.isFinite(value.x) && isNumber(value.y) && Number.isFinite(value.y)
-  );
-}
-
-async function withDevToolsDebugger<T>(contents: WebContents, operation: () => Promise<T>): Promise<T> {
-  const attachedHere = !contents.debugger.isAttached();
-  if (attachedHere) {
-    contents.debugger.attach("1.3");
-    // Native input must also work while OpenBot is not the foreground application.
-    await contents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
-  }
-  try {
-    return await operation();
-  } finally {
-    if (attachedHere && contents.debugger.isAttached()) contents.debugger.detach();
-  }
-}
-
-function pressKey(contents: WebContents, key: string): void {
-  if (!/^[a-zA-Z0-9+_-]{1,32}$/.test(key)) throw new Error("Invalid browser key.");
-  contents.sendInputEvent({ type: "keyDown", keyCode: key });
-  contents.sendInputEvent({ type: "keyUp", keyCode: key });
 }
 
 function parseAction(value: unknown): BrowserAction {
@@ -1256,26 +1605,11 @@ function requiredNumber(value: DynamicRecord, key: string): number {
   return value[key];
 }
 
-function isSnapshotElement(value: unknown): value is BrowserSnapshot["elements"][number] {
-  return (
-    isRecord(value) &&
-    isString(value.ref) &&
-    isString(value.tag) &&
-    (isString(value.role) || value.role === null) &&
-    isString(value.name) &&
-    isBoolean(value.disabled)
-  );
-}
-
 function textResult(value: unknown): DynamicToolResult {
   return {
     success: true,
     contentItems: [{ type: "inputText", text: JSON.stringify(value) }],
   };
-}
-
-function delay(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function uniqueDownloadPath(root: string, name: string, reserved: Set<string>): string {

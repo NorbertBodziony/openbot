@@ -1,13 +1,14 @@
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
+import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { app, BrowserWindow, webContents } from "electron";
 import { BrowserHost } from "../src/backend/browser-host";
-import { getString } from "../src/backend/protocol";
+import { type DynamicToolResult, getString } from "../src/backend/protocol";
 
 let cachedPageVersion = 1;
+let browserToolCall = 0;
 
 interface PersistenceSnapshot {
   ready: true;
@@ -55,6 +56,41 @@ const server = createServer((request, response) => {
   }
   if (url.pathname === "/abort") {
     response.destroy();
+    return;
+  }
+  if (url.pathname === "/frame") {
+    response.setHeader("content-type", "text/html; charset=utf-8");
+    response.end(
+      `<button aria-label="Frame action" onclick="this.textContent='Frame clicked:' + event.isTrusted">Frame action</button>`,
+    );
+    return;
+  }
+  if (url.pathname === "/diagnostic-error") {
+    response.writeHead(503, { "content-type": "text/plain" });
+    response.end("expected diagnostic failure");
+    return;
+  }
+  if (url.pathname === "/v2") {
+    const port = request.socket.localPort;
+    response.setHeader("content-type", "text/html; charset=utf-8");
+    response.end(`<!doctype html>
+      <label>Mode <select aria-label="Mode"><option value="a">Alpha</option><option value="b">Beta</option></select></label>
+      <label><input type="checkbox" aria-label="Agree" />Agree</label>
+      <div contenteditable="true" role="textbox" aria-label="Notes"></div>
+      <button aria-label="Duplicate">One</button><button aria-label="Duplicate">Two</button>
+      <span style="position:relative;display:inline-block"><button aria-label="Covered">Covered</button><span style="position:absolute;inset:0;z-index:2" aria-hidden="true"></span></span>
+      <button aria-label="SPA" onclick="setTimeout(() => { history.pushState({}, '', '/v2#done'); document.querySelector('output').textContent='SPA done'; }, 20)">SPA</button>
+      <button draggable="true" aria-label="Drag source">Drag source</button><button aria-label="Drop target" ondragover="event.preventDefault()" ondrop="event.preventDefault();document.querySelector('output').textContent='drag:' + event.isTrusted">Drop target</button>
+      <input type="file" aria-label="Files" onchange="document.querySelector('output').textContent=this.files[0]?.name || ''" />
+      <canvas width="40" height="20" style="display:block;width:80px;height:40px" onclick="document.querySelector('output').textContent='canvas:' + event.isTrusted"></canvas>
+      <iframe title="Cross origin frame" src="http://localhost:${port}/frame"></iframe>
+      <div id="shadow"></div><output>ready</output>
+      <script>
+        const root = document.querySelector('#shadow').attachShadow({ mode: 'open' });
+        root.innerHTML = '<button aria-label="Shadow action">Shadow action</button>';
+        document.addEventListener('keydown', event => { if (event.ctrlKey && event.key.toLowerCase() === 'k') document.querySelector('output').textContent = 'shortcut:' + event.isTrusted; });
+        console.error('v2 diagnostic marker'); fetch('/diagnostic-error').catch(() => {});
+      </script>`);
     return;
   }
 
@@ -151,6 +187,186 @@ async function main(): Promise<void> {
       throw new Error(`Browser input was not native: ${result.text}`);
     }
     process.stdout.write("BrowserHost: snapshot and actions passed.\n");
+
+    const v2Tab = await browser.open(`${origin}/v2`, "smoke-thread", "smoke-bot");
+    const v2SnapshotResult = await callBrowserTool(browser, "snapshot", { tabId: v2Tab.id, image: "auto" });
+    const v2Snapshot = toolTextPayload(v2SnapshotResult);
+    if (!v2SnapshotResult.success || !isDynamicRecord(v2Snapshot) || !Array.isArray(v2Snapshot.elements)) {
+      throw new Error("V2 snapshot failed.");
+    }
+    if (!v2SnapshotResult.contentItems.some((item) => item.type === "inputImage")) {
+      throw new Error("Adaptive snapshot did not include an image for canvas/iframe content.");
+    }
+    const v2Elements = v2Snapshot.elements.filter(isDynamicRecord);
+    if (!v2Elements.some((element) => element.name === "Shadow action")) {
+      throw new Error("V2 snapshot did not pierce shadow DOM.");
+    }
+    if (!v2Elements.some((element) => element.name === "Frame action")) {
+      throw new Error("V2 snapshot did not include a cross-origin iframe control.");
+    }
+    const frameClick = await callBrowserTool(browser, "click", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "button", name: "Frame action", exact: true },
+    });
+    const frameClickSnapshot = toolTextPayload(frameClick);
+    if (!frameClick.success || !String(frameClickSnapshot?.text).includes("Frame clicked:true")) {
+      throw new Error(`V2 cross-origin iframe click failed: ${toolError(frameClick)}`);
+    }
+    const noDomRefs = await callBrowserTool(browser, "evaluate", {
+      tabId: v2Tab.id,
+      expression: "document.querySelector('[data-openbot-ref]') === null",
+    });
+    if (toolTextPayload(noDomRefs)?.result !== true) throw new Error("V2 snapshot mutated the page DOM.");
+    const selected = await callBrowserTool(browser, "select_option", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "combobox", name: "Mode", exact: true },
+      values: ["b"],
+    });
+    if (!selected.success) throw new Error(`V2 select failed: ${toolError(selected)}`);
+    const selectionValue = await callBrowserTool(browser, "evaluate", {
+      tabId: v2Tab.id,
+      expression: "document.querySelector('select').value",
+    });
+    if (toolTextPayload(selectionValue)?.result !== "b")
+      throw new Error("V2 select did not change the native control.");
+    const checked = await callBrowserTool(browser, "set_checked", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "checkbox", name: "Agree", exact: true },
+      checked: true,
+    });
+    if (!checked.success) throw new Error(`V2 checkbox failed: ${toolError(checked)}`);
+    const contentEditable = await callBrowserTool(browser, "type", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "textbox", name: "Notes", exact: true },
+      text: "editable text",
+      mode: "replace",
+    });
+    if (!contentEditable.success) throw new Error(`V2 contenteditable typing failed: ${toolError(contentEditable)}`);
+    const editableValue = await callBrowserTool(browser, "evaluate", {
+      tabId: v2Tab.id,
+      expression: "document.querySelector('[contenteditable]').textContent",
+    });
+    if (toolTextPayload(editableValue)?.result !== "editable text") {
+      throw new Error("V2 contenteditable target did not receive text.");
+    }
+    const shortcut = await callBrowserTool(browser, "press", { tabId: v2Tab.id, key: "Control+k" });
+    if (!shortcut.success) throw new Error(`V2 keyboard shortcut failed: ${toolError(shortcut)}`);
+    const shortcutValue = await callBrowserTool(browser, "evaluate", {
+      tabId: v2Tab.id,
+      expression: "document.querySelector('output').textContent",
+    });
+    if (toolTextPayload(shortcutValue)?.result !== "shortcut:true") {
+      throw new Error("V2 keyboard shortcut was not a trusted page event.");
+    }
+    const ambiguous = await callBrowserTool(browser, "click", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "button", name: "Duplicate", exact: true },
+    });
+    if (ambiguous.success || !toolError(ambiguous).includes("Candidates:")) {
+      throw new Error("V2 semantic locator did not reject an ambiguous target.");
+    }
+    const covered = await callBrowserTool(browser, "click", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "button", name: "Covered", exact: true },
+    });
+    if (covered.success || !toolError(covered).includes("covered by")) {
+      throw new Error("V2 hit testing did not identify a covering page layer.");
+    }
+    const canvasPoint = await callBrowserTool(browser, "evaluate", {
+      tabId: v2Tab.id,
+      expression:
+        "(() => { const r = document.querySelector('canvas').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()",
+    });
+    const point = toolTextPayload(canvasPoint)?.result;
+    if (!isDynamicRecord(point)) throw new Error("V2 canvas coordinates were not serializable.");
+    const canvasClick = await callBrowserTool(browser, "click", {
+      tabId: v2Tab.id,
+      target: { kind: "point", x: point.x, y: point.y },
+    });
+    if (!canvasClick.success) throw new Error(`V2 coordinate click failed: ${toolError(canvasClick)}`);
+    const canvasValue = await callBrowserTool(browser, "evaluate", {
+      tabId: v2Tab.id,
+      expression: "document.querySelector('output').textContent",
+    });
+    if (toolTextPayload(canvasValue)?.result !== "canvas:true") {
+      throw new Error("V2 canvas coordinate click was not trusted.");
+    }
+    const dragged = await callBrowserTool(browser, "drag", {
+      tabId: v2Tab.id,
+      source: { kind: "role", role: "button", name: "Drag source", exact: true },
+      target: { kind: "role", role: "button", name: "Drop target", exact: true },
+    });
+    if (!dragged.success) throw new Error(`V2 drag failed: ${toolError(dragged)}`);
+    const dragValue = await callBrowserTool(browser, "evaluate", {
+      tabId: v2Tab.id,
+      expression: "document.querySelector('output').textContent",
+    });
+    if (toolTextPayload(dragValue)?.result !== "drag:true") {
+      throw new Error("V2 drag did not produce a trusted drop event.");
+    }
+    const spaClick = await callBrowserTool(browser, "click", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "button", name: "SPA", exact: true },
+    });
+    if (!spaClick.success) throw new Error(`V2 SPA click failed: ${toolError(spaClick)}`);
+    const spaWait = await callBrowserTool(browser, "wait_for", { tabId: v2Tab.id, text: "SPA done", timeoutMs: 2_000 });
+    if (!spaWait.success) throw new Error(`V2 event wait failed: ${toolError(spaWait)}`);
+    const timedOut = await callBrowserTool(browser, "wait_for", {
+      tabId: v2Tab.id,
+      text: "never appears",
+      timeoutMs: 10,
+    });
+    if (timedOut.success || !toolError(timedOut).includes("timed out")) {
+      throw new Error("V2 wait_for did not return a bounded timeout error.");
+    }
+    const uploadPath = join(temporaryRoot, "v2-upload.txt");
+    await writeFile(uploadPath, "upload fixture");
+    const uploaded = await callBrowserTool(browser, "upload_files", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "button", name: "Files" },
+      paths: [uploadPath],
+    });
+    if (!uploaded.success) throw new Error(`V2 upload failed: ${toolError(uploaded)}`);
+    const environment = await callBrowserTool(browser, "set_environment", {
+      tabId: v2Tab.id,
+      preset: "mobile",
+      colorScheme: "dark",
+      reducedMotion: true,
+    });
+    const environmentSnapshot = toolTextPayload(environment);
+    if (
+      !environment.success ||
+      !isDynamicRecord(environmentSnapshot?.viewport) ||
+      environmentSnapshot.viewport.width !== 390
+    ) {
+      throw new Error(`V2 environment emulation failed: ${toolError(environment)}`);
+    }
+    if (!Array.isArray(environmentSnapshot.diagnostics) || environmentSnapshot.diagnostics.length === 0) {
+      throw new Error("V2 snapshot omitted diagnostics.");
+    }
+    const recordingStarted = await callBrowserTool(browser, "recording_start", { tabId: v2Tab.id });
+    if (
+      !recordingStarted.success ||
+      browser.listTabs().find((candidate) => candidate.id === v2Tab.id)?.recording !== true
+    ) {
+      throw new Error(`V2 recording did not start: ${toolError(recordingStarted)}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    const recordingStopped = await callBrowserTool(browser, "recording_stop", { tabId: v2Tab.id });
+    const recordingPayload = toolTextPayload(recordingStopped);
+    const artifact = isDynamicRecord(recordingPayload?.artifact) ? recordingPayload.artifact : undefined;
+    const recordingPath = artifact ? getString(artifact, "path") : undefined;
+    if (!recordingStopped.success || !recordingPath) {
+      throw new Error(`V2 recording did not stop: ${toolError(recordingStopped)}`);
+    }
+    const recordingBytes = await readFile(recordingPath);
+    if (recordingBytes.length === 0 || recordingBytes.subarray(0, 4).toString("hex") !== "1a45dfa3") {
+      throw new Error("V2 recorder did not produce a valid WebM EBML header.");
+    }
+    if (browser.listTabs().find((candidate) => candidate.id === v2Tab.id)?.recording !== false) {
+      throw new Error("V2 recording state was not cleaned up.");
+    }
+    process.stdout.write("BrowserHost: V2 semantics, adaptive image, iframe, upload, waits, and emulation passed.\n");
 
     const headerTab = await browser.open(`${origin}/headers`, "smoke-thread");
     const headerSnapshot = await browser.snapshot(headerTab.id);
@@ -334,6 +550,7 @@ async function main(): Promise<void> {
     await restoredBrowser.destroy();
     const persistedState = JSON.parse(await readFile(statePath, "utf8"));
     if (!isDynamicRecord(persistedState)) throw new Error("Persisted browser state is invalid.");
+    if (persistedState.version !== 2) throw new Error("Browser state was not persisted as version 2.");
     const persistedTabs = Array.isArray(persistedState.tabs) ? persistedState.tabs.filter(isDynamicRecord) : [];
     if (
       getString(
@@ -343,6 +560,31 @@ async function main(): Promise<void> {
     ) {
       throw new Error("An immediate shutdown lost a restored tab URL.");
     }
+    const legacyTabId = "legacy-v1-tab";
+    await writeFile(
+      statePath,
+      `${JSON.stringify({
+        version: 1,
+        activeTabId: legacyTabId,
+        tabs: [
+          {
+            id: legacyTabId,
+            url: `${origin}/cookie`,
+            ownerThreadId: "legacy-thread",
+            ownerBotId: "legacy-bot",
+          },
+        ],
+      })}\n`,
+    );
+    const legacyWindow = new BrowserWindow({ show: false });
+    const legacyBrowser = new BrowserHost(legacyWindow, downloadsRoot, statePath);
+    await legacyBrowser.restore();
+    const legacyTab = legacyBrowser.listTabs().find((candidate) => candidate.id === legacyTabId);
+    if (legacyTab?.environment?.viewport.mode !== "fill" || legacyTab.environment.colorScheme !== "system") {
+      throw new Error("Browser state v1 did not migrate to the default V2 environment.");
+    }
+    await legacyBrowser.destroy();
+    legacyWindow.destroy();
     restoredWindow.destroy();
     process.stdout.write("BrowserHost smoke test passed.\n");
   } finally {
@@ -420,6 +662,36 @@ async function waitForPersistenceSnapshot(browser: BrowserHost, tabId: string): 
 
 function argumentValue(prefix: string): string | null {
   return process.argv.find((argument) => argument.startsWith(prefix))?.slice(prefix.length) || null;
+}
+
+function callBrowserTool(browser: BrowserHost, tool: string, argumentsValue: unknown): Promise<DynamicToolResult> {
+  browserToolCall += 1;
+  return browser.handleDynamicTool({
+    threadId: "smoke-thread",
+    turnId: `browser-v2-${browserToolCall}`,
+    callId: `browser-v2-call-${browserToolCall}`,
+    ownerBotId: "smoke-bot",
+    namespace: "openbot_browser",
+    tool,
+    arguments: argumentsValue,
+  });
+}
+
+function toolTextPayload(result: DynamicToolResult): DynamicRecord | undefined {
+  const item = result.contentItems.find((candidate) => candidate.type === "inputText");
+  if (item?.type !== "inputText") return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(item.text);
+  } catch {
+    return undefined;
+  }
+  return isDynamicRecord(value) ? value : undefined;
+}
+
+function toolError(result: DynamicToolResult): string {
+  const item = result.contentItems.find((candidate) => candidate.type === "inputText");
+  return item?.type === "inputText" ? item.text : "unknown browser tool error";
 }
 
 async function runGoogleLiveProbe(browser: BrowserHost): Promise<void> {
