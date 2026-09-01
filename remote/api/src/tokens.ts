@@ -2,10 +2,13 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import {
   createLocalJWKSet,
   createRemoteJWKSet,
+  customFetch,
   decodeJwt,
+  type FetchImplementation,
   type JSONWebKeySet,
   type JWTVerifyGetKey,
   jwtVerify,
+  type RemoteJWKSet,
   SignJWT,
 } from "jose";
 import { z } from "zod";
@@ -38,6 +41,7 @@ const remoteTicketClaimsSchema = z.object({
 
 export class RemoteTokenService {
   readonly #ticketKey: JWTVerifyGetKey;
+  readonly #remoteTicketKey: RemoteJWKSet | null;
   readonly #sessionSecret: Uint8Array;
   readonly #turnSecret: string;
   readonly #turnHost: string;
@@ -55,16 +59,33 @@ export class RemoteTokenService {
       "ticketJwks" | "ticketJwksUrl" | "sessionSecret" | "turnSecret" | "turnHost" | "turnPort" | "turnTlsPort"
     >,
     validateResumeClaims: (claims: RemoteTicketClaims) => Promise<boolean> = async () => false,
+    options: { fetch?: FetchImplementation } = {},
   ) {
-    this.#ticketKey = config.ticketJwks
-      ? createLocalJWKSet(parseJwks(config.ticketJwks))
-      : createRemoteJWKSet(new URL(config.ticketJwksUrl ?? invalidJwksConfiguration()));
+    if (config.ticketJwks) {
+      this.#remoteTicketKey = null;
+      this.#ticketKey = createLocalJWKSet(parseJwks(config.ticketJwks));
+    } else {
+      const remoteTicketKey = createRemoteJWKSet(
+        new URL(config.ticketJwksUrl ?? invalidJwksConfiguration()),
+        options.fetch ? { [customFetch]: options.fetch } : undefined,
+      );
+      this.#remoteTicketKey = remoteTicketKey;
+      this.#ticketKey = remoteTicketKey;
+    }
     this.#sessionSecret = new TextEncoder().encode(config.sessionSecret);
     this.#turnSecret = config.turnSecret;
     this.#turnHost = config.turnHost;
     this.#turnPort = config.turnPort;
     this.#turnTlsPort = config.turnTlsPort;
     this.#validateResumeClaims = validateResumeClaims;
+  }
+
+  async initialize(): Promise<void> {
+    if (!this.#remoteTicketKey) return;
+    await this.#remoteTicketKey.reload();
+    const jwks = this.#remoteTicketKey.jwks();
+    if (!jwks) throw new Error("Ticket JWKS did not load.");
+    parseJwks(JSON.stringify(jwks));
   }
 
   async verifyTicket(token: string, now = new Date()): Promise<RemoteTicketClaims> {

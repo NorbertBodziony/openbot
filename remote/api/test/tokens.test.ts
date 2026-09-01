@@ -6,6 +6,32 @@ import { RESUME_TTL_SECONDS, RemoteTokenService, verifyWebhookSignature } from "
 const secret = "s".repeat(32);
 
 describe("remote tokens", () => {
+  it("loads and validates the remote JWKS before becoming ready", async () => {
+    const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const jwk = await exportJWK(publicKey);
+    jwk.kid = "startup-key";
+    jwk.alg = "ES256";
+    const createService = (response: Response) =>
+      new RemoteTokenService(
+        {
+          ticketJwks: null,
+          ticketJwksUrl: "https://api.example.com/.well-known/jwks.json",
+          sessionSecret: secret,
+          turnSecret: "t".repeat(32),
+          turnHost: "turn.example.com",
+          turnPort: 3478,
+          turnTlsPort: 5349,
+        },
+        undefined,
+        { fetch: async () => response },
+      );
+    await expect(createService(Response.json({ keys: [jwk] })).initialize()).resolves.toBeUndefined();
+    await expect(createService(new Response("unavailable", { status: 503 })).initialize()).rejects.toThrow(
+      "Expected 200 OK",
+    );
+    await expect(createService(Response.json({ keys: [] })).initialize()).rejects.toThrow();
+  });
+
   it("verifies ES256 tickets and creates coturn credentials", async () => {
     const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
     const jwk = await exportJWK(publicKey);

@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/solid-router";
+import { sha256 } from "../../../server/crypto";
 import {
   apiError,
   authErrorResponse,
@@ -19,8 +20,7 @@ export const Route = createFileRoute("/v1/auth/logout")({
           if (!user) {
             return apiError(401, "unauthorized", "The session is invalid.");
           }
-          await service.logout(token);
-          await requestRemoteControlPlane().endUserSessions(user.id);
+          await requestRemoteControlPlane().endAccountSession(user.id, await sha256(token));
           return new Response(null, { status: 204, headers: { "Cache-Control": "no-store" } });
         } catch (error) {
           return authErrorResponse(error);

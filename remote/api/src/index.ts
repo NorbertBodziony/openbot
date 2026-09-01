@@ -23,6 +23,7 @@ const tokens = new RemoteTokenService(config, async (claims) => {
   if (!response.ok) return false;
   return z.object({ valid: z.boolean() }).parse(await response.json()).valid;
 });
+await tokens.initialize();
 const signal = new SignalService(
   tokens,
   config.maximumConnectionsPerUser,

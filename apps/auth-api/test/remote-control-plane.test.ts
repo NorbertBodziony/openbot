@@ -413,14 +413,16 @@ describe("RemoteControlPlane", () => {
     );
     const logoutSession = await controlPlane.startSession("revoked-member", "host-1", "member-auth");
     webhookAvailable = false;
-    database.prepare("UPDATE auth_sessions SET revoked_at = 1000 WHERE token_hash = 'member-auth'").run();
-    await controlPlane.endUserSessions("revoked-member");
+    await controlPlane.endAccountSession("revoked-member", "member-auth");
     await expect(controlPlane.startSession("revoked-member", "host-1", "member-auth")).rejects.toMatchObject({
       code: "auth_session_revoked",
     });
     expect(
       database.prepare("SELECT ended_at FROM remote_sessions WHERE session_id = ?").get(logoutSession.sessionId),
     ).toEqual({ ended_at: 1_000 });
+    expect(database.prepare("SELECT revoked_at FROM auth_sessions WHERE token_hash = 'member-auth'").get()).toEqual({
+      revoked_at: 1_000,
+    });
     expect(
       database
         .prepare(

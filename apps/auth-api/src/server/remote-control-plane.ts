@@ -705,6 +705,32 @@ export class RemoteControlPlane {
     await this.#flushAuthEvents();
   }
 
+  async endAccountSession(userId: string, authSessionHash: string): Promise<void> {
+    const now = this.#now();
+    const results = await this.#database.batch([
+      this.#database
+        .prepare(
+          `INSERT INTO remote_auth_events(event_id, payload, created_at, attempts, next_attempt_at)
+           SELECT lower(hex(randomblob(16))),
+                  json_object('type', 'remote-session-ended', 'hostId', host_id, 'sessionId', session_id),
+                  ?, 0, ?
+             FROM remote_sessions
+            WHERE user_id = ? AND ended_at IS NULL`,
+        )
+        .bind(now, now, userId),
+      this.#database
+        .prepare("UPDATE remote_sessions SET ended_at = ? WHERE user_id = ? AND ended_at IS NULL")
+        .bind(now, userId),
+      this.#database
+        .prepare("UPDATE auth_sessions SET revoked_at = ? WHERE token_hash = ? AND user_id = ? AND revoked_at IS NULL")
+        .bind(now, authSessionHash, userId),
+    ]);
+    if ((results[2]?.meta.changes ?? 0) !== 1) {
+      throw new RemoteControlPlaneError(401, "auth_session_revoked", "The account session has ended.");
+    }
+    await this.#flushAuthEvents();
+  }
+
   async validateResumeClaims(claims: RemoteResumeClaims): Promise<boolean> {
     const now = this.#now();
     if (claims.sessionExpiresAt * 1_000 <= now || !Number.isSafeInteger(claims.authEpoch)) return false;
