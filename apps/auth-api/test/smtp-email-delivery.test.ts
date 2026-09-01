@@ -231,6 +231,51 @@ describe("Private Email SMTP delivery", () => {
     expect(writes).toContain("QUIT\r\n");
   });
 
+  it("preserves a confirmed pre-DATA rejection when socket cleanup fails", async () => {
+    let attempts = 0;
+    const responses = [
+      "220 mail.privateemail.com ready",
+      "250-mail.privateemail.com",
+      "250 AUTH LOGIN",
+      "334 VXNlcm5hbWU6",
+      "334 UGFzc3dvcmQ6",
+      "535 Authentication rejected",
+    ].join("\r\n");
+    const connector: SmtpConnector = () => {
+      attempts += 1;
+      return {
+        opened: Promise.resolve(),
+        readable: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(`${responses}\r\n`));
+            controller.close();
+          },
+        }),
+        writable: new WritableStream(),
+        close: () => Promise.reject(new Error("socket cleanup failed")),
+      };
+    };
+
+    await expect(
+      sendPrivateEmailCode(
+        {
+          host: "mail.privateemail.com",
+          port: 465,
+          username: "hello@openbot.run",
+          password: "app-password-value",
+          from: "hello@openbot.run",
+        },
+        {
+          email: "person@example.com",
+          code: "ABCD-EFGH",
+          expiresAt: Date.now() + 10 * 60_000,
+        },
+        connector,
+      ),
+    ).rejects.toThrow("smtp_auth_failed");
+    expect(attempts).toBe(1);
+  });
+
   it("does not retry a timed-out session when socket closure cannot be confirmed", async () => {
     vi.useFakeTimers();
     let attempts = 0;

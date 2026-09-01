@@ -161,7 +161,7 @@ async function sendPrivateEmailAttempt(
   }
   const closeConfirmed = await closeSmtpSocket(socket);
   if (state.accepted) return;
-  if (attemptError?.message === "smtp_message_failed") throw attemptError;
+  if (attemptError && !isRetryableSmtpError(attemptError)) throw attemptError;
   if (state.submissionStarted || !closeConfirmed) throw new Error("smtp_delivery_unknown");
   if (attemptError) throw attemptError;
   throw new Error("smtp_delivery_unknown");
