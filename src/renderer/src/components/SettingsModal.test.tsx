@@ -438,6 +438,7 @@ describe("SettingsModal", () => {
       await fireEvent.click(screen.getByRole("button", { name: "Generate QR code" }));
       await vi.advanceTimersByTimeAsync(0);
       expect(screen.getByRole("img", { name: "Mobile Connect sign-in QR code" })).toBeInTheDocument();
+      const requestsBeforePolling = onListMobileConnectedDevices.mock.calls.length;
 
       devices.push({
         sessionId: "22222222-2222-4222-8222-222222222222",
@@ -446,7 +447,12 @@ describe("SettingsModal", () => {
         connectedAt: Date.now(),
         lastActiveAt: Date.now(),
       });
-      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(onListMobileConnectedDevices).toHaveBeenCalledTimes(requestsBeforePolling);
+      expect(screen.queryByText("Phone connected")).not.toBeInTheDocument();
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(onListMobileConnectedDevices).toHaveBeenCalledTimes(requestsBeforePolling + 1);
 
       expect(screen.getByText("Phone connected")).toBeInTheDocument();
       expect(screen.getByText("Norbert’s iPhone is ready to use OpenBot.")).toBeInTheDocument();
@@ -509,7 +515,7 @@ describe("SettingsModal", () => {
       expect(onCreateMobileConnect).toHaveBeenCalledOnce();
       expect(screen.getByRole("img", { name: "Mobile Connect sign-in QR code" })).toBeInTheDocument();
 
-      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.advanceTimersByTimeAsync(60_000);
       expect(screen.queryByText("Phone connected")).not.toBeInTheDocument();
       expect(screen.getByRole("img", { name: "Mobile Connect sign-in QR code" })).toBeInTheDocument();
     } finally {

@@ -9,6 +9,8 @@ import type {
   MobileAuthDeviceIdentity,
 } from "../src/server/types";
 
+const MOBILE_CONNECT_SERVER_ID = "00000000-0000-4000-8000-000000000002";
+
 class MemoryAuthRepository implements AuthRepository {
   readonly challenges = new Map<
     string,
@@ -325,6 +327,11 @@ describe("email one-time codes", () => {
       name: "Norbert’s iPhone",
       platform: "ios" as const,
     };
+    await expect(
+      service.redeemTeamAuthTicket(mobileTicket.ticket, MOBILE_CONNECT_SERVER_ID, "203.0.113.5"),
+    ).rejects.toMatchObject({ status: 400, code: "invalid_server_id" });
+    const crossPurposeTeamTicket = await service.issueTeamAuthTicket(session.sessionToken, serverId, "203.0.113.4");
+    expect(await service.redeemMobileAuthTicket(crossPurposeTeamTicket.ticket, device, "203.0.113.5")).toBeNull();
     expect(await service.redeemMobileAuthTicket(replacedMobileTicket.ticket, device, "203.0.113.5")).toBeNull();
     const mobileSession = await service.redeemMobileAuthTicket(mobileTicket.ticket, device, "203.0.113.5");
     expect(mobileSession).toMatchObject({ user: { id: session.user.id, name: "Nörbert Bot" } });
@@ -335,6 +342,9 @@ describe("email one-time codes", () => {
     await expect(
       service.issueMobileAuthTicket(mobileSession?.sessionToken ?? "missing", "203.0.113.4"),
     ).rejects.toMatchObject({ status: 401, code: "unauthorized" });
+    await expect(
+      service.issueTeamAuthTicket(mobileSession?.sessionToken ?? "missing", MOBILE_CONNECT_SERVER_ID, "203.0.113.4"),
+    ).rejects.toMatchObject({ status: 400, code: "invalid_server_id" });
     expect(await service.listMobileAuthDevices(session.sessionToken)).toMatchObject([
       { name: "Norbert’s iPhone", platform: "ios", connectedAt: 1_000 },
     ]);

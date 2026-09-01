@@ -1,6 +1,6 @@
 import type { CentralAuthUser } from "@openbot/contracts/ipc";
 import { isMobileConnectDevelopmentHost, parseMobileConnectUrl } from "@openbot/contracts/mobile-connect";
-import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
+import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { fetch } from "expo/fetch";
 import * as Crypto from "expo-crypto";
 import * as Device from "expo-device";
@@ -9,6 +9,7 @@ import { Platform } from "react-native";
 
 const MOBILE_SESSION_KEY = "openbot.mobile.session.v1";
 const MOBILE_DEVICE_ID_KEY = "openbot.mobile.device-id.v1";
+const MOBILE_AUTH_REQUEST_TIMEOUT_MS = 10_000;
 
 let mobileSessionStorageTail = Promise.resolve();
 
@@ -25,18 +26,23 @@ export async function redeemMobileConnectUrl(value: string): Promise<MobileSessi
   }
 
   let response: Response;
+  let body: unknown;
   try {
     const device = await mobileDeviceIdentity();
-    response = await fetch(new URL("/v1/mobile-auth/redeem", payload.apiUrl).toString(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ticket: payload.ticket,
-        deviceId: device.id,
-        deviceName: device.name,
-        platform: device.platform,
-      }),
-    });
+    ({ response, body } = await withMobileAuthRequestTimeout(async (signal) => {
+      const request = await fetch(new URL("/v1/mobile-auth/redeem", payload.apiUrl).toString(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ticket: payload.ticket,
+          deviceId: device.id,
+          deviceName: device.name,
+          platform: device.platform,
+        }),
+        signal,
+      });
+      return { response: request, body: await readResponseBody(request, signal) };
+    }));
   } catch {
     const apiUrl = new URL(payload.apiUrl);
     throw new Error(
@@ -46,7 +52,6 @@ export async function redeemMobileConnectUrl(value: string): Promise<MobileSessi
     );
   }
 
-  const body = await response.json().catch(() => null);
   if (!response.ok) {
     throw new Error(apiErrorMessage(body) ?? "This Mobile Connect code is invalid or has expired.");
   }
@@ -70,14 +75,17 @@ export async function readMobileSession(): Promise<MobileSession | null> {
 }
 
 export async function validateMobileSession(session: MobileSession): Promise<MobileSession | null> {
-  const response = await fetch(new URL("/v1/mobile-auth/session", session.apiUrl).toString(), {
-    headers: { Authorization: `Bearer ${session.sessionToken}` },
+  const { response, body } = await withMobileAuthRequestTimeout(async (signal) => {
+    const request = await fetch(new URL("/v1/mobile-auth/session", session.apiUrl).toString(), {
+      headers: { Authorization: `Bearer ${session.sessionToken}` },
+      signal,
+    });
+    return { response: request, body: await readResponseBody(request, signal) };
   });
   if (response.status === 401) {
     await deleteMobileSessionIfCurrent(session.sessionToken);
     return null;
   }
-  const body = await response.json().catch(() => null);
   if (!response.ok) {
     throw new Error(apiErrorMessage(body) ?? "OpenBot could not verify this mobile session.");
   }
@@ -91,11 +99,34 @@ export async function validateMobileSession(session: MobileSession): Promise<Mob
 export async function logoutMobileSession(session: MobileSession): Promise<void> {
   await Promise.all([
     deleteMobileSessionIfCurrent(session.sessionToken),
-    fetch(new URL("/v1/mobile-auth/session", session.apiUrl).toString(), {
-      method: "DELETE",
-      headers: { Authorization: `Bearer ${session.sessionToken}` },
+    withMobileAuthRequestTimeout(async (signal) => {
+      await fetch(new URL("/v1/mobile-auth/session", session.apiUrl).toString(), {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${session.sessionToken}` },
+        signal,
+      });
     }),
   ]);
+}
+
+async function withMobileAuthRequestTimeout<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), MOBILE_AUTH_REQUEST_TIMEOUT_MS);
+  try {
+    return await operation(controller.signal);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function readResponseBody(response: Response, signal: AbortSignal): Promise<DynamicRecord | null> {
+  try {
+    const body = await response.json();
+    return isDynamicRecord(body) ? body : null;
+  } catch (error) {
+    if (signal.aborted) throw error;
+    return null;
+  }
 }
 
 async function saveMobileSession(session: MobileSession): Promise<void> {

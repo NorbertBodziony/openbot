@@ -98,7 +98,6 @@ const updateTrackOptions: UpdateTrack[] = ["Stable"];
 const MOBILE_CONNECT_SUCCESS_FEEDBACK_MS = 900;
 const MOBILE_CONNECT_COLLAPSE_MS = 240;
 const MOBILE_DEVICES_REFRESH_INTERVAL_MS = 60_000;
-const MOBILE_CONNECT_PENDING_REFRESH_INTERVAL_MS = 2_000;
 
 export function SettingsModal(props: SettingsModalProps) {
   const [activeTab, setActiveTab] = createSignal<SettingsTab>("general");
@@ -158,15 +157,10 @@ export function SettingsModal(props: SettingsModalProps) {
       let timer: number | undefined;
 
       const scheduleRefresh = () => {
-        const ticket = mobileConnect();
-        const refreshInterval =
-          ticket && ticket.expiresAt > Date.now()
-            ? MOBILE_CONNECT_PENDING_REFRESH_INTERVAL_MS
-            : MOBILE_DEVICES_REFRESH_INTERVAL_MS;
         timer = window.setTimeout(async () => {
           await refreshMobileDevices(false);
           if (running) scheduleRefresh();
-        }, refreshInterval);
+        }, MOBILE_DEVICES_REFRESH_INTERVAL_MS);
       };
 
       void refreshMobileDevices(true);

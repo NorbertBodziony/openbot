@@ -16,7 +16,7 @@ interface PreparedCall {
   values: unknown[];
 }
 
-describe("D1 mobile session activity", () => {
+describe("D1 auth sessions", () => {
   it("excludes registered mobile sessions from desktop authentication", async () => {
     const calls: PreparedCall[] = [];
     const repository = new D1AuthRepository(desktopAuthenticationDatabase(calls));
@@ -40,18 +40,28 @@ describe("D1 mobile session activity", () => {
     expect(calls[0]?.values).toEqual([2_000, expect.any(String)]);
   });
 
-  it("updates last activity only after the coarse activity window", async () => {
+  it.each([
+    ["generic", (repository: D1AuthRepository, now: number) => repository.authenticate("session-token", now)],
+    [
+      "desktop",
+      (repository: D1AuthRepository, now: number) => repository.authenticateDesktopSession("desktop-token", now),
+    ],
+    [
+      "mobile",
+      (repository: D1AuthRepository, now: number) => repository.authenticateMobileSession("mobile-token", now),
+    ],
+  ])("updates %s session activity only after the coarse activity window", async (_kind, authenticate) => {
     const updates: unknown[][] = [];
     const connectedAt = 1_000;
     const repository = new D1AuthRepository(activityDatabase(connectedAt, updates));
 
-    await expect(
-      repository.authenticateMobileSession("mobile-token", connectedAt + FIFTEEN_MINUTES_MS - 1),
-    ).resolves.toMatchObject({ id: "user-1" });
+    await expect(authenticate(repository, connectedAt + FIFTEEN_MINUTES_MS - 1)).resolves.toMatchObject({
+      id: "user-1",
+    });
     expect(updates).toEqual([]);
 
     const now = connectedAt + FIFTEEN_MINUTES_MS;
-    await expect(repository.authenticateMobileSession("mobile-token", now)).resolves.toMatchObject({ id: "user-1" });
+    await expect(authenticate(repository, now)).resolves.toMatchObject({ id: "user-1" });
     expect(updates).toEqual([[now, expect.any(String), connectedAt]]);
   });
 
@@ -109,7 +119,7 @@ function ticketDatabase(batches: PreparedCall[][]): D1Database {
 function activityDatabase(lastUsedAt: number, updates: unknown[][]): D1Database {
   return {
     prepare(query) {
-      if (query.includes("JOIN mobile_auth_sessions")) {
+      if (query.includes("SELECT users.id")) {
         return statement({
           first: {
             id: "user-1",
@@ -146,6 +156,7 @@ function desktopAuthenticationDatabase(calls: PreparedCall[]): D1Database {
     email: "person@example.com",
     name: null,
     avatar_url: null,
+    last_used_at: 1_000,
   });
 }
 

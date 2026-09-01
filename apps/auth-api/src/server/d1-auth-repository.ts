@@ -14,6 +14,10 @@ interface UserRow {
   avatar_url: string | null;
 }
 
+interface AuthenticatedUserRow extends UserRow {
+  last_used_at: number;
+}
+
 interface ChallengeRow {
   email: string;
   code_hash: string;
@@ -27,7 +31,7 @@ interface MobileSessionUserRow extends UserRow {
   last_used_at: number;
 }
 
-const MOBILE_SESSION_ACTIVITY_UPDATE_INTERVAL_MS = 15 * 60_000;
+const SESSION_ACTIVITY_UPDATE_INTERVAL_MS = 15 * 60_000;
 
 export class D1AuthRepository implements AuthRepository {
   constructor(private readonly database: D1Database) {}
@@ -151,7 +155,7 @@ export class D1AuthRepository implements AuthRepository {
     const tokenHash = await sha256(sessionToken);
     const row = await this.database
       .prepare(
-        `SELECT users.id, users.email, users.name, users.avatar_url
+        `SELECT users.id, users.email, users.name, users.avatar_url, auth_sessions.last_used_at
          FROM auth_sessions
          JOIN users ON users.id = auth_sessions.user_id
          WHERE auth_sessions.token_hash = ?
@@ -159,12 +163,9 @@ export class D1AuthRepository implements AuthRepository {
            AND auth_sessions.expires_at > ?`,
       )
       .bind(tokenHash, now)
-      .first<UserRow>();
+      .first<AuthenticatedUserRow>();
     if (!row) return null;
-    await this.database
-      .prepare("UPDATE auth_sessions SET last_used_at = ? WHERE token_hash = ?")
-      .bind(now, tokenHash)
-      .run();
+    await this.updateSessionActivity(tokenHash, row.last_used_at, now);
     return mapUser(row);
   }
 
@@ -172,7 +173,7 @@ export class D1AuthRepository implements AuthRepository {
     const tokenHash = await sha256(sessionToken);
     const row = await this.database
       .prepare(
-        `SELECT users.id, users.email, users.name, users.avatar_url
+        `SELECT users.id, users.email, users.name, users.avatar_url, auth_sessions.last_used_at
          FROM auth_sessions
          JOIN users ON users.id = auth_sessions.user_id
          WHERE auth_sessions.token_hash = ?
@@ -184,12 +185,9 @@ export class D1AuthRepository implements AuthRepository {
            )`,
       )
       .bind(tokenHash, now)
-      .first<UserRow>();
+      .first<AuthenticatedUserRow>();
     if (!row) return null;
-    await this.database
-      .prepare("UPDATE auth_sessions SET last_used_at = ? WHERE token_hash = ?")
-      .bind(now, tokenHash)
-      .run();
+    await this.updateSessionActivity(tokenHash, row.last_used_at, now);
     return mapUser(row);
   }
 
@@ -382,13 +380,7 @@ export class D1AuthRepository implements AuthRepository {
       .bind(tokenHash, now)
       .first<MobileSessionUserRow>();
     if (!row) return null;
-    const activityCutoff = now - MOBILE_SESSION_ACTIVITY_UPDATE_INTERVAL_MS;
-    if (row.last_used_at <= activityCutoff) {
-      await this.database
-        .prepare("UPDATE auth_sessions SET last_used_at = ? WHERE token_hash = ? AND last_used_at <= ?")
-        .bind(now, tokenHash, activityCutoff)
-        .run();
-    }
+    await this.updateSessionActivity(tokenHash, row.last_used_at, now);
     return mapUser(row);
   }
 
@@ -431,6 +423,15 @@ export class D1AuthRepository implements AuthRepository {
       .bind(now, sessionId, userId)
       .run();
     return result.meta.changes === 1;
+  }
+
+  private async updateSessionActivity(tokenHash: string, lastUsedAt: number, now: number): Promise<void> {
+    const activityCutoff = now - SESSION_ACTIVITY_UPDATE_INTERVAL_MS;
+    if (lastUsedAt > activityCutoff) return;
+    await this.database
+      .prepare("UPDATE auth_sessions SET last_used_at = ? WHERE token_hash = ? AND last_used_at <= ?")
+      .bind(now, tokenHash, activityCutoff)
+      .run();
   }
 
   private async upsertEmailUser(email: string, now: number): Promise<AuthUser> {

@@ -182,7 +182,7 @@ export class AuthService {
     serverId: string,
     sourceIp: string,
   ): Promise<{ ticket: string; expiresAt: number }> {
-    validateServerId(serverId);
+    validateTeamServerId(serverId);
     const user = await this.authenticate(sessionToken);
     if (!user) throw new AuthServiceError(401, "unauthorized", "The session is invalid.");
     const now = this.#now();
@@ -201,7 +201,7 @@ export class AuthService {
   }
 
   async redeemTeamAuthTicket(ticket: string, serverId: string, sourceIp: string): Promise<AuthUser | null> {
-    validateServerId(serverId);
+    validateTeamServerId(serverId);
     if (!ticket || ticket.length > 128) return null;
     const now = this.#now();
     await this.#enforceRateLimit(`team-ticket-redeem:ip:${normalizeSourceIp(sourceIp)}`, 120, now);
@@ -349,6 +349,13 @@ function normalizeSourceIp(value: string): string {
 
 function validateServerId(value: string): void {
   if (!isUuidV4(value)) {
+    throw new AuthServiceError(400, "invalid_server_id", "The team server ID is invalid.");
+  }
+}
+
+function validateTeamServerId(value: string): void {
+  validateServerId(value);
+  if (value === MOBILE_CONNECT_SERVER_ID) {
     throw new AuthServiceError(400, "invalid_server_id", "The team server ID is invalid.");
   }
 }
