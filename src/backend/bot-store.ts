@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { copyFile, cp, lstat, mkdir, readdir, readFile, readlink, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { avatarFileExtension, isAvatarMimeType, isValidAvatarImage } from "@openbot/contracts/avatar-images";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
@@ -69,6 +69,7 @@ export class BotStore {
   readonly #database: OpenBotDatabase;
   #state: StoredState = { version: 2, examplesInitialized: false, bots: [] };
   #avatarUpdateQueue: Promise<void> = Promise.resolve();
+  #duplicationQueue: Promise<void> = Promise.resolve();
 
   constructor(userDataPath: string, homePath: string, database = new OpenBotDatabase(userDataPath)) {
     const openbotRoot = join(homePath, "OpenBot");
@@ -162,6 +163,87 @@ export class BotStore {
       throw error;
     }
     return { ...record };
+  }
+
+  duplicateBot(sourceId: string): Promise<BotSummary> {
+    const operation = this.#duplicationQueue.then(() => this.#duplicateBot(sourceId));
+    this.#duplicationQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
+  }
+
+  async #duplicateBot(sourceId: string): Promise<BotSummary> {
+    if (this.#state.bots.length >= INPUT_LIMITS.agents) {
+      throw new Error(`A host can have up to ${INPUT_LIMITS.agents} agents.`);
+    }
+    const source = this.#requireBot(sourceId);
+    const sourceProfileSignature = JSON.stringify(source);
+    const sourceWorkspaceSignature = await workspaceFingerprint(source.workspacePath);
+    const sourceAvatar = this.resolveAvatar(source.id);
+    const sourceAvatarSignature = sourceAvatar ? await fileFingerprint(sourceAvatar.path) : null;
+    const id = `bot-${randomUUID()}`;
+    const record = this.#createRecord(
+      id,
+      duplicateBotName(source.name, this.#state.bots),
+      source.title,
+      source.description,
+    );
+    record.notifications = source.notifications;
+    record.provider = source.provider;
+    record.model = source.model;
+    record.reasoningEffort = source.reasoningEffort;
+    record.avatarSeed = source.avatarSeed;
+    record.avatarHue = source.avatarHue;
+
+    const stagedWorkspace = `${record.workspacePath}.openbot-stage-${randomUUID()}`;
+    const avatarDirectory = join(this.#avatarsRoot, record.id);
+    const stagedAvatarDirectory = `${avatarDirectory}.openbot-stage-${randomUUID()}`;
+    try {
+      await cp(source.workspacePath, stagedWorkspace, {
+        recursive: true,
+        dereference: false,
+        errorOnExist: true,
+        force: false,
+        verbatimSymlinks: true,
+      });
+      if (sourceAvatar) {
+        await mkdir(stagedAvatarDirectory, { recursive: true, mode: 0o700 });
+        const extension = avatarFileExtension(sourceAvatar.mimeType);
+        await copyFile(sourceAvatar.path, join(stagedAvatarDirectory, `${sourceAvatar.version}.${extension}`));
+        record.avatarUrl = agentAvatarUrl(record.id, sourceAvatar.version, sourceAvatar.mimeType);
+      }
+      if (
+        JSON.stringify(source) !== sourceProfileSignature ||
+        (await workspaceFingerprint(source.workspacePath)) !== sourceWorkspaceSignature ||
+        (sourceAvatar ? await fileFingerprint(sourceAvatar.path) : null) !== sourceAvatarSignature
+      ) {
+        throw new Error("The agent changed while it was being duplicated. Try again.");
+      }
+      if (this.#state.bots.length >= INPUT_LIMITS.agents) {
+        throw new Error(`A host can have up to ${INPUT_LIMITS.agents} agents.`);
+      }
+      record.name = duplicateBotName(source.name, this.#state.bots);
+      await rename(stagedWorkspace, record.workspacePath);
+      if (sourceAvatar) await rename(stagedAvatarDirectory, avatarDirectory);
+      this.#state.bots.unshift(record);
+      try {
+        this.#persist("agent.duplicated");
+      } catch (error) {
+        this.#state.bots = this.#state.bots.filter((candidate) => candidate.id !== record.id);
+        throw error;
+      }
+      return { ...record };
+    } catch (error) {
+      await Promise.all([
+        rm(stagedWorkspace, { recursive: true, force: true }),
+        rm(record.workspacePath, { recursive: true, force: true }),
+        rm(stagedAvatarDirectory, { recursive: true, force: true }),
+        rm(avatarDirectory, { recursive: true, force: true }),
+      ]);
+      throw error;
+    }
   }
 
   async updateBot(input: UpdateBotInput): Promise<BotSummary> {
@@ -404,6 +486,54 @@ function limitedText(value: string, label: string, maxLength: number): string {
   const trimmed = value.trim();
   if (trimmed.length > maxLength) throw new Error(`${label} is too long.`);
   return trimmed;
+}
+
+function duplicateBotName(sourceName: string, bots: readonly StoredBot[]): string {
+  const match = /^(.*?)(?: copy(?: (\d+))?)$/iu.exec(sourceName);
+  const base = match?.[1]?.trim() || sourceName.trim();
+  const existing = new Set(bots.map((bot) => bot.name.toLocaleLowerCase()));
+  for (let index = 1; index <= INPUT_LIMITS.agents + 1; index += 1) {
+    const suffix = index === 1 ? " copy" : ` copy ${index}`;
+    const candidate = `${base.slice(0, Math.max(1, INPUT_LIMITS.agentName - suffix.length)).trimEnd()}${suffix}`;
+    if (!existing.has(candidate.toLocaleLowerCase())) return candidate;
+  }
+  throw new Error("OpenBot could not create a unique agent copy name.");
+}
+
+async function workspaceFingerprint(root: string): Promise<string> {
+  const hash = createHash("sha256");
+  const visit = async (directory: string, prefix: string): Promise<void> => {
+    const entries = await readdir(directory, { withFileTypes: true });
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      const path = join(directory, entry.name);
+      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const stats = await lstat(path);
+      hash.update(`${relativePath}\0${stats.mode}\0`);
+      if (stats.isSymbolicLink()) {
+        hash.update(`link\0${await readlink(path)}\0`);
+      } else if (stats.isDirectory()) {
+        hash.update("directory\0");
+        await visit(path, relativePath);
+      } else if (stats.isFile()) {
+        hash.update("file\0");
+        hash.update(await readFile(path));
+        hash.update("\0");
+      } else {
+        hash.update(`other\0${stats.size}\0${stats.mtimeMs}\0`);
+      }
+    }
+  };
+  await visit(root, "");
+  return hash.digest("hex");
+}
+
+async function fileFingerprint(path: string): Promise<string> {
+  const stats = await lstat(path);
+  const hash = createHash("sha256");
+  hash.update(`${stats.mode}\0`);
+  hash.update(await readFile(path));
+  return hash.digest("hex");
 }
 
 function validateBotId(id: string): void {

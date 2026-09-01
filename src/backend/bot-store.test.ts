@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
@@ -227,6 +227,96 @@ describe("BotStore", () => {
         .slice(0, 2)
         .map((bot) => bot.id),
     ).toEqual([second.id, first.id]);
+  });
+
+  it("duplicates the profile, avatar, workspace, and symbolic links into an independent agent", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-duplicate-"));
+    temporaryRoots.push(root);
+    const userData = join(root, "user-data");
+    const home = join(root, "home");
+    const store = new BotStore(userData, home);
+    await store.initialize();
+    const source = await store.getOrCreate("chief", "Research", "Research lead");
+    await store.updateBot({
+      botId: source.id,
+      description: "Finds primary sources.",
+      notifications: false,
+      provider: "claude",
+      model: "claude-opus-5",
+      reasoningEffort: "high",
+      avatarSeed: "research:avatar",
+      avatarHue: 215,
+    });
+    const image = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    await store.setAvatar(source.id, { mimeType: "image/png", bytes: image });
+    await mkdir(join(source.workspacePath, "skills", "research"), { recursive: true });
+    await writeFile(join(source.workspacePath, "skills", "research", "SKILL.md"), "Use primary sources.\n");
+    await writeFile(join(source.workspacePath, "skills.lock"), "research@1\n");
+    await writeFile(join(root, "outside.txt"), "outside\n");
+    await symlink(join(root, "outside.txt"), join(source.workspacePath, "outside-link"));
+
+    const duplicate = await store.duplicateBot(source.id);
+    const secondDuplicate = await store.duplicateBot(source.id);
+
+    expect(duplicate).toMatchObject({
+      name: "Research copy",
+      title: "Research lead",
+      description: "Finds primary sources.",
+      notifications: false,
+      provider: "claude",
+      model: "claude-opus-5",
+      reasoningEffort: "high",
+      threadId: null,
+      preview: "No messages yet",
+      updatedAt: null,
+      avatarSeed: "research:avatar",
+      avatarHue: 215,
+    });
+    expect(secondDuplicate.name).toBe("Research copy 2");
+    expect(duplicate.id).not.toBe(source.id);
+    expect(duplicate.workspacePath).not.toBe(source.workspacePath);
+    await expect(readFile(join(duplicate.workspacePath, "skills", "research", "SKILL.md"), "utf8")).resolves.toBe(
+      "Use primary sources.\n",
+    );
+    await expect(readFile(join(duplicate.workspacePath, "skills.lock"), "utf8")).resolves.toBe("research@1\n");
+    await expect(readlink(join(duplicate.workspacePath, "outside-link"))).resolves.toBe(join(root, "outside.txt"));
+    await expect(readFile(store.resolveAvatar(duplicate.id)?.path ?? "")).resolves.toEqual(Buffer.from(image));
+
+    await writeFile(join(duplicate.workspacePath, "skills.lock"), "research@2\n");
+    await expect(readFile(join(source.workspacePath, "skills.lock"), "utf8")).resolves.toBe("research@1\n");
+  });
+
+  it("removes a partial duplicate when profile persistence fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-duplicate-rollback-"));
+    temporaryRoots.push(root);
+    const home = join(root, "home");
+    const store = new BotStore(join(root, "user-data"), home);
+    await store.initialize();
+    const source = await store.getOrCreate("chief");
+    await writeFile(join(source.workspacePath, "note.txt"), "keep\n");
+    vi.spyOn(store.database, "replaceAgents").mockImplementationOnce(() => {
+      throw new Error("database unavailable");
+    });
+
+    await expect(store.duplicateBot(source.id)).rejects.toThrow("database unavailable");
+
+    expect(store.list().map((bot) => bot.id)).toEqual([source.id]);
+    expect(await readdir(join(home, "OpenBot", "Bots"))).toEqual([source.id]);
+    await expect(readFile(join(source.workspacePath, "note.txt"), "utf8")).resolves.toBe("keep\n");
+  });
+
+  it("rejects duplication after the host reaches its agent limit", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-duplicate-limit-"));
+    temporaryRoots.push(root);
+    const store = new BotStore(join(root, "user-data"), join(root, "home"));
+    await store.initialize();
+    const source = await store.getOrCreate("agent-0");
+    for (let index = 1; index < INPUT_LIMITS.agents; index += 1) {
+      await store.getOrCreate(`agent-${index}`);
+    }
+
+    await expect(store.duplicateBot(source.id)).rejects.toThrow(`up to ${INPUT_LIMITS.agents} agents`);
+    expect(store.list()).toHaveLength(INPUT_LIMITS.agents);
   });
 
   it("validates the complete Bot profile before it writes data", async () => {

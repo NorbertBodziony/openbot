@@ -12,11 +12,11 @@ import {
   type TeamProtocolV2RpcFrame,
   teamProtocolV2AuthenticationTranscript,
 } from "@openbot/contracts/team-protocol/v2";
+import { decodeTeamProtocolV2CurrentEvent } from "@openbot/contracts/team-protocol/v2-adapter";
 import {
-  decodeTeamProtocolV2CurrentEvent,
-  decodeTeamProtocolV2CurrentHttpResponse,
-  encodeTeamProtocolV2CurrentHttpRequest,
-} from "@openbot/contracts/team-protocol/v2-adapter";
+  decodeTeamProtocolV3WebRtcHttpResponse,
+  encodeTeamProtocolV3WebRtcHttpRequest,
+} from "@openbot/contracts/team-protocol/v3-webrtc-adapter";
 import type {
   RemoteConnectionBootstrap,
   RemoteHostSummary,
@@ -227,7 +227,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       payload: {
         method,
         path,
-        body: binary ? null : encodeTeamProtocolV2CurrentHttpRequest(method, path, init.body),
+        body: binary ? null : encodeTeamProtocolV3WebRtcHttpRequest(method, path, init.body),
         ...(bodyTransferId ? { bodyTransferId } : {}),
         ...(init.contentType ? { contentType: init.contentType } : {}),
       },
@@ -260,7 +260,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
         : undefined;
     return {
       status: envelope.status,
-      body: file ? null : decodeTeamProtocolV2CurrentHttpResponse(method, path, envelope.status, envelope.body),
+      body: file ? null : decodeTeamProtocolV3WebRtcHttpResponse(method, path, envelope.status, envelope.body),
       ...(file ? { file } : {}),
     };
   }

@@ -17,6 +17,7 @@ import {
   type AppSetupState,
   type BrowserDisplayState,
   type CentralAuthState,
+  type DuplicateBotResult,
   type ExternalDestination,
   type FilePreview,
   type ImportAttachmentsInput,
@@ -153,6 +154,7 @@ import {
   decodeBrowserPreview,
   decodeBrowserTab,
   decodeBrowserTabs,
+  decodeDuplicateBotResult,
   decodeQueuedMessageReceipt,
   decodeQueueSnapshot,
   decodeRoutine,
@@ -616,6 +618,11 @@ function registerIpcHandlers(
     return serverId === "local"
       ? service.createBot(parsed)
       : remoteServers.request("/v1/agents", { method: "POST", body: parsed }, serverId, decodeBotSummary);
+  });
+  handleTrusted(IPC_CHANNELS.agentDuplicateBot, (input: unknown): Promise<DuplicateBotResult> => {
+    const scoped = parseAgentRequest(input);
+    const botId = requireString(scoped.payload, "botId", INPUT_LIMITS.identifier);
+    return routeDuplicateBot(service, sidebarLayout, remoteServers, scoped.serverId, botId);
   });
   handleTrusted(IPC_CHANNELS.agentUpdateBot, (input: unknown) => {
     const scoped = parseAgentRequest(input);
@@ -2227,6 +2234,47 @@ async function routeDeleteBot(
     return;
   }
   await remoteServers.request(`/v1/agents/${encodeURIComponent(botId)}`, { method: "DELETE" }, serverId, decodeVoid);
+}
+
+async function routeDuplicateBot(
+  service: AgentService,
+  sidebarLayout: SidebarLayoutStore,
+  remoteServers: RemoteServerManager,
+  serverId: string,
+  botId: string,
+): Promise<DuplicateBotResult> {
+  if (serverId !== "local") {
+    return remoteServers.request(
+      `/v1/agents/${encodeURIComponent(botId)}/duplicate`,
+      { method: "POST", body: {} },
+      serverId,
+      decodeDuplicateBotResult,
+    );
+  }
+  const bot = await service.duplicateBot(botId);
+  try {
+    const layout = await sidebarLayout.placeDuplicateAfter(
+      botId,
+      bot.id,
+      service.listBots().map((candidate) => candidate.id),
+    );
+    return { bot, layout };
+  } catch (error) {
+    let rollbackError: unknown;
+    try {
+      await service.deleteBot(bot.id);
+      await sidebarLayout.removeAgent(bot.id);
+    } catch (caught) {
+      rollbackError = caught;
+    }
+    if (rollbackError) {
+      throw new AggregateError(
+        [error, rollbackError],
+        "Agent duplication failed and the incomplete copy could not be removed.",
+      );
+    }
+    throw error;
+  }
 }
 
 function routeReadConversation(host: HostService, remoteServers: RemoteServerManager, serverId: string, botId: string) {

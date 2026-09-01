@@ -558,6 +558,69 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
           throw error;
         }
       },
+      duplicateBot: async (botId) => {
+        const source = bots.find((bot) => bot.id === botId);
+        if (!source) throw new Error("Agent not found");
+        const bot = {
+          ...createBotSummary({
+            ...source,
+            id: undefined,
+            name: `${source.name} copy`,
+            preview: "",
+            updatedAt: null,
+            workspacePath: undefined,
+          }),
+          threadId: null,
+        };
+        bots = [...bots, bot];
+        queues.set(bot.id, emptyQueue(bot.id));
+        snapshots[bot.id] = {
+          botId: bot.id,
+          threadId: null,
+          messages: [],
+          activeTurnId: null,
+          revision: 0,
+        };
+        memories.set(
+          bot.id,
+          (memories.get(botId) ?? []).map((memory) => ({
+            ...memory,
+            id: crypto.randomUUID(),
+            botId: bot.id,
+            sourceTurnId: null,
+          })),
+        );
+        routines.set(
+          bot.id,
+          (routines.get(botId) ?? []).map((routine) => {
+            const routineId = crypto.randomUUID();
+            return {
+              ...routine,
+              id: routineId,
+              botId: bot.id,
+              trigger: {
+                ...routine.trigger,
+                id: crypto.randomUUID(),
+                routineId,
+                nextRunAt: new Date().toISOString(),
+              },
+            };
+          }),
+        );
+        const sourceSectionId = sidebarLayout.agentAssignments[botId] ?? null;
+        const orderWithoutBot = sidebarLayout.agentOrder.filter((agentId) => agentId !== bot.id);
+        const sourceIndex = orderWithoutBot.indexOf(botId);
+        const beforeAgentId = sourceIndex < 0 ? null : (orderWithoutBot[sourceIndex + 1] ?? null);
+        sidebarLayout = applySidebarLayoutAction(sidebarLayout, {
+          type: "move-agent",
+          agentId: bot.id,
+          sectionId: sourceSectionId,
+          beforeAgentId,
+        });
+        emitAgentEvent({ type: "bots-changed", bots });
+        emitAgentEvent({ type: "sidebar-layout-changed", layout: sidebarLayout });
+        return clone({ bot, layout: sidebarLayout });
+      },
       updateBot: async (input: UpdateBotInput) => {
         const current = bots.find((bot) => bot.id === input.botId);
         if (!current) throw new Error("Agent not found");

@@ -44,6 +44,27 @@ export class AgentRoutineStore {
     return isDynamicRecord(row) ? this.#routine(row) : null;
   }
 
+  duplicate(sourceBotId: string, targetBotId: string, now = new Date()): Map<string, Routine> {
+    const duplicated = new Map<string, Routine>();
+    for (const routine of this.list(sourceBotId)) {
+      duplicated.set(
+        routine.id,
+        this.create(
+          {
+            botId: targetBotId,
+            name: routine.name,
+            instruction: routine.instruction,
+            active: routine.active,
+            timezone: routine.timezone,
+            schedule: routine.trigger.schedule,
+          },
+          now,
+        ),
+      );
+    }
+    return duplicated;
+  }
+
   create(input: CreateRoutineInput, now = new Date()): Routine {
     this.#validateInput(input.name, input.instruction, input.timezone, input.schedule);
     if (this.list(input.botId).length >= INPUT_LIMITS.agentRoutines) {

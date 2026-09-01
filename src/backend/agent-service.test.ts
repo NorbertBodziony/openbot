@@ -19,6 +19,8 @@ import {
 import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentClient, AgentProvider } from "./agent-client";
+import { AgentMemoryStore } from "./agent-memory-store";
+import { AgentRoutineStore } from "./agent-routine-store";
 import { AgentService } from "./agent-service";
 import { BotStore } from "./bot-store";
 import { MailboxStore } from "./mailbox-store";
@@ -144,6 +146,172 @@ describe.sequential("AgentService", () => {
         .filter((model) => model.provider === "codex")
         .map((model) => model.id),
     ).toEqual(["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]);
+  });
+
+  it("duplicates persistent agent data without conversation or routine-run history", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    const source = await store.getOrCreate("chief", "Research", "Research lead");
+    await store.updateBot({
+      botId: source.id,
+      description: "Finds primary sources.",
+      notifications: false,
+      model: "gpt-5.6-sol",
+      reasoningEffort: "high",
+    });
+    await writeFile(join(source.workspacePath, "research.md"), "source workspace\n");
+    service.createMemory({ botId: source.id, text: "Use official documents." });
+    new AgentMemoryStore(store.database).saveAutomatic({
+      botId: source.id,
+      text: "The user prefers short briefs.",
+      sourceTurnId: "turn-source-memory",
+    });
+    const activeRoutine = service.createRoutine({
+      botId: source.id,
+      name: "Morning brief",
+      instruction: "Prepare the morning brief.",
+      active: true,
+      timezone: "Europe/Warsaw",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    const inactiveRoutine = service.createRoutine({
+      botId: source.id,
+      name: "Weekly review",
+      instruction: "Review the week.",
+      active: false,
+      timezone: "UTC",
+      schedule: { kind: "weekly", weekday: 1, time: "10:30" },
+    });
+    const routineStore = new AgentRoutineStore(store.database);
+    const oldRun = routineStore.createRun(
+      activeRoutine,
+      activeRoutine.trigger.id,
+      "scheduled",
+      "2026-08-31T07:00:00.000Z",
+    );
+    routineStore.updateRunStatus(oldRun.id, "succeeded");
+    service.setMarketplaceSource(source.id, {
+      agentId: "market-research",
+      versionId: "market-research-v2",
+      version: 2,
+      skillIds: ["primary-sources"],
+      routineIds: [activeRoutine.id],
+    });
+    const duplicateStartedAt = Date.now();
+
+    const duplicate = await service.duplicateBot(source.id);
+
+    expect(duplicate.id).not.toBe(source.id);
+    expect(duplicate).toMatchObject({
+      name: "Research copy",
+      title: "Research lead",
+      description: "Finds primary sources.",
+      notifications: false,
+      model: "gpt-5.6-sol",
+      reasoningEffort: "high",
+      threadId: null,
+      preview: "No messages yet",
+    });
+    expect((await service.readConversation(duplicate.id)).messages).toEqual([]);
+    await expect(readFile(join(duplicate.workspacePath, "research.md"), "utf8")).resolves.toBe("source workspace\n");
+
+    const sourceMemories = service.listMemories(source.id);
+    const duplicateMemories = service.listMemories(duplicate.id);
+    expect(
+      duplicateMemories
+        .map(({ text, origin, sourceTurnId }) => ({ text, origin, sourceTurnId }))
+        .sort((left, right) => left.text.localeCompare(right.text)),
+    ).toEqual(
+      sourceMemories
+        .map(({ text, origin }) => ({ text, origin, sourceTurnId: null }))
+        .sort((left, right) => left.text.localeCompare(right.text)),
+    );
+    expect(new Set(duplicateMemories.map((memory) => memory.id))).not.toEqual(
+      new Set(sourceMemories.map((memory) => memory.id)),
+    );
+
+    const sourceRoutines = service.listRoutines(source.id);
+    const duplicateRoutines = service.listRoutines(duplicate.id);
+    expect(
+      duplicateRoutines
+        .map(({ name, instruction, active, timezone, trigger }) => ({
+          name,
+          instruction,
+          active,
+          timezone,
+          schedule: trigger.schedule,
+        }))
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    ).toEqual(
+      sourceRoutines
+        .map(({ name, instruction, active, timezone, trigger }) => ({
+          name,
+          instruction,
+          active,
+          timezone,
+          schedule: trigger.schedule,
+        }))
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    );
+    expect(duplicateRoutines.every((routine) => Date.parse(routine.trigger.nextRunAt) >= duplicateStartedAt)).toBe(
+      true,
+    );
+    expect(duplicateRoutines.map((routine) => routine.id)).not.toEqual(sourceRoutines.map((routine) => routine.id));
+    for (const routine of duplicateRoutines) {
+      expect(service.listRoutineRuns({ botId: duplicate.id, routineId: routine.id, limit: 10 })).toEqual([]);
+    }
+    expect(duplicate.marketplaceSource).toMatchObject({
+      agentId: "market-research",
+      skillIds: ["primary-sources"],
+      routineIds: [duplicateRoutines.find((routine) => routine.name === activeRoutine.name)?.id],
+    });
+
+    await writeFile(join(duplicate.workspacePath, "research.md"), "duplicate workspace\n");
+    await service.updateMemory({
+      botId: duplicate.id,
+      memoryId: duplicateMemories[0]?.id ?? "missing",
+      text: "Changed only in the duplicate.",
+    });
+    const copiedActiveRoutine = duplicateRoutines.find((routine) => routine.name === activeRoutine.name);
+    if (!copiedActiveRoutine) throw new Error("The duplicated active routine is missing.");
+    service.updateRoutine({ botId: duplicate.id, routineId: copiedActiveRoutine.id, active: false });
+
+    await expect(readFile(join(source.workspacePath, "research.md"), "utf8")).resolves.toBe("source workspace\n");
+    expect(service.listMemories(source.id).some((memory) => memory.text === "Changed only in the duplicate.")).toBe(
+      false,
+    );
+    expect(service.listRoutines(source.id).find((routine) => routine.id === activeRoutine.id)?.active).toBe(true);
+    expect(service.listRoutines(source.id).find((routine) => routine.id === inactiveRoutine.id)?.active).toBe(false);
+  });
+
+  it("blocks duplication while the source agent has active work", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    await store.getOrCreate("chief");
+    await service.sendMessage({ botId: "chief", text: "Keep working.", attachmentDraftIds: [] });
+
+    await expect(service.duplicateBot("chief")).rejects.toThrow("finish and clear its queue");
+    expect(store.list().map((bot) => bot.id)).toEqual(["chief"]);
+  });
+
+  it("removes copied data when the source changes during duplication", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    await store.getOrCreate("chief");
+    const duplicateInStore = store.duplicateBot.bind(store);
+    vi.spyOn(store, "duplicateBot").mockImplementationOnce(async (botId) => {
+      const duplicate = await duplicateInStore(botId);
+      service?.createMemory({ botId, text: "Changed during duplication." });
+      return duplicate;
+    });
+
+    await expect(service.duplicateBot("chief")).rejects.toThrow("changed while it was being duplicated");
+
+    expect(store.list().map((bot) => bot.id)).toEqual(["chief"]);
+    expect(service.listMemories("chief")).toEqual([expect.objectContaining({ text: "Changed during duplication." })]);
   });
 
   it("creates a bounded runtime snapshot for reconnecting clients", async () => {
