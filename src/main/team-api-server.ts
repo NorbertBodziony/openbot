@@ -1541,7 +1541,9 @@ export class TeamApiServer {
 
   #duplicateAgent(sourceBotId: string, operationId: string): Promise<DuplicateBotResult> {
     const committed = this.#options.agents.committedBotDuplication(operationId, sourceBotId);
-    if (committed) return Promise.resolve(committed);
+    if (committed) {
+      return Promise.resolve({ bot: committed.bot, layout: this.#options.sidebarLayout.getSnapshot() });
+    }
     const pending = this.#duplicateRequests.get(operationId);
     if (pending) {
       if (pending.sourceBotId !== sourceBotId) {

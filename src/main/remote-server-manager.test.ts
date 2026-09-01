@@ -1436,6 +1436,9 @@ describe("Team API compatibility negotiation", () => {
         operationIds.push(body.operationId);
         duplicateAttempts += 1;
         if (duplicateAttempts === 1) throw new TypeError("connection reset after commit");
+        if (duplicateAttempts === 2) {
+          return Response.json({ error: "Host response was lost." }, { status: 503 });
+        }
         return Response.json(
           {
             bot: {
@@ -1472,11 +1475,12 @@ describe("Team API compatibility negotiation", () => {
     try {
       await manager.initialize();
       await expect(manager.duplicateBot("bot-source", "duplicate-retry")).rejects.toThrow("connection reset");
+      await expect(manager.duplicateBot("bot-source", "duplicate-retry")).rejects.toThrow("Host response was lost");
       await expect(manager.duplicateBot("bot-source", "duplicate-retry")).resolves.toMatchObject({
         bot: { id: "bot-copy" },
       });
-      expect(operationIds).toHaveLength(2);
-      expect(operationIds[0]).toBe(operationIds[1]);
+      expect(operationIds).toHaveLength(3);
+      expect(new Set(operationIds).size).toBe(1);
     } finally {
       manager.stop();
       await rm(directory, { recursive: true, force: true });

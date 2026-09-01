@@ -698,7 +698,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this.#duplicateOperationIds.delete(key);
       return result;
     } catch (error) {
-      if (error instanceof RemoteRequestError) this.#duplicateOperationIds.delete(key);
+      if (error instanceof RemoteRequestError && error.status >= 400 && error.status < 500) {
+        this.#duplicateOperationIds.delete(key);
+      }
       throw error;
     }
   }

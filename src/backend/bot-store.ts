@@ -8,6 +8,7 @@ import {
   readdir,
   readFile,
   readlink,
+  realpath,
   rename,
   rm,
   symlink,
@@ -311,7 +312,7 @@ export class BotStore {
     const bot = this.#state.bots.find((candidate) => candidate.id === resultBot.id);
     if (!bot) throw new Error("The duplicated agent no longer exists.");
     return {
-      bot: { ...normalizeStoredBot(resultBot) },
+      bot: { ...bot },
       layout: structuredClone(resultLayout),
     };
   }
@@ -685,6 +686,7 @@ async function rewriteInternalWorkspaceSymlinks(
   stagedRoot: string,
   finalRoot: string,
 ): Promise<void> {
+  const canonicalSourceRoot = await realpath(sourceRoot);
   const visit = async (stagedDirectory: string, sourceDirectory: string, finalDirectory: string): Promise<void> => {
     const entries = await readdir(stagedDirectory, { withFileTypes: true });
     for (const entry of entries) {
@@ -694,8 +696,16 @@ async function rewriteInternalWorkspaceSymlinks(
       if (entry.isSymbolicLink()) {
         const target = await readlink(stagedPath);
         const resolvedSourceTarget = resolve(dirname(sourcePath), target);
-        if (!isPathWithin(sourceRoot, resolvedSourceTarget)) continue;
-        const finalTarget = join(finalRoot, relative(sourceRoot, resolvedSourceTarget));
+        let sourceRelativePath: string;
+        try {
+          const canonicalTarget = await realpath(resolvedSourceTarget);
+          if (!isPathWithin(canonicalSourceRoot, canonicalTarget)) continue;
+          sourceRelativePath = relative(canonicalSourceRoot, canonicalTarget);
+        } catch {
+          if (!isPathWithin(sourceRoot, resolvedSourceTarget)) continue;
+          sourceRelativePath = relative(sourceRoot, resolvedSourceTarget);
+        }
+        const finalTarget = join(finalRoot, sourceRelativePath);
         const rewrittenTarget = isAbsolute(target) ? finalTarget : relative(dirname(finalPath), finalTarget) || ".";
         await rm(stagedPath);
         await symlink(rewrittenTarget, stagedPath);

@@ -286,6 +286,11 @@ describe("TeamApiServer administration", () => {
       expect(commitBotDuplication).toHaveBeenCalledWith(duplicate.id, expect.objectContaining({ revision: 2 }));
       expect(deleteBot).not.toHaveBeenCalled();
 
+      const currentLayout = await sidebarLayout.mutate(
+        { type: "create", name: "Later", agentId: duplicate.id },
+        new Set([source.id, duplicate.id]),
+      );
+
       const retry = await fetch(`${base}/v1/agents/${source.id}/duplicate`, {
         method: "POST",
         headers: {
@@ -297,6 +302,7 @@ describe("TeamApiServer administration", () => {
         body: JSON.stringify({ operationId: "7674b664-cd72-4cf9-88ed-6f2e189d551f" }),
       });
       expect(retry.status).toBe(201);
+      await expect(retry.json()).resolves.toMatchObject({ layout: { revision: currentLayout.revision } });
       expect(duplicateBot).toHaveBeenCalledTimes(1);
       expect(commitBotDuplication).toHaveBeenCalledTimes(1);
     } finally {

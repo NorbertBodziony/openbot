@@ -263,6 +263,9 @@ describe("BotStore", () => {
     await mkdir(join(source.workspacePath, "links"));
     await symlink(join(source.workspacePath, "skills.lock"), join(source.workspacePath, "internal-absolute"));
     await symlink("../skills.lock", join(source.workspacePath, "links", "internal-relative"));
+    const sourceWorkspaceAlias = join(root, "source-workspace-alias");
+    await symlink(source.workspacePath, sourceWorkspaceAlias);
+    await symlink(join(sourceWorkspaceAlias, "skills.lock"), join(source.workspacePath, "aliased-internal"));
     await writeFile(join(root, "outside.txt"), "outside\n");
     await symlink(join(root, "outside.txt"), join(source.workspacePath, "outside-link"));
 
@@ -298,6 +301,9 @@ describe("BotStore", () => {
       join(duplicate.workspacePath, "skills.lock"),
     );
     await expect(readlink(join(duplicate.workspacePath, "links", "internal-relative"))).resolves.toBe("../skills.lock");
+    await expect(readlink(join(duplicate.workspacePath, "aliased-internal"))).resolves.toBe(
+      join(duplicate.workspacePath, "skills.lock"),
+    );
     await expect(readlink(join(duplicate.workspacePath, "outside-link"))).resolves.toBe(join(root, "outside.txt"));
     await expect(readFile(store.resolveAvatar(duplicate.id)?.path ?? "")).resolves.toEqual(Buffer.from(image));
 
@@ -305,6 +311,8 @@ describe("BotStore", () => {
     await expect(readFile(join(duplicate.workspacePath, "links", "internal-relative"), "utf8")).resolves.toBe(
       "research@2\n",
     );
+    await writeFile(join(duplicate.workspacePath, "aliased-internal"), "research@3\n");
+    await expect(readFile(join(duplicate.workspacePath, "skills.lock"), "utf8")).resolves.toBe("research@3\n");
     await expect(readFile(join(source.workspacePath, "skills.lock"), "utf8")).resolves.toBe("research@1\n");
 
     const reloaded = new BotStore(userData, home);
@@ -346,11 +354,12 @@ describe("BotStore", () => {
     const source = await store.getOrCreate("chief");
     const duplicate = await store.duplicateBot(source.id, operationId);
     const committed = await store.commitBotDuplication(duplicate.id, operationId, source.id, EMPTY_LAYOUT);
+    const currentBot = await store.updateBot({ botId: duplicate.id, title: "Current title" });
 
     const restored = new BotStore(userData, home);
     await restored.initialize();
 
-    expect(restored.committedBotDuplication(operationId, source.id)).toEqual(committed);
+    expect(restored.committedBotDuplication(operationId, source.id)).toEqual({ ...committed, bot: currentBot });
     expect(restored.list().filter((bot) => bot.name === duplicate.name)).toHaveLength(1);
   });
 
