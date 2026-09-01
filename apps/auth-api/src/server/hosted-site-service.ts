@@ -87,6 +87,7 @@ export class HostedSiteService {
     private readonly bucket: R2Bucket,
     private readonly now: () => number = Date.now,
     private readonly reportHashSecret?: string,
+    private readonly localSiteOrigin?: string,
   ) {}
 
   async list(userId: string): Promise<HostedSiteSummary[]> {
@@ -100,7 +101,7 @@ export class HostedSiteService {
       )
       .bind(userId, now)
       .all<SiteRow & { file_count: number; total_bytes: number }>();
-    return rows.results.map(mapSite);
+    return rows.results.map((row) => mapSite(row, this.localSiteOrigin));
   }
 
   async createUpload(
@@ -1164,7 +1165,7 @@ export class HostedSiteService {
       .bind(siteId, userId)
       .first<SiteRow & { file_count: number; total_bytes: number }>();
     if (!row) throw new HostedSiteInputError(409, "site_not_found", "The site was not found.");
-    return mapSite(row);
+    return mapSite(row, this.localSiteOrigin);
   }
 
   private async runClaimedOperation<T>(
@@ -1520,11 +1521,14 @@ function parseSiteStatus(value: unknown): SiteRow["status"] {
   throw new Error("The stored site status is invalid.");
 }
 
-function mapSite(row: SiteRow & { file_count: number; total_bytes: number }): HostedSiteSummary {
+function mapSite(
+  row: SiteRow & { file_count: number; total_bytes: number },
+  localSiteOrigin?: string,
+): HostedSiteSummary {
   return {
     id: row.id,
     hostname: row.hostname,
-    url: `https://${row.hostname}`,
+    url: siteUrl(row.hostname, localSiteOrigin),
     title: row.title,
     description: row.description,
     framework: row.framework,
@@ -1534,6 +1538,17 @@ function mapSite(row: SiteRow & { file_count: number; total_bytes: number }): Ho
     expiresAt: row.expires_at === null ? null : new Date(row.expires_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
   };
+}
+
+function siteUrl(hostname: string, localSiteOrigin?: string): string {
+  if (!localSiteOrigin) return `https://${hostname}`;
+  const origin = new URL(localSiteOrigin);
+  const label = hostname.slice(0, -".openbot.site".length);
+  origin.hostname = `${label}.${origin.hostname}`;
+  origin.pathname = "/";
+  origin.search = "";
+  origin.hash = "";
+  return origin.toString();
 }
 
 function assetKey(siteId: string, deploymentId: string, path: string): string {

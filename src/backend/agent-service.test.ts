@@ -583,6 +583,7 @@ describe.sequential("AgentService", () => {
       expect(params.developerInstructions).toContain("Use the installed Computer Use plugin only");
       expect(params.developerInstructions).toContain("When you use openbot_browser");
       expect(params.developerInstructions).toContain("openbot.create_routine");
+      expect(params.developerInstructions).toContain("Never use ChatGPT Sites");
       expect(params.developerInstructions).toContain("openbot.attach_files_to_response");
       expect(params.developerInstructions).toContain("sadness, disappointment, frustration, loneliness");
       expect(params.developerInstructions).toContain("An emoji written inside your answer does not count");

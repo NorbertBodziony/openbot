@@ -43,7 +43,13 @@ export function requestAgentMarketplace(): AgentMarketplace {
 
 export function requestHostedSiteService(): HostedSiteService {
   const bindings = requireWorkerBindings(env);
-  return new HostedSiteService(bindings.DB, bindings.SITES, Date.now, bindings.SITE_REPORT_HASH_SECRET);
+  return new HostedSiteService(
+    bindings.DB,
+    bindings.SITES,
+    Date.now,
+    bindings.SITE_REPORT_HASH_SECRET,
+    bindings.SITE_LOCAL_ORIGIN,
+  );
 }
 
 export function requireSitePublishingEnabled(): void {
