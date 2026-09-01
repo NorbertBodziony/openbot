@@ -33,7 +33,7 @@
     "remote/api"
   ],
   "main": "./out/main/index.js",
-  "packageManager": "bun@1.3.11",
+  "packageManager": "bun@1.4.0",
   "engines": {
     "node": ">=22.12.0"
   },
