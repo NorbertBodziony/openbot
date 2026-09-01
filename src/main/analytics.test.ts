@@ -594,6 +594,52 @@ describe("host analytics", () => {
     );
   });
 
+  it("keeps an active turn with the account that started it", () => {
+    const client = fakeClient();
+    let owner = { id: "owner-1", email: "one@example.com" };
+    const analytics = new HostAnalytics(
+      {
+        enabled: true,
+        appVersion: "1.2.3",
+        platform: "darwin",
+        resolveOwner: () => owner,
+        resolveBot: () => BOT,
+      },
+      () => client,
+    );
+
+    analytics.handleAgentEvent({
+      type: "turn-started",
+      botId: BOT.id,
+      threadId: BOT.threadId ?? "",
+      turnId: "turn-account-bound",
+      origin: "user",
+    });
+    analytics.clear();
+    owner = { id: "owner-2", email: "two@example.com" };
+    analytics.handleAgentEvent({
+      type: "prompt",
+      requestId: "request-1",
+      botId: BOT.id,
+      threadId: BOT.threadId ?? "",
+      turnId: "turn-account-bound",
+      questions: [],
+    });
+    analytics.handleAgentEvent({
+      type: "turn-completed",
+      botId: BOT.id,
+      threadId: BOT.threadId ?? "",
+      turnId: "turn-account-bound",
+      origin: "unknown",
+      status: "completed",
+    });
+
+    expect(client.track).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(client.track).mock.calls.every(([, properties]) => properties?.profileId === "owner-1")).toBe(
+      true,
+    );
+  });
+
   it("adds safe bot context to host failures", () => {
     const client = fakeClient();
     const analytics = new HostAnalytics(

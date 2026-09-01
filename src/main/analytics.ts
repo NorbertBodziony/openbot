@@ -62,7 +62,7 @@ const HOST_ALLOWLIST = {
 type HostPropertyName = (typeof HOST_ALLOWLIST)[HostEventName][number];
 type HostProperties = Partial<Record<HostPropertyName, string | number | boolean>>;
 type HostPendingEvent = { name: HostEventName; properties: HostProperties; timestamp: string };
-type ActiveTurn = { startedAt: number; origin: string };
+type ActiveTurn = { startedAt: number; origin: string; owner: AnalyticsIdentity | null };
 
 export class HostAnalytics {
   readonly #resolveOwner: HostAnalyticsOptions["resolveOwner"];
@@ -115,11 +115,16 @@ export class HostAnalytics {
         this.#pruneActiveTurns(now);
         if (this.#activeTurns.has(event.turnId)) return;
         this.#makeTurnCapacity();
-        this.#activeTurns.set(event.turnId, { startedAt: now, origin: event.origin ?? "unknown" });
-        this.#track("system_turn_started", {
-          ...this.#botProperties(event.botId),
-          origin: event.origin ?? "unknown",
-        });
+        const owner = normalizeAnalyticsIdentity(this.#resolveOwner());
+        this.#activeTurns.set(event.turnId, { startedAt: now, origin: event.origin ?? "unknown", owner });
+        this.#track(
+          "system_turn_started",
+          {
+            ...this.#botProperties(event.botId),
+            origin: event.origin ?? "unknown",
+          },
+          owner,
+        );
         return;
       }
       case "turn-completed": {
@@ -127,32 +132,44 @@ export class HostAnalytics {
         this.#activeTurns.delete(event.turnId);
         const origin =
           event.origin && event.origin !== "unknown" ? event.origin : (activeTurn?.origin ?? event.origin ?? "unknown");
-        this.#track("system_turn_completed", {
-          ...this.#botProperties(event.botId),
-          origin,
-          status: normalizedTurnStatus(event.status),
-          ...(activeTurn === undefined
-            ? {}
-            : { duration_ms: Math.max(0, Math.round(performance.now() - activeTurn.startedAt)) }),
-        });
+        this.#track(
+          "system_turn_completed",
+          {
+            ...this.#botProperties(event.botId),
+            origin,
+            status: normalizedTurnStatus(event.status),
+            ...(activeTurn === undefined
+              ? {}
+              : { duration_ms: Math.max(0, Math.round(performance.now() - activeTurn.startedAt)) }),
+          },
+          activeTurn?.owner,
+        );
         return;
       }
       case "prompt":
-        this.#track("system_agent_input_requested", {
-          ...this.#botProperties(event.botId),
-          origin: this.#activeTurns.get(event.turnId)?.origin ?? "unknown",
-          kind: "prompt",
-          prompt_count: event.questions.length,
-          has_secret_prompt: event.questions.some((question) => question.isSecret),
-        });
+        this.#track(
+          "system_agent_input_requested",
+          {
+            ...this.#botProperties(event.botId),
+            origin: this.#activeTurns.get(event.turnId)?.origin ?? "unknown",
+            kind: "prompt",
+            prompt_count: event.questions.length,
+            has_secret_prompt: event.questions.some((question) => question.isSecret),
+          },
+          this.#activeTurns.get(event.turnId)?.owner,
+        );
         return;
       case "approval":
-        this.#track("system_agent_input_requested", {
-          ...this.#botProperties(event.approval.botId),
-          origin: this.#activeTurns.get(event.approval.turnId)?.origin ?? "unknown",
-          kind: "approval",
-          approval_kind: event.approval.kind,
-        });
+        this.#track(
+          "system_agent_input_requested",
+          {
+            ...this.#botProperties(event.approval.botId),
+            origin: this.#activeTurns.get(event.approval.turnId)?.origin ?? "unknown",
+            kind: "approval",
+            approval_kind: event.approval.kind,
+          },
+          this.#activeTurns.get(event.approval.turnId)?.owner,
+        );
         return;
       case "error":
         this.#track("system_operation_failed", {
@@ -175,7 +192,6 @@ export class HostAnalytics {
 
   clear(): void {
     this.#pending = [];
-    this.#activeTurns.clear();
     this.#identifiedOwner = null;
     if (this.#trackingEnabled) this.#enqueue("clear", () => this.#client?.clear());
   }
@@ -185,6 +201,7 @@ export class HostAnalytics {
     this.#trackingEnabled = enabled;
     if (!enabled) {
       this.#hostedSiteOwners.clear();
+      this.#activeTurns.clear();
       this.clear();
       this.#operationQueue.operations = [];
       this.#enqueue("clear", () => this.#client?.clear());
@@ -263,16 +280,16 @@ export class HostAnalytics {
     for (const event of pending) this.#send(event.name, event.properties, owner.id, event.timestamp);
   }
 
-  #track(name: HostEventName, properties: HostProperties): void {
+  #track(name: HostEventName, properties: HostProperties, ownerOverride?: AnalyticsIdentity | null): void {
     if (!this.#trackingEnabled) return;
     const sanitized = sanitizeHostEvent(name, properties);
-    const owner = normalizeAnalyticsIdentity(this.#resolveOwner());
+    const owner = ownerOverride === undefined ? normalizeAnalyticsIdentity(this.#resolveOwner()) : ownerOverride;
     if (!owner) {
       this.#pending.push({ name, properties: sanitized, timestamp: new Date().toISOString() });
       if (this.#pending.length > MAX_PENDING_EVENTS) this.#pending.shift();
       return;
     }
-    this.#trackForOwner(name, sanitized, owner);
+    this.#trackForOwner(name, sanitized, owner, ownerOverride === undefined);
   }
 
   #identify(owner: AnalyticsIdentity): void {
