@@ -133,7 +133,9 @@ export class DynamicIslandWindowController {
     if (window.isMinimized()) window.restore();
     window.show();
     window.focus();
-    if (action.type !== "open-app") sendToRenderer(window, IPC_CHANNELS.dynamicIslandAction, action);
+    if (action.type !== "open-app" && !sendToRenderer(window, IPC_CHANNELS.dynamicIslandAction, action)) {
+      throw new Error("The OpenBot window is temporarily unavailable.");
+    }
   }
 
   async #ensureMainWindow(): Promise<BrowserWindow> {

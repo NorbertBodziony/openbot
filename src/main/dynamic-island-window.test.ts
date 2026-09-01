@@ -588,6 +588,37 @@ describe("dynamic island window geometry", () => {
     expect(mainWindow.show).not.toHaveBeenCalled();
   });
 
+  it("keeps a navigation action retryable while the main renderer reloads", async () => {
+    const mainWindow = new FakeWindow(75, { x: 0, y: 0, width: 1200, height: 800 });
+    const controller = new DynamicIslandWindowController({
+      platform: "darwin",
+      preferencePath: "/tmp/dynamic-island-preference.json",
+      createWindow: () => {
+        throw new Error("An overlay window is not needed for this test.");
+      },
+      loadWindow: async () => undefined,
+      getDisplays: () => [],
+      // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
+      getMainWindow: () => mainWindow as unknown as BrowserWindow,
+      performHaptic: () => undefined,
+      performCriticalAction: async () => undefined,
+    });
+    const action = {
+      type: "open-failure",
+      serverId: "local",
+      botId: "research",
+      turnId: "turn-failed",
+    } satisfies DynamicIslandAction;
+    mainWindow.webContents.isLoadingMainFrame.mockReturnValue(true);
+
+    await expect(controller.performAction(action)).rejects.toThrow("temporarily unavailable");
+    expect(mainWindow.webContents.send).not.toHaveBeenCalled();
+
+    mainWindow.webContents.isLoadingMainFrame.mockReturnValue(false);
+    await expect(controller.performAction(action)).resolves.toBeUndefined();
+    expect(mainWindow.webContents.send).toHaveBeenCalledWith(IPC_CHANNELS.dynamicIslandAction, action);
+  });
+
   it("accepts every overlay renderer and rejects unrelated senders", () => {
     expect(() => requireDynamicIslandSender(10, new Set([10]), "main renderer")).not.toThrow();
     expect(() => requireDynamicIslandSender(12, new Set([11, 12]), "Dynamic Island renderer")).not.toThrow();
