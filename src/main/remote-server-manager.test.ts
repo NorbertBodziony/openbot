@@ -1422,6 +1422,10 @@ describe("Team API compatibility negotiation", () => {
       expect(headers.get("OpenBot-Protocol-Version")).toBe("2");
       expect(headers.get("OpenBot-App-Version")).toBe("0.4.0");
       expect(headers.get(TEAM_CAPABILITIES_HEADER)).toContain("routine-event-markers");
+      if (url.pathname === "/v1/agents/chief/messages") {
+        expect(JSON.parse(String(init?.body))).toMatchObject({ text: "Ask @Research to use Sources (skill)." });
+        return Response.json({ messageId: "message-1", deliveries: [] });
+      }
       return Response.json({
         phase: "ready",
         cliVersion: "1.0.0",
@@ -1439,6 +1443,21 @@ describe("Team API compatibility negotiation", () => {
       await expect(
         manager.request("/v1/agents/status", {}, "compatibility-headers", (value) => value),
       ).resolves.toMatchObject({ phase: "ready" });
+      await expect(
+        manager.request(
+          "/v1/agents/chief/messages",
+          {
+            method: "POST",
+            body: {
+              text: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
+              attachmentDraftIds: [],
+              replyToMessageId: null,
+            },
+          },
+          "compatibility-headers",
+          (value) => value,
+        ),
+      ).resolves.toMatchObject({ messageId: "message-1" });
       expect(manager.list().find((server) => server.id === "compatibility-headers")?.compatibility).toMatchObject({
         localAppVersion: "0.4.0",
         hostAppVersion: "0.3.0",

@@ -1245,11 +1245,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     protocol?: number;
     appVersion?: string;
     capabilities?: readonly TeamCurrentCapability[];
+    preserveSemanticTags?: boolean;
   } {
     return {
       protocol: compatibility.negotiatedProtocol ?? undefined,
       appVersion: this.#appVersion ?? undefined,
       capabilities: this.#appVersion ? TEAM_CURRENT_CAPABILITIES : undefined,
+      preserveSemanticTags: supportsTeamSemanticTags(compatibility.capabilities),
     };
   }
 
@@ -2006,6 +2008,7 @@ async function requestJson<T>(
     protocol?: number;
     appVersion?: string;
     capabilities?: readonly TeamCurrentCapability[];
+    preserveSemanticTags?: boolean;
   } = {},
 ): Promise<T> {
   const method = options.method ?? (options.body === undefined ? "GET" : "POST");
@@ -2023,7 +2026,7 @@ async function requestJson<T>(
       options.body === undefined
         ? undefined
         : encodeTeamProtocolV1CurrentHttpRequest(method, path, options.body, {
-            preserveSemanticTags: supportsTeamSemanticTags(options.capabilities ?? []),
+            preserveSemanticTags: options.preserveSemanticTags,
           }),
   });
   let value: unknown;
