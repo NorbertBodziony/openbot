@@ -1,11 +1,7 @@
-import { contextBridge, type IpcRendererEvent, ipcRenderer } from "electron";
+import { type IpcRendererEvent, ipcRenderer } from "electron";
 
-contextBridge.exposeInMainWorld("openbotTeamWebRtc", {
-  receivePort(callback: (port: MessagePort) => void): void {
-    ipcRenderer.once("openbot-team-webrtc-port", (event: IpcRendererEvent) => {
-      const port = event.ports[0];
-      if (!port) throw new Error("The Team WebRTC message port is missing.");
-      callback(port);
-    });
-  },
+ipcRenderer.once("openbot-team-webrtc-port", (event: IpcRendererEvent) => {
+  const port = event.ports[0];
+  if (!port) throw new Error("The Team WebRTC message port is missing.");
+  window.postMessage("openbot-team-webrtc-port", "*", [port]);
 });
