@@ -142,6 +142,20 @@ class MemoryAuthRepository implements AuthRepository {
     });
   }
 
+  async replaceMobileAuthTicket(input: {
+    ticketHash: string;
+    userId: string;
+    serverId: string;
+    expiresAt: number;
+  }): Promise<void> {
+    for (const ticket of this.teamTickets.values()) {
+      if (ticket.user.id === input.userId && ticket.serverId === input.serverId && !ticket.consumed) {
+        ticket.consumed = true;
+      }
+    }
+    await this.createTeamAuthTicket(input);
+  }
+
   async redeemTeamAuthTicket(input: { ticketHash: string; serverId: string; now: number }): Promise<AuthUser | null> {
     const ticket = this.teamTickets.get(input.ticketHash);
     if (!ticket || ticket.consumed || ticket.serverId !== input.serverId || ticket.expiresAt <= input.now) {
@@ -289,6 +303,7 @@ describe("email one-time codes", () => {
       name: "Nörbert Bot",
     });
     expect(await service.redeemTeamAuthTicket(ticket.ticket, serverId, "203.0.113.5")).toBeNull();
+    const replacedMobileTicket = await service.issueMobileAuthTicket(session.sessionToken, "203.0.113.4");
     const mobileTicket = await service.issueMobileAuthTicket(session.sessionToken, "203.0.113.4");
     expect(mobileTicket.expiresAt).toBe(121_000);
     const device = {
@@ -296,6 +311,7 @@ describe("email one-time codes", () => {
       name: "Norbert’s iPhone",
       platform: "ios" as const,
     };
+    expect(await service.redeemMobileAuthTicket(replacedMobileTicket.ticket, device, "203.0.113.5")).toBeNull();
     const mobileSession = await service.redeemMobileAuthTicket(mobileTicket.ticket, device, "203.0.113.5");
     expect(mobileSession).toMatchObject({ user: { id: session.user.id, name: "Nörbert Bot" } });
     expect(await service.authenticateMobileSession(mobileSession?.sessionToken ?? "missing")).toMatchObject({

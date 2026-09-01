@@ -140,6 +140,13 @@ export interface AuthRepository {
     createdAt: number;
     expiresAt: number;
   }): Promise<void>;
+  replaceMobileAuthTicket(input: {
+    ticketHash: string;
+    userId: string;
+    serverId: string;
+    createdAt: number;
+    expiresAt: number;
+  }): Promise<void>;
   redeemTeamAuthTicket(input: { ticketHash: string; serverId: string; now: number }): Promise<AuthUser | null>;
   redeemMobileAuthTicket(input: {
     ticketHash: string;

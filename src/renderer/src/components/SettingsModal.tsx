@@ -314,10 +314,19 @@ export function SettingsModal(props: SettingsModalProps) {
     setMobileConnectError(null);
     setMobileConnectSuccessDeviceName(null);
     setMobileConnectCollapsing(false);
+    setMobileConnectStartedAt(null);
     try {
+      let baselineDevices = mobileDevices();
+      if (props.onListMobileConnectedDevices) {
+        const refreshedDevices = await refreshMobileDevices(true);
+        if (!refreshedDevices) {
+          throw new Error(mobileDevicesError() ?? "Could not load connected devices before generating a code.");
+        }
+        baselineDevices = refreshedDevices;
+      }
+      mobileConnectBaselineSessionIds = new Set(baselineDevices.map((device) => device.sessionId));
       const ticket = await props.onCreateMobileConnect();
       const now = Date.now();
-      mobileConnectBaselineSessionIds = new Set(mobileDevices().map((device) => device.sessionId));
       setMobileConnect(ticket);
       setMobileConnectStartedAt(now);
       setMobileConnectNow(now);
@@ -330,23 +339,25 @@ export function SettingsModal(props: SettingsModalProps) {
     }
   }
 
-  async function refreshMobileDevices(showLoading: boolean): Promise<void> {
+  async function refreshMobileDevices(showLoading: boolean): Promise<MobileConnectedDevice[] | null> {
     const list = props.onListMobileConnectedDevices;
-    if (!list || revokingMobileSessionId()) return;
+    if (!list || revokingMobileSessionId()) return null;
     const revision = ++mobileDevicesRequestRevision;
     if (showLoading) setMobileDevicesLoading(true);
     try {
       const devices = await list();
-      if (revision !== mobileDevicesRequestRevision) return;
+      if (revision !== mobileDevicesRequestRevision) return null;
       const connectedDevice = newlyConnectedMobileDevice(devices);
       setMobileDevices(devices);
       setMobileDevicesLoaded(true);
       setMobileDevicesError(null);
       setMobileConnectNow(Date.now());
       if (connectedDevice) showMobileConnectSuccess(connectedDevice);
+      return devices;
     } catch (error) {
-      if (revision !== mobileDevicesRequestRevision) return;
+      if (revision !== mobileDevicesRequestRevision) return null;
       setMobileDevicesError(error instanceof Error ? error.message : "Could not load connected devices.");
+      return null;
     } finally {
       if (revision === mobileDevicesRequestRevision) setMobileDevicesLoading(false);
     }

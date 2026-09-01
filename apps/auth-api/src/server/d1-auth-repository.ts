@@ -222,6 +222,30 @@ export class D1AuthRepository implements AuthRepository {
       .run();
   }
 
+  async replaceMobileAuthTicket(input: {
+    ticketHash: string;
+    userId: string;
+    serverId: string;
+    createdAt: number;
+    expiresAt: number;
+  }): Promise<void> {
+    await this.database.batch([
+      this.database
+        .prepare(
+          `UPDATE team_auth_tickets SET consumed_at = ?
+           WHERE user_id = ? AND server_id = ? AND consumed_at IS NULL`,
+        )
+        .bind(input.createdAt, input.userId, input.serverId),
+      this.database
+        .prepare(
+          `INSERT INTO team_auth_tickets(
+            ticket_hash, user_id, server_id, created_at, expires_at
+          ) VALUES (?, ?, ?, ?, ?)`,
+        )
+        .bind(input.ticketHash, input.userId, input.serverId, input.createdAt, input.expiresAt),
+    ]);
+  }
+
   async redeemTeamAuthTicket(input: { ticketHash: string; serverId: string; now: number }): Promise<AuthUser | null> {
     const consumed = await this.database
       .prepare(

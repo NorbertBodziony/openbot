@@ -460,6 +460,64 @@ describe("SettingsModal", () => {
     }
   });
 
+  it("captures the existing device baseline before issuing a Mobile Connect ticket", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const existingDevice: MobileConnectedDevice = {
+      sessionId: "11111111-1111-4111-8111-111111111111",
+      name: "Existing iPhone",
+      platform: "ios",
+      connectedAt: Date.now() - 60_000,
+      lastActiveAt: Date.now(),
+    };
+    let resolveInitialDevices: ((devices: MobileConnectedDevice[]) => void) | undefined;
+    const initialDevices = new Promise<MobileConnectedDevice[]>((resolve) => {
+      resolveInitialDevices = resolve;
+    });
+    const onListMobileConnectedDevices = vi
+      .fn<() => Promise<MobileConnectedDevice[]>>()
+      .mockImplementationOnce(() => initialDevices)
+      .mockImplementationOnce(() => initialDevices)
+      .mockResolvedValue([existingDevice]);
+    const onCreateMobileConnect = vi.fn(async () => ({
+      qrData: "openbot://mobile-connect?api=https%3A%2F%2Fapi.openbot.run&ticket=mobile-ticket_baseline_1234567890",
+      expiresAt: Date.now() + 120_000,
+    }));
+    const view = render(() => (
+      <SettingsModal
+        open
+        onOpenChange={() => undefined}
+        value={DEFAULT_GENERAL_SETTINGS}
+        onValueChange={() => undefined}
+        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
+        updateStatus={idleUpdateStatus}
+        onUpdateAction={vi.fn(async () => undefined)}
+        account={account}
+        onUpdateAccountName={vi.fn(async () => undefined)}
+        onUpdateAccountAvatar={vi.fn(async () => undefined)}
+        onCreateMobileConnect={onCreateMobileConnect}
+        onListMobileConnectedDevices={onListMobileConnectedDevices}
+      />
+    ));
+
+    try {
+      await fireEvent.click(screen.getByRole("tab", { name: "Mobile Connect" }));
+      await fireEvent.click(screen.getByRole("button", { name: "Generate QR code" }));
+      expect(onCreateMobileConnect).not.toHaveBeenCalled();
+
+      resolveInitialDevices?.([existingDevice]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onCreateMobileConnect).toHaveBeenCalledOnce();
+      expect(screen.getByRole("img", { name: "Mobile Connect sign-in QR code" })).toBeInTheDocument();
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(screen.queryByText("Phone connected")).not.toBeInTheDocument();
+      expect(screen.getByRole("img", { name: "Mobile Connect sign-in QR code" })).toBeInTheDocument();
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
   it("refreshes connected mobile devices once per minute while no QR code is active", async () => {
     vi.useFakeTimers({ now: 1_000_000 });
     const onListMobileConnectedDevices = vi.fn(async () => []);

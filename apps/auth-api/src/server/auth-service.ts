@@ -216,7 +216,7 @@ export class AuthService {
     await this.#enforceRateLimit(`mobile-ticket:ip:${normalizeSourceIp(sourceIp)}`, 60, now);
     const ticket = randomToken();
     const expiresAt = now + TEAM_TICKET_TTL_MS;
-    await this.#repository.createTeamAuthTicket({
+    await this.#repository.replaceMobileAuthTicket({
       ticketHash: await sha256(ticket),
       userId: user.id,
       serverId: MOBILE_CONNECT_SERVER_ID,

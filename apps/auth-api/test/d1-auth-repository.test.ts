@@ -11,6 +11,11 @@ interface TestMobileSessionUserRow {
   last_used_at: number;
 }
 
+interface PreparedCall {
+  query: string;
+  values: unknown[];
+}
+
 describe("D1 mobile session activity", () => {
   it("updates last activity only after the coarse activity window", async () => {
     const updates: unknown[][] = [];
@@ -26,7 +31,57 @@ describe("D1 mobile session activity", () => {
     await expect(repository.authenticateMobileSession("mobile-token", now)).resolves.toMatchObject({ id: "user-1" });
     expect(updates).toEqual([[now, expect.any(String), connectedAt]]);
   });
+
+  it("atomically replaces outstanding mobile authentication tickets", async () => {
+    const batches: PreparedCall[][] = [];
+    const repository = new D1AuthRepository(ticketDatabase(batches));
+
+    await repository.replaceMobileAuthTicket({
+      ticketHash: "new-ticket-hash",
+      userId: "user-1",
+      serverId: "00000000-0000-4000-8000-000000000001",
+      createdAt: 1_000,
+      expiresAt: 121_000,
+    });
+
+    expect(batches).toHaveLength(1);
+    expect(batches[0]).toHaveLength(2);
+    expect(batches[0]?.[0]?.query).toContain("UPDATE team_auth_tickets SET consumed_at");
+    expect(batches[0]?.[0]?.values).toEqual([1_000, "user-1", "00000000-0000-4000-8000-000000000001"]);
+    expect(batches[0]?.[1]?.query).toContain("INSERT INTO team_auth_tickets");
+    expect(batches[0]?.[1]?.values).toEqual([
+      "new-ticket-hash",
+      "user-1",
+      "00000000-0000-4000-8000-000000000001",
+      1_000,
+      121_000,
+    ]);
+  });
 });
+
+function ticketDatabase(batches: PreparedCall[][]): D1Database {
+  const pending: PreparedCall[] = [];
+  return {
+    prepare(query) {
+      const call: PreparedCall = { query, values: [] };
+      pending.push(call);
+      return statement({ onBind: (values) => (call.values = values) });
+    },
+    async batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]> {
+      batches.push(pending.splice(0));
+      return statements.map(() => d1Result<T>());
+    },
+    exec() {
+      throw new Error("Unexpected exec call.");
+    },
+    withSession() {
+      throw new Error("Unexpected withSession call.");
+    },
+    dump() {
+      throw new Error("Unexpected dump call.");
+    },
+  };
+}
 
 function activityDatabase(lastUsedAt: number, updates: unknown[][]): D1Database {
   return {
@@ -64,12 +119,14 @@ function activityDatabase(lastUsedAt: number, updates: unknown[][]): D1Database 
 
 function statement(options: {
   first?: TestMobileSessionUserRow;
+  onBind?: (values: unknown[]) => void;
   onRun?: (values: unknown[]) => void;
 }): D1PreparedStatement {
   let values: unknown[] = [];
   const prepared: D1PreparedStatement = {
     bind(...nextValues) {
       values = nextValues;
+      options.onBind?.(values);
       return prepared;
     },
     async first<T = TestMobileSessionUserRow>(): Promise<T | null> {

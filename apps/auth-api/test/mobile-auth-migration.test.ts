@@ -23,7 +23,7 @@ describe("mobile auth sessions migration", () => {
       INSERT INTO auth_sessions(id, user_id) VALUES ('session-1', 'user-1');
     `);
 
-    const sql = readFileSync(new URL("../migrations/0012_mobile_auth_sessions.sql", import.meta.url), "utf8");
+    const sql = readFileSync(new URL("../migrations/0014_mobile_auth_sessions.sql", import.meta.url), "utf8");
     database.exec("BEGIN");
     database.exec(sql);
     database.exec("COMMIT");
