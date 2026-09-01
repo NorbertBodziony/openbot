@@ -4777,6 +4777,46 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(screen.queryByRole("tab", { name: "Second page" })).not.toBeInTheDocument());
   });
 
+  it("keeps the browser open when a new tab replaces the last tab during its delayed close", async () => {
+    let resolveClose: (() => void) | undefined;
+    vi.mocked(window.openbot.browser.close).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveClose = resolve;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const closingTab = {
+      id: "tab-closing-last",
+      title: "Closing page",
+      url: "https://example.com/closing",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    const replacementTab = {
+      id: "tab-replacement",
+      title: "Replacement page",
+      url: "https://example.com/replacement",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    emitAgentEvent?.({ type: "browser-changed", tabs: [closingTab], activeTabId: closingTab.id });
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    await fireEvent.keyDown(await screen.findByRole("tab", { name: "Closing page" }), { key: "Delete" });
+    await waitFor(() => expect(resolveClose).toBeDefined());
+
+    emitAgentEvent?.({ type: "browser-changed", tabs: [replacementTab], activeTabId: replacementTab.id });
+    expect(await screen.findByRole("tab", { name: "Replacement page" })).toBeInTheDocument();
+    resolveClose?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.getByRole("complementary", { name: "Browser" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Replacement page" })).toBeInTheDocument();
+  });
+
   it("closes the active remote browser tab with Control W", async () => {
     vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([
       testServer("local", true),
@@ -4895,6 +4935,48 @@ describe("OpenBot connected desktop shell", () => {
       }),
     );
     expect(browserPanel).toBeInTheDocument();
+  });
+
+  it("keeps the latest workspace when an older server load resolves late", async () => {
+    const local = testServer("local", true);
+    const studio = { ...testServer("remote-1", false), name: "Studio Mac" };
+    const office = { ...testServer("remote-2", false), name: "Office PC", apiUrl: "https://office.example.com" };
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, studio, office]);
+    vi.mocked(window.openbot.servers.select)
+      .mockResolvedValueOnce([
+        { ...local, active: false },
+        { ...studio, active: true },
+        { ...office, active: false },
+      ])
+      .mockResolvedValueOnce([
+        { ...local, active: false },
+        { ...studio, active: false },
+        { ...office, active: true },
+      ]);
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    let resolveStudioBots: ((bots: BotSummary[]) => void) | undefined;
+    vi.mocked(window.openbot.agent.listBots)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveStudioBots = resolve;
+          }),
+      )
+      .mockResolvedValueOnce([{ ...BOTS[0], name: "Office Chief" }]);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() => expect(resolveStudioBots).toBeDefined());
+    await fireEvent.click(screen.getByRole("button", { name: "Office PC server" }));
+
+    expect(await screen.findByRole("heading", { name: "Office Chief" })).toBeInTheDocument();
+    resolveStudioBots?.([{ ...BOTS[0], name: "Studio Chief" }]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.getByRole("button", { name: "Office PC server" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("heading", { name: "Office Chief" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Studio Chief" })).not.toBeInTheDocument();
   });
 
   it("closes the browser panel when its last tab is closed from the embedded page", async () => {

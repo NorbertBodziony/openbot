@@ -340,7 +340,7 @@ export function createAppController(props: AppProps = {}) {
   const [browserTabs, setBrowserTabs] = createSignal<BrowserTab[]>([]);
   const [activeBrowserTabId, setActiveBrowserTabId] = createSignal<string | null>(null);
   const [browserVisibilitySuspended, setBrowserVisibilitySuspended] = createSignal(false);
-  let browserVisibilitySuspensionCount = 0;
+  let serverSelectionGeneration = 0;
   let browserChangeRevision = 0;
   const [browserControlState, setBrowserControlState] = createSignal<BrowserControlState>({
     sessions: [],
@@ -3022,128 +3022,120 @@ export function createAppController(props: AppProps = {}) {
     setAppSettingsOpen(true);
   }
 
-  function suspendBrowserVisibility(): () => void {
-    browserVisibilitySuspensionCount += 1;
-    setBrowserVisibilitySuspended(true);
-    let released = false;
-    return () => {
-      if (released) return;
-      released = true;
-      browserVisibilitySuspensionCount -= 1;
-      setBrowserVisibilitySuspended(browserVisibilitySuspensionCount > 0);
-    };
-  }
-
   async function selectServer(serverId: string, trackSelection = true): Promise<void> {
     if (botSetupOpen() && creatingAgent()) return;
+    const selectionGeneration = ++serverSelectionGeneration;
+    const selectionIsCurrent = () => selectionGeneration === serverSelectionGeneration;
     const analytics = desktopAnalytics.scope();
     const previousServerId = servers().find((server) => server.active)?.id;
     const switchingServers = Boolean(previousServerId && previousServerId !== serverId);
-    const releaseBrowserVisibility = switchingServers ? suspendBrowserVisibility() : () => undefined;
-    if (switchingServers) {
-      try {
+    if (switchingServers) setBrowserVisibilitySuspended(true);
+    try {
+      if (switchingServers) {
         await disconnectRemoteDesktopWorkspace(false);
+        if (!selectionIsCurrent()) return;
         await window.openbot.browser.setVisible({ visible: false }).catch(() => undefined);
+        if (!selectionIsCurrent()) return;
+      }
+      directConversationRequest += 1;
+      const previousDynamicIslandLoadedServerId = dynamicIslandLoadedServerId() ?? previousServerId ?? null;
+      setDynamicIslandLoadedServerId(null);
+      let nextServers: ServerSummary[];
+      try {
+        nextServers = await window.openbot.servers.select(serverId);
+        if (!selectionIsCurrent()) return;
+        if (trackSelection) {
+          analytics.track("team_action", {
+            action: "server_selected",
+            result: "succeeded",
+            server_kind: nextServers.find((server) => server.active)?.kind ?? "unknown",
+          });
+        }
       } catch (error) {
-        releaseBrowserVisibility();
+        if (!selectionIsCurrent()) return;
+        if (trackSelection) {
+          analytics.track("team_action", {
+            action: "server_selected",
+            result: "failed",
+            failure_code: "server_select_failed",
+          });
+        }
+        setDynamicIslandLoadedServerId(previousDynamicIslandLoadedServerId);
         throw error;
       }
-    }
-    directConversationRequest += 1;
-    const previousDynamicIslandLoadedServerId = dynamicIslandLoadedServerId();
-    setDynamicIslandLoadedServerId(null);
-    let nextServers: ServerSummary[];
-    try {
-      nextServers = await window.openbot.servers.select(serverId);
-      if (trackSelection) {
-        analytics.track("team_action", {
-          action: "server_selected",
-          result: "succeeded",
-          server_kind: nextServers.find((server) => server.active)?.kind ?? "unknown",
-        });
+      const dynamicIslandState = dynamicIslandCoordinator.serverState(serverId);
+      setServers(nextServers);
+      setBotSetupOpen(false);
+      setBotSetupError(null);
+      setSettingsRequest(null);
+      setBotList([]);
+      agentChatsRetriedOnOpen.clear();
+      explicitlyOpenedAgentChatId = null;
+      setSidebarLayout(defaultSidebarLayout());
+      setActiveBotId("");
+      setActiveDirectMemberId(null);
+      setDirectConversationError(null);
+      setDirectThreads([]);
+      setDirectConversations({});
+      setDirectTypingMemberIds(new Set<string>());
+      setLiveMessages({});
+      rawAgentMessageBodies.clear();
+      setConversationLoaded({});
+      setConversationRevisions({});
+      setConversationReads({});
+      setConversationWindowModes({});
+      setUnreadReplies({});
+      setActiveTurns(dynamicIslandState?.activeTurns ?? {});
+      setQueues(dynamicIslandState?.queues ?? {});
+      setPendingPrompts(dynamicIslandState?.pendingPrompts ?? {});
+      setPendingApprovals(dynamicIslandState?.pendingApprovals ?? {});
+      setFailedTurns(dynamicIslandState?.failedTurns ?? {});
+      setTeamPresence(EMPTY_TEAM_PRESENCE);
+      const selectedServer = nextServers.find((server) => server.id === serverId);
+      if (
+        selectedServer?.kind === "remote" &&
+        (selectedServer.state === "incompatible" || selectedServer.issue?.code === "protocol_error")
+      ) {
+        return;
       }
-    } catch (error) {
-      if (trackSelection) {
-        analytics.track("team_action", {
-          action: "server_selected",
-          result: "failed",
-          failure_code: "server_select_failed",
-        });
+      const browserRequestedAtRevision = browserChangeRevision;
+      const browserSupported = serverSupportsCapability(selectedServer, "browser-control");
+      const browserDisplayState =
+        props.landingPreview || !browserSupported
+          ? Promise.resolve({ tabs: [], activeTabId: null })
+          : selectedServer?.kind === "remote"
+            ? window.openbot.browser.listTabs().then((tabs) => ({ tabs, activeTabId: tabs[0]?.id ?? null }))
+            : window.openbot.browser.getDisplayState();
+      const [storedBots, layout, reads, status, models, displayState, controlState, presence] = await Promise.all([
+        window.openbot.agent.listBots(),
+        serverSupportsCapability(selectedServer, "sidebar-layout")
+          ? window.openbot.agent.getSidebarLayout()
+          : Promise.resolve(defaultSidebarLayout()),
+        window.openbot.agent.listConversationReads(),
+        window.openbot.agent.getStatus(),
+        window.openbot.agent.listModels(),
+        browserDisplayState,
+        props.landingPreview || !browserSupported
+          ? Promise.resolve({ sessions: [] })
+          : window.openbot.browser.getControlState(),
+        window.openbot.servers.getPresence(),
+      ]);
+      if (!selectionIsCurrent()) return;
+      setAgentStatus(status);
+      setModelOptions(models);
+      if (browserChangeRevision === browserRequestedAtRevision) {
+        setBrowserTabs(displayState.tabs);
+        setActiveBrowserTabId(displayState.activeTabId ?? displayState.tabs[0]?.id ?? null);
       }
-      setDynamicIslandLoadedServerId(previousDynamicIslandLoadedServerId);
-      releaseBrowserVisibility();
-      throw error;
+      setBrowserControlState(controlState);
+      setTeamPresence(presence);
+      setSidebarLayout(layout);
+      applyStoredBots(storedBots);
+      applyConversationReads(reads);
+      setDynamicIslandLoadedServerId(serverId);
+    } finally {
+      if (selectionIsCurrent()) setBrowserVisibilitySuspended(false);
     }
-    const dynamicIslandState = dynamicIslandCoordinator.serverState(serverId);
-    setServers(nextServers);
-    setBotSetupOpen(false);
-    setBotSetupError(null);
-    setSettingsRequest(null);
-    setBotList([]);
-    releaseBrowserVisibility();
-    agentChatsRetriedOnOpen.clear();
-    explicitlyOpenedAgentChatId = null;
-    setSidebarLayout(defaultSidebarLayout());
-    setActiveBotId("");
-    setActiveDirectMemberId(null);
-    setDirectConversationError(null);
-    setDirectThreads([]);
-    setDirectConversations({});
-    setDirectTypingMemberIds(new Set<string>());
-    setLiveMessages({});
-    rawAgentMessageBodies.clear();
-    setConversationLoaded({});
-    setConversationRevisions({});
-    setConversationReads({});
-    setConversationWindowModes({});
-    setUnreadReplies({});
-    setActiveTurns(dynamicIslandState?.activeTurns ?? {});
-    setQueues(dynamicIslandState?.queues ?? {});
-    setPendingPrompts(dynamicIslandState?.pendingPrompts ?? {});
-    setPendingApprovals(dynamicIslandState?.pendingApprovals ?? {});
-    setFailedTurns(dynamicIslandState?.failedTurns ?? {});
-    setTeamPresence(EMPTY_TEAM_PRESENCE);
-    const selectedServer = nextServers.find((server) => server.id === serverId);
-    if (
-      selectedServer?.kind === "remote" &&
-      (selectedServer.state === "incompatible" || selectedServer.issue?.code === "protocol_error")
-    ) {
-      return;
-    }
-    const browserRequestedAtRevision = browserChangeRevision;
-    const browserSupported = serverSupportsCapability(selectedServer, "browser-control");
-    const browserDisplayState =
-      props.landingPreview || !browserSupported
-        ? Promise.resolve({ tabs: [], activeTabId: null })
-        : selectedServer?.kind === "remote"
-          ? window.openbot.browser.listTabs().then((tabs) => ({ tabs, activeTabId: tabs[0]?.id ?? null }))
-          : window.openbot.browser.getDisplayState();
-    const [storedBots, layout, reads, status, models, displayState, controlState, presence] = await Promise.all([
-      window.openbot.agent.listBots(),
-      serverSupportsCapability(selectedServer, "sidebar-layout")
-        ? window.openbot.agent.getSidebarLayout()
-        : Promise.resolve(defaultSidebarLayout()),
-      window.openbot.agent.listConversationReads(),
-      window.openbot.agent.getStatus(),
-      window.openbot.agent.listModels(),
-      browserDisplayState,
-      props.landingPreview || !browserSupported
-        ? Promise.resolve({ sessions: [] })
-        : window.openbot.browser.getControlState(),
-      window.openbot.servers.getPresence(),
-    ]);
-    setAgentStatus(status);
-    setModelOptions(models);
-    if (browserChangeRevision === browserRequestedAtRevision) {
-      setBrowserTabs(displayState.tabs);
-      setActiveBrowserTabId(displayState.activeTabId ?? displayState.tabs[0]?.id ?? null);
-    }
-    setBrowserControlState(controlState);
-    setTeamPresence(presence);
-    setSidebarLayout(layout);
-    applyStoredBots(storedBots);
-    applyConversationReads(reads);
-    setDynamicIslandLoadedServerId(serverId);
   }
 
   async function retryServerConnection(serverId: string): Promise<void> {

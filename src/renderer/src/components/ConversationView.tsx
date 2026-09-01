@@ -2199,10 +2199,8 @@ function createConversationViewScope(props: ConversationProps) {
   async function closeBrowserTab(tabId: string) {
     if (closingBrowserTabIds.has(tabId) || !browserTabs().some((tab) => tab.id === tabId)) return;
     closingBrowserTabIds.add(tabId);
-    const closesLastTab = browserTabs().length === 1 && browserTabs()[0]?.id === tabId;
     try {
       await props.onCloseBrowserTab(tabId);
-      if (closesLastTab) hideBrowserPanel();
     } catch {
       closingBrowserTabIds.delete(tabId);
       setComposerError("Could not close the browser tab.");
