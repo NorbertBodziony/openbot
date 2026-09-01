@@ -24,6 +24,7 @@ import {
   ChevronDown,
   ChevronRight,
   ContextMenu,
+  Copy,
   Folder,
   FolderInput,
   FolderPlus,
@@ -61,6 +62,9 @@ interface SidebarProps {
   onPreloadDirectConversation?: () => void;
   onCreateBot: () => void;
   onEditBot: (botId: string) => void;
+  duplicateSupported?: boolean;
+  duplicatingBotIds?: ReadonlySet<string>;
+  onDuplicateBot?: (botId: string) => Promise<void>;
   onDeleteBot: (botId: string) => Promise<void>;
   compact: boolean;
   onExpand: () => void;
@@ -1505,6 +1509,15 @@ export function Sidebar(props: SidebarProps) {
             <EditIcon />
             <span>Edit agent</span>
           </ContextMenu.Item>
+          <Show when={props.duplicateSupported !== false && props.onDuplicateBot}>
+            <ContextMenu.Item
+              disabled={props.duplicatingBotIds?.has(bot.id)}
+              onSelect={() => void props.onDuplicateBot?.(bot.id).catch(() => undefined)}
+            >
+              <Copy class="bot-context-icon size-4" aria-hidden="true" />
+              <span>{props.duplicatingBotIds?.has(bot.id) ? "Duplicating…" : "Duplicate agent"}</span>
+            </ContextMenu.Item>
+          </Show>
           <ContextMenu.Separator />
           <ContextMenu.Item
             class="ui-action-menu-danger bot-context-danger"

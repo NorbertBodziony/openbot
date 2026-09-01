@@ -82,6 +82,40 @@ describe("AgentRoutineStore", () => {
     database.close();
   });
 
+  it("excludes pending agents from due and next-due routine queries", async () => {
+    const { database, routines } = await setup();
+    const now = new Date("2026-08-25T10:00:00.000Z");
+    routines.create(
+      {
+        botId: "chief",
+        name: "Quarter hour",
+        instruction: "Run every quarter hour.",
+        active: true,
+        timezone: "UTC",
+        schedule: { kind: "interval", amount: 15, unit: "minutes", anchorAt: now.toISOString() },
+      },
+      now,
+    );
+    routines.create(
+      {
+        botId: "research",
+        name: "Half hour",
+        instruction: "Run every half hour.",
+        active: true,
+        timezone: "UTC",
+        schedule: { kind: "interval", amount: 30, unit: "minutes", anchorAt: now.toISOString() },
+      },
+      now,
+    );
+    const excluded = new Set(["chief"]);
+
+    expect(routines.nextDueAt(excluded)).toBe("2026-08-25T10:30:00.000Z");
+    expect(routines.due(new Date("2026-08-25T10:31:00.000Z"), excluded).map((due) => due.routine.botId)).toEqual([
+      "research",
+    ]);
+    database.close();
+  });
+
   it("reschedules a paused routine from the activation time without creating a run", async () => {
     const { database, routines } = await setup();
     const routine = routines.create(

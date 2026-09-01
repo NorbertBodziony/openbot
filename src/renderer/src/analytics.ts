@@ -45,7 +45,7 @@ export interface DesktopAnalyticsEvents {
         failure_code?: string;
       })
     | (Partial<AgentAnalyticsProperties> & {
-        action: "delete";
+        action: "delete" | "duplicate";
         result: AnalyticsResult;
         failure_code?: string;
       });
@@ -239,6 +239,7 @@ const SAFE_FAILURE_CODES = new Set([
   "disconnect_failed",
   "display_select_failed",
   "download_failed",
+  "duplicate_failed",
   "edit_failed",
   "email_delivery_failed",
   "email_delivery_not_configured",
@@ -280,7 +281,7 @@ const SAFE_FAILURE_CODES = new Set([
 ]);
 
 const EVENT_ACTIONS: Partial<Record<AnalyticsEventName, readonly string[]>> = {
-  agent_action: ["create", "update", "delete"],
+  agent_action: ["create", "update", "delete", "duplicate"],
   agent_input_action: ["prompt", "approval"],
   queue_action: ["cancel", "steer", "edit", "reorder", "interrupt"],
   routine_action: ["create", "update", "delete", "test"],

@@ -45,6 +45,17 @@ export class AgentMemoryStore {
     return this.#save({ botId, text, origin: "manual", sourceTurnId: null });
   }
 
+  duplicate(sourceBotId: string, targetBotId: string): BotMemory[] {
+    return this.list(sourceBotId).map((memory) =>
+      this.#save({
+        botId: targetBotId,
+        text: memory.text,
+        origin: memory.origin,
+        sourceTurnId: null,
+      }),
+    );
+  }
+
   updateManual(botId: string, memoryId: string, text: string): BotMemory {
     return this.#save({ botId, memoryId, text, origin: "manual", sourceTurnId: null });
   }
