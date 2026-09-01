@@ -3176,30 +3176,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error(`A browser tab can retain files for up to ${MAX_BROWSER_UPLOAD_INPUTS_PER_TAB} inputs.`);
     }
     const retainedBytes = [...(roots?.values() ?? [])].reduce((total, root) => total + root.bytes, 0);
-    const reservedDeltaBytes = [...reservations.values()].reduce(
-      (total, value) => total + Math.max(0, value.bytes - (roots?.get(value.inputId)?.bytes ?? 0)),
-      0,
-    );
-    const reservationDeltaBytes = reservation.bytes - (roots?.get(reservation.inputId)?.bytes ?? 0);
-    if (retainedBytes + reservedDeltaBytes + reservationDeltaBytes > MAX_BROWSER_UPLOAD_BYTES_PER_TAB) {
+    const reservedBytes = [...reservations.values()].reduce((total, value) => total + value.bytes, 0);
+    if (retainedBytes + reservedBytes + reservation.bytes > MAX_BROWSER_UPLOAD_BYTES_PER_TAB) {
       throw new Error(`A browser tab can retain up to ${MAX_BROWSER_UPLOAD_BYTES_PER_TAB} upload bytes.`);
     }
     const totalRetainedBytes = [...this.#browserUploadRoots.values()].reduce(
       (total, values) => total + [...values.values()].reduce((sum, value) => sum + value.bytes, 0),
       0,
     );
-    const totalReservedDeltaBytes = [...this.#browserUploadReservations].reduce(
-      (total, [reservedTabId, values]) =>
-        total +
-        [...values.values()].reduce(
-          (sum, value) =>
-            sum +
-            Math.max(0, value.bytes - (this.#browserUploadRoots.get(reservedTabId)?.get(value.inputId)?.bytes ?? 0)),
-          0,
-        ),
+    const totalReservedBytes = [...this.#browserUploadReservations.values()].reduce(
+      (total, values) => total + [...values.values()].reduce((sum, value) => sum + value.bytes, 0),
       0,
     );
-    if (totalRetainedBytes + totalReservedDeltaBytes + reservationDeltaBytes > MAX_BROWSER_UPLOAD_BYTES_TOTAL) {
+    if (totalRetainedBytes + totalReservedBytes + reservation.bytes > MAX_BROWSER_UPLOAD_BYTES_TOTAL) {
       throw new Error(`Browser uploads can retain up to ${MAX_BROWSER_UPLOAD_BYTES_TOTAL} bytes in total.`);
     }
     reservations.set(id, reservation);
