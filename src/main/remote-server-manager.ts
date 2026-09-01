@@ -107,7 +107,11 @@ import {
 } from "@openbot/contracts/team-protocol/v3-adapter";
 import { RemoteViewerProxy } from "./remote-viewer-proxy";
 import { fingerprint } from "./team-store";
-import { type TeamWebRtcClientTransport, TeamWebRtcRequestError } from "./team-webrtc-client-transport";
+import {
+  TEAM_WEBRTC_REMOTE_REQUEST_TIMEOUT_MILLISECONDS,
+  type TeamWebRtcClientTransport,
+  TeamWebRtcRequestError,
+} from "./team-webrtc-client-transport";
 
 export { isValidRemoteApiUrl } from "@openbot/contracts/invite-links";
 
@@ -174,6 +178,7 @@ export interface DevelopmentRemoteServerConnection {
 }
 
 const REMOTE_REQUEST_TIMEOUT_MS = 15_000;
+export const REMOTE_DUPLICATION_TIMEOUT_MS = TEAM_WEBRTC_REMOTE_REQUEST_TIMEOUT_MILLISECONDS;
 const REMOTE_EVENT_RECONNECT_BASE_MS = 1_000;
 const REMOTE_EVENT_RECONNECT_MAX_MS = 60_000;
 const REMOTE_EVENT_RECONNECT_JITTER = 0.2;
@@ -646,7 +651,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   async request<T>(
     path: string,
-    init: { method?: string; body?: unknown } = {},
+    init: { method?: string; body?: unknown; timeoutMs?: number } = {},
     serverId = this.#state.activeServerId,
     decoder: ResponseDecoder<T>,
   ): Promise<T> {
@@ -667,6 +672,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       const value = await requestJson(server.apiUrl, path, decoder, {
         ...init,
         token: this.#token(server),
+        timeoutMs: init.timeoutMs,
         ...this.#requestProtocol(compatibility),
       });
       return addRemotePreviewUrls(value, server.id);
@@ -2000,26 +2006,31 @@ async function requestJson<T>(
     protocol?: number;
     appVersion?: string;
     capabilities?: readonly TeamProtocolV3Capability[];
+    timeoutMs?: number;
   } = {},
 ): Promise<T> {
   const method = options.method ?? (options.body === undefined ? "GET" : "POST");
-  const response = await remoteFetch(new URL(path, apiUrl), {
-    method,
-    headers: {
-      Accept: "application/json",
-      ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
-      ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
-      ...(options.protocol ? { [TEAM_PROTOCOL_VERSION_HEADER]: String(options.protocol) } : {}),
-      ...(options.appVersion ? { [TEAM_APP_VERSION_HEADER]: options.appVersion } : {}),
-      ...(options.capabilities ? { [TEAM_CAPABILITIES_HEADER]: options.capabilities.join(",") } : {}),
+  const response = await remoteFetch(
+    new URL(path, apiUrl),
+    {
+      method,
+      headers: {
+        Accept: "application/json",
+        ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
+        ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+        ...(options.protocol ? { [TEAM_PROTOCOL_VERSION_HEADER]: String(options.protocol) } : {}),
+        ...(options.appVersion ? { [TEAM_APP_VERSION_HEADER]: options.appVersion } : {}),
+        ...(options.capabilities ? { [TEAM_CAPABILITIES_HEADER]: options.capabilities.join(",") } : {}),
+      },
+      body:
+        options.body === undefined
+          ? undefined
+          : options.protocol === TEAM_PROTOCOL_V3
+            ? encodeTeamProtocolV3CurrentHttpRequest(method, path, options.body)
+            : encodeTeamProtocolV1CurrentHttpRequest(method, path, options.body),
     },
-    body:
-      options.body === undefined
-        ? undefined
-        : options.protocol === TEAM_PROTOCOL_V3
-          ? encodeTeamProtocolV3CurrentHttpRequest(method, path, options.body)
-          : encodeTeamProtocolV1CurrentHttpRequest(method, path, options.body),
-  });
+    options.timeoutMs,
+  );
   let value: unknown;
   if (response.status !== 204) {
     try {
@@ -2774,8 +2785,12 @@ function readStoredRemoteServer(value: unknown): StoredRemoteServer | null {
   };
 }
 
-function remoteFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
-  return fetch(input, { ...init, signal: AbortSignal.timeout(REMOTE_REQUEST_TIMEOUT_MS) });
+function remoteFetch(
+  input: string | URL,
+  init: RequestInit = {},
+  timeoutMs = REMOTE_REQUEST_TIMEOUT_MS,
+): Promise<Response> {
+  return fetch(input, { ...init, signal: AbortSignal.timeout(timeoutMs) });
 }
 
 function isLocalDevelopmentApi(value: string): boolean {

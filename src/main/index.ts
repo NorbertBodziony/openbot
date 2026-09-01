@@ -163,6 +163,7 @@ import {
   decodeRoutines,
   decodeSidebarLayoutSnapshot,
   decodeVoid,
+  REMOTE_DUPLICATION_TIMEOUT_MS,
   RemoteServerManager,
 } from "./remote-server-manager";
 import { sendToRenderer } from "./renderer-ipc";
@@ -2246,7 +2247,7 @@ async function routeDuplicateBot(
   if (serverId !== "local") {
     return remoteServers.request(
       `/v1/agents/${encodeURIComponent(botId)}/duplicate`,
-      { method: "POST", body: {} },
+      { method: "POST", body: {}, timeoutMs: REMOTE_DUPLICATION_TIMEOUT_MS },
       serverId,
       decodeDuplicateBotResult,
     );
@@ -2257,7 +2258,7 @@ async function routeDuplicateBot(
       ...service.listBots().map((candidate) => candidate.id),
       bot.id,
     ]);
-    return { bot: service.commitBotDuplication(bot.id), layout };
+    return { bot: await service.commitBotDuplication(bot.id), layout };
   } catch (error) {
     let rollbackError: unknown;
     try {

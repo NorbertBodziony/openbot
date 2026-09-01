@@ -27,7 +27,7 @@ import type {
 import type { TeamWebRtcBridge } from "./team-webrtc-bridge";
 import { TeamWebRtcFileTransfer } from "./team-webrtc-file-transfer";
 
-const REMOTE_REQUEST_TIMEOUT_MILLISECONDS = 10 * 60_000 + 30_000;
+export const TEAM_WEBRTC_REMOTE_REQUEST_TIMEOUT_MILLISECONDS = 10 * 60_000 + 30_000;
 
 interface TeamWebRtcClientTransportEvents {
   connected: [hostId: string];
@@ -236,7 +236,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       const timer = setTimeout(() => {
         this.#pending.delete(requestId);
         reject(new TeamWebRtcRequestError(504, "remote_timeout", "The remote request timed out."));
-      }, REMOTE_REQUEST_TIMEOUT_MILLISECONDS);
+      }, TEAM_WEBRTC_REMOTE_REQUEST_TIMEOUT_MILLISECONDS);
       this.#pending.set(requestId, { hostId, resolve, reject, timer });
     });
     try {

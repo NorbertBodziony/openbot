@@ -226,7 +226,7 @@ describe("TeamApiServer administration", () => {
       bots = [duplicate, source];
       return duplicate;
     });
-    const commitBotDuplication = vi.fn(() => duplicate);
+    const commitBotDuplication = vi.fn(async () => duplicate);
     const deleteBot = vi.fn(async (botId: string) => {
       bots = bots.filter((bot) => bot.id !== botId);
     });

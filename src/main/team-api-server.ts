@@ -950,7 +950,7 @@ export class TeamApiServer {
               bot.id,
             ]);
             return this.#json(response, 201, {
-              bot: this.#options.agents.commitBotDuplication(bot.id),
+              bot: await this.#options.agents.commitBotDuplication(bot.id),
               layout,
             });
           } catch (error) {

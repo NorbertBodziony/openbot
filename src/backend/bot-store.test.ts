@@ -257,6 +257,8 @@ describe("BotStore", () => {
 
     const duplicate = await store.duplicateBot(source.id);
     const secondDuplicate = await store.duplicateBot(source.id);
+    await store.commitBotDuplication(duplicate.id);
+    await store.commitBotDuplication(secondDuplicate.id);
 
     expect(duplicate).toMatchObject({
       name: "Research copy",
@@ -284,6 +286,33 @@ describe("BotStore", () => {
 
     await writeFile(join(duplicate.workspacePath, "skills.lock"), "research@2\n");
     await expect(readFile(join(source.workspacePath, "skills.lock"), "utf8")).resolves.toBe("research@1\n");
+
+    const reloaded = new BotStore(userData, home);
+    await reloaded.initialize();
+    expect(reloaded.list().map((bot) => bot.id)).toEqual(
+      expect.arrayContaining([source.id, duplicate.id, secondDuplicate.id]),
+    );
+  });
+
+  it("removes a durable pending duplicate during restart recovery", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-duplicate-recovery-"));
+    temporaryRoots.push(root);
+    const userData = join(root, "user-data");
+    const home = join(root, "home");
+    const store = new BotStore(userData, home);
+    await store.initialize();
+    const source = await store.getOrCreate("chief");
+    await writeFile(join(source.workspacePath, "note.txt"), "source\n");
+    const duplicate = await store.duplicateBot(source.id);
+
+    const recovered = new BotStore(userData, home);
+    await recovered.initialize();
+
+    expect(recovered.list().map((bot) => bot.id)).toEqual([source.id]);
+    await expect(readFile(join(duplicate.workspacePath, "note.txt"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(readFile(join(source.workspacePath, "note.txt"), "utf8")).resolves.toBe("source\n");
   });
 
   it("removes a partial duplicate when profile persistence fails", async () => {

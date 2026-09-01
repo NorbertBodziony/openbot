@@ -206,7 +206,7 @@ describe.sequential("AgentService", () => {
 
     expect(service.listBots().some((bot) => bot.id === duplicate.id)).toBe(false);
     expect(events).toEqual([]);
-    service.commitBotDuplication(duplicate.id);
+    await service.commitBotDuplication(duplicate.id);
     expect(service.listBots().some((bot) => bot.id === duplicate.id)).toBe(true);
     expect(events).toEqual(
       expect.arrayContaining([
@@ -308,6 +308,30 @@ describe.sequential("AgentService", () => {
 
     await expect(service.duplicateBot("chief")).rejects.toThrow("finish and clear its queue");
     expect(store.list().map((bot) => bot.id)).toEqual(["chief"]);
+  });
+
+  it("serializes duplication until the previous copy is committed", async () => {
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    await store.getOrCreate("chief");
+    await store.getOrCreate("research");
+    const first = await service.duplicateBot("chief");
+    let secondResolved = false;
+    const secondRequest = service.duplicateBot("research").then((duplicate) => {
+      secondResolved = true;
+      return duplicate;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(secondResolved).toBe(false);
+    await service.commitBotDuplication(first.id);
+    const second = await secondRequest;
+    await service.commitBotDuplication(second.id);
+    expect(service.listBots().map((bot) => bot.id)).toEqual(
+      expect.arrayContaining(["chief", "research", first.id, second.id]),
+    );
   });
 
   it("removes copied data when the source changes during duplication", async () => {

@@ -67,6 +67,7 @@ export class BotStore {
   readonly #sharedRoot: string;
   readonly #downloadsRoot: string;
   readonly #avatarsRoot: string;
+  readonly #duplicationsRoot: string;
   readonly #database: OpenBotDatabase;
   #state: StoredState = { version: 2, examplesInitialized: false, bots: [] };
   #avatarUpdateQueue: Promise<void> = Promise.resolve();
@@ -79,6 +80,7 @@ export class BotStore {
     this.#sharedRoot = join(openbotRoot, "Shared");
     this.#downloadsRoot = join(openbotRoot, "Downloads");
     this.#avatarsRoot = join(userDataPath, "avatars", "agents");
+    this.#duplicationsRoot = join(userDataPath, "agent-duplications");
     this.#database = database;
   }
 
@@ -100,6 +102,7 @@ export class BotStore {
       mkdir(this.#sharedRoot, { recursive: true, mode: 0o700 }),
       mkdir(this.#downloadsRoot, { recursive: true, mode: 0o700 }),
       mkdir(this.#avatarsRoot, { recursive: true, mode: 0o700 }),
+      mkdir(this.#duplicationsRoot, { recursive: true, mode: 0o700 }),
       mkdir(dirname(this.#statePath), { recursive: true, mode: 0o700 }),
     ]);
 
@@ -114,29 +117,29 @@ export class BotStore {
         examplesInitialized: true,
         bots: persisted.map(normalizeStoredBot),
       };
-      return;
-    }
-
-    const legacy = await this.#readState();
-    await this.#database.backupLegacyFile(this.#statePath);
-    const sessions: Array<{ bot: StoredBot; externalSessionId: string }> = [];
-    legacy.bots = legacy.bots.map((bot) => {
-      if (!bot.threadId) return bot;
-      sessions.push({ bot, externalSessionId: bot.threadId });
-      return { ...bot, threadId: stableThreadId(bot.id) };
-    });
-    legacy.examplesInitialized = true;
-    this.#state = legacy;
-    this.#database.replaceAgents("legacy-import:bots:v1", legacy.bots, "agents.legacy-imported");
-    for (const { bot, externalSessionId } of sessions) {
-      this.#database.bindProviderSession({
-        threadId: stableThreadId(bot.id),
-        provider: bot.provider,
-        externalSessionId,
-        model: bot.model,
-        effort: bot.reasoningEffort,
+    } else {
+      const legacy = await this.#readState();
+      await this.#database.backupLegacyFile(this.#statePath);
+      const sessions: Array<{ bot: StoredBot; externalSessionId: string }> = [];
+      legacy.bots = legacy.bots.map((bot) => {
+        if (!bot.threadId) return bot;
+        sessions.push({ bot, externalSessionId: bot.threadId });
+        return { ...bot, threadId: stableThreadId(bot.id) };
       });
+      legacy.examplesInitialized = true;
+      this.#state = legacy;
+      this.#database.replaceAgents("legacy-import:bots:v1", legacy.bots, "agents.legacy-imported");
+      for (const { bot, externalSessionId } of sessions) {
+        this.#database.bindProviderSession({
+          threadId: stableThreadId(bot.id),
+          provider: bot.provider,
+          externalSessionId,
+          model: bot.model,
+          effort: bot.reasoningEffort,
+        });
+      }
     }
+    await this.#recoverPendingDuplications();
   }
 
   list(): BotSummary[] {
@@ -206,11 +209,13 @@ export class BotStore {
     record.avatarSeed = source.avatarSeed;
     record.avatarHue = source.avatarHue;
 
-    const stagedWorkspace = `${record.workspacePath}.openbot-stage-${randomUUID()}`;
+    const stagedWorkspace = `${record.workspacePath}.openbot-stage`;
     const avatarDirectory = join(this.#avatarsRoot, record.id);
-    const stagedAvatarDirectory = `${avatarDirectory}.openbot-stage-${randomUUID()}`;
+    const stagedAvatarDirectory = `${avatarDirectory}.openbot-stage`;
+    const duplicationMarker = this.#duplicationMarkerPath(record.id);
     let stagedAvatarPath: string | null = null;
     try {
+      await writeFile(duplicationMarker, "pending\n", { encoding: "utf8", mode: 0o600, flag: "wx" });
       await cp(source.workspacePath, stagedWorkspace, {
         recursive: true,
         dereference: false,
@@ -254,9 +259,16 @@ export class BotStore {
         rm(record.workspacePath, { recursive: true, force: true }),
         rm(stagedAvatarDirectory, { recursive: true, force: true }),
         rm(avatarDirectory, { recursive: true, force: true }),
+        rm(duplicationMarker, { force: true }),
       ]);
       throw error;
     }
+  }
+
+  async commitBotDuplication(id: string): Promise<BotSummary> {
+    const bot = this.#requireBot(id);
+    await rm(this.#duplicationMarkerPath(id));
+    return { ...bot };
   }
 
   async updateBot(input: UpdateBotInput): Promise<BotSummary> {
@@ -362,12 +374,21 @@ export class BotStore {
     this.#database.hardDeleteAgent(`agents:hard-delete:${randomUUID()}`, id, bot.threadId, this.#state.bots);
     await Promise.all([
       rm(join(this.#avatarsRoot, id), { recursive: true, force: true }),
+      rm(`${join(this.#avatarsRoot, id)}.openbot-stage`, { recursive: true, force: true }),
       rm(join(this.#botsRoot, id), { recursive: true, force: true }),
+      rm(`${join(this.#botsRoot, id)}.openbot-stage`, { recursive: true, force: true }),
+      rm(this.#duplicationMarkerPath(id), { force: true }),
     ]);
     return { ...bot };
   }
 
-  getOrCreate(id: string, name?: string, title?: string): Promise<BotSummary> {
+  async getOrCreate(id: string, name?: string, title?: string): Promise<BotSummary> {
+    validateBotId(id);
+    const existing = this.#state.bots.find((bot) => bot.id === id);
+    if (existing) {
+      await mkdir(existing.workspacePath, { recursive: true, mode: 0o700 });
+      return { ...existing };
+    }
     return this.#enqueueCreation(() => this.#getOrCreate(id, name, title));
   }
 
@@ -387,6 +408,31 @@ export class BotStore {
     await mkdir(record.workspacePath, { recursive: true, mode: 0o700 });
     this.#persist("agent.created");
     return { ...record };
+  }
+
+  async #recoverPendingDuplications(): Promise<void> {
+    const entries = await readdir(this.#duplicationsRoot, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".pending")) continue;
+      const id = entry.name.slice(0, -".pending".length);
+      if (!isGeneratedBotId(id)) continue;
+      const bot = this.#state.bots.find((candidate) => candidate.id === id);
+      if (bot) {
+        this.#state.bots = this.#state.bots.filter((candidate) => candidate.id !== id);
+        this.#database.hardDeleteAgent(`agents:duplicate-recovery:${randomUUID()}`, id, bot.threadId, this.#state.bots);
+      }
+      await Promise.all([
+        rm(join(this.#botsRoot, id), { recursive: true, force: true }),
+        rm(`${join(this.#botsRoot, id)}.openbot-stage`, { recursive: true, force: true }),
+        rm(join(this.#avatarsRoot, id), { recursive: true, force: true }),
+        rm(`${join(this.#avatarsRoot, id)}.openbot-stage`, { recursive: true, force: true }),
+        rm(join(this.#duplicationsRoot, entry.name), { force: true }),
+      ]);
+    }
+  }
+
+  #duplicationMarkerPath(id: string): string {
+    return join(this.#duplicationsRoot, `${id}.pending`);
   }
 
   async ensureThreadId(id: string): Promise<string> {
@@ -568,6 +614,10 @@ function validateBotId(id: string): void {
 
 function isValidBotId(id: string): boolean {
   return /^[a-z0-9][a-z0-9-]{0,63}$/.test(id) && basename(id) === id;
+}
+
+function isGeneratedBotId(id: string): boolean {
+  return id.startsWith("bot-") && isUuidV4(id.slice("bot-".length));
 }
 
 function titleFromId(id: string): string {

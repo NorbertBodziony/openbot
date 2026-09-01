@@ -365,10 +365,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #pendingRuntimeRefreshes = new Set<string>();
   readonly #duplicatingBots = new Set<string>();
   readonly #pendingDuplicateBots = new Set<string>();
+  readonly #pendingDuplicateReleases = new Map<string, () => void>();
   readonly #pendingDeltas = new Map<string, PendingDelta>();
   readonly #pendingMemoryMutations = new Map<string, PendingMemoryMutation[]>();
   readonly #responseAttachmentCommands = new Map<string, Promise<OpenBotToolResponse>>();
   readonly #memoryEpochs = new Map<string, number>();
+  #duplicationCommitQueue: Promise<void> = Promise.resolve();
   #routineTimer: NodeJS.Timeout | null = null;
   #status: AgentStatus = structuredClone(INITIAL_STATUS);
   readonly #clients = new Map<AgentProvider, AgentClient>();
@@ -708,13 +710,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async duplicateBot(sourceBotId: string): Promise<BotSummary> {
-    const source = this.#requireKnownBot(sourceBotId);
-    if (this.#duplicatingBots.has(sourceBotId)) throw new Error("This agent is already being duplicated.");
-    this.#assertBotIdleForDuplication(sourceBotId);
-    const sourceSignature = this.#duplicationSourceSignature(sourceBotId);
-    this.#duplicatingBots.add(sourceBotId);
+    const releaseDuplication = await this.#acquireDuplicationCommitLock();
+    let releaseOnExit = true;
     let duplicate: BotSummary | null = null;
     try {
+      const source = this.#requireKnownBot(sourceBotId);
+      if (this.#duplicatingBots.has(sourceBotId)) throw new Error("This agent is already being duplicated.");
+      this.#assertBotIdleForDuplication(sourceBotId);
+      const sourceSignature = this.#duplicationSourceSignature(sourceBotId);
+      this.#duplicatingBots.add(sourceBotId);
       duplicate = await this.#store.duplicateBot(sourceBotId);
       this.#pendingDuplicateBots.add(duplicate.id);
       this.#assertDuplicationSourceUnchanged(sourceBotId, sourceSignature);
@@ -732,6 +736,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       this.#assertDuplicationSourceUnchanged(sourceBotId, sourceSignature);
       const completedDuplicate = duplicate;
+      this.#pendingDuplicateReleases.set(completedDuplicate.id, releaseDuplication);
+      releaseOnExit = false;
       return this.#store.list().find((candidate) => candidate.id === completedDuplicate.id) ?? completedDuplicate;
     } catch (error) {
       if (!duplicate) throw error;
@@ -752,17 +758,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw error;
     } finally {
       this.#duplicatingBots.delete(sourceBotId);
+      if (releaseOnExit) releaseDuplication();
     }
   }
 
-  commitBotDuplication(botId: string): BotSummary {
-    if (!this.#pendingDuplicateBots.delete(botId)) throw new Error("This agent duplication is not pending.");
-    const bot = this.#requireKnownBot(botId);
-    this.#emit({ type: "bots-changed", bots: this.listBots() });
-    if (this.#memories.list(bot.id).length > 0) this.#memoryStateChanged(bot.id);
-    if (this.#routines.list(bot.id).length > 0) this.#routineStateChanged(bot.id);
-    this.#armRoutineTimer();
-    return bot;
+  async commitBotDuplication(botId: string): Promise<BotSummary> {
+    if (!this.#pendingDuplicateBots.has(botId)) throw new Error("This agent duplication is not pending.");
+    const releaseDuplication = this.#pendingDuplicateReleases.get(botId);
+    try {
+      const bot = await this.#store.commitBotDuplication(botId);
+      this.#pendingDuplicateBots.delete(botId);
+      this.#emit({ type: "bots-changed", bots: this.listBots() });
+      if (this.#memories.list(bot.id).length > 0) this.#memoryStateChanged(bot.id);
+      if (this.#routines.list(bot.id).length > 0) this.#routineStateChanged(bot.id);
+      this.#armRoutineTimer();
+      return bot;
+    } finally {
+      this.#pendingDuplicateReleases.delete(botId);
+      releaseDuplication?.();
+    }
   }
 
   setMarketplaceSource(botId: string, source: NonNullable<BotSummary["marketplaceSource"]>): BotSummary {
@@ -878,8 +892,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error("Stop the agent and cancel its queued messages before deleting it.");
     }
 
-    await this.#deleteBotData(bot);
-    const wasPendingDuplicate = this.#pendingDuplicateBots.delete(botId);
+    const wasPendingDuplicate = this.#pendingDuplicateBots.has(botId);
+    const releaseDuplication = this.#pendingDuplicateReleases.get(botId);
+    try {
+      await this.#deleteBotData(bot);
+    } finally {
+      if (wasPendingDuplicate) {
+        this.#pendingDuplicateReleases.delete(botId);
+        releaseDuplication?.();
+      }
+    }
+    this.#pendingDuplicateBots.delete(botId);
     if (!wasPendingDuplicate) this.#emit({ type: "bots-changed", bots: this.listBots() });
     this.#armRoutineTimer();
   }
@@ -895,6 +918,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (hasPendingWork || hasAttention || this.#snapshots.get(botId)?.activeTurnId) {
       throw new Error("Wait for the agent to finish and clear its queue before duplicating it.");
     }
+  }
+
+  async #acquireDuplicationCommitLock(): Promise<() => void> {
+    const previous = this.#duplicationCommitQueue;
+    let release = (): void => undefined;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.#duplicationCommitQueue = previous.then(() => current);
+    await previous;
+    return release;
   }
 
   #duplicationSourceSignature(botId: string): string {
