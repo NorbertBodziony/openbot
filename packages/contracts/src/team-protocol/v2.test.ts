@@ -118,6 +118,7 @@ describe("Team protocol v2", () => {
     ).toEqual({ visible: true });
     expect(encodeTeamProtocolV2CurrentHttpRequest("DELETE", "/v1/attachments/attachment-1", undefined)).toEqual({});
     expect(encodeTeamProtocolV2CurrentHttpRequest("DELETE", "/v1/agents/agent-1", undefined)).toEqual({});
+    expect(encodeTeamProtocolV2CurrentHttpRequest("GET", "/v1/agents/agent-1/skills", undefined)).toEqual({});
     expect(
       encodeTeamProtocolV2CurrentHttpRequest("GET", "/v1/remote-screen/sessions/session-1/viewer", undefined),
     ).toEqual({});

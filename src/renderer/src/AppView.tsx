@@ -212,6 +212,7 @@ function WorkspaceShell(props: {
     setPermissionsOpen,
     appSettingsOpen,
     openAppSettings,
+    skillsMarketplaceOpen,
     setSkillsMarketplaceOpen,
     LEFT_PANEL_DEFAULT,
     LEFT_PANEL_MIN,
@@ -533,7 +534,13 @@ function WorkspaceShell(props: {
           approval={activeBot() ? pendingApprovals()[activeBot()?.id ?? ""] : undefined}
           browserTakeover={activeBrowserTakeover()}
           activeTurnId={activeBot() ? activeTurns()[activeBot()?.id ?? ""] : null}
-          globalOverlayOpen={globalSearchOpen() || joinServerOpen() || serverSettingsOpen() || appSettingsOpen()}
+          globalOverlayOpen={
+            globalSearchOpen() ||
+            joinServerOpen() ||
+            serverSettingsOpen() ||
+            appSettingsOpen() ||
+            skillsMarketplaceOpen()
+          }
           settingsRequest={settingsRequest()}
           messageFocusRequest={messageFocusRequest()}
           onSelectAgent={selectBot}

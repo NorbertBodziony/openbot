@@ -107,7 +107,7 @@ function isTeamProtocolV2NoBodyRoute(method: string, path: string): boolean {
       return true;
     }
     if (/^\/v1\/direct\/conversations\/[^/]+(?:\/page)?$/u.test(pathname)) return true;
-    return /^\/v1\/agents\/[^/]+\/(?:memories|routines|routines\/[^/]+\/runs|conversation|conversation-page|queue)$/u.test(
+    return /^\/v1\/agents\/[^/]+\/(?:skills|memories|routines|routines\/[^/]+\/runs|conversation|conversation-page|queue)$/u.test(
       pathname,
     );
   }

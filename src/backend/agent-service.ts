@@ -4659,9 +4659,11 @@ function displayMessageReferences(
   agentNames: ReadonlyMap<string, string>,
 ): string {
   const names = new Map(attachments.map((attachment) => [attachment.id, attachment.name]));
-  return expandChatTagReferences(
-    expandAttachmentReferences(text, (reference) => names.get(reference.attachmentId)),
-    (reference) => (reference.kind === "agent" ? agentNames.get(reference.id) : undefined),
+  return expandAttachmentReferences(
+    expandChatTagReferences(text, (reference) =>
+      reference.kind === "agent" ? agentNames.get(reference.id) : undefined,
+    ),
+    (reference) => names.get(reference.attachmentId),
   );
 }
 

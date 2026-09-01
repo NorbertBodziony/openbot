@@ -2133,9 +2133,11 @@ function createConversationViewScope(props: ConversationProps) {
         .filter((skill) => skill.state !== "needs-repair")
         .map((skill) => [skill.skillId, skill.name]),
     );
-    const text = expandChatTagReferences(
-      expandAttachmentReferences(message.body, (reference) => attachmentNames.get(reference.attachmentId)),
-      (reference) => (reference.kind === "agent" ? agentNames.get(reference.id) : skillNames.get(reference.id)),
+    const text = expandAttachmentReferences(
+      expandChatTagReferences(message.body, (reference) =>
+        reference.kind === "agent" ? agentNames.get(reference.id) : skillNames.get(reference.id),
+      ),
+      (reference) => attachmentNames.get(reference.attachmentId),
     );
     if (!text) return;
     try {

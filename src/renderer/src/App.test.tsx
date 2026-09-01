@@ -1,3 +1,4 @@
+import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
 import { serializeChatTagReference } from "@openbot/contracts/chat-tag-references";
 import type {
   AgentEvent,
@@ -5329,9 +5330,10 @@ describe("OpenBot connected desktop shell", () => {
           {
             id: "assistant-actions",
             author: "user",
-            text: `Ask ${serializeChatTagReference("agent", "Old Sales", "sales-outbound")} to use ${serializeChatTagReference("skill", "Old Skill", "skill-1")}.`,
+            text: `Ask ${serializeChatTagReference("agent", "Old Sales", "sales-outbound")} to use ${serializeChatTagReference("skill", "Old Skill", "skill-1")} and review ${serializeAttachmentReference("tagged file", "attachment-1")}.`,
             createdAt: "2026-08-12T10:00:00.000Z",
             status: "completed",
+            attachments: [attachment("attachment-1", "@[Ops](agent:ops)", "pdf")],
           },
         ],
       },
@@ -5349,7 +5351,11 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.pointerDown(screen.getByRole("button", { name: "More message actions" }), { button: 0 });
     await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Copy" }), { button: 0 });
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith("Ask @Sales Outbound to use Release Notes (skill)."));
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith(
+        "Ask @Sales Outbound to use Release Notes (skill) and review @[Ops](agent:ops).",
+      ),
+    );
   });
 
   it("retries failed installed skill loading after a remote reconnect", async () => {
