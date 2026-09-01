@@ -126,6 +126,19 @@ describe("OpenBotDatabase", () => {
 
     database.dispatch(pending.markerCommandId, [], () => ({ recorded: true }));
     expect(database.pendingHostedSiteTerminalEvents()).toEqual([]);
+    database.deletePendingHostedSiteTerminalEvent(pending.botId, pending.operationId, pending.status);
+    expect(
+      database.connection
+        .prepare("SELECT COUNT(*) AS count FROM orchestration_events WHERE event_type = 'hosted-site.terminal-pending'")
+        .get(),
+    ).toMatchObject({ count: 0 });
+    expect(
+      database.connection
+        .prepare(
+          "SELECT COUNT(*) AS count FROM orchestration_command_receipts WHERE command_id LIKE 'hosted-site-terminal-pending:%'",
+        )
+        .get(),
+    ).toMatchObject({ count: 0 });
     database.close();
   });
 

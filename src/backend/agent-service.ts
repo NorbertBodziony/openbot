@@ -4986,6 +4986,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           detail: { action: context.action, status, operationId: context.operationId, siteId: details.siteId },
         });
       }
+      if (status !== "running") {
+        database.deletePendingHostedSiteTerminalEvent(context.botId, context.operationId, status);
+      }
       if (ownsTransaction) database.connection.exec("COMMIT");
       this.#snapshots.set(context.botId, current);
       this.#publishConversation(current);

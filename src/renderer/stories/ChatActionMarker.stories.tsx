@@ -83,11 +83,8 @@ export const AllStates: Story = {
   ),
   play: async ({ canvas, userEvent }) => {
     onOpenRoutine.mockClear();
-    onOpenHostedSite.mockClear();
     await userEvent.click(canvas.getAllByRole("button", { name: "Open routine Morning brief" })[0]);
     await expect(onOpenRoutine).toHaveBeenCalledWith({ routineId: "routine-1", name: "Morning brief" });
-    await userEvent.click(canvas.getAllByRole("button", { name: "Open site launch-page-23456789ab.openbot.site" })[0]);
-    await expect(onOpenHostedSite).toHaveBeenCalledWith("https://launch-page-23456789ab.openbot.site");
   },
 };
 

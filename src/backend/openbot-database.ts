@@ -287,16 +287,39 @@ export class OpenBotDatabase {
     for (const row of databaseRows(
       this.connection
         .prepare(
-          `SELECT payload_json FROM orchestration_events
-           WHERE event_type = 'hosted-site.terminal-pending'
-           ORDER BY sequence`,
+          `SELECT pending.payload_json
+           FROM orchestration_events pending
+           LEFT JOIN orchestration_command_receipts marker
+             ON marker.command_id = json_extract(pending.payload_json, '$.markerCommandId')
+           WHERE pending.event_type = 'hosted-site.terminal-pending'
+             AND marker.command_id IS NULL
+           ORDER BY pending.sequence`,
         )
         .all(),
     )) {
       const event = pendingHostedSiteTerminalEventValue(JSON.parse(requiredStringColumn(row, "payload_json")));
-      if (event && this.commandResult(event.markerCommandId) === undefined) pending.push(event);
+      if (event) pending.push(event);
     }
     return pending;
+  }
+
+  deletePendingHostedSiteTerminalEvent(
+    botId: string,
+    operationId: string,
+    status: Exclude<HostedSiteConversationEventStatus, "running">,
+  ): void {
+    const commandId = `hosted-site-terminal-pending:${botId}:${operationId}:${status}`;
+    const db = this.connection;
+    const ownsTransaction = !db.isTransaction;
+    if (ownsTransaction) db.exec("BEGIN IMMEDIATE");
+    try {
+      db.prepare("DELETE FROM orchestration_events WHERE command_id = ?").run(commandId);
+      db.prepare("DELETE FROM orchestration_command_receipts WHERE command_id = ?").run(commandId);
+      if (ownsTransaction) db.exec("COMMIT");
+    } catch (error) {
+      if (ownsTransaction && db.isTransaction) db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   runningHostedSiteConversationEvents(): RunningHostedSiteConversationEvent[] {
