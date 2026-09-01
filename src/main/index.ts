@@ -23,7 +23,6 @@ import {
   IPC_CHANNELS,
   isSkillCategory,
   type MacPermissionId,
-  type MacPermissionsState,
   type SendMessageInput,
   type SidebarLayoutSnapshot,
   type UpdateBotInput,
@@ -36,7 +35,6 @@ import {
   app,
   BrowserWindow,
   type Display,
-  desktopCapturer,
   dialog,
   Menu,
   Notification,
@@ -49,7 +47,6 @@ import {
   screen,
   session,
   shell,
-  systemPreferences,
 } from "electron";
 import electronUpdater from "electron-updater";
 import { z } from "zod";
@@ -68,6 +65,8 @@ import { readAnalyticsPreference, writeAnalyticsPreference } from "./analytics-p
 import { readAppVariant, resolveAppIconPath } from "./app-icon";
 import { BrowserPictureInPicture } from "./browser-picture-in-picture";
 import { CentralAuthManager, readCentralAuthApiUrl, readMobileConnectApiUrl } from "./central-auth-manager";
+import { ComputerUseMacSetupService } from "./computer-use-mac-setup";
+import { ComputerUseMacSetupWindowController } from "./computer-use-mac-setup-window";
 import { buildContentSecurityPolicy } from "./content-security-policy";
 import { guardDevelopmentOutput } from "./development-output";
 import {
@@ -268,6 +267,7 @@ let hostAnalytics: HostAnalytics | null = null;
 let teamWebRtcBridge: TeamWebRtcBridge | null = null;
 let voiceTranscriptionService: VoiceTranscriptionService | null = null;
 let dynamicIslandController: DynamicIslandWindowController | null = null;
+let computerUseMacSetupController: ComputerUseMacSetupWindowController | null = null;
 const macHapticFeedback = new MacHapticFeedback();
 let isQuitting = false;
 let shutdownStarted = false;
@@ -330,6 +330,7 @@ function registerIpcHandlers(
   marketplaceAgents: AgentMarketplaceService,
   voice: VoiceTranscriptionService,
   dynamicIsland: DynamicIslandWindowController,
+  computerUseMacSetup: ComputerUseMacSetupWindowController,
 ): void {
   handleTrusted(IPC_CHANNELS.getAppInfo, (): AppInfo => {
     const platform = process.platform;
@@ -384,10 +385,15 @@ function registerIpcHandlers(
     await initializeAgent();
     return state;
   });
-  handleTrusted(IPC_CHANNELS.getMacPermissions, readMacPermissions);
-  handleTrusted(IPC_CHANNELS.requestMacPermission, (permission: unknown) =>
-    requestMacPermission(parseMacPermission(permission)),
+  handleTrusted(IPC_CHANNELS.computerUseGetMacSetupState, () => computerUseMacSetup.getState());
+  handleTrusted(IPC_CHANNELS.computerUseOpenMacPermissionSetup, (permission: unknown) =>
+    computerUseMacSetup.open(parseMacPermission(permission)),
   );
+  handleTrustedWithEvent(IPC_CHANNELS.computerUseStartHelperDrag, (event) =>
+    computerUseMacSetup.startDrag(event.sender),
+  );
+  handleTrusted(IPC_CHANNELS.computerUseRevealHelper, () => computerUseMacSetup.revealHelper());
+  handleTrusted(IPC_CHANNELS.computerUseCloseMacPermissionSetup, () => computerUseMacSetup.close());
   handleTrusted(IPC_CHANNELS.openExternal, (destination: unknown) => {
     return shell.openExternal(EXTERNAL_DESTINATIONS[parseExternalDestination(destination)]);
   });
@@ -1223,6 +1229,7 @@ function createWindow(): BrowserWindow {
   window.on("closed", () => {
     if (mainWindow === window) mainWindow = null;
   });
+  window.on("hide", () => computerUseMacSetupController?.close());
 
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("before-input-event", (event, input) => {
@@ -1311,6 +1318,48 @@ function createDynamicIslandWindow(bounds: Rectangle, _display: Display): Browse
   return window;
 }
 
+function createComputerUseMacSetupWindow(): BrowserWindow {
+  const workArea =
+    mainWindow && !mainWindow.isDestroyed()
+      ? screen.getDisplayMatching(mainWindow.getBounds()).workArea
+      : screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+  const width = 360;
+  const height = 300;
+  const window = new BrowserWindow({
+    width,
+    height,
+    x: workArea.x + workArea.width - width - 16,
+    y: workArea.y + 52,
+    show: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    backgroundColor: "#0b0d0e",
+    title: "Set up Computer Use",
+    icon: appIconPath,
+    ...(process.platform === "darwin"
+      ? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 12, y: 13 } }
+      : {}),
+    webPreferences: {
+      preload: join(__dirname, "../preload/index.cjs"),
+      contextIsolation: true,
+      devTools: true,
+      sandbox: true,
+      nodeIntegration: false,
+      webSecurity: true,
+    },
+  });
+  window.setAlwaysOnTop(true, "floating");
+  window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  window.webContents.on("will-navigate", (event, targetUrl) => {
+    if (!isTrustedRendererUrl(targetUrl)) event.preventDefault();
+  });
+  return window;
+}
+
 function loadRenderer(window: BrowserWindow): Promise<void> {
   inviteReceiverReady = false;
   const developmentUrl = process.env.ELECTRON_RENDERER_URL;
@@ -1346,6 +1395,14 @@ function loadDynamicIslandRenderer(window: BrowserWindow, display: Display): Pro
     url.searchParams.set("notch-width", String(notch.width));
     url.searchParams.set("notch-height", String(notch.height));
   }
+  return window.loadURL(url.toString());
+}
+
+function loadComputerUseMacSetupRenderer(window: BrowserWindow, permission: MacPermissionId): Promise<void> {
+  const developmentUrl = process.env.ELECTRON_RENDERER_URL;
+  const url = new URL(developmentUrl ?? "openbot-app://app/index.html");
+  url.searchParams.set("surface", "computer-use-setup");
+  url.searchParams.set("permission", permission);
   return window.loadURL(url.toString());
 }
 
@@ -1565,6 +1622,17 @@ if (!hasSingleInstanceLock) {
       configureContentSecurityPolicy();
       configureRendererPermissions();
       mainWindow = createWindow();
+      const computerUseMacSetupService = new ComputerUseMacSetupService({
+        getIconDataUrl: async (path) => (await app.getFileIcon(path, { size: "normal" })).toDataURL(),
+      });
+      computerUseMacSetupController = new ComputerUseMacSetupWindowController({
+        service: computerUseMacSetupService,
+        createWindow: createComputerUseMacSetupWindow,
+        loadWindow: loadComputerUseMacSetupRenderer,
+        openExternal: (url) => shell.openExternal(url),
+        revealPath: (path) => shell.showItemInFolder(path),
+        loadDragIcon: (path) => app.getFileIcon(path, { size: "normal" }),
+      });
       dynamicIslandController = new DynamicIslandWindowController({
         platform: process.platform,
         preferencePath: join(app.getPath("userData"), DYNAMIC_ISLAND_PREFERENCE_FILE),
@@ -1639,7 +1707,6 @@ if (!hasSingleInstanceLock) {
         store,
         mailboxStore,
         browserHost,
-        readComputerUsePrerequisites,
         30_000,
         setupState.preferredProvider ?? "codex",
         null,
@@ -1967,6 +2034,7 @@ if (!hasSingleInstanceLock) {
         agentMarketplace,
         voiceTranscriptionService,
         dynamicIslandController,
+        computerUseMacSetupController,
       );
       configureApplicationMenu(service, updateService);
       await dynamicIslandController
@@ -2070,45 +2138,6 @@ async function connectDevelopmentRemoteServer(manager: RemoteServerManager): Pro
     }
   }
   throw lastError;
-}
-
-function readComputerUsePrerequisites(): {
-  screenRecording: boolean;
-  accessibility: boolean;
-} {
-  if (process.platform !== "darwin") {
-    return { screenRecording: false, accessibility: false };
-  }
-  return {
-    screenRecording: systemPreferences.getMediaAccessStatus("screen") === "granted",
-    accessibility: systemPreferences.isTrustedAccessibilityClient(false),
-  };
-}
-
-function readMacPermissions(): MacPermissionsState {
-  if (process.platform !== "darwin") {
-    return { screenRecording: "unknown", accessibility: "unknown" };
-  }
-  return {
-    screenRecording: systemPreferences.getMediaAccessStatus("screen"),
-    accessibility: systemPreferences.isTrustedAccessibilityClient(false) ? "granted" : "not-determined",
-  };
-}
-
-async function requestMacPermission(permission: MacPermissionId): Promise<MacPermissionsState> {
-  if (process.platform !== "darwin") return readMacPermissions();
-  if (permission === "accessibility") {
-    systemPreferences.isTrustedAccessibilityClient(true);
-    return readMacPermissions();
-  }
-
-  const state = systemPreferences.getMediaAccessStatus("screen");
-  if (state === "not-determined") {
-    await desktopCapturer.getSources({ types: ["screen"], thumbnailSize: { width: 0, height: 0 } });
-  } else if (state === "denied" || state === "unknown") {
-    await shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture");
-  }
-  return readMacPermissions();
 }
 
 app.on("window-all-closed", () => {

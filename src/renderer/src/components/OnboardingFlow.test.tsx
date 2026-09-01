@@ -1,16 +1,11 @@
-import type {
-  AgentProviderId,
-  AgentStatus,
-  MacPermissionId,
-  MacPermissionsState,
-  ProviderRuntimeStatus,
-} from "@openbot/contracts/ipc";
+import type { AgentProviderId, AgentStatus, ProviderRuntimeStatus } from "@openbot/contracts/ipc";
 import { fireEvent, render, waitFor, within } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { STORY_AGENT_STATUS } from "../preview/fixtures";
 import { createMockOpenBot, type MockOpenBotControls } from "../preview/mock-openbot";
 import { OnboardingFlow } from "./OnboardingFlow";
+import { Toaster, toast } from "./ui";
 
 let activeMock: MockOpenBotControls | undefined;
 const previousApi = window.openbot;
@@ -19,29 +14,25 @@ afterEach(() => {
   activeMock?.dispose();
   activeMock = undefined;
   window.openbot = previousApi;
+  toast.dismiss();
   vi.restoreAllMocks();
 });
 
 function renderFlow(
-  options: {
-    onSave?: (provider: AgentProviderId) => Promise<void>;
-    platform?: "darwin" | "win32" | "linux";
-    permissions?: MacPermissionsState;
-  } = {},
+  options: { onSave?: (provider: AgentProviderId) => Promise<void>; platform?: "darwin" | "win32" | "linux" } = {},
 ) {
   activeMock = createMockOpenBot();
-  if (options.permissions) {
-    activeMock.api.getMacPermissions = async () =>
-      options.permissions ?? { screenRecording: "unknown", accessibility: "unknown" };
-  }
   window.openbot = activeMock.api;
   const view = render(() => (
-    <OnboardingFlow
-      state={{ completed: false, preferredProvider: null }}
-      agentStatus={STORY_AGENT_STATUS}
-      platform={options.platform ?? "darwin"}
-      onSave={options.onSave ?? (async (_provider: AgentProviderId) => undefined)}
-    />
+    <>
+      <OnboardingFlow
+        state={{ completed: false, preferredProvider: null }}
+        agentStatus={STORY_AGENT_STATUS}
+        platform={options.platform ?? "darwin"}
+        onSave={options.onSave ?? (async (_provider: AgentProviderId) => undefined)}
+      />
+      <Toaster />
+    </>
   ));
   return view;
 }
@@ -74,17 +65,15 @@ describe("OnboardingFlow", () => {
   });
 
   it("requests optional macOS permissions before continuing", async () => {
-    const view = renderFlow({
-      permissions: { screenRecording: "unknown", accessibility: "unknown" },
-    });
-    const requestPermission = vi.spyOn(activeMock?.api ?? window.openbot, "requestMacPermission");
+    const view = renderFlow();
+    const openPermission = vi.spyOn(activeMock?.api ?? window.openbot, "openComputerUsePermissionSetup");
     await fireEvent.click(view.getByRole("button", { name: "Next" }));
     expect(await view.findByRole("heading", { name: "OpenBot might control your computer" })).toBeInTheDocument();
-    await waitFor(() => expect(view.getAllByRole("button", { name: "Open Settings" })).toHaveLength(2));
+    await waitFor(() => expect(view.getAllByRole("button", { name: "Set up" })).toHaveLength(2));
 
-    await fireEvent.click(view.getAllByRole("button", { name: "Open Settings" })[0]);
-    await waitFor(() => expect(requestPermission).toHaveBeenCalledWith("screen-recording" satisfies MacPermissionId));
-    await waitFor(() => expect(view.getAllByRole("button", { name: "Allowed" })).toHaveLength(2));
+    await fireEvent.click(view.getAllByRole("button", { name: "Set up" })[0]);
+    await waitFor(() => expect(openPermission).toHaveBeenCalledWith("screen-recording"));
+    expect(await view.findByText("System Settings opened")).toBeInTheDocument();
 
     await fireEvent.click(view.getByRole("button", { name: "Next" }));
     expect(await view.findByRole("heading", { name: "Give each bot a job" })).toBeInTheDocument();

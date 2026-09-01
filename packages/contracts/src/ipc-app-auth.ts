@@ -114,11 +114,14 @@ export interface CentralAuthDesktopApi {
 }
 
 export type MacPermissionId = "screen-recording" | "accessibility";
-export type MacPermissionState = "not-determined" | "granted" | "denied" | "restricted" | "unknown";
 
-export interface MacPermissionsState {
-  screenRecording: MacPermissionState;
-  accessibility: MacPermissionState;
+export type ComputerUseMacSetupStatus = "available" | "unavailable" | "unsupported";
+
+export interface ComputerUseMacSetupState {
+  status: ComputerUseMacSetupStatus;
+  helperName: string;
+  helperIconDataUrl: string | null;
+  message: string | null;
 }
 
 export type ExternalDestination = "agent-setup" | "claude-install" | "claude-sign-in" | "feedback" | "message";
