@@ -433,6 +433,25 @@ async function main(): Promise<void> {
       timeoutMs: 2_000,
     });
     if (!semanticWait.success) throw new Error(`V2 semantic wait failed: ${toolError(semanticWait)}`);
+    const largeTargetSet = await callBrowserTool(browser, "evaluate", {
+      tabId: v2Tab.id,
+      expression:
+        "document.body.appendChild(Object.assign(document.createElement('div'), { innerHTML: Array.from({ length: 200 }, (_, index) => '<button aria-label=\"Bulk ' + index + '\">Bulk ' + index + '</button>').join('') })); true",
+    });
+    if (!largeTargetSet.success) throw new Error(`V2 large target setup failed: ${toolError(largeTargetSet)}`);
+    const semanticWaitStarted = Date.now();
+    const boundedSemanticWait = await callBrowserTool(browser, "wait_for", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "button", name: "Missing bulk target", exact: true },
+      timeoutMs: 5,
+    });
+    if (
+      boundedSemanticWait.success ||
+      !toolError(boundedSemanticWait).includes("timed out") ||
+      Date.now() - semanticWaitStarted > 1_000
+    ) {
+      throw new Error("V2 semantic wait did not enforce its collection deadline.");
+    }
     const noisyPage = await callBrowserTool(browser, "evaluate", {
       tabId: v2Tab.id,
       expression:

@@ -490,7 +490,7 @@ export class BrowserCdpEngine {
         }
         if (condition.target) {
           try {
-            await this.#resolveTarget(send, condition.target);
+            await this.#resolveTarget(send, condition.target, deadline);
           } catch {
             matched = false;
           }
@@ -566,6 +566,7 @@ export class BrowserCdpEngine {
   async #resolveTarget(
     send: SendCommand,
     target: BrowserTarget,
+    deadline?: number,
   ): Promise<{ backendNodeId?: number; sessionId?: string; x: number; y: number }> {
     if (target.kind === "point") return { x: target.x, y: target.y };
     if (target.kind === "ref") {
@@ -596,7 +597,7 @@ export class BrowserCdpEngine {
         await send("Runtime.releaseObject", { objectId }).catch(() => undefined);
       }
     }
-    await this.#refreshSemanticTargets(send);
+    await this.#refreshSemanticTargets(send, deadline);
     const candidates = [...this.#targets.values()].filter(({ element }) => {
       if (target.kind === "role") {
         if (element.role?.toLowerCase() !== target.role.toLowerCase()) return false;
@@ -718,13 +719,14 @@ export class BrowserCdpEngine {
     }
   }
 
-  async #refreshSemanticTargets(send: SendCommand): Promise<void> {
+  async #refreshSemanticTargets(send: SendCommand, deadline?: number): Promise<void> {
     const navigationGeneration = this.#navigationGeneration;
     const parsed = await collectBoundedSnapshot(
       send,
       this.#snapshotTargets(),
       this.#lastSnapshot?.revision ?? 0,
       false,
+      deadline,
     );
     if (navigationGeneration !== this.#navigationGeneration) {
       throw new Error("Page navigated during semantic target collection. Take a fresh snapshot.");
@@ -818,6 +820,7 @@ async function collectBoundedSnapshot(
   captures: SnapshotTarget[],
   revision: number,
   includeText: boolean,
+  deadline?: number,
 ) {
   const targets = new Map<string, TargetRecord>();
   const elements: BrowserElement[] = [];
@@ -826,6 +829,7 @@ async function collectBoundedSnapshot(
   let hasVisualSurface = false;
   let hasFrame = captures.length > 1;
   for (const capture of captures) {
+    assertBeforeDeadline(deadline);
     if (includeText) {
       const remainingText = Math.max(0, MAX_SNAPSHOT_TEXT - textLength);
       const summary = await collectPageSummary(send, capture.sessionId, remainingText).catch(() => null);
@@ -840,9 +844,10 @@ async function collectBoundedSnapshot(
     }
     const remainingElements = MAX_SNAPSHOT_ELEMENTS - elements.length;
     if (remainingElements <= 0) break;
-    const candidates = capture.sessionId
-      ? await collectActionableNodes(send, capture, remainingElements).catch(() => [])
-      : await collectActionableNodes(send, capture, remainingElements);
+    const candidates =
+      capture.sessionId && deadline === undefined
+        ? await collectActionableNodes(send, capture, remainingElements).catch(() => [])
+        : await collectActionableNodes(send, capture, remainingElements, deadline);
     for (const candidate of candidates) {
       const properties = Array.isArray(candidate.ax.properties) ? candidate.ax.properties.filter(isRecord) : [];
       const states = properties
@@ -1080,8 +1085,12 @@ async function collectActionableNodes(
   send: SendCommand,
   capture: SnapshotTarget,
   limit: number,
+  deadline?: number,
 ): Promise<Array<{ backendNodeId: number; node: CdpResult; ax: CdpResult; role: string }>> {
+  assertBeforeDeadline(deadline);
   await Promise.all([send("DOM.enable", {}, capture.sessionId), send("Accessibility.enable", {}, capture.sessionId)]);
+  assertBeforeDeadline(deadline);
+  const scanBudgetMs = deadline === undefined ? 60_000 : Math.max(1, deadline - Date.now());
   const collection = await send(
     "Runtime.evaluate",
     {
@@ -1091,13 +1100,14 @@ async function collectActionableNodes(
         const seen = new Set();
         const elements = [];
         let scanned = 0;
-        while (roots.length && scanned < ${MAX_SNAPSHOT_SCANNED_NODES}) {
+        const stopAt = performance.now() + ${scanBudgetMs};
+        while (roots.length && scanned < ${MAX_SNAPSHOT_SCANNED_NODES} && performance.now() < stopAt) {
           const root = roots.shift();
           if (!root || seen.has(root)) continue;
           seen.add(root);
           const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
           let node;
-          while ((node = walker.nextNode()) && scanned < ${MAX_SNAPSHOT_SCANNED_NODES}) {
+          while ((node = walker.nextNode()) && scanned < ${MAX_SNAPSHOT_SCANNED_NODES} && performance.now() < stopAt) {
             scanned++;
             const nativeAction = node.matches('button, input:not([type="hidden"]), select, textarea, a[href], summary, [contenteditable]');
             const explicitRoles = String(node.getAttribute('role') || '').toLowerCase().split(/\\s+/).filter(Boolean);
@@ -1122,6 +1132,7 @@ async function collectActionableNodes(
   if (!collectionId) return [];
   const candidates: Array<{ backendNodeId: number; node: CdpResult; ax: CdpResult; role: string }> = [];
   try {
+    assertBeforeDeadline(deadline);
     const lengthResult = await send(
       "Runtime.callFunctionOn",
       {
@@ -1133,6 +1144,7 @@ async function collectActionableNodes(
     );
     const length = Math.min(MAX_SNAPSHOT_SCANNED_NODES, numberValue(recordValue(lengthResult.result)?.value));
     for (let index = 0; index < length && candidates.length < limit; index++) {
+      assertBeforeDeadline(deadline);
       const remoteResult = await send(
         "Runtime.callFunctionOn",
         {
@@ -1177,6 +1189,10 @@ async function collectActionableNodes(
     await send("Runtime.releaseObject", { objectId: collectionId }, capture.sessionId).catch(() => undefined);
   }
   return candidates;
+}
+
+function assertBeforeDeadline(deadline: number | undefined): void {
+  if (deadline !== undefined && Date.now() >= deadline) throw new Error("Browser wait condition timed out.");
 }
 
 function fallbackRole(node: CdpResult): string {
