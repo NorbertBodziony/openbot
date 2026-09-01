@@ -7,8 +7,8 @@ import { dirname, join } from "node:path";
 import type { PeerCertificate } from "node:tls";
 import type { RemoteDesktopDisplay, RemoteDesktopIceServer } from "@openbot/contracts/ipc";
 import { z } from "zod";
-import { stopOwnedProcess } from "./host-tunnel-runtime";
 import type { RemoteDesktopRuntimePaths } from "./remote-desktop-runtime-artifact";
+import { stopRemoteProcess } from "./remote-diagnostics";
 
 const MOONLIGHT_USER_HEADER = "X-OpenBot-Remote-User";
 const MOONLIGHT_STREAMER_SLOTS = 4;
@@ -102,7 +102,7 @@ export class SunshineMoonlightRuntime {
     this.#selectedDisplayId = displayId;
     if (!this.#state) return;
     await this.#writeSunshineConfig();
-    if (this.#sunshine) await stopOwnedProcess(this.#sunshine);
+    if (this.#sunshine) await stopRemoteProcess(this.#sunshine);
     this.#sunshine = null;
     await this.#startSunshine();
     if (this.#state) this.#state = { ...this.#state, selectedDisplayId: displayId };
@@ -111,8 +111,8 @@ export class SunshineMoonlightRuntime {
   async stop(): Promise<void> {
     this.#state = null;
     await Promise.all([
-      this.#moonlight ? stopOwnedProcess(this.#moonlight) : Promise.resolve(),
-      this.#sunshine ? stopOwnedProcess(this.#sunshine) : Promise.resolve(),
+      this.#moonlight ? stopRemoteProcess(this.#moonlight) : Promise.resolve(),
+      this.#sunshine ? stopRemoteProcess(this.#sunshine) : Promise.resolve(),
     ]);
     this.#moonlight = null;
     this.#sunshine = null;
@@ -184,7 +184,7 @@ export class SunshineMoonlightRuntime {
         session_expiration_check_interval: { secs: 300, nanos: 0 },
       },
       webrtc: {
-        ice_servers: [{ urls: ["stun:stun.cloudflare.com:3478"], username: "", credential: "" }],
+        ice_servers: [],
         ice_server_script: join(
           this.#options.stateDirectory,
           this.#options.platform === "win32" ? "openbot-ice-helper.cmd" : "openbot-ice-helper.sh",

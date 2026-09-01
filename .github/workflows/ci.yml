@@ -31,7 +31,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.3.11
+          bun-version: 1.4.0
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -50,7 +50,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.3.11
+          bun-version: 1.4.0
 
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
@@ -69,7 +69,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.3.11
+          bun-version: 1.4.0
 
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
@@ -88,7 +88,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.3.11
+          bun-version: 1.4.0
 
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
@@ -112,7 +112,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.3.11
+          bun-version: 1.4.0
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -183,7 +183,7 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.3.11
+          bun-version: 1.4.0
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -203,21 +203,29 @@ jobs:
         shell: bash
         env:
           EMAIL_SMTP_PASSWORD: ${{ secrets.EMAIL_SMTP_PASSWORD }}
-          OPENBOT_TUNNEL_API_TOKEN: ${{ secrets.OPENBOT_TUNNEL_API_TOKEN }}
           SKILLS_ADMIN_TOKEN: ${{ secrets.SKILLS_ADMIN_TOKEN }}
+          REMOTE_TICKET_PRIVATE_JWK: ${{ secrets.REMOTE_TICKET_PRIVATE_JWK }}
+          REMOTE_TICKET_PUBLIC_JWKS: ${{ secrets.REMOTE_TICKET_PUBLIC_JWKS }}
+          REMOTE_AUTH_WEBHOOK_SECRET: ${{ secrets.REMOTE_AUTH_WEBHOOK_SECRET }}
         run: |
           secrets_path="$RUNNER_TEMP/openbot-worker-secrets.json"
           umask 077
           SECRETS_PATH="$secrets_path" bun -e '
             const smtp = process.env.EMAIL_SMTP_PASSWORD;
-            const tunnel = process.env.OPENBOT_TUNNEL_API_TOKEN;
             const skillsAdmin = process.env.SKILLS_ADMIN_TOKEN;
+            const remotePrivateJwk = process.env.REMOTE_TICKET_PRIVATE_JWK;
+            const remotePublicJwks = process.env.REMOTE_TICKET_PUBLIC_JWKS;
+            const remoteWebhookSecret = process.env.REMOTE_AUTH_WEBHOOK_SECRET;
             const path = process.env.SECRETS_PATH;
-            if (!smtp || !tunnel || !skillsAdmin || !path) throw new Error("Required production secrets are missing.");
+            if (!smtp || !skillsAdmin || !remotePrivateJwk || !remotePublicJwks || !remoteWebhookSecret || !path) {
+              throw new Error("Required production secrets are missing.");
+            }
             await Bun.write(path, JSON.stringify({
               EMAIL_SMTP_PASSWORD: smtp,
-              CLOUDFLARE_API_TOKEN: tunnel,
               SKILLS_ADMIN_TOKEN: skillsAdmin,
+              REMOTE_TICKET_PRIVATE_JWK: remotePrivateJwk,
+              REMOTE_TICKET_PUBLIC_JWKS: remotePublicJwks,
+              REMOTE_AUTH_WEBHOOK_SECRET: remoteWebhookSecret,
             }));
           '
           echo "path=$secrets_path" >> "$GITHUB_OUTPUT"

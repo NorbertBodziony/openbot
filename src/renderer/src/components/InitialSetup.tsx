@@ -7,10 +7,9 @@ import type {
   DesktopPlatform,
   InvitePreview,
   JoinServerInput,
-  MacPermissionId,
-  MacPermissionsState,
 } from "@openbot/contracts/ipc";
-import { createEffect, createMemo, createSignal, For, flush, onCleanup, onSettled, Show, untrack } from "solid-js";
+import { createEffect, createMemo, createSignal, onSettled, Show, untrack } from "solid-js";
+import { ComputerUseMacSetup } from "./ComputerUseMacSetup";
 import { InvitePreviewCard } from "./JoinServerDialog";
 import { ProviderPicker, type ProviderPickerOption } from "./ProviderPicker";
 import { Button, Dialog, Textarea } from "./ui";
@@ -25,7 +24,7 @@ interface InitialSetupProps {
   onSave: (provider: AgentProviderId) => Promise<void>;
   onPreviewInvite: (input: JoinServerInput) => Promise<InvitePreview>;
   onJoinRemote: (input: JoinServerInput, provider: AgentProviderId) => Promise<void>;
-  onLogout: () => Promise<void>;
+  onLogout?: () => Promise<void>;
   onClose?: () => void;
 }
 
@@ -37,28 +36,6 @@ const PROVIDERS: Array<{ id: AgentProviderId; name: string }> = [
   { id: "grok", name: "Grok" },
 ];
 
-const PERMISSIONS: Array<{
-  id: MacPermissionId;
-  title: string;
-  description: string;
-}> = [
-  {
-    id: "screen-recording",
-    title: "Screen Recording",
-    description: "Let Computer Use see what is on your screen.",
-  },
-  {
-    id: "accessibility",
-    title: "Accessibility",
-    description: "Let Computer Use control apps on your Mac.",
-  },
-];
-
-const EMPTY_PERMISSIONS: MacPermissionsState = {
-  screenRecording: "unknown",
-  accessibility: "unknown",
-};
-
 export function InitialSetup(props: InitialSetupProps) {
   const initialInviteUrl = untrack(() => props.inviteUrl?.trim() ?? "");
   const [route, setRoute] = createSignal<SetupRoute | null>(
@@ -67,13 +44,10 @@ export function InitialSetup(props: InitialSetupProps) {
   const [selectedProvider, setSelectedProvider] = createSignal<AgentProviderId | null>(
     untrack(() => props.state.preferredProvider),
   );
-  const [permissions, setPermissions] = createSignal(EMPTY_PERMISSIONS);
   const [saving, setSaving] = createSignal(false);
-  const [permissionBusy, setPermissionBusy] = createSignal<MacPermissionId | null>(null);
   const [error, setError] = createSignal("");
   const [inviteUrl, setInviteUrl] = createSignal(initialInviteUrl);
   const [invitePreview, setInvitePreview] = createSignal<InvitePreview | null>(null);
-  let permissionRevision = 0;
   const providerOptions = createMemo<ProviderPickerOption[]>(() =>
     PROVIDERS.map((provider) => {
       const status = props.agentStatus.providers?.find((candidate) => candidate.id === provider.id);
@@ -116,45 +90,6 @@ export function InitialSetup(props: InitialSetupProps) {
   onSettled(() => {
     if (initialInviteUrl) void previewRemote(initialInviteUrl);
   });
-
-  async function loadPermissions(): Promise<void> {
-    const revision = ++permissionRevision;
-    try {
-      const next = await window.openbot.getMacPermissions();
-      if (revision === permissionRevision) flush(() => setPermissions(next));
-    } catch (cause) {
-      setError(errorMessage(cause, "OpenBot could not read macOS permissions."));
-    }
-  }
-
-  createEffect(
-    () => ({ route: route(), platform: props.platform }),
-    ({ route: currentRoute, platform }) => {
-      if (platform === "darwin" && currentRoute === "local") void loadPermissions();
-    },
-  );
-
-  const handleFocus = () => {
-    const shouldRefresh = untrack(() => props.platform === "darwin" && route() === "local");
-    if (shouldRefresh) void loadPermissions();
-  };
-  window.addEventListener("focus", handleFocus);
-  onCleanup(() => window.removeEventListener("focus", handleFocus));
-
-  async function requestPermission(permission: MacPermissionId): Promise<void> {
-    if (permissionBusy()) return;
-    const revision = ++permissionRevision;
-    setPermissionBusy(permission);
-    setError("");
-    try {
-      const next = await window.openbot.requestMacPermission(permission);
-      if (revision === permissionRevision) flush(() => setPermissions(next));
-    } catch (cause) {
-      setError(errorMessage(cause, "OpenBot could not open this macOS permission."));
-    } finally {
-      setPermissionBusy(null);
-    }
-  }
 
   function chooseRoute(nextRoute: SetupRoute): void {
     setError("");
@@ -253,9 +188,16 @@ export function InitialSetup(props: InitialSetupProps) {
                 <i aria-hidden="true" />
                 {props.accountEmail}
               </span>
-              <Button variant="ghost" type="button" class="initial-setup-signout" onClick={() => void props.onLogout()}>
-                Sign out
-              </Button>
+              <Show when={props.onLogout}>
+                <Button
+                  variant="ghost"
+                  type="button"
+                  class="initial-setup-signout"
+                  onClick={() => void props.onLogout?.()}
+                >
+                  Sign out
+                </Button>
+              </Show>
             </div>
             <p class="initial-setup-eyebrow">OpenBot setup</p>
             <Dialog.Title as="h1" id="initial-setup-title">
@@ -320,40 +262,7 @@ export function InitialSetup(props: InitialSetupProps) {
                 onChange={setSelectedProvider}
               />
 
-              <Show when={props.platform === "darwin"}>
-                <section class="mac-permissions" aria-labelledby="mac-permissions-title">
-                  <div class="mac-permissions-heading">
-                    <div>
-                      <h2 id="mac-permissions-title">Mac permissions</h2>
-                      <p>Optional. Computer Use needs both permissions.</p>
-                    </div>
-                  </div>
-                  <div class="mac-permission-list">
-                    <For each={PERMISSIONS}>
-                      {(permission) => {
-                        const state = () => permissionState(permissions(), permission.id);
-                        return (
-                          <div class="mac-permission-row">
-                            <span class="mac-permission-copy">
-                              <strong>{permission.title}</strong>
-                              <small>{permission.description}</small>
-                            </span>
-                            <Button
-                              variant="ghost"
-                              type="button"
-                              class={["mac-permission-action", { "mac-permission-allowed": state() === "granted" }]}
-                              disabled={permissionBusy() !== null || state() === "granted" || state() === "restricted"}
-                              onClick={() => void requestPermission(permission.id)}
-                            >
-                              {permissionBusy() === permission.id ? "Checking…" : permissionLabel(state())}
-                            </Button>
-                          </div>
-                        );
-                      }}
-                    </For>
-                  </div>
-                </section>
-              </Show>
+              <ComputerUseMacSetup platform={props.platform} variant="compact" />
             </div>
           </Show>
 
@@ -466,22 +375,6 @@ function RouteArrow() {
       <path d="M4 10h11M11 6l4 4-4 4" />
     </svg>
   );
-}
-
-function permissionState(
-  permissions: MacPermissionsState,
-  permission: MacPermissionId,
-): MacPermissionsState["screenRecording"] {
-  return permission === "screen-recording" ? permissions.screenRecording : permissions.accessibility;
-}
-
-function permissionLabel(
-  state: MacPermissionsState["screenRecording"],
-): "Allowed" | "Open Settings" | "Restricted" | "Allow" {
-  if (state === "granted") return "Allowed";
-  if (state === "denied" || state === "unknown") return "Open Settings";
-  if (state === "restricted") return "Restricted";
-  return "Allow";
 }
 
 function providerName(provider: AgentProviderId | null): "Claude" | "Codex" | "Grok" {

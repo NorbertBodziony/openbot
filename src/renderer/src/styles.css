@@ -13,9 +13,11 @@
 @import "./styles/onboarding.css";
 @import "./styles/first-bot-setup.css";
 @import "./styles/app-shell.css";
+@import "./styles/account-update-island.css";
 @import "./styles/join-server-dialog.css";
 @import "./styles/conversation.css";
 @import "./styles/settings-modal.css";
+@import "./styles/computer-use.css";
 @import "./styles/server-settings-modal.css";
 @import "./styles/skills-marketplace.css";
 
@@ -54,6 +56,7 @@
   --openbot-text-primary: #f2f2f2;
   --openbot-text-on-light: #141414;
   --openbot-surface-light: #f0f0f0;
+  --openbot-qr-background: #ffffff;
   --openbot-onboarding-desktop-mist: #dbe9ff;
   --openbot-onboarding-desktop-blue: #7eb4f2;
   --openbot-onboarding-desktop-indigo: #6f7de8;
@@ -242,6 +245,8 @@
   --openbot-duration-normal: 160ms;
   --openbot-duration-slow: 200ms;
   --openbot-duration-overlay: 240ms;
+  --openbot-duration-toast-enter: 340ms;
+  --openbot-duration-toast-exit: 220ms;
   --openbot-duration-island-content: 340ms;
   --openbot-duration-island-content-exit: 220ms;
   --stream-gap: 60ms;

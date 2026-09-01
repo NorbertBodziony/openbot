@@ -3,6 +3,7 @@ import { createSignal, onCleanup } from "solid-js";
 import { expect, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { OnboardingFlow } from "../src/components/OnboardingFlow";
+import { Toaster, toast } from "../src/components/ui";
 import { STORY_AGENT_STATUS } from "./fixtures";
 import { createMockOpenBot } from "./mock-openbot";
 
@@ -77,17 +78,25 @@ function MockedOnboardingFlow(props: { args: Parameters<typeof OnboardingFlow>[0
   const previousApi = window.openbot;
   const mock = createMockOpenBot();
   if (props.permissions) {
-    mock.api.getMacPermissions = async () => ({
-      screenRecording: "unknown",
-      accessibility: "unknown",
+    mock.api.getComputerUseMacSetupState = async () => ({
+      status: "available",
+      helperName: "Codex Computer Use",
+      helperIconDataUrl: null,
+      message: null,
     });
   }
   window.openbot = mock.api;
   onCleanup(() => {
     mock.dispose();
+    toast.dismiss();
     window.openbot = previousApi;
   });
-  return <OnboardingFlow {...props.args} />;
+  return (
+    <>
+      <OnboardingFlow {...props.args} />
+      <Toaster />
+    </>
+  );
 }
 
 function RefreshResettingFlow(props: { args: Parameters<typeof OnboardingFlow>[0] }) {

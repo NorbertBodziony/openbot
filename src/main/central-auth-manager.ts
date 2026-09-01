@@ -7,10 +7,13 @@ import type {
   CentralAuthIssue,
   CentralAuthState,
   CentralAuthUser,
-  RemoteDesktopIceServer,
+  MobileConnectedDevice,
+  MobileConnectTicket,
 } from "@openbot/contracts/ipc";
-import { type DynamicRecord, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
-import { isOpenBotTeamApiHostname } from "@openbot/contracts/validation";
+import { createMobileConnectUrl } from "@openbot/contracts/mobile-connect";
+import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { createLocalJWKSet, jwtVerify } from "jose";
+import { z } from "zod";
 
 interface CentralAuthEvents {
   changed: [state: CentralAuthState];
@@ -20,6 +23,7 @@ type AuthFetcher = (input: string | URL | Request, init?: RequestInit) => Promis
 
 interface CentralAuthManagerOptions {
   apiUrl: string;
+  mobileConnectApiUrl?: string;
   storagePath: string;
   encrypt: (value: string) => Buffer;
   decrypt: (value: Buffer) => string;
@@ -41,13 +45,72 @@ const STARTUP_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000] as const;
 const RESEND_FALLBACK_DELAY_MS = 60_000;
 const AUTH_API_UNAVAILABLE_MESSAGE =
   "OpenBot could not reach the account service. Check that the API is running, then try again.";
+const remoteTicketJwksSchema = z.object({
+  keys: z.array(z.object({ kty: z.string() }).loose()).min(1),
+});
 
-export interface ProvisionedTeamTunnel {
-  tunnelId: string;
-  tunnelName: string;
-  apiUrl: string;
-  token: string;
-  machineToken: string;
+export interface RegisteredRemoteHost {
+  hostId: string;
+  name: string;
+  membershipId: string;
+  authEpoch: number;
+  machineToken: string | null;
+}
+
+export interface RemoteConnectionBootstrap {
+  ticket: string;
+  expiresAt: number;
+  signalUrl: string;
+}
+
+export interface VerifiedRemoteSessionTicket {
+  sessionId: string;
+  hostId: string;
+  userId: string;
+  membershipId: string;
+  role: "owner" | "admin" | "member";
+  authEpoch: number;
+  sessionExpiresAt: number;
+  clientPublicKey: string;
+}
+
+export interface RemoteHostSummary {
+  hostId: string;
+  name: string;
+  logoKey: string | null;
+  devicePublicKey: string | null;
+  authEpoch: number;
+  membershipId: string;
+  role: "owner" | "admin" | "member";
+}
+
+export interface RemoteInviteRecord {
+  inviteId: string;
+  email: string | null;
+  role: "admin" | "member";
+  expiresAt: number;
+  usedAt: number | null;
+  revokedAt: number | null;
+}
+
+export interface RemoteInvitePreview {
+  inviteId: string;
+  hostId: string;
+  hostName: string;
+  role: "admin" | "member";
+  expiresAt: number;
+  emailBound: boolean;
+  devicePublicKey: string | null;
+}
+
+export interface RemoteMemberRecord {
+  membershipId: string;
+  email: string;
+  name: string | null;
+  avatarUrl: string | null;
+  role: "owner" | "admin" | "member";
+  status: "active" | "revoked";
+  createdAt: number;
 }
 
 export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
@@ -55,12 +118,14 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   #state: CentralAuthState = { status: "loading" };
   #sessionToken: string | null = null;
   readonly #teamHostTokens = new Map<string, string>();
+  #remoteTicketJwks: Promise<z.infer<typeof remoteTicketJwksSchema>> | null = null;
   #initializationPromise: Promise<CentralAuthState> | null = null;
 
   constructor(options: CentralAuthManagerOptions) {
     super();
     this.#options = {
       ...options,
+      mobileConnectApiUrl: options.mobileConnectApiUrl ?? options.apiUrl,
       canPersist: options.canPersist ?? (() => true),
       fetch: options.fetch ?? fetch,
       startupRetryWindowMs: options.startupRetryWindowMs ?? STARTUP_RETRY_WINDOW_MS,
@@ -119,6 +184,271 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     return result.ticket;
   }
 
+  async createMobileConnect(): Promise<MobileConnectTicket> {
+    const result = await this.#authorizedRequest("/v1/mobile-auth/ticket", { method: "POST" }, decodeTicketResponse);
+    if (!result.ticket || !Number.isFinite(result.expiresAt) || result.expiresAt <= Date.now()) {
+      throw new Error("The account service returned an invalid Mobile Connect ticket.");
+    }
+    return {
+      qrData: createMobileConnectUrl({ apiUrl: this.#options.mobileConnectApiUrl, ticket: result.ticket }),
+      expiresAt: result.expiresAt,
+    };
+  }
+
+  async listMobileConnectedDevices(): Promise<MobileConnectedDevice[]> {
+    const result = await this.#authorizedRequest(
+      "/v1/mobile-auth/devices",
+      { method: "GET" },
+      decodeMobileConnectedDevices,
+    );
+    return result.devices;
+  }
+
+  async revokeMobileConnectedDevice(sessionId: string): Promise<void> {
+    await this.#authorizedRequest(
+      `/v1/mobile-auth/devices/${encodeURIComponent(sessionId)}`,
+      { method: "DELETE" },
+      () => undefined,
+    );
+  }
+
+  async registerRemoteHost(input: {
+    hostId: string;
+    name: string;
+    ownerMembershipId: string;
+    devicePublicKey?: string | null;
+  }): Promise<RegisteredRemoteHost> {
+    const storedMachineToken = this.#teamHostTokens.get(input.hostId.toLowerCase());
+    const result = await this.#authorizedRequest(
+      "/v2/remote/hosts/register",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...input,
+          rotateCredential: !storedMachineToken,
+          ...(storedMachineToken ? { machineToken: storedMachineToken } : {}),
+        }),
+      },
+      decodeRegisteredRemoteHost,
+    );
+    if (result.machineToken) this.#teamHostTokens.set(input.hostId.toLowerCase(), result.machineToken);
+    await this.#writeStoredSession();
+    return result;
+  }
+
+  issueRemoteHostTicket(hostId: string): Promise<RemoteConnectionBootstrap> {
+    const machineToken = this.#teamHostTokens.get(hostId.toLowerCase());
+    if (!machineToken) throw new Error("The remote host credential is unavailable. Register the host again.");
+    return this.#request(
+      `/v2/remote/hosts/${encodeURIComponent(hostId)}/ticket`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ machineToken }) },
+      decodeRemoteConnectionBootstrap,
+    );
+  }
+
+  async startRemoteSession(hostId: string): Promise<{ sessionId: string; hostId: string; expiresAt: number }> {
+    return this.#authorizedRequest(
+      "/v2/remote/sessions/",
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ hostId }) },
+      decodeRemoteSession,
+    );
+  }
+
+  listRemoteHosts(): Promise<RemoteHostSummary[]> {
+    return this.#authorizedRequest("/v2/remote/hosts/", { method: "GET" }, decodeRemoteHosts);
+  }
+
+  issueRemoteSessionTicket(sessionId: string, clientPublicKey: string): Promise<RemoteConnectionBootstrap> {
+    return this.#authorizedRequest(
+      `/v2/remote/sessions/${encodeURIComponent(sessionId)}/ticket`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientPublicKey }),
+      },
+      decodeRemoteConnectionBootstrap,
+    );
+  }
+
+  async verifyRemoteSessionTicket(ticket: string): Promise<VerifiedRemoteSessionTicket> {
+    const verify = async () => {
+      if (!this.#remoteTicketJwks) this.#remoteTicketJwks = this.#fetchRemoteTicketJwks();
+      const jwks = await this.#remoteTicketJwks;
+      return jwtVerify(ticket, createLocalJWKSet(jwks), {
+        audience: "openbot-remote",
+        algorithms: ["ES256"],
+      });
+    };
+    let payload: Awaited<ReturnType<typeof verify>>["payload"];
+    try {
+      ({ payload } = await verify());
+    } catch (error) {
+      if (!isDynamicRecord(error) || error.code !== "ERR_JWKS_NO_MATCHING_KEY") throw error;
+      this.#remoteTicketJwks = null;
+      ({ payload } = await verify());
+    }
+    if (
+      !isString(payload.sessionId) ||
+      !isString(payload.hostId) ||
+      !isString(payload.userId) ||
+      !isString(payload.membershipId) ||
+      (payload.role !== "owner" && payload.role !== "admin" && payload.role !== "member") ||
+      !isNumber(payload.authEpoch) ||
+      !Number.isInteger(payload.authEpoch) ||
+      !isNumber(payload.sessionExpiresAt) ||
+      !Number.isInteger(payload.sessionExpiresAt) ||
+      !isString(payload.clientPublicKey)
+    ) {
+      throw new Error("The remote session ticket has invalid claims.");
+    }
+    return {
+      sessionId: payload.sessionId,
+      hostId: payload.hostId,
+      userId: payload.userId,
+      membershipId: payload.membershipId,
+      role: payload.role,
+      authEpoch: payload.authEpoch,
+      sessionExpiresAt: payload.sessionExpiresAt,
+      clientPublicKey: payload.clientPublicKey,
+    };
+  }
+
+  async #fetchRemoteTicketJwks(): Promise<z.infer<typeof remoteTicketJwksSchema>> {
+    const response = await this.#options.fetch(new URL("/.well-known/jwks.json", this.#options.apiUrl), {
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) throw await AuthApiError.fromResponse(response);
+    return remoteTicketJwksSchema.parse(await response.json());
+  }
+
+  endRemoteSession(sessionId: string): Promise<void> {
+    return this.#authorizedRequest(
+      `/v2/remote/sessions/${encodeURIComponent(sessionId)}/end`,
+      { method: "POST" },
+      decodeVoid,
+    );
+  }
+
+  createRemoteInvite(
+    hostId: string,
+    input: { role: "admin" | "member"; email?: string },
+  ): Promise<{ inviteId: string; token: string; expiresAt: number }> {
+    return this.#authorizedRequest(
+      `/v2/remote/hosts/${encodeURIComponent(hostId)}/invites`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) },
+      decodeCreatedRemoteInvite,
+    );
+  }
+
+  listRemoteInvites(hostId: string): Promise<RemoteInviteRecord[]> {
+    return this.#authorizedRequest(
+      `/v2/remote/hosts/${encodeURIComponent(hostId)}/invites`,
+      { method: "GET" },
+      decodeRemoteInvites,
+    );
+  }
+
+  previewRemoteInvite(token: string): Promise<RemoteInvitePreview> {
+    return this.#request(
+      "/v2/remote/invites/preview",
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) },
+      decodeRemoteInvitePreview,
+    );
+  }
+
+  acceptRemoteInvite(token: string): Promise<{ hostId: string; membershipId: string; role: "admin" | "member" }> {
+    return this.#authorizedRequest(
+      "/v2/remote/invites/accept",
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) },
+      decodeAcceptedRemoteInvite,
+    );
+  }
+
+  revokeRemoteInvite(inviteId: string): Promise<void> {
+    return this.#authorizedRequest(
+      `/v2/remote/invites/${encodeURIComponent(inviteId)}`,
+      { method: "DELETE" },
+      decodeVoid,
+    );
+  }
+
+  async listRemoteMembers(hostId: string): Promise<RemoteMemberRecord[]> {
+    const members = await this.#authorizedRequest(
+      `/v2/remote/hosts/${encodeURIComponent(hostId)}/members/`,
+      { method: "GET" },
+      decodeRemoteMembers,
+    );
+    return members.map((member) => ({
+      ...member,
+      avatarUrl: member.avatarUrl ? this.resolveApiUrl(member.avatarUrl) : null,
+    }));
+  }
+
+  updateRemoteMember(
+    hostId: string,
+    membershipId: string,
+    role: "admin" | "member",
+    reactivate = false,
+  ): Promise<void> {
+    return this.#authorizedRequest(
+      `/v2/remote/hosts/${encodeURIComponent(hostId)}/members/${encodeURIComponent(membershipId)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role, ...(reactivate ? { reactivate: true } : {}) }),
+      },
+      decodeVoid,
+    );
+  }
+
+  removeRemoteMember(hostId: string, membershipId: string): Promise<void> {
+    return this.#authorizedRequest(
+      `/v2/remote/hosts/${encodeURIComponent(hostId)}/members/${encodeURIComponent(membershipId)}`,
+      { method: "DELETE" },
+      decodeVoid,
+    );
+  }
+
+  async updateRemoteHostLogo(
+    hostId: string,
+    image: AvatarImageInput | null,
+    version?: string | null,
+  ): Promise<string | null> {
+    if (image === null) {
+      await this.#authorizedRequest(
+        `/v2/remote/hosts/${encodeURIComponent(hostId)}/logo`,
+        { method: "DELETE" },
+        decodeVoid,
+      );
+      return null;
+    }
+    return this.#authorizedRequest(
+      `/v2/remote/hosts/${encodeURIComponent(hostId)}/logo`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": image.mimeType, ...(version ? { "OpenBot-Logo-Version": version } : {}) },
+        body: Buffer.from(image.bytes),
+      },
+      (value) => requiredString(decodeRecord(value, "remote host logo"), "logoKey"),
+    );
+  }
+
+  async downloadRemoteHostLogo(hostId: string, version: string): Promise<{ bytes: Uint8Array; mimeType: string }> {
+    if (!this.#sessionToken) throw new AuthApiError(401, "unauthorized", "Sign in is required.");
+    const url = new URL(`/v2/remote/hosts/${encodeURIComponent(hostId)}/logo`, this.#options.apiUrl);
+    url.searchParams.set("v", version);
+    const response = await this.#options.fetch(url, {
+      headers: { Authorization: `Bearer ${this.#sessionToken}` },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!response.ok) throw await AuthApiError.fromResponse(response);
+    return {
+      bytes: new Uint8Array(await response.arrayBuffer()),
+      mimeType: response.headers.get("content-type")?.split(";", 1)[0]?.trim() || "application/octet-stream",
+    };
+  }
+
   async redeemTeamAuthTicket(ticket: string, serverId: string): Promise<CentralAuthUser | null> {
     if (!ticket) return null;
     try {
@@ -153,53 +483,6 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
       },
       decodeVoid,
     );
-  }
-
-  async provisionTeamTunnel(input: {
-    serverId: string;
-    serverName: string;
-    apiPort?: number | null;
-  }): Promise<ProvisionedTeamTunnel> {
-    const result = await this.#authorizedRequest(
-      "/v1/team-tunnels/provision",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
-      },
-      decodeProvisionedTeamTunnel,
-      60_000,
-    );
-    if (
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(result.tunnelId) ||
-      !/^openbot-[0-9a-f]{32}$/u.test(result.tunnelName) ||
-      !isOpenBotHostUrl(result.apiUrl) ||
-      result.token.length < 40 ||
-      !/^[0-9a-f]{64}$/u.test(result.machineToken)
-    ) {
-      throw new Error("The account service returned invalid team tunnel details.");
-    }
-    this.#teamHostTokens.set(input.serverId.toLowerCase(), result.machineToken);
-    await this.#writeStoredSession();
-    return result;
-  }
-
-  async getTeamHostIceServers(serverId: string): Promise<RemoteDesktopIceServer[]> {
-    const machineToken = this.#teamHostTokens.get(serverId.toLowerCase());
-    if (!machineToken) throw new Error("The team host token is unavailable. Restart the host service.");
-    const result = await this.#request(
-      "/v1/team-hosts/ice-servers",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${machineToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ serverId }),
-      },
-      decodeIceServerResponse,
-    );
-    return result.iceServers;
   }
 
   initialize(): Promise<CentralAuthState> {
@@ -492,7 +775,7 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     this.#teamHostTokens.clear();
     if (isDynamicRecord(stored.teamHostTokens)) {
       for (const [serverId, token] of Object.entries(stored.teamHostTokens)) {
-        if (/^[0-9a-f-]{36}$/iu.test(serverId) && isString(token) && /^[0-9a-f]{64}$/u.test(token)) {
+        if (/^[0-9a-f-]{36}$/iu.test(serverId) && isString(token) && /^[A-Za-z0-9_-]{32,128}$/u.test(token)) {
           this.#teamHostTokens.set(serverId.toLowerCase(), token);
         }
       }
@@ -520,21 +803,6 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   }
 }
 
-function isOpenBotHostUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return (
-      url.protocol === "https:" &&
-      url.pathname === "/" &&
-      url.search === "" &&
-      url.hash === "" &&
-      isOpenBotTeamApiHostname(url.hostname)
-    );
-  } catch {
-    return false;
-  }
-}
-
 export function readCentralAuthApiUrl(value: string | undefined, fallback = "http://127.0.0.1:3100"): string {
   const url = new URL(value ?? fallback);
   const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost";
@@ -542,6 +810,12 @@ export function readCentralAuthApiUrl(value: string | undefined, fallback = "htt
     throw new Error("OPENBOT_AUTH_API_URL must be HTTPS or an HTTP loopback origin.");
   }
   return url.origin;
+}
+
+export function readMobileConnectApiUrl(value: string | undefined, fallback: string): string {
+  const apiUrl = value ?? fallback;
+  createMobileConnectUrl({ apiUrl, ticket: "x".repeat(32) });
+  return new URL(apiUrl).origin;
 }
 
 class AuthApiError extends Error {
@@ -640,38 +914,177 @@ function decodeTicketResponse(value: unknown): { ticket: string; expiresAt: numb
   return { ticket: requiredString(record, "ticket"), expiresAt: record.expiresAt };
 }
 
-function decodeProvisionedTeamTunnel(value: unknown): ProvisionedTeamTunnel {
-  const record = decodeRecord(value, "team tunnel");
-  return {
-    tunnelId: requiredString(record, "tunnelId"),
-    tunnelName: requiredString(record, "tunnelName"),
-    apiUrl: requiredString(record, "apiUrl"),
-    token: requiredString(record, "token"),
-    machineToken: requiredString(record, "machineToken"),
-  };
+function decodeMobileConnectedDevices(value: unknown): { devices: MobileConnectedDevice[] } {
+  const record = decodeRecord(value, "mobile devices");
+  if (!Array.isArray(record.devices)) throw new Error("Invalid mobile device list.");
+  return { devices: record.devices.map(decodeMobileConnectedDevice) };
 }
 
-function decodeIceServerResponse(value: unknown): { iceServers: RemoteDesktopIceServer[] } {
-  const record = decodeRecord(value, "ICE server response");
-  if (!Array.isArray(record.iceServers)) throw new Error("Invalid ICE server list.");
-  return { iceServers: record.iceServers.map(decodeIceServer) };
-}
-
-function decodeIceServer(value: unknown): RemoteDesktopIceServer {
-  const record = decodeRecord(value, "ICE server");
-  const urls = record.urls;
-  if (!(isString(urls) || (Array.isArray(urls) && urls.length > 0 && urls.every(isString)))) {
-    throw new Error("Invalid ICE server URLs.");
+function decodeMobileConnectedDevice(value: unknown): MobileConnectedDevice {
+  const record = decodeRecord(value, "mobile device");
+  if (!isNumber(record.connectedAt) || !isNumber(record.lastActiveAt)) {
+    throw new Error("Invalid mobile device timestamps.");
   }
-  const username = record.username;
-  const credential = record.credential;
-  if (username !== undefined && !isString(username)) throw new Error("Invalid ICE server username.");
-  if (credential !== undefined && !isString(credential)) throw new Error("Invalid ICE server credential.");
+  const platform = record.platform;
+  if (platform !== "ios" && platform !== "android" && platform !== "unknown") {
+    throw new Error("Invalid mobile device platform.");
+  }
   return {
-    urls,
-    ...(username === undefined ? {} : { username }),
-    ...(credential === undefined ? {} : { credential }),
+    sessionId: requiredString(record, "sessionId"),
+    name: requiredString(record, "name"),
+    platform,
+    connectedAt: record.connectedAt,
+    lastActiveAt: record.lastActiveAt,
   };
+}
+
+function decodeRegisteredRemoteHost(value: unknown): RegisteredRemoteHost {
+  const record = decodeRecord(value, "remote host registration");
+  if (!isNumber(record.authEpoch) || !Number.isSafeInteger(record.authEpoch) || record.authEpoch < 1) {
+    throw new Error("Invalid remote host auth epoch.");
+  }
+  return {
+    hostId: requiredString(record, "hostId"),
+    name: requiredString(record, "name"),
+    membershipId: requiredString(record, "membershipId"),
+    authEpoch: record.authEpoch,
+    machineToken: record.machineToken === null ? null : requiredString(record, "machineToken"),
+  };
+}
+
+function decodeRemoteConnectionBootstrap(value: unknown): RemoteConnectionBootstrap {
+  const record = decodeRecord(value, "remote connection bootstrap");
+  if (!isNumber(record.expiresAt)) throw new Error("Invalid remote ticket expiration.");
+  const signalUrl = requiredString(record, "signalUrl");
+  const signal = new URL(signalUrl);
+  const loopback = signal.hostname === "127.0.0.1" || signal.hostname === "localhost";
+  if (signal.protocol !== "wss:" && !(signal.protocol === "ws:" && loopback))
+    throw new Error("Invalid Remote Signal URL.");
+  return { ticket: requiredString(record, "ticket"), expiresAt: record.expiresAt, signalUrl };
+}
+
+function decodeRemoteSession(value: unknown): { sessionId: string; hostId: string; expiresAt: number } {
+  const record = decodeRecord(value, "remote session");
+  if (!isNumber(record.expiresAt)) throw new Error("Invalid remote session expiration.");
+  return {
+    sessionId: requiredString(record, "sessionId"),
+    hostId: requiredString(record, "hostId"),
+    expiresAt: record.expiresAt,
+  };
+}
+
+function decodeRemoteHosts(value: unknown): RemoteHostSummary[] {
+  const record = decodeRecord(value, "remote hosts");
+  if (!Array.isArray(record.hosts)) throw new Error("Invalid remote host list.");
+  return record.hosts.map((item) => {
+    const host = decodeRecord(item, "remote host");
+    if (!isNumber(host.authEpoch) || !Number.isSafeInteger(host.authEpoch) || host.authEpoch < 1)
+      throw new Error("Invalid remote auth epoch.");
+    if (host.logoKey !== null && !isString(host.logoKey)) throw new Error("Invalid remote host logo.");
+    if (host.devicePublicKey !== null && !isString(host.devicePublicKey)) throw new Error("Invalid remote host key.");
+    if (host.role !== "owner" && host.role !== "admin" && host.role !== "member")
+      throw new Error("Invalid remote host role.");
+    return {
+      hostId: requiredString(host, "hostId"),
+      name: requiredString(host, "name"),
+      logoKey: host.logoKey,
+      devicePublicKey: host.devicePublicKey,
+      authEpoch: host.authEpoch,
+      membershipId: requiredString(host, "membershipId"),
+      role: host.role,
+    };
+  });
+}
+
+function decodeCreatedRemoteInvite(value: unknown): { inviteId: string; token: string; expiresAt: number } {
+  const record = decodeRecord(value, "remote invitation");
+  if (!isNumber(record.expiresAt)) throw new Error("Invalid remote invitation expiration.");
+  return {
+    inviteId: requiredString(record, "inviteId"),
+    token: requiredString(record, "token"),
+    expiresAt: record.expiresAt,
+  };
+}
+
+function decodeRemoteInvite(value: unknown): RemoteInviteRecord {
+  const record = decodeRecord(value, "remote invitation");
+  if (record.role !== "admin" && record.role !== "member") throw new Error("Invalid remote invitation role.");
+  if (!isNumber(record.expiresAt)) throw new Error("Invalid remote invitation expiration.");
+  if (record.usedAt !== null && !isNumber(record.usedAt)) throw new Error("Invalid remote invitation use time.");
+  if (record.revokedAt !== null && !isNumber(record.revokedAt))
+    throw new Error("Invalid remote invitation revocation time.");
+  if (record.email !== null && !isString(record.email)) throw new Error("Invalid remote invitation email.");
+  return {
+    inviteId: requiredString(record, "inviteId"),
+    email: record.email,
+    role: record.role,
+    expiresAt: record.expiresAt,
+    usedAt: record.usedAt,
+    revokedAt: record.revokedAt,
+  };
+}
+
+function decodeRemoteInvites(value: unknown): RemoteInviteRecord[] {
+  const record = decodeRecord(value, "remote invitation list");
+  if (!Array.isArray(record.invites)) throw new Error("Invalid remote invitation list.");
+  return record.invites.map(decodeRemoteInvite);
+}
+
+function decodeRemoteInvitePreview(value: unknown): RemoteInvitePreview {
+  const record = decodeRecord(value, "remote invitation preview");
+  if (record.role !== "admin" && record.role !== "member") throw new Error("Invalid remote invitation role.");
+  if (!isNumber(record.expiresAt) || !isBoolean(record.emailBound))
+    throw new Error("Invalid remote invitation preview.");
+  if (record.devicePublicKey !== null && !isString(record.devicePublicKey))
+    throw new Error("Invalid remote invitation host key.");
+  return {
+    inviteId: requiredString(record, "inviteId"),
+    hostId: requiredString(record, "hostId"),
+    hostName: requiredString(record, "hostName"),
+    role: record.role,
+    expiresAt: record.expiresAt,
+    emailBound: record.emailBound,
+    devicePublicKey: record.devicePublicKey,
+  };
+}
+
+function decodeAcceptedRemoteInvite(value: unknown): {
+  hostId: string;
+  membershipId: string;
+  role: "admin" | "member";
+} {
+  const record = decodeRecord(value, "accepted remote invitation");
+  if (record.role !== "admin" && record.role !== "member") throw new Error("Invalid remote membership role.");
+  return {
+    hostId: requiredString(record, "hostId"),
+    membershipId: requiredString(record, "membershipId"),
+    role: record.role,
+  };
+}
+
+function decodeRemoteMember(value: unknown): RemoteMemberRecord {
+  const record = decodeRecord(value, "remote member");
+  if (record.role !== "owner" && record.role !== "admin" && record.role !== "member")
+    throw new Error("Invalid remote member role.");
+  if (record.status !== "active" && record.status !== "revoked") throw new Error("Invalid remote member status.");
+  if (!isNumber(record.createdAt)) throw new Error("Invalid remote member creation time.");
+  if (record.name !== null && !isString(record.name)) throw new Error("Invalid remote member name.");
+  if (record.avatarUrl !== null && !isString(record.avatarUrl)) throw new Error("Invalid remote member avatar.");
+  return {
+    membershipId: requiredString(record, "membershipId"),
+    email: requiredString(record, "email"),
+    name: record.name,
+    avatarUrl: record.avatarUrl,
+    role: record.role,
+    status: record.status,
+    createdAt: record.createdAt,
+  };
+}
+
+function decodeRemoteMembers(value: unknown): RemoteMemberRecord[] {
+  const record = decodeRecord(value, "remote member list");
+  if (!Array.isArray(record.members)) throw new Error("Invalid remote member list.");
+  return record.members.map(decodeRemoteMember);
 }
 
 function decodeEmailChallenge(value: unknown): {

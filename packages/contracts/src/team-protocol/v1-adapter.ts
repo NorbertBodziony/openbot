@@ -51,6 +51,7 @@ export function encodeTeamProtocolV1CurrentHttpResponse(
   value: unknown,
 ): string {
   const wireValue: TeamProtocolV1JsonValue = JSON.parse(JSON.stringify(value));
+  if (status < 400 && isInstalledSkillsRoute(method, path)) return JSON.stringify(wireValue);
   const downconvertedValue = downconvertCurrentTags(wireValue);
   return JSON.stringify(decodeTeamProtocolV1HttpResponse(method, path, status, downconvertedValue));
 }
@@ -72,5 +73,13 @@ export function decodeTeamProtocolV1CurrentHttpResponse(
   status: number,
   value: unknown,
 ): TeamProtocolV1JsonValue {
+  if (status < 400 && isInstalledSkillsRoute(method, path)) {
+    const wireValue: TeamProtocolV1JsonValue = JSON.parse(JSON.stringify(value));
+    return structuredClone(wireValue);
+  }
   return structuredClone(decodeTeamProtocolV1HttpResponse(method, path, status, value));
+}
+
+function isInstalledSkillsRoute(method: string, path: string): boolean {
+  return method === "GET" && /^\/v1\/agents\/[^/]+\/skills$/u.test(new URL(path, "http://openbot.invalid").pathname);
 }

@@ -9,6 +9,7 @@ import {
   type BotMemory,
   type BotSummary,
   type BrowserPreview,
+  type ComputerUseMacSetupState,
   type ConversationMessage,
   type ConversationPage,
   type ConversationReadState,
@@ -88,6 +89,24 @@ function invokeAgentForServer<TResult>(
 ): Promise<TResult> {
   const request: AgentIpcRequest = { serverId, payload };
   return ipcRenderer.invoke(channel, request).then(decoder);
+}
+
+function decodeComputerUseMacSetupState(value: unknown): ComputerUseMacSetupState {
+  if (
+    !isDynamicRecord(value) ||
+    !isOneOf(["available", "unavailable", "unsupported"] as const, value.status) ||
+    !isString(value.helperName) ||
+    (value.helperIconDataUrl !== null && !isString(value.helperIconDataUrl)) ||
+    (value.message !== null && !isString(value.message))
+  ) {
+    throw new Error("Invalid Computer Use macOS setup state.");
+  }
+  return {
+    status: value.status,
+    helperName: value.helperName,
+    helperIconDataUrl: value.helperIconDataUrl,
+    message: value.message,
+  };
 }
 
 function rememberActiveServer<T extends { id: string; active: boolean }[]>(servers: T): T {
@@ -821,8 +840,14 @@ const openbotApi: OpenBotDesktopApi = {
     },
     setInteractive: (input) => ipcRenderer.invoke(IPC_CHANNELS.dynamicIslandSetInteractive, input).then(decodeVoid),
   },
-  getMacPermissions: () => ipcRenderer.invoke(IPC_CHANNELS.getMacPermissions),
-  requestMacPermission: (permission) => ipcRenderer.invoke(IPC_CHANNELS.requestMacPermission, permission),
+  getComputerUseMacSetupState: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.computerUseGetMacSetupState).then(decodeComputerUseMacSetupState),
+  openComputerUsePermissionSetup: (permission) =>
+    ipcRenderer.invoke(IPC_CHANNELS.computerUseOpenMacPermissionSetup, permission).then(decodeComputerUseMacSetupState),
+  startComputerUseHelperDrag: () => ipcRenderer.invoke(IPC_CHANNELS.computerUseStartHelperDrag).then(decodeVoid),
+  revealComputerUseHelper: () => ipcRenderer.invoke(IPC_CHANNELS.computerUseRevealHelper).then(decodeVoid),
+  closeComputerUsePermissionSetup: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.computerUseCloseMacPermissionSetup).then(decodeVoid),
   openExternal: (destination) => ipcRenderer.invoke(IPC_CHANNELS.openExternal, destination),
   connectChatGPT: () => ipcRenderer.invoke(IPC_CHANNELS.connectChatGPT),
   connectClaude: () => ipcRenderer.invoke(IPC_CHANNELS.connectClaude),
@@ -859,6 +884,10 @@ const openbotApi: OpenBotDesktopApi = {
     verifyEmailCode: (challengeId, code) => ipcRenderer.invoke(IPC_CHANNELS.authVerifyEmailCode, { challengeId, code }),
     updateName: (name) => ipcRenderer.invoke(IPC_CHANNELS.authUpdateName, name),
     updateAvatar: (image) => ipcRenderer.invoke(IPC_CHANNELS.authUpdateAvatar, image),
+    createMobileConnect: () => ipcRenderer.invoke(IPC_CHANNELS.authCreateMobileConnect),
+    listMobileConnectedDevices: () => ipcRenderer.invoke(IPC_CHANNELS.authListMobileConnectedDevices),
+    revokeMobileConnectedDevice: (sessionId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.authRevokeMobileConnectedDevice, sessionId),
     logout: () => ipcRenderer.invoke(IPC_CHANNELS.authLogout),
     onEvent: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, state: Parameters<typeof listener>[0]) => listener(state);

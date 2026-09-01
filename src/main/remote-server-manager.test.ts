@@ -15,6 +15,8 @@ import {
   remoteAttachmentPreviewUrl,
 } from "./remote-server-manager";
 import { fingerprint } from "./team-store";
+import { TeamWebRtcBridge } from "./team-webrtc-bridge";
+import { TeamWebRtcClientTransport } from "./team-webrtc-client-transport";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -96,6 +98,281 @@ describe("remote server links", () => {
     const preview = remoteAttachmentPreviewUrl("00000000-0000-4000-8000-000000000000", "draft 1");
     expect(preview).toBe("openbot-remote-attachment://00000000-0000-4000-8000-000000000000/draft%201");
     expect(preview).not.toContain("token");
+  });
+
+  it("rejects a WebRTC invitation whose pinned host key does not match the control plane", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-webrtc-invite-key-"));
+    const statePath = join(directory, "servers.json");
+    const hostId = "00000000-0000-4000-8000-000000000000";
+    const acceptInvite = vi.fn();
+    const bridge = new TeamWebRtcBridge();
+    vi.spyOn(bridge, "disconnect").mockResolvedValue();
+    const transport = new TeamWebRtcClientTransport({
+      bridge,
+      listHosts: async () => [],
+      startSession: async () => ({ sessionId: "session-1", hostId, expiresAt: Date.now() + 60_000 }),
+      issueTicket: async () => ({
+        ticket: "ticket",
+        expiresAt: Date.now() + 60_000,
+        signalUrl: "wss://signal.openbot.run/v1/signal",
+      }),
+      endSession: async () => undefined,
+      createInvite: async () => ({ inviteId: "invite-1", token: "t".repeat(43), expiresAt: Date.now() + 60_000 }),
+      listInvites: async () => [],
+      previewInvite: async () => ({
+        inviteId: "invite-1",
+        hostId,
+        hostName: "Studio Mac",
+        role: "member" as const,
+        expiresAt: Date.now() + 60_000,
+        emailBound: false,
+        devicePublicKey: "trusted-host-public-key",
+      }),
+      acceptInvite,
+      revokeInvite: async () => undefined,
+      listMembers: async () => [],
+      updateMember: async () => undefined,
+      removeMember: async () => undefined,
+      getPrincipalId: () => "person-1",
+      controlPlaneUrl: "https://api.openbot.run",
+      downloadHostLogo: async () => ({ bytes: new Uint8Array(), mimeType: "image/png" }),
+      transferDirectory: join(directory, "transfers"),
+    });
+    const manager = new RemoteServerManager(
+      statePath,
+      { encrypt: (value) => Buffer.from(value), decrypt: (value) => value.toString() },
+      { createTeamAuthTicket: async () => "ticket", getEmail: () => "person@example.com" },
+      { webrtcTransport: transport },
+    );
+    const inviteUrl = new URL("https://openbot.run/join");
+    inviteUrl.searchParams.set("api", "https://api.openbot.run");
+    inviteUrl.searchParams.set("server", hostId);
+    inviteUrl.searchParams.set("fingerprint", fingerprint("attacker-public-key"));
+    inviteUrl.searchParams.set("invite", "b".repeat(43));
+    try {
+      await manager.initialize();
+      await expect(manager.join({ inviteUrl: inviteUrl.toString() })).rejects.toThrow("identity");
+      expect(acceptInvite).not.toHaveBeenCalled();
+    } finally {
+      await manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("disconnects a stored WebRTC host removed from the authenticated directory", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-webrtc-revoked-host-"));
+    const statePath = join(directory, "servers.json");
+    const hostId = "revoked-host";
+    await writeFile(
+      statePath,
+      JSON.stringify({
+        version: 3,
+        activeServerId: hostId,
+        servers: [
+          {
+            id: hostId,
+            name: "Revoked host",
+            apiUrl: `webrtc://${hostId}`,
+            fingerprint: fingerprint("trusted-host-public-key"),
+            publicKey: "trusted-host-public-key",
+            username: "person@example.com",
+            encryptedToken: "",
+            remoteDesktopAvailable: true,
+            logoVersion: null,
+            role: "member",
+            transport: "webrtc-v2",
+          },
+        ],
+      }),
+    );
+    const bridge = new TeamWebRtcBridge();
+    const disconnect = vi.spyOn(bridge, "disconnect").mockResolvedValue();
+    const transport = new TeamWebRtcClientTransport({
+      bridge,
+      listHosts: async () => [],
+      startSession: async () => ({ sessionId: "session-1", hostId, expiresAt: Date.now() + 60_000 }),
+      issueTicket: async () => ({
+        ticket: "ticket",
+        expiresAt: Date.now() + 60_000,
+        signalUrl: "wss://signal.openbot.run/v1/signal",
+      }),
+      endSession: async () => undefined,
+      createInvite: async () => ({ inviteId: "invite-1", token: "token", expiresAt: Date.now() + 60_000 }),
+      listInvites: async () => [],
+      previewInvite: async () => ({
+        inviteId: "invite-1",
+        hostId,
+        hostName: "Revoked host",
+        role: "member",
+        expiresAt: Date.now() + 60_000,
+        emailBound: false,
+        devicePublicKey: "trusted-host-public-key",
+      }),
+      acceptInvite: async () => ({ hostId, membershipId: "membership-1", role: "member" }),
+      revokeInvite: async () => undefined,
+      listMembers: async () => [],
+      updateMember: async () => undefined,
+      removeMember: async () => undefined,
+      getPrincipalId: () => "person-1",
+      controlPlaneUrl: "https://api.openbot.run",
+      downloadHostLogo: async () => ({ bytes: new Uint8Array(), mimeType: "image/png" }),
+      transferDirectory: join(directory, "transfers"),
+    });
+    const manager = new RemoteServerManager(
+      statePath,
+      { encrypt: (value) => Buffer.from(value), decrypt: (value) => value.toString() },
+      { createTeamAuthTicket: async () => "ticket", getEmail: () => "person@example.com" },
+      { webrtcTransport: transport },
+    );
+
+    try {
+      await manager.initialize();
+      expect(disconnect).toHaveBeenCalledWith(hostId);
+      expect(manager.list().map((server) => server.id)).toEqual(["local"]);
+      expect(manager.activeServerId).toBe("local");
+    } finally {
+      await manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the saved WebRTC host order and loads Remote Desktop readiness after connection", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-webrtc-host-order-"));
+    const statePath = join(directory, "servers.json");
+    const alphaId = "00000000-0000-4000-8000-000000000001";
+    const betaId = "00000000-0000-4000-8000-000000000002";
+    const gammaId = "00000000-0000-4000-8000-000000000003";
+    const storedWebRtcServer = (id: string, name: string) => ({
+      id,
+      name,
+      apiUrl: `webrtc://${id}`,
+      fingerprint: fingerprint(`${id}-public-key`),
+      publicKey: `${id}-public-key`,
+      username: "person@example.com",
+      encryptedToken: "",
+      remoteDesktopAvailable: true,
+      logoVersion: null,
+      role: "member" as const,
+      transport: "webrtc-v2" as const,
+    });
+    await writeFile(
+      statePath,
+      JSON.stringify({
+        version: 3,
+        activeServerId: betaId,
+        servers: [storedWebRtcServer(betaId, "Beta"), storedWebRtcServer(alphaId, "Alpha")],
+      }),
+    );
+    let hosts = [
+      { hostId: alphaId, name: "Alpha", devicePublicKey: `${alphaId}-public-key` },
+      { hostId: betaId, name: "Beta", devicePublicKey: `${betaId}-public-key` },
+      { hostId: gammaId, name: "Gamma", devicePublicKey: `${gammaId}-public-key` },
+    ].map((host) => {
+      const role: "owner" | "member" = host.hostId === gammaId ? "owner" : "member";
+      return {
+        ...host,
+        logoKey: null,
+        authEpoch: 1,
+        membershipId: `${host.hostId}-member`,
+        role,
+      };
+    });
+    const bridge = new TeamWebRtcBridge();
+    vi.spyOn(bridge, "disconnect").mockResolvedValue();
+    const removeMember = vi.fn(async (hostId: string) => {
+      hosts = hosts.filter((host) => host.hostId !== hostId);
+    });
+    const revokeInvite = vi.fn(async () => undefined);
+    const sendTeamInviteEmail = vi.fn(async () => undefined);
+    const transport = new TeamWebRtcClientTransport({
+      bridge,
+      listHosts: async () => hosts,
+      startSession: async (hostId) => ({ sessionId: "session-1", hostId, expiresAt: Date.now() + 60_000 }),
+      issueTicket: async () => ({ ticket: "ticket", expiresAt: Date.now() + 60_000, signalUrl: "wss://signal" }),
+      endSession: async () => undefined,
+      createInvite: async () => ({ inviteId: "invite-1", token: "t".repeat(43), expiresAt: Date.now() + 60_000 }),
+      listInvites: async () => [],
+      previewInvite: async () => {
+        throw new Error("Unexpected invite preview.");
+      },
+      acceptInvite: async () => {
+        throw new Error("Unexpected invite acceptance.");
+      },
+      revokeInvite,
+      listMembers: async () => [],
+      updateMember: async () => undefined,
+      removeMember,
+      getPrincipalId: () => "person-1",
+      controlPlaneUrl: "https://api.openbot.run",
+      downloadHostLogo: async () => ({ bytes: new Uint8Array(), mimeType: "image/png" }),
+      transferDirectory: join(directory, "transfers"),
+    });
+    const request = vi.spyOn(transport, "request").mockResolvedValue({
+      ready: true,
+      platform: "linux",
+      unattended: true,
+      runtime: "sunshine-moonlight",
+      protocolVersion: 2,
+      displays: [],
+      selectedDisplayId: null,
+      activeSessions: 0,
+      maxSessions: 1,
+    });
+    const manager = new RemoteServerManager(
+      statePath,
+      { encrypt: (value) => Buffer.from(value), decrypt: (value) => value.toString() },
+      {
+        createTeamAuthTicket: async () => "ticket",
+        getEmail: () => "person@example.com",
+        sendTeamInviteEmail,
+      },
+      { webrtcTransport: transport },
+    );
+
+    try {
+      await manager.initialize();
+      expect(
+        manager
+          .list()
+          .slice(1)
+          .map((server) => server.id),
+      ).toEqual([betaId, alphaId, gammaId]);
+      expect(manager.list().find((server) => server.id === betaId)?.remoteDesktopAvailable).toBe(false);
+      transport.emit("connected", betaId);
+      await vi.waitFor(() =>
+        expect(manager.list().find((server) => server.id === betaId)?.remoteDesktopAvailable).toBe(true),
+      );
+      expect(request).toHaveBeenCalledWith(betaId, "/v1/remote-screen/capabilities", {});
+      const invite = await manager.createInvite(betaId, { role: "member", email: "friend@example.com" });
+      expect(sendTeamInviteEmail).toHaveBeenCalledWith({
+        email: "friend@example.com",
+        serverName: "Beta",
+        inviteUrl: invite.inviteUrl,
+        role: "member",
+      });
+      sendTeamInviteEmail.mockRejectedValueOnce(new Error("SMTP unavailable"));
+      await expect(manager.createInvite(betaId, { role: "member", email: "failed@example.com" })).rejects.toThrow(
+        "SMTP unavailable",
+      );
+      expect(revokeInvite).toHaveBeenCalledWith("invite-1");
+      await manager.remove(alphaId);
+      expect(removeMember).toHaveBeenCalledWith(alphaId, `${alphaId}-member`);
+      await manager.syncRemoteHosts();
+      expect(manager.list().some((server) => server.id === alphaId)).toBe(false);
+      await manager.remove(gammaId);
+      await manager.syncRemoteHosts();
+      expect(manager.list().some((server) => server.id === gammaId)).toBe(false);
+      expect(removeMember).not.toHaveBeenCalledWith(gammaId, `${gammaId}-member`);
+      expect(JSON.parse(await readFile(statePath, "utf8"))).toMatchObject({ hiddenHostIds: [gammaId] });
+      transport.emit("error", betaId, "session_revoked", "The remote session was revoked.");
+      expect(manager.list().find((server) => server.id === betaId)).toMatchObject({
+        state: "error",
+        issue: { code: "authentication_required", retryable: false },
+      });
+    } finally {
+      await manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
 
@@ -1076,7 +1353,7 @@ describe("Team API compatibility negotiation", () => {
     }
   });
 
-  it("negotiates v2 events and declares v2 client capabilities", async () => {
+  it("declares client capabilities when runtime snapshots are unavailable", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openbot-compatibility-event-scope-"));
     const statePath = join(directory, "servers.json");
     await writeRemoteEventState(statePath, "compatibility-event-scope");
@@ -1087,8 +1364,8 @@ describe("Team API compatibility negotiation", () => {
         if (url.pathname === "/v1/compatibility") {
           return Response.json({
             appVersion: "0.3.0",
-            protocol: { minimum: 1, maximum: 2 },
-            capabilities: ["agent-runtime-snapshots", "direct-messages", "installed-skills"],
+            protocol: { minimum: 1, maximum: 1 },
+            capabilities: ["direct-messages"],
           });
         }
         if (url.pathname === "/v1/agents") return Response.json([]);
@@ -1098,7 +1375,7 @@ describe("Team API compatibility negotiation", () => {
     const sockets: CapabilityEventSocket[] = [];
     class CapabilityEventSocket extends EventTarget {
       static readonly OPEN = 1;
-      readonly protocol = "openbot-team-v2";
+      readonly protocol = "openbot-team-v1";
       readyState = CapabilityEventSocket.OPEN;
       readonly send = vi.fn();
       readonly close = vi.fn(() => {
@@ -1108,7 +1385,6 @@ describe("Team API compatibility negotiation", () => {
 
       constructor(_url: URL, protocols: string[]) {
         super();
-        expect(protocols).toContain("openbot-team-v2");
         expect(protocols).toContain("openbot-team-v1");
         sockets.push(this);
         queueMicrotask(() => this.dispatchEvent(new Event("open")));
@@ -1125,28 +1401,8 @@ describe("Team API compatibility negotiation", () => {
       expect(messages).toContainEqual({
         type: "agent-event-scope",
         includeConversations: true,
-        capabilities: expect.arrayContaining(["direct-messages", "installed-skills"]),
+        capabilities: expect.arrayContaining(["direct-messages"]),
       });
-      const onAgent = vi.fn();
-      manager.on("agent", onAgent);
-      sockets[0]?.dispatchEvent(
-        new MessageEvent("message", {
-          data: JSON.stringify({
-            type: "error",
-            botId: "chief",
-            code: "test",
-            message: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
-          }),
-        }),
-      );
-      await vi.waitFor(() =>
-        expect(onAgent).toHaveBeenCalledWith(
-          "compatibility-event-scope",
-          expect.objectContaining({
-            message: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
-          }),
-        ),
-      );
     } finally {
       manager.stop();
       await rm(directory, { recursive: true, force: true });

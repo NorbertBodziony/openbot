@@ -13,6 +13,10 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin({ exclude: ["@openbot/contracts"] })],
     build: {
       rollupOptions: {
+        input: {
+          index: resolve("src/preload/index.ts"),
+          teamWebrtc: resolve("src/preload/team-webrtc.ts"),
+        },
         output: {
           format: "cjs",
           entryFileNames: "[name].cjs",
@@ -35,6 +39,7 @@ export default defineConfig({
           index: resolve("src/renderer/index.html"),
           browserPip: resolve("src/renderer/browser-pip.html"),
           browserPipControls: resolve("src/renderer/browser-pip-controls.html"),
+          teamWebrtc: resolve("src/renderer/team-webrtc.html"),
         },
       },
     },

@@ -11,6 +11,7 @@
     "./input-limits": "./src/input-limits.ts",
     "./invite-links": "./src/invite-links.ts",
     "./ipc": "./src/ipc.ts",
+    "./mobile-connect": "./src/mobile-connect.ts",
     "./runtime-values": "./src/runtime-values.ts",
     "./team-protocol": "./src/team-protocol/index.ts",
     "./team-protocol/v1": "./src/team-protocol/v1.ts",

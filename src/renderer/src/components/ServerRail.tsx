@@ -1,7 +1,7 @@
 import type { ServerSummary } from "@openbot/contracts/ipc";
 import { createEffect, createSignal, For, onCleanup, onSettled, Show } from "solid-js";
 import { createVerticalDragPreview } from "./createVerticalDragPreview";
-import { buttonVariants, ContextMenu, Tooltip } from "./ui";
+import { buttonVariants, ContextMenu, ServerGradientLogo, Tooltip } from "./ui";
 
 const SERVER_RAIL_TOOLTIP_OPEN_DELAY = 150;
 
@@ -381,27 +381,8 @@ function ServerMark(props: { server: ServerSummary }) {
     },
   );
   return (
-    <Show
-      when={!failed() ? props.server.logoUrl : null}
-      fallback={
-        <span class={props.server.kind === "local" ? "server-rail-local" : "server-rail-monogram"}>
-          {initials(props.server.name)}
-        </span>
-      }
-    >
+    <Show when={!failed() ? props.server.logoUrl : null} fallback={<ServerGradientLogo seed={props.server.id} />}>
       {(url) => <img class="server-rail-logo" src={url()} alt="" draggable={false} onError={() => setFailed(true)} />}
     </Show>
-  );
-}
-
-function initials(name: string): string {
-  return (
-    name
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((part) => part[0])
-      .join("")
-      .toUpperCase() || "O"
   );
 }

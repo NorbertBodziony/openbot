@@ -1,9 +1,7 @@
 import { env } from "cloudflare:workers";
 import { AgentMarketplace, AgentMarketplaceError } from "./agent-marketplace";
 import { AuthService, AuthServiceError } from "./auth-service";
-import { CloudflareTunnelProvider } from "./cloudflare-tunnel-provider";
 import { D1AuthRepository } from "./d1-auth-repository";
-import { D1TeamTunnelRepository } from "./d1-team-tunnel-repository";
 import { createEmailCodeDelivery, createTeamInviteEmailDelivery } from "./email-delivery";
 import { JsonBodyError } from "./json-body";
 import { MarketplaceQueryError } from "./marketplace-pagination";
@@ -12,8 +10,8 @@ import {
   type MarketplaceMutationKind,
   MarketplaceRateLimitError,
 } from "./marketplace-request-policy";
+import { RemoteControlPlane, RemoteControlPlaneError, verifyRemoteServiceSignature } from "./remote-control-plane";
 import { SkillMarketplace, SkillMarketplaceError } from "./skill-marketplace";
-import { authenticateTeamHost, TeamTunnelService } from "./team-tunnel-service";
 import { requireWorkerBindings, type TeamInviteEmailDelivery } from "./types";
 
 export function requestAuthService(): AuthService {
@@ -77,31 +75,31 @@ export function requestTeamInviteEmailDelivery(): TeamInviteEmailDelivery | null
   return createTeamInviteEmailDelivery(bindings);
 }
 
-export function requestTeamTunnelService(): TeamTunnelService | null {
-  const bindings = requireWorkerBindings(env);
-  if (
-    !bindings.CLOUDFLARE_ACCOUNT_ID ||
-    !bindings.CLOUDFLARE_ZONE_ID ||
-    !bindings.CLOUDFLARE_TUNNEL_DOMAIN ||
-    !bindings.CLOUDFLARE_API_TOKEN
-  ) {
-    return null;
-  }
-  return new TeamTunnelService({
-    repository: new D1TeamTunnelRepository(bindings.DB),
-    provider: new CloudflareTunnelProvider({
-      accountId: bindings.CLOUDFLARE_ACCOUNT_ID,
-      zoneId: bindings.CLOUDFLARE_ZONE_ID,
-      apiToken: bindings.CLOUDFLARE_API_TOKEN,
-    }),
-    domain: bindings.CLOUDFLARE_TUNNEL_DOMAIN,
-  });
+export function requestRemoteControlPlane(): RemoteControlPlane {
+  return new RemoteControlPlane(requireWorkerBindings(env));
 }
 
-export function requestTeamHostAuthenticator(): (serverId: string, token: string) => Promise<boolean> {
-  const bindings = requireWorkerBindings(env);
-  const repository = new D1TeamTunnelRepository(bindings.DB);
-  return (serverId, token) => authenticateTeamHost(repository, serverId, token);
+export function verifyRemoteServiceRequest(request: Request, body: string): Promise<boolean> {
+  const secret = requireWorkerBindings(env).REMOTE_AUTH_WEBHOOK_SECRET;
+  if (!secret) return Promise.resolve(false);
+  return verifyRemoteServiceSignature(
+    secret,
+    body,
+    request.headers.get("OpenBot-Timestamp") ?? "",
+    request.headers.get("OpenBot-Signature") ?? "",
+  );
+}
+
+export function remoteControlPlaneErrorResponse(error: unknown): Response {
+  if (error instanceof RemoteControlPlaneError) return apiError(error.status, error.code, error.message);
+  return authErrorResponse(error);
+}
+
+export function requestRemoteSignalUrl(): string {
+  const value = requireWorkerBindings(env).REMOTE_SIGNAL_URL?.trim();
+  if (!value)
+    throw new RemoteControlPlaneError(503, "remote_not_configured", "The Remote Signal URL is not configured.");
+  return value;
 }
 
 export function requestSourceIp(request: Request): string {

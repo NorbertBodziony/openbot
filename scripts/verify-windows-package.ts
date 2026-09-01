@@ -42,13 +42,9 @@ await Promise.all([
   access(resolve(resourcesPath, "remote-desktop-runtime/win32/x64/streamer.exe")),
   access(resolve(resourcesPath, "remote-desktop-runtime/win32/x64/static/stream.html")),
   access(resolve(resourcesPath, "remote-desktop-runtime/win32/x64/SHA256SUMS.txt")),
-  access(resolve(resourcesPath, "cloudflared/win/x64/cloudflared.exe")),
-  access(resolve(resourcesPath, "cloudflared/win/x64/SHA256SUMS.txt")),
-  access(resolve(resourcesPath, "cloudflared/win/x64/VERSION.txt")),
-  access(resolve(resourcesPath, "cloudflared/licenses/cloudflared-Apache-2.0.txt")),
-  access(resolve(resourcesPath, "cloudflared/source-manifest.json")),
 ]);
 await Promise.all(["codex", "claude", "grok"].map((name) => assertAbsent(resolve(resourcesPath, name))));
+await assertAbsent(resolve(resourcesPath, "cloudflared"));
 await assertAbsent(resolve(resourcesPath, "app.asar.unpacked/node_modules/@anthropic-ai/claude-agent-sdk-win32-x64"));
 
 if (existsSync(whisperModelPath)) throw new Error("The on-demand Whisper model must not be in the application.");
@@ -71,7 +67,6 @@ if (machine !== 0x8664) {
 for (const name of ["sunshine.exe", "web-server.exe", "streamer.exe"]) {
   verifyAuthenticode(resolve(resourcesPath, "remote-desktop-runtime/win32/x64", name), "NotSigned");
 }
-verifyAuthenticode(resolve(resourcesPath, "cloudflared/win/x64/cloudflared.exe"), "Valid");
 
 const versionInfo = JSON.parse(
   runWindowsPowerShell(

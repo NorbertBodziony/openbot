@@ -22,7 +22,6 @@ import {
   TEAM_PROTOCOL_V1_CAPABILITIES,
   TEAM_PROTOCOL_VERSION_HEADER,
 } from "@openbot/contracts/team-protocol/v1";
-import { TEAM_PROTOCOL_V2_CAPABILITIES, TEAM_PROTOCOL_V2_WEBSOCKET } from "@openbot/contracts/team-protocol/v2";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpenBotDatabase } from "../backend/openbot-database";
 import { SidebarLayoutStore } from "../backend/sidebar-layout-store";
@@ -161,8 +160,8 @@ describe("TeamApiServer compatibility", () => {
       expect(compatibility.status).toBe(200);
       await expect(compatibility.json()).resolves.toMatchObject({
         appVersion: "0.4.0",
-        protocol: { minimum: 1, maximum: 2 },
-        capabilities: expect.arrayContaining(["browser-control", "remote-desktop", "installed-skills"]),
+        protocol: { minimum: 1, maximum: 1 },
+        capabilities: expect.arrayContaining(["browser-control", "remote-desktop"]),
       });
 
       const missing = await fetch(`${base}/v1/identity`);
@@ -170,7 +169,7 @@ describe("TeamApiServer compatibility", () => {
       await expect(missing.json()).resolves.toMatchObject({ code: "client_update_required" });
 
       const newerClient = await fetch(`${base}/v1/identity`, {
-        headers: { [TEAM_PROTOCOL_VERSION_HEADER]: "3", [TEAM_APP_VERSION_HEADER]: "0.5.0" },
+        headers: { [TEAM_PROTOCOL_VERSION_HEADER]: "2", [TEAM_APP_VERSION_HEADER]: "0.5.0" },
       });
       expect(newerClient.status).toBe(426);
       await expect(newerClient.json()).resolves.toMatchObject({ code: "host_update_required" });
@@ -184,7 +183,7 @@ describe("TeamApiServer compatibility", () => {
     }
   });
 
-  it("serves installed skills only through protocol v2", async () => {
+  it("serves installed skill summaries", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-team-api-skills-"));
     roots.push(root);
     const store = new TeamStore(join(root, "team.json"));
@@ -217,7 +216,6 @@ describe("TeamApiServer compatibility", () => {
       const response = await fetch(`${base}/v1/agents/chief/skills`, {
         headers: {
           Authorization: `Bearer ${login.sessionToken}`,
-          [TEAM_PROTOCOL_VERSION_HEADER]: "2",
         },
       });
 
@@ -226,73 +224,7 @@ describe("TeamApiServer compatibility", () => {
         expect.objectContaining({ skillId: "skill-1", name: "Release Notes", state: "update-available" }),
       ]);
       expect(listInstalledForChatTags).toHaveBeenCalledWith("chief");
-
-      const legacyResponse = await fetch(`${base}/v1/agents/chief/skills`, {
-        headers: { Authorization: `Bearer ${login.sessionToken}` },
-      });
-      expect(legacyResponse.status).toBe(404);
     } finally {
-      await api.stop();
-    }
-  });
-
-  it("uses the v2 codec for v2 WebSocket scopes and events", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-v2-events-"));
-    roots.push(root);
-    const store = new TeamStore(join(root, "team.json"));
-    await store.initialize();
-    await store.configure("Studio Mac", "owner", "correct horse battery");
-    const session = await store.login("owner", "correct horse battery");
-    const agentEvents = new EventEmitter();
-    const api = new TeamApiServer({
-      appVersion: "0.4.0",
-      store,
-      agents: createAgents({}, agentEvents),
-      mailbox: createMailbox(),
-      browser: createBrowser(),
-    });
-    const port = await api.start();
-    const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/events`, [
-      TEAM_PROTOCOL_V2_WEBSOCKET,
-      `openbot-token.${session.sessionToken}`,
-    ]);
-
-    try {
-      const messages: TestRealtimeEvent[] = [];
-      socket.addEventListener("message", (message) => {
-        messages.push(decodeTestRealtimeEvent(JSON.parse(String(message.data))));
-      });
-      await new Promise<void>((resolve, reject) => {
-        socket.addEventListener("open", () => resolve(), { once: true });
-        socket.addEventListener("error", () => reject(new Error("WebSocket did not open.")), { once: true });
-      });
-      expect(socket.protocol).toBe(TEAM_PROTOCOL_V2_WEBSOCKET);
-      await vi.waitFor(() => expect(messages).toContainEqual(expect.objectContaining({ type: "team-presence" })));
-
-      socket.send(
-        JSON.stringify({
-          type: "agent-event-scope",
-          includeConversations: true,
-          capabilities: TEAM_PROTOCOL_V2_CAPABILITIES,
-        }),
-      );
-      await vi.waitFor(() => expect(messages).toContainEqual(expect.objectContaining({ type: "runtime-snapshot" })));
-      agentEvents.emit("event", {
-        type: "error",
-        botId: "chief",
-        code: "test",
-        message: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
-      });
-      await vi.waitFor(() =>
-        expect(messages).toContainEqual(
-          expect.objectContaining({
-            type: "error",
-            message: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
-          }),
-        ),
-      );
-    } finally {
-      socket.close();
       await api.stop();
     }
   });
@@ -480,9 +412,26 @@ describe("TeamApiServer administration", () => {
         revision: 3,
         sections: [{ name: "Shared 1" }, { name: "Shared 2" }, { name: "Shared 3" }],
       });
-      const closed = new Promise<CloseEvent>((resolve) => socket.addEventListener("close", resolve, { once: true }));
+      const firstSocketClosed = new Promise<CloseEvent>((resolve) =>
+        socket.addEventListener("close", resolve, { once: true }),
+      );
+      socket.close();
+      await firstSocketClosed;
+      const oversizedSocket = new WebSocket(`ws://127.0.0.1:${port}/v1/events`, [
+        "openbot-events-v2",
+        `openbot-token.${member.sessionToken}`,
+      ]);
+      const oversizedInitialEvents = nextJsonEvents(oversizedSocket, 2);
+      await new Promise<void>((resolve, reject) => {
+        oversizedSocket.addEventListener("open", () => resolve(), { once: true });
+        oversizedSocket.addEventListener("error", () => reject(new Error("WebSocket did not open.")), { once: true });
+      });
+      await oversizedInitialEvents;
+      const closed = new Promise<CloseEvent>((resolve) =>
+        oversizedSocket.addEventListener("close", resolve, { once: true }),
+      );
       now = 1_000;
-      getRuntimeSnapshot.mockImplementationOnce(() => ({
+      getRuntimeSnapshot.mockImplementation(() => ({
         bots: [],
         activeTurns: [],
         work: [],
@@ -500,12 +449,12 @@ describe("TeamApiServer administration", () => {
         pendingBrowserTakeovers: [],
         failedTurns: [],
       }));
-      socket.send(JSON.stringify({ type: "runtime-snapshot-request" }));
+      oversizedSocket.send(JSON.stringify({ type: "runtime-snapshot-request" }));
       expect((await closed).code).toBe(1011);
     } finally {
       await api.stop();
     }
-  }, 10_000);
+  }, 30_000);
 
   it("keeps legacy event clients connected without sending runtime snapshots", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-team-api-legacy-events-"));

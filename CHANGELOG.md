@@ -5,8 +5,20 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+### Added
+
+- Add a self-hosted Bun Signal service, coturn, DNS-01 certificate renewal, and Docker Compose deployment under `remote/`.
+- Add WebRTC Team API protocol v2 with RPC, ordered events, binary file transfer, backpressure, integrity checks, and resume support.
+
+### Changed
+
+- Keep accounts, host configuration, memberships, invitations, logical sessions, and public assets in Cloudflare while remote data uses WebRTC only.
+- Remove `cloudflared` from the active host transport and from macOS and Windows application packages.
+- Require old Team API clients and hosts to update before they can use the retired tunnel endpoints.
+
 ### Fixed
 
+- Keep the embedded browser panel closed until requested and prevent repeated toggles from opening duplicate tabs.
 - Restore embedded X sign-in with persistent cookie consent, a compatible browser identity, and current login routing.
 - Flush the embedded browser profile before restarts, system shutdowns, and application updates so authenticated sessions persist.
 

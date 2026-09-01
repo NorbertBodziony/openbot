@@ -177,11 +177,6 @@ interface PendingBrowserTakeover {
   resolve: (result: DynamicToolResult) => void;
 }
 
-interface ComputerUsePrerequisites {
-  screenRecording: boolean;
-  accessibility: boolean;
-}
-
 interface ThreadContextBudget {
   usedTokens: number;
   contextWindow: number;
@@ -341,7 +336,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #store: BotStore;
   readonly #mailbox: MailboxStore;
   readonly #browser: AgentBrowserHost;
-  readonly #computerUsePrerequisites: (() => ComputerUsePrerequisites) | null;
   readonly #conversationReads: ConversationReadStore;
   readonly #memories: AgentMemoryStore;
   readonly #routines: AgentRoutineStore;
@@ -397,7 +391,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     store: BotStore,
     mailbox: MailboxStore,
     browser: AgentBrowserHost,
-    computerUsePrerequisites: (() => ComputerUsePrerequisites) | null = null,
     requestTimeoutMs = 30_000,
     preferredProvider: AgentProvider = "codex",
     clientFactory: AgentClientFactory | null = null,
@@ -412,7 +405,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#conversationReads = new ConversationReadStore(store.database);
     this.#memories = new AgentMemoryStore(store.database);
     this.#routines = new AgentRoutineStore(store.database);
-    this.#computerUsePrerequisites = computerUsePrerequisites;
     this.#requestTimeoutMs = requestTimeoutMs;
     this.#clientFactory = clientFactory;
     this.#bundledCodexExecutable = bundledCodexExecutable;
@@ -3295,7 +3287,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.#setStatus({
           capabilities: {
             ...this.#status.capabilities,
-            computerUse: status === "ready" ? this.#computerUsePermissionState() : "setup-required",
+            computerUse: status === "ready" ? "ready" : "setup-required",
           },
         });
         return;
@@ -4051,7 +4043,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             plugin.installed === true &&
             plugin.enabled === true
           ) {
-            return this.#computerUsePermissionState();
+            return "ready";
           }
         }
       }
@@ -4059,12 +4051,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     } catch {
       return "unavailable";
     }
-  }
-
-  #computerUsePermissionState(): "ready" | "setup-required" {
-    if (!this.#computerUsePrerequisites) return "setup-required";
-    const prerequisites = this.#computerUsePrerequisites();
-    return prerequisites.screenRecording && prerequisites.accessibility ? "ready" : "setup-required";
   }
 
   #applyPendingRuntimeRefresh(bot: BotSummary): void {

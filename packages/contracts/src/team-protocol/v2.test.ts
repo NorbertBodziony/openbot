@@ -1,54 +1,51 @@
 import { describe, expect, it } from "vitest";
-import clientScopeFixture from "./fixtures/v2/client-scope.json";
-import hostCompatibilityFixture from "./fixtures/v2/host-compatibility.json";
-import hostEventFixture from "./fixtures/v2/host-event.json";
-import hostHttpResponseFixture from "./fixtures/v2/host-http-response.json";
-import { decodeTeamProtocolSupportV1 } from "./v1";
-import { encodeTeamProtocolV1CurrentHttpResponse } from "./v1-adapter";
+import eventFixture from "./fixtures/v2/event.json";
+import fileOpenFixture from "./fixtures/v2/file-open.json";
+import requestFixture from "./fixtures/v2/request.json";
 import {
-  decodeTeamProtocolV2ClientEvent,
-  decodeTeamProtocolV2HttpResponse,
-  encodeTeamProtocolV2ClientEvent,
-  TEAM_PROTOCOL_V2_CAPABILITIES,
-  TEAM_PROTOCOL_V2_WEBSOCKET,
+  decodeTeamProtocolV2AuthFrame,
+  decodeTeamProtocolV2EventFrame,
+  decodeTeamProtocolV2FileChunk,
+  decodeTeamProtocolV2FileControlFrame,
+  decodeTeamProtocolV2RpcFrame,
+  encodeTeamProtocolV2FileChunk,
+  encodeTeamProtocolV2Frame,
+  TEAM_PROTOCOL_V2_MAX_BINARY_FRAME_BYTES,
+  TEAM_PROTOCOL_V2_MAX_FILE_BYTES,
+  TEAM_PROTOCOL_V2_MAX_JSON_FRAME_BYTES,
 } from "./v2";
 import {
+  createTeamProtocolV2Event,
   decodeTeamProtocolV2CurrentEvent,
-  encodeTeamProtocolV2CurrentEvent,
+  decodeTeamProtocolV2CurrentHttpResponse,
+  encodeTeamProtocolV2CurrentHttpRequest,
   encodeTeamProtocolV2CurrentHttpResponse,
 } from "./v2-adapter";
 
 describe("Team protocol v2", () => {
-  it("keeps the released host and client fixtures valid", () => {
-    expect(decodeTeamProtocolSupportV1(hostCompatibilityFixture)).toEqual(hostCompatibilityFixture);
-    expect(decodeTeamProtocolV2CurrentEvent(hostEventFixture)).toEqual({ kind: "known", event: hostEventFixture });
-    const clientScope = decodeTeamProtocolV2ClientEvent(clientScopeFixture);
-    expect(JSON.parse(encodeTeamProtocolV2ClientEvent(clientScope))).toEqual(clientScopeFixture);
-    expect(decodeTeamProtocolV2HttpResponse("GET", "/v1/agents/chief/skills", 200, hostHttpResponseFixture)).toEqual(
-      hostHttpResponseFixture,
-    );
-    expect(
-      JSON.parse(
-        encodeTeamProtocolV2CurrentHttpResponse("GET", "/v1/agents/chief/skills", 200, hostHttpResponseFixture),
-      ),
-    ).toEqual(hostHttpResponseFixture);
+  it("keeps the released JSON fixtures valid", () => {
+    expect(decodeTeamProtocolV2RpcFrame(requestFixture)).toEqual(requestFixture);
+    expect(decodeTeamProtocolV2EventFrame(eventFixture)).toEqual(eventFixture);
+    expect(decodeTeamProtocolV2FileControlFrame(fileOpenFixture)).toEqual(fileOpenFixture);
   });
 
-  it("adds installed skill summaries behind a declared capability", () => {
-    expect(TEAM_PROTOCOL_V2_CAPABILITIES).toContain("installed-skills");
-    expect(
-      decodeTeamProtocolV2HttpResponse("GET", "/v1/agents/chief/skills", 200, [
-        {
-          skillId: "skill-1",
-          slug: "release-notes",
-          name: "Release Notes",
-          installedVersion: 1,
-          availableVersion: 2,
-          state: "update-available",
-          ignored: true,
-        },
-      ]),
-    ).toEqual([
+  it("preserves semantic tags in v2 events", () => {
+    const frame = createTeamProtocolV2Event(1, {
+      type: "error",
+      botId: "chief",
+      code: "test",
+      message: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
+    });
+
+    expect(frame).toMatchObject({
+      payload: {
+        message: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
+      },
+    });
+  });
+
+  it("passes installed skill summaries through the v2 HTTP adapter", () => {
+    const skills = [
       {
         skillId: "skill-1",
         slug: "release-notes",
@@ -57,53 +54,177 @@ describe("Team protocol v2", () => {
         availableVersion: 2,
         state: "update-available",
       },
-    ]);
+    ];
+
+    expect(encodeTeamProtocolV2CurrentHttpResponse("GET", "/v1/agents/chief/skills", 200, skills)).toEqual(skills);
+    expect(decodeTeamProtocolV2CurrentHttpResponse("GET", "/v1/agents/chief/skills", 200, skills)).toEqual(skills);
   });
 
-  it("accepts the v2 capability in client scope declarations", () => {
-    expect(TEAM_PROTOCOL_V2_WEBSOCKET).toBe("openbot-team-v2");
+  it("encodes binary chunks with an exact offset", () => {
+    const encoded = encodeTeamProtocolV2FileChunk({
+      transferId: "transfer-1",
+      offset: 65_536,
+      bytes: new Uint8Array([1, 2, 3, 4]),
+    });
+    expect(decodeTeamProtocolV2FileChunk(encoded)).toEqual({
+      transferId: "transfer-1",
+      offset: 65_536,
+      bytes: new Uint8Array([1, 2, 3, 4]),
+    });
+  });
+
+  it("accepts an event acknowledgement before the first event", () => {
+    expect(decodeTeamProtocolV2EventFrame({ version: 2, type: "event-ack", throughSequence: 0 })).toEqual({
+      version: 2,
+      type: "event-ack",
+      throughSequence: 0,
+    });
+  });
+
+  it("accepts an event sequence reset", () => {
+    expect(decodeTeamProtocolV2EventFrame({ version: 2, type: "event-reset", nextSequence: 2_001 })).toEqual({
+      version: 2,
+      type: "event-reset",
+      nextSequence: 2_001,
+    });
+  });
+
+  it("distinguishes unknown events from malformed known events", () => {
     expect(
-      decodeTeamProtocolV2ClientEvent({
-        type: "agent-event-scope",
-        includeConversations: true,
-        capabilities: ["agent-runtime-snapshots", "installed-skills"],
+      decodeTeamProtocolV2CurrentEvent({
+        version: 2,
+        type: "event",
+        sequence: 1,
+        payload: { type: "future-event", value: true },
+      }),
+    ).toEqual({ status: "unknown" });
+    expect(
+      decodeTeamProtocolV2CurrentEvent({
+        version: 2,
+        type: "event",
+        sequence: 1,
+        payload: { type: "runtime-snapshot" },
+      }),
+    ).toEqual({ status: "invalid" });
+  });
+
+  it("projects current HTTP payloads through the frozen route codec", () => {
+    expect(
+      encodeTeamProtocolV2CurrentHttpRequest("POST", "/v1/browser/visible", {
+        visible: true,
+        bounds: undefined,
+        futureRequestField: "ignored",
+      }),
+    ).toEqual({ visible: true });
+    expect(encodeTeamProtocolV2CurrentHttpRequest("DELETE", "/v1/attachments/attachment-1", undefined)).toEqual({});
+    expect(encodeTeamProtocolV2CurrentHttpRequest("DELETE", "/v1/agents/agent-1", undefined)).toEqual({});
+    expect(
+      encodeTeamProtocolV2CurrentHttpRequest("GET", "/v1/remote-screen/sessions/session-1/viewer", undefined),
+    ).toEqual({});
+    expect(
+      encodeTeamProtocolV2CurrentHttpRequest("POST", "/v1/remote-screen/sessions/session-1/authorize", {
+        grant: "viewer-grant",
+      }),
+    ).toEqual({ grant: "viewer-grant" });
+    expect(
+      decodeTeamProtocolV2CurrentHttpResponse("GET", "/v1/compatibility", 200, {
+        appVersion: "1.0.0",
+        protocol: { minimum: 1, maximum: 2 },
+        capabilities: [],
+        futureResponseField: "ignored",
+      }),
+    ).toEqual({ appVersion: "1.0.0", protocol: { minimum: 1, maximum: 2 }, capabilities: [] });
+    expect(decodeTeamProtocolV2CurrentHttpResponse("POST", "/v1/browser/visible", 204, {})).toEqual({});
+    expect(
+      decodeTeamProtocolV2CurrentHttpResponse("GET", "/v1/remote-screen/sessions/session-1/moonlight/api/role", 200, {
+        role: "stream",
+      }),
+    ).toEqual({ role: "stream" });
+  });
+
+  it("validates bounded authentication frames", () => {
+    expect(
+      decodeTeamProtocolV2AuthFrame({
+        version: 2,
+        type: "auth-ready",
+        clientNonce: "c".repeat(43),
+        hostNonce: "h".repeat(43),
+        signature: "s".repeat(86),
+      }),
+    ).toMatchObject({ type: "auth-ready" });
+    expect(
+      decodeTeamProtocolV2AuthFrame(
+        encodeTeamProtocolV2Frame({
+          version: 2,
+          type: "auth-complete",
+          clientNonce: "c".repeat(43),
+          hostNonce: "h".repeat(43),
+        }),
+      ),
+    ).toMatchObject({ type: "auth-complete" });
+    expect(
+      decodeTeamProtocolV2AuthFrame(
+        encodeTeamProtocolV2Frame({
+          version: 2,
+          type: "auth-confirmed",
+          clientNonce: "c".repeat(43),
+          hostNonce: "h".repeat(43),
+        }),
+      ),
+    ).toMatchObject({ type: "auth-confirmed" });
+  });
+
+  it("validates client event controls", () => {
+    expect(
+      decodeTeamProtocolV2EventFrame({
+        version: 2,
+        type: "event-control",
+        control: { type: "team-typing", botId: "bot-1", typing: true },
       }),
     ).toEqual({
-      type: "agent-event-scope",
-      includeConversations: true,
-      capabilities: ["agent-runtime-snapshots", "installed-skills"],
+      version: 2,
+      type: "event-control",
+      control: { type: "team-typing", botId: "bot-1", typing: true },
     });
+    expect(() =>
+      decodeTeamProtocolV2EventFrame({
+        version: 2,
+        type: "event-control",
+        control: { type: "team-direct-typing", recipientMemberId: "", typing: true },
+      }),
+    ).toThrow();
   });
 
-  it("preserves semantic tags in v2 events", () => {
-    const encoded = encodeTeamProtocolV2CurrentEvent({
-      type: "error",
-      botId: "chief",
-      code: "test",
-      message: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
-    });
-    expect(encoded).toContain("@[Research](agent:research)");
-    expect(encoded).toContain("@[Sources](skill:sources)");
+  it("rejects oversized files, chunks, and invalid offsets", () => {
+    expect(() =>
+      decodeTeamProtocolV2FileControlFrame({ ...fileOpenFixture, size: TEAM_PROTOCOL_V2_MAX_FILE_BYTES + 1 }),
+    ).toThrow();
+    expect(() =>
+      encodeTeamProtocolV2FileChunk({ transferId: "transfer-1", offset: -1, bytes: new Uint8Array([1]) }),
+    ).toThrow();
+    expect(() =>
+      encodeTeamProtocolV2FileChunk({
+        transferId: "transfer-1",
+        offset: 0,
+        bytes: new Uint8Array(TEAM_PROTOCOL_V2_MAX_BINARY_FRAME_BYTES),
+      }),
+    ).toThrow();
   });
 
-  it("down-converts semantic tags for v1 clients", () => {
-    const encoded = encodeTeamProtocolV1CurrentHttpResponse("GET", "/v1/agents/chief/conversation", 200, {
-      botId: "chief",
-      threadId: "thread-1",
-      messages: [
-        {
-          id: "message-1",
-          author: "user",
-          text: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
-          createdAt: "2026-08-31T00:00:00.000Z",
-          status: "completed",
-        },
-      ],
-      activeTurnId: null,
-      revision: 1,
-      readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
-    });
-    expect(encoded).toContain("Ask @Research to use Sources (skill).");
-    expect(encoded).not.toContain("agent:research");
+  it("requires exactly one response result", () => {
+    expect(() => decodeTeamProtocolV2RpcFrame({ version: 2, type: "response", requestId: "request-1" })).toThrow();
+    expect(() =>
+      decodeTeamProtocolV2RpcFrame({
+        version: 2,
+        type: "response",
+        requestId: "request-1",
+        result: null,
+        error: { code: "failed", message: "Failed", retryable: false },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects an oversized JSON frame before parsing its payload", () => {
+    expect(() => decodeTeamProtocolV2RpcFrame(" ".repeat(TEAM_PROTOCOL_V2_MAX_JSON_FRAME_BYTES + 1))).toThrow("size");
   });
 });
