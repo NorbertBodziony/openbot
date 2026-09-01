@@ -336,13 +336,14 @@ fi
         displayName: "Claude Sonnet 5",
         description: "Balanced",
         supportsEffort: true,
-        supportedEffortLevels: ["low", "medium", "high"],
+        supportedEffortLevels: ["low", "medium", "high", "max"],
       },
     ]);
     const unsupportedQuery = new TestQuery(new TestQueue<TestStreamMessage>());
     const switchingQuery = new TestQuery(new TestQueue<TestStreamMessage>());
+    const effortChangingQuery = new TestQuery(new TestQueue<TestStreamMessage>());
     const clearingQuery = new TestQuery(new TestQueue<TestStreamMessage>());
-    const queries = [discoveryQuery, unsupportedQuery, switchingQuery, clearingQuery];
+    const queries = [discoveryQuery, unsupportedQuery, switchingQuery, effortChangingQuery, clearingQuery];
     const runtimeOptions: DynamicRecord[] = [];
     const client = new ClaudeAgentClient({ executable: "/bin/true", version: "2.1.251" }, (params) => {
       const next = queries.shift();
@@ -374,7 +375,7 @@ fi
       { threadId: unsupportedThread.thread.id, model: "claude-haiku-5", effort: "high", input: [] },
       decodeTurnResponse,
     );
-    expect(unsupportedQuery.maxThinkingTokens).toEqual([]);
+    expect(unsupportedQuery.flagSettings).toEqual([]);
 
     const switchingThread = await client.request(
       "thread/start",
@@ -387,7 +388,20 @@ fi
       decodeTurnResponse,
     );
     expect(switchingQuery.models).toEqual(["sonnet"]);
-    expect(switchingQuery.maxThinkingTokens).toEqual([8_000]);
+    expect(switchingQuery.flagSettings).toEqual([{ effortLevel: "medium" }]);
+
+    const effortChangingThread = await client.request(
+      "thread/start",
+      { cwd: root, model: "claude-sonnet-5", effort: "medium" },
+      decodeThreadResponse,
+    );
+    await client.request(
+      "turn/start",
+      { threadId: effortChangingThread.thread.id, model: "claude-sonnet-5", effort: "max", input: [] },
+      decodeTurnResponse,
+    );
+    expect(effortChangingQuery.models).toEqual([]);
+    expect(effortChangingQuery.flagSettings).toEqual([{ effortLevel: "max" }]);
 
     const clearingThread = await client.request(
       "thread/start",
@@ -400,7 +414,7 @@ fi
       decodeTurnResponse,
     );
     expect(clearingQuery.models).toEqual(["haiku"]);
-    expect(clearingQuery.maxThinkingTokens).toEqual([null]);
+    expect(clearingQuery.flagSettings).toEqual([{ effortLevel: null }]);
 
     await client.stop();
   });
@@ -638,7 +652,9 @@ class TestQueue<T> implements AsyncIterable<T> {
 class TestQuery implements AsyncIterable<TestStreamMessage> {
   closed = false;
   readonly models: Array<string | undefined> = [];
-  readonly maxThinkingTokens: Array<number | null> = [];
+  readonly flagSettings: Array<{
+    effortLevel?: "low" | "medium" | "high" | "xhigh" | "max" | null;
+  }> = [];
 
   constructor(
     private readonly output: TestQueue<TestStreamMessage>,
@@ -661,11 +677,10 @@ class TestQuery implements AsyncIterable<TestStreamMessage> {
     this.models.push(model);
   }
 
-  async setMaxThinkingTokens(
-    maxThinkingTokens: number | null,
-    _thinkingDisplay?: "summarized" | "omitted" | null,
-  ): Promise<void> {
-    this.maxThinkingTokens.push(maxThinkingTokens);
+  async applyFlagSettings(settings: {
+    effortLevel?: "low" | "medium" | "high" | "xhigh" | "max" | null;
+  }): Promise<void> {
+    this.flagSettings.push(settings);
   }
 
   close(): void {
