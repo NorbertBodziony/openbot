@@ -103,7 +103,7 @@
     "test:imagegen": "bun scripts/filesystem-smoke.ts --provider codex --imagegen",
     "test:storage-live": "bun scripts/provider-storage-smoke.ts",
     "test:grok-live": "bun scripts/provider-storage-smoke.ts --grok-only",
-    "test:team-live": "bun run remote:check",
+    "test:team-live": "electron scripts/team-webrtc-live-smoke.mjs",
     "test:remote-desktop-runtime": "bun scripts/remote-desktop-runtime-smoke.ts",
     "codex:doctor": "bun scripts/codex-doctor.ts",
     "skills:review": "bun scripts/review-skills.ts",
