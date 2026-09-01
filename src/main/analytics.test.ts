@@ -1,6 +1,11 @@
 // @vitest-environment node
 
-import type { BotSummary } from "@openbot/contracts/ipc";
+import {
+  type BotSummary,
+  type ConversationMessage,
+  hostedSiteConversationEventItemType,
+  hostedSiteConversationEventText,
+} from "@openbot/contracts/ipc";
 import { isDynamicRecord } from "@openbot/contracts/runtime-values";
 import { OpenPanelBase } from "@openpanel/web";
 import { describe, expect, it, vi } from "vitest";
@@ -30,6 +35,34 @@ function fakeClient(): HostOpenPanelClient {
     track: vi.fn(),
     identify: vi.fn(),
     clear: vi.fn(),
+  };
+}
+
+function hostedSiteMessage(
+  id: string,
+  action: "publish" | "replace" | "delete",
+  status: "running" | "succeeded" | "failed" | "interrupted" | "cancelled",
+  operationId: string,
+): ConversationMessage {
+  const terminalSite = {
+    siteId: "site-1",
+    title: "Hosted site",
+    hostname: "hosted-site-23456789ab.openbot.site",
+    url: "https://hosted-site-23456789ab.openbot.site",
+  };
+  const details =
+    action === "publish" && status !== "succeeded"
+      ? { siteId: null, title: "Hosted site", hostname: null, url: null }
+      : terminalSite;
+  return {
+    id,
+    turnId: "turn-hosted-site",
+    author: "system",
+    source: "system",
+    text: hostedSiteConversationEventText(details),
+    createdAt: "2026-08-31T10:00:00.000Z",
+    status: "completed",
+    itemType: hostedSiteConversationEventItemType(action, status, operationId),
   };
 }
 
@@ -226,6 +259,182 @@ describe("host analytics", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it("tracks terminal hosted-site markers once for the operation owner", () => {
+    const client = fakeClient();
+    let owner = { id: "owner-1", email: "one@example.com" };
+    const analytics = new HostAnalytics(
+      {
+        enabled: true,
+        appVersion: "1.2.3",
+        platform: "darwin",
+        resolveOwner: () => owner,
+        resolveBot: () => BOT,
+      },
+      () => client,
+    );
+    const running = hostedSiteMessage("hosted-running", "publish", "running", "operation-success");
+    const runningFailed = hostedSiteMessage("hosted-running-failed", "replace", "running", "operation-failed");
+    const runningCancelled = hostedSiteMessage("hosted-running-cancelled", "delete", "running", "operation-cancelled");
+    const runningInterrupted = hostedSiteMessage(
+      "hosted-running-interrupted",
+      "replace",
+      "running",
+      "operation-interrupted",
+    );
+    analytics.handleAgentEvent({
+      type: "conversation",
+      snapshot: {
+        botId: BOT.id,
+        threadId: BOT.threadId,
+        activeTurnId: null,
+        revision: 1,
+        messages: [running, runningFailed, runningCancelled, runningInterrupted],
+      },
+    });
+
+    owner = { id: "owner-2", email: "two@example.com" };
+    const succeeded = hostedSiteMessage("hosted-succeeded", "publish", "succeeded", "operation-success");
+    const failed = hostedSiteMessage("hosted-failed", "replace", "failed", "operation-failed");
+    const cancelled = hostedSiteMessage("hosted-cancelled", "delete", "cancelled", "operation-cancelled");
+    const interrupted = hostedSiteMessage("hosted-interrupted", "replace", "interrupted", "operation-interrupted");
+    const messages = [
+      running,
+      runningFailed,
+      runningCancelled,
+      runningInterrupted,
+      succeeded,
+      failed,
+      cancelled,
+      interrupted,
+    ];
+    analytics.handleAgentEvent({
+      type: "conversation",
+      snapshot: { botId: BOT.id, threadId: BOT.threadId, activeTurnId: null, revision: 2, messages },
+    });
+    analytics.handleAgentEvent({
+      type: "conversation",
+      snapshot: { botId: BOT.id, threadId: BOT.threadId, activeTurnId: null, revision: 3, messages },
+    });
+
+    expect(client.track).toHaveBeenCalledTimes(4);
+    expect(client.track).toHaveBeenNthCalledWith(1, "hosted_site_action", {
+      action: "publish",
+      entry_point: "agent",
+      result: "succeeded",
+      profileId: "owner-1",
+    });
+    expect(client.track).toHaveBeenNthCalledWith(2, "hosted_site_action", {
+      action: "replace",
+      entry_point: "agent",
+      result: "failed",
+      failure_code: "hosted_site_failed",
+      profileId: "owner-1",
+    });
+    expect(client.track).toHaveBeenNthCalledWith(3, "hosted_site_action", {
+      action: "delete",
+      entry_point: "agent",
+      result: "failed",
+      failure_code: "cancelled",
+      profileId: "owner-1",
+    });
+    expect(client.track).toHaveBeenNthCalledWith(4, "hosted_site_action", {
+      action: "replace",
+      entry_point: "agent",
+      result: "failed",
+      failure_code: "interrupted",
+      profileId: "owner-1",
+    });
+    expect(JSON.stringify(vi.mocked(client.track).mock.calls)).not.toContain("hosted-site-23456789ab.openbot.site");
+  });
+
+  it("ignores terminal hosted-site history without a live running marker", () => {
+    const client = fakeClient();
+    const analytics = new HostAnalytics(
+      {
+        enabled: true,
+        appVersion: "1.2.3",
+        platform: "darwin",
+        resolveOwner: () => ({ id: "owner-account", email: "owner@example.com" }),
+        resolveBot: () => BOT,
+      },
+      () => client,
+    );
+
+    analytics.handleAgentEvent({
+      type: "conversation",
+      snapshot: {
+        botId: BOT.id,
+        threadId: BOT.threadId,
+        activeTurnId: null,
+        revision: 1,
+        messages: [hostedSiteMessage("hosted-history", "publish", "succeeded", "operation-history")],
+      },
+    });
+
+    expect(client.track).not.toHaveBeenCalled();
+  });
+
+  it("keeps a hosted-site operation owner across account clearing", () => {
+    const client = fakeClient();
+    let owner: { id: string; email: string } | null = { id: "owner-1", email: "one@example.com" };
+    const analytics = new HostAnalytics(
+      {
+        enabled: true,
+        appVersion: "1.2.3",
+        platform: "darwin",
+        resolveOwner: () => owner,
+        resolveBot: () => BOT,
+      },
+      () => client,
+    );
+    const running = hostedSiteMessage("hosted-running", "publish", "running", "operation-owner");
+    analytics.handleAgentEvent({
+      type: "conversation",
+      snapshot: { botId: BOT.id, threadId: BOT.threadId, activeTurnId: null, revision: 1, messages: [running] },
+    });
+
+    analytics.clear();
+    owner = { id: "owner-2", email: "two@example.com" };
+    analytics.handleAgentEvent({
+      type: "conversation",
+      snapshot: {
+        botId: BOT.id,
+        threadId: BOT.threadId,
+        activeTurnId: null,
+        revision: 2,
+        messages: [running, hostedSiteMessage("hosted-succeeded", "publish", "succeeded", "operation-owner")],
+      },
+    });
+
+    expect(client.track).toHaveBeenCalledWith("hosted_site_action", expect.objectContaining({ profileId: "owner-1" }));
+  });
+
+  it("bounds events behind a stalled identify request", async () => {
+    const client = fakeClient();
+    let releaseIdentify!: () => void;
+    const identifyReady = new Promise<void>((resolve) => {
+      releaseIdentify = resolve;
+    });
+    vi.mocked(client.identify).mockImplementation(async () => identifyReady);
+    const analytics = new HostAnalytics(
+      {
+        enabled: true,
+        appVersion: "1.2.3",
+        platform: "darwin",
+        resolveOwner: () => ({ id: "owner-account", email: "owner@example.com" }),
+        resolveBot: () => BOT,
+      },
+      () => client,
+    );
+
+    for (let index = 0; index < 150; index += 1) {
+      analytics.handleAgentEvent({ type: "error", code: `agent_${index}`, message: "private" });
+    }
+    releaseIdentify();
+
+    await vi.waitFor(() => expect(client.track).toHaveBeenCalledTimes(100));
   });
 
   it("normalizes the owner email before identifying", () => {

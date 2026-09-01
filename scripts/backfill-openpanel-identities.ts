@@ -78,9 +78,9 @@ export function buildBackfillUpdates(authUsers: readonly unknown[], profiles: re
     const profileId = requiredIdentifier(parsed.profileId, "OpenPanel profile id");
     if (profileIds.has(profileId)) throw new Error("Duplicate OpenPanel profile id in the input.");
     profileIds.add(profileId);
-    const existingEmail = parsed.email?.trim() ? requiredEmail(parsed.email, "OpenPanel profile email") : null;
     const email = usersById.get(profileId);
     if (!email) continue;
+    const existingEmail = parsed.email?.trim() ? normalizeEmailAddress(parsed.email) : null;
     if (existingEmail === email) continue;
     updates.push({ profileId, email });
   }

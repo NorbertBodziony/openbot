@@ -591,6 +591,7 @@ export class DesktopAnalytics {
   }
 
   #enqueue(queue: AnalyticsOperationQueue, operation: AnalyticsOperation): void {
+    if (queue.operations.length >= MAX_PENDING_EVENTS) queue.operations.shift();
     queue.operations.push(operation);
     if (queue.active) return;
     queue.active = true;

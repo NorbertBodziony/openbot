@@ -24,7 +24,7 @@ describe("OpenPanel identity backfill", () => {
     ]);
   });
 
-  it("rejects duplicate profile ids and malformed emails", () => {
+  it("rejects duplicate ids and malformed auth emails, while repairing malformed profiles", () => {
     expect(() =>
       buildBackfillUpdates(
         [{ id: "account-1", email: "person@example.com" }],
@@ -37,12 +37,15 @@ describe("OpenPanel identity backfill", () => {
     expect(() =>
       buildBackfillUpdates([{ id: "account-1", email: "invalid" }], [{ profileId: "account-1", email: null }]),
     ).toThrow("Invalid auth user email");
-    expect(() =>
+    expect(
       buildBackfillUpdates(
         [{ id: "account-1", email: "person@example.com" }],
-        [{ profileId: "unmatched-account", email: "invalid" }],
+        [
+          { profileId: "account-1", email: "invalid" },
+          { profileId: "unmatched-account", email: "also-invalid" },
+        ],
       ),
-    ).toThrow("Invalid OpenPanel profile email");
+    ).toEqual([{ profileId: "account-1", email: "person@example.com" }]);
   });
 
   it("keeps dry runs read-only", async () => {

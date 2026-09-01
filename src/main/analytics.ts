@@ -4,6 +4,8 @@ import {
   type AgentEvent,
   type BotSummary,
   type CentralAuthUser,
+  type ConversationMessage,
+  hostedSiteConversationEvent,
   isAgentModel,
 } from "@openbot/contracts/ipc";
 import { isBoolean, isDynamicRecord, isFunction, isNumber, isOneOf, isString } from "@openbot/contracts/runtime-values";
@@ -14,6 +16,7 @@ export const OPENPANEL_API_URL = "https://analytics.openbot.run/api";
 export const OPENPANEL_CLIENT_ID = "6c989975-87ef-4f0c-857e-ab449a65b5c2";
 const MAX_PENDING_EVENTS = 100;
 const MAX_ACTIVE_TURNS = 1_000;
+const MAX_HOSTED_SITE_OPERATIONS = 10_000;
 const ACTIVE_TURN_TTL_MS = 24 * 60 * 60 * 1_000;
 const ANALYTICS_SCHEMA_VERSION = 4;
 
@@ -24,7 +27,8 @@ type HostEventName =
   | "system_turn_started"
   | "system_turn_completed"
   | "system_agent_input_requested"
-  | "system_operation_failed";
+  | "system_operation_failed"
+  | "hosted_site_action";
 export type HostOpenPanelClient = Pick<OpenPanelBase, "setGlobalProperties" | "track" | "identify" | "clear">;
 type ClientFactory = (options: OpenPanelOptions) => HostOpenPanelClient;
 
@@ -51,6 +55,7 @@ const HOST_ALLOWLIST = {
     "approval_kind",
   ],
   system_operation_failed: ["provider", "model", "reasoning_effort", "area", "failure_code"],
+  hosted_site_action: ["action", "entry_point", "result", "failure_code"],
 } as const satisfies Record<HostEventName, readonly string[]>;
 
 type HostPropertyName = (typeof HOST_ALLOWLIST)[HostEventName][number];
@@ -66,6 +71,8 @@ export class HostAnalytics {
   #trackingEnabled: boolean;
   #pending: HostPendingEvent[] = [];
   readonly #activeTurns = new Map<string, ActiveTurn>();
+  readonly #hostedSiteOwners = new Map<string, AnalyticsIdentity | null>();
+  readonly #hostedSiteTerminalOperations = new Set<string>();
   readonly #operationQueue: AnalyticsOperationQueue = { active: false, operations: [] };
 
   constructor(
@@ -95,8 +102,11 @@ export class HostAnalytics {
   }
 
   handleAgentEvent(event: AgentEvent): void {
+    if (event.type === "conversation" && this.#client) this.#handleHostedSiteConversation(event.snapshot.messages);
     if (!this.#client || !this.#trackingEnabled) return;
     switch (event.type) {
+      case "conversation":
+        return;
       case "turn-started": {
         const now = performance.now();
         this.#pruneActiveTurns(now);
@@ -157,10 +167,7 @@ export class HostAnalytics {
     if (!this.#client || !this.#trackingEnabled) return;
     const owner = normalizeAnalyticsIdentity(this.#resolveOwner());
     if (!owner) return;
-    this.#identify(owner);
-    const pending = this.#pending;
-    this.#pending = [];
-    for (const event of pending) this.#send(event.name, event.properties, owner.id, event.timestamp);
+    this.#flushPendingForOwner(owner);
   }
 
   clear(): void {
@@ -182,6 +189,62 @@ export class HostAnalytics {
     this.flushPending();
   }
 
+  #handleHostedSiteConversation(messages: readonly ConversationMessage[]): void {
+    const observedRunningOperations = new Set(this.#hostedSiteOwners.keys());
+    for (const message of messages) {
+      const event = hostedSiteConversationEvent(message);
+      if (!event) continue;
+      if (event.status === "running") {
+        const owner = normalizeAnalyticsIdentity(this.#resolveOwner());
+        if (!this.#hostedSiteOwners.has(event.operationId)) this.#hostedSiteOwners.set(event.operationId, owner);
+        continue;
+      }
+      if (!observedRunningOperations.has(event.operationId)) continue;
+      if (this.#hostedSiteTerminalOperations.has(event.operationId)) continue;
+      this.#hostedSiteTerminalOperations.add(event.operationId);
+      const owner = this.#hostedSiteOwners.get(event.operationId) ?? null;
+      this.#hostedSiteOwners.delete(event.operationId);
+      if (!owner || !this.#trackingEnabled) continue;
+      this.#trackForOwner(
+        "hosted_site_action",
+        {
+          action: event.action,
+          entry_point: "agent",
+          result: event.status === "succeeded" ? "succeeded" : "failed",
+          ...(event.status === "failed"
+            ? { failure_code: "hosted_site_failed" }
+            : event.status === "cancelled" || event.status === "interrupted"
+              ? { failure_code: event.status }
+              : {}),
+        },
+        owner,
+      );
+    }
+    while (this.#hostedSiteOwners.size > MAX_HOSTED_SITE_OPERATIONS) {
+      const oldest = this.#hostedSiteOwners.keys().next();
+      if (oldest.done) break;
+      this.#hostedSiteOwners.delete(oldest.value);
+    }
+    while (this.#hostedSiteTerminalOperations.size > MAX_HOSTED_SITE_OPERATIONS) {
+      const oldest = this.#hostedSiteTerminalOperations.values().next();
+      if (oldest.done) break;
+      this.#hostedSiteTerminalOperations.delete(oldest.value);
+    }
+  }
+
+  #trackForOwner(name: HostEventName, properties: HostProperties, owner: AnalyticsIdentity): void {
+    const sanitized = sanitizeHostEvent(name, properties);
+    this.#flushPendingForOwner(owner);
+    this.#send(name, sanitized, owner.id);
+  }
+
+  #flushPendingForOwner(owner: AnalyticsIdentity): void {
+    this.#identify(owner);
+    const pending = this.#pending;
+    this.#pending = [];
+    for (const event of pending) this.#send(event.name, event.properties, owner.id, event.timestamp);
+  }
+
   #track(name: HostEventName, properties: HostProperties): void {
     if (!this.#trackingEnabled) return;
     const sanitized = sanitizeHostEvent(name, properties);
@@ -191,9 +254,7 @@ export class HostAnalytics {
       if (this.#pending.length > MAX_PENDING_EVENTS) this.#pending.shift();
       return;
     }
-    this.#identify(owner);
-    this.flushPending();
-    this.#send(name, sanitized, owner.id);
+    this.#trackForOwner(name, sanitized, owner);
   }
 
   #identify(owner: AnalyticsIdentity): void {
@@ -236,6 +297,7 @@ export class HostAnalytics {
   }
 
   #enqueue(operation: AnalyticsOperation): void {
+    if (this.#operationQueue.operations.length >= MAX_PENDING_EVENTS) this.#operationQueue.operations.shift();
     this.#operationQueue.operations.push(operation);
     if (this.#operationQueue.active) return;
     this.#operationQueue.active = true;
@@ -273,14 +335,25 @@ export function sanitizeHostEvent(name: HostEventName, properties: HostPropertie
   return Object.fromEntries(
     Object.entries(properties).flatMap(([key, value]) => {
       if (value === undefined || !allowed.some((item) => item === key)) return [];
-      const safeValue = sanitizeHostProperty(key, value);
+      const safeValue = sanitizeHostProperty(name, key, value);
       return safeValue === undefined ? [] : [[key, safeValue]];
     }),
   );
 }
 
-function sanitizeHostProperty(key: string, value: unknown): string | number | boolean | undefined {
-  if (key === "failure_code") return isString(value) ? systemFailureCode(value) : "unknown";
+function sanitizeHostProperty(name: HostEventName, key: string, value: unknown): string | number | boolean | undefined {
+  if (key === "failure_code") {
+    return isString(value)
+      ? name === "hosted_site_action"
+        ? hostedSiteFailureCode(value)
+        : systemFailureCode(value)
+      : "unknown";
+  }
+  if (name === "hosted_site_action") {
+    if (key === "action") return isOneOf(["publish", "replace", "delete"] as const, value) ? value : undefined;
+    if (key === "entry_point") return value === "agent" ? value : undefined;
+    if (key === "result") return isOneOf(["succeeded", "failed"] as const, value) ? value : undefined;
+  }
   if (key === "provider") return isOneOf(AGENT_PROVIDERS, value) ? value : undefined;
   if (key === "reasoning_effort") {
     return isOneOf(AGENT_REASONING_EFFORTS, value) ? value : undefined;
@@ -303,6 +376,10 @@ function sanitizeHostProperty(key: string, value: unknown): string | number | bo
   }
   if (key === "has_secret_prompt") return isBoolean(value) ? value : undefined;
   return undefined;
+}
+
+function hostedSiteFailureCode(value: string): string {
+  return value === "hosted_site_failed" || value === "cancelled" || value === "interrupted" ? value : "unknown";
 }
 
 function normalizedTurnStatus(value: string): string {

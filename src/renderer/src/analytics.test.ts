@@ -287,6 +287,26 @@ describe("desktop analytics", () => {
     );
   });
 
+  it("bounds events behind a stalled identify request", async () => {
+    const client = fakeClient();
+    let releaseIdentify!: () => void;
+    const identifyReady = new Promise<void>((resolve) => {
+      releaseIdentify = resolve;
+    });
+    vi.mocked(client.identify).mockImplementation(async () => identifyReady);
+    const createClient = vi.fn().mockReturnValue(client);
+    const analytics = new DesktopAnalytics(createClient, true);
+    analytics.configure(PRODUCTION_APP);
+    analytics.setUser({ id: "account-1", email: "person@example.com" });
+
+    for (let index = 0; index < 150; index += 1) {
+      analytics.track("search_action", { scope: "global", result: "succeeded", result_count: index });
+    }
+    releaseIdentify();
+
+    await vi.waitFor(() => expect(client.track).toHaveBeenCalledTimes(100));
+  });
+
   it("does not let SDK failures escape", () => {
     const client = fakeClient();
     vi.mocked(client.track).mockImplementation(() => {
