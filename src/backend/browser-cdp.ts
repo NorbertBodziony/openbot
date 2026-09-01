@@ -341,7 +341,7 @@ export class BrowserCdpEngine {
         const anchorRank = enabledIndices.indexOf(plan.keyboardAnchorIndex);
         const targetRank = enabledIndices.indexOf(desiredIndices[0]);
         for (let index = anchorRank; index < targetRank; index++) {
-          await dispatchSelectArrowDown(send, resolved.sessionId);
+          await dispatchShortcut(send, "ArrowDown", resolved.sessionId);
         }
       } else {
         const additiveModifiers = process.platform === "darwin" ? ["Meta"] : ["Control"];
@@ -1617,17 +1617,6 @@ async function dispatchTextKey(send: SendCommand, character: string, sessionId?:
     sessionId,
   );
   await send("Input.dispatchKeyEvent", { type: "keyUp", key: character, code }, sessionId);
-}
-
-async function dispatchSelectArrowDown(send: SendCommand, sessionId?: string): Promise<void> {
-  const key = {
-    key: "ArrowDown",
-    code: "ArrowDown",
-    windowsVirtualKeyCode: 40,
-    nativeVirtualKeyCode: process.platform === "darwin" ? 125 : 40,
-  };
-  await send("Input.dispatchKeyEvent", { type: "keyDown", ...key }, sessionId);
-  await send("Input.dispatchKeyEvent", { type: "keyUp", ...key }, sessionId);
 }
 
 function normalizeModifier(value: string) {
