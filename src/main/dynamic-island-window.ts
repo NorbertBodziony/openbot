@@ -196,6 +196,7 @@ export class DynamicIslandWindowController {
     window.setWindowButtonVisibility(false);
     window.setAlwaysOnTop(true, "status");
     window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    window.setHiddenInMissionControl(true);
     window.setFocusable(false);
     window.setIgnoreMouseEvents(true, { forward: true });
     window.once("ready-to-show", () => {
