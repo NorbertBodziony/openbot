@@ -4243,7 +4243,62 @@ describe.sequential("AgentService", () => {
     expect((await service.readConversation("chief")).activeTurnId).toBeNull();
   });
 
-  it("waits for an in-flight browser action before force-stop returns", async () => {
+  it("keeps a stop terminal after an already-dispatched completion resumes", async () => {
+    const client = new FakeAgentClient("codex", "", false);
+    const { store, mailbox } = stores();
+    const imagePath = join(root, "completion-race.png");
+    await writeFile(imagePath, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    const storeGeneratedAttachment = mailbox.storeGeneratedAttachment.bind(mailbox);
+    let releaseStorage: (() => void) | undefined;
+    const storagePending = new Promise<void>((resolve) => {
+      releaseStorage = resolve;
+    });
+    let storageStarted = false;
+    vi.spyOn(mailbox, "storeGeneratedAttachment").mockImplementationOnce(async (input) => {
+      storageStarted = true;
+      await storagePending;
+      return storeGeneratedAttachment(input);
+    });
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", () => client);
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Finish while stopping" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+    const session = store.activeProviderSession("chief");
+    const turnId = (await service.readConversation("chief")).activeTurnId;
+    if (!session || !turnId) throw new Error("The completion-race turn did not start.");
+    const item = { id: "completion-race-image", type: "image_generation_call", status: "in_progress" };
+    client.emit("notification", notification("item/started", { threadId: session.externalSessionId, turnId, item }));
+    client.emit(
+      "notification",
+      notification("item/completed", {
+        threadId: session.externalSessionId,
+        turnId,
+        item: { ...item, status: "completed", saved_path: imagePath },
+      }),
+    );
+    client.emit(
+      "notification",
+      notification("turn/completed", {
+        threadId: session.externalSessionId,
+        turn: { id: turnId, status: "completed" },
+      }),
+    );
+    await waitFor(() => storageStarted);
+
+    await service.stopAgent("chief");
+    releaseStorage?.();
+    await waitFor(async () => {
+      const message = (await service?.readConversation("chief"))?.messages.find(
+        (candidate) => candidate.id === item.id,
+      );
+      return message?.status === "interrupted";
+    });
+
+    expect(service.listQueue("chief").deliveries[0]?.status).toBe("interrupted");
+    expect((await service.readConversation("chief")).activeTurnId).toBeNull();
+  });
+
+  it("cancels an in-flight browser action before force-stop returns", async () => {
     const browser = fakeBrowser();
     type BrowserToolResult = Awaited<ReturnType<typeof browser.handleDynamicTool>>;
     let releaseBrowserAction: (() => void) | undefined;
@@ -4258,6 +4313,11 @@ describe.sequential("AgentService", () => {
     browser.handleDynamicTool = async () => {
       actionStarted = true;
       return actionPending;
+    };
+    let actionCancelled = false;
+    browser.cancelTurn = () => {
+      actionCancelled = true;
+      releaseBrowserAction?.();
     };
     const client = new FakeAgentClient("codex", "", false);
     const { store, mailbox } = stores();
@@ -4282,16 +4342,8 @@ describe.sequential("AgentService", () => {
     });
     await waitFor(() => actionStarted);
 
-    let stopReturned = false;
-    const stopping = service.stopAgent("chief").then(() => {
-      stopReturned = true;
-    });
-    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "interrupted");
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(stopReturned).toBe(false);
-
-    releaseBrowserAction?.();
-    await stopping;
+    await service.stopAgent("chief");
+    expect(actionCancelled).toBe(true);
     expect(actionFinished).toBe(true);
   });
 
@@ -4773,6 +4825,7 @@ function fakeBrowser(tabs: BrowserTab[] = []) {
     onChanged: (_listener: (tabs: BrowserTab[], activeTabId: string | null) => void) => () => undefined,
     onControlChanged: (_listener: (state: BrowserControlState) => void) => () => undefined,
     getControlState: (): BrowserControlState => ({ sessions: [] }),
+    cancelTurn: () => undefined,
     clearControls: () => undefined,
     endControl: () => undefined,
     listTabs: () => tabs,

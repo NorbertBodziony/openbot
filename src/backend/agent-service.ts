@@ -145,6 +145,7 @@ interface AgentBrowserHost {
   onChanged(listener: (tabs: BrowserTab[], activeTabId: string | null) => void): () => void;
   onControlChanged(listener: (state: BrowserControlState) => void): () => void;
   getControlState(): BrowserControlState;
+  cancelTurn(threadId: string, turnId: string): void;
   clearControls(): void;
   endControl(threadId: string, turnId: string): void;
   listTabs(): BrowserTab[];
@@ -1347,6 +1348,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.#ignoredTurns.add(`${session.externalSessionId}:${turnId}`);
           this.#interruptImageGenerations(botId, session.externalSessionId, turnId);
           this.#clearPendingRequestsForTurn(session.externalSessionId, turnId);
+          this.#browser.cancelTurn(bot.threadId ?? session.externalSessionId, turnId);
           this.#browser.endControl(bot.threadId ?? session.externalSessionId, turnId);
         }
       }
@@ -2541,7 +2543,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const commands = [...turnKeys].flatMap((turnKey) => [
       ...(this.#inFlightTurnCommands.get(turnKey)?.browserCommands ?? []),
     ]);
-    await Promise.all(commands);
+    if (commands.length === 0) return;
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        Promise.all(commands),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, 1_000);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   async #handleOpenBotTool(params: DynamicToolCallParams): Promise<OpenBotToolResponse> {
@@ -3776,6 +3789,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#flushTurnDeltas(turnId);
     await this.#waitForImageGenerationOperations(threadId, turnId);
     await this.#turnAssociations.get(turnId)?.catch(() => undefined);
+    if (this.#turnIsStopped(`${threadId}:${turnId}`)) return;
     this.#finishMemoryMutations(turnId, status);
     const shouldCompact = this.#reserveContextCompaction(botId, threadId);
     this.#browser.endControl(this.#publicThreadId(botId, threadId), turnId);
