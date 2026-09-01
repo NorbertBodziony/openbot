@@ -5,6 +5,12 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-09-01
+
+### Changed
+
+- Stabilize the signed macOS release gate by running the full repository test suite with bounded Vitest concurrency.
+
 ## [0.4.1] - 2026-09-01
 
 ### Added
