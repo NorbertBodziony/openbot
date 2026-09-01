@@ -182,7 +182,7 @@ export class BrowserCdpEngine {
 
   async hover(target: BrowserTarget): Promise<void> {
     await this.#lease(async (send) => {
-      const point = await this.#targetPoint(send, target, false);
+      const point = await this.#targetPoint(send, target, true);
       const { sessionId, ...coordinates } = point;
       await send("Input.dispatchMouseEvent", { type: "mouseMoved", ...coordinates }, sessionId);
     });
@@ -282,23 +282,28 @@ export class BrowserCdpEngine {
         `function(values) {
           if (this.localName !== 'select') throw new Error('Target is not a select element.');
           if (!this.multiple && values.length > 1) throw new Error('A single-select accepts only one requested value.');
-          const wanted = new Set(values);
-          const matched = new Set();
           const desiredIndices = [];
           const enabledIndices = [];
           for (let index = 0; index < this.options.length; index++) {
             const option = this.options[index];
             const disabled = option.disabled || option.parentElement?.disabled === true;
             if (!disabled) enabledIndices.push(index);
-            for (const value of wanted) {
-              if (value === option.value || value === option.label || value === option.text) {
-                matched.add(value);
-                if (disabled) throw new Error('A requested option is disabled.');
-                desiredIndices.push(index);
-              }
-            }
           }
-          if (matched.size !== wanted.size) throw new Error('One or more requested options do not exist.');
+          for (const value of values) {
+            const valueMatches = Array.from(this.options, (option, index) => option.value === value ? index : -1)
+              .filter(index => index >= 0);
+            const textMatches = valueMatches.length > 0 ? [] :
+              Array.from(this.options, (option, index) => option.label === value || option.text === value ? index : -1)
+                .filter(index => index >= 0);
+            const matches = valueMatches.length > 0 ? valueMatches : textMatches;
+            if (matches.length === 0) throw new Error('One or more requested options do not exist.');
+            if (matches.length > 1) throw new Error('A requested option is ambiguous. Use a unique option value.');
+            const option = this.options[matches[0]];
+            if (option.disabled || option.parentElement?.disabled === true) {
+              throw new Error('A requested option is disabled.');
+            }
+            desiredIndices.push(matches[0]);
+          }
           const uniqueDesiredIndices = [...new Set(desiredIndices)];
           return {
             multiple: this.multiple,
@@ -417,7 +422,7 @@ export class BrowserCdpEngine {
   async drag(source: BrowserTarget, target: BrowserTarget): Promise<void> {
     await this.#lease(async (send) => {
       const from = await this.#targetPoint(send, source, true);
-      const to = await this.#targetPoint(send, target, false);
+      const to = await this.#targetPoint(send, target, true);
       if (from.sessionId !== to.sessionId) throw new Error("Cross-frame drag is not supported.");
       const sessionId = from.sessionId;
       await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: from.x, y: from.y }, sessionId);
@@ -1345,69 +1350,80 @@ async function collectActionableNodes(
   await Promise.all([send("DOM.enable", {}, capture.sessionId), send("Accessibility.enable", {}, capture.sessionId)]);
   assertBeforeDeadline(deadline);
   const contextId = await automationContextId(send, capture.sessionId);
-  const collection = await send(
-    "Runtime.evaluate",
-    {
-      expression: actionableNodesExpression(limit),
-      contextId,
-      returnByValue: false,
-    },
-    capture.sessionId,
-  );
-  const exception = recordValue(collection.exceptionDetails);
-  if (exception) throw new Error(exceptionDescription(exception));
-  const collectionId = stringValue(recordValue(collection.result)?.objectId);
-  if (!collectionId) return [];
-  const objectIds: string[] = [];
-  try {
-    const properties = await send(
-      "Runtime.getProperties",
-      { objectId: collectionId, ownProperties: true },
+  const results: Array<{ backendNodeId: number; node: CdpResult; ax: CdpResult; role: string }> = [];
+  const batchSize = MAX_SNAPSHOT_ELEMENTS;
+  let candidateOffset = 0;
+  while (results.length < limit) {
+    assertBeforeDeadline(deadline);
+    const collection = await send(
+      "Runtime.evaluate",
+      {
+        expression: actionableNodesExpression(candidateOffset, batchSize),
+        contextId,
+        returnByValue: false,
+      },
       capture.sessionId,
     );
-    const descriptors = Array.isArray(properties.result) ? properties.result.filter(isRecord) : [];
-    objectIds.push(
-      ...descriptors
-        .filter((descriptor) => /^\d+$/.test(stringValue(descriptor.name)))
-        .sort((left, right) => Number(left.name) - Number(right.name))
-        .map((descriptor) => stringValue(recordValue(descriptor.value)?.objectId))
-        .filter(Boolean)
-        .slice(0, limit),
-    );
-    const resolved = await Promise.all(
-      objectIds.map(async (objectId) => {
-        const [description, partialAxTree] = await Promise.all([
-          send("DOM.describeNode", { objectId, depth: 0 }, capture.sessionId),
-          send("Accessibility.getPartialAXTree", { objectId, fetchRelatives: false }, capture.sessionId),
-        ]);
-        const node = recordValue(description.node);
-        const backendNodeId = numberValue(node?.backendNodeId);
-        if (!node || !backendNodeId) return null;
-        const axNodes = Array.isArray(partialAxTree.nodes) ? partialAxTree.nodes.filter(isRecord) : [];
-        const ax = axNodes.find((candidate) => numberValue(candidate.backendDOMNodeId) === backendNodeId) ?? axNodes[0];
-        if (!ax || ax.ignored === true) return null;
-        const role = axValue(ax.role).toLowerCase() || fallbackRole(node);
-        if (!ACTIONABLE_ROLES.has(role)) return null;
-        return { backendNodeId, node, ax, role };
-      }),
-    );
-    assertBeforeDeadline(deadline);
-    return resolved.filter((candidate) => candidate !== null).slice(0, limit);
-  } finally {
-    await Promise.allSettled([
-      ...objectIds.map((objectId) => send("Runtime.releaseObject", { objectId }, capture.sessionId)),
-      send("Runtime.releaseObject", { objectId: collectionId }, capture.sessionId),
-    ]);
+    const exception = recordValue(collection.exceptionDetails);
+    if (exception) throw new Error(exceptionDescription(exception));
+    const collectionId = stringValue(recordValue(collection.result)?.objectId);
+    if (!collectionId) break;
+    const objectIds: string[] = [];
+    try {
+      const properties = await send(
+        "Runtime.getProperties",
+        { objectId: collectionId, ownProperties: true },
+        capture.sessionId,
+      );
+      const descriptors = Array.isArray(properties.result) ? properties.result.filter(isRecord) : [];
+      objectIds.push(
+        ...descriptors
+          .filter((descriptor) => /^\d+$/.test(stringValue(descriptor.name)))
+          .sort((left, right) => Number(left.name) - Number(right.name))
+          .map((descriptor) => stringValue(recordValue(descriptor.value)?.objectId))
+          .filter(Boolean)
+          .slice(0, batchSize),
+      );
+      const resolved = await Promise.all(
+        objectIds.map(async (objectId) => {
+          const [description, partialAxTree] = await Promise.all([
+            send("DOM.describeNode", { objectId, depth: 0 }, capture.sessionId),
+            send("Accessibility.getPartialAXTree", { objectId, fetchRelatives: false }, capture.sessionId),
+          ]);
+          const node = recordValue(description.node);
+          const backendNodeId = numberValue(node?.backendNodeId);
+          if (!node || !backendNodeId) return null;
+          const axNodes = Array.isArray(partialAxTree.nodes) ? partialAxTree.nodes.filter(isRecord) : [];
+          const ax =
+            axNodes.find((candidate) => numberValue(candidate.backendDOMNodeId) === backendNodeId) ?? axNodes[0];
+          if (!ax || ax.ignored === true) return null;
+          const role = axValue(ax.role).toLowerCase() || fallbackRole(node);
+          if (!ACTIONABLE_ROLES.has(role)) return null;
+          return { backendNodeId, node, ax, role };
+        }),
+      );
+      results.push(...resolved.filter((candidate) => candidate !== null).slice(0, limit - results.length));
+      assertBeforeDeadline(deadline);
+    } finally {
+      await Promise.allSettled([
+        ...objectIds.map((objectId) => send("Runtime.releaseObject", { objectId }, capture.sessionId)),
+        send("Runtime.releaseObject", { objectId: collectionId }, capture.sessionId),
+      ]);
+    }
+    if (objectIds.length < batchSize) break;
+    candidateOffset += objectIds.length;
   }
+  return results;
 }
 
-function actionableNodesExpression(limit: number): string {
+function actionableNodesExpression(candidateOffset: number, limit: number): string {
   return `(() => {
     const roles = new Set(${JSON.stringify([...ACTIONABLE_ROLES])});
     const roots = [document];
     const seenRoots = new Set();
     const matches = [];
     let scanned = 0;
+    let candidates = 0;
     const isCandidate = node => {
       if (node.nodeType !== 1) return false;
       let element = node;
@@ -1441,7 +1457,10 @@ function actionableNodesExpression(limit: number): string {
         if (node.localName === 'iframe' || node.localName === 'frame') {
           try { if (node.contentDocument) roots.push(node.contentDocument); } catch {}
         }
-        if (isCandidate(node)) matches.push(node);
+        if (isCandidate(node)) {
+          if (candidates >= ${Math.max(0, candidateOffset)}) matches.push(node);
+          candidates++;
+        }
       }
     }
     return matches;

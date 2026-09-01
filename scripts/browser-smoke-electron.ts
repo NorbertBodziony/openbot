@@ -36,6 +36,11 @@ const server = createServer((request, response) => {
     response.end("local download");
     return;
   }
+  if (url.pathname === "/settle") {
+    response.setHeader("content-type", "text/plain; charset=utf-8");
+    setTimeout(() => response.end("settled"), 100);
+    return;
+  }
   if (url.pathname === "/cookie") {
     if (url.searchParams.has("set")) response.setHeader("set-cookie", "openbot=shared; Path=/");
     response.setHeader("content-type", "text/html; charset=utf-8");
@@ -64,7 +69,7 @@ const server = createServer((request, response) => {
   if (url.pathname === "/frame") {
     response.setHeader("content-type", "text/html; charset=utf-8");
     response.end(
-      `<button aria-label="Frame action" onclick="let count=0;const trusted=event.isTrusted;const timer=setInterval(()=>{this.textContent='Frame settled:'+(++count)+':'+trusted;if(count===5)clearInterval(timer)},40)">Frame action</button>
+      `<button aria-label="Frame action" onclick="const trusted=event.isTrusted;fetch('/settle').then(()=>{this.textContent='Frame settled:5:'+trusted})">Frame action</button>
        <button aria-label="Schedule frame navigation" onclick="setTimeout(() => location.href='/frame-next', 1000)">Schedule frame navigation</button>
        <input aria-label="Frame field" oninput="document.querySelector('output').textContent='Frame input:' + this.value + ':' + event.isTrusted" onkeydown="if (event.key === 'Enter') document.querySelector('output').textContent += '|Frame key:' + event.isTrusted" />
        <input type="file" aria-label="Frame files" />
@@ -84,6 +89,7 @@ const server = createServer((request, response) => {
     response.end(
       `<button aria-label="Same-origin action" onclick="document.querySelector('output').textContent='Same-origin:' + event.isTrusted">Same-origin action</button>
        <label>Mode <select aria-label="Same-origin mode" oninput="this.dataset.inputTrusted=String(event.isTrusted)" onchange="this.dataset.changeTrusted=String(event.isTrusted)"><option value="a">Alpha</option><option value="b">Beta</option></select></label>
+       <label>Collision <select aria-label="Same-origin collision"><option value="first">target</option><option value="target">Second</option><option value="third">Second</option></select></label>
        <label>Tags <select multiple size="3" aria-label="Same-origin tags" oninput="this.dataset.inputTrusted=String(event.isTrusted)" onchange="this.dataset.changeTrusted=String(event.isTrusted)"><option value="a">Alpha</option><option value="b">Beta</option><option value="c">Gamma</option></select></label>
        <label><input type="radio" name="same-choice" aria-label="Same-origin primary choice" checked />Primary</label>
        <input aria-label="Same-origin field" value="a" />
@@ -137,7 +143,7 @@ const server = createServer((request, response) => {
       <script>
         const root = document.querySelector('#shadow').attachShadow({ mode: 'open' });
         root.innerHTML = '<button aria-label="Shadow action">Shadow action</button>';
-        root.querySelector('button').onclick = event => { let count = 0; const trusted = event.isTrusted; const timer = setInterval(() => { root.querySelector('button').textContent = 'Shadow settled:' + (++count) + ':' + trusted; if (count === 5) clearInterval(timer); }, 40); };
+        root.querySelector('button').onclick = event => { const trusted = event.isTrusted; fetch('/settle').then(() => { root.querySelector('button').textContent = 'Shadow settled:5:' + trusted; }); };
         document.addEventListener('keydown', event => { if (event.ctrlKey && event.key.toLowerCase() === 'k') document.querySelector('output').textContent = 'shortcut:' + event.isTrusted; });
         console.error('v2 diagnostic marker'); fetch('/diagnostic-error?access_token=diagnostic-secret').catch(() => {});
       </script>`);
@@ -312,6 +318,26 @@ async function main(): Promise<void> {
     ) {
       throw new Error(`V2 same-origin iframe select failed: ${toolError(sameOriginSelect)}`);
     }
+    const sameOriginCollisionSelect = await callBrowserTool(browser, "select_option", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "combobox", name: "Same-origin collision", exact: true },
+      values: ["target"],
+    });
+    const sameOriginCollisionSelection = await v2Contents.executeJavaScript(
+      `document.querySelector('iframe[title="Same origin frame"]').contentDocument.querySelector('[aria-label="Same-origin collision"]').value`,
+      true,
+    );
+    if (!sameOriginCollisionSelect.success || sameOriginCollisionSelection !== "target") {
+      throw new Error(`V2 select did not prefer an exact value match: ${toolError(sameOriginCollisionSelect)}`);
+    }
+    const ambiguousOption = await callBrowserTool(browser, "select_option", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "combobox", name: "Same-origin collision", exact: true },
+      values: ["Second"],
+    });
+    if (ambiguousOption.success || !toolError(ambiguousOption).includes("ambiguous")) {
+      throw new Error("V2 select accepted an ambiguous option label.");
+    }
     const sameOriginMultiSelect = await callBrowserTool(browser, "select_option", {
       tabId: v2Tab.id,
       target: { kind: "role", role: "listbox", name: "Same-origin tags", exact: true },
@@ -357,7 +383,7 @@ async function main(): Promise<void> {
       `(() => {
         const container = document.createElement('div');
         container.dataset.rejectedCandidateNoise = '';
-        container.innerHTML = Array.from({ length: 250 }, () => '<button style="visibility:hidden">Hidden action</button>').join('') +
+        container.innerHTML = Array.from({ length: 250 }, () => '<input type="color" aria-label="Unsupported color input" />').join('') +
           '<button aria-label="Action after rejected candidates">Action after rejected candidates</button>';
         document.body.appendChild(container);
       })()`,
@@ -581,6 +607,21 @@ async function main(): Promise<void> {
     });
     if (covered.success || !toolError(covered).includes("covered by")) {
       throw new Error("V2 hit testing did not identify a covering page layer.");
+    }
+    const coveredHover = await callBrowserTool(browser, "hover", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "button", name: "Covered", exact: true },
+    });
+    if (coveredHover.success || !toolError(coveredHover).includes("covered by")) {
+      throw new Error("V2 hover reported success for a covered target.");
+    }
+    const coveredDrag = await callBrowserTool(browser, "drag", {
+      tabId: v2Tab.id,
+      source: { kind: "role", role: "button", name: "Drag source", exact: true },
+      target: { kind: "role", role: "button", name: "Covered", exact: true },
+    });
+    if (coveredDrag.success || !toolError(coveredDrag).includes("covered by")) {
+      throw new Error("V2 drag reported success for a covered destination.");
     }
     const partiallyCovered = await callBrowserTool(browser, "click", {
       tabId: v2Tab.id,
