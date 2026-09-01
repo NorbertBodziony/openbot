@@ -3971,6 +3971,63 @@ describe.sequential("AgentService", () => {
     expect((await service.readConversation("sales-outbound")).activeTurnId).toBe(salesTurnId);
   });
 
+  it("preserves another provider's active compaction during restart", async () => {
+    process.env.OPENBOT_CLAUDE_PATH = await createFakeClaude(root);
+    const codexClients: FakeAgentClient[] = [];
+    let claudeClient: FakeAgentClient | undefined;
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
+      if (provider === "claude") {
+        claudeClient = new FakeAgentClient(provider, "", false);
+        return claudeClient;
+      }
+      const client = new FakeAgentClient(provider, "", false, true, {}, async (method) => {
+        if (provider === "codex" && codexClients.length === 1 && method === "turn/interrupt") {
+          throw new Error("Runtime unavailable");
+        }
+      });
+      if (provider === "codex") codexClients.push(client);
+      return client;
+    });
+    await service.initialize();
+    await store.getOrCreate("sales-outbound");
+    await service.updateBot({ botId: "sales-outbound", provider: "claude", model: "claude-sonnet-5" });
+    await service.sendMessage({ botId: "sales-outbound", text: "Fill the context" });
+    await waitFor(() => service?.listQueue("sales-outbound").deliveries[0]?.status === "running");
+    await service.sendMessage({ botId: "sales-outbound", text: "Wait for compaction" });
+    const salesSession = store.activeProviderSession("sales-outbound");
+    const salesTurnId = (await service.readConversation("sales-outbound")).activeTurnId;
+    if (!claudeClient || !salesSession || !salesTurnId) throw new Error("The Claude turn did not start.");
+    claudeClient.emit(
+      "notification",
+      notification("thread/tokenUsage/updated", {
+        threadId: salesSession.externalSessionId,
+        turnId: salesTurnId,
+        tokenUsage: {
+          total: { totalTokens: 82_000 },
+          last: { totalTokens: 82_000 },
+          modelContextWindow: 100_000,
+        },
+      }),
+    );
+    claudeClient.emit(
+      "notification",
+      notification("turn/completed", {
+        threadId: salesSession.externalSessionId,
+        turn: { id: salesTurnId, status: "completed" },
+      }),
+    );
+    await waitFor(() => claudeClient?.requests.some((request) => request.method === "thread/compact/start"));
+
+    await service.sendMessage({ botId: "chief", text: "Restart Codex only" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "running");
+    await service.stopAgent("chief");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(claudeClient.requests.filter((request) => request.method === "turn/start")).toHaveLength(1);
+    expect(service.listQueue("sales-outbound").deliveries[1]?.status).toBe("queued");
+  });
+
   it("preserves browser takeover and control state owned by another provider during restart", async () => {
     process.env.OPENBOT_CLAUDE_PATH = await createFakeClaude(root);
     const tabs: BrowserTab[] = [];

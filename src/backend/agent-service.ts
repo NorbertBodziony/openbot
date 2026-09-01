@@ -2184,7 +2184,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     void client.stop().catch(() => undefined);
     this.#clearPendingTurnStartsForClient(client);
     this.#loadedThreads.clear();
-    this.#clearCompactionRuntime();
+    this.#clearCompactionRuntime(client.provider);
     this.#clearPendingPrompts(client);
     this.#clearPendingBrowserTakeovers(client.provider);
     this.#pendingApprovals.clear();
@@ -2255,7 +2255,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         await client.stop();
         if (this.#clients.get(client.provider) === client) this.#clients.delete(client.provider);
         this.#loadedThreads.clear();
-        this.#clearCompactionRuntime();
+        this.#clearCompactionRuntime(client.provider);
         this.#clearPendingPrompts(client);
         this.#clearPendingBrowserTakeovers(client.provider);
         for (const [requestId, pending] of this.#pendingApprovals) {
@@ -3929,11 +3929,33 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#compactionTimers.delete(threadId);
   }
 
-  #clearCompactionRuntime(): void {
-    for (const timer of this.#compactionTimers.values()) clearTimeout(timer);
-    this.#compactionTimers.clear();
-    this.#compactingBots.clear();
-    this.#contextBudgets.clear();
+  #clearCompactionRuntime(provider?: AgentProvider): void {
+    if (!provider) {
+      for (const timer of this.#compactionTimers.values()) clearTimeout(timer);
+      this.#compactionTimers.clear();
+      this.#compactingBots.clear();
+      this.#contextBudgets.clear();
+      return;
+    }
+    const botIds = new Set(
+      this.#store
+        .list()
+        .filter((bot) => providerForBot(bot) === provider)
+        .map((bot) => bot.id),
+    );
+    const threadIds = new Set<string>();
+    for (const botId of botIds) {
+      this.#compactingBots.delete(botId);
+      const session = this.#store.activeProviderSession(botId);
+      if (session) threadIds.add(session.externalSessionId);
+    }
+    for (const [threadId, botId] of this.#threadToBot) {
+      if (botIds.has(botId)) threadIds.add(threadId);
+    }
+    for (const threadId of threadIds) {
+      this.#clearCompactionTimer(threadId);
+      this.#contextBudgets.delete(threadId);
+    }
   }
 
   async #relayAgentResult(botId: string, turnId: string, delivery: DeliveryContext, text: string): Promise<void> {

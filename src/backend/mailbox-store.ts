@@ -811,28 +811,34 @@ export class MailboxStore {
   }
 
   async stopPending(botId: string, reason: string, deliveryIds?: readonly string[]): Promise<{ turnIds: string[] }> {
-    const previous = structuredClone(this.#state);
     const selected = deliveryIds ? new Set(deliveryIds) : null;
     const turnIds = new Set<string>();
-    let changed = false;
+    const changed: Array<{
+      delivery: StoredDelivery;
+      status: QueueDeliveryStatus;
+      error: string | null;
+    }> = [];
     for (const delivery of this.#state.deliveries) {
       if (delivery.recipientBotId !== botId) continue;
       if (selected && !selected.has(delivery.id)) continue;
       if (delivery.status === "queued") {
+        changed.push({ delivery, status: delivery.status, error: delivery.error });
         delivery.status = "cancelled";
-        changed = true;
       } else if (delivery.status === "starting" || delivery.status === "running") {
+        changed.push({ delivery, status: delivery.status, error: delivery.error });
         if (delivery.turnId) turnIds.add(delivery.turnId);
         delivery.status = "interrupted";
         delivery.error = reason;
-        changed = true;
       }
     }
-    if (!changed) return { turnIds: [] };
+    if (changed.length === 0) return { turnIds: [] };
     try {
       await this.#persist("agent.stopped");
     } catch (error) {
-      this.#state = previous;
+      for (const previous of changed) {
+        previous.delivery.status = previous.status;
+        previous.delivery.error = previous.error;
+      }
       throw error;
     }
     return { turnIds: [...turnIds] };
