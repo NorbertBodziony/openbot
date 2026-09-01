@@ -17,14 +17,14 @@
         }
       },
       "icon": {
-        "light": "./assets/icons/app-icon-ios-light.png",
+        "light": "./assets/icons/app-icon.png",
         "dark": "./assets/icons/app-icon-ios-dark.png",
         "tinted": "./assets/icons/app-icon-ios-tinted-light.png"
       }
     },
     "android": {
       "package": "run.openbot.mobile",
-      "icon": "./assets/icons/app-icon-android.png",
+      "icon": "./assets/icons/app-icon.png",
       "predictiveBackGestureEnabled": false
     },
     "plugins": [

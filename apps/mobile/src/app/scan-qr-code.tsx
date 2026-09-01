@@ -3,8 +3,17 @@ import { Link } from "expo-router";
 import { Button } from "heroui-native/button";
 import { useThemeColor } from "heroui-native/hooks";
 import { ChevronLeft, QrCode } from "lucide-react-native";
-import { useState } from "react";
-import { ActivityIndicator, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import { useEffect, useState } from "react";
+import {
+  ActivityIndicator,
+  AppState,
+  Linking,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from "react-native";
 
 import { redeemMobileConnectUrl } from "@/lib/mobile-auth";
 import { useMobileSession } from "@/providers/mobile-session-provider";
@@ -28,12 +37,25 @@ function ScreenBackButton({ iconColor }: { iconColor: string }) {
 }
 
 export default function ScanQrCode() {
-  const [permission, requestPermission] = useCameraPermissions();
+  const [permission, requestPermission, getPermission] = useCameraPermissions();
   const [scanState, setScanState] = useState<ScanState>({ status: "idle" });
   const foreground = useThemeColor("foreground");
   const { width: windowWidth } = useWindowDimensions();
   const scannerFrameSize = Math.min(windowWidth - 80, 280);
   const { connect: finishSignIn } = useMobileSession();
+
+  useEffect(() => {
+    if (permission?.granted || permission?.canAskAgain !== false) return;
+
+    let previousState = AppState.currentState;
+    const subscription = AppState.addEventListener("change", (state) => {
+      const returnedToForeground = state === "active" && previousState !== "active";
+      previousState = state;
+      if (returnedToForeground) void getPermission();
+    });
+
+    return () => subscription.remove();
+  }, [getPermission, permission?.canAskAgain, permission?.granted]);
 
   async function connect(data: string): Promise<void> {
     if (scanState.status !== "idle") return;
@@ -57,6 +79,8 @@ export default function ScanQrCode() {
   }
 
   if (!permission.granted) {
+    const canRequestPermission = permission.canAskAgain;
+
     return (
       <ScrollView
         className="flex-1 bg-background"
@@ -77,11 +101,19 @@ export default function ScanQrCode() {
               Camera access required
             </Text>
             <Text className="text-center font-sans text-body text-text-secondary">
-              OpenBot uses the camera only to scan the QR code shown in the desktop app.
+              {canRequestPermission
+                ? "OpenBot uses the camera only to scan the QR code shown in the desktop app."
+                : "Camera access is blocked. Enable it for OpenBot in your device settings, then return to scan the QR code."}
             </Text>
           </View>
-          <Button size="md" className="w-full max-w-sm" onPress={requestPermission}>
-            <Button.Label className="font-sans">Allow camera access</Button.Label>
+          <Button
+            size="md"
+            className="w-full max-w-sm"
+            onPress={canRequestPermission ? requestPermission : () => void Linking.openSettings()}
+          >
+            <Button.Label className="font-sans">
+              {canRequestPermission ? "Allow camera access" : "Open settings"}
+            </Button.Label>
           </Button>
         </View>
       </ScrollView>

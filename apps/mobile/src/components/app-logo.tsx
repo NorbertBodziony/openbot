@@ -126,6 +126,7 @@ export function AppLogo({
 
   useEffect(() => {
     if (!followDeviceOrientation) {
+      cancelAnimation(deviceRotation);
       deviceRotation.set(0);
       lastDeviceAngle.current = null;
       accumulatedDeviceRotation.current = 0;
@@ -173,6 +174,7 @@ export function AppLogo({
     return () => {
       active = false;
       subscription?.remove();
+      cancelAnimation(deviceRotation);
     };
   }, [deviceRotation, followDeviceOrientation, reduceMotion]);
 
