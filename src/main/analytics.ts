@@ -265,11 +265,9 @@ export class HostAnalytics {
     if (flushPending) this.#flushPendingForOwner(owner);
     else this.#identify(owner);
     this.#send(name, sanitized, owner.id);
-    if (name === "hosted_site_action") {
-      const currentOwner = normalizeAnalyticsIdentity(this.#resolveOwner());
-      if (currentOwner?.id !== owner.id || currentOwner.email !== owner.email) {
-        this.#enqueue("clear", () => this.#client?.clear());
-      }
+    const currentOwner = normalizeAnalyticsIdentity(this.#resolveOwner());
+    if (currentOwner?.id !== owner.id || currentOwner.email !== owner.email) {
+      this.#enqueue("clear", () => this.#client?.clear());
     }
   }
 

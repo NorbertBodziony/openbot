@@ -111,6 +111,7 @@ describe("OpenPanel identity backfill", () => {
     ).toBe(1);
     expect(fetcher).toHaveBeenCalledTimes(3);
     expect(sleep).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls[0]?.[1]?.redirect).toBe("error");
     expect(requests[0]).toEqual({
       type: "identify",
       payload: { profileId: "account-1", email: "person@example.com" },

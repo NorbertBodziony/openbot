@@ -640,6 +640,41 @@ describe("host analytics", () => {
     );
   });
 
+  it("clears a captured host identity after a turn continues past logout", () => {
+    const client = fakeClient();
+    let owner: { id: string; email: string } | null = { id: "owner-1", email: "one@example.com" };
+    const analytics = new HostAnalytics(
+      {
+        enabled: true,
+        appVersion: "1.2.3",
+        platform: "darwin",
+        resolveOwner: () => owner,
+        resolveBot: () => BOT,
+      },
+      () => client,
+    );
+
+    analytics.handleAgentEvent({
+      type: "turn-started",
+      botId: BOT.id,
+      threadId: BOT.threadId ?? "",
+      turnId: "turn-after-logout",
+      origin: "user",
+    });
+    analytics.clear();
+    owner = null;
+    analytics.handleAgentEvent({
+      type: "turn-completed",
+      botId: BOT.id,
+      threadId: BOT.threadId ?? "",
+      turnId: "turn-after-logout",
+      origin: "unknown",
+      status: "completed",
+    });
+
+    expect(client.clear).toHaveBeenCalledTimes(2);
+  });
+
   it("adds safe bot context to host failures", () => {
     const client = fakeClient();
     const analytics = new HostAnalytics(

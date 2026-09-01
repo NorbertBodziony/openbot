@@ -143,6 +143,7 @@ async function identifyProfile(
           "openpanel-sdk-name": "openbot-backfill",
         },
         body: JSON.stringify({ type: "identify", payload: identity }),
+        redirect: "error",
         signal: controller.signal,
       });
     } catch {
