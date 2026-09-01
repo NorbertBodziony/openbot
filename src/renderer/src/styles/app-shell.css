@@ -440,8 +440,7 @@
   }
 }
 
-.server-rail-monogram,
-.server-rail-local {
+.server-rail-monogram {
   display: grid;
   width: 40px;
   height: 40px;
@@ -463,12 +462,6 @@
   object-fit: cover;
   outline: 1px solid var(--openbot-image-outline);
   outline-offset: -1px;
-}
-
-.server-rail-local {
-  background: linear-gradient(145deg, var(--openbot-text-primary), var(--openbot-accent));
-  color: var(--openbot-accent);
-  font-size: var(--openbot-text-2xl);
 }
 
 .server-rail-mark {
@@ -3941,7 +3934,6 @@ textarea {
 }
 
 .server-rail-monogram,
-.server-rail-local,
 .server-rail-action .server-rail-monogram {
   border-color: var(--openbot-border);
   background: var(--openbot-bg-surface);
