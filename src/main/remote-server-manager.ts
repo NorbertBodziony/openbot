@@ -235,6 +235,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   #webrtcConnectionAttempts = new Set<string>();
   #conversationRefreshRequests = new Map<string, { revision: number }>();
   #queueRefreshRequests = new Map<string, { dirty: boolean }>();
+  #duplicateOperationIds = new Map<string, string>();
   #eventAuthenticationPaused = new Set<string>();
   #eventGenerations = new Map<string, number>();
   #eventsEnabled = false;
@@ -679,6 +680,25 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       return addRemotePreviewUrls(value, server.id);
     } catch (error) {
       this.#applyConnectionError(server.id, error);
+      throw error;
+    }
+  }
+
+  async duplicateBot(botId: string, serverId = this.#state.activeServerId): Promise<DuplicateBotResult> {
+    const key = `${serverId}\0${botId}`;
+    const operationId = this.#duplicateOperationIds.get(key) ?? randomUUID();
+    this.#duplicateOperationIds.set(key, operationId);
+    try {
+      const result = await this.request(
+        `/v1/agents/${encodeURIComponent(botId)}/duplicate`,
+        { method: "POST", body: { operationId }, timeoutMs: REMOTE_DUPLICATION_TIMEOUT_MS },
+        serverId,
+        decodeDuplicateBotResult,
+      );
+      this.#duplicateOperationIds.delete(key);
+      return result;
+    } catch (error) {
+      if (error instanceof RemoteRequestError) this.#duplicateOperationIds.delete(key);
       throw error;
     }
   }

@@ -89,6 +89,7 @@ function createAgents(overrides: Partial<TestAgents> = {}, events = new EventEmi
     listRoutineRuns: unimplemented,
     listConversationReads: unimplemented,
     createBot: unimplemented,
+    committedBotDuplication: () => null,
     duplicateBot: unimplemented,
     commitBotDuplication: unimplemented,
     updateBot: unimplemented,
@@ -226,11 +227,21 @@ describe("TeamApiServer administration", () => {
       bots = [duplicate, source];
       return duplicate;
     });
-    const commitBotDuplication = vi.fn(async () => duplicate);
+    let committedDuplicate: Awaited<ReturnType<TestAgents["commitBotDuplication"]>> | null = null;
+    const commitBotDuplication = vi.fn(async (_botId, layout) => {
+      committedDuplicate = { bot: duplicate, layout };
+      return committedDuplicate;
+    });
     const deleteBot = vi.fn(async (botId: string) => {
       bots = bots.filter((bot) => bot.id !== botId);
     });
-    const agents = createAgents({ listBots: () => bots, duplicateBot, commitBotDuplication, deleteBot });
+    const agents = createAgents({
+      listBots: () => bots,
+      committedBotDuplication: () => committedDuplicate,
+      duplicateBot,
+      commitBotDuplication,
+      deleteBot,
+    });
     const section = await sidebarLayout.mutate(
       { type: "create", name: "Core", agentId: source.id },
       new Set([source.id]),
@@ -260,7 +271,7 @@ describe("TeamApiServer administration", () => {
           [TEAM_PROTOCOL_VERSION_HEADER]: String(TEAM_PROTOCOL_V3),
           [TEAM_APP_VERSION_HEADER]: "1.0.0",
         },
-        body: "{}",
+        body: JSON.stringify({ operationId: "7674b664-cd72-4cf9-88ed-6f2e189d551f" }),
       });
 
       expect(response.status).toBe(201);
@@ -271,9 +282,23 @@ describe("TeamApiServer administration", () => {
           agentOrder: [source.id, duplicate.id],
         },
       });
-      expect(duplicateBot).toHaveBeenCalledWith(source.id);
-      expect(commitBotDuplication).toHaveBeenCalledWith(duplicate.id);
+      expect(duplicateBot).toHaveBeenCalledWith(source.id, "7674b664-cd72-4cf9-88ed-6f2e189d551f");
+      expect(commitBotDuplication).toHaveBeenCalledWith(duplicate.id, expect.objectContaining({ revision: 2 }));
       expect(deleteBot).not.toHaveBeenCalled();
+
+      const retry = await fetch(`${base}/v1/agents/${source.id}/duplicate`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${login.sessionToken}`,
+          "Content-Type": "application/json",
+          [TEAM_PROTOCOL_VERSION_HEADER]: String(TEAM_PROTOCOL_V3),
+          [TEAM_APP_VERSION_HEADER]: "1.0.0",
+        },
+        body: JSON.stringify({ operationId: "7674b664-cd72-4cf9-88ed-6f2e189d551f" }),
+      });
+      expect(retry.status).toBe(201);
+      expect(duplicateBot).toHaveBeenCalledTimes(1);
+      expect(commitBotDuplication).toHaveBeenCalledTimes(1);
     } finally {
       await api.stop();
     }
@@ -336,7 +361,7 @@ describe("TeamApiServer administration", () => {
           [TEAM_PROTOCOL_VERSION_HEADER]: String(TEAM_PROTOCOL_V3),
           [TEAM_APP_VERSION_HEADER]: "1.0.0",
         },
-        body: "{}",
+        body: JSON.stringify({ operationId: "25dc8b8e-a93b-48f5-9e22-d3a7840f5d4d" }),
       });
 
       expect(response.status).toBe(500);

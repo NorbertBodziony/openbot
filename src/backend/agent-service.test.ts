@@ -46,6 +46,13 @@ const CREATE_BOT_INPUT = {
   avatarHue: 215,
   initialMessage: "Help me make a practical plan.",
 } as const;
+const EMPTY_LAYOUT = {
+  revision: 0,
+  sections: [],
+  order: ["people", "unassigned"],
+  agentAssignments: {},
+  agentOrder: [],
+};
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "openbot-agent-test-"));
@@ -205,8 +212,15 @@ describe.sequential("AgentService", () => {
     const duplicate = await service.duplicateBot(source.id);
 
     expect(service.listBots().some((bot) => bot.id === duplicate.id)).toBe(false);
+    await expect(service.sendMessage({ botId: duplicate.id, text: "Do not start yet." })).rejects.toThrow(
+      `Unknown bot: ${duplicate.id}`,
+    );
+    await expect(service.updateBot({ botId: duplicate.id, title: "Hidden copy" })).rejects.toThrow(
+      `Unknown bot: ${duplicate.id}`,
+    );
+    expect(service.listQueue(duplicate.id).deliveries).toEqual([]);
     expect(events).toEqual([]);
-    await service.commitBotDuplication(duplicate.id);
+    await service.commitBotDuplication(duplicate.id, EMPTY_LAYOUT);
     expect(service.listBots().some((bot) => bot.id === duplicate.id)).toBe(true);
     expect(events).toEqual(
       expect.arrayContaining([
@@ -326,9 +340,9 @@ describe.sequential("AgentService", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(secondResolved).toBe(false);
-    await service.commitBotDuplication(first.id);
+    await service.commitBotDuplication(first.id, EMPTY_LAYOUT);
     const second = await secondRequest;
-    await service.commitBotDuplication(second.id);
+    await service.commitBotDuplication(second.id, EMPTY_LAYOUT);
     expect(service.listBots().map((bot) => bot.id)).toEqual(
       expect.arrayContaining(["chief", "research", first.id, second.id]),
     );

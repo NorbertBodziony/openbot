@@ -1,4 +1,5 @@
-import { isDynamicRecord } from "../runtime-values";
+import { isDynamicRecord, isString } from "../runtime-values";
+import { isUuidV4 } from "../validation";
 import {
   decodeTeamProtocolV1HttpRequest,
   decodeTeamProtocolV1HttpResponse,
@@ -17,10 +18,15 @@ export function decodeTeamProtocolV3HttpRequest(
   value: unknown,
 ): TeamProtocolV1JsonObject {
   if (duplicateRoute(method, path)) {
-    if (!isDynamicRecord(value) || Object.keys(value).length !== 0) {
+    if (
+      !isDynamicRecord(value) ||
+      Object.keys(value).length !== 1 ||
+      !isString(value.operationId) ||
+      !isUuidV4(value.operationId)
+    ) {
       throw new Error("Invalid Team protocol v3 duplicate-agent request.");
     }
-    return {};
+    return { operationId: value.operationId };
   }
   return decodeTeamProtocolV1HttpRequest(method, path, value);
 }

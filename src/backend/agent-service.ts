@@ -41,6 +41,7 @@ import type {
   DeleteBotMemoryInput,
   DeleteRoutineInput,
   DraftAttachment,
+  DuplicateBotResult,
   ImageGenerationInfo,
   ListRoutineRunsInput,
   QueueDeliveryStatus,
@@ -56,6 +57,7 @@ import type {
   RoutineSchedule,
   SendMessageInput,
   SetMessageReactionInput,
+  SidebarLayoutSnapshot,
   SteerQueuedMessageInput,
   TestRoutineInput,
   UpdateBotInput,
@@ -365,6 +367,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #pendingRuntimeRefreshes = new Set<string>();
   readonly #duplicatingBots = new Set<string>();
   readonly #pendingDuplicateBots = new Set<string>();
+  readonly #pendingDuplicateOperations = new Map<string, { operationId: string; sourceBotId: string }>();
   readonly #pendingDuplicateReleases = new Map<string, () => void>();
   readonly #pendingDeltas = new Map<string, PendingDelta>();
   readonly #pendingMemoryMutations = new Map<string, PendingMemoryMutation[]>();
@@ -709,7 +712,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return bot;
   }
 
-  async duplicateBot(sourceBotId: string): Promise<BotSummary> {
+  committedBotDuplication(operationId: string, sourceBotId: string): DuplicateBotResult | null {
+    return this.#store.committedBotDuplication(operationId, sourceBotId);
+  }
+
+  async duplicateBot(sourceBotId: string, operationId: string = randomUUID()): Promise<BotSummary> {
     const releaseDuplication = await this.#acquireDuplicationCommitLock();
     let releaseOnExit = true;
     let duplicate: BotSummary | null = null;
@@ -719,8 +726,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.#assertBotIdleForDuplication(sourceBotId);
       const sourceSignature = this.#duplicationSourceSignature(sourceBotId);
       this.#duplicatingBots.add(sourceBotId);
-      duplicate = await this.#store.duplicateBot(sourceBotId);
+      duplicate = await this.#store.duplicateBot(sourceBotId, operationId);
       this.#pendingDuplicateBots.add(duplicate.id);
+      this.#pendingDuplicateOperations.set(duplicate.id, { operationId, sourceBotId });
       this.#assertDuplicationSourceUnchanged(sourceBotId, sourceSignature);
       this.#memories.duplicate(sourceBotId, duplicate.id);
       const routines = this.#routines.duplicate(sourceBotId, duplicate.id, new Date());
@@ -745,6 +753,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       try {
         await this.#deleteBotData(duplicate);
         this.#pendingDuplicateBots.delete(duplicate.id);
+        this.#pendingDuplicateOperations.delete(duplicate.id);
       } catch (caught) {
         rollbackError = caught;
       }
@@ -762,17 +771,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  async commitBotDuplication(botId: string): Promise<BotSummary> {
+  async commitBotDuplication(botId: string, layout: SidebarLayoutSnapshot): Promise<DuplicateBotResult> {
     if (!this.#pendingDuplicateBots.has(botId)) throw new Error("This agent duplication is not pending.");
+    const operation = this.#pendingDuplicateOperations.get(botId);
+    if (!operation) throw new Error("This agent duplication operation is unavailable.");
     const releaseDuplication = this.#pendingDuplicateReleases.get(botId);
     try {
-      const bot = await this.#store.commitBotDuplication(botId);
+      const result = await this.#store.commitBotDuplication(
+        botId,
+        operation.operationId,
+        operation.sourceBotId,
+        layout,
+      );
       this.#pendingDuplicateBots.delete(botId);
+      this.#pendingDuplicateOperations.delete(botId);
       this.#emit({ type: "bots-changed", bots: this.listBots() });
-      if (this.#memories.list(bot.id).length > 0) this.#memoryStateChanged(bot.id);
-      if (this.#routines.list(bot.id).length > 0) this.#routineStateChanged(bot.id);
+      if (this.#memories.list(result.bot.id).length > 0) this.#memoryStateChanged(result.bot.id);
+      if (this.#routines.list(result.bot.id).length > 0) this.#routineStateChanged(result.bot.id);
       this.#armRoutineTimer();
-      return bot;
+      return result;
     } finally {
       this.#pendingDuplicateReleases.delete(botId);
       releaseDuplication?.();
@@ -786,6 +803,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async updateBot(input: UpdateBotInput): Promise<BotSummary> {
+    this.#requireKnownBot(input.botId);
     const previous = this.#store.list().find((bot) => bot.id === input.botId);
     const requestedModel = input.model
       ? this.#models.find((model) => model.id === input.model && (!input.provider || model.provider === input.provider))
@@ -903,6 +921,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
     }
     this.#pendingDuplicateBots.delete(botId);
+    this.#pendingDuplicateOperations.delete(botId);
     if (!wasPendingDuplicate) this.#emit({ type: "bots-changed", bots: this.listBots() });
     this.#armRoutineTimer();
   }
@@ -1279,6 +1298,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async sendMessage(input: SendMessageInput): Promise<QueuedMessageReceipt> {
+    if (this.#pendingDuplicateBots.has(input.botId)) throw new Error(`Unknown bot: ${input.botId}`);
     const bot = await this.#store.getOrCreate(input.botId);
     await this.ensureProvider(providerForBot(bot));
     const receipt = await this.#mailbox.enqueue({
@@ -2369,7 +2389,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
 
     if (params.tool === "list_agents") {
-      const agents = this.#store.list().map((bot) => {
+      const agents = this.listBots().map((bot) => {
         const queue = this.#mailbox.listQueue(bot.id);
         return {
           id: bot.id,
@@ -2623,7 +2643,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error("Duplicate recipients are not allowed.");
     }
     if (recipientValues.includes(senderBotId)) throw new Error("An agent cannot message itself.");
-    const knownIds = new Set(this.#store.list().map((bot) => bot.id));
+    const knownIds = new Set(this.listBots().map((bot) => bot.id));
     for (const recipient of recipientValues) {
       if (!knownIds.has(recipient)) throw new Error(`Unknown OpenBot agent: ${recipient}`);
     }
@@ -2836,6 +2856,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (
       this.#stopping ||
       this.#status.phase !== "ready" ||
+      this.#pendingDuplicateBots.has(botId) ||
       this.#drainingBots.has(botId) ||
       this.#scheduledDrains.has(botId) ||
       this.#compactingBots.has(botId)
@@ -2856,6 +2877,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async #drainBot(botId: string): Promise<void> {
     if (
       this.#stopping ||
+      this.#pendingDuplicateBots.has(botId) ||
       this.#drainingBots.has(botId) ||
       this.#compactingBots.has(botId) ||
       this.#status.phase !== "ready"
@@ -4419,7 +4441,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   #requireKnownBot(botId: string): BotSummary {
-    const bot = this.#store.list().find((candidate) => candidate.id === botId);
+    const bot = this.listBots().find((candidate) => candidate.id === botId);
     if (!bot) throw new Error(`Unknown bot: ${botId}`);
     return bot;
   }

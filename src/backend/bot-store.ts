@@ -12,11 +12,14 @@ import {
   type AvatarImageInput,
   type BotSummary,
   type CreateBotInput,
+  type DuplicateBotResult,
   isAgentModel,
   isAvatarHue,
   isAvatarSeed,
   isReasoningEffort,
+  isSidebarLayoutSnapshot,
   providerForLegacyModel,
+  type SidebarLayoutSnapshot,
   type UpdateBotInput,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isNumber, isOneOf, isString } from "@openbot/contracts/runtime-values";
@@ -30,6 +33,11 @@ type PersistedStoredBot = Omit<StoredBot, "avatarUrl" | "provider"> & {
   provider?: AgentProviderId;
 };
 type StoredBotBase = Omit<PersistedStoredBot, "avatarSeed" | "avatarHue"> & DynamicRecord;
+
+interface BotDuplicationMarker {
+  operationId: string;
+  sourceBotId: string;
+}
 
 interface StoredState {
   version: 2;
@@ -173,8 +181,9 @@ export class BotStore {
     return { ...record };
   }
 
-  duplicateBot(sourceId: string): Promise<BotSummary> {
-    return this.#enqueueCreation(() => this.#duplicateBot(sourceId));
+  duplicateBot(sourceId: string, operationId: string = randomUUID()): Promise<BotSummary> {
+    if (!isUuidV4(operationId)) throw new Error("Invalid agent duplication operation id.");
+    return this.#enqueueCreation(() => this.#duplicateBot(sourceId, operationId));
   }
 
   #enqueueCreation<T>(create: () => Promise<T>): Promise<T> {
@@ -186,7 +195,10 @@ export class BotStore {
     return operation;
   }
 
-  async #duplicateBot(sourceId: string): Promise<BotSummary> {
+  async #duplicateBot(sourceId: string, operationId: string): Promise<BotSummary> {
+    if (this.#database.commandResult(duplicationCommandId(operationId)) !== undefined) {
+      throw new Error("This agent duplication operation is already committed.");
+    }
     if (this.#state.bots.length >= INPUT_LIMITS.agents) {
       throw new Error(`A host can have up to ${INPUT_LIMITS.agents} agents.`);
     }
@@ -215,7 +227,11 @@ export class BotStore {
     const duplicationMarker = this.#duplicationMarkerPath(record.id);
     let stagedAvatarPath: string | null = null;
     try {
-      await writeFile(duplicationMarker, "pending\n", { encoding: "utf8", mode: 0o600, flag: "wx" });
+      await writeFile(duplicationMarker, `${JSON.stringify({ operationId, sourceBotId: sourceId })}\n`, {
+        encoding: "utf8",
+        mode: 0o600,
+        flag: "wx",
+      });
       await cp(source.workspacePath, stagedWorkspace, {
         recursive: true,
         dereference: false,
@@ -265,10 +281,67 @@ export class BotStore {
     }
   }
 
-  async commitBotDuplication(id: string): Promise<BotSummary> {
+  committedBotDuplication(operationId: string, sourceBotId: string): DuplicateBotResult | null {
+    if (!isUuidV4(operationId)) throw new Error("Invalid agent duplication operation id.");
+    const value = this.#database.commandResult(duplicationCommandId(operationId));
+    if (value === undefined) return null;
+    const result = isRecord(value) ? value.result : null;
+    const resultBot = isRecord(result) ? result.bot : null;
+    const resultLayout = isRecord(result) ? result.layout : null;
+    if (
+      !isRecord(value) ||
+      value.sourceBotId !== sourceBotId ||
+      !isRecord(result) ||
+      !isStoredBot(resultBot) ||
+      !isSidebarLayoutSnapshot(resultLayout)
+    ) {
+      throw new Error("The agent duplication receipt is invalid.");
+    }
+    const bot = this.#state.bots.find((candidate) => candidate.id === resultBot.id);
+    if (!bot) throw new Error("The duplicated agent no longer exists.");
+    return {
+      bot: { ...normalizeStoredBot(resultBot) },
+      layout: structuredClone(resultLayout),
+    };
+  }
+
+  async commitBotDuplication(
+    id: string,
+    operationId: string,
+    sourceBotId: string,
+    layout: SidebarLayoutSnapshot,
+  ): Promise<DuplicateBotResult> {
     const bot = this.#requireBot(id);
-    await rm(this.#duplicationMarkerPath(id));
-    return { ...bot };
+    const marker = await this.#readDuplicationMarker(id);
+    if (!marker || marker.operationId !== operationId || marker.sourceBotId !== sourceBotId) {
+      throw new Error("This agent duplication marker is invalid.");
+    }
+    const result = { bot: { ...bot }, layout: structuredClone(layout) };
+    const receipt = this.#database.dispatch(
+      duplicationCommandId(operationId),
+      [
+        {
+          aggregateType: "agent-duplications",
+          aggregateId: operationId,
+          eventType: "agent-duplication.committed",
+          payload: { sourceBotId, duplicateBotId: id },
+        },
+      ],
+      () => ({ sourceBotId, result }),
+    );
+    await rm(this.#duplicationMarkerPath(id), { force: true }).catch(() => undefined);
+    if (
+      !isRecord(receipt) ||
+      !isRecord(receipt.result) ||
+      !isStoredBot(receipt.result.bot) ||
+      !isSidebarLayoutSnapshot(receipt.result.layout)
+    ) {
+      throw new Error("The agent duplication receipt is invalid.");
+    }
+    return {
+      bot: { ...normalizeStoredBot(receipt.result.bot) },
+      layout: structuredClone(receipt.result.layout),
+    };
   }
 
   async updateBot(input: UpdateBotInput): Promise<BotSummary> {
@@ -417,6 +490,14 @@ export class BotStore {
       const id = entry.name.slice(0, -".pending".length);
       if (!isGeneratedBotId(id)) continue;
       const bot = this.#state.bots.find((candidate) => candidate.id === id);
+      const marker = await this.#readDuplicationMarker(id);
+      if (bot && marker) {
+        const committed = this.committedBotDuplication(marker.operationId, marker.sourceBotId);
+        if (committed?.bot.id === id) {
+          await rm(join(this.#duplicationsRoot, entry.name), { force: true });
+          continue;
+        }
+      }
       if (bot) {
         this.#state.bots = this.#state.bots.filter((candidate) => candidate.id !== id);
         this.#database.hardDeleteAgent(`agents:duplicate-recovery:${randomUUID()}`, id, bot.threadId, this.#state.bots);
@@ -433,6 +514,24 @@ export class BotStore {
 
   #duplicationMarkerPath(id: string): string {
     return join(this.#duplicationsRoot, `${id}.pending`);
+  }
+
+  async #readDuplicationMarker(id: string): Promise<BotDuplicationMarker | null> {
+    try {
+      const value = JSON.parse(await readFile(this.#duplicationMarkerPath(id), "utf8"));
+      if (
+        !isRecord(value) ||
+        !isString(value.operationId) ||
+        !isUuidV4(value.operationId) ||
+        !isString(value.sourceBotId) ||
+        !value.sourceBotId
+      ) {
+        return null;
+      }
+      return { operationId: value.operationId, sourceBotId: value.sourceBotId };
+    } catch {
+      return null;
+    }
   }
 
   async ensureThreadId(id: string): Promise<string> {
@@ -564,6 +663,10 @@ function duplicateBotName(sourceName: string, bots: readonly StoredBot[]): strin
     if (!existing.has(candidate.toLocaleLowerCase())) return candidate;
   }
   throw new Error("OpenBot could not create a unique agent copy name.");
+}
+
+function duplicationCommandId(operationId: string): string {
+  return `agent-duplication:${operationId}`;
 }
 
 async function workspaceFingerprint(root: string): Promise<string> {

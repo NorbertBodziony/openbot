@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseInviteUrl } from "@openbot/contracts/invite-links";
+import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { TEAM_CAPABILITIES_HEADER } from "@openbot/contracts/team-protocol/v1";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -1407,6 +1408,75 @@ describe("Team API compatibility negotiation", () => {
         hostAppVersion: "0.3.0",
         negotiatedProtocol: 2,
       });
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("reuses the duplication operation id after an ambiguous transport failure", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-duplicate-retry-"));
+    const statePath = join(directory, "servers.json");
+    await writeRemoteEventState(statePath, "duplicate-retry");
+    const operationIds: string[] = [];
+    let duplicateAttempts = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(input instanceof Request ? input.url : input.toString());
+        if (url.pathname === "/v1/compatibility") {
+          return Response.json({
+            appVersion: "1.0.0",
+            protocol: { minimum: 3, maximum: 3 },
+            capabilities: ["agent-duplication"],
+          });
+        }
+        const body = JSON.parse(String(init?.body));
+        if (!isDynamicRecord(body) || !isString(body.operationId)) throw new Error("Invalid duplicate request body.");
+        operationIds.push(body.operationId);
+        duplicateAttempts += 1;
+        if (duplicateAttempts === 1) throw new TypeError("connection reset after commit");
+        return Response.json(
+          {
+            bot: {
+              id: "bot-copy",
+              provider: "codex",
+              name: "Research copy",
+              title: "Research lead",
+              description: "",
+              notifications: true,
+              model: "gpt-5.6-luna",
+              reasoningEffort: "medium",
+              threadId: null,
+              workspacePath: "/OpenBot/Bots/bot-copy",
+              preview: "No messages yet",
+              updatedAt: null,
+              avatarSeed: "research",
+              avatarHue: null,
+              avatarUrl: null,
+            },
+            layout: {
+              revision: 1,
+              sections: [],
+              order: ["people", "unassigned"],
+              agentAssignments: {},
+              agentOrder: ["bot-source", "bot-copy"],
+            },
+          },
+          { status: 201 },
+        );
+      }),
+    );
+    const manager = remoteEventManager(statePath, "1.0.0");
+
+    try {
+      await manager.initialize();
+      await expect(manager.duplicateBot("bot-source", "duplicate-retry")).rejects.toThrow("connection reset");
+      await expect(manager.duplicateBot("bot-source", "duplicate-retry")).resolves.toMatchObject({
+        bot: { id: "bot-copy" },
+      });
+      expect(operationIds).toHaveLength(2);
+      expect(operationIds[0]).toBe(operationIds[1]);
     } finally {
       manager.stop();
       await rm(directory, { recursive: true, force: true });

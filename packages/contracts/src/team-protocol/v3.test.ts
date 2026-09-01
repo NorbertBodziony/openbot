@@ -32,6 +32,15 @@ describe("Team protocol v3", () => {
     );
   });
 
+  it("requires a valid idempotency key for duplicate requests", () => {
+    expect(() => decodeTeamProtocolV3CurrentHttpRequest("POST", duplicatePath, {})).toThrow(
+      "Invalid Team protocol v3 duplicate-agent request.",
+    );
+    expect(() => decodeTeamProtocolV3CurrentHttpRequest("POST", duplicatePath, { operationId: "not-a-uuid" })).toThrow(
+      "Invalid Team protocol v3 duplicate-agent request.",
+    );
+  });
+
   it("keeps old protocols frozen without the duplication route or capability", () => {
     expect(() => decodeTeamProtocolV1HttpRequest("POST", duplicatePath, requestFixture)).toThrow(
       "Invalid Team protocol v1 HTTP request",

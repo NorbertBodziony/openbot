@@ -20,6 +20,7 @@ import {
   type DirectMessageRealtimeEvent,
   type DirectThreadSummary,
   type DirectTypingRealtimeEvent,
+  type DuplicateBotResult,
   type InviteSummary,
   isAgentModel,
   isAvatarHue,
@@ -97,6 +98,7 @@ type TeamApiAgentMethods = Pick<
   | "listBots"
   | "listConversationReads"
   | "createBot"
+  | "committedBotDuplication"
   | "duplicateBot"
   | "commitBotDuplication"
   | "updateBot"
@@ -229,6 +231,7 @@ export class TeamApiServer {
   readonly #rateLimits = new Map<string, RateEntry>();
   readonly #eventClients = new Map<Ws.WebSocket, EventClientState>();
   readonly #responseRoutes = new WeakMap<ServerResponse, { method: string; path: string; protocol: number }>();
+  readonly #duplicateRequests = new Map<string, { sourceBotId: string; result: Promise<DuplicateBotResult> }>();
   readonly #webSockets = new webSockets.WebSocketServer({
     noServer: true,
     maxPayload: EVENT_PAYLOAD_LIMIT,
@@ -942,33 +945,8 @@ export class TeamApiServer {
           return this.#json(response, 200, await this.#options.agents.updateBot(botUpdate(body, botId)));
         }
         if (method === "POST" && action === "duplicate") {
-          await readJson(request);
-          const bot = await this.#options.agents.duplicateBot(botId);
-          try {
-            const layout = await this.#options.sidebarLayout.placeDuplicateAfter(botId, bot.id, [
-              ...this.#options.agents.listBots().map((candidate) => candidate.id),
-              bot.id,
-            ]);
-            return this.#json(response, 201, {
-              bot: await this.#options.agents.commitBotDuplication(bot.id),
-              layout,
-            });
-          } catch (error) {
-            let rollbackError: unknown;
-            try {
-              await this.#options.agents.deleteBot(bot.id);
-              await this.#options.sidebarLayout.removeAgent(bot.id);
-            } catch (caught) {
-              rollbackError = caught;
-            }
-            if (rollbackError) {
-              throw new AggregateError(
-                [error, rollbackError],
-                "Agent duplication failed and the incomplete copy could not be removed.",
-              );
-            }
-            throw error;
-          }
+          const body = await readJson(request);
+          return this.#json(response, 201, await this.#duplicateAgent(botId, stringField(body, "operationId")));
         }
         if (method === "DELETE" && !action) {
           if (member.role === "member") throw new HttpError(403, "Members cannot delete agents.");
@@ -1559,6 +1537,49 @@ export class TeamApiServer {
   #requireChat(): TeamChatStore {
     if (!this.#options.chat) throw new Error("Direct messages are unavailable.");
     return this.#options.chat;
+  }
+
+  #duplicateAgent(sourceBotId: string, operationId: string): Promise<DuplicateBotResult> {
+    const committed = this.#options.agents.committedBotDuplication(operationId, sourceBotId);
+    if (committed) return Promise.resolve(committed);
+    const pending = this.#duplicateRequests.get(operationId);
+    if (pending) {
+      if (pending.sourceBotId !== sourceBotId) {
+        return Promise.reject(new Error("This agent duplication operation belongs to another source agent."));
+      }
+      return pending.result;
+    }
+    const result = this.#performAgentDuplication(sourceBotId, operationId).finally(() => {
+      this.#duplicateRequests.delete(operationId);
+    });
+    this.#duplicateRequests.set(operationId, { sourceBotId, result });
+    return result;
+  }
+
+  async #performAgentDuplication(sourceBotId: string, operationId: string): Promise<DuplicateBotResult> {
+    const bot = await this.#options.agents.duplicateBot(sourceBotId, operationId);
+    try {
+      const layout = await this.#options.sidebarLayout.placeDuplicateAfter(sourceBotId, bot.id, [
+        ...this.#options.agents.listBots().map((candidate) => candidate.id),
+        bot.id,
+      ]);
+      return await this.#options.agents.commitBotDuplication(bot.id, layout);
+    } catch (error) {
+      let rollbackError: unknown;
+      try {
+        await this.#options.agents.deleteBot(bot.id);
+        await this.#options.sidebarLayout.removeAgent(bot.id);
+      } catch (caught) {
+        rollbackError = caught;
+      }
+      if (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          "Agent duplication failed and the incomplete copy could not be removed.",
+        );
+      }
+      throw error;
+    }
   }
 
   #requireDirectRecipient(senderMemberId: string, recipientMemberId: string): TeamMemberSummary {

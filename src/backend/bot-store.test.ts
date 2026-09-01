@@ -1,5 +1,6 @@
 // @vitest-environment node
 
+import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +15,13 @@ const BOT_PROFILE_INPUT = {
   avatarSeed: "setup:planning",
   avatarHue: 215,
 } as const;
+const EMPTY_LAYOUT = {
+  revision: 0,
+  sections: [],
+  order: ["people", "unassigned"],
+  agentAssignments: {},
+  agentOrder: [],
+};
 
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true })));
@@ -255,10 +263,12 @@ describe("BotStore", () => {
     await writeFile(join(root, "outside.txt"), "outside\n");
     await symlink(join(root, "outside.txt"), join(source.workspacePath, "outside-link"));
 
-    const duplicate = await store.duplicateBot(source.id);
-    const secondDuplicate = await store.duplicateBot(source.id);
-    await store.commitBotDuplication(duplicate.id);
-    await store.commitBotDuplication(secondDuplicate.id);
+    const firstOperationId = randomUUID();
+    const secondOperationId = randomUUID();
+    const duplicate = await store.duplicateBot(source.id, firstOperationId);
+    const secondDuplicate = await store.duplicateBot(source.id, secondOperationId);
+    await store.commitBotDuplication(duplicate.id, firstOperationId, source.id, EMPTY_LAYOUT);
+    await store.commitBotDuplication(secondDuplicate.id, secondOperationId, source.id, EMPTY_LAYOUT);
 
     expect(duplicate).toMatchObject({
       name: "Research copy",
@@ -313,6 +323,25 @@ describe("BotStore", () => {
       code: "ENOENT",
     });
     await expect(readFile(join(source.workspacePath, "note.txt"), "utf8")).resolves.toBe("source\n");
+  });
+
+  it("returns the committed duplicate for the same operation after restart", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-duplicate-idempotency-"));
+    temporaryRoots.push(root);
+    const userData = join(root, "user-data");
+    const home = join(root, "home");
+    const operationId = randomUUID();
+    const store = new BotStore(userData, home);
+    await store.initialize();
+    const source = await store.getOrCreate("chief");
+    const duplicate = await store.duplicateBot(source.id, operationId);
+    const committed = await store.commitBotDuplication(duplicate.id, operationId, source.id, EMPTY_LAYOUT);
+
+    const restored = new BotStore(userData, home);
+    await restored.initialize();
+
+    expect(restored.committedBotDuplication(operationId, source.id)).toEqual(committed);
+    expect(restored.list().filter((bot) => bot.name === duplicate.name)).toHaveLength(1);
   });
 
   it("removes a partial duplicate when profile persistence fails", async () => {
