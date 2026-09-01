@@ -115,12 +115,8 @@ export class RemoteViewerProxy {
         headers: { "Content-Type": request.headers["content-type"] ?? "application/octet-stream" },
         body: body ? Uint8Array.from(body).buffer : undefined,
       });
-      const setCookie = upstream.headers.get("set-cookie");
       if (upstream.status === 204) {
-        response.writeHead(204, {
-          "Cache-Control": "no-store",
-          ...(setCookie ? { "Set-Cookie": rewriteViewerCookiePath(setCookie, this.#basePath(route.serverId)) } : {}),
-        });
+        response.writeHead(204, { "Cache-Control": "no-store" });
         response.end();
         return;
       }
@@ -137,7 +133,6 @@ export class RemoteViewerProxy {
         "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff",
       };
-      if (setCookie) responseHeaders["Set-Cookie"] = rewriteViewerCookiePath(setCookie, this.#basePath(route.serverId));
       if (contentType.includes("text/html")) {
         responseHeaders["Content-Security-Policy"] =
           "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; media-src 'self' blob:; worker-src 'self' blob:";
@@ -288,10 +283,6 @@ export class RemoteViewerProxy {
   #basePath(serverId: string): string {
     return `/${this.#token}/${encodeURIComponent(serverId)}`;
   }
-}
-
-function rewriteViewerCookiePath(value: string, prefix: string): string {
-  return value.replace(/;\s*Path=\/v1\/remote-screen(?=\/|;|$)/iu, `; Path=${prefix}/v1/remote-screen`);
 }
 
 async function readBody(request: IncomingMessage): Promise<Buffer> {

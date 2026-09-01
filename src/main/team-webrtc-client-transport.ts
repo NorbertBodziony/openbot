@@ -207,7 +207,6 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
     status: number;
     body: TeamProtocolV2Json;
     file?: { bytes: Uint8Array; name: string; mimeType: string };
-    setCookie?: string;
   }> {
     await this.#ensureConnected(hostId);
     const method = (init.method ?? "GET").toUpperCase();
@@ -263,7 +262,6 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       status: envelope.status,
       body: file ? null : decodeTeamProtocolV2CurrentHttpResponse(method, path, envelope.status, envelope.body),
       ...(file ? { file } : {}),
-      ...(isString(envelope.setCookie) ? { setCookie: envelope.setCookie } : {}),
     };
   }
 

@@ -514,7 +514,6 @@ export class TeamWebRtcHostGateway {
     return {
       status: response.status,
       body: encodeTeamProtocolV2CurrentHttpResponse(input.method, input.path, response.status, body),
-      ...(response.headers.get("set-cookie") ? { setCookie: response.headers.get("set-cookie") } : {}),
     };
   }
 

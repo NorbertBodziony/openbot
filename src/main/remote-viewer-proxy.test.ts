@@ -62,28 +62,6 @@ describe("RemoteViewerProxy", () => {
     await proxy.stop();
   });
 
-  it("scopes the remote viewer cookie to its authenticated loopback proxy path", async () => {
-    const proxy = new RemoteViewerProxy({
-      transport: new FakeTransport(),
-      fetchResource: async () =>
-        new Response(null, {
-          status: 204,
-          headers: {
-            "Set-Cookie":
-              "openbot_remote_viewer=grant; HttpOnly; SameSite=Strict; Path=/v1/remote-screen/sessions/session-1/; Max-Age=86400",
-          },
-        }),
-    });
-    const viewerUrl = await proxy.viewerUrl("host-1", "/v1/remote-screen/sessions/session-1/viewer");
-    const viewer = new URL(viewerUrl);
-    const response = await fetch(viewerUrl, { method: "POST" });
-    const proxyPath = viewer.pathname.split("/v1/remote-screen")[0];
-
-    expect(response.status).toBe(204);
-    expect(response.headers.get("set-cookie")).toContain(`Path=${proxyPath}/v1/remote-screen/sessions/session-1/`);
-    await proxy.stop();
-  });
-
   it("closes a viewer when its open desktop forwarding queue exceeds the limit", async () => {
     const transport = new SlowFrameTransport();
     const proxy = new RemoteViewerProxy({ transport, fetchResource: async () => new Response() });
