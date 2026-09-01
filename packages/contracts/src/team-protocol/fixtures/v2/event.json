@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "type": "event",
+  "sequence": 42,
+  "payload": {
+    "type": "conversation-invalidated",
+    "botId": "bot-1",
+    "revision": 7
+  }
+}

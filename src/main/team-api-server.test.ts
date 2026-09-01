@@ -366,9 +366,26 @@ describe("TeamApiServer administration", () => {
         revision: 3,
         sections: [{ name: "Shared 1" }, { name: "Shared 2" }, { name: "Shared 3" }],
       });
-      const closed = new Promise<CloseEvent>((resolve) => socket.addEventListener("close", resolve, { once: true }));
+      const firstSocketClosed = new Promise<CloseEvent>((resolve) =>
+        socket.addEventListener("close", resolve, { once: true }),
+      );
+      socket.close();
+      await firstSocketClosed;
+      const oversizedSocket = new WebSocket(`ws://127.0.0.1:${port}/v1/events`, [
+        "openbot-events-v2",
+        `openbot-token.${member.sessionToken}`,
+      ]);
+      const oversizedInitialEvents = nextJsonEvents(oversizedSocket, 2);
+      await new Promise<void>((resolve, reject) => {
+        oversizedSocket.addEventListener("open", () => resolve(), { once: true });
+        oversizedSocket.addEventListener("error", () => reject(new Error("WebSocket did not open.")), { once: true });
+      });
+      await oversizedInitialEvents;
+      const closed = new Promise<CloseEvent>((resolve) =>
+        oversizedSocket.addEventListener("close", resolve, { once: true }),
+      );
       now = 1_000;
-      getRuntimeSnapshot.mockImplementationOnce(() => ({
+      getRuntimeSnapshot.mockImplementation(() => ({
         bots: [],
         activeTurns: [],
         work: [],
@@ -386,12 +403,12 @@ describe("TeamApiServer administration", () => {
         pendingBrowserTakeovers: [],
         failedTurns: [],
       }));
-      socket.send(JSON.stringify({ type: "runtime-snapshot-request" }));
+      oversizedSocket.send(JSON.stringify({ type: "runtime-snapshot-request" }));
       expect((await closed).code).toBe(1011);
     } finally {
       await api.stop();
     }
-  }, 10_000);
+  }, 30_000);
 
   it("keeps legacy event clients connected without sending runtime snapshots", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-team-api-legacy-events-"));

@@ -32,10 +32,18 @@ describe("worker handler", () => {
 
   it("uses the scheduled time and logs only aggregate deletion counts", async () => {
     const database = fakeDatabase();
-    const result: AuthRetentionResult = { challenges: 3, sessions: 2, rateLimits: 1, teamTickets: 4 };
+    const result: AuthRetentionResult = {
+      challenges: 3,
+      sessions: 2,
+      rateLimits: 1,
+      teamTickets: 4,
+      remoteSessions: 5,
+      remoteInvites: 6,
+    };
     let receivedDatabase: D1Database | null = null;
     let receivedTime: number | null = null;
     let logged: AuthRetentionResult | null = null;
+    let deliveredAt: number | null = null;
     const handler = createWorkerHandler(
       () => new Response("ok"),
       async (value, now) => {
@@ -46,6 +54,9 @@ describe("worker handler", () => {
       (value) => {
         logged = value;
       },
+      async (_bindings, now) => {
+        deliveredAt = now;
+      },
     );
 
     await handler.scheduled({ scheduledTime: 1_234 }, { DB: database });
@@ -53,6 +64,32 @@ describe("worker handler", () => {
     expect(receivedDatabase).toBe(database);
     expect(receivedTime).toBe(1_234);
     expect(logged).toEqual(result);
+    expect(deliveredAt).toBe(1_234);
+  });
+
+  it("delivers authorization events every minute and runs retention only at midnight UTC", async () => {
+    let pruneCalls = 0;
+    let deliveryCalls = 0;
+    let logCalls = 0;
+    const handler = createWorkerHandler(
+      () => new Response("ok"),
+      async () => {
+        pruneCalls += 1;
+        throw new Error("Retention must not run outside the daily window.");
+      },
+      () => {
+        logCalls += 1;
+      },
+      async () => {
+        deliveryCalls += 1;
+      },
+    );
+
+    await handler.scheduled({ scheduledTime: Date.UTC(2026, 8, 1, 12, 34) }, { DB: fakeDatabase() });
+
+    expect(deliveryCalls).toBe(1);
+    expect(pruneCalls).toBe(0);
+    expect(logCalls).toBe(0);
   });
 });
 
