@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createEmailCodeDelivery } from "../src/server/email-delivery";
 import { type SmtpConnector, sendPrivateEmailCode, sendPrivateTeamInvite } from "../src/server/smtp-email-delivery";
 
@@ -229,6 +229,261 @@ describe("Private Email SMTP delivery", () => {
 
     expect(attempts).toBe(2);
     expect(writes).toContain("QUIT\r\n");
+  });
+
+  it("preserves a confirmed pre-DATA rejection when socket cleanup fails", async () => {
+    let attempts = 0;
+    const responses = [
+      "220 mail.privateemail.com ready",
+      "250-mail.privateemail.com",
+      "250 AUTH LOGIN",
+      "334 VXNlcm5hbWU6",
+      "334 UGFzc3dvcmQ6",
+      "535 Authentication rejected",
+    ].join("\r\n");
+    const connector: SmtpConnector = () => {
+      attempts += 1;
+      return {
+        opened: Promise.resolve(),
+        readable: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(`${responses}\r\n`));
+            controller.close();
+          },
+        }),
+        writable: new WritableStream(),
+        close: () => Promise.reject(new Error("socket cleanup failed")),
+      };
+    };
+
+    await expect(
+      sendPrivateEmailCode(
+        {
+          host: "mail.privateemail.com",
+          port: 465,
+          username: "hello@openbot.run",
+          password: "app-password-value",
+          from: "hello@openbot.run",
+        },
+        {
+          email: "person@example.com",
+          code: "ABCD-EFGH",
+          expiresAt: Date.now() + 10 * 60_000,
+        },
+        connector,
+      ),
+    ).rejects.toThrow("smtp_auth_failed");
+    expect(attempts).toBe(1);
+  });
+
+  it("does not retry a timed-out session when socket closure cannot be confirmed", async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    const connector: SmtpConnector = () => {
+      attempts += 1;
+      return {
+        opened: new Promise(() => undefined),
+        readable: new ReadableStream(),
+        writable: new WritableStream(),
+        close: () => new Promise(() => undefined),
+      };
+    };
+
+    try {
+      const delivery = sendPrivateEmailCode(
+        {
+          host: "mail.privateemail.com",
+          port: 465,
+          username: "hello@openbot.run",
+          password: "app-password-value",
+          from: "hello@openbot.run",
+        },
+        {
+          email: "person@example.com",
+          code: "ABCD-EFGH",
+          expiresAt: Date.now() + 10 * 60_000,
+        },
+        connector,
+      );
+      const outcome = expect(delivery).rejects.toThrow("smtp_delivery_unknown");
+
+      await vi.advanceTimersByTimeAsync(8_000);
+      await outcome;
+      expect(attempts).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses the final delivery state when a timed-out session advances during socket closure", async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    const connector: SmtpConnector = () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return {
+          opened: new Promise((resolve) => setTimeout(resolve, 7_600)),
+          readable: new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(`${SUCCESS_RESPONSES}\r\n`));
+              controller.close();
+            },
+          }),
+          writable: new WritableStream(),
+          close: () => new Promise<void>((resolve) => setTimeout(resolve, 200)),
+        };
+      }
+      return {
+        opened: Promise.resolve(),
+        readable: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(`${SUCCESS_RESPONSES}\r\n`));
+            controller.close();
+          },
+        }),
+        writable: new WritableStream(),
+        close() {},
+      };
+    };
+
+    try {
+      const delivery = sendPrivateEmailCode(
+        {
+          host: "mail.privateemail.com",
+          port: 465,
+          username: "hello@openbot.run",
+          password: "app-password-value",
+          from: "hello@openbot.run",
+        },
+        {
+          email: "person@example.com",
+          code: "ABCD-EFGH",
+          expiresAt: Date.now() + 10 * 60_000,
+        },
+        connector,
+      );
+      const outcome = expect(delivery).resolves.toBeUndefined();
+
+      await vi.advanceTimersByTimeAsync(8_000);
+      await outcome;
+      expect(attempts).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not retry after message submission has started", async () => {
+    let attempts = 0;
+    const responses = SUCCESS_RESPONSES.split("\r\n").slice(0, 9).join("\r\n");
+    const connector: SmtpConnector = () => {
+      attempts += 1;
+      return {
+        opened: Promise.resolve(),
+        readable: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(`${responses}\r\n`));
+            controller.close();
+          },
+        }),
+        writable: new WritableStream(),
+        close() {},
+      };
+    };
+
+    await expect(
+      sendPrivateEmailCode(
+        {
+          host: "mail.privateemail.com",
+          port: 465,
+          username: "hello@openbot.run",
+          password: "app-password-value",
+          from: "hello@openbot.run",
+        },
+        {
+          email: "person@example.com",
+          code: "ABCD-EFGH",
+          expiresAt: Date.now() + 10 * 60_000,
+        },
+        connector,
+      ),
+    ).rejects.toThrow("smtp_delivery_unknown");
+    expect(attempts).toBe(1);
+  });
+
+  it("reports a confirmed post-DATA rejection as a delivery failure", async () => {
+    let attempts = 0;
+    const responses = `${SUCCESS_RESPONSES.split("\r\n").slice(0, 9).join("\r\n")}\r\n550 Message rejected`;
+    const connector: SmtpConnector = () => {
+      attempts += 1;
+      return {
+        opened: Promise.resolve(),
+        readable: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(`${responses}\r\n`));
+            controller.close();
+          },
+        }),
+        writable: new WritableStream(),
+        close() {},
+      };
+    };
+
+    await expect(
+      sendPrivateEmailCode(
+        {
+          host: "mail.privateemail.com",
+          port: 465,
+          username: "hello@openbot.run",
+          password: "app-password-value",
+          from: "hello@openbot.run",
+        },
+        {
+          email: "person@example.com",
+          code: "ABCD-EFGH",
+          expiresAt: Date.now() + 10 * 60_000,
+        },
+        connector,
+      ),
+    ).rejects.toThrow("smtp_message_failed");
+    expect(attempts).toBe(1);
+  });
+
+  it("accepts confirmed delivery when the QUIT response is lost", async () => {
+    let attempts = 0;
+    const responses = SUCCESS_RESPONSES.split("\r\n").slice(0, 10).join("\r\n");
+    const connector: SmtpConnector = () => {
+      attempts += 1;
+      return {
+        opened: Promise.resolve(),
+        readable: new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(`${responses}\r\n`));
+            controller.close();
+          },
+        }),
+        writable: new WritableStream(),
+        close() {},
+      };
+    };
+
+    await expect(
+      sendPrivateEmailCode(
+        {
+          host: "mail.privateemail.com",
+          port: 465,
+          username: "hello@openbot.run",
+          password: "app-password-value",
+          from: "hello@openbot.run",
+        },
+        {
+          email: "person@example.com",
+          code: "ABCD-EFGH",
+          expiresAt: Date.now() + 10 * 60_000,
+        },
+        connector,
+      ),
+    ).resolves.toBeUndefined();
+    expect(attempts).toBe(1);
   });
 
   it("rejects partial SMTP configuration", () => {

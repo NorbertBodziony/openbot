@@ -101,6 +101,7 @@ import {
   decodeTeamProtocolV1CurrentHttpResponse,
   encodeTeamProtocolV1CurrentHttpRequest,
 } from "@openbot/contracts/team-protocol/v1-adapter";
+import { decodeTeamProtocolV2Json, type TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
 import { RemoteViewerProxy } from "./remote-viewer-proxy";
 import { fingerprint } from "./team-store";
 import { type TeamWebRtcClientTransport, TeamWebRtcRequestError } from "./team-webrtc-client-transport";
@@ -969,7 +970,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   async fetchRemoteViewerResource(serverId: string, path: string, init: RequestInit): Promise<Response> {
     const server = this.#requireServer(serverId);
     if (server.transport !== "webrtc-v2") throw new Error("The remote viewer transport is invalid.");
-    return this.#fetch(server, new URL(path, server.apiUrl), init);
+    return this.#fetch(server, new URL(path, server.apiUrl), init, false);
   }
 
   closeRemoteDesktopSession(serverId: string, sessionId: string): Promise<void> {
@@ -1252,17 +1253,23 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     };
   }
 
-  async #fetch(server: StoredRemoteServer, input: string | URL, init: RequestInit = {}): Promise<Response> {
+  async #fetch(
+    server: StoredRemoteServer,
+    input: string | URL,
+    init: RequestInit = {},
+    affectsConnection = true,
+  ): Promise<Response> {
     try {
       if (server.transport === "webrtc-v2") {
         if (!this.#webrtcTransport) throw new Error("The WebRTC transport is unavailable.");
         const url = new URL(input);
         try {
           const compatibility = await this.#ensureCompatibility(server);
+          const contentType = new Headers(init.headers).get("Content-Type") ?? undefined;
           const response = await this.#webrtcTransport.requestResponse(server.id, `${url.pathname}${url.search}`, {
             method: init.method,
-            body: init.body,
-            contentType: new Headers(init.headers).get("Content-Type") ?? undefined,
+            body: webRtcRequestBody(init.body, contentType),
+            contentType,
             preserveSemanticTags: supportsTeamSemanticTags(compatibility.capabilities),
           });
           const headers = new Headers();
@@ -1327,7 +1334,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       }
       return response;
     } catch (error) {
-      this.#applyConnectionError(server.id, error);
+      if (affectsConnection) this.#applyConnectionError(server.id, error);
       throw error;
     }
   }
@@ -2755,6 +2762,25 @@ function readStoredRemoteServer(value: unknown): StoredRemoteServer | null {
 
 function remoteFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
   return fetch(input, { ...init, signal: AbortSignal.timeout(REMOTE_REQUEST_TIMEOUT_MS) });
+}
+
+function webRtcRequestBody(
+  body: RequestInit["body"],
+  contentType: string | undefined,
+): RequestInit["body"] | TeamProtocolV2Json {
+  const mimeType = contentType?.split(";", 1)[0]?.trim().toLowerCase();
+  if (!body || (mimeType !== "application/json" && !mimeType?.endsWith("+json"))) return body;
+  let text: string;
+  if (isString(body)) text = body;
+  else if (body instanceof ArrayBuffer) text = new TextDecoder().decode(body);
+  else if (ArrayBuffer.isView(body)) {
+    text = new TextDecoder().decode(new Uint8Array(body.buffer, body.byteOffset, body.byteLength));
+  } else return body;
+  try {
+    return decodeTeamProtocolV2Json(JSON.parse(text));
+  } catch {
+    return body;
+  }
 }
 
 function isLocalDevelopmentApi(value: string): boolean {

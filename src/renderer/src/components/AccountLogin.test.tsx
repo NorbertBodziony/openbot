@@ -161,6 +161,81 @@ describe("AccountLogin", () => {
     expect(screen.getByRole("button", { name: /Try again in 1:3\d/u })).toBeDisabled();
   });
 
+  it("counts down the full pending-delivery retry window before allowing a check", async () => {
+    vi.useFakeTimers();
+    const [state, setState] = createSignal<CentralAuthState>({ status: "signed_out" });
+    const onRequestEmailCode = vi.fn(async () => {
+      setState({
+        status: "error",
+        issue: {
+          code: "email_delivery_pending",
+          message: "OpenBot is still confirming delivery.",
+          retryAfterSeconds: 45,
+        },
+      });
+    });
+    const view = render(() => (
+      <AccountLogin
+        variant="production"
+        state={state()}
+        onRetry={async () => undefined}
+        onRequestEmailCode={onRequestEmailCode}
+        onVerifyEmailCode={async () => undefined}
+        onReset={async () => undefined}
+      />
+    ));
+
+    try {
+      await fireEvent.input(screen.getByRole("textbox", { name: "Email" }), {
+        target: { value: "person@example.com" },
+      });
+      await fireEvent.click(screen.getByRole("button", { name: "Send sign-in code" }));
+      await vi.advanceTimersByTimeAsync(0);
+      const blocked = screen.getByRole("button", { name: "Check again in 0:45" });
+      expect(blocked).toBeDisabled();
+      await vi.advanceTimersByTimeAsync(44_000);
+      expect(screen.getByRole("button", { name: "Check again in 0:01" })).toBeDisabled();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(screen.getByRole("button", { name: "Check delivery" })).toBeEnabled();
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("distinguishes an uncertain outcome from a confirmed delivery failure", async () => {
+    const [state, setState] = createSignal<CentralAuthState>({ status: "signed_out" });
+    let request = 0;
+    const onRequestEmailCode = vi.fn(async () => {
+      request += 1;
+      setState({
+        status: "error",
+        issue:
+          request === 1
+            ? { code: "email_delivery_timeout", message: "The code may still arrive." }
+            : { code: "email_delivery_failed", message: "OpenBot could not send the sign-in code." },
+      });
+    });
+    render(() => (
+      <AccountLogin
+        variant="production"
+        state={state()}
+        onRetry={async () => undefined}
+        onRequestEmailCode={onRequestEmailCode}
+        onVerifyEmailCode={async () => undefined}
+        onReset={async () => undefined}
+      />
+    ));
+    await fireEvent.input(screen.getByRole("textbox", { name: "Email" }), {
+      target: { value: "person@example.com" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Send sign-in code" }));
+    expect(await screen.findByRole("button", { name: "Check delivery" })).toBeEnabled();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Check delivery" }));
+    expect(await screen.findByRole("button", { name: "Send sign-in code" })).toBeEnabled();
+  });
+
   it("does not allow resend to overlap an in-flight verification", async () => {
     const onVerifyEmailCode = vi.fn(() => new Promise<void>(() => undefined));
     const onRequestEmailCode = vi.fn().mockResolvedValue(undefined);
