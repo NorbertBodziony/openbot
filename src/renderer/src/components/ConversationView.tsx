@@ -1315,6 +1315,23 @@ function createConversationViewScope(props: ConversationProps) {
       hideBrowserPanel();
       setMediaPreview(null);
     };
+    const closeActiveRemoteBrowserTab = (event: KeyboardEvent) => {
+      if (
+        props.server?.kind !== "remote" ||
+        !screenOpen() ||
+        event.key.toLowerCase() !== "w" ||
+        (!event.ctrlKey && !event.metaKey) ||
+        event.altKey ||
+        event.shiftKey
+      ) {
+        return;
+      }
+      const tab = activeBrowserTab();
+      if (!tab) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      void closeBrowserTab(tab.id);
+    };
     const closeMessageMenus = (event: MouseEvent) => {
       if (event.target instanceof Element && event.target.closest(".message-actions")) return;
       setOpenReactionMessageId(null);
@@ -1322,7 +1339,9 @@ function createConversationViewScope(props: ConversationProps) {
       setExpandedEmojiMessageId(null);
     };
     const keyboardTarget = conversationPanel?.ownerDocument ?? document;
+    const keyboardWindow = keyboardTarget.defaultView ?? window;
     keyboardTarget.addEventListener("keydown", closeOnEscape);
+    keyboardWindow.addEventListener("keydown", closeActiveRemoteBrowserTab);
     keyboardTarget.addEventListener("keydown", handleChatSearchShortcut);
     window.addEventListener("pointerdown", closeMessageMenus);
     scrollResizeObserver = new ResizeObserver(() => {
@@ -1347,6 +1366,7 @@ function createConversationViewScope(props: ConversationProps) {
       scrollResizeObserver = undefined;
       unsubscribeImport();
       keyboardTarget.removeEventListener("keydown", closeOnEscape);
+      keyboardWindow.removeEventListener("keydown", closeActiveRemoteBrowserTab);
       keyboardTarget.removeEventListener("keydown", handleChatSearchShortcut);
       window.removeEventListener("pointerdown", closeMessageMenus);
     };

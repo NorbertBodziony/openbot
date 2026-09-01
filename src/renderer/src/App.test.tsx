@@ -4716,6 +4716,35 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(screen.queryByRole("tab", { name: "Second page" })).not.toBeInTheDocument());
   });
 
+  it("closes the active remote browser tab with Control W", async () => {
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([
+      testServer("local", false),
+      testServer("remote-1", true),
+    ]);
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "remote-tab",
+          title: "Remote page",
+          url: "https://example.com/remote",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "remote-tab",
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    await screen.findByRole("tab", { name: "Remote page" });
+    await fireEvent.keyDown(window, { key: "w", ctrlKey: true });
+
+    expect(window.openbot.browser.close).toHaveBeenCalledWith("remote-tab");
+  });
+
   it("closes the browser panel when its last tab is closed from the embedded page", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
