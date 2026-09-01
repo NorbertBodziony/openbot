@@ -22,6 +22,7 @@ export interface WorkerBindings {
   SITE_REPORT_HASH_SECRET?: string;
   SITE_COOKIE_ISOLATION_READY?: string;
   SITE_PUBLISH_ENABLED?: string;
+  SITE_LOCAL_ORIGIN?: string;
   REMOTE_TICKET_PRIVATE_JWK?: string;
   REMOTE_TICKET_PUBLIC_JWKS?: string;
   REMOTE_TICKET_KEY_ID?: string;

@@ -80,6 +80,7 @@ import {
   AGENT_RUNTIME_TEXT_LIMIT,
   hostedSiteConversationEventItemType,
   hostedSiteConversationEventText,
+  isHostedSiteConversationEventUrl,
   isImageGenerationAspectRatio,
   isMessageReaction,
   isReasoningEffort,
@@ -5525,6 +5526,7 @@ function developerInstructions(bot: BotSummary, sharedRoot: string, memories: Bo
     `For every browser task, use ${OPENBOT_BROWSER_NAMESPACE} directly. It is OpenBot's private embedded browser and is available through its dynamic tools. Never use browser:control-in-app-browser, browser-use, Chrome, or another browser plugin inside OpenBot; those tools target a different host and can report a false unavailable state. Use the installed Computer Use plugin only for macOS GUI tasks outside the browser.`,
     `When you use ${OPENBOT_BROWSER_NAMESPACE} and a step requires the user to log in, grant consent, solve a CAPTCHA, use a passkey, enter a one-time code, or complete another authorization step, call ${OPENBOT_BROWSER_NAMESPACE}.request_takeover for that tab. Never enter credentials or authentication secrets yourself. Wait for the takeover result; when it is completed, take a fresh snapshot and continue the original task.`,
     "Use openbot.list_agents to discover other persistent OpenBot teammates.",
+    "When the user asks to host or publish a website, use openbot.list_sites, openbot.publish_site, openbot.replace_site, and openbot.delete_site. These are OpenBot's authoritative hosting tools in both development and production. Never use ChatGPT Sites, the sites:sites-hosting skill, or a *.chatgpt.site address for an OpenBot hosting request.",
     "When routing work, call openbot.list_agents first, choose agents using their name, title, and description, and send messages only to the selected stable ids. Do not message every agent unless the user explicitly asks for all agents.",
     "Use openbot.update_profile with the target bot id to change a local agent's name, title, or description. The target id is required and may refer to any local agent.",
     "Use openbot.list_routines, openbot.create_routine, openbot.update_routine, openbot.delete_routine, and openbot.test_routine to manage scheduled work for yourself or another local agent when the user's request calls for it. Omit botId to target yourself. Before changing another agent's routines, call openbot.list_agents and select its stable id. Before updating, deleting, or testing a routine, call openbot.list_routines to obtain its stable routine id.",
@@ -5952,7 +5954,7 @@ function hostedSiteEventDetails(site: HostedSiteSummary, siteId = site.id): Host
   const titleSource = site.title.trim() || site.hostname.trim() || "Hosted site";
   const title = titleSource.slice(0, 120).trim() || "Hosted site";
   const hostname = hostedSiteMarkerHostname(site.hostname);
-  const url = hostname && hostedSiteMarkerUrl(site.url, hostname) ? site.url : null;
+  const url = hostname && isHostedSiteConversationEventUrl(site.url, hostname) ? site.url : null;
   const details: HostedSiteConversationEventDetails = {
     siteId: siteId.trim() && siteId.length <= INPUT_LIMITS.identifier ? siteId.trim() : null,
     title,
@@ -5970,24 +5972,5 @@ function hostedSiteMarkerHostname(value: string): string | null {
     return parsed.hostname === value && parsed.port === "" && value.endsWith(".openbot.site") ? value : null;
   } catch {
     return null;
-  }
-}
-
-function hostedSiteMarkerUrl(value: string, hostname: string): boolean {
-  if (value.length > INPUT_LIMITS.browserUrl) return false;
-  try {
-    const parsed = new URL(value);
-    return (
-      parsed.protocol === "https:" &&
-      parsed.username === "" &&
-      parsed.password === "" &&
-      parsed.hostname === hostname &&
-      parsed.port === "" &&
-      parsed.pathname === "/" &&
-      parsed.search === "" &&
-      parsed.hash === ""
-    );
-  } catch {
-    return false;
   }
 }

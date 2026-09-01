@@ -132,6 +132,7 @@ async function main(): Promise<void> {
     if (!sharedEnvironment.OPENBOT_AUTH_API_URL) {
       sharedEnvironment.OPENBOT_AUTH_API_URL = `http://127.0.0.1:${apiPort}`;
     }
+    configureSiteHostingDevelopmentEnvironment(sharedEnvironment, apiPort);
     configureMobileConnectDevelopmentNetwork(services, sharedEnvironment, networkInterfaces());
     if (sharedEnvironment.OPENBOT_MOBILE_AUTH_API_URL) {
       console.log(`Mobile Connect API: ${sharedEnvironment.OPENBOT_MOBILE_AUTH_API_URL}`);
@@ -225,6 +226,12 @@ async function main(): Promise<void> {
     await stopAll("SIGTERM");
     throw error;
   }
+}
+
+export function configureSiteHostingDevelopmentEnvironment(environment: NodeJS.ProcessEnv, apiPort: number): void {
+  environment.SITE_PUBLISH_ENABLED ??= "true";
+  environment.SITE_COOKIE_ISOLATION_READY ??= "true";
+  environment.SITE_LOCAL_ORIGIN ??= `http://openbot.localhost:${apiPort}`;
 }
 
 export function configureMobileConnectDevelopmentNetwork(

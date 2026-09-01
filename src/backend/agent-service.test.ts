@@ -583,6 +583,7 @@ describe.sequential("AgentService", () => {
       expect(params.developerInstructions).toContain("Use the installed Computer Use plugin only");
       expect(params.developerInstructions).toContain("When you use openbot_browser");
       expect(params.developerInstructions).toContain("openbot.create_routine");
+      expect(params.developerInstructions).toContain("Never use ChatGPT Sites");
       expect(params.developerInstructions).toContain("openbot.attach_files_to_response");
       expect(params.developerInstructions).toContain("sadness, disappointment, frustration, loneliness");
       expect(params.developerInstructions).toContain("An emoji written inside your answer does not count");
@@ -1014,7 +1015,7 @@ describe.sequential("AgentService", () => {
     const hostedSite = {
       id: "site-1",
       hostname: "approved-public-site-for-students-k7m2q9tzab.openbot.site",
-      url: "https://approved-public-site-for-students-k7m2q9tzab.openbot.site",
+      url: "http://approved-public-site-for-students-k7m2q9tzab.openbot.localhost:3100/",
       title: "Approved public site",
       description: "A public test site.",
       framework: "vanilla" as const,

@@ -826,7 +826,7 @@ function isHostedSiteConversationEventDetails(value: unknown): value is HostedSi
     !isBoundedString(value.title, 120) ||
     value.title.trim().length === 0 ||
     (value.hostname !== null && (!isString(value.hostname) || !isHostedSiteHostname(value.hostname))) ||
-    (value.url !== null && !isHostedSiteUrl(value.url, value.hostname))
+    (value.url !== null && !isHostedSiteConversationEventUrl(value.url, value.hostname))
   ) {
     return false;
   }
@@ -860,19 +860,27 @@ function isHostedSiteHostname(value: string): boolean {
   }
 }
 
-function isHostedSiteUrl(value: unknown, hostname: unknown): value is string {
-  if (!isBoundedString(value, INPUT_LIMITS.browserUrl) || !isString(hostname)) return false;
+export function isHostedSiteConversationEventUrl(value: unknown, hostname: unknown): value is string {
+  if (!isBoundedString(value, INPUT_LIMITS.browserUrl) || !isString(hostname) || !isHostedSiteHostname(hostname)) {
+    return false;
+  }
   try {
     const parsed = new URL(value);
+    if (
+      parsed.username !== "" ||
+      parsed.password !== "" ||
+      parsed.pathname !== "/" ||
+      parsed.search !== "" ||
+      parsed.hash !== ""
+    ) {
+      return false;
+    }
+    if (parsed.protocol === "https:") return parsed.hostname === hostname && parsed.port === "";
+    if (parsed.protocol !== "http:" || !parsed.port) return false;
+    const port = Number(parsed.port);
+    const label = hostname.slice(0, -".openbot.site".length);
     return (
-      parsed.protocol === "https:" &&
-      parsed.username === "" &&
-      parsed.password === "" &&
-      parsed.hostname === hostname &&
-      parsed.port === "" &&
-      parsed.pathname === "/" &&
-      parsed.search === "" &&
-      parsed.hash === ""
+      Number.isInteger(port) && port >= 1_024 && port <= 65_535 && parsed.hostname === `${label}.openbot.localhost`
     );
   } catch {
     return false;

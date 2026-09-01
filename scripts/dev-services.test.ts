@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   configureMobileConnectDevelopmentNetwork,
+  configureSiteHostingDevelopmentEnvironment,
   createDevelopmentServiceSpec,
   developmentEnvironmentForTarget,
   parseDevelopmentTarget,
@@ -61,6 +62,18 @@ describe("development service runner", () => {
     expect(app.env.OPENBOT_AUTH_API_URL).toBe("http://127.0.0.1:3110");
     expect(app.env.OPENBOT_DEV_RENDERER_PORT).toBe("5180");
     expect(app.env.OPENBOT_DEV_REMOTE_DEBUGGING_PORT).toBe("9340");
+  });
+
+  it("enables hosted sites in the development environment", () => {
+    const environment: NodeJS.ProcessEnv = {};
+
+    configureSiteHostingDevelopmentEnvironment(environment, 3_100);
+
+    expect(environment).toEqual({
+      SITE_PUBLISH_ENABLED: "true",
+      SITE_COOKIE_ISOLATION_READY: "true",
+      SITE_LOCAL_ORIGIN: "http://openbot.localhost:3100",
+    });
   });
 
   it("advertises the preferred private LAN address for Mobile Connect development", () => {

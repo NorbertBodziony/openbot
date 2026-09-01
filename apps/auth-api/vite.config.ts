@@ -19,6 +19,7 @@ export default defineConfig(({ command }) => {
       host: readApiHost(process.env.OPENBOT_API_HOST),
       port: readApiPort(process.env.OPENBOT_API_PORT),
       strictPort: true,
+      allowedHosts: [".openbot.localhost"],
     },
     plugins: [
       developmentLanGuard(),
