@@ -177,7 +177,6 @@ export class HostAnalytics {
     this.#pending = [];
     this.#activeTurns.clear();
     this.#identifiedOwner = null;
-    this.#operationQueue.operations = [];
     if (this.#trackingEnabled) this.#enqueue("clear", () => this.#client?.clear());
   }
 
@@ -187,6 +186,7 @@ export class HostAnalytics {
     if (!enabled) {
       this.#hostedSiteOwners.clear();
       this.clear();
+      this.#operationQueue.operations = [];
       this.#enqueue("clear", () => this.#client?.clear());
       return;
     }

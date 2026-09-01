@@ -496,6 +496,32 @@ describe("host analytics", () => {
     expect(client.clear).toHaveBeenCalled();
   });
 
+  it("preserves host events queued before logout", async () => {
+    const client = fakeClient();
+    let releaseIdentify!: () => void;
+    const identifyReady = new Promise<void>((resolve) => {
+      releaseIdentify = resolve;
+    });
+    vi.mocked(client.identify).mockImplementation(async () => identifyReady);
+    const analytics = new HostAnalytics(
+      {
+        enabled: true,
+        appVersion: "1.2.3",
+        platform: "darwin",
+        resolveOwner: () => ({ id: "owner-account", email: "owner@example.com" }),
+        resolveBot: () => BOT,
+      },
+      () => client,
+    );
+
+    analytics.handleAgentEvent({ type: "error", code: "provider_error", message: "private" });
+    analytics.clear();
+    releaseIdentify();
+
+    await vi.waitFor(() => expect(client.track).toHaveBeenCalledOnce());
+    expect(client.clear).toHaveBeenCalledOnce();
+  });
+
   it("normalizes the owner email before identifying", () => {
     const client = fakeClient();
     const analytics = new HostAnalytics(
