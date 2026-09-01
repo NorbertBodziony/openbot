@@ -44,6 +44,27 @@ export class AgentRoutineStore {
     return isDynamicRecord(row) ? this.#routine(row) : null;
   }
 
+  duplicate(sourceBotId: string, targetBotId: string, now = new Date()): Map<string, Routine> {
+    const duplicated = new Map<string, Routine>();
+    for (const routine of this.list(sourceBotId)) {
+      duplicated.set(
+        routine.id,
+        this.create(
+          {
+            botId: targetBotId,
+            name: routine.name,
+            instruction: routine.instruction,
+            active: routine.active,
+            timezone: routine.timezone,
+            schedule: routine.trigger.schedule,
+          },
+          now,
+        ),
+      );
+    }
+    return duplicated;
+  }
+
   create(input: CreateRoutineInput, now = new Date()): Routine {
     this.#validateInput(input.name, input.instruction, input.timezone, input.schedule);
     if (this.list(input.botId).length >= INPUT_LIMITS.agentRoutines) {
@@ -180,7 +201,7 @@ export class AgentRoutineStore {
     ).map(decodeRun);
   }
 
-  due(now = new Date()): DueRoutineTrigger[] {
+  due(now = new Date(), excludedBotIds: ReadonlySet<string> = new Set()): DueRoutineTrigger[] {
     return rows(
       this.database.connection
         .prepare(
@@ -193,28 +214,33 @@ export class AgentRoutineStore {
            ORDER BY trigger.next_run_at, trigger.trigger_id`,
         )
         .all(now.toISOString()),
-    ).map((row) => {
-      const routine = this.#routine(row);
-      const schedule = scheduleColumn(row);
-      return {
-        routine,
-        triggerId: stringColumn(row, "trigger_id"),
-        nextRunAt: stringColumn(row, "next_run_at"),
-        schedule,
-      };
-    });
+    )
+      .map((row) => {
+        const routine = this.#routine(row);
+        const schedule = scheduleColumn(row);
+        return {
+          routine,
+          triggerId: stringColumn(row, "trigger_id"),
+          nextRunAt: stringColumn(row, "next_run_at"),
+          schedule,
+        };
+      })
+      .filter((due) => !excludedBotIds.has(due.routine.botId));
   }
 
-  nextDueAt(): string | null {
-    const row = this.database.connection
-      .prepare(
-        `SELECT MIN(trigger.next_run_at) AS next_run_at
+  nextDueAt(excludedBotIds: ReadonlySet<string> = new Set()): string | null {
+    const row = rows(
+      this.database.connection
+        .prepare(
+          `SELECT trigger.next_run_at, routine.agent_id
          FROM projection_routine_triggers trigger
          JOIN projection_agent_routines routine ON routine.routine_id = trigger.routine_id
-         WHERE routine.active = 1`,
-      )
-      .get();
-    return isDynamicRecord(row) && isString(row.next_run_at) ? row.next_run_at : null;
+         WHERE routine.active = 1
+         ORDER BY trigger.next_run_at, trigger.trigger_id`,
+        )
+        .all(),
+    ).find((candidate) => !excludedBotIds.has(stringColumn(candidate, "agent_id")));
+    return row && isString(row.next_run_at) ? row.next_run_at : null;
   }
 
   advanceTrigger(routineId: string, triggerId: string, nextRunAt: string): void {

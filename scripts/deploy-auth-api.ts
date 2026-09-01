@@ -27,6 +27,7 @@ async function main(): Promise<void> {
     input: `${skillsAdminToken}\n`,
     label: "Skills marketplace admin secret",
   });
+  await putRequiredSecret("SITE_REPORT_HASH_SECRET");
   await putRequiredSecret("REMOTE_TICKET_PRIVATE_JWK");
   await putRequiredSecret("REMOTE_TICKET_PUBLIC_JWKS");
   await putRequiredSecret("REMOTE_AUTH_WEBHOOK_SECRET");
@@ -37,7 +38,7 @@ async function main(): Promise<void> {
     label: "Auth API build",
     env: cloudflareEnvironment ? { CLOUDFLARE_ENV: cloudflareEnvironment } : undefined,
   });
-  await run(wranglerExecutable, ["deploy", ...environmentArgs], {
+  await run(wranglerExecutable, ["deploy", "--keep-vars", ...environmentArgs], {
     label: "Auth API deployment",
   });
 }

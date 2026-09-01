@@ -5,6 +5,8 @@ import type {
   AppInfo,
   AvatarImageInput,
   CentralAuthUser,
+  HostedSiteSummary,
+  HostedSitesDesktopApi,
   MobileConnectedDevice,
   MobileConnectTicket,
   ProviderRuntimeStatus,
@@ -24,9 +26,12 @@ import {
   AlertDescription,
   AlertIcon,
   AlertTitle,
+  Badge,
   Button,
   CircleArrowDown,
   CircleCheck,
+  ExternalLink,
+  Globe2,
   ImageRemoveButton,
   Info,
   Input,
@@ -49,6 +54,7 @@ import {
   SwitchField,
   Tabs,
   Text,
+  Trash2,
   UserAvatar,
   UserRound,
 } from "./ui";
@@ -73,10 +79,11 @@ export interface SettingsModalProps {
   onDownloadProvider?: (provider: AgentProviderId) => void | Promise<void>;
   onCancelProviderDownload?: (provider: AgentProviderId) => void | Promise<void>;
   onConnectProvider?: (provider: AgentProviderId) => void | Promise<void>;
+  hostedSitesApi?: HostedSitesDesktopApi;
   restoreFocusTarget?: HTMLElement | null;
 }
 
-type SettingsTab = "general" | "computer-use" | "profile" | "mobile-connect" | "updates";
+type SettingsTab = "general" | "computer-use" | "profile" | "mobile-connect" | "updates" | "hosted-sites";
 
 type SettingsNavItem = { value: SettingsTab; label: string; icon: typeof Settings };
 
@@ -86,6 +93,7 @@ const navItems: ReadonlyArray<SettingsNavItem> = [
   { value: "profile", label: "Profile", icon: UserRound },
   { value: "mobile-connect", label: "Mobile Connect", icon: Smartphone },
   { value: "updates", label: "Updates", icon: CircleArrowDown },
+  { value: "hosted-sites", label: "Hosted sites", icon: Globe2 },
 ];
 
 const tabDetails: Record<SettingsTab, { title: string; description: string }> = {
@@ -97,6 +105,7 @@ const tabDetails: Record<SettingsTab, { title: string; description: string }> = 
   profile: { title: "Profile", description: "Manage how you appear in OpenBot." },
   "mobile-connect": { title: "Mobile Connect", description: "Sign in securely on your phone." },
   updates: { title: "Updates", description: "Keep OpenBot current on this computer." },
+  "hosted-sites": { title: "Hosted sites", description: "View and manage static sites published by your bots." },
 };
 
 const linkTargetOptions: GeneralSettingsValue["externalLinkTarget"][] = ["Default browser", "OpenBot"];
@@ -130,9 +139,14 @@ export function SettingsModal(props: SettingsModalProps) {
   const [mobileDevicesError, setMobileDevicesError] = createSignal<string | null>(null);
   const [revokingMobileSessionId, setRevokingMobileSessionId] = createSignal<string | null>(null);
   const [selectedProvider, setSelectedProvider] = createSignal<AgentProviderId | null>(null);
+  const [hostedSites, setHostedSites] = createSignal<HostedSiteSummary[]>([]);
+  const [hostedSitesError, setHostedSitesError] = createSignal<string | null>(null);
+  const [hostingBusy, setHostingBusy] = createSignal(false);
   let modalElement: HTMLElement | undefined;
   let avatarFileInput: HTMLInputElement | undefined;
   let profileNameInput: HTMLInputElement | undefined;
+  let hostedSitesReloadRequested = false;
+  let hostedSitesLoadPromise: Promise<void> | null = null;
   let mobileDevicesRequestRevision = 0;
   let mobileConnectBaselineSessionIds = new Set<string>();
   let mobileConnectSuccessTimer: number | undefined;
@@ -297,7 +311,8 @@ export function SettingsModal(props: SettingsModalProps) {
         value === "computer-use" ||
         value === "profile" ||
         value === "mobile-connect" ||
-        value === "updates"
+        value === "updates" ||
+        value === "hosted-sites"
       ) {
         setActiveTab(value);
       }
@@ -508,6 +523,51 @@ export function SettingsModal(props: SettingsModalProps) {
     } finally {
       setAvatarBusy(false);
       if (avatarFileInput) avatarFileInput.value = "";
+    }
+  }
+
+  function loadHostedSites(): Promise<void> {
+    if (!props.hostedSitesApi) return Promise.resolve();
+    hostedSitesReloadRequested = true;
+    if (hostedSitesLoadPromise) return hostedSitesLoadPromise;
+    hostedSitesLoadPromise = Promise.resolve().then(async () => {
+      try {
+        while (hostedSitesReloadRequested) {
+          hostedSitesReloadRequested = false;
+          setHostedSitesError(null);
+          try {
+            const api = props.hostedSitesApi;
+            if (api) setHostedSites(await api.list());
+          } catch (error) {
+            setHostedSitesError(error instanceof Error ? error.message : "Could not load hosted sites.");
+          }
+        }
+      } finally {
+        hostedSitesLoadPromise = null;
+      }
+    });
+    return hostedSitesLoadPromise;
+  }
+
+  createEffect(
+    () => props.open && activeTab() === "hosted-sites",
+    (shouldLoad) => {
+      if (shouldLoad) void loadHostedSites();
+    },
+  );
+
+  async function deleteSite(site: HostedSiteSummary): Promise<void> {
+    if (!props.hostedSitesApi || hostingBusy()) return;
+    if (!window.confirm(`Delete ${site.hostname}? This address will immediately return 410 Gone.`)) return;
+    setHostingBusy(true);
+    setHostedSitesError(null);
+    try {
+      await props.hostedSitesApi.delete({ siteId: site.id });
+      await loadHostedSites();
+    } catch (error) {
+      setHostedSitesError(error instanceof Error ? error.message : "Could not delete the site.");
+    } finally {
+      setHostingBusy(false);
     }
   }
 
@@ -1072,7 +1132,82 @@ export function SettingsModal(props: SettingsModalProps) {
             </ItemGroup>
           </SettingsSection>
         </Tabs.Content>
+        <Tabs.Content value="hosted-sites" class="settings-modal-tab-panel" data-tab="hosted-sites">
+          <SettingsSection title="Your sites">
+            <Show when={props.hostedSitesApi} fallback={<Text tone="muted">Site hosting is unavailable.</Text>}>
+              <div class="hosted-sites-overview">
+                <span class="settings-modal-row-title">{hostedSites().length} of 10 sites</span>
+                <Text tone="muted" variant="caption">
+                  Sites expire 30 days after publication. Ask a bot to publish or update a site.
+                </Text>
+              </div>
+              <Show when={hostedSitesError()}>{(message) => <p class="settings-modal-error">{message()}</p>}</Show>
+              <Show
+                when={hostedSites().length > 0}
+                fallback={<Text tone="muted">You do not have a hosted site yet. Ask a bot to publish one.</Text>}
+              >
+                <ItemGroup class="settings-modal-card hosted-sites-list" surface="subtle">
+                  <For each={hostedSites()}>
+                    {(site) => (
+                      <Item class="hosted-sites-row">
+                        <ItemContent>
+                          <ItemTitle>{site.title}</ItemTitle>
+                          <Button
+                            type="button"
+                            variant="link"
+                            class="hosted-sites-link"
+                            title={site.hostname}
+                            disabled={site.status !== "active"}
+                            onClick={() => void window.openbot.openUrl(site.url)}
+                          >
+                            <span class="hosted-sites-link-label">{site.hostname}</span>
+                          </Button>
+                          <Show
+                            when={site.status === "blocked"}
+                            fallback={
+                              <Text tone="muted" variant="caption">
+                                {site.expiresAt ? `Expires ${formatDate(site.expiresAt)}` : "Expiry unavailable"}
+                              </Text>
+                            }
+                          >
+                            <Badge tone="neutral">Blocked</Badge>
+                          </Show>
+                        </ItemContent>
+                        <ItemActions class="hosted-sites-actions">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            aria-label={`Open ${site.hostname}`}
+                            disabled={site.status !== "active"}
+                            onClick={() => void window.openbot.openUrl(site.url)}
+                          >
+                            <ExternalLink size={14} aria-hidden="true" />
+                            Open
+                          </Button>
+                          <Button
+                            variant="destructive-ghost"
+                            size="sm"
+                            aria-label={`Delete ${site.hostname}`}
+                            disabled={hostingBusy()}
+                            onClick={() => void deleteSite(site)}
+                          >
+                            <Trash2 size={14} aria-hidden="true" />
+                            Delete
+                          </Button>
+                        </ItemActions>
+                      </Item>
+                    )}
+                  </For>
+                </ItemGroup>
+              </Show>
+            </Show>
+          </SettingsSection>
+        </Tabs.Content>
       </SettingsDialogShell>
     </Tabs.Root>
   );
+}
+
+function formatDate(value: string): string {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(value));
 }

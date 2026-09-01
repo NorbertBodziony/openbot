@@ -1,6 +1,9 @@
 const LOCAL_RUNTIME_KEYS = [
   "AUTH_EXPOSE_DEVELOPMENT_CODE",
   "EMAIL_SMTP_PASSWORD",
+  "SITE_REPORT_HASH_SECRET",
+  "SITE_PUBLISH_ENABLED",
+  "SITE_COOKIE_ISOLATION_READY",
   "REMOTE_TICKET_PRIVATE_JWK",
   "REMOTE_TICKET_PUBLIC_JWKS",
   "REMOTE_TICKET_KEY_ID",
@@ -9,12 +12,18 @@ const LOCAL_RUNTIME_KEYS = [
   "REMOTE_AUTH_WEBHOOK_SECRET",
 ] as const;
 
+const BOOLEAN_RUNTIME_KEYS = new Set<(typeof LOCAL_RUNTIME_KEYS)[number]>([
+  "AUTH_EXPOSE_DEVELOPMENT_CODE",
+  "SITE_PUBLISH_ENABLED",
+  "SITE_COOKIE_ISOLATION_READY",
+]);
+
 export function readLocalRuntimeVars(environment: NodeJS.ProcessEnv): Record<string, string> {
   const result: Record<string, string> = {};
   for (const key of LOCAL_RUNTIME_KEYS) {
     const value = environment[key];
     if (value === undefined) continue;
-    result[key] = key === "AUTH_EXPOSE_DEVELOPMENT_CODE" ? (normalizeBooleanFlag(value) ? "true" : "false") : value;
+    result[key] = BOOLEAN_RUNTIME_KEYS.has(key) ? (normalizeBooleanFlag(value) ? "true" : "false") : value;
   }
   return result;
 }

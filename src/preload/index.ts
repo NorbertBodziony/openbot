@@ -16,11 +16,13 @@ import {
   type ConversationSearchPage,
   type ConversationWithReadState,
   type DraftAttachment,
+  type DuplicateBotResult,
   type DynamicIslandAction,
   type DynamicIslandGeometry,
   type DynamicIslandPreference,
   type DynamicIslandPresentation,
   type FilePreview,
+  type HostedSiteSummary,
   type ImportAttachmentsInput,
   type InstalledSkill,
   IPC_CHANNELS,
@@ -186,6 +188,53 @@ function nullableString(value: unknown, label: string): value is string | null {
 function decodeVoid(value: unknown): undefined {
   if (value !== undefined && value !== null) throw new Error("IPC returned unexpected data.");
   return undefined;
+}
+
+function decodeHostedSite(value: unknown): HostedSiteSummary {
+  const site = record(value, "hosted site");
+  if (
+    !isString(site.id) ||
+    !isString(site.hostname) ||
+    !isString(site.url) ||
+    !isString(site.title) ||
+    !isString(site.description) ||
+    (site.framework !== "vanilla" && site.framework !== "astro") ||
+    (site.status !== "active" && site.status !== "deleted" && site.status !== "expired" && site.status !== "blocked") ||
+    !isNumber(site.fileCount) ||
+    !isNumber(site.size) ||
+    (site.expiresAt !== null && !isString(site.expiresAt)) ||
+    !isString(site.updatedAt)
+  ) {
+    throw new Error("Invalid hosted site response.");
+  }
+  return {
+    id: site.id,
+    hostname: site.hostname,
+    url: site.url,
+    title: site.title,
+    description: site.description,
+    framework: site.framework,
+    status: decodeHostedSiteStatus(site.status),
+    fileCount: site.fileCount,
+    size: site.size,
+    expiresAt: site.expiresAt,
+    updatedAt: site.updatedAt,
+  };
+}
+
+function decodeHostedSiteStatus(value: unknown): HostedSiteSummary["status"] {
+  if (value === "active" || value === "deleted" || value === "expired" || value === "blocked") return value;
+  throw new Error("Invalid hosted site status.");
+}
+
+function decodeHostedSites(value: unknown): HostedSiteSummary[] {
+  if (!Array.isArray(value)) throw new Error("Invalid hosted site list response.");
+  return value.map(decodeHostedSite);
+}
+
+function decodeNullablePath(value: unknown): string | null {
+  if (value !== null && !isString(value)) throw new Error("Invalid directory response.");
+  return value;
 }
 
 function decodeDynamicIslandPreference(value: unknown): DynamicIslandPreference {
@@ -396,6 +445,11 @@ function decodeMemories(value: unknown): BotMemory[] {
 function decodeSidebarLayout(value: unknown): SidebarLayoutSnapshot {
   if (!isSidebarLayoutSnapshot(value)) throw new Error("Invalid sidebar layout response.");
   return value;
+}
+
+function decodeDuplicateBotResult(value: unknown): DuplicateBotResult {
+  const item = record(value, "agent duplication");
+  return { bot: decodeBot(item.bot), layout: decodeSidebarLayout(item.layout) };
 }
 
 function decodeConversation(value: unknown): ConversationWithReadState {
@@ -905,6 +959,13 @@ const openbotApi: OpenBotDesktopApi = {
     install: (input) => ipcRenderer.invoke(IPC_CHANNELS.skillsInstall, input).then(decodeInstalledSkill),
     uninstall: (input) => ipcRenderer.invoke(IPC_CHANNELS.skillsUninstall, input).then(decodeVoid),
   },
+  hostedSites: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.hostedSitesList).then(decodeHostedSites),
+    chooseDirectory: () => ipcRenderer.invoke(IPC_CHANNELS.hostedSitesChooseDirectory).then(decodeNullablePath),
+    publish: (input) => ipcRenderer.invoke(IPC_CHANNELS.hostedSitesPublish, input).then(decodeHostedSite),
+    replace: (input) => ipcRenderer.invoke(IPC_CHANNELS.hostedSitesReplace, input).then(decodeHostedSite),
+    delete: (input) => ipcRenderer.invoke(IPC_CHANNELS.hostedSitesDelete, input).then(decodeVoid),
+  },
   marketplaceAgents: {
     list: (query) =>
       ipcRenderer.invoke(IPC_CHANNELS.marketplaceAgentsList, query ?? null).then(decodeMarketplaceAgentPage),
@@ -927,6 +988,7 @@ const openbotApi: OpenBotDesktopApi = {
     getSidebarLayout: () => invokeAgent(IPC_CHANNELS.agentGetSidebarLayout, null, decodeSidebarLayout),
     mutateSidebarLayout: (action) => invokeAgent(IPC_CHANNELS.agentMutateSidebarLayout, action, decodeSidebarLayout),
     createBot: (input) => invokeAgent(IPC_CHANNELS.agentCreateBot, input, decodeBot),
+    duplicateBot: (botId) => invokeAgent(IPC_CHANNELS.agentDuplicateBot, botId, decodeDuplicateBotResult),
     updateBot: (input) => invokeAgent(IPC_CHANNELS.agentUpdateBot, input, decodeBot),
     setAvatar: (input) => invokeAgent(IPC_CHANNELS.agentSetAvatar, input, decodeBot),
     deleteBot: (botId) => invokeAgent(IPC_CHANNELS.agentDeleteBot, botId, decodeVoid),

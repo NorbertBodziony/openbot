@@ -40,7 +40,7 @@ import type {
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
 import { parseRoutineConversationEventItemType } from "@openbot/contracts/ipc";
-import type { TeamProtocolV1Capability } from "@openbot/contracts/team-protocol/v1";
+import type { TeamProtocolV3Capability } from "@openbot/contracts/team-protocol/v3";
 import {
   createContext,
   createEffect,
@@ -155,7 +155,10 @@ const EMPTY_TEAM_PRESENCE: TeamPresenceSnapshot = {
   updatedAt: "",
 };
 
-function serverSupportsCapability(server: ServerSummary | undefined, capability: TeamProtocolV1Capability): boolean {
+function serverSupportsCapability(server: ServerSummary | undefined, capability: TeamProtocolV3Capability): boolean {
+  if (capability === "agent-duplication" && server?.kind === "remote") {
+    return server.compatibility?.capabilities.includes(capability) === true;
+  }
   return server?.kind !== "remote" || !server.compatibility || server.compatibility.capabilities.includes(capability);
 }
 
@@ -311,6 +314,7 @@ interface AppProps {
 export function createAppController(props: AppProps = {}) {
   const peopleEnabled = props.peopleEnabled === true;
   const [botList, setBotList] = createSignal<BotProfile[]>([]);
+  const [duplicatingBotIds, setDuplicatingBotIds] = createSignal<Set<string>>(new Set());
   const [modelOptions, setModelOptions] = createSignal<AgentModelOption[]>([]);
   const [activeBotId, setActiveBotId] = createSignal("");
   const [appFocused, setAppFocused] = createSignal(document.hasFocus());
@@ -501,7 +505,7 @@ export function createAppController(props: AppProps = {}) {
     }
   }
 
-  function activeServerSupportsCapability(capability: TeamProtocolV1Capability): boolean {
+  function activeServerSupportsCapability(capability: TeamProtocolV3Capability): boolean {
     const server = servers().find((candidate) => candidate.active);
     return serverSupportsCapability(server, capability);
   }
@@ -2284,6 +2288,41 @@ export function createAppController(props: AppProps = {}) {
     setSettingsRequest({ botId, nonce: Date.now() });
   }
 
+  async function duplicateBot(botId: string): Promise<void> {
+    if (botSetupOpen() && creatingAgent()) return;
+    if (!activeServerSupportsCapability("agent-duplication") || duplicatingBotIds().has(botId)) return;
+    const serverId = activeServerSidebarKey();
+    const analytics = desktopAnalytics.scope();
+    const properties = analyticsAgentProperties(botId);
+    setDuplicatingBotIds((current) => new Set(current).add(botId));
+    try {
+      const result = await window.openbot.agent.duplicateBot(botId);
+      if (activeServerSidebarKey() !== serverId) return;
+      const profile = toBotProfile(result.bot);
+      setBotList((current) => [profile, ...current.filter((candidate) => candidate.id !== profile.id)]);
+      setSidebarLayout(result.layout);
+      selectBot(result.bot.id);
+      analytics.track("agent_action", { action: "duplicate", result: "succeeded", ...(properties ?? {}) });
+    } catch (error) {
+      analytics.track("agent_action", {
+        action: "duplicate",
+        result: "failed",
+        failure_code: "duplicate_failed",
+        ...(properties ?? {}),
+      });
+      toast.error("Could not duplicate agent", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    } finally {
+      setDuplicatingBotIds((current) => {
+        const next = new Set(current);
+        next.delete(botId);
+        return next;
+      });
+    }
+  }
+
   async function deleteBot(botId: string) {
     if (botSetupOpen() && creatingAgent()) return;
     const serverId = activeServerSidebarKey();
@@ -3887,6 +3926,8 @@ export function createAppController(props: AppProps = {}) {
     openBotSetup,
     cancelBotSetup,
     editBot,
+    duplicateBot,
+    duplicatingBotIds,
     deleteBot,
     setSidebarCollapsed,
     expandSidebar,

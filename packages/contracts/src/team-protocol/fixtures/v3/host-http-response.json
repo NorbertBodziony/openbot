@@ -1,0 +1,33 @@
+{
+  "bot": {
+    "id": "bot-copy",
+    "provider": "codex",
+    "name": "Research copy",
+    "title": "Research lead",
+    "description": "Finds primary sources.",
+    "notifications": true,
+    "model": "gpt-5.6-luna",
+    "reasoningEffort": "medium",
+    "threadId": null,
+    "workspacePath": "/OpenBot/Bots/bot-copy",
+    "preview": "No messages yet",
+    "updatedAt": null,
+    "avatarSeed": "research",
+    "avatarHue": 215,
+    "avatarUrl": null,
+    "marketplaceSource": {
+      "agentId": "market-research",
+      "versionId": "market-research-v2",
+      "version": 2,
+      "skillIds": ["primary-sources"],
+      "routineIds": ["routine-copy"]
+    }
+  },
+  "layout": {
+    "revision": 4,
+    "sections": [{ "id": "section-core", "name": "Core" }],
+    "order": ["people", "unassigned", "section-core"],
+    "agentAssignments": { "bot-source": "section-core", "bot-copy": "section-core" },
+    "agentOrder": ["bot-source", "bot-copy"]
+  }
+}

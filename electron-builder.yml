@@ -29,6 +29,8 @@ files:
   - "!node_modules/@anthropic-ai/claude-agent-sdk-darwin-*/**/*"
   - "!node_modules/@anthropic-ai/claude-agent-sdk-win32-*/**/*"
 extraResources:
+  - from: resources/managed-skills
+    to: managed-skills
   - from: build/icon-production.png
     to: icons/icon-production.png
   - from: build/icon-dev.png
