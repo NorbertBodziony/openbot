@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+dotenvx_cli="${DOTENVX_CLI:-/root/.bun/install/global/node_modules/@dotenvx/dotenvx/src/cli/dotenvx.js}"
+exec /opt/openbot/runtime/node/bin/node "$dotenvx_cli" "$@"

@@ -94,8 +94,8 @@
       },
       "win32-x64": {
         "asset": "cloudflared-windows-amd64.exe",
-        "assetSha256": "20b9638f685333d623798e733effbad2487093f15ba592f6c7752360ff3b7ab7",
-        "binarySha256": "20b9638f685333d623798e733effbad2487093f15ba592f6c7752360ff3b7ab7",
+        "assetSha256": "20b9638f685333d623798e733affbad2487093f15ba592f6c7752360ff3b7ab7",
+        "binarySha256": "20b9638f685333d623798e733affbad2487093f15ba592f6c7752360ff3b7ab7",
         "executable": "cloudflared.exe",
         "platformDirectory": "win"
       }
