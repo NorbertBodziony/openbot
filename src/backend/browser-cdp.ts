@@ -486,7 +486,7 @@ export class BrowserCdpEngine {
         let matched = true;
         if (condition.url) matched &&= this.#contents.getURL().includes(condition.url);
         if (condition.text) {
-          matched &&= await pageContainsText(send, this.#snapshotTargets(), condition.text);
+          matched &&= await pageContainsText(send, this.#snapshotTargets(), condition.text, deadline);
         }
         if (condition.target) {
           try {
@@ -575,9 +575,37 @@ export class BrowserCdpEngine {
       }
       const record = this.#targets.get(target.ref);
       if (!record) throw new Error("Element reference is no longer available. Take a fresh snapshot.");
+      const sessionId = record.targetId ? this.#targetSessions.get(record.targetId)?.sessionId : undefined;
+      if (deadline !== undefined) {
+        assertBeforeDeadline(deadline);
+        const visible = await this.#callOnNode(
+          send,
+          record.backendNodeId,
+          `function() {
+            if (!(this instanceof Element) || !this.isConnected || this.getClientRects().length === 0) return false;
+            let element = this;
+            while (element) {
+              if (element.hidden || element.inert || String(element.getAttribute('aria-hidden')).toLowerCase() === 'true') return false;
+              const style = getComputedStyle(element);
+              if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.contentVisibility === 'hidden' || style.opacity === '0') return false;
+              const parent = element.parentElement;
+              if (parent) element = parent;
+              else {
+                const root = element.getRootNode();
+                element = root?.nodeType === Node.DOCUMENT_FRAGMENT_NODE ? root.host : null;
+              }
+            }
+            return true;
+          }`,
+          [],
+          sessionId,
+        );
+        assertBeforeDeadline(deadline);
+        if (visible !== true) throw new Error("Element reference is no longer visible.");
+      }
       return {
         backendNodeId: record.backendNodeId,
-        sessionId: record.targetId ? this.#targetSessions.get(record.targetId)?.sessionId : undefined,
+        sessionId,
         x: 0,
         y: 0,
       };
@@ -964,13 +992,21 @@ async function collectPageSummary(
   };
 }
 
-async function pageContainsText(send: SendCommand, captures: SnapshotTarget[], text: string): Promise<boolean> {
+async function pageContainsText(
+  send: SendCommand,
+  captures: SnapshotTarget[],
+  text: string,
+  deadline: number,
+): Promise<boolean> {
   for (const capture of captures) {
+    assertBeforeDeadline(deadline);
+    const scanBudgetMs = Math.max(1, deadline - Date.now());
     const result = await send(
       "Runtime.evaluate",
       {
         expression: `(() => {
           const needle = ${JSON.stringify(text)};
+          const scanDeadline = performance.now() + ${scanBudgetMs};
           const roots = [document];
           const seen = new Set();
           let combined = '';
@@ -994,12 +1030,14 @@ async function pageContainsText(send: SendCommand, captures: SnapshotTarget[], t
             return range.getClientRects().length > 0;
           };
           while (roots.length && scanned < ${MAX_SNAPSHOT_SCANNED_NODES} && chars < ${MAX_SNAPSHOT_TEXT}) {
+            if (performance.now() >= scanDeadline) return { matched: false, expired: true };
             const root = roots.shift();
             if (!root || seen.has(root)) continue;
             seen.add(root);
             const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
             let node;
             while ((node = walker.nextNode()) && scanned < ${MAX_SNAPSHOT_SCANNED_NODES}) {
+              if (performance.now() >= scanDeadline) return { matched: false, expired: true };
               scanned++;
               if (node.nodeType === Node.TEXT_NODE) {
                 const parentTag = node.parentElement?.localName;
@@ -1010,6 +1048,7 @@ async function pageContainsText(send: SendCommand, captures: SnapshotTarget[], t
                   const part = value.slice(0, Math.max(0, ${MAX_SNAPSHOT_TEXT} - chars));
                   combined += (combined ? ' ' : '') + part;
                   chars += part.length + 1;
+                  if (combined.includes(needle)) return { matched: true, expired: false };
                 }
                 continue;
               }
@@ -1020,13 +1059,16 @@ async function pageContainsText(send: SendCommand, captures: SnapshotTarget[], t
               if (node.shadowRoot) roots.push(node.shadowRoot);
             }
           }
-          return combined.includes(needle);
+          return { matched: combined.includes(needle), expired: false };
         })()`,
         returnByValue: true,
       },
       capture.sessionId,
     ).catch(() => null);
-    if (recordValue(result?.result)?.value === true) return true;
+    assertBeforeDeadline(deadline);
+    const value = recordValue(recordValue(result?.result)?.value);
+    if (value?.expired === true) throw new Error("Browser wait condition timed out.");
+    if (value?.matched === true) return true;
   }
   return false;
 }

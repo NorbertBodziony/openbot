@@ -433,6 +433,18 @@ async function main(): Promise<void> {
       timeoutMs: 2_000,
     });
     if (!semanticWait.success) throw new Error(`V2 semantic wait failed: ${toolError(semanticWait)}`);
+    const refWaitSnapshot = await browser.snapshot(v2Tab.id);
+    const removedRefTarget = refWaitSnapshot.elements.find((element) => element.name === "Late action");
+    if (!removedRefTarget) throw new Error("V2 removed-ref wait fixture was not available.");
+    await v2Contents.executeJavaScript(`document.querySelector('[aria-label="Late action"]').remove()`, true);
+    const removedRefWait = await callBrowserTool(browser, "wait_for", {
+      tabId: v2Tab.id,
+      target: { kind: "ref", ref: removedRefTarget.ref, revision: refWaitSnapshot.revision },
+      timeoutMs: 100,
+    });
+    if (removedRefWait.success || !toolError(removedRefWait).includes("timed out")) {
+      throw new Error("V2 ref wait matched an element after it was removed.");
+    }
     const largeTargetSet = await callBrowserTool(browser, "evaluate", {
       tabId: v2Tab.id,
       expression:
@@ -459,6 +471,29 @@ async function main(): Promise<void> {
     if (!largeTargetCleanup.success) {
       throw new Error(`V2 large target cleanup failed: ${toolError(largeTargetCleanup)}`);
     }
+    await v2Contents.executeJavaScript(
+      `(() => {
+        const container = document.createElement('div');
+        container.dataset.bulkText = '';
+        container.innerHTML = Array.from({ length: 6000 }, (_, index) => '<span>Bounded text ' + index + '</span>').join('');
+        document.body.appendChild(container);
+      })()`,
+      true,
+    );
+    const textWaitStarted = Date.now();
+    const boundedTextWait = await callBrowserTool(browser, "wait_for", {
+      tabId: v2Tab.id,
+      text: "Missing bounded text target",
+      timeoutMs: 5,
+    });
+    if (
+      boundedTextWait.success ||
+      !toolError(boundedTextWait).includes("timed out") ||
+      Date.now() - textWaitStarted > 1_000
+    ) {
+      throw new Error("V2 text wait did not enforce its scan deadline.");
+    }
+    await v2Contents.executeJavaScript(`document.querySelector('[data-bulk-text]').remove()`, true);
     const noisyPage = await callBrowserTool(browser, "evaluate", {
       tabId: v2Tab.id,
       expression:
@@ -471,6 +506,19 @@ async function main(): Promise<void> {
     });
     if (toolTextPayload(sharedEvaluationWorld)?.result !== true) {
       throw new Error("V2 evaluation did not reuse its isolated world.");
+    }
+    const actionTimeoutStarted = Date.now();
+    const boundedAction = await callBrowserTool(browser, "click", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "button", name: "SPA", exact: true },
+      timeoutMs: 50,
+    });
+    if (
+      boundedAction.success ||
+      !toolError(boundedAction).includes("timed out") ||
+      Date.now() - actionTimeoutStarted > 1_000
+    ) {
+      throw new Error("V2 action did not include settling and snapshot work in its deadline.");
     }
     await v2Contents.executeJavaScript(
       `(() => {

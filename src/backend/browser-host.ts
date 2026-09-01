@@ -955,6 +955,8 @@ export class BrowserHost {
     tab: InternalTab,
     revision: number,
     keepQueueBlocked: KeepQueueBlocked,
+    timeoutMs = 10_000,
+    timeoutMessage = "Browser snapshot timed out.",
   ): Promise<SnapshotReadResult> {
     const history = tab.diagnostics.snapshot();
     const completion = tab.engine.snapshot({
@@ -965,7 +967,7 @@ export class BrowserHost {
       actions: history.actions,
     });
     keepQueueBlocked(completion);
-    const result = await withTimeout(completion, 10_000, "Browser snapshot timed out.");
+    const result = await withTimeout(completion, timeoutMs, timeoutMessage);
     tab.revision = revision;
     return result;
   }
@@ -980,6 +982,8 @@ export class BrowserHost {
   ): Promise<BrowserSnapshot> {
     const tab = this.#requireTab(tabId);
     const started = tab.queue.then(() => {
+      const deadline = Date.now() + timeoutMs;
+      const timeoutMessage = `Browser ${action} timed out.`;
       const snapshotDrains: Promise<unknown>[] = [];
       const operationCompletion = (async () => {
         let highlighted = false;
@@ -996,15 +1000,28 @@ export class BrowserHost {
         }
       })();
       onOperationStarted?.(operationCompletion);
-      const response = withTimeout(operationCompletion, timeoutMs, `Browser ${action} timed out.`)
+      const response = withTimeout(operationCompletion, remainingTime(deadline, timeoutMessage), timeoutMessage)
         .then(async () => {
-          await tab.engine.settle(Math.min(timeoutMs, 10_000));
+          const settleTimeout = remainingTime(deadline, timeoutMessage);
+          const settleCompletion = tab.engine.settle(Math.min(settleTimeout, 10_000));
+          snapshotDrains.push(settleCompletion);
+          await withTimeout(settleCompletion, settleTimeout, timeoutMessage);
+          const snapshotTimeout = remainingTime(deadline, timeoutMessage);
+          const snapshot = (
+            await this.#readSnapshot(
+              tab,
+              tab.revision + 1,
+              (promise) => snapshotDrains.push(promise),
+              snapshotTimeout,
+              timeoutMessage,
+            )
+          ).snapshot;
           tab.diagnostics.action({
             action,
             target: target ? describeBrowserTarget(target) : undefined,
             outcome: "success",
           });
-          return (await this.#readSnapshot(tab, tab.revision + 1, (promise) => snapshotDrains.push(promise))).snapshot;
+          return snapshot;
         })
         .catch((error) => {
           tab.diagnostics.action({
@@ -1768,4 +1785,10 @@ async function withTimeout<T>(promise: Promise<T>, milliseconds: number, message
   } finally {
     if (timeout) clearTimeout(timeout);
   }
+}
+
+function remainingTime(deadline: number, message: string): number {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw new Error(message);
+  return remaining;
 }
