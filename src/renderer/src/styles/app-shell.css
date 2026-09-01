@@ -440,8 +440,7 @@
   }
 }
 
-.server-rail-monogram,
-.server-rail-local {
+.server-rail-monogram {
   display: grid;
   width: 40px;
   height: 40px;
@@ -463,12 +462,6 @@
   object-fit: cover;
   outline: 1px solid var(--openbot-image-outline);
   outline-offset: -1px;
-}
-
-.server-rail-local {
-  background: linear-gradient(145deg, var(--openbot-text-primary), var(--openbot-accent));
-  color: var(--openbot-accent);
-  font-size: var(--openbot-text-2xl);
 }
 
 .server-rail-mark {
@@ -1685,6 +1678,7 @@ textarea {
   transition:
     border-color var(--openbot-duration-hover) ease,
     background-color var(--openbot-duration-hover) ease,
+    box-shadow var(--openbot-duration-hover) ease,
     color var(--openbot-duration-hover) ease,
     transform var(--openbot-duration-fast) cubic-bezier(0.23, 1, 0.32, 1);
 }
@@ -3940,7 +3934,6 @@ textarea {
 }
 
 .server-rail-monogram,
-.server-rail-local,
 .server-rail-action .server-rail-monogram {
   border-color: var(--openbot-border);
   background: var(--openbot-bg-surface);

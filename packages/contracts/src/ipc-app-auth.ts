@@ -1,4 +1,5 @@
 import type { AgentProviderId, AvatarImageInput } from "./ipc-conversation";
+import type { MobileConnectedDevice, MobileConnectTicket } from "./mobile-connect";
 
 export type DesktopPlatform = "darwin" | "win32" | "linux";
 export type AppVariant = "production" | "dev" | "preview";
@@ -105,16 +106,22 @@ export interface CentralAuthDesktopApi {
   verifyEmailCode: (challengeId: string, code: string) => Promise<CentralAuthState>;
   updateName: (name: string) => Promise<CentralAuthState>;
   updateAvatar: (image: AvatarImageInput | null) => Promise<CentralAuthState>;
+  createMobileConnect: () => Promise<MobileConnectTicket>;
+  listMobileConnectedDevices: () => Promise<MobileConnectedDevice[]>;
+  revokeMobileConnectedDevice: (sessionId: string) => Promise<void>;
   logout: () => Promise<CentralAuthState>;
   onEvent: (listener: (state: CentralAuthState) => void) => () => void;
 }
 
 export type MacPermissionId = "screen-recording" | "accessibility";
-export type MacPermissionState = "not-determined" | "granted" | "denied" | "restricted" | "unknown";
 
-export interface MacPermissionsState {
-  screenRecording: MacPermissionState;
-  accessibility: MacPermissionState;
+export type ComputerUseMacSetupStatus = "available" | "unavailable" | "unsupported";
+
+export interface ComputerUseMacSetupState {
+  status: ComputerUseMacSetupStatus;
+  helperName: string;
+  helperIconDataUrl: string | null;
+  message: string | null;
 }
 
 export type ExternalDestination = "agent-setup" | "claude-install" | "claude-sign-in" | "feedback" | "message";

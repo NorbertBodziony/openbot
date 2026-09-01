@@ -15,8 +15,12 @@ describe("Bloub avatar adapter", () => {
     expect(avatarHueSwatch(215)).toBe(avatarHeadColor("different-seed", 215));
   });
 
-  it("preserves the generated droplet outside explicit avatar overrides", () => {
-    expect(bloubAvatarProfile("droplet-regression-0", null).shape).toBe("goutte");
+  it("preserves supported shapes and replaces the generated droplet", () => {
+    expect(
+      Array.from({ length: 7 }, (_, index) => bloubAvatarProfile(`shape-regression-${index}`, null).shape),
+    ).toEqual(["squircle", "galet", "triangle", "capsule", "nuage", "hexagone", "cercle"]);
+    expect(bloubAvatarProfile("droplet-regression-0", null).shape).toBe("capsule");
+    expect(bloubAvatarProfile("droplet-regression-0", null).shape).not.toBe("goutte");
   });
 
   it("keeps every supported Bloub shape in avatar candidates", () => {
@@ -28,8 +32,9 @@ describe("Bloub avatar adapter", () => {
     expect(firstSet).toHaveLength(12);
     expect(new Set(firstSet)).toHaveLength(12);
     expect(firstSet[0]).toBe("chief:avatar:4:7");
+    expect(firstSet.map((seed) => bloubAvatarProfile(seed, null).shape)).not.toContain("goutte");
     expect(new Set(firstSet.map((seed) => bloubAvatarProfile(seed, null).shape))).toEqual(
-      new Set(SHAPES.map((shape) => shape.id)),
+      new Set(SHAPES.map((shape) => shape.id).filter((shape) => shape !== "goutte")),
     );
     expect(new Set(firstSet.map((seed) => bloubAvatarProfile(seed, null).expression)).size).toBeGreaterThanOrEqual(8);
     expect(nextSet[0]).toBe(firstSet[0]);

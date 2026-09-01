@@ -1,16 +1,22 @@
 import { type AuthRetentionResult, pruneExpiredAuthData } from "./auth-data-retention";
 import { enforceMarketplaceIngress, MarketplaceRateLimitError } from "./marketplace-request-policy";
+import { deliverPendingRemoteAuthEvents } from "./remote-control-plane";
 import type { WorkerBindings } from "./types";
 
 type WorkerFetch = (request: Request) => Response | Promise<Response>;
 type AuthDataPruner = (database: D1Database, now: number) => Promise<AuthRetentionResult>;
 type RetentionLogger = (result: AuthRetentionResult) => void;
 type WorkerExecutionContext = Pick<ExecutionContext, "waitUntil">;
+type RemoteAuthEventDelivery = (
+  bindings: Pick<WorkerBindings, "DB" | "REMOTE_AUTH_WEBHOOK_URL" | "REMOTE_AUTH_WEBHOOK_SECRET">,
+  now: number,
+) => Promise<void>;
 
 export function createWorkerHandler(
   fetchHandler: WorkerFetch,
   prune: AuthDataPruner = pruneExpiredAuthData,
   log: RetentionLogger = logRetentionResult,
+  deliverRemoteAuthEvents: RemoteAuthEventDelivery = deliverPendingRemoteAuthEvents,
 ) {
   return {
     async fetch(
@@ -47,8 +53,16 @@ export function createWorkerHandler(
       }
       return response;
     },
-    async scheduled(controller: Pick<ScheduledController, "scheduledTime">, bindings: Pick<WorkerBindings, "DB">) {
-      const result = await prune(bindings.DB, controller.scheduledTime);
+    async scheduled(
+      controller: Pick<ScheduledController, "scheduledTime">,
+      bindings: Pick<WorkerBindings, "DB" | "REMOTE_AUTH_WEBHOOK_URL" | "REMOTE_AUTH_WEBHOOK_SECRET">,
+    ) {
+      const delivery = deliverRemoteAuthEvents(bindings, controller.scheduledTime);
+      if (!isDailyRetentionRun(controller.scheduledTime)) {
+        await delivery;
+        return;
+      }
+      const [result] = await Promise.all([prune(bindings.DB, controller.scheduledTime), delivery]);
       log(result);
     },
   } satisfies ExportedHandler<WorkerBindings>;
@@ -56,6 +70,11 @@ export function createWorkerHandler(
 
 function isEmailSignInStart(request: Request): boolean {
   return request.method === "POST" && new URL(request.url).pathname === "/v1/auth/email/start";
+}
+
+function isDailyRetentionRun(scheduledTime: number): boolean {
+  const scheduled = new Date(scheduledTime);
+  return scheduled.getUTCHours() === 0 && scheduled.getUTCMinutes() === 0;
 }
 
 function logRetentionResult(result: AuthRetentionResult): void {

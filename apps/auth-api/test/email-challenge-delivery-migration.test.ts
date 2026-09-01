@@ -23,7 +23,7 @@ describe("email challenge delivery state migration", () => {
       .run("challenge-1", "person@example.com", "code", "ip", 1_000, 601_000, 5);
 
     database.exec("BEGIN");
-    database.exec(migration("0012_email_challenge_delivery_state.sql"));
+    database.exec(migration("0015_email_challenge_delivery_state.sql"));
     database.exec("COMMIT");
 
     expect(

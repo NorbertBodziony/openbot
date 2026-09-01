@@ -1,12 +1,14 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createServer } from "node:net";
+import { type NetworkInterfaceInfo, networkInterfaces } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { prepareDevelopmentEnvironment } from "./prepare-dev-environment";
 
 export type DevelopmentService = "api" | "app" | "test-client";
 type DevelopmentTarget = DevelopmentService | "all";
+type DevelopmentNetworkInterfaces = NodeJS.Dict<Array<Pick<NetworkInterfaceInfo, "address" | "family" | "internal">>>;
 
 export interface DevelopmentServiceSpec {
   name: DevelopmentService;
@@ -14,6 +16,18 @@ export interface DevelopmentServiceSpec {
   args: string[];
   cwd: string;
   env: NodeJS.ProcessEnv;
+}
+
+type OwnedProcess = Pick<ChildProcess, "pid" | "exitCode" | "kill">;
+type KillProcess = (pid: number, signal?: NodeJS.Signals | number) => boolean;
+
+interface StopOwnedProcessesOptions {
+  platform?: NodeJS.Platform;
+  killProcess?: KillProcess;
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+  now?: () => number;
+  wait?: (milliseconds: number) => Promise<void>;
 }
 
 export function developmentEnvironmentForTarget(
@@ -118,6 +132,10 @@ async function main(): Promise<void> {
     if (!sharedEnvironment.OPENBOT_AUTH_API_URL) {
       sharedEnvironment.OPENBOT_AUTH_API_URL = `http://127.0.0.1:${apiPort}`;
     }
+    configureMobileConnectDevelopmentNetwork(services, sharedEnvironment, networkInterfaces());
+    if (sharedEnvironment.OPENBOT_MOBILE_AUTH_API_URL) {
+      console.log(`Mobile Connect API: ${sharedEnvironment.OPENBOT_MOBILE_AUTH_API_URL}`);
+    }
     if (apiPort !== DEFAULT_API_PORT) {
       console.log(`API port ${DEFAULT_API_PORT} is busy. Using ${apiPort}.`);
     }
@@ -170,19 +188,12 @@ async function main(): Promise<void> {
   const stopAll = async (signal: NodeJS.Signals): Promise<void> => {
     if (stopping) return;
     stopping = true;
-    const running = [...processes.values()].filter((child) => child.exitCode === null);
-    for (const child of running) signalOwnedProcess(child, signal);
-    await Promise.race([
-      Promise.all(running.map(waitForExit)),
-      new Promise<void>((resolveTimeout) => setTimeout(resolveTimeout, 3_000)),
-    ]);
-    for (const child of running) {
-      if (child.exitCode === null) signalOwnedProcess(child, "SIGKILL");
-    }
+    await stopOwnedProcesses([...processes.values()], signal);
   };
 
   process.once("SIGINT", () => void stopAll("SIGTERM").then(() => process.exit(130)));
   process.once("SIGTERM", () => void stopAll("SIGTERM").then(() => process.exit(143)));
+  process.once("SIGHUP", () => void stopAll("SIGTERM").then(() => process.exit(129)));
 
   try {
     for (const spec of specs) {
@@ -214,6 +225,56 @@ async function main(): Promise<void> {
     await stopAll("SIGTERM");
     throw error;
   }
+}
+
+export function configureMobileConnectDevelopmentNetwork(
+  services: DevelopmentService[],
+  environment: NodeJS.ProcessEnv,
+  interfaces: DevelopmentNetworkInterfaces,
+): void {
+  if (!services.some((service) => service === "app" || service === "test-client")) return;
+  if (environment.OPENBOT_API_HOST === "127.0.0.1") return;
+  const port = readPort(environment.OPENBOT_API_PORT);
+  const address = selectMobileConnectLanAddress(interfaces);
+  if (!port || !address) return;
+  environment.OPENBOT_API_HOST ??= "0.0.0.0";
+  environment.OPENBOT_MOBILE_AUTH_API_URL ??= `http://${address}:${port}`;
+}
+
+export function selectMobileConnectLanAddress(interfaces: DevelopmentNetworkInterfaces): string | null {
+  const candidates = Object.entries(interfaces).flatMap(([name, addresses]) =>
+    (addresses ?? []).flatMap((address) =>
+      address.family === "IPv4" && !address.internal && isPrivateIpv4(address.address)
+        ? [{ name, address: address.address }]
+        : [],
+    ),
+  );
+  candidates.sort(
+    (left, right) =>
+      interfacePriority(left.name) - interfacePriority(right.name) ||
+      left.name.localeCompare(right.name) ||
+      left.address.localeCompare(right.address),
+  );
+  return candidates[0]?.address ?? null;
+}
+
+function interfacePriority(name: string): 0 | 1 | 2 {
+  if (name === "en0" || name === "eth0") return 0;
+  if (/^(?:en|eth|wl)/u.test(name)) return 1;
+  return 2;
+}
+
+function isPrivateIpv4(address: string): boolean {
+  const values = address.split(".").map(Number);
+  if (values.length !== 4 || values.some((value) => !Number.isInteger(value) || value < 0 || value > 255)) {
+    return false;
+  }
+  const [first, second] = values;
+  return (
+    first === 10 ||
+    (first === 172 && second !== undefined && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168)
+  );
 }
 
 async function waitForDevelopmentApi(portValue: string | undefined, child: ChildProcess): Promise<void> {
@@ -293,19 +354,63 @@ function validateServiceSpecs(specs: DevelopmentServiceSpec[]): void {
   }
 }
 
-function signalOwnedProcess(child: ChildProcess, signal: NodeJS.Signals): void {
-  if (!child.pid || child.exitCode !== null) return;
+export function signalOwnedProcess(
+  child: OwnedProcess,
+  signal: NodeJS.Signals,
+  platform: NodeJS.Platform = process.platform,
+  killProcess: KillProcess = process.kill,
+): void {
+  if (!child.pid) return;
   try {
-    if (process.platform === "win32") child.kill(signal);
-    else process.kill(-child.pid, signal);
+    if (platform === "win32") {
+      if (child.exitCode === null) child.kill(signal);
+    } else {
+      killProcess(-child.pid, signal);
+    }
   } catch (error) {
     if (!isMissingProcess(error)) throw error;
   }
 }
 
-function waitForExit(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null) return Promise.resolve();
-  return new Promise((resolveExit) => child.once("exit", () => resolveExit()));
+export async function stopOwnedProcesses(
+  owned: OwnedProcess[],
+  signal: NodeJS.Signals,
+  options: StopOwnedProcessesOptions = {},
+): Promise<void> {
+  const {
+    platform = process.platform,
+    killProcess = process.kill,
+    timeoutMs = 3_000,
+    pollIntervalMs = 50,
+    now = Date.now,
+    wait = (milliseconds) => new Promise<void>((resolveDelay) => setTimeout(resolveDelay, milliseconds)),
+  } = options;
+  for (const child of owned) signalOwnedProcess(child, signal, platform, killProcess);
+
+  const deadline = now() + timeoutMs;
+  while (owned.some((child) => ownedProcessIsRunning(child, platform, killProcess))) {
+    const remaining = deadline - now();
+    if (remaining <= 0) break;
+    await wait(Math.min(pollIntervalMs, remaining));
+  }
+
+  for (const child of owned) {
+    if (ownedProcessIsRunning(child, platform, killProcess)) {
+      signalOwnedProcess(child, "SIGKILL", platform, killProcess);
+    }
+  }
+}
+
+function ownedProcessIsRunning(child: OwnedProcess, platform: NodeJS.Platform, killProcess: KillProcess): boolean {
+  if (!child.pid) return false;
+  if (platform === "win32") return child.exitCode === null;
+  try {
+    killProcess(-child.pid, 0);
+    return true;
+  } catch (error) {
+    if (isMissingProcess(error)) return false;
+    throw error;
+  }
 }
 
 function isMissingProcess(error: unknown): error is NodeJS.ErrnoException {

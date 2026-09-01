@@ -1,2 +1,4 @@
 # Local dotenvx decryption key used by the development Auth API.
 .env.keys
+# Local dotenvx decryption key used by the Remote production stack.
+remote/.env.keys

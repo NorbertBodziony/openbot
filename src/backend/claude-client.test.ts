@@ -3,12 +3,13 @@
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { ModelInfo, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it } from "vitest";
 import { ClaudeAgentClient } from "./claude-client";
 import {
   decodeAccountReadResult,
+  decodeModelListResponse,
   decodeRecordResponse,
   decodeThreadResponse,
   decodeTurnResponse,
@@ -164,6 +165,259 @@ fi
         }),
       ]),
     );
+    await client.stop();
+  });
+
+  it("discovers each model's supported reasoning efforts from the Claude SDK", async () => {
+    const query = new TestQuery(new TestQueue<TestStreamMessage>(), [
+      {
+        value: "opus",
+        resolvedModel: "claude-opus-5",
+        displayName: "Claude Opus 5",
+        description: "Most capable",
+        supportsEffort: true,
+        supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+      },
+      {
+        value: "claude-opus-5",
+        displayName: "Claude Opus 5 duplicate",
+        description: "Duplicate alias",
+        supportsEffort: true,
+        supportedEffortLevels: ["high"],
+      },
+      {
+        value: "sonnet",
+        resolvedModel: "claude-sonnet-5",
+        displayName: "Claude Sonnet 5",
+        description: "Balanced",
+        supportsEffort: true,
+        supportedEffortLevels: ["low", "medium", "max"],
+      },
+      {
+        value: "haiku",
+        resolvedModel: "claude-haiku-5",
+        displayName: "Claude Haiku 5",
+        description: "Fast",
+        supportsEffort: false,
+      },
+    ]);
+    const client = new ClaudeAgentClient({ executable: "/bin/true", version: "2.1.251" }, () => query);
+    client.start();
+
+    await expect(client.request("model/list", {}, decodeModelListResponse)).resolves.toEqual({
+      data: [
+        {
+          model: "claude-opus-5",
+          displayName: "Claude Opus 5",
+          defaultReasoningEffort: "high",
+          supportedReasoningEfforts: [
+            { reasoningEffort: "low" },
+            { reasoningEffort: "medium" },
+            { reasoningEffort: "high" },
+            { reasoningEffort: "xhigh" },
+            { reasoningEffort: "max" },
+          ],
+        },
+        {
+          model: "claude-sonnet-5",
+          displayName: "Claude Sonnet 5",
+          defaultReasoningEffort: "low",
+          supportedReasoningEfforts: [
+            { reasoningEffort: "low" },
+            { reasoningEffort: "medium" },
+            { reasoningEffort: "max" },
+          ],
+        },
+        {
+          model: "claude-haiku-5",
+          displayName: "Claude Haiku 5",
+          defaultReasoningEffort: "medium",
+          supportedReasoningEfforts: [{ reasoningEffort: "medium" }],
+        },
+      ],
+    });
+    expect(query.closed).toBe(true);
+  });
+
+  it("preserves discovered model capabilities when a later refresh times out", async () => {
+    const discoveryQuery = new TestQuery(new TestQueue<TestStreamMessage>(), [
+      {
+        value: "fable",
+        resolvedModel: "claude-fable-5",
+        displayName: "Claude Fable 5",
+        description: "Fast",
+        supportsEffort: false,
+      },
+    ]);
+    const timeoutQuery = new TestQuery(new TestQueue<TestStreamMessage>(), new Promise<ModelInfo[]>(() => {}));
+    const runtimeQuery = new TestQuery(new TestQueue<TestStreamMessage>());
+    const queries = [discoveryQuery, timeoutQuery, runtimeQuery];
+    let runtimeOptions: DynamicRecord | null = null;
+    const client = new ClaudeAgentClient({ executable: "/bin/true", version: "2.1.251" }, (params) => {
+      const next = queries.shift();
+      if (!next) throw new Error("Unexpected Claude query.");
+      if (next === runtimeQuery && isDynamicRecord(params.options)) runtimeOptions = params.options;
+      return next;
+    });
+    client.start();
+
+    await client.request("model/list", {}, decodeModelListResponse);
+    await expect(client.request("model/list", {}, decodeModelListResponse, 10)).rejects.toThrow(
+      "Claude request timed out: model/list",
+    );
+    await client.request(
+      "thread/start",
+      { cwd: process.cwd(), model: "claude-fable-5", effort: "medium" },
+      decodeThreadResponse,
+    );
+
+    expect(runtimeOptions).toMatchObject({ model: "fable" });
+    expect(runtimeOptions).not.toHaveProperty("effort");
+    expect(timeoutQuery.closed).toBe(true);
+    await client.stop();
+  });
+
+  it("uses alias-only discovery values for Claude SDK model selection", async () => {
+    root = await mkdtemp(join(tmpdir(), "openbot-claude-model-alias-"));
+    const discoveryQuery = new TestQuery(new TestQueue<TestStreamMessage>(), [
+      {
+        value: "sonnet",
+        displayName: "Claude Sonnet",
+        description: "Balanced",
+        supportsEffort: true,
+        supportedEffortLevels: ["medium", "high"],
+      },
+    ]);
+    const initialQuery = new TestQuery(new TestQueue<TestStreamMessage>());
+    const switchingQuery = new TestQuery(new TestQueue<TestStreamMessage>());
+    const queries = [discoveryQuery, initialQuery, switchingQuery];
+    let initialOptions: DynamicRecord | null = null;
+    const client = new ClaudeAgentClient({ executable: "/bin/true", version: "2.1.251" }, (params) => {
+      const next = queries.shift();
+      if (!next) throw new Error("Unexpected Claude query.");
+      if (next === initialQuery && isDynamicRecord(params.options)) initialOptions = params.options;
+      return next;
+    });
+    client.start();
+
+    await expect(client.request("model/list", {}, decodeModelListResponse)).resolves.toEqual({
+      data: [expect.objectContaining({ model: "sonnet" })],
+    });
+    await client.request("thread/start", { cwd: root, model: "sonnet", effort: "medium" }, decodeThreadResponse);
+    expect(initialOptions).toMatchObject({ model: "sonnet" });
+
+    const switchingThread = await client.request(
+      "thread/start",
+      { cwd: root, model: "claude-opus-5", effort: "medium" },
+      decodeThreadResponse,
+    );
+    await client.request(
+      "turn/start",
+      { threadId: switchingThread.thread.id, model: "sonnet", effort: "medium", input: [] },
+      decodeTurnResponse,
+    );
+    expect(switchingQuery.models).toEqual(["sonnet"]);
+
+    await client.stop();
+  });
+
+  it("keeps neutral UI effort for unsupported models without sending effort to Claude", async () => {
+    root = await mkdtemp(join(tmpdir(), "openbot-claude-effort-support-"));
+    const discoveryQuery = new TestQuery(new TestQueue<TestStreamMessage>(), [
+      {
+        value: "haiku",
+        resolvedModel: "claude-haiku-5",
+        displayName: "Claude Haiku 5",
+        description: "Fast",
+        supportsEffort: false,
+      },
+      {
+        value: "sonnet",
+        resolvedModel: "claude-sonnet-5",
+        displayName: "Claude Sonnet 5",
+        description: "Balanced",
+        supportsEffort: true,
+        supportedEffortLevels: ["low", "medium", "max"],
+      },
+    ]);
+    const unsupportedQuery = new TestQuery(new TestQueue<TestStreamMessage>());
+    const switchingQuery = new TestQuery(new TestQueue<TestStreamMessage>());
+    const effortChangingQuery = new TestQuery(new TestQueue<TestStreamMessage>());
+    const clearingQuery = new TestQuery(new TestQueue<TestStreamMessage>());
+    const queries = [discoveryQuery, unsupportedQuery, switchingQuery, effortChangingQuery, clearingQuery];
+    const runtimeOptions: DynamicRecord[] = [];
+    const client = new ClaudeAgentClient({ executable: "/bin/true", version: "2.1.251" }, (params) => {
+      const next = queries.shift();
+      if (!next) throw new Error("Unexpected Claude query.");
+      if (next !== discoveryQuery && isDynamicRecord(params.options)) runtimeOptions.push(params.options);
+      return next;
+    });
+    client.start();
+
+    const models = await client.request("model/list", {}, decodeModelListResponse);
+    expect(models.data).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          model: "claude-haiku-5",
+          defaultReasoningEffort: "medium",
+          supportedReasoningEfforts: [{ reasoningEffort: "medium" }],
+        }),
+      ]),
+    );
+
+    const unsupportedThread = await client.request(
+      "thread/start",
+      { cwd: root, model: "claude-haiku-5", effort: "medium" },
+      decodeThreadResponse,
+    );
+    expect(runtimeOptions[0]).not.toHaveProperty("effort");
+    await client.request(
+      "turn/start",
+      { threadId: unsupportedThread.thread.id, model: "claude-haiku-5", effort: "high", input: [] },
+      decodeTurnResponse,
+    );
+    expect(unsupportedQuery.flagSettings).toEqual([]);
+
+    const switchingThread = await client.request(
+      "thread/start",
+      { cwd: root, model: "claude-haiku-5", effort: "medium" },
+      decodeThreadResponse,
+    );
+    await client.request(
+      "turn/start",
+      { threadId: switchingThread.thread.id, model: "claude-sonnet-5", effort: "high", input: [] },
+      decodeTurnResponse,
+    );
+    expect(switchingQuery.models).toEqual(["sonnet"]);
+    expect(switchingQuery.flagSettings).toEqual([{ effortLevel: "low" }]);
+
+    const effortChangingThread = await client.request(
+      "thread/start",
+      { cwd: root, model: "claude-sonnet-5", effort: "high" },
+      decodeThreadResponse,
+    );
+    expect(runtimeOptions[2]).toMatchObject({ effort: "low" });
+    await client.request(
+      "turn/start",
+      { threadId: effortChangingThread.thread.id, model: "claude-sonnet-5", effort: "max", input: [] },
+      decodeTurnResponse,
+    );
+    expect(effortChangingQuery.models).toEqual([]);
+    expect(effortChangingQuery.flagSettings).toEqual([{ effortLevel: "max" }]);
+
+    const clearingThread = await client.request(
+      "thread/start",
+      { cwd: root, model: "claude-sonnet-5", effort: "medium" },
+      decodeThreadResponse,
+    );
+    await client.request(
+      "turn/start",
+      { threadId: clearingThread.thread.id, model: "claude-haiku-5", effort: "medium", input: [] },
+      decodeTurnResponse,
+    );
+    expect(clearingQuery.models).toEqual(["haiku"]);
+    expect(clearingQuery.flagSettings).toEqual([{ effortLevel: null }]);
+
     await client.stop();
   });
 
@@ -398,7 +652,16 @@ class TestQueue<T> implements AsyncIterable<T> {
 }
 
 class TestQuery implements AsyncIterable<TestStreamMessage> {
-  constructor(private readonly output: TestQueue<TestStreamMessage>) {}
+  closed = false;
+  readonly models: Array<string | undefined> = [];
+  readonly flagSettings: Array<{
+    effortLevel?: "low" | "medium" | "high" | "xhigh" | "max" | null;
+  }> = [];
+
+  constructor(
+    private readonly output: TestQueue<TestStreamMessage>,
+    private readonly supportedModelList: ModelInfo[] | Promise<ModelInfo[]> = [],
+  ) {}
 
   [Symbol.asyncIterator](): AsyncIterator<TestStreamMessage> {
     return this.output[Symbol.asyncIterator]();
@@ -408,14 +671,22 @@ class TestQuery implements AsyncIterable<TestStreamMessage> {
     return undefined;
   }
 
-  async setModel(_model?: string): Promise<void> {}
+  async supportedModels(): Promise<ModelInfo[]> {
+    return this.supportedModelList;
+  }
 
-  async setMaxThinkingTokens(
-    _maxThinkingTokens: number | null,
-    _thinkingDisplay?: "summarized" | "omitted" | null,
-  ): Promise<void> {}
+  async setModel(model?: string): Promise<void> {
+    this.models.push(model);
+  }
+
+  async applyFlagSettings(settings: {
+    effortLevel?: "low" | "medium" | "high" | "xhigh" | "max" | null;
+  }): Promise<void> {
+    this.flagSettings.push(settings);
+  }
 
   close(): void {
+    this.closed = true;
     this.output.close();
   }
 }

@@ -9,15 +9,17 @@ export function Toaster(props: ToasterProps): JSX.Element {
   return (
     <Sonner
       {...props}
-      class={cx("ui-toaster", props.class)}
+      class={cx("ui-toaster", (props.closeButton ?? true) && "ui-toaster-closeable", props.class)}
       theme={props.theme ?? "dark"}
-      position={props.position ?? "top-center"}
+      position={props.position ?? "top-right"}
       visibleToasts={props.visibleToasts ?? 3}
-      duration={props.duration ?? 4_000}
+      duration={props.duration ?? 6_000}
       gap={props.gap ?? 8}
-      richColors={props.richColors ?? true}
+      richColors={props.richColors ?? false}
       closeButton={props.closeButton ?? true}
       pauseWhenPageIsHidden={props.pauseWhenPageIsHidden ?? true}
+      containerAriaLabel={props.containerAriaLabel ?? "Notifications"}
+      toastOptions={{ closeButtonAriaLabel: "Close notification", ...props.toastOptions }}
       icons={{
         success: <CircleCheck class="ui-toast-icon" aria-hidden="true" />,
         info: <Info class="ui-toast-icon" aria-hidden="true" />,

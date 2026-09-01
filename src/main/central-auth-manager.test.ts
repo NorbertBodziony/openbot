@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CentralAuthManager, readCentralAuthApiUrl } from "./central-auth-manager";
+import { CentralAuthManager, readCentralAuthApiUrl, readMobileConnectApiUrl } from "./central-auth-manager";
 
 const roots: string[] = [];
 
@@ -44,14 +44,27 @@ describe("CentralAuthManager", () => {
       if (url.pathname === "/v1/team-auth/ticket") {
         return Response.json({ ticket: "one-time-ticket", expiresAt: 20_000 });
       }
-      if (url.pathname === "/v1/team-tunnels/provision") {
+      if (url.pathname === "/v1/mobile-auth/ticket") {
         return Response.json({
-          tunnelId: "11111111-1111-4111-8111-111111111111",
-          tunnelName: "openbot-00000000000040008000000000000000",
-          apiUrl: "https://studio-mac-k7m4q2pz-host.openbot.run",
-          token: "x".repeat(40),
-          machineToken: "a".repeat(64),
+          ticket: "mobile-ticket_1234567890abcdefghijklmnop",
+          expiresAt: Date.now() + 120_000,
         });
+      }
+      if (url.pathname === "/v1/mobile-auth/devices" && init?.method === "GET") {
+        return Response.json({
+          devices: [
+            {
+              sessionId: "11111111-1111-4111-8111-111111111111",
+              name: "Norbert’s iPhone",
+              platform: "ios",
+              connectedAt: 1_000,
+              lastActiveAt: 2_000,
+            },
+          ],
+        });
+      }
+      if (url.pathname === "/v1/mobile-auth/devices/11111111-1111-4111-8111-111111111111") {
+        return new Response(null, { status: 204 });
       }
       return Response.json({
         id: "user-1",
@@ -62,6 +75,7 @@ describe("CentralAuthManager", () => {
     });
     const options = {
       apiUrl: "http://127.0.0.1:3100",
+      mobileConnectApiUrl: "http://192.168.1.143:3100",
       storagePath,
       encrypt: (value: string) => Buffer.from(`encrypted:${value}`),
       decrypt: (value: Buffer) => value.toString().replace("encrypted:", ""),
@@ -82,21 +96,27 @@ describe("CentralAuthManager", () => {
     expect(await manager.redeemTeamAuthTicket("one-time-ticket", serverId)).toMatchObject({
       email: "person@example.com",
     });
+    expect(await manager.createMobileConnect()).toMatchObject({
+      qrData: expect.stringMatching(
+        /^openbot:\/\/mobile-connect\?api=http%3A%2F%2F192\.168\.1\.143%3A3100&ticket=mobile-ticket_1234567890abcdefghijklmnop$/u,
+      ),
+    });
+    expect(await manager.listMobileConnectedDevices()).toEqual([
+      {
+        sessionId: "11111111-1111-4111-8111-111111111111",
+        name: "Norbert’s iPhone",
+        platform: "ios",
+        connectedAt: 1_000,
+        lastActiveAt: 2_000,
+      },
+    ]);
+    await manager.revokeMobileConnectedDevice("11111111-1111-4111-8111-111111111111");
     await manager.sendTeamInviteEmail({
       email: "alice@example.com",
       serverName: "Studio Mac",
       inviteUrl:
         "https://openbot.run/join?api=https%3A%2F%2Fstudio-mac-k7m4q2pz-host.openbot.run%2F&server=00000000-0000-4000-8000-000000000000&fingerprint=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&invite=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       role: "member",
-    });
-    await expect(
-      manager.provisionTeamTunnel({
-        serverId,
-        serverName: "Studio Mac",
-        apiPort: 43_123,
-      }),
-    ).resolves.toMatchObject({
-      apiUrl: "https://studio-mac-k7m4q2pz-host.openbot.run",
     });
     expect(requests[0]).toMatchObject({ path: "/health/live", authorization: null });
     expect(requests[2]?.body).toEqual({ challengeId: "challenge-1", code: "ABCD-EFGH" });
@@ -110,15 +130,21 @@ describe("CentralAuthManager", () => {
       authorization: null,
     });
     expect(requests[5]).toMatchObject({
-      path: "/v1/team-invitations/email",
+      path: "/v1/mobile-auth/ticket",
       authorization: "Bearer session-secret",
     });
     expect(requests[6]).toMatchObject({
-      path: "/v1/team-tunnels/provision",
+      path: "/v1/mobile-auth/devices",
       authorization: "Bearer session-secret",
-      body: { serverId, serverName: "Studio Mac", apiPort: 43_123 },
     });
-
+    expect(requests[7]).toMatchObject({
+      path: "/v1/mobile-auth/devices/11111111-1111-4111-8111-111111111111",
+      authorization: "Bearer session-secret",
+    });
+    expect(requests[8]).toMatchObject({
+      path: "/v1/team-invitations/email",
+      authorization: "Bearer session-secret",
+    });
     const restored = new CentralAuthManager(options);
     expect(await restored.initialize()).toMatchObject({ status: "signed_in" });
     expect(requests.at(-1)).toMatchObject({
@@ -806,6 +832,12 @@ describe("CentralAuthManager", () => {
     expect(readCentralAuthApiUrl(undefined, "https://api.openbot.run")).toBe("https://api.openbot.run");
     expect(readCentralAuthApiUrl("https://auth.example.com")).toBe("https://auth.example.com");
     expect(() => readCentralAuthApiUrl("http://auth.example.com")).toThrow("HTTPS");
+    expect(readMobileConnectApiUrl("http://192.168.1.143:3100", "https://api.openbot.run")).toBe(
+      "http://192.168.1.143:3100",
+    );
+    expect(() => readMobileConnectApiUrl("http://203.0.113.10:3100", "https://api.openbot.run")).toThrow(
+      "Invalid Mobile Connect payload",
+    );
   });
 });
 

@@ -1,4 +1,4 @@
-import type { AvatarImageInput, CentralAuthUser, UpdateStatus } from "@openbot/contracts/ipc";
+import type { AvatarImageInput, CentralAuthUser, MobileConnectedDevice, UpdateStatus } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
@@ -367,5 +367,234 @@ describe("SettingsModal", () => {
     );
     await fireEvent.click(await screen.findByRole("button", { name: "Remove profile photo" }));
     await waitFor(() => expect(onUpdateAccountAvatar).toHaveBeenLastCalledWith(null));
+  });
+
+  it("generates a one-time QR code from Mobile Connect settings", async () => {
+    const onCreateMobileConnect = vi.fn(async () => ({
+      qrData:
+        "openbot://mobile-connect?api=https%3A%2F%2Fapi.openbot.run&ticket=mobile-ticket_1234567890abcdefghijklmnop",
+      expiresAt: Date.now() + 120_000,
+    }));
+    render(() => (
+      <SettingsModal
+        open
+        onOpenChange={() => undefined}
+        value={DEFAULT_GENERAL_SETTINGS}
+        onValueChange={() => undefined}
+        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
+        updateStatus={idleUpdateStatus}
+        onUpdateAction={vi.fn(async () => undefined)}
+        account={account}
+        onUpdateAccountName={vi.fn(async () => undefined)}
+        onUpdateAccountAvatar={vi.fn(async () => undefined)}
+        onCreateMobileConnect={onCreateMobileConnect}
+      />
+    ));
+
+    await fireEvent.click(screen.getByRole("tab", { name: "Mobile Connect" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Generate QR code" }));
+
+    await waitFor(() => expect(onCreateMobileConnect).toHaveBeenCalledOnce());
+    expect(await screen.findByRole("img", { name: "Mobile Connect sign-in QR code" })).toBeInTheDocument();
+    expect(screen.getByText(/Expires in/u)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Generate new code" })).toBeEnabled();
+    expect(screen.getByRole("heading", { name: "Connected devices" })).toBeInTheDocument();
+    expect(screen.getByText("No connected devices")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Access is revoked immediately. The mobile app may keep showing its current screen until it is reopened or brought back from the background.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("confirms a new mobile connection before collapsing the QR code", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const devices: MobileConnectedDevice[] = [];
+    const onListMobileConnectedDevices = vi.fn(async () => [...devices]);
+    const view = render(() => (
+      <SettingsModal
+        open
+        onOpenChange={() => undefined}
+        value={DEFAULT_GENERAL_SETTINGS}
+        onValueChange={() => undefined}
+        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
+        updateStatus={idleUpdateStatus}
+        onUpdateAction={vi.fn(async () => undefined)}
+        account={account}
+        onUpdateAccountName={vi.fn(async () => undefined)}
+        onUpdateAccountAvatar={vi.fn(async () => undefined)}
+        onCreateMobileConnect={async () => ({
+          qrData: "openbot://mobile-connect?api=https%3A%2F%2Fapi.openbot.run&ticket=mobile-ticket_success_1234567890",
+          expiresAt: Date.now() + 120_000,
+        })}
+        onListMobileConnectedDevices={onListMobileConnectedDevices}
+        onRevokeMobileConnectedDevice={vi.fn(async () => undefined)}
+      />
+    ));
+
+    try {
+      await fireEvent.click(screen.getByRole("tab", { name: "Mobile Connect" }));
+      await vi.advanceTimersByTimeAsync(0);
+      await fireEvent.click(screen.getByRole("button", { name: "Generate QR code" }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(screen.getByRole("img", { name: "Mobile Connect sign-in QR code" })).toBeInTheDocument();
+      const requestsBeforePolling = onListMobileConnectedDevices.mock.calls.length;
+
+      devices.push({
+        sessionId: "22222222-2222-4222-8222-222222222222",
+        name: "Norbert’s iPhone",
+        platform: "ios",
+        connectedAt: Date.now(),
+        lastActiveAt: Date.now(),
+      });
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(onListMobileConnectedDevices).toHaveBeenCalledTimes(requestsBeforePolling);
+      expect(screen.queryByText("Phone connected")).not.toBeInTheDocument();
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(onListMobileConnectedDevices).toHaveBeenCalledTimes(requestsBeforePolling + 1);
+
+      expect(screen.getByText("Phone connected")).toBeInTheDocument();
+      expect(screen.getByText("Norbert’s iPhone is ready to use OpenBot.")).toBeInTheDocument();
+      expect(screen.getByRole("table")).toBeInTheDocument();
+
+      await vi.advanceTimersByTimeAsync(1_200);
+      expect(screen.queryByRole("img", { name: "Mobile Connect sign-in QR code" })).not.toBeInTheDocument();
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("captures the existing device baseline before issuing a Mobile Connect ticket", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const existingDevice: MobileConnectedDevice = {
+      sessionId: "11111111-1111-4111-8111-111111111111",
+      name: "Existing iPhone",
+      platform: "ios",
+      connectedAt: Date.now() - 60_000,
+      lastActiveAt: Date.now(),
+    };
+    let resolveInitialDevices: ((devices: MobileConnectedDevice[]) => void) | undefined;
+    const initialDevices = new Promise<MobileConnectedDevice[]>((resolve) => {
+      resolveInitialDevices = resolve;
+    });
+    const onListMobileConnectedDevices = vi
+      .fn<() => Promise<MobileConnectedDevice[]>>()
+      .mockImplementationOnce(() => initialDevices)
+      .mockImplementationOnce(() => initialDevices)
+      .mockResolvedValue([existingDevice]);
+    const onCreateMobileConnect = vi.fn(async () => ({
+      qrData: "openbot://mobile-connect?api=https%3A%2F%2Fapi.openbot.run&ticket=mobile-ticket_baseline_1234567890",
+      expiresAt: Date.now() + 120_000,
+    }));
+    const view = render(() => (
+      <SettingsModal
+        open
+        onOpenChange={() => undefined}
+        value={DEFAULT_GENERAL_SETTINGS}
+        onValueChange={() => undefined}
+        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
+        updateStatus={idleUpdateStatus}
+        onUpdateAction={vi.fn(async () => undefined)}
+        account={account}
+        onUpdateAccountName={vi.fn(async () => undefined)}
+        onUpdateAccountAvatar={vi.fn(async () => undefined)}
+        onCreateMobileConnect={onCreateMobileConnect}
+        onListMobileConnectedDevices={onListMobileConnectedDevices}
+      />
+    ));
+
+    try {
+      await fireEvent.click(screen.getByRole("tab", { name: "Mobile Connect" }));
+      await fireEvent.click(screen.getByRole("button", { name: "Generate QR code" }));
+      expect(onCreateMobileConnect).not.toHaveBeenCalled();
+
+      resolveInitialDevices?.([existingDevice]);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onCreateMobileConnect).toHaveBeenCalledOnce();
+      expect(screen.getByRole("img", { name: "Mobile Connect sign-in QR code" })).toBeInTheDocument();
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(screen.queryByText("Phone connected")).not.toBeInTheDocument();
+      expect(screen.getByRole("img", { name: "Mobile Connect sign-in QR code" })).toBeInTheDocument();
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("refreshes connected mobile devices once per minute while no QR code is active", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    const onListMobileConnectedDevices = vi.fn(async () => []);
+    const view = render(() => (
+      <SettingsModal
+        open
+        onOpenChange={() => undefined}
+        value={DEFAULT_GENERAL_SETTINGS}
+        onValueChange={() => undefined}
+        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
+        updateStatus={idleUpdateStatus}
+        onUpdateAction={vi.fn(async () => undefined)}
+        account={account}
+        onUpdateAccountName={vi.fn(async () => undefined)}
+        onUpdateAccountAvatar={vi.fn(async () => undefined)}
+        onListMobileConnectedDevices={onListMobileConnectedDevices}
+      />
+    ));
+
+    try {
+      await fireEvent.click(screen.getByRole("tab", { name: "Mobile Connect" }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onListMobileConnectedDevices).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(59_999);
+      expect(onListMobileConnectedDevices).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(onListMobileConnectedDevices).toHaveBeenCalledTimes(2);
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it("lists connected mobile devices and revokes one device session", async () => {
+    const onListMobileConnectedDevices = vi.fn(async () => [
+      {
+        sessionId: "11111111-1111-4111-8111-111111111111",
+        name: "Norbert’s iPhone",
+        platform: "ios" as const,
+        connectedAt: Date.now() - 60_000,
+        lastActiveAt: Date.now(),
+      },
+    ]);
+    const onRevokeMobileConnectedDevice = vi.fn(async () => undefined);
+    render(() => (
+      <SettingsModal
+        open
+        onOpenChange={() => undefined}
+        value={DEFAULT_GENERAL_SETTINGS}
+        onValueChange={() => undefined}
+        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
+        updateStatus={idleUpdateStatus}
+        onUpdateAction={vi.fn(async () => undefined)}
+        account={account}
+        onUpdateAccountName={vi.fn(async () => undefined)}
+        onUpdateAccountAvatar={vi.fn(async () => undefined)}
+        onListMobileConnectedDevices={onListMobileConnectedDevices}
+        onRevokeMobileConnectedDevice={onRevokeMobileConnectedDevice}
+      />
+    ));
+
+    await fireEvent.click(screen.getByRole("tab", { name: "Mobile Connect" }));
+    expect(await screen.findByRole("table")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Disconnect Norbert’s iPhone" }));
+
+    await waitFor(() =>
+      expect(onRevokeMobileConnectedDevice).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111"),
+    );
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.getByText("No connected devices")).toBeInTheDocument();
   });
 });

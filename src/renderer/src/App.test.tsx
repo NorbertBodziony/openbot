@@ -260,14 +260,21 @@ describe("OpenBot connected desktop shell", () => {
           completed: true,
           preferredProvider,
         })),
-        getMacPermissions: vi.fn().mockResolvedValue({
-          screenRecording: "granted",
-          accessibility: "granted",
+        getComputerUseMacSetupState: vi.fn().mockResolvedValue({
+          status: "available",
+          helperName: "Codex Computer Use",
+          helperIconDataUrl: null,
+          message: null,
         }),
-        requestMacPermission: vi.fn().mockResolvedValue({
-          screenRecording: "granted",
-          accessibility: "granted",
+        openComputerUsePermissionSetup: vi.fn().mockResolvedValue({
+          status: "available",
+          helperName: "Codex Computer Use",
+          helperIconDataUrl: null,
+          message: null,
         }),
+        startComputerUseHelperDrag: vi.fn().mockResolvedValue(undefined),
+        revealComputerUseHelper: vi.fn().mockResolvedValue(undefined),
+        closeComputerUsePermissionSetup: vi.fn().mockResolvedValue(undefined),
         openExternal: vi.fn().mockResolvedValue(undefined),
         connectChatGPT: vi.fn().mockResolvedValue({
           phase: "blocked",
@@ -2279,40 +2286,28 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("heading", { name: "Chief" })).not.toBeInTheDocument();
   });
 
-  it("requests optional macOS permissions and shows the new state", async () => {
+  it("opens optional Computer Use setup without blocking onboarding", async () => {
     vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
       completed: false,
       preferredProvider: null,
     });
-    vi.mocked(window.openbot.getMacPermissions).mockResolvedValueOnce({
-      screenRecording: "not-determined",
-      accessibility: "not-determined",
-    });
-    vi.mocked(window.openbot.requestMacPermission).mockResolvedValueOnce({
-      screenRecording: "granted",
-      accessibility: "not-determined",
-    });
     render(() => <App />);
 
     await fireEvent.click(await screen.findByRole("button", { name: "Next" }));
-    const row = (await screen.findByText("Screen Recording")).closest(".onboarding-permission-row");
+    const row = (await screen.findByText("Screen Recording")).closest(".computer-use-row");
     const action = row?.querySelector("button");
     expect(action).not.toBeNull();
     if (!(action instanceof HTMLButtonElement)) throw new Error("Permission action is missing.");
     await fireEvent.click(action);
-    expect(window.openbot.requestMacPermission).toHaveBeenCalledWith("screen-recording");
-    await waitFor(() => expect(action).toHaveTextContent("Allowed"));
+    expect(window.openbot.openComputerUsePermissionSetup).toHaveBeenCalledWith("screen-recording");
+    expect(await screen.findByText("System Settings opened")).toBeInTheDocument();
 
-    vi.mocked(window.openbot.requestMacPermission).mockResolvedValueOnce({
-      screenRecording: "granted",
-      accessibility: "granted",
-    });
-    const accessibilityRow = screen.getByText("Accessibility").closest(".onboarding-permission-row");
+    const accessibilityRow = screen.getByText("Accessibility").closest(".computer-use-row");
     const accessibilityAction = accessibilityRow?.querySelector("button");
     expect(accessibilityAction).not.toBeNull();
     if (!(accessibilityAction instanceof HTMLButtonElement)) throw new Error("Accessibility action is missing.");
     await fireEvent.click(accessibilityAction);
-    await waitFor(() => expect(accessibilityAction).toHaveTextContent("Allowed"));
+    expect(window.openbot.openComputerUsePermissionSetup).toHaveBeenCalledWith("accessibility");
   });
 
   it("hides macOS permissions on other platforms", async () => {
@@ -2330,8 +2325,8 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(await screen.findByRole("heading", { name: "Meet OpenBot" })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    await waitFor(() => expect(screen.queryByText("Optional computer control")).not.toBeInTheDocument());
-    expect(window.openbot.getMacPermissions).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByText("Enable Computer Use")).not.toBeInTheDocument());
+    expect(window.openbot.getComputerUseMacSetupState).not.toHaveBeenCalled();
   });
 
   it("guides signed-out users before enabling chat", async () => {
@@ -2494,7 +2489,7 @@ describe("OpenBot connected desktop shell", () => {
     });
     render(() => <App />);
 
-    expect(await screen.findByText("OpenBot update available")).toBeInTheDocument();
+    expect(await screen.findByText("New update available")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open account actions" }));
     fireEvent.click(await screen.findByRole("button", { name: /Download update/ }));
     await waitFor(() => expect(window.openbot.update.download).toHaveBeenCalledOnce());
@@ -2549,6 +2544,25 @@ describe("OpenBot connected desktop shell", () => {
         failure_code: "download_failed",
       }),
     );
+    expect(await screen.findByRole("button", { name: /Retry update.*Could not check for updates/ })).toBeEnabled();
+  });
+
+  it("keeps the update retry visible when downloading rejects", async () => {
+    vi.mocked(window.openbot.update.getStatus).mockResolvedValueOnce({
+      phase: "available",
+      currentVersion: "0.1.0",
+      availableVersion: "0.2.0",
+      progress: null,
+      checkedAt: null,
+      message: null,
+      errorCode: null,
+    });
+    vi.mocked(window.openbot.update.download).mockRejectedValueOnce(new Error("Could not download update. Try again."));
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Download update/ }));
+
+    expect(await screen.findByRole("button", { name: /Retry update.*Could not download update/ })).toBeEnabled();
   });
 
   it("confirms an installed app version on the next launch", async () => {
@@ -4410,6 +4424,12 @@ describe("OpenBot connected desktop shell", () => {
       },
     });
 
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
+    const browserControl = screen.getByRole("button", { name: "Chief is controlling the browser" });
+    expect(browserControl).toHaveAttribute("aria-expanded", "false");
+    expect(window.openbot.browser.open).not.toHaveBeenCalled();
+
+    await fireEvent.click(browserControl);
     const controlledTab = await screen.findByRole("tab", {
       name: "Local smoke page, controlled by Chief",
     });
@@ -4417,7 +4437,6 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getAllByRole("tab")).toHaveLength(3);
     await fireEvent.keyDown(screen.getByRole("tab", { name: "Third page" }), { key: "Delete" });
     expect(window.openbot.browser.close).toHaveBeenCalledWith("tab-3");
-    expect(screen.queryByRole("button", { name: "Hide browser panel" })).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "New browser tab" }));
     expect(window.openbot.browser.open).toHaveBeenCalledWith({
       url: "https://www.google.com",
@@ -4455,6 +4474,92 @@ describe("OpenBot connected desktop shell", () => {
       expect(screen.queryByRole("tab", { name: "Local smoke page, controlled by Chief" })).not.toBeInTheDocument(),
     );
     expect(screen.getByRole("tab", { name: "Local smoke page" })).toBe(controlledTab);
+  });
+
+  it("coalesces repeated empty-browser opens and does not reopen the panel after a late response", async () => {
+    const openedTab: BrowserTab = {
+      id: "tab-delayed",
+      title: "Delayed page",
+      url: "https://www.google.com",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    let resolveOpen: ((tab: BrowserTab) => void) | undefined;
+    vi.mocked(window.openbot.browser.open).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveOpen = resolve;
+        }),
+    );
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    expect(await screen.findByRole("complementary", { name: "Browser" })).toBeInTheDocument();
+    expect(window.openbot.browser.open).toHaveBeenCalledTimes(1);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Hide computer" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Hide computer" }));
+    expect(window.openbot.browser.open).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
+
+    emitAgentEvent?.({ type: "browser-changed", tabs: [openedTab], activeTabId: openedTab.id });
+    resolveOpen?.(openedTab);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open computer" })).toHaveAttribute("aria-expanded", "false");
+    expect(window.openbot.browser.open).toHaveBeenCalledTimes(1);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    expect(await screen.findByRole("tab", { name: "Delayed page" })).toHaveAttribute("aria-selected", "true");
+    await fireEvent.click(screen.getByRole("button", { name: "Reload page" }));
+    expect(window.openbot.browser.reload).toHaveBeenCalledWith(openedTab.id);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Hide computer" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    expect(await screen.findByRole("tab", { name: "Delayed page" })).toHaveAttribute("aria-selected", "true");
+    expect(window.openbot.browser.open).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows a replacement when a loading browser tab is closed before its open request settles", async () => {
+    const loadingTab: BrowserTab = {
+      id: "tab-loading",
+      title: "Loading…",
+      url: "https://www.google.com/",
+      loading: true,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    let resolveFirstOpen: ((tab: BrowserTab) => void) | undefined;
+    vi.mocked(window.openbot.browser.open).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirstOpen = resolve;
+        }),
+    );
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    expect(window.openbot.browser.open).toHaveBeenCalledTimes(1);
+
+    emitAgentEvent?.({ type: "browser-changed", tabs: [loadingTab], activeTabId: loadingTab.id });
+    const tab = await screen.findByRole("tab", { name: "Loading…" });
+    await fireEvent.keyDown(tab, { key: "Delete" });
+    expect(window.openbot.browser.close).toHaveBeenCalledWith(loadingTab.id);
+
+    emitAgentEvent?.({ type: "browser-changed", tabs: [], activeTabId: null });
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument());
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    expect(window.openbot.browser.open).toHaveBeenCalledTimes(2);
+
+    resolveFirstOpen?.(loadingTab);
   });
 
   it("reveals the requested browser tab and resumes the agent from the takeover card", async () => {

@@ -5,7 +5,18 @@ import { Button, Heading, Text, Toaster, toast } from "../src/components/ui";
 const meta = {
   title: "Foundations/Toast",
   component: Toaster,
-  parameters: { layout: "fullscreen", a11y: { test: "error" } },
+  parameters: {
+    layout: "fullscreen",
+    a11y: { test: "error" },
+    viewport: {
+      options: {
+        toastNarrow: {
+          name: "Toast — 420 × 760",
+          styles: { width: "420px", height: "760px" },
+        },
+      },
+    },
+  },
 } satisfies Meta<typeof Toaster>;
 export default meta;
 type Story = StoryObj<typeof meta>;
@@ -38,19 +49,54 @@ export const Gallery: Story = {
         >
           Default
         </Button>
-        <Button variant="outline" onClick={() => toast.success("Changes saved successfully.")}>
+        <Button
+          variant="outline"
+          onClick={() =>
+            toast.success("Changes saved", {
+              description: "The new settings are already active.",
+            })
+          }
+        >
           Success
         </Button>
-        <Button variant="outline" onClick={() => toast.info("A newer model is available.")}>
+        <Button
+          variant="outline"
+          onClick={() =>
+            toast.info("New model available", {
+              description: "You can select it in model settings.",
+            })
+          }
+        >
           Info
         </Button>
-        <Button variant="outline" onClick={() => toast.warning("This action will interrupt the active turn.")}>
+        <Button
+          variant="outline"
+          onClick={() =>
+            toast.warning("Active turn will stop", {
+              description: "Wait for the turn to finish if you need its result.",
+            })
+          }
+        >
           Warning
         </Button>
-        <Button variant="outline" onClick={() => toast.error("The server could not be reached.")}>
+        <Button
+          variant="outline"
+          onClick={() =>
+            toast.error("Server unavailable", {
+              description: "Check the connection and try again.",
+            })
+          }
+        >
           Error
         </Button>
-        <Button variant="outline" onClick={() => toast.loading("Connecting to the server…")}>
+        <Button
+          variant="outline"
+          onClick={() =>
+            toast.loading("Connecting to server…", {
+              description: "This can take a few seconds.",
+            })
+          }
+        >
           Loading
         </Button>
         <Button
@@ -105,7 +151,7 @@ export const PromiseFlow: Story = {
       const request = new Promise<string>((resolve, reject) => {
         window.setTimeout(() => {
           if (shouldReject) reject(new Error("Connection timed out"));
-          else resolve("Workspace synchronized.");
+          else resolve("Sync complete.");
         }, 1_200);
       });
 
@@ -113,6 +159,7 @@ export const PromiseFlow: Story = {
         loading: "Synchronizing workspace…",
         success: (message: string) => message,
         error: (error: unknown) => (error instanceof Error ? error.message : "Synchronization failed."),
+        description: "The notification updates without changing its position.",
       });
     }
 
@@ -130,6 +177,26 @@ export const PromiseFlow: Story = {
             Reject promise
           </Button>
         </div>
+      </ToastStory>
+    );
+  },
+};
+
+export const NarrowViewport: Story = {
+  globals: { viewport: "toastNarrow" },
+  render: () => {
+    toast.info("New model available", {
+      id: "narrow-toast-preview",
+      description: "Open model settings to review its capabilities before you switch.",
+      duration: 10_000,
+    });
+
+    return (
+      <ToastStory>
+        <Heading as="h1" size="lg">
+          Narrow toast
+        </Heading>
+        <Text tone="secondary">The close control stays visible and the text wraps inside the viewport.</Text>
       </ToastStory>
     );
   },

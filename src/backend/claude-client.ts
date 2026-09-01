@@ -6,6 +6,7 @@ import {
   type CanUseTool,
   createSdkMcpServer,
   getSessionMessages,
+  type ModelInfo,
   type PermissionResult,
   query,
   type SDKUserMessage,
@@ -61,6 +62,7 @@ interface ActiveTurn {
 interface ThreadRuntime {
   id: string;
   config: ThreadConfig;
+  appliedEffort?: string;
   input: AsyncMessageQueue;
   query: ClaudeQuery;
   activeTurn: ActiveTurn | null;
@@ -87,15 +89,14 @@ interface ClaudeStreamMessage {
 
 interface ClaudeQuery extends AsyncIterable<ClaudeStreamMessage> {
   interrupt(): Promise<unknown>;
+  supportedModels(): Promise<ModelInfo[]>;
   setModel(model?: string): Promise<void>;
-  setMaxThinkingTokens(
-    maxThinkingTokens: number | null,
-    thinkingDisplay?: "summarized" | "omitted" | null,
-  ): Promise<void>;
+  applyFlagSettings(settings: { effortLevel?: ClaudeEffort | null }): Promise<void>;
   close(): void;
 }
 
 type QueryFactory = (params: Parameters<typeof query>[0]) => ClaudeQuery;
+type ClaudeEffortCapability = { supported: ClaudeEffort[]; defaultEffort: ClaudeEffort } | null;
 
 export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
   readonly provider: AgentProvider = "claude";
@@ -103,6 +104,8 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
   readonly #createQuery: QueryFactory;
   readonly #threads = new Map<string, ThreadRuntime>();
   readonly #pendingServerRequests = new Map<RequestId, PendingServerRequest>();
+  readonly #modelEffortCapabilities = new Map<string, ClaudeEffortCapability>();
+  readonly #modelSdkValues = new Map<string, string>();
   #running = false;
 
   constructor(cli: ClaudeCliInfo, createQuery: QueryFactory = query) {
@@ -145,7 +148,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       case "account/rateLimits/read":
         return decoder({ rateLimits: null, rateLimitsByLimitId: null });
       case "model/list":
-        return decoder({ data: CLAUDE_MODELS });
+        return decoder({ data: await this.#listModels(_timeoutMs) });
       case "plugin/list":
         return decoder({ marketplaces: [] });
       case "thread/start": {
@@ -206,6 +209,77 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     pending.reject(new Error(error.message));
   }
 
+  async #listModels(timeoutMs?: number): Promise<unknown[]> {
+    const input = new AsyncMessageQueue();
+    const claudeQuery = this.#createQuery({
+      prompt: input,
+      options: {
+        cwd: process.cwd(),
+        pathToClaudeCodeExecutable: this.#cli.executable,
+        settingSources: ["user", "project", "local"],
+        persistSession: false,
+        env: { ...claudeEnvironment(this.#cli), CLAUDE_AGENT_SDK_CLIENT_APP: "openbot/0.1.0" },
+      },
+    });
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const discovery = claudeQuery.supportedModels();
+      const discovered =
+        timeoutMs === undefined
+          ? await discovery
+          : await Promise.race([
+              discovery,
+              new Promise<ModelInfo[]>((_, reject) => {
+                timeout = setTimeout(() => {
+                  input.close();
+                  claudeQuery.close();
+                  reject(new Error("Claude request timed out: model/list"));
+                }, timeoutMs);
+              }),
+            ]);
+      const models = new Map<string, (typeof discovered)[number]>();
+      for (const model of discovered) {
+        const id = model.resolvedModel?.trim() || model.value.trim();
+        if (!id || models.has(id)) continue;
+        models.set(id, model);
+      }
+      const effortCapabilities = new Map<string, ClaudeEffortCapability>();
+      const sdkValues = new Map<string, string>();
+      const result = [...models.entries()].map(([id, model]) => {
+        const discoveredReasoningEfforts = [
+          ...new Set((model.supportedEffortLevels ?? []).filter((effort) => isOneOf(CLAUDE_EFFORTS, effort))),
+        ];
+        const supportedReasoningEfforts =
+          discoveredReasoningEfforts.length > 0 ? discoveredReasoningEfforts : ["medium" as const];
+        const defaultReasoningEffort = supportedReasoningEfforts.includes("high")
+          ? "high"
+          : (supportedReasoningEfforts[0] ?? "medium");
+        effortCapabilities.set(
+          id,
+          model.supportsEffort === false
+            ? null
+            : { supported: supportedReasoningEfforts, defaultEffort: defaultReasoningEffort },
+        );
+        sdkValues.set(id, model.value.trim() || id);
+        return {
+          model: id,
+          displayName: model.displayName,
+          defaultReasoningEffort,
+          supportedReasoningEfforts: supportedReasoningEfforts.map((reasoningEffort) => ({ reasoningEffort })),
+        };
+      });
+      this.#modelEffortCapabilities.clear();
+      this.#modelSdkValues.clear();
+      for (const [id, capability] of effortCapabilities) this.#modelEffortCapabilities.set(id, capability);
+      for (const [id, value] of sdkValues) this.#modelSdkValues.set(id, value);
+      return result;
+    } finally {
+      if (timeout) clearTimeout(timeout);
+      input.close();
+      claudeQuery.close();
+    }
+  }
+
   async #readAccount(): Promise<AccountReadResult> {
     try {
       const { stdout } = await execFileAsync(this.#cli.executable, ["auth", "status", "--json"], {
@@ -233,6 +307,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
 
   async #startThread(threadId: string, config: ThreadConfig, resume: boolean): Promise<void> {
     const input = new AsyncMessageQueue();
+    const appliedEffort = this.#resolveEffort(config.model, config.effort);
     const canUseTool: CanUseTool = async (toolName, toolInput, options) => {
       if (toolName !== "AskUserQuestion") {
         return { behavior: "allow", updatedInput: toolInput } satisfies PermissionResult;
@@ -245,8 +320,8 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       options: {
         cwd: config.cwd,
         pathToClaudeCodeExecutable: this.#cli.executable,
-        ...(config.model ? { model: normalizeClaudeModel(config.model) } : {}),
-        ...(config.effort ? { effort: normalizeClaudeEffort(config.effort) } : {}),
+        ...(config.model ? { model: this.#sdkModel(config.model) } : {}),
+        ...(appliedEffort ? { effort: appliedEffort } : {}),
         ...(resume ? { resume: threadId } : { sessionId: threadId }),
         systemPrompt: {
           type: "preset",
@@ -266,6 +341,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     const runtime: ThreadRuntime = {
       id: threadId,
       config,
+      appliedEffort,
       input,
       query: claudeQuery,
       activeTurn: null,
@@ -281,15 +357,22 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     if (runtime.activeTurn) throw new Error("The Claude thread already has an active turn.");
 
     const requestedModel = getString(params, "model");
-    if (requestedModel && requestedModel !== runtime.config.model) {
-      await runtime.query.setModel(normalizeClaudeModel(requestedModel));
+    const modelChanged = Boolean(requestedModel && requestedModel !== runtime.config.model);
+    if (requestedModel && modelChanged) {
+      await runtime.query.setModel(this.#sdkModel(requestedModel));
       runtime.config.model = requestedModel;
     }
     const requestedEffort = getString(params, "effort");
-    if (requestedEffort && requestedEffort !== runtime.config.effort) {
-      await runtime.query.setMaxThinkingTokens(thinkingTokens(requestedEffort));
-      runtime.config.effort = requestedEffort;
+    const selectedEffort = requestedEffort ?? runtime.config.effort;
+    const appliedEffort = this.#resolveEffort(runtime.config.model, selectedEffort);
+    if (!appliedEffort) {
+      if (runtime.appliedEffort !== undefined) await runtime.query.applyFlagSettings({ effortLevel: null });
+      runtime.appliedEffort = undefined;
+    } else if (modelChanged || appliedEffort !== runtime.appliedEffort) {
+      await runtime.query.applyFlagSettings({ effortLevel: appliedEffort });
+      runtime.appliedEffort = appliedEffort;
     }
+    if (requestedEffort) runtime.config.effort = requestedEffort;
 
     const clientId = getString(params, "clientUserMessageId");
     const turnId = clientId && isUuid(clientId) ? clientId : randomUUID();
@@ -671,6 +754,20 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     if (!runtime) throw new Error(`Unknown Claude thread: ${threadId}`);
     return runtime;
   }
+
+  #resolveEffort(model: string | undefined, effort: string | undefined): ClaudeEffort | undefined {
+    if (!effort) return undefined;
+    const normalized = normalizeClaudeEffort(effort);
+    if (!model) return normalized;
+    const capability = this.#modelEffortCapabilities.get(model);
+    if (capability === null) return undefined;
+    if (!capability || capability.supported.includes(normalized)) return normalized;
+    return capability.defaultEffort;
+  }
+
+  #sdkModel(model: string): string {
+    return this.#modelSdkValues.get(model) ?? normalizeClaudeModel(model);
+  }
 }
 
 function claudeEnvironment(cli: ClaudeCliInfo): NodeJS.ProcessEnv {
@@ -708,33 +805,6 @@ class AsyncMessageQueue implements AsyncIterable<SDKUserMessage> {
     };
   }
 }
-
-const CLAUDE_MODELS = [
-  {
-    model: "claude-fable-5",
-    displayName: "Claude Fable 5",
-    defaultReasoningEffort: "high",
-    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"].map((reasoningEffort) => ({
-      reasoningEffort,
-    })),
-  },
-  {
-    model: "claude-opus-5",
-    displayName: "Claude Opus 5",
-    defaultReasoningEffort: "high",
-    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"].map((reasoningEffort) => ({
-      reasoningEffort,
-    })),
-  },
-  {
-    model: "claude-sonnet-5",
-    displayName: "Claude Sonnet 5",
-    defaultReasoningEffort: "high",
-    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"].map((reasoningEffort) => ({
-      reasoningEffort,
-    })),
-  },
-];
 
 function readThreadConfig(params: unknown): ThreadConfig {
   const roots =
@@ -796,10 +866,6 @@ function normalizeClaudeModel(model: string): string {
 
 function normalizeClaudeEffort(effort: string): ClaudeEffort {
   return isOneOf(CLAUDE_EFFORTS, effort) ? effort : "high";
-}
-
-function thinkingTokens(effort: string): number {
-  return { low: 2_000, medium: 8_000, high: 16_000, xhigh: 32_000, max: 64_000 }[effort] ?? 16_000;
 }
 
 function isUuid(value: string): value is UUID {
