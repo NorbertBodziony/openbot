@@ -10,9 +10,13 @@ import type {
   ConversationPageAnchor,
   ConversationSearchPage,
   ConversationSnapshot,
+  HostedSiteConversationEventAction,
+  HostedSiteConversationEventDetails,
+  HostedSiteConversationEventStatus,
 } from "@openbot/contracts/ipc";
 import {
   HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX,
+  hostedSiteConversationEvent,
   isAgentProvider,
   isConversationMessage,
   providerForLegacyModel,
@@ -49,6 +53,18 @@ export interface StoredThreadSummary {
   throughMessageId: string | null;
   text: string;
   estimatedTokens: number;
+  createdAt: string;
+}
+
+export interface PendingHostedSiteTerminalEvent {
+  botId: string;
+  threadId: string;
+  turnId: string;
+  operationId: string;
+  action: HostedSiteConversationEventAction;
+  status: Exclude<HostedSiteConversationEventStatus, "running">;
+  details: HostedSiteConversationEventDetails;
+  markerCommandId: string;
   createdAt: string;
 }
 
@@ -239,6 +255,40 @@ export class OpenBotDatabase {
         .get(commandId),
     );
     return receipt ? JSON.parse(receipt.result_json) : undefined;
+  }
+
+  recordPendingHostedSiteTerminalEvent(event: PendingHostedSiteTerminalEvent): void {
+    validatePendingHostedSiteTerminalEvent(event);
+    this.dispatch(
+      `hosted-site-terminal-pending:${event.botId}:${event.operationId}:${event.status}`,
+      [
+        {
+          aggregateType: "thread",
+          aggregateId: event.threadId,
+          eventType: "hosted-site.terminal-pending",
+          occurredAt: event.createdAt,
+          payload: event,
+        },
+      ],
+      () => null,
+    );
+  }
+
+  pendingHostedSiteTerminalEvents(): PendingHostedSiteTerminalEvent[] {
+    const pending: PendingHostedSiteTerminalEvent[] = [];
+    for (const row of databaseRows(
+      this.connection
+        .prepare(
+          `SELECT payload_json FROM orchestration_events
+           WHERE event_type = 'hosted-site.terminal-pending'
+           ORDER BY sequence`,
+        )
+        .all(),
+    )) {
+      const event = pendingHostedSiteTerminalEventValue(JSON.parse(requiredStringColumn(row, "payload_json")));
+      if (event && this.commandResult(event.markerCommandId) === undefined) pending.push(event);
+    }
+    return pending;
   }
 
   listAgents(): BotSummary[] {
@@ -2027,6 +2077,62 @@ function deleteOrphanReceipts(db: DatabaseSync): void {
       SELECT 1 FROM orchestration_events
       WHERE orchestration_events.command_id = orchestration_command_receipts.command_id
     )`);
+}
+
+function validatePendingHostedSiteTerminalEvent(event: PendingHostedSiteTerminalEvent): void {
+  if (!pendingHostedSiteTerminalEventValue(event)) {
+    throw new Error("The pending hosted site terminal event is invalid.");
+  }
+}
+
+function pendingHostedSiteTerminalEventValue(value: unknown): PendingHostedSiteTerminalEvent | null {
+  if (
+    !isDynamicRecord(value) ||
+    !isString(value.botId) ||
+    !value.botId ||
+    !isString(value.threadId) ||
+    !value.threadId ||
+    !isString(value.turnId) ||
+    !value.turnId ||
+    !isString(value.operationId) ||
+    (value.action !== "publish" && value.action !== "replace" && value.action !== "delete") ||
+    (value.status !== "succeeded" &&
+      value.status !== "failed" &&
+      value.status !== "interrupted" &&
+      value.status !== "cancelled") ||
+    !isDynamicRecord(value.details) ||
+    !isString(value.markerCommandId) ||
+    !isString(value.createdAt)
+  ) {
+    return null;
+  }
+  const marker = hostedSiteConversationEvent({
+    id: value.markerCommandId,
+    author: "system",
+    source: "system",
+    text: JSON.stringify(value.details),
+    createdAt: value.createdAt,
+    status: "completed",
+    itemType: `hosted-site-event:${value.action}:${value.status}:${value.operationId}`,
+  });
+  if (!marker || marker.status === "running") return null;
+  if (value.markerCommandId !== `hosted-site-event:${value.botId}:${value.operationId}:${value.status}`) return null;
+  return {
+    botId: value.botId,
+    threadId: value.threadId,
+    turnId: value.turnId,
+    operationId: marker.operationId,
+    action: marker.action,
+    status: marker.status,
+    details: {
+      siteId: marker.siteId,
+      title: marker.title,
+      hostname: marker.hostname,
+      url: marker.url,
+    },
+    markerCommandId: value.markerCommandId,
+    createdAt: value.createdAt,
+  };
 }
 
 export function providerForStoredModel(model: BotSummary["model"]): AgentProviderId {

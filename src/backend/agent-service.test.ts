@@ -1300,6 +1300,262 @@ describe.sequential("AgentService", () => {
     expect(markers[0]).toMatchObject({ title: "Updated site", hostname: hostedSite.hostname });
   });
 
+  it("keeps a successful hosted site result when the provider response cannot be delivered", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    const hostedSite = {
+      id: "site-response-failure",
+      hostname: "response-failure-site-23456789ab.openbot.site",
+      url: "https://response-failure-site-23456789ab.openbot.site",
+      title: "Response failure site",
+      description: "A public test site.",
+      framework: "vanilla" as const,
+      status: "active" as const,
+      fileCount: 1,
+      size: 20,
+      expiresAt: "2026-09-30T12:00:00.000Z",
+      updatedAt: "2026-08-31T12:00:00.000Z",
+    };
+    const hostedSites = {
+      list: vi.fn(async () => [hostedSite]),
+      publish: vi.fn(async () => hostedSite),
+      replace: vi.fn(async () => hostedSite),
+      delete: vi.fn(async () => undefined),
+    };
+    service = new AgentService(
+      store,
+      mailbox,
+      fakeBrowser(),
+      30_000,
+      "codex",
+      (provider) => {
+        const client = new FakeAgentClient(provider, "", false);
+        clients.set(provider, client);
+        return client;
+      },
+      undefined,
+      null,
+      null,
+      async () => undefined,
+      hostedSites,
+    );
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    await service.sendMessage({ botId: bot.id, text: "Publish my site." });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
+    const turnId = events.find((event) => event.type === "turn-started")?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The hosted site response test turn did not start.");
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "publish-site-response-failure",
+      params: {
+        threadId,
+        turnId,
+        callId: "publish-site-response-failure",
+        namespace: "openbot",
+        tool: "publish_site",
+        arguments: {
+          sourcePath: bot.workspacePath,
+          title: hostedSite.title,
+          description: hostedSite.description,
+        },
+      },
+    });
+    await waitFor(() => service?.getRuntimeSnapshot().pendingApprovals.length === 1);
+    client.responseError = new Error("The provider connection closed.");
+    await service.respondToApproval({ requestId: "publish-site-response-failure", decision: "accept" });
+
+    expect(hostedSites.publish).toHaveBeenCalledTimes(1);
+    expect(
+      (await service.readConversation(bot.id)).messages
+        .flatMap((message) => hostedSiteConversationEvent(message) ?? [])
+        .map((marker) => marker.status),
+    ).toEqual(["running", "succeeded"]);
+  });
+
+  it("retries a durable hosted site result after restart without repeating the deploy", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    const hostedSite = {
+      id: "site-durable-result",
+      hostname: "durable-result-site-23456789ab.openbot.site",
+      url: "https://durable-result-site-23456789ab.openbot.site",
+      title: "Durable result site",
+      description: "A public test site.",
+      framework: "vanilla" as const,
+      status: "active" as const,
+      fileCount: 1,
+      size: 20,
+      expiresAt: "2026-09-30T12:00:00.000Z",
+      updatedAt: "2026-08-31T12:00:00.000Z",
+    };
+    const hostedSites = {
+      list: vi.fn(async () => [hostedSite]),
+      publish: vi.fn(async () => hostedSite),
+      replace: vi.fn(async () => hostedSite),
+      delete: vi.fn(async () => undefined),
+    };
+    service = new AgentService(
+      store,
+      mailbox,
+      fakeBrowser(),
+      30_000,
+      "codex",
+      (provider) => {
+        const client = new FakeAgentClient(provider, "", false);
+        clients.set(provider, client);
+        return client;
+      },
+      undefined,
+      null,
+      null,
+      async () => undefined,
+      hostedSites,
+    );
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    await service.sendMessage({ botId: bot.id, text: "Publish my site." });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
+    const turnId = events.find((event) => event.type === "turn-started")?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The hosted site retry test turn did not start.");
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "publish-site-durable-result",
+      params: {
+        threadId,
+        turnId,
+        callId: "publish-site-durable-result",
+        namespace: "openbot",
+        tool: "publish_site",
+        arguments: {
+          sourcePath: bot.workspacePath,
+          title: hostedSite.title,
+          description: hostedSite.description,
+        },
+      },
+    });
+    await waitFor(() => service?.getRuntimeSnapshot().pendingApprovals.length === 1);
+    const appendConversationMessage = store.database.appendConversationMessage.bind(store.database);
+    const appendSpy = vi.spyOn(store.database, "appendConversationMessage").mockImplementation((input) => {
+      if (input.message.itemType?.includes(":succeeded:")) {
+        throw new Error("The terminal marker store is temporarily unavailable.");
+      }
+      return appendConversationMessage(input);
+    });
+    await service.respondToApproval({ requestId: "publish-site-durable-result", decision: "accept" });
+
+    expect(hostedSites.publish).toHaveBeenCalledTimes(1);
+    expect(
+      (await service.readConversation(bot.id)).messages
+        .flatMap((message) => hostedSiteConversationEvent(message) ?? [])
+        .map((marker) => marker.status),
+    ).toEqual(["running"]);
+    expect(store.database.pendingHostedSiteTerminalEvents()).toEqual([
+      expect.objectContaining({ action: "publish", status: "succeeded" }),
+    ]);
+
+    appendSpy.mockRestore();
+    await service.stop();
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+
+    expect(hostedSites.publish).toHaveBeenCalledTimes(1);
+    expect(
+      (await service.readConversation(bot.id)).messages
+        .flatMap((message) => hostedSiteConversationEvent(message) ?? [])
+        .map((marker) => marker.status),
+    ).toEqual(["running", "succeeded"]);
+    expect(store.database.pendingHostedSiteTerminalEvents()).toEqual([]);
+  });
+
+  it("normalizes legacy hosted site metadata without blocking deletion", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    const hostedSite = {
+      id: "legacy-site",
+      hostname: "legacy.example.com",
+      url: "http://legacy.example.com",
+      title: "",
+      description: "A legacy site.",
+      framework: "vanilla" as const,
+      status: "active" as const,
+      fileCount: 1,
+      size: 20,
+      expiresAt: "2026-09-30T12:00:00.000Z",
+      updatedAt: "2026-08-31T12:00:00.000Z",
+    };
+    const hostedSites = {
+      list: vi.fn(async () => [hostedSite]),
+      publish: vi.fn(async () => hostedSite),
+      replace: vi.fn(async () => hostedSite),
+      delete: vi.fn(async () => undefined),
+    };
+    service = new AgentService(
+      store,
+      mailbox,
+      fakeBrowser(),
+      30_000,
+      "codex",
+      (provider) => {
+        const client = new FakeAgentClient(provider, "", false);
+        clients.set(provider, client);
+        return client;
+      },
+      undefined,
+      null,
+      null,
+      async () => undefined,
+      hostedSites,
+    );
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    await service.sendMessage({ botId: bot.id, text: "Delete my old site." });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
+    const turnId = events.find((event) => event.type === "turn-started")?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The legacy hosted site test turn did not start.");
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "delete-legacy-site",
+      params: {
+        threadId,
+        turnId,
+        callId: "delete-legacy-site",
+        namespace: "openbot",
+        tool: "delete_site",
+        arguments: { siteId: hostedSite.id },
+      },
+    });
+    await waitFor(() => service?.getRuntimeSnapshot().pendingApprovals.length === 1);
+    await service.respondToApproval({ requestId: "delete-legacy-site", decision: "accept" });
+
+    expect(hostedSites.delete).toHaveBeenCalledTimes(1);
+    const markers = (await service.readConversation(bot.id)).messages.flatMap(
+      (message) => hostedSiteConversationEvent(message) ?? [],
+    );
+    expect(markers.map((marker) => marker.status)).toEqual(["running", "succeeded"]);
+    expect(markers[0]).toMatchObject({
+      siteId: hostedSite.id,
+      title: hostedSite.hostname,
+      hostname: null,
+      url: null,
+    });
+  });
+
   it("interrupts an unfinished hosted site marker after restart", async () => {
     const { store, mailbox } = stores();
     service = new AgentService(store, mailbox, fakeBrowser());

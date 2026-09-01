@@ -450,6 +450,25 @@ describe("hosted site conversation events", () => {
     }
   });
 
+  it("keeps a terminal marker structured when legacy display metadata is unavailable", () => {
+    const details = { siteId: "site-1", title: "Hosted site", hostname: null, url: null };
+    const message = {
+      id: "legacy-delete",
+      author: "system",
+      source: "system",
+      text: hostedSiteConversationEventText(details),
+      createdAt: "2026-09-01T12:00:00.000Z",
+      status: "completed",
+      itemType: hostedSiteConversationEventItemType("delete", "succeeded", "operation-legacy"),
+    } as const;
+
+    expect(hostedSiteConversationEvent(message)).toMatchObject({
+      action: "delete",
+      status: "succeeded",
+      ...details,
+    });
+  });
+
   it("rejects malformed metadata, invalid details, and unsafe links", () => {
     expect(parseHostedSiteConversationEventItemType("hosted-site-event:deploy:running:operation-1")).toBeNull();
     expect(parseHostedSiteConversationEventItemType("hosted-site-event:publish:queued:operation-1")).toBeNull();

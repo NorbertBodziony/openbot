@@ -101,6 +101,34 @@ describe("OpenBotDatabase", () => {
     database.close();
   });
 
+  it("keeps a terminal hosted-site outcome pending until its marker command is durable", async () => {
+    const database = await createDatabase();
+    const pending = {
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-1",
+      operationId: "operation-1",
+      action: "publish" as const,
+      status: "succeeded" as const,
+      details: {
+        siteId: "site-1",
+        title: "Launch page",
+        hostname: "launch-page-23456789ab.openbot.site",
+        url: "https://launch-page-23456789ab.openbot.site",
+      },
+      markerCommandId: "hosted-site-event:chief:operation-1:succeeded",
+      createdAt: "2026-09-01T12:00:00.000Z",
+    };
+
+    database.recordPendingHostedSiteTerminalEvent(pending);
+    database.recordPendingHostedSiteTerminalEvent(pending);
+    expect(database.pendingHostedSiteTerminalEvents()).toEqual([pending]);
+
+    database.dispatch(pending.markerCommandId, [], () => ({ recorded: true }));
+    expect(database.pendingHostedSiteTerminalEvents()).toEqual([]);
+    database.close();
+  });
+
   it("returns the durable command receipt without running a command twice", async () => {
     const database = await createDatabase();
     let projections = 0;

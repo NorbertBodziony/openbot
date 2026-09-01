@@ -840,7 +840,7 @@ function hostedSiteDetailsMatchEvent(
   if (event.action === "publish" && event.status !== "succeeded") {
     return details.siteId === null && details.hostname === null && details.url === null;
   }
-  return details.siteId !== null && details.hostname !== null && details.url !== null;
+  return details.siteId !== null;
 }
 
 function isHostedSiteHostname(value: string): boolean {

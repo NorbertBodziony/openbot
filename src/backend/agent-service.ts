@@ -113,6 +113,7 @@ import {
   sortConversationMessages,
 } from "./conversation-snapshots";
 import type { DeliveryContext, GeneratedAttachmentSource, MailboxStore } from "./mailbox-store";
+import type { PendingHostedSiteTerminalEvent } from "./openbot-database";
 import { OPENBOT_DYNAMIC_TOOLS } from "./openbot-tools";
 import {
   type AccountLoginCompletedResult,
@@ -418,10 +419,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #pendingDuplicateReleases = new Map<string, () => void>();
   readonly #pendingDeltas = new Map<string, PendingDelta>();
   readonly #pendingMemoryMutations = new Map<string, PendingMemoryMutation[]>();
+  readonly #pendingHostedSiteTerminalEvents = new Map<string, PendingHostedSiteTerminalEvent>();
   readonly #responseAttachmentCommands = new Map<string, Promise<OpenBotToolResponse>>();
   readonly #memoryEpochs = new Map<string, number>();
   #duplicationCommitQueue: Promise<void> = Promise.resolve();
   #routineTimer: NodeJS.Timeout | null = null;
+  #hostedSiteTerminalRetryTimer: NodeJS.Timeout | null = null;
   #status: AgentStatus = structuredClone(INITIAL_STATUS);
   readonly #clients = new Map<AgentProvider, AgentClient>();
   readonly #cli = new Map<AgentProvider, AgentCliInfo>();
@@ -1074,6 +1077,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await this.#store.initialize();
     await this.#mailbox.initialize();
     this.#recoverPersistedTurns();
+    this.#restorePendingHostedSiteTerminalEvents();
     this.#reconcileHostedSiteEventsAfterRestart();
     this.#routines.skipMissed(new Date());
     this.#initialized = true;
@@ -1188,6 +1192,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#restartTimer = null;
     if (this.#routineTimer) clearTimeout(this.#routineTimer);
     this.#routineTimer = null;
+    if (this.#hostedSiteTerminalRetryTimer) clearTimeout(this.#hostedSiteTerminalRetryTimer);
+    this.#hostedSiteTerminalRetryTimer = null;
+    this.#pendingHostedSiteTerminalEvents.clear();
     this.#clearCompactionRuntime();
     for (const pending of this.#pendingDeltas.values()) {
       if (pending.timer) clearTimeout(pending.timer);
@@ -1493,19 +1500,27 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.#pendingApprovals.delete(input.requestId);
       const mutation = pending.hostedSiteMutation;
       if (input.decision === "decline") {
-        this.#tryRecordHostedSiteEvent(mutation, "cancelled", mutation.eventDetails);
-        pending.client.respondError(pending.id, {
-          code: -32001,
-          message: "The user declined this hosted site change.",
-        });
+        this.#recordHostedSiteTerminalEvent(mutation, "cancelled", mutation.eventDetails);
+        try {
+          pending.client.respondError(pending.id, {
+            code: -32001,
+            message: "The user declined this hosted site change.",
+          });
+        } catch (error) {
+          this.#emitError("server_response_failed", error, pending.approval.botId);
+        }
       } else {
         try {
           this.#recordHostedSiteEvent(mutation, "running", mutation.eventDetails);
         } catch (error) {
-          pending.client.respondError(pending.id, {
-            code: -32603,
-            message: "The hosted site change could not be recorded.",
-          });
+          try {
+            pending.client.respondError(pending.id, {
+              code: -32603,
+              message: "The hosted site change could not be recorded.",
+            });
+          } catch (responseError) {
+            this.#emitError("server_response_failed", responseError, pending.approval.botId);
+          }
           this.#emitError("hosted_site_marker_persistence_failed", error, pending.approval.botId);
           this.#emit({
             type: "agent-input-resolved",
@@ -1516,14 +1531,25 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           this.#emitRuntimeSnapshot();
           return;
         }
+        let result: HostedSiteMutationResult | null = null;
         try {
-          const result = await this.#executeHostedSiteMutation(mutation);
-          this.#tryRecordHostedSiteEvent(mutation, "succeeded", result.eventDetails);
-          pending.client.respond(pending.id, result.response);
+          result = await this.#executeHostedSiteMutation(mutation);
         } catch (error) {
-          this.#tryRecordHostedSiteEvent(mutation, "failed", mutation.eventDetails);
-          pending.client.respondError(pending.id, { code: -32603, message: String(error) });
+          this.#recordHostedSiteTerminalEvent(mutation, "failed", mutation.eventDetails);
+          try {
+            pending.client.respondError(pending.id, { code: -32603, message: String(error) });
+          } catch (responseError) {
+            this.#emitError("server_response_failed", responseError, pending.approval.botId);
+          }
           this.#emitError("server_request_failed", error, pending.approval.botId);
+        }
+        if (result) {
+          this.#recordHostedSiteTerminalEvent(mutation, "succeeded", result.eventDetails);
+          try {
+            pending.client.respond(pending.id, result.response);
+          } catch (error) {
+            this.#emitError("server_response_failed", error, pending.approval.botId);
+          }
         }
       }
     } else if (pending.approval.kind === "permissions") {
@@ -4096,7 +4122,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return {
         reason: `Delete ${site.hostname} from openbot.site.`,
         permissions: { fileSystem: { read: [], write: [] }, network: true },
-        eventDetails: hostedSiteEventDetails(site),
+        eventDetails: hostedSiteEventDetails(site, siteId),
       };
     }
 
@@ -4119,7 +4145,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return {
       reason: `Replace ${site.hostname} with ${JSON.stringify(title)}.`,
       permissions,
-      eventDetails: { ...hostedSiteEventDetails(site), title },
+      eventDetails: { ...hostedSiteEventDetails(site, siteId), title },
     };
   }
 
@@ -4153,14 +4179,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ...(isBoolean(args.spaFallback) ? { spaFallback: args.spaFallback } : {}),
     };
     const roots = [bot.workspacePath, this.#store.sharedRoot];
-    const site =
-      context.action === "publish"
-        ? await this.#requireHostedSites().publish(input, roots)
-        : await this.#requireHostedSites().replace(
-            { ...input, siteId: siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier) },
-            roots,
-          );
-    return { response: openBotToolResult(site), eventDetails: hostedSiteEventDetails(site) };
+    const siteId =
+      context.action === "publish" ? undefined : siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier);
+    const site = siteId
+      ? await this.#requireHostedSites().replace({ ...input, siteId }, roots)
+      : await this.#requireHostedSites().publish(input, roots);
+    return { response: openBotToolResult(site), eventDetails: hostedSiteEventDetails(site, siteId) };
   }
 
   #surfaceLegacyApproval(client: AgentClient, request: AppServerRequest): void {
@@ -4810,8 +4834,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     context: HostedSiteMutationContext,
     status: HostedSiteConversationEventStatus,
     details: HostedSiteConversationEventDetails,
+    createdAt = new Date().toISOString(),
   ): void {
-    const createdAt = new Date().toISOString();
     let failure: unknown;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
@@ -4828,14 +4852,81 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     context: HostedSiteMutationContext,
     status: HostedSiteConversationEventStatus,
     details: HostedSiteConversationEventDetails,
+    createdAt?: string,
   ): boolean {
     try {
-      this.#recordHostedSiteEvent(context, status, details);
+      this.#recordHostedSiteEvent(context, status, details, createdAt);
       return true;
     } catch (error) {
       this.#emitError("hosted_site_marker_persistence_failed", error, context.botId);
       return false;
     }
+  }
+
+  #recordHostedSiteTerminalEvent(
+    context: HostedSiteMutationContext,
+    status: Exclude<HostedSiteConversationEventStatus, "running">,
+    details: HostedSiteConversationEventDetails,
+  ): void {
+    const event: PendingHostedSiteTerminalEvent = {
+      botId: context.botId,
+      threadId: context.params.threadId,
+      turnId: context.params.turnId,
+      operationId: context.operationId,
+      action: context.action,
+      status,
+      details,
+      markerCommandId: hostedSiteEventCommandId(context.botId, context.operationId, status),
+      createdAt: new Date().toISOString(),
+    };
+    hostedSiteConversationEventItemType(event.action, event.status, event.operationId);
+    hostedSiteConversationEventText(event.details);
+    this.#pendingHostedSiteTerminalEvents.set(event.markerCommandId, event);
+    this.#flushPendingHostedSiteTerminalEvents();
+  }
+
+  #restorePendingHostedSiteTerminalEvents(): void {
+    for (const event of this.#store.database.pendingHostedSiteTerminalEvents()) {
+      this.#pendingHostedSiteTerminalEvents.set(event.markerCommandId, event);
+    }
+    this.#flushPendingHostedSiteTerminalEvents();
+  }
+
+  #flushPendingHostedSiteTerminalEvents(): void {
+    for (const [key, event] of this.#pendingHostedSiteTerminalEvents) {
+      try {
+        this.#store.database.recordPendingHostedSiteTerminalEvent(event);
+      } catch (error) {
+        this.#emitError("hosted_site_marker_persistence_failed", error, event.botId);
+      }
+      const context: HostedSiteMutationContext = {
+        botId: event.botId,
+        operationId: event.operationId,
+        action: event.action,
+        params: {
+          threadId: event.threadId,
+          turnId: event.turnId,
+          callId: event.operationId,
+          namespace: "openbot",
+          tool: hostedSiteTool(event.action),
+          arguments: {},
+        },
+        eventDetails: event.details,
+      };
+      if (this.#tryRecordHostedSiteEvent(context, event.status, event.details, event.createdAt)) {
+        this.#pendingHostedSiteTerminalEvents.delete(key);
+      }
+    }
+    if (this.#pendingHostedSiteTerminalEvents.size > 0) this.#scheduleHostedSiteTerminalRetry();
+  }
+
+  #scheduleHostedSiteTerminalRetry(): void {
+    if (this.#hostedSiteTerminalRetryTimer || this.#stopping) return;
+    this.#hostedSiteTerminalRetryTimer = setTimeout(() => {
+      this.#hostedSiteTerminalRetryTimer = null;
+      this.#flushPendingHostedSiteTerminalEvents();
+    }, 1_000);
+    this.#hostedSiteTerminalRetryTimer.unref?.();
   }
 
   #appendHostedSiteEvent(
@@ -4852,7 +4943,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (ownsTransaction) database.connection.exec("BEGIN IMMEDIATE");
     try {
       const threadId = this.#store.ensureThreadIdNow(context.botId);
-      const messageId = `hosted-site-event:${context.operationId}:${status}`;
+      const messageId = hostedSiteEventMessageId(context.operationId, status);
       const current = structuredClone(this.#ensureSnapshot(context.botId, threadId));
       current.threadId = threadId;
       if (!current.messages.some((message) => message.id === messageId)) {
@@ -4874,7 +4965,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           activeTurnId: current.activeTurnId,
           message,
           eventType: `hosted-site.${context.action}-${status}`,
-          commandId: `hosted-site-event:${context.operationId}:${status}`,
+          commandId: hostedSiteEventCommandId(context.botId, context.operationId, status),
           detail: { action: context.action, status, operationId: context.operationId, siteId: details.siteId },
         });
       }
@@ -4906,6 +4997,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       for (const { event, turnId } of latestByOperation.values()) {
         if (event.status !== "running") continue;
+        if (
+          [...this.#pendingHostedSiteTerminalEvents.values()].some(
+            (pending) => pending.botId === bot.id && pending.operationId === event.operationId,
+          )
+        ) {
+          continue;
+        }
         const context: HostedSiteMutationContext = {
           botId: bot.id,
           operationId: event.operationId,
@@ -4925,7 +5023,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             url: event.url,
           },
         };
-        this.#tryRecordHostedSiteEvent(context, "interrupted", context.eventDetails);
+        this.#recordHostedSiteTerminalEvent(context, "interrupted", context.eventDetails);
       }
     }
   }
@@ -5822,11 +5920,58 @@ function hostedSiteTool(action: HostedSiteConversationEventAction): HostedSiteMu
   return "delete_site";
 }
 
-function hostedSiteEventDetails(site: HostedSiteSummary): HostedSiteConversationEventDetails {
-  return {
-    siteId: site.id,
-    title: site.title,
-    hostname: site.hostname,
-    url: site.url,
+function hostedSiteEventMessageId(operationId: string, status: HostedSiteConversationEventStatus): string {
+  return `hosted-site-event:${operationId}:${status}`;
+}
+
+function hostedSiteEventCommandId(
+  botId: string,
+  operationId: string,
+  status: HostedSiteConversationEventStatus,
+): string {
+  return `hosted-site-event:${botId}:${operationId}:${status}`;
+}
+
+function hostedSiteEventDetails(site: HostedSiteSummary, siteId = site.id): HostedSiteConversationEventDetails {
+  const titleSource = site.title.trim() || site.hostname.trim() || "Hosted site";
+  const title = titleSource.slice(0, 120).trim() || "Hosted site";
+  const hostname = hostedSiteMarkerHostname(site.hostname);
+  const url = hostname && hostedSiteMarkerUrl(site.url, hostname) ? site.url : null;
+  const details: HostedSiteConversationEventDetails = {
+    siteId: siteId.trim() && siteId.length <= INPUT_LIMITS.identifier ? siteId.trim() : null,
+    title,
+    hostname: url ? hostname : null,
+    url,
   };
+  hostedSiteConversationEventText(details);
+  return details;
+}
+
+function hostedSiteMarkerHostname(value: string): string | null {
+  if (!value || value.length > INPUT_LIMITS.hostname || value !== value.toLowerCase()) return null;
+  try {
+    const parsed = new URL(`https://${value}`);
+    return parsed.hostname === value && parsed.port === "" && value.endsWith(".openbot.site") ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function hostedSiteMarkerUrl(value: string, hostname: string): boolean {
+  if (value.length > INPUT_LIMITS.browserUrl) return false;
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.protocol === "https:" &&
+      parsed.username === "" &&
+      parsed.password === "" &&
+      parsed.hostname === hostname &&
+      parsed.port === "" &&
+      parsed.pathname === "/" &&
+      parsed.search === "" &&
+      parsed.hash === ""
+    );
+  } catch {
+    return false;
+  }
 }
