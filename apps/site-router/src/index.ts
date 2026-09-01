@@ -25,10 +25,16 @@ interface SiteRouterEnv {
   SITE_SERVE_ENABLED?: string;
 }
 
+interface SiteRouterRuntime {
+  assetCache: Pick<Cache, "match" | "put">;
+  context: Pick<ExecutionContext, "waitUntil">;
+}
+
 export default {
-  async fetch(request: Request, env: SiteRouterEnv): Promise<Response> {
+  async fetch(request: Request, env: SiteRouterEnv, ctx: ExecutionContext): Promise<Response> {
     try {
-      return await routeRequest(request, env, Date.now());
+      const assetCache = await openAssetCache();
+      return await routeRequest(request, env, Date.now(), assetCache ? { assetCache, context: ctx } : undefined);
     } catch (error) {
       console.error(JSON.stringify({ event: "site_router_error", message: errorMessage(error) }));
       return errorResponse(500, "Site unavailable");
@@ -36,7 +42,21 @@ export default {
   },
 } satisfies ExportedHandler<SiteRouterEnv>;
 
-export async function routeRequest(request: Request, env: SiteRouterEnv, now: number): Promise<Response> {
+async function openAssetCache(): Promise<Cache | undefined> {
+  try {
+    return await caches.open("openbot-site-assets-v1");
+  } catch (error) {
+    console.error(JSON.stringify({ event: "site_asset_cache_open_error", message: errorMessage(error) }));
+    return undefined;
+  }
+}
+
+export async function routeRequest(
+  request: Request,
+  env: SiteRouterEnv,
+  now: number,
+  runtime?: SiteRouterRuntime,
+): Promise<Response> {
   if (request.method !== "GET" && request.method !== "HEAD") {
     const response = errorResponse(405, "Method not allowed");
     response.headers.set("Allow", "GET, HEAD");
@@ -71,18 +91,84 @@ export async function routeRequest(request: Request, env: SiteRouterEnv, now: nu
   if (path === null) return errorResponse(404, "Page not found");
   const file = resolveFile(route, path);
   if (!file) return errorResponse(404, "Page not found");
+  if (file.mimeType !== "text/html" && runtime) {
+    const cached = await readCachedAsset(request, file, runtime.assetCache);
+    if (cached) return assetResponse(request, file, cached.body, cached.headers.get("ETag"));
+  }
   const revalidation = assetRevalidationHeaders(request, file.mimeType);
   const object = await env.SITES.get(file.key, revalidation ? { onlyIf: revalidation } : undefined);
   if (!object || object.size !== file.size) return errorResponse(404, "Page not found");
 
+  if (!hasBody(object)) return assetResponse(request, file, null, object.httpEtag, 304);
+  if (file.mimeType === "text/html" || request.method === "HEAD" || !runtime) {
+    return assetResponse(request, file, object.body, object.httpEtag);
+  }
+
+  const cacheResponse = new Response(object.body, {
+    headers: {
+      "Cache-Control": "public, max-age=2764800, immutable",
+      "Content-Length": String(object.size),
+      ETag: object.httpEtag,
+    },
+  });
+  runtime.context.waitUntil(
+    runtime.assetCache.put(assetCacheRequest(request, file), cacheResponse.clone()).catch((error: unknown) => {
+      console.error(JSON.stringify({ event: "site_asset_cache_write_error", message: errorMessage(error) }));
+    }),
+  );
+  return assetResponse(request, file, cacheResponse.body, object.httpEtag);
+}
+
+async function readCachedAsset(
+  request: Request,
+  file: RouteFile,
+  cache: Pick<Cache, "match">,
+): Promise<Response | undefined> {
+  try {
+    const cached = await cache.match(assetCacheRequest(request, file));
+    if (cached?.status !== 200) return undefined;
+    if (cached.headers.get("Content-Length") !== String(file.size) || !cached.headers.has("ETag")) return undefined;
+    return cached;
+  } catch (error) {
+    console.error(JSON.stringify({ event: "site_asset_cache_read_error", message: errorMessage(error) }));
+    return undefined;
+  }
+}
+
+function assetCacheRequest(request: Request, file: RouteFile): Request {
+  const url = new URL(request.url);
+  url.pathname = `/_openbot/asset-cache/${encodeURIComponent(file.key)}`;
+  url.search = "";
+  return new Request(url, { method: "GET" });
+}
+
+function assetResponse(
+  request: Request,
+  file: RouteFile,
+  body: ReadableStream | null,
+  etag: string | null,
+  status = 200,
+): Response {
   const headers = secureHeaders({
     "Content-Type": file.mimeType,
     "Cache-Control": file.mimeType === "text/html" ? "no-store" : "public, no-cache",
   });
-  if (file.mimeType !== "text/html") headers.set("ETag", object.httpEtag);
-  if (!hasBody(object)) return new Response(null, { status: 304, headers });
-  headers.set("Content-Length", String(object.size));
-  return new Response(request.method === "HEAD" ? null : object.body, { status: 200, headers });
+  if (file.mimeType !== "text/html" && etag) headers.set("ETag", etag);
+  if (status === 304 || (file.mimeType !== "text/html" && etag && requestEtagMatches(request, etag))) {
+    return new Response(null, { status: 304, headers });
+  }
+  headers.set("Content-Length", String(file.size));
+  return new Response(request.method === "HEAD" ? null : body, { status: 200, headers });
+}
+
+function requestEtagMatches(request: Request, etag: string): boolean {
+  const ifNoneMatch = request.headers.get("If-None-Match");
+  if (!ifNoneMatch) return false;
+  const normalizedEtag = etag.replace(/^W\//u, "");
+  return ifNoneMatch.split(",").some((candidate) => {
+    const normalizedCandidate = candidate.trim();
+    return normalizedCandidate === "*" || normalizedCandidate.replace(/^W\//u, "") === normalizedEtag;
+  });
 }
 
 function assetRevalidationHeaders(request: Request, mimeType: string): Headers | null {

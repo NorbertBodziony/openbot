@@ -35,7 +35,7 @@ describe("site router", () => {
     });
     const response = await routeRequest(
       new Request("https://example-project-page-long-name-23456789ab.openbot.site/", {
-        headers: { Cookie: "unsafe=true" },
+        headers: { Cookie: "unsafe=true", "If-None-Match": '"etag"' },
       }),
       { SITES: bucket, SITE_SERVE_ENABLED: "true" },
       1_000,
@@ -133,6 +133,64 @@ describe("site router", () => {
     expect(await revalidated.text()).toBe("");
   });
 
+  it("caches immutable assets after checking the live block and route state", async () => {
+    const hostname = "example-project-page-long-name-23456789ab.openbot.site";
+    const getCounts = new Map<string, number>();
+    const objects: Record<string, string> = {
+      [`routes/${hostname}.json`]: JSON.stringify(activeRoute),
+      "sites/site-1/deployments/deployment-1/app.js": "console.log('ok')",
+    };
+    const bucket = fakeBucket(objects, (key) => getCounts.set(key, (getCounts.get(key) ?? 0) + 1));
+    const assetCache = fakeAssetCache();
+    const pending: Promise<unknown>[] = [];
+    const runtime = {
+      assetCache,
+      context: { waitUntil: (promise: Promise<unknown>) => pending.push(promise) },
+    };
+
+    const first = await routeRequest(
+      new Request(`https://${hostname}/app.js`),
+      { SITES: bucket, SITE_SERVE_ENABLED: "true" },
+      1_000,
+      runtime,
+    );
+    expect(first.status).toBe(200);
+    expect(await first.text()).toBe("console.log('ok')");
+    await Promise.all(pending);
+
+    const cached = await routeRequest(
+      new Request(`https://${hostname}/app.js`),
+      { SITES: bucket, SITE_SERVE_ENABLED: "true" },
+      1_000,
+      runtime,
+    );
+    expect(cached.status).toBe(200);
+    expect(await cached.text()).toBe("console.log('ok')");
+
+    const revalidated = await routeRequest(
+      new Request(`https://${hostname}/app.js`, { headers: { "If-None-Match": 'W/"etag"' } }),
+      { SITES: bucket, SITE_SERVE_ENABLED: "true" },
+      1_000,
+      runtime,
+    );
+    expect(revalidated.status).toBe(304);
+    expect(getCounts.get(`blocks/${hostname}`)).toBe(3);
+    expect(getCounts.get(`routes/${hostname}.json`)).toBe(3);
+    expect(getCounts.get("sites/site-1/deployments/deployment-1/app.js")).toBe(1);
+
+    objects[`blocks/${hostname}`] = "blocked";
+    const blocked = await routeRequest(
+      new Request(`https://${hostname}/app.js`),
+      { SITES: bucket, SITE_SERVE_ENABLED: "true" },
+      1_000,
+      runtime,
+    );
+    expect(blocked.status).toBe(451);
+    expect(getCounts.get(`blocks/${hostname}`)).toBe(4);
+    expect(getCounts.get(`routes/${hostname}.json`)).toBe(3);
+    expect(getCounts.get("sites/site-1/deployments/deployment-1/app.js")).toBe(1);
+  });
+
   it("rejects writes and traversal paths", async () => {
     const env = { SITES: fakeBucket({}), SITE_SERVE_ENABLED: "true" };
     expect(
@@ -156,9 +214,10 @@ describe("site router", () => {
   });
 });
 
-function fakeBucket(objects: Record<string, string>) {
+function fakeBucket(objects: Record<string, string>, onGet?: (key: string) => void) {
   return {
     async get(key: string, options?: R2GetOptions) {
+      onGet?.(key);
       const value = objects[key];
       if (value === undefined) return null;
       const bytes = new TextEncoder().encode(value);
@@ -200,4 +259,21 @@ function fakeBucket(objects: Record<string, string>) {
       } satisfies R2ObjectBody;
     },
   };
+}
+
+function fakeAssetCache() {
+  const entries = new Map<string, Response>();
+  return {
+    async match(request: RequestInfo | URL) {
+      return entries.get(cacheKey(request))?.clone();
+    },
+    async put(request: RequestInfo | URL, response: Response) {
+      entries.set(cacheKey(request), response.clone());
+    },
+  };
+}
+
+function cacheKey(request: RequestInfo | URL): string {
+  if (request instanceof Request) return request.url;
+  return new URL(String(request)).toString();
 }
