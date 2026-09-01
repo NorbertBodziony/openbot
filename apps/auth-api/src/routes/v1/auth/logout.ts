@@ -16,7 +16,7 @@ export const Route = createFileRoute("/v1/auth/logout")({
           const token = bearerToken(request);
           if (!token) return apiError(401, "unauthorized", "Sign in is required.");
           const service = requestAuthService();
-          const user = await service.authenticate(token);
+          const user = await service.authenticateDesktopSession(token);
           if (!user) {
             return apiError(401, "unauthorized", "The session is invalid.");
           }

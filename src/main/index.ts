@@ -67,7 +67,7 @@ import { HostAnalytics } from "./analytics";
 import { readAnalyticsPreference, writeAnalyticsPreference } from "./analytics-preference-store";
 import { readAppVariant, resolveAppIconPath } from "./app-icon";
 import { BrowserPictureInPicture } from "./browser-picture-in-picture";
-import { CentralAuthManager, readCentralAuthApiUrl } from "./central-auth-manager";
+import { CentralAuthManager, readCentralAuthApiUrl, readMobileConnectApiUrl } from "./central-auth-manager";
 import { buildContentSecurityPolicy } from "./content-security-policy";
 import { guardDevelopmentOutput } from "./development-output";
 import {
@@ -444,6 +444,11 @@ function registerIpcHandlers(
     return centralAuth.updateName(validation.name);
   });
   handleTrusted(IPC_CHANNELS.authUpdateAvatar, (input: unknown) => centralAuth.updateAvatar(parseAvatarImage(input)));
+  handleTrusted(IPC_CHANNELS.authCreateMobileConnect, () => centralAuth.createMobileConnect());
+  handleTrusted(IPC_CHANNELS.authListMobileConnectedDevices, () => centralAuth.listMobileConnectedDevices());
+  handleTrusted(IPC_CHANNELS.authRevokeMobileConnectedDevice, (input: unknown) =>
+    centralAuth.revokeMobileConnectedDevice(requireString(input, "sessionId", INPUT_LIMITS.identifier)),
+  );
   handleTrusted(IPC_CHANNELS.authLogout, () => centralAuth.logout());
   handleTrusted(IPC_CHANNELS.skillsList, (input: unknown) => {
     if (input === null || input === undefined) return skills.list();
@@ -1574,11 +1579,13 @@ if (!hasSingleInstanceLock) {
           await performDynamicIslandCriticalAction(action, agentService, remoteServerManager, decodeVoid);
         },
       });
+      const centralAuthApiUrl = readCentralAuthApiUrl(
+        process.env.OPENBOT_AUTH_API_URL,
+        app.isPackaged ? "https://api.openbot.run" : "http://127.0.0.1:3100",
+      );
       centralAuthManager = new CentralAuthManager({
-        apiUrl: readCentralAuthApiUrl(
-          process.env.OPENBOT_AUTH_API_URL,
-          app.isPackaged ? "https://api.openbot.run" : "http://127.0.0.1:3100",
-        ),
+        apiUrl: centralAuthApiUrl,
+        mobileConnectApiUrl: readMobileConnectApiUrl(process.env.OPENBOT_MOBILE_AUTH_API_URL, centralAuthApiUrl),
         storagePath: join(app.getPath("userData"), CENTRAL_AUTH_FILE),
         canPersist: () => safeStorage.isEncryptionAvailable(),
         encrypt: (value) => {
