@@ -40,6 +40,8 @@ CREATE TABLE site_deployments (
   objects_deleted_at INTEGER,
   activation_authorized_at INTEGER,
   in_flight_uploads INTEGER NOT NULL DEFAULT 0,
+  upload_claims INTEGER NOT NULL DEFAULT 0 CHECK (upload_claims >= 0),
+  upload_bytes_claimed INTEGER NOT NULL DEFAULT 0 CHECK (upload_bytes_claimed >= 0),
   UNIQUE(user_id, idempotency_key)
 );
 

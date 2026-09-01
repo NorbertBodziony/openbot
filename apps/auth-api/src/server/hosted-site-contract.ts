@@ -3,6 +3,8 @@ import { isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contrac
 export const HOSTED_SITE_LIMITS = {
   activeSites: 10,
   concurrentUploads: 2,
+  concurrentFileUploads: 2,
+  uploadAttemptMultiplier: 2,
   creationsPerHour: 20,
   creationsPerDay: 100,
   files: 20,

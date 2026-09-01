@@ -97,6 +97,16 @@ describe("site router", () => {
     );
     expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("public, no-cache");
+    expect(response.headers.get("ETag")).toBe('"etag"');
+
+    const revalidated = await routeRequest(
+      new Request(`https://${hostname}/app.js`, { headers: { "If-None-Match": '"etag"' } }),
+      { SITES: bucket, SITE_SERVE_ENABLED: "true" },
+      1_000,
+    );
+    expect(revalidated.status).toBe(304);
+    expect(revalidated.headers.get("ETag")).toBe('"etag"');
+    expect(await revalidated.text()).toBe("");
   });
 
   it("rejects writes and traversal paths", async () => {
@@ -124,13 +134,11 @@ describe("site router", () => {
 
 function fakeBucket(objects: Record<string, string>) {
   return {
-    async get(key: string) {
+    async get(key: string, options?: R2GetOptions) {
       const value = objects[key];
       if (value === undefined) return null;
       const bytes = new TextEncoder().encode(value);
-      const body = new Response(bytes).body;
-      if (!body) throw new Error("The test response body is missing.");
-      return {
+      const metadata = {
         key,
         version: "1",
         size: bytes.byteLength,
@@ -142,6 +150,22 @@ function fakeBucket(objects: Record<string, string>) {
         customMetadata: {},
         httpMetadata: {},
         range: undefined,
+        writeHttpMetadata() {},
+      } satisfies R2Object;
+      const onlyIf = options?.onlyIf;
+      if (
+        onlyIf instanceof Headers &&
+        onlyIf
+          .get("If-None-Match")
+          ?.split(",")
+          .some((etag) => etag.trim() === '"etag"')
+      ) {
+        return metadata;
+      }
+      const body = new Response(bytes).body;
+      if (!body) throw new Error("The test response body is missing.");
+      return {
+        ...metadata,
         body,
         bodyUsed: false,
         arrayBuffer: () => Promise.resolve(bytes.buffer),
@@ -149,7 +173,6 @@ function fakeBucket(objects: Record<string, string>) {
         text: () => Promise.resolve(value),
         json: () => Promise.resolve(JSON.parse(value)),
         blob: () => Promise.resolve(new Blob([bytes])),
-        writeHttpMetadata() {},
       } satisfies R2ObjectBody;
     },
   };

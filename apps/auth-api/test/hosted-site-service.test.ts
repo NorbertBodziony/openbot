@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { isNumber, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it } from "vitest";
-import type { HostedSiteUploadRequest } from "../src/server/hosted-site-contract";
+import { HOSTED_SITE_LIMITS, type HostedSiteUploadRequest } from "../src/server/hosted-site-contract";
 import { HostedSiteService } from "../src/server/hosted-site-service";
 
 const databases: DatabaseSync[] = [];
@@ -276,6 +276,55 @@ describe("hosted site control plane", () => {
       fixture.service.activate("alice", upload.uploadId, "activate-after-file-upload"),
     ).resolves.toMatchObject({ status: "active" });
     expect(fixture.bucket.keys()).toContain(asset);
+  });
+
+  it("caps simultaneous file uploads for an account", async () => {
+    const fixture = serviceFixture();
+    const [first, second] = await Promise.all([
+      fixture.service.createUpload("alice", uploadRequest(), "concurrent-file-limit-first"),
+      fixture.service.createUpload("alice", uploadRequest(), "concurrent-file-limit-second"),
+    ]);
+    const firstPause = fixture.bucket.pauseNextPutContaining(
+      `sites/${first.site.id}/deployments/${first.uploadId}/index.html`,
+    );
+    const secondPause = fixture.bucket.pauseNextPutContaining(
+      `sites/${second.site.id}/deployments/${second.uploadId}/index.html`,
+    );
+    const firstUpload = uploadIndex(fixture.service, "alice", first.uploadId);
+    const secondUpload = uploadIndex(fixture.service, "alice", second.uploadId);
+    await Promise.all([firstPause.started, secondPause.started]);
+
+    await expect(uploadIndex(fixture.service, "alice", first.uploadId)).rejects.toMatchObject({
+      code: "upload_rate_limit",
+    });
+    firstPause.resume();
+    secondPause.resume();
+    await Promise.all([firstUpload, secondUpload]);
+  });
+
+  it("bounds repeated upload bytes within one upload session", async () => {
+    const fixture = serviceFixture();
+    const content = "x".repeat(HOSTED_SITE_LIMITS.fileBytes);
+    const upload = await fixture.service.createUpload(
+      "alice",
+      uploadRequest({ files: [{ path: "index.html", size: content.length, mimeType: "text/html" }] }),
+      "upload-byte-limit",
+    );
+    const put = () =>
+      fixture.service.uploadFile(
+        "alice",
+        upload.uploadId,
+        "index.html",
+        new Request("https://openbot.run/v1/sites/upload", {
+          method: "PUT",
+          headers: { "Content-Type": "text/html", "Content-Length": String(content.length) },
+          body: content,
+        }),
+      );
+
+    await put();
+    await put();
+    await expect(put()).rejects.toMatchObject({ code: "upload_rate_limit" });
   });
 
   it("republishes an unsynced active route before deleting the prior deployment", async () => {
@@ -1044,7 +1093,7 @@ type Bytes = Uint8Array<ArrayBuffer>;
 class FakeR2Bucket implements R2Bucket {
   private readonly objects = new Map<string, { bytes: Bytes; metadata?: R2HTTPMetadata }>();
   #failPutFragment: string | null = null;
-  #pausePut: { fragment: string; started: () => void; wait: Promise<void> } | null = null;
+  readonly #pausedPuts: { fragment: string; started: () => void; wait: Promise<void> }[] = [];
 
   failNextPutContaining(fragment: string): void {
     this.#failPutFragment = fragment;
@@ -1059,7 +1108,7 @@ class FakeR2Bucket implements R2Bucket {
     const wait = new Promise<void>((resolve) => {
       resume = resolve;
     });
-    this.#pausePut = { fragment, started: markStarted, wait };
+    this.#pausedPuts.push({ fragment, started: markStarted, wait });
     return { started, resume };
   }
 
@@ -1087,9 +1136,10 @@ class FakeR2Bucket implements R2Bucket {
     value: ReadableStream | ArrayBuffer | ArrayBufferView | string | null | Blob,
     options?: R2PutOptions,
   ): Promise<R2Object> {
-    const pause = this.#pausePut;
-    if (pause && key.includes(pause.fragment)) {
-      this.#pausePut = null;
+    const pauseIndex = this.#pausedPuts.findIndex((candidate) => key.includes(candidate.fragment));
+    if (pauseIndex >= 0) {
+      const [pause] = this.#pausedPuts.splice(pauseIndex, 1);
+      if (!pause) throw new Error("The paused R2 put disappeared.");
       pause.started();
       await pause.wait;
     }

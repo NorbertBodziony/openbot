@@ -17,7 +17,7 @@ interface RouteManifest {
 }
 
 interface SiteBucket {
-  get(key: string): Promise<R2ObjectBody | null>;
+  get(key: string, options?: R2GetOptions): Promise<R2ObjectBody | R2Object | null>;
 }
 
 interface SiteRouterEnv {
@@ -60,6 +60,7 @@ export async function routeRequest(request: Request, env: SiteRouterEnv, now: nu
 
   const routeObject = await env.SITES.get(`routes/${hostname}.json`);
   if (!routeObject) return errorResponse(404, "Site not found");
+  if (!hasBody(routeObject)) return errorResponse(500, "Site unavailable");
   const route = await readRouteManifest(routeObject);
   if (!route) return errorResponse(500, "Site unavailable");
   if (route.status === "deleted" || route.status === "expired") return errorResponse(410, "Site no longer available");
@@ -70,15 +71,29 @@ export async function routeRequest(request: Request, env: SiteRouterEnv, now: nu
   if (path === null) return errorResponse(404, "Page not found");
   const file = resolveFile(route, path);
   if (!file) return errorResponse(404, "Page not found");
-  const object = await env.SITES.get(file.key);
+  const revalidation = assetRevalidationHeaders(request, file.mimeType);
+  const object = await env.SITES.get(file.key, revalidation ? { onlyIf: revalidation } : undefined);
   if (!object || object.size !== file.size) return errorResponse(404, "Page not found");
 
   const headers = secureHeaders({
     "Content-Type": file.mimeType,
     "Cache-Control": file.mimeType === "text/html" ? "no-store" : "public, no-cache",
-    "Content-Length": String(object.size),
   });
+  if (file.mimeType !== "text/html") headers.set("ETag", object.httpEtag);
+  if (!hasBody(object)) return new Response(null, { status: 304, headers });
+  headers.set("Content-Length", String(object.size));
   return new Response(request.method === "HEAD" ? null : object.body, { status: 200, headers });
+}
+
+function assetRevalidationHeaders(request: Request, mimeType: string): Headers | null {
+  if (mimeType === "text/html") return null;
+  const ifNoneMatch = request.headers.get("If-None-Match");
+  if (!ifNoneMatch) return null;
+  return new Headers({ "If-None-Match": ifNoneMatch });
+}
+
+function hasBody(object: R2Object | R2ObjectBody): object is R2ObjectBody {
+  return "body" in object;
 }
 
 function isHostedSiteHostname(hostname: string): boolean {

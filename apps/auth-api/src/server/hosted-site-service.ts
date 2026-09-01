@@ -42,6 +42,8 @@ interface DeploymentRow {
   objects_deleted_at: number | null;
   activation_authorized_at: number | null;
   in_flight_uploads: number;
+  upload_claims: number;
+  upload_bytes_claimed: number;
 }
 
 export interface HostedSiteSummary {
@@ -328,15 +330,70 @@ export class HostedSiteService {
     }
     if (!request.body) throw new HostedSiteInputError(400, "missing_file", "The file body is missing.");
     const key = assetKey(deployment.site_id, deployment.id, file.path);
+    const claimTime = this.now();
     const uploadClaim = await this.database
       .prepare(
-        `UPDATE site_deployments SET in_flight_uploads = in_flight_uploads + 1
-         WHERE id = ? AND user_id = ? AND status = 'uploading' AND upload_expires_at > ?`,
+        `UPDATE site_deployments
+         SET in_flight_uploads = in_flight_uploads + 1,
+             upload_claims = upload_claims + 1,
+             upload_bytes_claimed = upload_bytes_claimed + ?
+         WHERE id = ? AND user_id = ? AND status = 'uploading' AND upload_expires_at > ?
+           AND upload_claims < file_count * ?
+           AND upload_bytes_claimed + ? <= total_bytes * ?
+           AND (
+             SELECT COALESCE(SUM(candidate.in_flight_uploads), 0)
+             FROM site_deployments candidate
+             WHERE candidate.user_id = ? AND candidate.status = 'uploading' AND candidate.upload_expires_at > ?
+           ) < ?
+           AND (
+             SELECT COALESCE(SUM(candidate.upload_claims), 0)
+             FROM site_deployments candidate
+             WHERE candidate.user_id = ? AND candidate.status = 'uploading' AND candidate.upload_expires_at > ?
+           ) < (
+             SELECT COALESCE(SUM(candidate.file_count), 0) * ?
+             FROM site_deployments candidate
+             WHERE candidate.user_id = ? AND candidate.status = 'uploading' AND candidate.upload_expires_at > ?
+           )
+           AND (
+             SELECT COALESCE(SUM(candidate.upload_bytes_claimed), 0)
+             FROM site_deployments candidate
+             WHERE candidate.user_id = ? AND candidate.status = 'uploading' AND candidate.upload_expires_at > ?
+           ) + ? <= (
+             SELECT COALESCE(SUM(candidate.total_bytes), 0) * ?
+             FROM site_deployments candidate
+             WHERE candidate.user_id = ? AND candidate.status = 'uploading' AND candidate.upload_expires_at > ?
+           )`,
       )
-      .bind(deployment.id, userId, this.now())
+      .bind(
+        file.size,
+        deployment.id,
+        userId,
+        claimTime,
+        HOSTED_SITE_LIMITS.uploadAttemptMultiplier,
+        file.size,
+        HOSTED_SITE_LIMITS.uploadAttemptMultiplier,
+        userId,
+        claimTime,
+        HOSTED_SITE_LIMITS.concurrentFileUploads,
+        userId,
+        claimTime,
+        HOSTED_SITE_LIMITS.uploadAttemptMultiplier,
+        userId,
+        claimTime,
+        userId,
+        claimTime,
+        file.size,
+        HOSTED_SITE_LIMITS.uploadAttemptMultiplier,
+        userId,
+        claimTime,
+      )
       .run();
     if (uploadClaim.meta.changes !== 1) {
-      throw new HostedSiteInputError(409, "upload_expired", "This upload session has expired.");
+      const current = await this.requireDeployment(userId, deployment.id);
+      if (current.status !== "uploading" || current.upload_expires_at <= this.now()) {
+        throw new HostedSiteInputError(409, "upload_expired", "This upload session has expired.");
+      }
+      throw new HostedSiteInputError(429, "upload_rate_limit", "The upload retry limit for this account was reached.");
     }
     try {
       const body = await readUploadBody(request.body, file.size);
