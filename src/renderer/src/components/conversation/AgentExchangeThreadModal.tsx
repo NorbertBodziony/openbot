@@ -114,10 +114,7 @@ export function AgentExchangeThreadModal(props: AgentExchangeThreadModalProps) {
                         <strong>{sender()?.name ?? "Unavailable agent"}</strong>
                         <time datetime={message.createdAt ?? message.time}>{message.time}</time>
                       </div>
-                      <Bubble
-                        align={fromCurrentAgent() ? "end" : "start"}
-                        variant={fromCurrentAgent() ? "secondary" : "default"}
-                      >
+                      <Bubble align={fromCurrentAgent() ? "end" : "start"} variant="secondary">
                         <BubbleContent>
                           <MessageBody
                             message={{ ...message, author: "bot" }}
