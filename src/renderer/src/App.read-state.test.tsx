@@ -1,7 +1,8 @@
 import type { ConversationPage, DirectConversationSnapshot } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { expect, it, vi } from "vitest";
-import { App, AppControllerProvider, createAppController } from "./App";
+import { App, createAppController } from "./App";
+import { AppControllerProvider } from "./app-controller-context";
 import {
   emitAgentEvent,
   emitDirectMessage,

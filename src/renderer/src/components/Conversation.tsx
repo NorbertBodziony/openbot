@@ -1,5 +1,5 @@
 import type { AgentModelId, AgentProviderId, AgentReasoningEffort, BrowserBounds } from "@openbot/contracts/ipc";
-import { createContext, createSignal, onCleanup, type ParentProps, useContext } from "solid-js";
+import { createSignal, onCleanup } from "solid-js";
 import {
   type ComposerDraft,
   type ConversationProps,
@@ -10,6 +10,7 @@ import {
 } from "./ConversationView";
 import type { AgentActivityPresentation } from "./conversation/AgentActivity";
 import type { ChatSearchMatch } from "./conversation/chat-search";
+import { ConversationControllerProvider } from "./conversation-controller-context";
 
 const SETTINGS_PANEL_DEFAULT = 296;
 const BROWSER_PANEL_DEFAULT = 380;
@@ -229,23 +230,6 @@ export function createConversationController(props: Pick<ConversationProps, "onT
     setBrowserPanelWidth,
     resources,
   };
-}
-
-export type ConversationController = ReturnType<typeof createConversationController>;
-export type { ConversationProps } from "./ConversationView";
-
-const ConversationControllerContext = createContext<ConversationController>();
-
-/** @internal Access to the stable controller for Conversation view components. */
-export function useConversationController(): ConversationController {
-  const controller = useContext(ConversationControllerContext);
-  if (!controller) throw new Error("Conversation controller is unavailable outside Conversation.");
-  return controller;
-}
-
-/** @internal Test seam for remounting view boundaries without remounting their controller. */
-export function ConversationControllerProvider(props: ParentProps<{ controller: ConversationController }>) {
-  return <ConversationControllerContext value={props.controller}>{props.children}</ConversationControllerContext>;
 }
 
 export function Conversation(props: ConversationProps) {

@@ -45,20 +45,11 @@ import {
   ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX,
 } from "@openbot/contracts/ipc";
 import type { TeamProtocolV3Capability } from "@openbot/contracts/team-protocol/v3";
-import {
-  createContext,
-  createEffect,
-  createMemo,
-  createSignal,
-  createStore,
-  flush,
-  onSettled,
-  type ParentProps,
-  useContext,
-} from "solid-js";
+import { createEffect, createMemo, createSignal, createStore, flush, onSettled } from "solid-js";
 import { AppAccessGate } from "./AppView";
 import { cleanAgentMessageText } from "./agent-message-text";
 import { desktopAnalytics } from "./analytics";
+import { AppControllerProvider } from "./app-controller-context";
 import {
   botMessagesEqual,
   botProfilesEqual,
@@ -4164,21 +4155,6 @@ export function createAppController(props: AppProps = {}) {
       appFrameElement = element;
     },
   };
-}
-
-export type AppController = ReturnType<typeof createAppController>;
-
-const AppControllerContext = createContext<AppController>();
-
-export function useAppController(): AppController {
-  const controller = useContext(AppControllerContext);
-  if (!controller) throw new Error("App controller is unavailable outside App.");
-  return controller;
-}
-
-/** @internal Test seam for remounting shell views without remounting their controller. */
-export function AppControllerProvider(props: ParentProps<{ controller: AppController }>) {
-  return <AppControllerContext value={props.controller}>{props.children}</AppControllerContext>;
 }
 
 export function App(props: AppProps = {}) {
