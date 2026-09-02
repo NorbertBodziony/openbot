@@ -437,22 +437,23 @@ export class BrowserHost {
         throw new Error("Stale browser references. Take a fresh snapshot before acting.");
       }
       const target = "ref" in action ? ({ kind: "ref", ref: action.ref, revision } as const) : undefined;
+      const deadline = Date.now() + 10_000;
       try {
         switch (action.type) {
           case "click":
             if (!target) throw new Error("Legacy click requires a target.");
-            await tab.engine.click(target);
+            await tab.engine.click(target, {}, deadline);
             break;
           case "type":
             if (!target) throw new Error("Legacy type requires a target.");
-            await tab.engine.type(target, action.text, "replace");
-            if (action.submit) await tab.engine.press("Enter", target);
+            await tab.engine.type(target, action.text, "replace", deadline);
+            if (action.submit) await tab.engine.press("Enter", target, deadline);
             break;
           case "key":
-            await tab.engine.press(action.key);
+            await tab.engine.press(action.key, undefined, deadline);
             break;
           case "scroll":
-            await tab.engine.scroll(undefined, 0, action.deltaY);
+            await tab.engine.scroll(undefined, 0, action.deltaY, deadline);
             break;
           case "back":
           case "forward":
@@ -578,7 +579,7 @@ export class BrowserHost {
               tabId,
               "navigate",
               undefined,
-              async (tab, deadline) => {
+              async (tab, deadline, markDispatched) => {
                 const operationTimeout = remainingTime(deadline, "Browser navigate timed out.");
                 if (url) {
                   const normalizedUrl = normalizeBrowserUrl(url);
@@ -588,13 +589,17 @@ export class BrowserHost {
                   );
                   await navigateAndWait(
                     tab.view.webContents,
-                    () => tab.view.webContents.loadURL(normalizedUrl, browserLoadOptions()),
+                    () => {
+                      markDispatched();
+                      return tab.view.webContents.loadURL(normalizedUrl, browserLoadOptions());
+                    },
                     operationTimeout,
                   );
                 } else if (direction === "reload") {
                   await navigateAndWait(
                     tab.view.webContents,
                     () => {
+                      markDispatched();
                       tab.view.webContents.reload();
                       return true;
                     },
@@ -603,7 +608,10 @@ export class BrowserHost {
                 } else if (direction) {
                   await navigateAndWait(
                     tab.view.webContents,
-                    () => navigateHistory(tab.view.webContents, direction, this.#session.getUserAgent()),
+                    () => {
+                      markDispatched();
+                      return navigateHistory(tab.view.webContents, direction, this.#session.getUserAgent());
+                    },
                     operationTimeout,
                   );
                 }
@@ -621,7 +629,7 @@ export class BrowserHost {
               tabId,
               "click",
               target,
-              (tab, deadline) =>
+              (tab, deadline, markDispatched) =>
                 tab.engine.click(
                   target,
                   {
@@ -630,6 +638,7 @@ export class BrowserHost {
                     modifiers: optionalStringArray(args, "modifiers", 4),
                   },
                   deadline,
+                  markDispatched,
                 ),
               readTimeout(args),
             ),
@@ -646,8 +655,8 @@ export class BrowserHost {
               tabId,
               "type",
               target,
-              async (tab, deadline) => {
-                await tab.engine.type(target, text, mode, deadline);
+              async (tab, deadline, markDispatched) => {
+                await tab.engine.type(target, text, mode, deadline, markDispatched);
                 if (args.submit === true) await tab.engine.press("Enter", target);
               },
               readTimeout(args),
@@ -664,7 +673,7 @@ export class BrowserHost {
               tabId,
               "press",
               target,
-              (tab, deadline) => tab.engine.press(key, target, deadline),
+              (tab, deadline, markDispatched) => tab.engine.press(key, target, deadline, markDispatched),
               readTimeout(args),
             ),
           );
@@ -678,7 +687,7 @@ export class BrowserHost {
               tabId,
               "hover",
               target,
-              (tab, deadline) => tab.engine.hover(target, deadline),
+              (tab, deadline, markDispatched) => tab.engine.hover(target, deadline, markDispatched),
               readTimeout(args),
             ),
           );
@@ -695,7 +704,7 @@ export class BrowserHost {
               tabId,
               "scroll",
               target,
-              (tab, deadline) => tab.engine.scroll(target, deltaX, deltaY, deadline),
+              (tab, deadline, markDispatched) => tab.engine.scroll(target, deltaX, deltaY, deadline, markDispatched),
               readTimeout(args),
             ),
           );
@@ -710,7 +719,7 @@ export class BrowserHost {
               tabId,
               "select-option",
               target,
-              (tab, deadline) => tab.engine.selectOption(target, values, deadline),
+              (tab, deadline, markDispatched) => tab.engine.selectOption(target, values, deadline, markDispatched),
               readTimeout(args),
             ),
           );
@@ -725,7 +734,7 @@ export class BrowserHost {
               tabId,
               "set-checked",
               target,
-              (tab, deadline) => tab.engine.setChecked(target, checked, deadline),
+              (tab, deadline, markDispatched) => tab.engine.setChecked(target, checked, deadline, markDispatched),
               readTimeout(args),
             ),
           );
@@ -740,7 +749,7 @@ export class BrowserHost {
               tabId,
               "drag",
               source,
-              (tab, deadline) => tab.engine.drag(source, target, deadline),
+              (tab, deadline, markDispatched) => tab.engine.drag(source, target, deadline, markDispatched),
               readTimeout(args),
             ),
           );
@@ -755,12 +764,13 @@ export class BrowserHost {
               tabId,
               "upload-files",
               target,
-              async (tab, deadline) => {
+              async (tab, deadline, markDispatched) => {
                 const assignment = await tab.engine.uploadFiles(
                   target,
                   paths,
                   (resolved) => hooks.onUploadTargetResolved?.(resolved.inputId, resolved.documentId),
                   deadline,
+                  markDispatched,
                 );
                 hooks.onUploadAssigned?.(assignment.inputId, assignment.documentId);
               },
@@ -1157,7 +1167,7 @@ export class BrowserHost {
     tabId: string,
     action: string,
     target: BrowserTarget | undefined,
-    operation: (tab: InternalTab, deadline: number) => Promise<void>,
+    operation: (tab: InternalTab, deadline: number, markDispatched: () => void) => Promise<void>,
     timeoutMs = 10_000,
     onOperationStarted?: (completion: Promise<void>) => void,
   ): Promise<BrowserSnapshot> {
@@ -1172,6 +1182,7 @@ export class BrowserHost {
       const timeoutMessage = `Browser ${action} timed out.`;
       const snapshotDrains: Promise<unknown>[] = [];
       let actionRecorded = false;
+      let dispatched = false;
       const operationCompletion = (async () => {
         let highlighted = false;
         try {
@@ -1183,13 +1194,23 @@ export class BrowserHost {
             );
           }
           remainingTime(deadline, timeoutMessage);
-          await operation(tab, deadline);
+          await operation(tab, deadline, () => {
+            dispatched = true;
+          });
         } finally {
           if (highlighted) await tab.engine.hideHighlight().catch(() => undefined);
         }
       })();
       onOperationStarted?.(operationCompletion);
-      const response = operationCompletion
+      const boundedOperation = withTimeout(
+        operationCompletion,
+        Math.max(0, deadline - Date.now()),
+        timeoutMessage,
+      ).catch(async (error) => {
+        if (!isTimeoutError(error) || !dispatched) throw error;
+        await operationCompletion;
+      });
+      const response = boundedOperation
         .then(async () => {
           const settleTimeout = Math.max(1, deadline - Date.now());
           try {

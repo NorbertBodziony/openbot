@@ -221,8 +221,6 @@ export class BrowserRecorder {
         await this.#discardSession(session, true);
       }
     }
-    const artifact = this.#artifacts.get(tabId);
-    if (artifact) await rm(artifact.path, { force: true }).catch(() => undefined);
     this.#artifacts.delete(tabId);
     this.#errors.delete(tabId);
   }

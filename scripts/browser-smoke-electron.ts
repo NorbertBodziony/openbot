@@ -602,6 +602,18 @@ async function main(): Promise<void> {
     if (semanticChangeClick.success || !toolError(semanticChangeClick).includes("target changed")) {
       throw new Error("V2 revision-bound ref accepted a target whose semantics changed after the snapshot.");
     }
+    let legacySemanticChangeRejected = false;
+    try {
+      await browser.act(v2Tab.id, semanticChangeSnapshot.revision, {
+        type: "click",
+        ref: semanticChangeTarget.ref,
+      });
+    } catch (error) {
+      legacySemanticChangeRejected = String(error).includes("target changed");
+    }
+    if (!legacySemanticChangeRejected) {
+      throw new Error("V2 legacy act accepted a target whose semantics changed after the snapshot.");
+    }
     await v2Contents.executeJavaScript(
       `document.querySelector('[aria-label="Delete"]').setAttribute('aria-label', 'SPA'); true`,
       true,
@@ -1343,12 +1355,10 @@ async function main(): Promise<void> {
     if (!abandonedRecordingName) throw new Error("V2 automatic recording did not create an artifact.");
     const abandonedRecordingPath = join(downloadsRoot, abandonedRecordingName);
     await browser.close(abandonedRecordingTab.id);
-    await waitFor(async () =>
-      readFile(abandonedRecordingPath).then(
-        () => false,
-        () => true,
-      ),
-    );
+    const retainedRecording = await readFile(abandonedRecordingPath);
+    if (retainedRecording.length === 0 || retainedRecording.subarray(0, 4).toString("hex") !== "1a45dfa3") {
+      throw new Error("V2 tab close deleted or corrupted an automatically completed recording.");
+    }
     const { tab: actionNavigationTab, contents: actionNavigationContents } = await openTabWithContents(
       browser,
       origin,
