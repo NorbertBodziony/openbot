@@ -87,8 +87,8 @@ For setup problems, data reset, and uninstall instructions, see
 
 ## Development
 
-Development requires stable [Bun](https://bun.sh/) 1.4.0, Node.js 22.12 or newer, and at least one
-supported agent CLI.
+Development requires stable [Bun](https://bun.sh/) 1.4.0, Node.js 24 (the version in `.nvmrc`, matching
+the Node that Electron bundles - run `nvm use`), and at least one supported agent CLI.
 
 Install the exact Bun version on macOS or Linux:
 
