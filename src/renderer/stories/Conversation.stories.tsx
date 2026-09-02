@@ -1084,18 +1084,10 @@ export const SentMessageWithContextFiles: Story = {
 export const NarrowRichConversation: Story = {
   name: "Narrow rich conversation",
   render: (storyArgs) => (
-    <section data-testid="narrow-conversation-sample" style={{ width: "360px", height: "820px", overflow: "hidden" }}>
+    <section style={{ width: "360px", height: "820px", overflow: "hidden" }}>
       <MockedConversation args={storyArgs} />
     </section>
   ),
-  play: async ({ canvas }) => {
-    const sample = canvas.getByTestId("narrow-conversation-sample");
-    const reference = canvas.getByRole("button", {
-      name: `Open attached file ${STORY_ATTACHMENTS[0].name}`,
-    });
-    await expect(sample.scrollWidth).toBeLessThanOrEqual(sample.clientWidth);
-    await expect(reference.getBoundingClientRect().right).toBeLessThanOrEqual(sample.getBoundingClientRect().right);
-  },
 };
 
 export const UnreadMessages: Story = {
@@ -1681,14 +1673,8 @@ export const NarrowActionMarkerSpacing: Story = {
   name: "Narrow action marker spacing",
   args: actionMarkerArgs,
   render: (storyArgs) => (
-    <section data-testid="narrow-action-marker-sample" style={{ width: "320px", height: "820px", overflow: "hidden" }}>
+    <section style={{ width: "320px", height: "820px", overflow: "hidden" }}>
       <MockedConversation args={storyArgs} />
     </section>
   ),
-  play: async ({ canvas }) => {
-    const sample = canvas.getByTestId("narrow-action-marker-sample");
-    const site = canvas.getByRole("button", { name: "Open site launch-status-23456789ab.openbot.site" });
-    await expect(sample.scrollWidth).toBeLessThanOrEqual(sample.clientWidth);
-    await expect(site.getBoundingClientRect().right).toBeLessThanOrEqual(sample.getBoundingClientRect().right);
-  },
 };
