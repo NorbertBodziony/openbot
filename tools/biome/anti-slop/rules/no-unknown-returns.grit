@@ -1,5 +1,7 @@
 language js(typescript)
 
+// scope: global
+
 or {
   `function $name($params): unknown { $body }`,
   `function $name($params): Promise<unknown> { $body }`,

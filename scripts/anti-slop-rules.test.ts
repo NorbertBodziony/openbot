@@ -21,6 +21,20 @@ const ruleNames = readdirSync(rulesDirectory)
   .map((entry) => entry.replace(/\.grit$/, ""))
   .sort();
 
+interface BiomeConfig {
+  readonly plugins?: readonly string[];
+  readonly overrides?: readonly { readonly plugins?: readonly string[] }[];
+}
+
+const biomeConfig: BiomeConfig = JSON.parse(readFileSync(join(repositoryRoot, "biome.json"), "utf8"));
+
+function ruleNamesIn(plugins: readonly string[] | undefined): readonly string[] {
+  return (plugins ?? []).map((path) => path.replace(/^.*\//, "").replace(/\.grit$/, "")).sort();
+}
+
+const globalRules = ruleNamesIn(biomeConfig.plugins);
+const testOnlyRules = ruleNamesIn(biomeConfig.overrides?.flatMap((override) => override.plugins ?? []));
+
 function ruleSource(rule: string): string {
   return readFileSync(join(rulesDirectory, `${rule}.grit`), "utf8");
 }
@@ -81,6 +95,35 @@ describe("anti-slop rules", () => {
       .map((entry) => entry.replace(/\.fixture\.ts$/, ""))
       .sort();
     expect(fixtures).toEqual(ruleNames);
+  });
+
+  it("keeps the skill's bundled copy identical to the rules in this repository", () => {
+    // The skill installs these into other repositories. A stale bundle would
+    // ship deleted rules and a plugin list pointing at files that do not exist.
+    const bundleDirectory = join(repositoryRoot, ".agents/skills/biome-anti-slop/assets/anti-slop");
+    const bundled = (directory: string) => readdirSync(join(bundleDirectory, directory)).sort();
+
+    expect(bundled("rules")).toEqual(readdirSync(rulesDirectory).sort());
+    expect(bundled("fixtures")).toEqual(readdirSync(fixturesDirectory).sort());
+
+    const drifted = bundled("rules").filter(
+      (entry) =>
+        readFileSync(join(bundleDirectory, "rules", entry), "utf8") !==
+        readFileSync(join(rulesDirectory, entry), "utf8"),
+    );
+    expect(drifted).toEqual([]);
+  });
+
+  it("registers every rule in the list its own scope line names", () => {
+    // The rule states where it belongs, so neither biome.json nor the skill has
+    // to keep a second list that remembers it.
+    const declaredScope = (rule: string) => /^\/\/ scope: (global|tests)$/m.exec(ruleSource(rule))?.[1];
+    const misplaced = ruleNames.filter((rule) =>
+      declaredScope(rule) === "tests" ? !testOnlyRules.includes(rule) : !globalRules.includes(rule),
+    );
+
+    expect(ruleNames.filter((rule) => declaredScope(rule) === undefined)).toEqual([]);
+    expect(misplaced).toEqual([]);
   });
 
   it.each(ruleNames)("%s rejects the lines its fixture marks, and only those", (rule) => {

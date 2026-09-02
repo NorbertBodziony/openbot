@@ -1,5 +1,7 @@
 language js(typescript)
 
+// scope: global
+
 // The guards have to be regexes: `const` as a pattern does not match the
 // `const` keyword in the assertion's type position, so writing it that way
 // leaves the exemption dead and flags `(value as Frame) as const`.

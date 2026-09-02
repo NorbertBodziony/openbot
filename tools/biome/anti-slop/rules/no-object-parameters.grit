@@ -1,6 +1,8 @@
 engine biome(1.0)
 language js(typescript)
 
+// scope: global
+
 // A warning, never an error. Preferring a named type to bare `object` is a good
 // default, but whether a parameter list should be positional or an options
 // object is a readability judgement, not a defect: four booleans read better

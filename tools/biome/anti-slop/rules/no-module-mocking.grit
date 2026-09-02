@@ -1,5 +1,7 @@
 language js(typescript)
 
+// scope: global
+
 // A good default, not an absolute. The backend is on dependency injection, so a
 // fake that implements the real interface is almost always available and is a
 // better test. The exception is a module that reaches the outside world at

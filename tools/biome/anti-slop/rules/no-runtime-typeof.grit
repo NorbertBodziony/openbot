@@ -1,5 +1,7 @@
 language js(typescript)
 
+// scope: global
+
 // A warning, never an error, because `typeof` is the only correct way to narrow
 // an `unknown` at a trust boundary, and this repository is full of them: IPC
 // payloads, `JSON.parse` results, ACP frames, Team API frames, `localStorage`
