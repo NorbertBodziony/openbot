@@ -2355,7 +2355,7 @@
   flex-direction: column;
   gap: var(--openbot-space-6);
   overflow-y: auto;
-  padding: var(--openbot-space-4) var(--openbot-space-6);
+  padding: var(--openbot-space-4);
   scrollbar-gutter: stable;
 }
 
@@ -2412,10 +2412,6 @@
   .agent-exchange-thread-modal {
     width: calc(100vw - 24px);
     height: calc(100dvh - 24px);
-  }
-
-  .agent-exchange-thread-list {
-    padding: var(--openbot-space-4);
   }
 
   .agent-exchange-thread-entry > .ui-bubble {
