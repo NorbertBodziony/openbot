@@ -2776,6 +2776,12 @@ function markerOnlyMessage(message: BotMessage): boolean {
   );
 }
 
+/** Marker-only rows that render attachment cards below the marker do not end with one. */
+function markerRowEndsWithMarker(message: BotMessage): boolean {
+  if (!markerOnlyMessage(message)) return false;
+  return !(message.exchange?.direction === "incoming" && (message.attachments?.length ?? 0) > 0);
+}
+
 function routineMarkerAvailable(
   marker: ChatActionMarkerModel,
   availableRoutineIds: readonly string[] | undefined,
@@ -2962,7 +2968,7 @@ export function ConversationTimeline() {
                   if (!current?.actionMarker) return false;
                   if (current.id === props.firstUnreadMessageId) return false;
                   const previous = props.messages[virtualRow.index - 1];
-                  return previous !== undefined && markerOnlyMessage(previous);
+                  return previous !== undefined && markerRowEndsWithMarker(previous);
                 });
                 if (markerOnly) {
                   return (

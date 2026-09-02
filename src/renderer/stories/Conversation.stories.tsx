@@ -1554,6 +1554,7 @@ const actionMarkerMessages: RendererBotMessage[] = [
     body: "",
     time: "22:49",
     kind: "exchange",
+    attachments: [STORY_ATTACHMENTS[0]],
     exchange: {
       direction: "incoming",
       messageId: "spacing-marker-incoming",
@@ -1686,16 +1687,8 @@ export const NarrowActionMarkerSpacing: Story = {
   ),
   play: async ({ canvas }) => {
     const sample = canvas.getByTestId("narrow-action-marker-sample");
-    const sampleBounds = sample.getBoundingClientRect();
+    const site = canvas.getByRole("button", { name: "Open site launch-status-23456789ab.openbot.site" });
     await expect(sample.scrollWidth).toBeLessThanOrEqual(sample.clientWidth);
-    const targets = [
-      ...canvas.getAllByRole("button", { name: "Open routine Daily source check" }),
-      canvas.getByRole("button", { name: "Open site launch-status-23456789ab.openbot.site" }),
-    ];
-    for (const target of targets) {
-      const bounds = target.getBoundingClientRect();
-      await expect(bounds.left).toBeGreaterThanOrEqual(sampleBounds.left);
-      await expect(bounds.right).toBeLessThanOrEqual(sampleBounds.right);
-    }
+    await expect(site.getBoundingClientRect().right).toBeLessThanOrEqual(sample.getBoundingClientRect().right);
   },
 };

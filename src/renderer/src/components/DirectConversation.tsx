@@ -296,7 +296,10 @@ export function DirectConversation(props: DirectConversationProps) {
                     if (!message) return null;
                     const own = () => message.senderMemberId === props.currentMemberId;
                     const previous = () => props.snapshot?.messages[virtualRow.index - 1];
-                    const grouped = () => previous()?.senderMemberId === message.senderMemberId;
+                    // The unread boundary keeps the full entry gap so its divider stays legible.
+                    const grouped = () =>
+                      previous()?.senderMemberId === message.senderMemberId &&
+                      message.id !== props.snapshot?.readState?.firstUnreadMessageId;
                     return (
                       <div
                         data-index={virtualRow.index}
