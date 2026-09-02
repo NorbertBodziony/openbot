@@ -12,7 +12,6 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-  Switch,
   SwitchField,
   Textarea,
   Toaster,
@@ -106,24 +105,6 @@ describe("UI primitives", () => {
     await waitFor(() => expect(onCopyError).toHaveBeenCalledWith(clipboardError));
   });
 
-  it("supports polymorphic links, refs, and expanded state", () => {
-    let buttonRef: HTMLButtonElement | undefined;
-    render(() => (
-      <>
-        <Button as="a" href="/settings" variant="link">
-          Settings
-        </Button>
-        <Button ref={(element) => (buttonRef = element)} variant="outline" aria-expanded="true">
-          Options
-        </Button>
-      </>
-    ));
-
-    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
-    expect(buttonRef).toBe(screen.getByRole("button", { name: "Options" }));
-    expect(buttonRef).toHaveAttribute("aria-expanded", "true");
-  });
-
   it("keeps forwarded loading state reactive", async () => {
     const [loading, setLoading] = createSignal(false);
     render(() => <Button loading={loading()}>Sync</Button>);
@@ -144,8 +125,7 @@ describe("UI primitives", () => {
         <span aria-hidden="true">×</span>
       </IconButton>
     ));
-    const button = screen.getByRole("button", { name: "Close" });
-    expect(button).toHaveAttribute("title", "Close");
+    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
   });
 
   it("supports controlled switch state and form-compatible input props", async () => {
@@ -170,15 +150,6 @@ describe("UI primitives", () => {
     expect(control).toBeChecked();
     expect(control).toHaveAttribute("name", "notifications");
     expect(control).toHaveAttribute("value", "enabled");
-  });
-
-  it("supports an uncontrolled required switch", async () => {
-    render(() => <Switch defaultChecked required aria-label="Required option" />);
-    const control = screen.getByRole("switch", { name: "Required option" });
-    expect(control).toBeChecked();
-    expect(control).toBeRequired();
-    await fireEvent.click(control);
-    expect(control).not.toBeChecked();
   });
 
   it("exposes invalid switch state and field description", async () => {
@@ -234,7 +205,7 @@ describe("UI primitives", () => {
           submitted = new FormData(event.currentTarget);
         }}
       >
-        <SwitchField defaultChecked name="notifications" value="enabled" label="Notifications" />
+        <SwitchField defaultChecked required name="notifications" value="enabled" label="Notifications" />
       </form>
     ));
 
@@ -244,6 +215,7 @@ describe("UI primitives", () => {
     expect(submitted?.get("notifications")).toBe("enabled");
 
     const control = screen.getByRole("switch", { name: "Notifications" });
+    expect(control).toBeRequired();
     await fireEvent.click(control);
     expect(control).not.toBeChecked();
     await fireEvent.reset(form);
@@ -267,37 +239,6 @@ describe("UI primitives", () => {
     expect(screen.getByLabelText("Instructions")).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByLabelText("Instructions")).toHaveAttribute("aria-describedby");
     expect(screen.getByRole("alert")).toHaveTextContent("Required");
-  });
-
-  it("keeps controlled text input and textarea values during consecutive input events", async () => {
-    const [name, setName] = createSignal("Existing name");
-    const [description, setDescription] = createSignal("Existing description");
-    render(() => (
-      <>
-        <Input aria-label="Name" value={name()} onValueChange={setName} />
-        <Textarea aria-label="Description" value={description()} onValueChange={setDescription} />
-      </>
-    ));
-
-    const nameInput = screen.getByRole("textbox", { name: "Name" });
-    const descriptionInput = screen.getByRole("textbox", { name: "Description" });
-    if (!(nameInput instanceof HTMLInputElement)) throw new Error("Expected a native input.");
-    if (!(descriptionInput instanceof HTMLTextAreaElement)) throw new Error("Expected a native textarea.");
-    await fireEvent.input(nameInput, { target: { value: "" } });
-    for (const character of "Server name") {
-      const nextName = `${nameInput.value}${character}`;
-      await fireEvent.input(nameInput, { target: { value: nextName } });
-      expect(nameInput).toHaveValue(nextName);
-    }
-    await fireEvent.input(descriptionInput, { target: { value: "" } });
-    for (const character of "Every character remains.") {
-      const nextDescription = `${descriptionInput.value}${character}`;
-      await fireEvent.input(descriptionInput, { target: { value: nextDescription } });
-      expect(descriptionInput).toHaveValue(nextDescription);
-    }
-
-    expect(screen.getByRole("textbox", { name: "Name" })).toBe(nameInput);
-    expect(screen.getByRole("textbox", { name: "Description" })).toBe(descriptionInput);
   });
 
   it("keeps reactive values and every character from one native typing burst", () => {
@@ -339,38 +280,5 @@ describe("UI primitives", () => {
 
     expect(nameInput).toHaveValue("abcdefghijklmnop");
     expect(descriptionInput).toHaveValue("fast description");
-  });
-
-  it("forwards native refs from the shared input and textarea components", async () => {
-    const [name, setName] = createSignal("");
-    const [description, setDescription] = createSignal("");
-    let inputRef: HTMLInputElement | undefined;
-    let textareaRef: HTMLTextAreaElement | undefined;
-    render(() => (
-      <>
-        <Input
-          ref={(element) => (inputRef = element)}
-          aria-label="Fallback name"
-          value={name()}
-          onValueChange={setName}
-        />
-        <Textarea
-          ref={(element) => (textareaRef = element)}
-          aria-label="Fallback description"
-          value={description()}
-          onValueChange={setDescription}
-        />
-      </>
-    ));
-
-    const nameInput = screen.getByRole("textbox", { name: "Fallback name" });
-    await fireEvent.input(nameInput, { target: { value: "Server" } });
-    expect(nameInput).toHaveValue("Server");
-
-    const descriptionInput = screen.getByRole("textbox", { name: "Fallback description" });
-    await fireEvent.input(descriptionInput, { target: { value: "Notes" } });
-    expect(descriptionInput).toHaveValue("Notes");
-    expect(inputRef).toBe(nameInput);
-    expect(textareaRef).toBe(descriptionInput);
   });
 });

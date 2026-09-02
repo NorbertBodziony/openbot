@@ -1,0 +1,9 @@
+language js(typescript)
+
+`$_.toHaveClass($args)` as $call where {
+  register_diagnostic(
+    span=$call,
+    message="Do not assert CSS classes in tests. See AGENTS.md \"Test value policy\": assert the behaviour the class produces, or move the visual detail to a Storybook story.",
+    severity="error"
+  )
+}

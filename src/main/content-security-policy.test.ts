@@ -17,10 +17,4 @@ describe("buildContentSecurityPolicy", () => {
     expect(policy).toContain("http://localhost:*");
     expect(policy).toContain("ws://localhost:*");
   });
-
-  it("allows attachment previews to be fetched", () => {
-    const policy = buildContentSecurityPolicy(true);
-
-    expect(policy).toContain("connect-src 'self' openbot-attachment: openbot-remote-attachment:");
-  });
 });

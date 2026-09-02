@@ -6,6 +6,9 @@ export default defineConfig({
   test: {
     execArgv: ["--disable-warning=ExperimentalWarning"],
     globals: true,
+    // Every spy, global patch and fake timer a test file installs is undone
+    // after each test, in both projects, so nothing depends on file order.
+    restoreMocks: true,
     onConsoleLog(log) {
       // Solid 2 RC dependencies still emit this dev-only diagnostic while
       // their components initialize. Keep other console output visible.
@@ -17,13 +20,20 @@ export default defineConfig({
         test: {
           name: "node",
           environment: "node",
+          // The file name routes the file, so the project is never a decision:
+          // `*.test.ts` runs here without a DOM, `*.test.tsx` needs JSX and
+          // gets jsdom, and `*.dom.test.ts` is the narrow case of needing a DOM
+          // without rendering a component. Reaching for one of the latter two
+          // in a logic test means the logic is not separable from the DOM yet.
           include: [
             "src/backend/**/*.test.ts",
             "src/main/**/*.test.ts",
             "src/preload/**/*.test.ts",
+            "src/renderer/**/*.test.ts",
             "scripts/**/*.test.ts",
             "packages/contracts/**/*.test.ts",
           ],
+          exclude: [...configDefaults.exclude, "**/*.dom.test.ts"],
         },
       },
       {
@@ -31,7 +41,7 @@ export default defineConfig({
         test: {
           name: "renderer",
           environment: "jsdom",
-          include: ["src/renderer/**/*.test.{ts,tsx}", "packages/brand/**/*.test.{ts,tsx}"],
+          include: ["src/renderer/**/*.test.tsx", "src/renderer/**/*.dom.test.ts"],
           setupFiles: ["./src/renderer/src/setupTests.ts"],
         },
       },

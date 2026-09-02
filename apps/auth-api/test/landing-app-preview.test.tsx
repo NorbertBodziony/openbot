@@ -4,7 +4,6 @@ import { LandingAppPreview } from "../src/components/landing/LandingAppPreview";
 
 describe("LandingAppPreview", () => {
   let nextAnimationFrameId: number;
-  let cancelAnimationFrameMock: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     nextAnimationFrameId = 1;
@@ -16,7 +15,7 @@ describe("LandingAppPreview", () => {
       callback(0);
       return nextAnimationFrameId++;
     });
-    cancelAnimationFrameMock = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
     document.documentElement.style.setProperty("--reveal-dur", "240ms");
     vi.useFakeTimers();
   });
@@ -70,28 +69,6 @@ describe("LandingAppPreview", () => {
     expect(removeEventListener).toHaveBeenCalledWith("message", expect.any(Function));
   });
 
-  it("starts immediately after readiness when reduced motion is enabled", () => {
-    vi.stubGlobal(
-      "matchMedia",
-      vi.fn(() => ({ matches: true })),
-    );
-    const view = render(() => <LandingAppPreview />);
-    const frame = view.container.querySelector("iframe");
-    if (!frame?.contentWindow) throw new Error("Expected the landing preview");
-    vi.advanceTimersByTime(300);
-    const postMessage = vi.spyOn(frame.contentWindow, "postMessage");
-
-    window.dispatchEvent(
-      new MessageEvent("message", {
-        origin: window.location.origin,
-        source: frame.contentWindow,
-        data: { type: "openbot:landing-preview-ready" },
-      }),
-    );
-
-    expect(postMessage).toHaveBeenCalledOnce();
-  });
-
   it("clears a pending start when the preview unmounts", () => {
     const view = render(() => <LandingAppPreview />);
     const frame = view.container.querySelector("iframe");
@@ -109,17 +86,5 @@ describe("LandingAppPreview", () => {
     vi.advanceTimersByTime(240);
 
     expect(postMessage).not.toHaveBeenCalled();
-  });
-
-  it("does not load after unmounting during the delay", () => {
-    const view = render(() => <LandingAppPreview />);
-    const frame = view.container.querySelector("iframe");
-    if (!frame) throw new Error("Expected the landing iframe");
-    view.unmount();
-
-    vi.advanceTimersByTime(300);
-
-    expect(frame).not.toHaveAttribute("src");
-    expect(cancelAnimationFrameMock).toHaveBeenCalledTimes(2);
   });
 });

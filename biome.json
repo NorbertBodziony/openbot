@@ -95,6 +95,16 @@
           }
         }
       }
+    },
+    {
+      "includes": ["**/*.test.ts", "**/*.test.tsx"],
+      "plugins": [
+        "./tools/biome/anti-slop/rules/no-focus-assertions.grit",
+        "./tools/biome/anti-slop/rules/no-class-assertions.grit",
+        "./tools/biome/anti-slop/rules/no-style-assertions.grit",
+        "./tools/biome/anti-slop/rules/no-dom-containment-assertions.grit",
+        "./tools/biome/anti-slop/rules/no-title-copy-assertions.grit"
+      ]
     }
   ],
   "javascript": {

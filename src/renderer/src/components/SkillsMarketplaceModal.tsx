@@ -737,7 +737,7 @@ description: Turn merged work into clear, consistent release notes.
                             >
                               {(url) => (
                                 <span class="skills-marketplace-icon">
-                                  <img src={url} alt="" />
+                                  <img src={url} alt="Skill icon preview" />
                                 </span>
                               )}
                             </Show>

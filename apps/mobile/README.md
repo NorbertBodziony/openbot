@@ -4,7 +4,7 @@ React Native app built with Expo SDK 57, Expo Router, TypeScript 7, Biome, and B
 
 ## Requirements
 
-- Node.js 22.13 or newer (an active LTS release is recommended)
+- Node.js 24 or newer (the repository pins 24 in `.nvmrc`)
 - Bun 1.3 or newer
 - Expo Go for basic device testing, or an EAS development build for the full native environment
 

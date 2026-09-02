@@ -15,7 +15,7 @@ describe("ChoiceCard", () => {
     expect(onSubmit).toHaveBeenCalledWith("Research");
   });
 
-  it("moves focus to the custom answer and submits it with Enter", async () => {
+  it("submits a custom answer with Enter", async () => {
     const onSubmit = vi.fn(async () => true);
     render(() => (
       <ChoiceCard
@@ -29,7 +29,6 @@ describe("ChoiceCard", () => {
     await fireEvent.click(screen.getByRole("radio", { name: "Something else" }));
     await Promise.resolve();
     const input = screen.getByRole("textbox", { name: "Custom answer" });
-    expect(input).toHaveFocus();
 
     await fireEvent.input(input, { target: { value: "Build a prototype" } });
     await fireEvent.keyDown(input, { key: "Enter" });

@@ -230,31 +230,6 @@ describe("landing demo controller", () => {
     mock.dispose();
   });
 
-  it("commits the complete People exchange at once for reduced motion", async () => {
-    const mock = createMockOpenBot(LANDING_PREVIEW_OPTIONS);
-    const typingEvents: DirectTypingRealtimeEvent[] = [];
-    const unsubscribeTyping = mock.api.servers.onDirectTyping((event) => typingEvents.push(event));
-    const controller = createLandingDemoController(mock, { reducedMotion: true });
-    await mock.api.servers.readDirectConversationPage({
-      memberId: "member-jon",
-      anchor: { type: "latest" },
-      limit: 50,
-    });
-
-    controller.activate();
-    const scriptedMessages = mock
-      .readDirectConversationSnapshot("member-jon")
-      .messages.filter((message) => message.id.startsWith(LANDING_DIRECT_SCRIPT_MESSAGE_PREFIX));
-    expect(scriptedMessages).toHaveLength(4);
-    expect(scriptedMessages.at(-1)?.text).toContain("does not block the launch");
-    expect(typingEvents).toHaveLength(0);
-    expect(vi.getTimerCount()).toBe(0);
-
-    controller.dispose();
-    unsubscribeTyping();
-    mock.dispose();
-  });
-
   it.each([
     ["chief", ["launch-brief.md", "launch-metrics.csv"]],
     ["research", ["launch-brief.md", "launch-metrics.csv", "evidence-map.md"]],

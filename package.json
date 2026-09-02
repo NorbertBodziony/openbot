@@ -35,7 +35,7 @@
   "main": "./out/main/index.js",
   "packageManager": "bun@1.4.0",
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=24.0.0"
   },
   "scripts": {
     "prepare": "bun scripts/install-git-hooks.ts",
@@ -103,7 +103,8 @@
     "lint": "biome check .",
     "format": "biome check --write .",
     "check:staged": "biome check --write --staged --files-ignore-unknown=true --no-errors-on-unmatched",
-    "test": "vitest run",
+    "test": "bun run test:desktop && bun run test:api && bun run test:sites",
+    "test:desktop": "vitest run",
     "test:api": "bun run --cwd apps/auth-api test",
     "test:brand": "bun run --cwd packages/brand test",
     "test:contracts": "bun run --cwd packages/contracts test",
@@ -129,12 +130,13 @@
     "release:patch": "bun scripts/prepare-release.ts patch",
     "release:minor": "bun scripts/prepare-release.ts minor",
     "release:major": "bun scripts/prepare-release.ts major",
-    "check": "bun run check:desktop && bun run test && bun run check:api",
-    "check:desktop": "bun run check:ui && bun run lint && bun run desktop:typecheck && bun run test:browser && bun run build",
+    "check": "bun run --parallel check:desktop check:api test:sites && bun run test:desktop",
+    "check:desktop": "bun run check:ui && bun run check:tests && bun run lint && bun run desktop:typecheck && bun run test:browser && bun run build",
     "check:api": "bun run typecheck:api && bun run test:api && bun run api:build:check",
     "desktop:typecheck": "bun run --parallel typecheck:node typecheck:renderer typecheck:contracts typecheck:brand typecheck:storybook",
     "check:builds": "bun run --parallel api:build:check build",
     "api:build:check": "CLOUDFLARE_ENV=preview bun run api:build",
+    "check:tests": "bun scripts/test-value-check.ts && bun scripts/policy-sync-check.ts",
     "check:ui": "bun scripts/ui-foundation-check.ts",
     "package": "bun run voice:prepare-runtime && bun run prepare:remote-desktop-runtime && bun run verify:remote-desktop-runtime && bun run build && electron-builder --dir --mac --arm64 --config.mac.identity=null --config.mac.notarize=false",
     "verify:package": "bun scripts/verify-macos-package.ts",
@@ -184,7 +186,7 @@
     "@storybook/addon-a11y": "10.5.10",
     "@tailwindcss/vite": "4.3.3",
     "@testing-library/jest-dom": "7.0.1",
-    "@types/node": "22.20.1",
+    "@types/node": "24.13.3",
     "@types/qrcode": "^1.5.6",
     "@types/ws": "8.18.1",
     "electron": "44.0.0",
