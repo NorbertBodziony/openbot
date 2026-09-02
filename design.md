@@ -385,6 +385,7 @@ The renderer is a resizable desktop window, not a breakpoint grid.
   narrow web playground embeds behave like touch.
 - The left panel collapses to its compact 88px rail below the 210px drag threshold and expands again above 220px.
   New sidebar content must have a compact form.
+- The server rail narrows to 56px below 800px of window width, and stays 72px on macOS at every size.
 - Text truncates with `truncateMiddle` when the tail carries meaning (paths, IDs); otherwise it ellipsizes.
 - The landing playground renders the same components inside a web page, so a renderer component must not assume
   Electron APIs exist in order to draw itself.
@@ -491,11 +492,17 @@ structure, variants, spacing, or hover appearance. Those are Storybook's job.
 
 - **Adding a token** — declare it in the `:root` block of `src/renderer/src/styles.css`, add it to the relevant
   table here, and mirror it in `apps/mobile/global.css` and `apps/auth-api/src/styles.css` if it is a brand
-  value. `check:ui` fails if this document names a token that `:root` does not declare, and if any renderer
-  stylesheet or inline style uses an `--openbot-*` property that `:root` does not declare.
+  value. `check:ui` fails if this document names a token that `:root` does not declare, if any renderer
+  stylesheet or inline style uses an `--openbot-*` property that `:root` does not declare, and if a token table
+  row above quotes a literal value that no longer matches the declaration.
 - **Adding a component** — build it in `components/ui`, export it from `index.ts`, add its row to the inventory
   table, and add it to "Which component do I pick" if it changes a decision. `check:ui` fails if a barrel module
-  is missing from the inventory.
+  is missing from the inventory, and if a module exports a name its own inventory row does not list — so a new
+  export on an existing module has to be documented too.
+- **Changing a layout number** — the numbers this document states in prose are pinned to the constants that own
+  them (`LEFT_PANEL_*` in `src/renderer/src/App.tsx`, the rail and header custom properties in
+  `styles/app-shell.css`, the bubble measure in `styles/primitives.css`). `check:ui` derives the expected
+  sentence from the live value, so changing a constant without updating the prose fails.
 - **Changing a rule** — change the prose here, and if the rule can be checked deterministically, add it to
   `scripts/ui-foundation-check.ts` or `scripts/design-contract.ts` in the same change. Prose is for judgment;
   mechanics belong in the check.

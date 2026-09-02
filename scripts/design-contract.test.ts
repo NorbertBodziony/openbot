@@ -18,22 +18,98 @@ const requiredSections = [
   "Maintaining this document",
 ];
 
+const layoutSection = [
+  "## Layout",
+  "",
+  "`--left-header-height: 38px`, and `--server-rail-width` is 64px, and 72px on macOS.",
+  "The rail narrows to 56px below 800px of window width.",
+  "The left panel is 280px default, 240 min, 400 max, 88 compact, with 210/220 collapse-and-expand hysteresis.",
+  "It collapses to its compact 88px rail below the 210px drag threshold and expands again above 220px.",
+  "A bubble is `max-width: min(80%, 720px)` and the marker rail is `min(680px, 100%)`.",
+  "",
+];
+
+const componentsSection = [
+  "## Components",
+  "",
+  "### Inventory",
+  "",
+  "| Module | Exports |",
+  "| --- | --- |",
+  "| `button.tsx` | `Button` |",
+  "| `icons.ts` | The curated Lucide re-exports |",
+  "",
+];
+
+const appSource = [
+  "const LEFT_PANEL_DEFAULT = 280;",
+  "const LEFT_PANEL_MIN = 240;",
+  "const LEFT_PANEL_MAX = 400;",
+  "const LEFT_PANEL_COMPACT = 88;",
+  "const LEFT_PANEL_COLLAPSE_THRESHOLD = 210;",
+  "const LEFT_PANEL_EXPAND_THRESHOLD = 220;",
+  "",
+].join("\n");
+
+const shellSource = [
+  ".app-frame {",
+  "  --left-header-height: 38px;",
+  "  --server-rail-width: 64px;",
+  "}",
+  "",
+  ".app-frame-platform-darwin {",
+  "  --server-rail-width: 72px;",
+  "}",
+  "",
+  "@media (max-width: 800px) {",
+  "  .app-frame-with-server-rail {",
+  "    --server-rail-width: 56px;",
+  "  }",
+  "}",
+  "",
+].join("\n");
+
+const paletteSource = [
+  ":root {",
+  "  --openbot-accent: #6960f1;",
+  "  --openbot-radius-md: 8px;",
+  "  --openbot-chat-marker-width: min(680px, 100%);",
+  "}",
+  "",
+].join("\n");
+
 const roots: string[] = [];
 
 function designDoc(): string {
-  const inventory = ["| Module | Exports |", "| --- | --- |", "| `button.tsx` | `Button` |", "| `icons.ts` | icons |"];
-  const body = ["# OpenBot design", "", "Focus uses `--openbot-accent` and the `--openbot-shadow-*` family.", ""];
-  return [...body, ...inventory, "", ...requiredSections.map((section) => `## ${section}\n`)].join("\n");
+  const head = [
+    "# OpenBot design",
+    "",
+    "Focus uses `--openbot-accent` and the `--openbot-shadow-*` family.",
+    "",
+    "| Token | Value | Use |",
+    "| --- | --- | --- |",
+    "| `--openbot-radius-md` | `8px` | Default radius |",
+    "",
+  ];
+  const sections = requiredSections.flatMap((section) => {
+    if (section === "Layout") return layoutSection;
+    if (section === "Components") return componentsSection;
+    return [`## ${section}`, ""];
+  });
+  return [...head, ...sections].join("\n");
 }
 
 function compliantRepository(): Map<string, string> {
   return new Map([
     ["design.md", designDoc()],
     ["AGENTS.md", "Read [`design.md`](design.md) before you change any UI.\n"],
-    ["src/renderer/src/styles.css", ":root {\n  --openbot-accent: #6960f1;\n}\n"],
+    ["src/renderer/src/styles.css", paletteSource],
+    ["src/renderer/src/App.tsx", appSource],
+    ["src/renderer/src/styles/app-shell.css", shellSource],
+    ["src/renderer/src/styles/primitives.css", ".bubble {\n  max-width: min(80%, 720px);\n}\n"],
     ["src/renderer/src/components/ui/index.ts", 'export * from "./button";\nexport * from "./icons";\n'],
     ["src/renderer/src/components/ui/button.tsx", "export const Button = () => null;\n"],
-    ["src/renderer/src/components/ui/icons.ts", "export const icons = {};\n"],
+    ["src/renderer/src/components/ui/icons.ts", 'export { default as Check } from "lucide-solid/icons/check";\n'],
   ]);
 }
 
@@ -98,11 +174,56 @@ describe("design contract", () => {
     expect(failures[0]).toContain("uses --openbot-space-5");
   });
 
+  it("reports a token whose documented value drifted from the palette", () => {
+    const files = compliantRepository();
+    files.set(
+      "src/renderer/src/styles.css",
+      paletteSource.replace("--openbot-radius-md: 8px", "--openbot-radius-md: 10px"),
+    );
+
+    expect(checkRepository(files)).toEqual([
+      expect.stringContaining("documents --openbot-radius-md as 8px, but src/renderer/src/styles.css declares 10px"),
+    ]);
+  });
+
+  it("reports a layout number the document still states with its old value", () => {
+    const files = compliantRepository();
+    files.set("src/renderer/src/App.tsx", appSource.replace("LEFT_PANEL_MAX = 400", "LEFT_PANEL_MAX = 420"));
+
+    expect(checkRepository(files)).toEqual([expect.stringContaining('state "420 max"')]);
+  });
+
+  it("reports a pinned value whose source no longer declares it", () => {
+    const files = compliantRepository();
+    files.set("src/renderer/src/App.tsx", appSource.replace("const LEFT_PANEL_MAX = 400;\n", ""));
+
+    expect(checkRepository(files)).toEqual([expect.stringContaining("no longer declares")]);
+  });
+
   it("reports a barrel module that the component inventory omits", () => {
     const files = compliantRepository();
     files.set("src/renderer/src/components/ui/index.ts", 'export * from "./button";\nexport * from "./tooltip";\n');
     files.set("src/renderer/src/components/ui/tooltip.tsx", "export const Tooltip = () => null;\n");
 
     expect(checkRepository(files)).toEqual([expect.stringContaining("add `tooltip.tsx` to the component inventory")]);
+  });
+
+  it("reports an export that the module's inventory row omits", () => {
+    const files = compliantRepository();
+    files.set(
+      "src/renderer/src/components/ui/button.tsx",
+      "export const Button = () => null;\nexport const Toggle = () => null;\n",
+    );
+
+    expect(checkRepository(files)).toEqual([
+      expect.stringContaining("document `Toggle` in the `button.tsx` row of the component inventory"),
+    ]);
+  });
+
+  it("reports an inventory table the document no longer has", () => {
+    const files = compliantRepository();
+    files.set("design.md", designDoc().replace("### Inventory", "### Component inventory"));
+
+    expect(checkRepository(files)).toEqual([expect.stringContaining('restore the "### Inventory" table')]);
   });
 });
