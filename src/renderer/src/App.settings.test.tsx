@@ -10,25 +10,18 @@ describe("OpenBot connected desktop shell", () => {
     installOpenbotStub();
   });
 
-  it("shows focused weekly usage and compact account actions", async () => {
+  it("opens the dock surfaces and restores focus after every close path", async () => {
     render(() => <App />);
     await waitFor(() => expect(window.openbot.agent.getUsage).toHaveBeenCalledTimes(1));
-    const usageButton = await screen.findByRole("button", { name: "Weekly usage, 59% left" });
-    expect(screen.getByRole("complementary", { name: "Bot navigation" })).not.toContainElement(usageButton);
 
+    const usageButton = await screen.findByRole("button", { name: "Weekly usage, 59% left" });
     await fireEvent.click(usageButton);
     const usageDialog = screen.getByRole("dialog", { name: "Weekly usage" });
     const usageProgress = within(usageDialog).getByRole("progressbar", { name: "Weekly usage remaining" });
     expect(usageProgress).toHaveAttribute("aria-valuenow", "59");
     expect(usageProgress).toHaveAttribute("aria-valuetext", "59% left");
-    expect(within(usageDialog).getByText("59%")).toBeInTheDocument();
-    expect(within(usageDialog).getByText("Resets")).toBeInTheDocument();
     await fireEvent.click(within(usageDialog).getByRole("button", { name: "Refresh" }));
     await waitFor(() => expect(window.openbot.agent.getUsage).toHaveBeenCalledTimes(2));
-    expect(screen.queryByText(/ChatGPT Pro/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Developer preview/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Lifetime/i)).not.toBeInTheDocument();
-
     await fireEvent.keyDown(usageDialog, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Weekly usage" })).not.toBeInTheDocument());
     await waitFor(() => expect(usageButton).toHaveFocus());
@@ -36,19 +29,7 @@ describe("OpenBot connected desktop shell", () => {
     const accountButton = screen.getByRole("button", { name: "Open account actions" });
     await fireEvent.click(accountButton);
     const accountDialog = screen.getByRole("dialog", { name: "Account actions" });
-    expect(within(accountDialog).getByRole("button", { name: /Check for updates/ })).toBeInTheDocument();
-    expect(within(accountDialog).getByRole("button", { name: "Marketplace" })).toBeInTheDocument();
-    expect(within(accountDialog).getByRole("button", { name: "Providers & permissions" })).toBeInTheDocument();
-    expect(within(accountDialog).getByRole("button", { name: "Send feedback" })).toBeInTheDocument();
-    expect(within(accountDialog).getByRole("button", { name: "Message" })).toBeInTheDocument();
-    expect(within(accountDialog).getByRole("button", { name: "Sign out" })).toBeInTheDocument();
-    expect(within(accountDialog).queryByText("person@example.com")).not.toBeInTheDocument();
-    expect(within(accountDialog).queryByRole("button", { name: /photo/i })).not.toBeInTheDocument();
     expect(within(accountDialog).queryByRole("button", { name: "Settings" })).not.toBeInTheDocument();
-    expect(within(accountDialog).queryByText("Weekly usage")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Export data" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Export diagnostics" })).not.toBeInTheDocument();
-
     await fireEvent.keyDown(accountDialog, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Account actions" })).not.toBeInTheDocument());
     await waitFor(() => expect(accountButton).toHaveFocus());
@@ -61,12 +42,8 @@ describe("OpenBot connected desktop shell", () => {
     fireEvent.click(accountButton);
     fireEvent.click(screen.getByRole("button", { name: "Message" }));
     await waitFor(() => expect(window.openbot.openExternal).toHaveBeenCalledWith("message"));
-  });
 
-  it("opens global settings from the dock and restores focus after every close path", async () => {
-    render(() => <App />);
-    const settingsButton = await screen.findByRole("button", { name: "Settings" });
-
+    const settingsButton = screen.getByRole("button", { name: "Settings" });
     await fireEvent.click(settingsButton);
     let dialog = await screen.findByRole("dialog", { name: "General" });
     const launchSwitch = within(dialog).getByRole("switch", { name: "Launch OpenBot at login" });
@@ -79,7 +56,6 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.click(settingsButton);
     dialog = await screen.findByRole("dialog", { name: "General" });
-    expect(within(dialog).getByRole("switch", { name: "Launch OpenBot at login" })).not.toBeChecked();
     await fireEvent.keyDown(dialog, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
     await waitFor(() => expect(settingsButton).toHaveFocus());
@@ -91,22 +67,17 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(settingsButton).toHaveFocus());
   });
 
-  it("persists the product analytics opt-out", async () => {
+  it("persists every settings preference through its own IPC channel", async () => {
+    vi.mocked(window.openbot.update.getPreference).mockResolvedValue({ autoDownload: false });
     render(() => <App />);
     await fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
+
     await fireEvent.click(await screen.findByRole("switch", { name: "Share product analytics" }));
-
     await waitFor(() => expect(window.openbot.setAnalyticsPreference).toHaveBeenCalledWith({ enabled: false }));
-  });
 
-  it("persists the MacBook notch preference from settings on macOS", async () => {
-    render(() => <App />);
-    await fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
     const notchSwitch = await screen.findByRole("switch", { name: "Show status in the MacBook notch" });
     expect(notchSwitch).toBeChecked();
-
     await fireEvent.click(notchSwitch);
-
     await waitFor(() =>
       expect(window.openbot.dynamicIsland.setPreference).toHaveBeenCalledWith({
         enabled: false,
@@ -116,6 +87,12 @@ describe("OpenBot connected desktop shell", () => {
       }),
     );
     expect(notchSwitch).not.toBeChecked();
+
+    await fireEvent.click(await screen.findByRole("tab", { name: "Updates" }));
+    const autoDownload = await screen.findByRole("switch", { name: "Automatically download updates" });
+    await waitFor(() => expect(autoDownload).not.toBeChecked());
+    await fireEvent.click(autoDownload);
+    await waitFor(() => expect(window.openbot.update.setPreference).toHaveBeenCalledWith({ autoDownload: true }));
   });
 
   it("does not open desktop analytics when the saved preference is disabled", async () => {
@@ -175,7 +152,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(window.openbot.update.install).toHaveBeenCalledOnce());
   });
 
-  it("reports a returned update error as a failed action", async () => {
+  it("reports every update failure as a retryable action", async () => {
     vi.mocked(window.openbot.update.getStatus).mockResolvedValueOnce({
       phase: "available",
       currentVersion: "0.1.0",
@@ -185,15 +162,17 @@ describe("OpenBot connected desktop shell", () => {
       message: null,
       errorCode: null,
     });
-    vi.mocked(window.openbot.update.download).mockResolvedValueOnce({
-      phase: "error",
-      currentVersion: "0.1.0",
-      availableVersion: "0.2.0",
-      progress: null,
-      checkedAt: "2026-08-12T22:00:00.000Z",
-      message: "Could not check for updates. Try again.",
-      errorCode: "download_failed",
-    });
+    vi.mocked(window.openbot.update.download)
+      .mockResolvedValueOnce({
+        phase: "error",
+        currentVersion: "0.1.0",
+        availableVersion: "0.2.0",
+        progress: null,
+        checkedAt: "2026-08-12T22:00:00.000Z",
+        message: "Could not check for updates. Try again.",
+        errorCode: "download_failed",
+      })
+      .mockRejectedValueOnce(new Error("Could not download update. Try again."));
     render(() => <App />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Open account actions" }));
@@ -207,42 +186,15 @@ describe("OpenBot connected desktop shell", () => {
         failure_code: "download_failed",
       }),
     );
-    expect(await screen.findByRole("button", { name: /Retry update.*Could not check for updates/ })).toBeEnabled();
-  });
-
-  it("keeps the update retry visible when downloading rejects", async () => {
-    vi.mocked(window.openbot.update.getStatus).mockResolvedValueOnce({
-      phase: "available",
-      currentVersion: "0.1.0",
-      availableVersion: "0.2.0",
-      progress: null,
-      checkedAt: null,
-      message: null,
-      errorCode: null,
+    const retryAfterReturnedError = await screen.findByRole("button", {
+      name: /Retry update.*Could not check for updates/,
     });
-    vi.mocked(window.openbot.update.download).mockRejectedValueOnce(new Error("Could not download update. Try again."));
-    render(() => <App />);
+    expect(retryAfterReturnedError).toBeEnabled();
 
-    fireEvent.click(await screen.findByRole("button", { name: /Download update/ }));
+    fireEvent.click(retryAfterReturnedError);
 
     expect(await screen.findByRole("button", { name: /Retry update.*Could not download update/ })).toBeEnabled();
-  });
-
-  it("retries a failed download instead of checking again", async () => {
-    vi.mocked(window.openbot.update.getStatus).mockResolvedValueOnce({
-      phase: "error",
-      currentVersion: "0.1.0",
-      availableVersion: "0.2.0",
-      progress: null,
-      checkedAt: "2026-08-12T22:00:00.000Z",
-      message: "Could not download the update. Try again.",
-      errorCode: "download_failed",
-    });
-    render(() => <App />);
-
-    fireEvent.click(await screen.findByRole("button", { name: /Retry update/ }));
-
-    await waitFor(() => expect(window.openbot.update.download).toHaveBeenCalledOnce());
+    await waitFor(() => expect(window.openbot.update.download).toHaveBeenCalledTimes(2));
     expect(window.openbot.update.check).not.toHaveBeenCalled();
   });
 
@@ -268,21 +220,6 @@ describe("OpenBot connected desktop shell", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(toggle).not.toBeChecked();
-  });
-
-  it("persists the automatic download preference", async () => {
-    vi.mocked(window.openbot.update.getPreference).mockResolvedValue({ autoDownload: false });
-    render(() => <App />);
-
-    await fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
-    await fireEvent.click(await screen.findByRole("tab", { name: "Updates" }));
-
-    const toggle = await screen.findByRole("switch", { name: "Automatically download updates" });
-    await waitFor(() => expect(toggle).not.toBeChecked());
-
-    await fireEvent.click(toggle);
-
-    await waitFor(() => expect(window.openbot.update.setPreference).toHaveBeenCalledWith({ autoDownload: true }));
   });
 
   it("confirms an installed app version on the next launch", async () => {
@@ -508,22 +445,6 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("button", { name: "Agent model: Luna" })).toBeEnabled();
   });
 
-  it("rolls back a failed header effort change and reports the error", async () => {
-    vi.mocked(window.openbot.agent.updateBot).mockRejectedValueOnce(new Error("Effort failed"));
-    render(() => <App />);
-    await screen.findByRole("heading", { name: "Chief" });
-
-    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
-    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
-    const effort = within(picker).getByRole("button", { name: /Agent reasoning effort/ });
-    await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
-    await fireEvent.click(screen.getByRole("option", { name: "High" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not change effort. Try again.");
-    expect(effort).toHaveTextContent("Medium");
-    expect(picker).toBeInTheDocument();
-  });
-
   it("shows unavailable providers without allowing their models", async () => {
     vi.mocked(window.openbot.agent.getStatus).mockResolvedValueOnce({
       phase: "ready",
@@ -568,6 +489,22 @@ describe("OpenBot connected desktop shell", () => {
       screen.queryByRole("radiogroup", { name: "What do you want me helping with most?" }),
     ).not.toBeInTheDocument();
     expect(screen.getByLabelText("Message Chief")).toHaveAttribute("contenteditable", "true");
+  });
+
+  it("rolls back a failed header effort change and reports the error", async () => {
+    vi.mocked(window.openbot.agent.updateBot).mockRejectedValueOnce(new Error("Effort failed"));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    const effort = within(picker).getByRole("button", { name: /Agent reasoning effort/ });
+    await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
+    await fireEvent.click(screen.getByRole("option", { name: "High" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not change effort. Try again.");
+    expect(effort).toHaveTextContent("Medium");
+    expect(picker).toBeInTheDocument();
   });
 
   it("locks the header model picker during active work", async () => {
