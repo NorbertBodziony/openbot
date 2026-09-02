@@ -73,7 +73,9 @@
         "useAsConstAssertion": "error"
       },
       "suspicious": {
-        "noExplicitAny": "error"
+        "noExplicitAny": "error",
+        "noFocusedTests": "error",
+        "noSkippedTests": "warn"
       }
     }
   },

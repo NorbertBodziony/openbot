@@ -198,23 +198,35 @@ Do not trust your memory of any of these APIs — check `package.json`, then rea
 
 1. **The default answer is no test.** Prefer changing an existing test to adding one. A new test must
    name the consequence it protects; a new test *file* needs a boundary that does not exist yet.
-2. **Check whether something already enforces it.** `tsc`, Biome and its GritQL anti-slop rules, and
+2. **Watch it fail.** Before you keep a test, break what it covers — change the value, delete the
+   guard, return early — and confirm it goes red *for the reason you meant*. A test that still passes
+   is testing nothing. One that fails with "expected 3 children, got 2" is testing the tree, not the
+   behaviour, so fix the assertion before you restore the code. No linter can run this check for you,
+   and it is the one that separates a test from a costume. Do it every time, and say in the PR that
+   you did.
+3. **Check whether something already enforces it.** `tsc`, Biome and its GritQL anti-slop rules, and
    `bun run check:ui` cover a large class of rules mechanically. If one of them does, do not write
    the test.
-3. **A test that needs a timeout to pass is wrong.** Wait on an observable condition — a state
+4. **A test that needs a timeout to pass is wrong.** Wait on an observable condition — a state
    change, an emitted event, a resolved promise — never on the clock. A sleep long enough to pass on
    your machine is short enough to flake on a loaded runner.
-4. **Test behaviour, data, and accessible roles and names** — not markup, classes, layout, animation
-   timing, or where focus lands. Assert exact text only when it is a product contract, an error or
-   security message, serialized output, or a localization key. Verify visual detail in Storybook.
-5. **The file name picks the vitest project.** `src/renderer/**/*.test.ts` runs in `node` with no
+5. **Test behaviour, data, and accessible roles and names** — not markup, classes, layout, or
+   animation timing. Where focus lands *is* behaviour; assert it with `toHaveFocus()`. Assert exact
+   text only when it is a product contract, an error or security message, serialized output, or a
+   localization key. Verify visual detail in Storybook.
+6. **The file name picks the vitest project.** `src/renderer/**/*.test.ts` runs in `node` with no
    DOM, `*.test.tsx` renders JSX and gets jsdom, `*.dom.test.ts` is the narrow case of needing a DOM
    without rendering a component. Needing either of the last two for a logic test means the logic is
    not separable yet.
-6. **A test is mandatory** when a change touches the renderer-to-main trust boundary, the IPC
+7. **A test is mandatory** when a change touches the renderer-to-main trust boundary, the IPC
    contract, database schema or migrations, persisted state, secrets, the provider process boundary,
    the Team API wire protocol, or the updater. Test it at the lowest stable boundary, once — not at
    both the component and the application level.
+8. **Never delete, skip, or weaken a test to make a check pass.** A red test is information; losing
+   it costs more than the hour it would take to understand. Fix the code, or fix the test's premise
+   and say in the PR what changed and why. Loosening an assertion until it passes is the same move
+   wearing a disguise. `it.only` is rejected outright because it silently disables the rest of the
+   file; a skip is a warning, so it needs a comment naming what unblocks it.
 
 A test that only restates the markup is worse than no test: it costs a rewrite on every refactor and
 fails for reasons no user would notice. Before adding an assertion, ask what a user or a caller would
@@ -231,8 +243,8 @@ Biome enforces the mechanical half of that, and only the mechanical half. In tes
 `toHaveClass`, `toHaveStyle`, `getComputedStyle`, `toContainElement`, `toHaveAttribute("title", …)`,
 `expect(x.innerHTML)`, DOM-tree walks, `querySelector("svg" | "img")`, `document.activeElement`,
 `toMatchSnapshot` and `toMatchInlineSnapshot`, `getByTestId` and `data-testid`, an assertion reached
-through a CSS class, and awaiting a bare `setTimeout` promise inside a test body. Styling and layout
-stay available in `src/renderer/stories`, which is where they belong.
+through a CSS class, awaiting a bare `setTimeout` promise inside a test body, and `it.only`. Styling
+and layout stay available in `src/renderer/stories`, which is where they belong.
 
 Focus is the exception people expect to find here and will not. `toHaveFocus()` is *encouraged*: a
 dialog that never moves focus inside itself, a roving tabindex that loses its place, a skip link that
