@@ -9,14 +9,15 @@ import { AgentService } from "./agent-service";
 import {
   CREATE_BOT_INPUT,
   createFakeClaude,
-  createFakeCodex,
   createFakeGrok,
   FakeAgentClient,
   fakeBrowser,
   firstInputText,
   inputRecords,
+  installFakeAgentRuntime,
   notification,
   protocolMessages,
+  restoreAgentRuntimeEnv,
   stores,
   waitFor,
 } from "./agent-service-test-harness";
@@ -25,41 +26,17 @@ import { getString } from "./protocol";
 let root: string;
 let logPath: string;
 let service: AgentService | null = null;
-const originalCodexPath = process.env.OPENBOT_CODEX_PATH;
-const originalClaudePath = process.env.OPENBOT_CLAUDE_PATH;
-const originalGrokPath = process.env.OPENBOT_GROK_PATH;
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "openbot-agent-test-"));
-  logPath = join(root, "protocol.jsonl");
-  process.env.OPENBOT_FAKE_CODEX_LOG = logPath;
-  process.env.OPENBOT_CODEX_PATH = await createFakeCodex(root);
-  process.env.OPENBOT_CLAUDE_PATH = join(root, "missing-claude");
-  process.env.OPENBOT_GROK_PATH = join(root, "missing-grok");
+  logPath = await installFakeAgentRuntime(root);
 });
 
 afterEach(async () => {
   await service?.stop();
   service = null;
   vi.useRealTimers();
-  if (originalCodexPath === undefined) delete process.env.OPENBOT_CODEX_PATH;
-  else process.env.OPENBOT_CODEX_PATH = originalCodexPath;
-  if (originalClaudePath === undefined) delete process.env.OPENBOT_CLAUDE_PATH;
-  else process.env.OPENBOT_CLAUDE_PATH = originalClaudePath;
-  if (originalGrokPath === undefined) delete process.env.OPENBOT_GROK_PATH;
-  else process.env.OPENBOT_GROK_PATH = originalGrokPath;
-  delete process.env.OPENBOT_FAKE_CODEX_LOG;
-  delete process.env.OPENBOT_FAKE_AGENT_TOOL;
-  delete process.env.OPENBOT_FAKE_AGENT_TOOL_PATHS;
-  delete process.env.OPENBOT_FAKE_AGENT_TOOL_CALLS;
-  delete process.env.OPENBOT_FAKE_THREAD_READ_DELAY;
-  delete process.env.OPENBOT_FAKE_AUTO_COMPLETE;
-  delete process.env.OPENBOT_FAKE_CONTEXT_USAGE;
-  delete process.env.OPENBOT_FAKE_COMPACTION_ERROR;
-  delete process.env.OPENBOT_FAKE_ARCHIVED_THREAD;
-  delete process.env.OPENBOT_FAKE_TURN_START_RESPONSE_DELAY;
-  delete process.env.OPENBOT_FAKE_WARNING;
-  delete process.env.OPENBOT_FAKE_CLAUDE_LOGIN_LOG;
+  restoreAgentRuntimeEnv();
   await rm(root, { recursive: true, force: true });
 });
 

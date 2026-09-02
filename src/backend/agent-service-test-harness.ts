@@ -35,6 +35,49 @@ export const EMPTY_LAYOUT = {
   agentOrder: [],
 };
 
+const FAKE_RUNTIME_ENV_VARS = [
+  "OPENBOT_FAKE_CODEX_LOG",
+  "OPENBOT_FAKE_AGENT_TOOL",
+  "OPENBOT_FAKE_AGENT_TOOL_PATHS",
+  "OPENBOT_FAKE_AGENT_TOOL_CALLS",
+  "OPENBOT_FAKE_THREAD_READ_DELAY",
+  "OPENBOT_FAKE_AUTO_COMPLETE",
+  "OPENBOT_FAKE_CONTEXT_USAGE",
+  "OPENBOT_FAKE_COMPACTION_ERROR",
+  "OPENBOT_FAKE_ARCHIVED_THREAD",
+  "OPENBOT_FAKE_TURN_START_RESPONSE_DELAY",
+  "OPENBOT_FAKE_WARNING",
+  "OPENBOT_FAKE_CLAUDE_LOGIN_LOG",
+] as const;
+
+const PROVIDER_PATH_ENV_VARS = ["OPENBOT_CODEX_PATH", "OPENBOT_CLAUDE_PATH", "OPENBOT_GROK_PATH"] as const;
+
+/** Provider paths as they were before any shard touched them. */
+const originalProviderPaths = new Map(PROVIDER_PATH_ENV_VARS.map((name) => [name, process.env[name]]));
+
+/**
+ * Points the provider paths at a fresh fake Codex CLI and returns the protocol
+ * log path. Every AgentService shard calls this from its own beforeEach so the
+ * fake-runtime variables live in exactly one list.
+ */
+export async function installFakeAgentRuntime(root: string): Promise<string> {
+  const logPath = join(root, "protocol.jsonl");
+  process.env.OPENBOT_FAKE_CODEX_LOG = logPath;
+  process.env.OPENBOT_CODEX_PATH = await createFakeCodex(root);
+  process.env.OPENBOT_CLAUDE_PATH = join(root, "missing-claude");
+  process.env.OPENBOT_GROK_PATH = join(root, "missing-grok");
+  return logPath;
+}
+
+/** Undoes installFakeAgentRuntime, including every OPENBOT_FAKE_* variable a test may have set. */
+export function restoreAgentRuntimeEnv(): void {
+  for (const [name, original] of originalProviderPaths) {
+    if (original === undefined) delete process.env[name];
+    else process.env[name] = original;
+  }
+  for (const name of FAKE_RUNTIME_ENV_VARS) delete process.env[name];
+}
+
 export class FakeAgentClient extends EventEmitter implements AgentClient {
   readonly requests: Array<{ method: string; params: unknown }> = [];
   readonly responses: Array<{ id: RequestId; result: unknown }> = [];
