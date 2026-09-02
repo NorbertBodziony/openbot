@@ -2,6 +2,7 @@ import { randomBytes, verify } from "node:crypto";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
+import { supportsTeamSemanticTags, TEAM_CURRENT_CAPABILITIES } from "@openbot/contracts/team-protocol/current";
 import { encodeTeamProtocolV1ClientEvent } from "@openbot/contracts/team-protocol/v1";
 import {
   decodeTeamProtocolV2AuthFrame,
@@ -14,7 +15,6 @@ import {
   teamProtocolV2AuthenticationTranscript,
 } from "@openbot/contracts/team-protocol/v2";
 import { createTeamProtocolV2Event } from "@openbot/contracts/team-protocol/v2-adapter";
-import { TEAM_PROTOCOL_V3_CAPABILITIES } from "@openbot/contracts/team-protocol/v3";
 import {
   decodeTeamProtocolV3WebRtcHttpRequest,
   encodeTeamProtocolV3WebRtcHttpResponse,
@@ -67,6 +67,7 @@ export class TeamWebRtcHostGateway {
   readonly #responses = new Map<string, TeamProtocolV2RpcFrame>();
   readonly #responsesInFlight = new Map<string, Promise<TeamProtocolV2RpcFrame>>();
   readonly #events = new Map<number, string>();
+  #peerCapabilities = new Set<string>();
   #peerId: string | null = null;
   #localApiPort: number | null = null;
   #localSessionToken: string | null = null;
@@ -263,6 +264,7 @@ export class TeamWebRtcHostGateway {
       this.#sessionPreparation = null;
       this.#pendingConnection = null;
       this.#peerBinding = null;
+      this.#peerCapabilities.clear();
       this.#authenticationCompletion = null;
       this.#closeLocalSession();
     }
@@ -467,6 +469,8 @@ export class TeamWebRtcHostGateway {
     }
     const peerId = this.#peerId;
     if (!peerId) throw new GatewayError(503, "remote_disconnected", "The WebRTC peer disconnected.");
+    this.#peerCapabilities = new Set(input.capabilities ?? []);
+    const preserveSemanticTags = supportsTeamSemanticTags(this.#peerCapabilities);
     const uploaded = input.bodyTransferId ? await this.#files.consume(peerId, input.bodyTransferId) : null;
     const response = await fetch(url, {
       method: input.method,
@@ -475,6 +479,7 @@ export class TeamWebRtcHostGateway {
         "Content-Type": uploaded?.mimeType ?? input.contentType ?? "application/json",
         "OpenBot-Protocol-Version": /^\/v1\/agents\/[^/]+\/duplicate$/u.test(url.pathname) ? "3" : "1",
         "OpenBot-App-Version": this.#appVersion,
+        "OpenBot-Capabilities": [...this.#peerCapabilities].join(","),
         ...(this.#localSessionId ? { "X-OpenBot-WebRTC-Session": this.#localSessionId } : {}),
       },
       body:
@@ -484,7 +489,11 @@ export class TeamWebRtcHostGateway {
             ? Buffer.from(uploaded.bytes)
             : input.body === null
               ? undefined
-              : JSON.stringify(decodeTeamProtocolV3WebRtcHttpRequest(input.method, input.path, input.body)),
+              : JSON.stringify(
+                  decodeTeamProtocolV3WebRtcHttpRequest(input.method, input.path, input.body, {
+                    preserveSemanticTags,
+                  }),
+                ),
     });
     const contentType = response.headers.get("content-type") ?? "";
     const body = response.status === 204 ? {} : contentType.includes("json") ? await response.json() : null;
@@ -514,7 +523,9 @@ export class TeamWebRtcHostGateway {
     }
     return {
       status: response.status,
-      body: encodeTeamProtocolV3WebRtcHttpResponse(input.method, input.path, response.status, body),
+      body: encodeTeamProtocolV3WebRtcHttpResponse(input.method, input.path, response.status, body, {
+        preserveSemanticTags,
+      }),
     };
   }
 
@@ -532,7 +543,7 @@ export class TeamWebRtcHostGateway {
         encodeTeamProtocolV1ClientEvent({
           type: "agent-event-scope",
           includeConversations: true,
-          capabilities: TEAM_PROTOCOL_V3_CAPABILITIES,
+          capabilities: TEAM_CURRENT_CAPABILITIES,
         }),
       );
     });
@@ -541,7 +552,9 @@ export class TeamWebRtcHostGateway {
       let frame: string;
       try {
         frame = encodeTeamProtocolV2Frame(
-          createTeamProtocolV2Event(this.#nextEventSequence, JSON.parse(data.toString())),
+          createTeamProtocolV2Event(this.#nextEventSequence, JSON.parse(data.toString()), {
+            preserveSemanticTags: supportsTeamSemanticTags(this.#peerCapabilities),
+          }),
         );
       } catch {
         return;
@@ -748,6 +761,7 @@ interface HttpRequestPayload {
   body: TeamProtocolV2Json;
   bodyTransferId?: string;
   contentType?: string;
+  capabilities?: string[];
 }
 
 function isHttpRequest(value: TeamProtocolV2Json): value is TeamProtocolV2Json & HttpRequestPayload {
@@ -758,6 +772,8 @@ function isHttpRequest(value: TeamProtocolV2Json): value is TeamProtocolV2Json &
     isString(value.path) &&
     value.path.length <= 2_048 &&
     Object.hasOwn(value, "body") &&
+    (value.capabilities === undefined ||
+      (Array.isArray(value.capabilities) && value.capabilities.length <= 64 && value.capabilities.every(isString))) &&
     (value.bodyTransferId === undefined || isString(value.bodyTransferId)) &&
     (value.contentType === undefined || isString(value.contentType))
   );

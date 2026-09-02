@@ -1,5 +1,6 @@
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
-import type { DraftAttachment } from "@openbot/contracts/ipc";
+import { serializeChatTagReference } from "@openbot/contracts/chat-tag-references";
+import type { DraftAttachment, InstalledSkill } from "@openbot/contracts/ipc";
 import { createSignal } from "solid-js";
 import { expect, fn, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
@@ -50,6 +51,17 @@ const longReferencedFile: DraftAttachment = {
   previewUrl: null,
 };
 
+const installedSkills: InstalledSkill[] = [
+  {
+    skillId: "skill-release-notes",
+    slug: "release-notes",
+    name: "Release Notes",
+    installedVersion: 1,
+    availableVersion: 1,
+    state: "installed",
+  },
+];
+
 const meta = {
   title: "Conversation/ComposerEditor",
   component: ComposerEditor,
@@ -64,6 +76,19 @@ export const Empty: Story = {};
 
 export const WithDraft: Story = {
   args: { value: "Prepare a concise update for tomorrow." },
+};
+
+export const WithAgentAndSkillTags: Story = {
+  args: {
+    skills: installedSkills,
+    value: `Ask ${serializeChatTagReference("agent", "Research", "research")} to use ${serializeChatTagReference("skill", "Release Notes", "skill-release-notes")}.`,
+  },
+};
+
+export const WithUnavailableTags: Story = {
+  args: {
+    value: `Ask ${serializeChatTagReference("agent", "Former Agent", "removed-agent")} to use ${serializeChatTagReference("skill", "Old Skill", "removed-skill")}.`,
+  },
 };
 
 export const Disabled: Story = {

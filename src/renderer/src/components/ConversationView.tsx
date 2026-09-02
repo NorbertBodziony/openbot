@@ -4,6 +4,7 @@ import {
   expandAttachmentReferences,
   removeAttachmentReferences,
 } from "@openbot/contracts/attachment-references";
+import { expandChatTagReferences } from "@openbot/contracts/chat-tag-references";
 import type {
   AgentEvent,
   AgentModelId,
@@ -19,6 +20,7 @@ import type {
   BrowserTab,
   DraftAttachment,
   FilePreview,
+  InstalledSkill,
   MessageReaction,
   ProviderRuntimeStatus,
   QueueDelivery,
@@ -75,8 +77,10 @@ import {
 } from "./conversation/chat-search";
 import { calculateChatScrollMargin, createChatVirtualizer } from "./conversation/createChatVirtualizer";
 import { messageContentBlocks } from "./conversation/DataTable";
+import { installedSkillsRequestKey } from "./conversation/installed-skills-source";
 import { ScrollToLatestButton, scrollToLatestMessage } from "./conversation/MessageNavigation";
 import { MessageActions, MessageBody } from "./conversation/MessageRendering";
+import { RichMessageText } from "./conversation/RichMessageText";
 import { MessageSelectionActions } from "./conversation/SelectionActions";
 import {
   scrollToUnreadBoundary,
@@ -222,6 +226,7 @@ export interface ConversationProps {
   loadingOlder?: boolean;
   olderError?: string | null;
   activeTurnId: string | null | undefined;
+  skillsMarketplaceOpen?: boolean;
   globalOverlayOpen: boolean;
   settingsRequest: { botId: string; nonce: number } | null;
   messageFocusRequest: { botId: string; messageId: string; nonce: number } | null;
@@ -413,6 +418,11 @@ function createConversationViewScope(props: ConversationProps) {
     resources,
   } = controller;
   const [routineSettingsRequest, setRoutineSettingsRequest] = createSignal<RoutineSettingsRequest | null>(null);
+  const [installedSkills, setInstalledSkills] = createSignal<InstalledSkill[]>([]);
+  const [installedSkillsRetry, setInstalledSkillsRetry] = createSignal(0);
+  let installedSkillsRequest = 0;
+  let installedSkillsSourceId: string | undefined;
+  let failedInstalledSkillsAttempt: { serverId: string; sourceId: string; connectionSequence: number } | undefined;
   let routineSettingsRequestNonce = 0;
   let imageAttachmentPicker: HTMLInputElement | undefined;
   let contextAttachmentPicker: HTMLInputElement | undefined;
@@ -434,6 +444,61 @@ function createConversationViewScope(props: ConversationProps) {
     const target = currentTarget();
     return target ? (conversationErrors()[composerDraftKey(target)] ?? null) : null;
   });
+  const installedSkillsSource = createMemo(() =>
+    installedSkillsRequestKey(props.bot?.id, props.server, props.skillsMarketplaceOpen === true),
+  );
+  createEffect(
+    () => `${props.server?.id ?? "local"}\0${props.server?.connectionSequence ?? 0}`,
+    (source) => {
+      const [serverId, connectionSequenceText] = source.split("\0");
+      const failedAttempt = failedInstalledSkillsAttempt;
+      if (
+        failedAttempt?.serverId === serverId &&
+        failedAttempt.sourceId === `${serverId}\0${untrack(() => props.bot?.id) ?? ""}` &&
+        failedAttempt.connectionSequence !== Number(connectionSequenceText)
+      ) {
+        setInstalledSkillsRetry((retry) => retry + 1);
+      }
+    },
+  );
+  createEffect(
+    () => `${installedSkillsSource()}\0${installedSkillsRetry()}`,
+    (source) => {
+      const request = ++installedSkillsRequest;
+      const [serverId, botId, support, visibility] = source.split("\0");
+      if (!botId) {
+        installedSkillsSourceId = undefined;
+        failedInstalledSkillsAttempt = undefined;
+        setInstalledSkills([]);
+        return;
+      }
+      if (visibility === "hidden") return;
+      const sourceId = `${serverId}\0${botId}`;
+      if (installedSkillsSourceId !== sourceId) {
+        installedSkillsSourceId = sourceId;
+        setInstalledSkills([]);
+      }
+      if (support === "unsupported") {
+        failedInstalledSkillsAttempt = undefined;
+        setInstalledSkills([]);
+        return;
+      }
+      const connectionSequence = untrack(() => props.server?.connectionSequence) ?? 0;
+      failedInstalledSkillsAttempt = undefined;
+      void window.openbot.agent
+        .listInstalledSkills(botId)
+        .then((skills) => {
+          if (request !== installedSkillsRequest) return;
+          failedInstalledSkillsAttempt = undefined;
+          setInstalledSkills(skills);
+        })
+        .catch(() => {
+          if (request !== installedSkillsRequest) return;
+          failedInstalledSkillsAttempt = { serverId, sourceId, connectionSequence };
+          // Preserve an already loaded same-agent catalog when a refresh fails.
+        });
+    },
+  );
   const unreferencedDraftAttachments = createMemo(() => {
     const referencedIds = attachmentReferenceIds(currentDraft().text);
     return currentDraft().attachments.filter((attachment) => !referencedIds.has(attachment.id));
@@ -2087,7 +2152,18 @@ function createConversationViewScope(props: ConversationProps) {
 
   async function copyMessage(message: BotMessage) {
     const attachmentNames = new Map((message.attachments ?? []).map((attachment) => [attachment.id, attachment.name]));
-    const text = expandAttachmentReferences(message.body, (reference) => attachmentNames.get(reference.attachmentId));
+    const agentNames = new Map(props.bots.map((bot) => [bot.id, bot.name]));
+    const skillNames = new Map(
+      installedSkills()
+        .filter((skill) => skill.state !== "needs-repair")
+        .map((skill) => [skill.skillId, skill.name]),
+    );
+    const text = expandAttachmentReferences(
+      expandChatTagReferences(message.body, (reference) =>
+        reference.kind === "agent" ? agentNames.get(reference.id) : skillNames.get(reference.id),
+      ),
+      (reference) => attachmentNames.get(reference.attachmentId),
+    );
     if (!text) return;
     try {
       if (navigator.clipboard?.writeText) {
@@ -2487,6 +2563,7 @@ function createConversationViewScope(props: ConversationProps) {
     copyMessage,
     currentDraft,
     currentConversationError,
+    installedSkills,
     currentUnreadCount,
     drafts,
     dropActive,
@@ -2810,6 +2887,7 @@ export function ConversationTimeline() {
     copyMessage,
     expandedEmojiMessageId,
     expandedThinkingMessages,
+    installedSkills,
     fadeAtBottom,
     fadeAtTop,
     jumpToLatestMessage,
@@ -3111,6 +3189,7 @@ export function ConversationTimeline() {
                                               : undefined)
                                           }
                                           bots={props.bots}
+                                          skills={installedSkills()}
                                           onSelectAgent={props.onSelectAgent}
                                           onOpenLink={(url) => void openExternalMessageUrl(url)}
                                           onPreview={(attachment) => void previewAttachment(attachment)}
@@ -3336,10 +3415,12 @@ export function ConversationComposer() {
     composerHasContent,
     currentDraft,
     currentConversationError,
+    installedSkills,
     editQueuedMessage,
     editingDeliveryId,
     openAttachmentPicker,
     openAttachmentPickerFromKey,
+    openExternalMessageUrl,
     presentedQueueDeliveries,
     previewAttachment,
     props,
@@ -3378,6 +3459,8 @@ export function ConversationComposer() {
               <Loading>
                 <QueuePanel
                   deliveries={presentedQueueDeliveries()}
+                  bots={props.bots}
+                  skills={installedSkills()}
                   editingDeliveryId={editingDeliveryId()}
                   canSteer={Boolean(props.activeTurnId)}
                   onSteer={props.onSteerQueuedMessage}
@@ -3394,7 +3477,17 @@ export function ConversationComposer() {
             <div class="composer-reply-preview">
               <div>
                 <span>Replying to {message().author === "you" ? "your message" : "Agent"}</span>
-                <p>{message().body || "Attachment"}</p>
+                <p>
+                  <RichMessageText
+                    body={message().body || "Attachment"}
+                    bots={props.bots}
+                    skills={installedSkills()}
+                    attachments={message().attachments}
+                    onSelectAgent={props.onSelectAgent}
+                    onOpenLink={(url) => void openExternalMessageUrl(url)}
+                    onOpenAttachment={(attachment) => void previewAttachment(attachment)}
+                  />
+                </p>
               </div>
               <Button
                 variant="ghost"
@@ -3459,6 +3552,7 @@ export function ConversationComposer() {
             <ComposerEditor
               botId={props.bot?.id}
               bots={props.bots}
+              skills={installedSkills()}
               attachments={currentDraft().attachments}
               value={currentDraft().text}
               disabled={submitting() || selectionSending() || voicePhase() === "transcribing" || !agentReady()}

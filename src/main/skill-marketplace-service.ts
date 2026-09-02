@@ -140,6 +140,23 @@ export class SkillMarketplaceService {
     return installed.sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  async listInstalledForChatTags(botId: string): Promise<InstalledSkill[]> {
+    const bot = this.requireBot(botId);
+    const lock = await readLock(bot.workspacePath);
+    const installed: InstalledSkill[] = [];
+    for (const entry of Object.values(lock.skills)) {
+      installed.push({
+        skillId: entry.skillId,
+        slug: entry.slug,
+        name: entry.name,
+        installedVersion: entry.version,
+        availableVersion: entry.version,
+        state: await installedState(bot.workspacePath, entry),
+      });
+    }
+    return installed.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
   async install(input: InstallSkillInput): Promise<InstalledSkill> {
     const bot = this.requireBot(input.botId);
     const detail = await this.get(input.skillId);

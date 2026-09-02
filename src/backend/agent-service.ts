@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { expandAttachmentReferences } from "@openbot/contracts/attachment-references";
+import { expandChatTagReferences } from "@openbot/contracts/chat-tag-references";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   AccountUsage,
@@ -1433,7 +1434,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           threadId: session.externalSessionId,
           expectedTurnId: turnId,
           clientUserMessageId: input.deliveryId,
-          input: deliveryInput(context),
+          input: deliveryInput(context, agentNamesById(this.#store.list())),
         },
         decodeRecordResponse,
       );
@@ -1465,8 +1466,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#syncMailboxMessages(snapshot);
     await this.#store.updatePreview(
       bot.id,
-      displayAttachmentReferences(delivery.delivery.text, delivery.delivery.attachments) ||
-        delivery.delivery.attachments.map((item) => item.name).join(", "),
+      displayMessageReferences(
+        delivery.delivery.text,
+        delivery.delivery.attachments,
+        agentNamesById(this.#store.list()),
+      ) || delivery.delivery.attachments.map((item) => item.name).join(", "),
     );
     this.#emit({ type: "bots-changed", bots: this.listBots() });
     this.#emitConversation(snapshot);
@@ -3348,7 +3352,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return;
       }
 
-      const displayText = displayAttachmentReferences(delivery.text, delivery.attachments);
+      const agentNames = agentNamesById(this.#store.list());
+      const displayText = displayMessageReferences(delivery.text, delivery.attachments, agentNames);
       let text = displayText || "The user shared attached local files.";
       const handoff = this.#pendingHandoffs.get(threadId);
       if (handoff) {
@@ -3361,7 +3366,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           `The user is replying to message ${delivery.replyToMessageId}.`,
           "--- referenced message ---",
           referenced
-            ? displayAttachmentReferences(referenced.text, referenced.attachments ?? [])
+            ? displayMessageReferences(referenced.text, referenced.attachments ?? [], agentNames)
             : "(The referenced message is unavailable.)",
           "--- user reply ---",
           displayText || "(The reply contains attachments only.)",
@@ -4894,7 +4899,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     );
     if (messages.length === 0) return null;
 
-    const rendered = messages.map(renderHandoffMessage);
+    const agentNames = agentNamesById(this.#store.list());
+    const rendered = messages.map((message) => renderHandoffMessage(message, agentNames));
     const budgetTokens = 60_000;
     const fullText = rendered.join("\n\n");
     if (estimateTokens(fullText) <= budgetTokens) {
@@ -4920,7 +4926,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       split -= 1;
     }
     const oldMessages = messages.slice(0, split);
-    const summaryText = summarizeOldMessages(oldMessages, budgetTokens - newestTokens);
+    const summaryText = summarizeOldMessages(oldMessages, budgetTokens - newestTokens, agentNames);
     this.#store.database.saveThreadSummary(
       threadId,
       oldMessages.at(-1)?.id ?? null,
@@ -5710,13 +5716,14 @@ function routineStatusForDelivery(status: QueueDeliveryStatus) {
 
 function deliveryInput(
   context: DeliveryContext,
+  agentNames: ReadonlyMap<string, string>,
 ): Array<
   | { type: "text"; text: string }
   | { type: "localImage"; path: string }
   | { type: "mention"; name: string; path: string }
 > {
   const { delivery, managedAttachments } = context;
-  const displayText = displayAttachmentReferences(delivery.text, delivery.attachments);
+  const displayText = displayMessageReferences(delivery.text, delivery.attachments, agentNames);
   const text = [
     displayText || (managedAttachments.length ? "The user shared attached local files." : ""),
     managedAttachments.length
@@ -5735,9 +5742,22 @@ function deliveryInput(
   ];
 }
 
-function displayAttachmentReferences(text: string, attachments: Array<{ id: string; name: string }>): string {
+function displayMessageReferences(
+  text: string,
+  attachments: Array<{ id: string; name: string }>,
+  agentNames: ReadonlyMap<string, string>,
+): string {
   const names = new Map(attachments.map((attachment) => [attachment.id, attachment.name]));
-  return expandAttachmentReferences(text, (reference) => names.get(reference.attachmentId));
+  return expandAttachmentReferences(
+    expandChatTagReferences(text, (reference) =>
+      reference.kind === "agent" ? agentNames.get(reference.id) : undefined,
+    ),
+    (reference) => names.get(reference.attachmentId),
+  );
+}
+
+function agentNamesById(bots: BotSummary[]): ReadonlyMap<string, string> {
+  return new Map(bots.map((bot) => [bot.id, bot.name]));
 }
 
 function normalizeAccountUsage(rateLimits: AccountRateLimitsReadResult | null): AccountUsage {
@@ -5902,14 +5922,17 @@ function isDynamicToolCall(value: unknown): value is DynamicToolCallParams {
   );
 }
 
-function renderHandoffMessage(message: ConversationSnapshot["messages"][number]): string {
+function renderHandoffMessage(
+  message: ConversationSnapshot["messages"][number],
+  agentNames: ReadonlyMap<string, string>,
+): string {
   const attachmentMetadata = (message.attachments ?? [])
     .map((attachment) => `[attachment: ${attachment.name}; ${attachment.mimeType}; ${attachment.size} bytes]`)
     .join("\n");
   const sender = message.senderBotId ? ` agent:${message.senderBotId}` : "";
   return [
     `[${message.createdAt}] ${message.author}${sender}:`,
-    displayAttachmentReferences(message.text, message.attachments ?? []),
+    displayMessageReferences(message.text, message.attachments ?? [], agentNames),
     attachmentMetadata,
   ]
     .filter(Boolean)
@@ -5920,10 +5943,14 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-function summarizeOldMessages(messages: ConversationSnapshot["messages"], tokenBudget: number): string {
+function summarizeOldMessages(
+  messages: ConversationSnapshot["messages"],
+  tokenBudget: number,
+  agentNames: ReadonlyMap<string, string>,
+): string {
   const maximumCharacters = Math.max(4_000, tokenBudget * 4);
   const lines = messages.map((message) => {
-    const normalized = displayAttachmentReferences(message.text, message.attachments ?? [])
+    const normalized = displayMessageReferences(message.text, message.attachments ?? [], agentNames)
       .replace(/\s+/g, " ")
       .trim();
     const excerpt = normalized.length > 600 ? `${normalized.slice(0, 597)}...` : normalized;

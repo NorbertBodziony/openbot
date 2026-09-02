@@ -6,6 +6,8 @@ import {
   decodeTeamProtocolV1CurrentHttpRequest,
   decodeTeamProtocolV1CurrentHttpResponse,
   encodeTeamProtocolV1CurrentEvent,
+  encodeTeamProtocolV1CurrentHttpRequest,
+  encodeTeamProtocolV1CurrentHttpResponse,
 } from "./v1-adapter";
 import {
   decodeTeamProtocolV2EventFrame,
@@ -34,10 +36,14 @@ export function createTeamProtocolV2Response(requestId: string, result: unknown)
   return decodeTeamProtocolV2RpcFrame({ version: 2, type: "response", requestId, result: wireJson(result) });
 }
 
-export function createTeamProtocolV2Event(sequence: number, event: unknown): TeamProtocolV2EventFrame {
+export function createTeamProtocolV2Event(
+  sequence: number,
+  event: unknown,
+  options: { preserveSemanticTags?: boolean } = {},
+): TeamProtocolV2EventFrame {
   const current = decodeTeamProtocolV1CurrentEvent(event);
   if (current.kind !== "known") throw new Error("The event is not supported by Team protocol v2.");
-  const encoded = encodeTeamProtocolV1CurrentEvent(current.event);
+  const encoded = encodeTeamProtocolV1CurrentEvent(current.event, options);
   if (!encoded) throw new Error("The event is not supported by Team protocol v2.");
   return decodeTeamProtocolV2EventFrame({
     version: 2,
@@ -51,23 +57,32 @@ export function encodeTeamProtocolV2CurrentHttpRequest(
   method: string,
   path: string,
   value: unknown,
+  options: { preserveSemanticTags?: boolean } = {},
 ): TeamProtocolV2Json {
-  return decodeV2HttpRequest(method, path, value);
+  return decodeV2HttpRequest(method, path, value, options);
 }
 
 export function decodeTeamProtocolV2CurrentHttpRequest(
   method: string,
   path: string,
   value: unknown,
+  options: { preserveSemanticTags?: boolean } = {},
 ): TeamProtocolV2Json {
-  return decodeV2HttpRequest(method, path, value);
+  return decodeV2HttpRequest(method, path, value, options);
 }
 
-function decodeV2HttpRequest(method: string, path: string, value: unknown): TeamProtocolV2Json {
+function decodeV2HttpRequest(
+  method: string,
+  path: string,
+  value: unknown,
+  options: { preserveSemanticTags?: boolean },
+): TeamProtocolV2Json {
   const normalized = value === undefined ? null : wireJson(value);
   if (isRemoteViewerRoute(path)) return isEmptyRequest(normalized) ? {} : normalized;
   if (isEmptyRequest(normalized) && isTeamProtocolV2NoBodyRoute(method, path)) return {};
-  return wireJson(decodeTeamProtocolV1CurrentHttpRequest(method, path, normalized));
+  return options.preserveSemanticTags
+    ? wireJson(decodeTeamProtocolV1CurrentHttpRequest(method, path, normalized))
+    : wireJson(JSON.parse(encodeTeamProtocolV1CurrentHttpRequest(method, path, normalized)));
 }
 
 function isEmptyRequest(value: unknown): boolean {
@@ -110,7 +125,7 @@ function isTeamProtocolV2NoBodyRoute(method: string, path: string): boolean {
       return true;
     }
     if (/^\/v1\/direct\/conversations\/[^/]+(?:\/page)?$/u.test(pathname)) return true;
-    return /^\/v1\/agents\/[^/]+\/(?:memories|routines|routines\/[^/]+\/runs|conversation|conversation-page|queue)$/u.test(
+    return /^\/v1\/agents\/[^/]+\/(?:skills|memories|routines|routines\/[^/]+\/runs|conversation|conversation-page|queue)$/u.test(
       pathname,
     );
   }
@@ -138,10 +153,15 @@ export function encodeTeamProtocolV2CurrentHttpResponse(
   path: string,
   status: number,
   value: unknown,
+  options: { preserveSemanticTags?: boolean } = {},
 ): TeamProtocolV2Json {
   if (status === 204) return {};
   if (isRemoteViewerRoute(path)) return wireJson(value === undefined ? null : value);
-  return wireJson(decodeTeamProtocolV1CurrentHttpResponse(method, path, status, value === undefined ? null : value));
+  return wireJson(
+    JSON.parse(
+      encodeTeamProtocolV1CurrentHttpResponse(method, path, status, value === undefined ? null : value, options),
+    ),
+  );
 }
 
 export function decodeTeamProtocolV2CurrentHttpResponse(
