@@ -31,6 +31,7 @@ import type {
   DirectTypingRealtimeEvent,
   DraftAttachment,
   DuplicateBotResult,
+  InstalledSkill,
   InvitePreview,
   InviteSummary,
   JoinServerInput,
@@ -79,13 +80,17 @@ import {
   isString,
 } from "@openbot/contracts/runtime-values";
 import {
+  supportsTeamSemanticTags,
+  TEAM_CURRENT_CAPABILITIES,
+  type TeamCurrentCapability,
+} from "@openbot/contracts/team-protocol/current";
+import {
   decodeTeamProtocolSupportV1,
   encodeTeamProtocolV1ClientEvent,
   highestCommonTeamProtocol,
   TEAM_APP_VERSION_HEADER,
   TEAM_CAPABILITIES_HEADER,
   TEAM_PROTOCOL_V1,
-  TEAM_PROTOCOL_V1_CAPABILITIES,
   TEAM_PROTOCOL_V1_WEBSOCKET,
   TEAM_PROTOCOL_VERSION_HEADER,
   type TeamProtocolSupportV1,
@@ -97,11 +102,7 @@ import {
   encodeTeamProtocolV1CurrentHttpRequest,
 } from "@openbot/contracts/team-protocol/v1-adapter";
 import { decodeTeamProtocolV2Json, type TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
-import {
-  TEAM_PROTOCOL_V3,
-  TEAM_PROTOCOL_V3_CAPABILITIES,
-  type TeamProtocolV3Capability,
-} from "@openbot/contracts/team-protocol/v3";
+import { TEAM_PROTOCOL_V3, TEAM_PROTOCOL_V3_CAPABILITIES } from "@openbot/contracts/team-protocol/v3";
 import {
   decodeTeamProtocolV3CurrentHttpResponse,
   encodeTeamProtocolV3CurrentHttpRequest,
@@ -273,7 +274,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this.#eventReconnectTimers.delete(serverId);
       this.#eventReconnectAttempts.delete(serverId);
       this.#states.set(serverId, "online");
-      this.#compatibility.set(serverId, this.#webrtcCompatibility());
+      this.#compatibility.delete(serverId);
       this.#issues.delete(serverId);
       this.#connectionSequences.set(serverId, (this.#connectionSequences.get(serverId) ?? 0) + 1);
       this.#emitChanged();
@@ -327,7 +328,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     if (this.#webrtcTransport) await this.#syncWebRtcHosts().catch(() => undefined);
     for (const server of this.#state.servers) {
       this.#states.set(server.id, "offline");
-      if (server.transport === "webrtc-v2") this.#compatibility.set(server.id, this.#webrtcCompatibility());
+      if (server.transport === "webrtc-v2") this.#compatibility.set(server.id, this.#checkingCompatibility());
     }
   }
 
@@ -680,7 +681,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       if (server.transport === "webrtc-v2") {
         if (!this.#webrtcTransport) throw new Error("The WebRTC transport is unavailable.");
         try {
-          const value = await this.#webrtcTransport.request(server.id, path, init);
+          const compatibility = await this.#ensureCompatibility(server);
+          const value = await this.#webrtcTransport.request(server.id, path, {
+            ...init,
+            preserveSemanticTags: supportsTeamSemanticTags(compatibility.capabilities),
+          });
           return addRemotePreviewUrls(decoder(value), server.id);
         } catch (error) {
           if (error instanceof TeamWebRtcRequestError)
@@ -797,7 +802,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const server = this.#requireServer(serverId);
     if (server.transport === "webrtc-v2" && this.#webrtcTransport) {
       await this.#syncWebRtcHosts();
-      this.#compatibility.set(serverId, this.#webrtcCompatibility());
+      this.#compatibility.delete(serverId);
+      await this.#ensureCompatibility(server, true);
       this.#issues.delete(serverId);
       this.#emitChanged();
       return requiredServerSummary(this.list(), serverId);
@@ -1249,14 +1255,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     await this.#persist();
   }
 
-  #webrtcCompatibility(): ServerCompatibility {
+  #webrtcCompatibility(host: TeamProtocolSupportV1): ServerCompatibility {
     return {
       localAppVersion: this.#appVersion ?? "0.0.0",
-      hostAppVersion: null,
+      hostAppVersion: host.appVersion,
       localProtocol: LOCAL_TEAM_PROTOCOL,
       hostProtocol: { minimum: 2, maximum: 2 },
       negotiatedProtocol: 2,
-      capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
+      capabilities: host.capabilities,
     };
   }
 
@@ -1304,12 +1310,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   #requestProtocol(compatibility: ServerCompatibility): {
     protocol?: number;
     appVersion?: string;
-    capabilities?: readonly TeamProtocolV3Capability[];
+    capabilities?: readonly TeamCurrentCapability[];
+    preserveSemanticTags?: boolean;
   } {
     return {
       protocol: compatibility.negotiatedProtocol ?? undefined,
       appVersion: this.#appVersion ?? undefined,
-      capabilities: this.#appVersion ? TEAM_PROTOCOL_V3_CAPABILITIES : undefined,
+      capabilities: this.#appVersion ? TEAM_CURRENT_CAPABILITIES : undefined,
+      preserveSemanticTags: supportsTeamSemanticTags(compatibility.capabilities),
     };
   }
 
@@ -1324,11 +1332,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         if (!this.#webrtcTransport) throw new Error("The WebRTC transport is unavailable.");
         const url = new URL(input);
         try {
+          const compatibility = await this.#ensureCompatibility(server);
           const contentType = new Headers(init.headers).get("Content-Type") ?? undefined;
           const response = await this.#webrtcTransport.requestResponse(server.id, `${url.pathname}${url.search}`, {
             method: init.method,
             body: webRtcRequestBody(init.body, contentType),
             contentType,
+            preserveSemanticTags: supportsTeamSemanticTags(compatibility.capabilities),
           });
           const headers = new Headers();
           if (response.file) {
@@ -1356,7 +1366,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       headers.set(TEAM_PROTOCOL_VERSION_HEADER, String(compatibility.negotiatedProtocol));
       if (this.#appVersion) {
         headers.set(TEAM_APP_VERSION_HEADER, this.#appVersion);
-        headers.set(TEAM_CAPABILITIES_HEADER, TEAM_PROTOCOL_V3_CAPABILITIES.join(","));
+        headers.set(TEAM_CAPABILITIES_HEADER, TEAM_CURRENT_CAPABILITIES.join(","));
       }
       const response = await remoteFetch(input, { ...init, headers });
       if (!response.ok) {
@@ -1398,7 +1408,6 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async #ensureCompatibility(server: StoredRemoteServer, refresh = false): Promise<ServerCompatibility> {
-    if (server.transport === "webrtc-v2") return this.#webrtcCompatibility();
     const current = this.#compatibility.get(server.id);
     const issue = this.#issues.get(server.id);
     if (
@@ -1427,7 +1436,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     if (!refresh && current?.negotiatedProtocol) return current;
     const pending = this.#compatibilityRequests.get(server.id);
     if (pending) return pending;
-    const request = this.#negotiateCompatibility(server.apiUrl)
+    const request = (
+      server.transport === "webrtc-v2"
+        ? this.#negotiateWebRtcCompatibility(server.id)
+        : this.#negotiateCompatibility(server.apiUrl)
+    )
       .then((compatibility) => {
         this.#compatibility.set(server.id, compatibility);
         this.#issues.delete(server.id);
@@ -1438,6 +1451,12 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       });
     this.#compatibilityRequests.set(server.id, request);
     return request;
+  }
+
+  async #negotiateWebRtcCompatibility(serverId: string): Promise<ServerCompatibility> {
+    if (!this.#webrtcTransport) throw new Error("The WebRTC transport is unavailable.");
+    const value = await this.#webrtcTransport.request(serverId, "/v1/compatibility");
+    return this.#webrtcCompatibility(decodeTeamProtocolSupportV1(value));
   }
 
   async #negotiateCompatibility(apiUrl: string): Promise<ServerCompatibility> {
@@ -1581,7 +1600,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       if (server.transport === "webrtc-v2") {
         if (!this.#webrtcTransport) throw new Error("The WebRTC transport is unavailable.");
         capabilities = decodeRemoteDesktopCapabilities(
-          await this.#webrtcTransport.request(server.id, "/v1/remote-screen/capabilities", {}),
+          await this.#webrtcTransport.request(server.id, "/v1/remote-screen/capabilities", {
+            preserveSemanticTags: supportsTeamSemanticTags(compatibility.capabilities),
+          }),
         );
       } else {
         capabilities = await requestJson(
@@ -1797,7 +1818,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       encodeTeamProtocolV1ClientEvent({
         type: "agent-event-scope",
         includeConversations: this.#state.activeServerId === serverId,
-        ...(this.#appVersion ? { capabilities: TEAM_PROTOCOL_V3_CAPABILITIES } : {}),
+        ...(this.#appVersion ? { capabilities: TEAM_CURRENT_CAPABILITIES } : {}),
       }),
     );
   }
@@ -1879,7 +1900,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     }
   }
 
-  #supportsCapability(serverId: string, capability: TeamProtocolV3Capability): boolean {
+  #supportsCapability(serverId: string, capability: TeamCurrentCapability): boolean {
     return this.#compatibility.get(serverId)?.capabilities.includes(capability) ?? false;
   }
 
@@ -2058,7 +2079,8 @@ async function requestJson<T>(
     token?: string;
     protocol?: number;
     appVersion?: string;
-    capabilities?: readonly TeamProtocolV3Capability[];
+    capabilities?: readonly TeamCurrentCapability[];
+    preserveSemanticTags?: boolean;
     timeoutMs?: number;
   } = {},
 ): Promise<T> {
@@ -2079,8 +2101,12 @@ async function requestJson<T>(
         options.body === undefined
           ? undefined
           : options.protocol === TEAM_PROTOCOL_V3
-            ? encodeTeamProtocolV3CurrentHttpRequest(method, path, options.body)
-            : encodeTeamProtocolV1CurrentHttpRequest(method, path, options.body),
+            ? encodeTeamProtocolV3CurrentHttpRequest(method, path, options.body, {
+                preserveSemanticTags: options.preserveSemanticTags,
+              })
+            : encodeTeamProtocolV1CurrentHttpRequest(method, path, options.body, {
+                preserveSemanticTags: options.preserveSemanticTags,
+              }),
     },
     options.timeoutMs,
   );
@@ -2320,6 +2346,25 @@ export function decodeAgentModelOptions(value: unknown): AgentModelOption[] {
 export function decodeBotSummaries(value: unknown): BotSummary[] {
   if (!Array.isArray(value)) throw new Error("Invalid remote agent list.");
   return value.map(decodeBotSummary);
+}
+
+export function decodeInstalledSkills(value: unknown): InstalledSkill[] {
+  if (!Array.isArray(value)) throw new Error("Invalid installed skill list.");
+  return value.map((item) => {
+    const skill = decodeRecord(item, "installed skill");
+    const state = requiredString(skill, "state");
+    if (!isOneOf(["installed", "update-available", "modified", "needs-repair"] as const, state)) {
+      throw new Error("Invalid installed skill state.");
+    }
+    return {
+      skillId: requiredString(skill, "skillId"),
+      slug: requiredString(skill, "slug"),
+      name: requiredString(skill, "name"),
+      installedVersion: requiredNumber(skill, "installedVersion"),
+      availableVersion: requiredNumber(skill, "availableVersion"),
+      state,
+    };
+  });
 }
 
 export function decodeBotMemory(value: unknown): BotMemory {

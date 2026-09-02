@@ -1,3 +1,4 @@
+import { expandChatTagReferences } from "@openbot/contracts/chat-tag-references";
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import type { BotMessage, BotProfile } from "../data";
 import { AgentAvatar } from "./AgentAvatar";
@@ -27,7 +28,7 @@ function isSearchTab(value: string): value is SearchTab {
 }
 
 function messagePreview(message: BotMessage): string {
-  return message.body.trim().replace(/\s+/g, " ");
+  return expandChatTagReferences(message.body).trim().replace(/\s+/g, " ");
 }
 
 function resultKey(result: GlobalSearchResult): string {
@@ -42,7 +43,9 @@ function resultSearchText(result: GlobalSearchResult): string {
   if (result.kind === "bot") {
     return normalized(`${result.bot.name} ${result.bot.title} ${result.bot.description} ${result.bot.preview}`);
   }
-  return normalized(`${result.message.body} ${result.bot.name} ${result.bot.title} ${result.bot.description}`);
+  return normalized(
+    `${messagePreview(result.message)} ${result.bot.name} ${result.bot.title} ${result.bot.description}`,
+  );
 }
 
 function resultDescription(result: GlobalSearchResult): string {

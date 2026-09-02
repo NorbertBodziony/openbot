@@ -463,6 +463,7 @@ export function installOpenbotStub(): void {
           },
         ]),
         listBots: vi.fn().mockResolvedValue(BOTS),
+        listInstalledSkills: vi.fn().mockResolvedValue([]),
         listMemories: vi.fn().mockResolvedValue([]),
         listRoutines: vi.fn().mockResolvedValue([]),
         listRoutineRuns: vi.fn().mockResolvedValue([]),

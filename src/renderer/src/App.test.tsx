@@ -502,7 +502,7 @@ describe("OpenBot connected desktop shell", () => {
             id: "sales-search-result",
             author: "assistant",
             source: "assistant",
-            text: "Quarterly launch notes are ready for review.",
+            text: "Ask @[Research](agent:research-hidden-id) to use @[Sources](skill:sources-hidden-id).",
             createdAt: "2026-08-20T09:30:00.000Z",
             status: "completed",
           },
@@ -523,7 +523,7 @@ describe("OpenBot connected desktop shell", () => {
                 id: "sales-search-result",
                 author: "assistant",
                 source: "assistant",
-                text: "Quarterly launch notes are ready for review.",
+                text: "Ask @[Research](agent:research-hidden-id) to use @[Sources](skill:sources-hidden-id).",
                 createdAt: "2026-08-20T09:30:00.000Z",
                 status: "completed",
               },
@@ -542,12 +542,15 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(input).toHaveFocus());
 
     await fireEvent.click(screen.getByRole("tab", { name: "Messages" }));
-    await fireEvent.input(input, { target: { value: "quarterly" } });
-    const messageResult = await screen.findByRole("option", { name: /Quarterly launch notes/ });
+    await fireEvent.input(input, { target: { value: "sources-hidden-id" } });
+    await screen.findByText("No matching messages or bots");
+    await fireEvent.input(input, { target: { value: "research" } });
+    const messageResult = await screen.findByRole("option", { name: /Ask @Research to use Sources \(skill\)\./ });
+    expect(messageResult).not.toHaveTextContent("research-hidden-id");
     await fireEvent.click(messageResult);
     await screen.findByRole("heading", { name: "Sales Outbound" });
     expect(window.openbot.agent.searchConversationMessages).toHaveBeenCalledWith({
-      query: "quarterly",
+      query: "research",
       limit: 100,
     });
     expect(window.openbot.agent.readConversationPage).toHaveBeenCalledWith({

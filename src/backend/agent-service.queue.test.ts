@@ -275,7 +275,7 @@ describe.sequential("AgentService: queue", () => {
     );
   });
 
-  it("hands one SQLite conversation across Codex, Grok, and Claude provider sessions", async () => {
+  it("hands one SQLite conversation across repeated provider switches", async () => {
     process.env.OPENBOT_CLAUDE_PATH = await createFakeClaude(root);
     process.env.OPENBOT_GROK_PATH = await createFakeGrok(root);
     const clients = new Map<AgentProvider, FakeAgentClient>();
@@ -299,12 +299,20 @@ describe.sequential("AgentService: queue", () => {
     const grokInput = clients.get("grok")?.requests.find((request) => request.method === "turn/start")?.params;
     expect(firstInputText(grokInput)).toContain("CODEX_DONE");
     expect(firstInputText(grokInput)).toContain("Second request");
+    const firstGrokSessionId = store.activeProviderSession("chief")?.externalSessionId;
 
     await service.updateBot({ botId: "chief", provider: "claude", model: "claude-sonnet-5" });
     await service.sendMessage({ botId: "chief", text: "Third request" });
     await waitFor(() => service?.listQueue("chief").deliveries[2]?.status === "completed");
     const claudeInput = clients.get("claude")?.requests.find((request) => request.method === "turn/start")?.params;
     expect(firstInputText(claudeInput)).toContain("GROK_DONE");
+
+    await service.updateBot({ botId: "chief", provider: "grok", model: "grok-4.5" });
+    await service.sendMessage({ botId: "chief", text: "Fourth request" });
+    await waitFor(() => service?.listQueue("chief").deliveries[3]?.status === "completed");
+    const grokTurns = clients.get("grok")?.requests.filter((request) => request.method === "turn/start") ?? [];
+    expect(firstInputText(grokTurns[1]?.params)).toContain("CLAUDE_DONE");
+    expect(store.activeProviderSession("chief")?.externalSessionId).not.toBe(firstGrokSessionId);
 
     const conversation = await service.readConversation("chief");
     expect(conversation.threadId).toBe(publicThreadId);
@@ -315,8 +323,92 @@ describe.sequential("AgentService: queue", () => {
     expect(store.database.listProviderSessions(publicThreadId)).toMatchObject([
       { provider: "codex", state: "inactive" },
       { provider: "grok", state: "inactive" },
-      { provider: "claude", state: "active" },
+      { provider: "claude", state: "inactive" },
+      { provider: "grok", state: "active" },
     ]);
+  });
+
+  it("resumes and retries once when Grok loses its in-memory session", async () => {
+    process.env.OPENBOT_GROK_PATH = await createFakeGrok(root);
+    let rejectTurnStart = true;
+    let grokClient: FakeAgentClient | undefined;
+    const { store, mailbox } = stores(root);
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, undefined, true, true, {}, async (method) => {
+        if (provider === "grok" && method === "turn/start" && rejectTurnStart) {
+          rejectTurnStart = false;
+          throw new Error("Unknown Grok session: stale-session-id");
+        }
+      });
+      if (provider === "grok") grokClient = client;
+      return client;
+    });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await service.initialize();
+    await store.getOrCreate("chief");
+    await service.updateBot({ botId: "chief", provider: "grok", model: "grok-4.5" });
+
+    await service.sendMessage({ botId: "chief", text: "Recover this request" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "completed");
+
+    expect(grokClient?.requests.filter((request) => request.method === "thread/start")).toHaveLength(1);
+    expect(grokClient?.requests.filter((request) => request.method === "thread/resume")).toHaveLength(1);
+    expect(grokClient?.requests.filter((request) => request.method === "turn/start")).toHaveLength(2);
+    expect(
+      (await service.readConversation("chief")).messages.filter((message) => message.author === "user"),
+    ).toHaveLength(1);
+    expect(warning).toHaveBeenCalledWith(expect.any(String), {
+      botId: "chief",
+      provider: "grok",
+      outcome: "resumed",
+    });
+    warning.mockRestore();
+  });
+
+  it("replaces a Grok session that the provider can no longer resume", async () => {
+    process.env.OPENBOT_GROK_PATH = await createFakeGrok(root);
+    let rejectResume = false;
+    let grokClient: FakeAgentClient | undefined;
+    const { store, mailbox } = stores(root);
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, undefined, true, true, {}, async (method) => {
+        if (provider === "grok" && method === "thread/resume" && rejectResume) {
+          throw new Error("Grok session not found");
+        }
+      });
+      if (provider === "grok") grokClient = client;
+      return client;
+    });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await service.initialize();
+    await store.getOrCreate("chief");
+    await service.updateBot({ botId: "chief", provider: "grok", model: "grok-4.5" });
+    await service.sendMessage({ botId: "chief", text: "First Grok request" });
+    await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "completed");
+    const publicThreadId = service.listBots().find((bot) => bot.id === "chief")?.threadId;
+    const originalSessionId = store.activeProviderSession("chief")?.externalSessionId;
+    if (!publicThreadId || !originalSessionId) throw new Error("The first Grok session was not created.");
+
+    rejectResume = true;
+    await service.updateBot({ botId: "chief", description: "Force the provider session to reload." });
+    await service.sendMessage({ botId: "chief", text: "Continue after recovery" });
+    await waitFor(() => service?.listQueue("chief").deliveries[1]?.status === "completed");
+
+    const sessions = store.database.listProviderSessions(publicThreadId);
+    expect(sessions).toMatchObject([
+      { externalSessionId: originalSessionId, provider: "grok", state: "inactive" },
+      { provider: "grok", state: "active" },
+    ]);
+    expect(sessions[1]?.externalSessionId).not.toBe(originalSessionId);
+    const turns = grokClient?.requests.filter((request) => request.method === "turn/start") ?? [];
+    expect(firstInputText(turns[1]?.params)).toContain("GROK_DONE");
+    expect(firstInputText(turns[1]?.params)).toContain("Continue after recovery");
+    expect(warning).toHaveBeenCalledWith(expect.any(String), {
+      botId: "chief",
+      provider: "grok",
+      outcome: "replaced",
+    });
+    warning.mockRestore();
   });
 
   it("stores a visible summary when a provider handoff exceeds its budget", async () => {

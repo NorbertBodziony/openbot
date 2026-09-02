@@ -44,6 +44,27 @@ describe("Team protocol v1", () => {
     );
   });
 
+  it("down-converts semantic tags in current requests for v1 hosts", () => {
+    const message = JSON.parse(
+      encodeTeamProtocolV1CurrentHttpRequest("POST", "/v1/agents/chief/messages", {
+        text: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
+        attachmentDraftIds: [],
+        replyToMessageId: null,
+      }),
+    );
+    const queueUpdate = JSON.parse(
+      encodeTeamProtocolV1CurrentHttpRequest("POST", "/v1/agents/chief/queue/update", {
+        deliveryId: "delivery-1",
+        text: "Follow up with @[Research](agent:research).",
+        keepAttachmentIds: [],
+        attachmentDraftIds: [],
+      }),
+    );
+
+    expect(message.text).toBe("Ask @Research to use Sources (skill).");
+    expect(queueUpdate.text).toBe("Follow up with @Research.");
+  });
+
   it("decodes bounded compatibility metadata and finds the highest common version", () => {
     const support = decodeTeamProtocolSupportV1({
       appVersion: "0.4.0",

@@ -1,6 +1,7 @@
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
-import type { AttachmentSummary } from "@openbot/contracts/ipc";
-import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
+import { serializeChatTagReference } from "@openbot/contracts/chat-tag-references";
+import type { AttachmentSummary, InstalledSkill } from "@openbot/contracts/ipc";
+import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import type { BotProfile } from "../../data";
@@ -256,6 +257,44 @@ describe("MessageBody", () => {
     expect(screen.getByText("<script>alert('unsafe')</script>")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("link", { name: "the guide" }));
     expect(onOpenLink).toHaveBeenCalledWith("https://kobalte.dev/docs/core/overview/introduction");
+  });
+
+  it("preserves semantic tags in agent-authored Markdown", async () => {
+    const onSelectAgent = vi.fn();
+    const skills: InstalledSkill[] = [
+      {
+        skillId: "skill)1",
+        slug: "release-notes",
+        name: "Release] Notes",
+        installedVersion: 1,
+        availableVersion: 1,
+        state: "installed",
+      },
+    ];
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-markdown-tags",
+          author: "bot",
+          body: `Ask **@[Old Research](agent:research)** to use ${serializeChatTagReference("skill", "Old] Skill", "skill)1")}.`,
+          time: "10:00",
+        }}
+        bots={bots}
+        skills={skills}
+        onSelectAgent={onSelectAgent}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    const agentTag = screen.getByRole("button", { name: "Open agent Research" });
+    expect(agentTag.closest("strong")).toBeInTheDocument();
+    expect(screen.getByText("Release] Notes").closest(".message-skill-tag")).toHaveTextContent("Skill Release] Notes");
+    expect(screen.queryByText("Old Research")).toBeNull();
+    expect(screen.queryByText("Old Skill")).toBeNull();
+    await fireEvent.click(agentTag);
+    expect(onSelectAgent).toHaveBeenCalledWith("research");
   });
 
   it("renders absolute agent workspace Markdown paths as file controls", async () => {
@@ -1037,6 +1076,48 @@ describe("MessageBody", () => {
     expect(screen.getByText("This is the exact selected sentence.", { selector: "blockquote" })).toBeInTheDocument();
     expect(screen.getByText("A longer answer containing this exact selected sentence.")).toBeInTheDocument();
     expect(screen.queryByText(/^> This is/u)).toBeNull();
+  });
+
+  it("renders semantic tags in reply context with the current catalogs", () => {
+    const skills: InstalledSkill[] = [
+      {
+        skillId: "skill-1",
+        slug: "release-notes",
+        name: "Release Notes",
+        installedVersion: 1,
+        availableVersion: 1,
+        state: "installed",
+      },
+    ];
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-reply",
+          author: "you",
+          body: "Please continue.",
+          replyToMessageId: "message-source",
+          time: "10:01",
+        }}
+        referencedMessage={{
+          id: "message-source",
+          author: "bot",
+          body: `Ask ${serializeChatTagReference("agent", "Old Research", "research")} to use ${serializeChatTagReference("skill", "Old Skill", "skill-1")}.`,
+          time: "10:00",
+        }}
+        bots={bots}
+        skills={skills}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    const context = document.querySelector(".message-reply-context");
+    if (!(context instanceof HTMLElement)) throw new Error("Reply context did not render");
+    expect(within(context).getByRole("button", { name: "Open agent Research" })).toBeInTheDocument();
+    expect(within(context).getByText("Release Notes")).toBeInTheDocument();
+    expect(context).not.toHaveTextContent("@[");
   });
 
   it("renders a Markdown feature matrix as a comparison table", () => {

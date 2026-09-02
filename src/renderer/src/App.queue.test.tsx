@@ -1,3 +1,5 @@
+import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
+import { serializeChatTagReference } from "@openbot/contracts/chat-tag-references";
 import type { DirectConversationSnapshot } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { expect, it, vi } from "vitest";
@@ -369,7 +371,7 @@ describe("OpenBot connected desktop shell", () => {
           {
             id: "assistant-1",
             author: "assistant",
-            text: "Should I prepare the report?",
+            text: `Should ${serializeChatTagReference("agent", "Old Sales", "sales-outbound")} prepare the report?`,
             createdAt: "2026-08-12T10:00:00.000Z",
             status: "completed",
           },
@@ -377,9 +379,12 @@ describe("OpenBot connected desktop shell", () => {
       },
     });
 
-    await screen.findByText("Should I prepare the report?");
+    await screen.findByRole("button", { name: "Open agent Sales Outbound" });
     await fireEvent.click(screen.getByRole("button", { name: "Reply to Agent message" }));
     expect(screen.getByText("Replying to Agent")).toBeInTheDocument();
+    const replyPreview = document.querySelector(".composer-reply-preview");
+    expect(replyPreview).toHaveTextContent("Should Sales Outbound prepare the report?");
+    expect(replyPreview).not.toHaveTextContent("agent:sales-outbound");
 
     const composer = screen.getByRole("textbox", { name: "Message Chief" });
     composer.textContent = "Yes, today please";
@@ -458,12 +463,22 @@ describe("OpenBot connected desktop shell", () => {
     expect(composer).toHaveTextContent("Keep this draft");
   });
 
-  it("reacts and copies from agent hover actions", async () => {
+  it("reacts and copies resolved tags from message hover actions", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText },
     });
+    vi.mocked(window.openbot.agent.listInstalledSkills).mockResolvedValueOnce([
+      {
+        skillId: "skill-1",
+        slug: "release-notes",
+        name: "Release Notes",
+        installedVersion: 1,
+        availableVersion: 1,
+        state: "installed",
+      },
+    ]);
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     emitAgentEvent?.({
@@ -476,16 +491,17 @@ describe("OpenBot connected desktop shell", () => {
         messages: [
           {
             id: "assistant-actions",
-            author: "assistant",
-            text: "Ready to ship.",
+            author: "user",
+            text: `Ask ${serializeChatTagReference("agent", "Old Sales", "sales-outbound")} to use ${serializeChatTagReference("skill", "Old Skill", "skill-1")} and review ${serializeAttachmentReference("tagged file", "attachment-1")}.`,
             createdAt: "2026-08-12T10:00:00.000Z",
             status: "completed",
+            attachments: [attachment("attachment-1", "@[Ops](agent:ops)", "pdf")],
           },
         ],
       },
     });
 
-    await screen.findByText("Ready to ship.");
+    await screen.findByRole("button", { name: "Open agent Sales Outbound" });
     await fireEvent.pointerDown(screen.getByRole("button", { name: "Add reaction" }), { button: 0 });
     await fireEvent.pointerUp(screen.getByRole("menuitemradio", { name: "React with ❤️" }), { button: 0 });
     expect(window.openbot.agent.setMessageReaction).toHaveBeenCalledWith({
@@ -497,7 +513,11 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.pointerDown(screen.getByRole("button", { name: "More message actions" }), { button: 0 });
     await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Copy" }), { button: 0 });
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith("Ready to ship."));
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith(
+        "Ask @Sales Outbound to use Release Notes (skill) and review @[Ops](agent:ops).",
+      ),
+    );
   });
 
   it("lets the user remove only their own reaction while keeping the agent reaction read-only", async () => {

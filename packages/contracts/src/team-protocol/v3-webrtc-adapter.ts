@@ -11,20 +11,22 @@ export function encodeTeamProtocolV3WebRtcHttpRequest(
   method: string,
   path: string,
   value: unknown,
+  options: { preserveSemanticTags?: boolean } = {},
 ): TeamProtocolV2Json {
   return duplicateRoute(method, path)
     ? wireJson(decodeTeamProtocolV3CurrentHttpRequest(method, path, value ?? {}))
-    : encodeTeamProtocolV2CurrentHttpRequest(method, path, value);
+    : encodeTeamProtocolV2CurrentHttpRequest(method, path, value, options);
 }
 
 export function decodeTeamProtocolV3WebRtcHttpRequest(
   method: string,
   path: string,
   value: unknown,
+  options: { preserveSemanticTags?: boolean } = {},
 ): TeamProtocolV2Json {
   return duplicateRoute(method, path)
     ? wireJson(decodeTeamProtocolV3CurrentHttpRequest(method, path, value ?? {}))
-    : decodeTeamProtocolV2CurrentHttpRequest(method, path, value);
+    : decodeTeamProtocolV2CurrentHttpRequest(method, path, value, options);
 }
 
 export function encodeTeamProtocolV3WebRtcHttpResponse(
@@ -32,10 +34,11 @@ export function encodeTeamProtocolV3WebRtcHttpResponse(
   path: string,
   status: number,
   value: unknown,
+  options: { preserveSemanticTags?: boolean } = {},
 ): TeamProtocolV2Json {
   return duplicateRoute(method, path)
     ? wireJson(decodeTeamProtocolV3CurrentHttpResponse(method, path, status, value ?? null))
-    : encodeTeamProtocolV2CurrentHttpResponse(method, path, status, value);
+    : encodeTeamProtocolV2CurrentHttpResponse(method, path, status, value, options);
 }
 
 export function decodeTeamProtocolV3WebRtcHttpResponse(

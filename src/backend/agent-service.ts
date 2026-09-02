@@ -5,6 +5,7 @@ import { constants } from "node:fs";
 import { lstat, open, realpath, stat } from "node:fs/promises";
 import { basename, isAbsolute } from "node:path";
 import { expandAttachmentReferences } from "@openbot/contracts/attachment-references";
+import { expandChatTagReferences } from "@openbot/contracts/chat-tag-references";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   AccountUsage,
@@ -394,7 +395,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #hostedSites: AgentHostedSites | null;
   readonly #snapshots = new Map<string, ConversationSnapshot>();
   readonly #threadToBot = new Map<string, string>();
-  readonly #loadedThreads = new Set<string>();
+  readonly #loadedThreads = new Map<string, AgentClient>();
   readonly #pendingPrompts = new Map<RequestId, PendingPrompt>();
   readonly #pendingApprovals = new Map<RequestId, PendingApproval>();
   readonly #pendingBrowserTakeovers = new Map<RequestId, PendingBrowserTakeover>();
@@ -1380,7 +1381,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           threadId: session.externalSessionId,
           expectedTurnId: turnId,
           clientUserMessageId: input.deliveryId,
-          input: deliveryInput(context),
+          input: deliveryInput(context, agentNamesById(this.#store.list())),
         },
         decodeRecordResponse,
       );
@@ -1412,8 +1413,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#syncMailboxMessages(snapshot);
     await this.#store.updatePreview(
       bot.id,
-      displayAttachmentReferences(delivery.delivery.text, delivery.delivery.attachments) ||
-        delivery.delivery.attachments.map((item) => item.name).join(", "),
+      displayMessageReferences(
+        delivery.delivery.text,
+        delivery.delivery.attachments,
+        agentNamesById(this.#store.list()),
+      ) || delivery.delivery.attachments.map((item) => item.name).join(", "),
     );
     this.#emit({ type: "bots-changed", bots: this.listBots() });
     this.#emitConversation(snapshot);
@@ -2353,27 +2357,35 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const currentBot = this.#store.list().find((candidate) => candidate.id === bot.id) ?? bot;
     const session = this.#store.activeProviderSession(bot.id);
     if (session) {
-      this.#threadToBot.set(session.externalSessionId, bot.id);
-      if (!this.#loadedThreads.has(session.externalSessionId)) {
-        await this.#resumeThread(currentBot, client, session.externalSessionId);
+      if (this.#loadedThreads.get(session.externalSessionId) !== client) {
+        try {
+          await this.#resumeThread(currentBot, client, session.externalSessionId);
+        } catch (error) {
+          if (!isMissingProviderSessionError(error, client.provider)) throw error;
+          this.#retireProviderSession(currentBot, session.externalSessionId);
+          const replacementThreadId = await this.#startProviderThread(currentBot, client, publicThreadId);
+          this.#logProviderSessionRecovery(currentBot.id, client.provider, "replaced");
+          return replacementThreadId;
+        }
       }
+      this.#threadToBot.set(session.externalSessionId, bot.id);
       return session.externalSessionId;
     }
 
+    return this.#startProviderThread(currentBot, client, publicThreadId);
+  }
+
+  async #startProviderThread(bot: BotSummary, client: AgentClient, publicThreadId: string): Promise<string> {
     const response = await client.request(
       "thread/start",
       {
-        model: currentBot.model,
-        effort: currentBot.reasoningEffort,
-        cwd: currentBot.workspacePath,
-        runtimeWorkspaceRoots: [currentBot.workspacePath, this.#store.sharedRoot],
+        model: bot.model,
+        effort: bot.reasoningEffort,
+        cwd: bot.workspacePath,
+        runtimeWorkspaceRoots: [bot.workspacePath, this.#store.sharedRoot],
         approvalPolicy: "on-request",
         sandbox: "danger-full-access",
-        developerInstructions: developerInstructions(
-          currentBot,
-          this.#store.sharedRoot,
-          this.#memories.list(currentBot.id),
-        ),
+        developerInstructions: developerInstructions(bot, this.#store.sharedRoot, this.#memories.list(bot.id)),
         ephemeral: false,
         serviceName: "openbot",
         dynamicTools: [...BROWSER_DYNAMIC_TOOLS, OPENBOT_DYNAMIC_TOOLS],
@@ -2383,7 +2395,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const externalThreadId = response.thread.id;
     this.#store.bindProviderSession(bot.id, externalThreadId);
     this.#threadToBot.set(externalThreadId, bot.id);
-    this.#loadedThreads.add(externalThreadId);
+    this.#loadedThreads.set(externalThreadId, client);
     this.#ensureSnapshot(bot.id, publicThreadId);
     const handoff = this.#buildProviderHandoff(bot.id, publicThreadId);
     if (handoff) this.#pendingHandoffs.set(externalThreadId, handoff);
@@ -2410,7 +2422,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await client.request("thread/unarchive", { threadId: externalThreadId }, decodeRecordResponse);
       await client.request("thread/resume", params, decodeRecordResponse);
     }
-    this.#loadedThreads.add(externalThreadId);
+    this.#loadedThreads.set(externalThreadId, client);
+  }
+
+  #retireProviderSession(bot: BotSummary, externalThreadId: string): void {
+    const session = this.#store.activeProviderSession(bot.id);
+    if (session?.externalSessionId !== externalThreadId || !bot.threadId) return;
+    this.#store.database.deactivateProviderSessions(bot.threadId);
+    this.#threadToBot.delete(externalThreadId);
+    this.#loadedThreads.delete(externalThreadId);
+    this.#contextBudgets.delete(externalThreadId);
+    this.#clearCompactionTimer(externalThreadId);
+    this.#pendingHandoffs.delete(externalThreadId);
+  }
+
+  #logProviderSessionRecovery(botId: string, provider: AgentProvider, outcome: "resumed" | "replaced"): void {
+    console.warn("Recovered an unavailable provider session.", { botId, provider, outcome });
   }
 
   async #requestWithArchivedThreadRecovery<T>(
@@ -3075,7 +3102,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.#applyPendingRuntimeRefresh(bot);
       await this.ensureProvider(providerForBot(bot));
       const client = this.#requireReadyClient(providerForBot(bot));
-      const threadId = await this.#ensureThread(bot, client);
+      let threadId = await this.#ensureThread(bot, client);
       const snapshot = this.#ensureSnapshot(bot.id, threadId);
       if (snapshot.activeTurnId) {
         await this.#mailbox.markTerminal(delivery.id, "failed", "The recipient already has an active turn.");
@@ -3083,20 +3110,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return;
       }
 
-      const displayText = displayAttachmentReferences(delivery.text, delivery.attachments);
+      const agentNames = agentNamesById(this.#store.list());
+      const displayText = displayMessageReferences(delivery.text, delivery.attachments, agentNames);
       let text = displayText || "The user shared attached local files.";
-      const handoff = this.#pendingHandoffs.get(threadId);
-      if (handoff) {
-        text = `${handoff}\n\n--- current message ---\n${text}`;
-        this.#pendingHandoffs.delete(threadId);
-      }
       if (delivery.sender.kind === "user" && delivery.replyToMessageId) {
         const referenced = snapshot.messages.find((message) => message.id === delivery.replyToMessageId);
         text = [
           `The user is replying to message ${delivery.replyToMessageId}.`,
           "--- referenced message ---",
           referenced
-            ? displayAttachmentReferences(referenced.text, referenced.attachments ?? [])
+            ? displayMessageReferences(referenced.text, referenced.attachments ?? [], agentNames)
             : "(The referenced message is unavailable.)",
           "--- user reply ---",
           displayText || "(The reply contains attachments only.)",
@@ -3161,6 +3184,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             : { type: "mention", name: attachment.name, path: attachment.path },
         );
       }
+      const inputForThread = (providerThreadId: string): typeof input => {
+        const handoff = this.#pendingHandoffs.get(providerThreadId);
+        if (!handoff) return input;
+        return input.map((item, index) =>
+          index === 0 && item.type === "text"
+            ? { ...item, text: `${handoff}\n\n--- current message ---\n${item.text}` }
+            : item,
+        );
+      };
 
       if (!snapshot.messages.some((message) => message.id === delivery.id)) {
         snapshot.messages.push({
@@ -3178,23 +3210,40 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       this.#emitConversation(snapshot);
 
-      const response = await this.#requestWithArchivedThreadRecovery(
-        bot,
-        client,
-        "turn/start",
-        {
-          threadId,
-          model: bot.model,
-          effort: bot.reasoningEffort,
-          clientUserMessageId: delivery.id,
-          input,
-          cwd: bot.workspacePath,
-          runtimeWorkspaceRoots: [bot.workspacePath, this.#store.sharedRoot],
-          approvalPolicy: "on-request",
-          sandboxPolicy: { type: "dangerFullAccess" },
-        },
-        decodeTurnResponse,
-      );
+      const startTurn = (providerThreadId: string) =>
+        this.#requestWithArchivedThreadRecovery(
+          bot,
+          client,
+          "turn/start",
+          {
+            threadId: providerThreadId,
+            model: bot.model,
+            effort: bot.reasoningEffort,
+            clientUserMessageId: delivery.id,
+            input: inputForThread(providerThreadId),
+            cwd: bot.workspacePath,
+            runtimeWorkspaceRoots: [bot.workspacePath, this.#store.sharedRoot],
+            approvalPolicy: "on-request",
+            sandboxPolicy: { type: "dangerFullAccess" },
+          },
+          decodeTurnResponse,
+        );
+      let response: Awaited<ReturnType<typeof startTurn>>;
+      try {
+        response = await startTurn(threadId);
+      } catch (error) {
+        if (!isMissingProviderSessionError(error, client.provider)) throw error;
+        const unavailableThreadId = threadId;
+        if (this.#loadedThreads.get(unavailableThreadId) === client) {
+          this.#loadedThreads.delete(unavailableThreadId);
+        }
+        threadId = await this.#ensureThread(bot, client);
+        response = await startTurn(threadId);
+        if (threadId === unavailableThreadId) {
+          this.#logProviderSessionRecovery(bot.id, client.provider, "resumed");
+        }
+      }
+      this.#pendingHandoffs.delete(threadId);
       await this.#mailbox.markRunning(delivery.id, response.turn.id);
       confirmedTurnId = response.turn.id;
       const currentDelivery = this.#mailbox.getDelivery(delivery.id)?.delivery;
@@ -3605,7 +3654,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return;
       }
       case "thread/archived": {
-        if (threadId) this.#loadedThreads.delete(threadId);
+        if (threadId && this.#loadedThreads.get(threadId) === source) this.#loadedThreads.delete(threadId);
         return;
       }
       case "mcpServer/startupStatus/updated": {
@@ -4609,7 +4658,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     );
     if (messages.length === 0) return null;
 
-    const rendered = messages.map(renderHandoffMessage);
+    const agentNames = agentNamesById(this.#store.list());
+    const rendered = messages.map((message) => renderHandoffMessage(message, agentNames));
     const budgetTokens = 60_000;
     const fullText = rendered.join("\n\n");
     if (estimateTokens(fullText) <= budgetTokens) {
@@ -4635,7 +4685,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       split -= 1;
     }
     const oldMessages = messages.slice(0, split);
-    const summaryText = summarizeOldMessages(oldMessages, budgetTokens - newestTokens);
+    const summaryText = summarizeOldMessages(oldMessages, budgetTokens - newestTokens, agentNames);
     this.#store.database.saveThreadSummary(
       threadId,
       oldMessages.at(-1)?.id ?? null,
@@ -5425,13 +5475,14 @@ function routineStatusForDelivery(status: QueueDeliveryStatus) {
 
 function deliveryInput(
   context: DeliveryContext,
+  agentNames: ReadonlyMap<string, string>,
 ): Array<
   | { type: "text"; text: string }
   | { type: "localImage"; path: string }
   | { type: "mention"; name: string; path: string }
 > {
   const { delivery, managedAttachments } = context;
-  const displayText = displayAttachmentReferences(delivery.text, delivery.attachments);
+  const displayText = displayMessageReferences(delivery.text, delivery.attachments, agentNames);
   const text = [
     displayText || (managedAttachments.length ? "The user shared attached local files." : ""),
     managedAttachments.length
@@ -5450,9 +5501,22 @@ function deliveryInput(
   ];
 }
 
-function displayAttachmentReferences(text: string, attachments: Array<{ id: string; name: string }>): string {
+function displayMessageReferences(
+  text: string,
+  attachments: Array<{ id: string; name: string }>,
+  agentNames: ReadonlyMap<string, string>,
+): string {
   const names = new Map(attachments.map((attachment) => [attachment.id, attachment.name]));
-  return expandAttachmentReferences(text, (reference) => names.get(reference.attachmentId));
+  return expandAttachmentReferences(
+    expandChatTagReferences(text, (reference) =>
+      reference.kind === "agent" ? agentNames.get(reference.id) : undefined,
+    ),
+    (reference) => names.get(reference.attachmentId),
+  );
+}
+
+function agentNamesById(bots: BotSummary[]): ReadonlyMap<string, string> {
+  return new Map(bots.map((bot) => [bot.id, bot.name]));
 }
 
 function normalizeAccountUsage(rateLimits: AccountRateLimitsReadResult | null): AccountUsage {
@@ -5605,6 +5669,15 @@ function isArchivedThreadError(error: unknown): boolean {
   return error instanceof AppServerError && /\bis archived\b/i.test(error.message);
 }
 
+function isMissingProviderSessionError(error: unknown, provider: AgentProvider): boolean {
+  if (provider !== "grok" || !(error instanceof Error)) return false;
+  return (
+    /\bunknown grok session\b/i.test(error.message) ||
+    /\bsession\b.*\b(?:not found|does not exist|unknown)\b/i.test(error.message) ||
+    /\b(?:not found|unknown)\b.*\bsession\b/i.test(error.message)
+  );
+}
+
 function isDynamicToolCall(value: unknown): value is DynamicToolCallParams {
   return (
     isRecord(value) &&
@@ -5617,14 +5690,17 @@ function isDynamicToolCall(value: unknown): value is DynamicToolCallParams {
   );
 }
 
-function renderHandoffMessage(message: ConversationSnapshot["messages"][number]): string {
+function renderHandoffMessage(
+  message: ConversationSnapshot["messages"][number],
+  agentNames: ReadonlyMap<string, string>,
+): string {
   const attachmentMetadata = (message.attachments ?? [])
     .map((attachment) => `[attachment: ${attachment.name}; ${attachment.mimeType}; ${attachment.size} bytes]`)
     .join("\n");
   const sender = message.senderBotId ? ` agent:${message.senderBotId}` : "";
   return [
     `[${message.createdAt}] ${message.author}${sender}:`,
-    displayAttachmentReferences(message.text, message.attachments ?? []),
+    displayMessageReferences(message.text, message.attachments ?? [], agentNames),
     attachmentMetadata,
   ]
     .filter(Boolean)
@@ -5635,10 +5711,14 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-function summarizeOldMessages(messages: ConversationSnapshot["messages"], tokenBudget: number): string {
+function summarizeOldMessages(
+  messages: ConversationSnapshot["messages"],
+  tokenBudget: number,
+  agentNames: ReadonlyMap<string, string>,
+): string {
   const maximumCharacters = Math.max(4_000, tokenBudget * 4);
   const lines = messages.map((message) => {
-    const normalized = displayAttachmentReferences(message.text, message.attachments ?? [])
+    const normalized = displayMessageReferences(message.text, message.attachments ?? [], agentNames)
       .replace(/\s+/g, " ")
       .trim();
     const excerpt = normalized.length > 600 ? `${normalized.slice(0, 597)}...` : normalized;
