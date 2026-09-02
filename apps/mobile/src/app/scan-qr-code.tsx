@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { AppState, Linking, ScrollView, StyleSheet, useWindowDimensions, View } from "react-native";
 
 import { redeemMobileConnectUrl } from "@/lib/mobile-auth";
+import { isAndroid, isIOS } from "@/lib/platform";
 import { useMobileSession } from "@/providers/mobile-session-provider";
 
 type ScanState = { status: "idle" } | { status: "connecting" } | { status: "error"; message: string };
@@ -157,8 +158,8 @@ export default function ScanQrCode() {
     <>
       <Stack.Screen
         options={{
-          headerTransparent: process.env.EXPO_OS === "ios",
-          headerStyle: process.env.EXPO_OS === "android" ? { backgroundColor: "#000000" } : undefined,
+          headerTransparent: isIOS,
+          headerStyle: isAndroid ? { backgroundColor: "#000000" } : undefined,
           headerTintColor: "#ffffff",
         }}
       />

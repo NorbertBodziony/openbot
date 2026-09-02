@@ -5,6 +5,7 @@ import { useState } from "react";
 import { View } from "react-native";
 
 import { AppLogo } from "@/components/app-logo";
+import { isAndroid, isIOS } from "@/lib/platform";
 import { useMobileSession } from "@/providers/mobile-session-provider";
 
 export default function Connected() {
@@ -32,18 +33,17 @@ export default function Connected() {
       <Stack.Screen
         options={{
           headerTintColor: foreground,
-          headerRight:
-            process.env.EXPO_OS === "android"
-              ? () => (
-                  <Button size="sm" variant="ghost" isDisabled={signingOut} onPress={signOut}>
-                    <Button.Label>{signOutLabel}</Button.Label>
-                  </Button>
-                )
-              : undefined,
+          headerRight: isAndroid
+            ? () => (
+                <Button size="sm" variant="ghost" isDisabled={signingOut} onPress={signOut}>
+                  <Button.Label>{signOutLabel}</Button.Label>
+                </Button>
+              )
+            : undefined,
         }}
       />
 
-      {process.env.EXPO_OS === "ios" && (
+      {isIOS && (
         <Stack.Toolbar placement="right">
           <Stack.Toolbar.Button disabled={signingOut} onPress={signOut}>
             {signOutLabel}

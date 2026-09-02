@@ -10,6 +10,7 @@ import { useColorScheme, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { withUniwind } from "uniwind";
 
+import { isIOS } from "@/lib/platform";
 import { queryClient } from "@/lib/query-client";
 import { MobileSessionProvider, useMobileSession } from "@/providers/mobile-session-provider";
 
@@ -30,7 +31,7 @@ function AppNavigation() {
       screenOptions={{
         headerBackButtonDisplayMode: "minimal",
         headerShadowVisible: false,
-        headerTransparent: process.env.EXPO_OS === "ios",
+        headerTransparent: isIOS,
       }}
     >
       <Stack.Protected guard={!session}>

@@ -5,7 +5,8 @@ import { fetch } from "expo/fetch";
 import * as Crypto from "expo-crypto";
 import * as Device from "expo-device";
 import * as SecureStore from "expo-secure-store";
-import { Platform } from "react-native";
+
+import { isAndroid, isIOS } from "@/lib/platform";
 
 const MOBILE_SESSION_KEY = "openbot.mobile.session.v1";
 const MOBILE_DEVICE_ID_KEY = "openbot.mobile.device-id.v1";
@@ -188,7 +189,7 @@ async function mobileDeviceIdentity(): Promise<{
   }
   const rawName = Device.deviceName?.trim() || Device.modelName?.trim() || "Mobile device";
   const name = rawName.normalize("NFC").replace(/\p{C}/gu, "").replace(/\s+/gu, " ").slice(0, 80).trim();
-  const platform = Platform.OS === "ios" || Platform.OS === "android" ? Platform.OS : "unknown";
+  const platform = isIOS ? "ios" : isAndroid ? "android" : "unknown";
   return { id, name: name || "Mobile device", platform };
 }
 
