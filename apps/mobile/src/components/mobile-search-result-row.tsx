@@ -15,7 +15,7 @@ export function MobileSearchResultRow({ result }: { result: MobileSearchResult }
   const [muted, controlBackground] = useThemeColor(["muted", "default"]);
 
   if (result.category === "bots") {
-    return <BotListRow bot={result.bot} enableZoomTransition={false} />;
+    return <BotListRow bot={result.bot} enableActions={false} enableZoomTransition={false} />;
   }
 
   const Icon = RESULT_ICONS[result.category];
