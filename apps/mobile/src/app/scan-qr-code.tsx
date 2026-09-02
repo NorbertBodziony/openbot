@@ -1,45 +1,68 @@
 import { CameraView, useCameraPermissions } from "expo-camera";
-import { Link } from "expo-router";
-import { Button } from "heroui-native/button";
+import { Stack } from "expo-router";
+import { StatusBar } from "expo-status-bar";
+import { Alert, Button, Card, Spinner, Surface } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
-import { ChevronLeft, QrCode } from "lucide-react-native";
+import { Camera, ScanLine } from "lucide-react-native";
 import { useEffect, useState } from "react";
-import {
-  ActivityIndicator,
-  AppState,
-  Linking,
-  ScrollView,
-  StyleSheet,
-  Text,
-  useWindowDimensions,
-  View,
-} from "react-native";
+import { AppState, Linking, ScrollView, StyleSheet, useWindowDimensions, View } from "react-native";
 
 import { redeemMobileConnectUrl } from "@/lib/mobile-auth";
 import { useMobileSession } from "@/providers/mobile-session-provider";
 
 type ScanState = { status: "idle" } | { status: "connecting" } | { status: "error"; message: string };
 
-function ScreenBackButton({ iconColor }: { iconColor: string }) {
+function ScannerStatus({ scanState, onRetry }: { scanState: ScanState; onRetry: () => void }) {
+  const [foreground, accent] = useThemeColor(["foreground", "accent"]);
+
+  if (scanState.status === "error") {
+    return (
+      <Card variant="default" className="gap-4 rounded-3xl p-4">
+        <Alert status="danger">
+          <Alert.Indicator />
+          <Alert.Content>
+            <Alert.Title>Couldn’t connect</Alert.Title>
+            <Alert.Description selectable>{scanState.message}</Alert.Description>
+          </Alert.Content>
+        </Alert>
+        <Button size="md" variant="secondary" onPress={onRetry}>
+          <Button.Label>Scan again</Button.Label>
+        </Button>
+      </Card>
+    );
+  }
+
   return (
-    <Link href="/" dismissTo asChild>
-      <Button
-        size="sm"
-        variant="secondary"
-        isIconOnly
-        accessibilityLabel="Back"
-        className="rounded-full border border-border"
-      >
-        <ChevronLeft size={20} color={iconColor} strokeWidth={2} />
-      </Button>
-    </Link>
+    <Card variant="default" className="rounded-3xl p-4">
+      <Card.Body className="flex-row items-center gap-3">
+        {scanState.status === "connecting" ? (
+          <Surface variant="tertiary" className="size-11 items-center justify-center rounded-2xl p-0">
+            <Spinner size="sm" color={accent} />
+          </Surface>
+        ) : (
+          <Surface variant="tertiary" className="size-11 items-center justify-center rounded-2xl p-0">
+            <ScanLine size={22} color={foreground} strokeWidth={1.75} />
+          </Surface>
+        )}
+        <View className="min-w-0 flex-1 gap-0.5">
+          <Card.Title className="font-sans text-body font-semibold">
+            {scanState.status === "connecting" ? "Connecting your phone…" : "Scan the desktop code"}
+          </Card.Title>
+          <Card.Description className="font-sans text-caption">
+            {scanState.status === "connecting"
+              ? "Verifying the one-time pairing request."
+              : "Keep the QR code centered inside the frame."}
+          </Card.Description>
+        </View>
+      </Card.Body>
+    </Card>
   );
 }
 
 export default function ScanQrCode() {
   const [permission, requestPermission, getPermission] = useCameraPermissions();
   const [scanState, setScanState] = useState<ScanState>({ status: "idle" });
-  const foreground = useThemeColor("foreground");
+  const [foreground, accentForeground] = useThemeColor(["foreground", "accent-foreground"]);
   const { width: windowWidth } = useWindowDimensions();
   const scannerFrameSize = Math.min(windowWidth - 80, 280);
   const { connect: finishSignIn } = useMobileSession();
@@ -72,9 +95,12 @@ export default function ScanQrCode() {
 
   if (!permission) {
     return (
-      <View className="flex-1 items-center justify-center bg-background">
-        <ActivityIndicator color={foreground} accessibilityLabel="Loading camera" />
-      </View>
+      <>
+        <Stack.Screen options={{ headerTintColor: foreground }} />
+        <View className="flex-1 items-center justify-center bg-background">
+          <Spinner color="default" accessibilityLabel="Loading camera" />
+        </View>
+      </>
     );
   }
 
@@ -82,88 +108,74 @@ export default function ScanQrCode() {
     const canRequestPermission = permission.canAskAgain;
 
     return (
-      <ScrollView
-        className="flex-1 bg-background"
-        contentContainerClassName="min-h-full flex-grow px-6 pt-safe-offset-3 pb-safe-offset-8"
-        contentInsetAdjustmentBehavior="automatic"
-      >
-        <ScreenBackButton iconColor={foreground} />
+      <>
+        <Stack.Screen options={{ headerTintColor: foreground }} />
+        <ScrollView
+          className="flex-1 bg-background"
+          contentContainerClassName="min-h-full grow px-5 pb-safe-offset-8 pt-8"
+          contentInsetAdjustmentBehavior="automatic"
+        >
+          <View className="mx-auto w-full max-w-md flex-1 justify-center">
+            <Card variant="secondary" className="gap-6 rounded-3xl p-5">
+              <Card.Header>
+                <Surface variant="tertiary" className="size-14 items-center justify-center rounded-2xl p-0">
+                  <Camera size={27} color={foreground} strokeWidth={1.75} />
+                </Surface>
+              </Card.Header>
 
-        <View className="flex-1 items-center justify-center gap-6 pb-14">
-          <View className="size-20 items-center justify-center rounded-4xl border border-border bg-control">
-            <QrCode size={36} color={foreground} strokeWidth={1.5} />
+              <Card.Body className="gap-2">
+                <Card.Title accessibilityRole="header" className="font-sans text-title font-semibold">
+                  Camera access required
+                </Card.Title>
+                <Card.Description className="font-sans text-body leading-6 text-text-secondary">
+                  {canRequestPermission
+                    ? "OpenBot uses the camera only to scan the one-time QR code shown in the desktop app."
+                    : "Camera access is blocked. Enable it for OpenBot in device settings, then return here to pair your phone."}
+                </Card.Description>
+              </Card.Body>
+
+              <Card.Footer>
+                <Button
+                  size="lg"
+                  className="w-full"
+                  onPress={canRequestPermission ? requestPermission : () => void Linking.openSettings()}
+                >
+                  <Camera size={19} color={accentForeground} strokeWidth={2} />
+                  <Button.Label className="font-sans font-semibold">
+                    {canRequestPermission ? "Allow camera access" : "Open settings"}
+                  </Button.Label>
+                </Button>
+              </Card.Footer>
+            </Card>
           </View>
-          <View className="max-w-sm items-center gap-2">
-            <Text
-              accessibilityRole="header"
-              className="text-center font-sans text-heading font-semibold text-foreground"
-            >
-              Camera access required
-            </Text>
-            <Text className="text-center font-sans text-body text-text-secondary">
-              {canRequestPermission
-                ? "OpenBot uses the camera only to scan the QR code shown in the desktop app."
-                : "Camera access is blocked. Enable it for OpenBot in your device settings, then return to scan the QR code."}
-            </Text>
-          </View>
-          <Button
-            size="md"
-            className="w-full max-w-sm"
-            onPress={canRequestPermission ? requestPermission : () => void Linking.openSettings()}
-          >
-            <Button.Label className="font-sans">
-              {canRequestPermission ? "Allow camera access" : "Open settings"}
-            </Button.Label>
-          </Button>
-        </View>
-      </ScrollView>
+        </ScrollView>
+      </>
     );
   }
 
   return (
-    <View className="flex-1 bg-black">
-      <CameraView
-        style={StyleSheet.absoluteFill}
-        facing="back"
-        barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
-        onBarcodeScanned={scanState.status === "idle" ? ({ data }) => void connect(data) : undefined}
-      />
-
-      <View className="absolute inset-x-0 top-0 flex-row items-center justify-between px-5 pt-safe-offset-3">
-        <ScreenBackButton iconColor={foreground} />
-        <Text className="font-sans text-body font-semibold text-white">Scan QR code</Text>
-        <View className="size-10" />
-      </View>
-
-      <View pointerEvents="none" className="absolute inset-0 items-center justify-center px-10">
-        <View
-          className="rounded-[28px] border-2 border-white"
-          style={{ borderCurve: "continuous", height: scannerFrameSize, width: scannerFrameSize }}
+    <>
+      <Stack.Screen options={{ headerTintColor: "#ffffff" }} />
+      <StatusBar style="light" />
+      <View className="flex-1 bg-black">
+        <CameraView
+          style={StyleSheet.absoluteFill}
+          facing="back"
+          barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+          onBarcodeScanned={scanState.status === "idle" ? ({ data }) => void connect(data) : undefined}
         />
-        <Text className="mt-6 text-center font-sans text-body text-white">
-          Position the desktop QR code inside the frame.
-        </Text>
-      </View>
 
-      {scanState.status !== "idle" ? (
-        <View className="absolute inset-x-5 bottom-safe-offset-5 gap-4 rounded-3xl border border-border bg-background p-5">
-          <View className="gap-1">
-            <Text className="font-sans text-body font-semibold text-foreground">
-              {scanState.status === "connecting" ? "Connecting your phone…" : "Couldn’t connect"}
-            </Text>
-            {scanState.status === "connecting" ? (
-              <ActivityIndicator color={foreground} accessibilityLabel="Signing in" className="mt-3 self-start" />
-            ) : (
-              <Text className="font-sans text-caption text-muted">{scanState.message}</Text>
-            )}
-          </View>
-          {scanState.status === "error" ? (
-            <Button size="md" variant="secondary" onPress={() => setScanState({ status: "idle" })}>
-              <Button.Label className="font-sans">Scan again</Button.Label>
-            </Button>
-          ) : null}
+        <View pointerEvents="none" className="absolute inset-0 items-center justify-center px-10 pb-24">
+          <View
+            className="rounded-[28px] border-2 border-white"
+            style={{ borderCurve: "continuous", height: scannerFrameSize, width: scannerFrameSize }}
+          />
         </View>
-      ) : null}
-    </View>
+
+        <View className="absolute inset-x-5 bottom-safe-offset-5">
+          <ScannerStatus scanState={scanState} onRetry={() => setScanState({ status: "idle" })} />
+        </View>
+      </View>
+    </>
   );
 }
