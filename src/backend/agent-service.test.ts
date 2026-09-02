@@ -2530,6 +2530,25 @@ describe.sequential("AgentService", () => {
     expect(discardedRecordings).toEqual(["protected-tab"]);
     expect(tabs[0]?.recording).toBe(false);
 
+    for (const tool of ["list_tabs", "status"] as const) {
+      client.emit("request", {
+        method: "item/tool/call",
+        id: `${tool}-during-takeover`,
+        params: {
+          threadId: externalThreadId,
+          turnId: started.turnId,
+          callId: `${tool}-during-takeover`,
+          namespace: "openbot_browser",
+          tool,
+          arguments: {},
+        },
+      });
+      await waitFor(() => client.responses.some((response) => response.id === `${tool}-during-takeover`));
+      expect(client.responses.find((response) => response.id === `${tool}-during-takeover`)?.result).toMatchObject({
+        success: false,
+      });
+    }
+
     client.emit("request", {
       method: "item/tool/call",
       id: "recording-during-takeover",
@@ -2542,8 +2561,10 @@ describe.sequential("AgentService", () => {
         arguments: { tabId: "protected-tab" },
       },
     });
-    await waitFor(() => client.responses.length === 2);
-    expect(client.responses[1]?.result).toMatchObject({ success: false });
+    await waitFor(() => client.responses.some((response) => response.id === "recording-during-takeover"));
+    expect(client.responses.find((response) => response.id === "recording-during-takeover")?.result).toMatchObject({
+      success: false,
+    });
 
     client.emit("request", {
       method: "item/tool/call",
@@ -2557,12 +2578,14 @@ describe.sequential("AgentService", () => {
         arguments: { tabId: "protected-tab" },
       },
     });
-    await waitFor(() => client.responses.length === 3);
-    expect(client.responses[2]?.result).toMatchObject({ success: false });
+    await waitFor(() => client.responses.some((response) => response.id === "snapshot-during-takeover"));
+    expect(client.responses.find((response) => response.id === "snapshot-during-takeover")?.result).toMatchObject({
+      success: false,
+    });
 
     await service.respondToBrowserTakeover({ requestId: "takeover-call", decision: "complete" });
-    await waitFor(() => client.responses.length === 4);
-    expect(openBotToolPayload(client.responses[3]?.result)).toEqual({
+    await waitFor(() => client.responses.some((response) => response.id === "takeover-call"));
+    expect(openBotToolPayload(client.responses.find((response) => response.id === "takeover-call")?.result)).toEqual({
       status: "completed",
       next: "Take a fresh snapshot and continue the task.",
     });
@@ -2594,8 +2617,10 @@ describe.sequential("AgentService", () => {
       ),
     );
     await service.respondToBrowserTakeover({ requestId: "takeover-cancel", decision: "cancel" });
-    await waitFor(() => client.responses.length === 5);
-    expect(openBotToolPayload(client.responses[4]?.result)).toEqual({ status: "cancelled" });
+    await waitFor(() => client.responses.some((response) => response.id === "takeover-cancel"));
+    expect(openBotToolPayload(client.responses.find((response) => response.id === "takeover-cancel")?.result)).toEqual({
+      status: "cancelled",
+    });
     expect(endedTakeovers).toEqual(["protected-tab", "protected-tab"]);
   });
 

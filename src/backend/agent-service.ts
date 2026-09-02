@@ -3049,12 +3049,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async #handleBrowserDynamicTool(botId: string, params: DynamicToolCallParams): Promise<DynamicToolResult> {
-    const requestedTabId =
-      isRecord(params.arguments) && isString(params.arguments.tabId) ? params.arguments.tabId : null;
-    if (
-      requestedTabId !== null &&
-      [...this.#pendingBrowserTakeovers.values()].some((pending) => pending.request.tabId === requestedTabId)
-    ) {
+    if ([...this.#pendingBrowserTakeovers.values()].some((pending) => pending.request.botId === botId)) {
       return {
         success: false,
         contentItems: [{ type: "inputText", text: "Browser tools are unavailable during user takeover." }],
