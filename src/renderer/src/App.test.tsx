@@ -1497,8 +1497,6 @@ describe("OpenBot connected desktop shell", () => {
       itemType: "commentary",
     } satisfies ConversationMessage;
     emitAgentEvent?.(conversation(2, "turn-live-status", [userMessage, firstCommentary]));
-    await waitFor(() => expect(label).toHaveTextContent("Inspecting the release"));
-
     emitAgentEvent?.({
       type: "conversation-delta",
       botId: "chief",

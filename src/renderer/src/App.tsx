@@ -1513,36 +1513,46 @@ export function createAppController(props: AppProps = {}) {
 
   function applyConversationDelta(event: Extract<AgentEvent, { type: "conversation-delta" }>) {
     if (event.revision <= (conversationRevisions()[event.botId] ?? -1)) return;
-    pendingConversationSnapshots.delete(event.botId);
+    const pendingSnapshot = pendingConversationSnapshots.get(event.botId);
+    if (pendingSnapshot) {
+      if (event.revision <= pendingSnapshot.revision) return;
+      pendingConversationSnapshots.delete(event.botId);
+      applyConversation(pendingSnapshot, isAgentChatReadable(event.botId));
+    }
     setConversationRevisions((current) => ({
       ...current,
       [event.botId]: event.revision,
     }));
 
-    const messages = liveMessages()[event.botId] ?? [];
-    const existing = messages.find((message) => message.id === event.messageId);
-    const thinking = existing
-      ? undefined
-      : messages.find((message) => message.kind === "thinking" && message.itemIds?.includes(event.messageId));
-    const thinkingItemIndex = thinking?.itemIds?.indexOf(event.messageId) ?? -1;
     const messageKey = agentMessageKey(event.botId, event.messageId);
-    const rawBody =
-      (rawAgentMessageBodies.get(messageKey) ??
-        existing?.body ??
-        (thinkingItemIndex >= 0 ? thinking?.items?.[thinkingItemIndex] : "") ??
-        "") + event.delta;
-    rawAgentMessageBodies.set(messageKey, rawBody);
-    if (existing) {
-      updateStored(existing, {
-        ...existing,
-        body: cleanAgentMessageText(rawBody),
-        streaming: true,
-      });
-    } else if (thinking && thinkingItemIndex >= 0) {
-      const items = [...(thinking.items ?? [])];
-      items[thinkingItemIndex] = cleanAgentMessageText(rawBody);
-      updateStored(thinking, { ...thinking, items, streaming: true });
-    } else {
+    let appended = false;
+    setLiveMessages((current) => {
+      const messages = current[event.botId] ?? [];
+      const existing = messages.find((message) => message.id === event.messageId);
+      const thinking = existing
+        ? undefined
+        : messages.find((message) => message.kind === "thinking" && message.itemIds?.includes(event.messageId));
+      const thinkingItemIndex = thinking?.itemIds?.indexOf(event.messageId) ?? -1;
+      const rawBody =
+        (rawAgentMessageBodies.get(messageKey) ??
+          existing?.body ??
+          (thinkingItemIndex >= 0 ? thinking?.items?.[thinkingItemIndex] : "") ??
+          "") + event.delta;
+      rawAgentMessageBodies.set(messageKey, rawBody);
+      if (existing) {
+        updateStored(existing, {
+          ...existing,
+          body: cleanAgentMessageText(rawBody),
+          streaming: true,
+        });
+        return current;
+      }
+      if (thinking && thinkingItemIndex >= 0) {
+        const items = [...(thinking.items ?? [])];
+        items[thinkingItemIndex] = cleanAgentMessageText(rawBody);
+        updateStored(thinking, { ...thinking, items, streaming: true });
+        return current;
+      }
       const message = createStoredMessage({
         id: event.messageId,
         turnId: event.turnId,
@@ -1554,10 +1564,13 @@ export function createAppController(props: AppProps = {}) {
         animate: conversationLoaded()[event.botId] === true,
         kind: "text",
       });
-      setLiveMessages((current) => ({
+      appended = true;
+      return {
         ...current,
         [event.botId]: [...(current[event.botId] ?? []), message],
-      }));
+      };
+    });
+    if (appended) {
       const readState = conversationReads()[event.botId];
       if (isAgentChatReadable(event.botId)) {
         autoMarkAgentMessageRead(event.botId, event.messageId);
