@@ -1176,7 +1176,7 @@ export class BrowserHost {
       const snapshotDrains: Promise<unknown>[] = [];
       let actionRecorded = false;
       let dispatched = false;
-      let dispatchTimedOut = false;
+      let cancellationConfirmed = false;
       const operationCompletion = (async () => {
         let highlighted = false;
         try {
@@ -1192,7 +1192,7 @@ export class BrowserHost {
             dispatched = true;
           });
         } finally {
-          if (highlighted) await tab.engine.hideHighlight().catch(() => undefined);
+          if (highlighted && !cancellationConfirmed) await tab.engine.hideHighlight().catch(() => undefined);
         }
       })();
       onOperationStarted?.(operationCompletion);
@@ -1202,10 +1202,9 @@ export class BrowserHost {
         timeoutMessage,
       ).catch(async (error) => {
         if (!isTimeoutError(error)) throw error;
-        tab.engine.cancelPendingCommands();
-        if (!dispatched) throw error;
-        dispatchTimedOut = true;
-        await withTimeout(operationCompletion, 250, timeoutMessage).catch(() => undefined);
+        cancellationConfirmed = tab.engine.cancelPendingCommands();
+        if (dispatched && !cancellationConfirmed) await operationCompletion;
+        throw error;
       });
       const response = boundedOperation
         .then(async () => {
@@ -1220,11 +1219,9 @@ export class BrowserHost {
             action,
             target: target ? describeBrowserTarget(target) : undefined,
             outcome: "success",
-            ...(dispatchTimedOut
-              ? { detail: "Action dispatch exceeded its timeout; inspect this snapshot before continuing." }
-              : Date.now() >= deadline
-                ? { detail: "Action completed; page settling exceeded the requested timeout." }
-                : {}),
+            ...(Date.now() >= deadline
+              ? { detail: "Action completed; page settling exceeded the requested timeout." }
+              : {}),
           });
           actionRecorded = true;
           const snapshot = (
@@ -1251,7 +1248,9 @@ export class BrowserHost {
         })
         .finally(() => restoreWebContentsFocus(previouslyFocused, tab.view.webContents));
       const drained = Promise.allSettled([response])
-        .then(() => withTimeout(operationCompletion, 250, timeoutMessage).catch(() => undefined))
+        .then(() =>
+          cancellationConfirmed ? undefined : Promise.allSettled([operationCompletion]).then(() => undefined),
+        )
         .then(() => (tab.view.webContents.isLoading() ? tab.engine.stopLoading().catch(() => undefined) : undefined))
         .then(() => Promise.allSettled(snapshotDrains))
         .then(() => undefined);
