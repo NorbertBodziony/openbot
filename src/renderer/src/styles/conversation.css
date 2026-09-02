@@ -2355,7 +2355,7 @@
   flex-direction: column;
   gap: var(--openbot-space-6);
   overflow-y: auto;
-  padding: var(--openbot-space-4) 0 var(--openbot-space-4) var(--openbot-space-2);
+  padding: var(--openbot-space-4) var(--openbot-space-1) var(--openbot-space-4) var(--openbot-space-3);
   scrollbar-gutter: stable;
 }
 
