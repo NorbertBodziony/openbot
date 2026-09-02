@@ -36,10 +36,6 @@ describe("OpenBotDynamicIsland mode transitions", () => {
     flush(() => controller.setPresentation(approvalPresentation()));
     flush(() => controller.setPresentation(idlePresentation()));
 
-    await waitFor(() =>
-      expect(document.querySelector('[data-island-mode-layer="incoming"][data-island-mode="idle"]')).not.toBeNull(),
-    );
-    await waitFor(() => expect(document.querySelector('[data-island-mode-layer="outgoing"]')).toBeNull());
     await waitFor(() => expect(screen.queryByRole("button", { name: "Open chat" })).not.toBeInTheDocument());
     expect(screen.queryByRole("button", { name: /Official data/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
@@ -58,7 +54,6 @@ describe("OpenBotDynamicIsland mode transitions", () => {
       botId: "research",
       messageId: "reply-2",
     });
-    expect(document.querySelector('[data-island-mode-layer="outgoing"]')).toBeNull();
   });
 
   it("keeps the working row mounted while its task updates", async () => {

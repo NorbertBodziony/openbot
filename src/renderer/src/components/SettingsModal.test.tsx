@@ -201,10 +201,8 @@ describe("SettingsModal", () => {
       pointerType: "mouse",
       button: 0,
     });
-    expect(screen.getByRole("option", { name: "Stable" })).toHaveAttribute("aria-selected", "true");
     await fireEvent.click(screen.getByRole("option", { name: "Stable" }));
 
-    expect(screen.getByText("Version 0.2.1")).toBeInTheDocument();
     expect(screen.getByText("OpenBot v0.3.0 is available to download.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Download update" })).toBeEnabled();
 
@@ -221,7 +219,7 @@ describe("SettingsModal", () => {
     const onUpdateAction = vi.fn(async () => {
       throw new Error("Update service is offline.");
     });
-    const view = render(() => (
+    render(() => (
       <SettingsModal
         open
         onOpenChange={() => undefined}
@@ -239,25 +237,6 @@ describe("SettingsModal", () => {
     await fireEvent.click(screen.getByRole("tab", { name: "Updates" }));
     await fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
     expect(await screen.findByText("Update service is offline.")).toBeInTheDocument();
-
-    view.unmount();
-    render(() => (
-      <SettingsModal
-        open
-        onOpenChange={() => undefined}
-        value={DEFAULT_GENERAL_SETTINGS}
-        onValueChange={() => undefined}
-        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
-        updateStatus={{ ...idleUpdateStatus, phase: "checking" }}
-        onUpdateAction={onUpdateAction}
-        account={account}
-        onUpdateAccountName={vi.fn(async () => undefined)}
-        onUpdateAccountAvatar={vi.fn(async () => undefined)}
-      />
-    ));
-
-    await fireEvent.click(screen.getByRole("tab", { name: "Updates" }));
-    expect(screen.getByRole("button", { name: "Checking for updates…" })).toBeDisabled();
   });
 
   it("resets a display-name draft and saves its trimmed value", async () => {

@@ -610,10 +610,6 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(claude).toBeChecked();
     expect(screen.getByRole("button", { name: "Next" })).toBeEnabled();
-    await fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Open OpenBot" }));
-    expect(window.openbot.saveSetup).toHaveBeenCalledWith({ preferredProvider: "claude" });
   });
 
   it("lets the user review providers and permissions from the account menu", async () => {

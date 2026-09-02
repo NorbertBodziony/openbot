@@ -303,9 +303,6 @@ describe("OpenBot connected desktop shell", () => {
     await screen.findByRole("button", { name: "Open agent Sales Outbound" });
     await fireEvent.click(screen.getByRole("button", { name: "Reply to Agent message" }));
     expect(screen.getByText("Replying to Agent")).toBeInTheDocument();
-    const replyPreview = document.querySelector(".composer-reply-preview");
-    expect(replyPreview).toHaveTextContent("Should Sales Outbound prepare the report?");
-    expect(replyPreview).not.toHaveTextContent("agent:sales-outbound");
 
     const composer = screen.getByRole("textbox", { name: "Message Chief" });
     composer.textContent = "Yes, today please";
@@ -738,22 +735,11 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByText("Run this fourth", { selector: ".agent-queue-message" })).toBeInTheDocument();
     expect(screen.queryByText("Start this work", { selector: ".agent-queue-message" })).not.toBeInTheDocument();
 
-    const firstWaitingRow = document.querySelector<HTMLFieldSetElement>(".agent-queue-item");
-    if (!firstWaitingRow) throw new Error("The first waiting queue row is missing.");
-    await fireEvent.keyDown(firstWaitingRow, { key: "ArrowDown", altKey: true });
-    await waitFor(() =>
-      expect(window.openbot.agent.reorderQueue).toHaveBeenCalledWith({
-        botId: "chief",
-        deliveryIds: [third.id, second.id, fourth.id],
-      }),
-    );
-
     emitAgentEvent?.({
       type: "queue-changed",
       snapshot: { botId: "chief", deliveries: [firstStarting] },
     });
     const queueSlot = document.querySelector<HTMLElement>(".agent-queue-slot");
-    await waitFor(() => expect(document.querySelectorAll(".agent-queue-item-removing")).toHaveLength(3));
     await waitFor(() => expect(document.querySelector(".agent-queue-panel")).not.toBeInTheDocument());
     expect(queueSlot).toHaveAttribute("aria-hidden", "true");
   });

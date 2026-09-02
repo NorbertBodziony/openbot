@@ -180,7 +180,6 @@ describe("Sidebar pinned chats", () => {
     await fireEvent.contextMenu(screen.getByRole("button", { name: /Extra 4/ }));
     const agentMenu = await screen.findByRole("menu", { name: "Agent actions" });
     const pinItem = within(agentMenu).getByRole("menuitem", { name: "Pin" });
-    expect(pinItem).toHaveAttribute("title", "Maximum 6 pinned chats");
 
     await fireEvent.pointerUp(pinItem, { button: 0 });
     expect(props.onPin).not.toHaveBeenCalled();

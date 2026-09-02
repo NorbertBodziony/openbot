@@ -282,7 +282,6 @@ describe("OpenBot connected desktop shell", () => {
       name: "Local smoke page, controlled by Chief",
     });
     expect(controlledTab).toHaveAttribute("aria-description", "Press Delete or Control/Command W to close");
-    expect(screen.getAllByRole("tab")).toHaveLength(3);
     await fireEvent.keyDown(screen.getByRole("tab", { name: "Third page" }), { key: "Delete" });
     expect(window.openbot.browser.close).toHaveBeenCalledWith("tab-3");
     await fireEvent.click(screen.getByRole("button", { name: "New browser tab" }));

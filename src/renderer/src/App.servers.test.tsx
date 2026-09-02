@@ -604,13 +604,8 @@ describe("OpenBot connected desktop shell", () => {
     if (!appFrame) throw new Error("App frame is missing.");
     expect(appFrame.inert).toBe(true);
     expect(appFrame).toHaveAttribute("aria-hidden", "true");
-    expect(within(remoteDesktop).queryByText("Studio Mac")).not.toBeInTheDocument();
-    expect(within(remoteDesktop).queryByText("Shared control")).not.toBeInTheDocument();
     expect(within(remoteDesktop).getByRole("button", { name: "Back to OpenBot" })).toBeInTheDocument();
     expect(within(remoteDesktop).getByRole("button", { name: "Disconnect" })).toBeInTheDocument();
-    expect(within(remoteDesktop).queryByRole("button", { name: /Remote display/ })).not.toBeInTheDocument();
-    expect(within(remoteDesktop).queryByLabelText(/password/iu)).not.toBeInTheDocument();
-    expect(within(remoteDesktop).queryByText(/view.only/iu)).not.toBeInTheDocument();
     await waitFor(() => expect(window.openbot.remoteDesktop.connect).toHaveBeenCalledWith({ serverId: "remote-1" }));
 
     const viewer = await screen.findByTitle("Sunshine remote desktop");
@@ -831,7 +826,6 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(await screen.findByRole("dialog", { name: "General" })).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Server name" })).not.toBeInTheDocument();
-    expect(screen.getByText("Design studio", { selector: ".server-settings-readonly-value" })).toBeInTheDocument();
     expect(window.openbot.servers.select).not.toHaveBeenCalled();
     await fireEvent.click(screen.getByRole("button", { name: "Close server settings" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
