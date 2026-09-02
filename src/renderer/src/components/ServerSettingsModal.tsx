@@ -60,10 +60,10 @@ import {
   Text,
   Trash2,
   toast,
+  truncateMiddle,
   UserRound,
   UsersRound,
 } from "./ui";
-import { truncateMiddle } from "./ui/utils";
 
 export interface ServerSettingsModalProps {
   open: boolean;

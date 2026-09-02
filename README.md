@@ -213,7 +213,8 @@ Cloudflare Workers
 - `packages/contracts` contains process-boundary contracts, shared limits, and pure validation.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for dependency direction, state ownership, and
-rules for new modules.
+rules for new modules, and [design.md](design.md) for the visual and interaction contract the
+interface follows.
 
 ## Local data and network boundaries
 

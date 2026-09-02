@@ -1,7 +1,6 @@
 import type { JSX } from "@solidjs/web";
 import { createEffect, createSignal, onCleanup, untrack } from "solid-js";
-import { Dialog, IconButton, X } from "./ui";
-import { cx } from "./ui/utils";
+import { cx, Dialog, IconButton, X } from "./ui";
 
 interface SettingsDialogShellProps {
   open: boolean;

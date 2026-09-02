@@ -1,5 +1,13 @@
 # Repository guidance
 
+## Design system
+
+- Read [`design.md`](design.md) before you create or change any UI. It is the visual and interaction contract for OpenBot: brand direction, tokens, the `components/ui` public API, interaction states, responsive behavior, accessibility, and motion. It is required reading, not background material.
+- For mobile UI, read [`apps/mobile/DESIGN.md`](apps/mobile/DESIGN.md) first for component ownership, then `design.md` for brand, tokens, and motion.
+- Follow the component reuse order in `design.md`: search this repository, then the [Zaidan catalog](https://zaidan.carere.dev/docs/components), then build in `src/renderer/src/components/ui` and use it from the feature. Never copy a shared primitive into a feature component.
+- `bun run check:ui` enforces the mechanical half of `design.md` and runs in CI. When you add a component to `src/renderer/src/components/ui`, or a runtime export to one that is already there, update the `design.md` inventory in the same change or the check fails. A new token must be declared in `:root`; whether it earns a row in `design.md` is a review judgment, and the check verifies only that what the document names and what the renderer uses actually exists.
+- When a review keeps correcting the same UI decision, put the correction in `design.md`, or in `scripts/design-contract.ts` when it can be checked deterministically.
+
 ## Renderer UI
 
 - For integrated renderer UI work, always use `bun run dev`. This starts the local Auth API and the Electron dev app together.
@@ -12,18 +20,8 @@
 - Use packaged apps only when the user explicitly requests release or package verification.
 - For a populated integrated UI, stop the dev app, run `bun run dev:seed`, then run `bun run dev`. Use `bun run dev:seed --dry-run` to inspect the seed without changing local state.
 
-### Component reuse workflow
-
-- Before you add or change UI code, search the repository for reusable components, hooks, styles, utilities, and Storybook stories. Prefer reuse, composition, or a small extension of an existing component.
-- If no existing component fits, search the [Zaidan component catalog](https://zaidan.carere.dev/docs/components) for the same component or a close match before you design or implement a component from scratch.
-- If Zaidan has a suitable component, use its source as the starting point. Adapt it to this repository's SolidJS conventions, renderer color tokens, typography, spacing, icons, accessibility requirements, and component API.
-- Create or extend the reusable repository component in `src/renderer/src/components/ui` before you use it in a feature. Do not copy a shared primitive directly into a feature component.
-- Add or update its Storybook story when the shared component has a visual or interactive state that Storybook can verify.
+- Add or update a Storybook story when a shared component gains a visual or interactive state that Storybook can verify.
 - Only create a component from scratch after the repository and Zaidan searches do not provide a suitable base. Keep it reusable when the same UI pattern can reasonably appear again.
-- Use the shared component in the feature only after the reusable component layer is ready.
-
-- Use `lucide-solid` for renderer UI icons. Reuse a suitable Lucide icon before you add an inline SVG or a local icon component. Add a custom icon only when Lucide has no suitable icon, and document the exception next to the custom icon.
-- Treat the `:root` properties in `src/renderer/src/styles.css` as the renderer color palette. Use the closest semantic `--openbot-*` token, including opacity variants, instead of ad-hoc color literals. Add a token there only for a new semantic role. Keep existing compatibility aliases when used, and isolate fixed integration, generated asset, SVG, or platform colors at their boundaries.
 
 ## Database migrations
 

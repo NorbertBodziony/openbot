@@ -25,3 +25,4 @@ export * from "./switch";
 export * from "./toast";
 export * from "./typography";
 export * from "./user-avatar";
+export * from "./utils";
