@@ -32,7 +32,7 @@
     "@solidjs/signals": "2.0.0-rc.0",
     "@solidjs/web": "2.0.0-rc.0",
     "@tanstack/solid-router": "2.0.0-rc.0",
-    "@tanstack/solid-start": "2.0.0-rc.0",
+    "@tanstack/solid-start": "2.0.0-rc.4",
     "class-variance-authority": "0.7.1",
     "fflate": "0.8.2",
     "jose": "6.2.10",
