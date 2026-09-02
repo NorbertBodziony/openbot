@@ -980,6 +980,16 @@ async function main(): Promise<void> {
       throw new Error("V2 text wait did not enforce its scan deadline.");
     }
     await v2Contents.executeJavaScript(`document.querySelector('[data-bulk-text]').remove()`, true);
+    const boundedActionPoint = await v2Contents.executeJavaScript(
+      `(() => {
+        const bounds = document.querySelector('[aria-label="SPA"]').getBoundingClientRect();
+        return { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+      })()`,
+      true,
+    );
+    if (!isDynamicRecord(boundedActionPoint) || !isNumber(boundedActionPoint.x) || !isNumber(boundedActionPoint.y)) {
+      throw new Error("V2 bounded action point fixture was not available.");
+    }
     await v2Contents.executeJavaScript(
       "globalThis.__openbotNoise = setInterval(() => document.querySelector('output').toggleAttribute('data-noise'), 10); true",
       true,
@@ -987,8 +997,8 @@ async function main(): Promise<void> {
     const actionTimeoutStarted = Date.now();
     const boundedAction = await callBrowserTool(browser, "click", {
       tabId: v2Tab.id,
-      target: { kind: "role", role: "button", name: "SPA", exact: true },
-      timeoutMs: 50,
+      target: { kind: "point", x: boundedActionPoint.x, y: boundedActionPoint.y },
+      timeoutMs: 250,
     });
     const boundedActionPayload = toolTextPayload(boundedAction);
     if (
