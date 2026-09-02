@@ -11,6 +11,7 @@ import type { UpdateCancellationToken, UpdateCheckOutcome } from "./update-servi
 import { pruneShipItLogs, supportsInstalledUpdates, UpdateService } from "./update-service";
 
 const CHECK_TIMEOUT = 1_000;
+const CHECK_INTERVAL = 10_000;
 const DOWNLOAD_STALL_TIMEOUT = 2_000;
 const INSTALL_TIMEOUT = 3_000;
 
@@ -50,6 +51,7 @@ function createService(
     platform?: NodeJS.Platform;
     beforeInstall?: () => Promise<void>;
     autoDownload?: boolean;
+    checkIntervalMs?: number;
   } = {},
 ) {
   return new UpdateService(updater, {
@@ -58,6 +60,7 @@ function createService(
     autoDownload: options.autoDownload ?? false,
     beforeInstall: options.beforeInstall ?? vi.fn(async () => undefined),
     platform: options.platform ?? "darwin",
+    checkIntervalMs: options.checkIntervalMs ?? CHECK_INTERVAL,
     checkTimeoutMs: CHECK_TIMEOUT,
     downloadStallTimeoutMs: DOWNLOAD_STALL_TIMEOUT,
     installTimeoutMs: INSTALL_TIMEOUT,
@@ -323,6 +326,58 @@ describe("UpdateService", () => {
     await vi.advanceTimersByTimeAsync(CHECK_TIMEOUT);
 
     expect(service.getStatus()).toMatchObject({ phase: "error", errorCode: "check_failed" });
+  });
+
+  it("does not restart the app once the install deadline has reported a failure", async () => {
+    vi.useFakeTimers();
+    const updater = new FakeUpdater();
+    makeUpdateAvailable(updater);
+    completeDownload(updater);
+    let finishShutdown: (() => void) | undefined;
+    // Shutdown preparation can outlive the deadline: it tears down the browser, hosts and agents.
+    const beforeInstall = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishShutdown = resolve;
+        }),
+    );
+    const service = createService(updater, { platform: "win32", beforeInstall });
+    service.start(false);
+    await service.checkForUpdates();
+    await service.downloadUpdate();
+    const install = service.installUpdate();
+    await vi.advanceTimersByTimeAsync(0);
+
+    await vi.advanceTimersByTimeAsync(INSTALL_TIMEOUT);
+    expect(service.getStatus()).toMatchObject({ phase: "error", errorCode: "install_failed" });
+
+    finishShutdown?.();
+    await install;
+
+    // Restarting here would contradict the failure the user was just shown.
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
+    expect(service.getStatus()).toMatchObject({ phase: "error", errorCode: "install_failed" });
+  });
+
+  it("keeps checking on schedule after a check never settles", async () => {
+    vi.useFakeTimers();
+    const updater = new FakeUpdater();
+    updater.checkForUpdates.mockImplementation(() => new Promise<never>(() => undefined));
+    const service = createService(updater);
+    service.start(false);
+    void service.checkForUpdates();
+    await vi.advanceTimersByTimeAsync(0);
+
+    await vi.advanceTimersByTimeAsync(CHECK_TIMEOUT);
+    expect(service.getStatus()).toMatchObject({ phase: "error", errorCode: "check_failed" });
+    expect(updater.checkForUpdates).toHaveBeenCalledOnce();
+
+    // The stalled call never runs its finally block, so the timeout has to own the next schedule or
+    // the app would quietly stop checking for updates until it restarts.
+    await vi.advanceTimersByTimeAsync(CHECK_INTERVAL);
+
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(2);
+    expect(service.getStatus().phase).toBe("checking");
   });
 
   it("recovers when the installer hands back control without quitting", async () => {

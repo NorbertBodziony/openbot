@@ -107,6 +107,7 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
   #internalCheck = false;
   #checkGeneration = 0;
   #downloadGeneration = 0;
+  #installGeneration = 0;
 
   constructor(updater: UpdateAdapter, options: UpdateServiceOptions) {
     super();
@@ -244,7 +245,8 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
     } catch {
       if (this.#checkGeneration === generation) this.#setError("check_failed");
     } finally {
-      this.#scheduleCheck(this.#options.checkIntervalMs);
+      // A late completion must not push out the schedule the timeout branch already set.
+      if (this.#checkGeneration === generation) this.#scheduleCheck(this.#options.checkIntervalMs);
     }
     // downloadUpdate() moves into "downloading" before its first await, so the caller and the
     // renderer see the download start rather than a stale "available".
@@ -273,16 +275,22 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
     if (!this.#canInstall() || this.#installStarted) {
       throw new Error("An update is not ready to install.");
     }
+    const generation = ++this.#installGeneration;
     this.#installStarted = true;
     this.#operation = "install";
     this.#setStatus({ phase: "installing", progress: 100, message: null, errorCode: null });
     try {
       await this.#options.beforeInstall();
+      // Shutdown preparation can outlive the install deadline. Once the watchdog has reported the
+      // attempt as failed, or a retry has taken over, this attempt must not go on to restart the
+      // app behind a UI that says it did not happen.
+      if (this.#installGeneration !== generation) return;
       this.#updater.quitAndInstall(false, true);
       // The handover is where a restart is most likely to stall, and shutdown preparation may have
       // torn down the deadline along with everything else, so re-arm it here as well.
       this.#armPhaseTimer();
     } catch {
+      if (this.#installGeneration !== generation) return;
       this.#installStarted = false;
       this.#setError("install_failed");
       throw new Error("OpenBot could not restart to install the update.");
@@ -379,6 +387,9 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
     if (this.#status.phase === "checking") {
       this.#checkGeneration += 1;
       this.#setError("check_failed");
+      // The pending call never settles, so its finally block will not run. Without rescheduling
+      // here the app would silently stop checking for updates until it restarts.
+      this.#scheduleCheck(this.#options.checkIntervalMs);
       return;
     }
     if (this.#status.phase === "downloading") {
@@ -389,6 +400,7 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
       return;
     }
     if (this.#status.phase === "installing") {
+      this.#installGeneration += 1;
       this.#installStarted = false;
       this.#setError(
         "install_failed",
