@@ -693,6 +693,10 @@ export class BrowserCdpEngine {
     this.#lastSnapshot = null;
   }
 
+  cancelPendingCommands(): void {
+    this.#detachOwnedDebugger();
+  }
+
   async setEnvironment(environment: BrowserEnvironment): Promise<void> {
     const previousEnvironment = this.#environment;
     const previousRetainDebugger = this.#retainDebugger;
