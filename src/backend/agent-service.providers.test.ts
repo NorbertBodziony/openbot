@@ -1,6 +1,5 @@
 // @vitest-environment node
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
 import { serializeChatTagReference } from "@openbot/contracts/chat-tag-references";
@@ -20,11 +19,11 @@ import {
   FakeAgentClient,
   fakeBrowser,
   firstInputText,
-  installFakeAgentRuntime,
   paramsRecord,
   protocolMessages,
   readTextOrEmpty,
-  restoreAgentRuntimeEnv,
+  startAgentTestFixture,
+  stopAgentTestFixture,
   stores,
   waitFor,
 } from "./agent-service-test-harness";
@@ -35,16 +34,12 @@ let logPath: string;
 let service: AgentService | null = null;
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), "openbot-agent-test-"));
-  logPath = await installFakeAgentRuntime(root);
+  ({ root, logPath } = await startAgentTestFixture());
 });
 
 afterEach(async () => {
-  await service?.stop();
+  await stopAgentTestFixture(root, service);
   service = null;
-  vi.useRealTimers();
-  restoreAgentRuntimeEnv();
-  await rm(root, { recursive: true, force: true });
 });
 
 describe.sequential("AgentService: providers", () => {

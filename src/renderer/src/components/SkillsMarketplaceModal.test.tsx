@@ -353,6 +353,36 @@ describe("SkillsMarketplaceModal", () => {
     expect(await screen.findByRole("region", { name: "Release Notes details" })).toBeInTheDocument();
   });
 
+  it("announces detail loading with its own live region", async () => {
+    // SkillsMarketplaceModal.tsx:1445 is a second status region named
+    // "Loading skill"; the listing skeleton at :1409 is "Loading skills" and
+    // is covered separately, so detail loading needs its own assertion.
+    const loadedDetail = await window.openbot.skills.get("release-notes");
+    let resolveDetail!: (detail: typeof loadedDetail) => void;
+    window.openbot.skills.get = vi.fn(
+      () =>
+        new Promise<typeof loadedDetail>((resolve) => {
+          resolveDetail = resolve;
+        }),
+    );
+
+    render(() => (
+      <SkillsMarketplaceModal
+        open
+        bots={[{ id: "writer", name: "Writer" }]}
+        activeBotId="writer"
+        onOpenChange={() => undefined}
+      />
+    ));
+    const listing = await screen.findByRole("button", { name: "View Release Notes details" });
+    listing.click();
+
+    expect(await screen.findByRole("status", { name: "Loading skill" })).toBeInTheDocument();
+
+    resolveDetail(loadedDetail);
+    await screen.findByRole("region", { name: "Release Notes details" });
+  });
+
   it("opens pending submission details from its row", async () => {
     const submissions: SkillSubmission[] = [
       {

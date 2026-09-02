@@ -2,11 +2,12 @@
 
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { chmod, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentEvent, BrowserControlState, BrowserTab } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
-import { expect } from "vitest";
+import { expect, vi } from "vitest";
 import type { AgentClient, AgentProvider } from "./agent-client";
 import type { AgentService } from "./agent-service";
 import { BotStore } from "./bot-store";
@@ -56,26 +57,34 @@ const PROVIDER_PATH_ENV_VARS = ["OPENBOT_CODEX_PATH", "OPENBOT_CLAUDE_PATH", "OP
 const originalProviderPaths = new Map(PROVIDER_PATH_ENV_VARS.map((name) => [name, process.env[name]]));
 
 /**
- * Points the provider paths at a fresh fake Codex CLI and returns the protocol
- * log path. Every AgentService shard calls this from its own beforeEach so the
- * fake-runtime variables live in exactly one list.
+ * Creates the temporary root for one AgentService test and points the provider
+ * paths at a fresh fake Codex CLI. Every shard calls this from its beforeEach,
+ * so the fake-runtime variables and the fixture layout live in one place.
  */
-export async function installFakeAgentRuntime(root: string): Promise<string> {
+export async function startAgentTestFixture(): Promise<{ root: string; logPath: string }> {
+  const root = await mkdtemp(join(tmpdir(), "openbot-agent-test-"));
   const logPath = join(root, "protocol.jsonl");
   process.env.OPENBOT_FAKE_CODEX_LOG = logPath;
   process.env.OPENBOT_CODEX_PATH = await createFakeCodex(root);
   process.env.OPENBOT_CLAUDE_PATH = join(root, "missing-claude");
   process.env.OPENBOT_GROK_PATH = join(root, "missing-grok");
-  return logPath;
+  return { root, logPath };
 }
 
-/** Undoes installFakeAgentRuntime, including every OPENBOT_FAKE_* variable a test may have set. */
-export function restoreAgentRuntimeEnv(): void {
+/**
+ * Reverses startAgentTestFixture: stops the service, restores real timers and
+ * the original provider paths, clears every OPENBOT_FAKE_* variable a test may
+ * have set, and removes the temporary root.
+ */
+export async function stopAgentTestFixture(root: string, service: AgentService | null): Promise<void> {
+  await service?.stop();
+  vi.useRealTimers();
   for (const [name, original] of originalProviderPaths) {
     if (original === undefined) delete process.env[name];
     else process.env[name] = original;
   }
   for (const name of FAKE_RUNTIME_ENV_VARS) delete process.env[name];
+  await rm(root, { recursive: true, force: true });
 }
 
 export class FakeAgentClient extends EventEmitter implements AgentClient {

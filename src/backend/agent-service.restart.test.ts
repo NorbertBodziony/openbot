@@ -1,7 +1,3 @@
-// @vitest-environment node
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { type AgentEvent, isAgentEvent, routineRunConversationEvent } from "@openbot/contracts/ipc";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentProvider } from "./agent-client";
@@ -10,11 +6,11 @@ import {
   FakeAgentClient,
   fakeBrowser,
   firstInputText,
-  installFakeAgentRuntime,
   nextRoutinesChanged,
   notification,
   protocolMessages,
-  restoreAgentRuntimeEnv,
+  startAgentTestFixture,
+  stopAgentTestFixture,
   stores,
   waitFor,
 } from "./agent-service-test-harness";
@@ -25,16 +21,12 @@ let logPath: string;
 let service: AgentService | null = null;
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), "openbot-agent-test-"));
-  logPath = await installFakeAgentRuntime(root);
+  ({ root, logPath } = await startAgentTestFixture());
 });
 
 afterEach(async () => {
-  await service?.stop();
+  await stopAgentTestFixture(root, service);
   service = null;
-  vi.useRealTimers();
-  restoreAgentRuntimeEnv();
-  await rm(root, { recursive: true, force: true });
 });
 
 describe.sequential("AgentService: restart", () => {

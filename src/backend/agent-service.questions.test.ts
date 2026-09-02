@@ -1,7 +1,3 @@
-// @vitest-environment node
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
   AGENT_RUNTIME_QUESTION_DESCRIPTION_LIMIT,
@@ -18,10 +14,10 @@ import {
   createFakeClaude,
   FakeAgentClient,
   fakeBrowser,
-  installFakeAgentRuntime,
   notification,
   openBotToolPayload,
-  restoreAgentRuntimeEnv,
+  startAgentTestFixture,
+  stopAgentTestFixture,
   stores,
   waitFor,
 } from "./agent-service-test-harness";
@@ -30,16 +26,12 @@ let root: string;
 let service: AgentService | null = null;
 
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), "openbot-agent-test-"));
-  await installFakeAgentRuntime(root);
+  ({ root } = await startAgentTestFixture());
 });
 
 afterEach(async () => {
-  await service?.stop();
+  await stopAgentTestFixture(root, service);
   service = null;
-  vi.useRealTimers();
-  restoreAgentRuntimeEnv();
-  await rm(root, { recursive: true, force: true });
 });
 
 describe.sequential("AgentService: questions", () => {

@@ -28,6 +28,19 @@ describe("OpenBotDynamicIsland mode transitions", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: /Research/ })).not.toBeInTheDocument());
   });
 
+  it("makes outgoing controls inert as soon as the mode changes", () => {
+    // The stale mode layer stays mounted through the swap animation
+    // (OpenBotDynamicIsland.tsx:570-577), so inert is what stops its buttons
+    // from being focusable and clickable while the new mode is on screen.
+    // The remaining tests only cover the layer eventually going away.
+    const controller = renderControlledIsland(workingPresentation(), "expanded");
+    flush(() => controller.setPresentation(messagePresentation("reply-1")));
+
+    const staleControl = screen.getAllByRole("button", { hidden: true }).find((button) => button.closest("[inert]"));
+    expect(staleControl).toBeDefined();
+    expect(screen.getByRole("button", { name: "Open chat" }).closest("[inert]")).toBeNull();
+  });
+
   it("ends a rapid series of updates and a return to idle on the newest mode", async () => {
     const controller = renderControlledIsland(workingPresentation(), "compact");
 
