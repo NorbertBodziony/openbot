@@ -59,6 +59,14 @@ interface SnapshotTarget {
   url?: string;
 }
 
+interface SemanticMatch {
+  backendNodeId: number;
+  sessionId?: string;
+  targetId?: string;
+  role: string;
+  name: string;
+}
+
 export interface SnapshotReadResult {
   snapshot: BrowserSnapshot;
   recommendImage: boolean;
@@ -902,28 +910,65 @@ export class BrowserCdpEngine {
         await send("Runtime.releaseObject", { objectId: match.objectId }, match.sessionId).catch(() => undefined);
       }
     }
-    await this.#refreshSemanticTargets(send, deadline);
-    const candidates = [...this.#targets.values()].filter(({ element, visibleText }) => {
-      if (target.kind === "role") {
-        if (element.role?.toLowerCase() !== target.role.toLowerCase()) return false;
-        if (!target.name) return true;
-        return textMatches(element.name, target.name, target.exact);
+    const navigationGeneration = this.#navigationGeneration;
+    const candidates: SemanticMatch[] = [];
+    const seen = new Set<string>();
+    for (const capture of this.#snapshotTargets()) {
+      for (const candidate of await semanticAxMatches(send, capture, target, deadline)) {
+        const key = `${capture.targetId ?? "main"}:${candidate.backendNodeId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        candidates.push(candidate);
+        if (candidates.length >= 2) break;
       }
-      return [element.name, element.description, visibleText].some((value) =>
-        textMatches(value, target.text, target.exact),
-      );
-    });
+      if (candidates.length >= 2) break;
+      if (target.kind === "text") {
+        const objectIds = await visibleTextObjectMatches(send, capture, target, deadline);
+        try {
+          for (const objectId of objectIds) {
+            const described = await send("DOM.describeNode", { objectId, depth: 0 }, capture.sessionId);
+            const node = recordValue(described.node);
+            const backendNodeId = numberValue(node?.backendNodeId);
+            if (!backendNodeId) continue;
+            const key = `${capture.targetId ?? "main"}:${backendNodeId}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            candidates.push({
+              backendNodeId,
+              sessionId: capture.sessionId,
+              targetId: capture.targetId,
+              role: fallbackRole(node ?? {}),
+              name: target.text,
+            });
+            if (candidates.length >= 2) break;
+          }
+        } finally {
+          await Promise.allSettled(
+            objectIds.map((objectId) =>
+              send("Runtime.releaseObject", { objectId }, capture.sessionId).catch(() => undefined),
+            ),
+          );
+        }
+      }
+      if (candidates.length >= 2) break;
+    }
+    if (navigationGeneration !== this.#navigationGeneration) {
+      throw new Error("Page navigated during semantic target collection. Take a fresh snapshot.");
+    }
     if (candidates.length === 0) throw new Error(`No element matches ${describeTarget(target)}.`);
     if (candidates.length > 1) {
       const sample = candidates
         .slice(0, 5)
-        .map(({ element }) => `${element.ref} ${element.role ?? element.tag} “${element.name.slice(0, 80)}”`)
+        .map(
+          (candidate) =>
+            `${candidate.targetId ?? "main"}:${candidate.backendNodeId} ${candidate.role} “${candidate.name.slice(0, 80)}”`,
+        )
         .join("; ");
-      throw new Error(`Target is ambiguous (${candidates.length} matches). Candidates: ${sample}`);
+      throw new Error(`Target is ambiguous (at least 2 matches). Candidates: ${sample}`);
     }
     return {
       backendNodeId: candidates[0].backendNodeId,
-      sessionId: candidates[0].targetId ? this.#targetSessions.get(candidates[0].targetId)?.sessionId : undefined,
+      sessionId: candidates[0].sessionId,
       x: 0,
       y: 0,
     };
@@ -1063,21 +1108,6 @@ export class BrowserCdpEngine {
         send("Runtime.releaseObject", { objectId: selectObjectId }, sessionId),
       ]);
     }
-  }
-
-  async #refreshSemanticTargets(send: SendCommand, deadline?: number): Promise<void> {
-    const navigationGeneration = this.#navigationGeneration;
-    const parsed = await collectBoundedSnapshot(
-      send,
-      this.#snapshotTargets(),
-      this.#lastSnapshot?.revision ?? 0,
-      false,
-      deadline,
-    );
-    if (navigationGeneration !== this.#navigationGeneration) {
-      throw new Error("Page navigated during semantic target collection. Take a fresh snapshot.");
-    }
-    this.#targets = parsed.targets;
   }
 
   #snapshotTargets(): SnapshotTarget[] {
@@ -1480,6 +1510,143 @@ async function cssObjectMatch(
     return { objectId, ambiguous: false };
   } finally {
     await send("Runtime.releaseObject", { objectId: collectionId }, sessionId).catch(() => undefined);
+  }
+}
+
+async function semanticAxMatches(
+  send: SendCommand,
+  capture: SnapshotTarget,
+  target: Extract<BrowserTarget, { kind: "role" | "text" }>,
+  deadline?: number,
+): Promise<SemanticMatch[]> {
+  assertBeforeDeadline(deadline);
+  await send("Accessibility.enable", {}, capture.sessionId);
+  const matches: SemanticMatch[] = [];
+  const seen = new Set<number>();
+  const frameTree = await send("Page.getFrameTree", {}, capture.sessionId);
+  for (const frameId of frameIds(frameTree)) {
+    const tree = await send("Accessibility.getFullAXTree", { frameId }, capture.sessionId);
+    assertBeforeDeadline(deadline);
+    for (const node of Array.isArray(tree.nodes) ? tree.nodes.filter(isRecord) : []) {
+      if (node.ignored === true) continue;
+      const backendNodeId = numberValue(node.backendDOMNodeId);
+      const role = axValue(node.role).toLowerCase();
+      if (!backendNodeId || seen.has(backendNodeId) || !ACTIONABLE_ROLES.has(role)) continue;
+      seen.add(backendNodeId);
+      const name = axValue(node.name).slice(0, 500);
+      const description = axValue(node.description).slice(0, 500);
+      const matched =
+        target.kind === "role"
+          ? role === target.role.toLowerCase() && (!target.name || textMatches(name, target.name, target.exact))
+          : [name, description].some((value) => textMatches(value, target.text, target.exact));
+      if (!matched) continue;
+      matches.push({
+        backendNodeId,
+        sessionId: capture.sessionId,
+        targetId: capture.targetId,
+        role,
+        name,
+      });
+      if (matches.length >= 2) return matches;
+    }
+  }
+  return matches;
+}
+
+async function visibleTextObjectMatches(
+  send: SendCommand,
+  capture: SnapshotTarget,
+  target: Extract<BrowserTarget, { kind: "text" }>,
+  deadline?: number,
+): Promise<string[]> {
+  assertBeforeDeadline(deadline);
+  const contextId = await automationContextId(send, capture.sessionId);
+  const collection = await send(
+    "Runtime.evaluate",
+    {
+      expression: `(() => {
+        const roles = new Set(${JSON.stringify([...ACTIONABLE_ROLES])});
+        const needle = ${JSON.stringify(target.text.trim().toLocaleLowerCase())};
+        const exact = ${target.exact === true};
+        const roots = [document];
+        const seenRoots = new Set();
+        const matches = [];
+        let scanned = 0;
+        let truncated = false;
+        const isCandidate = node => {
+          if (node.nodeType !== 1) return false;
+          let element = node;
+          while (element) {
+            if (element.hidden || element.inert || String(element.getAttribute('aria-hidden')).toLowerCase() === 'true') return false;
+            const style = element.ownerDocument.defaultView?.getComputedStyle(element);
+            if (!style || style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.contentVisibility === 'hidden' || style.opacity === '0') return false;
+            const parent = element.parentElement;
+            if (parent) element = parent;
+            else {
+              const root = element.getRootNode();
+              element = root?.nodeType === Node.DOCUMENT_FRAGMENT_NODE ? root.host : null;
+            }
+          }
+          const explicitRole = (node.getAttribute('role') || '').trim().split(/\\s+/)[0].toLowerCase();
+          const tag = node.localName;
+          const semantic = tag === 'button' || tag === 'summary' || (tag === 'a' && node.hasAttribute('href')) ||
+            tag === 'select' || tag === 'textarea' || (tag === 'input' && node.type !== 'hidden') || node.isContentEditable;
+          if (!semantic && !roles.has(explicitRole)) return false;
+          return node.getClientRects().length > 0;
+        };
+        while (roots.length && matches.length < 2) {
+          if (scanned >= ${MAX_SNAPSHOT_SCANNED_NODES}) {
+            truncated = true;
+            break;
+          }
+          const root = roots.shift();
+          if (!root || seenRoots.has(root)) continue;
+          seenRoots.add(root);
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+          while (matches.length < 2) {
+            const node = walker.nextNode();
+            if (!node) break;
+            if (scanned >= ${MAX_SNAPSHOT_SCANNED_NODES}) {
+              truncated = true;
+              break;
+            }
+            scanned++;
+            if (node.shadowRoot) roots.push(node.shadowRoot);
+            if (node.localName === 'iframe' || node.localName === 'frame') {
+              try { if (node.contentDocument) roots.push(node.contentDocument); } catch {}
+            }
+            if (!isCandidate(node)) continue;
+            const value = String(node.innerText ?? node.textContent ?? '').replace(/\\s+/g, ' ').trim().toLocaleLowerCase();
+            if (exact ? value === needle : value.includes(needle)) matches.push(node);
+          }
+          if (truncated) break;
+        }
+        if (truncated && matches.length < 2) throw new Error('Semantic target uniqueness scan exceeded the safe node limit.');
+        return matches;
+      })()`,
+      contextId,
+      returnByValue: false,
+    },
+    capture.sessionId,
+  );
+  const exception = recordValue(collection.exceptionDetails);
+  if (exception) throw new Error(exceptionDescription(exception));
+  const collectionId = stringValue(recordValue(collection.result)?.objectId);
+  if (!collectionId) return [];
+  try {
+    const properties = await send(
+      "Runtime.getProperties",
+      { objectId: collectionId, ownProperties: true },
+      capture.sessionId,
+    );
+    return (Array.isArray(properties.result) ? properties.result.filter(isRecord) : [])
+      .filter((descriptor) => /^\d+$/.test(stringValue(descriptor.name)))
+      .sort((left, right) => Number(left.name) - Number(right.name))
+      .map((descriptor) => stringValue(recordValue(descriptor.value)?.objectId))
+      .filter(Boolean)
+      .slice(0, 2);
+  } finally {
+    await send("Runtime.releaseObject", { objectId: collectionId }, capture.sessionId).catch(() => undefined);
   }
 }
 
@@ -2068,6 +2235,19 @@ function waitForPageSignal(contents: WebContents, timeoutMs: number): Promise<vo
 
 function frameTreeRootId(value: CdpResult): string {
   return stringValue(recordValue(recordValue(value.frameTree)?.frame)?.id);
+}
+
+function frameIds(value: CdpResult): string[] {
+  const ids: string[] = [];
+  const pending = [recordValue(value.frameTree)];
+  while (pending.length > 0) {
+    const tree = pending.shift();
+    if (!tree) continue;
+    const id = stringValue(recordValue(tree.frame)?.id);
+    if (id) ids.push(id);
+    if (Array.isArray(tree.childFrames)) pending.push(...tree.childFrames.map(recordValue));
+  }
+  return ids;
 }
 
 function exceptionDescription(value: CdpResult): string {

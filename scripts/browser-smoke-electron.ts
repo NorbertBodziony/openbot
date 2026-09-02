@@ -647,6 +647,33 @@ async function main(): Promise<void> {
     if (ambiguous.success || !toolError(ambiguous).includes("Candidates:")) {
       throw new Error("V2 semantic locator did not reject an ambiguous target.");
     }
+    await v2Contents.executeJavaScript(
+      `(() => {
+        const container = document.createElement('div');
+        container.dataset.semanticScanLimit = '';
+        const first = document.createElement('button');
+        first.setAttribute('aria-label', 'Bounded semantic duplicate');
+        container.append(first);
+        container.append(...Array.from({ length: 450 }, (_, index) => {
+          const button = document.createElement('button');
+          button.setAttribute('aria-label', 'Unrelated semantic control ' + index);
+          return button;
+        }));
+        const second = document.createElement('button');
+        second.setAttribute('aria-label', 'Bounded semantic duplicate');
+        container.append(second);
+        document.body.append(container);
+      })()`,
+      true,
+    );
+    const boundedSemantic = await callBrowserTool(browser, "click", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "button", name: "Bounded semantic duplicate", exact: true },
+    });
+    if (boundedSemantic.success || !toolError(boundedSemantic).includes("Candidates:")) {
+      throw new Error("V2 semantic locator inferred uniqueness from a truncated snapshot candidate set.");
+    }
+    await v2Contents.executeJavaScript("document.querySelector('[data-semantic-scan-limit]').remove(); true", true);
     const visibleTextTarget = await callBrowserTool(browser, "click", {
       tabId: v2Tab.id,
       target: { kind: "text", text: "Unique action text", exact: true },
