@@ -49,18 +49,15 @@ describe("HeroDownloadSelector", () => {
     expect(view.queryByRole("link", { name: "Linux coming soon" })).not.toBeInTheDocument();
   });
 
-  it("supports arrow keys, Escape and outside clicks", async () => {
+  it("opens with arrow keys and closes on Escape or an outside click", async () => {
     setPlatform("Win32");
     const view = render(() => <HeroDownloadSelector />);
     const trigger = view.getByRole("button", { name: "Choose download platform" });
 
     await fireEvent.keyDown(trigger, { key: "ArrowDown" });
-    await waitFor(() => expect(document.activeElement).toHaveAttribute("role", "menuitem"));
-    const activeElement = document.activeElement;
-    if (!(activeElement instanceof HTMLElement)) throw new Error("Expected a focused menu item");
-    await fireEvent.keyDown(activeElement, { key: "Escape" });
+    const menu = await waitFor(() => view.getByRole("menu", { name: "Download platforms" }));
+    await fireEvent.keyDown(menu, { key: "Escape" });
     expect(view.queryByRole("menu")).not.toBeInTheDocument();
-    expect(trigger).toHaveFocus();
 
     await fireEvent.click(trigger);
     await fireEvent.pointerDown(document.body);

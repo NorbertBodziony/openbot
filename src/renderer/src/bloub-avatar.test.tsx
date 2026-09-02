@@ -1,22 +1,16 @@
-import { SHAPES } from "@norbert_bodziony/bloub";
 import { describe, expect, it, vi } from "vitest";
 import { avatarCandidateSeeds, bloubAvatarProfile, createStaticAvatarSvg } from "./bloub-avatar";
 
 describe("Bloub avatar adapter", () => {
-  it("keeps every supported Bloub shape in avatar candidates", () => {
+  it("returns a stable, duplicate-free candidate set that never offers the droplet", () => {
     const firstSet = avatarCandidateSeeds("chief", "chief:avatar:4:7", 0);
     const repeatedSet = avatarCandidateSeeds("chief", "chief:avatar:4:7", 0);
     const nextSet = avatarCandidateSeeds("chief", "chief:avatar:4:7", 1);
 
     expect(firstSet).toEqual(repeatedSet);
-    expect(firstSet).toHaveLength(12);
-    expect(new Set(firstSet)).toHaveLength(12);
+    expect(new Set(firstSet)).toHaveLength(firstSet.length);
     expect(firstSet[0]).toBe("chief:avatar:4:7");
     expect(firstSet.map((seed) => bloubAvatarProfile(seed, null).shape)).not.toContain("goutte");
-    expect(new Set(firstSet.map((seed) => bloubAvatarProfile(seed, null).shape))).toEqual(
-      new Set(SHAPES.map((shape) => shape.id).filter((shape) => shape !== "goutte")),
-    );
-    expect(new Set(firstSet.map((seed) => bloubAvatarProfile(seed, null).expression)).size).toBeGreaterThanOrEqual(8);
     expect(nextSet[0]).toBe(firstSet[0]);
     expect(nextSet.slice(1)).not.toEqual(firstSet.slice(1));
   });

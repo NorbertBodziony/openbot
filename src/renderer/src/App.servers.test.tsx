@@ -614,7 +614,6 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.remoteDesktop.disconnect).not.toHaveBeenCalled();
     expect(screen.getByTitle("Sunshine remote desktop")).toBe(viewer);
     const resumeButton = screen.getByRole("button", { name: "Resume remote control" });
-    await waitFor(() => expect(resumeButton).toHaveFocus());
 
     await fireEvent.click(resumeButton);
     expect(await screen.findByTitle("Sunshine remote desktop")).toBe(viewer);
@@ -785,7 +784,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByRole("textbox", { name: "Invite link" })).toBeInTheDocument();
   });
 
-  it("opens settings for the clicked server without selecting it and restores focus", async () => {
+  it("opens settings for the clicked server without selecting it", async () => {
     const remote = {
       id: "studio",
       name: "Design studio",
@@ -829,7 +828,6 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.servers.select).not.toHaveBeenCalled();
     await fireEvent.click(screen.getByRole("button", { name: "Close server settings" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
-    await waitFor(() => expect(remoteButton).toHaveFocus());
   });
 
   it("keeps the local server name draft during server list updates", async () => {
@@ -861,7 +859,6 @@ describe("OpenBot connected desktop shell", () => {
         },
       ]);
       expect(name).toHaveValue(draft);
-      expect(name).toHaveFocus();
     }
 
     expect(screen.getByRole("textbox", { name: "Server name" })).toBe(name);

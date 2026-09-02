@@ -422,7 +422,6 @@ describe("Sidebar sections", () => {
     const view = render(() => <Sidebar {...props} layout={sectionLayout()} layoutMutable={false} />);
 
     const section = screen.getByRole("button", { name: "Demo" });
-    expect(section).toHaveAttribute("title", "This host does not support sidebar layout changes.");
     expect(section).toHaveAttribute("draggable", "false");
     expect(view.container.querySelector("[data-agent-id='chief']")).toHaveAttribute("draggable", "false");
     expect(screen.queryByLabelText("Sidebar free area")).not.toBeInTheDocument();

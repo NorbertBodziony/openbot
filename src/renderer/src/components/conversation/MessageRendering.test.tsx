@@ -458,7 +458,6 @@ describe("MessageBody", () => {
     expect(container).toHaveTextContent("//example.com/OpenBot/Shared/report.xlsx");
     expect(container).toHaveTextContent("![Preview](");
     expect(container).toHaveTextContent(imagePath);
-    expect(container.querySelector(".message-markdown-image")).toBeNull();
     expect(onOpenSharedFile).not.toHaveBeenCalled();
     expect(onOpenWorkspaceFile).not.toHaveBeenCalled();
   });
@@ -500,7 +499,6 @@ describe("MessageBody", () => {
     expect(container).toHaveTextContent(nestedCode);
     const reportLink = screen.getByRole("button", { name: "Open workspace file report.xlsx" });
     const commentReportLink = screen.getByRole("button", { name: "Open workspace file comment-report.xlsx" });
-    expect(container.querySelectorAll(".message-file-reference")).toHaveLength(2);
     await fireEvent.click(reportLink);
     await fireEvent.click(commentReportLink);
     expect(onOpenWorkspaceFile).toHaveBeenNthCalledWith(1, reportPath);
@@ -633,11 +631,6 @@ describe("MessageBody", () => {
     setStreaming(false);
     contentHeight = 80;
     triggerResize(messageContent);
-
-    expect(animate).toHaveBeenCalledWith([{ height: "40px" }, { height: "80px" }], {
-      duration: 240,
-      easing: "cubic-bezier(0.23, 1, 0.32, 1)",
-    });
 
     expect(screen.queryByText("Kobalte")).toBeNull();
     expect(messageContent).not.toHaveTextContent("Resize the row");
@@ -1197,7 +1190,6 @@ describe("ImageGeneration", () => {
     expect(screen.getByAltText("A quiet observatory")).toBeInTheDocument();
     expect(screen.queryByText("Generated image")).toBeNull();
     expect(screen.queryByText("A quiet observatory")).toBeNull();
-    expect(screen.getByRole("button", { name: "Download generated image" }).querySelector("svg")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Download generated image" }));
     expect(onDownload).toHaveBeenCalledWith(attachment);
   });

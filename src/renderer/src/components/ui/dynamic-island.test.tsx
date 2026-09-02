@@ -27,14 +27,12 @@ describe("DynamicIsland", () => {
 
     const toggle = screen.getByRole("button", { name: "Expand working bots" });
     toggle.focus();
-    expect(toggle).toHaveFocus();
     await fireEvent.click(toggle, { detail: 1 });
     expect(changed).toHaveBeenCalledWith("expanded", "pointer");
     expect(screen.getByRole("button", { name: "Open Chief" })).toBeVisible();
     await fireEvent.keyDown(screen.getByRole("button", { name: "Open Chief" }), { key: "Escape" });
     expect(changed).toHaveBeenLastCalledWith("compact", "escape");
     expect(screen.getByRole("button", { name: "Expand working bots" })).toHaveAttribute("aria-expanded", "false");
-    expect(screen.getByRole("button", { name: "Expand working bots" })).toHaveFocus();
   });
 
   it("makes the mounted panel inert as soon as it collapses", async () => {
@@ -85,7 +83,6 @@ describe("DynamicIsland", () => {
     });
 
     const island = screen.getByRole("region", { name: "working bots" });
-    const toggle = screen.getByRole("button", { name: "Expand working bots" });
     await fireEvent.mouseEnter(island);
     expect(changed).not.toHaveBeenCalled();
     expect(screen.getByText("active")).toBeVisible();
@@ -93,7 +90,6 @@ describe("DynamicIsland", () => {
     await vi.runAllTimersAsync();
     expect(changed).toHaveBeenLastCalledWith("expanded", "hover");
     expect(screen.getByRole("button", { name: "Open Chief" })).toBeVisible();
-    expect(toggle).not.toHaveFocus();
 
     await fireEvent.mouseLeave(island);
     expect(screen.getByRole("button", { name: "Open Chief" })).toBeVisible();

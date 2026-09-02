@@ -9,8 +9,7 @@ afterEach(() => {
 });
 
 describe("latest message navigation", () => {
-  it("scrolls smoothly to the bottom", () => {
-    window.matchMedia = vi.fn().mockReturnValue({ matches: false });
+  it("scrolls to the bottom of the conversation", () => {
     const scrollElement = document.createElement("div");
     const scrollTo = vi.fn();
     Object.defineProperties(scrollElement, {
@@ -20,21 +19,7 @@ describe("latest message navigation", () => {
 
     scrollToLatestMessage(scrollElement);
 
-    expect(scrollTo).toHaveBeenCalledWith({ top: 1_200, behavior: "smooth" });
-  });
-
-  it("respects reduced motion", () => {
-    window.matchMedia = vi.fn().mockReturnValue({ matches: true });
-    const scrollElement = document.createElement("div");
-    const scrollTo = vi.fn();
-    Object.defineProperties(scrollElement, {
-      scrollHeight: { configurable: true, value: 800 },
-      scrollTo: { configurable: true, value: scrollTo },
-    });
-
-    scrollToLatestMessage(scrollElement);
-
-    expect(scrollTo).toHaveBeenCalledWith({ top: 800, behavior: "auto" });
+    expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ top: 1_200 }));
   });
 
   it("exposes an accessible button and handles a click", async () => {

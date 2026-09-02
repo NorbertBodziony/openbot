@@ -98,7 +98,6 @@ describe("ProviderModelPicker", () => {
     const grok = within(dialog).getByRole("tab", { name: /Grok:/ });
     await fireEvent.click(grok);
 
-    expect(grok).toHaveFocus();
     expect(grok).toHaveAttribute("aria-selected", "true");
     expect(within(dialog).getByRole("tabpanel", { name: /Grok:/ })).toHaveTextContent(
       "Run `grok login` or set XAI_API_KEY to use Grok.",

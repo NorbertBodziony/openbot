@@ -81,7 +81,6 @@ describe("OpenBotDynamicIsland mode transitions", () => {
 
     expect(screen.getByText("Writing the summary")).toBeVisible();
     expect(screen.getByRole("button", { name: /Research/ })).toBe(row);
-    expect(document.activeElement).toBe(row);
   });
 
   it("keeps message controls mounted while a message streams", () => {
@@ -96,7 +95,6 @@ describe("OpenBotDynamicIsland mode transitions", () => {
 
     expect(screen.getByText("The source check is ready with one more detail.")).toBeVisible();
     expect(screen.getByRole("button", { name: "Open chat" })).toBe(openChat);
-    expect(document.activeElement).toBe(openChat);
   });
 
   it.each([

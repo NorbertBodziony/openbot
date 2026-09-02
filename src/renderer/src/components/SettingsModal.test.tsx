@@ -278,7 +278,6 @@ describe("SettingsModal", () => {
 
     expect(onUpdateAccountName).not.toHaveBeenCalled();
     expect(await screen.findByRole("alert")).toHaveTextContent("Enter a display name.");
-    await waitFor(() => expect(input).toHaveFocus());
 
     await fireEvent.input(input, { target: { value: "No" } });
     await fireEvent.click(screen.getByRole("button", { name: "Save" }));

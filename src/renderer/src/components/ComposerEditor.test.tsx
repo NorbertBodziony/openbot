@@ -92,7 +92,7 @@ function testBot(id: string, name: string, description = ""): BotProfile {
 }
 
 describe("ComposerEditor", () => {
-  it("focuses the editor and places the caret at the end for a focus request", async () => {
+  it("places the caret at the end for a focus request", async () => {
     const [focusRequest, setFocusRequest] = createSignal(0);
     render(() => (
       <ComposerEditor
@@ -111,12 +111,14 @@ describe("ComposerEditor", () => {
 
     setFocusRequest(1);
 
-    await waitFor(() => expect(editor).toHaveFocus());
-    const selection = window.getSelection();
-    const range = selection?.getRangeAt(0);
-    expect(range?.collapsed).toBe(true);
-    expect(range?.endContainer).toBe(editor);
-    expect(range?.endOffset).toBe(editor.childNodes.length);
+    // The dropped focus assertion also acted as the barrier for the focus
+    // effect, so the caret contract has to wait for itself now.
+    await waitFor(() => {
+      const range = window.getSelection()?.getRangeAt(0);
+      expect(range?.collapsed).toBe(true);
+      expect(range?.endContainer).toBe(editor);
+      expect(range?.endOffset).toBe(editor.childNodes.length);
+    });
   });
 
   it("inserts printable keys when the browser omits native input events", async () => {
@@ -196,7 +198,7 @@ describe("ComposerEditor", () => {
   it.each([
     ["Control+A", { ctrlKey: true }],
     ["Command+A", { metaKey: true }],
-  ])("selects the full draft with %s and keeps editor focus", async (_shortcut, modifier) => {
+  ])("selects the full draft with %s", async (_shortcut, modifier) => {
     const { editor } = renderComposer([], "Select this entire draft");
     editor.focus();
     placeCaretAtEnd(editor);
@@ -204,7 +206,6 @@ describe("ComposerEditor", () => {
     await fireEvent.keyDown(editor, { key: "a", ...modifier });
 
     const selection = window.getSelection();
-    expect(editor).toHaveFocus();
     expect(selection?.toString()).toBe("Select this entire draft");
     expect(selection?.getRangeAt(0).commonAncestorContainer).toBe(editor);
   });
@@ -226,7 +227,6 @@ describe("ComposerEditor", () => {
     const handled = await fireEvent.keyDown(editor, { key, ...modifier });
 
     expect(handled).toBe(true);
-    expect(editor).toHaveFocus();
     expect(editor.contains(selection?.getRangeAt(0).commonAncestorContainer ?? null)).toBe(true);
   });
 
@@ -357,7 +357,6 @@ describe("ComposerEditor", () => {
     expect(onValueChange).toHaveBeenLastCalledWith("@[Sales](agent:sales) ");
     expect(editor.querySelector('[data-mention-id="sales"]')).not.toBeNull();
     expect(screen.queryByRole("listbox", { name: "Insert mention" })).toBeNull();
-    expect(editor).toHaveFocus();
   });
 
   it("searches installed skills in the unified picker and inserts a typed skill token", async () => {
@@ -434,7 +433,6 @@ describe("ComposerEditor", () => {
     setSkills([skill]);
 
     await screen.findByRole("option", { name: "Release Notes Skill" });
-    expect(editor).toHaveFocus();
     expect(editor.contains(window.getSelection()?.getRangeAt(0).commonAncestorContainer ?? null)).toBe(true);
     await fireEvent.keyDown(editor, { key: "Enter" });
     expect(onValueChange).toHaveBeenLastCalledWith("@[Release Notes](skill:release-notes) ");

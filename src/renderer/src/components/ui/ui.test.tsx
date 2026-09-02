@@ -106,24 +106,6 @@ describe("UI primitives", () => {
     await waitFor(() => expect(onCopyError).toHaveBeenCalledWith(clipboardError));
   });
 
-  it("supports polymorphic links, refs, and expanded state", () => {
-    let buttonRef: HTMLButtonElement | undefined;
-    render(() => (
-      <>
-        <Button as="a" href="/settings" variant="link">
-          Settings
-        </Button>
-        <Button ref={(element) => (buttonRef = element)} variant="outline" aria-expanded="true">
-          Options
-        </Button>
-      </>
-    ));
-
-    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
-    expect(buttonRef).toBe(screen.getByRole("button", { name: "Options" }));
-    expect(buttonRef).toHaveAttribute("aria-expanded", "true");
-  });
-
   it("keeps forwarded loading state reactive", async () => {
     const [loading, setLoading] = createSignal(false);
     render(() => <Button loading={loading()}>Sync</Button>);

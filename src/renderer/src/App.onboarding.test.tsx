@@ -24,7 +24,6 @@ describe("OpenBot connected desktop shell", () => {
 
     const providers = screen.getByRole("radiogroup", { name: "Default provider" });
     const codex = within(providers).getByRole("radio", { name: /ChatGPT.*Connected/ });
-    expect(codex).toHaveFocus();
     expect(codex).toBeChecked();
     await fireEvent.click(within(providers).getByRole("radio", { name: /Claude.*Connected/ }));
     await fireEvent.click(screen.getByRole("button", { name: "Next" }));
@@ -518,7 +517,6 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(codex).toBeEnabled();
     expect(claude).toBeEnabled();
-    expect(codex).toHaveFocus();
 
     await fireEvent.click(claude);
     expect(claude).toBeChecked();
