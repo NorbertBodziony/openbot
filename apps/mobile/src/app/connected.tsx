@@ -1,5 +1,6 @@
 import { Stack } from "expo-router";
-import { Typography } from "heroui-native";
+import { Button, Typography } from "heroui-native";
+import { useThemeColor } from "heroui-native/hooks";
 import { useState } from "react";
 import { View } from "react-native";
 
@@ -8,6 +9,7 @@ import { useMobileSession } from "@/providers/mobile-session-provider";
 
 export default function Connected() {
   const [signingOut, setSigningOut] = useState(false);
+  const [foreground] = useThemeColor(["foreground"]);
   const { session, signOut: endSession } = useMobileSession();
 
   async function signOut(): Promise<void> {
@@ -22,15 +24,32 @@ export default function Connected() {
 
   if (!session) return null;
 
+  const signOutLabel = signingOut ? "Signing out…" : "Sign out";
   const displayName = session.user.name?.trim() || session.user.email;
 
   return (
     <>
-      <Stack.Toolbar placement="right">
-        <Stack.Toolbar.Button disabled={signingOut} onPress={() => void signOut()}>
-          {signingOut ? "Signing out…" : "Sign out"}
-        </Stack.Toolbar.Button>
-      </Stack.Toolbar>
+      <Stack.Screen
+        options={{
+          headerTintColor: foreground,
+          headerRight:
+            process.env.EXPO_OS === "android"
+              ? () => (
+                  <Button size="sm" variant="ghost" isDisabled={signingOut} onPress={signOut}>
+                    <Button.Label>{signOutLabel}</Button.Label>
+                  </Button>
+                )
+              : undefined,
+        }}
+      />
+
+      {process.env.EXPO_OS === "ios" && (
+        <Stack.Toolbar placement="right">
+          <Stack.Toolbar.Button disabled={signingOut} onPress={signOut}>
+            {signOutLabel}
+          </Stack.Toolbar.Button>
+        </Stack.Toolbar>
+      )}
 
       <View className="flex-1 items-center justify-center bg-background px-6 pb-safe-offset-8 pt-8">
         <View className="w-full max-w-90 items-center">

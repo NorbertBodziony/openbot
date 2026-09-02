@@ -155,7 +155,13 @@ export default function ScanQrCode() {
 
   return (
     <>
-      <Stack.Screen options={{ headerTintColor: "#ffffff" }} />
+      <Stack.Screen
+        options={{
+          headerTransparent: process.env.EXPO_OS === "ios",
+          headerStyle: process.env.EXPO_OS === "android" ? { backgroundColor: "#000000" } : undefined,
+          headerTintColor: "#ffffff",
+        }}
+      />
       <StatusBar style="light" />
       <View className="flex-1 bg-black">
         <CameraView
