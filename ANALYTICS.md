@@ -18,11 +18,11 @@ Every event has these low-cardinality properties:
 
 - `surface`: `desktop`, `desktop_host`, or `landing`;
 - `environment`: currently `production` only;
-- `event_schema_version`: the integer schema generation, currently `3`;
+- `event_schema_version`: the integer schema generation, currently `4`;
 - `app_version` and `platform` on desktop surfaces;
 - `acquisition_source` on landing surfaces: `direct`, `search`, `social`, `github`, or `other`.
 
-Reports must filter to `event_schema_version = 3`. Historical events remain available but must not
+Reports must filter to `event_schema_version = 4`. Historical events remain available but must not
 be mixed into current conversion or reliability metrics.
 
 ## Identity
@@ -33,8 +33,12 @@ be mixed into current conversion or reliability metrics.
 - Landing, invitation, and pre-authentication events are anonymous.
 - OpenPanel receives the central account ID as `profileId` and the normalized account email as the
   profile email. Email is not copied into individual event properties.
-- Existing profiles receive their email the next time the production app identifies them. There is
-  no historical backfill.
+- Existing profiles are repaired by the controlled identity backfill when their `profileId` matches
+  a current account. The backfill updates profile traits only; it does not rewrite events or merge
+  unknown profiles.
+- The backfill is dry-run by default: `bun run analytics:backfill -- --auth-users users.json
+  --openpanel-profiles profiles.json`; pass `--apply` only after reviewing the counters. Credentials
+  come from `OPENPANEL_CLIENT_ID` and `OPENPANEL_CLIENT_SECRET`, and logs contain counts only.
 - Local IDs for agents, servers, members, messages, threads, turns, files, or deliveries are never
   analytics properties.
 
@@ -75,6 +79,7 @@ lifecycle. A malformed preference fails closed; a missing preference uses the do
 | `voice_transcription` | Is local voice input reliable and fast? | Transcription returned text without sending it to analytics |
 | `reaction_action` | Are reactions used? | Reaction operation completed |
 | `maintenance_action` | Can accounts export data and diagnostics? | Export reported a saved artifact |
+| `hosted_site_action` | Can accounts publish, replace, and delete Hosted Sites? | A terminal Hosted Site operation result; site metadata is never sent |
 | `screen_view` | Which public website routes are viewed in a session? | One safe view for `/` or `/join`, without a query or hash |
 | `landing_viewed` | How much qualified landing traffic arrives? | Non-automation production page view |
 | `landing_download_clicked` | Which safe channel/placement drives downloads? | Allowlisted download link clicked |
@@ -104,7 +109,7 @@ automatic interaction capture remain disabled.
    segment only by coarse acquisition source, placement, and platform.
 5. Reliability: failed outcomes, safe failure codes, P90/P99 durations, and update/provider health.
 
-Every dashboard must filter by the intended `surface` and `event_schema_version = 3`. Website bounce
+Every dashboard must filter by the intended `surface` and `event_schema_version = 4`. Website bounce
 uses OpenPanel's standard single-`screen_view` definition. Do not emit synthetic screen views to
 change it; use the engaged-session report for meaningful landing activity.
 

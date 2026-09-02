@@ -1960,6 +1960,18 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.remoteDesktop.onEvent).not.toHaveBeenCalled();
   });
 
+  it("does not configure desktop analytics in the landing preview", async () => {
+    const configure = vi.spyOn(desktopAnalytics, "configure");
+    try {
+      render(() => <App landingPreview />);
+
+      await screen.findByRole("heading", { name: "Chief" });
+      expect(configure).not.toHaveBeenCalled();
+    } finally {
+      configure.mockRestore();
+    }
+  });
+
   it("opens, hides, resumes, and disconnects Remote Control from the header", async () => {
     vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([
       {

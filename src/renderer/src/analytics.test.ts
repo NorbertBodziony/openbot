@@ -49,7 +49,7 @@ describe("desktop analytics", () => {
       __referrer: "",
       surface: "desktop",
       environment: "production",
-      event_schema_version: 3,
+      event_schema_version: 4,
       app_version: "1.2.3",
       platform: "darwin",
     });
@@ -72,7 +72,7 @@ describe("desktop analytics", () => {
     });
   });
 
-  it("clears before identifying a different account", () => {
+  it("clears before identifying a different account", async () => {
     const client = fakeClient();
     const order: string[] = [];
     vi.mocked(client.clear).mockImplementation(async () => {
@@ -88,7 +88,7 @@ describe("desktop analytics", () => {
 
     analytics.setUser({ id: "account-2", email: "two@example.com" });
 
-    expect(order).toEqual(["clear", "identify"]);
+    await vi.waitFor(() => expect(order).toEqual(["clear", "identify"]));
     expect(client.identify).toHaveBeenLastCalledWith({ profileId: "account-2", email: "two@example.com" });
   });
 
@@ -166,8 +166,14 @@ describe("desktop analytics", () => {
 
   it("sends the account email through the real SDK transport", async () => {
     const requests: unknown[] = [];
+    let releaseIdentify!: () => void;
+    const identifyReady = new Promise<void>((resolve) => {
+      releaseIdentify = resolve;
+    });
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      requests.push(JSON.parse(String(init?.body)));
+      const request = JSON.parse(String(init?.body));
+      requests.push(request);
+      if (isDynamicRecord(request) && request.type === "identify") await identifyReady;
       return new Response(null, { status: 200 });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -177,6 +183,9 @@ describe("desktop analytics", () => {
       analytics.setUser({ id: "account-1", email: "person@example.com" });
       analytics.track("agent_action", { action: "delete", result: "succeeded" });
 
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+      expect(isDynamicRecord(requests[0]) ? requests[0].type : undefined).toBe("identify");
+      releaseIdentify();
       await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
       const identifyRequest = requests.find((candidate) => isDynamicRecord(candidate) && candidate.type === "identify");
       const trackRequest = requests.find(
@@ -195,6 +204,34 @@ describe("desktop analytics", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it("normalizes the identity email before identifying", () => {
+    const client = fakeClient();
+    const analytics = new DesktopAnalytics(() => client, true);
+    analytics.configure(PRODUCTION_APP);
+
+    analytics.setUser({ id: "account-1", email: " Person@EXAMPLE.COM " });
+
+    expect(client.identify).toHaveBeenCalledWith({ profileId: "account-1", email: "person@example.com" });
+  });
+
+  it("rejects an invalid identity email and keeps the event anonymous", () => {
+    const identifiedClient = fakeClient();
+    const anonymousClient = fakeClient();
+    const createClient = vi.fn().mockReturnValueOnce(identifiedClient).mockReturnValueOnce(anonymousClient);
+    const analytics = new DesktopAnalytics(createClient, true);
+    analytics.configure(PRODUCTION_APP);
+
+    analytics.setUser({ id: "account-1", email: "not-an-email" });
+    analytics.track("agent_action", { action: "delete", result: "succeeded" });
+
+    expect(identifiedClient.identify).not.toHaveBeenCalled();
+    expect(identifiedClient.track).not.toHaveBeenCalled();
+    expect(anonymousClient.track).toHaveBeenCalledWith("agent_action", {
+      action: "delete",
+      result: "succeeded",
+    });
   });
 
   it("sanitizes runtime payloads independently of TypeScript types", () => {
@@ -222,6 +259,15 @@ describe("desktop analytics", () => {
         ),
       ),
     ).toEqual({ action: "test", trigger_type: "hourly", result: "failed", failure_code: "test_failed" });
+    expect(
+      sanitizeDesktopAnalyticsEvent(
+        "hosted_site_action",
+        Object.assign(
+          { action: "publish" as const, entry_point: "agent" as const, result: "succeeded" as const },
+          { url: "https://private.example", hostname: "private.example", title: "private", site_id: "site-1" },
+        ),
+      ),
+    ).toEqual({ action: "publish", entry_point: "agent", result: "succeeded" });
   });
 
   it("keeps only the newest 100 events buffered before configuration", () => {
@@ -239,6 +285,29 @@ describe("desktop analytics", () => {
       "search_action",
       expect.objectContaining({ result_count: 100, __timestamp: expect.any(String) }),
     );
+  });
+
+  it("bounds events behind a stalled identify request", async () => {
+    const client = fakeClient();
+    let releaseIdentify!: () => void;
+    const identifyReady = new Promise<void>((resolve) => {
+      releaseIdentify = resolve;
+    });
+    vi.mocked(client.identify).mockImplementation(async () => identifyReady);
+    const createClient = vi.fn().mockReturnValue(client);
+    const analytics = new DesktopAnalytics(createClient, true);
+    analytics.configure(PRODUCTION_APP);
+    analytics.setUser({ id: "account-1", email: "person@example.com" });
+    analytics.setUser({ id: "account-2", email: "second@example.com" });
+
+    for (let index = 0; index < 150; index += 1) {
+      analytics.track("search_action", { scope: "global", result: "succeeded", result_count: index });
+    }
+    releaseIdentify();
+
+    await vi.waitFor(() => expect(client.track).toHaveBeenCalledTimes(100));
+    expect(client.identify).toHaveBeenCalledWith({ profileId: "account-2", email: "second@example.com" });
+    expect(client.clear).toHaveBeenCalled();
   });
 
   it("does not let SDK failures escape", () => {
@@ -279,5 +348,21 @@ describe("desktop analytics", () => {
       email: "person@example.com",
     });
     expect(identifiedClient.track).toHaveBeenCalledOnce();
+  });
+
+  it("clears both OpenPanel clients when tracking is disabled", () => {
+    const identifiedClient = fakeClient();
+    const anonymousClient = fakeClient();
+    const createClient = vi.fn().mockReturnValueOnce(identifiedClient).mockReturnValueOnce(anonymousClient);
+    const analytics = new DesktopAnalytics(createClient, true);
+    analytics.configure(PRODUCTION_APP);
+    analytics.setUser({ id: "account-1", email: "person@example.com" });
+    vi.mocked(identifiedClient.clear).mockClear();
+    vi.mocked(anonymousClient.clear).mockClear();
+
+    analytics.setTrackingEnabled(false);
+
+    expect(identifiedClient.clear).toHaveBeenCalledOnce();
+    expect(anonymousClient.clear).toHaveBeenCalledOnce();
   });
 });

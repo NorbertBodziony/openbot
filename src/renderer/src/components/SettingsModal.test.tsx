@@ -8,6 +8,7 @@ import type {
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { type DesktopAnalyticsScope, desktopAnalytics } from "../analytics";
 import { DEFAULT_GENERAL_SETTINGS } from "../app-settings";
 import { SettingsModal } from "./SettingsModal";
 
@@ -449,6 +450,9 @@ describe("SettingsModal", () => {
       expiresAt: "2026-09-30T12:00:00.000Z",
       updatedAt: "2026-08-31T12:00:00.000Z",
     };
+    const analyticsTrack = vi.fn<DesktopAnalyticsScope["track"]>();
+    const analyticsScope = { track: analyticsTrack } satisfies DesktopAnalyticsScope;
+    vi.spyOn(desktopAnalytics, "scope").mockReturnValue(analyticsScope);
     const hostedSitesApi: HostedSitesDesktopApi = {
       list: vi.fn().mockResolvedValueOnce([site]).mockResolvedValue([]),
       chooseDirectory: vi.fn(async () => "/tmp/queued-site"),
@@ -483,6 +487,11 @@ describe("SettingsModal", () => {
     await waitFor(() => expect(hostedSitesApi.delete).toHaveBeenCalledWith({ siteId: site.id }));
     await waitFor(() => expect(hostedSitesApi.list).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByText(site.hostname)).not.toBeInTheDocument());
+    expect(analyticsTrack).toHaveBeenCalledWith("hosted_site_action", {
+      action: "delete",
+      entry_point: "settings",
+      result: "succeeded",
+    });
   });
 
   it("shows a blocked hosted site and disables Open", async () => {
