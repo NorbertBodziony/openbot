@@ -151,7 +151,7 @@ export class SkillMarketplaceService {
         name: entry.name,
         installedVersion: entry.version,
         availableVersion: entry.version,
-        state: await chatTagInstalledState(bot.workspacePath, entry),
+        state: await installedState(bot.workspacePath, entry),
       });
     }
     return installed.sort((a, b) => a.name.localeCompare(b.name));
@@ -445,13 +445,6 @@ async function installedState(workspace: string, entry: LockEntry): Promise<"ins
     }
   }
   return complete === 2 ? "installed" : "needs-repair";
-}
-
-async function chatTagInstalledState(workspace: string, entry: LockEntry): Promise<"installed" | "needs-repair"> {
-  for (const target of targetDirectories(workspace, entry.slug)) {
-    if (!(await pathExists(join(target, "SKILL.md")))) return "needs-repair";
-  }
-  return "installed";
 }
 
 function lockPath(workspace: string): string {
