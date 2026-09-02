@@ -1186,6 +1186,13 @@ export function createAppController(props: AppProps = {}) {
         return;
       case "turn-completed":
         completedTurnByBot.set(event.botId, event.turnId);
+        setLiveMessages((current) => {
+          const messages = current[event.botId];
+          if (!messages) return current;
+          const activityId = `thinking:activity:${event.turnId}`;
+          const next = messages.filter((message) => message.id !== activityId);
+          return next.length === messages.length ? current : { ...current, [event.botId]: next };
+        });
         setFailedTurns((current) =>
           event.status === "failed" ? { ...current, [event.botId]: event.turnId } : withoutBot(current, event.botId),
         );
@@ -1512,6 +1519,32 @@ export function createAppController(props: AppProps = {}) {
   }
 
   function applyConversationDelta(event: Extract<AgentEvent, { type: "conversation-delta" }>) {
+    if (event.messageId === `activity:${event.turnId}`) {
+      setLiveMessages((current) => {
+        const messages = current[event.botId] ?? [];
+        const activityId = `thinking:activity:${event.turnId}`;
+        const existing = messages.find((message) => message.id === activityId);
+        const activity: BotMessage = {
+          id: activityId,
+          turnId: event.turnId,
+          author: "bot",
+          body: "",
+          time: formatTime(event.createdAt),
+          createdAt: event.createdAt,
+          streaming: true,
+          itemType: "commentary",
+          kind: "thinking",
+          items: [cleanAgentMessageText(event.delta)],
+          itemIds: [event.messageId],
+        };
+        if (existing) {
+          updateStored(existing, activity);
+          return current;
+        }
+        return { ...current, [event.botId]: [...messages, createStoredMessage(activity)] };
+      });
+      return;
+    }
     if (event.revision <= (conversationRevisions()[event.botId] ?? -1)) return;
     const pendingSnapshot = pendingConversationSnapshots.get(event.botId);
     if (pendingSnapshot) {
@@ -1613,6 +1646,7 @@ export function createAppController(props: AppProps = {}) {
               return allMappedMessages.filter((message, index) => loadedIds.has(message.id) || index > lastLoadedIndex);
             })()
           : allMappedMessages,
+        snapshot.activeTurnId,
       );
       const next = mappedMessages.map((mapped) => {
         const existing = previousById.get(mapped.id);

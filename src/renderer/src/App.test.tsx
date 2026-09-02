@@ -1486,6 +1486,17 @@ describe("OpenBot connected desktop shell", () => {
     const status = await screen.findByRole("status", { name: /Chief is working/ });
     const label = status.querySelector(".agent-activity-label");
     expect(label?.textContent?.trim()).toBeTruthy();
+    emitAgentEvent?.({
+      type: "conversation-delta",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-live-status",
+      messageId: "activity:turn-live-status",
+      delta: "Searching for current information…",
+      createdAt: "2026-09-02T10:00:00.500Z",
+      revision: 1,
+    });
+    await waitFor(() => expect(label).toHaveTextContent("Searching for current information…"));
 
     const firstCommentary = {
       id: "commentary-live-status-1",
@@ -1508,7 +1519,7 @@ describe("OpenBot connected desktop shell", () => {
       revision: 3,
     });
     await waitFor(() => expect(label).toHaveTextContent("Inspecting the release checks"));
-    expect(status).toHaveAccessibleName("Chief is working: Inspecting the release checks");
+    expect(status).toHaveAccessibleName("Chief is working");
 
     const latestCommentary = {
       ...firstCommentary,
@@ -1524,7 +1535,26 @@ describe("OpenBot connected desktop shell", () => {
       ]),
     );
     await waitFor(() => expect(label).toHaveTextContent("Verifying the final build artifacts"));
+    emitAgentEvent?.({
+      type: "conversation-delta",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-live-status",
+      messageId: "activity:turn-live-status",
+      delta: "Reviewing the verification results…",
+      createdAt: "2026-09-02T10:00:03.000Z",
+      revision: 4,
+    });
+    await waitFor(() => expect(label).toHaveTextContent("Reviewing the verification results…"));
 
+    emitAgentEvent?.({
+      type: "turn-completed",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-live-status",
+      status: "completed",
+    });
+    expect(screen.queryByText("Reviewing the verification results…")).not.toBeInTheDocument();
     emitAgentEvent?.(conversation(5, null, [userMessage, { ...firstCommentary, status: "completed" }]));
     await waitFor(() => expect(screen.queryByRole("status", { name: /Chief is working/ })).not.toBeInTheDocument());
   });

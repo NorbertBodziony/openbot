@@ -3525,7 +3525,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const publicThreadId = this.#publicThreadId(botId, threadId);
         const snapshot = this.#ensureSnapshot(botId, publicThreadId);
         snapshot.activeTurnId = turnId;
-        this.#updateTurnProgress(snapshot, turnId, "Reviewing the request and planning the next step…");
         this.#failedTurns.delete(botId);
         const origin = this.#mailbox.startingDeliveryForBot(botId)?.delivery.sender.kind ?? "unknown";
         const association = this.#associateStartedTurn(botId, turnId, snapshot);
@@ -3536,6 +3535,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           }
         });
         this.#emit({ type: "turn-started", botId, threadId: publicThreadId, turnId, origin });
+        this.#emitTurnProgress(botId, publicThreadId, turnId, "Reviewing the request and planning the next step…");
         this.#emitConversation(snapshot, "turn.started", { turnId });
         return;
       }
@@ -3655,10 +3655,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       message.status = normalizeCompletionStatus(status);
       markIncompleteImageGeneration(message, message.status);
     }
-    const activityId = `activity:${turnId}`;
-    const activityIndex = snapshot.messages.findIndex((message) => message.id === activityId);
-    if (activityIndex >= 0) snapshot.messages.splice(activityIndex, 1);
-    this.#itemTurns.delete(activityId);
     const deliveries = this.#mailbox.findDeliveriesByTurn(botId, turnId);
     const latestAssistant = [...snapshot.messages]
       .reverse()
@@ -3903,8 +3899,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const toolProgress = toolProgressText(item, completed);
     if (toolProgress) {
-      const snapshot = this.#ensureSnapshot(botId, threadId);
-      if (this.#updateTurnProgress(snapshot, turnId, toolProgress)) this.#emitConversation(snapshot);
+      this.#emitTurnProgress(botId, this.#publicThreadId(botId, threadId), turnId, toolProgress);
       return;
     }
     if (item.type !== "agentMessage" || !isString(item.id)) return;
@@ -3921,19 +3916,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#emitConversation(snapshot);
   }
 
-  #updateTurnProgress(snapshot: ConversationSnapshot, turnId: string, text: string): boolean {
-    const id = `activity:${turnId}`;
-    let message = snapshot.messages.find((candidate) => candidate.id === id);
-    if (!message) {
-      message = newAssistantMessage(id, turnId);
-      message.itemType = "commentary";
-      snapshot.messages.push(message);
-      this.#itemTurns.set(id, turnId);
-    }
-    if (message.text === text && message.status === "streaming") return false;
-    message.text = text;
-    message.status = "streaming";
-    return true;
+  #emitTurnProgress(botId: string, threadId: string, turnId: string, text: string): void {
+    const snapshot = this.#ensureSnapshot(botId, threadId);
+    this.#emit({
+      type: "conversation-delta",
+      botId,
+      threadId,
+      turnId,
+      messageId: `activity:${turnId}`,
+      delta: text,
+      createdAt: new Date().toISOString(),
+      revision: snapshot.revision,
+    });
   }
 
   async #applyImageGenerationItem(

@@ -675,10 +675,15 @@ describe.sequential("AgentService", () => {
     const turnId = started.turnId;
 
     const progress = () =>
-      service
-        ?.readConversation("chief")
-        .then((conversation) => conversation.messages.find((message) => message.id === `activity:${turnId}`)?.text);
-    await expect(progress()).resolves.toBe("Reviewing the request and planning the next step…");
+      events.filter(
+        (event): event is Extract<AgentEvent, { type: "conversation-delta" }> =>
+          event.type === "conversation-delta" && event.messageId === `activity:${turnId}`,
+      );
+    expect(progress().at(-1)?.delta).toBe("Reviewing the request and planning the next step…");
+    const stored = await service.readConversation("chief");
+    expect(stored.messages.find((message) => message.id === `activity:${turnId}`)).toBeUndefined();
+    const conversationEventCount = () => events.filter((event) => event.type === "conversation").length;
+    const persistedBeforeTools = conversationEventCount();
 
     client.emit(
       "notification",
@@ -688,7 +693,7 @@ describe.sequential("AgentService", () => {
         item: { id: "tool-1", type: "toolCall", name: "web_search", status: "in_progress" },
       }),
     );
-    await waitFor(async () => (await progress()) === "Searching for current information…");
+    await waitFor(() => progress().at(-1)?.delta === "Searching for current information…");
 
     client.emit(
       "notification",
@@ -698,7 +703,8 @@ describe.sequential("AgentService", () => {
         item: { id: "tool-1", type: "toolCall", name: "web_search", status: "completed" },
       }),
     );
-    await waitFor(async () => (await progress()) === "Reviewing the sources and information I found…");
+    await waitFor(() => progress().at(-1)?.delta === "Reviewing the sources and information I found…");
+    expect(conversationEventCount()).toBe(persistedBeforeTools);
 
     client.emit(
       "notification",
@@ -712,11 +718,7 @@ describe.sequential("AgentService", () => {
       "notification",
       notification("turn/completed", { threadId, turn: { id: turnId, status: "completed" } }),
     );
-    await waitFor(async () =>
-      ((await service?.readConversation("chief"))?.messages ?? []).every(
-        (message) => message.id !== `activity:${turnId}`,
-      ),
-    );
+    await waitFor(() => events.some((event) => event.type === "turn-completed" && event.turnId === turnId));
   });
 
   it("connects ChatGPT through the Codex App Server and promotes the authenticated client", async () => {

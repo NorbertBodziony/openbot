@@ -287,6 +287,7 @@ describe("retainThinkingMessages", () => {
     ]);
 
     expect(retainThinkingMessages(previous, next)).toEqual(next);
+    expect(retainThinkingMessages(previous, next, "turn-1")).toEqual([{ ...previous[0], streaming: false }, ...next]);
   });
 });
 

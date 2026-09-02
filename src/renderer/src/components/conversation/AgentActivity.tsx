@@ -56,7 +56,7 @@ export function AgentActivityIndicator(props: {
       class="agent-activity-entry"
       data-state={props.phase ?? "active"}
       role="status"
-      aria-label={`${props.bot?.name ?? "Agent"} is working: ${label()}`}
+      aria-label={`${props.bot?.name ?? "Agent"} is working`}
     >
       <div class="agent-activity-content">
         <AgentAvatar
@@ -66,7 +66,9 @@ export function AgentActivityIndicator(props: {
           animationState={props.presentation.animation}
           class="agent-activity-avatar"
         />
-        <span class="agent-activity-label">{label()}</span>
+        <span class="agent-activity-label" aria-hidden="true">
+          {label()}
+        </span>
       </div>
     </div>
   );
