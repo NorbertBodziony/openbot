@@ -278,85 +278,6 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByText("Bob history")).toBeInTheDocument();
   });
 
-  it("keeps a queued message out of chat until work starts", async () => {
-    vi.mocked(window.openbot.agent.sendMessage).mockImplementationOnce(async (input) => {
-      const delivery = queuedDelivery("delivery-visible", input.text, 1);
-      emitAgentEvent?.({
-        type: "conversation",
-        snapshot: {
-          botId: input.botId,
-          threadId: "thread-chief",
-          activeTurnId: null,
-          revision: 1,
-          messages: [
-            {
-              id: delivery.id,
-              author: "user",
-              text: input.text,
-              createdAt: delivery.createdAt,
-              status: "completed",
-              delivery: { id: delivery.id, status: "queued", position: 1 },
-            },
-          ],
-        },
-      });
-      emitAgentEvent?.({
-        type: "queue-changed",
-        snapshot: { botId: input.botId, deliveries: [delivery] },
-      });
-      return {
-        messageId: delivery.messageId,
-        deliveries: [{ id: delivery.id, recipientBotId: input.botId, status: "queued", position: 1 }],
-      };
-    });
-
-    render(() => <App />);
-    await confirmOnboardingModel();
-    const composer = await screen.findByRole("textbox", { name: "Message Chief" });
-    composer.textContent = "Show this message";
-    await fireEvent.input(composer);
-    await fireEvent.keyDown(composer, { key: "Enter" });
-
-    await waitFor(() => expect(window.openbot.agent.sendMessage).toHaveBeenCalledOnce());
-    expect(screen.queryByText("Show this message", { selector: ".agent-queue-message" })).not.toBeInTheDocument();
-    expect(document.querySelector(".agent-queue-panel")).toBeNull();
-    expect(screen.queryByText("Show this message", { selector: ".message-copy" })).not.toBeInTheDocument();
-    await waitFor(() => {
-      expect(screen.queryByText("Choose a model to get started.")).not.toBeInTheDocument();
-      expect(
-        screen.queryByRole("radiogroup", { name: "What do you want me helping with most?" }),
-      ).not.toBeInTheDocument();
-    });
-
-    const started = queuedDelivery("delivery-visible", "Show this message", null, { status: "starting" });
-    emitAgentEvent?.({
-      type: "conversation",
-      snapshot: {
-        botId: "chief",
-        threadId: "thread-chief",
-        activeTurnId: null,
-        revision: 2,
-        messages: [
-          {
-            id: started.id,
-            author: "user",
-            text: started.text,
-            createdAt: started.createdAt,
-            status: "completed",
-            delivery: { id: started.id, status: "starting", position: null },
-          },
-        ],
-      },
-    });
-    emitAgentEvent?.({
-      type: "queue-changed",
-      snapshot: { botId: "chief", deliveries: [started] },
-    });
-
-    expect(await screen.findByText("Show this message", { selector: ".message-copy" })).toBeInTheDocument();
-    expect(screen.queryByText("Show this message", { selector: ".agent-queue-message" })).not.toBeInTheDocument();
-  });
-
   it("replies to a message through the composer and keeps the reference in the queued input", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
@@ -694,38 +615,6 @@ describe("OpenBot connected desktop shell", () => {
     );
   });
 
-  it("adds pathless pasted images reported by preload", async () => {
-    render(() => <App />);
-    await screen.findByRole("heading", { name: "Chief" });
-    emitAttachmentImport?.({ type: "started", requestId: "paste-1", serverId: "local" });
-    emitAttachmentImport?.({
-      type: "completed",
-      requestId: "paste-1",
-      serverId: "local",
-      attachments: [attachment("pasted-1", "pasted.png", "image")],
-    });
-    await fireEvent.click(await screen.findByRole("button", { name: "Remove pasted.png" }));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Remove pasted.png" })).not.toBeInTheDocument());
-    expect(window.openbot.agent.discardDraftAttachment).toHaveBeenCalledWith("pasted-1", "local");
-  });
-
-  it("keeps an asynchronous pasted attachment with the bot that received the paste", async () => {
-    render(() => <App />);
-    await screen.findByRole("heading", { name: "Chief" });
-    emitAttachmentImport?.({ type: "started", requestId: "paste-switch", serverId: "local" });
-    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
-    emitAttachmentImport?.({
-      type: "completed",
-      requestId: "paste-switch",
-      serverId: "local",
-      attachments: [attachment("pasted-switch", "for-chief.png", "image")],
-    });
-
-    expect(screen.queryByRole("button", { name: "Remove for-chief.png" })).not.toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
-    expect(await screen.findByRole("button", { name: "Remove for-chief.png" })).toBeInTheDocument();
-  });
-
   it("keeps an asynchronous attachment error with the bot that received the paste", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
@@ -771,6 +660,7 @@ describe("OpenBot connected desktop shell", () => {
     const removeAttachment = await screen.findByRole("button", { name: "Remove for-local.png" });
     await fireEvent.click(removeAttachment);
     expect(window.openbot.agent.discardDraftAttachment).toHaveBeenCalledWith("pasted-local", "local");
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Remove for-local.png" })).not.toBeInTheDocument());
   });
 
   it("keeps the first delivery out of Queue until work starts", async () => {

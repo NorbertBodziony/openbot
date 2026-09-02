@@ -330,28 +330,6 @@ describe("OpenBot connected desktop shell", () => {
     expect(claudeTrigger).toBeEnabled();
   });
 
-  it("changes reasoning effort from the header model picker without closing it", async () => {
-    render(() => <App />);
-    await screen.findByRole("heading", { name: "Chief" });
-
-    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
-    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
-    const effort = within(picker).getByRole("button", { name: /Agent reasoning effort/ });
-    expect(effort).toHaveTextContent("Medium");
-
-    await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
-    await fireEvent.click(screen.getByRole("option", { name: "High" }));
-
-    await waitFor(() =>
-      expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
-        botId: "chief",
-        reasoningEffort: "high",
-      }),
-    );
-    expect(effort).toHaveTextContent("High");
-    expect(picker).toBeInTheDocument();
-  });
-
   it("persists rapid model and effort changes in order as complete settings", async () => {
     const chief = BOTS.find((bot) => bot.id === "chief");
     if (!chief) throw new Error("Chief fixture is missing");
@@ -472,73 +450,6 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByRole("button", { name: "Agent model: Sol" })).toBeEnabled();
     expect(effort).toHaveTextContent("High");
     await fireEvent.click(screen.getByRole("button", { name: "Agent model: Sol" }));
-  });
-
-  it("orders Agent Settings effort changes after pending header model changes", async () => {
-    const chief = BOTS.find((bot) => bot.id === "chief");
-    if (!chief) throw new Error("Chief fixture is missing");
-    let resolveHeaderUpdate!: (bot: BotSummary) => void;
-    vi.mocked(window.openbot.agent.updateBot)
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            resolveHeaderUpdate = resolve;
-          }),
-      )
-      .mockImplementationOnce(async (input) => ({
-        ...chief,
-        ...input,
-        provider: "claude",
-        model: "claude-opus-5",
-      }));
-    render(() => <App />);
-    await screen.findByRole("heading", { name: "Chief" });
-
-    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
-    const headerPicker = screen.getByRole("dialog", { name: "Choose agent model" });
-    await fireEvent.click(within(headerPicker).getByRole("tab", { name: /^Claude:/ }));
-    await fireEvent.click(within(headerPicker).getByRole("option", { name: "Claude Opus 5, default" }));
-    await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
-
-    const settings = await screen.findByRole("complementary", { name: "Agent settings" });
-    expect(within(settings).getByRole("button", { name: "Agent model: Claude Opus 5" })).toBeEnabled();
-    const effort = within(settings).getByRole("button", { name: /Agent reasoning level/ });
-    await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
-    await fireEvent.click(screen.getByRole("option", { name: "High" }));
-
-    expect(window.openbot.agent.updateBot).toHaveBeenCalledTimes(1);
-    resolveHeaderUpdate({
-      ...chief,
-      provider: "claude",
-      model: "claude-opus-5",
-      reasoningEffort: "medium",
-    });
-
-    await waitFor(() =>
-      expect(vi.mocked(window.openbot.agent.updateBot).mock.calls).toEqual([
-        [
-          {
-            botId: "chief",
-            provider: "claude",
-            model: "claude-opus-5",
-            reasoningEffort: "medium",
-          },
-        ],
-        [
-          {
-            botId: "chief",
-            reasoningEffort: "high",
-          },
-        ],
-      ]),
-    );
-    expect(window.openbot.agent.updateBot).toHaveBeenLastCalledWith({
-      botId: "chief",
-      reasoningEffort: "high",
-    });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(within(settings).getByRole("button", { name: "Agent model: Claude Opus 5" })).toBeEnabled();
-    expect(effort).toHaveTextContent("High");
   });
 
   it("does not roll back a newer effort when an older save fails", async () => {

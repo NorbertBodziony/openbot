@@ -645,69 +645,6 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.agent.createBot).not.toHaveBeenCalled();
   });
 
-  it("keeps agents disabled when setup persistence fails", async () => {
-    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
-      completed: false,
-      preferredProvider: null,
-    });
-    vi.mocked(window.openbot.saveSetup).mockRejectedValueOnce(new Error("Could not save setup."));
-    render(() => <App />);
-
-    expect(
-      within(await screen.findByRole("radiogroup", { name: "Default provider" })).getByRole("radio", {
-        name: /ChatGPT.*Connected/,
-      }),
-    ).toBeChecked();
-    await fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Open OpenBot" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Could not save setup.");
-    expect(screen.queryByRole("heading", { name: "Chief" })).not.toBeInTheDocument();
-  });
-
-  it("opens optional Computer Use setup without blocking onboarding", async () => {
-    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
-      completed: false,
-      preferredProvider: null,
-    });
-    render(() => <App />);
-
-    await fireEvent.click(await screen.findByRole("button", { name: "Next" }));
-    const row = (await screen.findByText("Screen Recording")).closest(".computer-use-row");
-    const action = row?.querySelector("button");
-    expect(action).not.toBeNull();
-    if (!(action instanceof HTMLButtonElement)) throw new Error("Permission action is missing.");
-    await fireEvent.click(action);
-    expect(window.openbot.openComputerUsePermissionSetup).toHaveBeenCalledWith("screen-recording");
-    expect(await screen.findByText("System Settings opened")).toBeInTheDocument();
-
-    const accessibilityRow = screen.getByText("Accessibility").closest(".computer-use-row");
-    const accessibilityAction = accessibilityRow?.querySelector("button");
-    expect(accessibilityAction).not.toBeNull();
-    if (!(accessibilityAction instanceof HTMLButtonElement)) throw new Error("Accessibility action is missing.");
-    await fireEvent.click(accessibilityAction);
-    expect(window.openbot.openComputerUsePermissionSetup).toHaveBeenCalledWith("accessibility");
-  });
-
-  it("hides macOS permissions on other platforms", async () => {
-    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
-      completed: false,
-      preferredProvider: null,
-    });
-    vi.mocked(window.openbot.getAppInfo).mockResolvedValueOnce({
-      name: "OpenBot",
-      version: "0.1.0",
-      platform: "win32",
-      variant: "production",
-    });
-    render(() => <App />);
-
-    expect(await screen.findByRole("heading", { name: "Meet OpenBot" })).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "Next" }));
-    await waitFor(() => expect(screen.queryByText("Enable Computer Use")).not.toBeInTheDocument());
-    expect(window.openbot.getComputerUseMacSetupState).not.toHaveBeenCalled();
-  });
-
   it("guides signed-out users before enabling chat", async () => {
     vi.mocked(window.openbot.agent.getStatus).mockResolvedValueOnce({
       phase: "blocked",

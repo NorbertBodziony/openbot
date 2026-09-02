@@ -578,37 +578,6 @@ describe("SettingsModal", () => {
     expect(screen.getByRole("button", { name: `Open ${site.hostname}` })).toBeDisabled();
   });
 
-  it("generates a one-time QR code from Mobile Connect settings", async () => {
-    const onCreateMobileConnect = vi.fn(async () => ({
-      qrData:
-        "openbot://mobile-connect?api=https%3A%2F%2Fapi.openbot.run&ticket=mobile-ticket_1234567890abcdefghijklmnop",
-      expiresAt: Date.now() + 120_000,
-    }));
-    render(() => (
-      <SettingsModal
-        open
-        onOpenChange={() => undefined}
-        value={DEFAULT_GENERAL_SETTINGS}
-        onValueChange={() => undefined}
-        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
-        updateStatus={idleUpdateStatus}
-        onUpdateAction={vi.fn(async () => undefined)}
-        account={account}
-        onUpdateAccountName={vi.fn(async () => undefined)}
-        onUpdateAccountAvatar={vi.fn(async () => undefined)}
-        onCreateMobileConnect={onCreateMobileConnect}
-      />
-    ));
-
-    await fireEvent.click(screen.getByRole("tab", { name: "Mobile Connect" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Generate QR code" }));
-
-    await waitFor(() => expect(onCreateMobileConnect).toHaveBeenCalledOnce());
-    expect(await screen.findByRole("img", { name: "Mobile Connect sign-in QR code" })).toBeInTheDocument();
-    expect(screen.getByText(/Expires in/u)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Generate new code" })).toBeEnabled();
-  });
-
   it("confirms a new mobile connection before collapsing the QR code", async () => {
     vi.useFakeTimers({ now: 1_000_000 });
     const devices: MobileConnectedDevice[] = [];

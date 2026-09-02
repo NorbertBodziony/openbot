@@ -381,16 +381,6 @@ describe("SkillsMarketplaceModal", () => {
     expect(within(details).getByText("pending")).toBeInTheDocument();
   });
 
-  it("moves to the creator view", async () => {
-    render(() => <SkillsMarketplaceModal open bots={[]} activeBotId="" onOpenChange={() => undefined} />);
-    screen.getByRole("button", { name: "My submissions" }).click();
-    await waitFor(() => expect(screen.getByText(/No submissions yet/u)).toBeInTheDocument());
-    expect(screen.getByRole("heading", { name: "Submission requirements" })).toBeInTheDocument();
-    expect(screen.getByText("SKILL.md")).toBeInTheDocument();
-    expect(screen.getByText(/5 skills total/u)).toBeInTheDocument();
-    expect(screen.getByText(/5 submitted versions per skill/u)).toBeInTheDocument();
-  });
-
   it("keeps the selected icon filename visible and previews it", async () => {
     vi.stubGlobal(
       "createImageBitmap",

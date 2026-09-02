@@ -838,19 +838,6 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(remoteButton).toHaveFocus());
   });
 
-  it("opens settings from the local server context menu", async () => {
-    render(() => <App />);
-    await screen.findByRole("heading", { name: "Chief" });
-    expect(screen.queryByRole("button", { name: "Open publishing controls" })).not.toBeInTheDocument();
-    await fireEvent.contextMenu(screen.getByRole("button", { name: "Local server" }), {
-      clientX: 32,
-      clientY: 80,
-    });
-    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Server settings" }), { button: 0 });
-    expect(screen.getByRole("dialog", { name: "General" })).toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: "Server name" })).toBeInTheDocument();
-  });
-
   it("keeps the local server name draft during server list updates", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });

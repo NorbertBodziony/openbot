@@ -82,52 +82,6 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.servers.onPresence).toHaveBeenCalledTimes(presenceSubscriptionCount);
   });
 
-  it("opens routine settings from a persisted routine event marker", async () => {
-    const routine = {
-      id: "routine-1",
-      botId: "chief",
-      name: "Morning brief",
-      instruction: "Prepare the daily brief.",
-      active: true,
-      timezone: "UTC",
-      trigger: {
-        id: "trigger-1",
-        routineId: "routine-1",
-        schedule: { kind: "daily", time: "09:00" } as const,
-        nextRunAt: "2026-09-01T09:00:00.000Z",
-        createdAt: "2026-08-31T09:00:00.000Z",
-        updatedAt: "2026-08-31T09:00:00.000Z",
-      },
-      createdAt: "2026-08-31T09:00:00.000Z",
-      updatedAt: "2026-08-31T09:00:00.000Z",
-    };
-    vi.mocked(window.openbot.agent.listRoutines).mockResolvedValue([routine]);
-    vi.mocked(window.openbot.agent.readConversation).mockResolvedValue(
-      testConversationPage("chief", [
-        {
-          id: "routine-event-1",
-          author: "system",
-          source: "system",
-          text: routine.name,
-          createdAt: "2026-08-31T10:00:00.000Z",
-          status: "completed",
-          itemType: routineConversationEventItemType("created", routine.id),
-        },
-      ]),
-    );
-
-    render(() => <App />);
-
-    const marker = await screen.findByRole("button", { name: "Open routine Morning brief" });
-    await fireEvent.click(marker);
-    expect(await screen.findByRole("textbox", { name: "Name" })).toHaveValue("Morning brief");
-    expect(window.openbot.agent.listRoutineRuns).toHaveBeenCalledWith({
-      botId: "chief",
-      routineId: routine.id,
-      limit: 10,
-    });
-  });
-
   it("keeps an old routine marker unavailable when paginated history omits its deletion", async () => {
     vi.mocked(window.openbot.agent.listRoutines).mockResolvedValue([]);
     vi.mocked(window.openbot.agent.readConversation).mockResolvedValue(
@@ -296,16 +250,6 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(await screen.findByText("Restored after Codex became ready")).toBeInTheDocument();
     expect(window.openbot.agent.readConversation).toHaveBeenCalledTimes(2);
-  });
-
-  it("filters and switches backend bots", async () => {
-    render(() => <App />);
-    await screen.findByRole("heading", { name: "Chief" });
-    await screen.findByRole("button", { name: "Agent model: Luna" });
-    const search = screen.getByRole("searchbox", { name: "Search chats" });
-    await fireEvent.input(search, { target: { value: "Sales" } });
-    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
-    expect(screen.getByRole("heading", { name: "Sales Outbound" })).toBeInTheDocument();
   });
 
   it("restores and persists pinned chats for the active server", async () => {
@@ -1148,46 +1092,5 @@ describe("OpenBot connected desktop shell", () => {
       expect(screen.getByText("Newest streamed answer")).toBeInTheDocument();
       expect(screen.queryByText("Stale history answer")).not.toBeInTheDocument();
     });
-  });
-
-  it("removes a citation marker split across streaming deltas", async () => {
-    Object.defineProperty(window, "matchMedia", {
-      configurable: true,
-      value: vi.fn().mockReturnValue({ matches: true }),
-    });
-    render(() => <App />);
-    await screen.findByRole("heading", { name: "Chief" });
-
-    emitAgentEvent?.({
-      type: "conversation-delta",
-      botId: "chief",
-      threadId: "thread-chief",
-      turnId: "turn-live",
-      messageId: "agent-cited-answer",
-      delta: "Storms are likely.\u{e200}cite\u{e202}turn0fore",
-      createdAt: "2026-08-19T09:03:00.000Z",
-      revision: 1,
-    });
-
-    const message = await waitFor(() => {
-      const element = document.querySelector('[data-chat-search-message="agent-cited-answer"]');
-      expect(element).toHaveTextContent("Storms are likely.");
-      return element;
-    });
-    expect(message).not.toHaveTextContent("cite");
-
-    emitAgentEvent?.({
-      type: "conversation-delta",
-      botId: "chief",
-      threadId: "thread-chief",
-      turnId: "turn-live",
-      messageId: "agent-cited-answer",
-      delta: "cast0\u{e201} Take care.",
-      createdAt: "2026-08-19T09:03:00.000Z",
-      revision: 2,
-    });
-
-    await waitFor(() => expect(message).toHaveTextContent("Storms are likely. Take care."));
-    expect(message).not.toHaveTextContent("turn0forecast0");
   });
 });

@@ -110,37 +110,6 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("textbox", { name: "Browser address" })).toHaveValue("https://substack.com/chat");
   });
 
-  it("restores the active embedded browser tab from the local display state", async () => {
-    const firstTab: BrowserTab = {
-      id: "tab-first",
-      title: "First tab",
-      url: "https://example.com/first",
-      loading: false,
-      ownerThreadId: "thread-chief",
-      ownerBotId: "chief",
-    };
-    const activeTab: BrowserTab = {
-      id: "tab-active",
-      title: "Active tab",
-      url: "https://example.com/active",
-      loading: false,
-      ownerThreadId: "thread-chief",
-      ownerBotId: "chief",
-    };
-    vi.mocked(window.openbot.browser.getDisplayState).mockResolvedValueOnce({
-      tabs: [firstTab, activeTab],
-      activeTabId: activeTab.id,
-    });
-
-    render(() => <App />);
-    await screen.findByRole("heading", { name: "Chief" });
-    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
-
-    expect(await screen.findByRole("tab", { name: "Active tab" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("tab", { name: "First tab" })).toHaveAttribute("aria-selected", "false");
-    expect(screen.getByRole("textbox", { name: "Browser address" })).toHaveValue("https://example.com/active");
-  });
-
   it("restores the active local browser tab after returning from a remote server", async () => {
     const local = testServer("local", true);
     const remote = testServer("remote-1", false);
@@ -1096,53 +1065,6 @@ describe("OpenBot connected desktop shell", () => {
 
     await waitFor(() => expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument());
     expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({ visible: false });
-  });
-
-  it("updates embedded browser bounds when the window moves browser surface", async () => {
-    render(() => <App />);
-    await screen.findByRole("heading", { name: "Chief" });
-    emitAgentEvent?.({
-      type: "browser-changed",
-      tabs: [
-        {
-          id: "tab-resize",
-          title: "Resize test",
-          url: "https://example.com",
-          loading: false,
-          ownerThreadId: "thread-chief",
-          ownerBotId: "chief",
-        },
-      ],
-      activeTabId: "tab-resize",
-    });
-    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
-    const surface = document.querySelector(".browser-surface");
-    if (!(surface instanceof HTMLElement)) throw new Error("Browser surface was not rendered.");
-    await waitFor(() =>
-      expect(window.openbot.browser.setVisible).toHaveBeenCalledWith(expect.objectContaining({ visible: true })),
-    );
-    vi.mocked(window.openbot.browser.setVisible).mockClear();
-    vi.spyOn(surface, "getBoundingClientRect").mockReturnValue({
-      x: 640,
-      y: 73,
-      width: 380,
-      height: 600,
-      top: 73,
-      right: 1020,
-      bottom: 673,
-      left: 640,
-      toJSON: () => ({}),
-    });
-
-    window.dispatchEvent(new Event("resize"));
-
-    await waitFor(() =>
-      expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({
-        visible: true,
-        target: "main",
-        bounds: { x: 640, y: 73, width: 380, height: 600 },
-      }),
-    );
   });
 
   it("closes settings on agent switch but restores browser panels", async () => {

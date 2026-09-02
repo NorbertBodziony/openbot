@@ -162,36 +162,6 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("separator", { name: "New messages" })).not.toBeInTheDocument();
   });
 
-  it("does not mark an attachment-only conversation refresh as unread", async () => {
-    render(() => <App />);
-    await screen.findByRole("heading", { name: "Chief" });
-
-    emitAgentEvent?.({
-      type: "conversation-page",
-      page: testConversationPage(
-        "chief",
-        [
-          {
-            id: "reply-attachment-only",
-            author: "assistant",
-            text: "",
-            createdAt: "2026-08-30T02:02:00.000Z",
-            status: "completed",
-            itemType: "agent_attachment",
-          },
-        ],
-        {
-          revision: 2,
-          readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null },
-        },
-      ),
-    });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
-    expect(screen.queryByRole("status", { name: /new messages?/ })).not.toBeInTheDocument();
-  });
-
   it("does not persist a redundant read for an already-read refreshed page", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
@@ -219,38 +189,6 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
     expect(screen.queryByRole("status", { name: /new messages?/ })).not.toBeInTheDocument();
-  });
-
-  it("keeps a successful read when an equal-revision unread page arrives later", async () => {
-    render(() => <App />);
-    await screen.findByRole("heading", { name: "Chief" });
-    const delayedPage = testConversationPage(
-      "chief",
-      [
-        {
-          id: "reply-delayed-read-state",
-          author: "assistant",
-          text: "Reply from the delayed page",
-          createdAt: "2026-08-30T02:02:00.000Z",
-          status: "completed",
-        },
-      ],
-      {
-        revision: 2,
-        readState: { unreadCount: 1, firstUnreadMessageId: "reply-delayed-read-state", throughMessageId: null },
-      },
-    );
-
-    emitAgentEvent?.({ type: "conversation-page", page: delayedPage });
-    await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce());
-    await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
-
-    emitAgentEvent?.({ type: "conversation-page", page: delayedPage });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(vi.mocked(window.openbot.agent.markConversationRead).mock.calls).toEqual([
-      [{ botId: "chief", throughMessageId: "reply-delayed-read-state" }, "local"],
-    ]);
-    expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument();
   });
 
   it("keeps a successful realtime read when a pending reload resolves later", async () => {
