@@ -558,6 +558,56 @@ describe("UpdateService", () => {
     expect(service.getStatus()).toMatchObject({ phase: "error", errorCode: "install_failed" });
   });
 
+  it("refuses a download it would not be able to stop", async () => {
+    const updater = new FakeUpdater();
+    makeUpdateAvailable(updater);
+    stallDownloadUntilCancelled(updater);
+    const service = createService(updater);
+    service.start(false);
+    await service.checkForUpdates();
+    vi.useFakeTimers();
+    void service.downloadUpdate();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(DOWNLOAD_STALL_TIMEOUT);
+    vi.useRealTimers();
+
+    // The spent token forces a refresh, and that refresh fails to produce a new one.
+    updater.checkForUpdates.mockImplementation(async () => {
+      throw new Error("offline");
+    });
+    await service.downloadUpdate();
+
+    // Starting anyway would leave a transfer the stall watchdog cannot cancel, and an unsettled one
+    // blocks every later retry.
+    expect(updater.downloadUpdate).toHaveBeenCalledOnce();
+    expect(service.getStatus()).toMatchObject({ phase: "error", errorCode: "download_failed" });
+  });
+
+  it("stops acting on updates once shutdown preparation has begun", async () => {
+    vi.useFakeTimers();
+    const updater = new FakeUpdater();
+    makeUpdateAvailable(updater);
+    completeDownload(updater);
+    const service = createService(updater, { platform: "win32" });
+    service.start(false);
+    await service.checkForUpdates();
+    await service.downloadUpdate();
+    await service.installUpdate();
+    // The install fails, which leaves an error phase the ordinary guards would let a check through.
+    await vi.advanceTimersByTimeAsync(INSTALL_TIMEOUT);
+    expect(service.getStatus().errorCode).toBe("install_failed");
+    const callsBefore = updater.checkForUpdates.mock.calls.length;
+
+    // Services are stopped for good by now, so checking or downloading would act on a torn-down app
+    // and report a result the user cannot do anything with.
+    await service.checkForUpdates();
+    await service.downloadUpdate();
+
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(callsBefore);
+    expect(updater.downloadUpdate).toHaveBeenCalledOnce();
+    expect(service.getStatus().errorCode).toBe("install_failed");
+  });
+
   it("does not run the installer if shutdown preparation fails", async () => {
     const updater = new FakeUpdater();
     makeUpdateAvailable(updater);

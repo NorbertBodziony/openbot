@@ -86,15 +86,25 @@ const MAX_DIAGNOSTIC_EVENTS = 20;
  * phase with no bound is exactly how "Preparing update..." became a state the UI could never leave.
  */
 const DEFAULT_PHASE_TIMEOUTS: Record<UpdateBusyPhase, number> = {
-  /** One metadata request. A minute is far longer than any healthy check. */
-  checking: 60_000,
+  /**
+   * A backstop above builder-util-runtime's own 60s socket timeout, which aborts the request and
+   * rejects the call. Letting that fire first means the library reports the real failure and clears
+   * its outstanding promise, so the next scheduled check issues a fresh request; this only covers a
+   * stall outside the request itself, such as provider resolution.
+   */
+  checking: 90_000,
   /**
    * Time without a single progress event, not a cap on the whole transfer: release artifacts run to
    * hundreds of megabytes, so a slow link must stay supported while a dead socket must not.
    */
   downloading: 120_000,
-  /** Shutdown preparation plus a synchronous handover to the installer. */
-  installing: 60_000,
+  /**
+   * Shutdown preparation plus the handover to the installer. Generous because on macOS
+   * quitAndInstall asks Squirrel to stage the ZIP and only quits when that finishes, which is disk
+   * bound on an artifact of a few hundred megabytes. Firing early here would report a failure over a
+   * working install.
+   */
+  installing: 300_000,
 };
 
 export function supportsInstalledUpdates(platform: NodeJS.Platform): boolean {
@@ -127,6 +137,7 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
   #activeInstall: number | null = null;
   #checkInFlight = false;
   #downloadInFlight = false;
+  #teardownCommitted = false;
 
   constructor(updater: UpdateAdapter, options: UpdateServiceOptions) {
     super();
@@ -224,7 +235,7 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
   }
 
   async checkForUpdates(): Promise<UpdateStatus> {
-    if (!this.#options.enabled) return this.getStatus();
+    if (!this.#options.enabled || this.#teardownCommitted) return this.getStatus();
     if (["checking", "downloading", "ready", "installing"].includes(this.#status.phase)) {
       return this.getStatus();
     }
@@ -279,7 +290,7 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
   }
 
   async downloadUpdate(): Promise<UpdateStatus> {
-    if (!this.#options.enabled || !this.#canDownload()) return this.getStatus();
+    if (!this.#options.enabled || this.#teardownCommitted || !this.#canDownload()) return this.getStatus();
     // Same deduplication applies to downloads, and starting a second attempt while the abandoned one
     // is still unsettled is also what would let its buffered events be read as the new attempt's.
     if (this.#downloadInFlight) return this.getStatus();
@@ -291,7 +302,14 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
     try {
       const token = await this.#ensureCancellationToken();
       if (this.#downloadGeneration !== generation) return this.getStatus();
-      await this.#updater.downloadUpdate(token ?? undefined);
+      if (!token) {
+        // Without a token the stall watchdog could not stop the transfer, so the attempt would run
+        // untracked and an unsettled one would block every retry. Refuse instead of starting it.
+        this.#activeDownload = null;
+        this.#setError("download_failed");
+        return this.getStatus();
+      }
+      await this.#updater.downloadUpdate(token);
     } catch {
       // A superseded attempt is one the stall watchdog already cancelled and reported, so its
       // rejection must not overwrite the error the user is looking at.
@@ -315,6 +333,10 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
     this.#operation = "install";
     this.#setStatus({ phase: "installing", progress: 100, message: null, errorCode: null });
     try {
+      // Shutdown preparation stops services for good and is not reversible, so from here on this
+      // process can only quit into the installer or be relaunched. Checking or downloading would be
+      // acting on a torn-down app, so both are refused for the rest of its life.
+      this.#teardownCommitted = true;
       await this.#options.beforeInstall();
       // Shutdown preparation can outlive the install deadline. Once the watchdog has reported the
       // attempt as failed, or a retry has taken over, this attempt must not go on to restart the
