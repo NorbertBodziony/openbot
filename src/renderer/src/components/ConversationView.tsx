@@ -760,15 +760,20 @@ function createConversationViewScope(props: ConversationProps) {
     () => ({
       activityId: activeActivityId(),
       bot: props.bot,
-      detail: activeActivityDetail(),
       presentation: activityPresentation(),
     }),
-    ({ activityId, bot, detail, presentation }) => {
+    ({ activityId, bot, presentation }) => {
       clearAgentActivityShowTimer();
       clearAgentActivityExitDelayTimer();
       clearAgentActivityExitTimer();
       if (activityId && presentation) {
-        const nextActivity = { activityId, bot, detail, phase: "active" as const, presentation };
+        const nextActivity = {
+          activityId,
+          bot,
+          detail: untrack(activeActivityDetail),
+          phase: "active" as const,
+          presentation,
+        };
         const current = untrack(renderedAgentActivity);
         if (current?.bot?.id === bot?.id) {
           setAgentActivitySpaceReserved(true);
@@ -780,7 +785,7 @@ function createConversationViewScope(props: ConversationProps) {
           agentActivityShowTimer = undefined;
           if (untrack(activeActivityId) === activityId) {
             setAgentActivitySpaceReserved(true);
-            setRenderedAgentActivity(nextActivity);
+            setRenderedAgentActivity({ ...nextActivity, detail: untrack(activeActivityDetail) });
           }
         }, showDelay);
         return;
@@ -811,6 +816,16 @@ function createConversationViewScope(props: ConversationProps) {
       const exitDelay = agentActivityExitDelay();
       if (exitDelay === 0) beginExit();
       else agentActivityExitDelayTimer = window.setTimeout(beginExit, exitDelay);
+    },
+  );
+
+  createEffect(
+    () => ({ activityId: activeActivityId(), detail: activeActivityDetail() }),
+    ({ activityId, detail }) => {
+      if (!activityId) return;
+      setRenderedAgentActivity((current) =>
+        current?.activityId === activityId && current.detail !== detail ? { ...current, detail } : current,
+      );
     },
   );
 
