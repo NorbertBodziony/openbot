@@ -1,9 +1,23 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import type { BrowserControlAction, BrowserControlSession, BrowserTab } from "@openbot/contracts/ipc";
+import type {
+  BrowserControlAction,
+  BrowserControlDetailAction,
+  BrowserControlSession,
+  BrowserTab,
+} from "@openbot/contracts/ipc";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import type { BotProfile } from "../../data";
 import { PanelResizer, readPanelWidth, savePanelWidth } from "../PanelResizer";
-import { Button, buttonVariants, Input, PictureInPicture2, Tabs } from "../ui";
+import {
+  Button,
+  buttonVariants,
+  CircleDot,
+  Input,
+  MonitorSmartphone,
+  PictureInPicture2,
+  Tabs,
+  TriangleAlert,
+} from "../ui";
 import {
   BrowserBackIcon,
   BrowserControlIcon,
@@ -16,7 +30,7 @@ import {
 const BROWSER_PANEL_STORAGE_KEY = "openbot:browser-panel-width";
 const BROWSER_PANEL_MIN = 220;
 const BROWSER_PANEL_MAX = 1600;
-const BROWSER_ACTION_LABELS: Record<BrowserControlAction, string> = {
+const BROWSER_ACTION_LABELS: Record<BrowserControlAction | BrowserControlDetailAction, string> = {
   open: "Opening a page…",
   "list-tabs": "Checking tabs…",
   snapshot: "Reading the page…",
@@ -28,6 +42,19 @@ const BROWSER_ACTION_LABELS: Record<BrowserControlAction, string> = {
   forward: "Going forward…",
   reload: "Reloading…",
   screenshot: "Taking a screenshot…",
+  status: "Checking browser status…",
+  navigate: "Navigating…",
+  press: "Using the keyboard…",
+  hover: "Hovering…",
+  "select-option": "Selecting an option…",
+  "set-checked": "Changing a control…",
+  drag: "Dragging…",
+  "upload-files": "Uploading files…",
+  "wait-for": "Waiting for the page…",
+  evaluate: "Evaluating page JavaScript…",
+  "set-environment": "Changing the viewport…",
+  "recording-start": "Starting recording…",
+  "recording-stop": "Saving recording…",
   "close-tab": "Closing a tab…",
 };
 
@@ -184,7 +211,7 @@ export default function BrowserPanel(props: BrowserPanelProps) {
                         {(session) => (
                           <span
                             class="browser-tab-control browser-tab-control-acting"
-                            title={`${controller()?.name ?? "Agent"}: ${BROWSER_ACTION_LABELS[session().action]}`}
+                            title={`${controller()?.name ?? "Agent"}: ${BROWSER_ACTION_LABELS[session().detailAction ?? session().action]}`}
                           >
                             <BrowserControlIcon />
                           </span>
@@ -261,6 +288,34 @@ export default function BrowserPanel(props: BrowserPanelProps) {
             <BrowserReloadIcon />
           </Button>
           {addressBar()}
+          <Show when={props.activeTab?.environment}>
+            {(environment) => (
+              <span
+                class="browser-environment-status"
+                title={`Viewport ${environment().viewport.width}×${environment().viewport.height}, ${environment().colorScheme} color scheme`}
+              >
+                <MonitorSmartphone />
+                <span>
+                  {environment().viewport.width}×{environment().viewport.height}
+                </span>
+              </span>
+            )}
+          </Show>
+          <Show when={props.activeTab?.recording}>
+            <span class="browser-recording-status" role="status" aria-label="Browser recording active">
+              <CircleDot /> REC
+            </span>
+          </Show>
+          <Show when={(props.activeTab?.diagnosticErrorCount ?? 0) > 0}>
+            <span
+              class="browser-diagnostic-status"
+              role="status"
+              title={`${props.activeTab?.diagnosticErrorCount} browser diagnostic errors`}
+              aria-label={`${props.activeTab?.diagnosticErrorCount} browser diagnostic errors`}
+            >
+              <TriangleAlert /> {props.activeTab?.diagnosticErrorCount}
+            </span>
+          </Show>
           <Button
             variant="ghost"
             type="button"

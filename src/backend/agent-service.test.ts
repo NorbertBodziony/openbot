@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
 import { serializeChatTagReference } from "@openbot/contracts/chat-tag-references";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
@@ -948,6 +948,296 @@ describe.sequential("AgentService", () => {
 
     await waitFor(() => calls.length === 1);
     expect(calls[0]).toMatchObject({ threadId: openbotThreadId, ownerBotId: "chief" });
+  });
+
+  it("stages browser uploads from any local path readable by OpenBot", async () => {
+    const calls: DynamicToolCallParams[] = [];
+    let uploadPath = "";
+    let outsidePath = "";
+    const stagedPaths: string[] = [];
+    const stagedContents: string[] = [];
+    const delayedUpload: { complete?: () => void; completion?: Promise<void> } = {};
+    let holdUploads = false;
+    let releaseHeldUploads: () => void = () => undefined;
+    const heldUploads = new Promise<void>((resolve) => {
+      releaseHeldUploads = resolve;
+    });
+    const browser = fakeBrowser();
+    let documentChanged: (tabId: string, documentIds: ReadonlySet<string>) => void = (_tabId, _documentIds) =>
+      undefined;
+    browser.onDocumentChanged = (listener) => {
+      documentChanged = listener;
+      return () => undefined;
+    };
+    browser.resolveUploadTarget = async (params) => {
+      const target =
+        isDynamicRecord(params.arguments) && isDynamicRecord(params.arguments.target) ? params.arguments.target : {};
+      const inputId = String(target.selector ?? target.ref ?? "input");
+      return { inputId, documentId: inputId === "#second" ? "frame-document" : "main-document" };
+    };
+    browser.handleDynamicTool = async (params, hooks) => {
+      if (
+        params.tool === "upload_files" &&
+        isDynamicRecord(params.arguments) &&
+        Array.isArray(params.arguments.paths)
+      ) {
+        const stagedPath = String(params.arguments.paths[0]);
+        stagedPaths.push(stagedPath);
+        if (stagedPaths.length === 1) {
+          await rm(uploadPath);
+          await symlink(outsidePath, uploadPath);
+        }
+        stagedContents.push(await readFile(stagedPath, "utf8"));
+        const target = isDynamicRecord(params.arguments.target) ? params.arguments.target : {};
+        const inputId = String(target.selector ?? target.ref ?? "input");
+        const documentId = inputId === "#second" ? "frame-document" : "main-document";
+        hooks?.onUploadTargetResolved?.(inputId, documentId);
+        const assign = () => hooks?.onUploadAssigned?.(inputId, documentId);
+        if (holdUploads) {
+          const completion = heldUploads.then(assign);
+          hooks?.onUploadOperationStarted?.(completion);
+        } else if (stagedPaths.length === 2) {
+          delayedUpload.completion = new Promise<void>((resolve) => {
+            delayedUpload.complete = () => {
+              assign();
+              resolve();
+            };
+          });
+          hooks?.onUploadOperationStarted?.(delayedUpload.completion);
+        } else {
+          hooks?.onUploadOperationStarted?.(Promise.resolve());
+          assign();
+        }
+      }
+      calls.push(params);
+      return { success: stagedPaths.length !== 2, contentItems: [] };
+    };
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, browser, 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Upload a workspace file" });
+    await waitFor(() => Boolean(store.activeProviderSession("chief")));
+
+    const bot = await store.getOrCreate("chief");
+    const providerThreadId = store.activeProviderSession("chief")?.externalSessionId;
+    const client = clients.get("codex");
+    if (!providerThreadId || !client) throw new Error("Browser upload test thread was not created.");
+    uploadPath = join(bot.workspacePath, "browser-upload.txt");
+    const secondUploadPath = join(bot.workspacePath, "browser-upload-second.txt");
+    const replacementUploadPath = join(bot.workspacePath, "browser-upload-replacement.txt");
+    outsidePath = join(root, "private.txt");
+    await writeFile(uploadPath, "safe upload");
+    await writeFile(secondUploadPath, "second upload");
+    await writeFile(replacementUploadPath, "replacement upload");
+    await writeFile(outsidePath, "private");
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "browser-upload",
+      params: {
+        threadId: providerThreadId,
+        turnId: "turn-browser-upload",
+        callId: "browser-upload",
+        namespace: "openbot_browser",
+        tool: "upload_files",
+        arguments: { tabId: "tab", target: { kind: "css", selector: "input" }, paths: [uploadPath] },
+      },
+    });
+
+    await waitFor(() => client.responses.some((response) => response.id === "browser-upload"));
+    expect(calls[0]).toMatchObject({ ownerBotId: "chief" });
+    expect(stagedPaths[0]).not.toBe(uploadPath);
+    expect(basename(stagedPaths[0])).toBe(basename(uploadPath));
+    expect(stagedContents[0]).toBe("safe upload");
+    await expect(readFile(stagedPaths[0], "utf8")).resolves.toBe("safe upload");
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "browser-upload-second",
+      params: {
+        threadId: providerThreadId,
+        turnId: "turn-browser-upload",
+        callId: "browser-upload-second",
+        namespace: "openbot_browser",
+        tool: "upload_files",
+        arguments: { tabId: "tab", target: { kind: "css", selector: "#second" }, paths: [secondUploadPath] },
+      },
+    });
+
+    await waitFor(() => client.responses.some((response) => response.id === "browser-upload-second"));
+    await expect(readFile(stagedPaths[0], "utf8")).resolves.toBe("safe upload");
+    await expect(readFile(stagedPaths[1], "utf8")).resolves.toBe("second upload");
+    if (!delayedUpload.complete || !delayedUpload.completion) throw new Error("Delayed upload did not start.");
+    delayedUpload.complete();
+    await delayedUpload.completion;
+    documentChanged("tab", new Set(["main-document"]));
+    await expect(readFile(stagedPaths[0], "utf8")).resolves.toBe("safe upload");
+    await waitFor(() =>
+      readFile(stagedPaths[1]).then(
+        () => false,
+        () => true,
+      ),
+    );
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "browser-upload-replacement",
+      params: {
+        threadId: providerThreadId,
+        turnId: "turn-browser-upload",
+        callId: "browser-upload-replacement",
+        namespace: "openbot_browser",
+        tool: "upload_files",
+        arguments: {
+          tabId: "tab",
+          target: { kind: "css", selector: "input" },
+          paths: [replacementUploadPath],
+        },
+      },
+    });
+
+    await waitFor(() => client.responses.some((response) => response.id === "browser-upload-replacement"));
+    await waitFor(async () =>
+      readFile(stagedPaths[0]).then(
+        () => false,
+        () => true,
+      ),
+    );
+    await expect(readFile(stagedPaths[1], "utf8")).rejects.toThrow();
+    await expect(readFile(stagedPaths[2], "utf8")).resolves.toBe("replacement upload");
+
+    for (let index = 0; index < 9; index++) {
+      const id = `browser-upload-extra-${index}`;
+      client.emit("request", {
+        method: "item/tool/call",
+        id,
+        params: {
+          threadId: providerThreadId,
+          turnId: "turn-browser-upload",
+          callId: id,
+          namespace: "openbot_browser",
+          tool: "upload_files",
+          arguments: {
+            tabId: "tab",
+            target: { kind: "css", selector: `#extra-${index}` },
+            paths: [replacementUploadPath],
+          },
+        },
+      });
+      await waitFor(() => client.responses.some((response) => response.id === id));
+    }
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "browser-upload-full-replacement",
+      params: {
+        threadId: providerThreadId,
+        turnId: "turn-browser-upload",
+        callId: "browser-upload-full-replacement",
+        namespace: "openbot_browser",
+        tool: "upload_files",
+        arguments: {
+          tabId: "tab",
+          target: { kind: "css", selector: "input" },
+          paths: [replacementUploadPath],
+        },
+      },
+    });
+    await waitFor(() => client.responses.some((response) => response.id === "browser-upload-full-replacement"));
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "browser-upload-overflow",
+      params: {
+        threadId: providerThreadId,
+        turnId: "turn-browser-upload",
+        callId: "browser-upload-overflow",
+        namespace: "openbot_browser",
+        tool: "upload_files",
+        arguments: {
+          tabId: "tab",
+          target: { kind: "css", selector: "#overflow" },
+          paths: [replacementUploadPath],
+        },
+      },
+    });
+    await waitFor(() => client.errors.some((response) => response.id === "browser-upload-overflow"));
+    expect(client.errors.find((response) => response.id === "browser-upload-overflow")?.error.message).toContain(
+      "up to 10 inputs",
+    );
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "browser-upload-outside",
+      params: {
+        threadId: providerThreadId,
+        turnId: "turn-browser-upload",
+        callId: "browser-upload-outside",
+        namespace: "openbot_browser",
+        tool: "upload_files",
+        arguments: { tabId: "tab", target: { kind: "css", selector: "input" }, paths: [outsidePath] },
+      },
+    });
+
+    await waitFor(() => client.responses.some((response) => response.id === "browser-upload-outside"));
+    expect(stagedContents.at(-1)).toBe("private");
+    expect(calls).toHaveLength(14);
+    documentChanged("tab", new Set());
+    await waitFor(async () =>
+      (await Promise.allSettled(stagedPaths.slice(1).map((path) => readFile(path)))).every(
+        (result) => result.status === "rejected",
+      ),
+    );
+
+    holdUploads = true;
+    for (let index = 0; index < 11; index++) {
+      const id = `browser-upload-concurrent-${index}`;
+      client.emit("request", {
+        method: "item/tool/call",
+        id,
+        params: {
+          threadId: providerThreadId,
+          turnId: "turn-browser-upload",
+          callId: id,
+          namespace: "openbot_browser",
+          tool: "upload_files",
+          arguments: {
+            tabId: "tab",
+            target: { kind: "css", selector: `#concurrent-${index}` },
+            paths: [replacementUploadPath],
+          },
+        },
+      });
+    }
+    await waitFor(() =>
+      client.errors.some(
+        (response) =>
+          String(response.id).startsWith("browser-upload-concurrent-") && response.error.message.includes("10 inputs"),
+      ),
+    );
+    await waitFor(
+      () =>
+        client.responses.filter((response) => String(response.id).startsWith("browser-upload-concurrent-")).length ===
+        10,
+    );
+    expect(calls).toHaveLength(24);
+    releaseHeldUploads();
+    await heldUploads;
+    await Promise.resolve();
+    documentChanged("tab", new Set());
+    await waitFor(async () =>
+      (await Promise.allSettled(stagedPaths.slice(13).map((path) => readFile(path)))).every(
+        (result) => result.status === "rejected",
+      ),
+    );
+    await service.stop();
+    await expect(readFile(stagedPaths[1])).rejects.toThrow();
+    await expect(readFile(stagedPaths[2])).rejects.toThrow();
   });
 
   it("surfaces Codex approvals without auto-accepting and maps one-shot decisions", async () => {
@@ -2184,7 +2474,17 @@ describe.sequential("AgentService", () => {
   it("pauses a browser tool call until the user resolves the takeover", async () => {
     const clients = new Map<AgentProvider, FakeAgentClient>();
     const tabs: BrowserTab[] = [];
+    const discardedRecordings: string[] = [];
+    const endedTakeovers: string[] = [];
     const browser = fakeBrowser(tabs);
+    browser.beginTakeover = async (tabId) => {
+      discardedRecordings.push(tabId);
+      const tab = tabs.find((candidate) => candidate.id === tabId);
+      if (tab) tab.recording = false;
+    };
+    browser.endTakeover = (tabId) => {
+      endedTakeovers.push(tabId);
+    };
     browser.handleDynamicTool = async (params) => {
       if (params.tool === "open") {
         tabs.push({
@@ -2194,6 +2494,7 @@ describe.sequential("AgentService", () => {
           loading: false,
           ownerThreadId: params.threadId,
           ownerBotId: params.ownerBotId ?? null,
+          recording: true,
         });
       }
       return { success: true, contentItems: [] };
@@ -2249,13 +2550,69 @@ describe.sequential("AgentService", () => {
     expect(events.find((event) => event.type === "browser-takeover-requested")).toMatchObject({
       request: { requestId: "takeover-call", botId: "chief", tabId: "protected-tab" },
     });
+    expect(discardedRecordings).toEqual(["protected-tab"]);
+    expect(tabs[0]?.recording).toBe(false);
+
+    for (const tool of ["list_tabs", "status"] as const) {
+      client.emit("request", {
+        method: "item/tool/call",
+        id: `${tool}-during-takeover`,
+        params: {
+          threadId: externalThreadId,
+          turnId: started.turnId,
+          callId: `${tool}-during-takeover`,
+          namespace: "openbot_browser",
+          tool,
+          arguments: {},
+        },
+      });
+      await waitFor(() => client.responses.some((response) => response.id === `${tool}-during-takeover`));
+      expect(client.responses.find((response) => response.id === `${tool}-during-takeover`)?.result).toMatchObject({
+        success: false,
+      });
+    }
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "recording-during-takeover",
+      params: {
+        threadId: externalThreadId,
+        turnId: started.turnId,
+        callId: "recording-during-takeover",
+        namespace: "openbot_browser",
+        tool: "recording_start",
+        arguments: { tabId: "protected-tab" },
+      },
+    });
+    await waitFor(() => client.responses.some((response) => response.id === "recording-during-takeover"));
+    expect(client.responses.find((response) => response.id === "recording-during-takeover")?.result).toMatchObject({
+      success: false,
+    });
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "snapshot-during-takeover",
+      params: {
+        threadId: externalThreadId,
+        turnId: started.turnId,
+        callId: "snapshot-during-takeover",
+        namespace: "openbot_browser",
+        tool: "snapshot",
+        arguments: { tabId: "protected-tab" },
+      },
+    });
+    await waitFor(() => client.responses.some((response) => response.id === "snapshot-during-takeover"));
+    expect(client.responses.find((response) => response.id === "snapshot-during-takeover")?.result).toMatchObject({
+      success: false,
+    });
 
     await service.respondToBrowserTakeover({ requestId: "takeover-call", decision: "complete" });
-    await waitFor(() => client.responses.length === 2);
-    expect(openBotToolPayload(client.responses[1]?.result)).toEqual({
+    await waitFor(() => client.responses.some((response) => response.id === "takeover-call"));
+    expect(openBotToolPayload(client.responses.find((response) => response.id === "takeover-call")?.result)).toEqual({
       status: "completed",
       next: "Take a fresh snapshot and continue the task.",
     });
+    expect(endedTakeovers).toEqual(["protected-tab"]);
     expect(events).toContainEqual({
       type: "browser-takeover-resolved",
       requestId: "takeover-call",
@@ -2283,8 +2640,11 @@ describe.sequential("AgentService", () => {
       ),
     );
     await service.respondToBrowserTakeover({ requestId: "takeover-cancel", decision: "cancel" });
-    await waitFor(() => client.responses.length === 3);
-    expect(openBotToolPayload(client.responses[2]?.result)).toEqual({ status: "cancelled" });
+    await waitFor(() => client.responses.some((response) => response.id === "takeover-cancel"));
+    expect(openBotToolPayload(client.responses.find((response) => response.id === "takeover-cancel")?.result)).toEqual({
+      status: "cancelled",
+    });
+    expect(endedTakeovers).toEqual(["protected-tab", "protected-tab"]);
   });
 
   it("commits an automatic memory only after a successful turn and refreshes the next turn context", async () => {
@@ -5216,11 +5576,30 @@ function stores(): { store: BotStore; mailbox: MailboxStore } {
 function fakeBrowser(tabs: BrowserTab[] = []) {
   return {
     onChanged: (_listener: (tabs: BrowserTab[], activeTabId: string | null) => void) => () => undefined,
+    onDocumentChanged: (_listener: (tabId: string, documentIds: ReadonlySet<string>) => void) => () => undefined,
     onControlChanged: (_listener: (state: BrowserControlState) => void) => () => undefined,
     clearControls: () => undefined,
     endControl: () => undefined,
     listTabs: () => tabs,
-    handleDynamicTool: async (_params: DynamicToolCallParams) => ({ success: true, contentItems: [] }),
+    beginTakeover: async (_tabId: string) => undefined,
+    endTakeover: (_tabId: string) => undefined,
+    resolveUploadTarget: async (params: DynamicToolCallParams) => {
+      const target =
+        isDynamicRecord(params.arguments) && isDynamicRecord(params.arguments.target) ? params.arguments.target : {};
+      const inputId = String(target.selector ?? target.ref ?? "input");
+      return { inputId, documentId: inputId === "#second" ? "frame-document" : "main-document" };
+    },
+    handleDynamicTool: async (
+      _params: DynamicToolCallParams,
+      _hooks?: {
+        onUploadTargetResolved?: (inputId: string, documentId: string) => void;
+        onUploadAssigned?: (inputId: string, documentId: string) => void;
+        onUploadOperationStarted?: (completion: Promise<void>) => void;
+      },
+    ) => ({
+      success: true,
+      contentItems: [],
+    }),
   };
 }
 

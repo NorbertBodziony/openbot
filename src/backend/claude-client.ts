@@ -17,6 +17,7 @@ import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { type DynamicRecord, isOneOf, isString } from "@openbot/contracts/runtime-values";
 import { z } from "zod";
 import type { AgentProvider } from "./agent-client";
+import { BROWSER_TOOL_DEFINITIONS, OPENBOT_BROWSER_NAMESPACE } from "./browser-tools";
 import type { ClaudeCliInfo } from "./cli";
 import {
   type AccountReadResult,
@@ -562,40 +563,13 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       this.#callDynamicTool(threadId, namespace, name, args);
     return {
       openbot_browser: createSdkMcpServer({
-        name: "openbot_browser",
-        version: "0.1.0",
-        tools: [
-          tool("open", "Open an HTTP(S) URL in OpenBot's private browser.", { url: z.string() }, (args) =>
-            call("openbot_browser", "open", args),
+        name: OPENBOT_BROWSER_NAMESPACE,
+        version: "0.2.0",
+        tools: BROWSER_TOOL_DEFINITIONS.map((definition) =>
+          tool(definition.name, definition.description, definition.shape, (args) =>
+            call(OPENBOT_BROWSER_NAMESPACE, definition.name, args),
           ),
-          tool("list_tabs", "List OpenBot browser tabs.", {}, (args) => call("openbot_browser", "list_tabs", args)),
-          tool("snapshot", "Read a browser page and get element references.", { tabId: z.string() }, (args) =>
-            call("openbot_browser", "snapshot", args),
-          ),
-          tool(
-            "act",
-            "Click, type, press a key, scroll, navigate, or reload in OpenBot's browser.",
-            {
-              tabId: z.string(),
-              revision: z.number().int(),
-              action: z.object({
-                type: z.enum(["click", "type", "key", "scroll", "back", "forward", "reload"]),
-                ref: z.string().optional(),
-                text: z.string().optional(),
-                submit: z.boolean().optional(),
-                key: z.string().optional(),
-                deltaY: z.number().optional(),
-              }),
-            },
-            (args) => call("openbot_browser", "act", args),
-          ),
-          tool("screenshot", "Capture the visible browser page.", { tabId: z.string() }, (args) =>
-            call("openbot_browser", "screenshot", args),
-          ),
-          tool("close_tab", "Close an OpenBot browser tab.", { tabId: z.string() }, (args) =>
-            call("openbot_browser", "close_tab", args),
-          ),
-        ],
+        ),
       }),
       openbot: createSdkMcpServer({
         name: "openbot",
