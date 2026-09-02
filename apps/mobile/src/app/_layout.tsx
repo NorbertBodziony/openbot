@@ -14,6 +14,10 @@ import { isIOS } from "@/lib/platform";
 import { queryClient } from "@/lib/query-client";
 import { MobileSessionProvider, useMobileSession } from "@/providers/mobile-session-provider";
 
+export const unstable_settings = {
+  initialRouteName: "index",
+};
+
 const UniwindGestureHandlerRootView = withUniwind(GestureHandlerRootView);
 
 function AppNavigation() {
