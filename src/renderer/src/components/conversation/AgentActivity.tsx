@@ -46,6 +46,7 @@ export function nextAgentActivityPresentation(
 
 export function AgentActivityIndicator(props: {
   bot: BotProfile | undefined;
+  detail?: string | null;
   presentation: AgentActivityPresentation;
   phase?: "active" | "exiting";
 }) {
@@ -64,7 +65,7 @@ export function AgentActivityIndicator(props: {
           animationState={props.presentation.animation}
           class="agent-activity-avatar"
         />
-        <span class="agent-activity-label">{props.presentation.label}</span>
+        <span class="agent-activity-label">{props.detail ?? props.presentation.label}</span>
       </div>
     </div>
   );

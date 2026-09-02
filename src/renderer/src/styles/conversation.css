@@ -3693,6 +3693,10 @@
 }
 
 .agent-activity-label {
+  display: -webkit-box;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   background: linear-gradient(
     90deg,
     var(--openbot-text-primary) 0%,
@@ -3707,6 +3711,9 @@
   color: transparent;
   font-size: var(--openbot-text-sm);
   line-height: 20px;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   animation: image-generation-shine 2.25s cubic-bezier(0.25, 0.1, 0.25, 1) infinite;

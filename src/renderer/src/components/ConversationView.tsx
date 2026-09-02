@@ -135,6 +135,7 @@ function conversationBubbleVariant(message: BotMessage): BubbleVariant {
 interface RenderedAgentActivity {
   activityId: string;
   bot: BotProfile | undefined;
+  detail: string | null;
   phase: "active" | "exiting";
   presentation: AgentActivityPresentation;
 }
@@ -710,6 +711,19 @@ function createConversationViewScope(props: ConversationProps) {
     if (current?.bot?.id === botId) return current.activityId;
     return `${botId}:message:${streamingMessage.id}`;
   });
+  const activeActivityDetail = createMemo(() => {
+    const turnId = props.activeTurnId ?? activeDeliveries()[0]?.turnId ?? null;
+    let streamingFallback: string | null = null;
+    for (let index = props.messages.length - 1; index >= 0; index -= 1) {
+      const message = props.messages[index];
+      if (message?.kind !== "thinking") continue;
+      const detail = message.items?.at(-1)?.trim();
+      if (!detail) continue;
+      if (turnId && message.turnId === turnId) return detail;
+      if (message.streaming && streamingFallback === null) streamingFallback = detail;
+    }
+    return streamingFallback;
+  });
   const agentActivity = createMemo<"Working" | null>(() => (activeActivityId() ? "Working" : null));
   const activityPresentation = createMemo<AgentActivityPresentation | null>(() => {
     const botId = props.bot?.id;
@@ -743,14 +757,15 @@ function createConversationViewScope(props: ConversationProps) {
     () => ({
       activityId: activeActivityId(),
       bot: props.bot,
+      detail: activeActivityDetail(),
       presentation: activityPresentation(),
     }),
-    ({ activityId, bot, presentation }) => {
+    ({ activityId, bot, detail, presentation }) => {
       clearAgentActivityShowTimer();
       clearAgentActivityExitDelayTimer();
       clearAgentActivityExitTimer();
       if (activityId && presentation) {
-        const nextActivity = { activityId, bot, phase: "active" as const, presentation };
+        const nextActivity = { activityId, bot, detail, phase: "active" as const, presentation };
         const current = untrack(renderedAgentActivity);
         if (current?.bot?.id === bot?.id) {
           setAgentActivitySpaceReserved(true);
@@ -3343,6 +3358,7 @@ export function ConversationTimeline() {
               {(activity) => (
                 <AgentActivityIndicator
                   bot={activity().bot}
+                  detail={activity().detail}
                   presentation={activity().presentation}
                   phase={activity().phase}
                 />
