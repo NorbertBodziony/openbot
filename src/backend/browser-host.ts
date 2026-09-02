@@ -22,12 +22,13 @@ import type {
 import { type DynamicRecord, isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
 import {
   app,
-  type BrowserWindow,
+  BrowserWindow,
   type NativeImage,
   type Session,
   session,
   type WebContents,
   WebContentsView,
+  webContents,
 } from "electron";
 import { BrowserCdpEngine, type BrowserUploadAssignment, type SnapshotReadResult } from "./browser-cdp";
 import { BrowserDiagnostics } from "./browser-diagnostics";
@@ -288,6 +289,11 @@ export class BrowserHost {
       throw new Error(`The browser can have up to ${INPUT_LIMITS.browserTabs} open tabs.`);
     }
     const normalizedUrl = normalizeBrowserUrl(url);
+    const focusedContents = focus ? null : webContents.getFocusedWebContents();
+    const previouslyFocused =
+      focusedContents && ![...this.#tabs.values()].some((candidate) => candidate.view.webContents === focusedContents)
+        ? focusedContents
+        : null;
     const tab = this.#createTab(randomUUID(), normalizedUrl, ownerThreadId, ownerBotId);
 
     this.#tabs.set(tab.id, tab);
@@ -295,6 +301,7 @@ export class BrowserHost {
     this.#activeTabId = tab.id;
     tab.focusOnVisible = focus;
     this.#syncAttachedView();
+    if (!focus) restoreWebContentsFocus(previouslyFocused, tab.view.webContents);
     this.#emitChanged();
     await this.#persistState();
 
@@ -303,7 +310,7 @@ export class BrowserHost {
       if (focus) {
         this.#focusTab(tab);
         setImmediate(() => this.#focusTab(tab));
-      }
+      } else restoreWebContentsFocus(previouslyFocused, tab.view.webContents);
     } catch (error) {
       if (this.#tabs.get(tab.id) === tab) {
         this.#unmountView(tab.view);
@@ -761,6 +768,14 @@ export class BrowserHost {
             }),
           );
         }
+        case "evaluate": {
+          const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
+          this.#requireToolTab(params, tabId);
+          const expression = requiredString(args, "expression", 64_000);
+          if (!expression.trim()) throw new Error("expression must not be blank.");
+          const awaitPromise = args.awaitPromise === undefined ? true : requiredBoolean(args, "awaitPromise");
+          return textResult(await this.#runEvaluation(tabId, expression, awaitPromise, readTimeout(args)));
+        }
         case "set_environment": {
           const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
           this.#requireToolTab(params, tabId);
@@ -1117,6 +1132,11 @@ export class BrowserHost {
   ): Promise<BrowserSnapshot> {
     const tab = this.#requireTab(tabId);
     const started = tab.queue.then(() => {
+      const focusedContents = webContents.getFocusedWebContents();
+      const previouslyFocused =
+        focusedContents && ![...this.#tabs.values()].some((candidate) => candidate.view.webContents === focusedContents)
+          ? focusedContents
+          : null;
       const deadline = Date.now() + timeoutMs;
       const timeoutMessage = `Browser ${action} timed out.`;
       const snapshotDrains: Promise<unknown>[] = [];
@@ -1124,6 +1144,7 @@ export class BrowserHost {
       const operationCompletion = (async () => {
         let highlighted = false;
         try {
+          tab.view.webContents.focus();
           if (target && target.kind !== "point") {
             highlighted = await tab.engine.highlight(target).then(
               () => true,
@@ -1170,11 +1191,48 @@ export class BrowserHost {
             });
           }
           throw error;
-        });
+        })
+        .finally(() => restoreWebContentsFocus(previouslyFocused, tab.view.webContents));
       const drained = Promise.allSettled([operationCompletion, response])
         .then(() => (tab.view.webContents.isLoading() ? tab.engine.stopLoading().catch(() => undefined) : undefined))
         .then(() => Promise.allSettled(snapshotDrains))
         .then(() => undefined);
+      return { drained, response };
+    });
+    const result = started.then(({ response }) => response);
+    tab.queue = started.then(
+      ({ drained }) => drained,
+      () => undefined,
+    );
+    return result;
+  }
+
+  async #runEvaluation(tabId: string, expression: string, awaitPromise: boolean, timeoutMs: number): Promise<unknown> {
+    const tab = this.#requireTab(tabId);
+    const started = tab.queue.then(() => {
+      const deadline = Date.now() + timeoutMs;
+      const timeoutMessage = "Browser evaluate timed out.";
+      const operationCompletion = tab.engine.evaluate(
+        expression,
+        awaitPromise,
+        remainingTime(deadline, timeoutMessage),
+      );
+      const response = withTimeout(operationCompletion, remainingTime(deadline, timeoutMessage), timeoutMessage)
+        .then(async (value) => {
+          const settleTimeout = remainingTime(deadline, timeoutMessage);
+          await withTimeout(tab.engine.settle(settleTimeout), settleTimeout, timeoutMessage);
+          tab.diagnostics.action({ action: "evaluate", outcome: "success" });
+          return value;
+        })
+        .catch((error) => {
+          tab.diagnostics.action({
+            action: "evaluate",
+            outcome: "error",
+            detail: String(error).slice(0, 2_000),
+          });
+          throw error;
+        });
+      const drained = Promise.allSettled([operationCompletion, response]).then(() => undefined);
       return { drained, response };
     });
     const result = started.then(({ response }) => response);
@@ -1403,6 +1461,16 @@ function controlSessionId(threadId: string, turnId: string): string {
   return `${threadId}:${turnId}`;
 }
 
+function restoreWebContentsFocus(previous: WebContents | null, controlled: WebContents): void {
+  const current = webContents.getFocusedWebContents();
+  if (current && current !== controlled) return;
+  if (previous && !previous.isDestroyed()) {
+    const window = BrowserWindow.fromWebContents(previous);
+    if (window && !window.isDestroyed()) window.focus();
+    previous.focus();
+  }
+}
+
 function browserControlAction(tool: string, args: DynamicRecord): BrowserControlAction {
   switch (tool) {
     case "open":
@@ -1441,6 +1509,8 @@ function browserControlAction(tool: string, args: DynamicRecord): BrowserControl
     case "upload_files":
       return "type";
     case "wait_for":
+      return "snapshot";
+    case "evaluate":
       return "snapshot";
     case "set_environment":
       return "snapshot";
@@ -1484,6 +1554,8 @@ function browserControlDetailAction(tool: string): BrowserControlDetailAction | 
       return "upload-files";
     case "wait_for":
       return "wait-for";
+    case "evaluate":
+      return "evaluate";
     case "set_environment":
       return "set-environment";
     case "recording_start":

@@ -2970,8 +2970,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     });
   }
 
-  async #openAgentAttachmentSources(botId: string, paths: string[]): Promise<GeneratedAttachmentSource[]> {
-    const results = await Promise.allSettled(paths.map((path) => this.#openAgentAttachmentSource(botId, path)));
+  async #openAgentAttachmentSources(
+    botId: string,
+    paths: string[],
+    options: { allowAnyReadablePath?: boolean } = {},
+  ): Promise<GeneratedAttachmentSource[]> {
+    const results = await Promise.allSettled(
+      paths.map((path) => this.#openAgentAttachmentSource(botId, path, options.allowAnyReadablePath === true)),
+    );
     const sources = results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
     const failure = results.find((result) => result.status === "rejected");
     if (failure?.status === "rejected") {
@@ -2985,7 +2991,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return sources;
   }
 
-  async #openAgentAttachmentSource(botId: string, inputPath: string): Promise<GeneratedAttachmentSource> {
+  async #openAgentAttachmentSource(
+    botId: string,
+    inputPath: string,
+    allowAnyReadablePath: boolean,
+  ): Promise<GeneratedAttachmentSource> {
     const bot = this.#requireKnownBot(botId);
     const value = inputPath.trim();
     const [workspaceRoot, sharedRoot] = await Promise.all([
@@ -3007,9 +3017,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
     for (const candidate of candidates) {
       try {
-        if ((await lstat(candidate)).isSymbolicLink()) continue;
+        if (!allowAnyReadablePath && (await lstat(candidate)).isSymbolicLink()) continue;
         const resolved = await realpath(candidate);
-        if (!isWithin(workspaceRoot, resolved) && !isWithin(sharedRoot, resolved)) continue;
+        if (!allowAnyReadablePath && !isWithin(workspaceRoot, resolved) && !isWithin(sharedRoot, resolved)) continue;
         const authorizedMetadata = await lstat(resolved);
         if (authorizedMetadata.isSymbolicLink() || !authorizedMetadata.isFile()) continue;
         const handle = await open(resolved, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -3031,7 +3041,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         // Try the other permitted root for relative paths.
       }
     }
-    throw new Error("Attachment files must exist inside this agent's workspace or the OpenBot shared directory.");
+    throw new Error(
+      allowAnyReadablePath
+        ? "Browser upload files must exist, be regular files, and be readable by OpenBot."
+        : "Attachment files must exist inside this agent's workspace or the OpenBot shared directory.",
+    );
   }
 
   async #handleBrowserDynamicTool(botId: string, params: DynamicToolCallParams): Promise<DynamicToolResult> {
@@ -3062,7 +3076,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const tabId = args.tabId;
     const uploadTarget = await this.#browser.resolveUploadTarget(params);
-    const sources = await this.#openAgentAttachmentSources(botId, args.paths);
+    const sources = await this.#openAgentAttachmentSources(botId, args.paths, { allowAnyReadablePath: true });
     let stagingRoot: string | null = null;
     const reservationId = Symbol("browser-upload");
     let reservation: BrowserUploadReservation | null = null;

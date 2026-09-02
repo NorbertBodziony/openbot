@@ -157,6 +157,23 @@ export const BROWSER_TOOL_DEFINITIONS: readonly BrowserToolDefinition[] = [
     },
   },
   {
+    name: "evaluate",
+    description:
+      "Evaluate JavaScript in the sandboxed main-frame page context. Prefer snapshots and semantic actions; use this for inspection or unsupported interactions. Returns only a JSON-serializable value up to 64 KB.",
+    shape: {
+      tabId,
+      expression: z
+        .string()
+        .min(1)
+        .max(64_000)
+        .refine((value) => value.trim().length > 0, {
+          message: "expression must not be blank",
+        }),
+      awaitPromise: z.boolean().optional(),
+      timeoutMs: timeout,
+    },
+  },
+  {
     name: "set_environment",
     description:
       "Set a memory-bounded viewport, color scheme, and reduced-motion emulation without changing browser identity or user agent.",

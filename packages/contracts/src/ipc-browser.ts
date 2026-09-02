@@ -120,6 +120,7 @@ export type BrowserControlDetailAction =
   | "drag"
   | "upload-files"
   | "wait-for"
+  | "evaluate"
   | "set-environment"
   | "recording-start"
   | "recording-stop";

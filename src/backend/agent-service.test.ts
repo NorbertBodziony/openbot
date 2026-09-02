@@ -927,7 +927,7 @@ describe.sequential("AgentService", () => {
     expect(calls[0]).toMatchObject({ threadId: openbotThreadId, ownerBotId: "chief" });
   });
 
-  it("authorizes browser uploads against the agent workspace and shared directory", async () => {
+  it("stages browser uploads from any local path readable by OpenBot", async () => {
     const calls: DynamicToolCallParams[] = [];
     let uploadPath = "";
     let outsidePath = "";
@@ -1150,22 +1150,20 @@ describe.sequential("AgentService", () => {
 
     client.emit("request", {
       method: "item/tool/call",
-      id: "browser-upload-denied",
+      id: "browser-upload-outside",
       params: {
         threadId: providerThreadId,
         turnId: "turn-browser-upload",
-        callId: "browser-upload-denied",
+        callId: "browser-upload-outside",
         namespace: "openbot_browser",
         tool: "upload_files",
         arguments: { tabId: "tab", target: { kind: "css", selector: "input" }, paths: [outsidePath] },
       },
     });
 
-    await waitFor(() => client.errors.some((response) => response.id === "browser-upload-denied"));
-    expect(client.errors.find((response) => response.id === "browser-upload-denied")?.error.message).toContain(
-      "workspace or the OpenBot shared directory",
-    );
-    expect(calls).toHaveLength(13);
+    await waitFor(() => client.responses.some((response) => response.id === "browser-upload-outside"));
+    expect(stagedContents.at(-1)).toBe("private");
+    expect(calls).toHaveLength(14);
     documentChanged("tab", new Set());
     await waitFor(async () =>
       (await Promise.allSettled(stagedPaths.slice(1).map((path) => readFile(path)))).every(
@@ -1204,7 +1202,7 @@ describe.sequential("AgentService", () => {
         client.responses.filter((response) => String(response.id).startsWith("browser-upload-concurrent-")).length ===
         10,
     );
-    expect(calls).toHaveLength(23);
+    expect(calls).toHaveLength(24);
     releaseHeldUploads();
     await heldUploads;
     await Promise.resolve();

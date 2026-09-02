@@ -50,6 +50,7 @@ interface TargetRecord {
   backendNodeId: number;
   targetId?: string;
   element: BrowserElement;
+  visibleText: string;
 }
 
 interface SnapshotTarget {
@@ -457,10 +458,33 @@ export class BrowserCdpEngine {
 
   async drag(source: BrowserTarget, target: BrowserTarget): Promise<void> {
     await this.#lease(async (send) => {
-      const from = await this.#targetPoint(send, source, true);
-      const to = await this.#targetPoint(send, target, true);
-      if (from.sessionId !== to.sessionId) throw new Error("Cross-frame drag is not supported.");
+      const initialFrom = await this.#targetPoint(send, source, true);
+      const initialTo = await this.#targetPoint(send, target, true);
+      if (initialFrom.sessionId !== initialTo.sessionId) throw new Error("Cross-frame drag is not supported.");
+      const from = await this.#targetPoint(send, source, true, false);
+      const to = await this.#targetPoint(send, target, true, false);
       const sessionId = from.sessionId;
+      let stopWaitingForIntercept = () => undefined;
+      const interceptedDragData = new Promise<CdpResult | null>((resolve) => {
+        const debuggerClient = this.#contents.debugger;
+        const listener = (_event: Electron.Event, method: string, params: unknown, messageSessionId?: string) => {
+          if (method !== "Input.dragIntercepted" || (sessionId !== undefined && messageSessionId !== sessionId)) {
+            return;
+          }
+          stopWaitingForIntercept();
+          resolve(isRecord(params) ? (recordValue(params.data) ?? null) : null);
+        };
+        const timeout = setTimeout(() => {
+          stopWaitingForIntercept();
+          resolve(null);
+        }, 2_000);
+        stopWaitingForIntercept = () => {
+          clearTimeout(timeout);
+          debuggerClient.removeListener("message", listener);
+        };
+        debuggerClient.on("message", listener);
+      });
+      await send("Input.setInterceptDrags", { enabled: true }, sessionId);
       await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: from.x, y: from.y }, sessionId);
       await send(
         "Input.dispatchMouseEvent",
@@ -469,19 +493,37 @@ export class BrowserCdpEngine {
       );
       let released = false;
       try {
+        const activationX = from.x + Math.sign(to.x - from.x) * 4;
+        const activationY = from.y + Math.sign(to.y - from.y) * 4;
+        await send(
+          "Input.dispatchMouseEvent",
+          {
+            type: "mouseMoved",
+            x: activationX,
+            y: activationY,
+            button: "left",
+            buttons: 1,
+          },
+          sessionId,
+        );
         for (let step = 1; step <= 8; step++) {
           await send(
             "Input.dispatchMouseEvent",
             {
               type: "mouseMoved",
-              x: from.x + ((to.x - from.x) * step) / 8,
-              y: from.y + ((to.y - from.y) * step) / 8,
+              x: activationX + ((to.x - activationX) * step) / 8,
+              y: activationY + ((to.y - activationY) * step) / 8,
               button: "left",
               buttons: 1,
             },
             sessionId,
           );
         }
+        const dragData = await interceptedDragData;
+        if (!dragData) throw new Error("The source did not start a native drag operation.");
+        await send("Input.dispatchDragEvent", { type: "dragEnter", x: to.x, y: to.y, data: dragData }, sessionId);
+        await send("Input.dispatchDragEvent", { type: "dragOver", x: to.x, y: to.y, data: dragData }, sessionId);
+        await send("Input.dispatchDragEvent", { type: "drop", x: to.x, y: to.y, data: dragData }, sessionId);
         await send(
           "Input.dispatchMouseEvent",
           { type: "mouseReleased", x: to.x, y: to.y, button: "left", clickCount: 1 },
@@ -489,6 +531,8 @@ export class BrowserCdpEngine {
         );
         released = true;
       } finally {
+        stopWaitingForIntercept();
+        await send("Input.setInterceptDrags", { enabled: false }, sessionId).catch(() => undefined);
         if (!released) {
           await send(
             "Input.dispatchMouseEvent",
@@ -678,6 +722,39 @@ export class BrowserCdpEngine {
     });
   }
 
+  async evaluate(expression: string, awaitPromise = true, timeoutMs = ACTION_TIMEOUT_MS): Promise<unknown> {
+    return this.#lease(async (send) => {
+      await send("Runtime.enable");
+      const result = await send("Runtime.evaluate", {
+        expression,
+        awaitPromise,
+        returnByValue: true,
+        userGesture: true,
+        timeout: clamp(timeoutMs, 1, WAIT_TIMEOUT_MS),
+        disableBreaks: true,
+      });
+      const exception = recordValue(result.exceptionDetails);
+      if (exception) throw new Error(`Browser evaluation failed: ${exceptionDescription(exception)}`);
+      const remoteObject = recordValue(result.result);
+      if (!remoteObject || !("value" in remoteObject) || "unserializableValue" in remoteObject) {
+        throw new Error("Browser evaluation result is not JSON-serializable.");
+      }
+      const value = remoteObject.value;
+      let serialized: string | undefined;
+      try {
+        serialized = JSON.stringify(value);
+      } catch {
+        throw new Error("Browser evaluation result is not JSON-serializable.");
+      }
+      if (serialized === undefined) throw new Error("Browser evaluation result is not JSON-serializable.");
+      const bytes = Buffer.byteLength(serialized, "utf8");
+      if (bytes > MAX_RESULT_BYTES) {
+        throw new Error(`Browser evaluation result exceeds 64 KB (${bytes} bytes).`);
+      }
+      return value;
+    });
+  }
+
   async settle(timeoutMs = ACTION_TIMEOUT_MS): Promise<void> {
     await this.#lease(async (send) => {
       if (this.#contents.isLoading()) await waitForLoading(this.#contents, timeoutMs);
@@ -826,13 +903,15 @@ export class BrowserCdpEngine {
       }
     }
     await this.#refreshSemanticTargets(send, deadline);
-    const candidates = [...this.#targets.values()].filter(({ element }) => {
+    const candidates = [...this.#targets.values()].filter(({ element, visibleText }) => {
       if (target.kind === "role") {
         if (element.role?.toLowerCase() !== target.role.toLowerCase()) return false;
         if (!target.name) return true;
         return textMatches(element.name, target.name, target.exact);
       }
-      return textMatches(`${element.name} ${element.description}`, target.text, target.exact);
+      return [element.name, element.description, visibleText].some((value) =>
+        textMatches(value, target.text, target.exact),
+      );
     });
     if (candidates.length === 0) throw new Error(`No element matches ${describeTarget(target)}.`);
     if (candidates.length > 1) {
@@ -854,10 +933,11 @@ export class BrowserCdpEngine {
     send: SendCommand,
     target: BrowserTarget,
     hitTest: boolean,
+    scrollIntoView = true,
   ): Promise<{ x: number; y: number; sessionId?: string }> {
     const resolved = await this.#resolveTarget(send, target);
     if (!resolved.backendNodeId) return { x: resolved.x, y: resolved.y };
-    return this.#elementPoint(send, resolved.backendNodeId, hitTest, resolved.sessionId);
+    return this.#elementPoint(send, resolved.backendNodeId, hitTest, resolved.sessionId, scrollIntoView);
   }
 
   async #elementPoint(
@@ -865,8 +945,9 @@ export class BrowserCdpEngine {
     backendNodeId: number,
     hitTest: boolean,
     sessionId?: string,
+    scrollIntoView = true,
   ): Promise<{ x: number; y: number; sessionId?: string }> {
-    await send("DOM.scrollIntoViewIfNeeded", { backendNodeId }, sessionId);
+    if (scrollIntoView) await send("DOM.scrollIntoViewIfNeeded", { backendNodeId }, sessionId);
     const box = await send("DOM.getBoxModel", { backendNodeId }, sessionId);
     const model = recordValue(box.model);
     const quad = Array.isArray(model?.content) ? model.content.filter(isFiniteNumber) : [];
@@ -1137,7 +1218,12 @@ async function collectBoundedSnapshot(
         frame: frameId ? { id: frameId, url: redactedMetadataUrl(capture.url) } : null,
       };
       elements.push(element);
-      targets.set(ref, { backendNodeId: candidate.backendNodeId, targetId: capture.targetId, element });
+      targets.set(ref, {
+        backendNodeId: candidate.backendNodeId,
+        targetId: capture.targetId,
+        element,
+        visibleText: candidate.visibleText,
+      });
       if (elements.length >= MAX_SNAPSHOT_ELEMENTS) break;
     }
   }
@@ -1390,12 +1476,18 @@ async function collectActionableNodes(
   capture: SnapshotTarget,
   limit: number,
   deadline?: number,
-): Promise<Array<{ backendNodeId: number; node: CdpResult; ax: CdpResult; role: string }>> {
+): Promise<Array<{ backendNodeId: number; node: CdpResult; ax: CdpResult; role: string; visibleText: string }>> {
   assertBeforeDeadline(deadline);
   await Promise.all([send("DOM.enable", {}, capture.sessionId), send("Accessibility.enable", {}, capture.sessionId)]);
   assertBeforeDeadline(deadline);
   const contextId = await automationContextId(send, capture.sessionId);
-  const results: Array<{ backendNodeId: number; node: CdpResult; ax: CdpResult; role: string }> = [];
+  const results: Array<{
+    backendNodeId: number;
+    node: CdpResult;
+    ax: CdpResult;
+    role: string;
+    visibleText: string;
+  }> = [];
   const batchSize = MAX_SNAPSHOT_ELEMENTS;
   const collection = await send(
     "Runtime.evaluate",
@@ -1430,9 +1522,19 @@ async function collectActionableNodes(
       const batch = objectIds.slice(offset, offset + batchSize);
       const resolved = await Promise.all(
         batch.map(async (objectId) => {
-          const [description, partialAxTree] = await Promise.all([
+          const [description, partialAxTree, visibleTextResult] = await Promise.all([
             send("DOM.describeNode", { objectId, depth: 0 }, capture.sessionId),
             send("Accessibility.getPartialAXTree", { objectId, fetchRelatives: false }, capture.sessionId),
+            send(
+              "Runtime.callFunctionOn",
+              {
+                objectId,
+                functionDeclaration:
+                  "function() { return String(this.innerText ?? this.textContent ?? '').replace(/\\s+/g, ' ').trim().slice(0, 500); }",
+                returnByValue: true,
+              },
+              capture.sessionId,
+            ),
           ]);
           const node = recordValue(description.node);
           const backendNodeId = numberValue(node?.backendNodeId);
@@ -1443,7 +1545,13 @@ async function collectActionableNodes(
           if (!ax || ax.ignored === true) return null;
           const role = axValue(ax.role).toLowerCase() || fallbackRole(node);
           if (!ACTIONABLE_ROLES.has(role)) return null;
-          return { backendNodeId, node, ax, role };
+          return {
+            backendNodeId,
+            node,
+            ax,
+            role,
+            visibleText: stringValue(recordValue(visibleTextResult.result)?.value),
+          };
         }),
       );
       results.push(...resolved.filter((candidate) => candidate !== null).slice(0, limit - results.length));

@@ -129,6 +129,7 @@ const server = createServer((request, response) => {
       <div contenteditable="true" role="textbox" aria-label="Notes"></div>
       <input type="number" aria-label="Quantity" value="12" />
       <button aria-label="Duplicate">One</button><button aria-label="Duplicate">Two</button>
+      <button aria-label="Accessible override" onclick="document.querySelector('output').textContent='visible-text:' + event.isTrusted">Unique action text</button>
       <span style="position:relative;display:inline-block"><button aria-label="Covered">Covered</button><span style="position:absolute;inset:0;z-index:2" aria-hidden="true"></span></span>
       <span style="position:relative;display:inline-block"><button style="width:200px" aria-label="Partially covered" onclick="document.querySelector('output').textContent='partial:' + event.isTrusted">Partially covered</button><span style="position:absolute;left:70px;right:70px;top:0;bottom:0;z-index:2" aria-hidden="true"></span></span>
       <span hidden data-hidden-wait>hidden wait sentinel</span>
@@ -646,6 +647,15 @@ async function main(): Promise<void> {
     if (ambiguous.success || !toolError(ambiguous).includes("Candidates:")) {
       throw new Error("V2 semantic locator did not reject an ambiguous target.");
     }
+    const visibleTextTarget = await callBrowserTool(browser, "click", {
+      tabId: v2Tab.id,
+      target: { kind: "text", text: "Unique action text", exact: true },
+    });
+    if (!visibleTextTarget.success || !String(toolTextPayload(visibleTextTarget)?.text).includes("visible-text:true")) {
+      throw new Error(
+        `V2 visible-text locator ignored text overridden by an accessible name: ${toolError(visibleTextTarget)}`,
+      );
+    }
     const ambiguousCss = await callBrowserTool(browser, "click", {
       tabId: v2Tab.id,
       target: { kind: "css", selector: 'button[aria-label="Duplicate"]' },
@@ -722,7 +732,17 @@ async function main(): Promise<void> {
     if (!dragged.success) throw new Error(`V2 drag failed: ${toolError(dragged)}`);
     const dragValue = await v2Contents.executeJavaScript("document.querySelector('output').textContent", true);
     if (dragValue !== "drag:true") {
-      throw new Error("V2 drag did not produce a trusted drop event.");
+      const dragDiagnostics = await v2Contents.executeJavaScript(
+        `(() => ({
+          output: document.querySelector('output').textContent,
+          source: document.querySelector('[aria-label="Drag source"]').getBoundingClientRect().toJSON(),
+          target: document.querySelector('[aria-label="Drop target"]').getBoundingClientRect().toJSON(),
+          scrollY,
+          viewport: { width: innerWidth, height: innerHeight },
+        }))()`,
+        true,
+      );
+      throw new Error(`V2 drag did not produce a trusted drop event: ${JSON.stringify(dragDiagnostics)}`);
     }
     const spaClick = await callBrowserTool(browser, "click", {
       tabId: v2Tab.id,
@@ -884,12 +904,48 @@ async function main(): Promise<void> {
         `V2 DOM-quiet wait did not recheck its matched text condition: ${toolError(invalidatedQuietWait)}`,
       );
     }
-    const removedEvaluation = await callBrowserTool(browser, "evaluate", {
+    const evaluated = await callBrowserTool(browser, "evaluate", {
       tabId: v2Tab.id,
-      expression: "document.cookie",
+      expression:
+        "new Promise(resolve => setTimeout(() => { document.body.dataset.evaluated = 'true'; resolve({ title: document.title, async: true, sandboxed: typeof process === 'undefined' && typeof require === 'undefined' }); }, 25))",
     });
-    if (removedEvaluation.success || !toolError(removedEvaluation).includes("Unknown browser tool")) {
-      throw new Error("V2 exposed arbitrary page evaluation.");
+    const evaluatedValue = toolTextPayload(evaluated);
+    if (!evaluated.success || evaluatedValue?.async !== true || evaluatedValue.sandboxed !== true) {
+      throw new Error(`V2 page evaluation did not return its sandboxed async value: ${toolError(evaluated)}`);
+    }
+    const evaluatedMutation = await v2Contents.executeJavaScript("document.body.dataset.evaluated", true);
+    if (evaluatedMutation !== "true") throw new Error("V2 page evaluation did not run in the main-frame page context.");
+    const evaluationSnapshot = await browser.snapshot(v2Tab.id);
+    if (!evaluationSnapshot.actions.some((action) => action.action === "evaluate" && action.outcome === "success")) {
+      throw new Error("V2 page evaluation was not recorded in browser action history.");
+    }
+    const thrownEvaluation = await callBrowserTool(browser, "evaluate", {
+      tabId: v2Tab.id,
+      expression: "(() => { throw new Error('evaluation-smoke-error'); })()",
+    });
+    if (thrownEvaluation.success || !toolError(thrownEvaluation).includes("evaluation-smoke-error")) {
+      throw new Error("V2 page evaluation did not return a page exception.");
+    }
+    const unserializableEvaluation = await callBrowserTool(browser, "evaluate", {
+      tabId: v2Tab.id,
+      expression: "undefined",
+    });
+    if (unserializableEvaluation.success || !toolError(unserializableEvaluation).includes("not JSON-serializable")) {
+      throw new Error("V2 page evaluation accepted an unserializable result.");
+    }
+    const oversizedEvaluation = await callBrowserTool(browser, "evaluate", {
+      tabId: v2Tab.id,
+      expression: "'x'.repeat(70_000)",
+    });
+    if (oversizedEvaluation.success || !toolError(oversizedEvaluation).includes("exceeds 64 KB")) {
+      throw new Error("V2 page evaluation accepted an oversized result.");
+    }
+    const evaluationAfterFailure = await callBrowserTool(browser, "evaluate", {
+      tabId: v2Tab.id,
+      expression: "({ queueRecovered: true })",
+    });
+    if (!evaluationAfterFailure.success || toolTextPayload(evaluationAfterFailure)?.queueRecovered !== true) {
+      throw new Error(`V2 page evaluation left the action queue unusable: ${toolError(evaluationAfterFailure)}`);
     }
     const timedOut = await callBrowserTool(browser, "wait_for", {
       tabId: v2Tab.id,
@@ -1204,6 +1260,40 @@ async function main(): Promise<void> {
       throw new Error("V2 snapshot did not enforce its value and aggregate serialization limits.");
     }
     await browser.close(boundedTab.id);
+    const focusSentinel = new BrowserWindow({
+      show: false,
+      opacity: 0,
+      width: 64,
+      height: 64,
+    });
+    await focusSentinel.loadURL("data:text/html,<input autofocus>");
+    focusSentinel.show();
+    focusSentinel.focus();
+    focusSentinel.webContents.focus();
+    await waitFor(async () => webContents.getFocusedWebContents() === focusSentinel.webContents);
+    const backgroundTab = await browser.open(origin, "smoke-thread", "smoke-bot");
+    if (webContents.getFocusedWebContents() !== focusSentinel.webContents) {
+      throw new Error("A background browser open stole focus from an unrelated application renderer.");
+    }
+    const backgroundSnapshot = await browser.snapshot(backgroundTab.id);
+    if (webContents.getFocusedWebContents() !== focusSentinel.webContents) {
+      throw new Error("A background CDP operation stole focus from an unrelated application renderer.");
+    }
+    const backgroundSave = backgroundSnapshot.elements.find((element) => element.name === "Save");
+    if (!backgroundSave) throw new Error("The background focus fixture did not expose its action.");
+    const backgroundAction = await callBrowserTool(browser, "click", {
+      tabId: backgroundTab.id,
+      target: {
+        kind: "ref",
+        ref: backgroundSave.ref,
+        revision: backgroundSnapshot.revision,
+      },
+    });
+    if (!backgroundAction.success || webContents.getFocusedWebContents() !== focusSentinel.webContents) {
+      throw new Error("A background browser action did not restore focus to the unrelated application renderer.");
+    }
+    await browser.close(backgroundTab.id);
+    focusSentinel.destroy();
     process.stdout.write("BrowserHost: V2 semantics, adaptive image, iframe, upload, waits, and emulation passed.\n");
 
     const headerTab = await browser.open(`${origin}/headers`, "smoke-thread");
@@ -1317,6 +1407,7 @@ async function main(): Promise<void> {
       ["click", { tabId: tab.id, target: { kind: "point", x: 10, y: 10 }, clickCount: 1.5 }],
       ["click", { tabId: tab.id, target: { kind: "point", x: 10, y: 10 }, modifiers: ["Bogus"] }],
       ["scroll", { tabId: tab.id, deltaY: 100_001 }],
+      ["evaluate", { tabId: tab.id, expression: "1", returnByValue: false }],
       ["set_environment", { tabId: tab.id, width: 390.5 }],
     ] as const;
     for (const [tool, argumentsValue] of invalidToolArguments) {

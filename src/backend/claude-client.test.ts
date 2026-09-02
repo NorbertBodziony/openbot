@@ -80,6 +80,14 @@ fi
       });
       const options: DynamicRecord | null = isDynamicRecord(params.options) ? params.options : null;
       const mcpServers: DynamicRecord | null = isDynamicRecord(options?.mcpServers) ? options.mcpServers : null;
+      const browserServer = mcpServers?.openbot_browser;
+      const browserServerInstance = isDynamicRecord(browserServer) ? browserServer.instance : null;
+      const registeredBrowserTools = isDynamicRecord(browserServerInstance)
+        ? browserServerInstance._registeredTools
+        : null;
+      expect(isDynamicRecord(registeredBrowserTools) ? Object.keys(registeredBrowserTools) : []).toEqual(
+        expect.arrayContaining(["evaluate", "request_takeover"]),
+      );
       const openbotServer = mcpServers?.openbot;
       const serverInstance = isDynamicRecord(openbotServer) ? openbotServer.instance : null;
       const registeredTools = isDynamicRecord(serverInstance) ? serverInstance._registeredTools : null;
