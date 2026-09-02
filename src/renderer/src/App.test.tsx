@@ -1487,14 +1487,11 @@ describe("OpenBot connected desktop shell", () => {
     const label = status.querySelector(".agent-activity-label");
     expect(label?.textContent?.trim()).toBeTruthy();
     emitAgentEvent?.({
-      type: "conversation-delta",
+      type: "turn-progress",
       botId: "chief",
       threadId: "thread-chief",
       turnId: "turn-live-status",
-      messageId: "activity:turn-live-status",
-      delta: "Searching for current information…",
-      createdAt: "2026-09-02T10:00:00.500Z",
-      revision: 1,
+      detail: "Searching for current information…",
     });
     await waitFor(() => expect(label).toHaveTextContent("Searching for current information…"));
 
@@ -1536,14 +1533,11 @@ describe("OpenBot connected desktop shell", () => {
     );
     await waitFor(() => expect(label).toHaveTextContent("Verifying the final build artifacts"));
     emitAgentEvent?.({
-      type: "conversation-delta",
+      type: "turn-progress",
       botId: "chief",
       threadId: "thread-chief",
       turnId: "turn-live-status",
-      messageId: "activity:turn-live-status",
-      delta: "Reviewing the verification results…",
-      createdAt: "2026-09-02T10:00:03.000Z",
-      revision: 4,
+      detail: "Reviewing the verification results…",
     });
     await waitFor(() => expect(label).toHaveTextContent("Reviewing the verification results…"));
 

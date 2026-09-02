@@ -543,7 +543,7 @@ export class TeamWebRtcHostGateway {
         encodeTeamProtocolV1ClientEvent({
           type: "agent-event-scope",
           includeConversations: true,
-          capabilities: TEAM_CURRENT_CAPABILITIES,
+          capabilities: TEAM_CURRENT_CAPABILITIES.filter((capability) => this.#peerCapabilities.has(capability)),
         }),
       );
     });

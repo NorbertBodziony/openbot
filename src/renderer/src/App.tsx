@@ -1155,6 +1155,9 @@ export function createAppController(props: AppProps = {}) {
       case "conversation-delta":
         applyConversationDelta(event);
         return;
+      case "turn-progress":
+        applyTurnProgress(event);
+        return;
       case "queue-changed":
         queueSnapshotRequests.set(event.snapshot.botId, (queueSnapshotRequests.get(event.snapshot.botId) ?? 0) + 1);
         setQueues((current) => ({
@@ -1519,32 +1522,6 @@ export function createAppController(props: AppProps = {}) {
   }
 
   function applyConversationDelta(event: Extract<AgentEvent, { type: "conversation-delta" }>) {
-    if (event.messageId === `activity:${event.turnId}`) {
-      setLiveMessages((current) => {
-        const messages = current[event.botId] ?? [];
-        const activityId = `thinking:activity:${event.turnId}`;
-        const existing = messages.find((message) => message.id === activityId);
-        const activity: BotMessage = {
-          id: activityId,
-          turnId: event.turnId,
-          author: "bot",
-          body: "",
-          time: formatTime(event.createdAt),
-          createdAt: event.createdAt,
-          streaming: true,
-          itemType: "commentary",
-          kind: "thinking",
-          items: [cleanAgentMessageText(event.delta)],
-          itemIds: [event.messageId],
-        };
-        if (existing) {
-          updateStored(existing, activity);
-          return current;
-        }
-        return { ...current, [event.botId]: [...messages, createStoredMessage(activity)] };
-      });
-      return;
-    }
     if (event.revision <= (conversationRevisions()[event.botId] ?? -1)) return;
     const pendingSnapshot = pendingConversationSnapshots.get(event.botId);
     if (pendingSnapshot) {
@@ -1616,6 +1593,31 @@ export function createAppController(props: AppProps = {}) {
       }
     }
     setConversationLoaded((current) => ({ ...current, [event.botId]: true }));
+  }
+
+  function applyTurnProgress(event: Extract<AgentEvent, { type: "turn-progress" }>) {
+    setLiveMessages((current) => {
+      const messages = current[event.botId] ?? [];
+      const activityId = `thinking:activity:${event.turnId}`;
+      const existing = messages.find((message) => message.id === activityId);
+      const activity: BotMessage = {
+        id: activityId,
+        turnId: event.turnId,
+        author: "bot",
+        body: "",
+        time: "now",
+        streaming: true,
+        itemType: "commentary",
+        kind: "thinking",
+        items: [cleanAgentMessageText(event.detail)],
+        itemIds: [`activity:${event.turnId}`],
+      };
+      if (existing) {
+        updateStored(existing, activity);
+        return current;
+      }
+      return { ...current, [event.botId]: [...messages, createStoredMessage(activity)] };
+    });
   }
 
   function applyConversation(snapshot: ConversationSnapshot, markNewMessagesRead = false) {

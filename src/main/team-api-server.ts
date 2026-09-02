@@ -46,7 +46,9 @@ import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } fr
 import {
   isTeamCurrentCapability,
   supportsTeamSemanticTags,
+  TEAM_AGENT_ACTIVITY_CAPABILITY,
   TEAM_CURRENT_CAPABILITIES,
+  type TeamCurrentCapability,
 } from "@openbot/contracts/team-protocol/current";
 import {
   decodeTeamProtocolV1ClientEvent,
@@ -1804,7 +1806,8 @@ function markerSupported(itemType: string | undefined, capabilities: ReadonlySet
   return true;
 }
 
-function eventCapability(event: AgentEvent): (typeof TEAM_PROTOCOL_V1_CAPABILITIES)[number] | null {
+function eventCapability(event: AgentEvent): TeamCurrentCapability | null {
+  if (event.type === "turn-progress") return TEAM_AGENT_ACTIVITY_CAPABILITY;
   if (event.type === "runtime-snapshot") return "agent-runtime-snapshots";
   if (event.type === "sidebar-layout-changed") return "sidebar-layout";
   if (event.type === "browser-changed" || event.type === "browser-control-changed") return "browser-control";

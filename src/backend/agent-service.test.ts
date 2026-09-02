@@ -676,10 +676,10 @@ describe.sequential("AgentService", () => {
 
     const progress = () =>
       events.filter(
-        (event): event is Extract<AgentEvent, { type: "conversation-delta" }> =>
-          event.type === "conversation-delta" && event.messageId === `activity:${turnId}`,
+        (event): event is Extract<AgentEvent, { type: "turn-progress" }> =>
+          event.type === "turn-progress" && event.turnId === turnId,
       );
-    expect(progress().at(-1)?.delta).toBe("Reviewing the request and planning the next step…");
+    expect(progress().at(-1)?.detail).toBe("Reviewing the request and planning the next step…");
     const stored = await service.readConversation("chief");
     expect(stored.messages.find((message) => message.id === `activity:${turnId}`)).toBeUndefined();
     const conversationEventCount = () => events.filter((event) => event.type === "conversation").length;
@@ -693,7 +693,7 @@ describe.sequential("AgentService", () => {
         item: { id: "tool-1", type: "toolCall", name: "web_search", status: "in_progress" },
       }),
     );
-    await waitFor(() => progress().at(-1)?.delta === "Searching for current information…");
+    await waitFor(() => progress().at(-1)?.detail === "Searching for current information…");
 
     client.emit(
       "notification",
@@ -703,7 +703,7 @@ describe.sequential("AgentService", () => {
         item: { id: "tool-1", type: "toolCall", name: "web_search", status: "completed" },
       }),
     );
-    await waitFor(() => progress().at(-1)?.delta === "Reviewing the sources and information I found…");
+    await waitFor(() => progress().at(-1)?.detail === "Reviewing the sources and information I found…");
     expect(conversationEventCount()).toBe(persistedBeforeTools);
 
     client.emit(

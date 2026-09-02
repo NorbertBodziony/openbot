@@ -3917,16 +3917,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   #emitTurnProgress(botId: string, threadId: string, turnId: string, text: string): void {
-    const snapshot = this.#ensureSnapshot(botId, threadId);
     this.#emit({
-      type: "conversation-delta",
+      type: "turn-progress",
       botId,
       threadId,
       turnId,
-      messageId: `activity:${turnId}`,
-      delta: text,
-      createdAt: new Date().toISOString(),
-      revision: snapshot.revision,
+      detail: text,
     });
   }
 
