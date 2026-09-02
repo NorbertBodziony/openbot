@@ -2,6 +2,8 @@
 
 These rules apply to design, implementation, review, and AI-generated mobile UI. They define which layer owns each part of the interface and prevent the app from drifting into multiple visual systems.
 
+This document is authoritative for mobile. The repository-wide contract in [`design.md`](../../design.md) is authoritative for OpenBot's brand direction, the `--openbot-*` token vocabulary that `global.css` maps HeroUI onto, and motion principles. Read both before changing mobile UI.
+
 ## Core rule
 
 HeroUI Native is the foundation for application content. It is already installed, its provider is mounted in `src/app/_layout.tsx`, and its theme aliases are mapped to OpenBot tokens in `global.css`.

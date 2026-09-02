@@ -11,7 +11,7 @@ This is an Expo/React Native mobile application. Prioritize mobile-first pattern
 
 ## Design system and native chrome
 
-Read and follow [`DESIGN.md`](./DESIGN.md) before changing mobile UI.
+Read and follow [`DESIGN.md`](./DESIGN.md) before changing mobile UI. It owns component ownership and native chrome on mobile. The repository-wide contract in [`design.md`](../../design.md) owns brand direction, the `--openbot-*` token vocabulary, and motion; read it for anything `DESIGN.md` does not decide.
 
 - Build application content with HeroUI Native. Reuse its installed components and the OpenBot theme aliases in `global.css`; do not introduce a parallel component library, theme, or screen-local design language.
 - HeroUI-first does not mean component-heavy. Prefer the smallest composition that communicates the screen: plain layout plus `Typography` and `Button` is better than decorative `Card`, `Chip`, `Surface`, or `Alert` wrappers when those components add no interaction or hierarchy.

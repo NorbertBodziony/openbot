@@ -39,6 +39,15 @@ replace a concrete contract with a broad dictionary type.
 Do not commit generated `out`, `dist`, coverage, local browser profiles, Electron `userData`, CLI
 state, `.env` files, credentials, real conversations, or user attachments.
 
+## User interface changes
+
+`design.md` is OpenBot's visual and interaction contract, and `apps/mobile/DESIGN.md` is the mobile
+one. Read the relevant document before changing UI, and update it in the same pull request when you
+add a design token or a shared component. `bun run check:ui` fails when the document and the code
+disagree about a token or the `components/ui` inventory, so a documentation update is part of the
+change rather than a follow-up. When a rule can be checked deterministically, put it in
+`scripts/design-contract.ts` instead of relying on review.
+
 ## Security-sensitive changes
 
 Preserve the following boundaries and their tests:
