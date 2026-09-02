@@ -346,6 +346,11 @@ describe("SkillsMarketplaceModal", () => {
       />
     ));
 
+    // aria-current marks which marketplace section is showing
+    // (SkillsMarketplaceModal.tsx:413,423); nothing else asserts it.
+    expect(screen.getByRole("button", { name: "Skills" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "Agents" })).not.toHaveAttribute("aria-current");
+
     screen.getByRole("button", { name: "Installed" }).click();
     const listing = await screen.findByRole("button", { name: "View Release Notes details" });
     listing.click();
