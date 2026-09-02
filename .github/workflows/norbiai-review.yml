@@ -311,3 +311,38 @@ jobs:
               echo "::warning title=NorbiAI comment cleanup failed::Could not delete old comment ${comment_id}"
             fi
           done
+
+      - name: Block on unresolved P0 and P1 findings
+        # A review that only comments is advisory. This step is what makes it a
+        # gate, and it runs after the comment so the failure always has the
+        # findings sitting next to it. A degraded review blocks too: "human
+        # review required" means nothing if the pull request can merge without
+        # one. Making the check required is a branch protection setting, not
+        # something this file can do.
+        if: always() && !cancelled() && steps.review.outcome != 'skipped'
+        shell: bash
+        env:
+          REVIEW_FILE: ${{ steps.review.outputs.review_file }}
+          REVIEW_STATUS: ${{ steps.review.outputs.status }}
+          FAILURE_REASON: ${{ steps.review.outputs.failure_reason }}
+        run: |
+          set -euo pipefail
+
+          if [ "$REVIEW_STATUS" != "success" ]; then
+            echo "::error title=NorbiAI review did not complete::${FAILURE_REASON:-Human review required.}"
+            exit 1
+          fi
+
+          # Only the Findings section counts. Resolved items are listed above it
+          # and carry their own priority label.
+          blocking=$(
+            awk '/^## Findings[[:space:]]*$/ { findings = 1; next } findings' "$REVIEW_FILE" |
+              grep -c -E '\[(NEW|REMAINS)\]\[P[01]\]' || true
+          )
+
+          if [ "$blocking" -gt 0 ]; then
+            echo "::error title=NorbiAI found blocking issues::${blocking} unresolved P0/P1 finding(s). Fix them, or say in the PR why the finding is wrong."
+            exit 1
+          fi
+
+          echo "No unresolved P0 or P1 findings."

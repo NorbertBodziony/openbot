@@ -37,6 +37,7 @@ CI already owns all of it on every push:
 | --- | --- | --- |
 | Check | `macos-14` | `bun run check:desktop` |
 | Tests | `ubuntu-latest` | `bun run test:desktop`, `bun run test:sites` |
+| Surfaces | `ubuntu-latest` | `bun run mobile:typecheck`, `bun run typecheck:sites`, `bun run typecheck:team-client` |
 | API | `ubuntu-latest` | `bun run check:api` |
 | Storybook build | `ubuntu-latest` | `bun run build-storybook` |
 
