@@ -85,6 +85,19 @@ describe("browser tool catalog", () => {
     ).toThrow("Invalid browser tool arguments");
   });
 
+  it("rejects blank semantic and CSS targets", () => {
+    for (const target of [
+      { kind: "role", role: "button", name: "   " },
+      { kind: "role", role: "   " },
+      { kind: "text", text: "\t\n" },
+      { kind: "css", selector: "   " },
+    ]) {
+      expect(() => parseBrowserToolArguments("click", { tabId: "tab", target })).toThrow(
+        "Invalid browser tool arguments",
+      );
+    }
+  });
+
   it("keeps detailed local activity compatible with frozen Team API v1", () => {
     const encoded = encodeTeamProtocolV1Event({
       type: "browser-control-changed",

@@ -1415,13 +1415,23 @@ async function cssObjectMatch(
         const seen = new Set();
         const matches = [];
         let scanned = 0;
-        while (roots.length && scanned < ${MAX_SNAPSHOT_SCANNED_NODES} && matches.length < 2) {
+        let truncated = false;
+        while (roots.length && matches.length < 2) {
+          if (scanned >= ${MAX_SNAPSHOT_SCANNED_NODES}) {
+            truncated = true;
+            break;
+          }
           const root = roots.shift();
           if (!root || seen.has(root)) continue;
           seen.add(root);
           const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-          let node;
-          while ((node = walker.nextNode()) && scanned < ${MAX_SNAPSHOT_SCANNED_NODES} && matches.length < 2) {
+          while (matches.length < 2) {
+            const node = walker.nextNode();
+            if (!node) break;
+            if (scanned >= ${MAX_SNAPSHOT_SCANNED_NODES}) {
+              truncated = true;
+              break;
+            }
             scanned++;
             if (node.matches(selector)) matches.push(node);
             if (node.localName === 'iframe' || node.localName === 'frame') {
@@ -1429,7 +1439,9 @@ async function cssObjectMatch(
             }
             if (node.shadowRoot) roots.push(node.shadowRoot);
           }
+          if (truncated) break;
         }
+        if (truncated && matches.length < 2) throw new Error('CSS selector uniqueness scan exceeded the safe node limit.');
         return matches;
       })()`,
       contextId,

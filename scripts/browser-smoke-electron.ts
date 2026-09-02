@@ -663,6 +663,29 @@ async function main(): Promise<void> {
     if (ambiguousCss.success || !toolError(ambiguousCss).includes("CSS selector is ambiguous")) {
       throw new Error("V2 CSS locator did not reject an ambiguous target.");
     }
+    await v2Contents.executeJavaScript(
+      `(() => {
+        const container = document.createElement('div');
+        container.dataset.cssScanLimit = '';
+        const first = document.createElement('button');
+        first.dataset.boundedCssCollision = '';
+        container.append(first);
+        container.append(...Array.from({ length: 10_050 }, () => document.createElement('span')));
+        const second = document.createElement('button');
+        second.dataset.boundedCssCollision = '';
+        container.append(second);
+        document.body.append(container);
+      })()`,
+      true,
+    );
+    const boundedCss = await callBrowserTool(browser, "click", {
+      tabId: v2Tab.id,
+      target: { kind: "css", selector: "[data-bounded-css-collision]" },
+    });
+    if (boundedCss.success || !toolError(boundedCss).includes("uniqueness scan exceeded")) {
+      throw new Error("V2 CSS locator treated a truncated uniqueness scan as a unique match.");
+    }
+    await v2Contents.executeJavaScript("document.querySelector('[data-css-scan-limit]').remove(); true", true);
     const covered = await callBrowserTool(browser, "click", {
       tabId: v2Tab.id,
       target: { kind: "role", role: "button", name: "Covered", exact: true },

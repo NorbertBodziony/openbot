@@ -8,6 +8,7 @@ const tabId = z.string().min(1).max(INPUT_LIMITS.identifier);
 const revision = z.number().int().nonnegative();
 const timeout = z.number().int().min(0).max(30_000).optional();
 const image = z.enum(["auto", "always", "never"]).optional();
+const nonBlankString = (max: number) => z.string().max(max).trim().min(1);
 const modifiers = z
   .array(z.enum(["Alt", "Control", "Meta", "Shift"]))
   .max(4)
@@ -17,12 +18,12 @@ export const browserTargetSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("ref"), ref: tabId, revision }),
   z.object({
     kind: z.literal("role"),
-    role: z.string().min(1).max(64),
-    name: z.string().max(500).optional(),
+    role: nonBlankString(64),
+    name: nonBlankString(500).optional(),
     exact: z.boolean().optional(),
   }),
-  z.object({ kind: z.literal("text"), text: z.string().min(1).max(500), exact: z.boolean().optional() }),
-  z.object({ kind: z.literal("css"), selector: z.string().min(1).max(2_000) }),
+  z.object({ kind: z.literal("text"), text: nonBlankString(500), exact: z.boolean().optional() }),
+  z.object({ kind: z.literal("css"), selector: nonBlankString(2_000) }),
   z.object({
     kind: z.literal("point"),
     x: z.number().min(0).max(INPUT_LIMITS.browserCoordinate),
@@ -137,7 +138,7 @@ export const BROWSER_TOOL_DEFINITIONS: readonly BrowserToolDefinition[] = [
   {
     name: "upload_files",
     description:
-      "Set workspace or OpenBot shared files on a file input after authorizing paths, then return a fresh snapshot.",
+      "Set local files readable by OpenBot on a file input after validating paths, then return a fresh snapshot.",
     shape: {
       ...targetAction,
       paths: z.array(z.string().min(1).max(INPUT_LIMITS.path)).min(1).max(INPUT_LIMITS.attachments),
