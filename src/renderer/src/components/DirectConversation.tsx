@@ -300,6 +300,7 @@ export function DirectConversation(props: DirectConversationProps) {
                     return (
                       <div
                         data-index={virtualRow.index}
+                        data-grouped={grouped() ? "sender" : undefined}
                         ref={messageVirtualizer.measureElement}
                         class="virtual-chat-row"
                         style={{
@@ -319,7 +320,7 @@ export function DirectConversation(props: DirectConversationProps) {
                         <Message
                           role="article"
                           align={own() ? "end" : "start"}
-                          class={["direct-message", { own: own(), grouped: grouped() }]}
+                          class={["direct-message", { own: own() }]}
                           data-author={own() ? "user" : "member"}
                           aria-label={`${own() ? "You" : teamMemberName(props.member)} at ${messageTime(message.createdAt)}`}
                         >
