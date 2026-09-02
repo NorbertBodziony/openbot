@@ -35,6 +35,9 @@ index-*.css
 .openbot-browser-test/
 .openbot-build/
 .worktrees/
+# Claude Code creates git worktrees here; they carry a nested biome.json.
+.claude/worktrees/
+.claude/settings.local.json
 /build/cloudflared/
 /build/codex/
 /build/claude/

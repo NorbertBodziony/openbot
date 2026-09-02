@@ -3,7 +3,7 @@ language js(typescript)
 `$_.toHaveFocus()` as $call where {
   register_diagnostic(
     span=$call,
-    message="Do not assert focus placement in tests. See AGENTS.md \"Test value policy\": assert the accessible role, name or announcement instead, and keep focus behaviour in a Storybook interaction.",
+    message="Do not assert focus placement in tests. See AGENTS.md \"Tests\": assert the accessible role, name or announcement instead, and keep focus behaviour in a Storybook interaction.",
     severity="error"
   )
 }

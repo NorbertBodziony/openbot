@@ -67,7 +67,7 @@ schema used for new databases. Never remove or rewrite a migration that may have
 
 ## Team API compatibility boundary
 
-Current remote connections use Team API protocol v2 over three ordered WebRTC DataChannels: `rpc`,
+Current remote connections use Team API protocol v3 over three ordered WebRTC DataChannels: `rpc`,
 `events`, and `files`. A sandboxed hidden Chromium page owns each `RTCPeerConnection`. Electron main
 uses a `MessagePort` and transfers binary data as `ArrayBuffer`. Signal carries SDP and ICE only.
 Cloudflare issues short ES256 connection tickets and stores the logical session. Signal issues a

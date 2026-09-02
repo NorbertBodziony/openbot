@@ -18,6 +18,7 @@
     "includes": [
       "**",
       "!.codex",
+      "!.claude",
       "!node_modules",
       "!out",
       "!out-dev-app",
@@ -103,7 +104,12 @@
         "./tools/biome/anti-slop/rules/no-class-assertions.grit",
         "./tools/biome/anti-slop/rules/no-style-assertions.grit",
         "./tools/biome/anti-slop/rules/no-dom-containment-assertions.grit",
-        "./tools/biome/anti-slop/rules/no-title-copy-assertions.grit"
+        "./tools/biome/anti-slop/rules/no-title-copy-assertions.grit",
+        "./tools/biome/anti-slop/rules/no-active-element-assertions.grit",
+        "./tools/biome/anti-slop/rules/no-computed-style-assertions.grit",
+        "./tools/biome/anti-slop/rules/no-inner-html-assertions.grit",
+        "./tools/biome/anti-slop/rules/no-dom-traversal-assertions.grit",
+        "./tools/biome/anti-slop/rules/no-icon-query-assertions.grit"
       ]
     }
   ],

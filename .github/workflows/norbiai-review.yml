@@ -107,6 +107,11 @@ jobs:
           else
             cat .github/norbiai-review-prompt.md > "$prompt_file"
           fi
+
+          # Domain fragments are read from the base commit by the composer, so a PR cannot
+          # rewrite the instructions used to review it.
+          bun scripts/compose-review-prompt.ts "$BASE_SHA" "$HEAD_SHA" >> "$prompt_file"
+
           {
             printf '\n## PR context\n\n'
             printf 'PR: #%s\n' "$PR_NUMBER"

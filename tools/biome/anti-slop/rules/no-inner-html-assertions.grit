@@ -1,0 +1,12 @@
+language js(typescript)
+
+or {
+  `expect($_.innerHTML)`,
+  `expect($_.outerHTML)`
+} as $node where {
+  register_diagnostic(
+    span=$node,
+    message="Do not assert on raw HTML in tests. See AGENTS.md \"Tests\": assert the behaviour, or the text the user can actually see. Building a fixture with innerHTML stays fine.",
+    severity="error"
+  )
+}

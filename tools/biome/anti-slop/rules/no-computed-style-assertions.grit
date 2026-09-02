@@ -1,0 +1,12 @@
+language js(typescript)
+
+or {
+  `getComputedStyle($_)`,
+  `getComputedStyle($_, $_)`
+} as $node where {
+  register_diagnostic(
+    span=$node,
+    message="Do not read computed styles in tests. See AGENTS.md \"Tests\": styling, layout and animation timing belong in Storybook, not in assertions.",
+    severity="error"
+  )
+}
