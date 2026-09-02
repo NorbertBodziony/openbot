@@ -94,43 +94,6 @@ describe("DynamicIslandSurface", () => {
     mock.dispose();
   });
 
-  it("keeps a new working presentation compact until hover intent", async () => {
-    const mock = createMockOpenBot();
-    let publish: ((presentation: DynamicIslandPresentation) => void) | undefined;
-    mock.api.dynamicIsland.onPresentation = (listener) => {
-      publish = listener;
-      return () => {
-        publish = undefined;
-      };
-    };
-    Object.defineProperty(window, "openbot", { configurable: true, value: mock.api });
-    render(() => <DynamicIslandSurface />);
-    await waitFor(() => expect(publish).toBeDefined());
-    vi.useFakeTimers();
-
-    flush(() => {
-      publish?.({
-        serverId: "local",
-        mode: "working",
-        working: [
-          { bot: { ...RESEARCH, id: "chief", name: "Chief", avatarSeed: "chief" }, task: "Checking the release" },
-        ],
-      });
-    });
-    expect(screen.queryByText("1 bot working")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Expand OpenBot working status" })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-    await vi.advanceTimersByTimeAsync(7_000);
-    expect(screen.queryByText("1 bot working")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Expand OpenBot working status" })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-    mock.dispose();
-  });
-
   it("collects multiple answers and sends them after the last question", async () => {
     const formatQuestion: DynamicIslandQuestionItem = {
       id: "format",

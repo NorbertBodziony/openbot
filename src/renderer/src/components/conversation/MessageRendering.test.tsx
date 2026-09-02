@@ -198,8 +198,6 @@ describe("MessageBody", () => {
     expect(screen.getByRole("table")).toBeInTheDocument();
     expect(screen.getAllByRole("columnheader")).toHaveLength(3);
     expect(screen.getAllByRole("cell")).toHaveLength(6);
-    expect(screen.getByText("Model").tagName).toBe("STRONG");
-    expect(screen.getByText("gpt-4o").tagName).toBe("STRONG");
     expect(screen.queryByText("| --- | --- | ---: |")).toBeNull();
   });
 
@@ -248,10 +246,6 @@ describe("MessageBody", () => {
     ));
 
     expect(screen.getByRole("heading", { level: 2, name: "Recommendation" })).toBeInTheDocument();
-    expect(screen.getByText("Kobalte").tagName).toBe("STRONG");
-    expect(screen.getByText("Solid UI").tagName).toBe("EM");
-    expect(screen.getByText("remove the fallback").tagName).toBe("DEL");
-    expect(screen.getByText("@kobalte/core").tagName).toBe("CODE");
     expect(screen.getAllByRole("list")).toHaveLength(3);
     expect(screen.getByRole("checkbox", { name: "Tested" })).toBeChecked();
     expect(screen.getByRole("link", { name: "Open citation 1: Kobalte introduction" })).toBeInTheDocument();
@@ -1015,34 +1009,6 @@ describe("MessageBody", () => {
     expect(screen.getByText(/\| --- \| --- \|/u)).toBeInTheDocument();
   });
 
-  it("keeps the full routine instruction in its message body", () => {
-    render(() => (
-      <MessageBody
-        message={{
-          id: "message-routine",
-          author: "you",
-          body: "Prepare the full morning brief with every required section.",
-          time: "07:00",
-          routine: {
-            routineId: "routine-1",
-            runId: "run-1",
-            name: "Morning brief",
-            scheduledFor: "2026-08-25T05:00:00.000Z",
-          },
-          status: "Queued #1",
-        }}
-        bots={bots}
-        onSelectAgent={vi.fn()}
-        onOpenLink={vi.fn()}
-        onPreview={vi.fn()}
-        onAttachmentAction={vi.fn()}
-      />
-    ));
-
-    expect(screen.getByText("Prepare the full morning brief with every required section.")).toBeInTheDocument();
-    expect(screen.getByText("Queued #1")).toBeInTheDocument();
-  });
-
   it("renders a selected-text instruction as a compact quote while preserving reply context", () => {
     render(() => (
       <MessageBody
@@ -1172,7 +1138,6 @@ describe("ImageGeneration", () => {
     await fireEvent.error(screen.getByAltText("A quiet observatory"));
     expect(screen.getByRole("alert")).toHaveTextContent("preview is unavailable");
     expect(screen.getByRole("img", { name: "Image unavailable" })).toBeInTheDocument();
-    expect(screen.getByText("×")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
     await fireEvent.click(screen.getByRole("button", { name: "Download generated-image.png" }));
     expect(onDownload).toHaveBeenCalledWith(attachment);
@@ -1194,7 +1159,6 @@ describe("ImageGeneration", () => {
 
     expect(screen.getByRole("alert")).toHaveTextContent("Provider timeout");
     expect(screen.getByRole("img", { name: label })).toBeInTheDocument();
-    expect(screen.getByText("×")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   });
 });

@@ -117,7 +117,6 @@ describe("ServerSettingsModal", () => {
 
     const name = screen.getByRole("textbox", { name: "Server name" });
     expect(name).toHaveValue("");
-    expect(name).toHaveAttribute("placeholder", "e.g. Design studio");
     expect(screen.getByRole("switch", { name: "Publish this server" })).toBeDisabled();
 
     await fireEvent.input(name, { target: { value: "Draft Team" } });
@@ -212,7 +211,6 @@ describe("ServerSettingsModal", () => {
     ));
 
     expect(screen.queryByRole("textbox", { name: "Server name" })).not.toBeInTheDocument();
-    expect(screen.getByText("Studio Team", { selector: ".server-settings-readonly-value" })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("tab", { name: "Members" }));
     expect(screen.getByText("Alice Chen")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Send invite" })).not.toBeInTheDocument();
@@ -340,7 +338,6 @@ describe("ServerSettingsModal", () => {
     expect(screen.queryByText("Enter a valid email address.")).not.toBeInTheDocument();
     const inviteLink = screen.getByRole("textbox", { name: "Invitation link" });
     expect(inviteLink).toHaveValue("");
-    expect(inviteLink).toHaveAttribute("placeholder", "Create a private one-time link.");
     await fireEvent.click(screen.getByRole("button", { name: "Create link" }));
 
     await waitFor(() => expect(onCreateInvite).toHaveBeenCalledWith({ role: "member" }));

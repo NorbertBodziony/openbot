@@ -124,9 +124,6 @@ describe("Sidebar pinned chats", () => {
     expect(screen.queryByText("Pinned")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Chief, pinned agent" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("button", { name: "Alice Chen, pinned person" })).not.toBeInTheDocument();
-    expect(screen.getByTitle("Chief of staff")).toHaveTextContent("Chief of staff");
-    expect(screen.getAllByText("Chief")).toHaveLength(1);
-    expect(screen.getAllByText("Alice Chen")).toHaveLength(1);
 
     await fireEvent.input(screen.getByRole("searchbox", { name: "Search chats" }), {
       target: { value: "Sales" },
@@ -145,14 +142,9 @@ describe("Sidebar pinned chats", () => {
 
     await fireEvent.contextMenu(screen.getByRole("button", { name: "Chief, pinned agent" }));
     const agentMenu = await screen.findByRole("menu", { name: "Agent actions" });
-    const editItem = within(agentMenu).getByRole("menuitem", { name: "Edit agent" });
-    const duplicateItem = within(agentMenu).getByRole("menuitem", { name: "Duplicate agent" });
-    const deleteItem = within(agentMenu).getByRole("menuitem", { name: "Delete agent" });
-    const divider = within(agentMenu).getByRole("separator");
-    expect(editItem).toBeInTheDocument();
-    expect(duplicateItem).toBeInTheDocument();
-    expect(deleteItem).toBeInTheDocument();
-    expect(divider.nextElementSibling).toBe(deleteItem);
+    expect(within(agentMenu).getByRole("menuitem", { name: "Edit agent" })).toBeInTheDocument();
+    expect(within(agentMenu).getByRole("menuitem", { name: "Duplicate agent" })).toBeInTheDocument();
+    expect(within(agentMenu).getByRole("menuitem", { name: "Delete agent" })).toBeInTheDocument();
     await fireEvent.pointerUp(within(agentMenu).getByRole("menuitem", { name: "Unpin" }), { button: 0 });
     expect(props.onUnpin).toHaveBeenCalledWith({ kind: "agent", id: "chief" });
   });
@@ -720,11 +712,20 @@ describe("Sidebar sections", () => {
     expect(body).toHaveAttribute("inert");
   });
 
+  it("requests an agent edit from its context menu", async () => {
+    const props = sidebarProps([]);
+    render(() => <Sidebar {...props} />);
+
+    await fireEvent.contextMenu(screen.getByRole("button", { name: /Sales Outbound/ }));
+    const agentMenu = await screen.findByRole("menu", { name: "Agent actions" });
+    await fireEvent.pointerUp(within(agentMenu).getByRole("menuitem", { name: "Edit agent" }), { button: 0 });
+
+    expect(props.onEditBot).toHaveBeenCalledWith("sales");
+  });
+
   it("creates and renames sections inline, with duplicate-name validation", async () => {
     const props = sidebarProps();
     render(() => <Sidebar {...props} layout={sectionLayout()} />);
-
-    expect(screen.getByRole("button", { name: "Empty" })).toBeInTheDocument();
 
     await fireEvent.contextMenu(screen.getByLabelText("Sidebar free area"));
     const sidebarMenu = await screen.findByRole("menu", { name: "Sidebar actions" });

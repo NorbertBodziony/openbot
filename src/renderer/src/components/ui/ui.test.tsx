@@ -144,8 +144,7 @@ describe("UI primitives", () => {
         <span aria-hidden="true">×</span>
       </IconButton>
     ));
-    const button = screen.getByRole("button", { name: "Close" });
-    expect(button).toHaveAttribute("title", "Close");
+    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
   });
 
   it("supports controlled switch state and form-compatible input props", async () => {

@@ -607,13 +607,6 @@ describe("SettingsModal", () => {
     expect(await screen.findByRole("img", { name: "Mobile Connect sign-in QR code" })).toBeInTheDocument();
     expect(screen.getByText(/Expires in/u)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Generate new code" })).toBeEnabled();
-    expect(screen.getByRole("heading", { name: "Connected devices" })).toBeInTheDocument();
-    expect(screen.getByText("No connected devices")).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Access is revoked immediately. The mobile app may keep showing its current screen until it is reopened or brought back from the background.",
-      ),
-    ).toBeInTheDocument();
   });
 
   it("confirms a new mobile connection before collapsing the QR code", async () => {

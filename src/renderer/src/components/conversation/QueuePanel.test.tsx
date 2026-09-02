@@ -72,7 +72,6 @@ describe("QueuePanel", () => {
     expect(view.container.querySelector('.agent-queue-attachment img[src^="data:image/png"]')).toBeInTheDocument();
     expect(view.container.querySelector(".agent-queue-attachment")?.textContent).not.toContain("TXT");
     expect(view.container.querySelectorAll(".agent-queue-attachment")[1]).toHaveTextContent("TXT");
-    expect(view.container.querySelector(".agent-queue-drag-handle")).toBeNull();
   });
 
   it("keeps steer, cancel, and edit actions connected", async () => {

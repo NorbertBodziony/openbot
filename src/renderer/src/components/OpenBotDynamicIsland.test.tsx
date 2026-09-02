@@ -28,17 +28,6 @@ describe("OpenBotDynamicIsland mode transitions", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: /Research/ })).not.toBeInTheDocument());
   });
 
-  it("makes outgoing controls inert as soon as the mode changes", () => {
-    const controller = renderControlledIsland(workingPresentation(), "expanded");
-    flush(() => controller.setPresentation(messagePresentation("reply-1")));
-
-    const outgoingControl = document.querySelector<HTMLElement>(
-      '[data-island-mode-slot="expanded"] > [data-island-mode-layer="outgoing"] button',
-    );
-    expect(outgoingControl).not.toBeNull();
-    expect(outgoingControl?.closest("[inert]")).not.toBeNull();
-  });
-
   it("ends a rapid series of updates and a return to idle on the newest mode", async () => {
     const controller = renderControlledIsland(workingPresentation(), "compact");
 

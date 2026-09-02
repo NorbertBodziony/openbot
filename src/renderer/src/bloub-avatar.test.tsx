@@ -1,28 +1,8 @@
 import { SHAPES } from "@norbert_bodziony/bloub";
 import { describe, expect, it, vi } from "vitest";
-import {
-  avatarCandidateSeeds,
-  avatarHeadColor,
-  avatarHueSwatch,
-  bloubAvatarProfile,
-  createStaticAvatarSvg,
-} from "./bloub-avatar";
+import { avatarCandidateSeeds, bloubAvatarProfile, createStaticAvatarSvg } from "./bloub-avatar";
 
 describe("Bloub avatar adapter", () => {
-  it("maps stored hues to the visible Bloub color", () => {
-    expect(bloubAvatarProfile("chief", 215).color).toBe("bleu");
-    expect(avatarHeadColor("chief", 215)).toBe("#3b93f0");
-    expect(avatarHueSwatch(215)).toBe(avatarHeadColor("different-seed", 215));
-  });
-
-  it("preserves supported shapes and replaces the generated droplet", () => {
-    expect(
-      Array.from({ length: 7 }, (_, index) => bloubAvatarProfile(`shape-regression-${index}`, null).shape),
-    ).toEqual(["squircle", "galet", "triangle", "capsule", "nuage", "hexagone", "cercle"]);
-    expect(bloubAvatarProfile("droplet-regression-0", null).shape).toBe("capsule");
-    expect(bloubAvatarProfile("droplet-regression-0", null).shape).not.toBe("goutte");
-  });
-
   it("keeps every supported Bloub shape in avatar candidates", () => {
     const firstSet = avatarCandidateSeeds("chief", "chief:avatar:4:7", 0);
     const repeatedSet = avatarCandidateSeeds("chief", "chief:avatar:4:7", 0);

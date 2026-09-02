@@ -44,4 +44,7 @@ if (htmlElement && !htmlElement.prototype.scrollIntoView) {
   htmlElement.prototype.scrollIntoView = () => undefined;
 }
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  TestResizeObserver.instances.clear();
+});

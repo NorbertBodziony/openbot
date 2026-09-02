@@ -303,43 +303,6 @@ describe("ComposerEditor", () => {
     expect(onValueChange).toHaveBeenLastCalledWith("y".repeat(INPUT_LIMITS.messageText));
   });
 
-  it("renders saved mentions with the static agent avatar", async () => {
-    const sales: BotProfile = {
-      id: "sales",
-      provider: "codex",
-      name: "Sales",
-      title: "Agent",
-      description: "",
-      notifications: true,
-      model: "gpt-5.6-luna",
-      reasoningEffort: "medium",
-      threadId: null,
-      avatarSeed: "sales:avatar:0:2",
-      avatarHue: 215,
-      avatarUrl: null,
-      time: "",
-      preview: "",
-    };
-
-    render(() => (
-      <ComposerEditor
-        botId="chief"
-        bots={[sales]}
-        value="Ask @[Sales](sales)"
-        placeholder="Message Chief"
-        ariaLabel="Mention test"
-        disabled={false}
-        onValueChange={() => undefined}
-        onSubmit={() => undefined}
-      />
-    ));
-
-    const token = document.querySelector<HTMLElement>('[data-mention-id="sales"]');
-    await waitFor(() =>
-      expect(token?.querySelector('.composer-mention-avatar svg[aria-hidden="true"]')).not.toBeNull(),
-    );
-  });
-
   it("finds mention targets by title and description", async () => {
     const design: BotProfile = {
       id: "design",

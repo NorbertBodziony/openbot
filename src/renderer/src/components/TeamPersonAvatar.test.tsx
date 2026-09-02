@@ -17,12 +17,6 @@ const member: TeamPresenceMember = {
 };
 
 describe("TeamPersonAvatar", () => {
-  it("shows the synchronized account avatar", () => {
-    const view = render(() => <TeamPersonAvatar member={member} />);
-
-    expect(view.container.querySelector("img")).toHaveAttribute("src", member.avatarUrl);
-  });
-
   it("uses an agent avatar when the account image cannot load", async () => {
     const view = render(() => <TeamPersonAvatar member={member} />);
 

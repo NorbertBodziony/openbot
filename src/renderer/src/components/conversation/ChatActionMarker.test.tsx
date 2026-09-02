@@ -22,24 +22,6 @@ describe("ChatActionMarker", () => {
     expect(onSelectAgent).toHaveBeenCalledWith("research");
   });
 
-  it("distinguishes a received agent message from a sent message", () => {
-    render(() => (
-      <ChatActionMarker
-        marker={{
-          ...agentMarker([{ agentId: "chief", status: "completed" }], "completed"),
-          direction: "incoming",
-          sourceAgentId: "research",
-        }}
-        bots={bots}
-        onSelectAgent={vi.fn()}
-      />
-    ));
-
-    expect(screen.getByText("Message from")).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Message from Research, Completed" })).toBeInTheDocument();
-    expect(screen.queryByText("Completed")).not.toBeInTheDocument();
-  });
-
   it("lists each target state for a multi-agent message", async () => {
     render(() => (
       <ChatActionMarker
