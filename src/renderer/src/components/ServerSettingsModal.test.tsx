@@ -165,7 +165,7 @@ describe("ServerSettingsModal", () => {
     expect(screen.getByRole("switch", { name: "Publish this server" })).toBeDisabled();
   });
 
-  it("validates the server name without changing the field layout while typing", async () => {
+  it("validates the server name and returns an erased draft to its pristine state", async () => {
     const onSaveIdentity = vi.fn(async () => undefined);
     render(() => <ServerSettingsModal {...props({ onSaveIdentity })} />);
 
@@ -178,7 +178,15 @@ describe("ServerSettingsModal", () => {
     const error = screen.getByText("Enter at least 6 characters.");
     expect(name).toHaveAttribute("aria-invalid", "true");
     expect(name).toHaveAttribute("aria-describedby", error.id);
+    expect(screen.getByRole("region", { name: "Unsaved changes" })).toBeInTheDocument();
 
+    await fireEvent.input(name, { target: { value: "" } });
+    expect(screen.queryByText("Enter at least 6 characters.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Unsaved changes" })).not.toBeInTheDocument();
+    expect(name).not.toHaveAttribute("aria-invalid");
+
+    await fireEvent.input(name, { target: { value: "Tiny" } });
+    await fireEvent.blur(name);
     await fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(name).toHaveFocus();
 
@@ -187,22 +195,6 @@ describe("ServerSettingsModal", () => {
     expect(name).not.toHaveAttribute("aria-invalid");
     await fireEvent.keyDown(name, { key: "Enter" });
     await waitFor(() => expect(onSaveIdentity).toHaveBeenCalledWith({ serverName: "Studio Team" }));
-  });
-
-  it("returns an erased first setup name to its pristine state", async () => {
-    render(() => <ServerSettingsModal {...props()} />);
-
-    const name = screen.getByRole("textbox", { name: "Server name" });
-    await fireEvent.input(name, { target: { value: "Tiny" } });
-    await fireEvent.blur(name);
-    expect(screen.getByText("Enter at least 6 characters.")).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Unsaved changes" })).toBeInTheDocument();
-
-    await fireEvent.input(name, { target: { value: "" } });
-
-    expect(screen.queryByText("Enter at least 6 characters.")).not.toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Unsaved changes" })).not.toBeInTheDocument();
-    expect(name).not.toHaveAttribute("aria-invalid");
   });
 
   it("keeps remote member settings read-only", async () => {

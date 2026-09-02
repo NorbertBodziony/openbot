@@ -103,15 +103,6 @@ function nativeDragEvent(
 }
 
 describe("Sidebar pinned chats", () => {
-  it("opens the active server settings from the server title", async () => {
-    const props = sidebarProps();
-    render(() => <Sidebar {...props} />);
-
-    await fireEvent.click(screen.getByRole("button", { name: "Open settings for Local" }));
-
-    expect(props.onOpenServerSettings).toHaveBeenCalledWith(expect.any(HTMLElement));
-  });
-
   it("shows agent pins, ignores legacy person pins, and filters with search", async () => {
     const props = sidebarProps([
       { kind: "agent", id: "chief" },
@@ -119,6 +110,9 @@ describe("Sidebar pinned chats", () => {
       { kind: "agent", id: "missing" },
     ]);
     render(() => <Sidebar {...props} />);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open settings for Local" }));
+    expect(props.onOpenServerSettings).toHaveBeenCalledWith(expect.any(HTMLElement));
 
     expect(screen.getByRole("region", { name: "Pinned chats" })).toBeInTheDocument();
     expect(screen.queryByText("Pinned")).not.toBeInTheDocument();
@@ -142,11 +136,15 @@ describe("Sidebar pinned chats", () => {
 
     await fireEvent.contextMenu(screen.getByRole("button", { name: "Chief, pinned agent" }));
     const agentMenu = await screen.findByRole("menu", { name: "Agent actions" });
-    expect(within(agentMenu).getByRole("menuitem", { name: "Edit agent" })).toBeInTheDocument();
     expect(within(agentMenu).getByRole("menuitem", { name: "Duplicate agent" })).toBeInTheDocument();
     expect(within(agentMenu).getByRole("menuitem", { name: "Delete agent" })).toBeInTheDocument();
     await fireEvent.pointerUp(within(agentMenu).getByRole("menuitem", { name: "Unpin" }), { button: 0 });
     expect(props.onUnpin).toHaveBeenCalledWith({ kind: "agent", id: "chief" });
+
+    await fireEvent.contextMenu(screen.getByRole("button", { name: /Sales Outbound/ }));
+    const reopenedMenu = await screen.findByRole("menu", { name: "Agent actions" });
+    await fireEvent.pointerUp(within(reopenedMenu).getByRole("menuitem", { name: "Edit agent" }), { button: 0 });
+    expect(props.onEditBot).toHaveBeenCalledWith("sales");
   });
 
   it("disables duplication while it runs and hides it for an old host", async () => {
@@ -709,17 +707,6 @@ describe("Sidebar sections", () => {
 
     await fireEvent.input(screen.getByRole("searchbox", { name: "Search chats" }), { target: { value: "" } });
     expect(body).toHaveAttribute("inert");
-  });
-
-  it("requests an agent edit from its context menu", async () => {
-    const props = sidebarProps([]);
-    render(() => <Sidebar {...props} />);
-
-    await fireEvent.contextMenu(screen.getByRole("button", { name: /Sales Outbound/ }));
-    const agentMenu = await screen.findByRole("menu", { name: "Agent actions" });
-    await fireEvent.pointerUp(within(agentMenu).getByRole("menuitem", { name: "Edit agent" }), { button: 0 });
-
-    expect(props.onEditBot).toHaveBeenCalledWith("sales");
   });
 
   it("creates and renames sections inline, with duplicate-name validation", async () => {

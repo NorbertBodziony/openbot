@@ -35,31 +35,7 @@ describe("SettingsModal", () => {
     vi.unstubAllGlobals();
   });
 
-  it("keeps dependent notch options selected but unavailable while the MacBook notch is disabled", () => {
-    render(() => (
-      <SettingsModal
-        open
-        onOpenChange={() => undefined}
-        value={{ ...DEFAULT_GENERAL_SETTINGS, macBookNotch: false }}
-        onValueChange={() => undefined}
-        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
-        updateStatus={idleUpdateStatus}
-        onUpdateAction={vi.fn(async () => undefined)}
-        account={account}
-        onUpdateAccountName={vi.fn(async () => undefined)}
-        onUpdateAccountAvatar={vi.fn(async () => undefined)}
-      />
-    ));
-
-    expect(screen.getByRole("switch", { name: "Haptic feedback" })).toBeChecked();
-    expect(screen.getByRole("switch", { name: "Haptic feedback" })).toBeDisabled();
-    expect(screen.getByRole("switch", { name: "Show idle island" })).toBeChecked();
-    expect(screen.getByRole("switch", { name: "Show idle island" })).toBeDisabled();
-    expect(screen.getByRole("switch", { name: "Show on additional displays" })).toBeChecked();
-    expect(screen.getByRole("switch", { name: "Show on additional displays" })).toBeDisabled();
-  });
-
-  it("keeps General preferences controlled across close and reopen", async () => {
+  it("keeps every settings preference controlled across close and reopen", async () => {
     const [open, setOpen] = createSignal(true);
     const [value, setValue] = createSignal({ ...DEFAULT_GENERAL_SETTINGS });
     let openTrigger: HTMLButtonElement | undefined;
@@ -89,6 +65,13 @@ describe("SettingsModal", () => {
     await fireEvent.click(launchSwitch);
     expect(value().launchAtLogin).toBe(false);
 
+    await fireEvent.click(screen.getByRole("switch", { name: "Show status in the MacBook notch" }));
+    expect(value().macBookNotch).toBe(false);
+    for (const dependent of ["Haptic feedback", "Show idle island", "Show on additional displays"]) {
+      expect(await screen.findByRole("switch", { name: dependent })).toBeChecked();
+      expect(screen.getByRole("switch", { name: dependent })).toBeDisabled();
+    }
+
     const select = screen.getByRole("button", { name: /^Open external links in/ });
     await fireEvent.pointerDown(select, { pointerType: "mouse", button: 0 });
     await fireEvent.click(screen.getByRole("option", { name: "OpenBot" }));
@@ -103,38 +86,10 @@ describe("SettingsModal", () => {
     expect(await screen.findByRole("switch", { name: "Launch OpenBot at login" })).not.toBeChecked();
     expect(screen.getByRole("button", { name: /^Open external links in/ })).toHaveTextContent("OpenBot");
     expect(screen.getByRole("switch", { name: "Share product analytics" })).not.toBeChecked();
-  });
-
-  it("keeps the automatic download preference controlled across close and reopen", async () => {
-    const [open, setOpen] = createSignal(true);
-    const [value, setValue] = createSignal({ ...DEFAULT_GENERAL_SETTINGS });
-    let openTrigger: HTMLButtonElement | undefined;
-
-    render(() => (
-      <>
-        <button ref={(element) => (openTrigger = element)} type="button" onClick={() => setOpen(true)}>
-          Open settings
-        </button>
-        <SettingsModal
-          open={open()}
-          onOpenChange={setOpen}
-          value={value()}
-          onValueChange={setValue}
-          appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
-          updateStatus={idleUpdateStatus}
-          onUpdateAction={vi.fn(async () => undefined)}
-          account={account}
-          onUpdateAccountName={vi.fn(async () => undefined)}
-          onUpdateAccountAvatar={vi.fn(async () => undefined)}
-          restoreFocusTarget={openTrigger}
-        />
-      </>
-    ));
 
     await fireEvent.click(screen.getByRole("tab", { name: "Updates" }));
     const autoDownload = await screen.findByRole("switch", { name: "Automatically download updates" });
     expect(autoDownload).toBeChecked();
-
     await fireEvent.click(autoDownload);
     expect(value().autoDownloadUpdates).toBe(false);
 
@@ -297,8 +252,10 @@ describe("SettingsModal", () => {
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
   });
 
-  it("keeps an invalid display name focused and does not save it", async () => {
-    const onUpdateAccountName = vi.fn(async () => undefined);
+  it("keeps an invalid or rejected display name in the field", async () => {
+    const onUpdateAccountName = vi
+      .fn(async () => undefined)
+      .mockRejectedValueOnce(new Error("Profile service is offline."));
     render(() => (
       <SettingsModal
         open
@@ -332,32 +289,9 @@ describe("SettingsModal", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(onUpdateAccountName).not.toHaveBeenCalled();
     expect(await screen.findByRole("alert")).toHaveTextContent("Remove line breaks and hidden or control characters.");
-  });
 
-  it("keeps the display-name draft after a save failure", async () => {
-    const onUpdateAccountName = vi.fn(async () => {
-      throw new Error("Profile service is offline.");
-    });
-    render(() => (
-      <SettingsModal
-        open
-        onOpenChange={() => undefined}
-        value={DEFAULT_GENERAL_SETTINGS}
-        onValueChange={() => undefined}
-        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
-        updateStatus={idleUpdateStatus}
-        onUpdateAction={vi.fn(async () => undefined)}
-        account={account}
-        onUpdateAccountName={onUpdateAccountName}
-        onUpdateAccountAvatar={vi.fn(async () => undefined)}
-      />
-    ));
-
-    await fireEvent.click(screen.getByRole("tab", { name: "Profile" }));
-    const input = screen.getByRole("textbox", { name: "Display name" });
     await fireEvent.input(input, { target: { value: "Nora" } });
     await fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
     expect(await screen.findByRole("alert")).toHaveTextContent("Profile service is offline.");
     expect(input).toHaveValue("Nora");
   });
