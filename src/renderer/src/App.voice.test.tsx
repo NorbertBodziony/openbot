@@ -15,16 +15,37 @@ describe("OpenBot connected desktop shell", () => {
     installOpenbotStub();
   });
 
-  it("offers local voice prompting and explains blocked microphone access", async () => {
+  it("explains blocked microphone access, then records and offers the send arrow", async () => {
     render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
 
-    const voiceButton = await screen.findByRole("button", { name: "Create prompt with voice" });
-    await fireEvent.click(voiceButton);
+    await fireEvent.click(await screen.findByRole("button", { name: "Create prompt with voice" }));
 
     expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledWith({ audio: true, video: false });
     expect(
       await screen.findByText("Microphone access is blocked. Allow OpenBot to use the microphone in system settings."),
     ).toBeInTheDocument();
+
+    installVoiceRecordingMocks();
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: "turn-active",
+        revision: 2,
+        messages: [],
+      },
+    });
+    await screen.findByRole("button", { name: "Stop agent" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Create prompt with voice" }));
+
+    const status = await screen.findByRole("group", { name: "Voice recording" });
+    expect(within(status).getByText("0:00")).toBeVisible();
+    expect(within(status).getByRole("button", { name: "Stop voice recording" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Create prompt with voice" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send voice message" })).toBeInTheDocument();
   });
 
   it("downloads the voice model before it requests microphone access", async () => {
@@ -84,37 +105,6 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByText("Local voice setup failed")).toBeInTheDocument();
   });
 
-  it("shows the recording timer and stop control while capturing voice", async () => {
-    class RecordingMediaRecorder extends EventTarget {
-      readonly mimeType = "audio/webm";
-      state: RecordingState = "inactive";
-
-      start(): void {
-        this.state = "recording";
-      }
-
-      stop(): void {
-        this.state = "inactive";
-        this.dispatchEvent(new Event("stop"));
-      }
-    }
-    Object.defineProperty(window, "MediaRecorder", { configurable: true, value: RecordingMediaRecorder });
-    Object.defineProperty(navigator, "mediaDevices", {
-      configurable: true,
-      value: {
-        getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop: vi.fn() }] }),
-      },
-    });
-    render(() => <App />);
-
-    await fireEvent.click(await screen.findByRole("button", { name: "Create prompt with voice" }));
-
-    const status = await screen.findByRole("group", { name: "Voice recording" });
-    expect(within(status).getByText("0:00")).toBeVisible();
-    expect(within(status).getByRole("button", { name: "Stop voice recording" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Create prompt with voice" })).not.toBeInTheDocument();
-  });
-
   it("submits the accepted voice snapshot and preserves later draft changes", async () => {
     let resolveTranscription: ((result: { text: string }) => void) | undefined;
     vi.mocked(window.openbot.voice.transcribe).mockImplementationOnce(
@@ -151,14 +141,22 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(composer).toHaveTextContent("Later draft"));
   });
 
-  it("stores an ordinary voice transcript for the original bot after the chat changes", async () => {
+  it("keeps a deferred transcript and its failure with the chat that started them", async () => {
     let resolveTranscription: ((result: { text: string }) => void) | undefined;
-    vi.mocked(window.openbot.voice.transcribe).mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          resolveTranscription = resolve;
-        }),
-    );
+    let rejectTranscription: ((error: Error) => void) | undefined;
+    vi.mocked(window.openbot.voice.transcribe)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveTranscription = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectTranscription = reject;
+          }),
+      );
     installVoiceRecordingMocks();
     render(() => <App />);
 
@@ -175,26 +173,11 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(screen.getByRole("textbox", { name: "Message Chief" })).toHaveTextContent("Draft for Chief"),
     );
-  });
 
-  it("shows a deferred transcription error in the original chat", async () => {
-    let rejectTranscription: ((error: Error) => void) | undefined;
-    vi.mocked(window.openbot.voice.transcribe).mockImplementationOnce(
-      () =>
-        new Promise((_resolve, reject) => {
-          rejectTranscription = reject;
-        }),
-    );
-    installVoiceRecordingMocks();
-    render(() => <App />);
-
-    const composer = await screen.findByRole("textbox", { name: "Message Chief" });
-    composer.textContent = "Retry me";
-    await fireEvent.input(composer);
-    await fireEvent.click(await screen.findByRole("button", { name: "Create prompt with voice" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Create prompt with voice" }));
     await screen.findByRole("group", { name: "Voice recording" });
     await fireEvent.click(screen.getByRole("button", { name: "Send voice message" }));
-    await waitFor(() => expect(window.openbot.voice.transcribe).toHaveBeenCalledOnce());
+    await waitFor(() => expect(window.openbot.voice.transcribe).toHaveBeenCalledTimes(2));
     await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
 
     rejectTranscription?.(new Error("Transcription failed"));
@@ -426,26 +409,5 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.getByRole("textbox", { name: "Message Chief" })).toHaveTextContent("Personal draft");
     expect(window.openbot.agent.updateQueuedMessage).not.toHaveBeenCalled();
-  });
-
-  it("shows the voice-send arrow while an agent turn is active", async () => {
-    installVoiceRecordingMocks();
-    render(() => <App />);
-    await screen.findByRole("heading", { name: "Chief" });
-    emitAgentEvent?.({
-      type: "conversation",
-      snapshot: {
-        botId: "chief",
-        threadId: "thread-chief",
-        activeTurnId: "turn-active",
-        revision: 2,
-        messages: [],
-      },
-    });
-
-    await screen.findByRole("button", { name: "Stop agent" });
-    await fireEvent.click(screen.getByRole("button", { name: "Create prompt with voice" }));
-    await screen.findByRole("group", { name: "Voice recording" });
-    expect(screen.getByRole("button", { name: "Send voice message" })).toBeInTheDocument();
   });
 });
