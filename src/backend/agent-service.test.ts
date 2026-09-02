@@ -653,6 +653,72 @@ describe.sequential("AgentService", () => {
     expect((await store.getOrCreate("chief")).threadId).not.toBe((await store.getOrCreate("sales-outbound")).threadId);
   });
 
+  it("derives live progress from the provider-neutral turn and tool lifecycle", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores();
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "", false);
+      clients.set(provider, client);
+      return client;
+    });
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Check the latest result" });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+    const started = events.find((event) => event.type === "turn-started");
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    if (started?.type !== "turn-started" || !client || !threadId) {
+      throw new Error("The fake provider turn did not start.");
+    }
+    const turnId = started.turnId;
+
+    const progress = () =>
+      service
+        ?.readConversation("chief")
+        .then((conversation) => conversation.messages.find((message) => message.id === `activity:${turnId}`)?.text);
+    await expect(progress()).resolves.toBe("Reviewing the request and planning the next step…");
+
+    client.emit(
+      "notification",
+      notification("item/started", {
+        threadId,
+        turnId,
+        item: { id: "tool-1", type: "toolCall", name: "web_search", status: "in_progress" },
+      }),
+    );
+    await waitFor(async () => (await progress()) === "Searching for current information…");
+
+    client.emit(
+      "notification",
+      notification("item/completed", {
+        threadId,
+        turnId,
+        item: { id: "tool-1", type: "toolCall", name: "web_search", status: "completed" },
+      }),
+    );
+    await waitFor(async () => (await progress()) === "Reviewing the sources and information I found…");
+
+    client.emit(
+      "notification",
+      notification("item/completed", {
+        threadId,
+        turnId,
+        item: { id: "answer-1", type: "agentMessage", text: "Here is the result." },
+      }),
+    );
+    client.emit(
+      "notification",
+      notification("turn/completed", { threadId, turn: { id: turnId, status: "completed" } }),
+    );
+    await waitFor(async () =>
+      ((await service?.readConversation("chief"))?.messages ?? []).every(
+        (message) => message.id !== `activity:${turnId}`,
+      ),
+    );
+  });
+
   it("connects ChatGPT through the Codex App Server and promotes the authenticated client", async () => {
     const { store, mailbox } = stores();
     const codexClients: FakeAgentClient[] = [];
@@ -2818,13 +2884,8 @@ describe.sequential("AgentService", () => {
     expect(instructions).toContain('"title": "Research & writing"');
     expect(instructions).toContain('"description": "Researches topics and turns findings into clear writing."');
     expect(instructions).toContain("Be pragmatic and direct");
-    expect(instructions).toContain("Give the shortest final answer that is complete and useful");
+    expect(instructions).toContain("Give the shortest answer that is complete and useful");
     expect(instructions).toContain("Do not add filler");
-    expect(instructions).toContain("<user_updates_spec>");
-    expect(instructions).toContain("send an initial commentary update before the first tool call");
-    expect(instructions).toContain("learn a concrete result that changes or advances the work");
-    expect(instructions).toContain("State concrete progress and what you will focus on next");
-    expect(instructions).toContain("Do not expose private chain-of-thought");
     expect(instructions).toContain("openbot.ask_user");
     expect(instructions).toContain("GitHub-flavored Markdown tables");
     expect(instructions).toContain("at least three dashes per column");
@@ -3370,7 +3431,7 @@ describe.sequential("AgentService", () => {
       ]),
     );
     expect(chiefMessages.findIndex((message) => message.exchange?.direction === "outgoing")).toBeLessThan(
-      chiefMessages.findIndex((message) => message.author === "assistant"),
+      chiefMessages.findIndex((message) => message.author === "assistant" && message.itemType !== "commentary"),
     );
     await waitFor(async () =>
       (await service?.readConversation("sales-outbound"))?.messages.some(

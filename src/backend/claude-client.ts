@@ -57,6 +57,7 @@ interface ActiveTurn {
   itemId: string;
   text: string;
   assistantMessages: Map<string, string>;
+  toolCalls: Map<string, string>;
 }
 
 interface ThreadRuntime {
@@ -382,6 +383,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       itemId: `${turnId}:assistant`,
       text: "",
       assistantMessages: new Map<string, string>(),
+      toolCalls: new Map<string, string>(),
     };
     runtime.activeTurn = activeTurn;
     this.emit("notification", {
@@ -458,11 +460,29 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       if (message.parent_tool_use_id !== null) return;
       const turn = runtime.activeTurn;
       const text = messageText(message.message);
-      if (!turn || !text || !message.uuid) return;
+      if (!turn || !message.uuid) return;
+      for (const toolCall of messageToolCalls(message.message)) {
+        if (turn.toolCalls.has(toolCall.id)) continue;
+        turn.toolCalls.set(toolCall.id, toolCall.name);
+        this.#emitToolCall(runtime, toolCall.id, toolCall.name, false);
+      }
+      if (!text) return;
       turn.assistantMessages.set(message.uuid, text);
       const completeText = [...turn.assistantMessages.values()].join("");
       if (completeText.startsWith(turn.text)) {
         this.#appendDelta(runtime, completeText.slice(turn.text.length));
+      }
+      return;
+    }
+
+    if (message.type === "user") {
+      const turn = runtime.activeTurn;
+      if (!turn) return;
+      for (const toolCallId of messageToolResults(message.message)) {
+        const name = turn.toolCalls.get(toolCallId);
+        if (!name) continue;
+        turn.toolCalls.delete(toolCallId);
+        this.#emitToolCall(runtime, toolCallId, name, true);
       }
       return;
     }
@@ -472,6 +492,10 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     const errors = message.errors ?? [];
     const turn = runtime.activeTurn;
     if (turn) {
+      for (const [toolCallId, name] of turn.toolCalls) {
+        this.#emitToolCall(runtime, toolCallId, name, true);
+      }
+      turn.toolCalls.clear();
       const completeText = [...turn.assistantMessages.values()].join("");
       if (completeText) turn.text = completeText;
       else if (!turn.text && fallback) this.#appendDelta(runtime, fallback);
@@ -482,6 +506,19 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       errors.some((error) => /interrupt|abort/i.test(error));
     const status = interrupted ? "interrupted" : message.subtype === "success" ? "completed" : "failed";
     this.#completeTurn(runtime, status, errors.length > 0 ? errors.join("\n") : null);
+  }
+
+  #emitToolCall(runtime: ThreadRuntime, id: string, name: string, completed: boolean): void {
+    const turn = runtime.activeTurn;
+    if (!turn) return;
+    this.emit("notification", {
+      method: completed ? "item/completed" : "item/started",
+      params: {
+        threadId: runtime.id,
+        turnId: turn.id,
+        item: { id, type: "toolCall", name, status: completed ? "completed" : "in_progress" },
+      },
+    });
   }
 
   #appendDelta(runtime: ThreadRuntime, delta: string): void {
@@ -878,6 +915,24 @@ function messageText(message: unknown): string {
     .filter((block) => block.type === "text" && isString(block.text))
     .map((block) => block.text)
     .join("\n");
+}
+
+function messageToolCalls(message: unknown): Array<{ id: string; name: string }> {
+  if (!isRecord(message) || !Array.isArray(message.content)) return [];
+  return message.content.filter(isRecord).flatMap((block) => {
+    const id = getString(block, "id");
+    const name = getString(block, "name");
+    return block.type === "tool_use" && id && name ? [{ id, name }] : [];
+  });
+}
+
+function messageToolResults(message: unknown): string[] {
+  if (!isRecord(message) || !Array.isArray(message.content)) return [];
+  return message.content
+    .filter(isRecord)
+    .filter((block) => block.type === "tool_result")
+    .map((block) => getString(block, "tool_use_id"))
+    .filter(isString);
 }
 
 function dynamicContent(value: unknown): CallToolResult["content"] {

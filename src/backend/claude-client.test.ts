@@ -34,7 +34,22 @@ type TestStreamMessage =
       parent_tool_use_id: string | null;
       session_id: string;
       uuid: string;
-      message: { content: Array<{ type: "text"; text: string }> };
+      message: {
+        content: Array<{
+          type: string;
+          text?: string;
+          id?: string;
+          name?: string;
+          tool_use_id?: string;
+        }>;
+      };
+    }
+  | {
+      type: "user";
+      parent_tool_use_id: string | null;
+      session_id: string;
+      uuid: string;
+      message: { content: Array<{ type: "tool_result"; tool_use_id: string }> };
     }
   | {
       type: "result";
@@ -145,6 +160,8 @@ fi
       uuid: deliveryId,
       event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hi" } },
     });
+    output.push(toolUseMessage(thread.thread.id, "tool-message", "tool-use-1", "WebSearch"));
+    output.push(toolResultMessage(thread.thread.id, "tool-result", "tool-use-1"));
     output.push({
       type: "result",
       subtype: "success",
@@ -162,6 +179,20 @@ fi
         expect.objectContaining({
           method: "item/agentMessage/delta",
           params: expect.objectContaining({ turnId: deliveryId, delta: "Hi" }),
+        }),
+        expect.objectContaining({
+          method: "item/started",
+          params: expect.objectContaining({
+            turnId: deliveryId,
+            item: { id: "tool-use-1", type: "toolCall", name: "WebSearch", status: "in_progress" },
+          }),
+        }),
+        expect.objectContaining({
+          method: "item/completed",
+          params: expect.objectContaining({
+            turnId: deliveryId,
+            item: { id: "tool-use-1", type: "toolCall", name: "WebSearch", status: "completed" },
+          }),
         }),
         expect.objectContaining({
           method: "turn/completed",
@@ -600,6 +631,26 @@ function assistantMessage(
     session_id: threadId,
     uuid: messageId,
     message: { content: [{ type: "text", text }] },
+  };
+}
+
+function toolUseMessage(threadId: string, messageId: string, toolUseId: string, name: string): TestStreamMessage {
+  return {
+    type: "assistant",
+    parent_tool_use_id: null,
+    session_id: threadId,
+    uuid: messageId,
+    message: { content: [{ type: "tool_use", id: toolUseId, name }] },
+  };
+}
+
+function toolResultMessage(threadId: string, messageId: string, toolUseId: string): TestStreamMessage {
+  return {
+    type: "user",
+    parent_tool_use_id: null,
+    session_id: threadId,
+    uuid: messageId,
+    message: { content: [{ type: "tool_result", tool_use_id: toolUseId }] },
   };
 }
 

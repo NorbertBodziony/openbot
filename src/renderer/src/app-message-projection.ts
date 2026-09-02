@@ -320,6 +320,7 @@ export function retainThinkingMessages(previous: BotMessage[], next: BotMessage[
   const nextIds = new Set(result.map((message) => message.id));
   for (const thinking of previous) {
     if (thinking.kind !== "thinking" || nextIds.has(thinking.id) || !thinking.turnId) continue;
+    if (thinking.itemIds?.every((id) => id.startsWith("activity:"))) continue;
     const sameTurnIndexes = result.flatMap((message, index) => (message.turnId === thinking.turnId ? [index] : []));
     if (sameTurnIndexes.length === 0) continue;
     const finalAnswerIndex = result.findIndex(
