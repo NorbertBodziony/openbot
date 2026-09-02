@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { isDynamicRecord, isNumber } from "@openbot/contracts/runtime-values";
-import type { Point, Rectangle } from "electron";
+import type { Rectangle } from "electron";
 
 interface WindowSize {
   width: number;
@@ -55,20 +55,17 @@ export async function writeMainWindowBounds(path: string, bounds: Rectangle): Pr
 export function resolveMainWindowBounds(
   stored: Rectangle | null,
   workAreas: Rectangle[],
-  cursor: Point,
+  currentWorkArea: Rectangle,
   defaultSize: WindowSize,
   minimumSize: WindowSize,
 ): Rectangle {
-  const cursorWorkArea = workAreas.find((workArea) => containsPoint(workArea, cursor)) ?? workAreas[0];
-  if (!cursorWorkArea) return { x: 0, y: 0, ...defaultSize };
-
   const storedWorkArea = stored
     ? workAreas
         .map((workArea) => ({ workArea, overlap: intersectionArea(stored, workArea) }))
         .sort((left, right) => right.overlap - left.overlap)[0]
     : undefined;
   const restoreStoredPosition = Boolean(storedWorkArea?.overlap);
-  const workArea = restoreStoredPosition ? storedWorkArea?.workArea : cursorWorkArea;
+  const workArea = restoreStoredPosition ? storedWorkArea?.workArea : currentWorkArea;
   if (!workArea) return { x: 0, y: 0, ...defaultSize };
 
   const requestedSize = stored ?? { x: 0, y: 0, ...defaultSize };
@@ -88,15 +85,6 @@ export function resolveMainWindowBounds(
     width,
     height,
   };
-}
-
-function containsPoint(rectangle: Rectangle, point: Point): boolean {
-  return (
-    point.x >= rectangle.x &&
-    point.x < rectangle.x + rectangle.width &&
-    point.y >= rectangle.y &&
-    point.y < rectangle.y + rectangle.height
-  );
 }
 
 function intersectionArea(left: Rectangle, right: Rectangle): number {

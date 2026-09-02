@@ -1222,10 +1222,11 @@ function registerIpcHandlers(
 
 function createWindow(): BrowserWindow {
   let inspectElementModifierPressed = false;
+  const cursor = screen.getCursorScreenPoint();
   const bounds = resolveMainWindowBounds(
     mainWindowBounds,
     screen.getAllDisplays().map((display) => display.workArea),
-    screen.getCursorScreenPoint(),
+    screen.getDisplayNearestPoint(cursor).workArea,
     { width: 1200, height: 820 },
     { width: 960, height: 640 },
   );

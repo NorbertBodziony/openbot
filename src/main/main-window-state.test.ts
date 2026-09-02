@@ -15,19 +15,19 @@ describe("main window state", () => {
       resolveMainWindowBounds(
         { x: 1700, y: 120, width: 1100, height: 760 },
         [primary, secondary],
-        { x: 200, y: 100 },
+        primary,
         { width: 1200, height: 820 },
         { width: 960, height: 640 },
       ),
     ).toEqual({ x: 1700, y: 120, width: 1100, height: 760 });
   });
 
-  it("centers a new window on the display containing the cursor", () => {
+  it("centers a new window on the work area selected by Electron", () => {
     expect(
       resolveMainWindowBounds(
         null,
         [primary, secondary],
-        { x: 2000, y: 500 },
+        secondary,
         { width: 1200, height: 820 },
         { width: 960, height: 640 },
       ),
@@ -39,7 +39,7 @@ describe("main window state", () => {
       resolveMainWindowBounds(
         { x: 4000, y: 120, width: 1200, height: 820 },
         [primary],
-        { x: 300, y: 200 },
+        primary,
         { width: 1200, height: 820 },
         { width: 960, height: 640 },
       ),
