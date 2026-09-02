@@ -33,6 +33,11 @@ jobs:
         with:
           bun-version: 1.4.0
 
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
@@ -59,6 +64,11 @@ jobs:
         with:
           bun-version: 1.4.0
 
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
 
@@ -78,6 +88,11 @@ jobs:
         with:
           bun-version: 1.4.0
 
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
 
@@ -96,6 +111,11 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.0
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
 
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
@@ -120,6 +140,11 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.0
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -191,6 +216,11 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.0
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
 
       - name: Install dependencies
         run: bun install --frozen-lockfile

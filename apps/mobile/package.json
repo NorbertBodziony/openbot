@@ -10,7 +10,7 @@
     }
   },
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=24.0.0"
   },
   "dependencies": {
     "@expo/ui": "~57.0.14",
