@@ -588,6 +588,24 @@ async function main(): Promise<void> {
     if (staleFrameClick.success || !toolError(staleFrameClick).includes("Stale browser reference")) {
       throw new Error("V2 iframe navigation did not invalidate revision-bound references.");
     }
+    const semanticChangeSnapshot = await browser.snapshot(v2Tab.id);
+    const semanticChangeTarget = semanticChangeSnapshot.elements.find((element) => element.name === "SPA");
+    if (!semanticChangeTarget) throw new Error("V2 semantic-change stale-reference fixture was not available.");
+    await v2Contents.executeJavaScript(
+      `document.querySelector('[aria-label="SPA"]').setAttribute('aria-label', 'Delete'); true`,
+      true,
+    );
+    const semanticChangeClick = await callBrowserTool(browser, "click", {
+      tabId: v2Tab.id,
+      target: { kind: "ref", ref: semanticChangeTarget.ref, revision: semanticChangeSnapshot.revision },
+    });
+    if (semanticChangeClick.success || !toolError(semanticChangeClick).includes("target changed")) {
+      throw new Error("V2 revision-bound ref accepted a target whose semantics changed after the snapshot.");
+    }
+    await v2Contents.executeJavaScript(
+      `document.querySelector('[aria-label="Delete"]').setAttribute('aria-label', 'SPA'); true`,
+      true,
+    );
     await browser.snapshot(v2Tab.id);
     const noDomRefs = await v2Contents.executeJavaScript("document.querySelector('[data-openbot-ref]') === null", true);
     if (noDomRefs !== true) throw new Error("V2 snapshot mutated the page DOM.");

@@ -857,30 +857,17 @@ export class BrowserCdpEngine {
       const sessionId = record.targetId ? this.#targetSessions.get(record.targetId)?.sessionId : undefined;
       if (deadline !== undefined) {
         assertBeforeDeadline(deadline);
-        const visible = await this.#callOnNode(
-          send,
-          record.backendNodeId,
-          `function() {
-            if (this.nodeType !== 1 || !this.isConnected || this.getClientRects().length === 0) return false;
-            let element = this;
-            while (element) {
-              if (element.hidden || element.inert || String(element.getAttribute('aria-hidden')).toLowerCase() === 'true') return false;
-              const style = getComputedStyle(element);
-              if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.contentVisibility === 'hidden' || style.opacity === '0') return false;
-              const parent = element.parentElement;
-              if (parent) element = parent;
-              else {
-                const root = element.getRootNode();
-                element = root?.nodeType === Node.DOCUMENT_FRAGMENT_NODE ? root.host : null;
-              }
-            }
-            return true;
-          }`,
-          [],
-          sessionId,
-        );
+        const current = await this.#targetFingerprint(send, record.backendNodeId, sessionId).catch(() => null);
         assertBeforeDeadline(deadline);
-        if (visible !== true) throw new Error("Element reference is no longer visible.");
+        if (!current?.visible) throw new Error("Element reference is no longer visible.");
+        if (
+          current.role !== record.element.role ||
+          current.name !== record.element.name ||
+          current.tag !== record.element.tag ||
+          current.visibleText !== record.visibleText
+        ) {
+          throw new Error("Stale browser reference. The target changed after the snapshot.");
+        }
       }
       return {
         backendNodeId: record.backendNodeId,
@@ -992,6 +979,50 @@ export class BrowserCdpEngine {
       sessionId: candidates[0].sessionId,
       x: 0,
       y: 0,
+    };
+  }
+
+  async #targetFingerprint(
+    send: SendCommand,
+    backendNodeId: number,
+    sessionId?: string,
+  ): Promise<{ role: string; name: string; tag: string; visibleText: string; visible: boolean }> {
+    const [description, partialAxTree, pageState] = await Promise.all([
+      send("DOM.describeNode", { backendNodeId, depth: 0 }, sessionId),
+      send("Accessibility.getPartialAXTree", { backendNodeId, fetchRelatives: false }, sessionId),
+      this.#callOnNode(
+        send,
+        backendNodeId,
+        String.raw`function() {
+          if (this.nodeType !== 1 || !this.isConnected || this.getClientRects().length === 0) return null;
+          let element = this;
+          while (element) {
+            if (element.hidden || element.inert || String(element.getAttribute('aria-hidden')).toLowerCase() === 'true') return null;
+            const style = getComputedStyle(element);
+            if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || style.contentVisibility === 'hidden' || style.opacity === '0') return null;
+            const parent = element.parentElement;
+            if (parent) element = parent;
+            else {
+              const root = element.getRootNode();
+              element = root?.nodeType === Node.DOCUMENT_FRAGMENT_NODE ? root.host : null;
+            }
+          }
+          return { visibleText: String(this.innerText ?? this.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 500) };
+        }`,
+        [],
+        sessionId,
+      ),
+    ]);
+    const node = recordValue(description.node);
+    const axNodes = Array.isArray(partialAxTree.nodes) ? partialAxTree.nodes.filter(isRecord) : [];
+    const ax = axNodes.find((candidate) => numberValue(candidate.backendDOMNodeId) === backendNodeId) ?? axNodes[0];
+    const state = recordValue(pageState);
+    return {
+      role: ax ? axValue(ax.role).toLowerCase() || fallbackRole(node ?? {}) : fallbackRole(node ?? {}),
+      name: ax ? axValue(ax.name).slice(0, 500) : "",
+      tag: (stringValue(node?.localName) || stringValue(node?.nodeName)).toLowerCase(),
+      visibleText: stringValue(state?.visibleText),
+      visible: state !== undefined,
     };
   }
 
