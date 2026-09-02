@@ -375,7 +375,7 @@ export function signalOwnedProcess(
       killProcess(-child.pid, signal);
     }
   } catch (error) {
-    if (!isUnavailableProcess(error)) throw error;
+    if (!isUnavailableProcess(error, platform)) throw error;
   }
 }
 
@@ -415,14 +415,18 @@ function ownedProcessIsRunning(child: OwnedProcess, platform: NodeJS.Platform, k
     killProcess(-child.pid, 0);
     return true;
   } catch (error) {
-    if (isUnavailableProcess(error)) return false;
+    if (isUnavailableProcess(error, platform)) return false;
     throw error;
   }
 }
 
-function isUnavailableProcess(error: unknown): error is NodeJS.ErrnoException {
+function isUnavailableProcess(error: unknown, platform: NodeJS.Platform): error is NodeJS.ErrnoException {
   // macOS can report EPERM while a detached Electron group is disappearing and only sandboxed helpers remain.
-  return error instanceof Error && "code" in error && (error.code === "ESRCH" || error.code === "EPERM");
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error.code === "ESRCH" || (platform === "darwin" && error.code === "EPERM"))
+  );
 }
 
 const invokedFile = process.argv[1] ? resolve(process.argv[1]) : "";

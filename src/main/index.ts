@@ -1275,6 +1275,9 @@ function createWindow(): BrowserWindow {
       if (systemSessionEndFlushStarted) return;
       systemSessionEndFlushStarted = true;
       updateService?.stop();
+      void flushMainWindowBounds().catch((error) =>
+        console.error("Unable to save the main window position before Windows session end:", error),
+      );
       void browserHost
         ?.flushPersistentStorage()
         .catch((error) => console.error("Unable to flush browser storage before Windows session end:", error));
@@ -1283,6 +1286,9 @@ function createWindow(): BrowserWindow {
     window.on("session-end", () => {
       systemSessionEnding = true;
       isQuitting = true;
+      void flushMainWindowBounds().catch((error) =>
+        console.error("Unable to save the main window position during Windows session end:", error),
+      );
       void browserHost
         ?.flushPersistentStorage()
         .catch((error) => console.error("Unable to flush browser storage during Windows session end:", error));
