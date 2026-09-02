@@ -6,7 +6,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseInviteUrl } from "@openbot/contracts/invite-links";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
+import { TEAM_CURRENT_CAPABILITIES } from "@openbot/contracts/team-protocol/current";
 import { TEAM_CAPABILITIES_HEADER } from "@openbot/contracts/team-protocol/v1";
+import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   decodeBrowserPreview,
@@ -308,17 +310,28 @@ describe("remote server links", () => {
       downloadHostLogo: async () => ({ bytes: new Uint8Array(), mimeType: "image/png" }),
       transferDirectory: join(directory, "transfers"),
     });
-    const request = vi.spyOn(transport, "request").mockResolvedValue({
-      ready: true,
-      platform: "linux",
-      unattended: true,
-      runtime: "sunshine-moonlight",
-      protocolVersion: 2,
-      displays: [],
-      selectedDisplayId: null,
-      activeSessions: 0,
-      maxSessions: 1,
-    });
+    const request = vi
+      .spyOn(transport, "request")
+      .mockImplementation(async (_hostId, path): Promise<TeamProtocolV2Json> => {
+        if (path === "/v1/compatibility") {
+          return {
+            appVersion: "0.4.0",
+            protocol: { minimum: 1, maximum: 1 },
+            capabilities: [...TEAM_CURRENT_CAPABILITIES],
+          } satisfies TeamProtocolV2Json;
+        }
+        return {
+          ready: true,
+          platform: "linux",
+          unattended: true,
+          runtime: "sunshine-moonlight",
+          protocolVersion: 2,
+          displays: [],
+          selectedDisplayId: null,
+          activeSessions: 0,
+          maxSessions: 1,
+        } satisfies TeamProtocolV2Json;
+      });
     const manager = new RemoteServerManager(
       statePath,
       { encrypt: (value) => Buffer.from(value), decrypt: (value) => value.toString() },
@@ -327,7 +340,7 @@ describe("remote server links", () => {
         getEmail: () => "person@example.com",
         sendTeamInviteEmail,
       },
-      { webrtcTransport: transport },
+      { appVersion: "0.4.0", webrtcTransport: transport },
     );
 
     try {
@@ -343,7 +356,12 @@ describe("remote server links", () => {
       await vi.waitFor(() =>
         expect(manager.list().find((server) => server.id === betaId)?.remoteDesktopAvailable).toBe(true),
       );
-      expect(request).toHaveBeenCalledWith(betaId, "/v1/remote-screen/capabilities", {});
+      const compatibility = manager.list().find((server) => server.id === betaId)?.compatibility;
+      expect(compatibility).toMatchObject({ negotiatedProtocol: 2 });
+      expect(compatibility?.capabilities).toContain("installed-skills");
+      expect(request).toHaveBeenCalledWith(betaId, "/v1/remote-screen/capabilities", {
+        preserveSemanticTags: true,
+      });
       const invite = await manager.createInvite(betaId, { role: "member", email: "friend@example.com" });
       expect(sendTeamInviteEmail).toHaveBeenCalledWith({
         email: "friend@example.com",
@@ -469,6 +487,7 @@ describe("remote server links", () => {
         method: "POST",
         body: { grant: "viewer-grant" },
         contentType: "application/json",
+        preserveSemanticTags: false,
       });
 
       await expect(
@@ -1201,6 +1220,24 @@ function remoteEventManager(statePath: string, appVersion?: string): RemoteServe
 }
 
 describe("Team API compatibility negotiation", () => {
+  it("limits app-version-less connections to v1 capabilities", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-assumed-compatibility-"));
+    const statePath = join(directory, "servers.json");
+    await writeRemoteEventState(statePath, "assumed-compatibility");
+    const manager = remoteEventManager(statePath);
+
+    try {
+      await manager.initialize();
+      await manager.retryConnection("assumed-compatibility");
+      const compatibility = manager.list().find((server) => server.id === "assumed-compatibility")?.compatibility;
+      expect(compatibility).toMatchObject({ negotiatedProtocol: 1 });
+      expect(compatibility?.capabilities).not.toContain("installed-skills");
+    } finally {
+      manager.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when a binary route returns malformed protocol metadata", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openbot-binary-protocol-error-"));
     const statePath = join(directory, "servers.json");
@@ -1388,6 +1425,10 @@ describe("Team API compatibility negotiation", () => {
       expect(headers.get("OpenBot-App-Version")).toBe("0.4.0");
       expect(headers.get(TEAM_CAPABILITIES_HEADER)).toContain("routine-event-markers");
       expect(headers.get(TEAM_CAPABILITIES_HEADER)).toContain("routine-run-event-markers");
+      if (url.pathname === "/v1/agents/chief/messages") {
+        expect(JSON.parse(String(init?.body))).toMatchObject({ text: "Ask @Research to use Sources (skill)." });
+        return Response.json({ messageId: "message-1", deliveries: [] });
+      }
       return Response.json({
         phase: "ready",
         cliVersion: "1.0.0",
@@ -1405,6 +1446,21 @@ describe("Team API compatibility negotiation", () => {
       await expect(
         manager.request("/v1/agents/status", {}, "compatibility-headers", (value) => value),
       ).resolves.toMatchObject({ phase: "ready" });
+      await expect(
+        manager.request(
+          "/v1/agents/chief/messages",
+          {
+            method: "POST",
+            body: {
+              text: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
+              attachmentDraftIds: [],
+              replyToMessageId: null,
+            },
+          },
+          "compatibility-headers",
+          (value) => value,
+        ),
+      ).resolves.toMatchObject({ messageId: "message-1" });
       expect(manager.list().find((server) => server.id === "compatibility-headers")?.compatibility).toMatchObject({
         localAppVersion: "0.4.0",
         hostAppVersion: "0.3.0",

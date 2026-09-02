@@ -1,6 +1,7 @@
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
+import { serializeChatTagReference } from "@openbot/contracts/chat-tag-references";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import type { DraftAttachment } from "@openbot/contracts/ipc";
+import type { DraftAttachment, InstalledSkill } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -13,7 +14,12 @@ afterEach(() => {
   window.matchMedia = originalMatchMedia;
 });
 
-function renderComposer(attachments: DraftAttachment[] = [], initialValue = "", bots: BotProfile[] = []) {
+function renderComposer(
+  attachments: DraftAttachment[] = [],
+  initialValue = "",
+  bots: BotProfile[] = [],
+  skills: InstalledSkill[] = [],
+) {
   const onSubmit = vi.fn();
   const onValueChange = vi.fn();
   const onOpenAttachment = vi.fn();
@@ -24,6 +30,7 @@ function renderComposer(attachments: DraftAttachment[] = [], initialValue = "", 
       <ComposerEditor
         botId="chief"
         bots={bots}
+        skills={skills}
         attachments={attachments}
         value={value()}
         placeholder="Message Chief"
@@ -384,10 +391,90 @@ describe("ComposerEditor", () => {
     await fireEvent.keyDown(editor, { key: "Enter" });
 
     expect(onSubmit).not.toHaveBeenCalled();
-    expect(onValueChange).toHaveBeenLastCalledWith("@[Sales](sales) ");
+    expect(onValueChange).toHaveBeenLastCalledWith("@[Sales](agent:sales) ");
     expect(editor.querySelector('[data-mention-id="sales"]')).not.toBeNull();
     expect(screen.queryByRole("listbox", { name: "Insert mention" })).toBeNull();
     expect(editor).toHaveFocus();
+  });
+
+  it("searches installed skills in the unified picker and inserts a typed skill token", async () => {
+    const skill: InstalledSkill = {
+      skillId: "release-notes",
+      slug: "release-notes",
+      name: "Release Notes",
+      installedVersion: 1,
+      availableVersion: 1,
+      state: "installed",
+    };
+    const { editor, onValueChange } = renderComposer([], "", [], [skill]);
+    editor.textContent = "@release";
+    placeCaretAtEnd(editor);
+    await fireEvent.input(editor);
+
+    await fireEvent.keyDown(editor, { key: "Enter" });
+
+    expect(onValueChange).toHaveBeenLastCalledWith("@[Release Notes](skill:release-notes) ");
+    expect(editor.querySelector('[data-skill-id="release-notes"]')).not.toBeNull();
+  });
+
+  it("round-trips encoded semantic tag names and ids", async () => {
+    const skill: InstalledSkill = {
+      skillId: "guide)advanced",
+      slug: "guide-advanced",
+      name: "C] Guide",
+      installedVersion: 1,
+      availableVersion: 1,
+      state: "installed",
+    };
+    const marker = serializeChatTagReference("skill", skill.name, skill.skillId);
+    const { editor, onValueChange } = renderComposer([], marker, [], [skill]);
+
+    expect(editor.querySelector('[data-skill-id="guide)advanced"]')).not.toBeNull();
+    await fireEvent.input(editor);
+    expect(onValueChange).toHaveBeenLastCalledWith(marker);
+  });
+
+  it("keeps an active skill query usable when installed skills finish loading", async () => {
+    const skill: InstalledSkill = {
+      skillId: "release-notes",
+      slug: "release-notes",
+      name: "Release Notes",
+      installedVersion: 1,
+      availableVersion: 1,
+      state: "installed",
+    };
+    const [skills, setSkills] = createSignal<InstalledSkill[]>([]);
+    const [value, setValue] = createSignal("");
+    const onValueChange = vi.fn();
+    render(() => (
+      <ComposerEditor
+        botId="chief"
+        bots={[]}
+        skills={skills()}
+        value={value()}
+        placeholder="Message Chief"
+        ariaLabel="Loading skills"
+        disabled={false}
+        onValueChange={(nextValue) => {
+          onValueChange(nextValue);
+          setValue(nextValue);
+        }}
+        onSubmit={vi.fn()}
+      />
+    ));
+    const editor = screen.getByRole("textbox", { name: "Loading skills" });
+    editor.focus();
+    editor.textContent = "@release";
+    placeCaretAtEnd(editor);
+    await fireEvent.input(editor);
+
+    setSkills([skill]);
+
+    await screen.findByRole("option", { name: "Release Notes Skill" });
+    expect(editor).toHaveFocus();
+    expect(editor.contains(window.getSelection()?.getRangeAt(0).commonAncestorContainer ?? null)).toBe(true);
+    await fireEvent.keyDown(editor, { key: "Enter" });
+    expect(onValueChange).toHaveBeenLastCalledWith("@[Release Notes](skill:release-notes) ");
   });
 
   it("removes a leading mention atomically with Backspace", async () => {
@@ -433,7 +520,7 @@ describe("ComposerEditor", () => {
 
     expect(editor.querySelector('[data-mention-id="research"]')).not.toBeNull();
     expect(editor.querySelector("br, [data-composer-trailing-line]")).toBeNull();
-    expect(onValueChange).toHaveBeenLastCalledWith("before @[Research](research)");
+    expect(onValueChange).toHaveBeenLastCalledWith("before @[Research](agent:research)");
 
     await fireEvent.keyDown(editor, { key: "Backspace" });
 

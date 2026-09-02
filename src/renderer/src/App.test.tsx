@@ -1,3 +1,5 @@
+import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
+import { serializeChatTagReference } from "@openbot/contracts/chat-tag-references";
 import type {
   AgentEvent,
   AgentStatus,
@@ -474,6 +476,7 @@ describe("OpenBot connected desktop shell", () => {
             },
           ]),
           listBots: vi.fn().mockResolvedValue(BOTS),
+          listInstalledSkills: vi.fn().mockResolvedValue([]),
           listMemories: vi.fn().mockResolvedValue([]),
           listRoutines: vi.fn().mockResolvedValue([]),
           listRoutineRuns: vi.fn().mockResolvedValue([]),
@@ -4110,7 +4113,7 @@ describe("OpenBot connected desktop shell", () => {
             id: "sales-search-result",
             author: "assistant",
             source: "assistant",
-            text: "Quarterly launch notes are ready for review.",
+            text: "Ask @[Research](agent:research-hidden-id) to use @[Sources](skill:sources-hidden-id).",
             createdAt: "2026-08-20T09:30:00.000Z",
             status: "completed",
           },
@@ -4131,7 +4134,7 @@ describe("OpenBot connected desktop shell", () => {
                 id: "sales-search-result",
                 author: "assistant",
                 source: "assistant",
-                text: "Quarterly launch notes are ready for review.",
+                text: "Ask @[Research](agent:research-hidden-id) to use @[Sources](skill:sources-hidden-id).",
                 createdAt: "2026-08-20T09:30:00.000Z",
                 status: "completed",
               },
@@ -4150,12 +4153,15 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(input).toHaveFocus());
 
     await fireEvent.click(screen.getByRole("tab", { name: "Messages" }));
-    await fireEvent.input(input, { target: { value: "quarterly" } });
-    const messageResult = await screen.findByRole("option", { name: /Quarterly launch notes/ });
+    await fireEvent.input(input, { target: { value: "sources-hidden-id" } });
+    await screen.findByText("No matching messages or bots");
+    await fireEvent.input(input, { target: { value: "research" } });
+    const messageResult = await screen.findByRole("option", { name: /Ask @Research to use Sources \(skill\)\./ });
+    expect(messageResult).not.toHaveTextContent("research-hidden-id");
     await fireEvent.click(messageResult);
     await screen.findByRole("heading", { name: "Sales Outbound" });
     expect(window.openbot.agent.searchConversationMessages).toHaveBeenCalledWith({
-      query: "quarterly",
+      query: "research",
       limit: 100,
     });
     expect(window.openbot.agent.readConversationPage).toHaveBeenCalledWith({
@@ -5822,7 +5828,7 @@ describe("OpenBot connected desktop shell", () => {
           {
             id: "assistant-1",
             author: "assistant",
-            text: "Should I prepare the report?",
+            text: `Should ${serializeChatTagReference("agent", "Old Sales", "sales-outbound")} prepare the report?`,
             createdAt: "2026-08-12T10:00:00.000Z",
             status: "completed",
           },
@@ -5830,9 +5836,12 @@ describe("OpenBot connected desktop shell", () => {
       },
     });
 
-    await screen.findByText("Should I prepare the report?");
+    await screen.findByRole("button", { name: "Open agent Sales Outbound" });
     await fireEvent.click(screen.getByRole("button", { name: "Reply to Agent message" }));
     expect(screen.getByText("Replying to Agent")).toBeInTheDocument();
+    const replyPreview = document.querySelector(".composer-reply-preview");
+    expect(replyPreview).toHaveTextContent("Should Sales Outbound prepare the report?");
+    expect(replyPreview).not.toHaveTextContent("agent:sales-outbound");
 
     const composer = screen.getByRole("textbox", { name: "Message Chief" });
     composer.textContent = "Yes, today please";
@@ -5911,12 +5920,22 @@ describe("OpenBot connected desktop shell", () => {
     expect(composer).toHaveTextContent("Keep this draft");
   });
 
-  it("reacts and copies from agent hover actions", async () => {
+  it("reacts and copies resolved tags from message hover actions", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText },
     });
+    vi.mocked(window.openbot.agent.listInstalledSkills).mockResolvedValueOnce([
+      {
+        skillId: "skill-1",
+        slug: "release-notes",
+        name: "Release Notes",
+        installedVersion: 1,
+        availableVersion: 1,
+        state: "installed",
+      },
+    ]);
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     emitAgentEvent?.({
@@ -5929,16 +5948,17 @@ describe("OpenBot connected desktop shell", () => {
         messages: [
           {
             id: "assistant-actions",
-            author: "assistant",
-            text: "Ready to ship.",
+            author: "user",
+            text: `Ask ${serializeChatTagReference("agent", "Old Sales", "sales-outbound")} to use ${serializeChatTagReference("skill", "Old Skill", "skill-1")} and review ${serializeAttachmentReference("tagged file", "attachment-1")}.`,
             createdAt: "2026-08-12T10:00:00.000Z",
             status: "completed",
+            attachments: [attachment("attachment-1", "@[Ops](agent:ops)", "pdf")],
           },
         ],
       },
     });
 
-    await screen.findByText("Ready to ship.");
+    await screen.findByRole("button", { name: "Open agent Sales Outbound" });
     await fireEvent.pointerDown(screen.getByRole("button", { name: "Add reaction" }), { button: 0 });
     await fireEvent.pointerUp(screen.getByRole("menuitemradio", { name: "React with ❤️" }), { button: 0 });
     expect(window.openbot.agent.setMessageReaction).toHaveBeenCalledWith({
@@ -5950,7 +5970,51 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.pointerDown(screen.getByRole("button", { name: "More message actions" }), { button: 0 });
     await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Copy" }), { button: 0 });
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith("Ready to ship."));
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith(
+        "Ask @Sales Outbound to use Release Notes (skill) and review @[Ops](agent:ops).",
+      ),
+    );
+  });
+
+  it("retries failed installed skill loading after a remote reconnect", async () => {
+    const local = testServer("local", false);
+    const remote: ServerSummary = {
+      ...testServer("remote-1", true),
+      compatibility: {
+        localAppVersion: "0.4.0",
+        hostAppVersion: "0.4.0",
+        localProtocol: { minimum: 2, maximum: 2 },
+        hostProtocol: { minimum: 2, maximum: 2 },
+        negotiatedProtocol: 2,
+        capabilities: ["installed-skills"],
+      },
+      connectionSequence: 1,
+    };
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+    vi.mocked(window.openbot.agent.listInstalledSkills)
+      .mockRejectedValueOnce(new Error("Remote request failed"))
+      .mockResolvedValueOnce([
+        {
+          skillId: "release-notes",
+          slug: "release-notes",
+          name: "Release Notes",
+          installedVersion: 1,
+          availableVersion: 1,
+          state: "installed",
+        },
+      ]);
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await waitFor(() => expect(window.openbot.agent.listInstalledSkills).toHaveBeenCalledOnce());
+
+    emitServers?.([local, { ...remote, connectionSequence: 2 }]);
+    await waitFor(() => expect(window.openbot.agent.listInstalledSkills).toHaveBeenCalledTimes(2));
+
+    emitServers?.([local, { ...remote, connectionSequence: 3 }]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(window.openbot.agent.listInstalledSkills).toHaveBeenCalledTimes(2);
   });
 
   it("lets the user remove only their own reaction while keeping the agent reaction read-only", async () => {

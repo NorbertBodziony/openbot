@@ -1,0 +1,10 @@
+[
+  {
+    "skillId": "skill-1",
+    "slug": "release-notes",
+    "name": "Release Notes",
+    "installedVersion": 1,
+    "availableVersion": 1,
+    "state": "installed"
+  }
+]

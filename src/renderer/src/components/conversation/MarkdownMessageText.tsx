@@ -75,6 +75,7 @@ export function MarkdownMessageText(props: MarkdownMessageTextProps) {
   const tokens = createMemo(() => marked.lexer(props.body, { breaks: true, gfm: true }));
   const contentProps = (): MarkdownContentProps => ({
     bots: props.bots,
+    skills: props.skills,
     attachments: props.attachments,
     citations: props.citations,
     onSelectAgent: props.onSelectAgent,
@@ -106,6 +107,7 @@ export function MarkdownInlineText(
   const tokens = createMemo(() => marked.Lexer.lexInline(props.body, { breaks: true, gfm: true }));
   const contentProps = (): MarkdownContentProps => ({
     bots: props.bots,
+    skills: props.skills,
     attachments: props.attachments,
     citations: props.citations,
     onSelectAgent: props.onSelectAgent,
@@ -358,6 +360,8 @@ function MarkdownInline(props: {
     return values.map((token, index) => ({
       token,
       streaming: markerTokenIndexes.has(index),
+      semanticTag: index > 0 && textTokenEndsWithTagMarker(values[index - 1]) ? semanticChatTag(token) : null,
+      precedesSemanticTag: textTokenEndsWithTagMarker(token) && semanticChatTag(values[index + 1]) !== null,
       streamingTail: props.streamingTail === true && index === lastTokenIndex,
     }));
   });
@@ -412,6 +416,9 @@ function MarkdownInline(props: {
             return <br />;
           case "link": {
             if (!tokenIs(token, "link")) return token.raw;
+            if (item.semanticTag) {
+              return <RichText body={item.semanticTag} content={props.content} streamingTail={item.streamingTail} />;
+            }
             const url = safeBrowserUrl(token.href);
             const sharedPath = sharedFileTarget(token.href);
             const workspacePath = workspaceFileTarget(token.href);
@@ -475,7 +482,7 @@ function MarkdownInline(props: {
               />
             ) : (
               <RichText
-                body={token.text}
+                body={item.precedesSemanticTag ? token.text.slice(0, -1) : token.text}
                 content={props.content}
                 streaming={item.streaming}
                 streamingTail={item.streamingTail}
@@ -490,6 +497,16 @@ function MarkdownInline(props: {
       }}
     </For>
   );
+}
+
+function textTokenEndsWithTagMarker(token: Token | undefined): boolean {
+  return token !== undefined && tokenIs(token, "text") && !token.tokens && token.text.endsWith("@");
+}
+
+function semanticChatTag(token: Token | undefined): string | null {
+  if (!token || !tokenIs(token, "link")) return null;
+  const target = /^(agent|skill)(?:\+uri)?:([^\r\n]+)$/u.exec(token.href);
+  return target?.[2] ? `@${token.raw}` : null;
 }
 
 function RichText(props: {
@@ -511,7 +528,7 @@ function RichText(props: {
 function hideIncompleteEmphasisMarker(body: string): string {
   const characters = [...body];
   const markers = incompleteEmphasisMarkers(characters);
-  for (const marker of markers.toReversed()) characters.splice(marker.index, marker.length);
+  for (const marker of markers.reverse()) characters.splice(marker.index, marker.length);
   return characters.join("");
 }
 

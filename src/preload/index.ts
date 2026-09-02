@@ -985,6 +985,7 @@ const openbotApi: OpenBotDesktopApi = {
     getUsage: () => invokeAgent(IPC_CHANNELS.agentGetUsage, null, decodeAccountUsage),
     listModels: () => invokeAgent(IPC_CHANNELS.agentListModels, null, decodeAgentModels),
     listBots: () => invokeAgent(IPC_CHANNELS.agentListBots, null, decodeBots),
+    listInstalledSkills: (botId) => invokeAgent(IPC_CHANNELS.agentListInstalledSkills, botId, decodeInstalledSkills),
     getSidebarLayout: () => invokeAgent(IPC_CHANNELS.agentGetSidebarLayout, null, decodeSidebarLayout),
     mutateSidebarLayout: (action) => invokeAgent(IPC_CHANNELS.agentMutateSidebarLayout, action, decodeSidebarLayout),
     createBot: (input) => invokeAgent(IPC_CHANNELS.agentCreateBot, input, decodeBot),

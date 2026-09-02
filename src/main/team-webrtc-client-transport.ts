@@ -2,6 +2,7 @@ import { generateKeyPairSync, randomBytes, sign, verify } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { AgentEvent, TeamRealtimeEvent } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { TEAM_CURRENT_CAPABILITIES } from "@openbot/contracts/team-protocol/current";
 import {
   decodeTeamProtocolV2AuthFrame,
   decodeTeamProtocolV2EventFrame,
@@ -193,7 +194,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
   async request(
     hostId: string,
     path: string,
-    init: { method?: string; body?: unknown } = {},
+    init: { method?: string; body?: unknown; preserveSemanticTags?: boolean } = {},
   ): Promise<TeamProtocolV2Json | undefined> {
     const response = await this.requestResponse(hostId, path, init);
     return response.status === 204 ? undefined : response.body;
@@ -202,7 +203,7 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
   async requestResponse(
     hostId: string,
     path: string,
-    init: { method?: string; body?: unknown; contentType?: string } = {},
+    init: { method?: string; body?: unknown; contentType?: string; preserveSemanticTags?: boolean } = {},
   ): Promise<{
     status: number;
     body: TeamProtocolV2Json;
@@ -227,7 +228,12 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       payload: {
         method,
         path,
-        body: binary ? null : encodeTeamProtocolV3WebRtcHttpRequest(method, path, init.body),
+        body: binary
+          ? null
+          : encodeTeamProtocolV3WebRtcHttpRequest(method, path, init.body, {
+              preserveSemanticTags: init.preserveSemanticTags,
+            }),
+        capabilities: [...TEAM_CURRENT_CAPABILITIES],
         ...(bodyTransferId ? { bodyTransferId } : {}),
         ...(init.contentType ? { contentType: init.contentType } : {}),
       },

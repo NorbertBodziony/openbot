@@ -75,6 +75,29 @@ describe("QueuePanel", () => {
     expect(view.container.querySelector(".agent-queue-drag-handle")).toBeNull();
   });
 
+  it("renders semantic tags as readable queue text", () => {
+    render(() => (
+      <QueuePanel
+        deliveries={[delivery(1, { text: "Use @[Old name](skill:skill-1)." })]}
+        skills={[
+          {
+            skillId: "skill-1",
+            slug: "release-notes",
+            name: "Release Notes",
+            installedVersion: 1,
+            availableVersion: 1,
+            state: "installed",
+          },
+        ]}
+        canSteer
+        {...callbacks()}
+      />
+    ));
+
+    expect(screen.getByText("Use Release Notes (skill).")).toBeInTheDocument();
+    expect(screen.queryByText(/skill:skill-1/u)).not.toBeInTheDocument();
+  });
+
   it("keeps steer, cancel, and edit actions connected", async () => {
     const props = callbacks();
     render(() => <QueuePanel deliveries={[delivery(1), delivery(2), delivery(3)]} canSteer {...props} />);
