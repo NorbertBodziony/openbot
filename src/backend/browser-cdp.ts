@@ -616,7 +616,7 @@ export class BrowserCdpEngine {
   async documentIds(): Promise<Set<string>> {
     return this.#lease(async (send) => {
       const ids = new Set<string>();
-      for (const capture of this.#snapshotTargets()) {
+      for (const capture of this.#snapshotTargets(Number.POSITIVE_INFINITY)) {
         if (ids.size === this.#uploadDocumentIds.size) break;
         const contextId = await automationContextId(send, capture.sessionId);
         const result = await send(
@@ -888,7 +888,7 @@ export class BrowserCdpEngine {
       const matches: Array<{ objectId: string; sessionId?: string }> = [];
       let ambiguous = false;
       try {
-        for (const capture of this.#snapshotTargets()) {
+        for (const capture of this.#snapshotTargets(Number.POSITIVE_INFINITY)) {
           const match = await cssObjectMatch(send, target.selector, capture.sessionId);
           ambiguous ||= match.ambiguous;
           if (match.objectId) matches.push({ objectId: match.objectId, sessionId: capture.sessionId });

@@ -68,12 +68,13 @@ const server = createServer((request, response) => {
   }
   if (url.pathname === "/frame") {
     const frameActionLabel = url.searchParams.get("action_label") ?? "Frame action";
+    const frameFileLabel = url.searchParams.get("file_label") ?? "Frame files";
     response.setHeader("content-type", "text/html; charset=utf-8");
     response.end(
       `<button aria-label="${frameActionLabel}" onclick="const trusted=event.isTrusted;fetch('/settle').then(()=>{this.textContent='Frame settled:5:'+trusted})">${frameActionLabel}</button>
        <button aria-label="Schedule frame navigation" onclick="setTimeout(() => location.href='/frame-next', 1000)">Schedule frame navigation</button>
        <input aria-label="Frame field" oninput="document.querySelector('output').textContent='Frame input:' + this.value + ':' + event.isTrusted" onkeydown="if (event.key === 'Enter') document.querySelector('output').textContent += '|Frame key:' + event.isTrusted" />
-       <input type="file" aria-label="Frame files" />
+       <input type="file" aria-label="${frameFileLabel}" />
        <output>Frame ready</output>`,
     );
     return;
@@ -213,7 +214,11 @@ async function main(): Promise<void> {
     });
     await browser.setVisible({ visible: true, bounds: { x: 0, y: 0, width: 800, height: 600 } });
     const documentChangedTabs: string[] = [];
-    browser.onDocumentChanged((tabId) => documentChangedTabs.push(tabId));
+    const retainedDocumentChanges: Array<{ tabId: string; documentIds: ReadonlySet<string> }> = [];
+    browser.onDocumentChanged((tabId, documentIds) => {
+      documentChangedTabs.push(tabId);
+      retainedDocumentChanges.push({ tabId, documentIds });
+    });
     let changedEventCount = 0;
     browser.onChanged(() => {
       changedEventCount += 1;
@@ -457,7 +462,8 @@ async function main(): Promise<void> {
         for (let index = 0; index < 12; index++) {
           const frame = document.createElement('iframe');
           const label = index === 11 ? 'Frame action' : 'OOPIF noise ' + index;
-          frame.src = 'http://localhost:${address.port}/frame?action_label=' + encodeURIComponent(label);
+          const fileLabel = index === 11 ? 'Late OOPIF files' : 'OOPIF files ' + index;
+          frame.src = 'http://localhost:${address.port}/frame?action_label=' + encodeURIComponent(label) + '&file_label=' + encodeURIComponent(fileLabel);
           container.append(frame);
           await new Promise(loaded => { frame.onload = loaded; });
         }
@@ -473,6 +479,44 @@ async function main(): Promise<void> {
     if (manyFrameAmbiguity.success || !toolError(manyFrameAmbiguity).includes("Candidates:")) {
       throw new Error("V2 semantic locator inferred uniqueness after truncating attached OOPIF targets.");
     }
+    const manyFrameCssAmbiguity = await callBrowserTool(browser, "click", {
+      tabId: v2Tab.id,
+      target: { kind: "css", selector: '[aria-label="Frame action"]' },
+      timeoutMs: 30_000,
+    });
+    if (manyFrameCssAmbiguity.success || !toolError(manyFrameCssAmbiguity).includes("CSS selector is ambiguous")) {
+      throw new Error("V2 CSS locator inferred uniqueness after truncating attached OOPIF targets.");
+    }
+    const lateFrameUploadPath = join(temporaryRoot, "late-oopif-upload.txt");
+    await writeFile(lateFrameUploadPath, "late OOPIF upload fixture");
+    let lateFrameDocumentId = "";
+    const lateFrameUpload = await callBrowserTool(
+      browser,
+      "upload_files",
+      {
+        tabId: v2Tab.id,
+        target: { kind: "role", role: "button", name: "Late OOPIF files", exact: true },
+        paths: [lateFrameUploadPath],
+      },
+      { onUploadAssigned: (_inputId, documentId) => (lateFrameDocumentId = documentId) },
+    );
+    if (!lateFrameUpload.success || !lateFrameDocumentId) {
+      throw new Error(`V2 late OOPIF upload failed: ${toolError(lateFrameUpload)}`);
+    }
+    const retainedChangesBeforeNavigation = retainedDocumentChanges.length;
+    await v2Contents.executeJavaScript(
+      `(() => {
+        const frame = document.querySelector('[data-many-oopifs] iframe');
+        frame.src = 'http://localhost:${address.port}/frame?action_label=Navigated+OOPIF';
+        return true;
+      })()`,
+      true,
+    );
+    await waitFor(async () =>
+      retainedDocumentChanges
+        .slice(retainedChangesBeforeNavigation)
+        .some((change) => change.tabId === v2Tab.id && change.documentIds.has(lateFrameDocumentId)),
+    );
     await v2Contents.executeJavaScript("document.querySelector('[data-many-oopifs]').remove(); true", true);
     await new Promise((resolve) => setTimeout(resolve, 100));
     const frameTextWait = await callBrowserTool(browser, "wait_for", {
