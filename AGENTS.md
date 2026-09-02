@@ -52,3 +52,8 @@
 - Do not test the same rule at the component and application levels. Prefer one test at the lowest stable behavior boundary. Keep only one application-level happy path when it protects a critical integration.
 - A UI test must fail when behavior or accessibility breaks. It must not fail only because markup, wording, or styling changes.
 - For a bug fix, add a regression test only when it reproduces the failure at a stable boundary and can prevent the same failure from returning.
+- The default answer is no test. A test is an exception that must name the consequence it protects.
+- Before writing a test, check whether `tsc`, Biome and its GritQL rules, `bun run check:ui`, or Storybook already enforces the rule. If one of them does, do not write the test.
+- Put pure logic in the vitest `node` project even when the module lives in the renderer.
+- A test is mandatory when a change touches the renderer-to-main trust boundary, the IPC contract, database schema or migrations, persisted state, secrets, the provider process boundary, the Team API wire protocol, or the updater. Read `docs/TESTING.md` before writing it.
+- `src/renderer/src/App.test.tsx` is closed to new cases. New coverage goes to a module or to a component test at the lowest stable boundary.
