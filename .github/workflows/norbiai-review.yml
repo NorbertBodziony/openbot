@@ -111,10 +111,19 @@ jobs:
           # Both the composer and the fragments it reads come from the base commit, so a PR
           # cannot rewrite the instructions used to review it. Running the checked-out copy
           # would hand that control straight back to the PR.
+          #
+          # Reading the composer from the base commit is not enough on its own: Bun's default
+          # config path is `$cwd/bunfig.toml`, and the working directory here is the PR's own
+          # checkout. A PR that adds a `bunfig.toml` with a `preload` entry would run its own
+          # code before the composer and could append trusted instructions to the prompt. Point
+          # `--config` at an empty file outside the checkout so the PR's config is never read,
+          # and pass `--no-install` so no import can pull in a package either.
           composer_file="$RUNNER_TEMP/compose-review-prompt.ts"
+          composer_bunfig="$RUNNER_TEMP/norbiai-composer-bunfig.toml"
+          : > "$composer_bunfig"
           if git cat-file -e "$BASE_SHA:scripts/compose-review-prompt.ts" 2>/dev/null; then
             git show "$BASE_SHA:scripts/compose-review-prompt.ts" > "$composer_file"
-            bun "$composer_file" "$BASE_SHA" "$HEAD_SHA" >> "$prompt_file"
+            bun --config="$composer_bunfig" --no-install "$composer_file" "$BASE_SHA" "$HEAD_SHA" >> "$prompt_file"
           else
             echo "::notice title=NorbiAI domain fragments skipped::No composer at the base commit"
           fi

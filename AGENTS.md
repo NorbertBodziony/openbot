@@ -216,10 +216,11 @@ in bulk — it names no consequence, so it gets updated, not read.
 Biome enforces the mechanical half and only that. In test files it rejects `toHaveClass`,
 `toHaveStyle`, `getComputedStyle`, `toContainElement`, `toHaveAttribute("title", …)`,
 `expect(x.innerHTML)`, DOM-tree walks, `querySelector("svg" | "img")`, `document.activeElement`,
-snapshots, `getByTestId` and `data-testid`, an assertion reached through a CSS class, an awaited bare
-`setTimeout`, and `it.only`. All of it stays available in `src/renderer/stories`, where it belongs.
-Around focus only `document.activeElement` is rejected — it asserts against the document instead of
-the element the test already holds, and fails with "expected null" rather than naming the control;
+snapshots, the `*ByTestId` queries, an assertion reached through a CSS class, an awaited bare
+`setTimeout`, and `it.only`. It does not see a `data-testid` attribute itself — the paragraph above
+is what rules that out. All of it stays available in `src/renderer/stories`, where it belongs. Around
+focus only `document.activeElement` is rejected: it asserts against the document instead of the
+element the test already holds, and fails with "expected null" rather than naming the control.
 `toHaveFocus()` is encouraged.
 
 Two severities. **Error** is for patterns with no honest counter-example: a snapshot, a test id, a
