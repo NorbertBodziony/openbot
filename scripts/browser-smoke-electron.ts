@@ -1227,10 +1227,20 @@ async function main(): Promise<void> {
     if (oversizedEnvironment.success || !toolError(oversizedEnvironment).includes("physical viewport")) {
       throw new Error("V2 environment accepted an unsafe physical pixel area.");
     }
+    const preTakeoverSnapshot = await browser.snapshot(v2Tab.id);
+    const preTakeoverTarget = preTakeoverSnapshot.elements.find((element) => element.name === "SPA");
+    if (!preTakeoverTarget) throw new Error("V2 takeover stale-reference fixture was not available.");
     await browser.beginTakeover(v2Tab.id);
     await v2Contents.executeJavaScript("console.error('takeover-console-secret'); true", true);
     await new Promise((resolve) => setTimeout(resolve, 50));
     browser.endTakeover(v2Tab.id);
+    const postTakeoverOldRef = await callBrowserTool(browser, "click", {
+      tabId: v2Tab.id,
+      target: { kind: "ref", ref: preTakeoverTarget.ref, revision: preTakeoverSnapshot.revision },
+    });
+    if (postTakeoverOldRef.success || !toolError(postTakeoverOldRef).includes("Stale browser reference")) {
+      throw new Error("V2 takeover left a pre-takeover browser reference valid.");
+    }
     const postTakeoverSnapshot = await browser.snapshot(v2Tab.id);
     if (JSON.stringify(postTakeoverSnapshot.diagnostics).includes("takeover-console-secret")) {
       throw new Error("V2 takeover exposed console messages captured while the user had control.");

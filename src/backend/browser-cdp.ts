@@ -647,6 +647,11 @@ export class BrowserCdpEngine {
     return this.#uploadDocumentIds.size > 0;
   }
 
+  invalidateReferences(): void {
+    this.#targets.clear();
+    this.#lastSnapshot = null;
+  }
+
   async setEnvironment(environment: BrowserEnvironment): Promise<void> {
     const previousEnvironment = this.#environment;
     const previousRetainDebugger = this.#retainDebugger;

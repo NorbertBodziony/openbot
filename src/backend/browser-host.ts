@@ -392,6 +392,7 @@ export class BrowserHost {
   async beginTakeover(tabId: string): Promise<void> {
     const tab = this.#tabs.get(tabId);
     if (!tab) throw new Error("Browser tab not found.");
+    tab.engine.invalidateReferences();
     this.#takeoverTabIds.add(tabId);
     tab.diagnostics.clearDiagnostics();
     this.#emitChanged();
@@ -406,7 +407,10 @@ export class BrowserHost {
 
   endTakeover(tabId: string): void {
     const tab = this.#tabs.get(tabId);
-    if (tab) tab.diagnostics.clearDiagnostics();
+    if (tab) {
+      tab.engine.invalidateReferences();
+      tab.diagnostics.clearDiagnostics();
+    }
     this.#takeoverTabIds.delete(tabId);
     this.#emitChanged();
   }
