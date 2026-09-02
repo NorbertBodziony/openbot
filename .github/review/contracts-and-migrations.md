@@ -1,13 +1,17 @@
 ---
 include:
-  - "src/backend/migrations/**"
+  - "src/backend/openbot-database-schema.ts"
+  - "src/backend/openbot-database.ts"
+  - "apps/auth-api/migrations/**"
   - "packages/contracts/**"
 ---
 
 ## Contracts and migrations review
 
-These two directories carry data the repository cannot re-derive: the user's SQLite database and
-every wire protocol already in the field. Findings here are P0 or P1 by default.
+These files carry data the repository cannot re-derive: the user's SQLite database
+(`src/backend/openbot-database-schema.ts` holds every released schema and migration,
+`openbot-database.ts` is the boundary), the account service's D1 database, and every wire protocol
+already in the field. Findings here are P0 or P1 by default.
 
 Report a finding when the diff:
 
@@ -28,6 +32,9 @@ Report a finding when the diff:
 - Makes a malformed known payload anything other than a fail-closed `protocol_error`, or fails on an
   unknown optional event instead of ignoring it.
 - Puts a type in `packages/contracts` that does not cross a process or application boundary.
+- Adds a D1 migration under `apps/auth-api/migrations/` that the currently live Worker would not
+  tolerate. CI applies D1 migrations **before** deploying the new Worker, so a migration that is not
+  backward compatible needs a test proving the old Worker survives it, or a two-step release.
 
 Do **not** report:
 

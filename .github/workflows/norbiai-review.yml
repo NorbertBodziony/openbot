@@ -108,9 +108,16 @@ jobs:
             cat .github/norbiai-review-prompt.md > "$prompt_file"
           fi
 
-          # Domain fragments are read from the base commit by the composer, so a PR cannot
-          # rewrite the instructions used to review it.
-          bun scripts/compose-review-prompt.ts "$BASE_SHA" "$HEAD_SHA" >> "$prompt_file"
+          # Both the composer and the fragments it reads come from the base commit, so a PR
+          # cannot rewrite the instructions used to review it. Running the checked-out copy
+          # would hand that control straight back to the PR.
+          composer_file="$RUNNER_TEMP/compose-review-prompt.ts"
+          if git cat-file -e "$BASE_SHA:scripts/compose-review-prompt.ts" 2>/dev/null; then
+            git show "$BASE_SHA:scripts/compose-review-prompt.ts" > "$composer_file"
+            bun "$composer_file" "$BASE_SHA" "$HEAD_SHA" >> "$prompt_file"
+          else
+            echo "::notice title=NorbiAI domain fragments skipped::No composer at the base commit"
+          fi
 
           {
             printf '\n## PR context\n\n'

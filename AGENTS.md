@@ -171,6 +171,10 @@ Do not trust your memory of any of these APIs — check `package.json`, then rea
   stable database boundary.
 - Do not add automatic full-database migration backups. Their time and disk cost is unbounded because
   conversation history lives in SQLite; make the migration itself safe instead.
+- The account service has a second, unrelated database. CI applies the D1 migrations under
+  `apps/auth-api/migrations/` **before** deploying the new Worker, so every D1 migration must be
+  backward compatible with the Worker still running. One that is not needs a test proving the old
+  Worker tolerates the new schema, or a two-step release.
 
 ## Team API protocol compatibility
 

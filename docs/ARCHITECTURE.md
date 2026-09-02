@@ -96,6 +96,8 @@ Protocol support has no fixed time or release limit. Removal is an exceptional a
 
 ## Required verification
 
-Run `bun run check` for normal changes. Changes to packaging, native modules, or Electron security
-also require the applicable macOS and Windows package verification commands. Live provider and team
-smoke tests use isolated temporary data and are manual because they can require local credentials.
+Run the narrowest relevant test plus a targeted `biome check` and `tsc`; CI owns the full suite. See
+`AGENTS.md` "Do not run repo-wide checks" for the division of labour and what each CI job covers.
+Changes to packaging, native modules, or Electron security also require the applicable macOS and
+Windows package verification commands. Live provider and team smoke tests use isolated temporary
+data and are manual because they can require local credentials.
