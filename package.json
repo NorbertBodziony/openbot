@@ -1,7 +1,7 @@
 {
   "name": "openbot",
   "productName": "OpenBot",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "A local-first multi-agent desktop workspace for Codex, Claude, and Grok.",
   "author": {
     "name": "Norbert Bodziony",
