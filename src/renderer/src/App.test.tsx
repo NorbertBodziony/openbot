@@ -2652,6 +2652,30 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.update.check).not.toHaveBeenCalled();
   });
 
+  it("keeps a toggle made before the stored preference finishes loading", async () => {
+    let resolvePreference: ((value: { autoDownload: boolean }) => void) | undefined;
+    vi.mocked(window.openbot.update.getPreference).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolvePreference = resolve;
+      }),
+    );
+    render(() => <App />);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    await fireEvent.click(await screen.findByRole("tab", { name: "Updates" }));
+    const toggle = await screen.findByRole("switch", { name: "Automatically download updates" });
+    await fireEvent.click(toggle);
+    await waitFor(() => expect(window.openbot.update.setPreference).toHaveBeenCalledWith({ autoDownload: false }));
+
+    // The stored read finally lands with the value the user has just replaced. Painting it back would
+    // leave the switch disagreeing with both disk and the main process.
+    resolvePreference?.({ autoDownload: true });
+    // Let the hydration continuation actually run, otherwise this asserts before it could apply.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(toggle).not.toBeChecked();
+  });
+
   it("persists the automatic download preference", async () => {
     vi.mocked(window.openbot.update.getPreference).mockResolvedValue({ autoDownload: false });
     render(() => <App />);

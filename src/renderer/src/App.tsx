@@ -588,6 +588,8 @@ export function createAppController(props: AppProps = {}) {
     setCentralAuth(state);
   }
 
+  let autoDownloadUpdatesChanged = false;
+
   function updateGeneralSettings(value: GeneralSettingsValue): void {
     const previous = generalSettings();
     setGeneralSettings(value);
@@ -608,6 +610,7 @@ export function createAppController(props: AppProps = {}) {
         });
     }
     if (previous.autoDownloadUpdates !== value.autoDownloadUpdates) {
+      autoDownloadUpdatesChanged = true;
       void window.openbot.update
         .setPreference({ autoDownload: value.autoDownloadUpdates })
         .then((preference) =>
@@ -877,9 +880,12 @@ export function createAppController(props: AppProps = {}) {
       });
     void window.openbot.update
       .getPreference()
-      .then((preference) =>
-        setGeneralSettings((current) => ({ ...current, autoDownloadUpdates: preference.autoDownload })),
-      )
+      .then((preference) => {
+        // A toggle made before this read resolves has already been persisted, so the older value
+        // must not be painted back over it.
+        if (autoDownloadUpdatesChanged) return;
+        setGeneralSettings((current) => ({ ...current, autoDownloadUpdates: preference.autoDownload }));
+      })
       .catch(() => undefined);
     void window.openbot.dynamicIsland
       .getPreference()
@@ -3068,9 +3074,7 @@ export function createAppController(props: AppProps = {}) {
     const analytics = desktopAnalytics.scope();
     const status = updateStatus();
     const phase = status.phase;
-    // A failed stage is retried in place: the error code says which stage to run again, so the user
-    // does not have to walk back through a check first.
-    if (phase === "ready" || (phase === "error" && status.errorCode === "install_failed")) {
+    if (phase === "ready") {
       try {
         await window.openbot.update.install();
         analytics.track("update_action", { action: "install", result: "succeeded", phase: "installing" });

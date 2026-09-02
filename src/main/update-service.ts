@@ -125,6 +125,8 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
   #installGeneration = 0;
   #activeDownload: number | null = null;
   #activeInstall: number | null = null;
+  #checkInFlight = false;
+  #downloadInFlight = false;
 
   constructor(updater: UpdateAdapter, options: UpdateServiceOptions) {
     super();
@@ -183,11 +185,11 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
       // and only for an operation still in flight. An abandoned operation reporting late must not
       // replace the state the user is now looking at.
       if (this.#operation === "install" && this.#isInstallLive()) {
-        // quitAndInstall can return without quitting, so an install failure has to release the latch
-        // or the restart action would never become available again.
+        // quitAndInstall can return without quitting. Shutdown preparation has already run by then,
+        // so the app cannot install again; it reports the failure and asks to be relaunched.
         this.#installGeneration += 1;
-        this.#installStarted = false;
-        this.#setError("install_failed");
+        this.#activeInstall = null;
+        this.#setError("install_failed", INSTALL_FAILED_MESSAGE);
         return;
       }
       if (this.#operation === "download" && this.#isDownloadLive()) {
@@ -226,6 +228,15 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
     if (["checking", "downloading", "ready", "installing"].includes(this.#status.phase)) {
       return this.getStatus();
     }
+    // electron-updater returns the outstanding promise when a check is already running, so entering
+    // "checking" again would only re-await the call this service has already given up on and time
+    // out a second time. Wait for it to settle; the next scheduled check then issues a real request.
+    if (this.#checkInFlight) {
+      // Keep the periodic loop alive, or refusing here would be the last check of the session.
+      this.#scheduleCheck(this.#options.checkIntervalMs);
+      return this.getStatus();
+    }
+    this.#checkInFlight = true;
     const generation = ++this.#checkGeneration;
     this.#operation = "check";
     this.#setStatus({ phase: "checking", progress: null, message: null, errorCode: null });
@@ -257,6 +268,7 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
     } catch {
       if (this.#checkGeneration === generation) this.#setError("check_failed");
     } finally {
+      this.#checkInFlight = false;
       // A late completion must not push out the schedule the timeout branch already set.
       if (this.#checkGeneration === generation) this.#scheduleCheck(this.#options.checkIntervalMs);
     }
@@ -268,6 +280,10 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
 
   async downloadUpdate(): Promise<UpdateStatus> {
     if (!this.#options.enabled || !this.#canDownload()) return this.getStatus();
+    // Same deduplication applies to downloads, and starting a second attempt while the abandoned one
+    // is still unsettled is also what would let its buffered events be read as the new attempt's.
+    if (this.#downloadInFlight) return this.getStatus();
+    this.#downloadInFlight = true;
     const generation = ++this.#downloadGeneration;
     this.#activeDownload = generation;
     this.#operation = "download";
@@ -283,6 +299,8 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
         this.#activeDownload = null;
         this.#setError("download_failed");
       }
+    } finally {
+      this.#downloadInFlight = false;
     }
     return this.getStatus();
   }
@@ -308,8 +326,7 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
       this.#armPhaseTimer();
     } catch {
       if (this.#installGeneration !== generation) return;
-      this.#installStarted = false;
-      this.#setError("install_failed");
+      this.#setError("install_failed", INSTALL_FAILED_MESSAGE);
       throw new Error("OpenBot could not restart to install the update.");
     }
   }
@@ -341,10 +358,15 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
     );
   }
 
+  /**
+   * Installing is one shot per session. beforeInstall is shutdown preparation - it flushes browser
+   * storage, destroys the browser and stops services - and it is not transactional, so once it has
+   * begun there is no state to safely retry from. A failed or timed-out install therefore keeps the
+   * latch and asks the user to relaunch rather than offering an action that would run teardown a
+   * second time, concurrently with the first.
+   */
   #canInstall(): boolean {
-    if (this.#downloadedVersion === null) return false;
-    if (this.#status.phase === "ready") return true;
-    return this.#status.phase === "error" && this.#status.errorCode === "install_failed";
+    return this.#downloadedVersion !== null && this.#status.phase === "ready";
   }
 
   /**
@@ -424,13 +446,11 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
       return;
     }
     if (this.#status.phase === "installing") {
+      // The latch deliberately stays set: shutdown preparation may already have torn services down,
+      // so a second attempt would run teardown concurrently with the first.
       this.#installGeneration += 1;
       this.#activeInstall = null;
-      this.#installStarted = false;
-      this.#setError(
-        "install_failed",
-        "Could not restart to install the update. Quit and reopen OpenBot to finish updating.",
-      );
+      this.#setError("install_failed", INSTALL_FAILED_MESSAGE);
     }
   }
 
@@ -461,9 +481,11 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
   }
 }
 
+const INSTALL_FAILED_MESSAGE = "Could not install the update. Quit and reopen OpenBot, then try again.";
+
 function errorMessage(code: UpdateFailureCode) {
   if (code === "download_failed") return "Could not download the update. Try again.";
-  if (code === "install_failed") return "Could not restart to install the update. Try again.";
+  if (code === "install_failed") return INSTALL_FAILED_MESSAGE;
   return "Could not check for updates. Try again.";
 }
 

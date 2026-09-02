@@ -17,8 +17,10 @@ const INSTALL_TIMEOUT = 3_000;
 
 class FakeCancellationToken {
   cancelled = false;
+  onCancel: (() => void) | undefined;
   cancel = vi.fn(() => {
     this.cancelled = true;
+    this.onCancel?.();
   });
 }
 
@@ -78,6 +80,16 @@ function makeUpdateAvailable(updater: FakeUpdater): void {
       cancellationToken: updater.mintToken(),
     };
   });
+}
+
+function stallDownloadUntilCancelled(updater: FakeUpdater): void {
+  updater.downloadUpdate.mockImplementationOnce(
+    (token?: UpdateCancellationToken) =>
+      new Promise<string[]>((_resolve, reject) => {
+        // Cancelling the real token aborts the request, so the attempt rejects rather than hanging on.
+        if (token instanceof FakeCancellationToken) token.onCancel = () => reject(new Error("aborted"));
+      }),
+  );
 }
 
 function completeDownload(updater: FakeUpdater): void {
@@ -253,7 +265,7 @@ describe("UpdateService", () => {
     vi.useFakeTimers();
     const updater = new FakeUpdater();
     makeUpdateAvailable(updater);
-    updater.downloadUpdate.mockImplementationOnce(() => new Promise<string[]>(() => undefined));
+    stallDownloadUntilCancelled(updater);
     const service = createService(updater);
     service.start(false);
     await service.checkForUpdates();
@@ -358,7 +370,7 @@ describe("UpdateService", () => {
     vi.useFakeTimers();
     const updater = new FakeUpdater();
     makeUpdateAvailable(updater);
-    updater.downloadUpdate.mockImplementationOnce(() => new Promise<string[]>(() => undefined));
+    stallDownloadUntilCancelled(updater);
     const service = createService(updater);
     service.start(false);
     await service.checkForUpdates();
@@ -376,7 +388,7 @@ describe("UpdateService", () => {
     expect(service.getStatus()).toMatchObject({ phase: "ready", availableVersion: "0.1.1" });
   });
 
-  it("does not let an abandoned check result overwrite a newer download", async () => {
+  it("does not let an abandoned check result replace the reported failure", async () => {
     vi.useFakeTimers();
     const updater = new FakeUpdater();
     let settleAbandonedCheck: (() => void) | undefined;
@@ -390,23 +402,45 @@ describe("UpdateService", () => {
     service.start(false);
     void service.checkForUpdates();
     await vi.advanceTimersByTimeAsync(0);
-
-    // The only way a check is abandoned is its own watchdog, which is also what unblocks a retry.
     await vi.advanceTimersByTimeAsync(CHECK_TIMEOUT);
     expect(service.getStatus().errorCode).toBe("check_failed");
-    service.stop();
 
-    makeUpdateAvailable(updater);
-    completeDownload(updater);
-    await service.checkForUpdates();
-    await service.downloadUpdate();
-    expect(service.getStatus().phase).toBe("ready");
-
-    // The abandoned check finally answers "no update". It must not wipe the staged download.
+    // The generation guard is what keeps a result the service already gave up on from being applied.
     settleAbandonedCheck?.();
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(service.getStatus()).toMatchObject({ phase: "ready", availableVersion: "0.1.1" });
+    expect(service.getStatus()).toMatchObject({ phase: "error", errorCode: "check_failed" });
+  });
+
+  it("waits for a stalled check to settle before checking again", async () => {
+    vi.useFakeTimers();
+    const updater = new FakeUpdater();
+    let settleStalledCheck: (() => void) | undefined;
+    updater.checkForUpdates.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          settleStalledCheck = () => resolve({ isUpdateAvailable: false, updateInfo: { version: "0.1.0" } });
+        }),
+    );
+    const service = createService(updater);
+    service.start(false);
+    void service.checkForUpdates();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(CHECK_TIMEOUT);
+    expect(service.getStatus().errorCode).toBe("check_failed");
+
+    // electron-updater hands back the same outstanding promise, so re-entering "checking" here
+    // would show a spinner for a request that was never issued and time out all over again.
+    await vi.advanceTimersByTimeAsync(CHECK_INTERVAL);
+    expect(updater.checkForUpdates).toHaveBeenCalledOnce();
+    expect(service.getStatus().phase).toBe("error");
+
+    // Once it settles, the schedule resumes with a real request.
+    settleStalledCheck?.();
+    await vi.advanceTimersByTimeAsync(CHECK_INTERVAL);
+
+    expect(updater.checkForUpdates).toHaveBeenCalledTimes(2);
+    expect(service.getStatus().phase).toBe("up-to-date");
   });
 
   it("fails a check that never answers", async () => {
@@ -455,28 +489,7 @@ describe("UpdateService", () => {
     expect(service.getStatus()).toMatchObject({ phase: "error", errorCode: "install_failed" });
   });
 
-  it("keeps checking on schedule after a check never settles", async () => {
-    vi.useFakeTimers();
-    const updater = new FakeUpdater();
-    updater.checkForUpdates.mockImplementation(() => new Promise<never>(() => undefined));
-    const service = createService(updater);
-    service.start(false);
-    void service.checkForUpdates();
-    await vi.advanceTimersByTimeAsync(0);
-
-    await vi.advanceTimersByTimeAsync(CHECK_TIMEOUT);
-    expect(service.getStatus()).toMatchObject({ phase: "error", errorCode: "check_failed" });
-    expect(updater.checkForUpdates).toHaveBeenCalledOnce();
-
-    // The stalled call never runs its finally block, so the timeout has to own the next schedule or
-    // the app would quietly stop checking for updates until it restarts.
-    await vi.advanceTimersByTimeAsync(CHECK_INTERVAL);
-
-    expect(updater.checkForUpdates).toHaveBeenCalledTimes(2);
-    expect(service.getStatus().phase).toBe("checking");
-  });
-
-  it("recovers when the installer hands back control without quitting", async () => {
+  it("reports an install that never quits and does not offer to run teardown again", async () => {
     vi.useFakeTimers();
     const updater = new FakeUpdater();
     makeUpdateAvailable(updater);
@@ -493,11 +506,31 @@ describe("UpdateService", () => {
     expect(service.getStatus()).toMatchObject({
       phase: "error",
       errorCode: "install_failed",
-      message: "Could not restart to install the update. Quit and reopen OpenBot to finish updating.",
+      message: "Could not install the update. Quit and reopen OpenBot, then try again.",
     });
-    // The restart action has to come back, otherwise the update can never be applied.
+    // Shutdown preparation is not transactional, so a second attempt would tear down services
+    // concurrently with the first. The user is asked to relaunch instead.
+    await expect(service.installUpdate()).rejects.toThrow("not ready");
+    expect(updater.quitAndInstall).toHaveBeenCalledOnce();
+  });
+
+  it("reports an installer failure without offering a second attempt", async () => {
+    const updater = new FakeUpdater();
+    makeUpdateAvailable(updater);
+    completeDownload(updater);
+    const service = createService(updater, { platform: "win32" });
+    service.start(false);
+    await service.checkForUpdates();
+    await service.downloadUpdate();
+    updater.quitAndInstall.mockImplementationOnce(() => {
+      updater.emit("error", new Error("no update filepath provided"));
+    });
+
     await service.installUpdate();
-    expect(updater.quitAndInstall).toHaveBeenCalledTimes(2);
+
+    expect(service.getStatus()).toMatchObject({ phase: "error", errorCode: "install_failed" });
+    await expect(service.installUpdate()).rejects.toThrow("not ready");
+    expect(updater.quitAndInstall).toHaveBeenCalledOnce();
   });
 
   it("keeps the install deadline through the shutdown preparation that stops the service", async () => {
@@ -523,25 +556,6 @@ describe("UpdateService", () => {
     await vi.advanceTimersByTimeAsync(INSTALL_TIMEOUT);
 
     expect(service.getStatus()).toMatchObject({ phase: "error", errorCode: "install_failed" });
-  });
-
-  it("releases the restart action when the installer reports a failure", async () => {
-    const updater = new FakeUpdater();
-    makeUpdateAvailable(updater);
-    completeDownload(updater);
-    const service = createService(updater, { platform: "win32" });
-    service.start(false);
-    await service.checkForUpdates();
-    await service.downloadUpdate();
-    updater.quitAndInstall.mockImplementationOnce(() => {
-      updater.emit("error", new Error("no update filepath provided"));
-    });
-
-    await service.installUpdate();
-
-    expect(service.getStatus()).toMatchObject({ phase: "error", errorCode: "install_failed" });
-    await service.installUpdate();
-    expect(updater.quitAndInstall).toHaveBeenCalledTimes(2);
   });
 
   it("does not run the installer if shutdown preparation fails", async () => {

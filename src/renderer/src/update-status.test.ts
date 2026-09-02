@@ -48,11 +48,14 @@ describe("presentUpdateStatus", () => {
   });
 
   it.each([
+    // A download is retryable in place. An install is not: shutdown preparation has already run, so
+    // the message asks for a relaunch and the action falls back to checking rather than inviting a
+    // second teardown.
     ["download_failed", "Retry download"],
-    ["install_failed", "Retry restart"],
+    ["install_failed", "Check for updates"],
     ["check_failed", "Check for updates"],
   ] as const satisfies readonly (readonly [UpdateFailureCode, string])[])(
-    "retries the %s stage in place",
+    "offers the right action after %s",
     (errorCode, actionLabel) => {
       const presentation = presentUpdateStatus(status({ phase: "error", errorCode }));
       expect(presentation.actionLabel).toBe(actionLabel);

@@ -31,10 +31,10 @@ export function presentUpdateStatus(status: UpdateStatus): UpdateStatusPresentat
       actionLabel = "Restarting…";
       break;
     case "error":
-      // A failed stage is retried in place, so the label has to name that stage rather than send the
-      // user back through another check.
+      // A failed download is retried in place rather than sending the user back through a check. A
+      // failed install is not retryable: shutdown preparation has already run, so the message asks
+      // for a relaunch and the action falls back to checking.
       if (status.errorCode === "download_failed") actionLabel = "Retry download";
-      else if (status.errorCode === "install_failed") actionLabel = "Retry restart";
       break;
   }
 
