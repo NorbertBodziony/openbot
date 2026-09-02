@@ -607,6 +607,16 @@ export function createAppController(props: AppProps = {}) {
           setGeneralSettings((current) => ({ ...current, productAnalytics: previous.productAnalytics }));
         });
     }
+    if (previous.autoDownloadUpdates !== value.autoDownloadUpdates) {
+      void window.openbot.update
+        .setPreference({ autoDownload: value.autoDownloadUpdates })
+        .then((preference) =>
+          setGeneralSettings((current) => ({ ...current, autoDownloadUpdates: preference.autoDownload })),
+        )
+        .catch(() =>
+          setGeneralSettings((current) => ({ ...current, autoDownloadUpdates: previous.autoDownloadUpdates })),
+        );
+    }
     if (
       previous.macBookNotch !== value.macBookNotch ||
       previous.macBookNotchHaptics !== value.macBookNotchHaptics ||
@@ -865,6 +875,12 @@ export function createAppController(props: AppProps = {}) {
         setAnalyticsPreferenceLoaded(false);
         setGeneralSettings((current) => ({ ...current, productAnalytics: false }));
       });
+    void window.openbot.update
+      .getPreference()
+      .then((preference) =>
+        setGeneralSettings((current) => ({ ...current, autoDownloadUpdates: preference.autoDownload })),
+      )
+      .catch(() => undefined);
     void window.openbot.dynamicIsland
       .getPreference()
       .then((preference) =>
@@ -3050,8 +3066,11 @@ export function createAppController(props: AppProps = {}) {
 
   async function runUpdateAction(): Promise<void> {
     const analytics = desktopAnalytics.scope();
-    const phase = updateStatus().phase;
-    if (phase === "ready") {
+    const status = updateStatus();
+    const phase = status.phase;
+    // A failed stage is retried in place: the error code says which stage to run again, so the user
+    // does not have to walk back through a check first.
+    if (phase === "ready" || (phase === "error" && status.errorCode === "install_failed")) {
       try {
         await window.openbot.update.install();
         analytics.track("update_action", { action: "install", result: "succeeded", phase: "installing" });
@@ -3065,19 +3084,21 @@ export function createAppController(props: AppProps = {}) {
       }
       return;
     }
-    const action = phase === "available" ? ("download" as const) : ("check" as const);
+    const action =
+      phase === "available" || (phase === "error" && status.errorCode === "download_failed")
+        ? ("download" as const)
+        : ("check" as const);
     try {
-      const status =
-        action === "download" ? await window.openbot.update.download() : await window.openbot.update.check();
-      setUpdateStatus(status);
+      const next = action === "download" ? await window.openbot.update.download() : await window.openbot.update.check();
+      setUpdateStatus(next);
       const succeeded =
         action === "download"
-          ? status.phase === "downloading" || status.phase === "ready"
-          : status.phase !== "error" && status.phase !== "unsupported";
+          ? next.phase === "downloading" || next.phase === "ready"
+          : next.phase !== "error" && next.phase !== "unsupported";
       analytics.track("update_action", {
         action,
         result: succeeded ? "succeeded" : "failed",
-        phase: status.phase,
+        phase: next.phase,
         ...(succeeded ? {} : { failure_code: action === "download" ? "download_failed" : "check_failed" }),
       });
     } catch (error) {

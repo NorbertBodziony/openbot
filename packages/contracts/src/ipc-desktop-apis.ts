@@ -10,6 +10,7 @@ import type {
   ProviderRuntimeSnapshot,
   SaveSetupInput,
   SetAnalyticsPreferenceInput,
+  UpdatePreference,
   UpdateStatus,
 } from "./ipc-app-auth";
 import type {
@@ -229,7 +230,10 @@ export interface UpdateDesktopApi {
   getStatus: () => Promise<UpdateStatus>;
   check: () => Promise<UpdateStatus>;
   download: () => Promise<UpdateStatus>;
+  cancelDownload: () => Promise<UpdateStatus>;
   install: () => Promise<void>;
+  getPreference: () => Promise<UpdatePreference>;
+  setPreference: (input: UpdatePreference) => Promise<UpdatePreference>;
   onEvent: (listener: (status: UpdateStatus) => void) => () => void;
 }
 

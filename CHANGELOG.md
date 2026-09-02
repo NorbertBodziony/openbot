@@ -5,6 +5,15 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Apply the **Automatically download updates** setting: it is now persisted in the user data directory and drives the
+  updater, instead of being a renderer-only value that reset on every launch and never started a download.
+- Stop macOS updates hanging on **Preparing update…**: the restart action is offered as soon as the download completes
+  rather than waiting for a native staging event that never arrived, and the phase that could hang is gone.
+- Bound and recover every update stage: a check, download, or restart that stops responding now reports an actionable
+  error and can be retried in place, including a Windows installer that hands back control without quitting.
+
 ## [0.4.2] - 2026-09-01
 
 ### Changed

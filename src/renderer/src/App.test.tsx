@@ -675,7 +675,17 @@ describe("OpenBot connected desktop shell", () => {
             checkedAt: "2026-08-12T22:00:00.000Z",
             message: null,
           }),
+          cancelDownload: vi.fn().mockResolvedValue({
+            phase: "available",
+            currentVersion: "0.1.0",
+            availableVersion: "0.2.0",
+            progress: null,
+            checkedAt: "2026-08-12T22:00:00.000Z",
+            message: null,
+          }),
           install: vi.fn().mockResolvedValue(undefined),
+          getPreference: vi.fn().mockResolvedValue({ autoDownload: true }),
+          setPreference: vi.fn(async (input) => input),
           onEvent: vi.fn((listener) => {
             emitUpdateStatus = listener;
             return () => undefined;
@@ -2630,6 +2640,39 @@ describe("OpenBot connected desktop shell", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Download update/ }));
 
     expect(await screen.findByRole("button", { name: /Retry update.*Could not download update/ })).toBeEnabled();
+  });
+
+  it("retries a failed download instead of checking again", async () => {
+    vi.mocked(window.openbot.update.getStatus).mockResolvedValueOnce({
+      phase: "error",
+      currentVersion: "0.1.0",
+      availableVersion: "0.2.0",
+      progress: null,
+      checkedAt: "2026-08-12T22:00:00.000Z",
+      message: "Could not download the update. Try again.",
+      errorCode: "download_failed",
+    });
+    render(() => <App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Retry update/ }));
+
+    await waitFor(() => expect(window.openbot.update.download).toHaveBeenCalledOnce());
+    expect(window.openbot.update.check).not.toHaveBeenCalled();
+  });
+
+  it("persists the automatic download preference", async () => {
+    vi.mocked(window.openbot.update.getPreference).mockResolvedValue({ autoDownload: false });
+    render(() => <App />);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    await fireEvent.click(await screen.findByRole("tab", { name: "Updates" }));
+
+    const toggle = await screen.findByRole("switch", { name: "Automatically download updates" });
+    await waitFor(() => expect(toggle).not.toBeChecked());
+
+    await fireEvent.click(toggle);
+
+    await waitFor(() => expect(window.openbot.update.setPreference).toHaveBeenCalledWith({ autoDownload: true }));
   });
 
   it("confirms an installed app version on the next launch", async () => {

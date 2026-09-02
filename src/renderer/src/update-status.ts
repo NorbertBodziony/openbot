@@ -1,4 +1,5 @@
 import type { UpdateStatus } from "@openbot/contracts/ipc";
+import { isUpdateActivePhase, isUpdateBusyPhase } from "@openbot/contracts/ipc";
 
 export interface UpdateStatusPresentation {
   actionLabel: string;
@@ -9,8 +10,8 @@ export interface UpdateStatusPresentation {
 }
 
 export function presentUpdateStatus(status: UpdateStatus): UpdateStatusPresentation {
-  const available = ["available", "downloading", "preparing", "ready", "installing"].includes(status.phase);
-  const busy = ["checking", "downloading", "preparing", "installing"].includes(status.phase);
+  const available = isUpdateActivePhase(status.phase);
+  const busy = isUpdateBusyPhase(status.phase);
   let actionLabel = "Check for updates";
 
   switch (status.phase) {
@@ -23,14 +24,17 @@ export function presentUpdateStatus(status: UpdateStatus): UpdateStatusPresentat
     case "downloading":
       actionLabel = "Downloading update…";
       break;
-    case "preparing":
-      actionLabel = "Preparing update…";
-      break;
     case "ready":
       actionLabel = "Restart to update";
       break;
     case "installing":
       actionLabel = "Restarting…";
+      break;
+    case "error":
+      // A failed stage is retried in place, so the label has to name that stage rather than send the
+      // user back through another check.
+      if (status.errorCode === "download_failed") actionLabel = "Retry download";
+      else if (status.errorCode === "install_failed") actionLabel = "Retry restart";
       break;
   }
 
