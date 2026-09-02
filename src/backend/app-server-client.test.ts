@@ -4,7 +4,7 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isString } from "@openbot/contracts/runtime-values";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CodexAppServerClient } from "./app-server-client";
 import { decodeRecordResponse, isRecord } from "./protocol";
 
@@ -25,10 +25,9 @@ describe("CodexAppServerClient", () => {
     client.start();
 
     const result = await client.request("test/echo", { text: "hello" }, decodeEchoResponse);
-    await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(result).toEqual({ echoed: "hello" });
-    expect(notifications).toContain("test/notification");
+    await vi.waitFor(() => expect(notifications).toContain("test/notification"));
   });
 
   it("rejects timed out requests", async () => {

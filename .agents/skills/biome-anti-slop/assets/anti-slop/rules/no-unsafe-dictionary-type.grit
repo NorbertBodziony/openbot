@@ -1,5 +1,7 @@
 language js(typescript)
 
+// scope: global
+
 or {
   `Record<string, unknown>`,
   `Record<number, unknown>`,
@@ -14,5 +16,9 @@ or {
   `Record<symbol, object>`,
   `Record<PropertyKey, object>`
 } as $dictionary where {
-  register_diagnostic(span=$dictionary, message="This dictionary value type gives callers no concrete contract. Use an owner/schema-derived value type and parse external payloads before insertion.", severity="error")
+  register_diagnostic(
+    span=$dictionary,
+    message="This dictionary value type gives callers no concrete contract. Use an owner/schema-derived value type and parse external payloads before insertion.",
+    severity="error"
+  )
 }

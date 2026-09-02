@@ -1,5 +1,7 @@
 language js(typescript)
 
+// scope: global
+
 or {
   `const $name = $value`,
   `let $name = $value`,

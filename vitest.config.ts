@@ -1,5 +1,6 @@
 import solidPlugin from "@solidjs/vite-plugin";
 import { configDefaults, defineConfig } from "vitest/config";
+import { NODE_TEST_TIMEOUT_MS } from "./src/backend/test-deadlines";
 
 export default defineConfig({
   plugins: [solidPlugin()],
@@ -20,6 +21,10 @@ export default defineConfig({
         test: {
           name: "node",
           environment: "node",
+          // Strictly longer than the harness deadline, so a stalled wait fails
+          // with the predicate that never held rather than with vitest's
+          // generic "test timed out" - see src/backend/test-deadlines.ts.
+          testTimeout: NODE_TEST_TIMEOUT_MS,
           // The file name routes the file, so the project is never a decision:
           // `*.test.ts` runs here without a DOM, `*.test.tsx` needs JSX and
           // gets jsdom, and `*.dom.test.ts` is the narrow case of needing a DOM

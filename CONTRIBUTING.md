@@ -33,7 +33,7 @@ replace a concrete contract with a broad dictionary type.
 1. Create a branch from `main`.
 2. Keep behavior and visual changes scoped to the issue being solved.
 3. Add or update tests for behavior changes and reproduced bugs.
-4. Run `bun run check`.
+4. Run `bun run check`. Coding agents do not: see `AGENTS.md` "Do not run repo-wide checks".
 5. Describe user-visible changes, risks, and manual verification in the pull request.
 
 Do not commit generated `out`, `dist`, coverage, local browser profiles, Electron `userData`, CLI

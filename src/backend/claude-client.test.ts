@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ModelInfo, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ClaudeAgentClient } from "./claude-client";
 import {
   decodeAccountReadResult,
@@ -696,10 +696,7 @@ class TestQuery implements AsyncIterable<TestStreamMessage> {
 }
 
 async function waitFor(check: () => boolean): Promise<void> {
-  const deadline = Date.now() + 1_000;
-  while (Date.now() < deadline) {
-    if (check()) return;
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-  throw new Error("Timed out waiting for Claude adapter events.");
+  await vi.waitFor(() => {
+    if (!check()) throw new Error("Timed out waiting for Claude adapter events.");
+  });
 }

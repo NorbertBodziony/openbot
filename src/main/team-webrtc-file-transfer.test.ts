@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isString } from "@openbot/contracts/runtime-values";
@@ -196,7 +196,8 @@ describe("TeamWebRtcFileTransfer", () => {
 
   it("releases quota for file declarations that make no progress", async () => {
     const bridge = new FakeBridge();
-    const transfers = new TeamWebRtcFileTransfer(bridge, await temporaryDirectory(), 10);
+    const directory = await temporaryDirectory();
+    const transfers = new TeamWebRtcFileTransfer(bridge, directory, 10);
     transfers.setPeerAuthenticated("host-1", true);
     try {
       const maximumFileBytes = 100 * 1024 * 1024;
@@ -205,7 +206,10 @@ describe("TeamWebRtcFileTransfer", () => {
       bridge.emit("data", "host-1", "files", fileOpen("transfer-3", maximumFileBytes / 2, "3".repeat(64)));
       await vi.waitFor(() => expect(bridge.sent).toHaveLength(3));
 
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      // A declaration opens a `.part` file and its expiry removes it only after
+      // dropping the reservation, so an empty directory is the observable proof
+      // that the quota those three held has been released.
+      await vi.waitFor(async () => expect(await readdir(directory)).toHaveLength(0));
       bridge.emit("data", "host-1", "files", fileOpen("transfer-4", maximumFileBytes, "4".repeat(64)));
       await vi.waitFor(() => expect(bridge.sent).toHaveLength(4));
 

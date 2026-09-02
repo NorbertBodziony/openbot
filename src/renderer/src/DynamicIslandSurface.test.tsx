@@ -135,8 +135,7 @@ describe("DynamicIslandSurface", () => {
     };
     render(() => <DynamicIslandSurface />);
     await screen.findByRole("region", { name: "OpenBot question from AI" });
-    const anchor = document.querySelector(".dynamic-island-surface-anchor");
-    if (!anchor) throw new Error("Dynamic Island interaction area is missing.");
+    const anchor = screen.getByRole("group", { name: "Dynamic Island interaction area" });
     await fireEvent.mouseOver(anchor);
 
     flush(() => publish?.(approvalPresentation("approval-queued")));

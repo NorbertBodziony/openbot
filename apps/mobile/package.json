@@ -70,7 +70,8 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "lint": "biome check src",
-    "typecheck": "tsc --noEmit",
+    "codegen": "expo customize tsconfig.json && uniwind generate-artifacts --css ./global.css --dts ./src/uniwind-types.d.ts",
+    "typecheck": "bun run codegen && tsc --noEmit",
     "doctor": "bunx expo-doctor@latest"
   },
   "private": true

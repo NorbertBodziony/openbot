@@ -30,10 +30,10 @@ describe("RichMessageText tooltips", () => {
       />
     ));
 
-    expect(screen.getByText("Release Notes").closest(".message-skill-tag")).toHaveTextContent("Skill Release Notes");
-    expect(screen.getByText("Former").closest(".message-tag-unavailable")).toHaveTextContent(
-      "Unavailable agent Former",
-    );
+    expect(screen.getByText("Skill")).toBeInTheDocument();
+    expect(screen.getByText("Release Notes")).toBeInTheDocument();
+    expect(screen.getByText("Unavailable agent")).toBeInTheDocument();
+    expect(screen.getByText("Former")).toBeInTheDocument();
   });
 
   it("renders a plain attached file name as a styled reference", async () => {

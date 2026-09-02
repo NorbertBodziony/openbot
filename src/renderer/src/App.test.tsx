@@ -29,7 +29,7 @@ describe("OpenBot connected desktop shell", () => {
     function ShellProbe() {
       const controller = useAppController();
       return (
-        <output data-testid="shell-controller-state">
+        <output aria-label="shell controller state">
           {controller.activeServer()?.id}|{controller.activeBot()?.id}|{controller.activeMessages().length}|
           {controller.leftPanelWidth()}
         </output>
@@ -61,10 +61,14 @@ describe("OpenBot connected desktop shell", () => {
     }
 
     render(() => <Harness />);
-    await waitFor(() => expect(screen.getByTestId("shell-controller-state")).toHaveTextContent("local|chief|0|280"));
+    await waitFor(() =>
+      expect(screen.getByRole("status", { name: "shell controller state" })).toHaveTextContent("local|chief|0|280"),
+    );
     await fireEvent.click(screen.getByRole("button", { name: "Set shell state" }));
     await waitFor(() =>
-      expect(screen.getByTestId("shell-controller-state")).toHaveTextContent("local|sales-outbound|0|360"),
+      expect(screen.getByRole("status", { name: "shell controller state" })).toHaveTextContent(
+        "local|sales-outbound|0|360",
+      ),
     );
 
     const agentSubscriptionCount = vi.mocked(window.openbot.agent.onEvent).mock.calls.length;
@@ -72,10 +76,12 @@ describe("OpenBot connected desktop shell", () => {
     const presenceSubscriptionCount = vi.mocked(window.openbot.servers.onPresence).mock.calls.length;
 
     await fireEvent.click(screen.getByRole("button", { name: "Toggle shell view" }));
-    expect(screen.queryByTestId("shell-controller-state")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "shell controller state" })).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Toggle shell view" }));
 
-    expect(screen.getByTestId("shell-controller-state")).toHaveTextContent("local|sales-outbound|0|360");
+    expect(screen.getByRole("status", { name: "shell controller state" })).toHaveTextContent(
+      "local|sales-outbound|0|360",
+    );
     expect(window.openbot.agent.onEvent).toHaveBeenCalledTimes(agentSubscriptionCount);
     expect(window.openbot.auth.onEvent).toHaveBeenCalledTimes(authSubscriptionCount);
     expect(window.openbot.servers.onPresence).toHaveBeenCalledTimes(presenceSubscriptionCount);

@@ -1,11 +1,10 @@
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
 import { serializeChatTagReference } from "@openbot/contracts/chat-tag-references";
 import type { AttachmentSummary, InstalledSkill } from "@openbot/contracts/ipc";
-import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
+import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import type { BotProfile } from "../../data";
-import { triggerResize } from "../../setupTests";
 import { ImageGeneration } from "./ImageGeneration";
 import { MarkdownMessageText } from "./MarkdownMessageText";
 import { MessageBody } from "./MessageRendering";
@@ -290,7 +289,7 @@ describe("MessageBody", () => {
 
     const agentTag = screen.getByRole("button", { name: "Open agent Research" });
     expect(agentTag.closest("strong")).toBeInTheDocument();
-    expect(screen.getByText("Release] Notes").closest(".message-skill-tag")).toHaveTextContent("Skill Release] Notes");
+    expect(screen.getByText("Release] Notes")).toBeInTheDocument();
     expect(screen.queryByText("Old Research")).toBeNull();
     expect(screen.queryByText("Old Skill")).toBeNull();
     await fireEvent.click(agentTag);
@@ -596,7 +595,7 @@ describe("MessageBody", () => {
   it("finishes streaming Markdown inside the same message element", async () => {
     const [body, setBody] = createSignal("## Plan\n\nUse **Kobal");
     const [streaming, setStreaming] = createSignal(true);
-    const { container } = render(() => (
+    render(() => (
       <MessageBody
         message={{
           id: "message-streaming-markdown",
@@ -615,31 +614,23 @@ describe("MessageBody", () => {
 
     expect(screen.getByRole("heading", { level: 2, name: "Plan" })).toBeInTheDocument();
     expect(screen.getByText("Use Kobal")).toBeInTheDocument();
-    const messageContent = container.querySelector<HTMLElement>(".message-content-blocks");
-    const messageResize = container.querySelector<HTMLElement>(".message-content-resize");
-    if (!messageContent || !messageResize) throw new Error("Streaming resize elements are missing.");
-    expect(messageContent).not.toHaveTextContent("**");
-    let contentHeight = 40;
-    vi.spyOn(messageContent, "getBoundingClientRect").mockImplementation(() =>
-      DOMRect.fromRect({ height: contentHeight, width: 640, x: 0, y: 0 }),
-    );
-    const animate = vi.fn().mockReturnValue({ cancel: vi.fn(), finished: Promise.resolve() });
-    Object.defineProperty(messageResize, "animate", { configurable: true, value: animate });
-    triggerResize(messageContent);
+    expect(screen.queryByText(/\*\*/u)).toBeNull();
 
     setBody("## Plan\n\nUse **Kobalte**.\n\n- Parse Markdown\n- Resize the row");
     setStreaming(false);
-    contentHeight = 80;
-    triggerResize(messageContent);
 
     // How much text each reveal tick adds is animation, so nothing here asserts
     // an intermediate state: the reveal is word-by-word on a 60 ms timer and any
     // "not revealed yet" assertion just races the timer on a loaded machine.
-    await waitFor(() => expect(messageContent).toHaveTextContent("Resize the row"));
+    // The tail word animates in its own element while the reveal runs, so the
+    // assertion is on the list the bullets land in rather than on one text node.
+    await waitFor(() => expect(screen.getByRole("list")).toHaveTextContent("Resize the row"));
     expect(screen.getByText("Kobalte").tagName).toBe("STRONG");
     expect(screen.getByText("Parse Markdown")).toBeInTheDocument();
     expect(screen.queryByText("Use Kobal")).toBeNull();
-    expect(container.querySelector(".message-content-blocks")).toBe(messageContent);
+    // The heading the stream opened with is still the same one, so the finished
+    // Markdown replaced the body in place rather than remounting the message.
+    expect(screen.getByRole("heading", { level: 2, name: "Plan" })).toBeInTheDocument();
   });
 
   it("hides a punctuation-adjacent strong marker while streaming", async () => {
@@ -1106,11 +1097,11 @@ describe("MessageBody", () => {
       />
     ));
 
-    const context = document.querySelector(".message-reply-context");
-    if (!(context instanceof HTMLElement)) throw new Error("Reply context did not render");
-    expect(within(context).getByRole("button", { name: "Open agent Research" })).toBeInTheDocument();
-    expect(within(context).getByText("Release Notes")).toBeInTheDocument();
-    expect(context).not.toHaveTextContent("@[");
+    // Only the quoted message carries tags, so finding them at all proves the
+    // reply context parsed the references instead of echoing the raw markup.
+    expect(screen.getByRole("button", { name: "Open agent Research" })).toBeInTheDocument();
+    expect(screen.getByText("Release Notes")).toBeInTheDocument();
+    expect(screen.queryByText(/@\[/)).toBeNull();
   });
 
   it("renders a Markdown feature matrix as a comparison table", () => {

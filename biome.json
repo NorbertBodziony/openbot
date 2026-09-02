@@ -2,12 +2,10 @@
   "$schema": "https://biomejs.dev/schemas/2.5.9/schema.json",
   "plugins": [
     "./tools/biome/anti-slop/rules/no-chained-type-assertions.grit",
-    "./tools/biome/anti-slop/rules/no-conditional-empty-object-spread.grit",
     "./tools/biome/anti-slop/rules/no-known-value-widening.grit",
     "./tools/biome/anti-slop/rules/no-module-mocking.grit",
     "./tools/biome/anti-slop/rules/no-object-parameters.grit",
-    "./tools/biome/anti-slop/rules/no-reflect-apply.grit",
-    "./tools/biome/anti-slop/rules/no-reflect-get.grit",
+    "./tools/biome/anti-slop/rules/no-reflect-escapes.grit",
     "./tools/biome/anti-slop/rules/no-runtime-typeof.grit",
     "./tools/biome/anti-slop/rules/no-shape-in-symbol-names.grit",
     "./tools/biome/anti-slop/rules/no-unknown-returns.grit",
@@ -18,6 +16,7 @@
     "includes": [
       "**",
       "!.codex",
+      "!.claude",
       "!node_modules",
       "!out",
       "!out-dev-app",
@@ -74,7 +73,9 @@
         "useAsConstAssertion": "error"
       },
       "suspicious": {
-        "noExplicitAny": "error"
+        "noExplicitAny": "error",
+        "noFocusedTests": "error",
+        "noSkippedTests": "warn"
       }
     }
   },
@@ -99,11 +100,18 @@
     {
       "includes": ["**/*.test.ts", "**/*.test.tsx"],
       "plugins": [
-        "./tools/biome/anti-slop/rules/no-focus-assertions.grit",
         "./tools/biome/anti-slop/rules/no-class-assertions.grit",
         "./tools/biome/anti-slop/rules/no-style-assertions.grit",
         "./tools/biome/anti-slop/rules/no-dom-containment-assertions.grit",
-        "./tools/biome/anti-slop/rules/no-title-copy-assertions.grit"
+        "./tools/biome/anti-slop/rules/no-title-copy-assertions.grit",
+        "./tools/biome/anti-slop/rules/no-active-element-assertions.grit",
+        "./tools/biome/anti-slop/rules/no-inner-html-assertions.grit",
+        "./tools/biome/anti-slop/rules/no-dom-traversal-assertions.grit",
+        "./tools/biome/anti-slop/rules/no-icon-query-assertions.grit",
+        "./tools/biome/anti-slop/rules/no-snapshot-tests.grit",
+        "./tools/biome/anti-slop/rules/no-testid-queries.grit",
+        "./tools/biome/anti-slop/rules/no-class-selector-queries.grit",
+        "./tools/biome/anti-slop/rules/no-sleep-in-tests.grit"
       ]
     }
   ],

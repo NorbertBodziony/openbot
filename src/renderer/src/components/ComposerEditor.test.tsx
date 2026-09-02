@@ -144,10 +144,9 @@ describe("ComposerEditor", () => {
     await fireEvent.keyDown(editor, { key: "a" });
     editor.textContent = "a";
     await fireEvent.input(editor, { inputType: "insertText", data: "a" });
-    await new Promise((resolve) => window.setTimeout(resolve, 10));
 
+    await vi.waitFor(() => expect(onValueChange).toHaveBeenLastCalledWith("a"));
     expect(editor).toHaveTextContent("a");
-    expect(onValueChange).toHaveBeenLastCalledWith("a");
   });
 
   it("keeps repeated Shift+Enter line breaks in the draft", async () => {
