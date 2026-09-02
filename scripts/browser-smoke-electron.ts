@@ -67,9 +67,10 @@ const server = createServer((request, response) => {
     return;
   }
   if (url.pathname === "/frame") {
+    const frameActionLabel = url.searchParams.get("action_label") ?? "Frame action";
     response.setHeader("content-type", "text/html; charset=utf-8");
     response.end(
-      `<button aria-label="Frame action" onclick="const trusted=event.isTrusted;fetch('/settle').then(()=>{this.textContent='Frame settled:5:'+trusted})">Frame action</button>
+      `<button aria-label="${frameActionLabel}" onclick="const trusted=event.isTrusted;fetch('/settle').then(()=>{this.textContent='Frame settled:5:'+trusted})">${frameActionLabel}</button>
        <button aria-label="Schedule frame navigation" onclick="setTimeout(() => location.href='/frame-next', 1000)">Schedule frame navigation</button>
        <input aria-label="Frame field" oninput="document.querySelector('output').textContent='Frame input:' + this.value + ':' + event.isTrusted" onkeydown="if (event.key === 'Enter') document.querySelector('output').textContent += '|Frame key:' + event.isTrusted" />
        <input type="file" aria-label="Frame files" />
@@ -448,6 +449,32 @@ async function main(): Promise<void> {
     if (!frameClick.success || !String(frameClickSnapshot?.text).includes("Frame settled:5:true")) {
       throw new Error(`V2 cross-origin iframe click failed: ${toolError(frameClick)}`);
     }
+    await v2Contents.executeJavaScript(
+      `(async () => {
+        const container = document.createElement('div');
+        container.dataset.manyOopifs = '';
+        document.body.append(container);
+        for (let index = 0; index < 12; index++) {
+          const frame = document.createElement('iframe');
+          const label = index === 11 ? 'Frame action' : 'OOPIF noise ' + index;
+          frame.src = 'http://localhost:${address.port}/frame?action_label=' + encodeURIComponent(label);
+          container.append(frame);
+          await new Promise(loaded => { frame.onload = loaded; });
+        }
+        return true;
+      })()`,
+      true,
+    );
+    const manyFrameAmbiguity = await callBrowserTool(browser, "click", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "button", name: "Frame action", exact: true },
+      timeoutMs: 30_000,
+    });
+    if (manyFrameAmbiguity.success || !toolError(manyFrameAmbiguity).includes("Candidates:")) {
+      throw new Error("V2 semantic locator inferred uniqueness after truncating attached OOPIF targets.");
+    }
+    await v2Contents.executeJavaScript("document.querySelector('[data-many-oopifs]').remove(); true", true);
+    await new Promise((resolve) => setTimeout(resolve, 100));
     const frameTextWait = await callBrowserTool(browser, "wait_for", {
       tabId: v2Tab.id,
       text: "Frame settled:5:true",
@@ -640,6 +667,24 @@ async function main(): Promise<void> {
     if (outputAfterInvalidShortcut === "shortcut:true") {
       throw new Error("V2 invalid shortcut left Control pressed.");
     }
+    await v2Contents.executeJavaScript(
+      "document.body.appendChild(Object.assign(document.createElement('button'), { ariaLabel: 'Expired click', onclick: () => { document.querySelector('output').textContent = 'expired-click-ran'; } })); document.querySelector('output').textContent = 'expired-click-idle'; true",
+      true,
+    );
+    const expiredClick = await callBrowserTool(browser, "click", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "button", name: "Expired click", exact: true },
+      timeoutMs: 0,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const expiredClickOutput = await v2Contents.executeJavaScript("document.querySelector('output').textContent", true);
+    if (
+      expiredClick.success ||
+      !toolError(expiredClick).includes("timed out") ||
+      expiredClickOutput !== "expired-click-idle"
+    ) {
+      throw new Error("V2 timed-out click continued and dispatched input after reporting failure.");
+    }
     const ambiguous = await callBrowserTool(browser, "click", {
       tabId: v2Tab.id,
       target: { kind: "role", role: "button", name: "Duplicate", exact: true },
@@ -811,6 +856,25 @@ async function main(): Promise<void> {
       timeoutMs: 2_000,
     });
     if (!semanticWait.success) throw new Error(`V2 semantic wait failed: ${toolError(semanticWait)}`);
+    await v2Contents.executeJavaScript(
+      "document.body.appendChild(Object.assign(document.createElement('h2'), { ariaLabel: 'Ready heading' })); true",
+      true,
+    );
+    const nonActionableRoleWait = await callBrowserTool(browser, "wait_for", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "heading", name: "Ready heading", exact: true },
+      timeoutMs: 2_000,
+    });
+    if (!nonActionableRoleWait.success) {
+      throw new Error(`V2 non-actionable ARIA role wait failed: ${toolError(nonActionableRoleWait)}`);
+    }
+    const nonActionableRoleClick = await callBrowserTool(browser, "click", {
+      tabId: v2Tab.id,
+      target: { kind: "role", role: "heading", name: "Ready heading", exact: true },
+    });
+    if (nonActionableRoleClick.success || !toolError(nonActionableRoleClick).includes("No element matches")) {
+      throw new Error("V2 action targeting accepted a non-actionable ARIA role.");
+    }
     const refWaitSnapshot = await browser.snapshot(v2Tab.id);
     const removedRefTarget = refWaitSnapshot.elements.find((element) => element.name === "Late action");
     if (!removedRefTarget) throw new Error("V2 removed-ref wait fixture was not available.");
@@ -882,12 +946,16 @@ async function main(): Promise<void> {
       target: { kind: "role", role: "button", name: "SPA", exact: true },
       timeoutMs: 50,
     });
+    const boundedActionPayload = toolTextPayload(boundedAction);
     if (
-      boundedAction.success ||
-      !toolError(boundedAction).includes("timed out") ||
+      !boundedAction.success ||
+      !Array.isArray(boundedActionPayload?.actions) ||
+      !boundedActionPayload.actions.some(
+        (entry) => isDynamicRecord(entry) && String(entry.detail).includes("Action completed"),
+      ) ||
       Date.now() - actionTimeoutStarted > 1_000
     ) {
-      throw new Error("V2 action did not include settling and snapshot work in its deadline.");
+      throw new Error("V2 dispatched action did not report success when settling exceeded its deadline.");
     }
     await v2Contents.executeJavaScript(
       `(() => {
@@ -1212,10 +1280,17 @@ async function main(): Promise<void> {
     const timedActionNavigation = await callBrowserTool(browser, "click", {
       tabId: actionNavigationTab.id,
       target: { kind: "role", role: "button", name: "Slow action navigation", exact: true },
-      timeoutMs: 10,
+      timeoutMs: 100,
     });
-    if (timedActionNavigation.success || !toolError(timedActionNavigation).includes("timed out")) {
-      throw new Error("V2 action-triggered navigation did not return its bounded timeout error.");
+    const timedActionPayload = toolTextPayload(timedActionNavigation);
+    if (
+      !timedActionNavigation.success ||
+      !Array.isArray(timedActionPayload?.actions) ||
+      !timedActionPayload.actions.some(
+        (entry) => isDynamicRecord(entry) && String(entry.detail).includes("Action completed"),
+      )
+    ) {
+      throw new Error("V2 action-triggered navigation did not accurately report a dispatched timed action.");
     }
     const snapshotAfterTimedAction = await callBrowserTool(browser, "snapshot", { tabId: actionNavigationTab.id });
     if (

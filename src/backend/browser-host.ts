@@ -56,6 +56,7 @@ type KeepQueueBlocked = (promise: Promise<unknown>) => void;
 
 const MAX_PHYSICAL_VIEWPORT_PIXELS = 8_388_608;
 const MAX_ENCODED_CAPTURE_PIXELS = 4_194_304;
+const ACTION_POST_DISPATCH_TIMEOUT_MS = 10_000;
 
 interface BrowserConsoleMessageDetails {
   level: "info" | "warning" | "error" | "debug";
@@ -573,7 +574,8 @@ export class BrowserHost {
               tabId,
               "navigate",
               undefined,
-              async (tab) => {
+              async (tab, deadline) => {
+                const operationTimeout = remainingTime(deadline, "Browser navigate timed out.");
                 if (url) {
                   const normalizedUrl = normalizeBrowserUrl(url);
                   tab.requestedUrl = normalizedUrl;
@@ -583,7 +585,7 @@ export class BrowserHost {
                   await navigateAndWait(
                     tab.view.webContents,
                     () => tab.view.webContents.loadURL(normalizedUrl, browserLoadOptions()),
-                    timeoutMs,
+                    operationTimeout,
                   );
                 } else if (direction === "reload") {
                   await navigateAndWait(
@@ -592,13 +594,13 @@ export class BrowserHost {
                       tab.view.webContents.reload();
                       return true;
                     },
-                    timeoutMs,
+                    operationTimeout,
                   );
                 } else if (direction) {
                   await navigateAndWait(
                     tab.view.webContents,
                     () => navigateHistory(tab.view.webContents, direction, this.#session.getUserAgent()),
-                    timeoutMs,
+                    operationTimeout,
                   );
                 }
               },
@@ -615,12 +617,16 @@ export class BrowserHost {
               tabId,
               "click",
               target,
-              (tab) =>
-                tab.engine.click(target, {
-                  button: optionalEnum(args, "button", ["left", "middle", "right"] as const),
-                  clickCount: optionalNumber(args, "clickCount"),
-                  modifiers: optionalStringArray(args, "modifiers", 4),
-                }),
+              (tab, deadline) =>
+                tab.engine.click(
+                  target,
+                  {
+                    button: optionalEnum(args, "button", ["left", "middle", "right"] as const),
+                    clickCount: optionalNumber(args, "clickCount"),
+                    modifiers: optionalStringArray(args, "modifiers", 4),
+                  },
+                  deadline,
+                ),
               readTimeout(args),
             ),
           );
@@ -636,8 +642,8 @@ export class BrowserHost {
               tabId,
               "type",
               target,
-              async (tab) => {
-                await tab.engine.type(target, text, mode);
+              async (tab, deadline) => {
+                await tab.engine.type(target, text, mode, deadline);
                 if (args.submit === true) await tab.engine.press("Enter", target);
               },
               readTimeout(args),
@@ -650,7 +656,13 @@ export class BrowserHost {
           const target = args.target === undefined ? undefined : parseTarget(args.target);
           const key = requiredString(args, "key", 128);
           return textResult(
-            await this.#runAction(tabId, "press", target, (tab) => tab.engine.press(key, target), readTimeout(args)),
+            await this.#runAction(
+              tabId,
+              "press",
+              target,
+              (tab, deadline) => tab.engine.press(key, target, deadline),
+              readTimeout(args),
+            ),
           );
         }
         case "hover": {
@@ -658,7 +670,13 @@ export class BrowserHost {
           this.#requireToolTab(params, tabId);
           const target = parseTarget(args.target);
           return textResult(
-            await this.#runAction(tabId, "hover", target, (tab) => tab.engine.hover(target), readTimeout(args)),
+            await this.#runAction(
+              tabId,
+              "hover",
+              target,
+              (tab, deadline) => tab.engine.hover(target, deadline),
+              readTimeout(args),
+            ),
           );
         }
         case "scroll": {
@@ -673,7 +691,7 @@ export class BrowserHost {
               tabId,
               "scroll",
               target,
-              (tab) => tab.engine.scroll(target, deltaX, deltaY),
+              (tab, deadline) => tab.engine.scroll(target, deltaX, deltaY, deadline),
               readTimeout(args),
             ),
           );
@@ -688,7 +706,7 @@ export class BrowserHost {
               tabId,
               "select-option",
               target,
-              (tab) => tab.engine.selectOption(target, values),
+              (tab, deadline) => tab.engine.selectOption(target, values, deadline),
               readTimeout(args),
             ),
           );
@@ -703,7 +721,7 @@ export class BrowserHost {
               tabId,
               "set-checked",
               target,
-              (tab) => tab.engine.setChecked(target, checked),
+              (tab, deadline) => tab.engine.setChecked(target, checked, deadline),
               readTimeout(args),
             ),
           );
@@ -714,7 +732,13 @@ export class BrowserHost {
           const source = parseTarget(args.source);
           const target = parseTarget(args.target);
           return textResult(
-            await this.#runAction(tabId, "drag", source, (tab) => tab.engine.drag(source, target), readTimeout(args)),
+            await this.#runAction(
+              tabId,
+              "drag",
+              source,
+              (tab, deadline) => tab.engine.drag(source, target, deadline),
+              readTimeout(args),
+            ),
           );
         }
         case "upload_files": {
@@ -727,9 +751,12 @@ export class BrowserHost {
               tabId,
               "upload-files",
               target,
-              async (tab) => {
-                const assignment = await tab.engine.uploadFiles(target, paths, (resolved) =>
-                  hooks.onUploadTargetResolved?.(resolved.inputId, resolved.documentId),
+              async (tab, deadline) => {
+                const assignment = await tab.engine.uploadFiles(
+                  target,
+                  paths,
+                  (resolved) => hooks.onUploadTargetResolved?.(resolved.inputId, resolved.documentId),
+                  deadline,
                 );
                 hooks.onUploadAssigned?.(assignment.inputId, assignment.documentId);
               },
@@ -1126,7 +1153,7 @@ export class BrowserHost {
     tabId: string,
     action: string,
     target: BrowserTarget | undefined,
-    operation: (tab: InternalTab) => Promise<void>,
+    operation: (tab: InternalTab, deadline: number) => Promise<void>,
     timeoutMs = 10_000,
     onOperationStarted?: (completion: Promise<void>) => void,
   ): Promise<BrowserSnapshot> {
@@ -1151,23 +1178,29 @@ export class BrowserHost {
               () => false,
             );
           }
-          await operation(tab);
+          remainingTime(deadline, timeoutMessage);
+          await operation(tab, deadline);
         } finally {
           if (highlighted) await tab.engine.hideHighlight().catch(() => undefined);
         }
       })();
       onOperationStarted?.(operationCompletion);
-      const response = withTimeout(operationCompletion, remainingTime(deadline, timeoutMessage), timeoutMessage)
+      const response = operationCompletion
         .then(async () => {
-          const settleTimeout = remainingTime(deadline, timeoutMessage);
-          const settleCompletion = tab.engine.settle(settleTimeout);
-          snapshotDrains.push(settleCompletion);
-          await withTimeout(settleCompletion, settleTimeout, timeoutMessage);
-          const snapshotTimeout = remainingTime(deadline, timeoutMessage);
+          const settleTimeout = Math.max(1, deadline - Date.now());
+          try {
+            await tab.engine.settle(settleTimeout);
+          } catch (error) {
+            if (!isTimeoutError(error)) throw error;
+            if (tab.view.webContents.isLoading()) await tab.engine.stopLoading().catch(() => undefined);
+          }
           tab.diagnostics.action({
             action,
             target: target ? describeBrowserTarget(target) : undefined,
             outcome: "success",
+            ...(Date.now() >= deadline
+              ? { detail: "Action completed; page settling exceeded the requested timeout." }
+              : {}),
           });
           actionRecorded = true;
           const snapshot = (
@@ -1175,7 +1208,7 @@ export class BrowserHost {
               tab,
               tab.revision + 1,
               (promise) => snapshotDrains.push(promise),
-              snapshotTimeout,
+              ACTION_POST_DISPATCH_TIMEOUT_MS,
               timeoutMessage,
             )
           ).snapshot;
@@ -2128,6 +2161,10 @@ async function withTimeout<T>(promise: Promise<T>, milliseconds: number, message
   } finally {
     if (timeout) clearTimeout(timeout);
   }
+}
+
+function isTimeoutError(error: unknown): boolean {
+  return error instanceof Error && /timed out/i.test(error.message);
 }
 
 function remainingTime(deadline: number, message: string): number {

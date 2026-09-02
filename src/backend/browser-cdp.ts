@@ -110,11 +110,7 @@ export class BrowserCdpEngine {
         const attachedSessionId = stringValue(params.sessionId) || sessionId || "";
         const targetInfo = recordValue(params.targetInfo);
         const targetId = stringValue(targetInfo?.targetId);
-        if (
-          attachedSessionId &&
-          targetId &&
-          (this.#targetSessions.has(targetId) || this.#targetSessions.size < MAX_SNAPSHOT_FRAMES - 1)
-        ) {
+        if (attachedSessionId && targetId) {
           this.#targetSessions.set(targetId, { sessionId: attachedSessionId, url: stringValue(targetInfo?.url) });
         }
       }
@@ -169,13 +165,15 @@ export class BrowserCdpEngine {
   async click(
     target: BrowserTarget,
     options: { button?: "left" | "middle" | "right"; clickCount?: number; modifiers?: string[] } = {},
+    deadline?: number,
   ): Promise<void> {
     await this.#lease(async (send) => {
-      const point = await this.#targetPoint(send, target, true);
+      const point = await this.#targetPoint(send, target, true, true, deadline);
       const { sessionId, ...coordinates } = point;
       const button = options.button ?? "left";
       const clickCount = options.clickCount ?? 1;
       const modifiers = modifierMask(options.modifiers ?? []);
+      assertBeforeDeadline(deadline);
       await send("Input.dispatchMouseEvent", { type: "mouseMoved", ...coordinates, modifiers }, sessionId);
       await send(
         "Input.dispatchMouseEvent",
@@ -190,17 +188,23 @@ export class BrowserCdpEngine {
     });
   }
 
-  async hover(target: BrowserTarget): Promise<void> {
+  async hover(target: BrowserTarget, deadline?: number): Promise<void> {
     await this.#lease(async (send) => {
-      const point = await this.#targetPoint(send, target, true);
+      const point = await this.#targetPoint(send, target, true, true, deadline);
       const { sessionId, ...coordinates } = point;
+      assertBeforeDeadline(deadline);
       await send("Input.dispatchMouseEvent", { type: "mouseMoved", ...coordinates }, sessionId);
     });
   }
 
-  async type(target: BrowserTarget, text: string, mode: "replace" | "append" = "replace"): Promise<void> {
+  async type(
+    target: BrowserTarget,
+    text: string,
+    mode: "replace" | "append" = "replace",
+    deadline?: number,
+  ): Promise<void> {
     await this.#lease(async (send) => {
-      const resolved = await this.#resolveTarget(send, target);
+      const resolved = await this.#resolveTarget(send, target, deadline);
       if (!resolved.backendNodeId) throw new Error("Typing requires an element target.");
       await send("DOM.focus", { backendNodeId: resolved.backendNodeId }, resolved.sessionId);
       const useEndKey = await this.#callOnNode(
@@ -230,26 +234,29 @@ export class BrowserCdpEngine {
         resolved.sessionId,
       );
       if (useEndKey === true) await dispatchShortcut(send, "End", resolved.sessionId);
+      assertBeforeDeadline(deadline);
       await send("Input.insertText", { text }, resolved.sessionId);
     });
   }
 
-  async press(key: string, target?: BrowserTarget): Promise<void> {
+  async press(key: string, target?: BrowserTarget, deadline?: number): Promise<void> {
     await this.#lease(async (send) => {
       let sessionId: string | undefined;
       if (target) {
         if (target.kind === "point") throw new Error("Press requires an element target, not coordinates.");
-        const resolved = await this.#resolveTarget(send, target);
+        const resolved = await this.#resolveTarget(send, target, deadline);
         sessionId = resolved.sessionId;
         if (resolved.backendNodeId) await send("DOM.focus", { backendNodeId: resolved.backendNodeId }, sessionId);
       }
+      assertBeforeDeadline(deadline);
       await dispatchShortcut(send, key, sessionId);
     });
   }
 
-  async scroll(target: BrowserTarget | undefined, deltaX: number, deltaY: number): Promise<void> {
+  async scroll(target: BrowserTarget | undefined, deltaX: number, deltaY: number, deadline?: number): Promise<void> {
     await this.#lease(async (send) => {
       if (!target) {
+        assertBeforeDeadline(deadline);
         await send("Input.dispatchMouseEvent", {
           type: "mouseWheel",
           x: 1,
@@ -259,8 +266,9 @@ export class BrowserCdpEngine {
         });
         return;
       }
-      const resolved = await this.#resolveTarget(send, target);
+      const resolved = await this.#resolveTarget(send, target, deadline);
       if (!resolved.backendNodeId) {
+        assertBeforeDeadline(deadline);
         await send(
           "Input.dispatchMouseEvent",
           {
@@ -274,6 +282,7 @@ export class BrowserCdpEngine {
         );
         return;
       }
+      assertBeforeDeadline(deadline);
       await this.#callOnNode(
         send,
         resolved.backendNodeId,
@@ -284,10 +293,10 @@ export class BrowserCdpEngine {
     });
   }
 
-  async selectOption(target: BrowserTarget, values: string[]): Promise<void> {
+  async selectOption(target: BrowserTarget, values: string[], deadline?: number): Promise<void> {
     this.#contents.focus();
     await this.#lease(async (send) => {
-      const resolved = await this.#resolveElement(send, target);
+      const resolved = await this.#resolveElement(send, target, deadline);
       const plan = await this.#callOnNode(
         send,
         resolved.backendNodeId,
@@ -343,6 +352,7 @@ export class BrowserCdpEngine {
       if (desiredIndices.length === 0 || desiredIndices.some((index) => !enabledIndices.includes(index))) {
         throw new Error("Select target returned an invalid option plan.");
       }
+      assertBeforeDeadline(deadline);
       await send("DOM.focus", { backendNodeId: resolved.backendNodeId }, resolved.sessionId);
       if (!plan.multiple) {
         const cycleIndices = Array.isArray(plan.typeaheadCycleIndices)
@@ -415,9 +425,9 @@ export class BrowserCdpEngine {
     });
   }
 
-  async setChecked(target: BrowserTarget, checked: boolean): Promise<void> {
+  async setChecked(target: BrowserTarget, checked: boolean, deadline?: number): Promise<void> {
     await this.#lease(async (send) => {
-      const resolved = await this.#resolveElement(send, target);
+      const resolved = await this.#resolveElement(send, target, deadline);
       const state = await this.#callOnNode(
         send,
         resolved.backendNodeId,
@@ -440,6 +450,7 @@ export class BrowserCdpEngine {
         throw new Error("A selected radio button cannot be cleared directly. Select another radio option instead.");
       }
       if (state.checked !== checked) {
+        assertBeforeDeadline(deadline);
         const point = await this.#elementPoint(send, resolved.backendNodeId, true, resolved.sessionId);
         const { sessionId, ...coordinates } = point;
         await send(
@@ -464,13 +475,13 @@ export class BrowserCdpEngine {
     });
   }
 
-  async drag(source: BrowserTarget, target: BrowserTarget): Promise<void> {
+  async drag(source: BrowserTarget, target: BrowserTarget, deadline?: number): Promise<void> {
     await this.#lease(async (send) => {
-      const initialFrom = await this.#targetPoint(send, source, true);
-      const initialTo = await this.#targetPoint(send, target, true);
+      const initialFrom = await this.#targetPoint(send, source, true, true, deadline);
+      const initialTo = await this.#targetPoint(send, target, true, true, deadline);
       if (initialFrom.sessionId !== initialTo.sessionId) throw new Error("Cross-frame drag is not supported.");
-      const from = await this.#targetPoint(send, source, true, false);
-      const to = await this.#targetPoint(send, target, true, false);
+      const from = await this.#targetPoint(send, source, true, false, deadline);
+      const to = await this.#targetPoint(send, target, true, false, deadline);
       const sessionId = from.sessionId;
       let stopWaitingForIntercept = () => undefined;
       const interceptedDragData = new Promise<CdpResult | null>((resolve) => {
@@ -492,6 +503,7 @@ export class BrowserCdpEngine {
         };
         debuggerClient.on("message", listener);
       });
+      assertBeforeDeadline(deadline);
       await send("Input.setInterceptDrags", { enabled: true }, sessionId);
       await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: from.x, y: from.y }, sessionId);
       await send(
@@ -563,6 +575,7 @@ export class BrowserCdpEngine {
     target: BrowserTarget,
     paths: string[],
     onTargetResolved?: (assignment: BrowserUploadAssignment) => void,
+    deadline?: number,
   ): Promise<BrowserUploadAssignment> {
     if (paths.length === 0 || paths.length > 10) throw new Error("Upload requires between 1 and 10 files.");
     if (Buffer.byteLength(JSON.stringify(paths)) > MAX_RESULT_BYTES)
@@ -572,9 +585,10 @@ export class BrowserCdpEngine {
       if (!info?.isFile()) throw new Error(`Upload file does not exist or is not a regular file: ${path}`);
     }
     return this.#lease(async (send) => {
-      const resolved = await this.#resolveElement(send, target);
+      const resolved = await this.#resolveElement(send, target, deadline);
       const assignment = await this.#identifyUploadTarget(send, resolved);
       onTargetResolved?.(assignment);
+      assertBeforeDeadline(deadline);
       await send("DOM.setFileInputFiles", { backendNodeId: resolved.backendNodeId, files: paths }, resolved.sessionId);
       return assignment;
     });
@@ -695,7 +709,7 @@ export class BrowserCdpEngine {
         }
         if (condition.target) {
           try {
-            await this.#resolveTarget(send, condition.target, deadline);
+            await this.#resolveTarget(send, condition.target, deadline, true);
           } catch {
             matched = false;
           }
@@ -806,8 +820,9 @@ export class BrowserCdpEngine {
   async #resolveElement(
     send: SendCommand,
     target: BrowserTarget,
+    deadline?: number,
   ): Promise<{ backendNodeId: number; sessionId?: string }> {
-    const resolved = await this.#resolveTarget(send, target);
+    const resolved = await this.#resolveTarget(send, target, deadline);
     if (!resolved.backendNodeId) throw new Error("This operation requires an element target, not coordinates.");
     return { backendNodeId: resolved.backendNodeId, sessionId: resolved.sessionId };
   }
@@ -816,6 +831,7 @@ export class BrowserCdpEngine {
     send: SendCommand,
     target: BrowserTarget,
     deadline?: number,
+    allowNonActionableRole = false,
   ): Promise<{ backendNodeId?: number; sessionId?: string; x: number; y: number }> {
     if (target.kind === "point") {
       const metrics = await send("Page.getLayoutMetrics");
@@ -913,8 +929,8 @@ export class BrowserCdpEngine {
     const navigationGeneration = this.#navigationGeneration;
     const candidates: SemanticMatch[] = [];
     const seen = new Set<string>();
-    for (const capture of this.#snapshotTargets()) {
-      for (const candidate of await semanticAxMatches(send, capture, target, deadline)) {
+    for (const capture of this.#snapshotTargets(Number.POSITIVE_INFINITY)) {
+      for (const candidate of await semanticAxMatches(send, capture, target, allowNonActionableRole, deadline)) {
         const key = `${capture.targetId ?? "main"}:${candidate.backendNodeId}`;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -979,8 +995,10 @@ export class BrowserCdpEngine {
     target: BrowserTarget,
     hitTest: boolean,
     scrollIntoView = true,
+    deadline?: number,
   ): Promise<{ x: number; y: number; sessionId?: string }> {
-    const resolved = await this.#resolveTarget(send, target);
+    const resolved = await this.#resolveTarget(send, target, deadline);
+    assertBeforeDeadline(deadline);
     if (!resolved.backendNodeId) return { x: resolved.x, y: resolved.y };
     return this.#elementPoint(send, resolved.backendNodeId, hitTest, resolved.sessionId, scrollIntoView);
   }
@@ -1110,11 +1128,11 @@ export class BrowserCdpEngine {
     }
   }
 
-  #snapshotTargets(): SnapshotTarget[] {
+  #snapshotTargets(limit = MAX_SNAPSHOT_FRAMES): SnapshotTarget[] {
     return [
       {},
       ...[...this.#targetSessions.entries()]
-        .slice(0, MAX_SNAPSHOT_FRAMES - 1)
+        .slice(0, Math.max(0, limit - 1))
         .map(([targetId, target]) => ({ ...target, targetId })),
     ];
   }
@@ -1517,6 +1535,7 @@ async function semanticAxMatches(
   send: SendCommand,
   capture: SnapshotTarget,
   target: Extract<BrowserTarget, { kind: "role" | "text" }>,
+  allowNonActionableRole: boolean,
   deadline?: number,
 ): Promise<SemanticMatch[]> {
   assertBeforeDeadline(deadline);
@@ -1531,14 +1550,17 @@ async function semanticAxMatches(
       if (node.ignored === true) continue;
       const backendNodeId = numberValue(node.backendDOMNodeId);
       const role = axValue(node.role).toLowerCase();
-      if (!backendNodeId || seen.has(backendNodeId) || !ACTIONABLE_ROLES.has(role)) continue;
+      if (!backendNodeId || seen.has(backendNodeId)) continue;
       seen.add(backendNodeId);
       const name = axValue(node.name).slice(0, 500);
       const description = axValue(node.description).slice(0, 500);
       const matched =
         target.kind === "role"
-          ? role === target.role.toLowerCase() && (!target.name || textMatches(name, target.name, target.exact))
-          : [name, description].some((value) => textMatches(value, target.text, target.exact));
+          ? (allowNonActionableRole || ACTIONABLE_ROLES.has(role)) &&
+            role === target.role.toLowerCase() &&
+            (!target.name || textMatches(name, target.name, target.exact))
+          : ACTIONABLE_ROLES.has(role) &&
+            [name, description].some((value) => textMatches(value, target.text, target.exact));
       if (!matched) continue;
       matches.push({
         backendNodeId,

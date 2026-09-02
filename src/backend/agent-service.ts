@@ -3188,15 +3188,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if ((roots?.size ?? 0) + reservedNewInputs + additionalInput > MAX_BROWSER_UPLOAD_INPUTS_PER_TAB) {
       throw new Error(`A browser tab can retain files for up to ${MAX_BROWSER_UPLOAD_INPUTS_PER_TAB} inputs.`);
     }
-    const retainedBytes = [...(roots?.values() ?? [])].reduce((total, root) => total + root.bytes, 0);
+    const replacedBytes = roots?.get(reservation.inputId)?.bytes ?? 0;
+    const retainedBytes = [...(roots?.values() ?? [])].reduce((total, root) => total + root.bytes, 0) - replacedBytes;
     const reservedBytes = [...reservations.values()].reduce((total, value) => total + value.bytes, 0);
     if (retainedBytes + reservedBytes + reservation.bytes > MAX_BROWSER_UPLOAD_BYTES_PER_TAB) {
       throw new Error(`A browser tab can retain up to ${MAX_BROWSER_UPLOAD_BYTES_PER_TAB} upload bytes.`);
     }
-    const totalRetainedBytes = [...this.#browserUploadRoots.values()].reduce(
-      (total, values) => total + [...values.values()].reduce((sum, value) => sum + value.bytes, 0),
-      0,
-    );
+    const totalRetainedBytes =
+      [...this.#browserUploadRoots.values()].reduce(
+        (total, values) => total + [...values.values()].reduce((sum, value) => sum + value.bytes, 0),
+        0,
+      ) - replacedBytes;
     const totalReservedBytes = [...this.#browserUploadReservations.values()].reduce(
       (total, values) => total + [...values.values()].reduce((sum, value) => sum + value.bytes, 0),
       0,
