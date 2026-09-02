@@ -21,7 +21,7 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 
 import { BloubAvatar } from "@/components/bloub-avatar";
 import { useBotContextMenu } from "@/components/bot-context-menu";
-import { BotPinAvatar, useBotPinTransition } from "@/components/bot-pin-transition";
+import { type BotAvatarLocation, BotPinAvatar, useBotPinTransition } from "@/components/bot-pin-transition";
 import { isIOS } from "@/lib/platform";
 import { type MobileBot, useMobileWorkspace } from "@/providers/mobile-workspace-provider";
 
@@ -80,26 +80,35 @@ function BotRowTextReveal({ active, children }: PropsWithChildren<{ active: bool
 }
 
 interface BotListRowProps {
+  avatarLocation?: BotAvatarLocation;
   bot: MobileBot;
+  dismissToChat?: boolean;
   enableActions?: boolean;
   enableZoomTransition?: boolean;
 }
 
-export function BotListRow({ bot, enableActions = true, enableZoomTransition = true }: BotListRowProps) {
+export function BotListRow({
+  avatarLocation = "row",
+  bot,
+  dismissToChat = false,
+  enableActions = true,
+  enableZoomTransition = true,
+}: BotListRowProps) {
   const [background, accent, accentForeground] = useThemeColor(["background", "accent", "accent-foreground"]);
   const { unreadBotIds } = useMobileWorkspace();
-  const { toggleBotPinAnimated, transition } = useBotPinTransition();
+  const { startBotNavigationAnimated, toggleBotPinAnimated, transition } = useBotPinTransition();
   const pendingPinRef = useRef(false);
   const botContextMenu = useBotContextMenu(bot);
   const isUnread = unreadBotIds.includes(bot.id);
   const isUnpinTarget = transition?.botId === bot.id && transition.target === "row";
   const avatar = (
-    <BotPinAvatar botId={bot.id} location="row" size={54}>
+    <BotPinAvatar botId={bot.id} location={avatarLocation} size={54}>
       <BloubAvatar seed={bot.avatarSeed} size={54} />
     </BotPinAvatar>
   );
 
   const handleOpen = () => {
+    if (dismissToChat) startBotNavigationAnimated(bot.id, avatarLocation);
     if (isIOS) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
   };
 
@@ -132,14 +141,17 @@ export function BotListRow({ bot, enableActions = true, enableZoomTransition = t
     </Link.Trigger>
   );
 
-  const href = { pathname: "/chat/[botId]" as const, params: { botId: bot.id } };
+  const href = {
+    pathname: "/chat/[botId]" as const,
+    params: dismissToChat ? { avatarTransition: "search", botId: bot.id } : { botId: bot.id },
+  };
   const botLink = enableActions ? (
-    <Link href={href} asChild onPress={handleOpen}>
+    <Link href={href} asChild dismissTo={dismissToChat} onPress={handleOpen}>
       {linkTrigger}
       {botContextMenu}
     </Link>
   ) : (
-    <Link href={href} asChild onPress={handleOpen}>
+    <Link href={href} asChild dismissTo={dismissToChat} onPress={handleOpen}>
       {linkTrigger}
     </Link>
   );

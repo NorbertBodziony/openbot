@@ -3,7 +3,7 @@ import * as Haptics from "expo-haptics";
 import { Link, router } from "expo-router";
 import { useThemeColor } from "heroui-native/hooks";
 import { ArrowLeft, ArrowUp, Mic, Monitor, Plus, X } from "lucide-react-native";
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -19,10 +19,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { scheduleOnRN } from "react-native-worklets";
 
 import { BloubAvatar } from "@/components/bloub-avatar";
+import { BotPinAvatar, useBotPinTransition } from "@/components/bot-pin-transition";
 import { isIOS } from "@/lib/platform";
 import type { MobileBot } from "@/providers/mobile-workspace-provider";
 
 interface MobileChatViewProps {
+  animateAvatarOnExit?: boolean;
   bot: MobileBot;
   userName: string;
 }
@@ -46,8 +48,9 @@ function leaveConversation(): void {
   else router.replace("/connected");
 }
 
-export function MobileChatView({ bot, userName }: MobileChatViewProps) {
+export function MobileChatView({ animateAvatarOnExit = false, bot, userName }: MobileChatViewProps) {
   const insets = useSafeAreaInsets();
+  const { leaveBotChatAnimated } = useBotPinTransition();
   const scrollViewRef = useRef<ScrollView>(null);
   const [foreground, muted, fieldBackground, raised, action, actionForeground, background] = useThemeColor([
     "foreground",
@@ -69,6 +72,10 @@ export function MobileChatView({ bot, userName }: MobileChatViewProps) {
   ]);
   const liquidGlassAvailable = isLiquidGlassAvailable();
   const iconColor = String(foreground);
+  const handleLeaveConversation = useCallback(() => {
+    if (animateAvatarOnExit) leaveBotChatAnimated(bot.id);
+    else leaveConversation();
+  }, [animateAvatarOnExit, bot.id, leaveBotChatAnimated]);
   const edgeBackGesture = useMemo(
     () =>
       Gesture.Pan()
@@ -77,9 +84,9 @@ export function MobileChatView({ bot, userName }: MobileChatViewProps) {
         .failOffsetX(-8)
         .failOffsetY([-16, 16])
         .onEnd((event) => {
-          if (event.translationX >= 48 || event.velocityX >= 650) scheduleOnRN(leaveConversation);
+          if (event.translationX >= 48 || event.velocityX >= 650) scheduleOnRN(handleLeaveConversation);
         }),
-    [],
+    [handleLeaveConversation],
   );
 
   function sendMessage(value = draft): void {
@@ -109,7 +116,7 @@ export function MobileChatView({ bot, userName }: MobileChatViewProps) {
             accessibilityLabel="Back"
             fallbackBackground={fieldBackground}
             liquidGlassAvailable={liquidGlassAvailable}
-            onPress={leaveConversation}
+            onPress={handleLeaveConversation}
           >
             <ArrowLeft color={iconColor} size={24} strokeWidth={2} />
           </ChatGlassIconButton>
@@ -130,9 +137,9 @@ export function MobileChatView({ bot, userName }: MobileChatViewProps) {
             }}
           >
             <Link.AppleZoomTarget>
-              <View style={{ height: 28, width: 28 }}>
+              <BotPinAvatar botId={bot.id} location="chat" size={28}>
                 <BloubAvatar seed={bot.avatarSeed} size={28} />
-              </View>
+              </BotPinAvatar>
             </Link.AppleZoomTarget>
             <Text className="min-w-0 shrink font-sans text-body font-semibold text-foreground" numberOfLines={1}>
               {bot.name}

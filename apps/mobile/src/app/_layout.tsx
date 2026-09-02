@@ -12,6 +12,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { withUniwind } from "uniwind";
 
 import { AppDrawerShell } from "@/components/app-drawer-shell";
+import { BotPinTransitionProvider } from "@/components/bot-pin-transition";
 import { isIOS } from "@/lib/platform";
 import { queryClient } from "@/lib/query-client";
 import { MobileSessionProvider, useMobileSession } from "@/providers/mobile-session-provider";
@@ -116,9 +117,11 @@ export default function RootLayout() {
             <StatusBar style="auto" />
             <MobileSessionProvider>
               <MobileWorkspaceProvider>
-                <AppDrawerShell>
-                  <AppNavigation />
-                </AppDrawerShell>
+                <BotPinTransitionProvider>
+                  <AppDrawerShell>
+                    <AppNavigation />
+                  </AppDrawerShell>
+                </BotPinTransitionProvider>
               </MobileWorkspaceProvider>
             </MobileSessionProvider>
           </ThemeProvider>

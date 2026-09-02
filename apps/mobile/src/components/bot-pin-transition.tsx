@@ -1,4 +1,5 @@
 import * as Haptics from "expo-haptics";
+import { router } from "expo-router";
 import {
   createContext,
   type PropsWithChildren,
@@ -24,7 +25,7 @@ import { BloubAvatar } from "@/components/bloub-avatar";
 import { isIOS } from "@/lib/platform";
 import { MAX_PINNED_BOTS, useMobileWorkspace } from "@/providers/mobile-workspace-provider";
 
-export type BotAvatarLocation = "pinned" | "row";
+export type BotAvatarLocation = "chat" | "pinned" | "row" | "search";
 
 interface AvatarRect {
   height: number;
@@ -43,8 +44,10 @@ export interface BotPinTransitionState {
 }
 
 interface BotPinTransitionContextValue {
+  leaveBotChatAnimated: (botId: string) => void;
   registerAvatar: (botId: string, location: BotAvatarLocation, node: View | null) => void;
   notifyAvatarLayout: (botId: string, location: BotAvatarLocation) => void;
+  startBotNavigationAnimated: (botId: string, source: BotAvatarLocation) => void;
   toggleBotPinAnimated: (botId: string) => void;
   transition: BotPinTransitionState | null;
 }
@@ -57,6 +60,7 @@ export function BotPinTransitionProvider({ children }: PropsWithChildren) {
   const { bots, pinnedBotIds, toggleBotPin } = useMobileWorkspace();
   const containerRef = useRef<View>(null);
   const avatarRefs = useRef(new Map<string, Partial<Record<BotAvatarLocation, View>>>()).current;
+  const avatarRects = useRef(new Map<string, Partial<Record<BotAvatarLocation, AvatarRect>>>()).current;
   const transitionRef = useRef<BotPinTransitionState | null>(null);
   const animationStartedRef = useRef(false);
   const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -96,29 +100,31 @@ export function BotPinTransitionProvider({ children }: PropsWithChildren) {
     [finishTransition, progress],
   );
 
-  const measureTarget = useCallback(
+  const measureAvatar = useCallback(
     (botId: string, location: BotAvatarLocation) => {
-      const current = transitionRef.current;
-      if (!current || current.botId !== botId || current.target !== location || current.to) return;
-
       const node = avatarRefs.get(botId)?.[location];
       const container = containerRef.current;
       if (!node || !container) return;
 
       container.measureInWindow((containerX, containerY) => {
         node.measureInWindow((x, y, width, height) => {
+          const rect = { x: x - containerX, y: y - containerY, width, height };
+          const rects = avatarRects.get(botId) ?? {};
+          rects[location] = rect;
+          avatarRects.set(botId, rects);
+
           const latest = transitionRef.current;
           if (!latest || latest.botId !== botId || latest.target !== location || latest.to) return;
 
           const nextTransition = {
             ...latest,
-            to: { x: x - containerX, y: y - containerY, width, height },
+            to: rect,
           };
           startMovement(nextTransition);
         });
       });
     },
-    [avatarRefs, startMovement],
+    [avatarRects, avatarRefs, startMovement],
   );
 
   const registerAvatar = useCallback(
@@ -127,20 +133,79 @@ export function BotPinTransitionProvider({ children }: PropsWithChildren) {
       if (node) {
         refs[location] = node;
         avatarRefs.set(botId, refs);
-        requestAnimationFrame(() => measureTarget(botId, location));
+        requestAnimationFrame(() => measureAvatar(botId, location));
       } else {
         delete refs[location];
         if (Object.keys(refs).length === 0) avatarRefs.delete(botId);
       }
     },
-    [avatarRefs, measureTarget],
+    [avatarRefs, measureAvatar],
   );
 
   const notifyAvatarLayout = useCallback(
     (botId: string, location: BotAvatarLocation) => {
-      requestAnimationFrame(() => measureTarget(botId, location));
+      requestAnimationFrame(() => measureAvatar(botId, location));
     },
-    [measureTarget],
+    [measureAvatar],
+  );
+
+  const startBotNavigationAnimated = useCallback(
+    (botId: string, source: BotAvatarLocation) => {
+      const bot = bots.find((item) => item.id === botId);
+      const from = avatarRects.get(botId)?.[source];
+      if (!bot || !from || transitionRef.current) return;
+
+      const nextTransition: BotPinTransitionState = {
+        botId,
+        avatarSeed: bot.avatarSeed,
+        from,
+        source,
+        target: "chat",
+      };
+      transitionRef.current = nextTransition;
+      setTransition(nextTransition);
+      progress.set(0);
+      fallbackTimerRef.current = setTimeout(finishTransition, 1200);
+    },
+    [avatarRects, bots, finishTransition, progress],
+  );
+
+  const leaveBotChatAnimated = useCallback(
+    (botId: string) => {
+      const navigateBack = () => {
+        if (router.canGoBack()) router.back();
+        else router.replace("/connected");
+      };
+      const bot = bots.find((item) => item.id === botId);
+      const from = avatarRects.get(botId)?.chat;
+
+      if (!bot || !from || transitionRef.current) {
+        navigateBack();
+        return;
+      }
+
+      const target: BotAvatarLocation = pinnedBotIds.includes(botId) ? "pinned" : "row";
+      const to = avatarRects.get(botId)?.[target];
+      const nextTransition: BotPinTransitionState = {
+        botId,
+        avatarSeed: bot.avatarSeed,
+        from,
+        source: "chat",
+        target,
+        ...(to ? { to } : {}),
+      };
+
+      transitionRef.current = nextTransition;
+      setTransition(nextTransition);
+      progress.set(0);
+      fallbackTimerRef.current = setTimeout(finishTransition, 1200);
+
+      requestAnimationFrame(() => {
+        navigateBack();
+        if (to) startMovement(nextTransition);
+      });
+    },
+    [avatarRects, bots, finishTransition, pinnedBotIds, progress, startMovement],
   );
 
   const toggleBotPinAnimated = useCallback(
@@ -210,8 +275,22 @@ export function BotPinTransitionProvider({ children }: PropsWithChildren) {
   );
 
   const contextValue = useMemo<BotPinTransitionContextValue>(
-    () => ({ registerAvatar, notifyAvatarLayout, toggleBotPinAnimated, transition }),
-    [notifyAvatarLayout, registerAvatar, toggleBotPinAnimated, transition],
+    () => ({
+      leaveBotChatAnimated,
+      registerAvatar,
+      notifyAvatarLayout,
+      startBotNavigationAnimated,
+      toggleBotPinAnimated,
+      transition,
+    }),
+    [
+      leaveBotChatAnimated,
+      notifyAvatarLayout,
+      registerAvatar,
+      startBotNavigationAnimated,
+      toggleBotPinAnimated,
+      transition,
+    ],
   );
 
   const overlayStyle = useAnimatedStyle(() => {
@@ -285,8 +364,13 @@ export function useBotPinTransition(): BotPinTransitionContextValue {
   return useMemo(
     () =>
       context ?? {
+        leaveBotChatAnimated: () => {
+          if (router.canGoBack()) router.back();
+          else router.replace("/connected");
+        },
         notifyAvatarLayout: () => undefined,
         registerAvatar: () => undefined,
+        startBotNavigationAnimated: () => undefined,
         toggleBotPinAnimated: (botId: string) => {
           const result = toggleBotPin(botId);
           if (result === "limit") {
