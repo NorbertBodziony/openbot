@@ -2182,7 +2182,7 @@
   width: min(430px, calc(100vw - 32px));
   outline: none;
   background: var(--openbot-bg-control);
-  padding: var(--openbot-space-4);
+  padding: var(--openbot-space-4) var(--openbot-space-2);
   color: var(--openbot-text-primary);
   transform: translate(-50%, -50%);
   transform-origin: center;
