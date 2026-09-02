@@ -886,4 +886,82 @@ describe.sequential("AgentService: routines", () => {
         .get(delivery.turnId),
     ).toMatchObject({ status: "completed", completed_at: expect.any(String) });
   });
+
+  it("rolls back a routine mutation when its transcript marker cannot persist", async () => {
+    const { store, mailbox } = stores(root);
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    const initialBot = store.list().find((candidate) => candidate.id === bot.id);
+    vi.spyOn(store.database, "persistConversation").mockImplementationOnce(() => {
+      throw new Error("conversation persistence failed");
+    });
+
+    expect(() =>
+      service?.createRoutine({
+        botId: bot.id,
+        name: "Atomic routine",
+        instruction: "Do not persist half of this change.",
+        active: true,
+        timezone: "UTC",
+        schedule: { kind: "daily", time: "09:00" },
+      }),
+    ).toThrow("conversation persistence failed");
+    expect(service.listRoutines(bot.id)).toEqual([]);
+    expect((await service.readConversation(bot.id)).messages).toEqual([]);
+    expect(store.list().find((candidate) => candidate.id === bot.id)).toMatchObject({
+      threadId: initialBot?.threadId ?? null,
+      updatedAt: initialBot?.updatedAt ?? null,
+    });
+  });
+
+  it("restores queued routine work when a delete marker cannot persist", async () => {
+    const { store, mailbox } = stores(root);
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    const routine = service.createRoutine({
+      botId: bot.id,
+      name: "Queued routine",
+      instruction: "Keep this queued when deletion fails.",
+      active: true,
+      timezone: "UTC",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await waitFor(() => service?.listQueue(bot.id).deliveries.some((delivery) => delivery.status === "queued"));
+    const queuedDelivery = service.listQueue(bot.id).deliveries.find((delivery) => delivery.status === "queued");
+    if (!queuedDelivery) throw new Error("The queued routine delivery is missing.");
+    const queuedRun = service
+      .listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+      .find((run) => run.deliveryId === queuedDelivery.id);
+    if (!queuedRun) throw new Error("The queued routine run is missing.");
+    const persistConversation = store.database.persistConversation.bind(store.database);
+    vi.spyOn(store.database, "persistConversation").mockImplementation((...args) => {
+      if (args[1] === "routine.deleted") throw new Error("delete marker persistence failed");
+      return persistConversation(...args);
+    });
+
+    await expect(service.deleteRoutine({ botId: bot.id, routineId: routine.id })).rejects.toThrow(
+      "delete marker persistence failed",
+    );
+    expect(service.listRoutines(bot.id)).toEqual([expect.objectContaining({ id: routine.id })]);
+    const restoredDelivery = service.listQueue(bot.id).deliveries.find((delivery) => delivery.id === queuedDelivery.id);
+    expect(restoredDelivery).toBeDefined();
+    expect(["queued", "starting", "running"]).toContain(restoredDelivery?.status);
+    const restoredRun = service
+      .listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+      .find((run) => run.id === queuedRun.id);
+    expect(restoredRun).toBeDefined();
+    expect(["queued", "running"]).toContain(restoredRun?.status);
+    await waitFor(() =>
+      service
+        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .some((run) => run.status === "interrupted"),
+    );
+    expect(service.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })).toEqual(
+      expect.arrayContaining([expect.objectContaining({ status: "interrupted" })]),
+    );
+  });
 });

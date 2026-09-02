@@ -114,6 +114,9 @@ describe("Sidebar pinned chats", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Open settings for Local" }));
     expect(props.onOpenServerSettings).toHaveBeenCalledWith(expect.any(HTMLElement));
 
+    await fireEvent.click(screen.getByRole("button", { name: "Open Marketplace" }));
+    expect(props.onOpenMarketplace).toHaveBeenCalledOnce();
+
     expect(screen.getByRole("region", { name: "Pinned chats" })).toBeInTheDocument();
     expect(screen.queryByText("Pinned")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Chief, pinned agent" })).toHaveAttribute("aria-pressed", "true");

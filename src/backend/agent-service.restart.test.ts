@@ -11,6 +11,7 @@ import {
   FakeAgentClient,
   fakeBrowser,
   firstInputText,
+  nextRoutinesChanged,
   notification,
   protocolMessages,
   stores,
@@ -369,5 +370,54 @@ describe.sequential("AgentService: restart", () => {
       expect.arrayContaining(["running", "needs-attention", "cancelled", "failed", "interrupted"]),
     );
     expect(transitionStatuses.filter((status) => status === "running")).toHaveLength(3);
+  });
+
+  it("queues only the last missed run after sleep and does not duplicate it after restart", async () => {
+    const { store, mailbox } = stores(root);
+    service = new AgentService(
+      store,
+      mailbox,
+      fakeBrowser(),
+      30_000,
+      "codex",
+      (provider) => new FakeAgentClient(provider),
+    );
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    vi.useFakeTimers({ now: new Date("2026-08-25T11:07:00.000Z") });
+    const routine = service.createRoutine({
+      botId: bot.id,
+      name: "Quarter-hour check",
+      instruction: "Check the current queue.",
+      active: true,
+      timezone: "UTC",
+      schedule: { kind: "interval", amount: 15, unit: "minutes", anchorAt: "2026-08-25T10:00:00.000Z" },
+    });
+    store.database.connection
+      .prepare("UPDATE projection_routine_triggers SET next_run_at = ? WHERE trigger_id = ?")
+      .run("2026-08-25T10:15:00.000Z", routine.trigger.id);
+    service.updateRoutine({ botId: bot.id, routineId: routine.id, name: routine.name });
+    const routineChanged = nextRoutinesChanged(service, bot.id);
+
+    await vi.advanceTimersByTimeAsync(0);
+    await routineChanged;
+
+    expect(service.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })).toEqual([
+      expect.objectContaining({ kind: "scheduled", scheduledFor: "2026-08-25T11:00:00.000Z" }),
+    ]);
+    expect(service.listRoutines(bot.id)[0]?.trigger.nextRunAt).toBe("2026-08-25T11:15:00.000Z");
+
+    await service.stop();
+    service = new AgentService(
+      store,
+      mailbox,
+      fakeBrowser(),
+      30_000,
+      "codex",
+      (provider) => new FakeAgentClient(provider),
+    );
+    await service.initialize();
+
+    expect(service.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })).toHaveLength(1);
   });
 });

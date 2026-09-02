@@ -122,6 +122,17 @@ describe.sequential("AgentService: providers", () => {
     ]);
 
     expect(availableOrder).toEqual(["claude", "grok", "codex"]);
+
+    // The fake CLI advertises models outside the curated set, and
+    // CURATED_CODEX_MODEL_IDS (agent-service.ts:3296) has to drop them.
+    const codexModelIds = service
+      .listModels()
+      .filter((model) => model.provider === "codex")
+      .map((model) => model.id);
+    for (const uncurated of ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark"]) {
+      expect(codexModelIds).not.toContain(uncurated);
+    }
+    expect(codexModelIds).toContain("gpt-5.6-luna");
   });
 
   it("duplicates persistent agent data without conversation or routine-run history", async () => {
@@ -843,5 +854,47 @@ describe.sequential("AgentService: providers", () => {
 
     await waitFor(() => calls.length === 1);
     expect(calls[0]).toMatchObject({ threadId: openbotThreadId, ownerBotId: "chief" });
+  });
+
+  it("serializes duplication until the previous copy is committed", async () => {
+    const { store, mailbox } = stores(root);
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    await store.getOrCreate("chief");
+    await store.getOrCreate("research");
+    const first = await service.duplicateBot("chief");
+    let secondResolved = false;
+    const secondRequest = service.duplicateBot("research").then((duplicate) => {
+      secondResolved = true;
+      return duplicate;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(secondResolved).toBe(false);
+    await service.commitBotDuplication(first.id, EMPTY_LAYOUT);
+    const second = await secondRequest;
+    await service.commitBotDuplication(second.id, EMPTY_LAYOUT);
+    expect(service.listBots().map((bot) => bot.id)).toEqual(
+      expect.arrayContaining(["chief", "research", first.id, second.id]),
+    );
+  });
+
+  it("removes copied data when the source changes during duplication", async () => {
+    const { store, mailbox } = stores(root);
+    service = new AgentService(store, mailbox, fakeBrowser());
+    await service.initialize();
+    await store.getOrCreate("chief");
+    const duplicateInStore = store.duplicateBot.bind(store);
+    vi.spyOn(store, "duplicateBot").mockImplementationOnce(async (botId) => {
+      const duplicate = await duplicateInStore(botId);
+      service?.createMemory({ botId, text: "Changed during duplication." });
+      return duplicate;
+    });
+
+    await expect(service.duplicateBot("chief")).rejects.toThrow("changed while it was being duplicated");
+
+    expect(store.list().map((bot) => bot.id)).toEqual(["chief"]);
+    expect(service.listMemories("chief")).toEqual([expect.objectContaining({ text: "Changed during duplication." })]);
   });
 });

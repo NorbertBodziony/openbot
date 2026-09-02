@@ -667,4 +667,82 @@ describe.sequential("AgentService: approvals", () => {
     expect(markers.map((marker) => marker.status)).toEqual(["running", "interrupted"]);
     expect(markers[1]).toMatchObject({ action: "publish", title: details.title, operationId: "operation-restart" });
   });
+
+  it("keeps a successful hosted site result when the provider response cannot be delivered", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores(root);
+    const hostedSite = {
+      id: "site-response-failure",
+      hostname: "response-failure-site-23456789ab.openbot.site",
+      url: "https://response-failure-site-23456789ab.openbot.site",
+      title: "Response failure site",
+      description: "A public test site.",
+      framework: "vanilla" as const,
+      status: "active" as const,
+      fileCount: 1,
+      size: 20,
+      expiresAt: "2026-09-30T12:00:00.000Z",
+      updatedAt: "2026-08-31T12:00:00.000Z",
+    };
+    const hostedSites = {
+      list: vi.fn(async () => [hostedSite]),
+      publish: vi.fn(async () => hostedSite),
+      replace: vi.fn(async () => hostedSite),
+      delete: vi.fn(async () => undefined),
+    };
+    service = new AgentService(
+      store,
+      mailbox,
+      fakeBrowser(),
+      30_000,
+      "codex",
+      (provider) => {
+        const client = new FakeAgentClient(provider, "", false);
+        clients.set(provider, client);
+        return client;
+      },
+      undefined,
+      null,
+      null,
+      async () => undefined,
+      hostedSites,
+    );
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    await service.sendMessage({ botId: bot.id, text: "Publish my site." });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
+    const turnId = events.find((event) => event.type === "turn-started")?.turnId;
+    if (!client || !threadId || !turnId) throw new Error("The hosted site response test turn did not start.");
+
+    client.emit("request", {
+      method: "item/tool/call",
+      id: "publish-site-response-failure",
+      params: {
+        threadId,
+        turnId,
+        callId: "publish-site-response-failure",
+        namespace: "openbot",
+        tool: "publish_site",
+        arguments: {
+          sourcePath: bot.workspacePath,
+          title: hostedSite.title,
+          description: hostedSite.description,
+        },
+      },
+    });
+    await waitFor(() => service?.getRuntimeSnapshot().pendingApprovals.length === 1);
+    client.responseError = new Error("The provider connection closed.");
+    await service.respondToApproval({ requestId: "publish-site-response-failure", decision: "accept" });
+
+    expect(hostedSites.publish).toHaveBeenCalledTimes(1);
+    expect(
+      (await service.readConversation(bot.id)).messages
+        .flatMap((message) => hostedSiteConversationEvent(message) ?? [])
+        .map((marker) => marker.status),
+    ).toEqual(["running", "succeeded"]);
+  });
 });
