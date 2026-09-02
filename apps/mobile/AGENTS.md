@@ -14,11 +14,13 @@ This is an Expo/React Native mobile application. Prioritize mobile-first pattern
 Read and follow [`DESIGN.md`](./DESIGN.md) before changing mobile UI.
 
 - Build application content with HeroUI Native. Reuse its installed components and the OpenBot theme aliases in `global.css`; do not introduce a parallel component library, theme, or screen-local design language.
+- HeroUI-first does not mean component-heavy. Prefer the smallest composition that communicates the screen: plain layout plus `Typography` and `Button` is better than decorative `Card`, `Chip`, `Surface`, or `Alert` wrappers when those components add no interaction or hierarchy.
 - Render product text with HeroUI Native `Typography` and its semantic variants. Do not import React Native `Text` directly in screens or product components unless an integration boundary explicitly requires the native primitive.
 - Treat system chrome as the deliberate exception to the HeroUI-first rule. Navigation stacks, headers, tab bars, toolbars, search bars, system menus, and route-level sheets must use the native Expo Router or `@expo/ui` APIs whenever they provide the required behavior.
 - Prefer `Stack`, `Stack.Title`, `Stack.Toolbar`, `Stack.SearchBar`, and `NativeTabs` over custom React Native or HeroUI imitations. Native chrome must remain native so iOS can provide Liquid Glass on supported versions and Android can use its platform conventions.
 - Do not fake native chrome with custom blur, gradients, translucent cards, or `GlassView`. Use `expo-glass-effect` only for an intentional custom in-content glass surface, with platform and accessibility fallbacks.
 - If neither an existing OpenBot component nor HeroUI Native fits an application-content need, verify that before creating a reusable component. If native APIs cannot satisfy a system-chrome requirement, document the constraint in the change before using a fallback.
+- Do not add status badges, warnings, or operational guidance unless the application state and repository behavior support the claim. Verify lifecycle and connectivity copy against the implementation before presenting it to users.
 
 ## Expo has changed — do not trust your training data
 
