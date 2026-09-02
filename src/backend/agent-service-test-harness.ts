@@ -20,6 +20,7 @@ import {
   type ResponseDecoder,
   type RpcError,
 } from "./protocol";
+import { HARNESS_WAIT_TIMEOUT_MS } from "./test-deadlines";
 
 export const CREATE_BOT_INPUT = {
   name: "Planning Bot",
@@ -353,12 +354,17 @@ export async function protocolMessages(logPath: string): Promise<DynamicRecord[]
 }
 
 export async function waitFor(check: () => boolean | undefined | Promise<boolean | undefined>): Promise<void> {
-  const deadline = Date.now() + 5_000;
+  const deadline = Date.now() + HARNESS_WAIT_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (await check()) return;
     await new Promise((resolve) => setTimeout(resolve, 2));
   }
-  throw new Error("Timed out waiting for the fake App Server.");
+  // The predicate's own source names the condition, which every call site
+  // already spells out, so no call site has to repeat it as a description.
+  const condition = check.toString().replace(/\s+/g, " ").trim();
+  throw new Error(
+    `Timed out after ${HARNESS_WAIT_TIMEOUT_MS}ms waiting for: ${condition.length > 200 ? `${condition.slice(0, 200)}…` : condition}`,
+  );
 }
 
 export async function createFakeCodex(directory: string): Promise<string> {
