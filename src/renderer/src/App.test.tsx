@@ -1426,7 +1426,7 @@ describe("OpenBot connected desktop shell", () => {
       ],
     });
 
-    expect(await screen.findByRole("status", { name: "Chief is working" })).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: /Chief is working/ })).toBeInTheDocument();
     expect(await screen.findByRole("textbox", { name: "Custom answer for: Which scope?" })).toBeInTheDocument();
 
     const runtimeSnapshot: AgentEvent = {
@@ -1445,7 +1445,7 @@ describe("OpenBot connected desktop shell", () => {
     };
     emitAgentEvent?.(runtimeSnapshot);
 
-    expect(screen.getByRole("status", { name: "Chief is working" })).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: /Chief is working/ })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Custom answer for: Which scope?" })).toBeInTheDocument();
 
     emitAgentEvent?.({
@@ -1455,7 +1455,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(screen.queryByRole("textbox", { name: "Custom answer for: Which scope?" })).not.toBeInTheDocument(),
     );
-    await waitFor(() => expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("status", { name: /Chief is working/ })).not.toBeInTheDocument());
   });
 
   it("shows the latest streamed commentary in the agent activity row", async () => {
@@ -1483,7 +1483,7 @@ describe("OpenBot connected desktop shell", () => {
     } satisfies ConversationMessage;
 
     emitAgentEvent?.(conversation(1, "turn-live-status", [userMessage]));
-    const status = await screen.findByRole("status", { name: "Chief is working" });
+    const status = await screen.findByRole("status", { name: /Chief is working/ });
     const label = status.querySelector(".agent-activity-label");
     expect(label?.textContent?.trim()).toBeTruthy();
 
@@ -1508,6 +1508,7 @@ describe("OpenBot connected desktop shell", () => {
       revision: 3,
     });
     await waitFor(() => expect(label).toHaveTextContent("Inspecting the release checks"));
+    expect(status).toHaveAccessibleName("Chief is working: Inspecting the release checks");
 
     const latestCommentary = {
       ...firstCommentary,
@@ -1525,7 +1526,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(label).toHaveTextContent("Verifying the final build artifacts"));
 
     emitAgentEvent?.(conversation(5, null, [userMessage, { ...firstCommentary, status: "completed" }]));
-    await waitFor(() => expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("status", { name: /Chief is working/ })).not.toBeInTheDocument());
   });
 
   it("merges compact runtime attention into the active server", async () => {
@@ -6410,7 +6411,7 @@ describe("OpenBot connected desktop shell", () => {
     });
 
     await screen.findByText("Start this work", { selector: ".message-copy" });
-    await screen.findByRole("status", { name: "Chief is working" });
+    await screen.findByRole("status", { name: /Chief is working/ });
     expect(screen.getByText("Run this second", { selector: ".agent-queue-message" })).toBeInTheDocument();
     expect(screen.getByText("Run this third", { selector: ".agent-queue-message" })).toBeInTheDocument();
     expect(screen.getByText("Run this fourth", { selector: ".agent-queue-message" })).toBeInTheDocument();
