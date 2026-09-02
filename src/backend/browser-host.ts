@@ -152,6 +152,7 @@ export class BrowserHost {
   readonly #downloadsRoot: string;
   readonly #statePath: string;
   readonly #tabs = new Map<string, InternalTab>();
+  readonly #closingTabDrains = new Map<string, Promise<void>>();
   readonly #listeners = new Set<(...args: BrowserHostEvents["changed"]) => void>();
   readonly #controlListeners = new Set<(...args: BrowserHostEvents["controlChanged"]) => void>();
   readonly #controlSessions = new Map<string, BrowserControlSession>();
@@ -327,26 +328,39 @@ export class BrowserHost {
   }
 
   async close(tabId: string): Promise<void> {
-    const tab = this.#requireTab(tabId);
+    const tab = this.#tabs.get(tabId);
+    if (!tab) return;
     const tabIds = [...this.#tabs.keys()];
     const closedIndex = tabIds.indexOf(tabId);
     this.#unmountView(tab.view);
     this.#tabs.delete(tabId);
-    tab.view.webContents.close();
 
     if (this.#activeTabId === tabId) {
       this.#activeTabId = tabIds[closedIndex + 1] ?? tabIds[closedIndex - 1] ?? null;
     }
     this.#syncAttachedView();
     this.#emitChanged();
-    await this.#persistState();
+    const destroy = tab.queue.then(() => {
+      if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
+    });
+    this.#closingTabDrains.set(tab.id, destroy);
+    tab.queue = destroy.catch(() => undefined);
+    const statePersistence = this.#persistState();
+    try {
+      await destroy;
+      await statePersistence;
+    } finally {
+      if (this.#closingTabDrains.get(tab.id) === destroy) this.#closingTabDrains.delete(tab.id);
+    }
   }
 
   async setVisible(input: BrowserVisibilityInput): Promise<void> {
+    const restoreRendererFocus = !input.visible && this.#attachedView?.webContents.isFocused();
     this.#visible = input.visible;
     if (input.bounds) this.#bounds = validateBounds(input.bounds);
     if (input.target) this.#target = input.target;
     this.#syncAttachedView();
+    if (restoreRendererFocus) this.#window.webContents.focus();
   }
 
   async snapshot(tabId: string): Promise<BrowserSnapshot> {
@@ -468,7 +482,7 @@ export class BrowserHost {
         }
         case "close_tab": {
           const tabId = requiredString(args, "tabId", INPUT_LIMITS.identifier);
-          this.#requireToolTab(params, tabId);
+          if (this.#tabs.has(tabId)) this.#requireToolTab(params, tabId);
           await this.close(tabId);
           return textResult({ closed: true });
         }
@@ -492,6 +506,7 @@ export class BrowserHost {
 
   async #destroyPersistentStorageAndViews(): Promise<void> {
     const statePersistence = this.#persistState();
+    const closingTabDrains = [...this.#closingTabDrains.values()];
     this.#session.flushStorageData();
     for (const tab of this.#tabs.values()) {
       this.#unmountView(tab.view);
@@ -501,8 +516,15 @@ export class BrowserHost {
     this.#listeners.clear();
     this.clearControls();
     this.#controlListeners.clear();
+    const results = await Promise.allSettled([
+      this.#session.cookies.flushStore(),
+      statePersistence,
+      ...closingTabDrains,
+    ]);
+    this.#closingTabDrains.clear();
     this.#session.flushStorageData();
-    await Promise.all([this.#session.cookies.flushStore(), statePersistence]);
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
   }
 
   async flushPersistentStorage(): Promise<void> {

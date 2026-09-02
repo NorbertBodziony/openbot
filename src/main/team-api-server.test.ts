@@ -14,7 +14,13 @@ import type {
   RoutineRun,
   TeamPresenceSnapshot,
 } from "@openbot/contracts/ipc";
-import { AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT, routineConversationEventItemType } from "@openbot/contracts/ipc";
+import {
+  AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT,
+  hostedSiteConversationEventItemType,
+  hostedSiteConversationEventText,
+  routineConversationEventItemType,
+  routineRunConversationEventItemType,
+} from "@openbot/contracts/ipc";
 import { isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { TEAM_CURRENT_CAPABILITIES, TEAM_SEMANTIC_TAGS_CAPABILITY } from "@openbot/contracts/team-protocol/current";
 import {
@@ -710,6 +716,29 @@ describe("TeamApiServer administration", () => {
               createdAt: "2026-08-29T10:01:00.000Z",
               status: "completed",
               itemType: routineConversationEventItemType("created", "routine-1"),
+            },
+            {
+              id: "routine-run-event-1",
+              author: "system",
+              source: "system",
+              text: "Morning brief",
+              createdAt: "2026-08-29T10:02:00.000Z",
+              status: "completed",
+              itemType: routineRunConversationEventItemType("running", "routine-1", "run-1"),
+            },
+            {
+              id: "hosted-site-event-1",
+              author: "system",
+              source: "system",
+              text: hostedSiteConversationEventText({
+                siteId: null,
+                title: "Launch page",
+                hostname: null,
+                url: null,
+              }),
+              createdAt: "2026-08-29T10:03:00.000Z",
+              status: "completed",
+              itemType: hostedSiteConversationEventItemType("publish", "running", "operation-1"),
             },
           ],
         },
@@ -1511,6 +1540,29 @@ describe("TeamApiServer administration", () => {
           status: "completed",
           itemType: routineConversationEventItemType("created", "routine-1"),
         },
+        {
+          id: "routine-run-event-1",
+          author: "system",
+          source: "system",
+          text: "Morning brief",
+          createdAt: "2026-08-19T10:02:00.000Z",
+          status: "completed",
+          itemType: routineRunConversationEventItemType("running", "routine-1", "run-1"),
+        },
+        {
+          id: "hosted-site-event-1",
+          author: "system",
+          source: "system",
+          text: hostedSiteConversationEventText({
+            siteId: null,
+            title: "Launch page",
+            hostname: null,
+            url: null,
+          }),
+          createdAt: "2026-08-19T10:03:00.000Z",
+          status: "completed",
+          itemType: hostedSiteConversationEventItemType("publish", "running", "operation-1"),
+        },
       ],
     };
     const createBot = vi.fn(
@@ -1528,28 +1580,59 @@ describe("TeamApiServer administration", () => {
       ...localConversation,
       messages: [
         { ...localConversation.messages[0], text: "Ask @Research to use Sources (skill)." },
-        localConversation.messages[1],
+        ...localConversation.messages.slice(1),
       ],
     };
     const sendMessage = vi.fn<TestAgents["sendMessage"]>(async () => ({
       messageId: "message-tagged",
       deliveries: [],
     }));
+    const readConversationPageFor = vi.fn(async (...args: unknown[]) => {
+      const options = isDynamicRecord(args[4]) ? args[4] : {};
+      const messages = localConversation.messages.filter((message) => {
+        if (options.excludeRoutineEvents && message.itemType?.startsWith("routine-event:")) return false;
+        if (options.excludeRoutineRunEvents && message.itemType?.startsWith("routine-run-event:")) return false;
+        if (options.excludeHostedSiteEvents && message.itemType?.startsWith("hosted-site-event:")) return false;
+        return true;
+      });
+      return {
+        ...localConversation,
+        messages,
+        references: {},
+        pageInfo: { hasOlder: false, olderCursor: null },
+        readState: {
+          unreadCount: 0,
+          firstUnreadMessageId: null,
+          throughMessageId: options.excludeHostedSiteEvents ? "message-1" : "hosted-site-event-1",
+        },
+      };
+    });
+    const listConversationReads = vi.fn((_memberId: string, options: { excludeHostedSiteEvents?: boolean } = {}) => ({
+      chief: {
+        unreadCount: 0,
+        firstUnreadMessageId: null,
+        throughMessageId: options.excludeHostedSiteEvents ? "message-1" : "hosted-site-event-1",
+      },
+    }));
     const agents = createAgents({
       listBots: () => localBots,
       createBot,
-      listConversationReads: () => ({
-        chief: { unreadCount: 1, firstUnreadMessageId: "message-1", throughMessageId: null },
-      }),
+      listConversationReads,
       readConversationFor: async (botId: string, _memberId: string) => ({
         ...localConversation,
         botId,
-        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
+        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "hosted-site-event-1" },
       }),
-      markConversationRead: async (_botId: string, _memberId: string, throughMessageId: string | null) => ({
+      readConversationPageFor,
+      markConversationRead: async (
+        _botId: string,
+        _memberId: string,
+        throughMessageId: string | null,
+        options: { excludeHostedSiteEvents?: boolean } = {},
+      ) => ({
         unreadCount: 0,
         firstUnreadMessageId: null,
-        throughMessageId,
+        throughMessageId: options.excludeHostedSiteEvents ? throughMessageId : "hosted-site-event-1",
       }),
       sendMessage,
     });
@@ -1595,7 +1678,7 @@ describe("TeamApiServer administration", () => {
         }),
       ).resolves.toEqual({
         ...legacyConversation,
-        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
+        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "hosted-site-event-1" },
       });
       await expect(
         jsonRequest(base, "/v1/agents/chief/conversation", {
@@ -1604,10 +1687,50 @@ describe("TeamApiServer administration", () => {
         }),
       ).resolves.toEqual({
         ...localConversation,
-        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
+        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "hosted-site-event-1" },
+      });
+      await expect(
+        jsonRequest(base, "/v1/agents/chief/conversation-page?limit=10", { token: login.sessionToken }),
+      ).resolves.toMatchObject({
+        messages: [{ id: "message-1" }],
+        readState: { throughMessageId: "message-1" },
+      });
+      expect(readConversationPageFor.mock.calls.at(-1)?.[4]).toEqual({
+        excludeRoutineEvents: true,
+        excludeRoutineRunEvents: true,
+        excludeHostedSiteEvents: true,
+      });
+      await expect(
+        jsonRequest(base, "/v1/agents/chief/conversation-page?limit=10", {
+          token: login.sessionToken,
+          capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
+        }),
+      ).resolves.toMatchObject({ messages: legacyConversation.messages });
+      expect(readConversationPageFor.mock.calls.at(-1)?.[4]).toEqual({
+        excludeRoutineEvents: false,
+        excludeRoutineRunEvents: false,
+        excludeHostedSiteEvents: false,
       });
       await expect(jsonRequest(base, "/v1/agents/conversation-reads", { token: login.sessionToken })).resolves.toEqual({
-        chief: { unreadCount: 1, firstUnreadMessageId: "message-1", throughMessageId: null },
+        chief: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
+      });
+      expect(listConversationReads.mock.calls.at(-1)?.[1]).toEqual({
+        excludeRoutineEvents: true,
+        excludeRoutineRunEvents: true,
+        excludeHostedSiteEvents: true,
+      });
+      await expect(
+        jsonRequest(base, "/v1/agents/conversation-reads", {
+          token: login.sessionToken,
+          capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
+        }),
+      ).resolves.toEqual({
+        chief: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "hosted-site-event-1" },
+      });
+      expect(listConversationReads.mock.calls.at(-1)?.[1]).toEqual({
+        excludeRoutineEvents: false,
+        excludeRoutineRunEvents: false,
+        excludeHostedSiteEvents: false,
       });
       await expect(
         jsonRequest(base, "/v1/agents/chief/conversation/read", {
@@ -1635,6 +1758,17 @@ describe("TeamApiServer administration", () => {
         text: taggedMessage,
         attachmentDraftIds: [],
         replyToMessageId: null,
+      });
+      await expect(
+        jsonRequest(base, "/v1/agents/chief/conversation/read", {
+          token: login.sessionToken,
+          capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
+          body: { throughMessageId: "message-1" },
+        }),
+      ).resolves.toEqual({
+        unreadCount: 0,
+        firstUnreadMessageId: null,
+        throughMessageId: "hosted-site-event-1",
       });
     } finally {
       await api.stop();

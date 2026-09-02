@@ -132,6 +132,7 @@ async function main(): Promise<void> {
     if (!sharedEnvironment.OPENBOT_AUTH_API_URL) {
       sharedEnvironment.OPENBOT_AUTH_API_URL = `http://127.0.0.1:${apiPort}`;
     }
+    configureSiteHostingDevelopmentEnvironment(sharedEnvironment, apiPort);
     configureMobileConnectDevelopmentNetwork(services, sharedEnvironment, networkInterfaces());
     if (sharedEnvironment.OPENBOT_MOBILE_AUTH_API_URL) {
       console.log(`Mobile Connect API: ${sharedEnvironment.OPENBOT_MOBILE_AUTH_API_URL}`);
@@ -225,6 +226,12 @@ async function main(): Promise<void> {
     await stopAll("SIGTERM");
     throw error;
   }
+}
+
+export function configureSiteHostingDevelopmentEnvironment(environment: NodeJS.ProcessEnv, apiPort: number): void {
+  environment.SITE_PUBLISH_ENABLED ??= "true";
+  environment.SITE_COOKIE_ISOLATION_READY ??= "true";
+  environment.SITE_LOCAL_ORIGIN ??= `http://openbot.localhost:${apiPort}`;
 }
 
 export function configureMobileConnectDevelopmentNetwork(
@@ -368,7 +375,7 @@ export function signalOwnedProcess(
       killProcess(-child.pid, signal);
     }
   } catch (error) {
-    if (!isMissingProcess(error)) throw error;
+    if (!isUnavailableProcess(error, platform)) throw error;
   }
 }
 
@@ -408,13 +415,18 @@ function ownedProcessIsRunning(child: OwnedProcess, platform: NodeJS.Platform, k
     killProcess(-child.pid, 0);
     return true;
   } catch (error) {
-    if (isMissingProcess(error)) return false;
+    if (isUnavailableProcess(error, platform)) return false;
     throw error;
   }
 }
 
-function isMissingProcess(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error && error.code === "ESRCH";
+function isUnavailableProcess(error: unknown, platform: NodeJS.Platform): error is NodeJS.ErrnoException {
+  // macOS can report EPERM while a detached Electron group is disappearing and only sandboxed helpers remain.
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error.code === "ESRCH" || (platform === "darwin" && error.code === "EPERM"))
+  );
 }
 
 const invokedFile = process.argv[1] ? resolve(process.argv[1]) : "";

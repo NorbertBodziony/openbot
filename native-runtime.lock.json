@@ -102,7 +102,7 @@
     }
   },
   "remoteDesktop": {
-    "recipeVersion": 7,
+    "recipeVersion": 8,
     "sunshine": {
       "sourceMode": "openbot-fork",
       "repository": "https://github.com/NorbertBodziony/Sunshine.git",
@@ -166,20 +166,20 @@
       "submodules": {}
     },
     "artifactRelease": {
-      "repository": "NorbertBodziony/openbot",
-      "tag": "remote-desktop-runtime-ee34f22191f226e3cdf9903e95a85f26ae759dd07ac23dca9f3fab65ec0e6e23",
-      "inputDigest": "ee34f22191f226e3cdf9903e95a85f26ae759dd07ac23dca9f3fab65ec0e6e23",
+      "repository": "nightly-labs/openbot",
+      "tag": "remote-desktop-runtime-202f3df41a8a8ff92dec7abe0c8caa572cd0ead65399d5ace479ec21be9f2c66",
+      "inputDigest": "202f3df41a8a8ff92dec7abe0c8caa572cd0ead65399d5ace479ec21be9f2c66",
       "manifestAsset": "remote-desktop-runtime-manifest.json",
-      "manifestSha256": "5134c54a31715afb740ab0c7697a28dabea311c9f70ca86e0f9d01023d3a7296"
+      "manifestSha256": "1776be0e036c320b2da0bc65701f174a0f1e1d618a2cc3a05a0065c511b9e60c"
     },
     "releaseArtifacts": {
       "darwin-arm64": {
         "asset": "remote-desktop-runtime-darwin-arm64.tar.gz",
-        "sha256": "36e2eaa2ffab02180b2c1e402de378a0889d89bd50f30f181cd1a1cae8794e55"
+        "sha256": "4364005a99dc2753dae35a6d2e6da25de3ab1eb6e090925080eed970d3718509"
       },
       "win32-x64": {
         "asset": "remote-desktop-runtime-win32-x64.tar.gz",
-        "sha256": "24b2b2fc52a2f4270a9a7ba1d9e3cf60d63f87d43f6965ac5419ded5b79a8940"
+        "sha256": "bce91a1b10abacd73c989fa789cd6ce4ccfe995b77ae1fb8dce3c0609e758e3c"
       }
     },
     "targets": {

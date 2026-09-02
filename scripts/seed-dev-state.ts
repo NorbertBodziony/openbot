@@ -12,7 +12,7 @@ import { BotStore } from "../src/backend/bot-store";
 import { sortConversationMessages } from "../src/backend/conversation-snapshots";
 import { MailboxStore } from "../src/backend/mailbox-store";
 import { TeamChatStore } from "../src/backend/team-chat-store";
-import { developmentUserDataName } from "../src/main/development-profile";
+import { developmentUserDataName, readDevelopmentInstanceId } from "../src/main/development-profile";
 import { writeSetupState } from "../src/main/setup-store";
 import { TeamStore } from "../src/main/team-store";
 import { resolveDevelopmentAppDataRoot } from "./development-state-paths";
@@ -45,6 +45,7 @@ export interface DevelopmentSeedOptions {
   appDataRoot?: string;
   homeDirectory?: string;
   dryRun?: boolean;
+  instanceId?: string | null;
 }
 
 export interface DevelopmentSeedSummary {
@@ -127,7 +128,7 @@ export async function seedDevelopmentState(options: DevelopmentSeedOptions = {})
     options.appDataRoot ?? resolveDevelopmentAppDataRoot(process.platform, process.env, homeDirectory),
   );
   assertSafeAppDataRoot(appDataRoot);
-  const targetProfile = resolve(appDataRoot, developmentUserDataName("app"));
+  const targetProfile = resolve(appDataRoot, developmentUserDataName("app", options.instanceId ?? null));
   if (dirname(targetProfile) !== appDataRoot) throw new Error(`Unsafe OpenBot dev profile path: ${targetProfile}`);
 
   const profileActive = await isDevelopmentProfileActive(targetProfile);
@@ -786,7 +787,10 @@ function isMainModule(): boolean {
 
 async function main(): Promise<void> {
   const dryRun = process.argv.slice(2).includes("--dry-run");
-  const summary = await seedDevelopmentState({ dryRun });
+  const summary = await seedDevelopmentState({
+    dryRun,
+    instanceId: readDevelopmentInstanceId(process.env.OPENBOT_DEV_INSTANCE_ID),
+  });
   console.log(dryRun ? "OpenBot development seed dry run:" : "OpenBot development state seeded:");
   console.log(`- profile: ${summary.targetProfile}`);
   console.log(`- profile active: ${summary.profileActive ? "yes" : "no"}`);

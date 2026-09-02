@@ -137,6 +137,7 @@ import { registerTeamIpcHandlers, withLocalHostSummary } from "./ipc/register-te
 import { isObject, optionalBoolean, requireString } from "./ipc/validation";
 import { parseVoiceTranscription } from "./ipc/voice-inputs";
 import { MacHapticFeedback } from "./mac-haptic-feedback";
+import { readMainWindowBounds, resolveMainWindowBounds, writeMainWindowBounds } from "./main-window-state";
 import { exportDiagnostics, exportOpenBotData } from "./maintenance-service";
 import { ManagedSkillService } from "./managed-skill-service";
 import { ProviderRuntimeManager } from "./provider-runtime-manager";
@@ -229,11 +230,11 @@ protocol.registerSchemesAsPrivileged([
   },
   {
     scheme: "openbot-attachment",
-    privileges: { standard: true, secure: true, supportFetchAPI: true },
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
   },
   {
     scheme: "openbot-remote-attachment",
-    privileges: { standard: true, secure: true, supportFetchAPI: true },
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
   },
   {
     scheme: "openbot-avatar",
@@ -266,6 +267,7 @@ let remoteDesktopManager: RemoteDesktopManager | null = null;
 let remoteServerManager: RemoteServerManager | null = null;
 let centralAuthManager: CentralAuthManager | null = null;
 let activeRemotePrincipalId: string | null = null;
+let activeAnalyticsPrincipalId: string | null = null;
 let remoteAccountSync = Promise.resolve();
 let hostAnalytics: HostAnalytics | null = null;
 let teamWebRtcBridge: TeamWebRtcBridge | null = null;
@@ -277,12 +279,23 @@ let isQuitting = false;
 let shutdownStarted = false;
 let systemSessionEnding = false;
 let systemSessionEndFlushStarted = false;
+let mainWindowBounds: Rectangle | null = null;
+let mainWindowBoundsWriteTimer: ReturnType<typeof setTimeout> | null = null;
+let mainWindowBoundsWrite = Promise.resolve();
 let pendingInviteUrl: string | null = findInviteUrl(process.argv);
 let inviteReceiverReady = false;
 
 const SETUP_FILE = "openbot-setup-v2.json";
 const ANALYTICS_PREFERENCE_FILE = "openbot-analytics-preference-v1.json";
 const DYNAMIC_ISLAND_PREFERENCE_FILE = "openbot-dynamic-island-preference-v1.json";
+const MAIN_WINDOW_STATE_FILE = "openbot-main-window-state-v1.json";
+
+if (!app.isPackaged) {
+  const quitAfterDevelopmentSignal = () => app.quit();
+  process.once("SIGINT", quitAfterDevelopmentSignal);
+  process.once("SIGTERM", quitAfterDevelopmentSignal);
+  process.once("SIGHUP", quitAfterDevelopmentSignal);
+}
 const BROWSER_STATE_FILE = "openbot-browser-state-v1.json";
 const SIDEBAR_LAYOUT_FILE = "openbot-sidebar-layout-v1.json";
 const TEAM_FILE = "openbot-team-server-v1.json";
@@ -1227,9 +1240,16 @@ function registerIpcHandlers(
 
 function createWindow(): BrowserWindow {
   let inspectElementModifierPressed = false;
+  const cursor = screen.getCursorScreenPoint();
+  const bounds = resolveMainWindowBounds(
+    mainWindowBounds,
+    screen.getAllDisplays().map((display) => display.workArea),
+    screen.getDisplayNearestPoint(cursor).workArea,
+    { width: 1200, height: 820 },
+    { width: 960, height: 640 },
+  );
   const window = new BrowserWindow({
-    width: 1200,
-    height: 820,
+    ...bounds,
     minWidth: 960,
     minHeight: 640,
     show: false,
@@ -1260,6 +1280,7 @@ function createWindow(): BrowserWindow {
     }
   });
   window.on("close", (event) => {
+    rememberMainWindowBounds(window.getNormalBounds());
     if (process.platform === "darwin" && !isQuitting) {
       // The hidden renderer owns the cross-host Dynamic Island coordinator and must outlive its visible window.
       event.preventDefault();
@@ -1273,6 +1294,9 @@ function createWindow(): BrowserWindow {
       if (systemSessionEndFlushStarted) return;
       systemSessionEndFlushStarted = true;
       updateService?.stop();
+      void flushMainWindowBounds().catch((error) =>
+        console.error("Unable to save the main window position before Windows session end:", error),
+      );
       void browserHost
         ?.flushPersistentStorage()
         .catch((error) => console.error("Unable to flush browser storage before Windows session end:", error));
@@ -1281,6 +1305,9 @@ function createWindow(): BrowserWindow {
     window.on("session-end", () => {
       systemSessionEnding = true;
       isQuitting = true;
+      void flushMainWindowBounds().catch((error) =>
+        console.error("Unable to save the main window position during Windows session end:", error),
+      );
       void browserHost
         ?.flushPersistentStorage()
         .catch((error) => console.error("Unable to flush browser storage during Windows session end:", error));
@@ -1290,6 +1317,8 @@ function createWindow(): BrowserWindow {
   window.on("closed", () => {
     if (mainWindow === window) mainWindow = null;
   });
+  window.on("move", () => rememberMainWindowBounds(window.getNormalBounds()));
+  window.on("resize", () => rememberMainWindowBounds(window.getNormalBounds()));
   window.on("hide", () => computerUseMacSetupController?.close());
 
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -1323,7 +1352,14 @@ function createWindow(): BrowserWindow {
       return;
     }
     const tabId = browserHost?.activeTabId;
-    if (!browserHost?.visible || !tabId || !isCloseBrowserTabShortcut(input)) return;
+    if (
+      remoteServerManager?.activeServerId !== "local" ||
+      !browserHost?.visible ||
+      !tabId ||
+      !isCloseBrowserTabShortcut(input)
+    ) {
+      return;
+    }
     event.preventDefault();
     setImmediate(() => void browserHost?.close(tabId).catch(() => undefined));
   });
@@ -1345,6 +1381,35 @@ function createWindow(): BrowserWindow {
   });
 
   return window;
+}
+
+function rememberMainWindowBounds(bounds: Rectangle): void {
+  mainWindowBounds = { ...bounds };
+  if (mainWindowBoundsWriteTimer) clearTimeout(mainWindowBoundsWriteTimer);
+  mainWindowBoundsWriteTimer = setTimeout(() => {
+    mainWindowBoundsWriteTimer = null;
+    void queueMainWindowBoundsWrite().catch((error) =>
+      console.error("Unable to save the main window position:", error),
+    );
+  }, 250);
+}
+
+function queueMainWindowBoundsWrite(): Promise<void> {
+  if (!mainWindowBounds) return mainWindowBoundsWrite;
+  const bounds = { ...mainWindowBounds };
+  mainWindowBoundsWrite = mainWindowBoundsWrite
+    .catch((error) => console.error("Unable to save the previous main window position:", error))
+    .then(() => writeMainWindowBounds(join(app.getPath("userData"), MAIN_WINDOW_STATE_FILE), bounds));
+  return mainWindowBoundsWrite;
+}
+
+async function flushMainWindowBounds(): Promise<void> {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindowBounds = mainWindow.getNormalBounds();
+  if (mainWindowBoundsWriteTimer) {
+    clearTimeout(mainWindowBoundsWriteTimer);
+    mainWindowBoundsWriteTimer = null;
+  }
+  await queueMainWindowBoundsWrite();
 }
 
 function createDynamicIslandWindow(bounds: Rectangle, _display: Display): BrowserWindow {
@@ -1585,6 +1650,13 @@ function forwardDirectTyping(
 }
 
 function forwardCentralAuth(state: CentralAuthState): void {
+  if (state.status === "signed_in") {
+    if (activeAnalyticsPrincipalId && activeAnalyticsPrincipalId !== state.user.id) hostAnalytics?.clear();
+    activeAnalyticsPrincipalId = state.user.id;
+  } else if (state.status === "signed_out") {
+    if (activeAnalyticsPrincipalId) hostAnalytics?.clear();
+    activeAnalyticsPrincipalId = null;
+  }
   remoteAccountSync = remoteAccountSync
     .then(async () => {
       const nextPrincipalId = state.status === "signed_in" ? state.user.id : null;
@@ -1682,6 +1754,12 @@ if (!hasSingleInstanceLock) {
       if (process.platform === "darwin") app.dock?.setIcon(appIconPath);
       configureContentSecurityPolicy();
       configureRendererPermissions();
+      mainWindowBounds = await readMainWindowBounds(join(app.getPath("userData"), MAIN_WINDOW_STATE_FILE)).catch(
+        (error) => {
+          console.error("Unable to restore the main window position:", error);
+          return null;
+        },
+      );
       mainWindow = createWindow();
       const computerUseMacSetupService = new ComputerUseMacSetupService({
         getIconDataUrl: async (path) => (await app.getFileIcon(path, { size: "normal" })).toDataURL(),
@@ -1930,10 +2008,10 @@ if (!hasSingleInstanceLock) {
         appVersion: app.getVersion(),
         platform: analyticsPlatform,
         resolveOwner: () => {
-          const storedOwner = teamStore.getOwnerAnalyticsIdentity();
-          if (storedOwner) return storedOwner;
           const state = centralAuthManager?.getState();
           if (state?.status !== "signed_in") return null;
+          const storedOwner = teamStore.getOwnerAnalyticsIdentity();
+          if (storedOwner) return storedOwner.id === state.user.id ? storedOwner : null;
           const ownerEmail = teamStore.getOwnerEmail();
           return !teamStore.configured || ownerEmail?.trim().toLowerCase() === state.user.email.trim().toLowerCase()
             ? state.user
@@ -2239,6 +2317,7 @@ async function prepareForShutdown(browserAlreadyDestroyed = false): Promise<void
   shutdownStarted = true;
   isQuitting = true;
   updateService?.stop();
+  await flushMainWindowBounds().catch((error) => console.error("Unable to save the main window position:", error));
   dynamicIslandController?.destroy();
   dynamicIslandController = null;
   macHapticFeedback.destroy();
@@ -2436,6 +2515,8 @@ function configureAttachmentProtocol(mailbox: MailboxStore, agents: AgentService
         headers: {
           "Content-Type": attachment.mimeType,
           "Cache-Control": "no-store",
+          "Access-Control-Allow-Origin": request.headers.get("Origin") ?? "*",
+          Vary: "Origin",
           "X-Content-Type-Options": "nosniff",
           "Content-Disposition": "inline",
         },
@@ -2457,6 +2538,8 @@ function configureAttachmentProtocol(mailbox: MailboxStore, agents: AgentService
         headers: {
           "Content-Type": attachment.mimeType,
           "Cache-Control": "no-store",
+          "Access-Control-Allow-Origin": request.headers.get("Origin") ?? "*",
+          Vary: "Origin",
           "X-Content-Type-Options": "nosniff",
           "Content-Disposition": "inline",
         },

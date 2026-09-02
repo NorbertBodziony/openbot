@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   configureMobileConnectDevelopmentNetwork,
+  configureSiteHostingDevelopmentEnvironment,
   createDevelopmentServiceSpec,
   developmentEnvironmentForTarget,
   parseDevelopmentTarget,
@@ -61,6 +62,18 @@ describe("development service runner", () => {
     expect(app.env.OPENBOT_AUTH_API_URL).toBe("http://127.0.0.1:3110");
     expect(app.env.OPENBOT_DEV_RENDERER_PORT).toBe("5180");
     expect(app.env.OPENBOT_DEV_REMOTE_DEBUGGING_PORT).toBe("9340");
+  });
+
+  it("enables hosted sites in the development environment", () => {
+    const environment: NodeJS.ProcessEnv = {};
+
+    configureSiteHostingDevelopmentEnvironment(environment, 3_100);
+
+    expect(environment).toEqual({
+      SITE_PUBLISH_ENABLED: "true",
+      SITE_COOKIE_ISOLATION_READY: "true",
+      SITE_LOCAL_ORIGIN: "http://openbot.localhost:3100",
+    });
   });
 
   it("advertises the preferred private LAN address for Mobile Connect development", () => {
@@ -140,6 +153,41 @@ describe("development service runner", () => {
     expect(kill).toHaveBeenCalledWith(-321, "SIGTERM");
     expect(kill).not.toHaveBeenCalledWith(-321, "SIGKILL");
     expect(time).toBe(50);
+  });
+
+  it("accepts an inaccessible macOS process group as already stopped", async () => {
+    const kill = vi.fn((_pid: number, signal?: NodeJS.Signals | number) => {
+      if (signal === 0) throw Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+      return true;
+    });
+    const child = { pid: 321, exitCode: 0, kill: vi.fn(() => true) };
+
+    await expect(
+      stopOwnedProcesses([child], "SIGTERM", {
+        platform: "darwin",
+        killProcess: kill,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(kill).toHaveBeenCalledWith(-321, "SIGTERM");
+    expect(kill).toHaveBeenCalledWith(-321, 0);
+    expect(kill).not.toHaveBeenCalledWith(-321, "SIGKILL");
+  });
+
+  it("does not hide an inaccessible process group on other POSIX platforms", async () => {
+    const error = Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+    const kill = vi.fn((_pid: number, signal?: NodeJS.Signals | number) => {
+      if (signal === 0) throw error;
+      return true;
+    });
+    const child = { pid: 321, exitCode: 0, kill: vi.fn(() => true) };
+
+    await expect(
+      stopOwnedProcesses([child], "SIGTERM", {
+        platform: "linux",
+        killProcess: kill,
+      }),
+    ).rejects.toBe(error);
   });
 
   it("escalates only after a surviving process group misses the deadline", async () => {

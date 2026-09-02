@@ -211,6 +211,17 @@ describe("development state seed", () => {
     await expect(readFile(sentinel, "utf8")).resolves.toBe("keep");
   });
 
+  it("seeds an isolated development instance without changing the default profile", async () => {
+    const { appDataRoot, homeDirectory } = await createRoots();
+    const defaultSentinel = join(appDataRoot, developmentUserDataName("app"), "keep.txt");
+    await writeSentinel(defaultSentinel, "keep");
+
+    const result = await seedDevelopmentState({ appDataRoot, homeDirectory, instanceId: "5197" });
+
+    expect(result.targetProfile).toBe(join(appDataRoot, developmentUserDataName("app", "5197")));
+    await expect(readFile(defaultSentinel, "utf8")).resolves.toBe("keep");
+  });
+
   it("ignores unsafe paths in a malformed seed manifest", async () => {
     const { appDataRoot, homeDirectory } = await createRoots();
     const profilePath = join(appDataRoot, developmentUserDataName("app"));

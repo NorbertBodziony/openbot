@@ -14,7 +14,7 @@ The production website records anonymous page views using only the fixed paths `
 also records download clicks, clicks on allowlisted public links, invitation validity, and open-app
 actions on invitation pages. The production desktop app records application, sign-in, onboarding,
 agent, message, turn, prompt, approval, queue, routine, team, browser, search, Remote Desktop, update,
-marketplace, memory, provider, voice transcription, reaction, maintenance, and confirmed
+marketplace, memory, provider, voice transcription, reaction, maintenance, Hosted Site, and confirmed
 application-version-change actions. Event properties are limited to metadata such as counts, result
 states, timing, provider, model, reasoning effort, application version, operating system, and coarse
 failure codes.
@@ -38,6 +38,11 @@ Analytics is enabled in production by default. Desktop users can disable it unde
 General → Privacy → Share product analytics**. The preference is stored locally and disables both UI
 analytics and lifecycle analytics emitted by the local host. Website analytics does not use the
 desktop preference.
+
+Hosted Site analytics records only the operation, entry point, result, and bounded failure code. It
+does not contain the site's URL, hostname, title, source path, site ID, or content. A one-time
+backfill may update the email trait of an existing OpenPanel profile matched to a current account; it
+does not create profiles for accounts without existing analytics activity.
 
 OpenPanel event and profile data has no automatic retention limit. It remains stored until it is
 removed manually or the analytics project is deleted. OpenPanel analytics does not change where

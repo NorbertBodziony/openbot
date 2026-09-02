@@ -514,7 +514,7 @@ describe("remote server order", () => {
       statePath,
       JSON.stringify({
         version: 2,
-        activeServerId: "server-1",
+        activeServerId: "local",
         servers: [
           {
             id: "server-1",
@@ -545,6 +545,7 @@ describe("remote server order", () => {
       await manager.initialize();
       await rename(directory, unavailableDirectory);
       await expect(manager.select("server-1")).rejects.toThrow();
+      expect(manager.activeServerId).toBe("local");
       await rename(unavailableDirectory, directory);
 
       await expect(manager.select("local")).resolves.toBeDefined();
@@ -1423,6 +1424,7 @@ describe("Team API compatibility negotiation", () => {
       expect(headers.get("OpenBot-Protocol-Version")).toBe("2");
       expect(headers.get("OpenBot-App-Version")).toBe("0.4.0");
       expect(headers.get(TEAM_CAPABILITIES_HEADER)).toContain("routine-event-markers");
+      expect(headers.get(TEAM_CAPABILITIES_HEADER)).toContain("routine-run-event-markers");
       if (url.pathname === "/v1/agents/chief/messages") {
         expect(JSON.parse(String(init?.body))).toMatchObject({ text: "Ask @Research to use Sources (skill)." });
         return Response.json({ messageId: "message-1", deliveries: [] });

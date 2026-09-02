@@ -21,6 +21,7 @@ import {
   type DirectThreadSummary,
   type DirectTypingRealtimeEvent,
   type DuplicateBotResult,
+  HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX,
   type InstalledSkill,
   type InviteSummary,
   isAgentModel,
@@ -28,10 +29,11 @@ import {
   isAvatarSeed,
   isMessageReaction,
   isReasoningEffort,
-  parseRoutineConversationEventItemType,
   type ReorderQueueInput,
   type RespondToApprovalInput,
   type RespondToBrowserTakeoverInput,
+  ROUTINE_EVENT_ITEM_TYPE_PREFIX,
+  ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX,
   type SidebarLayoutSnapshot,
   type SteerQueuedMessageInput,
   type TeamMemberSummary,
@@ -943,7 +945,11 @@ export class TeamApiServer {
         return this.#json(response, 200, this.#options.agents.listBots());
       }
       if (method === "GET" && url.pathname === "/v1/agents/conversation-reads") {
-        return this.#json(response, 200, this.#options.agents.listConversationReads(member.id));
+        return this.#json(
+          response,
+          200,
+          this.#options.agents.listConversationReads(member.id, markerExclusionsForCapabilities(clientCapabilities)),
+        );
       }
       if (method === "POST" && url.pathname === "/v1/agents") {
         const body = await readJson(request);
@@ -1083,13 +1089,7 @@ export class TeamApiServer {
         }
         if (method === "GET" && action === "conversation") {
           const conversation = await this.#options.agents.readConversationFor(botId, member.id);
-          return this.#json(
-            response,
-            200,
-            clientCapabilities.has("routine-event-markers")
-              ? conversation
-              : conversationWithoutRoutineEvents(conversation),
-          );
+          return this.#json(response, 200, conversationForCapabilities(conversation, clientCapabilities));
         }
         if (method === "GET" && action === "conversation-page") {
           const page = await this.#options.agents.readConversationPageFor(
@@ -1097,7 +1097,7 @@ export class TeamApiServer {
             member.id,
             pageAnchor(url),
             pageLimit(url),
-            { excludeRoutineEvents: !clientCapabilities.has("routine-event-markers") },
+            markerExclusionsForCapabilities(clientCapabilities),
           );
           return this.#json(response, 200, page);
         }
@@ -1106,7 +1106,12 @@ export class TeamApiServer {
           return this.#json(
             response,
             200,
-            await this.#options.agents.markConversationRead(botId, member.id, nullableString(body, "throughMessageId")),
+            await this.#options.agents.markConversationRead(
+              botId,
+              member.id,
+              nullableString(body, "throughMessageId"),
+              markerExclusionsForCapabilities(clientCapabilities),
+            ),
           );
         }
         if (method === "POST" && action === "messages") {
@@ -1246,6 +1251,7 @@ export class TeamApiServer {
   }
 
   #broadcastAgentEvent(event: AgentEvent): void {
+    const filteredConversationPayloads = new Map<string, string>();
     let conversationInvalidation: string | undefined;
     let queueInvalidation: string | undefined;
     for (const [client, connection] of this.#eventClients) {
@@ -1272,17 +1278,27 @@ export class TeamApiServer {
           encodeTeamProtocolV1CurrentEvent({ type: "queue-invalidated", botId: event.snapshot.botId }) ?? undefined;
         if (!queueInvalidation) continue;
         outgoing = queueInvalidation;
-      } else if (event.type === "conversation" && !connection.capabilities.has("routine-event-markers")) {
-        const routineEventFilteredPayload =
-          encodeTeamProtocolV1CurrentEvent(
-            {
-              ...event,
-              snapshot: conversationSnapshotWithoutRoutineEvents(event.snapshot),
-            },
-            encodingOptions,
-          ) ?? undefined;
-        if (!routineEventFilteredPayload) continue;
-        outgoing = routineEventFilteredPayload;
+      } else if (
+        event.type === "conversation" &&
+        (!connection.capabilities.has("routine-event-markers") ||
+          !connection.capabilities.has("routine-run-event-markers") ||
+          !connection.capabilities.has("hosted-site-event-markers"))
+      ) {
+        const key = `${connection.capabilities.has("routine-event-markers")}:${connection.capabilities.has("routine-run-event-markers")}:${connection.capabilities.has("hosted-site-event-markers")}:${encodingOptions.preserveSemanticTags}`;
+        let filtered = filteredConversationPayloads.get(key);
+        if (!filtered) {
+          filtered =
+            encodeTeamProtocolV1CurrentEvent(
+              {
+                ...event,
+                snapshot: conversationSnapshotForCapabilities(event.snapshot, connection.capabilities),
+              },
+              encodingOptions,
+            ) ?? undefined;
+          if (filtered) filteredConversationPayloads.set(key, filtered);
+        }
+        if (!filtered) continue;
+        outgoing = filtered;
       } else {
         const payload = encodeTeamProtocolV1CurrentEvent(event, encodingOptions) ?? undefined;
         if (!payload) continue;
@@ -1325,6 +1341,8 @@ export class TeamApiServer {
           : TEAM_PROTOCOL_V1_CAPABILITIES.filter(
               (capability) =>
                 capability !== "routine-event-markers" &&
+                capability !== "routine-run-event-markers" &&
+                capability !== "hosted-site-event-markers" &&
                 (supportsSnapshotTransport || capability !== "agent-runtime-snapshots"),
             ),
       ),
@@ -1719,20 +1737,71 @@ function requestCapabilities(request: import("node:http").IncomingMessage): Set<
   return new Set(capabilities.filter(isTeamCurrentCapability));
 }
 
-function conversationSnapshotWithoutRoutineEvents(snapshot: ConversationSnapshot): ConversationSnapshot {
+function conversationSnapshotForCapabilities(
+  snapshot: ConversationSnapshot,
+  capabilities: ReadonlySet<string>,
+): ConversationSnapshot {
   return {
     ...snapshot,
-    messages: snapshot.messages.filter((message) => parseRoutineConversationEventItemType(message.itemType) === null),
+    messages: snapshot.messages.filter((message) => markerSupported(message.itemType, capabilities)),
   };
 }
 
-function conversationWithoutRoutineEvents(conversation: ConversationWithReadState): ConversationWithReadState {
+function conversationForCapabilities(
+  conversation: ConversationWithReadState,
+  capabilities: ReadonlySet<string>,
+): ConversationWithReadState {
+  const messages = conversation.messages.filter((message) => markerSupported(message.itemType, capabilities));
+  if (!conversation.readState) return { ...conversation, messages };
   return {
     ...conversation,
-    messages: conversation.messages.filter(
-      (message) => parseRoutineConversationEventItemType(message.itemType) === null,
-    ),
+    messages,
+    readState: {
+      ...conversation.readState,
+      throughMessageId: supportedConversationCursor(
+        conversation.messages,
+        conversation.readState.throughMessageId,
+        capabilities,
+      ),
+    },
   };
+}
+
+function supportedConversationCursor(
+  messages: ConversationSnapshot["messages"],
+  throughMessageId: string | null,
+  capabilities: ReadonlySet<string>,
+): string | null {
+  if (!throughMessageId) return null;
+  const boundary = messages.findIndex((message) => message.id === throughMessageId);
+  for (let index = boundary; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message && markerSupported(message.itemType, capabilities)) return message.id;
+  }
+  return null;
+}
+
+function markerExclusionsForCapabilities(capabilities: ReadonlySet<string>): {
+  excludeRoutineEvents: boolean;
+  excludeRoutineRunEvents: boolean;
+  excludeHostedSiteEvents: boolean;
+} {
+  return {
+    excludeRoutineEvents: !capabilities.has("routine-event-markers"),
+    excludeRoutineRunEvents: !capabilities.has("routine-run-event-markers"),
+    excludeHostedSiteEvents: !capabilities.has("hosted-site-event-markers"),
+  };
+}
+
+function markerSupported(itemType: string | undefined, capabilities: ReadonlySet<string>): boolean {
+  if (itemType?.startsWith(ROUTINE_EVENT_ITEM_TYPE_PREFIX)) return capabilities.has("routine-event-markers");
+  if (itemType?.startsWith(ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX)) {
+    return capabilities.has("routine-run-event-markers");
+  }
+  if (itemType?.startsWith(HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX)) {
+    return capabilities.has("hosted-site-event-markers");
+  }
+  return true;
 }
 
 function eventCapability(event: AgentEvent): (typeof TEAM_PROTOCOL_V1_CAPABILITIES)[number] | null {

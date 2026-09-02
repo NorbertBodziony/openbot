@@ -10,12 +10,19 @@ import type {
   ConversationPageAnchor,
   ConversationSearchPage,
   ConversationSnapshot,
+  HostedSiteConversationEvent,
+  HostedSiteConversationEventAction,
+  HostedSiteConversationEventDetails,
+  HostedSiteConversationEventStatus,
 } from "@openbot/contracts/ipc";
 import {
+  HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX,
+  hostedSiteConversationEvent,
   isAgentProvider,
   isConversationMessage,
   providerForLegacyModel,
   ROUTINE_EVENT_ITEM_TYPE_PREFIX,
+  ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { migrateOpenBotDatabase } from "./openbot-database-schema";
@@ -48,6 +55,26 @@ export interface StoredThreadSummary {
   text: string;
   estimatedTokens: number;
   createdAt: string;
+}
+
+export interface PendingHostedSiteTerminalEvent {
+  botId: string;
+  threadId: string;
+  turnId: string;
+  operationId: string;
+  action: HostedSiteConversationEventAction;
+  status: Exclude<HostedSiteConversationEventStatus, "running">;
+  details: HostedSiteConversationEventDetails;
+  markerCommandId: string;
+  createdAt: string;
+}
+
+export interface ActiveHostedSiteConversationEvent {
+  botId: string;
+  threadId: string;
+  turnId: string;
+  createdAt: string;
+  event: HostedSiteConversationEvent & { status: "running" };
 }
 
 interface ReceiptRow {
@@ -239,6 +266,106 @@ export class OpenBotDatabase {
     return receipt ? JSON.parse(receipt.result_json) : undefined;
   }
 
+  recordPendingHostedSiteTerminalEvent(event: PendingHostedSiteTerminalEvent): void {
+    validatePendingHostedSiteTerminalEvent(event);
+    this.dispatch(
+      `hosted-site-terminal-pending:${event.botId}:${event.operationId}:${event.status}`,
+      [
+        {
+          aggregateType: "hosted-site-terminal",
+          aggregateId: event.botId,
+          eventType: "hosted-site.terminal-pending",
+          occurredAt: event.createdAt,
+          payload: event,
+        },
+      ],
+      () => null,
+    );
+  }
+
+  pendingHostedSiteTerminalEvents(): PendingHostedSiteTerminalEvent[] {
+    const pending: PendingHostedSiteTerminalEvent[] = [];
+    for (const row of databaseRows(
+      this.connection
+        .prepare(
+          `SELECT pending.payload_json
+           FROM orchestration_events pending
+           LEFT JOIN orchestration_command_receipts marker
+             ON marker.command_id = json_extract(pending.payload_json, '$.markerCommandId')
+           WHERE pending.aggregate_type = 'hosted-site-terminal'
+             AND pending.event_type = 'hosted-site.terminal-pending'
+             AND marker.command_id IS NULL
+           ORDER BY pending.sequence`,
+        )
+        .all(),
+    )) {
+      const event = pendingHostedSiteTerminalEventValue(JSON.parse(requiredStringColumn(row, "payload_json")));
+      if (event) pending.push(event);
+    }
+    return pending;
+  }
+
+  deletePendingHostedSiteTerminalEvent(
+    botId: string,
+    operationId: string,
+    status: Exclude<HostedSiteConversationEventStatus, "running">,
+  ): void {
+    const commandId = `hosted-site-terminal-pending:${botId}:${operationId}:${status}`;
+    this.#deleteEventsAndReceipt(commandId);
+  }
+
+  #deleteEventsAndReceipt(commandId: string): void {
+    const db = this.connection;
+    const ownsTransaction = !db.isTransaction;
+    if (ownsTransaction) db.exec("BEGIN IMMEDIATE");
+    try {
+      db.prepare("DELETE FROM orchestration_events WHERE command_id = ?").run(commandId);
+      db.prepare("DELETE FROM orchestration_command_receipts WHERE command_id = ?").run(commandId);
+      if (ownsTransaction) db.exec("COMMIT");
+    } catch (error) {
+      if (ownsTransaction && db.isTransaction) db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  recordActiveHostedSiteConversationEvent(event: ActiveHostedSiteConversationEvent): void {
+    validateActiveHostedSiteConversationEvent(event);
+    this.dispatch(
+      `hosted-site-active:${event.botId}:${event.event.operationId}`,
+      [
+        {
+          aggregateType: "hosted-site-operation",
+          aggregateId: event.botId,
+          eventType: "hosted-site.active",
+          occurredAt: event.createdAt,
+          payload: event,
+        },
+      ],
+      () => null,
+    );
+  }
+
+  deleteActiveHostedSiteConversationEvent(botId: string, operationId: string): void {
+    this.#deleteEventsAndReceipt(`hosted-site-active:${botId}:${operationId}`);
+  }
+
+  activeHostedSiteConversationEvents(): ActiveHostedSiteConversationEvent[] {
+    const active: ActiveHostedSiteConversationEvent[] = [];
+    for (const row of databaseRows(
+      this.connection
+        .prepare(
+          `SELECT payload_json FROM orchestration_events
+           WHERE aggregate_type = 'hosted-site-operation' AND event_type = 'hosted-site.active'
+           ORDER BY sequence`,
+        )
+        .all(),
+    )) {
+      const event = activeHostedSiteConversationEventValue(JSON.parse(requiredStringColumn(row, "payload_json")));
+      if (event) active.push(event);
+    }
+    return active;
+  }
+
   listAgents(): BotSummary[] {
     return databaseRows(
       this.connection.prepare("SELECT agent_json FROM projection_agents ORDER BY sort_order, agent_id").all(),
@@ -326,6 +453,20 @@ export class OpenBotDatabase {
              WHERE aggregate_type IN ('agent-routine', 'routine-run') AND aggregate_id IN (${placeholders})`,
           ).run(...routineIds);
         }
+        db.prepare(
+          `DELETE FROM orchestration_command_receipts WHERE command_id IN (
+             SELECT DISTINCT command_id FROM orchestration_events
+             WHERE aggregate_type = 'hosted-site-terminal'
+               AND event_type = 'hosted-site.terminal-pending'
+               AND json_extract(payload_json, '$.botId') = ?
+           )`,
+        ).run(botId);
+        db.prepare(
+          `DELETE FROM orchestration_events
+           WHERE aggregate_type = 'hosted-site-terminal'
+             AND event_type = 'hosted-site.terminal-pending'
+             AND json_extract(payload_json, '$.botId') = ?`,
+        ).run(botId);
         const sensitiveFilter = threadId
           ? `(aggregate_id = ? OR aggregate_id = ? OR
               (aggregate_type = 'agents' AND aggregate_id = 'agents' AND sequence < ?))`
@@ -415,7 +556,11 @@ export class OpenBotDatabase {
     threadId: string | null,
     anchor: ConversationPageAnchor = { type: "latest" },
     requestedLimit = 50,
-    options: { excludeRoutineEvents?: boolean } = {},
+    options: {
+      excludeRoutineEvents?: boolean;
+      excludeRoutineRunEvents?: boolean;
+      excludeHostedSiteEvents?: boolean;
+    } = {},
   ): ConversationPage {
     if (!threadId) {
       return {
@@ -437,7 +582,14 @@ export class OpenBotDatabase {
         )
         .get(threadId, botId),
     );
-    const rows = this.#conversationPageRows(threadId, anchor, limit, options.excludeRoutineEvents === true);
+    const rows = this.#conversationPageRows(
+      threadId,
+      anchor,
+      limit,
+      options.excludeRoutineEvents === true,
+      options.excludeRoutineRunEvents === true,
+      options.excludeHostedSiteEvents === true,
+    );
     const messages = rows.map((row) => decodeConversationMessageJson(requiredStringColumn(row, "message_json")));
     const messageIds = new Set(messages.map((message) => message.id));
     const referenceIdSet = new Set<string>();
@@ -454,7 +606,11 @@ export class OpenBotDatabase {
           .prepare(
             `SELECT message_id, message_json FROM projection_thread_messages
              WHERE thread_id = ? AND message_id IN (${placeholders})
-             ${options.excludeRoutineEvents ? `AND COALESCE(item_type, '') NOT LIKE '${ROUTINE_EVENT_ITEM_TYPE_PREFIX}%'` : ""}`,
+             ${conversationMarkerSqlFilter(
+               options.excludeRoutineEvents === true,
+               options.excludeRoutineRunEvents === true,
+               options.excludeHostedSiteEvents === true,
+             )}`,
           )
           .all(threadId, ...referenceIds),
       );
@@ -466,7 +622,13 @@ export class OpenBotDatabase {
     }
     const first = rows[0];
     const hasOlder = first
-      ? this.#hasConversationRowsBefore(threadId, conversationRowCursor(first), options.excludeRoutineEvents === true)
+      ? this.#hasConversationRowsBefore(
+          threadId,
+          conversationRowCursor(first),
+          options.excludeRoutineEvents === true,
+          options.excludeRoutineRunEvents === true,
+          options.excludeHostedSiteEvents === true,
+        )
       : false;
     return {
       botId,
@@ -480,6 +642,47 @@ export class OpenBotDatabase {
         olderCursor: hasOlder && first ? encodePageCursor(conversationRowCursor(first)) : null,
       },
     };
+  }
+
+  supportedConversationCursor(
+    threadId: string,
+    throughMessageId: string | null,
+    options: {
+      excludeRoutineEvents?: boolean;
+      excludeRoutineRunEvents?: boolean;
+      excludeHostedSiteEvents?: boolean;
+    } = {},
+  ): string | null {
+    if (!throughMessageId) return null;
+    const boundary = databaseRow(
+      this.connection
+        .prepare(
+          `SELECT created_at, ordinal, message_id FROM projection_thread_messages
+           WHERE thread_id = ? AND message_id = ?`,
+        )
+        .get(threadId, throughMessageId),
+    );
+    if (!boundary) return null;
+    const createdAt = requiredStringColumn(boundary, "created_at");
+    const ordinal = requiredNumberColumn(boundary, "ordinal");
+    const messageId = requiredStringColumn(boundary, "message_id");
+    const row = databaseRow(
+      this.connection
+        .prepare(
+          `SELECT message_id FROM projection_thread_messages
+           WHERE thread_id = ?
+             AND (created_at, ordinal, message_id) <= (?, ?, ?)
+             ${conversationMarkerSqlFilter(
+               options.excludeRoutineEvents === true,
+               options.excludeRoutineRunEvents === true,
+               options.excludeHostedSiteEvents === true,
+             )}
+           ORDER BY created_at DESC, ordinal DESC, message_id DESC
+           LIMIT 1`,
+        )
+        .get(threadId, createdAt, ordinal, messageId),
+    );
+    return row ? requiredStringColumn(row, "message_id") : null;
   }
 
   searchConversationMessages(
@@ -504,6 +707,8 @@ export class OpenBotDatabase {
            WHERE LOWER(json_extract(message.message_json, '$.text')) LIKE ? ESCAPE '\\'
              AND COALESCE(json_extract(message.message_json, '$.delivery.status'), '') NOT IN ('queued', 'cancelled')
              AND COALESCE(message.item_type, '') NOT LIKE '${ROUTINE_EVENT_ITEM_TYPE_PREFIX}%'
+             AND COALESCE(message.item_type, '') NOT LIKE '${ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX}%'
+             AND COALESCE(message.item_type, '') NOT LIKE '${HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX}%'
              ${filter}`,
         )
         .get(...parameters),
@@ -518,6 +723,8 @@ export class OpenBotDatabase {
            WHERE LOWER(json_extract(message.message_json, '$.text')) LIKE ? ESCAPE '\\'
              AND COALESCE(json_extract(message.message_json, '$.delivery.status'), '') NOT IN ('queued', 'cancelled')
              AND COALESCE(message.item_type, '') NOT LIKE '${ROUTINE_EVENT_ITEM_TYPE_PREFIX}%'
+             AND COALESCE(message.item_type, '') NOT LIKE '${ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX}%'
+             AND COALESCE(message.item_type, '') NOT LIKE '${HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX}%'
              ${filter}
            ORDER BY message.created_at DESC, message.ordinal DESC, message.message_id DESC
            LIMIT ? OFFSET ?`,
@@ -541,11 +748,15 @@ export class OpenBotDatabase {
     anchor: ConversationPageAnchor,
     limit: number,
     excludeRoutineEvents: boolean,
+    excludeRoutineRunEvents: boolean,
+    excludeHostedSiteEvents: boolean,
   ): DynamicRecord[] {
     const columns = "created_at, ordinal, message_id, message_json";
-    const routineFilter = excludeRoutineEvents
-      ? `AND COALESCE(item_type, '') NOT LIKE '${ROUTINE_EVENT_ITEM_TYPE_PREFIX}%'`
-      : "";
+    const routineFilter = conversationMarkerSqlFilter(
+      excludeRoutineEvents,
+      excludeRoutineRunEvents,
+      excludeHostedSiteEvents,
+    );
     if (anchor.type === "latest") {
       return databaseRows(
         this.connection
@@ -645,10 +856,18 @@ export class OpenBotDatabase {
     return [...older, ...newer];
   }
 
-  #hasConversationRowsBefore(threadId: string, cursor: ConversationPageCursor, excludeRoutineEvents: boolean): boolean {
-    const routineFilter = excludeRoutineEvents
-      ? `AND COALESCE(item_type, '') NOT LIKE '${ROUTINE_EVENT_ITEM_TYPE_PREFIX}%'`
-      : "";
+  #hasConversationRowsBefore(
+    threadId: string,
+    cursor: ConversationPageCursor,
+    excludeRoutineEvents: boolean,
+    excludeRoutineRunEvents: boolean,
+    excludeHostedSiteEvents: boolean,
+  ): boolean {
+    const routineFilter = conversationMarkerSqlFilter(
+      excludeRoutineEvents,
+      excludeRoutineRunEvents,
+      excludeHostedSiteEvents,
+    );
     return Boolean(
       this.connection
         .prepare(
@@ -807,6 +1026,100 @@ export class OpenBotDatabase {
       },
     );
     return { ...structuredClone(snapshot), revision: result.revision };
+  }
+
+  appendConversationMessage(input: {
+    botId: string;
+    threadId: string;
+    activeTurnId: string | null;
+    message: ConversationMessage;
+    eventType: string;
+    detail?: unknown;
+    commandId?: string;
+  }): number {
+    const result = this.dispatch(
+      input.commandId ?? `conversation:${input.eventType}:${randomUUID()}`,
+      [
+        {
+          aggregateType: "thread",
+          aggregateId: input.threadId,
+          eventType: input.eventType,
+          occurredAt: input.message.createdAt,
+          payload: {
+            detail: input.detail ?? {},
+            appendedMessage: input.message,
+            activeTurnId: input.activeTurnId,
+          },
+        },
+      ],
+      (db, sequences) => {
+        const sequence = sequences[0] ?? 0;
+        const agent = this.listAgents().find((candidate) => candidate.id === input.botId);
+        if (!agent || agent.threadId !== input.threadId) {
+          throw new Error(`Unknown agent thread for conversation append: ${input.botId}`);
+        }
+        this.#ensureThreadProjection(db, agent, sequence);
+        const ordinalRow = databaseRow(
+          db
+            .prepare(
+              `SELECT COALESCE(MAX(ordinal), -1) + 1 AS ordinal
+               FROM projection_thread_messages WHERE thread_id = ?`,
+            )
+            .get(input.threadId),
+        );
+        const ordinal = ordinalRow ? requiredNumberColumn(ordinalRow, "ordinal") : 0;
+        db.prepare(
+          `INSERT INTO projection_thread_messages (
+             thread_id, message_id, turn_id, author, status, item_type, created_at,
+             ordinal, message_json, last_event_sequence
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          input.threadId,
+          input.message.id,
+          input.message.turnId ?? null,
+          input.message.author,
+          input.message.status,
+          input.message.itemType ?? null,
+          input.message.createdAt,
+          ordinal,
+          JSON.stringify(input.message),
+          sequence,
+        );
+        for (const attachment of input.message.attachments ?? []) {
+          db.prepare(
+            `INSERT INTO projection_attachments
+               (attachment_id, owner_kind, owner_id, name, path, metadata_json, created_at, last_event_sequence)
+             VALUES (?, 'thread-message', ?, ?, '', ?, ?, ?)`,
+          ).run(
+            `${input.threadId}:${input.message.id}:${attachment.id}`,
+            `${input.threadId}:${input.message.id}`,
+            attachment.name,
+            JSON.stringify(attachment),
+            input.message.createdAt,
+            sequence,
+          );
+        }
+        db.prepare(
+          `UPDATE projection_threads
+           SET active_turn_id = ?, updated_at = ?, last_event_sequence = ? WHERE thread_id = ?`,
+        ).run(input.activeTurnId, input.message.createdAt, sequence, input.threadId);
+        db.prepare(
+          `INSERT INTO projection_thread_activities
+             (activity_id, thread_id, turn_id, activity_type, payload_json, created_at, last_event_sequence)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          randomUUID(),
+          input.threadId,
+          input.message.turnId ?? input.activeTurnId,
+          input.eventType,
+          JSON.stringify(input.detail ?? {}),
+          input.message.createdAt,
+          sequence,
+        );
+        return { revision: sequence };
+      },
+    );
+    return result.revision;
   }
 
   persistConversationAndMailbox(
@@ -1073,6 +1386,8 @@ export class OpenBotDatabase {
         if (summary) summaries.push({ ...summary, sequence: event.sequence });
       }
       const snapshot = conversationSnapshotValue(objectValue(record?.snapshot));
+      const appendedMessage = record?.appendedMessage;
+      const appendedActiveTurnId = record?.activeTurnId;
       if (snapshot) {
         latest = snapshot;
         latestSequence = event.sequence;
@@ -1083,6 +1398,14 @@ export class OpenBotDatabase {
           const activeSession = [...sessions.values()].find((session) => session.state === "active");
           turnSessions.set(snapshot.activeTurnId, activeSession?.id ?? null);
         }
+      } else if (latest && isConversationMessage(appendedMessage)) {
+        if (!latest.messages.some((message) => message.id === appendedMessage.id)) {
+          latest.messages.push(structuredClone(appendedMessage));
+        }
+        if (isString(appendedActiveTurnId) || appendedActiveTurnId === null) {
+          latest.activeTurnId = appendedActiveTurnId;
+        }
+        latestSequence = event.sequence;
       }
     }
     if (!latest) throw new Error(`Thread ${threadId} has no conversation events to replay.`);
@@ -1209,9 +1532,11 @@ export class OpenBotDatabase {
       for (const event of events) {
         const eventPayload = JSON.parse(event.payload_json);
         const eventRecord = objectValue(eventPayload);
-        const activityPayload = conversationSnapshotValue(objectValue(eventRecord?.snapshot))
-          ? (eventRecord?.detail ?? {})
-          : eventPayload;
+        const activityPayload =
+          conversationSnapshotValue(objectValue(eventRecord?.snapshot)) ||
+          isConversationMessage(eventRecord?.appendedMessage)
+            ? (eventRecord?.detail ?? {})
+            : eventPayload;
         activityInsert.run(
           randomUUID(),
           threadId,
@@ -1530,6 +1855,20 @@ function conversationRowCursor(row: DynamicRecord): ConversationPageCursor {
     ordinal: requiredNumberColumn(row, "ordinal"),
     messageId: requiredStringColumn(row, "message_id"),
   };
+}
+
+function conversationMarkerSqlFilter(
+  excludeRoutineEvents: boolean,
+  excludeRoutineRunEvents: boolean,
+  excludeHostedSiteEvents: boolean,
+): string {
+  return [
+    excludeRoutineEvents ? `AND COALESCE(item_type, '') NOT LIKE '${ROUTINE_EVENT_ITEM_TYPE_PREFIX}%'` : "",
+    excludeRoutineRunEvents ? `AND COALESCE(item_type, '') NOT LIKE '${ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX}%'` : "",
+    excludeHostedSiteEvents ? `AND COALESCE(item_type, '') NOT LIKE '${HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX}%'` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function encodePageCursor(cursor: ConversationPageCursor): string {
@@ -1868,6 +2207,109 @@ function deleteOrphanReceipts(db: DatabaseSync): void {
       SELECT 1 FROM orchestration_events
       WHERE orchestration_events.command_id = orchestration_command_receipts.command_id
     )`);
+}
+
+function validatePendingHostedSiteTerminalEvent(event: PendingHostedSiteTerminalEvent): void {
+  if (!pendingHostedSiteTerminalEventValue(event)) {
+    throw new Error("The pending hosted site terminal event is invalid.");
+  }
+}
+
+function validateActiveHostedSiteConversationEvent(event: ActiveHostedSiteConversationEvent): void {
+  if (!activeHostedSiteConversationEventValue(event)) {
+    throw new Error("The active hosted site event is invalid.");
+  }
+}
+
+function activeHostedSiteConversationEventValue(value: unknown): ActiveHostedSiteConversationEvent | null {
+  if (
+    !isDynamicRecord(value) ||
+    !isString(value.botId) ||
+    !value.botId ||
+    !isString(value.threadId) ||
+    !value.threadId ||
+    !isString(value.turnId) ||
+    !value.turnId ||
+    !isString(value.createdAt) ||
+    !isDynamicRecord(value.event) ||
+    (value.event.action !== "publish" && value.event.action !== "replace" && value.event.action !== "delete") ||
+    value.event.status !== "running" ||
+    !isString(value.event.operationId)
+  ) {
+    return null;
+  }
+  const marker = hostedSiteConversationEvent({
+    id: `hosted-site-event:${value.event.operationId}:running`,
+    author: "system",
+    source: "system",
+    text: JSON.stringify({
+      siteId: value.event.siteId,
+      title: value.event.title,
+      hostname: value.event.hostname,
+      url: value.event.url,
+    }),
+    createdAt: value.createdAt,
+    status: "completed",
+    itemType: `hosted-site-event:${value.event.action}:running:${value.event.operationId}`,
+  });
+  if (marker?.status !== "running") return null;
+  return {
+    botId: value.botId,
+    threadId: value.threadId,
+    turnId: value.turnId,
+    createdAt: value.createdAt,
+    event: { ...marker, status: "running" },
+  };
+}
+
+function pendingHostedSiteTerminalEventValue(value: unknown): PendingHostedSiteTerminalEvent | null {
+  if (
+    !isDynamicRecord(value) ||
+    !isString(value.botId) ||
+    !value.botId ||
+    !isString(value.threadId) ||
+    !value.threadId ||
+    !isString(value.turnId) ||
+    !value.turnId ||
+    !isString(value.operationId) ||
+    (value.action !== "publish" && value.action !== "replace" && value.action !== "delete") ||
+    (value.status !== "succeeded" &&
+      value.status !== "failed" &&
+      value.status !== "interrupted" &&
+      value.status !== "cancelled") ||
+    !isDynamicRecord(value.details) ||
+    !isString(value.markerCommandId) ||
+    !isString(value.createdAt)
+  ) {
+    return null;
+  }
+  const marker = hostedSiteConversationEvent({
+    id: value.markerCommandId,
+    author: "system",
+    source: "system",
+    text: JSON.stringify(value.details),
+    createdAt: value.createdAt,
+    status: "completed",
+    itemType: `hosted-site-event:${value.action}:${value.status}:${value.operationId}`,
+  });
+  if (!marker || marker.status === "running") return null;
+  if (value.markerCommandId !== `hosted-site-event:${value.botId}:${value.operationId}:${value.status}`) return null;
+  return {
+    botId: value.botId,
+    threadId: value.threadId,
+    turnId: value.turnId,
+    operationId: marker.operationId,
+    action: marker.action,
+    status: marker.status,
+    details: {
+      siteId: marker.siteId,
+      title: marker.title,
+      hostname: marker.hostname,
+      url: marker.url,
+    },
+    markerCommandId: value.markerCommandId,
+    createdAt: value.createdAt,
+  };
 }
 
 export function providerForStoredModel(model: BotSummary["model"]): AgentProviderId {

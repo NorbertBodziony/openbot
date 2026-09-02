@@ -1,7 +1,7 @@
 {
   "name": "openbot",
   "productName": "OpenBot",
-  "version": "0.4.0",
+  "version": "0.4.2",
   "description": "A local-first multi-agent desktop workspace for Codex, Claude, and Grok.",
   "author": {
     "name": "Norbert Bodziony",
@@ -76,6 +76,7 @@
     "all": "bun run dev:all",
     "dev:seed": "tsx scripts/seed-dev-state.ts",
     "dev:reset": "tsx scripts/reset-dev-state.ts",
+    "analytics:backfill": "bun scripts/backfill-openpanel-identities.ts",
     "build": "electron-vite build",
     "voice:prepare": "bun scripts/prepare-whisper.ts",
     "voice:prepare-runtime": "bun scripts/prepare-whisper.ts --runtime-only",

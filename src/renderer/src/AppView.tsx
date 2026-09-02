@@ -247,8 +247,10 @@ function WorkspaceShell(props: {
     conversationOlderLoading,
     conversationOlderErrors,
     activeQueue,
+    activeRoutineIds,
     browserTabs,
     activeBrowserTabId,
+    browserVisibilitySuspended,
     browserControlState,
     teamPresence,
     activeRemoteDesktopSession,
@@ -508,6 +510,7 @@ function WorkspaceShell(props: {
           }
           bot={activeBot()}
           bots={botList()}
+          availableRoutineIds={activeRoutineIds()}
           modelOptions={modelOptions()}
           messages={activeMessages()}
           messageReferences={activeBot() ? (conversationReferences()[activeBot()?.id ?? ""] ?? {}) : {}}
@@ -527,6 +530,7 @@ function WorkspaceShell(props: {
           queue={activeQueue()}
           browserTabs={browserTabs()}
           activeBrowserTabId={activeBrowserTabId()}
+          browserVisibilitySuspended={browserVisibilitySuspended()}
           browserControlState={browserControlState()}
           server={activeServer()}
           presence={teamPresence()}

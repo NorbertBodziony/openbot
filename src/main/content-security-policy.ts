@@ -9,7 +9,7 @@ export function buildContentSecurityPolicy(packaged: boolean): string {
     "style-src 'self' 'unsafe-inline'",
     `img-src 'self' data: openbot-attachment: openbot-remote-attachment: openbot-avatar: openbot-remote-avatar: openbot-server-logo: openbot-remote-server-logo: https:${developmentImageSources}`,
     "font-src 'self' data:",
-    `connect-src 'self' https://analytics.openbot.run ws://127.0.0.1:* wss://*.openbot.run${developmentSources}`,
+    `connect-src 'self' openbot-attachment: openbot-remote-attachment: https://analytics.openbot.run ws://127.0.0.1:* wss://*.openbot.run${developmentSources}`,
     "object-src 'none'",
     `frame-src 'self' openbot-attachment: openbot-remote-attachment: https://*.openbot.run${developmentFrameSources}`,
     "base-uri 'none'",

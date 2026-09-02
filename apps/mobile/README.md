@@ -20,6 +20,12 @@ bun run mobile:android
 
 Application routes live in `src/app`. Shared components, hooks, and other application code live in sibling directories under `src`.
 
+## Design development
+
+The mobile design system is documented in [`DESIGN.md`](./DESIGN.md). Read it before implementing or reviewing UI.
+
+In short, use HeroUI Native for application content and reusable product components. Use native Expo Router and `@expo/ui` surfaces for navigation, headers, tabs, toolbars, search, menus, and route-level sheets so each platform owns its chrome and iOS can render Liquid Glass where the operating system supports it.
+
 ## Verification
 
 ```bash

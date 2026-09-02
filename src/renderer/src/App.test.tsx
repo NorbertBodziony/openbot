@@ -944,6 +944,29 @@ describe("OpenBot connected desktop shell", () => {
     });
   });
 
+  it("keeps an old routine marker unavailable when paginated history omits its deletion", async () => {
+    vi.mocked(window.openbot.agent.listRoutines).mockResolvedValue([]);
+    vi.mocked(window.openbot.agent.readConversation).mockResolvedValue(
+      testConversationPage("chief", [
+        {
+          id: "old-routine-event",
+          author: "system",
+          source: "system",
+          text: "Archived brief",
+          createdAt: "2026-08-30T10:00:00.000Z",
+          status: "completed",
+          itemType: routineConversationEventItemType("updated", "deleted-routine"),
+        },
+      ]),
+    );
+
+    render(() => <App />);
+
+    expect(await screen.findByText("Archived brief")).toBeInTheDocument();
+    await waitFor(() => expect(window.openbot.agent.listRoutines).toHaveBeenCalledWith("chief"));
+    expect(screen.queryByRole("button", { name: "Open routine Archived brief" })).not.toBeInTheDocument();
+  });
+
   it("restores the active server before loading its workspace data", async () => {
     let resolveServers: ((servers: ServerSummary[]) => void) | undefined;
     vi.mocked(window.openbot.servers.list).mockReturnValueOnce(
@@ -1189,6 +1212,7 @@ describe("OpenBot connected desktop shell", () => {
       }),
     );
 
+    const presentationCountBeforeReview = vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.length;
     emitDynamicIslandAction?.({
       type: "review-attention",
       serverId: "remote-1",
@@ -1197,11 +1221,20 @@ describe("OpenBot connected desktop shell", () => {
     });
     await waitFor(() => expect(window.openbot.servers.select).toHaveBeenCalledWith("remote-1"));
     await waitFor(() =>
-      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
-        serverId: "remote-1",
-        mode: "approval",
-        item: { requestId: "approval-remote" },
-      }),
+      expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true"),
+    );
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(window.openbot.dynamicIsland.publishPresentation)
+          .mock.calls.slice(presentationCountBeforeReview)
+          .some(
+            ([presentation]) =>
+              presentation.serverId === "remote-1" &&
+              presentation.mode === "approval" &&
+              presentation.item.requestId === "approval-remote",
+          ),
+      ).toBe(true),
     );
 
     emitDynamicIslandAction?.({
@@ -1928,6 +1961,18 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.browser.setVisible).not.toHaveBeenCalled();
     expect(window.openbot.remoteDesktop.list).not.toHaveBeenCalled();
     expect(window.openbot.remoteDesktop.onEvent).not.toHaveBeenCalled();
+  });
+
+  it("does not configure desktop analytics in the landing preview", async () => {
+    const configure = vi.spyOn(desktopAnalytics, "configure");
+    try {
+      render(() => <App landingPreview />);
+
+      await screen.findByRole("heading", { name: "Chief" });
+      expect(configure).not.toHaveBeenCalled();
+    } finally {
+      configure.mockRestore();
+    }
   });
 
   it("opens, hides, resumes, and disconnects Remote Control from the header", async () => {
@@ -4401,7 +4446,7 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
     await waitFor(() => expect(window.openbot.browser.openPictureInPicture).toHaveBeenCalledTimes(2));
   });
-  it("shows a stable indicator while an agent controls the embedded browser", async () => {
+  it("shows the browser control indicator only while an agent acts", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     emitAgentEvent?.({
@@ -4495,12 +4540,40 @@ describe("OpenBot connected desktop shell", () => {
         ],
       },
     });
+    expect(screen.queryByRole("button", { name: "Chief is controlling the browser" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hide computer" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Local smoke page" })).toBe(controlledTab);
+
+    emitAgentEvent?.({
+      type: "browser-control-changed",
+      state: {
+        sessions: [
+          {
+            id: "thread-chief:turn-1",
+            threadId: "thread-chief",
+            turnId: "turn-1",
+            callId: "call-1",
+            tabId: "tab-1",
+            action: "type",
+            phase: "waiting",
+            startedAt: "2026-08-12T10:00:00.000Z",
+          },
+          {
+            id: "thread-chief:turn-2",
+            threadId: "thread-chief",
+            turnId: "turn-2",
+            callId: "call-2",
+            tabId: "tab-1",
+            action: "click",
+            phase: "acting",
+            startedAt: "2026-08-12T10:00:01.000Z",
+          },
+        ],
+      },
+    });
     expect(screen.getByRole("tab", { name: "Local smoke page, controlled by Chief" })).toBe(controlledTab);
 
     emitAgentEvent?.({ type: "browser-control-changed", state: { sessions: [] } });
-    await waitFor(() =>
-      expect(screen.queryByRole("tab", { name: "Local smoke page, controlled by Chief" })).not.toBeInTheDocument(),
-    );
     expect(screen.getByRole("tab", { name: "Local smoke page" })).toBe(controlledTab);
   });
 
@@ -4697,7 +4770,14 @@ describe("OpenBot connected desktop shell", () => {
     expect(within(cancelledCard).queryByRole("button")).not.toBeInTheDocument();
   });
 
-  it("closes browser tabs with the middle mouse button and Control W, then closes the panel", async () => {
+  it("coalesces repeated tab closes and ignores navigation while a close is pending", async () => {
+    let resolveClose: (() => void) | undefined;
+    vi.mocked(window.openbot.browser.close).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveClose = resolve;
+        }),
+    );
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     const firstTab = {
@@ -4719,19 +4799,471 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "browser-changed",
       tabs: [firstTab, secondTab],
+      activeTabId: secondTab.id,
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    await screen.findByRole("complementary", { name: "Browser" });
+    const closingTab = await screen.findByRole("tab", { name: "Second page" });
+    await fireEvent.pointerDown(closingTab, { button: 1 });
+    await fireEvent.pointerDown(closingTab, { button: 1 });
+    expect(window.openbot.browser.close).toHaveBeenCalledWith(secondTab.id);
+    expect(window.openbot.browser.close).toHaveBeenCalledTimes(1);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Go back" }));
+    expect(window.openbot.browser.navigate).not.toHaveBeenCalled();
+
+    resolveClose?.();
+    await waitFor(() => expect(screen.queryByRole("tab", { name: "Second page" })).not.toBeInTheDocument());
+    expect(screen.getByRole("tab", { name: "First page" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("waits for tab activation before it closes the same tab", async () => {
+    let resolveActivation: (() => void) | undefined;
+    vi.mocked(window.openbot.browser.activate).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveActivation = resolve;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const firstTab = {
+      id: "tab-activation-first",
+      title: "First activation page",
+      url: "https://example.com/first",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    const secondTab = {
+      id: "tab-activation-closing",
+      title: "Closing activation page",
+      url: "https://example.com/closing",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [firstTab, secondTab],
       activeTabId: firstTab.id,
     });
 
     await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
-    await fireEvent.pointerDown(screen.getByRole("tab", { name: "Second page" }), { button: 1 });
-    expect(window.openbot.browser.close).toHaveBeenCalledWith(secondTab.id);
+    const closingTab = await screen.findByRole("tab", { name: "Closing activation page" });
+    await fireEvent.click(closingTab);
+    await waitFor(() => expect(window.openbot.browser.activate).toHaveBeenCalledWith(secondTab.id));
+    await fireEvent.keyDown(closingTab, { key: "Delete" });
+    expect(window.openbot.browser.close).not.toHaveBeenCalled();
 
-    emitAgentEvent?.({ type: "browser-changed", tabs: [firstTab], activeTabId: firstTab.id });
-    await waitFor(() => expect(screen.queryByRole("tab", { name: "Second page" })).not.toBeInTheDocument());
+    resolveActivation?.();
+    await waitFor(() => expect(window.openbot.browser.close).toHaveBeenCalledWith(secondTab.id));
+  });
+
+  it("drops a pending tab close when a server switch begins", async () => {
+    const local = testServer("local", true);
+    const studio = testServer("remote-1", false);
+    let resolveActivation: (() => void) | undefined;
+    let resolveSelection: ((servers: ServerSummary[]) => void) | undefined;
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, studio]);
+    vi.mocked(window.openbot.servers.select).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSelection = resolve;
+        }),
+    );
+    vi.mocked(window.openbot.browser.activate).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveActivation = resolve;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const firstTab = {
+      id: "tab-switch-first",
+      title: "First switch page",
+      url: "https://example.com/first",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    const closingTab = {
+      id: "tab-switch-closing",
+      title: "Closing switch page",
+      url: "https://example.com/closing",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [firstTab, closingTab],
+      activeTabId: firstTab.id,
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    const closingTabElement = await screen.findByRole("tab", { name: "Closing switch page" });
+    await fireEvent.click(closingTabElement);
+    await waitFor(() => expect(resolveActivation).toBeDefined());
+    await fireEvent.keyDown(closingTabElement, { key: "Delete" });
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() => expect(resolveSelection).toBeDefined());
+
+    resolveActivation?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(window.openbot.browser.close).not.toHaveBeenCalled();
+
+    resolveSelection?.([
+      { ...local, active: false },
+      { ...studio, active: true },
+    ]);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true"),
+    );
+  });
+
+  it("keeps the browser open when a new tab replaces the last tab during its delayed close", async () => {
+    let resolveClose: (() => void) | undefined;
+    vi.mocked(window.openbot.browser.close).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveClose = resolve;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const closingTab = {
+      id: "tab-closing-last",
+      title: "Closing page",
+      url: "https://example.com/closing",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    const replacementTab = {
+      id: "tab-replacement",
+      title: "Replacement page",
+      url: "https://example.com/replacement",
+      loading: false,
+      ownerThreadId: "thread-chief",
+      ownerBotId: "chief",
+    };
+    emitAgentEvent?.({ type: "browser-changed", tabs: [closingTab], activeTabId: closingTab.id });
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    await fireEvent.keyDown(await screen.findByRole("tab", { name: "Closing page" }), { key: "Delete" });
+    await waitFor(() => expect(resolveClose).toBeDefined());
+
+    emitAgentEvent?.({ type: "browser-changed", tabs: [replacementTab], activeTabId: replacementTab.id });
+    expect(await screen.findByRole("tab", { name: "Replacement page" })).toBeInTheDocument();
+    resolveClose?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.getByRole("complementary", { name: "Browser" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Replacement page" })).toBeInTheDocument();
+  });
+
+  it("closes the active remote browser tab with Control W", async () => {
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([
+      testServer("local", true),
+      testServer("remote-1", false),
+    ]);
+    vi.mocked(window.openbot.servers.select).mockResolvedValueOnce([
+      testServer("local", false),
+      testServer("remote-1", true),
+    ]);
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "local-tab",
+          title: "Local page",
+          url: "https://example.com/local",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "local-tab",
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    await screen.findByRole("tab", { name: "Local page" });
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() => expect(window.openbot.servers.select).toHaveBeenCalledWith("remote-1"));
+    const hideBrowserCall = vi
+      .mocked(window.openbot.browser.setVisible)
+      .mock.calls.findIndex(([input]) => input.visible === false);
+    expect(hideBrowserCall).toBeGreaterThanOrEqual(0);
+    expect(vi.mocked(window.openbot.browser.setVisible).mock.invocationCallOrder[hideBrowserCall]).toBeLessThan(
+      vi.mocked(window.openbot.servers.select).mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "remote-tab",
+          title: "Remote page",
+          url: "https://example.com/remote",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "remote-tab",
+    });
+    await fireEvent.click(await screen.findByRole("button", { name: "Open computer" }));
+    await screen.findByRole("tab", { name: "Remote page" });
     await fireEvent.keyDown(window, { key: "w", ctrlKey: true });
-    expect(window.openbot.browser.close).toHaveBeenLastCalledWith(firstTab.id);
-    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument());
-    expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({ visible: false });
+
+    expect(window.openbot.browser.close).toHaveBeenCalledWith("remote-tab");
+  });
+
+  it("blocks browser controls while the remote browser is suspended during a server switch", async () => {
+    const local = testServer("local", true);
+    const studio = testServer("remote-1", false);
+    const office = { ...testServer("remote-2", false), name: "Office PC", apiUrl: "https://office.example.com" };
+    let resolveOfficeSelection: ((servers: ServerSummary[]) => void) | undefined;
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, studio, office]);
+    vi.mocked(window.openbot.servers.select)
+      .mockResolvedValueOnce([
+        { ...local, active: false },
+        { ...studio, active: true },
+        { ...office, active: false },
+      ])
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveOfficeSelection = resolve;
+          }),
+      );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() => expect(window.openbot.servers.select).toHaveBeenCalledWith("remote-1"));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true"),
+    );
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "remote-tab-during-switch",
+          title: "Remote page",
+          url: "https://example.com/remote",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "remote-tab-during-switch",
+    });
+    await fireEvent.click(await screen.findByRole("button", { name: "Open computer" }));
+    const remoteTab = await screen.findByRole("tab", { name: "Remote page" });
+    const address = screen.getByRole("textbox", { name: "Browser address" });
+    const addressForm = address.closest("form");
+    if (!addressForm) throw new Error("Browser address form was not rendered.");
+    const backButton = screen.getByRole("button", { name: "Go back" });
+    const reloadButton = screen.getByRole("button", { name: "Reload page" });
+    vi.mocked(window.openbot.browser.open).mockClear();
+    vi.mocked(window.openbot.browser.activate).mockClear();
+    vi.mocked(window.openbot.browser.close).mockClear();
+    vi.mocked(window.openbot.browser.reload).mockClear();
+    vi.mocked(window.openbot.browser.navigate).mockClear();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Office PC server" }));
+    await waitFor(() => expect(resolveOfficeSelection).toBeDefined());
+    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
+    const computerButton = screen.getByRole("button", { name: "Open computer" });
+    expect(computerButton).toBeDisabled();
+    await fireEvent.click(computerButton);
+    await fireEvent.click(remoteTab);
+    await fireEvent.keyDown(remoteTab, { key: "Delete" });
+    await fireEvent.click(backButton);
+    await fireEvent.click(reloadButton);
+    await fireEvent.submit(addressForm);
+    await fireEvent.keyDown(window, { key: "w", ctrlKey: true });
+
+    expect(window.openbot.browser.open).not.toHaveBeenCalled();
+    expect(window.openbot.browser.activate).not.toHaveBeenCalled();
+    expect(window.openbot.browser.close).not.toHaveBeenCalled();
+    expect(window.openbot.browser.reload).not.toHaveBeenCalled();
+    expect(window.openbot.browser.navigate).not.toHaveBeenCalled();
+    resolveOfficeSelection?.([
+      { ...local, active: false },
+      { ...studio, active: false },
+      { ...office, active: true },
+    ]);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Office PC server" })).toHaveAttribute("aria-pressed", "true"),
+    );
+  });
+
+  it("restores the visible browser after a server switch fails", async () => {
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([
+      testServer("local", true),
+      testServer("remote-1", false),
+    ]);
+    vi.mocked(window.openbot.servers.select).mockRejectedValueOnce(new Error("Workspace refresh failed"));
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    emitAgentEvent?.({
+      type: "browser-changed",
+      tabs: [
+        {
+          id: "local-tab",
+          title: "Local page",
+          url: "https://example.com/local",
+          loading: false,
+          ownerThreadId: "thread-chief",
+          ownerBotId: "chief",
+        },
+      ],
+      activeTabId: "local-tab",
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
+    await screen.findByRole("complementary", { name: "Browser" });
+    const surface = document.querySelector(".browser-surface");
+    if (!(surface instanceof HTMLElement)) throw new Error("Browser surface was not rendered.");
+    vi.spyOn(surface, "getBoundingClientRect").mockReturnValue({
+      x: 640,
+      y: 73,
+      width: 380,
+      height: 600,
+      top: 73,
+      right: 1020,
+      bottom: 673,
+      left: 640,
+      toJSON: () => ({}),
+    });
+    window.dispatchEvent(new Event("resize"));
+    await waitFor(() =>
+      expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({
+        visible: true,
+        target: "main",
+        bounds: { x: 640, y: 73, width: 380, height: 600 },
+      }),
+    );
+    vi.mocked(window.openbot.browser.setVisible).mockClear();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+
+    await screen.findByText("Could not select the server");
+    const restoredBrowserPanel = await screen.findByRole("complementary", { name: "Browser" });
+    const restoredSurface = document.querySelector(".browser-surface");
+    if (!(restoredSurface instanceof HTMLElement)) throw new Error("Restored browser surface was not rendered.");
+    vi.spyOn(restoredSurface, "getBoundingClientRect").mockReturnValue({
+      x: 640,
+      y: 73,
+      width: 380,
+      height: 600,
+      top: 73,
+      right: 1020,
+      bottom: 673,
+      left: 640,
+      toJSON: () => ({}),
+    });
+    window.dispatchEvent(new Event("resize"));
+    await waitFor(() =>
+      expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({
+        visible: true,
+        target: "main",
+        bounds: { x: 640, y: 73, width: 380, height: 600 },
+      }),
+    );
+    expect(restoredBrowserPanel).toBeInTheDocument();
+  });
+
+  it("keeps the latest workspace when an older server load resolves late", async () => {
+    const local = testServer("local", true);
+    const studio = { ...testServer("remote-1", false), name: "Studio Mac" };
+    const office = { ...testServer("remote-2", false), name: "Office PC", apiUrl: "https://office.example.com" };
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, studio, office]);
+    vi.mocked(window.openbot.servers.select)
+      .mockResolvedValueOnce([
+        { ...local, active: false },
+        { ...studio, active: true },
+        { ...office, active: false },
+      ])
+      .mockResolvedValueOnce([
+        { ...local, active: false },
+        { ...studio, active: false },
+        { ...office, active: true },
+      ]);
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    let resolveStudioBots: ((bots: BotSummary[]) => void) | undefined;
+    vi.mocked(window.openbot.agent.listBots)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveStudioBots = resolve;
+          }),
+      )
+      .mockResolvedValueOnce([{ ...BOTS[0], name: "Office Chief" }]);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() => expect(resolveStudioBots).toBeDefined());
+    await fireEvent.click(screen.getByRole("button", { name: "Office PC server" }));
+
+    expect(await screen.findByRole("heading", { name: "Office Chief" })).toBeInTheDocument();
+    resolveStudioBots?.([{ ...BOTS[0], name: "Studio Chief" }]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(screen.getByRole("button", { name: "Office PC server" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("heading", { name: "Office Chief" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Studio Chief" })).not.toBeInTheDocument();
+  });
+
+  it("restores the authoritative workspace when a newer server selection fails", async () => {
+    const local = testServer("local", true);
+    const studio = { ...testServer("remote-1", false), name: "Studio Mac" };
+    const office = { ...testServer("remote-2", false), name: "Office PC", apiUrl: "https://office.example.com" };
+    const studioActive = [
+      { ...local, active: false },
+      { ...studio, active: true },
+      { ...office, active: false },
+    ];
+    let resolveStudioSelection: ((servers: ServerSummary[]) => void) | undefined;
+    let rejectOfficeSelection: ((error: Error) => void) | undefined;
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, studio, office]);
+    vi.mocked(window.openbot.servers.select)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveStudioSelection = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            rejectOfficeSelection = reject;
+          }),
+      )
+      .mockResolvedValueOnce(studioActive);
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    vi.mocked(window.openbot.agent.listBots).mockResolvedValueOnce([{ ...BOTS[0], name: "Studio Chief" }]);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() => expect(resolveStudioSelection).toBeDefined());
+    await fireEvent.click(screen.getByRole("button", { name: "Office PC server" }));
+    await waitFor(() => expect(rejectOfficeSelection).toBeDefined());
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce(studioActive);
+    resolveStudioSelection?.(studioActive);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    rejectOfficeSelection?.(new Error("Office unavailable"));
+
+    expect(await screen.findByRole("heading", { name: "Studio Chief" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true");
+    expect(window.openbot.servers.select).toHaveBeenCalledTimes(3);
   });
 
   it("closes the browser panel when its last tab is closed from the embedded page", async () => {
@@ -6432,6 +6964,96 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.agent.markConversationRead).not.toHaveBeenCalled();
   });
 
+  it("cancels a Dynamic Island action when its server selection is superseded", async () => {
+    const local = testServer("local", true);
+    const studio = testServer("remote-1", false);
+    const office = { ...testServer("remote-2", false), name: "Office PC", apiUrl: "https://office.example.com" };
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, studio, office]);
+    vi.mocked(window.openbot.servers.select)
+      .mockResolvedValueOnce([
+        { ...local, active: false },
+        { ...studio, active: true },
+        { ...office, active: false },
+      ])
+      .mockResolvedValueOnce([
+        { ...local, active: false },
+        { ...studio, active: false },
+        { ...office, active: true },
+      ]);
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+
+    let resolveStudioBots: ((bots: BotSummary[]) => void) | undefined;
+    vi.mocked(window.openbot.agent.listBots)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveStudioBots = resolve;
+          }),
+      )
+      .mockResolvedValueOnce([{ ...BOTS[0], name: "Office Chief" }]);
+    emitDynamicIslandAction?.({
+      type: "open-message",
+      serverId: "remote-1",
+      botId: "chief",
+      messageId: "stale-remote-message",
+    });
+    await waitFor(() => expect(resolveStudioBots).toBeDefined());
+    await fireEvent.click(screen.getByRole("button", { name: "Office PC server" }));
+    expect(await screen.findByRole("heading", { name: "Office Chief" })).toBeInTheDocument();
+
+    resolveStudioBots?.([{ ...BOTS[0], name: "Studio Chief" }]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(
+      vi
+        .mocked(window.openbot.agent.readConversationPage)
+        .mock.calls.some(
+          ([input]) => input.anchor?.type === "around" && input.anchor.messageId === "stale-remote-message",
+        ),
+    ).toBe(false);
+    expect(screen.getByRole("button", { name: "Office PC server" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("cancels a Dynamic Island action when selection activates another server", async () => {
+    const local = testServer("local", true);
+    const studio = testServer("remote-1", false);
+    const office = { ...testServer("remote-2", false), name: "Office PC", apiUrl: "https://office.example.com" };
+    const officeActive = [
+      { ...local, active: false },
+      { ...studio, active: false },
+      { ...office, active: true },
+    ];
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, studio, office]);
+    vi.mocked(window.openbot.servers.select).mockResolvedValueOnce(officeActive).mockResolvedValueOnce(officeActive);
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+    vi.mocked(window.openbot.agent.listBots).mockResolvedValueOnce([{ ...BOTS[0], name: "Office Chief" }]);
+
+    emitDynamicIslandAction?.({
+      type: "open-message",
+      serverId: "remote-1",
+      botId: "chief",
+      messageId: "wrong-server-message",
+    });
+
+    expect(await screen.findByRole("heading", { name: "Office Chief" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Office PC server" })).toHaveAttribute("aria-pressed", "true");
+    expect(window.openbot.servers.select).toHaveBeenNthCalledWith(1, "remote-1");
+    expect(window.openbot.servers.select).toHaveBeenNthCalledWith(2, "remote-2");
+    expect(
+      vi
+        .mocked(window.openbot.agent.readConversationPage)
+        .mock.calls.some(
+          ([input]) => input.anchor?.type === "around" && input.anchor.messageId === "wrong-server-message",
+        ),
+    ).toBe(false);
+  });
+
   it("discards a chat-open reload that resolves during a server switch", async () => {
     const local = testServer("local", true);
     const remote = testServer("remote-1", false);
@@ -7956,10 +8578,28 @@ describe("OpenBot connected desktop shell", () => {
         },
         {
           id: "agent-new-1",
-          author: "assistant",
-          text: "First unseen answer",
+          author: "agent",
+          source: "agent",
+          senderBotId: "sales-outbound",
+          text: "First unseen agent answer",
           createdAt: "2026-08-19T09:01:00.000Z",
           status: "completed",
+          exchange: {
+            direction: "incoming",
+            messageId: "agent-new-1",
+            senderBotId: "sales-outbound",
+            recipientBotIds: ["chief"],
+            replyToMessageId: null,
+            deliveries: [
+              {
+                id: "agent-new-1",
+                recipientBotId: "chief",
+                status: "completed",
+                position: null,
+                error: null,
+              },
+            ],
+          },
         },
         {
           id: "agent-new-2",
@@ -7978,7 +8618,7 @@ describe("OpenBot connected desktop shell", () => {
 
     render(() => <App />);
     expect(await screen.findByRole("status", { name: "2 new messages" })).toBeInTheDocument();
-    await screen.findByText("First unseen answer");
+    await screen.findByText("Message from");
     expect(screen.getByRole("separator", { name: "New messages" })).toBeInTheDocument();
     const scrollElement = document.querySelector<HTMLElement>(".conversation-scroll");
     const divider = document.querySelector<HTMLElement>(".unread-messages-divider");

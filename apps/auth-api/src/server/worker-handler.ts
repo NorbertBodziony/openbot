@@ -1,3 +1,4 @@
+import { routeRequest as routeHostedSiteRequest } from "../../../site-router/src/index";
 import { type AuthRetentionResult, pruneExpiredAuthData } from "./auth-data-retention";
 import { HostedSiteService } from "./hosted-site-service";
 import { enforceMarketplaceIngress, MarketplaceRateLimitError } from "./marketplace-request-policy";
@@ -22,9 +23,12 @@ export function createWorkerHandler(
   return {
     async fetch(
       request: Request,
-      bindings: Pick<WorkerBindings, "MARKETPLACE_INGRESS_RATE_LIMITER">,
+      bindings: Pick<WorkerBindings, "MARKETPLACE_INGRESS_RATE_LIMITER"> &
+        Partial<Pick<WorkerBindings, "SITES" | "SITE_LOCAL_ORIGIN">>,
       context?: WorkerExecutionContext,
     ) {
+      const localSiteResponse = await serveLocalHostedSite(request, bindings);
+      if (localSiteResponse) return localSiteResponse;
       try {
         await enforceMarketplaceIngress(request, bindings);
       } catch (error) {
@@ -73,6 +77,34 @@ export function createWorkerHandler(
       if (sites) console.info("Hosted site cleanup completed.", sites);
     },
   } satisfies ExportedHandler<WorkerBindings>;
+}
+
+async function serveLocalHostedSite(
+  request: Request,
+  bindings: Partial<Pick<WorkerBindings, "SITES" | "SITE_LOCAL_ORIGIN">>,
+): Promise<Response | null> {
+  if (!bindings.SITES || !bindings.SITE_LOCAL_ORIGIN) return null;
+  const requestUrl = new URL(request.url);
+  const configuredOrigin = new URL(bindings.SITE_LOCAL_ORIGIN);
+  const suffix = `.${configuredOrigin.hostname}`;
+  if (
+    requestUrl.protocol !== configuredOrigin.protocol ||
+    requestUrl.port !== configuredOrigin.port ||
+    !requestUrl.hostname.endsWith(suffix)
+  ) {
+    return null;
+  }
+  const label = requestUrl.hostname.slice(0, -suffix.length);
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(label)) return null;
+  const hostedUrl = new URL(requestUrl);
+  hostedUrl.protocol = "https:";
+  hostedUrl.hostname = `${label}.openbot.site`;
+  hostedUrl.port = "";
+  return routeHostedSiteRequest(
+    new Request(hostedUrl, request),
+    { SITES: bindings.SITES, SITE_SERVE_ENABLED: "true" },
+    Date.now(),
+  );
 }
 
 function isEmailSignInStart(request: Request): boolean {
