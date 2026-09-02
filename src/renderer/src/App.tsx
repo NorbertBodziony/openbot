@@ -588,6 +588,8 @@ export function createAppController(props: AppProps = {}) {
     setCentralAuth(state);
   }
 
+  let autoDownloadUpdatesChanged = false;
+
   function updateGeneralSettings(value: GeneralSettingsValue): void {
     const previous = generalSettings();
     setGeneralSettings(value);
@@ -606,6 +608,17 @@ export function createAppController(props: AppProps = {}) {
           setAnalyticsPreferenceLoaded(previous.productAnalytics);
           setGeneralSettings((current) => ({ ...current, productAnalytics: previous.productAnalytics }));
         });
+    }
+    if (previous.autoDownloadUpdates !== value.autoDownloadUpdates) {
+      autoDownloadUpdatesChanged = true;
+      void window.openbot.update
+        .setPreference({ autoDownload: value.autoDownloadUpdates })
+        .then((preference) =>
+          setGeneralSettings((current) => ({ ...current, autoDownloadUpdates: preference.autoDownload })),
+        )
+        .catch(() =>
+          setGeneralSettings((current) => ({ ...current, autoDownloadUpdates: previous.autoDownloadUpdates })),
+        );
     }
     if (
       previous.macBookNotch !== value.macBookNotch ||
@@ -865,6 +878,15 @@ export function createAppController(props: AppProps = {}) {
         setAnalyticsPreferenceLoaded(false);
         setGeneralSettings((current) => ({ ...current, productAnalytics: false }));
       });
+    void window.openbot.update
+      .getPreference()
+      .then((preference) => {
+        // A toggle made before this read resolves has already been persisted, so the older value
+        // must not be painted back over it.
+        if (autoDownloadUpdatesChanged) return;
+        setGeneralSettings((current) => ({ ...current, autoDownloadUpdates: preference.autoDownload }));
+      })
+      .catch(() => undefined);
     void window.openbot.dynamicIsland
       .getPreference()
       .then((preference) =>
@@ -3050,7 +3072,8 @@ export function createAppController(props: AppProps = {}) {
 
   async function runUpdateAction(): Promise<void> {
     const analytics = desktopAnalytics.scope();
-    const phase = updateStatus().phase;
+    const status = updateStatus();
+    const phase = status.phase;
     if (phase === "ready") {
       try {
         await window.openbot.update.install();
@@ -3065,19 +3088,21 @@ export function createAppController(props: AppProps = {}) {
       }
       return;
     }
-    const action = phase === "available" ? ("download" as const) : ("check" as const);
+    const action =
+      phase === "available" || (phase === "error" && status.errorCode === "download_failed")
+        ? ("download" as const)
+        : ("check" as const);
     try {
-      const status =
-        action === "download" ? await window.openbot.update.download() : await window.openbot.update.check();
-      setUpdateStatus(status);
+      const next = action === "download" ? await window.openbot.update.download() : await window.openbot.update.check();
+      setUpdateStatus(next);
       const succeeded =
         action === "download"
-          ? status.phase === "downloading" || status.phase === "ready"
-          : status.phase !== "error" && status.phase !== "unsupported";
+          ? next.phase === "downloading" || next.phase === "ready"
+          : next.phase !== "error" && next.phase !== "unsupported";
       analytics.track("update_action", {
         action,
         result: succeeded ? "succeeded" : "failed",
-        phase: status.phase,
+        phase: next.phase,
         ...(succeeded ? {} : { failure_code: action === "download" ? "download_failed" : "check_failed" }),
       });
     } catch (error) {

@@ -1081,6 +1081,8 @@ const openbotApi: OpenBotDesktopApi = {
     check: () => ipcRenderer.invoke(IPC_CHANNELS.updateCheck),
     download: () => ipcRenderer.invoke(IPC_CHANNELS.updateDownload),
     install: () => ipcRenderer.invoke(IPC_CHANNELS.updateInstall),
+    getPreference: () => ipcRenderer.invoke(IPC_CHANNELS.updateGetPreference),
+    setPreference: (input) => ipcRenderer.invoke(IPC_CHANNELS.updateSetPreference, input),
     onEvent: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, status: UpdateStatus) => listener(status);
       ipcRenderer.on(IPC_CHANNELS.updateEvent, handler);

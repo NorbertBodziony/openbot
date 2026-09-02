@@ -5,7 +5,9 @@ describe("buildContentSecurityPolicy", () => {
   it("allows the production analytics endpoint", () => {
     const policy = buildContentSecurityPolicy(true);
 
-    expect(policy).toContain("connect-src 'self' https://analytics.openbot.run ws://127.0.0.1:* wss://*.openbot.run");
+    expect(policy).toContain(
+      "connect-src 'self' openbot-attachment: openbot-remote-attachment: https://analytics.openbot.run ws://127.0.0.1:* wss://*.openbot.run",
+    );
     expect(policy).not.toContain("localhost");
   });
 
@@ -14,5 +16,11 @@ describe("buildContentSecurityPolicy", () => {
 
     expect(policy).toContain("http://localhost:*");
     expect(policy).toContain("ws://localhost:*");
+  });
+
+  it("allows attachment previews to be fetched", () => {
+    const policy = buildContentSecurityPolicy(true);
+
+    expect(policy).toContain("connect-src 'self' openbot-attachment: openbot-remote-attachment:");
   });
 });

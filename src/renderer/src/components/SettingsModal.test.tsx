@@ -105,6 +105,48 @@ describe("SettingsModal", () => {
     expect(screen.getByRole("switch", { name: "Share product analytics" })).not.toBeChecked();
   });
 
+  it("keeps the automatic download preference controlled across close and reopen", async () => {
+    const [open, setOpen] = createSignal(true);
+    const [value, setValue] = createSignal({ ...DEFAULT_GENERAL_SETTINGS });
+    let openTrigger: HTMLButtonElement | undefined;
+
+    render(() => (
+      <>
+        <button ref={(element) => (openTrigger = element)} type="button" onClick={() => setOpen(true)}>
+          Open settings
+        </button>
+        <SettingsModal
+          open={open()}
+          onOpenChange={setOpen}
+          value={value()}
+          onValueChange={setValue}
+          appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
+          updateStatus={idleUpdateStatus}
+          onUpdateAction={vi.fn(async () => undefined)}
+          account={account}
+          onUpdateAccountName={vi.fn(async () => undefined)}
+          onUpdateAccountAvatar={vi.fn(async () => undefined)}
+          restoreFocusTarget={openTrigger}
+        />
+      </>
+    ));
+
+    await fireEvent.click(screen.getByRole("tab", { name: "Updates" }));
+    const autoDownload = await screen.findByRole("switch", { name: "Automatically download updates" });
+    expect(autoDownload).toBeChecked();
+
+    await fireEvent.click(autoDownload);
+    expect(value().autoDownloadUpdates).toBe(false);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Close settings" }));
+    // The dialog is named after the active tab, so the wait has to target the Updates title.
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Updates" })).not.toBeInTheDocument());
+    await fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+    await fireEvent.click(await screen.findByRole("tab", { name: "Updates" }));
+
+    expect(await screen.findByRole("switch", { name: "Automatically download updates" })).not.toBeChecked();
+  });
+
   it("runs the updater and reflects its live status", async () => {
     const [status, setStatus] = createSignal<UpdateStatus>(idleUpdateStatus);
     const onUpdateAction = vi.fn(async () => {

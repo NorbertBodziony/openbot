@@ -138,14 +138,6 @@
   line-height: 17px;
 }
 
-.direct-message {
-  margin-top: 9px;
-}
-
-.direct-message.grouped {
-  margin-top: 3px;
-}
-
 .direct-message-list .ui-message-group {
   gap: 0;
 }
@@ -3087,6 +3079,16 @@
   position: absolute;
   inset: 0 0 auto;
   width: 100%;
+  padding-top: var(--openbot-chat-entry-gap);
+}
+
+/* Rows the timeline marks as grouped (marker runs, same-sender messages) sit tighter. */
+.virtual-chat-row[data-grouped] {
+  padding-top: var(--openbot-chat-marker-gap);
+}
+
+.virtual-chat-row > .chat-action-marker + .message-entry {
+  margin-top: var(--openbot-chat-marker-gap);
 }
 
 .virtual-chat-list-static .virtual-chat-row {
@@ -3253,7 +3255,7 @@
   width: 100%;
   align-items: center;
   gap: 8px;
-  margin: 16px 0 4px;
+  margin: var(--openbot-space-1) 0 var(--openbot-space-2);
   color: var(--openbot-unread-divider);
   font-size: var(--openbot-text-2xs);
   font-weight: 720;
@@ -3289,7 +3291,6 @@
 
 .message-entry {
   max-width: none;
-  margin: 12px 0 0;
 }
 
 .message-entry > .ui-message-content {
@@ -3530,7 +3531,6 @@
 
 .thinking-entry {
   width: 100%;
-  margin: 8px 0 2px;
 }
 
 .thinking-entry-animated {
@@ -3648,7 +3648,6 @@
 
 .chat-action-entry-animated {
   width: 100%;
-  margin: 8px 0 0;
   opacity: 0;
   animation: message-in var(--openbot-duration-normal) cubic-bezier(0.23, 1, 0.32, 1) forwards;
 }
@@ -3749,22 +3748,15 @@
 }
 
 .chat-action-marker {
-  width: min(88%, 680px, calc(100% - 48px));
-  min-height: 36px;
+  width: var(--openbot-chat-marker-width);
+  min-height: var(--openbot-chat-marker-height);
   justify-content: center;
   margin: 0 auto;
   color: var(--openbot-text-muted);
   font-size: var(--openbot-text-sm);
   line-height: var(--openbot-leading-sm);
+  letter-spacing: var(--openbot-tracking-normal);
   text-align: center;
-}
-
-.chat-action-marker-agent-message {
-  width: min(88%, 640px, calc(100% - 82px));
-  min-height: 24px;
-  font-size: var(--openbot-text-sm);
-  line-height: 16px;
-  letter-spacing: 0;
 }
 
 .chat-action-marker-content {
@@ -3783,26 +3775,20 @@
   font-size: var(--openbot-text-xs);
 }
 
-.chat-action-marker-agent-message .chat-action-marker-time {
-  margin-left: 2px;
-  color: var(--openbot-text-muted);
-  line-height: 16px;
-  letter-spacing: 0.005em;
-}
-
 .chat-action-target {
   box-sizing: border-box;
   display: inline-flex;
   min-width: 0;
-  max-width: min(280px, 42vw);
-  height: 24px;
+  max-width: min(280px, 100%);
+  height: auto;
+  min-height: var(--openbot-chat-marker-height);
   flex: 0 1 auto;
   align-items: center;
   gap: var(--openbot-space-1);
   border: 0;
   border-radius: var(--openbot-radius-pill);
   background: transparent;
-  padding: 0 var(--openbot-space-2) 0 var(--openbot-space-1);
+  padding: 0 var(--openbot-space-1-5);
   color: var(--openbot-text-secondary);
   font: inherit;
   line-height: inherit;
@@ -3841,6 +3827,11 @@ button.chat-action-target:active,
   color: var(--openbot-text-muted);
 }
 
+/* Markers without a target pill keep the same optical label-to-time rhythm. */
+.chat-action-marker-unavailable .chat-action-marker-label {
+  padding-inline-end: var(--openbot-space-1-5);
+}
+
 .chat-action-target-name,
 .chat-action-target > span:last-child {
   min-width: 0;
@@ -3860,23 +3851,19 @@ button.chat-action-target:active,
 }
 
 .chat-action-agent-avatar {
-  --bot-avatar-optical-offset: -1px;
+  --bot-avatar-optical-offset: -2px;
 
-  width: 18px;
-  height: 18px;
-  flex: 0 0 18px;
+  position: relative;
+  width: var(--openbot-chat-marker-avatar);
+  height: var(--openbot-chat-marker-avatar);
+  flex: 0 0 var(--openbot-chat-marker-avatar);
+  border: 0;
+  background: transparent;
   translate: 0 -0.5px;
 }
 
 .chat-action-marker-agent-message .chat-action-target {
   --chat-action-agent-color: var(--openbot-accent);
-
-  height: 24px;
-  gap: 4px;
-  padding: 4px 6px 4px 4px;
-  color: var(--openbot-text-secondary);
-  font-weight: 400;
-  line-height: inherit;
 }
 
 .chat-action-marker-agent-message button.chat-action-target:hover,
@@ -3898,17 +3885,6 @@ button.chat-action-target:active,
 .chat-action-marker-agent-message .chat-action-agent-menu-trigger:active {
   background: color-mix(in srgb, var(--chat-action-agent-color) 34%, transparent);
   color: var(--openbot-text-primary);
-}
-
-.chat-action-marker-agent-message .chat-action-agent-avatar {
-  --bot-avatar-optical-offset: -2px;
-
-  position: relative;
-  width: 16px;
-  height: 16px;
-  flex: 0 0 16px;
-  border: 0;
-  background: transparent;
 }
 
 .chat-action-target-status-in-progress .ui-marker-icon {
@@ -3936,17 +3912,11 @@ button.chat-action-target:active,
 .chat-action-avatar-stack {
   display: inline-flex;
   min-width: 0;
-  height: 18px;
+  height: var(--openbot-chat-marker-avatar);
   align-items: center;
-  gap: 2px;
 }
 
-.chat-action-marker-agent-message .chat-action-avatar-stack {
-  height: 16px;
-  gap: 0;
-}
-
-.chat-action-marker-agent-message .chat-action-avatar-stack .chat-action-agent-avatar + .chat-action-agent-avatar {
+.chat-action-avatar-stack .chat-action-agent-avatar + .chat-action-agent-avatar {
   margin-left: -6px;
 }
 
@@ -3973,7 +3943,7 @@ button.chat-action-target:active,
 
 .chat-action-attachments {
   width: min(560px, 92%);
-  margin: 11px auto 0;
+  margin: var(--openbot-space-2) auto 0;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -5768,7 +5738,7 @@ button.chat-action-target:active,
 }
 
 .message-status {
-  margin-top: 8px;
+  margin-top: var(--openbot-space-2);
 }
 
 [data-slot="bubble"][data-author="user"] .message-status {
@@ -7908,7 +7878,6 @@ button.chat-action-target:active,
 
 .question-prompt-history-entry {
   width: min(540px, 100%);
-  margin-block: var(--openbot-space-2);
 }
 
 @media (max-width: 520px) {
