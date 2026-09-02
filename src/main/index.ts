@@ -229,11 +229,11 @@ protocol.registerSchemesAsPrivileged([
   },
   {
     scheme: "openbot-attachment",
-    privileges: { standard: true, secure: true, supportFetchAPI: true },
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
   },
   {
     scheme: "openbot-remote-attachment",
-    privileges: { standard: true, secure: true, supportFetchAPI: true },
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
   },
   {
     scheme: "openbot-avatar",
@@ -2489,6 +2489,8 @@ function configureAttachmentProtocol(mailbox: MailboxStore, agents: AgentService
         headers: {
           "Content-Type": attachment.mimeType,
           "Cache-Control": "no-store",
+          "Access-Control-Allow-Origin": request.headers.get("Origin") ?? "*",
+          Vary: "Origin",
           "X-Content-Type-Options": "nosniff",
           "Content-Disposition": "inline",
         },
@@ -2510,6 +2512,8 @@ function configureAttachmentProtocol(mailbox: MailboxStore, agents: AgentService
         headers: {
           "Content-Type": attachment.mimeType,
           "Cache-Control": "no-store",
+          "Access-Control-Allow-Origin": request.headers.get("Origin") ?? "*",
+          Vary: "Origin",
           "X-Content-Type-Options": "nosniff",
           "Content-Disposition": "inline",
         },
