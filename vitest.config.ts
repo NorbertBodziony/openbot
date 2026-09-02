@@ -41,6 +41,12 @@ export default defineConfig({
         test: {
           name: "renderer",
           environment: "jsdom",
+          // Reuse the module registry between files in a worker: every file
+          // otherwise re-imports jest-dom, Solid, Kobalte and lucide from
+          // scratch, which is most of this project's import and setup cost.
+          // Only safe because the shared test globals are writable and the
+          // analytics spies are reinstalled per test - see app-test-harness.ts.
+          isolate: false,
           include: ["src/renderer/**/*.test.{ts,tsx}", "packages/brand/**/*.test.{ts,tsx}"],
           exclude: [
             ...configDefaults.exclude,

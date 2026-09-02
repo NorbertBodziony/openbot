@@ -18,16 +18,18 @@ import { screen } from "@solidjs/testing-library";
 import { vi } from "vitest";
 import { type AnalyticsEventName, type DesktopAnalyticsEvents, desktopAnalytics } from "./analytics";
 
-export const trackAnalytics = vi.spyOn(desktopAnalytics, "track").mockImplementation(() => undefined);
+/** Stable across files, so `expect(trackAnalytics)` keeps working under isolate: false. */
+export const trackAnalytics =
+  vi.fn<<Name extends AnalyticsEventName>(name: Name, properties: DesktopAnalyticsEvents[Name]) => void>();
 function trackScopedAnalytics<Name extends AnalyticsEventName>(name: Name, properties: DesktopAnalyticsEvents[Name]) {
   trackAnalytics(name, properties);
 }
-vi.spyOn(desktopAnalytics, "scope").mockImplementation(() => ({
-  track: trackScopedAnalytics,
-}));
-vi.spyOn(desktopAnalytics, "anonymousScope").mockImplementation(() => ({
-  track: trackScopedAnalytics,
-}));
+
+function installAnalyticsSpies(): void {
+  vi.spyOn(desktopAnalytics, "track").mockImplementation(trackScopedAnalytics);
+  vi.spyOn(desktopAnalytics, "scope").mockImplementation(() => ({ track: trackScopedAnalytics }));
+  vi.spyOn(desktopAnalytics, "anonymousScope").mockImplementation(() => ({ track: trackScopedAnalytics }));
+}
 const defaultMatchMedia = window.matchMedia;
 
 export let emitAgentEvent: ((event: AgentEvent) => void) | undefined;
@@ -174,10 +176,11 @@ export function installVoiceRecordingMocks(): void {
 
     async close(): Promise<void> {}
   }
-  Object.defineProperty(window, "MediaRecorder", { configurable: true, value: RecordingMediaRecorder });
-  Object.defineProperty(window, "AudioContext", { configurable: true, value: TestAudioContext });
+  Object.defineProperty(window, "MediaRecorder", { configurable: true, writable: true, value: RecordingMediaRecorder });
+  Object.defineProperty(window, "AudioContext", { configurable: true, writable: true, value: TestAudioContext });
   Object.defineProperty(navigator, "mediaDevices", {
     configurable: true,
+    writable: true,
     value: {
       getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop: vi.fn() }] }),
     },
@@ -198,22 +201,27 @@ export function installOpenbotStub(): void {
   emitInvite = undefined;
   emitDynamicIslandAction = undefined;
   trackAnalytics.mockClear();
+  installAnalyticsSpies();
   window.localStorage.clear();
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
+    writable: true,
     value: defaultMatchMedia,
   });
-  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1024 });
   Object.defineProperty(document, "hasFocus", {
     configurable: true,
+    writable: true,
     value: vi.fn(() => true),
   });
   Object.defineProperty(navigator, "mediaDevices", {
     configurable: true,
+    writable: true,
     value: { getUserMedia: vi.fn().mockRejectedValue(new DOMException("Denied", "NotAllowedError")) },
   });
   Object.defineProperty(window, "openbot", {
     configurable: true,
+    writable: true,
     value: {
       getAppInfo: vi.fn().mockResolvedValue({
         name: "OpenBot",
