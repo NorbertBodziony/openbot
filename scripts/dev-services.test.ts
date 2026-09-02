@@ -155,6 +155,25 @@ describe("development service runner", () => {
     expect(time).toBe(50);
   });
 
+  it("accepts an inaccessible POSIX process group as already stopped", async () => {
+    const kill = vi.fn((_pid: number, signal?: NodeJS.Signals | number) => {
+      if (signal === 0) throw Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+      return true;
+    });
+    const child = { pid: 321, exitCode: 0, kill: vi.fn(() => true) };
+
+    await expect(
+      stopOwnedProcesses([child], "SIGTERM", {
+        platform: "darwin",
+        killProcess: kill,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(kill).toHaveBeenCalledWith(-321, "SIGTERM");
+    expect(kill).toHaveBeenCalledWith(-321, 0);
+    expect(kill).not.toHaveBeenCalledWith(-321, "SIGKILL");
+  });
+
   it("escalates only after a surviving process group misses the deadline", async () => {
     let time = 0;
     const kill = vi.fn(() => true);
