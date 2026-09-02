@@ -5,23 +5,26 @@ import { DarkTheme, DefaultTheme, ThemeProvider } from "expo-router/react-naviga
 import { Stack } from "expo-router/stack";
 import { StatusBar } from "expo-status-bar";
 import { Spinner } from "heroui-native";
+import { useThemeColor } from "heroui-native/hooks";
 import { HeroUINativeProvider } from "heroui-native/provider";
 import { useColorScheme, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { withUniwind } from "uniwind";
 
+import { AppDrawerShell } from "@/components/app-drawer-shell";
 import { isIOS } from "@/lib/platform";
 import { queryClient } from "@/lib/query-client";
 import { MobileSessionProvider, useMobileSession } from "@/providers/mobile-session-provider";
+import { MobileWorkspaceProvider } from "@/providers/mobile-workspace-provider";
 
 export const unstable_settings = {
   initialRouteName: "index",
 };
 
 const UniwindGestureHandlerRootView = withUniwind(GestureHandlerRootView);
-
 function AppNavigation() {
   const { loading, session } = useMobileSession();
+  const background = useThemeColor("background");
   if (loading) {
     return (
       <View className="flex-1 items-center justify-center bg-background">
@@ -44,6 +47,58 @@ function AppNavigation() {
       </Stack.Protected>
       <Stack.Protected guard={Boolean(session)}>
         <Stack.Screen name="connected" options={{ animation: "fade", gestureEnabled: false, title: "" }} />
+        <Stack.Screen
+          name="chat/[botId]"
+          options={{
+            animation: "slide_from_right",
+            contentStyle: { backgroundColor: background },
+            gestureEnabled: true,
+            headerShown: false,
+          }}
+        />
+        <Stack.Screen
+          name="add-bot"
+          options={{
+            contentStyle: { backgroundColor: background },
+            headerStyle: { backgroundColor: background },
+            headerTransparent: false,
+            presentation: "formSheet",
+            sheetAllowedDetents: "fitToContents",
+            sheetGrabberVisible: true,
+            title: "Add bot",
+          }}
+        />
+        <Stack.Screen
+          name="add-server"
+          options={{
+            contentStyle: { backgroundColor: background },
+            headerShown: false,
+            presentation: "formSheet",
+            sheetAllowedDetents: "fitToContents",
+            sheetGrabberVisible: true,
+          }}
+        />
+        <Stack.Screen
+          name="search-bots"
+          options={{
+            contentStyle: { backgroundColor: background },
+            headerShown: false,
+            presentation: "formSheet",
+            sheetAllowedDetents: [1],
+            sheetGrabberVisible: true,
+            sheetInitialDetentIndex: "last",
+          }}
+        />
+        <Stack.Screen
+          name="settings"
+          options={{
+            contentStyle: { backgroundColor: background },
+            headerShown: false,
+            presentation: "formSheet",
+            sheetAllowedDetents: "fitToContents",
+            sheetGrabberVisible: true,
+          }}
+        />
       </Stack.Protected>
     </Stack>
   );
@@ -59,7 +114,11 @@ export default function RootLayout() {
           <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
             <StatusBar style="auto" />
             <MobileSessionProvider>
-              <AppNavigation />
+              <MobileWorkspaceProvider>
+                <AppDrawerShell>
+                  <AppNavigation />
+                </AppDrawerShell>
+              </MobileWorkspaceProvider>
             </MobileSessionProvider>
           </ThemeProvider>
         </HeroUINativeProvider>
