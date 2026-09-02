@@ -313,6 +313,102 @@ describe("UpdateService", () => {
     expect(service.getStatus()).toMatchObject({ phase: "downloading", progress: 10 });
   });
 
+  it("ignores a progress event that arrives after the stall watchdog gave up", async () => {
+    vi.useFakeTimers();
+    const updater = new FakeUpdater();
+    makeUpdateAvailable(updater);
+    updater.downloadUpdate.mockImplementation(() => new Promise<string[]>(() => undefined));
+    const service = createService(updater);
+    service.start(false);
+    await service.checkForUpdates();
+    void service.downloadUpdate();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(DOWNLOAD_STALL_TIMEOUT);
+    const reported = service.getStatus();
+
+    // A chunk already in flight when the token was cancelled must not turn the reported failure
+    // back into a spinner for a transfer that is no longer running.
+    updater.emit("download-progress", { percent: 71 });
+
+    expect(service.getStatus()).toEqual(reported);
+    expect(service.getStatus().errorCode).toBe("download_failed");
+  });
+
+  it("ignores a completed download that lands after the stall watchdog gave up", async () => {
+    vi.useFakeTimers();
+    const updater = new FakeUpdater();
+    makeUpdateAvailable(updater);
+    updater.downloadUpdate.mockImplementation(() => new Promise<string[]>(() => undefined));
+    const service = createService(updater);
+    service.start(false);
+    await service.checkForUpdates();
+    void service.downloadUpdate();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(DOWNLOAD_STALL_TIMEOUT);
+
+    updater.emit("update-downloaded", { version: "0.1.1" });
+
+    // Offering a restart for an attempt the service already abandoned would be a lie about what is
+    // staged on disk; the retry re-checks and starts from a known state.
+    expect(service.getStatus()).toMatchObject({ phase: "error", errorCode: "download_failed" });
+    await expect(service.installUpdate()).rejects.toThrow("not ready");
+  });
+
+  it("ignores a late error from an operation the user has moved on from", async () => {
+    vi.useFakeTimers();
+    const updater = new FakeUpdater();
+    makeUpdateAvailable(updater);
+    updater.downloadUpdate.mockImplementationOnce(() => new Promise<string[]>(() => undefined));
+    const service = createService(updater);
+    service.start(false);
+    await service.checkForUpdates();
+    void service.downloadUpdate();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(DOWNLOAD_STALL_TIMEOUT);
+
+    completeDownload(updater);
+    await service.downloadUpdate();
+    expect(service.getStatus().phase).toBe("ready");
+
+    // The abandoned transfer finally reports its failure. The newer download already succeeded.
+    updater.emit("error", new Error("socket hang up"));
+
+    expect(service.getStatus()).toMatchObject({ phase: "ready", availableVersion: "0.1.1" });
+  });
+
+  it("does not let an abandoned check result overwrite a newer download", async () => {
+    vi.useFakeTimers();
+    const updater = new FakeUpdater();
+    let settleAbandonedCheck: (() => void) | undefined;
+    updater.checkForUpdates.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          settleAbandonedCheck = () => resolve({ isUpdateAvailable: false, updateInfo: { version: "0.1.0" } });
+        }),
+    );
+    const service = createService(updater);
+    service.start(false);
+    void service.checkForUpdates();
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The only way a check is abandoned is its own watchdog, which is also what unblocks a retry.
+    await vi.advanceTimersByTimeAsync(CHECK_TIMEOUT);
+    expect(service.getStatus().errorCode).toBe("check_failed");
+    service.stop();
+
+    makeUpdateAvailable(updater);
+    completeDownload(updater);
+    await service.checkForUpdates();
+    await service.downloadUpdate();
+    expect(service.getStatus().phase).toBe("ready");
+
+    // The abandoned check finally answers "no update". It must not wipe the staged download.
+    settleAbandonedCheck?.();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(service.getStatus()).toMatchObject({ phase: "ready", availableVersion: "0.1.1" });
+  });
+
   it("fails a check that never answers", async () => {
     vi.useFakeTimers();
     const updater = new FakeUpdater();

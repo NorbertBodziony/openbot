@@ -18,6 +18,22 @@ export type UpdateCheckOutcome = {
   readonly cancellationToken?: UpdateCancellationToken;
 };
 
+/**
+ * The subset of electron-updater this service drives. Four behaviours of the installed version are
+ * load bearing here, none of them public API, all verified against 6.8.9 and pinned by
+ * electron-updater-assumptions.test.ts:
+ *
+ * 1. `MacUpdater.updateDownloaded` only calls `nativeUpdater.checkForUpdates()` - the call that makes
+ *    Squirrel stage the ZIP and eventually emit the native `update-downloaded` - while
+ *    `autoInstallOnAppQuit` is true. We keep that off, so nothing here may wait on that event; doing
+ *    so is what left macOS stuck on "Preparing update..." in issue #152.
+ * 2. `MacUpdater.quitAndInstall` stages on demand when Squirrel has not already done so, which is why
+ *    `ready` is a valid state the moment the download completes.
+ * 3. `AppUpdater.doCheckForUpdates` mints a `CancellationToken` for every available update and returns
+ *    it on the result, so cancellation needs no direct dependency on builder-util-runtime.
+ * 4. `BaseUpdater.quitAndInstall` can return without quitting when `install()` fails, so an install
+ *    failure has to release the latch or the restart action never becomes available again.
+ */
 type UpdateAdapter = {
   allowPrerelease: boolean;
   autoDownload: boolean;
@@ -104,10 +120,11 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
   #autoDownload: boolean;
   #downloadedVersion: string | null = null;
   #cancellationToken: UpdateCancellationToken | null = null;
-  #internalCheck = false;
   #checkGeneration = 0;
   #downloadGeneration = 0;
   #installGeneration = 0;
+  #activeDownload: number | null = null;
+  #activeInstall: number | null = null;
 
   constructor(updater: UpdateAdapter, options: UpdateServiceOptions) {
     super();
@@ -146,48 +163,37 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
     this.#updater.autoInstallOnAppQuit = false;
     this.#updater.allowPrerelease = false;
 
-    this.#updater.on("checking-for-update", () => {
-      if (this.#internalCheck) return;
-      this.#operation = "check";
-      this.#setStatus({ phase: "checking", progress: null, message: null, errorCode: null });
-    });
-    this.#updater.on("update-available", (info: UpdateInfo) => {
-      if (this.#internalCheck) return;
-      this.#downloadedVersion = null;
-      this.#setStatus({
-        phase: "available",
-        availableVersion: info.version,
-        progress: null,
-        checkedAt: new Date().toISOString(),
-        message: null,
-        errorCode: null,
-      });
-    });
-    this.#updater.on("update-not-available", () => {
-      if (this.#internalCheck) return;
-      this.#setStatus({
-        phase: "up-to-date",
-        availableVersion: null,
-        progress: null,
-        checkedAt: new Date().toISOString(),
-        message: null,
-        errorCode: null,
-      });
-    });
+    // The check lifecycle is driven entirely by checkForUpdates(), whose result is generation
+    // guarded, so there are deliberately no checking-for-update / update-available /
+    // update-not-available listeners: a second, unguarded writer is how a late event from an
+    // abandoned check could overwrite a newer download or ready state.
     this.#updater.on("download-progress", (progress: ProgressInfo) => {
-      this.#operation = "download";
+      if (!this.#isDownloadLive()) return;
       this.#setStatus({ phase: "downloading", progress: clampProgress(progress.percent), errorCode: null });
     });
     this.#updater.on("update-downloaded", (info: UpdateInfo) => {
+      if (!this.#isDownloadLive()) return;
+      this.#activeDownload = null;
       // electron-updater has staged everything it needs by now. On macOS quitAndInstall asks the
       // native updater for the ZIP on demand, so the restart action is available immediately.
       this.#markReady(info.version);
     });
     this.#updater.on("error", () => {
-      // quitAndInstall can return without quitting, so an install failure has to release the latch
-      // or the restart action would never become available again.
-      if (this.#operation === "install") this.#installStarted = false;
-      this.#setError(failureCode(this.#operation));
+      // Both awaited calls reject on failure, so this only has to cover errors raised outside them,
+      // and only for an operation still in flight. An abandoned operation reporting late must not
+      // replace the state the user is now looking at.
+      if (this.#operation === "install" && this.#isInstallLive()) {
+        // quitAndInstall can return without quitting, so an install failure has to release the latch
+        // or the restart action would never become available again.
+        this.#installGeneration += 1;
+        this.#installStarted = false;
+        this.#setError("install_failed");
+        return;
+      }
+      if (this.#operation === "download" && this.#isDownloadLive()) {
+        this.#activeDownload = null;
+        this.#setError("download_failed");
+      }
     });
     if (this.#options.platform === "darwin" && this.#options.shipItDirectory) {
       void pruneShipItLogs(this.#options.shipItDirectory);
@@ -227,20 +233,26 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
       const result = await this.#updater.checkForUpdates();
       if (this.#checkGeneration !== generation) return this.getStatus();
       this.#cancellationToken = result?.cancellationToken ?? null;
-      if (this.getStatus().phase === "checking") {
-        this.#setStatus(
-          result?.isUpdateAvailable
-            ? {
-                phase: "available",
-                availableVersion: result.updateInfo.version,
-                checkedAt: new Date().toISOString(),
-              }
-            : {
-                phase: "up-to-date",
-                availableVersion: null,
-                checkedAt: new Date().toISOString(),
-              },
-        );
+      if (result?.isUpdateAvailable) {
+        if (result.updateInfo.version !== this.#downloadedVersion) this.#downloadedVersion = null;
+        this.#setStatus({
+          phase: "available",
+          availableVersion: result.updateInfo.version,
+          progress: null,
+          message: null,
+          errorCode: null,
+          checkedAt: new Date().toISOString(),
+        });
+      } else {
+        this.#downloadedVersion = null;
+        this.#setStatus({
+          phase: "up-to-date",
+          availableVersion: null,
+          progress: null,
+          message: null,
+          errorCode: null,
+          checkedAt: new Date().toISOString(),
+        });
       }
     } catch {
       if (this.#checkGeneration === generation) this.#setError("check_failed");
@@ -257,6 +269,7 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
   async downloadUpdate(): Promise<UpdateStatus> {
     if (!this.#options.enabled || !this.#canDownload()) return this.getStatus();
     const generation = ++this.#downloadGeneration;
+    this.#activeDownload = generation;
     this.#operation = "download";
     this.#setStatus({ phase: "downloading", progress: 0, message: null, errorCode: null });
     try {
@@ -266,7 +279,10 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
     } catch {
       // A superseded attempt is one the stall watchdog already cancelled and reported, so its
       // rejection must not overwrite the error the user is looking at.
-      if (this.#downloadGeneration === generation) this.#setError("download_failed");
+      if (this.#downloadGeneration === generation) {
+        this.#activeDownload = null;
+        this.#setError("download_failed");
+      }
     }
     return this.getStatus();
   }
@@ -276,6 +292,7 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
       throw new Error("An update is not ready to install.");
     }
     const generation = ++this.#installGeneration;
+    this.#activeInstall = generation;
     this.#installStarted = true;
     this.#operation = "install";
     this.#setStatus({ phase: "installing", progress: 100, message: null, errorCode: null });
@@ -306,6 +323,15 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
     if (this.#status.phase !== "installing") this.#clearPhaseTimer();
   }
 
+  /** True while the download the service still believes in is the one events are reporting on. */
+  #isDownloadLive(): boolean {
+    return this.#activeDownload !== null && this.#activeDownload === this.#downloadGeneration;
+  }
+
+  #isInstallLive(): boolean {
+    return this.#activeInstall !== null && this.#activeInstall === this.#installGeneration;
+  }
+
   #canDownload(): boolean {
     if (this.#status.phase === "available") return true;
     return (
@@ -328,14 +354,11 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
    */
   async #ensureCancellationToken(): Promise<UpdateCancellationToken | null> {
     if (this.#cancellationToken && !this.#cancellationToken.cancelled) return this.#cancellationToken;
-    this.#internalCheck = true;
     try {
       const result = await this.#updater.checkForUpdates();
       this.#cancellationToken = result?.cancellationToken ?? null;
     } catch {
       this.#cancellationToken = null;
-    } finally {
-      this.#internalCheck = false;
     }
     return this.#cancellationToken;
   }
@@ -394,6 +417,7 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
     }
     if (this.#status.phase === "downloading") {
       this.#downloadGeneration += 1;
+      this.#activeDownload = null;
       this.#cancellationToken?.cancel();
       this.#cancellationToken = null;
       this.#setError("download_failed", "The update download stopped responding. Try again.");
@@ -401,6 +425,7 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
     }
     if (this.#status.phase === "installing") {
       this.#installGeneration += 1;
+      this.#activeInstall = null;
       this.#installStarted = false;
       this.#setError(
         "install_failed",
@@ -434,12 +459,6 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
       this.#logWrite = this.#logWrite.then(() => appendUpdateLog(logDirectory, event));
     }
   }
-}
-
-function failureCode(operation: UpdateOperation): UpdateFailureCode {
-  if (operation === "download") return "download_failed";
-  if (operation === "install") return "install_failed";
-  return "check_failed";
 }
 
 function errorMessage(code: UpdateFailureCode) {
