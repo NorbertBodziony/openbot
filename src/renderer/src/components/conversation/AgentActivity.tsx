@@ -94,7 +94,8 @@ export function ThinkingDisclosure(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const stepCount = () => props.message.items?.length ?? 0;
+  const steps = () => props.message.items?.filter((item) => item.trim()) ?? [];
+  const stepCount = () => steps().length;
   return (
     <article class="thinking-entry">
       <details
@@ -122,7 +123,7 @@ export function ThinkingDisclosure(props: {
           </span>
         </summary>
         <div class="thinking-details">
-          <For each={props.message.items ?? []}>{(item) => <p>{item}</p>}</For>
+          <For each={steps()}>{(item) => <p>{item}</p>}</For>
         </div>
       </details>
     </article>

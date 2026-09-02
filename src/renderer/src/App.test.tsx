@@ -1491,12 +1491,24 @@ describe("OpenBot connected desktop shell", () => {
       id: "commentary-live-status-1",
       turnId: "turn-live-status",
       author: "assistant",
-      text: "Inspecting the release checks",
+      text: "Inspecting the release",
       createdAt: "2026-09-02T10:00:01.000Z",
       status: "streaming",
       itemType: "commentary",
     } satisfies ConversationMessage;
     emitAgentEvent?.(conversation(2, "turn-live-status", [userMessage, firstCommentary]));
+    await waitFor(() => expect(label).toHaveTextContent("Inspecting the release"));
+
+    emitAgentEvent?.({
+      type: "conversation-delta",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-live-status",
+      messageId: firstCommentary.id,
+      delta: " checks",
+      createdAt: firstCommentary.createdAt,
+      revision: 3,
+    });
     await waitFor(() => expect(label).toHaveTextContent("Inspecting the release checks"));
 
     const latestCommentary = {
@@ -1506,11 +1518,15 @@ describe("OpenBot connected desktop shell", () => {
       createdAt: "2026-09-02T10:00:02.000Z",
     } satisfies ConversationMessage;
     emitAgentEvent?.(
-      conversation(3, "turn-live-status", [userMessage, { ...firstCommentary, status: "completed" }, latestCommentary]),
+      conversation(4, "turn-live-status", [
+        userMessage,
+        { ...firstCommentary, text: "Inspecting the release checks", status: "completed" },
+        latestCommentary,
+      ]),
     );
     await waitFor(() => expect(label).toHaveTextContent("Verifying the final build artifacts"));
 
-    emitAgentEvent?.(conversation(4, null, [userMessage, { ...firstCommentary, status: "completed" }]));
+    emitAgentEvent?.(conversation(5, null, [userMessage, { ...firstCommentary, status: "completed" }]));
     await waitFor(() => expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument());
   });
 

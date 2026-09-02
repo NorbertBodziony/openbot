@@ -1519,9 +1519,18 @@ export function createAppController(props: AppProps = {}) {
       [event.botId]: event.revision,
     }));
 
-    const existing = liveMessages()[event.botId]?.find((message) => message.id === event.messageId);
+    const messages = liveMessages()[event.botId] ?? [];
+    const existing = messages.find((message) => message.id === event.messageId);
+    const thinking = existing
+      ? undefined
+      : messages.find((message) => message.kind === "thinking" && message.itemIds?.includes(event.messageId));
+    const thinkingItemIndex = thinking?.itemIds?.indexOf(event.messageId) ?? -1;
     const messageKey = agentMessageKey(event.botId, event.messageId);
-    const rawBody = (rawAgentMessageBodies.get(messageKey) ?? existing?.body ?? "") + event.delta;
+    const rawBody =
+      (rawAgentMessageBodies.get(messageKey) ??
+        existing?.body ??
+        (thinkingItemIndex >= 0 ? thinking?.items?.[thinkingItemIndex] : "") ??
+        "") + event.delta;
     rawAgentMessageBodies.set(messageKey, rawBody);
     if (existing) {
       updateStored(existing, {
@@ -1529,6 +1538,10 @@ export function createAppController(props: AppProps = {}) {
         body: cleanAgentMessageText(rawBody),
         streaming: true,
       });
+    } else if (thinking && thinkingItemIndex >= 0) {
+      const items = [...(thinking.items ?? [])];
+      items[thinkingItemIndex] = cleanAgentMessageText(rawBody);
+      updateStored(thinking, { ...thinking, items, streaming: true });
     } else {
       const message = createStoredMessage({
         id: event.messageId,

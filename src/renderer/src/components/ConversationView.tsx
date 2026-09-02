@@ -717,7 +717,10 @@ function createConversationViewScope(props: ConversationProps) {
     for (let index = props.messages.length - 1; index >= 0; index -= 1) {
       const message = props.messages[index];
       if (message?.kind !== "thinking") continue;
-      const detail = message.items?.at(-1)?.trim();
+      const detail = [...(message.items ?? [])]
+        .reverse()
+        .find((item) => item.trim())
+        ?.trim();
       if (!detail) continue;
       if (turnId && message.turnId === turnId) return detail;
       if (message.streaming && streamingFallback === null) streamingFallback = detail;
