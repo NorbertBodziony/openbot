@@ -1,10 +1,20 @@
 This is an Expo/React Native mobile application. Prioritize mobile-first patterns, performance, and cross-platform compatibility.
 
+## Execution and verification limits
+
+- Never run any build, packaging, signing, submission, or deployment command for the mobile app unless the user gives explicit permission for that specific command.
+- Never start an iOS simulator, Android emulator, device run, or native development client unless the user gives explicit permission for that specific run.
+- Do not run wide or full-repository checks by default. The allowed default checks are lint, Biome, and TypeScript checks limited to files changed by the task.
+- Before creating or executing a PR, wider checks are required. If they have not been run, stop before the PR and request explicit permission for each concrete wider check that must be run.
+- Permission for a wider check authorizes only the one named check or command. It does not authorize other wider checks, builds, simulator/emulator runs, or subsequent commands.
+- If a requested workflow would require a prohibited command, explain the limitation and wait for explicit permission rather than substituting a broader command or running it implicitly.
+
 ## Design system and native chrome
 
 Read and follow [`DESIGN.md`](./DESIGN.md) before changing mobile UI.
 
 - Build application content with HeroUI Native. Reuse its installed components and the OpenBot theme aliases in `global.css`; do not introduce a parallel component library, theme, or screen-local design language.
+- Render product text with HeroUI Native `Typography` and its semantic variants. Do not import React Native `Text` directly in screens or product components unless an integration boundary explicitly requires the native primitive.
 - Treat system chrome as the deliberate exception to the HeroUI-first rule. Navigation stacks, headers, tab bars, toolbars, search bars, system menus, and route-level sheets must use the native Expo Router or `@expo/ui` APIs whenever they provide the required behavior.
 - Prefer `Stack`, `Stack.Title`, `Stack.Toolbar`, `Stack.SearchBar`, and `NativeTabs` over custom React Native or HeroUI imitations. Native chrome must remain native so iOS can provide Liquid Glass on supported versions and Android can use its platform conventions.
 - Do not fake native chrome with custom blur, gradients, translucent cards, or `GlassView`. Use `expo-glass-effect` only for an intentional custom in-content glass surface, with platform and accessibility fallbacks.
@@ -31,7 +41,9 @@ bun run doctor               # diagnose dependency and config issues
 bunx expo install --fix      # fix incompatible package versions
 ```
 
-Run lint and typecheck before declaring any task done.
+The `lint` and `typecheck` examples are permitted only when scoped to files changed by the task; do not run a repository-wide script as-is when it checks unrelated files.
+
+Before declaring any task done, run only targeted lint, Biome, and TypeScript checks covering the files changed by the task.
 
 ## Navigation & Routing
 
@@ -39,13 +51,13 @@ Run lint and typecheck before declaring any task done.
 - Import `Link`, `router`, and `useLocalSearchParams` from `expo-router`.
 - Docs: https://docs.expo.dev/router/introduction.md
 
-## Building with EAS
+## Building with EAS (explicit authorization only)
 
-Use EAS to build, sign, and submit the app in the cloud (`eas build`, `eas submit`) and to ship over-the-air updates (`eas update`) — no local Xcode or Android Studio required. Run EAS CLI as `bunx eas-cli <command>` in Bun projects, or `npx eas-cli@latest <command>` otherwise; substitute that for bare `eas` in docs examples.
+EAS build, signing, submission, and update commands are prohibited unless the user explicitly authorizes that exact command. If authorized, use EAS to perform the requested operation in the cloud (`eas build`, `eas submit`, or `eas update`) — no local Xcode or Android Studio required. Run EAS CLI as `bunx eas-cli <command>` in Bun projects, or `npx eas-cli@latest <command>` otherwise; substitute that for bare `eas` in docs examples.
 Docs: https://docs.expo.dev/eas/index.md
 
 ## Rules
 
 - If `ios/` and `android/` directories do not exist, they are generated (Continuous Native Generation). Never create or edit them by hand — configure native behavior in `app.json` and config plugins.
-- Expo Go only includes its bundled native modules. After adding a library with native code, the app needs a development build: `npx expo run:ios|android` locally, or `eas build --profile development`.
+- Expo Go only includes its bundled native modules. After adding a library with native code, the app needs a development build; do not create or run one without explicit user authorization for the exact build or run command.
 - Prefer recommended Expo modules over third-party libraries, and check your available skills before adding dependencies. Docs: https://docs.expo.dev/versions/latest/index.md
