@@ -80,13 +80,13 @@ describe("ProviderModelPicker", () => {
     expect(dialog).toBeInTheDocument();
   });
 
-  it("shows the status of an unavailable provider when its rail button is selected", async () => {
+  it("shows an unavailable provider without allowing its models", async () => {
     const onChange = vi.fn();
     const view = render(() => (
       <ProviderModelPicker
         provider="codex"
         value="gpt-5.6-luna"
-        modelOptions={STORY_MODELS.filter((model) => model.provider === "codex")}
+        modelOptions={STORY_MODELS}
         agentStatus={agentStatus}
         onChange={onChange}
       />
@@ -102,6 +102,35 @@ describe("ProviderModelPicker", () => {
     expect(within(dialog).getByRole("tabpanel", { name: /Grok:/ })).toHaveTextContent(
       "Run `grok login` or set XAI_API_KEY to use Grok.",
     );
+
+    await fireEvent.click(within(dialog).getByRole("tab", { name: /Claude:/ }));
+    expect(within(dialog).getByRole("option", { name: "Claude Opus 5, default" })).toBeDisabled();
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("moves between providers with the keyboard and closes on Escape or an outside press", async () => {
+    const view = render(() => (
+      <ProviderModelPicker
+        provider="codex"
+        value="gpt-5.6-luna"
+        modelOptions={STORY_MODELS}
+        agentStatus={agentStatus}
+        onChange={vi.fn()}
+      />
+    ));
+    const trigger = view.getByRole("button", { name: "Agent model: Luna" });
+
+    await fireEvent.click(trigger);
+    const dialog = view.getByRole("dialog", { name: "Choose agent model" });
+    await fireEvent.keyDown(within(dialog).getByRole("tab", { name: /^ChatGPT:/ }), { key: "ArrowUp" });
+    expect(within(dialog).getByRole("tab", { name: /^Claude:/ })).toHaveAttribute("aria-selected", "true");
+
+    await fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(view.queryByRole("dialog", { name: "Choose agent model" })).not.toBeInTheDocument();
+
+    await fireEvent.click(trigger);
+    expect(view.getByRole("dialog", { name: "Choose agent model" })).toBeInTheDocument();
+    await fireEvent.pointerDown(document.body);
+    expect(view.queryByRole("dialog", { name: "Choose agent model" })).not.toBeInTheDocument();
   });
 });

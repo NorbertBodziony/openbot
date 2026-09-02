@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@solidjs/testing-library";
 import { createSignal, Show } from "solid-js";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConversationControllerProvider, type ConversationProps, createConversationController } from "./Conversation";
 import { isDragLeavingConversation } from "./ConversationView";
 
@@ -9,6 +9,10 @@ function controllerProps(onTypingChange = vi.fn()): Pick<ConversationProps, "onT
 }
 
 describe("Conversation HMR boundary", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("keeps the file drop overlay active while dragging across conversation children", () => {
     const panel = document.createElement("main");
     const child = document.createElement("div");
@@ -143,6 +147,5 @@ describe("Conversation HMR boundary", () => {
     expect(stopTrack).toHaveBeenCalledOnce();
     vi.runOnlyPendingTimers();
     expect(onTypingChange).toHaveBeenCalledOnce();
-    vi.useRealTimers();
   });
 });

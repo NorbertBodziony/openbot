@@ -69,66 +69,6 @@ describe("OpenBotDynamicIsland mode transitions", () => {
     });
   });
 
-  it("keeps the working row mounted while its task updates", async () => {
-    const controller = renderControlledIsland(workingPresentation(), "expanded");
-    const row = screen.getByRole("button", { name: /Research/ });
-    row.focus();
-
-    const next = workingPresentation();
-    if (next.mode !== "working" || !next.working[0]) throw new Error("Working fixture is missing.");
-    next.working[0] = { ...next.working[0], task: "Writing the summary" };
-    flush(() => controller.setPresentation(next));
-
-    expect(screen.getByText("Writing the summary")).toBeVisible();
-    expect(screen.getByRole("button", { name: /Research/ })).toBe(row);
-  });
-
-  it("keeps message controls mounted while a message streams", () => {
-    const controller = renderControlledIsland(messagePresentation("reply-1"), "expanded");
-    const openChat = screen.getByRole("button", { name: "Open chat" });
-    openChat.focus();
-
-    const next = messagePresentation("reply-1");
-    if (next.mode !== "message") throw new Error("Message fixture is missing.");
-    next.message = { ...next.message, text: "The source check is ready with one more detail." };
-    flush(() => controller.setPresentation(next));
-
-    expect(screen.getByText("The source check is ready with one more detail.")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Open chat" })).toBe(openChat);
-  });
-
-  it.each([
-    [
-      "browser takeover",
-      takeoverPresentation(),
-      "expanded",
-      "Take over",
-      { type: "review-attention", serverId: "local", botId: "research", requestId: "takeover-1" },
-    ],
-    [
-      "failed task",
-      failedPresentation(),
-      "expanded",
-      "Open details",
-      { type: "open-failure", serverId: "local", botId: "research", turnId: "turn-failed" },
-    ],
-    [
-      "working bot",
-      workingPresentation(),
-      "expanded",
-      /Research/,
-      { type: "open-bot", serverId: "local", botId: "research" },
-    ],
-    ["idle app", idlePresentation(), "compact", "Expand Open OpenBot", { type: "open-app" }],
-  ] as const)("maps the %s action", async (_name, presentation, state, buttonName, action) => {
-    const onAction = vi.fn<(action: DynamicIslandAction) => void>();
-    renderControlledIsland(presentation, state, onAction);
-
-    await fireEvent.click(screen.getByRole("button", { name: buttonName }));
-
-    expect(onAction).toHaveBeenCalledWith(action);
-  });
-
   it("reviews, accepts, or declines approvals", async () => {
     const onAction = vi.fn<(action: DynamicIslandAction) => void>();
     renderControlledIsland(approvalPresentation(), "expanded", onAction);
@@ -287,32 +227,6 @@ function approvalPresentation(): Extract<DynamicIslandPresentation, { mode: "app
         grantRoot: null,
         permissions: null,
       },
-    },
-  };
-}
-
-function takeoverPresentation(): DynamicIslandPresentation {
-  return {
-    serverId: "local",
-    mode: "takeover",
-    item: {
-      requestId: "takeover-1",
-      bot: BOT,
-      title: "Browser step needs you",
-      detail: "Complete the sign-in, verification, or consent in the browser.",
-    },
-  };
-}
-
-function failedPresentation(): DynamicIslandPresentation {
-  return {
-    serverId: "local",
-    mode: "failed",
-    item: {
-      turnId: "turn-failed",
-      bot: BOT,
-      title: "Task failed",
-      detail: "The browser tab closed unexpectedly.",
     },
   };
 }

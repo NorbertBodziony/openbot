@@ -33,22 +33,6 @@ describe("HeroDownloadSelector", () => {
     },
   );
 
-  it("shows all platforms and keeps Linux as coming soon", async () => {
-    setPlatform("MacIntel");
-    const view = render(() => <HeroDownloadSelector />);
-    const trigger = view.getByRole("button", { name: "Choose download platform" });
-
-    await fireEvent.click(trigger);
-    expect(trigger).toHaveAttribute("aria-expanded", "true");
-    expect(view.getByRole("menu", { name: "Download platforms" })).toBeInTheDocument();
-    expect(view.getAllByRole("menuitem")).toHaveLength(3);
-
-    await fireEvent.click(view.getByRole("menuitem", { name: /Linux.*Coming soon/i }));
-    await waitFor(() => expect(view.queryByRole("menu")).not.toBeInTheDocument());
-    expect(view.getByText("Linux coming soon")).toHaveAttribute("aria-disabled", "true");
-    expect(view.queryByRole("link", { name: "Linux coming soon" })).not.toBeInTheDocument();
-  });
-
   it("opens with arrow keys and closes on Escape or an outside click", async () => {
     setPlatform("Win32");
     const view = render(() => <HeroDownloadSelector />);

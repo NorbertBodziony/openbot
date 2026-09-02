@@ -455,11 +455,8 @@ describe("SkillsMarketplaceModal", () => {
 
     fireEvent.change(input, { target: { files: [icon] } });
 
-    await waitFor(() => expect(document.querySelector(".skills-publish-summary img")).toBeInTheDocument());
-    expect(document.querySelector(".skills-publish-summary img")).toHaveAttribute(
-      "src",
-      expect.stringMatching(/^data:image\/webp;base64,/u),
-    );
+    const iconPreview = await screen.findByRole("img", { name: "Skill icon preview" });
+    expect(iconPreview).toHaveAttribute("src", expect.stringMatching(/^data:image\/webp;base64,/u));
     expect(input).toHaveValue("C:\\fakepath\\skill-icon.png");
   });
 

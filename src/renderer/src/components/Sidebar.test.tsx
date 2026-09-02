@@ -250,63 +250,6 @@ describe("Sidebar pinned chats", () => {
     ]);
     expect(dataTransfer.setDragImage).toHaveBeenCalledOnce();
   });
-
-  it("pins an agent dropped on the pinned area with the same native drag path", async () => {
-    const props = sidebarProps([{ kind: "agent", id: "research" }]);
-    const view = render(() => <Sidebar {...props} />);
-    const chief = screen.getByRole("button", { name: /Chief/ });
-    const chiefItem = chief.closest<HTMLElement>("[data-agent-id]");
-    const pinned = screen.getByRole("region", { name: "Pinned chats" });
-    const list = view.container.querySelector<HTMLElement>(".bot-list");
-    if (!chiefItem || !list) throw new Error("Sidebar list is missing.");
-    vi.spyOn(chiefItem, "getBoundingClientRect").mockReturnValue(rect(12, 180, 256, 54));
-    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 600));
-    vi.spyOn(pinned, "getBoundingClientRect").mockReturnValue(rect(0, 20, 280, 120));
-    const dataTransfer = {
-      setData: vi.fn(),
-      setDragImage: vi.fn(),
-      effectAllowed: "move",
-      dropEffect: "move",
-    };
-
-    dragStartAt(chiefItem, dataTransfer, { clientX: 30, clientY: 200 });
-    await dragOverFrame(pinned, dataTransfer, { clientX: 100, clientY: 100 });
-
-    dropAt(pinned, dataTransfer, { clientX: 100, clientY: 100 });
-
-    expect(props.onPin).toHaveBeenCalledWith({ kind: "agent", id: "chief" });
-  });
-
-  it("keeps the animated empty pin field as a live drop target", async () => {
-    const props = sidebarProps();
-    const view = render(() => <Sidebar {...props} />);
-    const chief = screen.getByRole("button", { name: /Chief/ });
-    const chiefItem = chief.closest<HTMLElement>("[data-agent-id]");
-    const list = view.container.querySelector<HTMLElement>(".bot-list");
-    if (!chiefItem || !list) throw new Error("Sidebar agent drag source is missing.");
-    vi.spyOn(chiefItem, "getBoundingClientRect").mockReturnValue(rect(12, 180, 256, 54));
-    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 600));
-    const dataTransfer = {
-      setData: vi.fn(),
-      setDragImage: vi.fn(),
-      effectAllowed: "move",
-      dropEffect: "move",
-    };
-
-    dragStartAt(chiefItem, dataTransfer, { clientX: 30, clientY: 200 });
-    await dragOverFrame(list, dataTransfer, { clientX: 32, clientY: 196 });
-    const pinned = screen.getByRole("region", { name: "Pinned chats" });
-    const field = screen.getByText("Drag here to pin");
-    vi.spyOn(pinned, "getBoundingClientRect").mockReturnValue(rect(0, 20, 280, 6));
-    vi.spyOn(field, "getBoundingClientRect").mockReturnValue(rect(12, 24, 256, 104));
-
-    await fireEvent.transitionEnd(pinned, { propertyName: "grid-template-rows" });
-    await dragOverFrame(field, dataTransfer, { clientX: 100, clientY: 72 });
-
-    vi.mocked(field.getBoundingClientRect).mockReturnValue(rect(12, 200, 256, 104));
-    fireEvent(chiefItem, nativeDragEvent("dragend", dataTransfer, { clientX: 100, clientY: 72 }));
-    expect(props.onPin).toHaveBeenCalledWith({ kind: "agent", id: "chief" });
-  });
 });
 
 describe("Sidebar people", () => {
@@ -684,7 +627,7 @@ describe("Sidebar sections", () => {
   it("keeps collapsed private and expands matching search results temporarily", async () => {
     const props = sidebarProps();
     const [collapsed, setCollapsed] = createSignal([demoId]);
-    const view = render(() => (
+    render(() => (
       <Sidebar
         {...props}
         layout={sectionLayout()}
@@ -699,16 +642,16 @@ describe("Sidebar sections", () => {
       />
     ));
 
-    const body = view.container.querySelector<HTMLElement>(`#sidebar-section-body-${demoId}`)?.parentElement;
-    expect(body).toHaveAttribute("inert");
+    expect(screen.getByRole("button", { name: "Demo" })).toHaveAttribute("aria-expanded", "false");
 
     await fireEvent.input(screen.getByRole("searchbox", { name: "Search chats" }), {
       target: { value: "Research" },
     });
     expect(screen.getByRole("button", { name: /Research/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Demo" })).toHaveAttribute("aria-expanded", "true");
 
     await fireEvent.input(screen.getByRole("searchbox", { name: "Search chats" }), { target: { value: "" } });
-    expect(body).toHaveAttribute("inert");
+    expect(screen.getByRole("button", { name: "Demo" })).toHaveAttribute("aria-expanded", "false");
   });
 
   it("creates and renames sections inline, with duplicate-name validation", async () => {

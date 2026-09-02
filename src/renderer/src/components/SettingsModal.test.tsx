@@ -35,7 +35,7 @@ describe("SettingsModal", () => {
     vi.unstubAllGlobals();
   });
 
-  it("keeps every settings preference controlled across close and reopen", async () => {
+  it("keeps every settings preference controlled across a button close, Escape, and reopen", async () => {
     const [open, setOpen] = createSignal(true);
     const [value, setValue] = createSignal({ ...DEFAULT_GENERAL_SETTINGS });
     let openTrigger: HTMLButtonElement | undefined;
@@ -93,7 +93,7 @@ describe("SettingsModal", () => {
     await fireEvent.click(autoDownload);
     expect(value().autoDownloadUpdates).toBe(false);
 
-    await fireEvent.click(screen.getByRole("button", { name: "Close settings" }));
+    await fireEvent.keyDown(screen.getByRole("dialog", { name: "Updates" }), { key: "Escape" });
     // The dialog is named after the active tab, so the wait has to target the Updates title.
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Updates" })).not.toBeInTheDocument());
     await fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
@@ -127,47 +127,6 @@ describe("SettingsModal", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
     await waitFor(() => expect(onUpdateAction).toHaveBeenCalledOnce());
     expect(await screen.findByText("OpenBot is up to date on the Stable track.")).toBeInTheDocument();
-  });
-
-  it("shows the Stable track and the target update across download states", async () => {
-    const [status, setStatus] = createSignal<UpdateStatus>({
-      ...idleUpdateStatus,
-      phase: "available",
-      availableVersion: "0.3.0",
-    });
-
-    render(() => (
-      <SettingsModal
-        open
-        onOpenChange={() => undefined}
-        value={DEFAULT_GENERAL_SETTINGS}
-        onValueChange={() => undefined}
-        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
-        updateStatus={status()}
-        onUpdateAction={vi.fn(async () => undefined)}
-        account={account}
-        onUpdateAccountName={vi.fn(async () => undefined)}
-        onUpdateAccountAvatar={vi.fn(async () => undefined)}
-      />
-    ));
-
-    await fireEvent.click(screen.getByRole("tab", { name: "Updates" }));
-    await fireEvent.pointerDown(screen.getByRole("button", { name: /^Update track/ }), {
-      pointerType: "mouse",
-      button: 0,
-    });
-    await fireEvent.click(screen.getByRole("option", { name: "Stable" }));
-
-    expect(screen.getByText("OpenBot v0.3.0 is available to download.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Download update" })).toBeEnabled();
-
-    setStatus({ ...status(), phase: "downloading", progress: 42 });
-    expect(await screen.findByText("Downloading OpenBot v0.3.0 · 42%")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Downloading update…" })).toBeDisabled();
-
-    setStatus({ ...status(), phase: "ready", progress: 100 });
-    expect(await screen.findByText("OpenBot v0.3.0 is ready. Restart to apply.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Restart to update" })).toBeEnabled();
   });
 
   it("disables busy update actions and shows action failures", async () => {

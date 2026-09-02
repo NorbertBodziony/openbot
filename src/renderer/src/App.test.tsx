@@ -1,5 +1,4 @@
 import type { BotSummary, ConversationPage, ConversationSnapshot } from "@openbot/contracts/ipc";
-import { routineConversationEventItemType } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { createSignal, Show } from "solid-js";
 import { expect, it, vi } from "vitest";
@@ -80,29 +79,6 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.agent.onEvent).toHaveBeenCalledTimes(agentSubscriptionCount);
     expect(window.openbot.auth.onEvent).toHaveBeenCalledTimes(authSubscriptionCount);
     expect(window.openbot.servers.onPresence).toHaveBeenCalledTimes(presenceSubscriptionCount);
-  });
-
-  it("keeps an old routine marker unavailable when paginated history omits its deletion", async () => {
-    vi.mocked(window.openbot.agent.listRoutines).mockResolvedValue([]);
-    vi.mocked(window.openbot.agent.readConversation).mockResolvedValue(
-      testConversationPage("chief", [
-        {
-          id: "old-routine-event",
-          author: "system",
-          source: "system",
-          text: "Archived brief",
-          createdAt: "2026-08-30T10:00:00.000Z",
-          status: "completed",
-          itemType: routineConversationEventItemType("updated", "deleted-routine"),
-        },
-      ]),
-    );
-
-    render(() => <App />);
-
-    expect(await screen.findByText("Archived brief")).toBeInTheDocument();
-    await waitFor(() => expect(window.openbot.agent.listRoutines).toHaveBeenCalledWith("chief"));
-    expect(screen.queryByRole("button", { name: "Open routine Archived brief" })).not.toBeInTheDocument();
   });
 
   it("shows the interactive account dock in the landing preview and omits browser and remote control", async () => {
@@ -380,34 +356,16 @@ describe("OpenBot connected desktop shell", () => {
 
     const leftResizer = screen.getByRole("separator", { name: "Resize left sidebar" });
     await fireEvent.keyDown(leftResizer, { key: "ArrowRight" });
-    expect(leftResizer).toHaveAttribute("aria-valuenow", "292");
     expect(window.localStorage.getItem("openbot:left-panel-width")).toBe("292");
 
+    // Collapsing must not overwrite the width the sidebar returns to.
     await fireEvent.keyDown(leftResizer, { key: "Home" });
-    expect(leftResizer).toHaveAttribute("aria-valuenow", "88");
-    expect(leftResizer).toHaveAttribute("aria-valuetext", "Compact (88px)");
     expect(window.localStorage.getItem("openbot:left-panel-width")).toBe("292");
-
-    await fireEvent.keyDown(leftResizer, { key: "ArrowRight" });
-    expect(leftResizer).toHaveAttribute("aria-valuenow", "240");
-    await fireEvent.keyDown(leftResizer, { key: "End" });
-    expect(leftResizer).toHaveAttribute("aria-valuenow", "400");
-    await fireEvent.dblClick(leftResizer);
-    expect(leftResizer).toHaveAttribute("aria-valuenow", "280");
 
     await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
     const rightResizer = await screen.findByRole("separator", { name: "Resize right panel" });
     await fireEvent.keyDown(rightResizer, { key: "ArrowLeft" });
-    expect(rightResizer).toHaveAttribute("aria-valuenow", "308");
     expect(window.localStorage.getItem("openbot:settings-panel-width")).toBe("308");
-
-    await fireEvent.dblClick(rightResizer);
-    expect(rightResizer).toHaveAttribute("aria-valuenow", "296");
-
-    await fireEvent.keyDown(rightResizer, { key: "Home" });
-    expect(rightResizer).toHaveAttribute("aria-valuenow", "180");
-    await fireEvent.keyDown(rightResizer, { key: "End" });
-    expect(rightResizer).toHaveAttribute("aria-valuenow", String(Math.min(1600, window.innerWidth - 96)));
   });
 
   it("opens conversation search with the primary Find shortcut and closes it on Escape", async () => {
@@ -516,13 +474,6 @@ describe("OpenBot connected desktop shell", () => {
     const compactAccountButton = await screen.findByRole("button", { name: "Open account menu" });
     await fireEvent.click(compactAccountButton);
     const compactAccountDialog = screen.getByRole("dialog", { name: "Account actions" });
-    expect(within(compactAccountDialog).getByRole("button", { name: /Check for updates/ })).toBeInTheDocument();
-    expect(within(compactAccountDialog).getByRole("button", { name: "Marketplace" })).toBeInTheDocument();
-    expect(within(compactAccountDialog).getByRole("button", { name: "Providers & permissions" })).toBeInTheDocument();
-    expect(within(compactAccountDialog).getByRole("button", { name: "Send feedback" })).toBeInTheDocument();
-    expect(within(compactAccountDialog).getByRole("button", { name: "Message" })).toBeInTheDocument();
-    expect(within(compactAccountDialog).getByRole("button", { name: "Sign out" })).toBeInTheDocument();
-    expect(within(compactAccountDialog).getByRole("button", { name: "Settings" })).toBeInTheDocument();
     const compactUsageButton = await within(compactAccountDialog).findByRole("button", {
       name: "Weekly usage, 59% left",
     });

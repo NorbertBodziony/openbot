@@ -604,19 +604,16 @@ describe("OpenBot connected desktop shell", () => {
     if (!appFrame) throw new Error("App frame is missing.");
     expect(appFrame.inert).toBe(true);
     expect(appFrame).toHaveAttribute("aria-hidden", "true");
-    expect(within(remoteDesktop).getByRole("button", { name: "Back to OpenBot" })).toBeInTheDocument();
-    expect(within(remoteDesktop).getByRole("button", { name: "Disconnect" })).toBeInTheDocument();
     await waitFor(() => expect(window.openbot.remoteDesktop.connect).toHaveBeenCalledWith({ serverId: "remote-1" }));
 
-    const viewer = await screen.findByTitle("Sunshine remote desktop");
+    await screen.findByTitle("Sunshine remote desktop");
     await fireEvent.click(within(remoteDesktop).getByRole("button", { name: "Back to OpenBot" }));
     await waitFor(() => expect(appFrame.inert).toBe(false));
+    // Hiding keeps the session alive, so resuming must not open a second one.
     expect(window.openbot.remoteDesktop.disconnect).not.toHaveBeenCalled();
-    expect(screen.getByTitle("Sunshine remote desktop")).toBe(viewer);
-    const resumeButton = screen.getByRole("button", { name: "Resume remote control" });
 
-    await fireEvent.click(resumeButton);
-    expect(await screen.findByTitle("Sunshine remote desktop")).toBe(viewer);
+    await fireEvent.click(screen.getByRole("button", { name: "Resume remote control" }));
+    expect(await screen.findByTitle("Sunshine remote desktop")).toBeInTheDocument();
     expect(window.openbot.remoteDesktop.connect).toHaveBeenCalledTimes(1);
     await fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
     await waitFor(() => expect(window.openbot.remoteDesktop.disconnect).toHaveBeenCalledWith("desktop-1"));

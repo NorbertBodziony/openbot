@@ -51,23 +51,22 @@ const forbidden = [
     expression: /getComputedStyle\(/gu,
     reason: "asercja na wyliczonym stylu; styl i layout należą do Storybooka",
   },
+  {
+    expression: /\b(?:next|previous)ElementSibling\b|\bparentElement\b|\bfirstElementChild\b/gu,
+    reason: "chodzenie po rodzeństwie i rodzicu; zapytaj o element przez rolę i dostępną nazwę",
+  },
 ] as const;
 
 /** Today's counts. Lower them when a test stops needing the pattern; never raise them. */
 const budgets = [
-  { label: "uchwyty po klasie CSS", expression: /querySelector(?:All)?(?:<[^>]*>)?\(\s*["'`]\./gu, maximum: 54 },
-  { label: "sięganie po data-testid", expression: /By(?:All)?TestId\(/gu, maximum: 20 },
+  { label: "uchwyty po klasie CSS", expression: /querySelector(?:All)?(?:<[^>]*>)?\(\s*["'`]\./gu, maximum: 30 },
+  { label: "sięganie po data-testid", expression: /By(?:All)?TestId\(/gu, maximum: 18 },
   { label: "wspinanie się po drzewie przez closest()", expression: /\.closest\(/gu, maximum: 14 },
   { label: "asercje na nazwie znacznika", expression: /\.tagName\b/gu, maximum: 8 },
   {
     label: "liczenie elementów o roli strukturalnej",
     expression: /getAll(?:By)?Role\(\s*["'](?:columnheader|cell|row|list|listitem|group)["']/gu,
     maximum: 7,
-  },
-  {
-    label: "chodzenie po rodzeństwie i rodzicu",
-    expression: /\b(?:next|previous)ElementSibling\b|\bparentElement\b|\bfirstElementChild\b/gu,
-    maximum: 5,
   },
 ] as const;
 

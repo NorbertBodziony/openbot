@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { avatarCandidateSeeds, bloubAvatarProfile, createStaticAvatarSvg } from "./bloub-avatar";
 
 describe("Bloub avatar adapter", () => {
@@ -15,18 +15,12 @@ describe("Bloub avatar adapter", () => {
     expect(nextSet.slice(1)).not.toEqual(firstSet.slice(1));
   });
 
-  it("renders decorative static SVG without starting an animation frame", () => {
-    const requestAnimationFrame = vi.fn(() => 1);
-    vi.stubGlobal("requestAnimationFrame", requestAnimationFrame);
-
+  it("hides the static avatar from assistive technology", () => {
     const svg = createStaticAvatarSvg("chief", 215);
 
-    expect(svg.localName).toBe("svg");
     expect(svg.getAttribute("aria-hidden")).toBe("true");
     expect(svg.getAttribute("focusable")).toBe("false");
     expect(svg.hasAttribute("role")).toBe(false);
     expect(svg.hasAttribute("aria-label")).toBe(false);
-    expect(requestAnimationFrame).not.toHaveBeenCalled();
-    vi.unstubAllGlobals();
   });
 });

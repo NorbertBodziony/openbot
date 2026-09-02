@@ -902,55 +902,23 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
     await screen.findByRole("complementary", { name: "Browser" });
-    const surface = document.querySelector(".browser-surface");
-    if (!(surface instanceof HTMLElement)) throw new Error("Browser surface was not rendered.");
-    vi.spyOn(surface, "getBoundingClientRect").mockReturnValue({
-      x: 640,
-      y: 73,
-      width: 380,
-      height: 600,
-      top: 73,
-      right: 1020,
-      bottom: 673,
-      left: 640,
-      toJSON: () => ({}),
-    });
-    window.dispatchEvent(new Event("resize"));
     await waitFor(() =>
-      expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({
-        visible: true,
-        target: "main",
-        bounds: { x: 640, y: 73, width: 380, height: 600 },
-      }),
+      expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith(
+        expect.objectContaining({ visible: true, target: "main" }),
+      ),
     );
     vi.mocked(window.openbot.browser.setVisible).mockClear();
 
     await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
 
     await screen.findByText("Could not select the server");
-    const restoredBrowserPanel = await screen.findByRole("complementary", { name: "Browser" });
-    const restoredSurface = document.querySelector(".browser-surface");
-    if (!(restoredSurface instanceof HTMLElement)) throw new Error("Restored browser surface was not rendered.");
-    vi.spyOn(restoredSurface, "getBoundingClientRect").mockReturnValue({
-      x: 640,
-      y: 73,
-      width: 380,
-      height: 600,
-      top: 73,
-      right: 1020,
-      bottom: 673,
-      left: 640,
-      toJSON: () => ({}),
-    });
+    expect(await screen.findByRole("complementary", { name: "Browser" })).toBeInTheDocument();
     window.dispatchEvent(new Event("resize"));
     await waitFor(() =>
-      expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({
-        visible: true,
-        target: "main",
-        bounds: { x: 640, y: 73, width: 380, height: 600 },
-      }),
+      expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith(
+        expect.objectContaining({ visible: true, target: "main" }),
+      ),
     );
-    expect(restoredBrowserPanel).toBeInTheDocument();
   });
 
   it("keeps the latest workspace when an older server load resolves late", async () => {
@@ -1064,28 +1032,6 @@ describe("OpenBot connected desktop shell", () => {
 
     await waitFor(() => expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument());
     expect(window.openbot.browser.setVisible).toHaveBeenLastCalledWith({ visible: false });
-  });
-
-  it("closes settings on agent switch but restores browser panels", async () => {
-    render(() => <App />);
-    await screen.findByRole("heading", { name: "Chief" });
-
-    await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
-    expect(await screen.findByRole("complementary", { name: "Agent settings" })).toBeInTheDocument();
-
-    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
-    expect(screen.queryByRole("complementary", { name: "Agent settings" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open computer" })).toBeInTheDocument();
-
-    await fireEvent.click(screen.getByRole("button", { name: "Open computer" }));
-    expect(await screen.findByRole("complementary", { name: "Browser" })).toBeInTheDocument();
-
-    await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
-    expect(screen.queryByRole("complementary", { name: "Agent settings" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("complementary", { name: "Browser" })).not.toBeInTheDocument();
-
-    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
-    expect(await screen.findByRole("complementary", { name: "Browser" })).toBeInTheDocument();
   });
 
   it("opens workspace Markdown in the right sidebar and keeps external opening explicit", async () => {

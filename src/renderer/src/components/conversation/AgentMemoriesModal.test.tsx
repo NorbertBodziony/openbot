@@ -39,14 +39,13 @@ function trackScopedMemoryAnalytics<Name extends AnalyticsEventName>(
   trackMemoryAnalytics(name, properties);
 }
 
-vi.spyOn(desktopAnalytics, "scope").mockImplementation(() => ({ track: trackScopedMemoryAnalytics }));
-
 afterEach(() => {
   activeMock?.dispose();
   activeMock = undefined;
 });
 
 beforeEach(() => {
+  vi.spyOn(desktopAnalytics, "scope").mockImplementation(() => ({ track: trackScopedMemoryAnalytics }));
   trackMemoryAnalytics.mockClear();
   memoryState = [];
   emitAgentEvent = undefined;

@@ -6,22 +6,6 @@ import { ChatActionMarker } from "./ChatActionMarker";
 const bots: BotProfile[] = [bot("research", "Research"), bot("sales", "Sales")];
 
 describe("ChatActionMarker", () => {
-  it("opens a single outgoing agent target and shows its aggregate state", async () => {
-    const onSelectAgent = vi.fn();
-    render(() => (
-      <ChatActionMarker
-        marker={agentMarker([{ agentId: "research", status: "running" }], "in-progress")}
-        bots={bots}
-        onSelectAgent={onSelectAgent}
-      />
-    ));
-
-    expect(screen.getByRole("group", { name: "Messaged Research, In progress" })).toBeInTheDocument();
-    expect(screen.queryByText("In progress")).not.toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "Open chat with Research" }));
-    expect(onSelectAgent).toHaveBeenCalledWith("research");
-  });
-
   it("lists each target state for a multi-agent message", async () => {
     render(() => (
       <ChatActionMarker

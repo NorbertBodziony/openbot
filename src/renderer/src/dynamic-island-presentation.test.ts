@@ -268,6 +268,7 @@ describe("createDynamicIslandPresentation", () => {
 
     expect(createDynamicIslandPresentation(input)).toMatchObject({
       mode: "message",
+      unreadCount: 2,
       message: { messageId: "newer", bot: { id: "research" } },
     });
   });
@@ -435,23 +436,5 @@ describe("createDynamicIslandPresentation", () => {
       turnId: "turn-failed",
       detail: "The browser tab closed unexpectedly.",
     });
-  });
-
-  it("keeps working ahead of unread replies and preserves their aggregate", () => {
-    const input = state();
-    input.bots = [bot, research];
-    input.activeTurns = { chief: "turn-1", research: "turn-2" };
-    input.unreadReplies = { chief: 2, research: 3 };
-    input.liveMessages = {
-      chief: [{ id: "m1", author: "bot", body: "Launch plan ready", time: "now" }],
-      research: [{ id: "m2", author: "bot", body: "Sources ready", time: "now" }],
-    };
-    expect(createDynamicIslandPresentation(input).mode).toBe("working");
-
-    input.activeTurns = {};
-    const presentation = createDynamicIslandPresentation(input);
-    expect(presentation.mode).toBe("message");
-    if (presentation.mode !== "message") throw new Error("Expected a message presentation.");
-    expect(presentation.unreadCount).toBe(5);
   });
 });

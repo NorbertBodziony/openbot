@@ -43,6 +43,9 @@ const htmlElement = globalThis.HTMLElement;
 if (htmlElement && !htmlElement.prototype.scrollIntoView) {
   htmlElement.prototype.scrollIntoView = () => undefined;
 }
+if (htmlElement && !htmlElement.prototype.scrollTo) {
+  htmlElement.prototype.scrollTo = () => undefined;
+}
 
 afterEach(() => {
   cleanup();

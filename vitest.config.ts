@@ -17,22 +17,16 @@ export default defineConfig({
         test: {
           name: "node",
           environment: "node",
+          // The extension routes the file: renderer logic named `*.test.ts` runs
+          // here, without jsdom, and only `*.test.tsx` gets a DOM. Needing jsdom
+          // for a logic test means the logic is not separable from the DOM yet.
           include: [
             "src/backend/**/*.test.ts",
             "src/main/**/*.test.ts",
             "src/preload/**/*.test.ts",
+            "src/renderer/**/*.test.ts",
             "scripts/**/*.test.ts",
             "packages/contracts/**/*.test.ts",
-            "src/renderer/src/app-message-projection.test.ts",
-            "src/renderer/src/dynamic-island-coordinator.test.ts",
-            "src/renderer/src/dynamic-island-presentation.test.ts",
-            "src/renderer/src/sidebar-people-order.test.ts",
-            "src/renderer/src/sidebar-pins.test.ts",
-            "src/renderer/src/sidebar-sections.test.ts",
-            "src/renderer/src/team-webrtc-framing.test.ts",
-            "src/renderer/src/update-status.test.ts",
-            "src/renderer/src/voice-recording.test.ts",
-            "src/renderer/src/preview/landing-demo.test.ts",
           ],
         },
       },
@@ -41,26 +35,10 @@ export default defineConfig({
         test: {
           name: "renderer",
           environment: "jsdom",
-          // Reuse the module registry between files in a worker: every file
-          // otherwise re-imports jest-dom, Solid, Kobalte and lucide from
-          // scratch, which is most of this project's import and setup cost.
-          // Only safe because the shared test globals are writable and the
-          // analytics spies are reinstalled per test - see app-test-harness.ts.
-          isolate: false,
-          include: ["src/renderer/**/*.test.{ts,tsx}", "packages/brand/**/*.test.{ts,tsx}"],
-          exclude: [
-            ...configDefaults.exclude,
-            "src/renderer/src/app-message-projection.test.ts",
-            "src/renderer/src/dynamic-island-coordinator.test.ts",
-            "src/renderer/src/dynamic-island-presentation.test.ts",
-            "src/renderer/src/sidebar-people-order.test.ts",
-            "src/renderer/src/sidebar-pins.test.ts",
-            "src/renderer/src/sidebar-sections.test.ts",
-            "src/renderer/src/team-webrtc-framing.test.ts",
-            "src/renderer/src/update-status.test.ts",
-            "src/renderer/src/voice-recording.test.ts",
-            "src/renderer/src/preview/landing-demo.test.ts",
-          ],
+          // Every spy, global patch and fake timer a test file installs is
+          // undone after each test, so nothing depends on file order.
+          restoreMocks: true,
+          include: ["src/renderer/**/*.test.tsx"],
           setupFiles: ["./src/renderer/src/setupTests.ts"],
         },
       },

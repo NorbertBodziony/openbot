@@ -1,5 +1,5 @@
 import type { Routine, RoutineRun } from "@openbot/contracts/ipc";
-import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
+import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMockOpenBot, type MockOpenBotControls } from "../../preview/mock-openbot";
@@ -259,10 +259,8 @@ describe("AgentRoutinesSettings", () => {
     await waitFor(() => expect(testRoutine).toHaveBeenCalledWith({ botId: "chief", routineId: "routine-1" }));
 
     await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-    const actions = screen.getByRole("button", { name: "Delete now" }).parentElement;
-    if (!actions) throw new Error("Expected routine action controls");
     expect(deleteRoutine).not.toHaveBeenCalled();
-    await fireEvent.click(within(actions).getByRole("button", { name: "Delete now" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Delete now" }));
     await waitFor(() => expect(deleteRoutine).toHaveBeenCalledWith({ botId: "chief", routineId: "routine-1" }));
     expect(await screen.findByText("No routines yet.")).toBeInTheDocument();
   });

@@ -18,7 +18,7 @@ import { screen } from "@solidjs/testing-library";
 import { vi } from "vitest";
 import { type AnalyticsEventName, type DesktopAnalyticsEvents, desktopAnalytics } from "./analytics";
 
-/** Stable across files, so `expect(trackAnalytics)` keeps working under isolate: false. */
+/** Shared by every harness helper, so `expect(trackAnalytics)` works without re-importing the spy. */
 export const trackAnalytics =
   vi.fn<<Name extends AnalyticsEventName>(name: Name, properties: DesktopAnalyticsEvents[Name]) => void>();
 function trackScopedAnalytics<Name extends AnalyticsEventName>(name: Name, properties: DesktopAnalyticsEvents[Name]) {

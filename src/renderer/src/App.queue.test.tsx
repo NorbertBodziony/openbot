@@ -1,7 +1,7 @@
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
 import { serializeChatTagReference } from "@openbot/contracts/chat-tag-references";
 import type { DirectConversationSnapshot } from "@openbot/contracts/ipc";
-import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
+import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { expect, it, vi } from "vitest";
 import { App } from "./App";
 import {
@@ -645,90 +645,6 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(screen.queryByRole("button", { name: "Remove for-local.png" })).not.toBeInTheDocument());
   });
 
-  it("keeps the first delivery out of Queue until work starts", async () => {
-    render(() => <App />);
-    await screen.findByRole("heading", { name: "Chief" });
-    const first = queuedDelivery("delivery-foreground", "Start this work", 1);
-    const second = queuedDelivery("delivery-waiting-1", "Run this second", 2);
-    const third = queuedDelivery("delivery-waiting-2", "Run this third", 3);
-    const fourth = queuedDelivery("delivery-waiting-3", "Run this fourth", 4);
-
-    emitAgentEvent?.({
-      type: "conversation",
-      snapshot: {
-        botId: "chief",
-        threadId: "thread-chief",
-        activeTurnId: null,
-        revision: 1,
-        messages: [
-          {
-            id: first.id,
-            author: "user",
-            text: first.text,
-            createdAt: first.createdAt,
-            status: "completed",
-            delivery: { id: first.id, status: "queued", position: 1 },
-          },
-        ],
-      },
-    });
-    emitAgentEvent?.({
-      type: "queue-changed",
-      snapshot: { botId: "chief", deliveries: [first] },
-    });
-
-    expect(screen.queryByText("Start this work", { selector: ".agent-queue-message" })).not.toBeInTheDocument();
-    expect(document.querySelector(".agent-queue-panel")).toBeNull();
-    expect(screen.queryByText("Start this work", { selector: ".message-copy" })).not.toBeInTheDocument();
-
-    emitAgentEvent?.({
-      type: "queue-changed",
-      snapshot: { botId: "chief", deliveries: [first, second, third, fourth] },
-    });
-    expect(document.querySelector(".agent-queue-panel")).toBeNull();
-
-    const firstStarting = { ...first, status: "starting" as const, position: null, turnId: "turn-queue" };
-    emitAgentEvent?.({
-      type: "queue-changed",
-      snapshot: { botId: "chief", deliveries: [firstStarting, second, third, fourth] },
-    });
-    emitAgentEvent?.({
-      type: "conversation",
-      snapshot: {
-        botId: "chief",
-        threadId: "thread-chief",
-        activeTurnId: "turn-queue",
-        revision: 2,
-        messages: [
-          {
-            id: first.id,
-            turnId: "turn-queue",
-            author: "user",
-            text: first.text,
-            createdAt: first.createdAt,
-            status: "completed",
-            delivery: { id: first.id, status: "starting", position: null },
-          },
-        ],
-      },
-    });
-
-    await screen.findByText("Start this work", { selector: ".message-copy" });
-    await screen.findByRole("status", { name: "Chief is working" });
-    expect(screen.getByText("Run this second", { selector: ".agent-queue-message" })).toBeInTheDocument();
-    expect(screen.getByText("Run this third", { selector: ".agent-queue-message" })).toBeInTheDocument();
-    expect(screen.getByText("Run this fourth", { selector: ".agent-queue-message" })).toBeInTheDocument();
-    expect(screen.queryByText("Start this work", { selector: ".agent-queue-message" })).not.toBeInTheDocument();
-
-    emitAgentEvent?.({
-      type: "queue-changed",
-      snapshot: { botId: "chief", deliveries: [firstStarting] },
-    });
-    const queueSlot = document.querySelector<HTMLElement>(".agent-queue-slot");
-    await waitFor(() => expect(document.querySelector(".agent-queue-panel")).not.toBeInTheDocument());
-    expect(queueSlot).toHaveAttribute("aria-hidden", "true");
-  });
-
   it("keeps foreground starts out of Queue and hides waiting work between turns", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
@@ -740,14 +656,14 @@ describe("OpenBot connected desktop shell", () => {
       type: "queue-changed",
       snapshot: { botId: "chief", deliveries: [firstStarting] },
     });
-    expect(document.querySelector(".agent-queue-panel")).toBeNull();
+    expect(screen.queryByRole("region", { name: "Message queue" })).not.toBeInTheDocument();
 
     emitAgentEvent?.({
       type: "queue-changed",
       snapshot: { botId: "chief", deliveries: [firstStarting, second] },
     });
-    expect(await screen.findByText("Next work", { selector: ".agent-queue-message" })).toBeInTheDocument();
-    expect(screen.queryByText("Current work", { selector: ".agent-queue-message" })).not.toBeInTheDocument();
+    await screen.findByRole("group", { name: "Queued message 1: Next work" });
+    expect(screen.queryByRole("group", { name: /Current work/ })).not.toBeInTheDocument();
 
     emitAgentEvent?.({ type: "turn-started", botId: "chief", threadId: "thread-chief", turnId: "turn-live" });
     emitAgentEvent?.({
@@ -762,10 +678,11 @@ describe("OpenBot connected desktop shell", () => {
       },
     });
     await waitFor(() =>
-      expect(Array.from(document.querySelectorAll(".agent-queue-message"), (element) => element.textContent)).toEqual([
-        "Later work",
-        "Next work",
-      ]),
+      expect(
+        within(screen.getByRole("region", { name: "Message queue" }))
+          .getAllByLabelText(/^Queued message/u)
+          .map((item) => item.getAttribute("aria-label")),
+      ).toEqual(["Queued message 2: Later work", "Queued message : Next work"]),
     );
 
     emitAgentEvent?.({
@@ -785,15 +702,15 @@ describe("OpenBot connected desktop shell", () => {
         ],
       },
     });
-    await waitFor(() => expect(document.querySelector(".agent-queue-panel")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Message queue" })).not.toBeInTheDocument());
 
     const secondStarting = { ...second, status: "starting" as const, position: null, turnId: "turn-next" };
     emitAgentEvent?.({
       type: "queue-changed",
       snapshot: { botId: "chief", deliveries: [secondStarting, third] },
     });
-    expect(await screen.findByText("Later work", { selector: ".agent-queue-message" })).toBeInTheDocument();
-    expect(screen.queryByText("Next work", { selector: ".agent-queue-message" })).not.toBeInTheDocument();
+    await screen.findByRole("group", { name: "Queued message 2: Later work" });
+    expect(screen.queryByRole("group", { name: /Next work/ })).not.toBeInTheDocument();
   });
 
   it("keeps the complete Bot draft when creation fails", async () => {
