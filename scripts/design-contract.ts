@@ -36,7 +36,11 @@ const tokenRowPattern = /`(--openbot-[a-z0-9-]+)`\s*\|\s*([^|]+?)\s*\|/gu;
 // Rows whose value cell is prose ("72% white", "16% / 34% accent") describe a role and cannot be compared.
 const literalValuePattern = /^(?:#[0-9a-f]{3,8}|-?\d+(?:\.\d+)?(?:px|ms|em|rem)?|rgba?\([^)]*\)|oklch\([^)]*\))$/iu;
 
+// The inventory tracks runtime API. Prop and type exports are implementation detail and are not listed.
 const exportPattern = /^export (?:const|function|class) ([A-Za-z][A-Za-z0-9_]*)/gmu;
+
+// A local `export { name };` is API too. A `from` clause is the `icons.ts` bulk re-export, which is not.
+const localReExportPattern = /^export \{([^}]+)\};$/gmu;
 
 /**
  * Numbers design.md states in prose while the code owns them as a named constant or declaration.
@@ -130,9 +134,11 @@ function barrelModules(projectRoot: string, barrel: string): { file: string; exp
     const tsx = resolve(uiRoot, `${name}.tsx`);
     const path = existsSync(tsx) ? tsx : resolve(uiRoot, `${name}.ts`);
     const source = existsSync(path) ? readFileSync(path, "utf8") : "";
-    // Only declarations authored here are inventory material; `icons.ts` re-exports Lucide wholesale.
-    const exports = [...source.matchAll(exportPattern)].map((match) => match[1]);
-    return { file: relative(uiRoot, path), exports };
+    const declared = [...source.matchAll(exportPattern)].map((match) => match[1]);
+    const reExported = [...source.matchAll(localReExportPattern)].flatMap((match) =>
+      match[1].split(",").map((name) => (name.includes(" as ") ? name.split(" as ")[1] : name).trim()),
+    );
+    return { file: relative(uiRoot, path), exports: [...declared, ...reExported].filter(Boolean) };
   });
 }
 

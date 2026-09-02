@@ -220,6 +220,28 @@ describe("design contract", () => {
     ]);
   });
 
+  it("reports a local re-export the inventory row omits", () => {
+    const files = compliantRepository();
+    files.set(
+      "src/renderer/src/components/ui/button.tsx",
+      "const Button = () => null;\nexport { Button };\nconst press = () => null;\nexport { press };\n",
+    );
+
+    expect(checkRepository(files)).toEqual([
+      expect.stringContaining("document `press` in the `button.tsx` row of the component inventory"),
+    ]);
+  });
+
+  it("ignores a bulk re-export module such as the icon barrel", () => {
+    const files = compliantRepository();
+    files.set(
+      "src/renderer/src/components/ui/icons.ts",
+      'export { default as Check } from "lucide-solid/icons/check";\nexport { default as X } from "lucide-solid/icons/x";\n',
+    );
+
+    expect(checkRepository(files)).toEqual([]);
+  });
+
   it("reports an inventory table the document no longer has", () => {
     const files = compliantRepository();
     files.set("design.md", designDoc().replace("### Inventory", "### Component inventory"));

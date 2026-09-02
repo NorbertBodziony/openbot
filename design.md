@@ -50,6 +50,15 @@ mechanical rule, and `check:ui` holds all of its budgets at zero.
 
 Add a token only for a genuinely new semantic role, in `:root`, and document it here in the same change.
 
+The tables below inventory the **semantic vocabulary** — the tokens you choose from when you build a screen.
+They are not a dump of `:root`. Component-local tokens (`--openbot-queue-*`, `--openbot-tabs-*`,
+`--openbot-island-*` and their kind) and the legacy aliases at the end of the block are declared there without a
+row here, because naming them in a contract would bury the vocabulary that matters. `check:ui` therefore
+enforces the directions it can prove — every token this document names must be declared, every token the
+renderer uses must be declared, and every literal value quoted in a table below must match the declaration — but
+it cannot tell a new semantic role from new component plumbing, so adding a row for a token that deserves one
+stays a review judgment.
+
 ### Surfaces
 
 | Token | Value | Use |
@@ -285,7 +294,7 @@ Reading measures are capped, not fluid: a chat bubble is `max-width: min(80%, 72
 | `sliding-tabs.tsx` | `SlidingTabs` — `Root`, `List`, `Trigger`, `Content`, `ContentSlot` |
 | `settings.tsx` | `SettingsSection` |
 | `questionnaire.tsx` | `Questionnaire` — `Root`, `Progress`, `Item`, `Choice`, `Error` |
-| `toast.tsx` | `Toaster`, and the `solid-sonner` types it re-exports |
+| `toast.tsx` | `Toaster`, `toast`, and the `solid-sonner` types it re-exports |
 | `qr-code.tsx` | `QrCode` |
 | `user-avatar.tsx` | `UserAvatar` |
 | `server-gradient-logo.tsx` | `ServerGradientLogo`, `serverGradientLogoProfile` |
@@ -402,8 +411,10 @@ The renderer is a resizable desktop window, not a breakpoint grid.
 - Announce asynchronous change with `role="status"` and `aria-live="polite"`, and label the region. Use `.sr-only`
   for text that only assistive technology needs.
 - Every keyboard path must work: tab order, `Escape` to dismiss, arrow keys inside a composite.
-- Storybook's accessibility addon is a **blocking gate** (`a11y: { test: "error" }` in `.storybook/preview.tsx`).
-  A story that fails it fails the build.
+- Storybook's accessibility addon is configured to treat violations as errors (`a11y: { test: "error" }` in
+  `.storybook/preview.tsx`), and its panel reports them per story. **It is not wired into CI**: the repository
+  installs no Storybook test-runner, and the `Storybook build` job only builds. Check the a11y panel by hand for
+  every story you touch until a runner exists.
 
 ## Do and don't
 
@@ -481,7 +492,8 @@ the wrappers still behave before changing any feature import.
 
 Verify a component in Storybook and a flow in the dev app. Never verify UI from `dist/`, a packaged `.app`, or a
 production build. For each component you touch, confirm default, hover, focus-visible, active, disabled, and
-loading or empty where they apply, plus the keyboard path and the accessibility story.
+loading or empty where they apply, plus the keyboard path and the Storybook accessibility panel — nothing in CI
+runs that panel for you.
 
 Follow the repository test policy in [`AGENTS.md`](AGENTS.md): do not write tests that assert CSS classes, DOM
 structure, variants, spacing, or hover appearance. Those are Storybook's job.
@@ -497,8 +509,10 @@ structure, variants, spacing, or hover appearance. Those are Storybook's job.
   row above quotes a literal value that no longer matches the declaration.
 - **Adding a component** — build it in `components/ui`, export it from `index.ts`, add its row to the inventory
   table, and add it to "Which component do I pick" if it changes a decision. `check:ui` fails if a barrel module
-  is missing from the inventory, and if a module exports a name its own inventory row does not list — so a new
-  export on an existing module has to be documented too.
+  is missing from the inventory, and if a module exports a runtime name — a `const`, `function`, `class`, or
+  local `export { name }` — that its own inventory row does not list, so a new export on an existing module has
+  to be documented too. Prop and type exports are implementation detail and are deliberately not inventoried;
+  a row names a type only when picking it is a real decision, like `TextVariant` or `ControlSize`.
 - **Changing a layout number** — the numbers this document states in prose are pinned to the constants that own
   them (`LEFT_PANEL_*` in `src/renderer/src/App.tsx`, the rail and header custom properties in
   `styles/app-shell.css`, the bubble measure in `styles/primitives.css`). `check:ui` derives the expected

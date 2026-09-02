@@ -5,7 +5,7 @@
 - Read [`design.md`](design.md) before you create or change any UI. It is the visual and interaction contract for OpenBot: brand direction, tokens, the `components/ui` public API, interaction states, responsive behavior, accessibility, and motion. It is required reading, not background material.
 - For mobile UI, read [`apps/mobile/DESIGN.md`](apps/mobile/DESIGN.md) first for component ownership, then `design.md` for brand, tokens, and motion.
 - Follow the component reuse order in `design.md`: search this repository, then the [Zaidan catalog](https://zaidan.carere.dev/docs/components), then build in `src/renderer/src/components/ui` and use it from the feature. Never copy a shared primitive into a feature component.
-- `bun run check:ui` enforces the mechanical half of `design.md` and runs in CI. When you add a token or a component, update `design.md` in the same change, or the check fails.
+- `bun run check:ui` enforces the mechanical half of `design.md` and runs in CI. When you add a component to `src/renderer/src/components/ui`, or a runtime export to one that is already there, update the `design.md` inventory in the same change or the check fails. A new token must be declared in `:root`; whether it earns a row in `design.md` is a review judgment, and the check verifies only that what the document names and what the renderer uses actually exists.
 - When a review keeps correcting the same UI decision, put the correction in `design.md`, or in `scripts/design-contract.ts` when it can be checked deterministically.
 
 ## Renderer UI
