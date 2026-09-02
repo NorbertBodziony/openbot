@@ -43,7 +43,7 @@
     "@cloudflare/vite-plugin": "1.52.1",
     "@cloudflare/workers-types": "5.20260815.1",
     "@solidjs/testing-library": "1.0.0-beta.2",
-    "@solidjs/vite-plugin": "3.0.0-next.28",
+    "@solidjs/vite-plugin": "3.0.0-next.36",
     "@tailwindcss/vite": "4.3.3",
     "@types/node": "22.20.1",
     "jsdom": "30.0.1",

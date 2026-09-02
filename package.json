@@ -180,7 +180,7 @@
     "@dotenvx/dotenvx": "^2.21.0",
     "@electron/fuses": "1.8.0",
     "@solidjs/testing-library": "1.0.0-beta.2",
-    "@solidjs/vite-plugin": "3.0.0-next.28",
+    "@solidjs/vite-plugin": "3.0.0-next.36",
     "@storybook/addon-a11y": "10.5.10",
     "@tailwindcss/vite": "4.3.3",
     "@testing-library/jest-dom": "7.0.1",
