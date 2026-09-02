@@ -1,4 +1,4 @@
-import { router, useLocalSearchParams } from "expo-router";
+import { router, useLocalSearchParams, usePreventZoomTransitionDismissal } from "expo-router";
 import { useThemeColor } from "heroui-native/hooks";
 import { ArrowLeft } from "lucide-react-native";
 import { Pressable, Text, View } from "react-native";
@@ -8,6 +8,8 @@ import { useMobileSession } from "@/providers/mobile-session-provider";
 import { useMobileWorkspace } from "@/providers/mobile-workspace-provider";
 
 export default function BotChat() {
+  usePreventZoomTransitionDismissal();
+
   const { botId } = useLocalSearchParams<{ botId: string }>();
   const { bots } = useMobileWorkspace();
   const { session } = useMobileSession();

@@ -24,7 +24,6 @@ interface AppDrawerContextValue {
 }
 
 const AppDrawerContext = createContext<AppDrawerContextValue | null>(null);
-const EDGE_GESTURE_WIDTH = 24;
 const DRAWER_SPRING = {
   dampingRatio: 0.8,
   duration: 300,
@@ -71,8 +70,10 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
   const openingGesture = useMemo(
     () =>
       Gesture.Pan()
-        .activeOffsetX(8)
-        .failOffsetY([-12, 12])
+        .enabled(!drawerOpen && pathname === "/connected")
+        .activeOffsetX(12)
+        .failOffsetX(-10)
+        .failOffsetY([-10, 10])
         .onUpdate((event) => {
           drawerProgress.set(Math.min(1, Math.max(0, event.translationX / drawerWidth)));
         })
@@ -89,7 +90,7 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
             ),
           );
         }),
-    [commitDrawerState, drawerProgress, drawerWidth],
+    [commitDrawerState, drawerOpen, drawerProgress, drawerWidth, pathname],
   );
 
   const closingGesture = useMemo(
@@ -258,37 +259,28 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
           </View>
         </Animated.View>
 
-        <Animated.View
-          className="flex-1 overflow-hidden bg-background"
-          style={[{ boxShadow: "-12px 0 32px rgba(0, 0, 0, 0.28)" }, surfaceStyle]}
-        >
-          {children}
-          <GestureDetector gesture={closingGesture}>
-            <Animated.View
-              className="absolute inset-0 bg-black"
-              pointerEvents={drawerOpen ? "auto" : "none"}
-              style={scrimStyle}
-            >
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Close server drawer"
-                className="flex-1"
-                onPress={closeDrawer}
-              />
-            </Animated.View>
-          </GestureDetector>
-        </Animated.View>
-
-        {!drawerOpen && pathname === "/connected" ? (
-          <GestureDetector gesture={openingGesture}>
-            <View
-              className="absolute inset-y-0 left-0"
-              style={{ width: EDGE_GESTURE_WIDTH }}
-              accessibilityElementsHidden
-              importantForAccessibility="no-hide-descendants"
-            />
-          </GestureDetector>
-        ) : null}
+        <GestureDetector gesture={openingGesture}>
+          <Animated.View
+            className="flex-1 overflow-hidden bg-background"
+            style={[{ boxShadow: "-12px 0 32px rgba(0, 0, 0, 0.28)" }, surfaceStyle]}
+          >
+            {children}
+            <GestureDetector gesture={closingGesture}>
+              <Animated.View
+                className="absolute inset-0 bg-black"
+                pointerEvents={drawerOpen ? "auto" : "none"}
+                style={scrimStyle}
+              >
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Close server drawer"
+                  className="flex-1"
+                  onPress={closeDrawer}
+                />
+              </Animated.View>
+            </GestureDetector>
+          </Animated.View>
+        </GestureDetector>
       </View>
     </AppDrawerContext.Provider>
   );

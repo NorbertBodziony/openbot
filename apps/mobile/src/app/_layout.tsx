@@ -52,7 +52,8 @@ function AppNavigation() {
           options={{
             animation: "slide_from_right",
             contentStyle: { backgroundColor: background },
-            gestureEnabled: true,
+            fullScreenGestureEnabled: false,
+            gestureEnabled: false,
             headerShown: false,
           }}
         />
