@@ -3,7 +3,7 @@ language js(typescript)
 `document.activeElement` as $node where {
   register_diagnostic(
     span=$node,
-    message="Do not reach for document.activeElement in tests. See AGENTS.md \"Tests\": assert the accessible role, name or announcement instead, and keep focus behaviour in a Storybook interaction.",
+    message="Do not reach for document.activeElement in tests. See the Tests section of AGENTS.md: assert the accessible role, name or announcement instead, and keep focus behaviour in a Storybook interaction.",
     severity="error"
   )
 }

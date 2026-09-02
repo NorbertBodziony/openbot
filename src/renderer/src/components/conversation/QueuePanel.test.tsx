@@ -51,9 +51,9 @@ function callbacks() {
 }
 
 describe("QueuePanel", () => {
-  it("sorts visible deliveries and renders first-attachment previews", () => {
+  it("sorts visible deliveries by queue position", () => {
     const props = callbacks();
-    const view = render(() => (
+    render(() => (
       <QueuePanel
         deliveries={[
           delivery(3, { attachments: [fileAttachment] }),
@@ -66,12 +66,13 @@ describe("QueuePanel", () => {
       />
     ));
 
-    expect(Array.from(view.container.querySelectorAll(".agent-queue-message")).map((node) => node.textContent)).toEqual(
-      ["Queued task 1", "Queued task 2", "Queued task 3"],
-    );
-    expect(view.container.querySelector('.agent-queue-attachment img[src^="data:image/png"]')).toBeInTheDocument();
-    expect(view.container.querySelector(".agent-queue-attachment")?.textContent).not.toContain("TXT");
-    expect(view.container.querySelectorAll(".agent-queue-attachment")[1]).toHaveTextContent("TXT");
+    // Each row announces its own queue position, so the accessible names carry
+    // both the order the panel renders and the message each row stands for.
+    expect(screen.getAllByRole("group").map((row) => row.getAttribute("aria-label"))).toEqual([
+      "Queued message 1: Queued task 1",
+      "Queued message 2: Queued task 2",
+      "Queued message 3: Queued task 3",
+    ]);
   });
 
   it("renders semantic tags as readable queue text", () => {

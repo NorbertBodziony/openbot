@@ -1042,9 +1042,17 @@ describe.sequential("AgentService: routines", () => {
 
     await service.sendMessage({ botId: "chief", text: "Run exactly once" });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "completed");
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    const deliveryId = service.listQueue("chief").deliveries[0]?.id;
 
-    const delivery = service.listQueue("chief").deliveries[0];
+    // The fake answers `turn/start` on a delay, so a second completed turn is the
+    // barrier proving the first turn's late start response was already written and
+    // processed: both responses travel the same pipe, in order.
+    await service.sendMessage({ botId: "chief", text: "Run once more" });
+    await waitFor(
+      () => service?.listQueue("chief").deliveries.filter((entry) => entry.status === "completed").length === 2,
+    );
+
+    const delivery = service.listQueue("chief").deliveries.find((entry) => entry.id === deliveryId);
     if (!delivery?.turnId) throw new Error("The completed delivery did not have a turn.");
     expect((await service.readConversation("chief")).activeTurnId).toBeNull();
     expect(

@@ -8,7 +8,7 @@ or {
 } as $node where {
   register_diagnostic(
     span=$node,
-    message="Do not assert that an icon is present. See AGENTS.md \"Tests\": assert the accessible name of the control that contains the icon, which is what a user perceives.",
+    message="Do not assert that an icon is present. See the Tests section of AGENTS.md: assert the accessible name of the control that contains the icon, which is what a user perceives.",
     severity="error"
   )
 }

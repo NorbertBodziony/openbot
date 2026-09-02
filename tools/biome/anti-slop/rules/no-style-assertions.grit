@@ -3,7 +3,7 @@ language js(typescript)
 `$_.toHaveStyle($args)` as $call where {
   register_diagnostic(
     span=$call,
-    message="Do not assert computed styles in tests. See AGENTS.md \"Tests\": styling, layout and animation timing belong in Storybook, not in assertions.",
+    message="Do not assert computed styles in tests. See the Tests section of AGENTS.md: styling, layout and animation timing belong in Storybook, not in assertions.",
     severity="error"
   )
 }

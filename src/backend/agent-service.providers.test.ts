@@ -751,8 +751,11 @@ describe.sequential("AgentService: providers", () => {
     );
     expect(service.getStatus().providers?.some((provider) => provider.connectionState === "connecting")).toBe(false);
 
+    // The stale login completion is queued behind the codex connection command
+    // that `refreshProviders` runs, so awaiting the refresh proves the service
+    // processed it and still refused to sign the cancelled generation in.
     codexClients[1]?.completeLogin(true);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await service.refreshProviders();
     expect(service.getStatus().providers).toContainEqual(
       expect.objectContaining({ id: "codex", state: "sign-in-required" }),
     );

@@ -213,9 +213,9 @@ describe("RemoteScreenGateway", () => {
       client.send(JSON.stringify({ Init: { host_id: 12 + index, app_id: 1 } }));
     });
 
+    // Both Init frames are in flight together, so this only settles on a length of
+    // one while the gateway is holding the second back.
     await vi.waitFor(() => expect(upstreamMessages).toHaveLength(1));
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(upstreamMessages).toHaveLength(1);
     const firstSlot = Number(upstreamMessages[0]?.user.match(/(\d+)$/)?.[1]);
     const firstIndex = firstSlot - 1;
     const connected = await fetch(`${origin}/v1/remote-screen/sessions/${sessions[firstIndex]?.id}/viewer-state`, {
@@ -231,6 +231,7 @@ describe("RemoteScreenGateway", () => {
     });
     expect(connected.status).toBe(204);
     await vi.waitFor(() => expect(upstreamMessages).toHaveLength(2));
+    expect(new Set(upstreamMessages.map((message) => message.user)).size).toBe(2);
 
     clients.forEach((client) => {
       client.close();

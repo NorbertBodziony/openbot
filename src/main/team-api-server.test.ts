@@ -594,8 +594,7 @@ describe("TeamApiServer administration", () => {
       for (let index = 0; index < 20; index += 1) {
         socket.send(JSON.stringify({ type: "runtime-snapshot-request" }));
       }
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(getRuntimeSnapshot).toHaveBeenCalledTimes(3);
+      await vi.waitFor(() => expect(getRuntimeSnapshot).toHaveBeenCalledTimes(3));
 
       for (const [index, token] of [owner.sessionToken, admin.sessionToken, member.sessionToken].entries()) {
         const event = nextJsonEvent(socket);
@@ -610,6 +609,9 @@ describe("TeamApiServer administration", () => {
           layout: { revision: index + 1 },
         });
       }
+      // Three request/response round-trips have passed through the same socket
+      // since the burst, so the coalescer provably never woke for the other 19.
+      expect(getRuntimeSnapshot).toHaveBeenCalledTimes(3);
 
       await expect(jsonRequest(base, "/v1/sidebar-layout", { token: member.sessionToken })).resolves.toMatchObject({
         revision: 3,

@@ -73,7 +73,7 @@ describe("OpenBot connected desktop shell", () => {
           <button type="button" onClick={() => void controller.loadOlderAgentMessages("chief")}>
             Load older agent messages
           </button>
-          <output data-testid="agent-read-state">
+          <output aria-label="agent read state">
             {controller.conversationReads().chief?.unreadCount ?? -1}|
             {controller
               .activeMessages()
@@ -85,7 +85,9 @@ describe("OpenBot connected desktop shell", () => {
     }
 
     render(() => <Harness />);
-    await waitFor(() => expect(screen.getByTestId("agent-read-state")).toHaveTextContent("0|reply-latest-page"));
+    await waitFor(() =>
+      expect(screen.getByRole("status", { name: "agent read state" })).toHaveTextContent("0|reply-latest-page"),
+    );
     await fireEvent.click(screen.getByRole("button", { name: "Load older agent messages" }));
     await waitFor(() => expect(resolveOlderPage).toBeDefined());
 
@@ -98,7 +100,9 @@ describe("OpenBot connected desktop shell", () => {
       }),
     });
     await waitFor(() => expect(window.openbot.agent.markConversationRead).toHaveBeenCalledOnce());
-    await waitFor(() => expect(screen.getByTestId("agent-read-state")).toHaveTextContent("0|reply-latest-page"));
+    await waitFor(() =>
+      expect(screen.getByRole("status", { name: "agent read state" })).toHaveTextContent("0|reply-latest-page"),
+    );
 
     resolveOlderPage?.(
       testConversationPage(
@@ -120,7 +124,9 @@ describe("OpenBot connected desktop shell", () => {
     );
 
     await waitFor(() =>
-      expect(screen.getByTestId("agent-read-state")).toHaveTextContent("0|reply-older-page,reply-latest-page"),
+      expect(screen.getByRole("status", { name: "agent read state" })).toHaveTextContent(
+        "0|reply-older-page,reply-latest-page",
+      ),
     );
   });
 

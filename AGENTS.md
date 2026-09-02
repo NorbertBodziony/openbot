@@ -216,10 +216,26 @@ Do not trust your memory of any of these APIs — check `package.json`, then rea
    the Team API wire protocol, or the updater. Test it at the lowest stable boundary, once — not at
    both the component and the application level.
 
+A test that only restates the markup is worse than no test: it costs a rewrite on every refactor and
+fails for reasons no user would notice. Before adding an assertion, ask what a user or a caller would
+see differently if it failed. If the answer is "a class name changed", "the colour changed", "the
+element moved", or "the tree grew a node", drop the assertion — colour and layout belong in a
+Storybook story, and the tree belongs nowhere. The same goes for how you reach the element: a
+`data-testid` is a hook the product does not otherwise need and a CSS class is a styling detail, so
+both tie the test to markup that is free to change. Query by accessible role and name. When nothing
+accessible identifies the element, that is an accessibility gap in the component, not a reason for a
+test id. Snapshots are the same failure in bulk: a snapshot names no consequence, so it cannot fail
+for a reason anyone can act on — it gets updated, not read.
+
 Biome enforces the mechanical half in test files: `toHaveFocus`, `toHaveClass`, `toHaveStyle`,
 `toContainElement`, `toHaveAttribute("title", …)`, `document.activeElement`, `getComputedStyle`,
-`expect(x.innerHTML)`, DOM-tree walks, and `querySelector("svg" | "img")` are rejected. These stay
-available in `src/renderer/stories`, which is where visual and focus behaviour belongs.
+`expect(x.innerHTML)`, DOM-tree walks, `querySelector("svg" | "img")`, `toMatchSnapshot` and
+`toMatchInlineSnapshot`, `getByTestId` and `data-testid`, asserting on an element found by CSS class,
+and awaiting a bare `setTimeout` promise inside a test body are all rejected. The judgement Biome
+cannot make is still yours: taking a class handle to fire a drag event on or to stub
+`getBoundingClientRect` over is fine, because jsdom has no layout — taking one to decide what to
+assert is not. All of this stays available in `src/renderer/stories`, which is where visual and focus
+behaviour belongs.
 
 ## Pull requests
 

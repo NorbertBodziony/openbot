@@ -109,7 +109,11 @@
         "./tools/biome/anti-slop/rules/no-computed-style-assertions.grit",
         "./tools/biome/anti-slop/rules/no-inner-html-assertions.grit",
         "./tools/biome/anti-slop/rules/no-dom-traversal-assertions.grit",
-        "./tools/biome/anti-slop/rules/no-icon-query-assertions.grit"
+        "./tools/biome/anti-slop/rules/no-icon-query-assertions.grit",
+        "./tools/biome/anti-slop/rules/no-snapshot-tests.grit",
+        "./tools/biome/anti-slop/rules/no-testid-queries.grit",
+        "./tools/biome/anti-slop/rules/no-class-selector-queries.grit",
+        "./tools/biome/anti-slop/rules/no-sleep-in-tests.grit"
       ]
     }
   ],

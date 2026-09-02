@@ -6,7 +6,7 @@ or {
 } as $node where {
   register_diagnostic(
     span=$node,
-    message="Do not read computed styles in tests. See AGENTS.md \"Tests\": styling, layout and animation timing belong in Storybook, not in assertions.",
+    message="Do not read computed styles in tests. See the Tests section of AGENTS.md: styling, layout and animation timing belong in Storybook, not in assertions.",
     severity="error"
   )
 }

@@ -169,10 +169,9 @@ describe("AgentMemoriesModal", () => {
     const clearButton = screen.getByRole("button", { name: "Clear all memories" });
     await fireEvent.click(clearButton);
     const confirmation = await screen.findByRole("dialog", { name: "Clear all memories?" });
-    const originalModal = document.querySelector(".agent-memories-modal");
-    if (!(originalModal instanceof HTMLElement)) throw new Error("Expected the Memories modal to stay mounted.");
-    expect(originalModal).toBeVisible();
-    expect(within(originalModal).getByText("Uses metric units.")).toBeInTheDocument();
+    // The confirmation opens on top of the memories modal rather than replacing
+    // it, so the list it was opened from is still rendered underneath.
+    expect(screen.getByText("Uses metric units.")).toBeInTheDocument();
     expect(within(confirmation).getByText(/all 2 saved memories/)).toBeInTheDocument();
     expect(within(confirmation).getByText(/Original messages will stay/)).toBeInTheDocument();
     expect(clearMemories).not.toHaveBeenCalled();
