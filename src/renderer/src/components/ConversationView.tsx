@@ -2841,6 +2841,24 @@ export function ConversationHeader() {
   );
 }
 
+/** A message that renders only an action marker, with no bubble of its own. */
+function markerOnlyMessage(message: BotMessage): boolean {
+  const marker = message.actionMarker;
+  if (!marker) return false;
+  return (
+    Boolean(message.exchange) ||
+    !message.routine ||
+    marker.kind === "routine-lifecycle" ||
+    marker.kind === "unavailable"
+  );
+}
+
+/** Marker-only rows that render attachment cards below the marker do not end with one. */
+function markerRowEndsWithMarker(message: BotMessage): boolean {
+  if (!markerOnlyMessage(message)) return false;
+  return !(message.exchange?.direction === "incoming" && (message.attachments?.length ?? 0) > 0);
+}
+
 function routineMarkerAvailable(
   marker: ChatActionMarkerModel,
   availableRoutineIds: readonly string[] | undefined,
@@ -3021,16 +3039,20 @@ export function ConversationTimeline() {
                 if (!initialMessage) return null;
                 const animateEntrance = initialMessage.animate === true && markMessageSeen(initialMessage.id);
                 const initialActionMarker = initialMessage.actionMarker;
-                const markerOnly =
-                  initialActionMarker &&
-                  (initialMessage.exchange ||
-                    !initialMessage.routine ||
-                    initialActionMarker.kind === "routine-lifecycle" ||
-                    initialActionMarker.kind === "unavailable");
+                const markerOnly = markerOnlyMessage(initialMessage);
+                // Consecutive markers keep the tighter marker gap so they read as one group.
+                const groupedWithMarker = createMemo(() => {
+                  const current = message();
+                  if (!current?.actionMarker) return false;
+                  if (current.id === props.firstUnreadMessageId) return false;
+                  const previous = props.messages[virtualRow.index - 1];
+                  return previous !== undefined && markerRowEndsWithMarker(previous);
+                });
                 if (markerOnly) {
                   return (
                     <div
                       data-index={virtualRow.index}
+                      data-grouped={groupedWithMarker() ? "marker" : undefined}
                       ref={messageVirtualizer.measureElement}
                       class="virtual-chat-row"
                       style={{
@@ -3096,6 +3118,7 @@ export function ConversationTimeline() {
                 return (
                   <div
                     data-index={virtualRow.index}
+                    data-grouped={groupedWithMarker() ? "marker" : undefined}
                     ref={messageVirtualizer.measureElement}
                     class="virtual-chat-row"
                     style={{

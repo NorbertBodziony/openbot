@@ -1,4 +1,5 @@
 import type { UpdateStatus } from "@openbot/contracts/ipc";
+import { isUpdateActivePhase, isUpdateBusyPhase } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { Button, Download, RefreshCw, Spinner } from "./ui";
 
@@ -12,14 +13,6 @@ interface UpdateProgressValueProps {
   active: boolean;
   value: number;
 }
-
-const VISIBLE_UPDATE_PHASES = new Set<UpdateStatus["phase"]>([
-  "available",
-  "downloading",
-  "preparing",
-  "ready",
-  "installing",
-]);
 
 function UpdateProgressValue(props: UpdateProgressValueProps) {
   let digitGroup: HTMLSpanElement | undefined;
@@ -67,9 +60,9 @@ export function AccountUpdateIsland(props: AccountUpdateIslandProps) {
     return message || "Update failed. Try again.";
   });
   const failed = createMemo(() => Boolean(props.errorMessage) || phase() === "error");
-  const open = createMemo(() => failed() || VISIBLE_UPDATE_PHASES.has(phase()));
+  const open = createMemo(() => failed() || isUpdateActivePhase(phase()));
   const downloading = createMemo(() => phase() === "downloading");
-  const busy = createMemo(() => actionPending() || ["downloading", "preparing", "installing"].includes(phase()));
+  const busy = createMemo(() => actionPending() || isUpdateBusyPhase(phase()));
   const ready = createMemo(() => !failed() && (phase() === "ready" || phase() === "installing"));
   const progress = createMemo(() => {
     const value = props.updateStatus.progress;
@@ -79,14 +72,12 @@ export function AccountUpdateIsland(props: AccountUpdateIslandProps) {
   const busyLabel = createMemo(() => {
     if (actionPending() && failed()) return "Retrying";
     if (downloading() && progress() !== null) return null;
-    if (phase() === "preparing") return "Preparing";
     if (phase() === "installing" || (actionPending() && ready())) return "Restarting";
     return "Starting";
   });
   const accessibleActionLabel = createMemo(() => {
     if (actionPending() && failed()) return "Retrying update";
     if (downloading() && progress() !== null) return `Downloading update, ${progress()}%`;
-    if (phase() === "preparing") return "Preparing update";
     if (phase() === "installing" || (actionPending() && ready())) return "Restarting to update";
     if (failed()) return `Retry update. ${errorMessage()}`;
     return `${ready() ? "Restart to update" : "Download update"}. ${

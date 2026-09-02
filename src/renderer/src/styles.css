@@ -238,6 +238,11 @@
   --openbot-icon-sm: 14px;
   --openbot-icon-md: 16px;
   --openbot-icon-lg: 20px;
+  --openbot-chat-entry-gap: var(--openbot-space-3);
+  --openbot-chat-marker-gap: var(--openbot-space-1);
+  --openbot-chat-marker-height: var(--openbot-control-xs);
+  --openbot-chat-marker-avatar: var(--openbot-icon-md);
+  --openbot-chat-marker-width: min(680px, calc(100% - var(--openbot-space-6)));
   --openbot-duration-fast: 120ms;
   --openbot-duration-hover: 0ms;
   --openbot-duration-selectable-hover: var(--openbot-duration-hover);
