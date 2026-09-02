@@ -46,9 +46,12 @@
 ## Test value policy
 
 - Keep verification minimal and proportional to the change. Run the narrowest relevant automated test and, when needed, one manual UI check; do not repeat equivalent checks across Vitest, Storybook, and the integrated app unless they cover genuinely different runtime behavior.
-- Write tests only when they protect user behavior, accessibility, data integrity, security or permission boundaries, IPC contracts, persistence, error recovery, asynchronous ordering, or a reproduced regression.
-- Do not add tests that only check static text, CSS classes, visual-only data attributes, DOM structure, component variants, sizes, layout, animation timing, hover appearance, or Storybook states. Verify visual details in Storybook or with `bun run dev`.
+- Write tests only when they protect user behavior, accessible roles and names, live-region announcements (`role="alert"`, `role="status"`), data integrity, security or permission boundaries, IPC contracts, persistence, error recovery, asynchronous ordering, or a reproduced regression. Accessibility here means the accessible name, role and announcement - not where focus lands.
+- Do not add tests that only check static text, CSS classes, visual-only data attributes, DOM structure, component variants, sizes, layout, animation timing, focus placement, hover appearance, or Storybook states. Verify visual details in Storybook or with `bun run dev`.
 - Tests can use accessible roles and names to find controls. Assert the action and its result, not the exact wording. Assert exact text only when the text is a product contract, an error or security message, serialized output, or a localization key.
 - Do not test the same rule at the component and application levels. Prefer one test at the lowest stable behavior boundary. Keep only one application-level happy path when it protects a critical integration.
-- A UI test must fail when behavior or accessibility breaks. It must not fail only because markup, wording, or styling changes.
+- A UI test must fail when behavior breaks, or when a control loses its accessible role or name. It must not fail only because markup, wording, styling, or focus order changes.
 - For a bug fix, add a regression test only when it reproduces the failure at a stable boundary and can prevent the same failure from returning.
+- Prefer changing an existing test over adding one. A new test needs a rule that no existing boundary covers - name the boundary you checked. A new test file needs a boundary that does not exist yet.
+- `bun run check:tests` enforces the mechanical half of this policy and its budgets may only decrease. Reaching for a class-name `querySelector`, `document.activeElement`, a DOM walk inside `expect`, or a `data-testid` the test did not render itself means the rule belongs at a different boundary.
+- `toHaveFocus`, `toHaveClass`, `toHaveStyle`, `toContainElement` and `toHaveAttribute("title", ...)` are rejected in test files at commit time. They stay available in `src/renderer/stories`, which is where visual and focus behavior belongs.
