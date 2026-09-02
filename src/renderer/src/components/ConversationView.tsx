@@ -57,6 +57,7 @@ import {
   nextAgentActivityPresentation,
   ThinkingDisclosure,
 } from "./conversation/AgentActivity";
+import { AgentExchangeThreadModal } from "./conversation/AgentExchangeThreadModal";
 import type { AgentRuntimeSettings, AgentRuntimeSettingsPatch } from "./conversation/AgentSettingsPanel";
 import { AttachmentCards, fileBadge, formatFileSize } from "./conversation/AttachmentCards";
 import { attachmentReferenceTone } from "./conversation/AttachmentReference";
@@ -418,6 +419,10 @@ function createConversationViewScope(props: ConversationProps) {
     resources,
   } = controller;
   const [routineSettingsRequest, setRoutineSettingsRequest] = createSignal<RoutineSettingsRequest | null>(null);
+  const [agentExchangeThread, setAgentExchangeThread] = createSignal<{
+    agentId: string;
+    messageId: string;
+  } | null>(null);
   const [installedSkills, setInstalledSkills] = createSignal<InstalledSkill[]>([]);
   const [installedSkillsRetry, setInstalledSkillsRetry] = createSignal(0);
   let installedSkillsRequest = 0;
@@ -426,6 +431,12 @@ function createConversationViewScope(props: ConversationProps) {
   let routineSettingsRequestNonce = 0;
   let imageAttachmentPicker: HTMLInputElement | undefined;
   let contextAttachmentPicker: HTMLInputElement | undefined;
+  createEffect(
+    () => props.bot?.id,
+    () => {
+      setAgentExchangeThread(null);
+    },
+  );
   const currentTarget = (): ConversationTarget | undefined => {
     const botId = props.bot?.id;
     return botId ? { botId, serverId: props.server?.id ?? "local" } : undefined;
@@ -2516,6 +2527,7 @@ function createConversationViewScope(props: ConversationProps) {
     activityPresentation,
     addAttachments,
     agentActivity,
+    agentExchangeThread,
     agentReady,
     agentActivityExitDelayTimer,
     agentActivityExitTimer,
@@ -2640,6 +2652,7 @@ function createConversationViewScope(props: ConversationProps) {
     setActiveChatSearchIndex,
     setActiveRightPanel,
     setAgentActivitySpaceReserved,
+    setAgentExchangeThread,
     setAttachmentBusy,
     setBrowserAddress,
     setBrowserAddressEditing,
@@ -2910,6 +2923,7 @@ export function ConversationTimeline() {
     respondToBrowserTakeover,
     replyToMessage,
     scheduleUnreadDividerVisibilityUpdate,
+    setAgentExchangeThread,
     setChatSearchQuery,
     setComposerError,
     setExpandedEmojiMessageId,
@@ -3080,7 +3094,7 @@ export function ConversationTimeline() {
                               bots={props.bots}
                               announce={animateEntrance}
                               routineAvailable={routineMarkerAvailable(marker(), props.availableRoutineIds)}
-                              onSelectAgent={props.onSelectAgent}
+                              onOpenAgentThread={setAgentExchangeThread}
                               onOpenRoutine={openRoutineSettings}
                               onOpenHostedSite={(url) => void openExternalMessageUrl(url)}
                             />
@@ -3149,7 +3163,7 @@ export function ConversationTimeline() {
                                     bots={props.bots}
                                     announce={animateEntrance}
                                     routineAvailable={routineMarkerAvailable(marker(), props.availableRoutineIds)}
-                                    onSelectAgent={props.onSelectAgent}
+                                    onOpenAgentThread={setAgentExchangeThread}
                                     onOpenRoutine={openRoutineSettings}
                                     onOpenHostedSite={(url) => void openExternalMessageUrl(url)}
                                   />
@@ -3891,71 +3905,106 @@ export function ConversationPanels() {
 
 /** @internal Stable HMR boundary for conversation overlays. */
 export function ConversationOverlays() {
-  const { attachmentAction, mediaPreview, setMediaPreview } = useConversationViewScope();
+  const {
+    agentExchangeThread,
+    attachmentAction,
+    installedSkills,
+    mediaPreview,
+    openExternalMessageUrl,
+    openSharedFile,
+    openWorkspaceFile,
+    previewAttachment,
+    props,
+    setAgentExchangeThread,
+    setMediaPreview,
+  } = useConversationViewScope();
+  const selectedAgent = () => props.bots.find((bot) => bot.id === agentExchangeThread()?.agentId);
   return (
-    <Dialog.Root open={Boolean(mediaPreview())} onOpenChange={(open) => !open && setMediaPreview(null)}>
-      <Show when={mediaPreview()}>
-        {(preview) => (
-          <Dialog.Portal>
-            <Dialog.Overlay class="media-backdrop">
-              <Dialog.Content as="section" class="media-modal" data-dialog-surface="unstyled">
-                <Dialog.Title class="sr-only">{preview().attachment.name}</Dialog.Title>
-                <Button
-                  variant="ghost"
-                  type="button"
-                  class="media-close"
-                  aria-label="Close media preview"
-                  onClick={() => setMediaPreview(null)}
-                >
-                  <CloseIcon />
-                </Button>
-                <Show when={preview().attachment.previewKind === "image"}>
-                  <img
-                    class="media-image"
-                    src={preview().attachment.previewUrl ?? ""}
-                    alt={preview().attachment.name}
-                  />
-                </Show>
-                <Show when={preview().attachment.previewKind === "pdf"}>
-                  <iframe
-                    class="media-document"
-                    title={preview().attachment.name}
-                    src={preview().attachment.previewUrl ?? ""}
-                  />
-                </Show>
-                <Show when={preview().attachment.previewKind === "text"}>
-                  <pre class="media-text">{preview().loading ? "Loading…" : (preview().error ?? preview().text)}</pre>
-                </Show>
-                <div class="media-caption">
-                  <span>{preview().attachment.name}</span>
+    <>
+      <AgentExchangeThreadModal
+        open={Boolean(agentExchangeThread())}
+        messageId={agentExchangeThread()?.messageId ?? null}
+        selectedAgent={selectedAgent()}
+        currentBot={props.bot}
+        bots={props.bots}
+        messages={props.messages}
+        skills={installedSkills()}
+        onOpenChange={(open) => !open && setAgentExchangeThread(null)}
+        onSelectAgent={(botId) => {
+          setAgentExchangeThread(null);
+          props.onSelectAgent(botId);
+        }}
+        onOpenLink={(url) => void openExternalMessageUrl(url)}
+        onPreview={(attachment) => void previewAttachment(attachment)}
+        onAttachmentAction={attachmentAction}
+        onOpenSharedFile={openSharedFile}
+        onOpenWorkspaceFile={openWorkspaceFile}
+      />
+
+      <Dialog.Root open={Boolean(mediaPreview())} onOpenChange={(open) => !open && setMediaPreview(null)}>
+        <Show when={mediaPreview()}>
+          {(preview) => (
+            <Dialog.Portal>
+              <Dialog.Overlay class="media-backdrop">
+                <Dialog.Content as="section" class="media-modal" data-dialog-surface="unstyled">
+                  <Dialog.Title class="sr-only">{preview().attachment.name}</Dialog.Title>
                   <Button
-                    variant="outline"
+                    variant="ghost"
                     type="button"
-                    onClick={() => attachmentAction(preview().attachment, "open")}
+                    class="media-close"
+                    aria-label="Close media preview"
+                    onClick={() => setMediaPreview(null)}
                   >
-                    Open
+                    <CloseIcon />
                   </Button>
-                  <Button
-                    variant="outline"
-                    type="button"
-                    onClick={() => attachmentAction(preview().attachment, "download")}
-                  >
-                    Download
-                  </Button>
-                  <Button
-                    variant="outline"
-                    type="button"
-                    onClick={() => attachmentAction(preview().attachment, "reveal")}
-                  >
-                    Show in Finder
-                  </Button>
-                </div>
-              </Dialog.Content>
-            </Dialog.Overlay>
-          </Dialog.Portal>
-        )}
-      </Show>
-    </Dialog.Root>
+                  <Show when={preview().attachment.previewKind === "image"}>
+                    <img
+                      class="media-image"
+                      src={preview().attachment.previewUrl ?? ""}
+                      alt={preview().attachment.name}
+                    />
+                  </Show>
+                  <Show when={preview().attachment.previewKind === "pdf"}>
+                    <iframe
+                      class="media-document"
+                      title={preview().attachment.name}
+                      src={preview().attachment.previewUrl ?? ""}
+                    />
+                  </Show>
+                  <Show when={preview().attachment.previewKind === "text"}>
+                    <pre class="media-text">{preview().loading ? "Loading…" : (preview().error ?? preview().text)}</pre>
+                  </Show>
+                  <div class="media-caption">
+                    <span>{preview().attachment.name}</span>
+                    <Button
+                      variant="outline"
+                      type="button"
+                      onClick={() => attachmentAction(preview().attachment, "open")}
+                    >
+                      Open
+                    </Button>
+                    <Button
+                      variant="outline"
+                      type="button"
+                      onClick={() => attachmentAction(preview().attachment, "download")}
+                    >
+                      Download
+                    </Button>
+                    <Button
+                      variant="outline"
+                      type="button"
+                      onClick={() => attachmentAction(preview().attachment, "reveal")}
+                    >
+                      Show in Finder
+                    </Button>
+                  </div>
+                </Dialog.Content>
+              </Dialog.Overlay>
+            </Dialog.Portal>
+          )}
+        </Show>
+      </Dialog.Root>
+    </>
   );
 }
 

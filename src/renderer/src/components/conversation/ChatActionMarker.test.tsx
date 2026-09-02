@@ -7,22 +7,23 @@ const bots: BotProfile[] = [bot("research", "Research"), bot("sales", "Sales")];
 
 describe("ChatActionMarker", () => {
   it("opens a single outgoing agent target and shows its aggregate state", async () => {
-    const onSelectAgent = vi.fn();
+    const onOpenAgentThread = vi.fn();
     render(() => (
       <ChatActionMarker
         marker={agentMarker([{ agentId: "research", status: "running" }], "in-progress")}
         bots={bots}
-        onSelectAgent={onSelectAgent}
+        onOpenAgentThread={onOpenAgentThread}
       />
     ));
 
     expect(screen.getByRole("group", { name: "Messaged Research, In progress" })).toBeInTheDocument();
     expect(screen.queryByText("In progress")).not.toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "Open chat with Research" }));
-    expect(onSelectAgent).toHaveBeenCalledWith("research");
+    await fireEvent.click(screen.getByRole("button", { name: "Open message thread with Research" }));
+    expect(onOpenAgentThread).toHaveBeenCalledWith({ agentId: "research", messageId: "message-1" });
   });
 
-  it("distinguishes a received agent message from a sent message", () => {
+  it("opens a received message thread from its source agent", async () => {
+    const onOpenAgentThread = vi.fn();
     render(() => (
       <ChatActionMarker
         marker={{
@@ -31,16 +32,19 @@ describe("ChatActionMarker", () => {
           sourceAgentId: "research",
         }}
         bots={bots}
-        onSelectAgent={vi.fn()}
+        onOpenAgentThread={onOpenAgentThread}
       />
     ));
 
     expect(screen.getByText("Message from")).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Message from Research, Completed" })).toBeInTheDocument();
     expect(screen.queryByText("Completed")).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Open message thread with Research" }));
+    expect(onOpenAgentThread).toHaveBeenCalledWith({ agentId: "research", messageId: "message-1" });
   });
 
   it("lists each target state for a multi-agent message", async () => {
+    const onOpenAgentThread = vi.fn();
     render(() => (
       <ChatActionMarker
         marker={agentMarker(
@@ -51,7 +55,7 @@ describe("ChatActionMarker", () => {
           "partial",
         )}
         bots={bots}
-        onSelectAgent={vi.fn()}
+        onOpenAgentThread={onOpenAgentThread}
       />
     ));
 
@@ -61,6 +65,8 @@ describe("ChatActionMarker", () => {
     });
     expect(await screen.findByText("Completed")).toBeInTheDocument();
     expect(screen.getByText("Failed")).toBeInTheDocument();
+    await fireEvent.pointerUp(screen.getByRole("menuitem", { name: /Sales.*Failed/u }), { button: 0 });
+    expect(onOpenAgentThread).toHaveBeenCalledWith({ agentId: "sales", messageId: "message-1" });
   });
 
   it("renders missing agents and unavailable routines without an action", () => {
@@ -68,7 +74,7 @@ describe("ChatActionMarker", () => {
       <ChatActionMarker
         marker={agentMarker([{ agentId: "missing", status: "failed" }], "failed")}
         bots={bots}
-        onSelectAgent={vi.fn()}
+        onOpenAgentThread={vi.fn()}
       />
     ));
     expect(screen.getByText("Unavailable agent")).toBeInTheDocument();
@@ -80,7 +86,7 @@ describe("ChatActionMarker", () => {
         marker={routineMarker("cancelled")}
         bots={bots}
         routineAvailable={false}
-        onSelectAgent={vi.fn()}
+        onOpenAgentThread={vi.fn()}
         onOpenRoutine={vi.fn()}
       />
     ));
@@ -94,7 +100,7 @@ describe("ChatActionMarker", () => {
       <ChatActionMarker
         marker={routineMarker("needs-attention")}
         bots={bots}
-        onSelectAgent={vi.fn()}
+        onOpenAgentThread={vi.fn()}
         onOpenRoutine={onOpenRoutine}
       />
     ));
@@ -111,7 +117,7 @@ describe("ChatActionMarker", () => {
       <ChatActionMarker
         marker={siteMarker("publish", "succeeded")}
         bots={bots}
-        onSelectAgent={vi.fn()}
+        onOpenAgentThread={vi.fn()}
         onOpenHostedSite={onOpenHostedSite}
       />
     ));
@@ -129,7 +135,7 @@ describe("ChatActionMarker", () => {
         marker={siteMarker("replace", "failed")}
         bots={bots}
         announce
-        onSelectAgent={vi.fn()}
+        onOpenAgentThread={vi.fn()}
         onOpenHostedSite={onOpenHostedSite}
       />
     ));

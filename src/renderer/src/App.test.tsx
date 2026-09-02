@@ -8194,7 +8194,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByText("This approval is no longer active.")).toBeInTheDocument();
   });
 
-  it("opens the recipient chat from a persistent agent exchange", async () => {
+  it("opens the reply-linked message thread from a persistent agent exchange", async () => {
     vi.mocked(window.openbot.agent.readConversation).mockImplementation(async (botId) => ({
       botId,
       threadId: "thread-1",
@@ -8233,9 +8233,12 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     expect(await screen.findByText("Messaged")).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "Open chat with Sales Outbound" }));
-    expect(await screen.findByRole("heading", { name: "Sales Outbound" })).toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "Messages with Sales Outbound" })).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Open message thread with Sales Outbound" }));
+    expect(await screen.findByRole("dialog", { name: "Agent message thread" })).toBeInTheDocument();
+    expect(screen.getByText("Prepare report")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Close message thread" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Agent message thread" })).not.toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: "Chief" })).toBeInTheDocument();
   });
 
   it("shows an incoming agent marker without duplicating raw collaborator input", async () => {
@@ -8284,7 +8287,7 @@ describe("OpenBot connected desktop shell", () => {
     }));
 
     render(() => <App />);
-    expect(await screen.findByRole("button", { name: "Open chat with Sales Outbound" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Open message thread with Sales Outbound" })).toBeInTheDocument();
     expect(screen.queryByText("RAW_COLLABORATOR_RESULT")).not.toBeInTheDocument();
     expect(screen.getByText("Sales Outbound reports that the pipeline is ready.")).toBeInTheDocument();
   });

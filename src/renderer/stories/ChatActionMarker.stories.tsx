@@ -5,7 +5,7 @@ import { Heading, Text } from "../src/components/ui";
 import type { BotProfile, ChatActionMarkerModel } from "../src/data";
 
 const bots: BotProfile[] = [bot("research", "Research"), bot("sales", "Sales")];
-const onSelectAgent = fn();
+const onOpenAgentThread = fn();
 const onOpenRoutine = fn();
 const onOpenHostedSite = fn();
 
@@ -35,7 +35,7 @@ export const AllStates: Story = {
             "in-progress",
           )}
           bots={bots}
-          onSelectAgent={onSelectAgent}
+          onOpenAgentThread={onOpenAgentThread}
         />
         <ChatActionMarker
           marker={{
@@ -44,13 +44,13 @@ export const AllStates: Story = {
             sourceAgentId: "research",
           }}
           bots={bots}
-          onSelectAgent={onSelectAgent}
+          onOpenAgentThread={onOpenAgentThread}
         />
         {routineStatuses.map((status) => (
           <ChatActionMarker
             marker={routineMarker(status)}
             bots={bots}
-            onSelectAgent={onSelectAgent}
+            onOpenAgentThread={onOpenAgentThread}
             onOpenRoutine={onOpenRoutine}
           />
         ))}
@@ -59,7 +59,7 @@ export const AllStates: Story = {
             marker={lifecycleMarker(action)}
             bots={bots}
             routineAvailable={action !== "deleted"}
-            onSelectAgent={onSelectAgent}
+            onOpenAgentThread={onOpenAgentThread}
             onOpenRoutine={onOpenRoutine}
           />
         ))}
@@ -68,7 +68,7 @@ export const AllStates: Story = {
             <ChatActionMarker
               marker={siteMarker(action, status)}
               bots={bots}
-              onSelectAgent={onSelectAgent}
+              onOpenAgentThread={onOpenAgentThread}
               onOpenHostedSite={onOpenHostedSite}
             />
           )),
@@ -76,7 +76,7 @@ export const AllStates: Story = {
         <ChatActionMarker
           marker={{ kind: "unavailable", label: "Action unavailable", timestamp: timestamp }}
           bots={bots}
-          onSelectAgent={onSelectAgent}
+          onOpenAgentThread={onOpenAgentThread}
         />
       </section>
     </main>
@@ -102,13 +102,13 @@ export const CompactAndUnavailable: Story = {
           }}
           bots={bots}
           routineAvailable={false}
-          onSelectAgent={onSelectAgent}
+          onOpenAgentThread={onOpenAgentThread}
           onOpenRoutine={onOpenRoutine}
         />
         <ChatActionMarker
           marker={agentMarker([{ agentId: "missing", status: "failed" }], "failed")}
           bots={bots}
-          onSelectAgent={onSelectAgent}
+          onOpenAgentThread={onOpenAgentThread}
         />
         <ChatActionMarker
           marker={{
@@ -116,7 +116,7 @@ export const CompactAndUnavailable: Story = {
             title: "A very long public launch page title that must remain compact in a narrow conversation",
           }}
           bots={bots}
-          onSelectAgent={onSelectAgent}
+          onOpenAgentThread={onOpenAgentThread}
           onOpenHostedSite={onOpenHostedSite}
         />
       </section>
@@ -134,7 +134,7 @@ export const ReducedMotion: Story = {
         <ChatActionMarker
           marker={siteMarker("replace", "running")}
           bots={bots}
-          onSelectAgent={onSelectAgent}
+          onOpenAgentThread={onOpenAgentThread}
           onOpenHostedSite={onOpenHostedSite}
         />
       </section>

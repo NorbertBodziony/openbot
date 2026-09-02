@@ -26,7 +26,7 @@ interface ChatActionMarkerProps {
   bots: BotProfile[];
   announce?: boolean;
   routineAvailable?: boolean;
-  onSelectAgent: (botId: string) => void;
+  onOpenAgentThread: (selection: { agentId: string; messageId: string }) => void;
   onOpenRoutine?: (routine: { routineId: string; name: string }) => void;
   onOpenHostedSite?: (url: string) => void;
 }
@@ -55,7 +55,7 @@ export function ChatActionMarker(props: ChatActionMarkerProps) {
       <MarkerContent class="chat-action-marker-content">
         <span class="chat-action-marker-label">{label()}</span>
         <Show when={props.marker.kind === "agent-message" && props.marker}>
-          {(marker) => <AgentTarget marker={marker()} bots={props.bots} onSelectAgent={props.onSelectAgent} />}
+          {(marker) => <AgentTarget marker={marker()} bots={props.bots} onOpenThread={props.onOpenAgentThread} />}
         </Show>
         <Show when={props.marker.kind === "routine-lifecycle" && props.marker}>
           {(marker) => (
@@ -132,7 +132,7 @@ function HostedSiteTarget(props: {
 function AgentTarget(props: {
   marker: Extract<ChatActionMarkerModel, { kind: "agent-message" }>;
   bots: BotProfile[];
-  onSelectAgent: (botId: string) => void;
+  onOpenThread: (selection: { agentId: string; messageId: string }) => void;
 }) {
   const source = () => props.bots.find((bot) => bot.id === props.marker.sourceAgentId);
   const recipients = () => props.marker.targetDeliveries;
@@ -144,7 +144,12 @@ function AgentTarget(props: {
     <Show
       when={props.marker.direction === "outgoing"}
       fallback={
-        <AgentButton bot={source()} fallbackId={props.marker.sourceAgentId} onSelectAgent={props.onSelectAgent} />
+        <AgentButton
+          bot={source()}
+          fallbackId={props.marker.sourceAgentId}
+          messageId={props.marker.messageId}
+          onOpenThread={props.onOpenThread}
+        />
       }
     >
       <Show
@@ -153,7 +158,8 @@ function AgentTarget(props: {
           <AgentButton
             bot={singleRecipient()}
             fallbackId={recipients()[0]?.agentId}
-            onSelectAgent={props.onSelectAgent}
+            messageId={props.marker.messageId}
+            onOpenThread={props.onOpenThread}
           />
         }
       >
@@ -184,7 +190,9 @@ function AgentTarget(props: {
                   <DropdownMenu.Item
                     class="chat-action-agent-menu-item"
                     disabled={!bot()}
-                    onSelect={() => props.onSelectAgent(delivery.agentId)}
+                    onSelect={() =>
+                      props.onOpenThread({ agentId: delivery.agentId, messageId: props.marker.messageId })
+                    }
                   >
                     <AgentAvatar bot={bot()} class="chat-action-agent-avatar" />
                     <span>{bot()?.name ?? "Unavailable agent"}</span>
@@ -203,7 +211,8 @@ function AgentTarget(props: {
 function AgentButton(props: {
   bot: BotProfile | undefined;
   fallbackId: string | undefined;
-  onSelectAgent: (botId: string) => void;
+  messageId: string;
+  onOpenThread: (selection: { agentId: string; messageId: string }) => void;
 }) {
   return (
     <Show
@@ -221,8 +230,8 @@ function AgentButton(props: {
           type="button"
           class="chat-action-target"
           style={agentTargetStyle(bot())}
-          aria-label={`Open chat with ${bot().name}`}
-          onClick={() => props.onSelectAgent(bot().id)}
+          aria-label={`Open message thread with ${bot().name}`}
+          onClick={() => props.onOpenThread({ agentId: bot().id, messageId: props.messageId })}
         >
           <AgentAvatar bot={bot()} class="chat-action-agent-avatar" />
           <span>{bot().name}</span>

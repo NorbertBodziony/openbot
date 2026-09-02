@@ -2265,6 +2265,171 @@
   }
 }
 
+.agent-exchange-thread-overlay {
+  position: fixed;
+  z-index: var(--openbot-layer-dialog);
+  inset: 0;
+}
+
+.agent-exchange-thread-overlay[data-expanded] {
+  animation: agent-dialog-overlay-in var(--openbot-duration-dialog) ease;
+}
+
+.agent-exchange-thread-overlay[data-closed] {
+  animation: agent-dialog-overlay-out var(--openbot-duration-dialog) ease;
+}
+
+.agent-exchange-thread-modal {
+  position: fixed;
+  z-index: calc(var(--openbot-layer-dialog) + 1);
+  top: 50%;
+  left: 50%;
+  width: min(640px, calc(100vw - 48px));
+  height: min(620px, calc(100dvh - 48px));
+  min-height: 320px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  outline: 0;
+  background: var(--openbot-bg-control);
+  color: var(--openbot-text-primary);
+  transform: translate(-50%, -50%);
+  transform-origin: center;
+}
+
+.agent-exchange-thread-modal[data-expanded] {
+  animation: agent-dialog-content-in var(--openbot-duration-dialog) ease;
+}
+
+.agent-exchange-thread-modal[data-closed] {
+  animation: agent-dialog-content-out var(--openbot-duration-dialog) ease;
+}
+
+.agent-exchange-thread-header {
+  display: flex;
+  min-height: 64px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--openbot-space-3);
+  border-bottom: 1px solid var(--openbot-border);
+  padding: var(--openbot-space-2) var(--openbot-space-2) var(--openbot-space-2) var(--openbot-space-4);
+}
+
+.agent-exchange-thread-heading {
+  min-width: 0;
+}
+
+.agent-exchange-thread-title-copy,
+.agent-exchange-thread-meta {
+  display: flex;
+  align-items: center;
+}
+
+.agent-exchange-thread-title-copy {
+  gap: var(--openbot-space-2);
+}
+
+.agent-exchange-thread-title-copy h2 {
+  margin: 0;
+  font-size: var(--openbot-text-lg);
+  font-weight: var(--openbot-weight-semibold);
+  line-height: var(--openbot-leading-lg);
+}
+
+.agent-exchange-thread-heading > p {
+  margin: var(--openbot-space-0-5) 0 0 calc(var(--openbot-control-xs) + var(--openbot-space-2));
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-xs);
+  line-height: var(--openbot-leading-xs);
+}
+
+.agent-exchange-thread-title-avatar {
+  width: var(--openbot-control-xs);
+  height: var(--openbot-control-xs);
+  flex: 0 0 var(--openbot-control-xs);
+}
+
+.agent-exchange-thread-list {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--openbot-space-5);
+  overflow-y: auto;
+  padding: var(--openbot-space-5);
+  scrollbar-gutter: stable;
+}
+
+.agent-exchange-thread-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--openbot-space-2);
+}
+
+.agent-exchange-thread-entry[data-align="end"] {
+  align-items: flex-end;
+}
+
+.agent-exchange-thread-meta {
+  min-width: 0;
+  gap: var(--openbot-space-1-5);
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-xs);
+  line-height: var(--openbot-leading-xs);
+}
+
+.agent-exchange-thread-entry[data-align="end"] .agent-exchange-thread-meta {
+  flex-direction: row-reverse;
+}
+
+.agent-exchange-thread-meta strong {
+  overflow: hidden;
+  color: var(--openbot-text-secondary);
+  font-weight: var(--openbot-weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-exchange-thread-avatar {
+  width: var(--openbot-icon-md);
+  height: var(--openbot-icon-md);
+  flex: 0 0 var(--openbot-icon-md);
+}
+
+.agent-exchange-thread-entry > .ui-bubble {
+  max-width: 82%;
+}
+
+.agent-exchange-thread-empty {
+  margin: auto;
+  color: var(--openbot-text-muted);
+  font-size: var(--openbot-text-md);
+  line-height: var(--openbot-leading-md);
+  text-align: center;
+}
+
+@media (max-width: 520px) {
+  .agent-exchange-thread-modal {
+    width: calc(100vw - 24px);
+    height: calc(100dvh - 24px);
+  }
+
+  .agent-exchange-thread-list {
+    padding: var(--openbot-space-4);
+  }
+
+  .agent-exchange-thread-entry > .ui-bubble {
+    max-width: 90%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-exchange-thread-overlay,
+  .agent-exchange-thread-modal {
+    animation: none;
+  }
+}
+
 .agent-settings-model {
   margin: 25px 0 20px;
   overflow: visible;
