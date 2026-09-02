@@ -45,16 +45,12 @@ jobs:
         run: bun run check:desktop
 
   tests:
-    # ubuntu-latest gives 4 vCPUs and vitest uses 3 workers, so a single job is
-    # CPU-bound: ~250s of test CPU cannot go below ~85s of wall clock there.
-    # Three shards split the files across three runners instead.
-    name: Tests (shard ${{ matrix.shard }}/3)
+    # ubuntu-latest gives 4 vCPUs and vitest uses 3 workers, so this job is
+    # CPU-bound at ~2 minutes. Splitting it across runners saved wall clock but
+    # paid for it with a checkout and an install per shard, so it runs as one.
+    name: Tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3]
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -72,8 +68,11 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
 
-      - name: Run tests
-        run: bun run test -- --shard=${{ matrix.shard }}/3
+      - name: Run desktop tests
+        run: bun run test:desktop
+
+      - name: Run site router tests
+        run: bun run test:sites
 
   api:
     name: API

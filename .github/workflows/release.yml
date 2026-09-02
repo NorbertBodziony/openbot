@@ -137,7 +137,8 @@ jobs:
       - name: Run repository check
         run: |
           bun run check:desktop
-          bun run test -- --maxWorkers=2
+          bun run test:desktop -- --maxWorkers=2
+          bun run test:sites
           bun run check:api
 
       - name: Install and verify native runtimes

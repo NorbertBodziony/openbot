@@ -1,12 +1,14 @@
 # Testing guide
 
-This document decides **whether** a test is required, **which type** it should be,
-and **where** it belongs. Read it before writing a test at any seam listed in
-section 4.
+This document says **which type** of test to write and **where** it belongs, once a
+test is already required. **Whether** it is required at all is decided by the "Test
+value policy" section of `AGENTS.md`, where the default answer is no test. The
+seventeen types in section 3 are a vocabulary for the tests that pass that filter,
+not an invitation to write seventeen of them.
 
-The prohibitions live in the "Test value policy" section of `AGENTS.md` and are not
-repeated here. This document adds the part that policy leaves out: the vocabulary of
-test types we actually want, and the seams where one is mandatory.
+So the prohibitions are not repeated here. This document adds the part the policy
+leaves out: the names of the tests we actually want, and the seams in section 4
+where one is mandatory. Read it before writing a test at any of those seams.
 
 The default failure mode this guide exists to prevent is not a missing test. It is
 a suite that grows where rendering is easy and stays thin where a defect is
@@ -39,17 +41,25 @@ of them can enforce the rule, **do not write a test.**
 | `tsc` | `bun run typecheck` (8 projects) | type shapes, exhaustiveness, nullability |
 | Biome + 17 GritQL rules | `biome.json`, `tools/biome/anti-slop/rules/` | syntactic rules, unsafe assertions, module mocking, focus/class/style/containment/tooltip matchers |
 | `scripts/ui-foundation-check.ts` | `bun run check:ui` | native controls outside `components/ui`, colour/size/radius literals in inline styles |
-| `scripts/test-value-check.ts` | `bun run check:tests` | class-name `querySelector`, `document.activeElement`, raw-HTML and computed-style assertions, DOM walks, foreign `data-testid`. Its budgets may only decrease |
+| `scripts/test-value-check.ts` | `bun run check:tests` | class-name `querySelector`, `document.activeElement`, raw-HTML and computed-style assertions, DOM walks, foreign `data-testid`. Its budgets are per file and may only decrease, and it holds the case ceilings of the closed `App*.test.tsx` family |
+| `scripts/policy-sync-check.ts` | `bun run check:tests` | the counts, script names, file paths and vitest globs this document and `AGENTS.md` claim. A document that describes a mechanism it no longer has fails the check |
 | Storybook, by hand | `bun run storybook` | every visual and animation detail |
 | vitest project `node` | `src/backend`, `src/main`, `src/preload`, `scripts`, `packages/contracts`, and every `src/renderer/**/*.test.ts` | **the default.** Anything separable from the DOM |
-| vitest project `renderer` (jsdom) | `src/renderer/**/*.test.tsx` | only component behaviour that cannot be extracted |
+| vitest project `renderer` (jsdom) | `src/renderer/**/*.test.tsx`, plus `*.dom.test.ts` | only component behaviour that cannot be extracted |
 | real-Electron smoke | `scripts/browser-smoke.ts` (`test:browser`, runs in CI) | behaviour that only exists in the real runtime |
 | live smoke scripts | `test:filesystem`, `test:storage-live`, `test:grok-live`, `test:codex`, `test:team-live`, `test:remote-desktop-runtime` | provider and network reality; manual by design, never in CI |
 
-Project boundaries are defined in `vitest.config.ts` and follow the file extension:
-`src/renderer/**/*.test.ts` runs in `node`, `*.test.tsx` in jsdom. So the project is not
-a decision — the extension you pick is. A logic test that turns out to need jsdom is a
-signal the logic is not separable from the DOM yet.
+Project boundaries are defined in `vitest.config.ts` and follow the file name, so the
+project is not a decision — the name you pick is:
+
+- `src/renderer/**/*.test.ts` runs in `node`, with no DOM. This is where renderer logic belongs.
+- `src/renderer/**/*.test.tsx` runs in jsdom, because it renders JSX.
+- `*.dom.test.ts` runs in jsdom too, for the narrow case of code that needs a DOM API
+  (`Range`, `TreeWalker`, `getBoundingClientRect`) without rendering a component. Three
+  files use it. The suffix exists so `.tsx` keeps meaning "contains JSX".
+
+A logic test that turns out to need either jsdom name is a signal the logic is not
+separable from the DOM yet.
 
 ## 3. Test types we want
 
