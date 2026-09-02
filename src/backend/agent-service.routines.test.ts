@@ -10,6 +10,7 @@ import {
   expectOpenBotToolError,
   FakeAgentClient,
   fakeBrowser,
+  notification,
   openBotToolPayload,
   protocolMessages,
   startAgentTestFixture,
@@ -253,6 +254,200 @@ describe.sequential("AgentService: routines", () => {
       (message) => routineRunConversationEvent(message)?.status === "running",
     );
     expect(runningMarkers).toHaveLength(1);
+  });
+
+  it("keeps routine approvals interactive while attention markers retry", async () => {
+    const { store, mailbox } = stores(root);
+    let client: FakeAgentClient | undefined;
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
+      client = new FakeAgentClient(provider, "", false);
+      return client;
+    });
+    const emitted: AgentEvent[] = [];
+    service.on("event", (event: AgentEvent) => emitted.push(event));
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    const routine = service.createRoutine({
+      botId: bot.id,
+      name: "Approval marker retry",
+      instruction: "Request approval and continue after the response.",
+      active: true,
+      timezone: "UTC",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    const run = await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await waitFor(() =>
+      service
+        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .some((candidate) => candidate.id === run.id && candidate.status === "running"),
+    );
+    const delivery = service.listQueue(bot.id).deliveries.find((candidate) => candidate.status === "running");
+    const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
+    if (!delivery?.turnId || !client || !threadId) throw new Error("The routine turn did not start.");
+
+    const appendConversationMessage = store.database.appendConversationMessage.bind(store.database);
+    let rejectNeedsAttentionMarker = true;
+    let rejectResumedRunningMarker = false;
+    vi.spyOn(store.database, "appendConversationMessage").mockImplementation((input) => {
+      if (rejectNeedsAttentionMarker && input.eventType === "routine.run-needs-attention") {
+        rejectNeedsAttentionMarker = false;
+        throw new Error("attention marker persistence failed");
+      }
+      if (rejectResumedRunningMarker && input.eventType === "routine.run-running") {
+        rejectResumedRunningMarker = false;
+        throw new Error("resumed marker persistence failed");
+      }
+      return appendConversationMessage(input);
+    });
+
+    client.emit("request", {
+      id: "retry-routine-approval",
+      method: "item/commandExecution/requestApproval",
+      params: { threadId, turnId: delivery.turnId, command: "echo routine" },
+    });
+
+    await waitFor(() => emitted.some((event) => event.type === "approval"));
+    await waitFor(() =>
+      service
+        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .some((candidate) => candidate.id === run.id && candidate.status === "needs-attention"),
+    );
+    expect(client.responses).toEqual([]);
+
+    rejectResumedRunningMarker = true;
+    await service.respondToApproval({ requestId: "retry-routine-approval", decision: "accept" });
+    expect(client.responses).toContainEqual(
+      expect.objectContaining({ id: "retry-routine-approval", result: { decision: "accept" } }),
+    );
+    await waitFor(() =>
+      service
+        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .some((candidate) => candidate.id === run.id && candidate.status === "running"),
+    );
+
+    expect(
+      emitted.filter(
+        (event) => event.type === "error" && event.code === "delivery_reconciliation_pending" && event.botId === bot.id,
+      ),
+    ).toHaveLength(2);
+    const transitions = (await service.readConversation(bot.id)).messages.flatMap(
+      (message) => routineRunConversationEvent(message) ?? [],
+    );
+    expect(transitions.filter((event) => event.runId === run.id && event.status === "needs-attention")).toHaveLength(1);
+    expect(transitions.filter((event) => event.runId === run.id && event.status === "running")).toHaveLength(2);
+  });
+
+  it("continues turn completion while a terminal routine marker retries", async () => {
+    const { store, mailbox } = stores(root);
+    let client: FakeAgentClient | undefined;
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
+      client = new FakeAgentClient(provider, "", false);
+      return client;
+    });
+    const emitted: AgentEvent[] = [];
+    service.on("event", (event: AgentEvent) => emitted.push(event));
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    const routine = service.createRoutine({
+      botId: bot.id,
+      name: "Retry terminal marker",
+      instruction: "Continue queued work after terminal marker persistence retries.",
+      active: true,
+      timezone: "UTC",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+    const firstRun = await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await waitFor(() => {
+      const deliveries = service?.listQueue(bot.id).deliveries ?? [];
+      return (
+        deliveries.some((delivery) => delivery.status === "running") &&
+        deliveries.some((delivery) => delivery.status === "queued")
+      );
+    });
+    const firstDelivery = service.listQueue(bot.id).deliveries.find((delivery) => delivery.status === "running");
+    const threadId = store.activeProviderSession(bot.id)?.externalSessionId;
+    if (!firstDelivery?.turnId || !client || !threadId) throw new Error("The first routine turn did not start.");
+    const appendConversationMessage = store.database.appendConversationMessage.bind(store.database);
+    let rejectTerminalMarker = true;
+    vi.spyOn(store.database, "appendConversationMessage").mockImplementation((input) => {
+      if (rejectTerminalMarker && input.eventType === "routine.run-succeeded") {
+        rejectTerminalMarker = false;
+        throw new Error("terminal marker persistence failed");
+      }
+      return appendConversationMessage(input);
+    });
+
+    client.emit(
+      "notification",
+      notification("turn/completed", {
+        threadId,
+        turn: { id: firstDelivery.turnId, status: "completed" },
+      }),
+    );
+
+    await waitFor(() =>
+      emitted.some(
+        (event) => event.type === "turn-completed" && event.botId === bot.id && event.turnId === firstDelivery.turnId,
+      ),
+    );
+    await waitFor(() =>
+      service
+        ?.listQueue(bot.id)
+        .deliveries.some((delivery) => delivery.id !== firstDelivery.id && delivery.status === "running"),
+    );
+    expect(
+      service
+        .listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .find((run) => run.id === firstRun.id),
+    ).toMatchObject({ status: "succeeded" });
+    expect(emitted).toContainEqual(
+      expect.objectContaining({ type: "error", code: "delivery_reconciliation_pending", botId: bot.id }),
+    );
+    const terminalMarkers = (await service.readConversation(bot.id)).messages.filter((message) => {
+      const event = routineRunConversationEvent(message);
+      return event?.runId === firstRun.id && event.status === "succeeded";
+    });
+    expect(terminalMarkers).toHaveLength(1);
+  });
+
+  it("persists a completed routine turn as terminal", async () => {
+    const { store, mailbox } = stores(root);
+    service = new AgentService(
+      store,
+      mailbox,
+      fakeBrowser(),
+      30_000,
+      "codex",
+      (provider) => new FakeAgentClient(provider),
+    );
+    await service.initialize();
+    const bot = await store.getOrCreate("chief");
+    const routine = service.createRoutine({
+      botId: bot.id,
+      name: "Queue health",
+      instruction: "Check the current queue health.",
+      active: true,
+      timezone: "Europe/Warsaw",
+      schedule: { kind: "daily", time: "09:00" },
+    });
+
+    await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    await waitFor(() => service?.listQueue(bot.id).deliveries[0]?.status === "completed");
+
+    const turnId = service.listQueue(bot.id).deliveries[0]?.turnId;
+    if (!turnId) throw new Error("The completed routine turn did not start.");
+    expect(
+      store.database.connection
+        .prepare("SELECT status, completed_at FROM projection_turns WHERE turn_id = ?")
+        .get(turnId),
+    ).toMatchObject({ status: "completed", completed_at: expect.any(String) });
+    expect((await service.readConversation(bot.id)).activeTurnId).toBeNull();
+    expect(
+      (await service.readConversation(bot.id)).messages.flatMap(
+        (message) => routineRunConversationEvent(message)?.status ?? [],
+      ),
+    ).toContain("succeeded");
   });
 
   it("rolls back a routine transition and retries without a duplicate marker", async () => {

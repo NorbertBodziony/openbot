@@ -143,7 +143,17 @@ export class FakeAgentClient extends EventEmitter implements AgentClient {
       result = {
         data:
           this.provider === "codex"
-            ? ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"].map((model) => ({ model }))
+            ? // The uncurated ids are advertised on purpose, the way the real CLI
+              // does: CURATED_CODEX_MODEL_IDS has to drop them again.
+              [
+                "gpt-5.6-luna",
+                "gpt-5.6-terra",
+                "gpt-5.6-sol",
+                "gpt-5.5",
+                "gpt-5.4",
+                "gpt-5.4-mini",
+                "gpt-5.3-codex-spark",
+              ].map((model) => ({ model }))
             : this.provider === "grok"
               ? ["grok-4.5", "grok-fast"].map((model) => ({ model }))
               : ["claude-fable-5", "claude-opus-5", "claude-sonnet-5"].map((model) => ({ model })),

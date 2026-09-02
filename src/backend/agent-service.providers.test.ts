@@ -95,16 +95,14 @@ describe.sequential("AgentService: providers", () => {
 
     expect(availableOrder).toEqual(["claude", "grok", "codex"]);
 
-    // The fake CLI advertises models outside the curated set, and
-    // CURATED_CODEX_MODEL_IDS (agent-service.ts:3296) has to drop them.
-    const codexModelIds = service
-      .listModels()
-      .filter((model) => model.provider === "codex")
-      .map((model) => model.id);
-    for (const uncurated of ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark"]) {
-      expect(codexModelIds).not.toContain(uncurated);
-    }
-    expect(codexModelIds).toContain("gpt-5.6-luna");
+    // The fake advertises gpt-5.5, gpt-5.4, gpt-5.4-mini and gpt-5.3-codex-spark
+    // alongside the curated three, so CURATED_CODEX_MODEL_IDS has to drop four.
+    expect(
+      service
+        .listModels()
+        .filter((model) => model.provider === "codex")
+        .map((model) => model.id),
+    ).toEqual(["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]);
   });
 
   it("duplicates persistent agent data without conversation or routine-run history", async () => {
@@ -624,34 +622,40 @@ describe.sequential("AgentService: providers", () => {
     );
   });
 
-  it("connects Claude through the bundled CLI login command", async () => {
-    process.env.OPENBOT_CLAUDE_PATH = await createFakeClaude(root);
-    const { store, mailbox } = stores(root);
-    let claudeClients = 0;
-    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "claude", (provider) => {
-      const authenticated = provider === "claude" ? claudeClients > 0 : true;
-      if (provider === "claude") claudeClients += 1;
-      return new FakeAgentClient(provider, "DONE", true, authenticated);
-    });
-    await service.initialize();
+  it.each([
+    { target: "claude", connect: "connectClaude", pathVariable: "OPENBOT_CLAUDE_PATH", createCli: createFakeClaude },
+    { target: "grok", connect: "connectGrok", pathVariable: "OPENBOT_GROK_PATH", createCli: createFakeGrok },
+  ] as const)(
+    "connects $target through the bundled CLI login command",
+    async ({ target, connect, pathVariable, createCli }) => {
+      process.env[pathVariable] = await createCli(root);
+      const { store, mailbox } = stores(root);
+      let clients = 0;
+      service = new AgentService(store, mailbox, fakeBrowser(), 30_000, target, (provider) => {
+        const authenticated = provider === target ? clients > 0 : true;
+        if (provider === target) clients += 1;
+        return new FakeAgentClient(provider, "DONE", true, authenticated);
+      });
+      await service.initialize();
 
-    expect(service.getStatus().providers).toContainEqual(
-      expect.objectContaining({ id: "claude", state: "sign-in-required" }),
-    );
+      expect(service.getStatus().providers).toContainEqual(
+        expect.objectContaining({ id: target, state: "sign-in-required" }),
+      );
 
-    const connecting = await service.connectClaude();
+      const connecting = await service[connect]();
 
-    expect(connecting.providers).toContainEqual(
-      expect.objectContaining({ id: "claude", state: "sign-in-required", connectionState: "connecting" }),
-    );
-    await waitFor(() => claudeClients === 2);
-    await waitFor(
-      () => service?.getStatus().providers?.find((provider) => provider.id === "claude")?.state === "available",
-    );
-    expect(service.getStatus().providers).toContainEqual(
-      expect.objectContaining({ id: "claude", state: "available", email: "claude@example.com" }),
-    );
-  });
+      expect(connecting.providers).toContainEqual(
+        expect.objectContaining({ id: target, state: "sign-in-required", connectionState: "connecting" }),
+      );
+      await waitFor(() => clients === 2);
+      await waitFor(
+        () => service?.getStatus().providers?.find((provider) => provider.id === target)?.state === "available",
+      );
+      expect(service.getStatus().providers).toContainEqual(
+        expect.objectContaining({ id: target, state: "available", email: `${target}@example.com` }),
+      );
+    },
+  );
 
   it("restores the connect action when the login page cannot open", async () => {
     const { store, mailbox } = stores(root);
