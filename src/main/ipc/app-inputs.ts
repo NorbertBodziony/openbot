@@ -6,6 +6,7 @@ import type {
   ExternalDestination,
   MacPermissionId,
   SetAnalyticsPreferenceInput,
+  UpdatePreference,
 } from "@openbot/contracts/ipc";
 import {
   isDynamicIslandAction,
@@ -30,6 +31,11 @@ export function parseProviderId(input: unknown): AgentProviderId {
 export function parseAnalyticsPreference(input: unknown): SetAnalyticsPreferenceInput {
   if (!isDynamicRecord(input) || !isBoolean(input.enabled)) throw new Error("Analytics preference is required.");
   return { enabled: input.enabled };
+}
+
+export function parseUpdatePreference(input: unknown): UpdatePreference {
+  if (!isDynamicRecord(input) || !isBoolean(input.autoDownload)) throw new Error("Update preference is required.");
+  return { autoDownload: input.autoDownload };
 }
 
 export function parseDynamicIslandPreference(input: unknown): DynamicIslandPreference {

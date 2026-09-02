@@ -117,10 +117,15 @@ The workflow:
 Users can verify a downloaded artifact with
 `gh attestation verify <file> --repo NorbertBodziony/openbot`.
 
-Installed OpenBot builds check for updates shortly after launch and every four hours. Updates are
-never downloaded without a user action. The account popover shows the current state and lets the user
-download an available version, then restart into it. macOS shows the restart action only after the
-native updater finishes staging the ZIP. Windows installs only after the explicit restart action.
+Installed OpenBot builds check for updates shortly after launch and every four hours. New versions
+download automatically while **Automatically download updates** is on, which is the default and is
+persisted per user in `openbot-update-preference-v1.json`; with the setting off, a download starts
+only on a user action. The account popover shows the current state and lets the user download an
+available version, then restart into it. The restart action appears as
+soon as the download completes on both platforms, and neither platform installs without that
+explicit action, because `autoInstallOnAppQuit` stays off so shutdown preparation always runs. Every
+stage the user waits on is bounded by a timeout and recorded in `logs/update/update.log`, so a failed
+check, download, or restart reports an actionable error and can be retried in place.
 
 The Whisper executable is part of the application. The `ggml-medium-q5_0.bin` model is not part of an
 application or update artifact. OpenBot downloads the pinned model on first voice use, checks its size

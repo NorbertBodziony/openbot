@@ -42,6 +42,7 @@ import {
   parseMacPermission,
   parseProvider,
   parseProviderId,
+  parseUpdatePreference,
 } from "./app-inputs";
 import { parseBrowserNavigate, parseBrowserOpen, parseVisibility } from "./browser-inputs";
 import {
@@ -66,6 +67,8 @@ describe("app IPC input parsing", () => {
     expect(parseExternalDestination("claude-install")).toBe("claude-install");
     expect(parseExternalDestination("claude-sign-in")).toBe("claude-sign-in");
     expect(parseAnalyticsPreference({ enabled: false })).toEqual({ enabled: false });
+    expect(parseUpdatePreference({ autoDownload: false })).toEqual({ autoDownload: false });
+    expect(parseUpdatePreference({ autoDownload: true })).toEqual({ autoDownload: true });
   });
 
   it("keeps setup and permission error messages", () => {
@@ -76,6 +79,8 @@ describe("app IPC input parsing", () => {
     expect(() => parseExternalDestination("https://example.com")).toThrowError("Unknown external destination.");
     expect(() => parseExternalDestination("chatgpt-install")).toThrowError("Unknown external destination.");
     expect(() => parseAnalyticsPreference({ enabled: "false" })).toThrowError("Analytics preference is required.");
+    expect(() => parseUpdatePreference({ autoDownload: "yes" })).toThrowError("Update preference is required.");
+    expect(() => parseUpdatePreference(null)).toThrowError("Update preference is required.");
   });
 
   it("validates Dynamic Island data and actions", () => {

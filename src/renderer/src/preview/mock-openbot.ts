@@ -1062,8 +1062,7 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         const downloadSteps = [
           { delay: 350, expectedPhase: "downloading", phase: "downloading", progress: 28 },
           { delay: 700, expectedPhase: "downloading", phase: "downloading", progress: 64 },
-          { delay: 1_050, expectedPhase: "downloading", phase: "preparing", progress: 100 },
-          { delay: 1_400, expectedPhase: "preparing", phase: "ready", progress: 100 },
+          { delay: 1_050, expectedPhase: "downloading", phase: "ready", progress: 100 },
         ] as const;
         for (const step of downloadSteps) {
           schedule(() => {
@@ -1078,6 +1077,8 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         updateStatus = { ...updateStatus, phase: "installing" };
         emit(updateListeners, updateStatus);
       },
+      getPreference: async () => ({ autoDownload: true }),
+      setPreference: async (input) => ({ ...input }),
       onEvent: (listener) => {
         updateListeners.add(listener);
         return () => updateListeners.delete(listener);

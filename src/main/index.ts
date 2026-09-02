@@ -39,7 +39,6 @@ import {
   dialog,
   Menu,
   Notification,
-  autoUpdater as nativeAutoUpdater,
   type OpenDialogOptions,
   powerMonitor,
   protocol,
@@ -130,6 +129,7 @@ import {
   parseMacPermission,
   parseProvider,
   parseProviderId,
+  parseUpdatePreference,
 } from "./ipc/app-inputs";
 import { parseAvatarImage } from "./ipc/avatar-inputs";
 import { parseBrowserBounds, parseBrowserNavigate, parseBrowserOpen, parseVisibility } from "./ipc/browser-inputs";
@@ -176,6 +176,7 @@ import { TeamWebRtcBridge } from "./team-webrtc-bridge";
 import { TeamWebRtcClientTransport } from "./team-webrtc-client-transport";
 import { handleTrusted, handleTrustedWithEvent } from "./trusted-ipc";
 import { isTrustedRendererUrl } from "./trusted-renderer";
+import { readUpdatePreference, writeUpdatePreference } from "./update-preference-store";
 import { supportsInstalledUpdates, UpdateService } from "./update-service";
 import { WHISPER_MODEL_NAME, WHISPER_MODEL_URL } from "./voice-model-service";
 import { VoiceTranscriptionService } from "./voice-transcription-service";
@@ -286,6 +287,7 @@ let inviteReceiverReady = false;
 
 const SETUP_FILE = "openbot-setup-v2.json";
 const ANALYTICS_PREFERENCE_FILE = "openbot-analytics-preference-v1.json";
+const UPDATE_PREFERENCE_FILE = "openbot-update-preference-v1.json";
 const DYNAMIC_ISLAND_PREFERENCE_FILE = "openbot-dynamic-island-preference-v1.json";
 const MAIN_WINDOW_STATE_FILE = "openbot-main-window-state-v1.json";
 
@@ -336,6 +338,7 @@ function registerIpcHandlers(
   updater: UpdateService,
   setupFile: string,
   analyticsPreferenceFile: string,
+  updatePreferenceFile: string,
   initializeAgent: () => Promise<void>,
   sidebarLayout: SidebarLayoutStore,
   host: HostService,
@@ -600,6 +603,12 @@ function registerIpcHandlers(
   handleTrusted(IPC_CHANNELS.updateCheck, () => updater.checkForUpdates());
   handleTrusted(IPC_CHANNELS.updateDownload, () => updater.downloadUpdate());
   handleTrusted(IPC_CHANNELS.updateInstall, () => updater.installUpdate());
+  handleTrusted(IPC_CHANNELS.updateGetPreference, () => readUpdatePreference(updatePreferenceFile));
+  handleTrusted(IPC_CHANNELS.updateSetPreference, async (input: unknown) => {
+    const preference = await writeUpdatePreference(updatePreferenceFile, parseUpdatePreference(input).autoDownload);
+    updater.setAutoDownload(preference.autoDownload);
+    return preference;
+  });
   handleTrusted(IPC_CHANNELS.maintenanceExportData, () =>
     exportOpenBotData({ service, mailbox, parentWindow: mainWindow }),
   );
@@ -1825,8 +1834,10 @@ if (!hasSingleInstanceLock) {
       browserHost.onChanged((tabs, activeTabId) => forwardBrowserDisplayState({ tabs, activeTabId }));
       const setupFile = join(app.getPath("userData"), SETUP_FILE);
       const analyticsPreferenceFile = join(app.getPath("userData"), ANALYTICS_PREFERENCE_FILE);
+      const updatePreferenceFile = join(app.getPath("userData"), UPDATE_PREFERENCE_FILE);
       const setupState = await readSetupState(setupFile);
       const analyticsPreference = await readAnalyticsPreference(analyticsPreferenceFile);
+      const updatePreference = await readUpdatePreference(updatePreferenceFile);
       providerRuntimeManager = new ProviderRuntimeManager({
         root: join(app.getPath("userData"), "provider-runtimes"),
       });
@@ -2120,9 +2131,9 @@ if (!hasSingleInstanceLock) {
           app.isPackaged &&
           supportsInstalledUpdates(process.platform) &&
           existsSync(join(process.resourcesPath, "app-update.yml")),
+        autoDownload: updatePreference.autoDownload,
         beforeInstall: prepareForUpdateInstall,
         platform: process.platform,
-        nativeUpdater: nativeAutoUpdater,
         logDirectory: join(app.getPath("userData"), "logs", "update"),
         shipItDirectory: join(homedir(), "Library", "Caches", "app.openbot.desktop.ShipIt"),
       });
@@ -2154,6 +2165,7 @@ if (!hasSingleInstanceLock) {
         updateService,
         setupFile,
         analyticsPreferenceFile,
+        updatePreferenceFile,
         () => agentInitialization.start(),
         sidebarLayoutStore,
         host,

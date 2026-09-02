@@ -116,8 +116,6 @@ function SettingsModalStory(props: {
     await new Promise((resolve) => setTimeout(resolve, 400));
     setUpdateStatus({ ...downloadingStatus, progress: 48 });
     await new Promise((resolve) => setTimeout(resolve, 400));
-    setUpdateStatus({ ...downloadingStatus, phase: "preparing", progress: 100 });
-    await new Promise((resolve) => setTimeout(resolve, 400));
     setUpdateStatus({ ...downloadingStatus, phase: "ready", progress: 100 });
   }
 
@@ -312,7 +310,6 @@ export const DownloadUpdateFlow: Story = {
 
     await step("Finish the mocked download", async () => {
       await waitFor(() => expect(body.getByText("Downloading OpenBot v0.3.0 · 48%")).toBeVisible());
-      await waitFor(() => expect(body.getByText("Preparing OpenBot v0.3.0…")).toBeVisible());
       await waitFor(() => expect(body.getByText("OpenBot v0.3.0 is ready. Restart to apply.")).toBeVisible());
       await expect(body.getByRole("button", { name: "Restart to update" })).toBeEnabled();
     });
