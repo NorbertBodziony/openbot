@@ -1,6 +1,6 @@
 import type { ServerSummary } from "@openbot/contracts/ipc";
 import { createMemo, For, Loading, lazy, Show } from "solid-js";
-import { useAppController } from "./App";
+import { useAppController } from "./app-controller-context";
 import { Conversation } from "./components/Conversation";
 import { FIRST_BOT_SUGGESTIONS, FirstBotSetup } from "./components/FirstBotSetup";
 import { PanelResizer, savePanelWidth } from "./components/PanelResizer";

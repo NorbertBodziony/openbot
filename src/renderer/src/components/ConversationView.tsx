@@ -49,7 +49,6 @@ import type { BotMessage, BotProfile, ChatActionMarkerModel } from "../data";
 import { appendVoiceTranscript, recordingToWav } from "../voice-recording";
 import { AgentAvatar } from "./AgentAvatar";
 import { ComposerEditor, expandComposerMentions } from "./ComposerEditor";
-import { useConversationController } from "./Conversation";
 import { BrowserTakeoverCard } from "./ConversationPrompts";
 import {
   AgentActivityIndicator,
@@ -94,6 +93,7 @@ import {
   voiceCaptureError,
   voiceTranscriptionError,
 } from "./conversation/voice-status";
+import { useConversationController } from "./conversation-controller-context";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import {
   Bubble,

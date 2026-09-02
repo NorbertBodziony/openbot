@@ -2,8 +2,9 @@ import type { BotSummary, ConversationPage, ConversationSnapshot } from "@openbo
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { createSignal, Show } from "solid-js";
 import { expect, it, vi } from "vitest";
-import { App, AppControllerProvider, createAppController, createBotInitialMessage, useAppController } from "./App";
+import { App, createAppController, createBotInitialMessage } from "./App";
 import { desktopAnalytics } from "./analytics";
+import { AppControllerProvider, useAppController } from "./app-controller-context";
 import {
   BOTS,
   confirmOnboardingModel,

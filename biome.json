@@ -75,6 +75,7 @@
       "suspicious": {
         "noExplicitAny": "error",
         "noFocusedTests": "error",
+        "noImportCycles": "error",
         "noSkippedTests": "warn"
       }
     }
