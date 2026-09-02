@@ -1080,7 +1080,6 @@ const openbotApi: OpenBotDesktopApi = {
     getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.updateGetStatus),
     check: () => ipcRenderer.invoke(IPC_CHANNELS.updateCheck),
     download: () => ipcRenderer.invoke(IPC_CHANNELS.updateDownload),
-    cancelDownload: () => ipcRenderer.invoke(IPC_CHANNELS.updateCancelDownload),
     install: () => ipcRenderer.invoke(IPC_CHANNELS.updateInstall),
     getPreference: () => ipcRenderer.invoke(IPC_CHANNELS.updateGetPreference),
     setPreference: (input) => ipcRenderer.invoke(IPC_CHANNELS.updateSetPreference, input),

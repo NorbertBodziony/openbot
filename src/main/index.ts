@@ -590,7 +590,6 @@ function registerIpcHandlers(
   handleTrusted(IPC_CHANNELS.updateGetStatus, () => updater.getStatus());
   handleTrusted(IPC_CHANNELS.updateCheck, () => updater.checkForUpdates());
   handleTrusted(IPC_CHANNELS.updateDownload, () => updater.downloadUpdate());
-  handleTrusted(IPC_CHANNELS.updateCancelDownload, () => updater.cancelDownload());
   handleTrusted(IPC_CHANNELS.updateInstall, () => updater.installUpdate());
   handleTrusted(IPC_CHANNELS.updateGetPreference, () => readUpdatePreference(updatePreferenceFile));
   handleTrusted(IPC_CHANNELS.updateSetPreference, async (input: unknown) => {

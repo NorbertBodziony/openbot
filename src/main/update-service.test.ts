@@ -218,7 +218,8 @@ describe("UpdateService", () => {
     expect(service.getStatus()).toMatchObject({ phase: "ready", availableVersion: "0.1.1" });
   });
 
-  it("cancels an in-flight download without reporting a failure", async () => {
+  it("does not report a superseded download attempt after the stall watchdog gave up", async () => {
+    vi.useFakeTimers();
     const updater = new FakeUpdater();
     makeUpdateAvailable(updater);
     let rejectDownload: ((error: Error) => void) | undefined;
@@ -232,34 +233,31 @@ describe("UpdateService", () => {
     service.start(false);
     await service.checkForUpdates();
     const download = service.downloadUpdate();
-    await vi.waitFor(() => expect(updater.downloadUpdate).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(0);
 
-    await service.cancelDownload();
-    rejectDownload?.(new Error("cancelled"));
+    await vi.advanceTimersByTimeAsync(DOWNLOAD_STALL_TIMEOUT);
+    const reported = service.getStatus();
+    // The abandoned transfer rejects later; it must not overwrite the message the user is reading.
+    rejectDownload?.(new Error("aborted"));
+    await download;
 
     expect(updater.tokens.at(0)?.cancel).toHaveBeenCalledOnce();
-    expect(service.getStatus()).toMatchObject({ phase: "available", progress: null, errorCode: null });
-    await download;
-    expect(service.getStatus().phase).toBe("available");
+    expect(service.getStatus()).toEqual(reported);
+    expect(service.getStatus().message).toBe("The update download stopped responding. Try again.");
   });
 
-  it("re-checks for a fresh cancellation token when retrying after a cancel", async () => {
+  it("re-checks for a fresh cancellation token when retrying a cancelled attempt", async () => {
+    vi.useFakeTimers();
     const updater = new FakeUpdater();
     makeUpdateAvailable(updater);
-    let rejectDownload: ((error: Error) => void) | undefined;
-    updater.downloadUpdate.mockImplementationOnce(
-      () =>
-        new Promise<string[]>((_resolve, reject) => {
-          rejectDownload = reject;
-        }),
-    );
+    updater.downloadUpdate.mockImplementationOnce(() => new Promise<string[]>(() => undefined));
     const service = createService(updater);
     service.start(false);
     await service.checkForUpdates();
     void service.downloadUpdate();
-    await vi.waitFor(() => expect(updater.downloadUpdate).toHaveBeenCalledOnce());
-    await service.cancelDownload();
-    rejectDownload?.(new Error("cancelled"));
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(DOWNLOAD_STALL_TIMEOUT);
+    expect(updater.tokens.at(0)?.cancelled).toBe(true);
     expect(updater.checkForUpdates).toHaveBeenCalledOnce();
 
     completeDownload(updater);
@@ -351,6 +349,31 @@ describe("UpdateService", () => {
     expect(updater.quitAndInstall).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps the install deadline through the shutdown preparation that stops the service", async () => {
+    vi.useFakeTimers();
+    const updater = new FakeUpdater();
+    makeUpdateAvailable(updater);
+    completeDownload(updater);
+    let service: UpdateService | undefined;
+    // Production beforeInstall is prepareForUpdateInstall, which runs prepareForShutdown and stops
+    // the service. The install deadline is the only escape from a restart that never happens, so it
+    // has to outlive that teardown.
+    const beforeInstall = vi.fn(async () => {
+      service?.stop();
+    });
+    service = createService(updater, { platform: "darwin", beforeInstall });
+    service.start(false);
+    await service.checkForUpdates();
+    await service.downloadUpdate();
+    await service.installUpdate();
+    expect(beforeInstall).toHaveBeenCalledOnce();
+    expect(service.getStatus().phase).toBe("installing");
+
+    await vi.advanceTimersByTimeAsync(INSTALL_TIMEOUT);
+
+    expect(service.getStatus()).toMatchObject({ phase: "error", errorCode: "install_failed" });
+  });
+
   it("releases the restart action when the installer reports a failure", async () => {
     const updater = new FakeUpdater();
     makeUpdateAvailable(updater);
@@ -400,7 +423,6 @@ describe("UpdateService", () => {
 
     expect((await service.checkForUpdates()).phase).toBe("unsupported");
     expect((await service.downloadUpdate()).phase).toBe("unsupported");
-    expect((await service.cancelDownload()).phase).toBe("unsupported");
     expect(updater.checkForUpdates).not.toHaveBeenCalled();
     expect(updater.downloadUpdate).not.toHaveBeenCalled();
   });

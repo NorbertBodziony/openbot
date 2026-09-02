@@ -68,7 +68,6 @@ export const IPC_CHANNELS = {
   updateCheck: "update:check",
   updateDownload: "update:download",
   updateInstall: "update:install",
-  updateCancelDownload: "update:cancel-download",
   updateGetPreference: "update:get-preference",
   updateSetPreference: "update:set-preference",
   updateEvent: "update:event",

@@ -121,7 +121,7 @@ Installed OpenBot builds check for updates shortly after launch and every four h
 download automatically while **Automatically download updates** is on, which is the default and is
 persisted per user in `openbot-update-preference-v1.json`; with the setting off, a download starts
 only on a user action. The account popover shows the current state and lets the user download an
-available version, cancel a running download, then restart into it. The restart action appears as
+available version, then restart into it. The restart action appears as
 soon as the download completes on both platforms, and neither platform installs without that
 explicit action, because `autoInstallOnAppQuit` stays off so shutdown preparation always runs. Every
 stage the user waits on is bounded by a timeout and recorded in `logs/update/update.log`, so a failed

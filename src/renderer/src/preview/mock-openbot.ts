@@ -1073,12 +1073,6 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
         }
         return clone(updateStatus);
       },
-      cancelDownload: async () => {
-        if (updateStatus.phase !== "downloading") return clone(updateStatus);
-        updateStatus = { ...updateStatus, phase: "available", progress: null };
-        emit(updateListeners, updateStatus);
-        return clone(updateStatus);
-      },
       install: async () => {
         updateStatus = { ...updateStatus, phase: "installing" };
         emit(updateListeners, updateStatus);

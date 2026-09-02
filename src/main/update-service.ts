@@ -104,7 +104,6 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
   #autoDownload: boolean;
   #downloadedVersion: string | null = null;
   #cancellationToken: UpdateCancellationToken | null = null;
-  #cancelled = false;
   #internalCheck = false;
   #checkGeneration = 0;
   #downloadGeneration = 0;
@@ -184,7 +183,6 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
       this.#markReady(info.version);
     });
     this.#updater.on("error", () => {
-      if (this.#cancelled) return;
       // quitAndInstall can return without quitting, so an install failure has to release the latch
       // or the restart action would never become available again.
       if (this.#operation === "install") this.#installStarted = false;
@@ -257,7 +255,6 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
   async downloadUpdate(): Promise<UpdateStatus> {
     if (!this.#options.enabled || !this.#canDownload()) return this.getStatus();
     const generation = ++this.#downloadGeneration;
-    this.#cancelled = false;
     this.#operation = "download";
     this.#setStatus({ phase: "downloading", progress: 0, message: null, errorCode: null });
     try {
@@ -265,23 +262,10 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
       if (this.#downloadGeneration !== generation) return this.getStatus();
       await this.#updater.downloadUpdate(token ?? undefined);
     } catch {
-      if (!this.#cancelled && this.#downloadGeneration === generation) this.#setError("download_failed");
+      // A superseded attempt is one the stall watchdog already cancelled and reported, so its
+      // rejection must not overwrite the error the user is looking at.
+      if (this.#downloadGeneration === generation) this.#setError("download_failed");
     }
-    return this.getStatus();
-  }
-
-  async cancelDownload(): Promise<UpdateStatus> {
-    if (this.#status.phase !== "downloading") return this.getStatus();
-    this.#cancelled = true;
-    this.#downloadGeneration += 1;
-    this.#cancellationToken?.cancel();
-    this.#cancellationToken = null;
-    this.#setStatus({
-      phase: "available",
-      progress: null,
-      message: null,
-      errorCode: null,
-    });
     return this.getStatus();
   }
 
@@ -295,6 +279,9 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
     try {
       await this.#options.beforeInstall();
       this.#updater.quitAndInstall(false, true);
+      // The handover is where a restart is most likely to stall, and shutdown preparation may have
+      // torn down the deadline along with everything else, so re-arm it here as well.
+      this.#armPhaseTimer();
     } catch {
       this.#installStarted = false;
       this.#setError("install_failed");
@@ -305,7 +292,10 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
   stop(): void {
     if (this.#checkTimer) clearTimeout(this.#checkTimer);
     this.#checkTimer = null;
-    this.#clearPhaseTimer();
+    // An install runs shutdown preparation, which stops background work through this method. The
+    // install deadline has to survive that: it is the only thing that can release a restart which
+    // never happens, and clearing it here would leave the app latched in "installing" forever.
+    if (this.#status.phase !== "installing") this.#clearPhaseTimer();
   }
 
   #canDownload(): boolean {
@@ -325,8 +315,8 @@ export class UpdateService extends EventEmitter<UpdateServiceEvents> {
 
   /**
    * A cancellation token is single use, and electron-updater only mints one alongside update
-   * metadata. Re-check quietly when the stored token is missing or spent so a retry after a cancel
-   * still downloads under a live token.
+   * metadata. Re-check quietly when the stored token is missing or spent so that a retry after the
+   * stall watchdog cancelled the last attempt still downloads under a live token.
    */
   async #ensureCancellationToken(): Promise<UpdateCancellationToken | null> {
     if (this.#cancellationToken && !this.#cancellationToken.cancelled) return this.#cancellationToken;

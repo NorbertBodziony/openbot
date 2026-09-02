@@ -230,7 +230,6 @@ export interface UpdateDesktopApi {
   getStatus: () => Promise<UpdateStatus>;
   check: () => Promise<UpdateStatus>;
   download: () => Promise<UpdateStatus>;
-  cancelDownload: () => Promise<UpdateStatus>;
   install: () => Promise<void>;
   getPreference: () => Promise<UpdatePreference>;
   setPreference: (input: UpdatePreference) => Promise<UpdatePreference>;

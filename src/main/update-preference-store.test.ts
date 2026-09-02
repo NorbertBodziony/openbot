@@ -40,6 +40,24 @@ describe("update preference store", () => {
     expect((await readdir(root)).filter((entry) => entry.endsWith(".tmp"))).toEqual([]);
   });
 
+  it("persists the last of several overlapping writes", async () => {
+    const root = await temporaryRoot();
+    const path = join(root, "update.json");
+
+    // Concurrent toggles each rename their own temporary file, so without serialization the earlier
+    // write could land last and persist the value the user just turned off.
+    const results = await Promise.all([
+      writeUpdatePreference(path, true),
+      writeUpdatePreference(path, false),
+      writeUpdatePreference(path, true),
+      writeUpdatePreference(path, false),
+    ]);
+
+    expect(results.at(-1)).toEqual({ autoDownload: false });
+    await expect(readUpdatePreference(path)).resolves.toEqual({ autoDownload: false });
+    expect((await readdir(root)).filter((entry) => entry.endsWith(".tmp"))).toEqual([]);
+  });
+
   it("persists an opt-in over a stored opt-out", async () => {
     const root = await temporaryRoot();
     const path = join(root, "update.json");
