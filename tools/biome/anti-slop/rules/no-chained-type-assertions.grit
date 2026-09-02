@@ -1,8 +1,11 @@
 language js(typescript)
 
+// The guards have to be regexes: `const` as a pattern does not match the
+// `const` keyword in the assertion's type position, so writing it that way
+// leaves the exemption dead and flags `(value as Frame) as const`.
 `($value as $inner) as $outer` where {
-  not $inner <: `const`,
-  not $outer <: `const`,
+  not $inner <: r"^const$",
+  not $outer <: r"^const$",
   register_diagnostic(
     span=$outer,
     message="This assertion chain discards type evidence. Keep the original precise type, or parse untrusted input at its boundary before narrowing it.",

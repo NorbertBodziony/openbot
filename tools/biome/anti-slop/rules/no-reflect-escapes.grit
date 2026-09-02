@@ -1,0 +1,12 @@
+language js(typescript)
+
+or {
+  `Reflect.apply($args)`,
+  `Reflect.get($args)`
+} as $call where {
+  register_diagnostic(
+    span=$call,
+    message="Do not use Reflect to get past the type checker. Call the function directly or read the property directly, modelling dynamic dispatch behind a named interface and parsing dynamic input into a domain type first.",
+    severity="error"
+  )
+}

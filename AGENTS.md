@@ -227,15 +227,32 @@ accessible identifies the element, that is an accessibility gap in the component
 test id. Snapshots are the same failure in bulk: a snapshot names no consequence, so it cannot fail
 for a reason anyone can act on — it gets updated, not read.
 
-Biome enforces the mechanical half in test files: `toHaveFocus`, `toHaveClass`, `toHaveStyle`,
-`toContainElement`, `toHaveAttribute("title", …)`, `document.activeElement`, `getComputedStyle`,
-`expect(x.innerHTML)`, DOM-tree walks, `querySelector("svg" | "img")`, `toMatchSnapshot` and
-`toMatchInlineSnapshot`, `getByTestId` and `data-testid`, asserting on an element found by CSS class,
-and awaiting a bare `setTimeout` promise inside a test body are all rejected. The judgement Biome
-cannot make is still yours: taking a class handle to fire a drag event on or to stub
-`getBoundingClientRect` over is fine, because jsdom has no layout — taking one to decide what to
-assert is not. All of this stays available in `src/renderer/stories`, which is where visual and focus
-behaviour belongs.
+Biome enforces the mechanical half of that, and only the mechanical half. In test files it rejects
+`toHaveClass`, `toHaveStyle`, `getComputedStyle`, `toContainElement`, `toHaveAttribute("title", …)`,
+`expect(x.innerHTML)`, DOM-tree walks, `querySelector("svg" | "img")`, `document.activeElement`,
+`toMatchSnapshot` and `toMatchInlineSnapshot`, `getByTestId` and `data-testid`, an assertion reached
+through a CSS class, and awaiting a bare `setTimeout` promise inside a test body. Styling and layout
+stay available in `src/renderer/stories`, which is where they belong.
+
+Focus is the exception people expect to find here and will not. `toHaveFocus()` is *encouraged*: a
+dialog that never moves focus inside itself, a roving tabindex that loses its place, a skip link that
+goes nowhere — each is a defect only a keyboard user hits, and each regresses silently. Only
+`document.activeElement` is rejected, because it asserts against the document instead of the element
+the test already holds, and fails with "expected null" rather than naming the control.
+
+The rules run at two severities, and the difference is a promise about how far you should bend for
+one. **Error** is for patterns with no honest counter-example — a snapshot, a test id, a sleep.
+**Warning** is for a judgement a pattern cannot make: `typeof` (right at a trust boundary that
+narrows an `unknown`, wrong on a value whose type is already known), an `object` parameter, a module
+mock. A warning is a prompt to think, never a demand to rewrite. Since `biome-ignore` is not
+available to you, silencing a warning by making correct code worse is the one wrong answer; leave it
+and say why in the PR.
+
+Every rule in `tools/biome/anti-slop/rules` owns a fixture in `../fixtures` marking each line it must
+reject with `// flag`, surrounded by adjacent correct code it must leave alone, and
+`scripts/anti-slop-rules.test.ts` checks both halves. This is not ceremony: a GritQL pattern that
+matches nothing is green and enforces nothing, which is how a rule stayed blind to
+`querySelector<HTMLElement>` for months. A new rule without a fixture is not a rule.
 
 ## Pull requests
 

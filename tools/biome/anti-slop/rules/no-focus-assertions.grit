@@ -1,9 +1,0 @@
-language js(typescript)
-
-`$_.toHaveFocus()` as $call where {
-  register_diagnostic(
-    span=$call,
-    message="Do not assert focus placement in tests. See the Tests section of AGENTS.md: assert the accessible role, name or announcement instead, and keep focus behaviour in a Storybook interaction.",
-    severity="error"
-  )
-}
