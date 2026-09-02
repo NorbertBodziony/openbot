@@ -1,7 +1,17 @@
 import type { AgentPromptQuestion } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QuestionPromptBubble } from "./QuestionPromptBubble";
+
+const originalMatchMedia = window.matchMedia;
+
+beforeEach(() => {
+  window.matchMedia = vi.fn().mockReturnValue({ matches: true });
+});
+
+afterEach(() => {
+  window.matchMedia = originalMatchMedia;
+});
 
 const questions: AgentPromptQuestion[] = [
   {
@@ -62,6 +72,7 @@ describe("QuestionPromptBubble", () => {
   });
 
   it("presents a successful resolution when the bubble unmounts during its transition", async () => {
+    window.matchMedia = originalMatchMedia;
     const onResolutionPresented = vi.fn();
     const view = render(() => (
       <QuestionPromptBubble
