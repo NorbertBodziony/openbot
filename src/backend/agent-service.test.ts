@@ -2818,8 +2818,13 @@ describe.sequential("AgentService", () => {
     expect(instructions).toContain('"title": "Research & writing"');
     expect(instructions).toContain('"description": "Researches topics and turns findings into clear writing."');
     expect(instructions).toContain("Be pragmatic and direct");
-    expect(instructions).toContain("Give the shortest answer that is complete and useful");
+    expect(instructions).toContain("Give the shortest final answer that is complete and useful");
     expect(instructions).toContain("Do not add filler");
+    expect(instructions).toContain("<user_updates_spec>");
+    expect(instructions).toContain("send an initial commentary update before the first tool call");
+    expect(instructions).toContain("learn a concrete result that changes or advances the work");
+    expect(instructions).toContain("State concrete progress and what you will focus on next");
+    expect(instructions).toContain("Do not expose private chain-of-thought");
     expect(instructions).toContain("openbot.ask_user");
     expect(instructions).toContain("GitHub-flavored Markdown tables");
     expect(instructions).toContain("at least three dashes per column");
