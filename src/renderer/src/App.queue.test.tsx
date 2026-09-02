@@ -24,12 +24,23 @@ describe("OpenBot connected desktop shell", () => {
     installOpenbotStub();
   });
 
-  it("queues from the composer and clears only after success", async () => {
+  it("keeps a failed send in the composer and clears it only after a successful retry", async () => {
+    vi.mocked(window.openbot.agent.sendMessage).mockRejectedValueOnce(new Error("Mailbox unavailable"));
     render(() => <App />);
     await confirmOnboardingModel();
     const composer = await screen.findByRole("textbox", { name: "Message Chief" });
     composer.textContent = "Run this Monday";
     await fireEvent.input(composer);
+    await waitFor(() =>
+      expect(window.openbot.servers.setTyping).toHaveBeenCalledWith({
+        botId: "chief",
+        typing: true,
+      }),
+    );
+    await fireEvent.keyDown(composer, { key: "Enter" });
+    expect(await screen.findByText("Mailbox unavailable")).toBeInTheDocument();
+    expect(composer).toHaveTextContent("Run this Monday");
+
     await fireEvent.keyDown(composer, { key: "Enter" });
     await waitFor(() =>
       expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith(
@@ -101,20 +112,6 @@ describe("OpenBot connected desktop shell", () => {
     expect(vi.mocked(window.openbot.agent.markConversationRead).mock.calls).toEqual([
       [{ botId: "chief", throughMessageId: "delivery-1" }, "local"],
     ]);
-  });
-
-  it("publishes typing state", async () => {
-    render(() => <App />);
-    await confirmOnboardingModel();
-    const composer = screen.getByRole("textbox", { name: "Message Chief" });
-    composer.textContent = "Review this";
-    await fireEvent.input(composer);
-    await waitFor(() =>
-      expect(window.openbot.servers.setTyping).toHaveBeenCalledWith({
-        botId: "chief",
-        typing: true,
-      }),
-    );
   });
 
   it("opens a private person thread and receives direct messages in real time", async () => {
@@ -567,18 +564,6 @@ describe("OpenBot connected desktop shell", () => {
     });
     await waitFor(() => expect(screen.getByText("Thinking").closest("details")).toBe(details));
     expect(screen.getByText("I’ll open x.com in the OpenBot browser.")).toBeVisible();
-  });
-
-  it("keeps text and attachments when enqueue fails", async () => {
-    vi.mocked(window.openbot.agent.sendMessage).mockRejectedValueOnce(new Error("Mailbox unavailable"));
-    render(() => <App />);
-    await confirmOnboardingModel();
-    const composer = await screen.findByRole("textbox", { name: "Message Chief" });
-    composer.textContent = "Retry me";
-    await fireEvent.input(composer);
-    await fireEvent.keyDown(composer, { key: "Enter" });
-    expect(await screen.findByText("Mailbox unavailable")).toBeInTheDocument();
-    expect(composer).toHaveTextContent("Retry me");
   });
 
   it("supports picker and attachment-only messages", async () => {

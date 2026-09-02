@@ -362,6 +362,9 @@ describe("OpenBot connected desktop shell", () => {
 
     expect(screen.getAllByText(/person@example.com/).length).toBeGreaterThan(0);
     expect(await screen.findByText("Studio Mac")).toBeInTheDocument();
+    await waitFor(() => expect(window.openbot.servers.previewInvite).toHaveBeenCalledWith({ inviteUrl }));
+    expect(window.openbot.servers.join).not.toHaveBeenCalled();
+
     await fireEvent.click(screen.getByRole("button", { name: "Connect to host" }));
 
     await waitFor(() =>
@@ -379,22 +382,6 @@ describe("OpenBot connected desktop shell", () => {
       "team_action",
       expect.objectContaining({ action: "server_selected" }),
     );
-  });
-
-  it("loads a cold-start invitation into first-run remote setup", async () => {
-    const inviteUrl = "https://openbot.run/join?invite=cold-start";
-    vi.mocked(window.openbot.getSetupState).mockResolvedValueOnce({
-      completed: false,
-      preferredProvider: null,
-    });
-    vi.mocked(window.openbot.servers.takePendingInvite).mockResolvedValueOnce(inviteUrl);
-
-    render(() => <App />);
-
-    expect(await screen.findByRole("dialog", { name: "Connect to a host" })).toBeInTheDocument();
-    await waitFor(() => expect(window.openbot.servers.previewInvite).toHaveBeenCalledWith({ inviteUrl }));
-    expect(await screen.findByText("Studio Mac")).toBeInTheDocument();
-    expect(window.openbot.servers.join).not.toHaveBeenCalled();
   });
 
   it("opens a verified invitation received while the configured app is running", async () => {
@@ -475,15 +462,6 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByRole("heading", { name: "Sign in to OpenBot" })).toBeInTheDocument();
   });
 
-  it("requires account sign-in before opening a completed workspace", async () => {
-    vi.mocked(window.openbot.auth.getState).mockResolvedValueOnce({ status: "signed_out" });
-    render(() => <App />);
-
-    expect(await screen.findByRole("heading", { name: "Sign in to OpenBot" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Chief" })).not.toBeInTheDocument();
-    expect(screen.queryByText("Codex")).not.toBeInTheDocument();
-  });
-
   it("keeps a cold-start invitation until a signed-out user signs in", async () => {
     const inviteUrl = "https://openbot.run/join?invite=after-sign-in";
     vi.mocked(window.openbot.auth.getState).mockResolvedValueOnce({ status: "signed_out" });
@@ -491,6 +469,7 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
 
     expect(await screen.findByRole("heading", { name: "Sign in to OpenBot" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Chief" })).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Join a server" })).not.toBeInTheDocument();
 
     emitAuth?.({

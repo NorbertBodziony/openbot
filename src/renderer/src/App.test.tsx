@@ -106,6 +106,7 @@ describe("OpenBot connected desktop shell", () => {
   });
 
   it("shows the interactive account dock in the landing preview and omits browser and remote control", async () => {
+    const configure = vi.spyOn(desktopAnalytics, "configure");
     vi.mocked(window.openbot.auth.getState).mockResolvedValueOnce({
       status: "signed_in",
       user: {
@@ -157,18 +158,8 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.browser.setVisible).not.toHaveBeenCalled();
     expect(window.openbot.remoteDesktop.list).not.toHaveBeenCalled();
     expect(window.openbot.remoteDesktop.onEvent).not.toHaveBeenCalled();
-  });
-
-  it("does not configure desktop analytics in the landing preview", async () => {
-    const configure = vi.spyOn(desktopAnalytics, "configure");
-    try {
-      render(() => <App landingPreview />);
-
-      await screen.findByRole("heading", { name: "Chief" });
-      expect(configure).not.toHaveBeenCalled();
-    } finally {
-      configure.mockRestore();
-    }
+    expect(configure).not.toHaveBeenCalled();
+    configure.mockRestore();
   });
 
   it("renders message links and opens them in the external browser", async () => {
