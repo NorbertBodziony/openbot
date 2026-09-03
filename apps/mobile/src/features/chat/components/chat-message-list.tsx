@@ -27,6 +27,7 @@ interface ChatMessageListProps {
   raised: ViewStyle["backgroundColor"];
   showStarter: boolean;
   topInset: number;
+  onContentSizeChange: () => void;
   onDismissStarter: () => void;
   onSelectStarter: (value: string) => void;
 }
@@ -41,12 +42,13 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
     raised,
     showStarter,
     topInset,
+    onContentSizeChange,
     onDismissStarter,
     onSelectStarter,
   },
   ref,
 ) {
-  const userBubbleColor = getBloubAvatarColor(bot.avatarSeed);
+  const userBubbleColor = getBloubAvatarColor(bot.avatarSeed, bot.avatarHue);
 
   return (
     <ScrollView
@@ -63,6 +65,7 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
       contentInsetAdjustmentBehavior="never"
       keyboardDismissMode="interactive"
       keyboardShouldPersistTaps="handled"
+      onContentSizeChange={onContentSizeChange}
       showsVerticalScrollIndicator={false}
     >
       <Typography.Paragraph type="body-xs" align="center" className="pb-1 text-text-dim">

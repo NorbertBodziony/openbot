@@ -14,6 +14,53 @@ afterEach(async () => {
 });
 
 describe("CentralAuthManager", () => {
+  it("accepts a private-LAN Signal URL for local Mobile Connect development", async () => {
+    const root = await createRoot();
+    const storagePath = join(root, "session.bin");
+    await writeFile(storagePath, "session-secret");
+    const serverId = "00000000-0000-4000-8000-000000000000";
+    let signalUrl = "ws://192.168.1.143:3101/v1/signal";
+    const manager = new CentralAuthManager({
+      apiUrl: "http://127.0.0.1:3100",
+      storagePath,
+      encrypt: (value) => Buffer.from(value),
+      decrypt: (value) => value.toString(),
+      fetch: vi.fn(async (input: string | URL | Request) => {
+        const path = new URL(input.toString()).pathname;
+        if (path === "/v1/me") {
+          return Response.json({ id: "user-1", email: "person@example.com", name: null, avatarUrl: null });
+        }
+        if (path === "/v2/remote/hosts/register") {
+          return Response.json({
+            hostId: serverId,
+            name: "Studio",
+            membershipId: "membership-1",
+            authEpoch: 1,
+            machineToken: "machine-token-1234567890abcdefghijklmnop",
+          });
+        }
+        return Response.json({
+          ticket: "remote-ticket",
+          expiresAt: Date.now() + 60_000,
+          signalUrl,
+        });
+      }),
+    });
+
+    await manager.initialize();
+    await manager.registerRemoteHost({
+      hostId: serverId,
+      name: "Studio",
+      ownerMembershipId: "membership-1",
+    });
+
+    await expect(manager.issueRemoteHostTicket(serverId)).resolves.toMatchObject({
+      signalUrl: "ws://192.168.1.143:3101/v1/signal",
+    });
+    signalUrl = "ws://signal.example.com/v1/signal";
+    await expect(manager.issueRemoteHostTicket(serverId)).rejects.toThrow("Invalid Remote Signal URL.");
+  });
+
   it("requests an email code, verifies it, and restores an encrypted session", async () => {
     const root = await createRoot();
     const storagePath = join(root, "session.bin");

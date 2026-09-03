@@ -1,5 +1,9 @@
-export function buildContentSecurityPolicy(packaged: boolean): string {
-  const developmentSources = packaged ? "" : " http://localhost:* ws://localhost:*";
+import { isMobileConnectDevelopmentHost } from "@openbot/contracts/mobile-connect";
+
+export function buildContentSecurityPolicy(packaged: boolean, developmentSignalUrl?: string): string {
+  const developmentSources = packaged
+    ? ""
+    : ` http://localhost:* ws://localhost:*${developmentSignalSource(developmentSignalUrl)}`;
   const developmentImageSources = packaged ? "" : " http://127.0.0.1:* http://localhost:*";
   const developmentFrameSources = packaged ? "" : " http://127.0.0.1:* http://localhost:*";
 
@@ -14,4 +18,22 @@ export function buildContentSecurityPolicy(packaged: boolean): string {
     `frame-src 'self' openbot-attachment: openbot-remote-attachment: https://*.openbot.run${developmentFrameSources}`,
     "base-uri 'none'",
   ].join("; ");
+}
+
+function developmentSignalSource(value: string | undefined): string {
+  if (!value) return "";
+  try {
+    const url = new URL(value);
+    if (
+      url.protocol !== "ws:" ||
+      !isMobileConnectDevelopmentHost(url.hostname) ||
+      url.username !== "" ||
+      url.password !== ""
+    ) {
+      return "";
+    }
+    return ` ${url.origin}`;
+  } catch {
+    return "";
+  }
 }

@@ -136,6 +136,7 @@ export class HostService extends EventEmitter<HostEvents> {
   #status: HostStatus;
   #runtimeGeneration = 0;
   #startOperation: Promise<HostStatus> | null = null;
+  #webRtcOnline = false;
   #legacyCredentialRemoved = false;
 
   constructor(options: HostServiceOptions) {
@@ -326,7 +327,7 @@ export class HostService extends EventEmitter<HostEvents> {
 
   async #startRuntimeOperation(): Promise<HostStatus> {
     if (!this.#options.store.configured) throw new Error("Name this OpenBot before publishing it.");
-    if (this.#status.phase === "online" || this.#status.phase === "starting") {
+    if ((this.#status.phase === "online" && this.#webRtcOnline) || this.#status.phase === "starting") {
       return this.getStatus();
     }
     if (this.#status.phase === "stopping") return this.getStatus();
@@ -363,6 +364,7 @@ export class HostService extends EventEmitter<HostEvents> {
         ticket: bootstrap.ticket,
         localApiPort: apiPort,
       });
+      this.#webRtcOnline = true;
       if (await this.#cancelSupersededStart(generation)) return this.getStatus();
       this.#setStatus({
         apiUrl: bootstrap.signalUrl,
@@ -708,6 +710,7 @@ export class HostService extends EventEmitter<HostEvents> {
   }
 
   async #stopRuntime(): Promise<void> {
+    this.#webRtcOnline = false;
     await this.#webrtcGateway?.stop();
     await this.#api.stop();
   }

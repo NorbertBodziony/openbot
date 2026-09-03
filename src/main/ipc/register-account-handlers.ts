@@ -3,6 +3,8 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { IPC_CHANNELS } from "@openbot/contracts/ipc";
 import type { CentralAuthManager } from "../central-auth-manager";
+import type { HostService } from "../host-service";
+import { createHostedMobileConnect } from "../mobile-connect-host";
 import { handleTrusted } from "../trusted-ipc";
 import { parseEmailCodeVerification, parseProfileName } from "./app-inputs";
 import { parseAvatarImage } from "./avatar-inputs";
@@ -10,9 +12,10 @@ import { stringPayload } from "./validation";
 
 export interface AccountIpcDependencies {
   centralAuth: CentralAuthManager;
+  host: Pick<HostService, "configure" | "getStatus" | "start">;
 }
 
-export function registerAccountIpcHandlers({ centralAuth }: AccountIpcDependencies): void {
+export function registerAccountIpcHandlers({ centralAuth, host }: AccountIpcDependencies): void {
   handleTrusted(IPC_CHANNELS.authGetState, () => centralAuth.getState());
   handleTrusted(IPC_CHANNELS.authRetry, () => centralAuth.retry());
   handleTrusted(IPC_CHANNELS.authRequestEmailCode, stringPayload("email", INPUT_LIMITS.email), (email) =>
@@ -23,7 +26,7 @@ export function registerAccountIpcHandlers({ centralAuth }: AccountIpcDependenci
   );
   handleTrusted(IPC_CHANNELS.authUpdateName, parseProfileName, (name) => centralAuth.updateName(name));
   handleTrusted(IPC_CHANNELS.authUpdateAvatar, parseAvatarImage, (parsed) => centralAuth.updateAvatar(parsed));
-  handleTrusted(IPC_CHANNELS.authCreateMobileConnect, () => centralAuth.createMobileConnect());
+  handleTrusted(IPC_CHANNELS.authCreateMobileConnect, () => createHostedMobileConnect({ centralAuth, host }));
   handleTrusted(IPC_CHANNELS.authListMobileConnectedDevices, () => centralAuth.listMobileConnectedDevices());
   handleTrusted(
     IPC_CHANNELS.authRevokeMobileConnectedDevice,

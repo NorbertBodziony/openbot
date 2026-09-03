@@ -220,7 +220,7 @@ const LEGACY_REMOTE_DESKTOP_CREDENTIAL_FILE = "openbot-remote-desktop-credential
 const REMOTE_DESKTOP_RUNTIME_SECRET_FILE = "openbot-remote-desktop-runtime-v1.json";
 
 function configureContentSecurityPolicy(): void {
-  const policy = buildContentSecurityPolicy(app.isPackaged);
+  const policy = buildContentSecurityPolicy(app.isPackaged, process.env.REMOTE_SIGNAL_URL);
 
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     if (details.resourceType !== "mainFrame" || !isTrustedRendererUrl(details.url)) {
@@ -305,7 +305,7 @@ function registerIpcHandlers({
   registerComputerUseIpcHandlers({ computerUseMacSetup });
   registerProviderIpcHandlers({ service, providerRuntimes });
   registerVoiceIpcHandlers({ voice });
-  registerAccountIpcHandlers({ centralAuth });
+  registerAccountIpcHandlers({ centralAuth, host });
   registerSkillIpcHandlers({ skills, getMainWindow });
   registerHostedSiteIpcHandlers({ hostedSites, getMainWindow });
   registerMarketplaceAgentIpcHandlers({ marketplaceAgents });

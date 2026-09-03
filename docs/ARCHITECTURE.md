@@ -87,6 +87,10 @@ schema used for new databases. Never remove or rewrite a migration that may have
 Current remote connections use Team API protocol v3 over three ordered WebRTC DataChannels: `rpc`,
 `events`, and `files`. A sandboxed hidden Chromium page owns each `RTCPeerConnection`. Electron main
 uses a `MessagePort` and transfers binary data as `ArrayBuffer`. Signal carries SDP and ICE only.
+OpenBot Mobile uses the same ticket, authentication transcript, framing, RPC codec, and event stream.
+In Expo Go, an Expo DOM component owns the browser `RTCPeerConnection` inside a hidden WebView and
+passes only serializable, validated commands and events to the native React UI; no native WebRTC
+module or development build is required.
 Cloudflare issues short ES256 connection tickets and stores the logical session. Signal issues a
 10-minute resume token, so a short Signal update does not end an active WebRTC connection. Signal
 validates a trusted, non-expired resume token locally. After a Signal restart, the first use of a token

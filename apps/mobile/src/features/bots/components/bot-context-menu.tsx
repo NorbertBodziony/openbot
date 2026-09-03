@@ -1,6 +1,6 @@
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
-import { Link } from "expo-router";
+import { Link, router } from "expo-router";
 import { Alert } from "react-native";
 
 import { useBotPinTransition } from "@/features/bots/components/bot-pin-transition";
@@ -29,7 +29,7 @@ export function useBotContextMenu(bot: MobileBot) {
         text: "Delete",
         style: "destructive",
         onPress: () => {
-          deleteBot(bot.id);
+          void deleteBot(bot.id);
           if (isIOS) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         },
       },
@@ -61,13 +61,19 @@ export function useBotContextMenu(bot: MobileBot) {
         Hide
       </Link.MenuAction>
       <Link.Menu icon="ellipsis" title="More">
+        <Link.MenuAction
+          icon="pencil"
+          onPress={() => router.push({ pathname: "/edit-bot/[botId]", params: { botId: bot.id } })}
+        >
+          Edit
+        </Link.MenuAction>
         <Link.MenuAction icon="doc.on.doc" onPress={handleCopyId}>
           Copy ID
         </Link.MenuAction>
         <Link.MenuAction
           icon="plus.square.on.square"
           onPress={() => {
-            duplicateBot(bot.id);
+            void duplicateBot(bot.id);
             if (isIOS) void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           }}
         >

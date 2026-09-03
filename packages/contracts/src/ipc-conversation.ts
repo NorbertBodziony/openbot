@@ -1,3 +1,5 @@
+import emojiRegex from "emoji-regex";
+
 import { INPUT_LIMITS } from "./input-limits";
 import type { BrowserControlState, BrowserTab } from "./ipc-browser";
 import { isBoolean, isDynamicRecord, isNumber, isOneOf, isString } from "./runtime-values";
@@ -1123,11 +1125,12 @@ export interface ConversationReaction {
   actor: ConversationReactionActor;
 }
 
-// biome-ignore lint/complexity/useRegexLiterals: The v flag is supported at runtime but the contracts target predates ES2024.
-const RGI_EMOJI_PATTERN = new RegExp("^(?:\\p{RGI_Emoji})$", "v");
+const RGI_EMOJI_PATTERN = emojiRegex();
 
 export function isMessageReaction(value: unknown): value is MessageReaction {
-  return isString(value) && RGI_EMOJI_PATTERN.test(value);
+  if (!isString(value)) return false;
+  const matches = value.match(RGI_EMOJI_PATTERN);
+  return matches?.length === 1 && matches[0] === value;
 }
 
 export function isConversationReaction(value: unknown): value is ConversationReaction {

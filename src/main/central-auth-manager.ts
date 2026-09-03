@@ -10,7 +10,7 @@ import type {
   MobileConnectedDevice,
   MobileConnectTicket,
 } from "@openbot/contracts/ipc";
-import { createMobileConnectUrl } from "@openbot/contracts/mobile-connect";
+import { createMobileConnectUrl, isMobileConnectDevelopmentHost } from "@openbot/contracts/mobile-connect";
 import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { createLocalJWKSet, jwtVerify } from "jose";
 import { z } from "zod";
@@ -1034,8 +1034,7 @@ function decodeRemoteConnectionBootstrap(value: unknown): RemoteConnectionBootst
   if (!isNumber(record.expiresAt)) throw new Error("Invalid remote ticket expiration.");
   const signalUrl = requiredString(record, "signalUrl");
   const signal = new URL(signalUrl);
-  const loopback = signal.hostname === "127.0.0.1" || signal.hostname === "localhost";
-  if (signal.protocol !== "wss:" && !(signal.protocol === "ws:" && loopback))
+  if (signal.protocol !== "wss:" && !(signal.protocol === "ws:" && isMobileConnectDevelopmentHost(signal.hostname)))
     throw new Error("Invalid Remote Signal URL.");
   return { ticket: requiredString(record, "ticket"), expiresAt: record.expiresAt, signalUrl };
 }

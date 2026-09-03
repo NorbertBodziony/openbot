@@ -5,7 +5,6 @@ import { ArrowLeft } from "lucide-react-native";
 import { useEffect } from "react";
 import { Pressable, View } from "react-native";
 
-import { useMobileSession } from "@/features/auth/context/mobile-session-context";
 import { MobileChatView } from "@/features/chat/components/chat-view";
 import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 
@@ -14,14 +13,11 @@ export function BotChatScreen() {
 
   const { avatarTransition, botId } = useLocalSearchParams<{ avatarTransition?: string; botId: string }>();
   const { bots, markBotRead } = useMobileWorkspace();
-  const { session } = useMobileSession();
   const foreground = useThemeColor("foreground");
   const resolvedBotId = Array.isArray(botId) ? botId[0] : botId;
   const resolvedAvatarTransition = Array.isArray(avatarTransition) ? avatarTransition[0] : avatarTransition;
   const animateAvatarOnExit = resolvedAvatarTransition === "search";
   const bot = bots.find((candidate) => candidate.id === resolvedBotId);
-  const email = session?.user.email ?? "there";
-  const userName = session?.user.name?.trim().split(/\s+/)[0] || email.split("@")[0] || "there";
 
   useEffect(() => {
     if (resolvedBotId) markBotRead(resolvedBotId);
@@ -31,7 +27,7 @@ export function BotChatScreen() {
     return (
       <>
         <Stack.Screen options={{ animation: animateAvatarOnExit ? "fade" : "slide_from_right" }} />
-        <MobileChatView animateAvatarOnExit={animateAvatarOnExit} bot={bot} userName={userName} />
+        <MobileChatView animateAvatarOnExit={animateAvatarOnExit} bot={bot} />
       </>
     );
   }

@@ -4,7 +4,7 @@ import { Button, Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
 import { Bot, Ellipsis, Layers3, Plus, Search, WifiOff } from "lucide-react-native";
 import { useMemo } from "react";
-import { FlatList, Pressable, View } from "react-native";
+import { ActivityIndicator, FlatList, Pressable, View } from "react-native";
 import Animated, { Easing, FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 
 import { BotListRow } from "@/features/bots/components/bot-list-row";
@@ -57,7 +57,16 @@ function HeaderIconButton({
 
 export function ConnectedScreen() {
   const { openDrawer } = useAppDrawer();
-  const { activeBots, activeServer, hiddenBots, pinnedBotIds } = useMobileWorkspace();
+  const {
+    activeBots,
+    activeServer,
+    hiddenBots,
+    pinnedBotIds,
+    refreshServers,
+    serverDirectoryError,
+    serverDirectoryState,
+    servers,
+  } = useMobileWorkspace();
   const [foreground, muted] = useThemeColor(["foreground", "muted"]);
   const iconColor = String(foreground);
   const mutedColor = String(muted);
@@ -90,7 +99,7 @@ export function ConnectedScreen() {
                 <View className="flex-row items-center gap-2 rounded-2xl bg-control px-3 py-2.5">
                   <WifiOff color={mutedColor} size={17} strokeWidth={1.8} />
                   <Typography.Paragraph type="body-xs" className="min-w-0 flex-1 text-text-secondary">
-                    This server is offline. Showing the last available bot list.
+                    {activeServer.connectionMessage ?? "This server is offline. Showing the last available bot list."}
                   </Typography.Paragraph>
                 </View>
               </View>
@@ -98,7 +107,39 @@ export function ConnectedScreen() {
           </>
         }
         ListEmptyComponent={
-          activeBots.length === 0 ? (
+          serverDirectoryState === "loading" && servers.length === 0 ? (
+            <View className="flex-1 items-center justify-center gap-4 px-8 py-16">
+              <ActivityIndicator color={mutedColor} />
+              <Typography.Paragraph className="text-text-secondary">Loading your servers…</Typography.Paragraph>
+            </View>
+          ) : serverDirectoryState === "error" && servers.length === 0 ? (
+            <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
+              <View className="size-16 items-center justify-center rounded-3xl bg-control">
+                <WifiOff color={mutedColor} size={28} strokeWidth={1.6} />
+              </View>
+              <View className="items-center gap-1.5">
+                <Typography.Heading type="h4">Couldn’t load your servers</Typography.Heading>
+                <Typography.Paragraph align="center" className="text-text-secondary">
+                  {serverDirectoryError ?? "Check that the desktop app is running and try again."}
+                </Typography.Paragraph>
+              </View>
+              <Button size="md" variant="secondary" onPress={() => void refreshServers().catch(() => undefined)}>
+                <Button.Label>Try again</Button.Label>
+              </Button>
+            </View>
+          ) : servers.length === 0 ? (
+            <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
+              <View className="size-16 items-center justify-center rounded-3xl bg-control">
+                <Layers3 color={mutedColor} size={28} strokeWidth={1.6} />
+              </View>
+              <View className="items-center gap-1.5">
+                <Typography.Heading type="h4">No servers available</Typography.Heading>
+                <Typography.Paragraph align="center" className="text-text-secondary">
+                  Connect the desktop app again or join a remote server.
+                </Typography.Paragraph>
+              </View>
+            </View>
+          ) : activeBots.length === 0 ? (
             <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
               <View className="size-16 items-center justify-center rounded-3xl bg-control">
                 <Bot color={mutedColor} size={30} strokeWidth={1.6} />

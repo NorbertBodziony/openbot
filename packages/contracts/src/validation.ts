@@ -12,7 +12,6 @@ const ACCOUNT_NAME_UNSAFE_CHARACTER_PATTERN = /[\p{Cc}\p{Cs}\p{Zl}\p{Zp}]/u;
 const ACCOUNT_NAME_FORMAT_CHARACTER_PATTERN = /\p{Cf}/u;
 const ACCOUNT_NAME_ALLOWED_FORMAT_CHARACTERS = new Set(["\u200c", "\u200d"]);
 const ACCOUNT_NAME_JOINER_NEIGHBOR_PATTERN = /[\p{L}\p{M}\p{N}\p{S}]/u;
-const ACCOUNT_NAME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 export type ProfileNameValidationError = "required" | "unsafe" | "too-short" | "too-long";
 
@@ -48,13 +47,18 @@ export function hasUnsafeAccountNameCharacters(value: string): boolean {
 export function validateProfileName(value: string): ProfileNameValidationResult {
   const name = normalizeAccountName(value);
   if (hasUnsafeAccountNameCharacters(value)) return { name, error: "unsafe" };
-  const length = [...ACCOUNT_NAME_SEGMENTER.segment(name)].length;
+  const length = countVisibleCharacters(name);
   if (length === 0) return { name, error: "required" };
   if (length < INPUT_LIMITS.profileNameMin) return { name, error: "too-short" };
   if (length > INPUT_LIMITS.profileName || name.length > INPUT_LIMITS.accountName) {
     return { name, error: "too-long" };
   }
   return { name, error: null };
+}
+
+function countVisibleCharacters(value: string): number {
+  if (!Intl.Segmenter) return [...value].length;
+  return [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value)].length;
 }
 
 export function isValidHostname(value: string, requireDot = true): boolean {

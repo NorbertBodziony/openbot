@@ -78,7 +78,7 @@ function PinnedBotItem({ bot }: { bot: MobileBot }) {
           >
             <Link.AppleZoom>
               <BotPinAvatar botId={bot.id} location="pinned" size={76}>
-                <BloubAvatar seed={bot.avatarSeed} size={76} />
+                <BloubAvatar hue={bot.avatarHue} seed={bot.avatarSeed} size={76} />
                 {isUnread ? (
                   <View
                     className="absolute right-0 top-0 size-3.5 rounded-full border-2 bg-accent"

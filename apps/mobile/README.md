@@ -6,7 +6,7 @@ React Native app built with Expo SDK 57, Expo Router, TypeScript 7, Biome, and B
 
 - Node.js 24 or newer (the repository pins 24 in `.nvmrc`)
 - Bun 1.3 or newer
-- Expo Go for basic device testing, or an EAS development build for the full native environment
+- Expo Go for device testing, including the WebRTC server connection
 
 ## Development
 
@@ -17,6 +17,18 @@ bun run mobile
 bun run mobile:ios
 bun run mobile:android
 ```
+
+For an Expo Go device outside the computer's trusted local network context, start Metro with a secure
+tunnel:
+
+```bash
+bun run mobile -- --tunnel
+```
+
+The native UI does not depend on a native WebRTC module. A hidden Expo DOM component owns the browser
+`RTCPeerConnection` and its authenticated DataChannels, then forwards validated commands and live
+events to React Native. This keeps the production transport identical while remaining testable in
+Expo Go without a development build.
 
 ## Source structure
 
@@ -35,7 +47,7 @@ src/
     search/             search model, controls, results, and screen
     servers/            server drawer and joining a server
     settings/           account settings screen
-    workspace/          workspace state, domain types, and prototype fixtures
+    workspace/          remote directory, WebRTC transport, live events, and workspace state
   shared/
     components/         UI used by more than one feature
     lib/                platform and infrastructure helpers
