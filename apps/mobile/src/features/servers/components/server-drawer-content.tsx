@@ -1,6 +1,6 @@
 import type { Href } from "expo-router";
 import { Typography } from "heroui-native";
-import { Monitor, Plus, Server, Settings, Wifi, WifiOff } from "lucide-react-native";
+import { Monitor, Plus, Server, Settings } from "lucide-react-native";
 import { Pressable, ScrollView, View, type ViewStyle } from "react-native";
 
 import type { MobileSession } from "@/features/auth/api/mobile-auth";
@@ -51,14 +51,14 @@ export function ServerDrawerContent({
         {servers.map((serverItem) => {
           const selected = serverItem.id === activeServerId;
           const ServerIcon = serverItem.kind === "local" ? Monitor : Server;
-          const StateIcon = serverItem.state === "online" ? Wifi : WifiOff;
+          const serverLabel = serverItem.kind === "local" ? "Local" : "Remote";
 
           return (
             <Pressable
               key={serverItem.id}
               accessibilityRole="button"
               accessibilityState={{ selected }}
-              accessibilityLabel={`${serverItem.name}, ${serverItem.state}`}
+              accessibilityLabel={`${serverItem.name}, ${serverLabel}`}
               className="min-h-16 flex-row items-center gap-3 rounded-2xl px-3 py-2"
               onPress={() => onSelectServer(serverItem.id)}
               style={({ pressed }) => ({ opacity: pressed ? 0.58 : 1 })}
@@ -86,13 +86,9 @@ export function ServerDrawerContent({
                 <Typography.Paragraph weight={selected ? "bold" : "semibold"} numberOfLines={1}>
                   {serverItem.name}
                 </Typography.Paragraph>
-                <View className="flex-row items-center gap-1.5">
-                  <StateIcon color={mutedColor} size={12} strokeWidth={2} />
-                  <Typography.Paragraph type="body-xs" className="capitalize text-text-secondary">
-                    {serverItem.state}
-                    {serverItem.kind === "remote" ? " · Remote" : " · Paired desktop"}
-                  </Typography.Paragraph>
-                </View>
+                <Typography.Paragraph type="body-xs" className="text-text-secondary">
+                  {serverLabel}
+                </Typography.Paragraph>
               </View>
             </Pressable>
           );

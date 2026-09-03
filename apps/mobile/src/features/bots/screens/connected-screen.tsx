@@ -18,6 +18,8 @@ const EASE_OUT = Easing.bezier(0.23, 1, 0.32, 1);
 const EASE_IN_OUT = Easing.bezier(0.77, 0, 0.175, 1);
 const ROW_ENTER = FadeIn.duration(180).easing(EASE_IN_OUT).reduceMotion(ReduceMotion.System);
 const ROW_EXIT = FadeOut.duration(120).easing(EASE_OUT).reduceMotion(ReduceMotion.System);
+// Bot search is not available in the current mobile release, so keep its entry points hidden until it is ready.
+const IS_BOT_SEARCH_ENABLED = false;
 
 function TransitioningBotRow({ bot }: { bot: MobileBot }) {
   const { transition } = useBotPinTransition();
@@ -128,9 +130,11 @@ export function ConnectedScreen() {
           headerRight: isAndroid
             ? () => (
                 <View className="flex-row items-center gap-1">
-                  <HeaderIconButton accessibilityLabel="Search bots" onPress={() => router.push("/search-bots")}>
-                    <Search color={iconColor} size={22} strokeWidth={1.9} />
-                  </HeaderIconButton>
+                  {IS_BOT_SEARCH_ENABLED ? (
+                    <HeaderIconButton accessibilityLabel="Search bots" onPress={() => router.push("/search-bots")}>
+                      <Search color={iconColor} size={22} strokeWidth={1.9} />
+                    </HeaderIconButton>
+                  ) : null}
                   <MenuView
                     actions={optionsActions}
                     onPressAction={(event) => {
@@ -162,7 +166,9 @@ export function ConnectedScreen() {
             <Stack.Toolbar.Button icon="square.stack.3d.up.fill" onPress={openDrawer} />
           </Stack.Toolbar>
           <Stack.Toolbar placement="right">
-            <Stack.Toolbar.Button icon="magnifyingglass" onPress={() => router.push("/search-bots")} />
+            {IS_BOT_SEARCH_ENABLED ? (
+              <Stack.Toolbar.Button icon="magnifyingglass" onPress={() => router.push("/search-bots")} />
+            ) : null}
             <Stack.Toolbar.Menu icon="ellipsis">
               <Stack.Toolbar.MenuAction icon="plus.circle" onPress={() => router.push("/add-bot")}>
                 Add bot
