@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { INPUT_LIMITS } from "./input-limits";
 import {
   AGENT_RUNTIME_ATTENTION_LIMIT,
   AGENT_RUNTIME_TEXT_LIMIT,
@@ -705,5 +706,20 @@ describe("renderer-to-main boundary guards", () => {
     const { provider, ...withoutProvider } = model;
     expect(isAgentModelOption(withoutProvider)).toBe(false);
     expect(isAgentModelOption({ ...model, supportedReasoningEfforts: ["low", "extreme"] })).toBe(false);
+  });
+
+  // A model name is a CLI's `displayName`, which nothing bounds, and the released Team v1 adapter
+  // accepts 160 — so anything shorter here rejects a whole model list a shipped peer may send.
+  it("accepts a model name up to the length the released protocol allows", () => {
+    const model = {
+      provider: "claude",
+      id: "claude-sonnet-5",
+      name: "Sonnet 5",
+      description: "Balanced reasoning.",
+      defaultReasoningEffort: "medium",
+      supportedReasoningEfforts: ["low", "medium", "high"],
+    };
+    expect(isAgentModelOption({ ...model, name: "S".repeat(INPUT_LIMITS.modelName) })).toBe(true);
+    expect(isAgentModelOption({ ...model, name: "S".repeat(INPUT_LIMITS.modelName + 1) })).toBe(false);
   });
 });

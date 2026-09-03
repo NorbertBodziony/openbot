@@ -496,7 +496,7 @@ export function isAgentModelOption(value: unknown): value is AgentModelOption {
     isDynamicRecord(value) &&
     isAgentProvider(value.provider) &&
     isAgentModel(value.id) &&
-    isBoundedString(value.name, INPUT_LIMITS.agentName) &&
+    isBoundedString(value.name, INPUT_LIMITS.modelName) &&
     isBoundedString(value.description, INPUT_LIMITS.agentDescription) &&
     isReasoningEffort(value.defaultReasoningEffort) &&
     Array.isArray(value.supportedReasoningEfforts) &&
