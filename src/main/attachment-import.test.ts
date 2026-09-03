@@ -140,6 +140,23 @@ describe("EML attachment imports", () => {
     await expect(importEmail(email)).rejects.toThrow("more than 10 attachments");
   });
 
+  it("rejects continued MIME boundaries before parsing", async () => {
+    const email = ENCODER.encode(
+      [
+        "Subject: Continued boundary",
+        "Content-Type: multipart/mixed; boundary*0=open; boundary*1=bot",
+        "",
+        "--openbot",
+        "Content-Type: text/plain",
+        "",
+        "Message",
+        "--openbot--",
+      ].join("\r\n"),
+    );
+
+    await expect(importEmail(email)).rejects.toThrow("extended or continued MIME boundary");
+  });
+
   it("rejects an oversized aggregate EML header block", async () => {
     const headers = `X-Header: ${"a".repeat(1024)}\r\n`.repeat(2_100);
 

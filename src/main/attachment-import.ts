@@ -169,7 +169,7 @@ function assertEmailPreflight(name: string, bytes: Uint8Array, budget: Attachmen
   ({ parts, attachments, hasHtml } = countEmailPart(root, parts, attachments, hasHtml));
   assertEmailCounts(name, budget, parts, attachments);
   const boundaries = new Set<string>();
-  addEmailBoundary(root, boundaries);
+  addEmailBoundary(name, root, boundaries);
   let offset = root.bodyOffset;
 
   while (offset < bytes.byteLength) {
@@ -184,20 +184,23 @@ function assertEmailPreflight(name: string, bytes: Uint8Array, budget: Attachmen
     const headers = readEmailHeaders(bytes, offset);
     ({ parts, attachments, hasHtml } = countEmailPart(headers, parts, attachments, hasHtml));
     assertEmailCounts(name, budget, parts, attachments);
-    addEmailBoundary(headers, boundaries);
+    addEmailBoundary(name, headers, boundaries);
     offset = headers.bodyOffset;
 
     if (emailContentType(headers) === "message/rfc822" && emailDisposition(headers) === "inline") {
       const nested = readEmailHeaders(bytes, offset);
       ({ parts, attachments, hasHtml } = countEmailPart(nested, parts, attachments, hasHtml));
       assertEmailCounts(name, budget, parts, attachments);
-      addEmailBoundary(nested, boundaries);
+      addEmailBoundary(name, nested, boundaries);
       offset = nested.bodyOffset;
     }
   }
 }
 
-function addEmailBoundary(headers: EmailHeaders, boundaries: Set<string>): void {
+function addEmailBoundary(name: string, headers: EmailHeaders, boundaries: Set<string>): void {
+  if (/(?:^|;)\s*boundary\*(?:\d+\*?)?\s*=/iu.test(headers.contentType)) {
+    throw new Error(`${name} uses an extended or continued MIME boundary, which is not supported. Export it again.`);
+  }
   const match = /(?:^|;)\s*boundary\s*=\s*(?:"((?:\\.|[^"])*)"|([^;\s]+))/iu.exec(headers.contentType);
   const boundary = (match?.[1] ?? match?.[2])?.replace(/\\(.)/gu, "$1");
   if (boundary) boundaries.add(boundary);
