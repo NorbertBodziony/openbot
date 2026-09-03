@@ -390,8 +390,9 @@ interface EmailHeaders {
 function assertEmailPreflight(name: string, bytes: Uint8Array, budget: AttachmentBudget): void {
   let parts = 0;
   let attachments = 1;
+  let hasHtml = false;
   const root = readEmailHeaders(bytes, 0);
-  ({ parts, attachments } = countEmailPart(root, parts, attachments));
+  ({ parts, attachments, hasHtml } = countEmailPart(root, parts, attachments, hasHtml));
   assertEmailCounts(name, budget, parts, attachments);
   const boundaries = new Set<string>();
   addEmailBoundary(root, boundaries);
@@ -407,14 +408,14 @@ function assertEmailPreflight(name: string, bytes: Uint8Array, budget: Attachmen
       continue;
     }
     const headers = readEmailHeaders(bytes, offset);
-    ({ parts, attachments } = countEmailPart(headers, parts, attachments));
+    ({ parts, attachments, hasHtml } = countEmailPart(headers, parts, attachments, hasHtml));
     assertEmailCounts(name, budget, parts, attachments);
     addEmailBoundary(headers, boundaries);
     offset = headers.bodyOffset;
 
     if (emailContentType(headers) === "message/rfc822" && emailDisposition(headers) === "inline") {
       const nested = readEmailHeaders(bytes, offset);
-      ({ parts, attachments } = countEmailPart(nested, parts, attachments));
+      ({ parts, attachments, hasHtml } = countEmailPart(nested, parts, attachments, hasHtml));
       assertEmailCounts(name, budget, parts, attachments);
       addEmailBoundary(nested, boundaries);
       offset = nested.bodyOffset;
@@ -434,11 +435,10 @@ function matchEmailBoundary(
   boundaries: Set<string>,
 ): { value: string; closing: boolean } | null {
   if (bytes[line.startOffset] !== 45 || bytes[line.startOffset + 1] !== 45) return null;
-  const value = HEADER_DECODER.decode(bytes.subarray(line.startOffset, line.endOffset)).trimEnd();
-  for (const boundary of boundaries) {
-    if (value === `--${boundary}`) return { value: boundary, closing: false };
-    if (value === `--${boundary}--`) return { value: boundary, closing: true };
-  }
+  const candidate = HEADER_DECODER.decode(bytes.subarray(line.startOffset + 2, line.endOffset)).trimEnd();
+  if (boundaries.has(candidate)) return { value: candidate, closing: false };
+  const closing = candidate.endsWith("--") ? candidate.slice(0, -2) : "";
+  if (closing && boundaries.has(closing)) return { value: closing, closing: true };
   return null;
 }
 
@@ -455,8 +455,9 @@ function countEmailPart(
   headers: EmailHeaders,
   parts: number,
   attachments: number,
-): { parts: number; attachments: number } {
-  if (!headers.recognized) return { parts: parts + 1, attachments };
+  hasHtml: boolean,
+): { parts: number; attachments: number; hasHtml: boolean } {
+  if (!headers.recognized) return { parts: parts + 1, attachments, hasHtml };
   const contentType = emailContentType(headers);
   const disposition = emailDisposition(headers);
   const named = hasEmailAttachmentName(headers);
@@ -471,7 +472,8 @@ function countEmailPart(
   const isHtml = contentType === "text/html" && !isAttachment;
   return {
     parts: parts + 1,
-    attachments: attachments + Number(isHtml) + Number(isAttachment),
+    attachments: attachments + Number(isHtml && !hasHtml) + Number(isAttachment),
+    hasHtml: hasHtml || isHtml,
   };
 }
 
@@ -581,7 +583,8 @@ function isPlatformMetadata(name: string): boolean {
 }
 
 function flattenedName(containerStem: string, memberName: string): string {
-  return safeAttachmentName(`${containerStem} - ${memberName.split("/").join(" - ")}`);
+  const extension = attachmentFileExtension(memberName) === null ? ".txt" : "";
+  return safeAttachmentName(`${containerStem} - ${memberName.split("/").join(" - ")}${extension}`);
 }
 
 function uniqueName(name: string, used: Set<string>): string {

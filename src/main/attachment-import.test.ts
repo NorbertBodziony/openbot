@@ -110,6 +110,12 @@ describe("attachment container imports", () => {
     await expect(importZip(unicode)).resolves.toMatchObject({ data: [{ name: "bundle - café.txt" }] });
   });
 
+  it("keeps supported extensionless ZIP members attachable after flattening", async () => {
+    await expect(importZip(zipSync({ Dockerfile: strToU8("FROM scratch") }))).resolves.toMatchObject({
+      data: [{ name: "bundle - Dockerfile.txt", mimeType: "text/plain" }],
+    });
+  });
+
   it.each([
     ["unsafe path", zipSync({ "../secret.txt": strToU8("secret") }), "unsafe path"],
     ["nested archive", zipSync({ "nested.zip": strToU8("zip") }), "nested .zip"],
@@ -296,6 +302,21 @@ describe("attachment container imports", () => {
     const headers = `X-Header: ${"a".repeat(1024)}\r\n`.repeat(2_100);
 
     await expect(importEmail(strToU8(`${headers}\r\nbody`))).rejects.toThrow("headers exceed the 2 MB limit");
+  });
+
+  it("reserves one output for a multipart HTML body", async () => {
+    const parts = Array.from({ length: 10 }, (_, index) =>
+      ["--openbot", "Content-Type: text/html", "", `<p>Section ${index}</p>`].join("\r\n"),
+    );
+    const email = strToU8(
+      ["Subject: HTML", 'Content-Type: multipart/alternative; boundary="openbot"', "", ...parts, "--openbot--"].join(
+        "\r\n",
+      ),
+    );
+
+    await expect(importEmail(email)).resolves.toMatchObject({
+      data: [{ name: "message - email.txt" }, { name: "message - email.html" }],
+    });
   });
 
   it("does not treat dashed plain-text body lines as MIME boundaries", async () => {
