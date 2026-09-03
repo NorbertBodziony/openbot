@@ -7,6 +7,33 @@ export function requireString(value: unknown, field: string, maxLength: number =
   return value;
 }
 
+/**
+ * `requireString` bound to one field name, for the many channels whose whole payload is a single
+ * identifier. `handleTrusted` takes a `(value: unknown) => Payload`, and `requireString` takes three
+ * arguments, so without this each of those channels would need its own one-line named decoder.
+ */
+export function stringPayload(field: string, maxLength: number = INPUT_LIMITS.identifier): (value: unknown) => string {
+  return (value) => requireString(value, field, maxLength);
+}
+
+/**
+ * Wraps a decoder for a channel whose payload may legitimately be absent, so an omitted payload
+ * stays `undefined` rather than being rejected as malformed. An explicit `null` is not an omission
+ * and still goes to the decoder, which is what a caller sending one has always got.
+ */
+export function optionalPayload<Payload>(decode: (value: unknown) => Payload): (value: unknown) => Payload | undefined {
+  return (value) => (value === undefined ? undefined : decode(value));
+}
+
+/**
+ * The same, for the two marketplace channels that have shipped treating an explicit `null` as "no
+ * query" alongside an omitted one. Widening `optionalPayload` to cover them instead would make every
+ * other channel newly accept a `null` its decoder used to reject.
+ */
+export function nullishPayload<Payload>(decode: (value: unknown) => Payload): (value: unknown) => Payload | undefined {
+  return (value) => (value === null || value === undefined ? undefined : decode(value));
+}
+
 export function isObject(value: unknown): value is DynamicRecord {
   return isDynamicRecord(value);
 }

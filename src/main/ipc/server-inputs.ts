@@ -177,3 +177,16 @@ export function parseDirectTyping(value: unknown): DirectTypingInput {
     typing: value.typing,
   };
 }
+
+export function parseRemoteDesktopConnect(input: unknown): { serverId: string } {
+  if (!isObject(input)) throw new Error("Remote control details are required.");
+  return { serverId: requireString(input.serverId, "serverId") };
+}
+
+export function parseRemoteDesktopDisplay(input: unknown): { serverId: string; displayId: string } {
+  if (!isObject(input)) throw new Error("Remote display details are required.");
+  return {
+    serverId: requireString(input.serverId, "serverId"),
+    displayId: requireString(input.displayId, "displayId"),
+  };
+}
