@@ -123,4 +123,29 @@ describe("trusted IPC wrappers", () => {
 
     expect(registrations.get("test:accept-with-event")?.(TRUSTED_EVENT, "one")).toEqual([TRUSTED_EVENT, "decoded:one"]);
   });
+
+  // Ordering again, one level in: every window of the app shares the trusted origin, so a channel
+  // restricted to one of them authorizes by sender identity. That answers "may this caller use this
+  // channel at all", so it has to settle before the decoder runs — otherwise a caller the channel
+  // rejects still gets to choose which payload-validation error comes back.
+  it("authorizes the sender before decoding a payload it sent", () => {
+    const order: string[] = [];
+    handleTrustedWithEvent(
+      "test:authorized",
+      () => {
+        order.push("authorize");
+        throw new Error("Rejected Dynamic Island IPC request outside the main renderer.");
+      },
+      (value) => {
+        order.push("decode");
+        return value;
+      },
+      (_event, payload) => payload,
+    );
+
+    expect(() => registrations.get("test:authorized")?.(TRUSTED_EVENT, "one")).toThrowError(
+      "Rejected Dynamic Island IPC request outside the main renderer.",
+    );
+    expect(order).toEqual(["authorize"]);
+  });
 });

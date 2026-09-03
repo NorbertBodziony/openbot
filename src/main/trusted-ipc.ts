@@ -29,6 +29,14 @@ type TakesNoArguments<Handler> = Handler extends (...args: infer Args) => unknow
     : ArityMessage
   : never;
 
+// Authorization that needs the event — a sender-identity check the trusted-URL gate is not able to
+// make, because every window of the app shares one origin — belongs beside that gate rather than in
+// the handler. Both answer "may this caller use this channel at all", so both have to be settled
+// before the process decodes anything the caller sent. Without the slot the check can only run after
+// the decoder, which hands a caller already known to be rejected a payload-validation error to read
+// and makes it the decoder's allocations that answer first.
+type AuthorizeSender = (event: IpcMainInvokeEvent) => void;
+
 // The event is passed by the wrapper, not the renderer, so a handler may name it or ignore it.
 type TakesEventOnly<Handler> = Handler extends (...args: infer Args) => unknown
   ? Args["length"] extends 0 | 1
@@ -38,7 +46,12 @@ type TakesEventOnly<Handler> = Handler extends (...args: infer Args) => unknown
 
 type TrustedEventRegistration =
   | [handler: (event: IpcMainInvokeEvent) => unknown]
-  | [decode: PayloadDecoder<unknown>, handler: (event: IpcMainInvokeEvent, payload: unknown) => unknown];
+  | [decode: PayloadDecoder<unknown>, handler: (event: IpcMainInvokeEvent, payload: unknown) => unknown]
+  | [
+      authorize: AuthorizeSender,
+      decode: PayloadDecoder<unknown>,
+      handler: (event: IpcMainInvokeEvent, payload: unknown) => unknown,
+    ];
 
 export function handleTrusted<Handler extends () => unknown>(
   channel: string,
@@ -72,13 +85,28 @@ export function handleTrustedWithEvent<Payload, Result>(
   decode: PayloadDecoder<Payload>,
   handler: (event: IpcMainInvokeEvent, payload: Payload) => Result,
 ): void;
+// Only the payload-taking form has an authorizing overload. An authorized channel with nothing to
+// decode has no ordering to fix — its handler is already the first thing that runs — and a three
+// argument `(channel, authorize, handler)` form could not be told apart from `(channel, decode,
+// handler)`, since an `AuthorizeSender` is structurally a decoder that returns nothing.
+export function handleTrustedWithEvent<Payload, Result>(
+  channel: string,
+  authorize: AuthorizeSender,
+  decode: PayloadDecoder<Payload>,
+  handler: (event: IpcMainInvokeEvent, payload: Payload) => Result,
+): void;
 export function handleTrustedWithEvent(channel: string, ...registration: TrustedEventRegistration): void {
   ipcMain.handle(channel, (event, payload: unknown) => {
     if (!isTrustedRendererUrl(event.senderFrame?.url)) {
       throw new Error("Rejected IPC request from an untrusted renderer.");
     }
     if (registration.length === 1) return registration[0](event);
-    const [decode, handler] = registration;
+    if (registration.length === 2) {
+      const [decode, handler] = registration;
+      return handler(event, decode(payload));
+    }
+    const [authorize, decode, handler] = registration;
+    authorize(event);
     return handler(event, decode(payload));
   });
 }

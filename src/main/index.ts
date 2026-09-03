@@ -384,34 +384,38 @@ function registerIpcHandlers(
     );
     return dynamicIsland.preference;
   });
-  handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandSetPreference, parseDynamicIslandPreference, (event, preference) => {
-    requireDynamicIslandSender(event.sender.id, dynamicIsland.mainRendererIds, "main renderer");
-    return dynamicIsland.setPreference(preference);
-  });
+  handleTrustedWithEvent(
+    IPC_CHANNELS.dynamicIslandSetPreference,
+    (event) => requireDynamicIslandSender(event.sender.id, dynamicIsland.mainRendererIds, "main renderer"),
+    parseDynamicIslandPreference,
+    (_event, preference) => dynamicIsland.setPreference(preference),
+  );
   handleTrustedWithEvent(
     IPC_CHANNELS.dynamicIslandPublishPresentation,
+    (event) => requireDynamicIslandSender(event.sender.id, dynamicIsland.mainRendererIds, "main renderer"),
     parseDynamicIslandPresentation,
-    (event, presentation) => {
-      requireDynamicIslandSender(event.sender.id, dynamicIsland.mainRendererIds, "main renderer");
-      dynamicIsland.publish(presentation);
-    },
+    (_event, presentation) => dynamicIsland.publish(presentation),
   );
   handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandGetPresentation, (event) => {
     requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer");
     return dynamicIsland.presentation;
   });
-  handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandPerformAction, parseDynamicIslandAction, (event, action) => {
-    requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer");
-    return dynamicIsland.performAction(action);
-  });
+  handleTrustedWithEvent(
+    IPC_CHANNELS.dynamicIslandPerformAction,
+    (event) => requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer"),
+    parseDynamicIslandAction,
+    (_event, action) => dynamicIsland.performAction(action),
+  );
   handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandPerformHaptic, (event) => {
     requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer");
     dynamicIsland.performHaptic();
   });
-  handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandSetInteractive, parseDynamicIslandInteractive, (event, state) => {
-    requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer");
-    dynamicIsland.setInteractive(event.sender.id, state.interactive);
-  });
+  handleTrustedWithEvent(
+    IPC_CHANNELS.dynamicIslandSetInteractive,
+    (event) => requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer"),
+    parseDynamicIslandInteractive,
+    (event, state) => dynamicIsland.setInteractive(event.sender.id, state.interactive),
+  );
   handleTrusted(IPC_CHANNELS.saveSetup, parseProvider, async (preferredProvider): Promise<AppSetupState> => {
     const state = await writeSetupState(setupFile, preferredProvider);
     await service.setPreferredProvider(preferredProvider);
