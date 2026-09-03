@@ -471,6 +471,49 @@ describe("TeamStore", () => {
     expect(restarted.listMembers().map((member) => member.name)).toEqual(["Owner", "Alice"]);
   });
 
+  it("keeps a member disabled here when the other build only changed their name", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-"));
+    roots.push(root);
+    const legacyPath = join(root, "team.json");
+    const path = join(root, "team-v2.json");
+    const owner = { id: "owner-account", email: "owner@example.com", name: "Owner", avatarUrl: null };
+    const source = new TeamStore(legacyPath);
+    await source.initialize();
+    await source.configureWithAccount("Studio Mac", owner);
+    const invite = await source.createInvite("member", "alice@example.com");
+    const alice = await source.acceptInviteWithAccount(invite.token, {
+      id: "alice-account",
+      email: "alice@example.com",
+      name: "Alice",
+      avatarUrl: null,
+    });
+    const legacyRecord = await readStoredHost(legacyPath);
+    await writeFile(legacyPath, JSON.stringify(legacyRecord));
+
+    const upgraded = new TeamStore(path, legacyPath);
+    await upgraded.initialize();
+    await upgraded.updateMember(alice.member.id, { disabled: true });
+
+    // The older build knows nothing of that and renames the same member.
+    await writeFile(
+      legacyPath,
+      JSON.stringify({
+        ...legacyRecord,
+        members: legacyRecord.members?.map((member) =>
+          member.id === alice.member.id ? { ...member, name: "Alice Chen" } : member,
+        ),
+      }),
+    );
+    const restarted = new TeamStore(path, legacyPath);
+    await restarted.initialize();
+
+    // Their access was taken away here, and a rename made elsewhere cannot give it back.
+    expect(restarted.listMembers().find((member) => member.id === alice.member.id)).toMatchObject({
+      name: "Alice Chen",
+      disabled: true,
+    });
+  });
+
   it("keeps each account's host separate and restores it on the next sign-in", async () => {
     const { store, path } = await createStore();
     const first = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
@@ -874,7 +917,7 @@ interface StoredHostFields {
   serverName?: string;
   enabledOnLaunch?: boolean;
   serverLogo?: { version?: string; mimeType?: string; bytes?: unknown };
-  members?: Array<{ accountId?: string }>;
+  members?: Array<{ id: string; name: string; accountId?: string }>;
 }
 
 /** The file holds one host per account; every host field a test reads lives under `hosts`. */

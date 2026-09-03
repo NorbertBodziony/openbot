@@ -140,6 +140,8 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   #sessionToken: string | null = null;
   readonly #teamHostTokens = new Map<string, string>();
   #sessionWriteChain: Promise<void> = Promise.resolve();
+  /** The account the stored host credentials were issued to, or none while signed out. */
+  #sessionAccountId: string | null = null;
   #remoteTicketJwks: Promise<z.infer<typeof remoteTicketJwksSchema>> | null = null;
   #initializationPromise: Promise<CentralAuthState> | null = null;
   #emailCodeRequest: EmailCodeRequest | null = null;
@@ -638,6 +640,11 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
         },
         decodeSessionResponse,
       );
+      // Signing in as somebody else without signing out first. The host credentials belong
+      // to the account that was issued them, and must not be filed under this session.
+      if (this.#sessionAccountId !== null && this.#sessionAccountId !== session.user.id) {
+        this.#teamHostTokens.clear();
+      }
       this.#sessionToken = session.sessionToken;
       await this.#writeStoredSession();
       return this.#setState({
@@ -824,6 +831,7 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
 
   async #clearStoredSession(): Promise<void> {
     this.#sessionToken = null;
+    this.#sessionAccountId = null;
     this.#teamHostTokens.clear();
     // Through the same chain as the writes, so a write already in flight cannot put the
     // file back after it is removed.
@@ -856,6 +864,9 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   }
 
   #setState(state: CentralAuthState): CentralAuthState {
+    // Held apart from the state, which passes through `code_sent` on the way to another
+    // account: this is whose credentials the store is holding, until they are cleared.
+    if (state.status === "signed_in") this.#sessionAccountId = state.user.id;
     this.#state = state;
     const copy = this.getState();
     this.emit("changed", copy);

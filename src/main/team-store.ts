@@ -1250,11 +1250,11 @@ function reconcileHost(baseline: StoredTeam, mine: StoredTeam, theirs: StoredTea
 
 /** The side that moved, or this build's value when the other side stood still. */
 function pickChanged<T>(baseline: T, mine: T, theirs: T): T {
-  return JSON.stringify(theirs ?? null) === JSON.stringify(baseline ?? null) ? mine : theirs;
+  return sameValue(theirs, baseline) ? mine : theirs;
 }
 
 function reconcileEntries<T extends { id: string }>(baseline: T[], mine: T[], theirs: T[]): T[] {
-  const before = new Map(baseline.map((entry) => [entry.id, JSON.stringify(entry)]));
+  const before = new Map(baseline.map((entry) => [entry.id, entry]));
   const merged: T[] = [];
   const seen = new Set<string>();
   for (const entry of [...mine, ...theirs]) {
@@ -1264,10 +1264,38 @@ function reconcileEntries<T extends { id: string }>(baseline: T[], mine: T[], th
     const other = theirs.find((candidate) => candidate.id === entry.id);
     const known = before.get(entry.id);
     // Known to both and gone from one of them: removed there, so it stays removed.
-    if (known !== undefined && (!ours || !other)) continue;
-    merged.push(other && known !== undefined && JSON.stringify(other) !== known ? other : (ours ?? entry));
+    if (known && (!ours || !other)) continue;
+    if (!ours || !other || !known) {
+      merged.push(ours ?? other ?? entry);
+      continue;
+    }
+    // Both builds have it. Taking the other side's entry whole would undo a field this one
+    // changed - a disabled member handed back their access, say - so each field is decided
+    // on its own.
+    merged.push(reconcileFields(known, ours, other));
   }
   return merged;
+}
+
+/** The entry field by field: whichever side moved a field, and this build's when neither did. */
+function reconcileFields<T extends object>(baseline: T, mine: T, theirs: T): T {
+  const merged = { ...mine };
+  const before = new Map(Object.entries(baseline));
+  const ours = new Map(Object.entries(mine));
+  for (const [key, other] of Object.entries(theirs)) {
+    Reflect.set(merged, key, sameValue(other, before.get(key)) ? ours.get(key) : other);
+  }
+  for (const key of ours.keys()) {
+    // Dropped there, and this build never touched it, so it goes.
+    if (!(key in theirs) && before.has(key) && sameValue(ours.get(key), before.get(key))) {
+      Reflect.deleteProperty(merged, key);
+    }
+  }
+  return merged;
+}
+
+function sameValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
 }
 
 function isStoredTeamFile(value: unknown): value is StoredTeamFile {

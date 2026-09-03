@@ -255,6 +255,10 @@ export class HostService extends EventEmitter<HostEvents> {
     const nextAccountId = user?.id ?? null;
     if (this.#boundAccountId === undefined || this.#boundAccountId === nextAccountId) return;
     if (!this.#options.store.configured) return;
+    // A start still in flight belongs to the account on its way out. Bumping here rather
+    // than waiting for the queued `applySignedInAccount` is what stops it reporting the
+    // previous host online - or its failure as an error - on the new account's status.
+    this.#runtimeGeneration += 1;
     this.#options.store.unbindActiveHost();
     this.#status = initialHostStatus(null, this.#options.unattended ?? false);
     this.emit("changed", this.getStatus());
@@ -498,6 +502,7 @@ export class HostService extends EventEmitter<HostEvents> {
       });
       if (await this.#cancelSupersededStart(generation)) return this.getStatus();
       await this.#options.store.setEnabledOnLaunch(identity.serverId, true);
+      if (await this.#cancelSupersededStart(generation)) return this.getStatus();
       this.#setStatus({ phase: "online", enabledOnLaunch: true });
     } catch (error) {
       if (generation !== this.#runtimeGeneration) {
