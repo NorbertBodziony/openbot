@@ -10,7 +10,7 @@ import type {
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
 import { normalizeEmailAddress } from "@openbot/contracts/validation";
-import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, createStore, For, onCleanup, Show, snapshot } from "solid-js";
 import { normalizeAvatarFile } from "../avatar-image";
 import { SettingsDialogShell } from "./SettingsDialogShell";
 import { teamMemberName } from "./TeamPersonAvatar";
@@ -97,26 +97,71 @@ const sections: Record<Section, { title: string; description: string }> = {
   desktop: { title: "Remote desktop", description: "Configure or connect to this server’s desktop." },
 };
 
+/**
+ * The identity form: the name and logo as the server last confirmed them, the draft the user is
+ * editing, and the validation feedback that belongs to that draft. `logo` is `undefined` while the
+ * saved image stands, `null` once the user removes it, and an image once one is chosen, so it
+ * carries the difference between "unchanged" and "cleared" that a save has to send.
+ */
+interface ServerIdentityDraft {
+  editing: boolean;
+  logo: AvatarImageInput | null | undefined;
+  logoError: string | null;
+  logoUrl: string | null;
+  name: string;
+  nameShaking: boolean;
+  nameTouched: boolean;
+  savedLogoUrl: string | null;
+  savedName: string;
+}
+
+/** The invite composer. `mode` picks which of `email` and `link` the panel is filling in. */
+interface InvitePanel {
+  email: string;
+  emailError: string | null;
+  link: string;
+  mode: InviteMode;
+  result: InviteSummary | null;
+  role: InviteRole;
+}
+
+interface MembersPanel {
+  removeId: string | null;
+  search: string;
+}
+
+/**
+ * One record per panel of the dialog. Each group's fields are written together - a reset rewrites
+ * the whole identity draft at once, and switching invite mode clears three of the composer's
+ * fields - so they are one store rather than a signal each, and replacing one field re-renders
+ * only what read that field.
+ */
+interface ServerSettingsPanels {
+  identity: ServerIdentityDraft;
+  invite: InvitePanel;
+  members: MembersPanel;
+}
+
 export function ServerSettingsModal(props: ServerSettingsModalProps) {
+  const [panels, setPanels] = createStore<ServerSettingsPanels>({
+    identity: {
+      editing: false,
+      logo: undefined,
+      logoError: null,
+      logoUrl: null,
+      name: "",
+      nameShaking: false,
+      nameTouched: false,
+      savedLogoUrl: null,
+      savedName: "",
+    },
+    invite: { email: "", emailError: null, link: "", mode: "email", result: null, role: "member" },
+    members: { removeId: null, search: "" },
+  });
   const [section, setSection] = createSignal<Section>("general");
-  const [savedName, setSavedName] = createSignal("");
-  const [draftName, setDraftName] = createSignal("");
-  const [savedLogoUrl, setSavedLogoUrl] = createSignal<string | null>(null);
-  const [draftLogoUrl, setDraftLogoUrl] = createSignal<string | null>(null);
-  const [draftLogo, setDraftLogo] = createSignal<AvatarImageInput | null | undefined>(undefined);
-  const [identityEditing, setIdentityEditing] = createSignal(false);
-  const [nameTouched, setNameTouched] = createSignal(false);
-  const [nameShaking, setNameShaking] = createSignal(false);
-  const [logoError, setLogoError] = createSignal<string | null>(null);
+  /** The key of the one action in flight, gating every panel at once rather than belonging to any. */
   const [busy, setBusy] = createSignal<string | null>(null);
-  const [inviteMode, setInviteMode] = createSignal<InviteMode>("email");
-  const [inviteRole, setInviteRole] = createSignal<InviteRole>("member");
-  const [inviteEmail, setInviteEmail] = createSignal("");
-  const [inviteEmailError, setInviteEmailError] = createSignal<string | null>(null);
-  const [inviteResult, setInviteResult] = createSignal<InviteSummary | null>(null);
-  const [inviteLinkValue, setInviteLinkValue] = createSignal("");
-  const [memberSearch, setMemberSearch] = createSignal("");
-  const [removeMemberId, setRemoveMemberId] = createSignal<string | null>(null);
+  /** A clock, not panel state: it retires an invite row as its `expiresAt` passes. */
   const [now, setNow] = createSignal(Date.now());
   let modalElement: HTMLElement | undefined;
   let logoInput: HTMLInputElement | undefined;
@@ -135,7 +180,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
   const actionsAvailable = () => local() || props.server.state === "online";
   const published = () => (local() ? props.hostStatus?.phase === "online" : props.server.state === "online");
   const address = () => (local() ? props.hostStatus?.apiUrl : props.server.apiUrl);
-  const trimmedName = () => draftName().trim();
+  const trimmedName = () => panels.identity.name.trim();
   const nameError = () => {
     if (!canEditIdentity()) return null;
     if (trimmedName().length < INPUT_LIMITS.serverNameMin)
@@ -144,27 +189,29 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
       return `Use no more than ${INPUT_LIMITS.serverName} characters.`;
     return null;
   };
-  const visibleNameError = () => (nameTouched() ? nameError() : null);
+  const visibleNameError = () => (panels.identity.nameTouched ? nameError() : null);
   const identityDirty = () =>
     canEditIdentity() &&
-    (trimmedName() !== savedName() || draftLogo() !== undefined || draftLogoUrl() !== savedLogoUrl());
+    (trimmedName() !== panels.identity.savedName ||
+      panels.identity.logo !== undefined ||
+      panels.identity.logoUrl !== panels.identity.savedLogoUrl);
   const activeInvites = createMemo(() =>
     props.invites.filter((item) => item.usedAt === null && Date.parse(item.expiresAt) > now()),
   );
   const filteredMembers = createMemo(() => {
-    const query = memberSearch().trim().toLowerCase();
+    const query = panels.members.search.trim().toLowerCase();
     if (!query) return props.members;
     return props.members.filter((member) =>
       [teamMemberName(member), member.email, member.username].some((value) => value?.toLowerCase().includes(query)),
     );
   });
-  const removeMember = createMemo(() => props.members.find((member) => member.id === removeMemberId()) ?? null);
+  const removeMember = createMemo(() => props.members.find((member) => member.id === panels.members.removeId) ?? null);
   const canInvite = createMemo(
     () =>
       canManage() &&
       published() &&
       busy() === null &&
-      (inviteMode() === "link" || normalizeEmailAddress(inviteEmail()) !== null),
+      (panels.invite.mode === "link" || normalizeEmailAddress(panels.invite.email) !== null),
   );
 
   createEffect(
@@ -173,28 +220,32 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
       id: props.server.id,
       name: props.server.kind === "local" && !props.hostStatus?.configured ? "" : props.server.name,
       logoUrl: props.server.logoUrl,
-      editing: identityEditing(),
+      editing: panels.identity.editing,
     }),
     ({ open, id, name, logoUrl, editing }) => {
       if (!open) return;
       if (syncedServerId !== id) {
         syncedServerId = id;
         setSection("general");
-        setIdentityEditing(false);
-        setNameTouched(false);
-        setNameShaking(false);
-        setMemberSearch("");
-        setInviteResult(null);
+        setPanels((state) => {
+          state.identity.editing = false;
+          state.identity.nameTouched = false;
+          state.identity.nameShaking = false;
+          state.invite.result = null;
+          state.members.search = "";
+        });
         resetInviteLink();
       }
       if (!editing) {
-        setSavedName(name);
-        setDraftName(name);
-        setSavedLogoUrl(logoUrl);
-        setDraftLogoUrl(logoUrl);
-        setDraftLogo(undefined);
-        setNameTouched(false);
-        setNameShaking(false);
+        setPanels((state) => {
+          state.identity.savedName = name;
+          state.identity.name = name;
+          state.identity.savedLogoUrl = logoUrl;
+          state.identity.logoUrl = logoUrl;
+          state.identity.logo = undefined;
+          state.identity.nameTouched = false;
+          state.identity.nameShaking = false;
+        });
       }
     },
   );
@@ -224,13 +275,17 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
     if (inviteLinkSwapTimer) clearTimeout(inviteLinkSwapTimer);
     inviteLinkSwapTimer = undefined;
     inviteLinkInput?.classList.remove("is-exit", "is-enter-start");
-    setInviteLinkValue("");
+    setPanels((state) => {
+      state.invite.link = "";
+    });
   }
 
   function swapInviteLink(next: string): void {
     const element = inviteLinkInput;
     if (!element || (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false)) {
-      setInviteLinkValue(next);
+      setPanels((state) => {
+        state.invite.link = next;
+      });
       return;
     }
     if (inviteLinkSwapTimer) clearTimeout(inviteLinkSwapTimer);
@@ -239,7 +294,9 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
     element.classList.add("is-exit");
     inviteLinkSwapTimer = setTimeout(() => {
       inviteLinkSwapTimer = undefined;
-      setInviteLinkValue(next);
+      setPanels((state) => {
+        state.invite.link = next;
+      });
       element.classList.remove("is-exit");
       element.classList.add("is-enter-start");
       void element.offsetHeight;
@@ -265,73 +322,93 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
 
   async function chooseLogo(file: File | undefined): Promise<void> {
     if (!file) return;
-    setLogoError(null);
+    setPanels((state) => {
+      state.identity.logoError = null;
+    });
     try {
       const image = await normalizeAvatarFile(file);
       const url = URL.createObjectURL(file);
       objectUrls.push(url);
-      setIdentityEditing(true);
-      setDraftLogo(image);
-      setDraftLogoUrl(url);
+      setPanels((state) => {
+        state.identity.editing = true;
+        state.identity.logo = image;
+        state.identity.logoUrl = url;
+      });
     } catch (error) {
-      setLogoError(error instanceof Error ? error.message : "OpenBot could not read this image.");
+      setPanels((state) => {
+        state.identity.logoError = error instanceof Error ? error.message : "OpenBot could not read this image.";
+      });
     }
   }
 
   function resetIdentity(): void {
-    setDraftName(savedName());
-    setDraftLogoUrl(savedLogoUrl());
-    setDraftLogo(undefined);
-    setIdentityEditing(false);
-    setNameTouched(false);
-    setNameShaking(false);
-    setLogoError(null);
+    setPanels((state) => {
+      state.identity.name = state.identity.savedName;
+      state.identity.logoUrl = state.identity.savedLogoUrl;
+      state.identity.logo = undefined;
+      state.identity.editing = false;
+      state.identity.nameTouched = false;
+      state.identity.nameShaking = false;
+      state.identity.logoError = null;
+    });
   }
 
   function updateDraftName(value: string): void {
-    const namePristine = value.trim() === savedName();
-    const logoPristine = draftLogo() === undefined && draftLogoUrl() === savedLogoUrl();
-    setDraftName(value);
-    setIdentityEditing(!(namePristine && logoPristine));
-    if (namePristine) {
-      setNameTouched(false);
-      setNameShaking(false);
-    } else if (!nameError()) {
-      setNameShaking(false);
-    }
+    const namePristine = value.trim() === panels.identity.savedName;
+    const logoPristine = panels.identity.logo === undefined && panels.identity.logoUrl === panels.identity.savedLogoUrl;
+    // Decided before the write, so `nameError()` still sees the pre-write draft name - the same
+    // value it saw when this was a signal, whose write was equally deferred.
+    const stopShaking = namePristine || !nameError();
+    setPanels((state) => {
+      state.identity.name = value;
+      state.identity.editing = !(namePristine && logoPristine);
+      if (namePristine) state.identity.nameTouched = false;
+      if (stopShaking) state.identity.nameShaking = false;
+    });
   }
 
   function restartNameShake(): void {
-    setNameShaking(false);
+    setPanels((state) => {
+      state.identity.nameShaking = false;
+    });
     queueMicrotask(() => {
       if (!nameInput || !nameError()) return;
       void nameInput.offsetWidth;
-      setNameShaking(true);
+      setPanels((state) => {
+        state.identity.nameShaking = true;
+      });
     });
   }
 
   async function saveIdentity(): Promise<void> {
-    setNameTouched(true);
+    setPanels((state) => {
+      state.identity.nameTouched = true;
+    });
     if (nameError()) {
       restartNameShake();
       queueMicrotask(() => nameInput?.focus({ preventScroll: true }));
       return;
     }
     if (!identityDirty()) return;
-    const logo = draftLogo();
+    const logo = panels.identity.logo;
+    const serverName = trimmedName();
     const saved = await run("identity", () =>
       props.onSaveIdentity({
-        serverName: trimmedName(),
-        ...(logo === undefined ? {} : { logo }),
+        serverName,
+        // The image crosses to IPC, which structured-clones it, so it goes as a snapshot rather
+        // than as whatever the store hands back.
+        ...(logo === undefined ? {} : { logo: snapshot(logo) }),
       }),
     );
     if (!saved) return;
-    setSavedName(trimmedName());
-    setSavedLogoUrl(draftLogoUrl());
-    setDraftLogo(undefined);
-    setIdentityEditing(false);
-    setNameTouched(false);
-    setNameShaking(false);
+    setPanels((state) => {
+      state.identity.savedName = serverName;
+      state.identity.savedLogoUrl = state.identity.logoUrl;
+      state.identity.logo = undefined;
+      state.identity.editing = false;
+      state.identity.nameTouched = false;
+      state.identity.nameShaking = false;
+    });
   }
 
   function showCopyError(): void {
@@ -339,20 +416,26 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
   }
 
   async function createInvite(): Promise<void> {
-    const email = inviteMode() === "email" ? normalizeEmailAddress(inviteEmail()) : null;
-    if (inviteMode() === "email" && !email) {
-      setInviteEmailError("Enter a valid email address.");
+    const email = panels.invite.mode === "email" ? normalizeEmailAddress(panels.invite.email) : null;
+    if (panels.invite.mode === "email" && !email) {
+      setPanels((state) => {
+        state.invite.emailError = "Enter a valid email address.";
+      });
       return;
     }
     let result: InviteSummary | undefined;
+    const role = panels.invite.role;
     const saved = await run("invite", async () => {
-      result = await props.onCreateInvite({ role: inviteRole(), ...(email ? { email } : {}) });
+      result = await props.onCreateInvite({ role, ...(email ? { email } : {}) });
     });
     if (!saved || !result) return;
-    setInviteResult(result);
-    if (!result.email) swapInviteLink(result.inviteUrl);
-    setInviteEmailError(null);
-    if (email) setInviteEmail("");
+    const created = result;
+    setPanels((state) => {
+      state.invite.result = created;
+      state.invite.emailError = null;
+      if (email) state.invite.email = "";
+    });
+    if (!created.email) swapInviteLink(created.inviteUrl);
   }
 
   const sectionTabsProps = {
@@ -368,14 +451,16 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
 
   const inviteTabsProps = {
     get value() {
-      return inviteMode();
+      return panels.invite.mode;
     },
     onChange(value: string) {
       if (value !== "link" && value !== "email") return;
-      setInviteMode(value);
-      setInviteResult(null);
+      setPanels((state) => {
+        state.invite.mode = value;
+        state.invite.result = null;
+        state.invite.emailError = null;
+      });
       resetInviteLink();
-      setInviteEmailError(null);
     },
   };
 
@@ -479,7 +564,10 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
       <AlertDialog.Root
         open={Boolean(removeMember())}
         onOpenChange={(open) => {
-          if (!open && busy() !== `remove:${removeMemberId()}`) setRemoveMemberId(null);
+          if (!open && busy() !== `remove:${panels.members.removeId}`)
+            setPanels((state) => {
+              state.members.removeId = null;
+            });
         }}
       >
         <Show when={removeMember()}>
@@ -505,7 +593,11 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                       type="button"
                       variant="outline"
                       disabled={busy() === `remove:${member().id}`}
-                      onClick={() => setRemoveMemberId(null)}
+                      onClick={() =>
+                        setPanels((state) => {
+                          state.members.removeId = null;
+                        })
+                      }
                     >
                       Cancel
                     </Button>
@@ -517,7 +609,9 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                       onClick={() =>
                         void run(`remove:${member().id}`, async () => {
                           await props.onRemoveMember(member().id);
-                          setRemoveMemberId(null);
+                          setPanels((state) => {
+                            state.members.removeId = null;
+                          });
                         })
                       }
                     >
@@ -576,12 +670,16 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                 <ItemActions class="settings-identity-name-control" data-invalid={visibleNameError() ? "" : undefined}>
                   <Input
                     ref={(element) => (nameInput = element)}
-                    class={nameShaking() ? "settings-identity-name-input is-shaking" : "settings-identity-name-input"}
+                    class={
+                      panels.identity.nameShaking
+                        ? "settings-identity-name-input is-shaking"
+                        : "settings-identity-name-input"
+                    }
                     id="server-settings-name"
                     size="md"
                     maxlength={INPUT_LIMITS.serverName}
                     placeholder="e.g. Design studio"
-                    value={draftName()}
+                    value={panels.identity.name}
                     aria-labelledby="server-settings-name-label"
                     aria-describedby={
                       visibleNameError() ? "server-settings-name-error" : "server-settings-name-description"
@@ -589,11 +687,17 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                     aria-invalid={visibleNameError() ? "true" : undefined}
                     onValueChange={updateDraftName}
                     onBlur={() => {
-                      if (trimmedName() === savedName()) return;
-                      setNameTouched(true);
+                      if (trimmedName() === panels.identity.savedName) return;
+                      setPanels((state) => {
+                        state.identity.nameTouched = true;
+                      });
                       if (nameError()) restartNameShake();
                     }}
-                    onAnimationEnd={() => setNameShaking(false)}
+                    onAnimationEnd={() =>
+                      setPanels((state) => {
+                        state.identity.nameShaking = false;
+                      })
+                    }
                     onKeyDown={(event) => {
                       if (event.key !== "Enter" || event.isComposing) return;
                       event.preventDefault();
@@ -614,8 +718,8 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
             <Item class="settings-identity-image-row">
               <ItemContent>
                 <ItemTitle>Server logo</ItemTitle>
-                <ItemDescription class={logoError() ? "server-settings-item-error" : undefined}>
-                  {logoError() ??
+                <ItemDescription class={panels.identity.logoError ? "server-settings-item-error" : undefined}>
+                  {panels.identity.logoError ??
                     (canEditIdentity()
                       ? "Shown to everyone who connects."
                       : "Only the server owner can change this logo.")}
@@ -624,7 +728,9 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
               <ItemActions class="settings-identity-image-control">
                 <Show
                   when={canEditIdentity()}
-                  fallback={<ServerLogo name={draftName() || props.server.name} url={draftLogoUrl()} />}
+                  fallback={
+                    <ServerLogo name={panels.identity.name || props.server.name} url={panels.identity.logoUrl} />
+                  }
                 >
                   <div class="settings-identity-image-picker ui-removable-image">
                     <Button
@@ -632,25 +738,27 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                       variant="outline"
                       size="icon-lg"
                       class="settings-identity-image-trigger server-settings-logo-trigger"
-                      aria-label={draftLogoUrl() ? "Edit server logo" : "Add server logo"}
+                      aria-label={panels.identity.logoUrl ? "Edit server logo" : "Add server logo"}
                       onClick={() => logoInput?.click()}
                     >
                       <Show
-                        when={draftLogoUrl()}
+                        when={panels.identity.logoUrl}
                         fallback={<Image class="server-settings-logo-placeholder" aria-hidden="true" />}
                       >
-                        {(logoUrl) => <ServerLogo name={draftName() || props.server.name} url={logoUrl()} />}
+                        {(logoUrl) => <ServerLogo name={panels.identity.name || props.server.name} url={logoUrl()} />}
                       </Show>
                     </Button>
-                    <Show when={draftLogoUrl()}>
+                    <Show when={panels.identity.logoUrl}>
                       <ImageRemoveButton
                         class="server-settings-logo-remove"
                         label="Remove server logo"
                         onClick={() => {
-                          setIdentityEditing(true);
-                          setDraftLogoUrl(null);
-                          setDraftLogo(null);
-                          setLogoError(null);
+                          setPanels((state) => {
+                            state.identity.editing = true;
+                            state.identity.logoUrl = null;
+                            state.identity.logo = null;
+                            state.identity.logoError = null;
+                          });
                         }}
                       />
                     </Show>
@@ -734,8 +842,12 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                 size="sm"
                 type="search"
                 placeholder="Search members"
-                value={memberSearch()}
-                onValueChange={setMemberSearch}
+                value={panels.members.search}
+                onValueChange={(value) =>
+                  setPanels((state) => {
+                    state.members.search = value;
+                  })
+                }
               />
             </label>
           }
@@ -778,7 +890,11 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
             <div class="server-settings-invite-composer">
               <SlidingTabs.ContentSlot>
                 <SlidingTabs.Content value="email" class="server-settings-invite-mode-panel">
-                  <Field class="server-settings-invite-email-field" label="Email address" error={inviteEmailError()}>
+                  <Field
+                    class="server-settings-invite-email-field"
+                    label="Email address"
+                    error={panels.invite.emailError}
+                  >
                     <Input
                       size="md"
                       type="email"
@@ -786,15 +902,19 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                       maxlength={INPUT_LIMITS.email}
                       disabled={!published()}
                       placeholder="person@company.com"
-                      value={inviteEmail()}
-                      onValueChange={(value) => {
-                        setInviteEmail(value);
-                        setInviteEmailError(null);
-                      }}
+                      value={panels.invite.email}
+                      onValueChange={(value) =>
+                        setPanels((state) => {
+                          state.invite.email = value;
+                          state.invite.emailError = null;
+                        })
+                      }
                       onBlur={() =>
-                        inviteEmail() &&
-                        !normalizeEmailAddress(inviteEmail()) &&
-                        setInviteEmailError("Enter a valid email address.")
+                        panels.invite.email &&
+                        !normalizeEmailAddress(panels.invite.email) &&
+                        setPanels((state) => {
+                          state.invite.emailError = "Enter a valid email address.";
+                        })
                       }
                     />
                   </Field>
@@ -807,18 +927,23 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                     readonly
                     aria-label="Invitation link"
                     placeholder={INVITE_LINK_PLACEHOLDER}
-                    value={inviteLinkValue()}
-                    title={inviteLinkValue() || undefined}
+                    value={panels.invite.link}
+                    title={panels.invite.link || undefined}
                     onFocus={(event) => event.currentTarget.select()}
                   />
                 </SlidingTabs.Content>
               </SlidingTabs.ContentSlot>
               <Select<string>
                 options={ROLE_OPTIONS}
-                value={roleLabel(inviteRole())}
+                value={roleLabel(panels.invite.role)}
                 disabled={!published()}
                 placement="bottom-end"
-                onChange={(value) => value && setInviteRole(value === "Admin" ? "admin" : "member")}
+                onChange={(value) =>
+                  value &&
+                  setPanels((state) => {
+                    state.invite.role = value === "Admin" ? "admin" : "member";
+                  })
+                }
                 itemComponent={(item) => <SelectItem item={item.item}>{item.item.rawValue}</SelectItem>}
               >
                 <SelectTrigger class="server-settings-role-select" size="sm" aria-label="Invitation role">
@@ -827,7 +952,11 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                 <SelectContent />
               </Select>
               <Show
-                when={inviteMode() === "link" && inviteResult() && !inviteResult()?.email ? inviteResult() : null}
+                when={
+                  panels.invite.mode === "link" && panels.invite.result && !panels.invite.result.email
+                    ? panels.invite.result
+                    : null
+                }
                 fallback={
                   <Button
                     type="button"
@@ -837,7 +966,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                     disabled={!canInvite()}
                     onClick={() => void createInvite()}
                   >
-                    {inviteMode() === "email" ? "Send invite" : "Create link"}
+                    {panels.invite.mode === "email" ? "Send invite" : "Create link"}
                   </Button>
                 }
               >
@@ -854,7 +983,7 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                 )}
               </Show>
             </div>
-            <Show when={inviteResult()?.email ? inviteResult() : null}>
+            <Show when={panels.invite.result?.email ? panels.invite.result : null}>
               {(result) => (
                 <Alert class="server-settings-invite-result" tone="success" role="status">
                   <AlertIcon>
@@ -897,7 +1026,9 @@ export function ServerSettingsModal(props: ServerSettingsModalProps) {
                 }
                 onRemove={(trigger) => {
                   removeMemberTrigger = trigger;
-                  setRemoveMemberId(member.id);
+                  setPanels((state) => {
+                    state.members.removeId = member.id;
+                  });
                 }}
               />
             </Show>

@@ -129,6 +129,22 @@ describe("ServerSettingsModal", () => {
     expect(onSetPublished).not.toHaveBeenCalled();
   });
 
+  it("clears a rejected server logo error when the draft is reset", async () => {
+    render(() => <ServerSettingsModal {...props()} />);
+
+    const name = screen.getByRole("textbox", { name: "Server name" });
+    await fireEvent.input(name, { target: { value: "Studio Team" } });
+    await fireEvent.change(screen.getByLabelText("Server logo"), {
+      target: { files: [new File(["not-an-image"], "logo.txt", { type: "text/plain" })] },
+    });
+
+    expect(await screen.findByText("Choose a PNG, JPEG, or WebP image.")).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(screen.queryByText("Choose a PNG, JPEG, or WebP image.")).not.toBeInTheDocument();
+    expect(screen.getByText("Shown to everyone who connects.")).toBeInTheDocument();
+  });
+
   it("shows a failed identity action and keeps the draft", async () => {
     const onSaveIdentity = vi.fn(async () => {
       throw new Error("The identity could not save.");
