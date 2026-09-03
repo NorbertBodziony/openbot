@@ -1765,6 +1765,7 @@ textarea {
   transition:
     border-color var(--openbot-duration-hover) ease,
     background-color var(--openbot-duration-hover) ease,
+    box-shadow var(--openbot-duration-hover) ease,
     opacity var(--openbot-duration-fast) ease,
     transform var(--openbot-duration-slow) cubic-bezier(0.32, 0.72, 0, 1);
 }
@@ -1772,6 +1773,7 @@ textarea {
 .search-field:focus-within {
   border-color: var(--openbot-text-dim);
   background: var(--openbot-bg-surface);
+  box-shadow: var(--openbot-focus-ring);
 }
 
 .search-field input {
@@ -1780,6 +1782,7 @@ textarea {
   border: 0;
   outline: 0;
   background: transparent;
+  box-shadow: none;
   color: var(--openbot-text-primary);
   font-size: var(--openbot-text-md);
   line-height: 18px;
