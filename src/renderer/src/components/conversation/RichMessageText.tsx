@@ -1,9 +1,10 @@
-import type { AttachmentSummary } from "@openbot/contracts/ipc";
+import { type ChatTagKind, chatTagReferences } from "@openbot/contracts/chat-tag-references";
+import type { AttachmentSummary, InstalledSkill } from "@openbot/contracts/ipc";
 import type { JSX } from "@solidjs/web";
 import { createMemo, createSignal, createUniqueId, For, onCleanup, Show } from "solid-js";
 import type { BotProfile, MessageCitation } from "../../data";
 import { AgentAvatar } from "../AgentAvatar";
-import { Button } from "../ui";
+import { Button, Puzzle } from "../ui";
 import { AnchoredTooltip } from "./AnchoredTooltip";
 import { AttachmentReferenceVisual, attachmentReferenceTone } from "./AttachmentReference";
 import { LinkIcon } from "./ConversationIcons";
@@ -12,6 +13,7 @@ import { messageFileReferences } from "./FileReference";
 export interface RichMessageTextProps {
   body: string;
   bots: BotProfile[];
+  skills?: InstalledSkill[];
   attachments?: AttachmentSummary[];
   citations?: MessageCitation[];
   onSelectAgent: (botId: string) => void;
@@ -30,7 +32,9 @@ export function RichMessageText(props: RichMessageTextProps) {
   const attachmentsById = createMemo(
     () => new Map((props.attachments ?? []).map((attachment) => [attachment.id, attachment])),
   );
-  const parts = createMemo(() => richMessageParts(props.body, props.bots, citationsByNumber(), attachmentsById()));
+  const parts = createMemo(() =>
+    richMessageParts(props.body, props.bots, props.skills ?? [], citationsByNumber(), attachmentsById()),
+  );
   const renderedParts = createMemo(() => {
     const values = parts();
     return values.map((part, index) => ({
@@ -122,6 +126,23 @@ export function RichMessageText(props: RichMessageTextProps) {
                 <AgentAvatar bot={part.bot} />
                 <span>{part.bot.name}</span>
               </Button>
+            );
+          }
+          if (part.skill) {
+            return (
+              <span class="message-skill-tag">
+                <Puzzle aria-hidden="true" />
+                <span class="sr-only">Skill </span>
+                <span>{part.skill.name}</span>
+              </span>
+            );
+          }
+          if (part.unavailableKind) {
+            return (
+              <span class="message-tag-unavailable">
+                <span class="sr-only">Unavailable {part.unavailableKind} </span>
+                {part.text}
+              </span>
             );
           }
           if (part.citation) {
@@ -274,6 +295,8 @@ function usesTouchLayout(): boolean {
 interface RichMessagePart {
   text: string;
   bot?: BotProfile;
+  skill?: InstalledSkill;
+  unavailableKind?: ChatTagKind;
   citation?: MessageCitation;
   attachment?: AttachmentSummary;
   sharedPath?: string;
@@ -283,28 +306,57 @@ interface RichMessagePart {
 function richMessageParts(
   body: string,
   bots: BotProfile[],
+  skills: InstalledSkill[],
   citationsByNumber: Map<number, MessageCitation>,
   attachmentsById: Map<string, AttachmentSummary>,
 ): RichMessagePart[] {
   const parts: RichMessagePart[] = [];
-  for (const referencedPart of referencedMessageParts(body, attachmentsById)) {
-    if (referencedPart.attachment || referencedPart.sharedPath) {
-      parts.push(referencedPart);
+  for (const taggedReference of semanticTagParts(body, bots, skills)) {
+    if (taggedReference.bot || taggedReference.skill || taggedReference.unavailableKind) {
+      parts.push(taggedReference);
       continue;
     }
-    for (const part of linkedMessageParts(referencedPart.text)) {
-      if (part.url) parts.push(part);
-      else {
-        for (const taggedPart of taggedMessageParts(part.text, bots)) {
-          if (taggedPart.bot) {
-            parts.push(taggedPart);
-          } else {
-            parts.push(...citedMessageParts(taggedPart.text, citationsByNumber));
+    for (const referencedPart of referencedMessageParts(taggedReference.text, attachmentsById)) {
+      if (referencedPart.attachment || referencedPart.sharedPath) {
+        parts.push(referencedPart);
+        continue;
+      }
+      for (const part of linkedMessageParts(referencedPart.text)) {
+        if (part.url) parts.push(part);
+        else {
+          for (const taggedPart of taggedMessageParts(part.text, bots)) {
+            if (taggedPart.bot) {
+              parts.push(taggedPart);
+            } else {
+              parts.push(...citedMessageParts(taggedPart.text, citationsByNumber));
+            }
           }
         }
       }
     }
   }
+  return parts;
+}
+
+function semanticTagParts(body: string, bots: BotProfile[], skills: InstalledSkill[]): RichMessagePart[] {
+  const references = chatTagReferences(body);
+  if (references.length === 0) return [{ text: body }];
+  const parts: RichMessagePart[] = [];
+  let cursor = 0;
+  for (const reference of references) {
+    if (reference.start > cursor) parts.push({ text: body.slice(cursor, reference.start) });
+    if (reference.kind === "agent") {
+      const bot = bots.find((candidate) => candidate.id === reference.id);
+      parts.push(bot ? { text: bot.name, bot } : { text: reference.name, unavailableKind: "agent" });
+    } else {
+      const skill = skills.find(
+        (candidate) => candidate.skillId === reference.id && candidate.state !== "needs-repair",
+      );
+      parts.push(skill ? { text: skill.name, skill } : { text: reference.name, unavailableKind: "skill" });
+    }
+    cursor = reference.end;
+  }
+  if (cursor < body.length) parts.push({ text: body.slice(cursor) });
   return parts;
 }
 

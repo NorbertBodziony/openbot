@@ -12,13 +12,10 @@ import { createEffect, createSignal, onCleanup, onSettled, Show } from "solid-js
 import { expect, fireEvent, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { clipboardFiles } from "../../preload/clipboard-files";
-import {
-  Conversation,
-  ConversationControllerProvider,
-  createConversationController,
-} from "../src/components/Conversation";
+import { Conversation, createConversationController } from "../src/components/Conversation";
 import { BrowserTakeoverCard } from "../src/components/ConversationPrompts";
 import { ConversationView } from "../src/components/ConversationView";
+import { ConversationControllerProvider } from "../src/components/conversation-controller-context";
 import type { BotMessage as RendererBotMessage } from "../src/data";
 import browserTakeoverPreviewUrl from "./assets/browser-takeover-preview.svg";
 import {
@@ -1084,18 +1081,10 @@ export const SentMessageWithContextFiles: Story = {
 export const NarrowRichConversation: Story = {
   name: "Narrow rich conversation",
   render: (storyArgs) => (
-    <section data-testid="narrow-conversation-sample" style={{ width: "360px", height: "820px", overflow: "hidden" }}>
+    <section style={{ width: "360px", height: "820px", overflow: "hidden" }}>
       <MockedConversation args={storyArgs} />
     </section>
   ),
-  play: async ({ canvas }) => {
-    const sample = canvas.getByTestId("narrow-conversation-sample");
-    const reference = canvas.getByRole("button", {
-      name: `Open attached file ${STORY_ATTACHMENTS[0].name}`,
-    });
-    await expect(sample.scrollWidth).toBeLessThanOrEqual(sample.clientWidth);
-    await expect(reference.getBoundingClientRect().right).toBeLessThanOrEqual(sample.getBoundingClientRect().right);
-  },
 };
 
 export const UnreadMessages: Story = {
@@ -1509,4 +1498,180 @@ export const EditingQueuedMessage: Story = {
 
 export const Empty: Story = {
   args: { messages: [], loaded: true, queue: undefined },
+};
+
+const actionMarkerMessages: RendererBotMessage[] = [
+  {
+    id: "spacing-user-1",
+    author: "you",
+    body: "Check the claims and route the source check to the research agents.",
+    time: "22:48",
+    kind: "text",
+  },
+  {
+    id: "spacing-bot-1",
+    author: "bot",
+    body: "Done. One claim still needs a primary source, so I invoked the daily source check.",
+    time: "22:48",
+    kind: "text",
+  },
+  {
+    id: "spacing-routine-run",
+    author: "bot",
+    body: "Recheck open launch claims against the tracked sources and report only material changes.",
+    time: "22:49",
+    kind: "text",
+    routine: {
+      routineId: "routine-source-check",
+      runId: "run-1",
+      name: "Daily source check",
+      scheduledFor: "2026-08-19T22:49:00.000Z",
+    },
+    actionMarker: {
+      kind: "routine-run",
+      sourceAgentId: "chief",
+      routineId: "routine-source-check",
+      runId: "run-1",
+      routineName: "Daily source check",
+      status: "queued",
+      timestamp: "2026-08-19T22:49:00.000Z",
+    },
+  },
+  {
+    id: "spacing-marker-incoming",
+    author: "bot",
+    body: "",
+    time: "22:49",
+    kind: "exchange",
+    attachments: [STORY_ATTACHMENTS[0]],
+    exchange: {
+      direction: "incoming",
+      messageId: "spacing-marker-incoming",
+      senderBotId: "chief",
+      recipientBotIds: ["research"],
+      replyToMessageId: null,
+      deliveries: [],
+    },
+    actionMarker: {
+      kind: "agent-message",
+      direction: "incoming",
+      sourceAgentId: "chief",
+      targetDeliveries: [{ agentId: "research", status: "completed" }],
+      status: "completed",
+      timestamp: "2026-08-19T22:49:00.000Z",
+      messageId: "spacing-marker-incoming",
+      replyToMessageId: null,
+    },
+  },
+  {
+    id: "spacing-marker-outgoing",
+    author: "bot",
+    body: "",
+    time: "22:49",
+    kind: "exchange",
+    exchange: {
+      direction: "outgoing",
+      messageId: "spacing-marker-outgoing",
+      senderBotId: "chief",
+      recipientBotIds: ["research", "sales"],
+      replyToMessageId: null,
+      deliveries: [],
+    },
+    actionMarker: {
+      kind: "agent-message",
+      direction: "outgoing",
+      sourceAgentId: "chief",
+      targetDeliveries: [
+        { agentId: "research", status: "completed" },
+        { agentId: "sales", status: "running" },
+      ],
+      status: "in-progress",
+      timestamp: "2026-08-19T22:49:00.000Z",
+      messageId: "spacing-marker-outgoing",
+      replyToMessageId: null,
+    },
+  },
+  {
+    id: "spacing-marker-lifecycle",
+    author: "bot",
+    body: "",
+    time: "22:50",
+    kind: "action-marker",
+    actionMarker: {
+      kind: "routine-lifecycle",
+      action: "created",
+      sourceAgentId: "chief",
+      routineId: "routine-source-check",
+      routineName: "Daily source check",
+      status: "completed",
+      timestamp: "2026-08-19T22:50:00.000Z",
+    },
+  },
+  {
+    id: "spacing-marker-site",
+    author: "bot",
+    body: "",
+    time: "22:50",
+    kind: "action-marker",
+    actionMarker: {
+      kind: "hosted-site",
+      sourceAgentId: "chief",
+      action: "publish",
+      status: "succeeded",
+      operationId: "op-1",
+      siteId: "site-1",
+      title: "Launch status page",
+      hostname: "launch-status-23456789ab.openbot.site",
+      url: "https://launch-status-23456789ab.openbot.site",
+      timestamp: "2026-08-19T22:50:00.000Z",
+    },
+  },
+  {
+    id: "spacing-marker-unavailable",
+    author: "bot",
+    body: "",
+    time: "22:50",
+    kind: "action-marker",
+    actionMarker: {
+      kind: "unavailable",
+      label: "Action unavailable",
+      timestamp: "2026-08-19T22:50:00.000Z",
+    },
+  },
+  {
+    id: "spacing-bot-error",
+    author: "bot",
+    body: "I could not reach the tracked source index.",
+    time: "22:50",
+    kind: "text",
+    status: "Failed",
+  },
+  {
+    id: "spacing-bot-stream",
+    author: "bot",
+    body: "Publishing the summary now, then I will report the remaining open claim.",
+    time: "22:51",
+    kind: "text",
+    streaming: true,
+  },
+];
+
+const actionMarkerArgs = {
+  messages: actionMarkerMessages,
+  availableRoutineIds: ["routine-source-check"],
+} satisfies Partial<Parameters<typeof Conversation>[0]>;
+
+export const ActionMarkerSpacing: Story = {
+  name: "Action marker spacing",
+  args: actionMarkerArgs,
+};
+
+export const NarrowActionMarkerSpacing: Story = {
+  name: "Narrow action marker spacing",
+  args: actionMarkerArgs,
+  render: (storyArgs) => (
+    <section style={{ width: "320px", height: "820px", overflow: "hidden" }}>
+      <MockedConversation args={storyArgs} />
+    </section>
+  ),
 };

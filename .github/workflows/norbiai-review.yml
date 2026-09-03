@@ -107,6 +107,27 @@ jobs:
           else
             cat .github/norbiai-review-prompt.md > "$prompt_file"
           fi
+
+          # Both the composer and the fragments it reads come from the base commit, so a PR
+          # cannot rewrite the instructions used to review it. Running the checked-out copy
+          # would hand that control straight back to the PR.
+          #
+          # Reading the composer from the base commit is not enough on its own: Bun's default
+          # config path is `$cwd/bunfig.toml`, and the working directory here is the PR's own
+          # checkout. A PR that adds a `bunfig.toml` with a `preload` entry would run its own
+          # code before the composer and could append trusted instructions to the prompt. Point
+          # `--config` at an empty file outside the checkout so the PR's config is never read,
+          # and pass `--no-install` so no import can pull in a package either.
+          composer_file="$RUNNER_TEMP/compose-review-prompt.ts"
+          composer_bunfig="$RUNNER_TEMP/norbiai-composer-bunfig.toml"
+          : > "$composer_bunfig"
+          if git cat-file -e "$BASE_SHA:scripts/compose-review-prompt.ts" 2>/dev/null; then
+            git show "$BASE_SHA:scripts/compose-review-prompt.ts" > "$composer_file"
+            bun --config="$composer_bunfig" --no-install "$composer_file" "$BASE_SHA" "$HEAD_SHA" >> "$prompt_file"
+          else
+            echo "::notice title=NorbiAI domain fragments skipped::No composer at the base commit"
+          fi
+
           {
             printf '\n## PR context\n\n'
             printf 'PR: #%s\n' "$PR_NUMBER"
@@ -299,3 +320,38 @@ jobs:
               echo "::warning title=NorbiAI comment cleanup failed::Could not delete old comment ${comment_id}"
             fi
           done
+
+      - name: Block on unresolved P0 and P1 findings
+        # A review that only comments is advisory. This step is what makes it a
+        # gate, and it runs after the comment so the failure always has the
+        # findings sitting next to it. A degraded review blocks too: "human
+        # review required" means nothing if the pull request can merge without
+        # one. Making the check required is a branch protection setting, not
+        # something this file can do.
+        if: always() && !cancelled() && steps.review.outcome != 'skipped'
+        shell: bash
+        env:
+          REVIEW_FILE: ${{ steps.review.outputs.review_file }}
+          REVIEW_STATUS: ${{ steps.review.outputs.status }}
+          FAILURE_REASON: ${{ steps.review.outputs.failure_reason }}
+        run: |
+          set -euo pipefail
+
+          if [ "$REVIEW_STATUS" != "success" ]; then
+            echo "::error title=NorbiAI review did not complete::${FAILURE_REASON:-Human review required.}"
+            exit 1
+          fi
+
+          # Only the Findings section counts. Resolved items are listed above it
+          # and carry their own priority label.
+          blocking=$(
+            awk '/^## Findings[[:space:]]*$/ { findings = 1; next } findings' "$REVIEW_FILE" |
+              grep -c -E '\[(NEW|REMAINS)\]\[P[01]\]' || true
+          )
+
+          if [ "$blocking" -gt 0 ]; then
+            echo "::error title=NorbiAI found blocking issues::${blocking} unresolved P0/P1 finding(s). Fix them, or say in the PR why the finding is wrong."
+            exit 1
+          fi
+
+          echo "No unresolved P0 or P1 findings."

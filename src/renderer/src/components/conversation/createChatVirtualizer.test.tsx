@@ -20,14 +20,16 @@ describe("chat virtualizer", () => {
       });
       const rows = createMemo(() => virtualizer.getVirtualItems());
 
-      return <For each={rows()}>{(row) => <div data-testid={`dynamic-row-${row.index}`}>{String(row.key)}</div>}</For>;
+      return (
+        <For each={rows()}>{(row) => <output aria-label={`dynamic row ${row.index}`}>{String(row.key)}</output>}</For>
+      );
     }
 
     render(() => <TestList />);
-    expect(screen.getByTestId("dynamic-row-0")).toHaveTextContent("message-0");
+    expect(screen.getByRole("status", { name: "dynamic row 0" })).toHaveTextContent("message-0");
 
     appendMessage?.();
 
-    await waitFor(() => expect(screen.getByTestId("dynamic-row-1")).toHaveTextContent("message-1"));
+    await waitFor(() => expect(screen.getByRole("status", { name: "dynamic row 1" })).toHaveTextContent("message-1"));
   });
 });

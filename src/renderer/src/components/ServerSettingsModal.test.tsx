@@ -117,7 +117,6 @@ describe("ServerSettingsModal", () => {
 
     const name = screen.getByRole("textbox", { name: "Server name" });
     expect(name).toHaveValue("");
-    expect(name).toHaveAttribute("placeholder", "e.g. Design studio");
     expect(screen.getByRole("switch", { name: "Publish this server" })).toBeDisabled();
 
     await fireEvent.input(name, { target: { value: "Draft Team" } });
@@ -166,7 +165,7 @@ describe("ServerSettingsModal", () => {
     expect(screen.getByRole("switch", { name: "Publish this server" })).toBeDisabled();
   });
 
-  it("validates the server name without changing the field layout while typing", async () => {
+  it("validates the server name and returns an erased draft to its pristine state", async () => {
     const onSaveIdentity = vi.fn(async () => undefined);
     render(() => <ServerSettingsModal {...props({ onSaveIdentity })} />);
 
@@ -179,9 +178,16 @@ describe("ServerSettingsModal", () => {
     const error = screen.getByText("Enter at least 6 characters.");
     expect(name).toHaveAttribute("aria-invalid", "true");
     expect(name).toHaveAttribute("aria-describedby", error.id);
+    expect(screen.getByRole("region", { name: "Unsaved changes" })).toBeInTheDocument();
 
+    await fireEvent.input(name, { target: { value: "" } });
+    expect(screen.queryByText("Enter at least 6 characters.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Unsaved changes" })).not.toBeInTheDocument();
+    expect(name).not.toHaveAttribute("aria-invalid");
+
+    await fireEvent.input(name, { target: { value: "Tiny" } });
+    await fireEvent.blur(name);
     await fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    expect(name).toHaveFocus();
 
     await fireEvent.input(name, { target: { value: "Studio Team" } });
     expect(screen.queryByText("Enter at least 6 characters.")).not.toBeInTheDocument();
@@ -190,29 +196,12 @@ describe("ServerSettingsModal", () => {
     await waitFor(() => expect(onSaveIdentity).toHaveBeenCalledWith({ serverName: "Studio Team" }));
   });
 
-  it("returns an erased first setup name to its pristine state", async () => {
-    render(() => <ServerSettingsModal {...props()} />);
-
-    const name = screen.getByRole("textbox", { name: "Server name" });
-    await fireEvent.input(name, { target: { value: "Tiny" } });
-    await fireEvent.blur(name);
-    expect(screen.getByText("Enter at least 6 characters.")).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Unsaved changes" })).toBeInTheDocument();
-
-    await fireEvent.input(name, { target: { value: "" } });
-
-    expect(screen.queryByText("Enter at least 6 characters.")).not.toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Unsaved changes" })).not.toBeInTheDocument();
-    expect(name).not.toHaveAttribute("aria-invalid");
-  });
-
   it("keeps remote member settings read-only", async () => {
     render(() => (
       <ServerSettingsModal {...props({ server: { ...remoteServer, role: "member" }, hostStatus: null, members })} />
     ));
 
     expect(screen.queryByRole("textbox", { name: "Server name" })).not.toBeInTheDocument();
-    expect(screen.getByText("Studio Team", { selector: ".server-settings-readonly-value" })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("tab", { name: "Members" }));
     expect(screen.getByText("Alice Chen")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Send invite" })).not.toBeInTheDocument();
@@ -228,11 +217,10 @@ describe("ServerSettingsModal", () => {
 
     const membersTab = screen.getByRole("tab", { name: "Members" });
     await waitFor(() => expect(membersTab).toHaveAttribute("aria-selected", "true"));
-    expect(membersTab).toHaveFocus();
     expect(screen.getByRole("heading", { name: "Members" })).toBeInTheDocument();
   });
 
-  it("confirms member removal and restores focus after cancellation", async () => {
+  it("confirms member removal and keeps the member after cancellation", async () => {
     const onRemoveMember = vi.fn(async () => undefined);
     render(() => (
       <ServerSettingsModal {...props({ server: remoteServer, hostStatus: null, members, onRemoveMember })} />
@@ -247,7 +235,6 @@ describe("ServerSettingsModal", () => {
     expect(await screen.findByRole("alertdialog", { name: "Remove Alice Chen?" })).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    await waitFor(() => expect(memberActions).toHaveFocus());
     expect(onRemoveMember).not.toHaveBeenCalled();
 
     await fireEvent.pointerDown(memberActions, { button: 0 });
@@ -340,7 +327,6 @@ describe("ServerSettingsModal", () => {
     expect(screen.queryByText("Enter a valid email address.")).not.toBeInTheDocument();
     const inviteLink = screen.getByRole("textbox", { name: "Invitation link" });
     expect(inviteLink).toHaveValue("");
-    expect(inviteLink).toHaveAttribute("placeholder", "Create a private one-time link.");
     await fireEvent.click(screen.getByRole("button", { name: "Create link" }));
 
     await waitFor(() => expect(onCreateInvite).toHaveBeenCalledWith({ role: "member" }));

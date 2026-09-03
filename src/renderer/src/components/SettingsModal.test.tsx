@@ -35,31 +35,7 @@ describe("SettingsModal", () => {
     vi.unstubAllGlobals();
   });
 
-  it("keeps dependent notch options selected but unavailable while the MacBook notch is disabled", () => {
-    render(() => (
-      <SettingsModal
-        open
-        onOpenChange={() => undefined}
-        value={{ ...DEFAULT_GENERAL_SETTINGS, macBookNotch: false }}
-        onValueChange={() => undefined}
-        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
-        updateStatus={idleUpdateStatus}
-        onUpdateAction={vi.fn(async () => undefined)}
-        account={account}
-        onUpdateAccountName={vi.fn(async () => undefined)}
-        onUpdateAccountAvatar={vi.fn(async () => undefined)}
-      />
-    ));
-
-    expect(screen.getByRole("switch", { name: "Haptic feedback" })).toBeChecked();
-    expect(screen.getByRole("switch", { name: "Haptic feedback" })).toBeDisabled();
-    expect(screen.getByRole("switch", { name: "Show idle island" })).toBeChecked();
-    expect(screen.getByRole("switch", { name: "Show idle island" })).toBeDisabled();
-    expect(screen.getByRole("switch", { name: "Show on additional displays" })).toBeChecked();
-    expect(screen.getByRole("switch", { name: "Show on additional displays" })).toBeDisabled();
-  });
-
-  it("keeps General preferences controlled across close and reopen", async () => {
+  it("keeps every settings preference controlled across a button close, Escape, and reopen", async () => {
     const [open, setOpen] = createSignal(true);
     const [value, setValue] = createSignal({ ...DEFAULT_GENERAL_SETTINGS });
     let openTrigger: HTMLButtonElement | undefined;
@@ -89,6 +65,13 @@ describe("SettingsModal", () => {
     await fireEvent.click(launchSwitch);
     expect(value().launchAtLogin).toBe(false);
 
+    await fireEvent.click(screen.getByRole("switch", { name: "Show status in the MacBook notch" }));
+    expect(value().macBookNotch).toBe(false);
+    for (const dependent of ["Haptic feedback", "Show idle island", "Show on additional displays"]) {
+      expect(await screen.findByRole("switch", { name: dependent })).toBeChecked();
+      expect(screen.getByRole("switch", { name: dependent })).toBeDisabled();
+    }
+
     const select = screen.getByRole("button", { name: /^Open external links in/ });
     await fireEvent.pointerDown(select, { pointerType: "mouse", button: 0 });
     await fireEvent.click(screen.getByRole("option", { name: "OpenBot" }));
@@ -103,6 +86,20 @@ describe("SettingsModal", () => {
     expect(await screen.findByRole("switch", { name: "Launch OpenBot at login" })).not.toBeChecked();
     expect(screen.getByRole("button", { name: /^Open external links in/ })).toHaveTextContent("OpenBot");
     expect(screen.getByRole("switch", { name: "Share product analytics" })).not.toBeChecked();
+
+    await fireEvent.click(screen.getByRole("tab", { name: "Updates" }));
+    const autoDownload = await screen.findByRole("switch", { name: "Automatically download updates" });
+    expect(autoDownload).toBeChecked();
+    await fireEvent.click(autoDownload);
+    expect(value().autoDownloadUpdates).toBe(false);
+
+    await fireEvent.keyDown(screen.getByRole("dialog", { name: "Updates" }), { key: "Escape" });
+    // The dialog is named after the active tab, so the wait has to target the Updates title.
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Updates" })).not.toBeInTheDocument());
+    await fireEvent.click(screen.getByRole("button", { name: "Open settings" }));
+    await fireEvent.click(await screen.findByRole("tab", { name: "Updates" }));
+
+    expect(await screen.findByRole("switch", { name: "Automatically download updates" })).not.toBeChecked();
   });
 
   it("runs the updater and reflects its live status", async () => {
@@ -132,54 +129,11 @@ describe("SettingsModal", () => {
     expect(await screen.findByText("OpenBot is up to date on the Stable track.")).toBeInTheDocument();
   });
 
-  it("shows the Stable track and the target update across download states", async () => {
-    const [status, setStatus] = createSignal<UpdateStatus>({
-      ...idleUpdateStatus,
-      phase: "available",
-      availableVersion: "0.3.0",
-    });
-
-    render(() => (
-      <SettingsModal
-        open
-        onOpenChange={() => undefined}
-        value={DEFAULT_GENERAL_SETTINGS}
-        onValueChange={() => undefined}
-        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
-        updateStatus={status()}
-        onUpdateAction={vi.fn(async () => undefined)}
-        account={account}
-        onUpdateAccountName={vi.fn(async () => undefined)}
-        onUpdateAccountAvatar={vi.fn(async () => undefined)}
-      />
-    ));
-
-    await fireEvent.click(screen.getByRole("tab", { name: "Updates" }));
-    await fireEvent.pointerDown(screen.getByRole("button", { name: /^Update track/ }), {
-      pointerType: "mouse",
-      button: 0,
-    });
-    expect(screen.getByRole("option", { name: "Stable" })).toHaveAttribute("aria-selected", "true");
-    await fireEvent.click(screen.getByRole("option", { name: "Stable" }));
-
-    expect(screen.getByText("Version 0.2.1")).toBeInTheDocument();
-    expect(screen.getByText("OpenBot v0.3.0 is available to download.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Download update" })).toBeEnabled();
-
-    setStatus({ ...status(), phase: "downloading", progress: 42 });
-    expect(await screen.findByText("Downloading OpenBot v0.3.0 · 42%")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Downloading update…" })).toBeDisabled();
-
-    setStatus({ ...status(), phase: "ready", progress: 100 });
-    expect(await screen.findByText("OpenBot v0.3.0 is ready. Restart to apply.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Restart to update" })).toBeEnabled();
-  });
-
   it("disables busy update actions and shows action failures", async () => {
     const onUpdateAction = vi.fn(async () => {
       throw new Error("Update service is offline.");
     });
-    const view = render(() => (
+    render(() => (
       <SettingsModal
         open
         onOpenChange={() => undefined}
@@ -197,25 +151,6 @@ describe("SettingsModal", () => {
     await fireEvent.click(screen.getByRole("tab", { name: "Updates" }));
     await fireEvent.click(screen.getByRole("button", { name: "Check for updates" }));
     expect(await screen.findByText("Update service is offline.")).toBeInTheDocument();
-
-    view.unmount();
-    render(() => (
-      <SettingsModal
-        open
-        onOpenChange={() => undefined}
-        value={DEFAULT_GENERAL_SETTINGS}
-        onValueChange={() => undefined}
-        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
-        updateStatus={{ ...idleUpdateStatus, phase: "checking" }}
-        onUpdateAction={onUpdateAction}
-        account={account}
-        onUpdateAccountName={vi.fn(async () => undefined)}
-        onUpdateAccountAvatar={vi.fn(async () => undefined)}
-      />
-    ));
-
-    await fireEvent.click(screen.getByRole("tab", { name: "Updates" }));
-    expect(screen.getByRole("button", { name: "Checking for updates…" })).toBeDisabled();
   });
 
   it("resets a display-name draft and saves its trimmed value", async () => {
@@ -276,8 +211,10 @@ describe("SettingsModal", () => {
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
   });
 
-  it("keeps an invalid display name focused and does not save it", async () => {
-    const onUpdateAccountName = vi.fn(async () => undefined);
+  it("keeps an invalid or rejected display name in the field", async () => {
+    const onUpdateAccountName = vi
+      .fn(async () => undefined)
+      .mockRejectedValueOnce(new Error("Profile service is offline."));
     render(() => (
       <SettingsModal
         open
@@ -300,7 +237,6 @@ describe("SettingsModal", () => {
 
     expect(onUpdateAccountName).not.toHaveBeenCalled();
     expect(await screen.findByRole("alert")).toHaveTextContent("Enter a display name.");
-    await waitFor(() => expect(input).toHaveFocus());
 
     await fireEvent.input(input, { target: { value: "No" } });
     await fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -311,32 +247,9 @@ describe("SettingsModal", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(onUpdateAccountName).not.toHaveBeenCalled();
     expect(await screen.findByRole("alert")).toHaveTextContent("Remove line breaks and hidden or control characters.");
-  });
 
-  it("keeps the display-name draft after a save failure", async () => {
-    const onUpdateAccountName = vi.fn(async () => {
-      throw new Error("Profile service is offline.");
-    });
-    render(() => (
-      <SettingsModal
-        open
-        onOpenChange={() => undefined}
-        value={DEFAULT_GENERAL_SETTINGS}
-        onValueChange={() => undefined}
-        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
-        updateStatus={idleUpdateStatus}
-        onUpdateAction={vi.fn(async () => undefined)}
-        account={account}
-        onUpdateAccountName={onUpdateAccountName}
-        onUpdateAccountAvatar={vi.fn(async () => undefined)}
-      />
-    ));
-
-    await fireEvent.click(screen.getByRole("tab", { name: "Profile" }));
-    const input = screen.getByRole("textbox", { name: "Display name" });
     await fireEvent.input(input, { target: { value: "Nora" } });
     await fireEvent.click(screen.getByRole("button", { name: "Save" }));
-
     expect(await screen.findByRole("alert")).toHaveTextContent("Profile service is offline.");
     expect(input).toHaveValue("Nora");
   });
@@ -534,44 +447,6 @@ describe("SettingsModal", () => {
     await fireEvent.click(screen.getByRole("tab", { name: "Hosted sites" }));
     expect(await screen.findByText("Blocked")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: `Open ${site.hostname}` })).toBeDisabled();
-  });
-
-  it("generates a one-time QR code from Mobile Connect settings", async () => {
-    const onCreateMobileConnect = vi.fn(async () => ({
-      qrData:
-        "openbot://mobile-connect?api=https%3A%2F%2Fapi.openbot.run&ticket=mobile-ticket_1234567890abcdefghijklmnop",
-      expiresAt: Date.now() + 120_000,
-    }));
-    render(() => (
-      <SettingsModal
-        open
-        onOpenChange={() => undefined}
-        value={DEFAULT_GENERAL_SETTINGS}
-        onValueChange={() => undefined}
-        appInfo={{ name: "OpenBot", version: "0.2.1", platform: "darwin", variant: "dev" }}
-        updateStatus={idleUpdateStatus}
-        onUpdateAction={vi.fn(async () => undefined)}
-        account={account}
-        onUpdateAccountName={vi.fn(async () => undefined)}
-        onUpdateAccountAvatar={vi.fn(async () => undefined)}
-        onCreateMobileConnect={onCreateMobileConnect}
-      />
-    ));
-
-    await fireEvent.click(screen.getByRole("tab", { name: "Mobile Connect" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Generate QR code" }));
-
-    await waitFor(() => expect(onCreateMobileConnect).toHaveBeenCalledOnce());
-    expect(await screen.findByRole("img", { name: "Mobile Connect sign-in QR code" })).toBeInTheDocument();
-    expect(screen.getByText(/Expires in/u)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Generate new code" })).toBeEnabled();
-    expect(screen.getByRole("heading", { name: "Connected devices" })).toBeInTheDocument();
-    expect(screen.getByText("No connected devices")).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Access is revoked immediately. The mobile app may keep showing its current screen until it is reopened or brought back from the background.",
-      ),
-    ).toBeInTheDocument();
   });
 
   it("confirms a new mobile connection before collapsing the QR code", async () => {

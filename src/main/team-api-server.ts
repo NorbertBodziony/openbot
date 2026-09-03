@@ -22,6 +22,7 @@ import {
   type DirectTypingRealtimeEvent,
   type DuplicateBotResult,
   HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX,
+  type InstalledSkill,
   type InviteSummary,
   isAgentModel,
   isAvatarHue,
@@ -43,8 +44,12 @@ import {
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import {
+  isTeamCurrentCapability,
+  supportsTeamSemanticTags,
+  TEAM_CURRENT_CAPABILITIES,
+} from "@openbot/contracts/team-protocol/current";
+import {
   decodeTeamProtocolV1ClientEvent,
-  isTeamProtocolV1Capability,
   TEAM_APP_VERSION_HEADER,
   TEAM_CAPABILITIES_HEADER,
   TEAM_PROTOCOL_V1,
@@ -58,7 +63,7 @@ import {
   encodeTeamProtocolV1CurrentEvent,
   encodeTeamProtocolV1CurrentHttpResponse,
 } from "@openbot/contracts/team-protocol/v1-adapter";
-import { TEAM_PROTOCOL_V3, TEAM_PROTOCOL_V3_CAPABILITIES } from "@openbot/contracts/team-protocol/v3";
+import { TEAM_PROTOCOL_V3 } from "@openbot/contracts/team-protocol/v3";
 import {
   decodeTeamProtocolV3CurrentHttpRequest,
   encodeTeamProtocolV3CurrentHttpResponse,
@@ -184,6 +189,7 @@ interface TeamApiOptions {
   appVersion?: string;
   store: TeamStore;
   agents: TeamApiAgents;
+  skills?: { listInstalledForChatTags: (botId: string) => Promise<InstalledSkill[]> };
   sidebarLayout?: TeamApiSidebarLayout;
   mailbox: TeamApiMailbox;
   browser: TeamApiBrowser;
@@ -232,7 +238,10 @@ export class TeamApiServer {
   readonly #options: Omit<TeamApiOptions, "sidebarLayout"> & { sidebarLayout: TeamApiSidebarLayout };
   readonly #rateLimits = new Map<string, RateEntry>();
   readonly #eventClients = new Map<Ws.WebSocket, EventClientState>();
-  readonly #responseRoutes = new WeakMap<ServerResponse, { method: string; path: string; protocol: number }>();
+  readonly #responseRoutes = new WeakMap<
+    ServerResponse,
+    { method: string; path: string; protocol: number; capabilities: Set<string> }
+  >();
   readonly #duplicateRequests = new Map<string, { sourceBotId: string; result: Promise<DuplicateBotResult> }>();
   readonly #webSockets = new webSockets.WebSocketServer({
     noServer: true,
@@ -470,7 +479,12 @@ export class TeamApiServer {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       const method = request.method ?? "GET";
       const clientCapabilities = requestCapabilities(request);
-      this.#responseRoutes.set(response, { method, path: url.pathname, protocol: requestProtocol(request) });
+      this.#responseRoutes.set(response, {
+        method,
+        path: url.pathname,
+        protocol: requestProtocol(request),
+        capabilities: clientCapabilities,
+      });
 
       if (method === "GET" && url.pathname === "/v1/compatibility") {
         return this.#json(response, 200, this.#protocolSupport());
@@ -946,6 +960,9 @@ export class TeamApiServer {
       if (agentMatch) {
         const botId = pathIdentifier(agentMatch[1], "botId");
         const action = agentMatch[2] ?? "";
+        if (method === "GET" && action === "skills") {
+          return this.#json(response, 200, (await this.#options.skills?.listInstalledForChatTags(botId)) ?? []);
+        }
         if (method === "PATCH" && !action) {
           const body = await readJson(request);
           return this.#json(response, 200, await this.#options.agents.updateBot(botUpdate(body, botId)));
@@ -1234,12 +1251,11 @@ export class TeamApiServer {
   }
 
   #broadcastAgentEvent(event: AgentEvent): void {
-    let payload: string | undefined;
     const filteredConversationPayloads = new Map<string, string>();
     let conversationInvalidation: string | undefined;
     let queueInvalidation: string | undefined;
-    let completionSnapshot: string | undefined;
     for (const [client, connection] of this.#eventClients) {
+      const encodingOptions = { preserveSemanticTags: supportsTeamSemanticTags(connection.capabilities) };
       const supportsRuntimeSnapshots = connection.capabilities.has("agent-runtime-snapshots");
       const requiredCapability = eventCapability(event);
       if (requiredCapability && !connection.capabilities.has(requiredCapability)) continue;
@@ -1268,20 +1284,23 @@ export class TeamApiServer {
           !connection.capabilities.has("routine-run-event-markers") ||
           !connection.capabilities.has("hosted-site-event-markers"))
       ) {
-        const key = `${connection.capabilities.has("routine-event-markers")}:${connection.capabilities.has("routine-run-event-markers")}:${connection.capabilities.has("hosted-site-event-markers")}`;
+        const key = `${connection.capabilities.has("routine-event-markers")}:${connection.capabilities.has("routine-run-event-markers")}:${connection.capabilities.has("hosted-site-event-markers")}:${encodingOptions.preserveSemanticTags}`;
         let filtered = filteredConversationPayloads.get(key);
         if (!filtered) {
           filtered =
-            encodeTeamProtocolV1CurrentEvent({
-              ...event,
-              snapshot: conversationSnapshotForCapabilities(event.snapshot, connection.capabilities),
-            }) ?? undefined;
+            encodeTeamProtocolV1CurrentEvent(
+              {
+                ...event,
+                snapshot: conversationSnapshotForCapabilities(event.snapshot, connection.capabilities),
+              },
+              encodingOptions,
+            ) ?? undefined;
           if (filtered) filteredConversationPayloads.set(key, filtered);
         }
         if (!filtered) continue;
         outgoing = filtered;
       } else {
-        payload ??= encodeTeamProtocolV1CurrentEvent(event) ?? undefined;
+        const payload = encodeTeamProtocolV1CurrentEvent(event, encodingOptions) ?? undefined;
         if (!payload) continue;
         outgoing = payload;
       }
@@ -1292,11 +1311,14 @@ export class TeamApiServer {
       if (event.type !== "turn-completed" || !supportsRuntimeSnapshots || connection.includeConversationEvents) {
         continue;
       }
-      completionSnapshot ??=
-        encodeTeamProtocolV1CurrentEvent({
-          type: "runtime-snapshot",
-          snapshot: this.#options.agents.getRuntimeSnapshot(),
-        }) ?? undefined;
+      const completionSnapshot =
+        encodeTeamProtocolV1CurrentEvent(
+          {
+            type: "runtime-snapshot",
+            snapshot: this.#options.agents.getRuntimeSnapshot(),
+          },
+          encodingOptions,
+        ) ?? undefined;
       if (!completionSnapshot) continue;
       if (Buffer.byteLength(completionSnapshot) > AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return;
       client.send(completionSnapshot);
@@ -1362,7 +1384,7 @@ export class TeamApiServer {
           if (acceptsCapabilityDeclaration) {
             if (!event.capabilities) throw new Error("Invalid client capabilities.");
             const snapshotsWereEnabled = connection.capabilities.has("agent-runtime-snapshots");
-            connection.capabilities = new Set(event.capabilities.filter(isTeamProtocolV1Capability));
+            connection.capabilities = new Set(event.capabilities.filter(isTeamCurrentCapability));
             if (connection.capabilities.has("agent-runtime-snapshots") && !snapshotsWereEnabled) {
               this.#sendRuntimeSnapshot(client, connection, false);
             }
@@ -1614,10 +1636,11 @@ export class TeamApiServer {
     const route = this.#responseRoutes.get(response);
     if (!route) throw new Error("Team API response route is unavailable.");
     response.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
+    const options = { preserveSemanticTags: supportsTeamSemanticTags(route.capabilities) };
     const body =
       route.protocol === TEAM_PROTOCOL_V3
-        ? encodeTeamProtocolV3CurrentHttpResponse(route.method, route.path, status, value)
-        : encodeTeamProtocolV1CurrentHttpResponse(route.method, route.path, status, value);
+        ? encodeTeamProtocolV3CurrentHttpResponse(route.method, route.path, status, value, options)
+        : encodeTeamProtocolV1CurrentHttpResponse(route.method, route.path, status, value, options);
     response.end(`${body}\n`);
   }
 
@@ -1625,7 +1648,7 @@ export class TeamApiServer {
     return {
       appVersion: this.#options.appVersion ?? "0.0.0",
       protocol: { minimum: TEAM_PROTOCOL_V1, maximum: TEAM_PROTOCOL_V3 },
-      capabilities: [...TEAM_PROTOCOL_V3_CAPABILITIES],
+      capabilities: [...TEAM_CURRENT_CAPABILITIES],
     };
   }
 
@@ -1711,7 +1734,7 @@ function requestCapabilities(request: import("node:http").IncomingMessage): Set<
   if (!value || value.length > 4_096) return new Set();
   const capabilities = value.split(",").map((capability) => capability.trim());
   if (capabilities.length > 64) return new Set();
-  return new Set(capabilities.filter(isTeamProtocolV1Capability));
+  return new Set(capabilities.filter(isTeamCurrentCapability));
 }
 
 function conversationSnapshotForCapabilities(
@@ -1858,7 +1881,9 @@ async function readJson(request: import("node:http").IncomingMessage): Promise<D
   try {
     const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
     return requestProtocol(request) === TEAM_PROTOCOL_V3
-      ? decodeTeamProtocolV3CurrentHttpRequest(request.method ?? "GET", request.url ?? "/", value)
+      ? decodeTeamProtocolV3CurrentHttpRequest(request.method ?? "GET", request.url ?? "/", value, {
+          preserveSemanticTags: supportsTeamSemanticTags(requestCapabilities(request)),
+        })
       : decodeTeamProtocolV1CurrentHttpRequest(request.method ?? "GET", request.url ?? "/", value);
   } catch {
     throw new HttpError(400, "A valid JSON object is required.");

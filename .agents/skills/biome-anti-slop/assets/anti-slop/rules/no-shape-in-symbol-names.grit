@@ -1,5 +1,7 @@
 language js(typescript)
 
+// scope: global
+
 or {
   `const $name = $value`,
   `let $name = $value`,
@@ -11,5 +13,9 @@ or {
   `import $name from $source`
 } where {
   $name <: r"(?i).*shape.*",
-  register_diagnostic(span=$name, message="Rename this symbol for its domain role; `shape` describes structure rather than ownership.", severity="error")
+  register_diagnostic(
+    span=$name,
+    message="Rename this symbol for its domain role; `shape` describes structure rather than ownership.",
+    severity="error"
+  )
 }

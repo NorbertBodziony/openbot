@@ -1,258 +1,69 @@
-import type { AgentModelId, AgentProviderId, AgentReasoningEffort, BrowserBounds } from "@openbot/contracts/ipc";
-import { createContext, createSignal, onCleanup, type ParentProps, useContext } from "solid-js";
-import {
-  type ComposerDraft,
-  type ConversationProps,
-  ConversationView,
-  type MediaPreview,
-  type RightPanelMode,
-  type SidebarFilePreview,
-} from "./ConversationView";
-import type { AgentActivityPresentation } from "./conversation/AgentActivity";
-import type { ChatSearchMatch } from "./conversation/chat-search";
+import { onCleanup } from "solid-js";
+import { type ConversationProps, ConversationView } from "./ConversationView";
+import { useConversationController } from "./conversation-controller-context";
 
-const SETTINGS_PANEL_DEFAULT = 296;
-const BROWSER_PANEL_DEFAULT = 380;
-const BROWSER_PIP_STORAGE_KEY = "openbot:browser-pip-native-bounds";
+export { createConversationController } from "./conversation-controller";
 
-function readBrowserPipBounds(): BrowserBounds | null {
-  const values = (window.localStorage.getItem(BROWSER_PIP_STORAGE_KEY) ?? "")
-    .split(",")
-    .map((value) => Number.parseFloat(value));
-  const [x, y, width, height] = values;
-  return values.length === 4 && values.every(Number.isFinite) ? { x, y, width, height } : null;
-}
-
-interface ConversationResources {
-  agentActivityPresentations: Map<string, { activityId: string; presentation: AgentActivityPresentation }>;
-  browserOpenRequests: Map<
-    string,
-    {
-      promise: Promise<void>;
-      serverId: string;
-      botId: string | null;
-      url: string;
-      existingTabIds: Set<string>;
-    }
-  >;
-  importTargetBots: Map<string, { botId: string; serverId: string }>;
-  seenMessageIds: Set<string>;
-  typingIdleTimer: ReturnType<typeof setTimeout> | undefined;
-  typingBotId: string | null;
-  voiceRecorder: Pick<MediaRecorder, "state" | "stop"> | undefined;
-  voiceStream: { getTracks(): Array<Pick<MediaStreamTrack, "stop">> } | undefined;
-  voiceRecordingTimer: ReturnType<typeof setTimeout> | undefined;
-  voiceElapsedTimer: ReturnType<typeof setInterval> | undefined;
-  voiceChunks: Blob[];
-  voiceBotId: string | undefined;
-  voiceServerId: string | undefined;
-  voiceSubmitRequest:
-    | {
-        botId: string;
-        serverId: string;
-        draft: ComposerDraft;
-        queuedEdit: { deliveryId: string; originalAttachmentIds: string[] } | undefined;
-      }
-    | undefined;
-  voiceDisposed: boolean;
-  filePreviewRequestGeneration: number;
-  runtimeSettingsSaveTails: Map<string, Promise<boolean>>;
-  runtimeSettingsAttempts: Map<
-    string,
-    {
-      generation: number;
-      pending: boolean;
-      settings: {
-        provider: AgentProviderId;
-        model: AgentModelId;
-        reasoningEffort: AgentReasoningEffort;
-      };
-    }
-  >;
-}
-
-/** @internal Stable owner for renderer state that must survive Conversation view HMR. */
-export function createConversationController(props: Pick<ConversationProps, "onTypingChange">) {
-  const [drafts, setDrafts] = createSignal<Record<string, ComposerDraft>>({});
-  const [editingBotId, setEditingBotId] = createSignal<string | null>(null);
-  const [editingServerId, setEditingServerId] = createSignal<string | null>(null);
-  const [editingDeliveryId, setEditingDeliveryId] = createSignal<string | null>(null);
-  const [editingDraftBackup, setEditingDraftBackup] = createSignal<ComposerDraft | null>(null);
-  const [editingOriginalAttachmentIds, setEditingOriginalAttachmentIds] = createSignal<string[]>([]);
-  const [composerFocusRequest, setComposerFocusRequest] = createSignal(0);
-  const [showComposerActions, setShowComposerActions] = createSignal(false);
-  const [attachmentBusy, setAttachmentBusy] = createSignal(false);
-  const [composerError, setComposerError] = createSignal<string | null>(null);
-  const [conversationErrors, setConversationErrors] = createSignal<Record<string, string>>({});
-  const [voicePhase, setVoicePhase] = createSignal<"idle" | "preparing" | "requesting" | "recording" | "transcribing">(
-    "idle",
-  );
-  const [voiceModelProgress, setVoiceModelProgress] = createSignal<number | null>(null);
-  const [voiceElapsedSeconds, setVoiceElapsedSeconds] = createSignal(0);
-  const [markingRead, setMarkingRead] = createSignal(false);
-  const [submitting, setSubmitting] = createSignal(false);
-  const [selectionSending, setSelectionSending] = createSignal(false);
-  const [dropActive, setDropActive] = createSignal(false);
-  const [rightPanels, setRightPanels] = createSignal<Record<string, RightPanelMode>>({});
-  const [settingsProvider, setSettingsProvider] = createSignal<AgentProviderId>("codex");
-  const [settingsModel, setSettingsModel] = createSignal<AgentModelId>("gpt-5.6-luna");
-  const [settingsReasoning, setSettingsReasoning] = createSignal<AgentReasoningEffort>("medium");
-  const [browserAddress, setBrowserAddress] = createSignal("https://www.google.com");
-  const [browserAddressEditing, setBrowserAddressEditing] = createSignal(false);
-  const [browserPipBounds, setBrowserPipBounds] = createSignal<BrowserBounds | null>(readBrowserPipBounds());
-  const [mediaPreview, setMediaPreview] = createSignal<MediaPreview | null>(null);
-  const [sidebarFilePreview, setSidebarFilePreview] = createSignal<SidebarFilePreview | null>(null);
-  const [openReactionMessageId, setOpenReactionMessageId] = createSignal<string | null>(null);
-  const [openMoreMessageId, setOpenMoreMessageId] = createSignal<string | null>(null);
-  const [expandedEmojiMessageId, setExpandedEmojiMessageId] = createSignal<string | null>(null);
-  const [expandedThinkingMessages, setExpandedThinkingMessages] = createSignal<Record<string, boolean>>({});
-  const [copiedMessageId, setCopiedMessageId] = createSignal<string | null>(null);
-  const [chatSearchOpen, setChatSearchOpen] = createSignal(false);
-  const [chatSearchQuery, setChatSearchQuery] = createSignal("");
-  const [chatSearchMatches, setChatSearchMatches] = createSignal<ChatSearchMatch[]>([]);
-  const [activeChatSearchIndex, setActiveChatSearchIndex] = createSignal(-1);
-  const [chatSearchMessageIds, setChatSearchMessageIds] = createSignal<string[]>([]);
-  const [chatSearchTotal, setChatSearchTotal] = createSignal(0);
-  const [settingsPanelWidth, setSettingsPanelWidth] = createSignal(SETTINGS_PANEL_DEFAULT);
-  const [browserPanelWidth, setBrowserPanelWidth] = createSignal(BROWSER_PANEL_DEFAULT);
-  const resources: ConversationResources = {
-    agentActivityPresentations: new Map(),
-    browserOpenRequests: new Map(),
-    importTargetBots: new Map<string, { botId: string; serverId: string }>(),
-    seenMessageIds: new Set<string>(),
-    typingIdleTimer: undefined,
-    typingBotId: null,
-    voiceRecorder: undefined,
-    voiceStream: undefined,
-    voiceRecordingTimer: undefined,
-    voiceElapsedTimer: undefined,
-    voiceChunks: [],
-    voiceBotId: undefined,
-    voiceServerId: undefined,
-    voiceSubmitRequest: undefined,
-    voiceDisposed: false,
-    filePreviewRequestGeneration: 0,
-    runtimeSettingsSaveTails: new Map(),
-    runtimeSettingsAttempts: new Map(),
-  };
+/**
+ * The scoped half of the conversation surface.
+ *
+ * The controller itself is created above the per-server scope (see
+ * `app-providers.tsx`), because composer drafts, an in-flight voice send and a
+ * queued-message edit are keyed by `serverId:botId` and are expected to still be
+ * there when the user comes back. What *is* scoped is the typing indicator and
+ * the microphone: leaving the conversation - by opening Bot setup, a direct
+ * message, or another server - has to release both, and this component unmounts
+ * on exactly those transitions.
+ *
+ * On a server switch the typing indicator is released earlier still, in
+ * `server-selection.tsx`, because by the time this unmounts main has already
+ * moved its active server and the message would reach the wrong one. The call
+ * here is then a no-op, and it is what covers the two transitions that stay
+ * inside one server.
+ *
+ * `voiceDisposed` deliberately stays with the controller. It means "the app is
+ * going away", not "this view went away", so a transcription that resolves after
+ * the switch still lands on the server that started it. What replaces it for the
+ * view's own lifetime is the scope guard in `ConversationView`, which keeps a
+ * finished model download from opening the microphone for a conversation nobody
+ * is looking at.
+ *
+ * `transcribing` is the one phase this does not release, because unlike the two
+ * it does, it names work that is already running and that finishes into a draft
+ * the user can still reach.
+ */
+export function Conversation(props: ConversationProps) {
+  const controller = useConversationController();
+  const { resources } = controller;
 
   onCleanup(() => {
-    resources.voiceDisposed = true;
+    controller.stopComposerTyping();
+    const phase = controller.voicePhase();
+    if (phase === "preparing" || phase === "requesting") {
+      // A model download and a permission prompt both belong to the
+      // conversation that asked for them, and both can outlive it by a long way
+      // - or never settle at all. The phase does not belong to them: it lives on
+      // the controller, so leaving it here would hand the next conversation a
+      // disabled microphone and someone else's "Downloading voice model". The
+      // abandoned chain still reports its failure where it was asked for,
+      // because the generation counter rather than the phase is what tells it
+      // that it has been superseded.
+      controller.setVoicePhase("idle");
+      controller.setVoiceModelProgress(null);
+    }
     if (resources.voiceRecordingTimer) clearTimeout(resources.voiceRecordingTimer);
     if (resources.voiceElapsedTimer) clearInterval(resources.voiceElapsedTimer);
-    if (resources.voiceRecorder?.state === "recording") resources.voiceRecorder.stop();
+    if (resources.voiceRecorder?.state === "recording") {
+      // The audio captured so far still belongs to the draft it was dictated
+      // into, and drafts outlive this view, so the recording finishes into text
+      // rather than being thrown away. `transcribing` is what that is, and
+      // leaving the phase on `recording` would offer a stop button for a
+      // recorder that has already been handed over.
+      controller.setVoicePhase("transcribing");
+      resources.voiceRecorder.stop();
+    }
     for (const track of resources.voiceStream?.getTracks() ?? []) track.stop();
-    if (resources.typingIdleTimer) clearTimeout(resources.typingIdleTimer);
-    if (resources.typingBotId) props.onTypingChange(resources.typingBotId, false);
   });
 
-  return {
-    drafts,
-    setDrafts,
-    editingBotId,
-    setEditingBotId,
-    editingServerId,
-    setEditingServerId,
-    editingDeliveryId,
-    setEditingDeliveryId,
-    editingDraftBackup,
-    setEditingDraftBackup,
-    editingOriginalAttachmentIds,
-    setEditingOriginalAttachmentIds,
-    composerFocusRequest,
-    setComposerFocusRequest,
-    showComposerActions,
-    setShowComposerActions,
-    attachmentBusy,
-    setAttachmentBusy,
-    composerError,
-    setComposerError,
-    conversationErrors,
-    setConversationErrors,
-    voicePhase,
-    setVoicePhase,
-    voiceModelProgress,
-    setVoiceModelProgress,
-    voiceElapsedSeconds,
-    setVoiceElapsedSeconds,
-    markingRead,
-    setMarkingRead,
-    submitting,
-    setSubmitting,
-    selectionSending,
-    setSelectionSending,
-    dropActive,
-    setDropActive,
-    rightPanels,
-    setRightPanels,
-    settingsProvider,
-    setSettingsProvider,
-    settingsModel,
-    setSettingsModel,
-    settingsReasoning,
-    setSettingsReasoning,
-    browserAddress,
-    setBrowserAddress,
-    browserAddressEditing,
-    setBrowserAddressEditing,
-    browserPipBounds,
-    setBrowserPipBounds,
-    mediaPreview,
-    setMediaPreview,
-    sidebarFilePreview,
-    setSidebarFilePreview,
-    openReactionMessageId,
-    setOpenReactionMessageId,
-    openMoreMessageId,
-    setOpenMoreMessageId,
-    expandedEmojiMessageId,
-    setExpandedEmojiMessageId,
-    expandedThinkingMessages,
-    setExpandedThinkingMessages,
-    copiedMessageId,
-    setCopiedMessageId,
-    chatSearchOpen,
-    setChatSearchOpen,
-    chatSearchQuery,
-    setChatSearchQuery,
-    chatSearchMatches,
-    setChatSearchMatches,
-    activeChatSearchIndex,
-    setActiveChatSearchIndex,
-    chatSearchMessageIds,
-    setChatSearchMessageIds,
-    chatSearchTotal,
-    setChatSearchTotal,
-    settingsPanelWidth,
-    setSettingsPanelWidth,
-    browserPanelWidth,
-    setBrowserPanelWidth,
-    resources,
-  };
-}
-
-export type ConversationController = ReturnType<typeof createConversationController>;
-export type { ConversationProps } from "./ConversationView";
-
-const ConversationControllerContext = createContext<ConversationController>();
-
-/** @internal Access to the stable controller for Conversation view components. */
-export function useConversationController(): ConversationController {
-  const controller = useContext(ConversationControllerContext);
-  if (!controller) throw new Error("Conversation controller is unavailable outside Conversation.");
-  return controller;
-}
-
-/** @internal Test seam for remounting view boundaries without remounting their controller. */
-export function ConversationControllerProvider(props: ParentProps<{ controller: ConversationController }>) {
-  return <ConversationControllerContext value={props.controller}>{props.children}</ConversationControllerContext>;
-}
-
-export function Conversation(props: ConversationProps) {
-  const controller = createConversationController(props);
-  return (
-    <ConversationControllerProvider controller={controller}>
-      <ConversationView {...props} />
-    </ConversationControllerProvider>
-  );
+  return <ConversationView {...props} />;
 }

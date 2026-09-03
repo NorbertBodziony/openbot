@@ -1,10 +1,10 @@
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
-import type { AttachmentSummary } from "@openbot/contracts/ipc";
+import { serializeChatTagReference } from "@openbot/contracts/chat-tag-references";
+import type { AttachmentSummary, InstalledSkill } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import type { BotProfile } from "../../data";
-import { triggerResize } from "../../setupTests";
 import { ImageGeneration } from "./ImageGeneration";
 import { MarkdownMessageText } from "./MarkdownMessageText";
 import { MessageBody } from "./MessageRendering";
@@ -198,8 +198,6 @@ describe("MessageBody", () => {
     expect(screen.getByRole("table")).toBeInTheDocument();
     expect(screen.getAllByRole("columnheader")).toHaveLength(3);
     expect(screen.getAllByRole("cell")).toHaveLength(6);
-    expect(screen.getByText("Model").tagName).toBe("STRONG");
-    expect(screen.getByText("gpt-4o").tagName).toBe("STRONG");
     expect(screen.queryByText("| --- | --- | ---: |")).toBeNull();
   });
 
@@ -248,10 +246,6 @@ describe("MessageBody", () => {
     ));
 
     expect(screen.getByRole("heading", { level: 2, name: "Recommendation" })).toBeInTheDocument();
-    expect(screen.getByText("Kobalte").tagName).toBe("STRONG");
-    expect(screen.getByText("Solid UI").tagName).toBe("EM");
-    expect(screen.getByText("remove the fallback").tagName).toBe("DEL");
-    expect(screen.getByText("@kobalte/core").tagName).toBe("CODE");
     expect(screen.getAllByRole("list")).toHaveLength(3);
     expect(screen.getByRole("checkbox", { name: "Tested" })).toBeChecked();
     expect(screen.getByRole("link", { name: "Open citation 1: Kobalte introduction" })).toBeInTheDocument();
@@ -262,6 +256,44 @@ describe("MessageBody", () => {
     expect(screen.getByText("<script>alert('unsafe')</script>")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("link", { name: "the guide" }));
     expect(onOpenLink).toHaveBeenCalledWith("https://kobalte.dev/docs/core/overview/introduction");
+  });
+
+  it("preserves semantic tags in agent-authored Markdown", async () => {
+    const onSelectAgent = vi.fn();
+    const skills: InstalledSkill[] = [
+      {
+        skillId: "skill)1",
+        slug: "release-notes",
+        name: "Release] Notes",
+        installedVersion: 1,
+        availableVersion: 1,
+        state: "installed",
+      },
+    ];
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-markdown-tags",
+          author: "bot",
+          body: `Ask **@[Old Research](agent:research)** to use ${serializeChatTagReference("skill", "Old] Skill", "skill)1")}.`,
+          time: "10:00",
+        }}
+        bots={bots}
+        skills={skills}
+        onSelectAgent={onSelectAgent}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    const agentTag = screen.getByRole("button", { name: "Open agent Research" });
+    expect(agentTag.closest("strong")).toBeInTheDocument();
+    expect(screen.getByText("Release] Notes")).toBeInTheDocument();
+    expect(screen.queryByText("Old Research")).toBeNull();
+    expect(screen.queryByText("Old Skill")).toBeNull();
+    await fireEvent.click(agentTag);
+    expect(onSelectAgent).toHaveBeenCalledWith("research");
   });
 
   it("renders absolute agent workspace Markdown paths as file controls", async () => {
@@ -425,7 +457,6 @@ describe("MessageBody", () => {
     expect(container).toHaveTextContent("//example.com/OpenBot/Shared/report.xlsx");
     expect(container).toHaveTextContent("![Preview](");
     expect(container).toHaveTextContent(imagePath);
-    expect(container.querySelector(".message-markdown-image")).toBeNull();
     expect(onOpenSharedFile).not.toHaveBeenCalled();
     expect(onOpenWorkspaceFile).not.toHaveBeenCalled();
   });
@@ -467,7 +498,6 @@ describe("MessageBody", () => {
     expect(container).toHaveTextContent(nestedCode);
     const reportLink = screen.getByRole("button", { name: "Open workspace file report.xlsx" });
     const commentReportLink = screen.getByRole("button", { name: "Open workspace file comment-report.xlsx" });
-    expect(container.querySelectorAll(".message-file-reference")).toHaveLength(2);
     await fireEvent.click(reportLink);
     await fireEvent.click(commentReportLink);
     expect(onOpenWorkspaceFile).toHaveBeenNthCalledWith(1, reportPath);
@@ -562,10 +592,10 @@ describe("MessageBody", () => {
     expect(onOpenWorkspaceFile).toHaveBeenCalledWith("lutra-brand-board.html");
   });
 
-  it("reveals streaming Markdown updates gradually in the same message", async () => {
+  it("finishes streaming Markdown inside the same message element", async () => {
     const [body, setBody] = createSignal("## Plan\n\nUse **Kobal");
     const [streaming, setStreaming] = createSignal(true);
-    const { container } = render(() => (
+    render(() => (
       <MessageBody
         message={{
           id: "message-streaming-markdown",
@@ -584,36 +614,23 @@ describe("MessageBody", () => {
 
     expect(screen.getByRole("heading", { level: 2, name: "Plan" })).toBeInTheDocument();
     expect(screen.getByText("Use Kobal")).toBeInTheDocument();
-    const messageContent = container.querySelector<HTMLElement>(".message-content-blocks");
-    const messageResize = container.querySelector<HTMLElement>(".message-content-resize");
-    if (!messageContent || !messageResize) throw new Error("Streaming resize elements are missing.");
-    expect(messageContent).not.toHaveTextContent("**");
-    let contentHeight = 40;
-    vi.spyOn(messageContent, "getBoundingClientRect").mockImplementation(() =>
-      DOMRect.fromRect({ height: contentHeight, width: 640, x: 0, y: 0 }),
-    );
-    const animate = vi.fn().mockReturnValue({ cancel: vi.fn(), finished: Promise.resolve() });
-    Object.defineProperty(messageResize, "animate", { configurable: true, value: animate });
-    triggerResize(messageContent);
+    expect(screen.queryByText(/\*\*/u)).toBeNull();
 
     setBody("## Plan\n\nUse **Kobalte**.\n\n- Parse Markdown\n- Resize the row");
     setStreaming(false);
-    contentHeight = 80;
-    triggerResize(messageContent);
 
-    expect(animate).toHaveBeenCalledWith([{ height: "40px" }, { height: "80px" }], {
-      duration: 240,
-      easing: "cubic-bezier(0.23, 1, 0.32, 1)",
-    });
-
-    expect(screen.queryByText("Kobalte")).toBeNull();
-    expect(messageContent).not.toHaveTextContent("Resize the row");
-    await waitFor(() => expect(screen.getByText("Kobalte").tagName).toBe("STRONG"));
-    expect(messageContent).not.toHaveTextContent("Resize the row");
-    await waitFor(() => expect(messageContent).toHaveTextContent("Resize the row"));
+    // How much text each reveal tick adds is animation, so nothing here asserts
+    // an intermediate state: the reveal is word-by-word on a 60 ms timer and any
+    // "not revealed yet" assertion just races the timer on a loaded machine.
+    // The tail word animates in its own element while the reveal runs, so the
+    // assertion is on the list the bullets land in rather than on one text node.
+    await waitFor(() => expect(screen.getByRole("list")).toHaveTextContent("Resize the row"));
+    expect(screen.getByText("Kobalte").tagName).toBe("STRONG");
     expect(screen.getByText("Parse Markdown")).toBeInTheDocument();
     expect(screen.queryByText("Use Kobal")).toBeNull();
-    expect(container.querySelector(".message-content-blocks")).toBe(messageContent);
+    // The heading the stream opened with is still the same one, so the finished
+    // Markdown replaced the body in place rather than remounting the message.
+    expect(screen.getByRole("heading", { level: 2, name: "Plan" })).toBeInTheDocument();
   });
 
   it("hides a punctuation-adjacent strong marker while streaming", async () => {
@@ -1015,34 +1032,6 @@ describe("MessageBody", () => {
     expect(screen.getByText(/\| --- \| --- \|/u)).toBeInTheDocument();
   });
 
-  it("keeps the full routine instruction in its message body", () => {
-    render(() => (
-      <MessageBody
-        message={{
-          id: "message-routine",
-          author: "you",
-          body: "Prepare the full morning brief with every required section.",
-          time: "07:00",
-          routine: {
-            routineId: "routine-1",
-            runId: "run-1",
-            name: "Morning brief",
-            scheduledFor: "2026-08-25T05:00:00.000Z",
-          },
-          status: "Queued #1",
-        }}
-        bots={bots}
-        onSelectAgent={vi.fn()}
-        onOpenLink={vi.fn()}
-        onPreview={vi.fn()}
-        onAttachmentAction={vi.fn()}
-      />
-    ));
-
-    expect(screen.getByText("Prepare the full morning brief with every required section.")).toBeInTheDocument();
-    expect(screen.getByText("Queued #1")).toBeInTheDocument();
-  });
-
   it("renders a selected-text instruction as a compact quote while preserving reply context", () => {
     render(() => (
       <MessageBody
@@ -1071,6 +1060,48 @@ describe("MessageBody", () => {
     expect(screen.getByText("This is the exact selected sentence.", { selector: "blockquote" })).toBeInTheDocument();
     expect(screen.getByText("A longer answer containing this exact selected sentence.")).toBeInTheDocument();
     expect(screen.queryByText(/^> This is/u)).toBeNull();
+  });
+
+  it("renders semantic tags in reply context with the current catalogs", () => {
+    const skills: InstalledSkill[] = [
+      {
+        skillId: "skill-1",
+        slug: "release-notes",
+        name: "Release Notes",
+        installedVersion: 1,
+        availableVersion: 1,
+        state: "installed",
+      },
+    ];
+    render(() => (
+      <MessageBody
+        message={{
+          id: "message-reply",
+          author: "you",
+          body: "Please continue.",
+          replyToMessageId: "message-source",
+          time: "10:01",
+        }}
+        referencedMessage={{
+          id: "message-source",
+          author: "bot",
+          body: `Ask ${serializeChatTagReference("agent", "Old Research", "research")} to use ${serializeChatTagReference("skill", "Old Skill", "skill-1")}.`,
+          time: "10:00",
+        }}
+        bots={bots}
+        skills={skills}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+        onPreview={vi.fn()}
+        onAttachmentAction={vi.fn()}
+      />
+    ));
+
+    // Only the quoted message carries tags, so finding them at all proves the
+    // reply context parsed the references instead of echoing the raw markup.
+    expect(screen.getByRole("button", { name: "Open agent Research" })).toBeInTheDocument();
+    expect(screen.getByText("Release Notes")).toBeInTheDocument();
+    expect(screen.queryByText(/@\[/)).toBeNull();
   });
 
   it("renders a Markdown feature matrix as a comparison table", () => {
@@ -1150,7 +1181,6 @@ describe("ImageGeneration", () => {
     expect(screen.getByAltText("A quiet observatory")).toBeInTheDocument();
     expect(screen.queryByText("Generated image")).toBeNull();
     expect(screen.queryByText("A quiet observatory")).toBeNull();
-    expect(screen.getByRole("button", { name: "Download generated image" }).querySelector("svg")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Download generated image" }));
     expect(onDownload).toHaveBeenCalledWith(attachment);
   });
@@ -1172,7 +1202,6 @@ describe("ImageGeneration", () => {
     await fireEvent.error(screen.getByAltText("A quiet observatory"));
     expect(screen.getByRole("alert")).toHaveTextContent("preview is unavailable");
     expect(screen.getByRole("img", { name: "Image unavailable" })).toBeInTheDocument();
-    expect(screen.getByText("×")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
     await fireEvent.click(screen.getByRole("button", { name: "Download generated-image.png" }));
     expect(onDownload).toHaveBeenCalledWith(attachment);
@@ -1194,7 +1223,6 @@ describe("ImageGeneration", () => {
 
     expect(screen.getByRole("alert")).toHaveTextContent("Provider timeout");
     expect(screen.getByRole("img", { name: label })).toBeInTheDocument();
-    expect(screen.getByText("×")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   });
 });

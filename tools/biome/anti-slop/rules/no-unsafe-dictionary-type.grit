@@ -1,5 +1,7 @@
 language js(typescript)
 
+// scope: global
+
 or {
   `Record<string, unknown>`,
   `Record<number, unknown>`,

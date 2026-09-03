@@ -4,7 +4,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type DynamicRecord, isDynamicRecord } from "@openbot/contracts/runtime-values";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GrokAgentClient } from "./grok-client";
 import {
   type AppServerNotification,
@@ -286,12 +286,12 @@ function parseLogLine(line: string): DynamicRecord {
 }
 
 async function waitFor(predicate: () => boolean, timeoutMs = 3_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error("Timed out waiting for the fake Grok ACP process.");
+  await vi.waitFor(
+    () => {
+      if (!predicate()) throw new Error("Timed out waiting for the fake Grok ACP process.");
+    },
+    { timeout: timeoutMs },
+  );
 }
 
 const FAKE_GROK_ACP = String.raw`#!/usr/bin/env node

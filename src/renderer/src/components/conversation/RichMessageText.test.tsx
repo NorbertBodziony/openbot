@@ -10,6 +10,32 @@ afterEach(() => {
 });
 
 describe("RichMessageText tooltips", () => {
+  it("resolves semantic skill tags by id and marks missing tags unavailable", () => {
+    render(() => (
+      <RichMessageText
+        body="Use @[Old name](skill:skill-1) and ask @[Former](agent:agent-removed)."
+        bots={[]}
+        skills={[
+          {
+            skillId: "skill-1",
+            slug: "release-notes",
+            name: "Release Notes",
+            installedVersion: 1,
+            availableVersion: 1,
+            state: "installed",
+          },
+        ]}
+        onSelectAgent={vi.fn()}
+        onOpenLink={vi.fn()}
+      />
+    ));
+
+    expect(screen.getByText("Skill")).toBeInTheDocument();
+    expect(screen.getByText("Release Notes")).toBeInTheDocument();
+    expect(screen.getByText("Unavailable agent")).toBeInTheDocument();
+    expect(screen.getByText("Former")).toBeInTheDocument();
+  });
+
   it("renders a plain attached file name as a styled reference", async () => {
     const attachment = {
       id: "report",

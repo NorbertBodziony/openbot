@@ -12,6 +12,7 @@ import type {
   ProviderRuntimeStatus,
   UpdateStatus,
 } from "@openbot/contracts/ipc";
+import { isUpdateActivePhase } from "@openbot/contracts/ipc";
 import { normalizeAccountName, validateProfileName } from "@openbot/contracts/validation";
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { desktopAnalytics } from "../analytics";
@@ -260,8 +261,6 @@ export function SettingsModal(props: SettingsModalProps) {
         return `Downloading ${targetUpdate()}${
           props.updateStatus.progress === null ? "…" : ` · ${Math.round(props.updateStatus.progress)}%`
         }`;
-      case "preparing":
-        return `Preparing ${targetUpdate()}…`;
       case "ready":
         return `${targetUpdate()} is ready. Restart to apply.`;
       case "installing":
@@ -277,7 +276,7 @@ export function SettingsModal(props: SettingsModalProps) {
   const updateMessageClass = () => {
     if (updateError() || props.updateStatus.phase === "error")
       return "settings-modal-update-status settings-modal-error";
-    if (["available", "downloading", "preparing", "ready", "installing"].includes(props.updateStatus.phase)) {
+    if (isUpdateActivePhase(props.updateStatus.phase)) {
       return "settings-modal-update-status settings-modal-update-status-active";
     }
     return "settings-modal-update-status";

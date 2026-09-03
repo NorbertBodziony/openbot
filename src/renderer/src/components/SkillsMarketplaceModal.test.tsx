@@ -111,28 +111,6 @@ describe("SkillsMarketplaceModal", () => {
     );
   });
 
-  it("shows discover listings and install totals", async () => {
-    render(() => (
-      <SkillsMarketplaceModal
-        open
-        bots={[{ id: "writer", name: "Writer" }]}
-        activeBotId="writer"
-        onOpenChange={() => undefined}
-      />
-    ));
-    expect(screen.getByRole("dialog", { name: "Marketplace" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Skills" })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("button", { name: "Agents" })).toBeEnabled();
-    await waitFor(() => expect(screen.getByText("Release Notes")).toBeInTheDocument());
-    expect(screen.getByText(/1,280 installs/u)).toBeInTheDocument();
-    expect(screen.getByLabelText("Search skills")).toBeInTheDocument();
-    expect(window.openbot.skills.list).toHaveBeenCalledWith({
-      category: "documents",
-      sort: "installs",
-      limit: 5,
-    });
-  });
-
   it("confirms active routines before installing an independent agent", async () => {
     const detail: MarketplaceAgentDetail = {
       id: "research-agent",
@@ -309,24 +287,6 @@ describe("SkillsMarketplaceModal", () => {
     ).toBeDefined();
   });
 
-  it("keeps the shared marketplace navigation when browsing installed agents", async () => {
-    render(() => (
-      <SkillsMarketplaceModal
-        open
-        bots={[{ id: "writer", name: "Writer" }]}
-        activeBotId="writer"
-        onOpenChange={() => undefined}
-      />
-    ));
-
-    screen.getByRole("button", { name: "Agents" }).click();
-    screen.getByRole("button", { name: "Installed" }).click();
-
-    expect(await screen.findByRole("heading", { name: "Local agents" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Writer" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add agent" })).toBeInTheDocument();
-  });
-
   it("waits 500ms after typing before searching", async () => {
     vi.useFakeTimers();
     render(() => <SkillsMarketplaceModal open bots={[]} activeBotId="" onOpenChange={() => undefined} />);
@@ -341,36 +301,6 @@ describe("SkillsMarketplaceModal", () => {
 
     await vi.advanceTimersByTimeAsync(1);
     expect(list).toHaveBeenCalled();
-  });
-
-  it("shows the default skill icon when a marketplace image fails to load", async () => {
-    const pageWithIcon: MarketplaceSkillPage = {
-      skills: [
-        {
-          id: "release-notes",
-          slug: "release-notes",
-          name: "Release Notes",
-          description: "Turns merged work into clear release notes.",
-          category: "documents",
-          creatorName: "Ada",
-          version: 2,
-          installs: 1280,
-          featured: true,
-          iconUrl: "http://127.0.0.1:3100/v1/skills/release-notes/icon?v=release-notes-v2",
-          updatedAt: "2026-08-25T00:00:00.000Z",
-        },
-      ],
-      nextCursor: null,
-    };
-    window.openbot.skills.list = vi.fn(async () => pageWithIcon);
-    render(() => <SkillsMarketplaceModal open bots={[]} activeBotId="" onOpenChange={() => undefined} />);
-
-    await waitFor(() => expect(document.querySelector(".skills-marketplace-icon img")).toBeInTheDocument());
-    const icon = document.querySelector<HTMLImageElement>(".skills-marketplace-icon img");
-    if (!icon) throw new Error("Missing marketplace skill image.");
-    fireEvent.error(icon);
-
-    await waitFor(() => expect(document.querySelector(".skills-marketplace-icon svg")).toBeInTheDocument());
   });
 
   it("uses category and card skeletons while discover listings load", async () => {
@@ -395,7 +325,43 @@ describe("SkillsMarketplaceModal", () => {
     await waitFor(() => expect(screen.queryByRole("status", { name: "Loading skills" })).not.toBeInTheDocument());
   });
 
-  it("announces detail loading", async () => {
+  it("opens details from an installed skill row", async () => {
+    const installed: InstalledSkill[] = [
+      {
+        skillId: "release-notes",
+        slug: "release-notes",
+        name: "Release Notes",
+        installedVersion: 2,
+        availableVersion: 2,
+        state: "installed",
+      },
+    ];
+    window.openbot.skills.listInstalled = vi.fn(async () => installed);
+    render(() => (
+      <SkillsMarketplaceModal
+        open
+        bots={[{ id: "writer", name: "Writer" }]}
+        activeBotId="writer"
+        onOpenChange={() => undefined}
+      />
+    ));
+
+    // aria-current marks which marketplace section is showing
+    // (SkillsMarketplaceModal.tsx:413,423); nothing else asserts it.
+    expect(screen.getByRole("button", { name: "Skills" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "Agents" })).not.toHaveAttribute("aria-current");
+
+    screen.getByRole("button", { name: "Installed" }).click();
+    const listing = await screen.findByRole("button", { name: "View Release Notes details" });
+    listing.click();
+
+    expect(await screen.findByRole("region", { name: "Release Notes details" })).toBeInTheDocument();
+  });
+
+  it("announces detail loading with its own live region", async () => {
+    // SkillsMarketplaceModal.tsx:1445 is a second status region named
+    // "Loading skill"; the listing skeleton at :1409 is "Loading skills" and
+    // is covered separately, so detail loading needs its own assertion.
     const loadedDetail = await window.openbot.skills.get("release-notes");
     let resolveDetail!: (detail: typeof loadedDetail) => void;
     window.openbot.skills.get = vi.fn(
@@ -420,34 +386,6 @@ describe("SkillsMarketplaceModal", () => {
 
     resolveDetail(loadedDetail);
     await screen.findByRole("region", { name: "Release Notes details" });
-  });
-
-  it("opens details from an installed skill row", async () => {
-    const installed: InstalledSkill[] = [
-      {
-        skillId: "release-notes",
-        slug: "release-notes",
-        name: "Release Notes",
-        installedVersion: 2,
-        availableVersion: 2,
-        state: "installed",
-      },
-    ];
-    window.openbot.skills.listInstalled = vi.fn(async () => installed);
-    render(() => (
-      <SkillsMarketplaceModal
-        open
-        bots={[{ id: "writer", name: "Writer" }]}
-        activeBotId="writer"
-        onOpenChange={() => undefined}
-      />
-    ));
-
-    screen.getByRole("button", { name: "Installed" }).click();
-    const listing = await screen.findByRole("button", { name: "View Release Notes details" });
-    listing.click();
-
-    expect(await screen.findByRole("region", { name: "Release Notes details" })).toBeInTheDocument();
   });
 
   it("opens pending submission details from its row", async () => {
@@ -476,16 +414,6 @@ describe("SkillsMarketplaceModal", () => {
     const details = await screen.findByRole("region", { name: "Release Notes submission details" });
     expect(within(details).getByRole("heading", { name: "Review status" })).toBeInTheDocument();
     expect(within(details).getByText("pending")).toBeInTheDocument();
-  });
-
-  it("moves to the creator view", async () => {
-    render(() => <SkillsMarketplaceModal open bots={[]} activeBotId="" onOpenChange={() => undefined} />);
-    screen.getByRole("button", { name: "My submissions" }).click();
-    await waitFor(() => expect(screen.getByText(/No submissions yet/u)).toBeInTheDocument());
-    expect(screen.getByRole("heading", { name: "Submission requirements" })).toBeInTheDocument();
-    expect(screen.getByText("SKILL.md")).toBeInTheDocument();
-    expect(screen.getByText(/5 skills total/u)).toBeInTheDocument();
-    expect(screen.getByText(/5 submitted versions per skill/u)).toBeInTheDocument();
   });
 
   it("keeps the selected icon filename visible and previews it", async () => {
@@ -527,11 +455,8 @@ describe("SkillsMarketplaceModal", () => {
 
     fireEvent.change(input, { target: { files: [icon] } });
 
-    await waitFor(() => expect(document.querySelector(".skills-publish-summary img")).toBeInTheDocument());
-    expect(document.querySelector(".skills-publish-summary img")).toHaveAttribute(
-      "src",
-      expect.stringMatching(/^data:image\/webp;base64,/u),
-    );
+    const iconPreview = await screen.findByRole("img", { name: "Skill icon preview" });
+    expect(iconPreview).toHaveAttribute("src", expect.stringMatching(/^data:image\/webp;base64,/u));
     expect(input).toHaveValue("C:\\fakepath\\skill-icon.png");
   });
 

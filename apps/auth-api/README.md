@@ -15,7 +15,7 @@ code in the API response. It never writes the code to logs.
 
 ```bash
 bun run api:migrate:local
-bun run api
+bun run dev:api
 ```
 
 The local address is `http://127.0.0.1:3100`.

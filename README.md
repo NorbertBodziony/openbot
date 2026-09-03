@@ -87,8 +87,8 @@ For setup problems, data reset, and uninstall instructions, see
 
 ## Development
 
-Development requires stable [Bun](https://bun.sh/) 1.4.0, Node.js 22.12 or newer, and at least one
-supported agent CLI.
+Development requires stable [Bun](https://bun.sh/) 1.4.0, Node.js 24 (the version in `.nvmrc`, matching
+the Node that Electron bundles - run `nvm use`), and at least one supported agent CLI.
 
 Install the exact Bun version on macOS or Linux:
 
@@ -136,7 +136,7 @@ Use `bun run dev:seed --dry-run` to inspect the target and fixture counts withou
 | --- | --- |
 | `bun run dev` | Start the local Auth API and Electron client with renderer HMR on its app profile. |
 | `bun run preview` | Preview the built Electron client with the green preview icon. |
-| `bun run api` | Start the TanStack Start API and its local D1 database on `127.0.0.1:3100`. |
+| `bun run dev:api` | Start the TanStack Start API and its local D1 database on `127.0.0.1:3100`. |
 | `bun run api:start` | Build and preview the Cloudflare Worker locally. |
 | `bun run api:migrate:local` | Apply D1 migrations to the local development database. |
 | `bun run api:migrate:remote` | Apply D1 migrations to the configured remote database. |

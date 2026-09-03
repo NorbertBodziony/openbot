@@ -59,7 +59,20 @@ renderer ──► @openbot/contracts ◄── preload ◄── main ──►
 5. Keep Electron entry points small. New features use a service or a focused IPC input module.
 6. Do not add a second linter or formatter. Biome and its repository-owned anti-slop plugins are the
    only repository lint and format tools.
-7. Do not add temporary compatibility paths without a removal condition and a test for that condition. Released Team API protocol adapters are permanent by default and follow the policy below.
+7. Put renderer state in a domain context module at the root of `src/renderer/src`, and place it by
+   lifetime: state that belongs to one team server goes inside the keyed scope in
+   `app-providers.tsx`, everything else above it. A server switch discards and rebuilds that scope,
+   so it is the only per-server teardown there is - a signal on the wrong side of that boundary
+   either survives a switch it should not or dies in one it should not, and no list of setters can
+   fix it. A context reaches another one with `use*()` only downwards, in the nesting order of
+   `app-providers.tsx`, or through a provider prop; a command that writes to several domains lives
+   in a leaf context or a bridge component mounted under all of them. `window.openbot.*` is not a
+   dependency. Cycles are rejected by `noImportCycles`, so an upward edge must be `import type`.
+8. Read those contexts from the smallest component that needs them. A pane calls the `use*()` of the
+   domains it renders and nothing else; `WorkspaceShell` reads only what decides *which* pane
+   renders, and passes a value down as a prop when two of them would otherwise derive it twice. A
+   component that assembles another one's props is how the god controller grew back last time.
+9. Do not add temporary compatibility paths without a removal condition and a test for that condition. Released Team API protocol adapters are permanent by default and follow the policy below.
 
 SQLite migration history starts at the frozen version 8 compatibility baseline. Keep the baseline
 schema unchanged, append every later migration in numeric order, and update the separate latest
@@ -67,7 +80,7 @@ schema used for new databases. Never remove or rewrite a migration that may have
 
 ## Team API compatibility boundary
 
-Current remote connections use Team API protocol v2 over three ordered WebRTC DataChannels: `rpc`,
+Current remote connections use Team API protocol v3 over three ordered WebRTC DataChannels: `rpc`,
 `events`, and `files`. A sandboxed hidden Chromium page owns each `RTCPeerConnection`. Electron main
 uses a `MessagePort` and transfers binary data as `ArrayBuffer`. Signal carries SDP and ICE only.
 Cloudflare issues short ES256 connection tickets and stores the logical session. Signal issues a
@@ -96,6 +109,8 @@ Protocol support has no fixed time or release limit. Removal is an exceptional a
 
 ## Required verification
 
-Run `bun run check` for normal changes. Changes to packaging, native modules, or Electron security
-also require the applicable macOS and Windows package verification commands. Live provider and team
-smoke tests use isolated temporary data and are manual because they can require local credentials.
+Run the narrowest relevant test plus a targeted `biome check` and `tsc`; CI owns the full suite. See
+`AGENTS.md` "Do not run repo-wide checks" for the division of labour and what each CI job covers.
+Changes to packaging, native modules, or Electron security also require the applicable macOS and
+Windows package verification commands. Live provider and team smoke tests use isolated temporary
+data and are manual because they can require local credentials.

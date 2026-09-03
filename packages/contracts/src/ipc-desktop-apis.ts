@@ -10,6 +10,7 @@ import type {
   ProviderRuntimeSnapshot,
   SaveSetupInput,
   SetAnalyticsPreferenceInput,
+  UpdatePreference,
   UpdateStatus,
 } from "./ipc-app-auth";
 import type {
@@ -150,6 +151,7 @@ export interface AgentDesktopApi {
   getUsage: () => Promise<AccountUsage>;
   listModels: () => Promise<AgentModelOption[]>;
   listBots: () => Promise<BotSummary[]>;
+  listInstalledSkills: (botId: string) => Promise<InstalledSkill[]>;
   getSidebarLayout: () => Promise<SidebarLayoutSnapshot>;
   mutateSidebarLayout: (action: SidebarLayoutAction) => Promise<SidebarLayoutSnapshot>;
   createBot: (input: CreateBotInput) => Promise<BotSummary>;
@@ -230,6 +232,8 @@ export interface UpdateDesktopApi {
   check: () => Promise<UpdateStatus>;
   download: () => Promise<UpdateStatus>;
   install: () => Promise<void>;
+  getPreference: () => Promise<UpdatePreference>;
+  setPreference: (input: UpdatePreference) => Promise<UpdatePreference>;
   onEvent: (listener: (status: UpdateStatus) => void) => () => void;
 }
 

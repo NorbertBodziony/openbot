@@ -32,25 +32,15 @@ setup. Preserve unrelated work and adapt to the repository's package manager and
    replace an existing destination; use `--force` only after reviewing the existing files and the
    replacement diff.
 
-4. Merge the installed files into the existing top-level `plugins` array. For the default
-   destination, add all of these paths without removing existing plugins:
+4. Register the installed rules. **Do not type the rule names from memory or from this file.** The
+   installer prints two lists, read from the `// scope:` line each rule declares, so they cannot go
+   stale as rules are added, merged, or removed:
 
-   ```json
-   [
-     "./tools/biome/anti-slop/rules/no-chained-type-assertions.grit",
-     "./tools/biome/anti-slop/rules/no-conditional-empty-object-spread.grit",
-     "./tools/biome/anti-slop/rules/no-known-value-widening.grit",
-     "./tools/biome/anti-slop/rules/no-module-mocking.grit",
-     "./tools/biome/anti-slop/rules/no-object-parameters.grit",
-     "./tools/biome/anti-slop/rules/no-reflect-apply.grit",
-     "./tools/biome/anti-slop/rules/no-reflect-get.grit",
-     "./tools/biome/anti-slop/rules/no-runtime-typeof.grit",
-     "./tools/biome/anti-slop/rules/no-shape-in-symbol-names.grit",
-     "./tools/biome/anti-slop/rules/no-unknown-returns.grit",
-     "./tools/biome/anti-slop/rules/no-unknown-type-aliases.grit",
-     "./tools/biome/anti-slop/rules/no-unsafe-dictionary-type.grit"
-   ]
-   ```
+   - the `global` list goes in the top-level `plugins` array;
+   - the `tests` list goes in a `plugins` array on an `overrides` entry matching `**/*.test.ts` and
+     `**/*.test.tsx`, because those patterns are legitimate in product code and only wrong in a test.
+
+   Add them without removing existing plugins.
 
    Preserve every existing configuration field. Also enable these native Biome rules at error
    severity, merging them into their existing groups:
@@ -72,13 +62,19 @@ setup. Preserve unrelated work and adapt to the repository's package manager and
            "noNonNullAssertion": "error",
            "useAsConstAssertion": "error"
          },
-         "suspicious": { "noExplicitAny": "error" }
+         "suspicious": {
+           "noExplicitAny": "error",
+           "noFocusedTests": "error",
+           "noSkippedTests": "warn"
+         }
        }
      }
    }
    ```
 
-   Confirm all eight rule names and their current groups with the installed Biome binary before
+   `noFocusedTests` is an error because a stray `it.only` silently disables the rest of its file;
+   `noSkippedTests` is a warning because a skip has honest uses and only needs a comment naming what
+   unblocks it. Confirm every rule name and its current group with the installed Biome binary before
    editing configuration. The groups above are correct for Biome 2.5.9; if `biome explain` reports
    that a later compatible 2.x release promoted a nursery rule, use its reported stable group. Stop
    if any rule is unavailable rather than writing an invalid configuration.
@@ -91,9 +87,20 @@ setup. Preserve unrelated work and adapt to the repository's package manager and
    `.agents` or `.codex`; do not ignore all dot-directories. If no Biome configuration exists,
    create a minimal one with the local schema, the plugin list, and those file exclusions.
 
-5. Run the repository's existing lint or check command. If none exists, run Biome directly. Report
+5. Keep each rule's declared severity. The set runs at two levels and the difference is a promise:
+   `error` is for a pattern with no honest counter-example, `warn` for a judgement a pattern cannot
+   make - a `typeof` narrowing an `unknown` at a trust boundary is correct, an options-object
+   parameter is a readability call, and whether a module has an injectable seam is a fact about the
+   code under test. A warning is a prompt to think, never a demand to rewrite.
+
+6. Every rule ships a fixture beside it under `fixtures/`, marking each line the rule must reject
+   with a trailing `// flag` and surrounding it with correct code the rule must leave alone. A
+   GritQL pattern that matches nothing is green and enforces nothing, so a rule without a fixture
+   proving both halves is not a rule. If the target repository adds one, it adds a fixture too.
+
+7. Run the repository's existing lint or check command. If none exists, run Biome directly. Report
    findings in owned source and fix them only when the user requested migration or cleanup. Do not
    suppress diagnostics, weaken their severity, or launder types to make the check pass.
 
-6. Review the final diff and report the copied path, dependency change, configuration change,
+8. Review the final diff and report the copied path, dependency change, configuration change,
    checks run, and any remaining findings.

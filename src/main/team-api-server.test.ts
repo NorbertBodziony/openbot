@@ -22,6 +22,7 @@ import {
   routineRunConversationEventItemType,
 } from "@openbot/contracts/ipc";
 import { isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { TEAM_CURRENT_CAPABILITIES, TEAM_SEMANTIC_TAGS_CAPABILITY } from "@openbot/contracts/team-protocol/current";
 import {
   TEAM_APP_VERSION_HEADER,
   TEAM_CAPABILITIES_HEADER,
@@ -171,7 +172,7 @@ describe("TeamApiServer compatibility", () => {
       await expect(compatibility.json()).resolves.toMatchObject({
         appVersion: "0.4.0",
         protocol: { minimum: 1, maximum: 3 },
-        capabilities: expect.arrayContaining(["browser-control", "remote-desktop"]),
+        capabilities: expect.arrayContaining(["browser-control", "remote-desktop", TEAM_SEMANTIC_TAGS_CAPABILITY]),
       });
 
       const missing = await fetch(`${base}/v1/identity`);
@@ -188,6 +189,52 @@ describe("TeamApiServer compatibility", () => {
         headers: { [TEAM_PROTOCOL_VERSION_HEADER]: "1", [TEAM_APP_VERSION_HEADER]: "0.3.9" },
       });
       expect(compatible.status).toBe(200);
+    } finally {
+      await api.stop();
+    }
+  });
+
+  it("serves installed skill summaries", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-skills-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const listInstalledForChatTags = vi.fn(async () => [
+      {
+        skillId: "skill-1",
+        slug: "release-notes",
+        name: "Release Notes",
+        installedVersion: 1,
+        availableVersion: 2,
+        state: "update-available" as const,
+      },
+    ]);
+    const api = new TeamApiServer({
+      store,
+      agents: createAgents(),
+      skills: { listInstalledForChatTags },
+      mailbox: createMailbox(),
+      browser: createBrowser(),
+    });
+    const port = await api.start();
+    const base = `http://127.0.0.1:${port}`;
+
+    try {
+      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
+        body: { username: "owner", password: "correct horse battery" },
+      });
+      const response = await fetch(`${base}/v1/agents/chief/skills`, {
+        headers: {
+          Authorization: `Bearer ${login.sessionToken}`,
+        },
+      });
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual([
+        expect.objectContaining({ skillId: "skill-1", name: "Release Notes", state: "update-available" }),
+      ]);
+      expect(listInstalledForChatTags).toHaveBeenCalledWith("chief");
     } finally {
       await api.stop();
     }
@@ -547,8 +594,7 @@ describe("TeamApiServer administration", () => {
       for (let index = 0; index < 20; index += 1) {
         socket.send(JSON.stringify({ type: "runtime-snapshot-request" }));
       }
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(getRuntimeSnapshot).toHaveBeenCalledTimes(3);
+      await vi.waitFor(() => expect(getRuntimeSnapshot).toHaveBeenCalledTimes(3));
 
       for (const [index, token] of [owner.sessionToken, admin.sessionToken, member.sessionToken].entries()) {
         const event = nextJsonEvent(socket);
@@ -563,6 +609,9 @@ describe("TeamApiServer administration", () => {
           layout: { revision: index + 1 },
         });
       }
+      // Three request/response round-trips have passed through the same socket
+      // since the burst, so the coalescer provably never woke for the other 19.
+      expect(getRuntimeSnapshot).toHaveBeenCalledTimes(3);
 
       await expect(jsonRequest(base, "/v1/sidebar-layout", { token: member.sessionToken })).resolves.toMatchObject({
         revision: 3,
@@ -1480,7 +1529,7 @@ describe("TeamApiServer administration", () => {
         {
           id: "message-1",
           author: "assistant",
-          text: "Stored locally",
+          text: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
           createdAt: "2026-08-19T10:00:00.000Z",
           status: "completed",
         },
@@ -1529,6 +1578,17 @@ describe("TeamApiServer administration", () => {
         avatarHue: input.avatarHue,
       }),
     );
+    const legacyConversation = {
+      ...localConversation,
+      messages: [
+        { ...localConversation.messages[0], text: "Ask @Research to use Sources (skill)." },
+        ...localConversation.messages.slice(1),
+      ],
+    };
+    const sendMessage = vi.fn<TestAgents["sendMessage"]>(async () => ({
+      messageId: "message-tagged",
+      deliveries: [],
+    }));
     const readConversationPageFor = vi.fn(async (...args: unknown[]) => {
       const options = isDynamicRecord(args[4]) ? args[4] : {};
       const messages = localConversation.messages.filter((message) => {
@@ -1576,6 +1636,7 @@ describe("TeamApiServer administration", () => {
         firstUnreadMessageId: null,
         throughMessageId: options.excludeHostedSiteEvents ? throughMessageId : "hosted-site-event-1",
       }),
+      sendMessage,
     });
     const api = new TeamApiServer({
       store,
@@ -1608,14 +1669,23 @@ describe("TeamApiServer administration", () => {
       expect(createBot).toHaveBeenCalledWith(createInput);
       await expect(jsonRequest(base, "/v1/agents", { token: login.sessionToken })).resolves.toEqual(localBots);
       await expect(jsonRequest(base, "/v1/agents/chief/conversation", { token: login.sessionToken })).resolves.toEqual({
-        ...localConversation,
-        messages: [localConversation.messages[0]],
+        ...legacyConversation,
+        messages: [legacyConversation.messages[0]],
         readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
       });
       await expect(
         jsonRequest(base, "/v1/agents/chief/conversation", {
           token: login.sessionToken,
           capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
+        }),
+      ).resolves.toEqual({
+        ...legacyConversation,
+        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "hosted-site-event-1" },
+      });
+      await expect(
+        jsonRequest(base, "/v1/agents/chief/conversation", {
+          token: login.sessionToken,
+          capabilities: [...TEAM_CURRENT_CAPABILITIES],
         }),
       ).resolves.toEqual({
         ...localConversation,
@@ -1637,7 +1707,7 @@ describe("TeamApiServer administration", () => {
           token: login.sessionToken,
           capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
         }),
-      ).resolves.toMatchObject({ messages: localConversation.messages });
+      ).resolves.toMatchObject({ messages: legacyConversation.messages });
       expect(readConversationPageFor.mock.calls.at(-1)?.[4]).toEqual({
         excludeRoutineEvents: false,
         excludeRoutineRunEvents: false,
@@ -1673,6 +1743,23 @@ describe("TeamApiServer administration", () => {
         unreadCount: 0,
         firstUnreadMessageId: null,
         throughMessageId: "message-1",
+      });
+      const taggedMessage = "Ask @[Research](agent:research) to use @[Sources](skill:sources).";
+      await jsonRequest(base, "/v1/agents/chief/messages", {
+        token: login.sessionToken,
+        protocol: TEAM_PROTOCOL_V3,
+        capabilities: [...TEAM_CURRENT_CAPABILITIES],
+        body: {
+          text: taggedMessage,
+          attachmentDraftIds: [],
+          replyToMessageId: null,
+        },
+      });
+      expect(sendMessage).toHaveBeenCalledWith({
+        botId: "chief",
+        text: taggedMessage,
+        attachmentDraftIds: [],
+        replyToMessageId: null,
       });
       await expect(
         jsonRequest(base, "/v1/agents/chief/conversation/read", {
