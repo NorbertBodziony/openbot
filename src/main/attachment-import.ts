@@ -22,6 +22,16 @@ const UNIX_REGULAR_FILE = 0o100000;
 const UNIX_DIRECTORY = 0o040000;
 const EMAIL_MAX_HEADERS_BYTES = 2 * 1024 * 1024;
 const EMAIL_MAX_NESTING_DEPTH = 32;
+const CRC32_TABLE = Uint32Array.from({ length: 256 }, (_, index) => {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) value = (value >>> 1) ^ (0xedb88320 & -(value & 1));
+  return value >>> 0;
+});
+
+interface AttachmentBudget {
+  count: number;
+  bytes: number;
+}
 
 interface ZipEntry {
   name: string;
@@ -38,23 +48,49 @@ export async function normalizeAttachmentImports(input: ImportAttachmentsInput):
 
   const paths: string[] = [];
   const data: AttachmentDataInput[] = [];
+  let leafCount = 0;
+  let leafBytes = 0;
   for (const path of input.paths) {
     const name = basename(path);
     assertSupportedImport(name);
-    if (isContainer(name)) {
-      const metadata = await stat(path);
-      if (!metadata.isFile()) throw new Error(`Only regular files can be attached: ${name}`);
-      if (metadata.size > ATTACHMENT_LIMITS.fileBytes) throw new Error(`${name} exceeds the 100 MB limit.`);
-      data.push(...(await expandContainer(name, new Uint8Array(await readFile(path)))));
-    } else {
-      paths.push(path);
-    }
+    const metadata = await stat(path);
+    if (!metadata.isFile()) throw new Error(`Only regular files can be attached: ${name}`);
+    if (metadata.size > ATTACHMENT_LIMITS.fileBytes) throw new Error(`${name} exceeds the 100 MB limit.`);
+    if (isContainer(name)) continue;
+    paths.push(path);
+    leafCount += 1;
+    leafBytes += metadata.size;
   }
   for (const item of input.data) {
     const name = basename(item.name);
     assertSupportedImport(name);
-    if (isContainer(name)) data.push(...(await expandContainer(name, item.bytes)));
-    else data.push({ name, mimeType: item.mimeType, bytes: item.bytes });
+    if (isContainer(name)) continue;
+    if (item.bytes.byteLength > ATTACHMENT_LIMITS.fileBytes) throw new Error(`${name} exceeds the 100 MB limit.`);
+    leafCount += 1;
+    leafBytes += item.bytes.byteLength;
+  }
+  if (leafBytes > ATTACHMENT_LIMITS.totalBytes) throw new Error("Attachments exceed the 250 MB total limit.");
+
+  const budget: AttachmentBudget = {
+    count: INPUT_LIMITS.attachments - leafCount,
+    bytes: ATTACHMENT_LIMITS.totalBytes - leafBytes,
+  };
+  for (const path of input.paths) {
+    const name = basename(path);
+    if (!isContainer(name)) continue;
+    const expanded = await expandContainer(name, new Uint8Array(await readFile(path)), budget);
+    data.push(...expanded);
+    consumeBudget(budget, expanded);
+  }
+  for (const item of input.data) {
+    const name = basename(item.name);
+    if (isContainer(name)) {
+      const expanded = await expandContainer(name, item.bytes, budget);
+      data.push(...expanded);
+      consumeBudget(budget, expanded);
+    } else {
+      data.push({ name, mimeType: item.mimeType, bytes: item.bytes });
+    }
   }
 
   await assertExpandedLimits(paths, data);
@@ -71,9 +107,16 @@ function assertSupportedImport(name: string): void {
   throw new Error(`${name || "This file"} is not supported. Attach ${SUPPORTED_ATTACHMENT_IMPORT_DESCRIPTION}.`);
 }
 
-async function expandContainer(name: string, bytes: Uint8Array): Promise<AttachmentDataInput[]> {
+async function expandContainer(
+  name: string,
+  bytes: Uint8Array,
+  budget: AttachmentBudget,
+): Promise<AttachmentDataInput[]> {
   if (bytes.byteLength > ATTACHMENT_LIMITS.fileBytes) throw new Error(`${name} exceeds the 100 MB limit.`);
-  return attachmentFileExtension(name) === "eml" ? expandEmail(name, bytes) : expandZip(name, bytes);
+  const expanded =
+    attachmentFileExtension(name) === "eml" ? await expandEmail(name, bytes) : await expandZip(name, bytes, budget);
+  assertWithinBudget(expanded, budget);
+  return expanded;
 }
 
 async function expandEmail(name: string, bytes: Uint8Array): Promise<AttachmentDataInput[]> {
@@ -117,11 +160,11 @@ async function expandEmail(name: string, bytes: Uint8Array): Promise<AttachmentD
   return result;
 }
 
-async function expandZip(name: string, bytes: Uint8Array): Promise<AttachmentDataInput[]> {
+async function expandZip(name: string, bytes: Uint8Array, budget: AttachmentBudget): Promise<AttachmentDataInput[]> {
   const entries = inspectZip(name, bytes).filter((entry) => !entry.directory && !isPlatformMetadata(entry.name));
   if (entries.length === 0) throw new Error(`${name} does not contain any supported files.`);
-  if (entries.length > INPUT_LIMITS.attachments) {
-    throw new Error(`${name} expands to more than ${INPUT_LIMITS.attachments} attachments. Remove files and retry.`);
+  if (entries.length > budget.count) {
+    throw new Error(`These files expand to more than ${INPUT_LIMITS.attachments} attachments. Import fewer files.`);
   }
   for (const entry of entries) {
     assertSafeMemberName(name, entry.name);
@@ -133,8 +176,8 @@ async function expandZip(name: string, bytes: Uint8Array): Promise<AttachmentDat
     }
   }
   const total = entries.reduce((sum, entry) => sum + entry.size, 0);
-  if (total > ATTACHMENT_LIMITS.totalBytes) {
-    throw new Error(`${name} expands beyond the 250 MB total limit. Remove files from the archive and retry.`);
+  if (total > budget.bytes) {
+    throw new Error("Attachments exceed the 250 MB total limit.");
   }
 
   let extracted: Record<string, Uint8Array>;
@@ -266,11 +309,21 @@ function findZipEnd(bytes: Uint8Array): number {
 
 function crc32(bytes: Uint8Array): number {
   let value = 0xffffffff;
-  for (const byte of bytes) {
-    value ^= byte;
-    for (let bit = 0; bit < 8; bit += 1) value = (value >>> 1) ^ (0xedb88320 & -(value & 1));
-  }
+  for (const byte of bytes) value = CRC32_TABLE[(value ^ byte) & 0xff] ^ (value >>> 8);
   return (value ^ 0xffffffff) >>> 0;
+}
+
+function assertWithinBudget(items: AttachmentDataInput[], budget: AttachmentBudget): void {
+  if (items.length > budget.count) {
+    throw new Error(`These files expand to more than ${INPUT_LIMITS.attachments} attachments. Import fewer files.`);
+  }
+  const total = items.reduce((sum, item) => sum + item.bytes.byteLength, 0);
+  if (total > budget.bytes) throw new Error("Attachments exceed the 250 MB total limit.");
+}
+
+function consumeBudget(budget: AttachmentBudget, items: AttachmentDataInput[]): void {
+  budget.count -= items.length;
+  budget.bytes -= items.reduce((sum, item) => sum + item.bytes.byteLength, 0);
 }
 
 function assertSafeMemberName(container: string, name: string): void {

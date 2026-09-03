@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ATTACHMENT_LIMITS } from "@openbot/contracts/input-limits";
@@ -152,6 +152,46 @@ describe("attachment container imports", () => {
     await expect(importZip(oversized)).rejects.toThrow("exceeds the 100 MB limit");
     await expect(importZip(crowded)).rejects.toThrow("more than 10 attachments");
     await expect(importZip(excessiveTotal)).rejects.toThrow("250 MB total limit");
+  });
+
+  it("applies the remaining aggregate budgets before extracting a ZIP", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-attachment-import-"));
+    temporaryDirectories.push(directory);
+    const largePaths = await Promise.all(
+      Array.from({ length: 2 }, async (_, index) => {
+        const path = join(directory, `large-${index}.txt`);
+        await writeFile(path, "");
+        await truncate(path, ATTACHMENT_LIMITS.fileBytes);
+        return path;
+      }),
+    );
+    const excessiveBytes = patchFirstZipEntry(zipSync({ "report.txt": strToU8("report") }), (view, central, local) => {
+      const size = 60 * 1024 * 1024;
+      view.setUint32(central + 24, size, true);
+      view.setUint32(local + 22, size, true);
+    });
+    const excessiveCount = patchFirstZipEntry(
+      zipSync({ "one.txt": strToU8("1"), "two.txt": strToU8("2") }),
+      (view, central) => view.setUint32(central + 16, 0, true),
+    );
+    const leafData = Array.from({ length: 9 }, (_, index) => ({
+      name: `leaf-${index}.txt`,
+      mimeType: "text/plain",
+      bytes: strToU8(String(index)),
+    }));
+
+    await expect(
+      normalizeAttachmentImports({
+        paths: largePaths,
+        data: [{ name: "bundle.zip", mimeType: "application/zip", bytes: excessiveBytes }],
+      }),
+    ).rejects.toThrow("250 MB total limit");
+    await expect(
+      normalizeAttachmentImports({
+        paths: [],
+        data: [...leafData, { name: "bundle.zip", mimeType: "application/zip", bytes: excessiveCount }],
+      }),
+    ).rejects.toThrow("more than 10 attachments");
   });
 
   it("rejects malformed email and unsafe email attachments transactionally", async () => {
