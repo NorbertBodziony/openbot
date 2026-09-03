@@ -1,6 +1,5 @@
 import { readFile, stat } from "node:fs/promises";
 import { basename, extname } from "node:path";
-import { crc32, inflateRaw } from "node:zlib";
 import {
   attachmentFileExtension,
   attachmentMimeTypeForName,
@@ -10,40 +9,16 @@ import {
 } from "@openbot/contracts/attachment-files";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { AttachmentDataInput, ImportAttachmentsInput } from "@openbot/contracts/ipc";
-import { strFromU8 } from "fflate";
 import PostalMime from "postal-mime";
 
-const ZIP_CENTRAL_SIGNATURE = 0x02014b50;
-const ZIP_LOCAL_SIGNATURE = 0x04034b50;
-const ZIP_ENCRYPTED_FLAG = 1;
-const ZIP_UTF8_FLAG = 0x0800;
-const ZIP_DIRECTORY_ATTRIBUTE = 0x10;
-const ZIP_UNICODE_PATH_EXTRA = 0x7075;
-const ZIP_MAX_DIRECTORY_ENTRIES = 64;
-const UNIX_FILE_TYPE_MASK = 0o170000;
-const UNIX_REGULAR_FILE = 0o100000;
-const UNIX_DIRECTORY = 0o040000;
 const EMAIL_MAX_HEADERS_BYTES = 2 * 1024 * 1024;
 const EMAIL_MAX_NESTING_DEPTH = 32;
 const EMAIL_MAX_RFC822_NESTING_DEPTH = 10;
 const EMAIL_MAX_MIME_PARTS = 64;
 const HEADER_DECODER = new TextDecoder("latin1");
-const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
-const CP437_HIGH =
-  "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■ ";
 interface AttachmentBudget {
   count: number;
   bytes: number;
-}
-
-interface ZipEntry {
-  name: string;
-  size: number;
-  directory: boolean;
-  crc32: number;
-  compression: number;
-  compressedSize: number;
-  dataOffset: number;
 }
 
 export async function normalizeAttachmentImports(input: ImportAttachmentsInput): Promise<ImportAttachmentsInput> {
@@ -62,7 +37,7 @@ export async function normalizeAttachmentImports(input: ImportAttachmentsInput):
     const metadata = await stat(path);
     if (!metadata.isFile()) throw new Error(`Only regular files can be attached: ${name}`);
     if (metadata.size > ATTACHMENT_LIMITS.fileBytes) throw new Error(`${name} exceeds the 100 MB limit.`);
-    if (isContainer(name)) continue;
+    if (isEmailImport(name)) continue;
     paths.push(path);
     leafCount += 1;
     leafBytes += metadata.size;
@@ -70,7 +45,7 @@ export async function normalizeAttachmentImports(input: ImportAttachmentsInput):
   for (const item of input.data) {
     const name = basename(item.name);
     assertSupportedImport(name);
-    if (isContainer(name)) continue;
+    if (isEmailImport(name)) continue;
     if (item.bytes.byteLength > ATTACHMENT_LIMITS.fileBytes) throw new Error(`${name} exceeds the 100 MB limit.`);
     leafCount += 1;
     leafBytes += item.bytes.byteLength;
@@ -83,15 +58,15 @@ export async function normalizeAttachmentImports(input: ImportAttachmentsInput):
   };
   for (const path of input.paths) {
     const name = basename(path);
-    if (!isContainer(name)) continue;
-    const expanded = await expandContainer(name, new Uint8Array(await readFile(path)), budget);
+    if (!isEmailImport(name)) continue;
+    const expanded = await expandEmailWithinBudget(name, new Uint8Array(await readFile(path)), budget);
     data.push(...expanded);
     consumeBudget(budget, expanded);
   }
   for (const item of input.data) {
     const name = basename(item.name);
-    if (isContainer(name)) {
-      const expanded = await expandContainer(name, item.bytes, budget);
+    if (isEmailImport(name)) {
+      const expanded = await expandEmailWithinBudget(name, item.bytes, budget);
       data.push(...expanded);
       consumeBudget(budget, expanded);
     } else {
@@ -103,9 +78,8 @@ export async function normalizeAttachmentImports(input: ImportAttachmentsInput):
   return { paths, data };
 }
 
-function isContainer(name: string): boolean {
-  const extension = attachmentFileExtension(name);
-  return extension === "eml" || extension === "zip";
+function isEmailImport(name: string): boolean {
+  return attachmentFileExtension(name) === "eml";
 }
 
 function assertSupportedImport(name: string): void {
@@ -113,16 +87,13 @@ function assertSupportedImport(name: string): void {
   throw new Error(`${name || "This file"} is not supported. Attach ${SUPPORTED_ATTACHMENT_IMPORT_DESCRIPTION}.`);
 }
 
-async function expandContainer(
+async function expandEmailWithinBudget(
   name: string,
   bytes: Uint8Array,
   budget: AttachmentBudget,
 ): Promise<AttachmentDataInput[]> {
   if (bytes.byteLength > ATTACHMENT_LIMITS.fileBytes) throw new Error(`${name} exceeds the 100 MB limit.`);
-  const expanded =
-    attachmentFileExtension(name) === "eml"
-      ? await expandEmail(name, bytes, budget)
-      : await expandZip(name, bytes, budget);
+  const expanded = await expandEmail(name, bytes, budget);
   assertWithinBudget(expanded, budget);
   return expanded;
 }
@@ -168,203 +139,6 @@ async function expandEmail(name: string, bytes: Uint8Array, budget: AttachmentBu
     });
   }
   return result;
-}
-
-async function expandZip(name: string, bytes: Uint8Array, budget: AttachmentBudget): Promise<AttachmentDataInput[]> {
-  const entries = inspectZip(name, bytes).filter((entry) => !entry.directory && !isPlatformMetadata(entry.name));
-  if (entries.length === 0) throw new Error(`${name} does not contain any supported files.`);
-  if (entries.length > budget.count) {
-    throw new Error(`These files expand to more than ${INPUT_LIMITS.attachments} attachments. Import fewer files.`);
-  }
-  for (const entry of entries) {
-    assertSafeMemberName(name, entry.name);
-    assertLeafEntry(name, entry.name);
-    if (entry.size > ATTACHMENT_LIMITS.fileBytes) {
-      throw new Error(
-        `${name} contains ${entry.name}, which exceeds the 100 MB limit. Extract a smaller file and retry.`,
-      );
-    }
-  }
-  const total = entries.reduce((sum, entry) => sum + entry.size, 0);
-  if (total > budget.bytes) {
-    throw new Error("Attachments exceed the 250 MB total limit.");
-  }
-
-  const stem = safeStem(name);
-  const usedNames = new Set<string>();
-  const result: AttachmentDataInput[] = [];
-  for (const entry of entries) {
-    let content: Uint8Array;
-    try {
-      content = await extractZipEntry(bytes, entry);
-    } catch {
-      throw new Error(`${name} is malformed or uses an unsupported ZIP encoding. Recreate the archive and retry.`);
-    }
-    if (content.byteLength !== entry.size || crc32(content) !== entry.crc32) {
-      throw new Error(`${name} contains a damaged entry (${entry.name}). Recreate the archive and retry.`);
-    }
-    const outputName = uniqueName(flattenedName(stem, entry.name), usedNames);
-    result.push({ name: outputName, mimeType: attachmentMimeTypeForName(outputName), bytes: content });
-  }
-  return result;
-}
-
-function extractZipEntry(bytes: Uint8Array, entry: ZipEntry): Promise<Uint8Array> {
-  const compressed = bytes.subarray(entry.dataOffset, entry.dataOffset + entry.compressedSize);
-  if (entry.compression === 0) return Promise.resolve(compressed.slice());
-  return new Promise((resolve, reject) => {
-    inflateRaw(compressed, { maxOutputLength: entry.size + 1 }, (error, result) => {
-      if (error) reject(error);
-      else resolve(new Uint8Array(result));
-    });
-  });
-}
-
-function inspectZip(archiveName: string, bytes: Uint8Array): ZipEntry[] {
-  const endOffset = findZipEnd(bytes);
-  if (endOffset < 0) throw new Error(`${archiveName} is not a valid ZIP archive. Recreate it and retry.`);
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const disk = view.getUint16(endOffset + 4, true);
-  const centralDisk = view.getUint16(endOffset + 6, true);
-  const diskEntries = view.getUint16(endOffset + 8, true);
-  const entryCount = view.getUint16(endOffset + 10, true);
-  const centralSize = view.getUint32(endOffset + 12, true);
-  const centralOffset = view.getUint32(endOffset + 16, true);
-  if (disk !== 0 || centralDisk !== 0 || diskEntries !== entryCount) {
-    throw new Error(
-      `${archiveName} is a multi-volume ZIP, which is not supported. Extract it first and attach the files.`,
-    );
-  }
-  if (entryCount === 0xffff || centralSize === 0xffffffff || centralOffset === 0xffffffff) {
-    throw new Error(`${archiveName} uses ZIP64, which is not supported. Extract it first and attach the files.`);
-  }
-  if (entryCount > ZIP_MAX_DIRECTORY_ENTRIES) {
-    throw new Error(`${archiveName} contains too many entries. Import a smaller archive.`);
-  }
-  if (centralOffset + centralSize > endOffset) throw new Error(`${archiveName} has a damaged ZIP directory.`);
-
-  const entries: ZipEntry[] = [];
-  const names = new Set<string>();
-  let offset = centralOffset;
-  for (let index = 0; index < entryCount; index += 1) {
-    if (offset + 46 > endOffset || view.getUint32(offset, true) !== ZIP_CENTRAL_SIGNATURE) {
-      throw new Error(`${archiveName} has a damaged ZIP directory.`);
-    }
-    const flags = view.getUint16(offset + 8, true);
-    const compression = view.getUint16(offset + 10, true);
-    const expectedCrc32 = view.getUint32(offset + 16, true);
-    const compressedSize = view.getUint32(offset + 20, true);
-    const size = view.getUint32(offset + 24, true);
-    const nameLength = view.getUint16(offset + 28, true);
-    const extraLength = view.getUint16(offset + 30, true);
-    const commentLength = view.getUint16(offset + 32, true);
-    const externalAttributes = view.getUint32(offset + 38, true);
-    const localOffset = view.getUint32(offset + 42, true);
-    const nextOffset = offset + 46 + nameLength + extraLength + commentLength;
-    if (nextOffset > endOffset || localOffset + 30 > bytes.byteLength) {
-      throw new Error(`${archiveName} has a damaged ZIP directory.`);
-    }
-    const nameBytes = bytes.subarray(offset + 46, offset + 46 + nameLength);
-    const extraBytes = bytes.subarray(offset + 46 + nameLength, offset + 46 + nameLength + extraLength);
-    const name = decodeZipName(nameBytes, extraBytes, flags);
-    if (names.has(name)) throw new Error(`${archiveName} contains a duplicate path (${name}). Remove it and retry.`);
-    names.add(name);
-    if (compressedSize === 0xffffffff || size === 0xffffffff || localOffset === 0xffffffff) {
-      throw new Error(`${archiveName} uses ZIP64, which is not supported. Extract it first and attach the files.`);
-    }
-    if ((flags & ZIP_ENCRYPTED_FLAG) !== 0) {
-      throw new Error(`${archiveName} contains a password-protected entry (${name}). Remove the password and retry.`);
-    }
-    if (compression !== 0 && compression !== 8) {
-      throw new Error(
-        `${archiveName} contains ${name} with unsupported ZIP compression. Recreate the archive and retry.`,
-      );
-    }
-    if (compression === 0 && compressedSize !== size) {
-      throw new Error(`${archiveName} has conflicting ZIP sizes for ${name}. Recreate it and retry.`);
-    }
-    if (view.getUint32(localOffset, true) !== ZIP_LOCAL_SIGNATURE) {
-      throw new Error(`${archiveName} has a damaged ZIP entry (${name}).`);
-    }
-    const localFlags = view.getUint16(localOffset + 6, true);
-    if ((localFlags & ZIP_ENCRYPTED_FLAG) !== 0) {
-      throw new Error(`${archiveName} contains a password-protected entry (${name}). Remove the password and retry.`);
-    }
-    if (view.getUint16(localOffset + 8, true) !== compression) {
-      throw new Error(`${archiveName} has conflicting ZIP metadata for ${name}. Recreate it and retry.`);
-    }
-    const localNameLength = view.getUint16(localOffset + 26, true);
-    const localExtraLength = view.getUint16(localOffset + 28, true);
-    const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
-    if (dataOffset + compressedSize > centralOffset) {
-      throw new Error(`${archiveName} has a damaged ZIP entry (${name}).`);
-    }
-    const origin = view.getUint8(offset + 5);
-    const unixType = origin === 3 ? (externalAttributes >>> 16) & UNIX_FILE_TYPE_MASK : 0;
-    const directory =
-      name.endsWith("/") || (externalAttributes & ZIP_DIRECTORY_ATTRIBUTE) !== 0 || unixType === UNIX_DIRECTORY;
-    if (unixType !== 0 && unixType !== UNIX_REGULAR_FILE && unixType !== UNIX_DIRECTORY) {
-      throw new Error(`${archiveName} contains a link or special file (${name}). Remove it and retry.`);
-    }
-    entries.push({
-      name,
-      size,
-      directory,
-      crc32: expectedCrc32,
-      compression,
-      compressedSize,
-      dataOffset,
-    });
-    offset = nextOffset;
-  }
-  if (offset !== centralOffset + centralSize) throw new Error(`${archiveName} has a damaged ZIP directory.`);
-  return entries;
-}
-
-function decodeZipName(nameBytes: Uint8Array, extraBytes: Uint8Array, flags: number): string {
-  if ((flags & ZIP_UTF8_FLAG) !== 0) return strFromU8(nameBytes);
-  let offset = 0;
-  const view = new DataView(extraBytes.buffer, extraBytes.byteOffset, extraBytes.byteLength);
-  while (offset + 4 <= extraBytes.byteLength) {
-    const identifier = view.getUint16(offset, true);
-    const size = view.getUint16(offset + 2, true);
-    const nextOffset = offset + 4 + size;
-    if (nextOffset > extraBytes.byteLength) break;
-    if (
-      identifier === ZIP_UNICODE_PATH_EXTRA &&
-      size >= 5 &&
-      extraBytes[offset + 4] === 1 &&
-      view.getUint32(offset + 5, true) === crc32(nameBytes)
-    ) {
-      try {
-        return UTF8_DECODER.decode(extraBytes.subarray(offset + 9, nextOffset));
-      } catch {
-        break;
-      }
-    }
-    offset = nextOffset;
-  }
-
-  let result = "";
-  for (const byte of nameBytes) result += byte < 0x80 ? String.fromCharCode(byte) : CP437_HIGH[byte - 0x80];
-  return result;
-}
-
-function findZipEnd(bytes: Uint8Array): number {
-  const minimum = Math.max(0, bytes.byteLength - 65_557);
-  for (let offset = bytes.byteLength - 22; offset >= minimum; offset -= 1) {
-    if (
-      bytes[offset] === 0x50 &&
-      bytes[offset + 1] === 0x4b &&
-      bytes[offset + 2] === 0x05 &&
-      bytes[offset + 3] === 0x06
-    ) {
-      const commentLength = bytes[offset + 20] + ((bytes[offset + 21] ?? 0) << 8);
-      if (offset + 22 + commentLength !== bytes.byteLength) continue;
-      return offset;
-    }
-  }
-  return -1;
 }
 
 function assertWithinBudget(items: AttachmentDataInput[], budget: AttachmentBudget): void {
@@ -566,7 +340,7 @@ function assertSafeMemberName(container: string, name: string): void {
 }
 
 function assertLeafEntry(container: string, name: string): void {
-  if (isContainer(name)) {
+  if (isEmailImport(name)) {
     throw new Error(`${container} contains a nested ${extname(name) || "container"} file (${name}). Extract it first.`);
   }
   if (!isSupportedAttachmentName(name)) {
@@ -574,12 +348,6 @@ function assertLeafEntry(container: string, name: string): void {
       `${container} contains an unsupported file (${name}). Remove it or attach a supported file instead.`,
     );
   }
-}
-
-function isPlatformMetadata(name: string): boolean {
-  const parts = name.split("/");
-  const leaf = parts.at(-1) ?? "";
-  return parts[0] === "__MACOSX" || leaf === ".DS_Store" || leaf.startsWith("._");
 }
 
 function flattenedName(containerStem: string, memberName: string): string {

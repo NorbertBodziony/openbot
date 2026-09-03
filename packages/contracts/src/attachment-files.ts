@@ -67,7 +67,7 @@ export const CONTEXT_ATTACHMENT_EXTENSIONS = [
   "zsh",
 ] as const;
 
-export const CONTAINER_ATTACHMENT_EXTENSIONS = ["eml", "zip"] as const;
+export const CONTAINER_ATTACHMENT_EXTENSIONS = ["eml"] as const;
 
 export const ATTACHMENT_FILE_EXTENSIONS = [
   ...IMAGE_ATTACHMENT_EXTENSIONS,
@@ -79,7 +79,7 @@ export const IMAGE_ATTACHMENT_ACCEPT = IMAGE_ATTACHMENT_EXTENSIONS.map((extensio
 export const ATTACHMENT_FILE_ACCEPT = ATTACHMENT_FILE_EXTENSIONS.map((extension) => `.${extension}`).join(",");
 export const SUPPORTED_ATTACHMENT_DESCRIPTION = "images, PDF, Office documents, text, Markdown, data, or source files";
 export const SUPPORTED_ATTACHMENT_IMPORT_DESCRIPTION =
-  "images, PDF, Office documents, email, ZIP archives, text, Markdown, data, or source files";
+  "images, PDF, Office documents, email, text, Markdown, data, or source files";
 
 const SUPPORTED_EXTENSIONS = new Set<string>([...IMAGE_ATTACHMENT_EXTENSIONS, ...CONTEXT_ATTACHMENT_EXTENSIONS]);
 const SUPPORTED_IMPORT_EXTENSIONS = new Set<string>(ATTACHMENT_FILE_EXTENSIONS);
@@ -120,8 +120,6 @@ export function attachmentMimeTypeForName(name: string) {
       return "application/pdf";
     case "eml":
       return "message/rfc822";
-    case "zip":
-      return "application/zip";
     case "doc":
       return "application/msword";
     case "docx":

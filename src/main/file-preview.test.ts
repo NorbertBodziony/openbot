@@ -28,7 +28,7 @@ describe("file previews", () => {
     expect(mimeTypeForName("Dockerfile")).toBe("text/plain");
   });
 
-  it("does not transfer bytes for container files without a preview", async () => {
+  it("does not transfer bytes for unsupported local files", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openbot-file-preview-"));
     temporaryDirectories.push(directory);
     const path = join(directory, "archive.zip");
@@ -37,7 +37,7 @@ describe("file previews", () => {
     await expect(localFilePreview(path, "archive.zip", 3)).resolves.toEqual({
       name: "archive.zip",
       size: 3,
-      mimeType: "application/zip",
+      mimeType: "application/octet-stream",
       previewKind: "none",
       bytes: null,
     });

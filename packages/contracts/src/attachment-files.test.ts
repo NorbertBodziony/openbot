@@ -24,13 +24,13 @@ describe("attachment file whitelist", () => {
     expect(isSupportedAttachmentName("no-extension")).toBe(false);
   });
 
-  it("advertises EML and ZIP as import containers without treating them as leaf attachments", () => {
+  it("advertises EML as an import container without treating it as a leaf attachment", () => {
     expect(isSupportedAttachmentImportName("message.eml")).toBe(true);
-    expect(isSupportedAttachmentImportName("bundle.zip")).toBe(true);
+    expect(isSupportedAttachmentImportName("bundle.zip")).toBe(false);
     expect(isSupportedAttachmentName("message.eml")).toBe(false);
     expect(isSupportedAttachmentName("bundle.zip")).toBe(false);
     expect(ATTACHMENT_FILE_ACCEPT).toContain(".eml");
-    expect(ATTACHMENT_FILE_ACCEPT).toContain(".zip");
+    expect(ATTACHMENT_FILE_ACCEPT).not.toContain(".zip");
   });
 
   it("assigns stable MIME types to supported formats", () => {
@@ -40,6 +40,6 @@ describe("attachment file whitelist", () => {
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     );
     expect(attachmentMimeTypeForName("message.eml")).toBe("message/rfc822");
-    expect(attachmentMimeTypeForName("bundle.zip")).toBe("application/zip");
+    expect(attachmentMimeTypeForName("bundle.zip")).toBe("application/octet-stream");
   });
 });
