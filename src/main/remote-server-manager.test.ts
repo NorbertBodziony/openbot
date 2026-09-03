@@ -505,6 +505,35 @@ describe("remote server links", () => {
   });
 });
 
+describe("remote attachment uploads", () => {
+  it("discards every completed draft when any upload fails", async () => {
+    const manager = remoteEventManager("unused.json");
+    vi.spyOn(manager, "uploadAttachment").mockImplementation(async (name) => {
+      if (name === "broken.txt") throw new Error("upload failed");
+      return {
+        id: `draft-${name}`,
+        name,
+        size: 1,
+        kind: "file",
+        mimeType: "text/plain",
+        previewKind: "text",
+        previewUrl: null,
+      };
+    });
+    const discard = vi.spyOn(manager, "discardDraftAttachment").mockResolvedValue();
+    const files = ["first.txt", "broken.txt", "last.txt"].map((name) => ({
+      name,
+      mimeType: "text/plain",
+      bytes: new Uint8Array([1]),
+    }));
+
+    await expect(manager.uploadAttachments(files, "remote")).rejects.toThrow("upload failed");
+    expect(discard).toHaveBeenCalledTimes(2);
+    expect(discard).toHaveBeenCalledWith("draft-first.txt", "remote");
+    expect(discard).toHaveBeenCalledWith("draft-last.txt", "remote");
+  });
+});
+
 describe("remote server order", () => {
   it("recovers the persistence queue after a write failure", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openbot-server-persistence-"));

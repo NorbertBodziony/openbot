@@ -1059,6 +1059,39 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     return addRemotePreviewUrls(decodeDraftAttachment(value), server.id);
   }
 
+  discardDraftAttachment(attachmentId: string, serverId = this.#state.activeServerId): Promise<void> {
+    return this.request(
+      `/v1/attachments/${encodeURIComponent(attachmentId)}`,
+      { method: "DELETE" },
+      serverId,
+      decodeVoid,
+    );
+  }
+
+  async uploadAttachments(
+    files: readonly { name: string; mimeType: string; bytes: Uint8Array }[],
+    serverId = this.#state.activeServerId,
+  ): Promise<DraftAttachment[]> {
+    const results = await Promise.allSettled(
+      files.map((file) => this.uploadAttachment(file.name, file.mimeType, file.bytes, serverId)),
+    );
+    const attachments = results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
+    const uploadErrors = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
+    if (uploadErrors.length === 0) return attachments;
+
+    const rollbackResults = await Promise.allSettled(
+      attachments.map((attachment) => this.discardDraftAttachment(attachment.id, serverId)),
+    );
+    const rollbackErrors = rollbackResults.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
+    if (rollbackErrors.length > 0) {
+      throw new AggregateError(
+        [...uploadErrors, ...rollbackErrors],
+        "Attachment import failed and uploaded drafts could not be removed.",
+      );
+    }
+    throw uploadErrors[0];
+  }
+
   async setAgentAvatar(
     botId: string,
     image: AvatarImageInput | null,

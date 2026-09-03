@@ -916,12 +916,7 @@ function registerIpcHandlers(
     const attachmentId = requireString(scoped.payload, "attachmentId");
     return scoped.serverId === "local"
       ? service.discardDraftAttachment(attachmentId)
-      : remoteServers.request(
-          `/v1/attachments/${encodeURIComponent(attachmentId)}`,
-          { method: "DELETE" },
-          scoped.serverId,
-          decodeVoid,
-        );
+      : remoteServers.discardDraftAttachment(attachmentId, scoped.serverId);
   });
   handleTrusted(IPC_CHANNELS.agentOpenAttachment, async (input: unknown) => {
     const scoped = parseAgentRequest(input);
@@ -2487,9 +2482,7 @@ async function uploadRemoteImports(
   if (files.reduce((sum, file) => sum + file.bytes.byteLength, 0) > ATTACHMENT_LIMITS.totalBytes) {
     throw new Error("Attachments exceed the 250 MB total limit.");
   }
-  return Promise.all(
-    files.map((file) => remoteServers.uploadAttachment(file.name, file.mimeType, file.bytes, serverId)),
-  );
+  return remoteServers.uploadAttachments(files, serverId);
 }
 
 function configureAttachmentProtocol(mailbox: MailboxStore, agents: AgentService): void {

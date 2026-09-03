@@ -252,6 +252,27 @@ describe("attachment container imports", () => {
     await expect(importEmail(strToU8(nested))).rejects.toThrow("nested .eml");
   });
 
+  it("names supported filename-less Office attachments", async () => {
+    const email = strToU8(
+      [
+        "Subject: Document",
+        'Content-Type: multipart/mixed; boundary="openbot"',
+        "",
+        "--openbot",
+        "Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "Content-Disposition: attachment",
+        "Content-Transfer-Encoding: base64",
+        "",
+        "ZG9jeA==",
+        "--openbot--",
+      ].join("\r\n"),
+    );
+
+    await expect(importEmail(email)).resolves.toMatchObject({
+      data: [{ name: "message - email.txt" }, { name: "message - attachment-1.docx" }],
+    });
+  });
+
   it("rejects an over-populated EML before parsing its attachments", async () => {
     const parts = Array.from({ length: 10 }, (_, index) =>
       [

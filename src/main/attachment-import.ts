@@ -629,7 +629,17 @@ function extensionForMimeType(mimeType: string): string | null {
   const normalized = mimeType.split(";", 1)[0]?.trim().toLowerCase();
   const extensions: Record<string, string> = {
     "application/json": "json",
+    "application/msword": "doc",
     "application/pdf": "pdf",
+    "application/rtf": "rtf",
+    "application/vnd.ms-excel": "xls",
+    "application/vnd.ms-powerpoint": "ppt",
+    "application/vnd.oasis.opendocument.presentation": "odp",
+    "application/vnd.oasis.opendocument.spreadsheet": "ods",
+    "application/vnd.oasis.opendocument.text": "odt",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
     "image/avif": "avif",
     "image/gif": "gif",
     "image/jpeg": "jpg",
