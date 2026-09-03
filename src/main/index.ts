@@ -755,13 +755,16 @@ function forwardCentralAuth(state: CentralAuthState): void {
       }
       activeRemotePrincipalId = nextPrincipalId;
       if (state.status !== "signed_in") {
-        if (state.status === "signed_out") await hostService?.stop(false);
+        if (state.status === "signed_out") {
+          await hostService?.stop(false);
+          await hostService?.applySignedInAccount(null);
+        }
         return;
       }
       await remoteServerManager?.syncRemoteHosts();
       const host = hostService;
       if (!host) return;
-      await host.syncSignedInAccount(state.user);
+      await host.applySignedInAccount(state.user);
       hostAnalytics?.flushPending();
       const status = host.getStatus();
       if (shouldAutoStartHost(status)) await host.start();
@@ -976,6 +979,7 @@ if (!hasSingleInstanceLock) {
             ? (teamStore.getOwnerEmail() ?? "openbot-dev-host@example.com")
             : "openbot-dev-client@example.com";
         const user = await ensureDevelopmentAccount(centralAuthManager, email);
+        await teamStore.activateAccount(user);
         if (developmentRemoteRole === "host" && !teamStore.configured) {
           await teamStore.configureWithAccount("OpenBot Local Dev Host", user);
         }
@@ -1088,7 +1092,7 @@ if (!hasSingleInstanceLock) {
       });
       const signedInState = centralAuthManager.getState();
       if (signedInState.status === "signed_in") {
-        await hostService.syncSignedInAccount(signedInState.user);
+        await hostService.applySignedInAccount(signedInState.user);
       }
       const analyticsPlatform = process.platform;
       if (analyticsPlatform !== "darwin" && analyticsPlatform !== "win32" && analyticsPlatform !== "linux") {

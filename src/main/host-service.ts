@@ -46,7 +46,7 @@ import { appendRemoteDiagnosticLog } from "./remote-diagnostics";
 import { RemoteScreenGateway } from "./remote-screen-gateway";
 import type { SkillMarketplaceService } from "./skill-marketplace-service";
 import { TeamApiServer } from "./team-api-server";
-import type { AuthenticatedMember, RemoteDirectoryMember, TeamStore } from "./team-store";
+import type { AuthenticatedMember, RemoteDirectoryMember, TeamIdentity, TeamStore } from "./team-store";
 import type { TeamWebRtcBridge } from "./team-webrtc-bridge";
 import { TeamWebRtcHostGateway } from "./team-webrtc-host-gateway";
 
@@ -136,6 +136,8 @@ export class HostService extends EventEmitter<HostEvents> {
   #status: HostStatus;
   #runtimeGeneration = 0;
   #startOperation: Promise<HostStatus> | null = null;
+  /** `undefined` until the account service first reports, so the first report always binds. */
+  #boundAccountId: string | null | undefined = undefined;
   #legacyCredentialRemoved = false;
 
   constructor(options: HostServiceOptions) {
@@ -144,22 +146,7 @@ export class HostService extends EventEmitter<HostEvents> {
       ...options,
       allowLocalDevelopmentInvites: options.allowLocalDevelopmentInvites ?? false,
     };
-    const identity = options.store.getIdentity();
-    this.#status = {
-      phase: identity ? "idle" : "unconfigured",
-      configured: Boolean(identity),
-      enabledOnLaunch: identity?.enabledOnLaunch ?? false,
-      serverId: identity?.serverId ?? null,
-      serverName: identity?.serverName ?? null,
-      logoUrl: identity?.logoVersion ? serverLogoUrl(identity.logoVersion) : null,
-      apiUrl: null,
-      apiOnline: false,
-      remoteDesktopReady: false,
-      remoteDesktopUnattended: options.unattended ?? false,
-      remoteDesktopActiveSessions: 0,
-      remoteDesktopMaxSessions: 4,
-      message: null,
-    };
+    this.#status = initialHostStatus(options.store.getIdentity(), options.unattended ?? false);
     const logDirectory = options.logDirectory;
     this.#remoteScreen = new RemoteScreenGateway({
       platform: options.platform ?? normalizeRemoteDesktopPlatform(process.platform),
@@ -249,9 +236,47 @@ export class HostService extends EventEmitter<HostEvents> {
     };
   }
 
-  async syncSignedInAccount(user: CentralAuthUser): Promise<void> {
-    if (!this.#options.store.configured) return;
-    if (await this.#options.store.syncAccount(user)) this.#api.refreshPresence();
+  /**
+   * Binds the host to the signed-in account, or unbinds it on sign-out. The status is
+   * rebuilt from the newly active identity rather than patched, so a second account can
+   * never inherit the first one's server name, id or launch preference.
+   */
+  async applySignedInAccount(user: CentralAuthUser | null): Promise<void> {
+    const nextAccountId = user?.id ?? null;
+    if (this.#boundAccountId === nextAccountId) {
+      // The same account, reported again - a renamed profile or a new avatar. Rebinding
+      // here would stop a host that is happily online.
+      if (user && this.#options.store.configured && (await this.#options.store.syncAccount(user))) {
+        this.#api.refreshPresence();
+      }
+      return;
+    }
+    const previousServerId = this.#status.serverId;
+    if (this.#boundAccountId !== undefined) {
+      this.#runtimeGeneration += 1;
+      await this.#stopRuntime();
+    }
+    if (user) await this.#options.store.activateAccount(user);
+    else await this.#options.store.deactivate();
+    this.#boundAccountId = nextAccountId;
+    const identity = this.#options.store.getIdentity();
+    if (identity && identity.serverId === previousServerId) {
+      // The host this process started with, now confirmed as this account's. Keep the
+      // status the constructor already published rather than resetting a live runtime.
+      this.#setStatus({
+        configured: true,
+        serverName: identity.serverName,
+        logoUrl: identity.logoVersion ? serverLogoUrl(identity.logoVersion) : null,
+        enabledOnLaunch: identity.enabledOnLaunch,
+      });
+    } else {
+      this.#status = initialHostStatus(identity, this.#options.unattended ?? false);
+      this.emit("changed", this.getStatus());
+    }
+    if (identity) {
+      this.#api.refreshPresence();
+      this.#api.refreshIdentity();
+    }
   }
 
   async configure(input: ConfigureHostInput): Promise<HostStatus> {
@@ -333,7 +358,7 @@ export class HostService extends EventEmitter<HostEvents> {
     const generation = ++this.#runtimeGeneration;
     const signedInUser = this.#options.getSignedInUser();
     this.#options.store.assertOwnerAccount(signedInUser);
-    await this.syncSignedInAccount(signedInUser);
+    if (await this.#options.store.syncAccount(signedInUser)) this.#api.refreshPresence();
     this.#setStatus({ phase: "starting", message: "Starting the WebRTC host…" });
 
     try {
@@ -757,6 +782,24 @@ export class HostService extends EventEmitter<HostEvents> {
     if (!memberId) throw new Error("The host owner identity is unavailable.");
     return memberId;
   }
+}
+
+function initialHostStatus(identity: TeamIdentity | null, unattended: boolean): HostStatus {
+  return {
+    phase: identity ? "idle" : "unconfigured",
+    configured: Boolean(identity),
+    enabledOnLaunch: identity?.enabledOnLaunch ?? false,
+    serverId: identity?.serverId ?? null,
+    serverName: identity?.serverName ?? null,
+    logoUrl: identity?.logoVersion ? serverLogoUrl(identity.logoVersion) : null,
+    apiUrl: null,
+    apiOnline: false,
+    remoteDesktopReady: false,
+    remoteDesktopUnattended: unattended,
+    remoteDesktopActiveSessions: 0,
+    remoteDesktopMaxSessions: 4,
+    message: null,
+  };
 }
 
 export function serverLogoUrl(version: string): string {

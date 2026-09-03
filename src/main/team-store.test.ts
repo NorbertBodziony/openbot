@@ -65,8 +65,7 @@ describe("TeamStore", () => {
     await rename(unavailableRoot, root);
 
     await expect(store.setEnabledOnLaunch(false)).resolves.toBeUndefined();
-    const persisted = JSON.parse(await readFile(path, "utf8"));
-    expect(persisted.enabledOnLaunch).toBe(false);
+    expect((await readStoredHost(path)).enabledOnLaunch).toBe(false);
   });
 
   it("stores, restores, replaces, and removes a validated server logo", async () => {
@@ -90,7 +89,7 @@ describe("TeamStore", () => {
     expect(identity.logoVersion).toBe(firstStoredLogo?.version);
     expect(firstStoredLogo?.mimeType).toBe("image/png");
     await expect(readFile(firstStoredLogo?.path ?? "")).resolves.toEqual(Buffer.from(firstLogo.bytes));
-    const raw = JSON.parse(await readFile(path, "utf8"));
+    const raw = await readStoredHost(path);
     expect(raw.serverLogo).toEqual({ version: firstStoredLogo?.version, mimeType: "image/png" });
     expect(raw.serverLogo).not.toHaveProperty("bytes");
 
@@ -392,8 +391,8 @@ describe("TeamStore", () => {
       avatarUrl: null,
     };
     await store.configureWithAccount("Studio Mac", owner);
-    const legacy = JSON.parse(await readFile(path, "utf8"));
-    delete legacy.members[0].accountId;
+    const legacy = await readStoredHost(path);
+    delete legacy.members?.[0]?.accountId;
     await writeFile(path, JSON.stringify(legacy));
 
     const restored = new TeamStore(path);
@@ -404,8 +403,83 @@ describe("TeamStore", () => {
     await expect(restored.syncAccount(owner)).resolves.toBe(true);
     expect(restored.getOwnerAnalyticsIdentity()).toEqual({ id: "owner-account", email: "owner@example.com" });
     expect(restored.listMembers()[0]).not.toHaveProperty("accountId");
-    const persisted = JSON.parse(await readFile(path, "utf8"));
-    expect(persisted.members[0].accountId).toBe("owner-account");
+    const persisted = await readStoredHost(path);
+    expect(persisted.members?.[0]?.accountId).toBe("owner-account");
+  });
+
+  it("keeps each account's host separate and restores it on the next sign-in", async () => {
+    const { store, path } = await createStore();
+    const first = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
+    const second = { id: "account-b", email: "b@example.com", name: "B", avatarUrl: null };
+    const firstIdentity = await store.configureWithAccount("Studio Mac", first, {
+      mimeType: "image/png",
+      bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    });
+    const invite = await store.createInvite("member");
+    await store.acceptInviteWithAccount(invite.token, {
+      id: "account-c",
+      email: "c@example.com",
+      name: "C",
+      avatarUrl: null,
+    });
+    const pending = await store.createInvite("admin");
+
+    await store.activateAccount(second);
+    expect(store.configured).toBe(false);
+    expect(store.getIdentity()).toBeNull();
+    const secondIdentity = await store.configureWithAccount("Loft Mini", second);
+    expect(secondIdentity.serverId).not.toBe(firstIdentity.serverId);
+    expect(store.listMembers()).toHaveLength(1);
+
+    await store.activateAccount(first);
+    expect(store.getIdentity()?.serverId).toBe(firstIdentity.serverId);
+    expect(store.getIdentity()?.serverName).toBe("Studio Mac");
+    expect(store.getIdentity()?.logoVersion).toBe(firstIdentity.logoVersion);
+    expect(store.listMembers().map((member) => member.email)).toEqual(["a@example.com", "c@example.com"]);
+    expect(store.listInvites().find((candidate) => candidate.id === pending.id)?.role).toBe("admin");
+    expect(await readStoredHosts(path)).toHaveLength(2);
+  });
+
+  it("leaves no host bound after signing out, and restores it on the next sign-in", async () => {
+    const { store, path } = await createStore();
+    const owner = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
+    const identity = await store.configureWithAccount("Studio Mac", owner);
+
+    await store.deactivate();
+    expect(store.configured).toBe(false);
+    expect(store.getIdentity()).toBeNull();
+
+    const restarted = new TeamStore(path);
+    await restarted.initialize();
+    expect(restarted.configured).toBe(false);
+
+    await restarted.activateAccount(owner);
+    expect(restarted.getIdentity()?.serverId).toBe(identity.serverId);
+  });
+
+  it("adopts a host configured before accounts existed and records its owner", async () => {
+    const { store, path } = await createStore();
+    const identity = await store.configure("Studio Mac", "owner", "correct horse battery");
+    const owner = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
+
+    await store.activateAccount(owner);
+    expect(store.getIdentity()?.serverId).toBe(identity.serverId);
+    expect(store.getOwnerAnalyticsIdentity()).toEqual({ id: "account-a", email: "a@example.com" });
+    expect(() => store.assertOwnerAccount(owner)).not.toThrow();
+
+    const restarted = new TeamStore(path);
+    await restarted.initialize();
+    await restarted.activateAccount(owner);
+    expect(restarted.getIdentity()?.serverId).toBe(identity.serverId);
+    expect(await readStoredHosts(path)).toHaveLength(1);
+  });
+
+  it("activates nothing for an account that has no host", async () => {
+    const { store, path } = await createStore();
+    await store.activateAccount({ id: "account-a", email: "a@example.com", name: "A", avatarUrl: null });
+
+    expect(store.configured).toBe(false);
+    expect(await readStoredHosts(path)).toHaveLength(0);
   });
 
   it("allows only the OpenBot email that created the host to own it", async () => {
@@ -498,6 +572,25 @@ describe("TeamStore", () => {
     await expect(store.login("owner", "a newer secure password")).resolves.toBeDefined();
   });
 });
+
+/** Only the stored fields these tests read - the store owns the full shape. */
+interface StoredHostFields {
+  serverId?: string;
+  enabledOnLaunch?: boolean;
+  serverLogo?: { version?: string; mimeType?: string; bytes?: unknown };
+  members?: Array<{ accountId?: string }>;
+}
+
+/** The file holds one host per account; every host field a test reads lives under `hosts`. */
+async function readStoredHosts(path: string): Promise<StoredHostFields[]> {
+  return JSON.parse(await readFile(path, "utf8")).hosts;
+}
+
+async function readStoredHost(path: string, index = 0): Promise<StoredHostFields> {
+  const host = (await readStoredHosts(path))[index];
+  if (!host) throw new Error(`No stored host at index ${index}.`);
+  return host;
+}
 
 async function createStore() {
   const root = await mkdtemp(join(tmpdir(), "openbot-team-"));

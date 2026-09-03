@@ -68,6 +68,18 @@ interface StoredTeam {
   sessions: StoredSession[];
 }
 
+/**
+ * The file holds one host per OpenBot account, so switching accounts cannot hand the
+ * new account the previous one's server. `hosts` is append-only - a host is never
+ * removed when its owner signs out, because this file is user data with no backup.
+ */
+interface StoredTeamFile {
+  version: 2;
+  /** The account whose host is active, so a restart activates it before the network answers. */
+  activeAccountId: string | null;
+  hosts: StoredTeam[];
+}
+
 export interface TeamIdentity {
   serverId: string;
   serverName: string;
@@ -110,6 +122,8 @@ export interface RemoteDirectoryMember {
 export class TeamStore {
   readonly #path: string;
   readonly #logoRoot: string;
+  #file: StoredTeamFile = { version: 2, activeAccountId: null, hosts: [] };
+  /** The host of the signed-in account. Every other method reads this one, never `#file.hosts`. */
   #state: StoredTeam | null = null;
   readonly #remoteSessions = new Map<
     string,
@@ -123,13 +137,73 @@ export class TeamStore {
   }
 
   async initialize(): Promise<void> {
+    let migrated = false;
     try {
       const parsed = JSON.parse(await readFile(this.#path, "utf8"));
-      this.#state = isStoredTeam(parsed) ? parsed : null;
-      if (this.#state) await this.#prune();
+      if (isStoredTeamFile(parsed)) {
+        this.#file = parsed;
+      } else if (isStoredTeam(parsed)) {
+        this.#file = { version: 2, activeAccountId: ownerAccountId(parsed), hosts: [parsed] };
+        migrated = true;
+      }
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     }
+    const activeAccountId = this.#file.activeAccountId;
+    this.#state =
+      (activeAccountId === null
+        ? // A host that predates accounts, or one upgraded from a file where the owner
+          // account was never recorded. Activating it keeps an offline upgrade showing the
+          // host it showed yesterday. A host left behind by a sign-out has an owner account,
+          // so signing out still unbinds it.
+          this.#file.hosts.find((host) => ownerAccountId(host) === null)
+        : this.#file.hosts.find((host) => ownerAccountId(host) === activeAccountId)) ?? null;
+    if (migrated) await this.#persistFile();
+    if (this.#state) await this.#prune();
+  }
+
+  /**
+   * Binds the store to `user`'s own host, adopting a host whose owner predates account
+   * sign-in. An account with no host leaves the store unconfigured rather than borrowing
+   * another account's.
+   */
+  async activateAccount(user: CentralAuthUser): Promise<void> {
+    const email = normalizeEmail(user.email);
+    const hosts = this.#file.hosts;
+    const unbound = hosts.find((host) => {
+      const owner = hostOwner(host);
+      return owner !== undefined && !owner.accountId && !owner.email;
+    });
+    this.#state =
+      hosts.find((host) => ownerAccountId(host) === user.id) ??
+      hosts.find((host) => {
+        const ownerEmail = hostOwner(host)?.email;
+        return ownerEmail ? normalizeEmail(ownerEmail) === email : false;
+      }) ??
+      unbound ??
+      null;
+    this.#file.activeAccountId = user.id;
+    // A host configured before accounts existed has no owner email to match on next time,
+    // so adopting it has to write the binding rather than rely on `syncAccount`.
+    if (this.#state && this.#state === unbound) {
+      const owner = hostOwner(this.#state);
+      if (owner) {
+        owner.accountId = user.id;
+        owner.email = email;
+      }
+    }
+    await this.#persistFile();
+    if (this.#state) {
+      await this.syncAccount(user);
+      await this.#prune();
+    }
+  }
+
+  /** Signing out unbinds the host without removing it - signing back in restores it. */
+  async deactivate(): Promise<void> {
+    this.#state = null;
+    this.#file.activeAccountId = null;
+    await this.#persistFile();
   }
 
   get configured(): boolean {
@@ -216,7 +290,14 @@ export class TeamStore {
       invites: [],
       sessions: [],
     };
-    await this.#persist();
+    this.#file.hosts.push(this.#state);
+    try {
+      await this.#persistFile();
+    } catch (error) {
+      this.#file.hosts.pop();
+      this.#state = null;
+      throw error;
+    }
     const identity = this.getIdentity();
     if (!identity) throw new Error("The team identity could not be created.");
     return identity;
@@ -227,9 +308,12 @@ export class TeamStore {
     user: CentralAuthUser,
     logo?: AvatarImageInput | null,
   ): Promise<TeamIdentity> {
-    if (this.#state) throw new TeamStoreError("The team server is already configured.");
-    validateServerName(serverName);
     const email = normalizeEmail(user.email);
+    const activeOwner = this.#state ? hostOwner(this.#state) : undefined;
+    if (this.#hostFor(user.id, email) || (activeOwner && !activeOwner.accountId && !activeOwner.email)) {
+      throw new TeamStoreError("The team server is already configured.");
+    }
+    validateServerName(serverName);
     const { publicKey, privateKey } = generateKeyPairSync("ed25519", {
       publicKeyEncoding: { type: "spki", format: "pem" },
       privateKeyEncoding: { type: "pkcs8", format: "pem" },
@@ -259,9 +343,14 @@ export class TeamStore {
       invites: [],
       sessions: [],
     };
+    this.#file.hosts.push(this.#state);
+    const previousAccountId = this.#file.activeAccountId;
+    this.#file.activeAccountId = user.id;
     try {
-      await this.#persist();
+      await this.#persistFile();
     } catch (error) {
+      this.#file.hosts.pop();
+      this.#file.activeAccountId = previousAccountId;
       this.#state = null;
       if (serverLogo) await this.#removeLogo(serverLogo).catch(() => undefined);
       throw error;
@@ -756,6 +845,13 @@ export class TeamStore {
     return this.#state;
   }
 
+  #hostFor(accountId: string, email: string): StoredTeam | undefined {
+    return this.#file.hosts.find((host) => {
+      const owner = hostOwner(host);
+      return owner?.accountId === accountId || (owner?.email ? normalizeEmail(owner.email) === email : false);
+    });
+  }
+
   async #prune(): Promise<void> {
     if (!this.#state) return;
     const now = Date.now();
@@ -767,7 +863,12 @@ export class TeamStore {
   }
 
   async #persist(): Promise<void> {
-    const snapshot = structuredClone(this.#requireState());
+    this.#requireState();
+    await this.#persistFile();
+  }
+
+  async #persistFile(): Promise<void> {
+    const snapshot = structuredClone(this.#file);
     const operation = this.#writeChain.then(async () => {
       const temporary = `${this.#path}.${randomUUID()}.tmp`;
       try {
@@ -872,6 +973,24 @@ function validatePassword(value: string): void {
   if (value.length < 12 || value.length > 256) {
     throw new TeamStoreError("Password must contain 12 to 256 characters.");
   }
+}
+
+function hostOwner(host: StoredTeam): StoredMember | undefined {
+  return host.members.find((member) => member.role === "owner");
+}
+
+function ownerAccountId(host: StoredTeam): string | null {
+  return hostOwner(host)?.accountId ?? null;
+}
+
+function isStoredTeamFile(value: unknown): value is StoredTeamFile {
+  if (!isDynamicRecord(value)) return false;
+  return (
+    value.version === 2 &&
+    (value.activeAccountId === null || isString(value.activeAccountId)) &&
+    Array.isArray(value.hosts) &&
+    value.hosts.every((host) => isStoredTeam(host))
+  );
 }
 
 function isStoredTeam(value: unknown): value is StoredTeam {
