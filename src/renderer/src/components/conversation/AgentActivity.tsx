@@ -1,8 +1,9 @@
 import type { StateId } from "@norbert_bodziony/bloub";
-import { For, Show } from "solid-js";
+import { For } from "solid-js";
 import type { BotMessage, BotProfile } from "../../data";
 import { AgentAvatar } from "../AgentAvatar";
-import { ChevronIcon, ThinkingIcon } from "./ConversationIcons";
+import { Button } from "../ui/button";
+import { ChevronDown, Sparkles } from "../ui/icons";
 
 export const AGENT_ACTIVITY_ANIMATIONS = [
   "thinking",
@@ -46,17 +47,21 @@ export function nextAgentActivityPresentation(
 
 export function AgentActivityIndicator(props: {
   bot: BotProfile | undefined;
+  detail?: string | null;
   presentation: AgentActivityPresentation;
   phase?: "active" | "exiting";
 }) {
+  const label = () => props.detail ?? props.presentation.label;
   return (
-    <div
-      class="agent-activity-entry"
-      data-state={props.phase ?? "active"}
-      role="status"
-      aria-label={`${props.bot?.name ?? "Agent"} is working`}
-    >
-      <div class="agent-activity-content">
+    <div class="agent-activity-entry" data-state={props.phase ?? "active"}>
+      <span
+        class="sr-only"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        aria-label={`${props.bot?.name ?? "Agent"} is working: ${label()}`}
+      />
+      <section class="agent-activity-content" aria-label="Current activity">
         <AgentAvatar
           bot={props.bot}
           url={null}
@@ -64,8 +69,8 @@ export function AgentActivityIndicator(props: {
           animationState={props.presentation.animation}
           class="agent-activity-avatar"
         />
-        <span class="agent-activity-label">{props.presentation.label}</span>
-      </div>
+        <span class="agent-activity-label">{label()}</span>
+      </section>
     </div>
   );
 }
@@ -90,40 +95,45 @@ function pickActivityLabel(
 
 export function ThinkingDisclosure(props: {
   message: BotMessage;
-  open: boolean;
+  working: boolean;
+  open: boolean | undefined;
   onOpenChange: (open: boolean) => void;
 }) {
-  const stepCount = () => props.message.items?.length ?? 0;
+  const steps = () => props.message.items?.filter((item) => item.trim()) ?? [];
+  /* Open while the agent reasons so the trace reads as it arrives, closed once it has answered —
+     until the reader decides otherwise. */
+  const expanded = () => props.open ?? props.working;
   return (
     <article class="thinking-entry">
-      <details
-        class="thinking-disclosure"
-        open={props.open}
-        onToggle={(event) => props.onOpenChange(event.currentTarget.open)}
-      >
-        <summary aria-label="Show thinking details">
-          <span class="thinking-mark" aria-hidden="true">
-            <ThinkingIcon />
+      <div class="thinking-disclosure" data-expanded={expanded()}>
+        <Button
+          variant="ghost"
+          size="xs"
+          class="thinking-summary"
+          aria-expanded={expanded() ? "true" : "false"}
+          aria-label={expanded() ? "Hide thinking details" : "Show thinking details"}
+          onClick={() => props.onOpenChange(!expanded())}
+        >
+          <Sparkles class="thinking-mark" aria-hidden="true" />
+          <span class="thinking-label" role="status" data-working={props.working}>
+            {props.working ? "Thinking" : "Thought it through"}
           </span>
-          <span>Thinking</span>
-          <Show when={props.message.streaming}>
-            <span class="thinking-live-dots" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-            </span>
-          </Show>
-          <Show when={!props.message.streaming && stepCount() > 1}>
-            <small>{stepCount()} steps</small>
-          </Show>
-          <span class="thinking-chevron" aria-hidden="true">
-            <ChevronIcon />
-          </span>
-        </summary>
-        <div class="thinking-details">
-          <For each={props.message.items ?? []}>{(item) => <p>{item}</p>}</For>
+          <ChevronDown class="thinking-chevron" aria-hidden="true" />
+        </Button>
+        <div class="thinking-panel" aria-hidden={expanded() ? undefined : "true"}>
+          <div class="thinking-panel-clip">
+            <div class="thinking-details">
+              <For each={steps()}>
+                {(item, index) => (
+                  <p class="thinking-step" style={{ "--thinking-step-index": String(index()) }}>
+                    {item}
+                  </p>
+                )}
+              </For>
+            </div>
+          </div>
         </div>
-      </details>
+      </div>
     </article>
   );
 }

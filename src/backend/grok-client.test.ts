@@ -118,6 +118,24 @@ describe.sequential("GrokAgentClient", () => {
         expect.objectContaining({ method: "turn/completed" }),
       ]),
     );
+    // A thought only reaches the thinking disclosure while it is phased as commentary; without the
+    // phase it arrives as an ordinary agent message and renders as a chat bubble.
+    expect(notifications).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "item/started",
+          params: expect.objectContaining({
+            item: expect.objectContaining({ type: "agentMessage", phase: "commentary" }),
+          }),
+        }),
+        expect.objectContaining({
+          method: "item/completed",
+          params: expect.objectContaining({
+            item: expect.objectContaining({ phase: "commentary", text: "GROK_THOUGHT" }),
+          }),
+        }),
+      ]),
+    );
 
     const secondTurn = await client.request(
       "turn/start",
@@ -371,6 +389,13 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   }
   if (!message.method && message.id === "input-1") {
     log({ event: "user-input-response", hasAnswers: Boolean(message.result?.answers) });
+    write({
+      method: "session/update",
+      params: {
+        sessionId: pendingPrompt.sessionId,
+        update: { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "GROK_THOUGHT" } },
+      },
+    });
     write({
       method: "session/update",
       params: {

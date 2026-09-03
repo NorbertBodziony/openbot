@@ -574,6 +574,17 @@ describe("TeamApiServer administration", () => {
       agentEvents.emit("event", { type: "queue-changed", snapshot: { botId: "chief", deliveries: [] } });
       await expect(queueEvent).resolves.toEqual({ type: "queue-invalidated", botId: "chief" });
 
+      const eventAfterUnsupportedActivity = nextJsonEvent(socket);
+      agentEvents.emit("event", {
+        type: "turn-progress",
+        botId: "chief",
+        threadId: "thread-chief",
+        turnId: "turn-1",
+        detail: "Searching for current information…",
+      });
+      agentEvents.emit("event", { type: "bots-changed", bots: [] });
+      await expect(eventAfterUnsupportedActivity).resolves.toMatchObject({ type: "bots-changed" });
+
       const eventsAfterOversizedConversation = nextJsonEvents(socket, 2);
       agentEvents.emit("event", {
         ...conversation,

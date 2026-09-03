@@ -27,6 +27,7 @@ import {
   type RequestId,
   type ResponseDecoder,
   type RpcError,
+  type ThreadItem,
   type ThreadResponse,
   type TurnResponse,
 } from "./protocol";
@@ -55,8 +56,14 @@ interface ThreadConfig {
 interface ActiveTurn {
   id: string;
   itemId: string;
+  reasoningItemId: string;
   text: string;
+  thinking: string;
+  thinkingStarted: boolean;
+  thinkingStreamId: string | null;
   assistantMessages: Map<string, string>;
+  thinkingMessages: Map<string, string>;
+  toolCalls: Map<string, string>;
 }
 
 interface ThreadRuntime {
@@ -96,22 +103,29 @@ interface ClaudeQuery extends AsyncIterable<ClaudeStreamMessage> {
 }
 
 type QueryFactory = (params: Parameters<typeof query>[0]) => ClaudeQuery;
+type SessionHistoryReader = typeof getSessionMessages;
 type ClaudeEffortCapability = { supported: ClaudeEffort[]; defaultEffort: ClaudeEffort } | null;
 
 export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
   readonly provider: AgentProvider = "claude";
   readonly #cli: ClaudeCliInfo;
   readonly #createQuery: QueryFactory;
+  readonly #readSessionMessages: SessionHistoryReader;
   readonly #threads = new Map<string, ThreadRuntime>();
   readonly #pendingServerRequests = new Map<RequestId, PendingServerRequest>();
   readonly #modelEffortCapabilities = new Map<string, ClaudeEffortCapability>();
   readonly #modelSdkValues = new Map<string, string>();
   #running = false;
 
-  constructor(cli: ClaudeCliInfo, createQuery: QueryFactory = query) {
+  constructor(
+    cli: ClaudeCliInfo,
+    createQuery: QueryFactory = query,
+    readSessionMessages: SessionHistoryReader = getSessionMessages,
+  ) {
     super();
     this.#cli = cli;
     this.#createQuery = createQuery;
+    this.#readSessionMessages = readSessionMessages;
   }
 
   get running(): boolean {
@@ -380,8 +394,14 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     const activeTurn = {
       id: turnId,
       itemId: `${turnId}:assistant`,
+      reasoningItemId: `${turnId}:reasoning`,
       text: "",
+      thinking: "",
+      thinkingStarted: false,
+      thinkingStreamId: null,
       assistantMessages: new Map<string, string>(),
+      thinkingMessages: new Map<string, string>(),
+      toolCalls: new Map<string, string>(),
     };
     runtime.activeTurn = activeTurn;
     this.emit("notification", {
@@ -441,15 +461,11 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     if (message.type === "stream_event" && message.parent_tool_use_id === null) {
       const event = message.event;
       const delta = isRecord(event) ? event.delta : null;
-      if (
-        event &&
-        isRecord(event) &&
-        event.type === "content_block_delta" &&
-        isRecord(delta) &&
-        delta.type === "text_delta" &&
-        isString(delta.text)
-      ) {
-        this.#appendDelta(runtime, delta.text);
+      if (event && isRecord(event) && event.type === "content_block_delta" && isRecord(delta)) {
+        if (delta.type === "text_delta" && isString(delta.text)) this.#appendDelta(runtime, delta.text);
+        else if (delta.type === "thinking_delta" && isString(delta.thinking)) {
+          this.#appendThinkingDelta(runtime, delta.thinking, message.uuid);
+        }
       }
       return;
     }
@@ -458,11 +474,37 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       if (message.parent_tool_use_id !== null) return;
       const turn = runtime.activeTurn;
       const text = messageText(message.message);
-      if (!turn || !text || !message.uuid) return;
+      if (!turn || !message.uuid) return;
+      const thinking = messageThinking(message.message);
+      if (thinking) {
+        turn.thinkingMessages.set(message.uuid, thinking);
+        const completeThinking = [...turn.thinkingMessages.values()].join("\n");
+        if (completeThinking.startsWith(turn.thinking)) {
+          this.#appendThinkingDelta(runtime, completeThinking.slice(turn.thinking.length));
+        }
+      }
+      for (const toolCall of messageToolCalls(message.message)) {
+        if (turn.toolCalls.has(toolCall.id)) continue;
+        turn.toolCalls.set(toolCall.id, toolCall.name);
+        this.#emitToolCall(runtime, toolCall.id, toolCall.name, false);
+      }
+      if (!text) return;
       turn.assistantMessages.set(message.uuid, text);
       const completeText = [...turn.assistantMessages.values()].join("");
       if (completeText.startsWith(turn.text)) {
         this.#appendDelta(runtime, completeText.slice(turn.text.length));
+      }
+      return;
+    }
+
+    if (message.type === "user") {
+      const turn = runtime.activeTurn;
+      if (!turn) return;
+      for (const toolCallId of messageToolResults(message.message)) {
+        const name = turn.toolCalls.get(toolCallId);
+        if (!name) continue;
+        turn.toolCalls.delete(toolCallId);
+        this.#emitToolCall(runtime, toolCallId, name, true);
       }
       return;
     }
@@ -472,6 +514,10 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     const errors = message.errors ?? [];
     const turn = runtime.activeTurn;
     if (turn) {
+      for (const [toolCallId, name] of turn.toolCalls) {
+        this.#emitToolCall(runtime, toolCallId, name, true);
+      }
+      turn.toolCalls.clear();
       const completeText = [...turn.assistantMessages.values()].join("");
       if (completeText) turn.text = completeText;
       else if (!turn.text && fallback) this.#appendDelta(runtime, fallback);
@@ -482,6 +528,49 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       errors.some((error) => /interrupt|abort/i.test(error));
     const status = interrupted ? "interrupted" : message.subtype === "success" ? "completed" : "failed";
     this.#completeTurn(runtime, status, errors.length > 0 ? errors.join("\n") : null);
+  }
+
+  #emitToolCall(runtime: ThreadRuntime, id: string, name: string, completed: boolean): void {
+    const turn = runtime.activeTurn;
+    if (!turn) return;
+    this.emit("notification", {
+      method: completed ? "item/completed" : "item/started",
+      params: {
+        threadId: runtime.id,
+        turnId: turn.id,
+        item: { id, type: "toolCall", name, status: completed ? "completed" : "in_progress" },
+      },
+    });
+  }
+
+  /* Claude streams reasoning as its own content block; the app-server vocabulary carries it as a
+     separate agentMessage item whose `commentary` phase becomes the thinking disclosure. */
+  #appendThinkingDelta(runtime: ThreadRuntime, delta: string, streamId?: string): void {
+    const turn = runtime.activeTurn;
+    if (!turn || !delta) return;
+    if (!turn.thinkingStarted) {
+      turn.thinkingStarted = true;
+      this.emit("notification", {
+        method: "item/started",
+        params: {
+          threadId: runtime.id,
+          turnId: turn.id,
+          item: { id: turn.reasoningItemId, type: "agentMessage", phase: "commentary" },
+        },
+      });
+    }
+    const nextDelta = streamId && turn.thinkingStreamId && streamId !== turn.thinkingStreamId ? `\n${delta}` : delta;
+    if (streamId) turn.thinkingStreamId = streamId;
+    turn.thinking += nextDelta;
+    this.emit("notification", {
+      method: "item/agentMessage/delta",
+      params: {
+        threadId: runtime.id,
+        turnId: turn.id,
+        itemId: turn.reasoningItemId,
+        delta: nextDelta,
+      },
+    });
   }
 
   #appendDelta(runtime: ThreadRuntime, delta: string): void {
@@ -502,6 +591,16 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
   #completeTurn(runtime: ThreadRuntime, status: string, error: unknown): void {
     const turn = runtime.activeTurn;
     if (!turn) return;
+    if (turn.thinkingStarted) {
+      this.emit("notification", {
+        method: "item/completed",
+        params: {
+          threadId: runtime.id,
+          turnId: turn.id,
+          item: { id: turn.reasoningItemId, type: "agentMessage", phase: "commentary", text: turn.thinking },
+        },
+      });
+    }
     this.emit("notification", {
       method: "item/completed",
       params: {
@@ -525,9 +624,13 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
 
   async #readThread(threadId: string): Promise<ThreadResponse> {
     const runtime = this.#threads.get(threadId);
-    const messages = await getSessionMessages(threadId, runtime?.config.cwd ? { dir: runtime.config.cwd } : undefined);
+    const messages = await this.#readSessionMessages(
+      threadId,
+      runtime?.config.cwd ? { dir: runtime.config.cwd } : undefined,
+    );
     const turns: NonNullable<ThreadResponse["thread"]["turns"]> = [];
     let current: (typeof turns)[number] | null = null;
+    let currentThinking: ThreadItem | null = null;
     for (const message of messages) {
       if (message.parent_tool_use_id) continue;
       const text = messageText(message.message);
@@ -546,12 +649,29 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
           ],
         };
         turns.push(current);
-      } else if (message.type === "assistant" && text) {
+        currentThinking = null;
+      } else if (message.type === "assistant") {
+        const thinking = messageThinking(message.message);
+        if (!thinking && !text) continue;
         if (!current) {
           current = { id: message.uuid, status: "completed", items: [] };
           turns.push(current);
+          currentThinking = null;
         }
-        current.items?.push({ id: message.uuid, type: "agentMessage", text });
+        if (thinking) {
+          if (currentThinking) {
+            currentThinking.text = `${currentThinking.text ?? ""}\n${thinking}`;
+          } else {
+            currentThinking = {
+              id: `${current.id}:reasoning`,
+              type: "agentMessage",
+              phase: "commentary",
+              text: thinking,
+            };
+            current.items?.push(currentThinking);
+          }
+        }
+        if (text) current.items?.push({ id: message.uuid, type: "agentMessage", text });
       }
     }
     return { thread: { id: threadId, turns } };
@@ -878,6 +998,34 @@ function messageText(message: unknown): string {
     .filter((block) => block.type === "text" && isString(block.text))
     .map((block) => block.text)
     .join("\n");
+}
+
+function messageThinking(message: unknown): string {
+  if (!isRecord(message) || !Array.isArray(message.content)) return "";
+  return message.content
+    .filter(isRecord)
+    .filter((block) => block.type === "thinking")
+    .map((block) => getString(block, "thinking"))
+    .filter(isString)
+    .join("\n");
+}
+
+function messageToolCalls(message: unknown): Array<{ id: string; name: string }> {
+  if (!isRecord(message) || !Array.isArray(message.content)) return [];
+  return message.content.filter(isRecord).flatMap((block) => {
+    const id = getString(block, "id");
+    const name = getString(block, "name");
+    return block.type === "tool_use" && id && name ? [{ id, name }] : [];
+  });
+}
+
+function messageToolResults(message: unknown): string[] {
+  if (!isRecord(message) || !Array.isArray(message.content)) return [];
+  return message.content
+    .filter(isRecord)
+    .filter((block) => block.type === "tool_result")
+    .map((block) => getString(block, "tool_use_id"))
+    .filter(isString);
 }
 
 function dynamicContent(value: unknown): CallToolResult["content"] {

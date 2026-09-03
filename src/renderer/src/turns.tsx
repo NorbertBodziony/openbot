@@ -19,7 +19,7 @@ type BrowserTakeoverEvent = Extract<AgentEvent, { type: "browser-takeover-reques
  *
  * This is the one domain inside the per-server subtree whose state survives a
  * server switch. `DynamicIslandCoordinator` lives above the keyed boundary,
- * keeps five of these maps per server and hands them back through
+ * keeps six of these maps per server and hands them back through
  * `serverState(serverId)`, so this provider seeds from that snapshot on mount
  * instead of starting empty. Keeping turns separate from `conversation` is what
  * keeps that seam visible - mixed together, the one layer that is restored
@@ -62,6 +62,9 @@ const Turns = createSimpleContext({
     // The layer-2 seed: what this server was doing the last time it was open.
     const seed = dynamicIslandCoordinator.serverState(activeServerId());
     const [activeTurns, setActiveTurns] = createSignal<Record<string, string | null>>(seed?.activeTurns ?? {});
+    const [turnProgress, setTurnProgress] = createSignal<
+      Record<string, { turnId: string; detail: string } | undefined>
+    >(seed?.turnProgress ?? {});
     const [failedTurns, setFailedTurns] = createSignal<Record<string, string | undefined>>(seed?.failedTurns ?? {});
     const [queues, setQueues] = createSignal<Record<string, QueueSnapshot>>(seed?.queues ?? {});
     const [routineIdsByConversation, setRoutineIdsByConversation] = createSignal<Record<string, string[] | undefined>>(
@@ -323,6 +326,8 @@ const Turns = createSimpleContext({
     return {
       activeTurns,
       setActiveTurns,
+      turnProgress,
+      setTurnProgress,
       failedTurns,
       setFailedTurns,
       queues,

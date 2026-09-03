@@ -18,6 +18,27 @@ describe("landing demo controller", () => {
     vi.restoreAllMocks();
   });
 
+  it("emits activity detail during the mock send lifecycle", async () => {
+    const mock = createMockOpenBot();
+    const events: AgentEvent[] = [];
+    const unsubscribe = mock.api.agent.onEvent((event) => events.push(event));
+
+    const sent = await mock.api.agent.sendMessage({ botId: "chief", text: "Check it", attachmentDraftIds: [] });
+    const started = events.find((event) => event.type === "turn-started");
+    const progress = events.find((event) => event.type === "turn-progress");
+
+    expect(sent.deliveries).toHaveLength(1);
+    expect(progress).toMatchObject({
+      type: "turn-progress",
+      botId: "chief",
+      turnId: started?.type === "turn-started" ? started.turnId : undefined,
+    });
+    expect(progress?.type === "turn-progress" ? progress.detail : "").not.toBe("");
+
+    unsubscribe();
+    mock.dispose();
+  });
+
   it("runs the prompt, thinking, streaming, files, reaction, and handoff stages", async () => {
     const mock = createMockOpenBot(LANDING_PREVIEW_OPTIONS);
     const events: AgentEvent[] = [];

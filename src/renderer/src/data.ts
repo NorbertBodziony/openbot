@@ -120,6 +120,7 @@ export interface BotMessage {
   };
   actionMarker?: ChatActionMarkerModel;
   items?: string[];
+  itemIds?: string[];
 }
 
 export interface BotProfile {

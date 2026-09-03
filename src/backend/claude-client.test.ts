@@ -3,7 +3,7 @@
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ModelInfo, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { ModelInfo, SDKUserMessage, SessionMessage } from "@anthropic-ai/claude-agent-sdk";
 import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ClaudeAgentClient } from "./claude-client";
@@ -26,7 +26,7 @@ type TestStreamMessage =
       event: {
         type: "content_block_delta";
         index: number;
-        delta: { type: "text_delta"; text: string };
+        delta: { type: "text_delta"; text: string } | { type: "thinking_delta"; thinking: string };
       };
     }
   | {
@@ -34,7 +34,23 @@ type TestStreamMessage =
       parent_tool_use_id: string | null;
       session_id: string;
       uuid: string;
-      message: { content: Array<{ type: "text"; text: string }> };
+      message: {
+        content: Array<{
+          type: string;
+          text?: string;
+          thinking?: string;
+          id?: string;
+          name?: string;
+          tool_use_id?: string;
+        }>;
+      };
+    }
+  | {
+      type: "user";
+      parent_tool_use_id: string | null;
+      session_id: string;
+      uuid: string;
+      message: { content: Array<{ type: "tool_result"; tool_use_id: string }> };
     }
   | {
       type: "result";
@@ -54,6 +70,64 @@ afterEach(async () => {
 });
 
 describe("ClaudeAgentClient", () => {
+  it("restores one stable reasoning item for a multi-phase turn", async () => {
+    const turnId = "8bf58506-96a8-4d96-837c-3ab807b79d1f";
+    const history: SessionMessage[] = [
+      {
+        type: "user",
+        uuid: turnId,
+        session_id: "thread-1",
+        parent_tool_use_id: null,
+        parent_agent_id: null,
+        message: { content: "Plan it" },
+      },
+      {
+        type: "assistant",
+        uuid: "phase-1",
+        session_id: "thread-1",
+        parent_tool_use_id: null,
+        parent_agent_id: null,
+        message: { content: [{ type: "thinking", thinking: "Check the inputs." }] },
+      },
+      {
+        type: "assistant",
+        uuid: "phase-2",
+        session_id: "thread-1",
+        parent_tool_use_id: null,
+        parent_agent_id: null,
+        message: { content: [{ type: "thinking", thinking: "Compare the options." }] },
+      },
+      {
+        type: "assistant",
+        uuid: "answer",
+        session_id: "thread-1",
+        parent_tool_use_id: null,
+        parent_agent_id: null,
+        message: { content: [{ type: "text", text: "Use option A." }] },
+      },
+    ];
+    const client = new ClaudeAgentClient(
+      { executable: "/bin/true", version: "2.1.231" },
+      undefined,
+      async () => history,
+    );
+    client.start();
+
+    const result = await client.request("thread/read", { threadId: "thread-1" }, decodeThreadResponse);
+
+    expect(result.thread.turns?.[0]?.items).toEqual([
+      expect.objectContaining({ type: "userMessage" }),
+      {
+        id: `${turnId}:reasoning`,
+        type: "agentMessage",
+        phase: "commentary",
+        text: "Check the inputs.\nCompare the options.",
+      },
+      { id: "answer", type: "agentMessage", text: "Use option A." },
+    ]);
+    await client.stop();
+  });
+
   it("streams a Claude SDK turn through the App Server event contract", async () => {
     root = await mkdtemp(join(tmpdir(), "openbot-claude-client-"));
     const sharedRoot = join(root, "shared");
@@ -146,6 +220,15 @@ fi
       event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hi" } },
     });
     output.push({
+      type: "stream_event",
+      parent_tool_use_id: null,
+      session_id: thread.thread.id,
+      uuid: deliveryId,
+      event: { type: "content_block_delta", index: 1, delta: { type: "thinking_delta", thinking: "Weighing it" } },
+    });
+    output.push(toolUseMessage(thread.thread.id, "tool-message", "tool-use-1", "WebSearch"));
+    output.push(toolResultMessage(thread.thread.id, "tool-result", "tool-use-1"));
+    output.push({
       type: "result",
       subtype: "success",
       result: "Hi",
@@ -164,11 +247,77 @@ fi
           params: expect.objectContaining({ turnId: deliveryId, delta: "Hi" }),
         }),
         expect.objectContaining({
+          method: "item/started",
+          params: expect.objectContaining({
+            turnId: deliveryId,
+            item: { id: "tool-use-1", type: "toolCall", name: "WebSearch", status: "in_progress" },
+          }),
+        }),
+        expect.objectContaining({
+          method: "item/completed",
+          params: expect.objectContaining({
+            turnId: deliveryId,
+            item: { id: "tool-use-1", type: "toolCall", name: "WebSearch", status: "completed" },
+          }),
+        }),
+        // Extended thinking rides its own item: the `commentary` phase is what routes it to the
+        // thinking disclosure instead of the answer bubble.
+        expect.objectContaining({
+          method: "item/started",
+          params: expect.objectContaining({
+            turnId: deliveryId,
+            item: { id: `${deliveryId}:reasoning`, type: "agentMessage", phase: "commentary" },
+          }),
+        }),
+        expect.objectContaining({
+          method: "item/agentMessage/delta",
+          params: expect.objectContaining({ itemId: `${deliveryId}:reasoning`, delta: "Weighing it" }),
+        }),
+        expect.objectContaining({
+          method: "item/completed",
+          params: expect.objectContaining({
+            turnId: deliveryId,
+            item: {
+              id: `${deliveryId}:reasoning`,
+              type: "agentMessage",
+              phase: "commentary",
+              text: "Weighing it",
+            },
+          }),
+        }),
+        expect.objectContaining({
           method: "turn/completed",
           params: expect.objectContaining({ turn: { id: deliveryId, status: "completed" } }),
         }),
       ]),
     );
+    await client.stop();
+  });
+
+  it("separates streamed reasoning phases the same way as restored history", async () => {
+    const { client, notifications, output, threadId } = await createHarness();
+    const turnId = "99999999-9999-4999-8999-999999999999";
+    await startTurn(client, threadId, turnId);
+
+    output.push(thinkingStreamDelta(threadId, "phase-1", "Check the inputs."));
+    output.push(thinkingMessage(threadId, "phase-1", "Check the inputs."));
+    output.push(thinkingStreamDelta(threadId, "phase-2", "Compare the options."));
+    output.push(thinkingMessage(threadId, "phase-2", "Compare the options."));
+    output.push(resultMessage(threadId, turnId, ""));
+    await waitFor(() => notifications.some((event) => event.method === "turn/completed"));
+
+    const reasoningItemId = `${turnId}:reasoning`;
+    const streamed = notifications
+      .filter((event) => event.method === "item/agentMessage/delta")
+      .filter((event) => getString(event.params, "itemId") === reasoningItemId)
+      .map((event) => getString(event.params, "delta") ?? "")
+      .join("");
+    const completed = notifications.find(
+      (event) =>
+        event.method === "item/completed" && getString(getRecord(event.params, "item"), "id") === reasoningItemId,
+    );
+    expect(streamed).toBe("Check the inputs.\nCompare the options.");
+    expect(getString(getRecord(completed?.params, "item"), "text")).toBe(streamed);
     await client.stop();
   });
 
@@ -588,6 +737,26 @@ function streamDelta(threadId: string, turnId: string, text: string): TestStream
   };
 }
 
+function thinkingStreamDelta(threadId: string, messageId: string, thinking: string): TestStreamMessage {
+  return {
+    type: "stream_event",
+    parent_tool_use_id: null,
+    session_id: threadId,
+    uuid: messageId,
+    event: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking } },
+  };
+}
+
+function thinkingMessage(threadId: string, messageId: string, thinking: string): TestStreamMessage {
+  return {
+    type: "assistant",
+    parent_tool_use_id: null,
+    session_id: threadId,
+    uuid: messageId,
+    message: { content: [{ type: "thinking", thinking }] },
+  };
+}
+
 function assistantMessage(
   threadId: string,
   messageId: string,
@@ -600,6 +769,26 @@ function assistantMessage(
     session_id: threadId,
     uuid: messageId,
     message: { content: [{ type: "text", text }] },
+  };
+}
+
+function toolUseMessage(threadId: string, messageId: string, toolUseId: string, name: string): TestStreamMessage {
+  return {
+    type: "assistant",
+    parent_tool_use_id: null,
+    session_id: threadId,
+    uuid: messageId,
+    message: { content: [{ type: "tool_use", id: toolUseId, name }] },
+  };
+}
+
+function toolResultMessage(threadId: string, messageId: string, toolUseId: string): TestStreamMessage {
+  return {
+    type: "user",
+    parent_tool_use_id: null,
+    session_id: threadId,
+    uuid: messageId,
+    message: { content: [{ type: "tool_result", tool_use_id: toolUseId }] },
   };
 }
 

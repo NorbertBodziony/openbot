@@ -1,7 +1,7 @@
 import { expandChatTagReferences } from "../chat-tag-references";
-import type { AgentEvent } from "../ipc-conversation";
+import { type AgentEvent, isAgentEvent } from "../ipc-conversation";
 import type { TeamRealtimeEvent } from "../ipc-team-host";
-import { isBoolean, isNumber, isString } from "../runtime-values";
+import { isBoolean, isDynamicRecord, isNumber, isString } from "../runtime-values";
 import {
   decodeTeamProtocolV1Event,
   decodeTeamProtocolV1HttpRequest,
@@ -17,6 +17,11 @@ export type TeamProtocolV1CurrentEventDecodeResult =
   | Exclude<TeamProtocolV1EventDecodeResult, { kind: "known" }>;
 
 export function decodeTeamProtocolV1CurrentEvent(value: unknown): TeamProtocolV1CurrentEventDecodeResult {
+  if (isDynamicRecord(value) && value.type === "turn-progress") {
+    return isAgentEvent(value)
+      ? { kind: "known", event: structuredClone(value) }
+      : { kind: "invalid", type: value.type };
+  }
   const decoded = decodeTeamProtocolV1Event(value);
   if (decoded.kind !== "known") return decoded;
   // biome-ignore lint/nursery/noUnsafeTypeAssertion: the frozen v1 codec validates the wire value before this versioned boundary clone.
@@ -27,6 +32,7 @@ export function encodeTeamProtocolV1CurrentEvent(
   event: AgentEvent | TeamRealtimeEvent,
   options: { preserveSemanticTags?: boolean } = {},
 ): string | null {
+  if (event.type === "turn-progress") return JSON.stringify(event);
   const wireValue: TeamProtocolV1JsonValue = JSON.parse(JSON.stringify(event));
   const downconvertedValue = options.preserveSemanticTags ? wireValue : downconvertCurrentTags(wireValue);
   const decoded = decodeTeamProtocolV1Event(downconvertedValue);

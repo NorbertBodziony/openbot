@@ -884,6 +884,13 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
           threadId: getSnapshot(input.botId).threadId ?? `thread-${input.botId}`,
           turnId,
         });
+        emitAgentEvent({
+          type: "turn-progress",
+          botId: input.botId,
+          threadId: getSnapshot(input.botId).threadId ?? `thread-${input.botId}`,
+          turnId,
+          detail: "Reviewing your request…",
+        });
 
         schedule(() => {
           const assistantMessage: ConversationMessage = {

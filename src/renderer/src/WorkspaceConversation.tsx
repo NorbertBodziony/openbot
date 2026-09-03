@@ -47,6 +47,7 @@ export function WorkspaceConversation(props: { account: () => CentralAuthUser })
     pendingPrompts,
     pendingApprovals,
     activeTurns,
+    turnProgress,
     answerPrompt,
     respondToApproval,
     respondToBrowserTakeover,
@@ -149,6 +150,7 @@ export function WorkspaceConversation(props: { account: () => CentralAuthUser })
       approval={activeBot() ? pendingApprovals()[activeBot()?.id ?? ""] : undefined}
       browserTakeover={activeBrowserTakeover()}
       activeTurnId={activeBot() ? activeTurns()[activeBot()?.id ?? ""] : null}
+      activityDetail={activeBot() ? turnProgress()[activeBot()?.id ?? ""]?.detail : undefined}
       skillsMarketplaceOpen={skillsMarketplaceOpen()}
       globalOverlayOpen={
         globalSearchOpen() || joinServerOpen() || serverSettingsOpen() || appSettingsOpen() || skillsMarketplaceOpen()

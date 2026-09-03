@@ -1,5 +1,6 @@
 import type { AgentEvent, AgentRuntimeSnapshot } from "@openbot/contracts/ipc";
 import { flush, onSettled } from "solid-js";
+import { cleanAgentMessageText } from "./agent-message-text";
 import {
   appendLatestRuntimeMessages,
   reconcileAttentionApprovals,
@@ -62,6 +63,7 @@ export function AgentEventBridge() {
   } = useConversation();
   const {
     setActiveTurns,
+    setTurnProgress,
     setFailedTurns,
     setQueues,
     setPendingPrompts,
@@ -123,6 +125,12 @@ export function AgentEventBridge() {
       case "conversation-delta":
         applyConversationDelta(event);
         return;
+      case "turn-progress":
+        setTurnProgress((current) => ({
+          ...current,
+          [event.botId]: { turnId: event.turnId, detail: cleanAgentMessageText(event.detail) },
+        }));
+        return;
       case "queue-changed":
         queueSnapshotRequests.set(event.snapshot.botId, (queueSnapshotRequests.get(event.snapshot.botId) ?? 0) + 1);
         setQueues((current) => ({
@@ -143,6 +151,7 @@ export function AgentEventBridge() {
         return;
       case "turn-started":
         completedTurnByBot.delete(event.botId);
+        setTurnProgress((current) => withoutBot(current, event.botId));
         clearRecentReply(event.botId);
         setFailedTurns((current) => withoutBot(current, event.botId));
         setActiveTurns((current) => ({
@@ -152,6 +161,9 @@ export function AgentEventBridge() {
         return;
       case "turn-completed":
         completedTurnByBot.set(event.botId, event.turnId);
+        setTurnProgress((current) =>
+          current[event.botId]?.turnId === event.turnId ? withoutBot(current, event.botId) : current,
+        );
         setFailedTurns((current) =>
           event.status === "failed" ? { ...current, [event.botId]: event.turnId } : withoutBot(current, event.botId),
         );
@@ -230,15 +242,15 @@ export function AgentEventBridge() {
   }
 
   function applyAgentRuntimeSnapshot(snapshot: AgentRuntimeSnapshot): void {
-    setActiveTurns(Object.fromEntries(snapshot.activeTurns.map((turn) => [turn.botId, turn.turnId])));
-    setFailedTurns(Object.fromEntries(snapshot.failedTurns.map((turn) => [turn.botId, turn.turnId])));
-    setQueues((current) =>
-      reconcileQueuesWithRuntimeWork(
-        current,
-        snapshot.work,
-        new Map(snapshot.activeTurns.map((turn) => [turn.botId, turn.turnId])),
+    const runtimeTurns = new Map(snapshot.activeTurns.map((turn) => [turn.botId, turn.turnId]));
+    setActiveTurns(Object.fromEntries(runtimeTurns));
+    setTurnProgress((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([botId, progress]) => progress?.turnId === runtimeTurns.get(botId)),
       ),
     );
+    setFailedTurns(Object.fromEntries(snapshot.failedTurns.map((turn) => [turn.botId, turn.turnId])));
+    setQueues((current) => reconcileQueuesWithRuntimeWork(current, snapshot.work, runtimeTurns));
     setPendingPrompts((current) => reconcileAttentionPrompts(current, snapshot, submittedPromptRequests()));
     setPendingApprovals((current) => reconcileAttentionApprovals(current, snapshot));
     for (const botId of new Set(snapshot.latestMessages.map((message) => message.botId))) {

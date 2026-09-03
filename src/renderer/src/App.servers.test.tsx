@@ -1,4 +1,4 @@
-import type { AgentEvent, ServerSummary } from "@openbot/contracts/ipc";
+import type { AgentEvent, ConversationMessage, ServerSummary } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -480,7 +480,7 @@ describe("OpenBot connected desktop shell", () => {
       ],
     });
 
-    expect(await screen.findByRole("status", { name: "Chief is working" })).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: /^Chief is working:/ })).toBeInTheDocument();
     expect(await screen.findByRole("textbox", { name: "Custom answer for: Which scope?" })).toBeInTheDocument();
 
     const runtimeSnapshot: AgentEvent = {
@@ -499,7 +499,7 @@ describe("OpenBot connected desktop shell", () => {
     };
     emitAgentEvent?.(runtimeSnapshot);
 
-    expect(screen.getByRole("status", { name: "Chief is working" })).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: /^Chief is working:/ })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Custom answer for: Which scope?" })).toBeInTheDocument();
 
     emitAgentEvent?.({
@@ -509,7 +509,166 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(screen.queryByRole("textbox", { name: "Custom answer for: Which scope?" })).not.toBeInTheDocument(),
     );
-    await waitFor(() => expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("status", { name: /^Chief is working:/ })).not.toBeInTheDocument());
+  });
+
+  it("streams commentary into both the thinking trace and current activity", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+
+    const conversation = (revision: number, activeTurnId: string | null, messages: ConversationMessage[]) => ({
+      type: "conversation" as const,
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId,
+        revision,
+        messages,
+      },
+    });
+    const userMessage = {
+      id: "user-live-status",
+      turnId: "turn-live-status",
+      author: "user",
+      text: "Check the release status",
+      createdAt: "2026-09-02T10:00:00.000Z",
+      status: "completed",
+    } satisfies ConversationMessage;
+
+    emitAgentEvent?.(conversation(1, "turn-live-status", [userMessage]));
+    expect(await screen.findByRole("status", { name: /^Chief is working:/ })).toBeInTheDocument();
+
+    emitAgentEvent?.({
+      type: "turn-progress",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-live-status",
+      detail: "Searching for current information…",
+    });
+    expect(
+      await within(screen.getByRole("region", { name: "Current activity" })).findByText(
+        "Searching for current information…",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("status", { name: "Chief is working: Searching for current information…" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show thinking details" })).not.toBeInTheDocument();
+
+    const firstCommentary = {
+      id: "commentary-live-status-1",
+      turnId: "turn-live-status",
+      author: "assistant",
+      text: "Inspecting the release",
+      createdAt: "2026-09-02T10:00:01.000Z",
+      status: "streaming",
+      itemType: "commentary",
+    } satisfies ConversationMessage;
+    emitAgentEvent?.(conversation(2, "turn-live-status", [userMessage, firstCommentary]));
+    emitAgentEvent?.({
+      type: "conversation-delta",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-live-status",
+      messageId: firstCommentary.id,
+      delta: " checks",
+      createdAt: firstCommentary.createdAt,
+      revision: 3,
+    });
+    // Reasoning reads in the trace, which opens itself while the agent works.
+    const trace = await screen.findByRole("button", { name: "Hide thinking details" });
+    expect(trace.getAttribute("aria-expanded")).toBe("true");
+    expect(await screen.findAllByText("Inspecting the release checks")).not.toHaveLength(0);
+    expect(
+      await within(screen.getByRole("region", { name: "Current activity" })).findByText(
+        "Inspecting the release checks",
+      ),
+    ).toBeInTheDocument();
+
+    const latestCommentary = {
+      ...firstCommentary,
+      id: "commentary-live-status-2",
+      text: "Verifying the final build artifacts",
+      createdAt: "2026-09-02T10:00:02.000Z",
+    } satisfies ConversationMessage;
+    emitAgentEvent?.(
+      conversation(4, "turn-live-status", [
+        userMessage,
+        { ...firstCommentary, text: "Inspecting the release checks", status: "completed" },
+        latestCommentary,
+      ]),
+    );
+    expect(await screen.findAllByText("Verifying the final build artifacts")).not.toHaveLength(0);
+    expect(
+      screen.getByRole("status", { name: "Chief is working: Verifying the final build artifacts" }),
+    ).toBeInTheDocument();
+
+    emitAgentEvent?.({
+      type: "turn-progress",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-live-status",
+      detail: "Reviewing the verification results…",
+    });
+    expect(
+      within(screen.getByRole("region", { name: "Current activity" })).getByText("Verifying the final build artifacts"),
+    ).toBeInTheDocument();
+
+    emitAgentEvent?.({
+      type: "turn-completed",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-live-status",
+      status: "completed",
+    });
+    emitAgentEvent?.(conversation(5, null, [userMessage, { ...firstCommentary, status: "completed" }]));
+    await waitFor(() => expect(screen.queryByRole("status", { name: /^Chief is working:/ })).not.toBeInTheDocument());
+  });
+
+  it("stops showing reasoning as the current activity once the answer arrives", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+
+    const turnId = "turn-answering";
+    const base = {
+      turnId,
+      author: "assistant",
+      createdAt: "2026-09-02T11:00:01.000Z",
+      status: "completed",
+    } as const;
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: turnId,
+        revision: 1,
+        messages: [
+          {
+            id: "user-answering",
+            turnId,
+            author: "user",
+            text: "Check the release status",
+            createdAt: "2026-09-02T11:00:00.000Z",
+            status: "completed",
+          },
+          { ...base, id: "commentary-answering", text: "Verifying the build artifacts", itemType: "commentary" },
+          {
+            ...base,
+            id: "answer-answering",
+            text: "The release is green.",
+            createdAt: "2026-09-02T11:00:02.000Z",
+            status: "streaming",
+          },
+        ] satisfies ConversationMessage[],
+      },
+    });
+
+    const activity = await screen.findByRole("region", { name: "Current activity" });
+    expect(within(activity).queryByText("Verifying the build artifacts")).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Hide thinking details" })).toBeInTheDocument();
   });
 
   it("merges compact runtime attention into the active server", async () => {
