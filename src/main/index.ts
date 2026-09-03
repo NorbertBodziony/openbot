@@ -1,33 +1,15 @@
-import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { chmod, copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
-import {
-  ATTACHMENT_FILE_EXTENSIONS,
-  IMAGE_ATTACHMENT_EXTENSIONS,
-  isSupportedAttachmentName,
-  SUPPORTED_ATTACHMENT_DESCRIPTION,
-} from "@openbot/contracts/attachment-files";
-import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import { extname, isAbsolute, join, relative, resolve } from "node:path";
 import { parseInviteUrl } from "@openbot/contracts/invite-links";
 import {
   type AgentEvent,
-  type AppInfo,
-  type AppSetupState,
   type BrowserDisplayState,
   type CentralAuthState,
-  type DuplicateBotResult,
-  type ExternalDestination,
-  type FilePreview,
-  type ImportAttachmentsInput,
   IPC_CHANNELS,
   type MacPermissionId,
-  type SendMessageInput,
-  type SidebarLayoutSnapshot,
-  type UpdateBotInput,
   type VoiceModelStatus,
-  type VoiceTranscriptionResult,
 } from "@openbot/contracts/ipc";
 import {
   app,
@@ -36,7 +18,6 @@ import {
   dialog,
   Menu,
   Notification,
-  type OpenDialogOptions,
   powerMonitor,
   protocol,
   type Rectangle,
@@ -58,7 +39,7 @@ import { AgentInitializationGate } from "./agent-initialization";
 import { AgentMarketplaceService } from "./agent-marketplace-service";
 import { notificationForAgentEvent } from "./agent-notifications";
 import { HostAnalytics } from "./analytics";
-import { readAnalyticsPreference, writeAnalyticsPreference } from "./analytics-preference-store";
+import { readAnalyticsPreference } from "./analytics-preference-store";
 import { readAppVariant, resolveAppIconPath } from "./app-icon";
 import { BrowserPictureInPicture } from "./browser-picture-in-picture";
 import { CentralAuthManager, readCentralAuthApiUrl, readMobileConnectApiUrl } from "./central-auth-manager";
@@ -74,109 +55,33 @@ import {
   shouldShowDevelopmentWindow,
 } from "./development-profile";
 import { performDynamicIslandCriticalAction } from "./dynamic-island-actions";
-import {
-  DynamicIslandWindowController,
-  dynamicIslandNotchSizeForDisplay,
-  requireDynamicIslandSender,
-} from "./dynamic-island-window";
-import { filePreviewFromBytes, localFilePreview, mimeTypeForName } from "./file-preview";
+import { DynamicIslandWindowController, dynamicIslandNotchSizeForDisplay } from "./dynamic-island-window";
 import { DEVELOPMENT_REMOTE_CLIENT_USERNAME, HostService } from "./host-service";
 import { HostedSiteDesktopService } from "./hosted-site-service";
-import {
-  parseAcknowledgeFailedTurn,
-  parseAgentRequest,
-  parseApprovalResponse,
-  parseBrowserTakeoverResponse,
-  parseCancelQueuedMessage,
-  parseChooseAttachments,
-  parseCreateBot,
-  parseCreateBotMemory,
-  parseCreateRoutine,
-  parseDeleteBotMemory,
-  parseDeleteRoutine,
-  parseImportAttachments,
-  parseInterrupt,
-  parseListRoutineRuns,
-  parseMarkConversationRead,
-  parseMessageReaction,
-  parseOpenAttachment,
-  parseOpenSharedFile,
-  parseOpenWorkspaceFile,
-  parsePromptResponse,
-  parseReadConversationPage,
-  parseReorderQueue,
-  parseSearchConversationMessages,
-  parseSendMessage,
-  parseSetAgentAvatar,
-  parseSidebarLayoutAction,
-  parseSteerQueuedMessage,
-  parseTestRoutine,
-  parseUpdateBot,
-  parseUpdateBotMemory,
-  parseUpdateQueuedMessage,
-  parseUpdateRoutine,
-} from "./ipc/agent-inputs";
-import {
-  parseAnalyticsPreference,
-  parseDeleteHostedSite,
-  parseDynamicIslandAction,
-  parseDynamicIslandInteractive,
-  parseDynamicIslandPreference,
-  parseDynamicIslandPresentation,
-  parseEmailCodeVerification,
-  parseExternalDestination,
-  parseInstallMarketplaceAgent,
-  parseInstallSkill,
-  parseMacPermission,
-  parseMarketplaceAgentQuery,
-  parseMarketplaceSkillQuery,
-  parseProfileName,
-  parseProvider,
-  parseProviderId,
-  parsePublishHostedSite,
-  parseReplaceHostedSite,
-  parseSubmitMarketplaceAgent,
-  parseSubmitSkill,
-  parseUninstallSkill,
-  parseUpdatePreference,
-} from "./ipc/app-inputs";
-import { parseAvatarImage } from "./ipc/avatar-inputs";
-import { parseBrowserBounds, parseBrowserNavigate, parseBrowserOpen, parseVisibility } from "./ipc/browser-inputs";
+import { registerAccountIpcHandlers } from "./ipc/register-account-handlers";
+import { registerAgentIpcHandlers } from "./ipc/register-agent-handlers";
+import { registerAppIpcHandlers } from "./ipc/register-app-handlers";
+import { registerAttachmentIpcHandlers } from "./ipc/register-attachment-handlers";
+import { registerBrowserIpcHandlers } from "./ipc/register-browser-handlers";
+import { registerComputerUseIpcHandlers } from "./ipc/register-computer-use-handlers";
+import { registerDynamicIslandIpcHandlers } from "./ipc/register-dynamic-island-handlers";
+import { registerHostedSiteIpcHandlers } from "./ipc/register-hosted-site-handlers";
+import { registerMarketplaceAgentIpcHandlers } from "./ipc/register-marketplace-agent-handlers";
+import { registerMemoryIpcHandlers } from "./ipc/register-memory-handlers";
+import { registerProviderIpcHandlers } from "./ipc/register-provider-handlers";
+import { registerRoutineIpcHandlers } from "./ipc/register-routine-handlers";
+import { registerSkillIpcHandlers } from "./ipc/register-skill-handlers";
 import { registerTeamIpcHandlers, withLocalHostSummary } from "./ipc/register-team-handlers";
-import { nullishPayload, optionalPayload, requireString, stringPayload } from "./ipc/validation";
-import { parseVoiceTranscription } from "./ipc/voice-inputs";
+import { registerUpdateIpcHandlers } from "./ipc/register-update-handlers";
+import { registerVoiceIpcHandlers } from "./ipc/register-voice-handlers";
 import { MacHapticFeedback } from "./mac-haptic-feedback";
 import { readMainWindowBounds, resolveMainWindowBounds, writeMainWindowBounds } from "./main-window-state";
-import { exportDiagnostics, exportOpenBotData } from "./maintenance-service";
 import { ManagedSkillService } from "./managed-skill-service";
 import { ProviderRuntimeManager } from "./provider-runtime-manager";
 import { RemoteDesktopManager } from "./remote-desktop-manager";
 import { resolveRemoteDesktopRuntime } from "./remote-desktop-runtime-artifact";
 import { loadOrCreateRemoteDesktopCredentials } from "./remote-desktop-secret-store";
-import {
-  type DevelopmentRemoteServerConnection,
-  decodeAccountUsage,
-  decodeAgentModelOptions,
-  decodeAgentStatus,
-  decodeBotMemories,
-  decodeBotMemory,
-  decodeBotSummaries,
-  decodeBotSummary,
-  decodeBrowserControlState,
-  decodeBrowserPreview,
-  decodeBrowserTab,
-  decodeBrowserTabs,
-  decodeInstalledSkills,
-  decodeQueuedMessageReceipt,
-  decodeQueueSnapshot,
-  decodeRoutine,
-  decodeRoutineRun,
-  decodeRoutineRuns,
-  decodeRoutines,
-  decodeSidebarLayoutSnapshot,
-  decodeVoid,
-  RemoteServerManager,
-} from "./remote-server-manager";
+import { type DevelopmentRemoteServerConnection, decodeVoid, RemoteServerManager } from "./remote-server-manager";
 import { sendToRenderer } from "./renderer-ipc";
 import { canCheckRendererPermission, canRequestRendererPermission } from "./renderer-permissions";
 import { readSetupState, writeSetupState } from "./setup-store";
@@ -184,9 +89,8 @@ import { SkillMarketplaceService } from "./skill-marketplace-service";
 import { TeamStore } from "./team-store";
 import { TeamWebRtcBridge } from "./team-webrtc-bridge";
 import { TeamWebRtcClientTransport } from "./team-webrtc-client-transport";
-import { handleTrusted, handleTrustedWithEvent } from "./trusted-ipc";
 import { isTrustedRendererUrl } from "./trusted-renderer";
-import { readUpdatePreference, writeUpdatePreference } from "./update-preference-store";
+import { readUpdatePreference } from "./update-preference-store";
 import { supportsInstalledUpdates, UpdateService } from "./update-service";
 import { WHISPER_MODEL_NAME, WHISPER_MODEL_URL } from "./voice-model-service";
 import { VoiceTranscriptionService } from "./voice-transcription-service";
@@ -314,13 +218,6 @@ const REMOTE_SERVERS_FILE = "openbot-remote-servers-v1.json";
 const CENTRAL_AUTH_FILE = "openbot-central-auth-v1.bin";
 const LEGACY_REMOTE_DESKTOP_CREDENTIAL_FILE = "openbot-remote-desktop-credential-v1.json";
 const REMOTE_DESKTOP_RUNTIME_SECRET_FILE = "openbot-remote-desktop-runtime-v1.json";
-const EXTERNAL_DESTINATIONS: Record<ExternalDestination, string> = {
-  "agent-setup": "https://github.com/NorbertBodziony/openbot/blob/main/docs/TROUBLESHOOTING.md",
-  "claude-install": "https://code.claude.com/docs",
-  "claude-sign-in": "https://code.claude.com/docs/en/authentication",
-  feedback: "https://x.com/intent/post?text=Feedback%20for%20OpenBot%20%40norbertbodziony%3A%20",
-  message: "https://x.com/norbertbodziony",
-};
 
 function configureContentSecurityPolicy(): void {
   const policy = buildContentSecurityPolicy(app.isPackaged);
@@ -339,207 +236,80 @@ function configureContentSecurityPolicy(): void {
   });
 }
 
-function registerIpcHandlers(
-  service: AgentService,
-  providerRuntimes: ProviderRuntimeManager,
-  mailbox: MailboxStore,
-  browser: BrowserHost,
-  browserPictureInPicture: BrowserPictureInPicture,
-  updater: UpdateService,
-  setupFile: string,
-  analyticsPreferenceFile: string,
-  updatePreferenceFile: string,
-  initializeAgent: () => Promise<void>,
-  sidebarLayout: SidebarLayoutStore,
-  host: HostService,
-  remoteDesktop: RemoteDesktopManager,
-  remoteServers: RemoteServerManager,
-  centralAuth: CentralAuthManager,
-  skills: SkillMarketplaceService,
-  hostedSites: HostedSiteDesktopService,
-  marketplaceAgents: AgentMarketplaceService,
-  voice: VoiceTranscriptionService,
-  dynamicIsland: DynamicIslandWindowController,
-  computerUseMacSetup: ComputerUseMacSetupWindowController,
-): void {
-  handleTrusted(IPC_CHANNELS.getAppInfo, (): AppInfo => {
-    const platform = process.platform;
-    if (platform !== "darwin" && platform !== "win32" && platform !== "linux") {
-      throw new Error(`Unsupported desktop platform: ${platform}`);
-    }
-    return { name: app.getName(), version: app.getVersion(), platform, variant: appVariant };
-  });
-  handleTrusted(IPC_CHANNELS.getSetupState, () => readSetupState(setupFile));
-  handleTrusted(IPC_CHANNELS.getAnalyticsPreference, () => readAnalyticsPreference(analyticsPreferenceFile));
-  handleTrusted(IPC_CHANNELS.setAnalyticsPreference, parseAnalyticsPreference, async (parsed) => {
-    const preference = await writeAnalyticsPreference(analyticsPreferenceFile, parsed.enabled);
-    hostAnalytics?.setTrackingEnabled(preference.enabled);
-    return preference;
-  });
-  handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandGetPreference, (event) => {
-    requireDynamicIslandSender(
-      event.sender.id,
-      new Set([...dynamicIsland.mainRendererIds, ...dynamicIsland.overlayRendererIds]),
-      "main or Dynamic Island renderer",
-    );
-    return dynamicIsland.preference;
-  });
-  handleTrustedWithEvent(
-    IPC_CHANNELS.dynamicIslandSetPreference,
-    (event) => requireDynamicIslandSender(event.sender.id, dynamicIsland.mainRendererIds, "main renderer"),
-    parseDynamicIslandPreference,
-    (_event, preference) => dynamicIsland.setPreference(preference),
-  );
-  handleTrustedWithEvent(
-    IPC_CHANNELS.dynamicIslandPublishPresentation,
-    (event) => requireDynamicIslandSender(event.sender.id, dynamicIsland.mainRendererIds, "main renderer"),
-    parseDynamicIslandPresentation,
-    (_event, presentation) => dynamicIsland.publish(presentation),
-  );
-  handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandGetPresentation, (event) => {
-    requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer");
-    return dynamicIsland.presentation;
-  });
-  handleTrustedWithEvent(
-    IPC_CHANNELS.dynamicIslandPerformAction,
-    (event) => requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer"),
-    parseDynamicIslandAction,
-    (_event, action) => dynamicIsland.performAction(action),
-  );
-  handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandPerformHaptic, (event) => {
-    requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer");
-    dynamicIsland.performHaptic();
-  });
-  handleTrustedWithEvent(
-    IPC_CHANNELS.dynamicIslandSetInteractive,
-    (event) => requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer"),
-    parseDynamicIslandInteractive,
-    (event, state) => dynamicIsland.setInteractive(event.sender.id, state.interactive),
-  );
-  handleTrusted(IPC_CHANNELS.saveSetup, parseProvider, async (preferredProvider): Promise<AppSetupState> => {
-    const state = await writeSetupState(setupFile, preferredProvider);
-    await service.setPreferredProvider(preferredProvider);
-    await initializeAgent();
-    return state;
-  });
-  handleTrusted(IPC_CHANNELS.computerUseGetMacSetupState, () => computerUseMacSetup.getState());
-  handleTrusted(IPC_CHANNELS.computerUseOpenMacPermissionSetup, parseMacPermission, (parsed) =>
-    computerUseMacSetup.open(parsed),
-  );
-  handleTrustedWithEvent(IPC_CHANNELS.computerUseStartHelperDrag, (event) =>
-    computerUseMacSetup.startDrag(event.sender),
-  );
-  handleTrusted(IPC_CHANNELS.computerUseRevealHelper, () => computerUseMacSetup.revealHelper());
-  handleTrusted(IPC_CHANNELS.computerUseCloseMacPermissionSetup, () => computerUseMacSetup.close());
-  handleTrusted(IPC_CHANNELS.openExternal, parseExternalDestination, (parsed) => {
-    return shell.openExternal(EXTERNAL_DESTINATIONS[parsed]);
-  });
-  handleTrusted(IPC_CHANNELS.connectChatGPT, () =>
-    service.connectChatGPT(async (value) => {
-      const url = new URL(value);
-      if (url.protocol !== "https:") throw new Error("Only HTTPS ChatGPT login links can open in the browser.");
-      await shell.openExternal(url.toString());
-    }),
-  );
-  handleTrusted(IPC_CHANNELS.connectClaude, () => service.connectClaude());
-  handleTrusted(IPC_CHANNELS.connectGrok, () => service.connectGrok());
-  handleTrusted(IPC_CHANNELS.refreshAgentProviders, () => service.refreshProviders());
-  handleTrusted(IPC_CHANNELS.providerRuntimesGetStatus, () => providerRuntimes.getStatus());
-  handleTrusted(IPC_CHANNELS.providerRuntimesDownload, parseProviderId, (parsed) => providerRuntimes.download(parsed));
-  handleTrusted(IPC_CHANNELS.providerRuntimesCancel, parseProviderId, (parsed) => providerRuntimes.cancel(parsed));
-  handleTrusted(IPC_CHANNELS.openUrl, stringPayload("URL", INPUT_LIMITS.browserUrl), (url) => {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      throw new Error("Only HTTP(S) links can open in the external browser.");
-    }
-    return shell.openExternal(parsed.toString());
-  });
-  handleTrusted(IPC_CHANNELS.voiceGetModelStatus, (): Promise<VoiceModelStatus> => voice.getModelStatus());
-  handleTrusted(IPC_CHANNELS.voicePrepareModel, (): Promise<VoiceModelStatus> => voice.prepareModel());
-  handleTrusted(
-    IPC_CHANNELS.voiceTranscribe,
-    parseVoiceTranscription,
-    (transcription): Promise<VoiceTranscriptionResult> => voice.transcribe(transcription.audio),
-  );
-  handleTrusted(IPC_CHANNELS.authGetState, () => centralAuth.getState());
-  handleTrusted(IPC_CHANNELS.authRetry, () => centralAuth.retry());
-  handleTrusted(IPC_CHANNELS.authRequestEmailCode, stringPayload("email", INPUT_LIMITS.email), (email) =>
-    centralAuth.requestEmailCode(email),
-  );
-  handleTrusted(IPC_CHANNELS.authVerifyEmailCode, parseEmailCodeVerification, (verification) =>
-    centralAuth.verifyEmailCode(verification.challengeId, verification.code),
-  );
-  handleTrusted(IPC_CHANNELS.authUpdateName, parseProfileName, (name) => centralAuth.updateName(name));
-  handleTrusted(IPC_CHANNELS.authUpdateAvatar, parseAvatarImage, (parsed) => centralAuth.updateAvatar(parsed));
-  handleTrusted(IPC_CHANNELS.authCreateMobileConnect, () => centralAuth.createMobileConnect());
-  handleTrusted(IPC_CHANNELS.authListMobileConnectedDevices, () => centralAuth.listMobileConnectedDevices());
-  handleTrusted(
-    IPC_CHANNELS.authRevokeMobileConnectedDevice,
-    stringPayload("sessionId", INPUT_LIMITS.identifier),
-    (sessionId) => centralAuth.revokeMobileConnectedDevice(sessionId),
-  );
-  handleTrusted(IPC_CHANNELS.authLogout, () => centralAuth.logout());
-  handleTrusted(IPC_CHANNELS.skillsList, nullishPayload(parseMarketplaceSkillQuery), (query) => skills.list(query));
-  handleTrusted(IPC_CHANNELS.skillsGet, stringPayload("skillId"), (skillId) => skills.get(skillId));
-  handleTrusted(IPC_CHANNELS.skillsListMine, () => skills.listMine());
-  handleTrusted(IPC_CHANNELS.skillsChoosePackage, async () => {
-    const options: OpenDialogOptions = {
-      title: "Choose a skill folder or ZIP",
-      properties: ["openFile", "openDirectory"],
-      filters: [{ name: "Skill packages", extensions: ["zip"] }],
-    };
-    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
-    return result.canceled || !result.filePaths[0] ? null : skills.stage(result.filePaths[0]);
-  });
-  handleTrusted(IPC_CHANNELS.skillsSubmit, parseSubmitSkill, (submission) => skills.submit(submission));
-  handleTrusted(IPC_CHANNELS.skillsListInstalled, stringPayload("botId"), (botId) => skills.listInstalled(botId));
-  handleTrusted(IPC_CHANNELS.skillsInstall, parseInstallSkill, (installation) => skills.install(installation));
-  handleTrusted(IPC_CHANNELS.skillsUninstall, parseUninstallSkill, (removal) => skills.uninstall(removal));
-  handleTrusted(IPC_CHANNELS.hostedSitesList, () => hostedSites.list());
-  handleTrusted(IPC_CHANNELS.hostedSitesChooseDirectory, async () => {
-    const options: OpenDialogOptions = {
-      title: "Choose a static site directory",
-      properties: ["openDirectory"],
-    };
-    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
-    return result.canceled ? null : (result.filePaths[0] ?? null);
-  });
-  handleTrusted(IPC_CHANNELS.hostedSitesPublish, parsePublishHostedSite, (site) => hostedSites.publish(site));
-  handleTrusted(IPC_CHANNELS.hostedSitesReplace, parseReplaceHostedSite, (site) => hostedSites.replace(site));
-  handleTrusted(IPC_CHANNELS.hostedSitesDelete, parseDeleteHostedSite, (siteId) => hostedSites.delete(siteId));
-  handleTrusted(IPC_CHANNELS.marketplaceAgentsList, nullishPayload(parseMarketplaceAgentQuery), (query) =>
-    marketplaceAgents.list(query),
-  );
-  handleTrusted(IPC_CHANNELS.marketplaceAgentsGet, stringPayload("agentId"), (agentId) =>
-    marketplaceAgents.get(agentId),
-  );
-  handleTrusted(IPC_CHANNELS.marketplaceAgentsListMine, () => marketplaceAgents.listMine());
-  handleTrusted(IPC_CHANNELS.marketplaceAgentsPreview, stringPayload("botId"), (botId) =>
-    marketplaceAgents.preview(botId),
-  );
-  handleTrusted(IPC_CHANNELS.marketplaceAgentsSubmit, parseSubmitMarketplaceAgent, (submission) =>
-    marketplaceAgents.submit(submission),
-  );
-  handleTrusted(IPC_CHANNELS.marketplaceAgentsInstall, parseInstallMarketplaceAgent, (installation) =>
-    marketplaceAgents.install(installation),
-  );
-  handleTrusted(IPC_CHANNELS.updateGetStatus, () => updater.getStatus());
-  handleTrusted(IPC_CHANNELS.updateCheck, () => updater.checkForUpdates());
-  handleTrusted(IPC_CHANNELS.updateDownload, () => updater.downloadUpdate());
-  handleTrusted(IPC_CHANNELS.updateInstall, () => updater.installUpdate());
-  handleTrusted(IPC_CHANNELS.updateGetPreference, () => readUpdatePreference(updatePreferenceFile));
-  handleTrusted(IPC_CHANNELS.updateSetPreference, parseUpdatePreference, async (parsed) => {
-    const preference = await writeUpdatePreference(updatePreferenceFile, parsed.autoDownload);
-    updater.setAutoDownload(preference.autoDownload);
-    return preference;
-  });
-  handleTrusted(IPC_CHANNELS.maintenanceExportData, () =>
-    exportOpenBotData({ service, mailbox, parentWindow: mainWindow }),
-  );
-  handleTrusted(IPC_CHANNELS.maintenanceExportDiagnostics, () =>
-    exportDiagnostics({ service, browser, updater, parentWindow: mainWindow }),
-  );
+interface IpcHandlerDependencies {
+  service: AgentService;
+  providerRuntimes: ProviderRuntimeManager;
+  mailbox: MailboxStore;
+  browser: BrowserHost;
+  browserPictureInPicture: BrowserPictureInPicture;
+  updater: UpdateService;
+  setupFile: string;
+  analyticsPreferenceFile: string;
+  updatePreferenceFile: string;
+  initializeAgent: () => Promise<void>;
+  sidebarLayout: SidebarLayoutStore;
+  host: HostService;
+  remoteDesktop: RemoteDesktopManager;
+  remoteServers: RemoteServerManager;
+  centralAuth: CentralAuthManager;
+  skills: SkillMarketplaceService;
+  hostedSites: HostedSiteDesktopService;
+  marketplaceAgents: AgentMarketplaceService;
+  voice: VoiceTranscriptionService;
+  dynamicIsland: DynamicIslandWindowController;
+  computerUseMacSetup: ComputerUseMacSetupWindowController;
+}
 
+function registerIpcHandlers({
+  service,
+  providerRuntimes,
+  mailbox,
+  browser,
+  browserPictureInPicture,
+  updater,
+  setupFile,
+  analyticsPreferenceFile,
+  updatePreferenceFile,
+  initializeAgent,
+  sidebarLayout,
+  host,
+  remoteDesktop,
+  remoteServers,
+  centralAuth,
+  skills,
+  hostedSites,
+  marketplaceAgents,
+  voice,
+  dynamicIsland,
+  computerUseMacSetup,
+}: IpcHandlerDependencies): void {
+  // Every renderer-to-main endpoint is registered by one of these, one file per
+  // domain under ./ipc. Nothing is registered inline here: this is the trust
+  // boundary, and a reviewer should be able to read a domain's whole surface in
+  // one file rather than find it interleaved with window and lifecycle code.
+  const getMainWindow = () => mainWindow;
+
+  registerAppIpcHandlers({
+    service,
+    mailbox,
+    browser,
+    updater,
+    setupFile,
+    analyticsPreferenceFile,
+    initializeAgent,
+    appVariant,
+    getMainWindow,
+    setAnalyticsTrackingEnabled: (enabled) => hostAnalytics?.setTrackingEnabled(enabled),
+  });
+  registerDynamicIslandIpcHandlers({ dynamicIsland });
+  registerComputerUseIpcHandlers({ computerUseMacSetup });
+  registerProviderIpcHandlers({ service, providerRuntimes });
+  registerVoiceIpcHandlers({ voice });
+  registerAccountIpcHandlers({ centralAuth });
+  registerSkillIpcHandlers({ skills, getMainWindow });
+  registerHostedSiteIpcHandlers({ hostedSites, getMainWindow });
+  registerMarketplaceAgentIpcHandlers({ marketplaceAgents });
+  registerUpdateIpcHandlers({ updater, updatePreferenceFile });
   registerTeamIpcHandlers({
     host,
     remoteDesktop,
@@ -551,566 +321,11 @@ function registerIpcHandlers(
       return inviteUrl;
     },
   });
-
-  handleTrusted(IPC_CHANNELS.agentGetStatus, parseAgentRequest, (parsed) => {
-    const { serverId } = parsed;
-    return serverId === "local"
-      ? service.getStatus()
-      : remoteServers.request("/v1/agents/status", {}, serverId, decodeAgentStatus);
-  });
-  handleTrusted(IPC_CHANNELS.agentGetUsage, parseAgentRequest, (parsed) => {
-    const { serverId } = parsed;
-    return serverId === "local"
-      ? service.getUsage()
-      : remoteServers.request("/v1/agents/usage", {}, serverId, decodeAccountUsage);
-  });
-  handleTrusted(IPC_CHANNELS.agentListModels, parseAgentRequest, (parsed) => {
-    const { serverId } = parsed;
-    return serverId === "local"
-      ? service.listModels()
-      : remoteServers.request("/v1/agents/models", {}, serverId, decodeAgentModelOptions);
-  });
-  handleTrusted(IPC_CHANNELS.agentListBots, parseAgentRequest, (parsed) => {
-    const { serverId } = parsed;
-    return serverId === "local"
-      ? service.listBots()
-      : remoteServers.request("/v1/agents", {}, serverId, decodeBotSummaries);
-  });
-  handleTrusted(IPC_CHANNELS.agentListInstalledSkills, parseAgentRequest, (scoped) => {
-    const botId = requireString(scoped.payload, "botId", INPUT_LIMITS.identifier);
-    return scoped.serverId === "local"
-      ? skills.listInstalledForChatTags(botId)
-      : remoteServers
-            .list()
-            .find((server) => server.id === scoped.serverId)
-            ?.compatibility?.capabilities.includes("installed-skills")
-        ? remoteServers.request(
-            `/v1/agents/${encodeURIComponent(botId)}/skills`,
-            {},
-            scoped.serverId,
-            decodeInstalledSkills,
-          )
-        : Promise.resolve([]);
-  });
-  handleTrusted(
-    IPC_CHANNELS.agentGetSidebarLayout,
-    parseAgentRequest,
-    ({ serverId }): Promise<SidebarLayoutSnapshot> => {
-      return serverId === "local"
-        ? Promise.resolve(sidebarLayout.getSnapshot())
-        : remoteServers.request("/v1/sidebar-layout", {}, serverId, decodeSidebarLayoutSnapshot);
-    },
-  );
-  handleTrusted(IPC_CHANNELS.agentMutateSidebarLayout, parseAgentRequest, (scoped): Promise<SidebarLayoutSnapshot> => {
-    const action = parseSidebarLayoutAction(scoped.payload);
-    return scoped.serverId === "local"
-      ? sidebarLayout.mutate(action, new Set(service.listBots().map((bot) => bot.id)))
-      : remoteServers.request(
-          "/v1/sidebar-layout/actions",
-          { method: "POST", body: action },
-          scoped.serverId,
-          decodeSidebarLayoutSnapshot,
-        );
-  });
-  handleTrusted(IPC_CHANNELS.agentCreateBot, parseAgentRequest, ({ serverId, payload }) => {
-    const parsed = parseCreateBot(payload);
-    return serverId === "local"
-      ? service.createBot(parsed)
-      : remoteServers.request("/v1/agents", { method: "POST", body: parsed }, serverId, decodeBotSummary);
-  });
-  handleTrusted(IPC_CHANNELS.agentDuplicateBot, parseAgentRequest, (scoped): Promise<DuplicateBotResult> => {
-    const botId = requireString(scoped.payload, "botId", INPUT_LIMITS.identifier);
-    return routeDuplicateBot(service, sidebarLayout, remoteServers, scoped.serverId, botId);
-  });
-  handleTrusted(IPC_CHANNELS.agentUpdateBot, parseAgentRequest, (scoped) => {
-    return routeUpdateBot(service, remoteServers, scoped.serverId, parseUpdateBot(scoped.payload));
-  });
-  handleTrusted(IPC_CHANNELS.agentSetAvatar, parseAgentRequest, (scoped) => {
-    const parsed = parseSetAgentAvatar(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.setAvatar(parsed.botId, parsed.image)
-      : remoteServers.setAgentAvatar(parsed.botId, parsed.image, scoped.serverId);
-  });
-  handleTrusted(IPC_CHANNELS.agentDeleteBot, parseAgentRequest, (scoped) => {
-    const botId = requireString(scoped.payload, "botId");
-    return routeDeleteBot(service, sidebarLayout, remoteServers, scoped.serverId, botId);
-  });
-  handleTrusted(IPC_CHANNELS.agentListMemories, parseAgentRequest, (scoped) => {
-    const botId = requireString(scoped.payload, "botId", INPUT_LIMITS.identifier);
-    return scoped.serverId === "local"
-      ? service.listMemories(botId)
-      : remoteServers.request(
-          `/v1/agents/${encodeURIComponent(botId)}/memories`,
-          {},
-          scoped.serverId,
-          decodeBotMemories,
-        );
-  });
-  handleTrusted(IPC_CHANNELS.agentCreateMemory, parseAgentRequest, (scoped) => {
-    const parsed = parseCreateBotMemory(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.createMemory(parsed)
-      : remoteServers.request(
-          `/v1/agents/${encodeURIComponent(parsed.botId)}/memories`,
-          { method: "POST", body: { text: parsed.text } },
-          scoped.serverId,
-          decodeBotMemory,
-        );
-  });
-  handleTrusted(IPC_CHANNELS.agentUpdateMemory, parseAgentRequest, (scoped) => {
-    const parsed = parseUpdateBotMemory(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.updateMemory(parsed)
-      : remoteServers.request(
-          `/v1/agents/${encodeURIComponent(parsed.botId)}/memories/${encodeURIComponent(parsed.memoryId)}`,
-          { method: "PATCH", body: { text: parsed.text } },
-          scoped.serverId,
-          decodeBotMemory,
-        );
-  });
-  handleTrusted(IPC_CHANNELS.agentDeleteMemory, parseAgentRequest, (scoped) => {
-    const parsed = parseDeleteBotMemory(scoped.payload);
-    if (scoped.serverId === "local") return service.deleteMemory(parsed);
-    return remoteServers.request(
-      `/v1/agents/${encodeURIComponent(parsed.botId)}/memories/${encodeURIComponent(parsed.memoryId)}`,
-      { method: "DELETE" },
-      scoped.serverId,
-      decodeVoid,
-    );
-  });
-  handleTrusted(IPC_CHANNELS.agentClearMemories, parseAgentRequest, (scoped) => {
-    const botId = requireString(scoped.payload, "botId", INPUT_LIMITS.identifier);
-    if (scoped.serverId === "local") return service.clearMemories(botId);
-    return remoteServers.request(
-      `/v1/agents/${encodeURIComponent(botId)}/memories`,
-      { method: "DELETE" },
-      scoped.serverId,
-      decodeVoid,
-    );
-  });
-  handleTrusted(IPC_CHANNELS.agentListRoutines, parseAgentRequest, (scoped) => {
-    const botId = requireString(scoped.payload, "botId", INPUT_LIMITS.identifier);
-    return scoped.serverId === "local"
-      ? service.listRoutines(botId)
-      : remoteServers.request(`/v1/agents/${encodeURIComponent(botId)}/routines`, {}, scoped.serverId, decodeRoutines);
-  });
-  handleTrusted(IPC_CHANNELS.agentCreateRoutine, parseAgentRequest, (scoped) => {
-    const parsed = parseCreateRoutine(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.createRoutine(parsed)
-      : remoteServers.request(
-          `/v1/agents/${encodeURIComponent(parsed.botId)}/routines`,
-          { method: "POST", body: parsed },
-          scoped.serverId,
-          decodeRoutine,
-        );
-  });
-  handleTrusted(IPC_CHANNELS.agentUpdateRoutine, parseAgentRequest, (scoped) => {
-    const parsed = parseUpdateRoutine(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.updateRoutine(parsed)
-      : remoteServers.request(
-          `/v1/agents/${encodeURIComponent(parsed.botId)}/routines/${encodeURIComponent(parsed.routineId)}`,
-          { method: "PATCH", body: parsed },
-          scoped.serverId,
-          decodeRoutine,
-        );
-  });
-  handleTrusted(IPC_CHANNELS.agentDeleteRoutine, parseAgentRequest, (scoped) => {
-    const parsed = parseDeleteRoutine(scoped.payload);
-    if (scoped.serverId === "local") return service.deleteRoutine(parsed);
-    return remoteServers.request(
-      `/v1/agents/${encodeURIComponent(parsed.botId)}/routines/${encodeURIComponent(parsed.routineId)}`,
-      { method: "DELETE" },
-      scoped.serverId,
-      decodeVoid,
-    );
-  });
-  handleTrusted(IPC_CHANNELS.agentTestRoutine, parseAgentRequest, (scoped) => {
-    const parsed = parseTestRoutine(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.testRoutine(parsed)
-      : remoteServers.request(
-          `/v1/agents/${encodeURIComponent(parsed.botId)}/routines/${encodeURIComponent(parsed.routineId)}/test`,
-          { method: "POST" },
-          scoped.serverId,
-          decodeRoutineRun,
-        );
-  });
-  handleTrusted(IPC_CHANNELS.agentListRoutineRuns, parseAgentRequest, (scoped) => {
-    const parsed = parseListRoutineRuns(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.listRoutineRuns(parsed)
-      : remoteServers.request(
-          `/v1/agents/${encodeURIComponent(parsed.botId)}/routines/${encodeURIComponent(parsed.routineId)}/runs?limit=${parsed.limit}`,
-          {},
-          scoped.serverId,
-          decodeRoutineRuns,
-        );
-  });
-  handleTrusted(IPC_CHANNELS.agentReadConversation, parseAgentRequest, (scoped) => {
-    return routeReadConversation(host, remoteServers, scoped.serverId, requireString(scoped.payload, "botId"));
-  });
-  handleTrusted(IPC_CHANNELS.agentReadConversationPage, parseAgentRequest, (scoped) => {
-    const parsed = parseReadConversationPage(scoped.payload);
-    return scoped.serverId === "local"
-      ? host.readAgentConversationPage(parsed.botId, parsed.anchor, parsed.limit)
-      : remoteServers.readAgentConversationPage(parsed.botId, parsed.anchor, parsed.limit, scoped.serverId);
-  });
-  handleTrusted(IPC_CHANNELS.agentSearchConversationMessages, parseAgentRequest, (scoped) => {
-    const parsed = parseSearchConversationMessages(scoped.payload);
-    return scoped.serverId === "local"
-      ? host.searchAgentConversationMessages(parsed.query, parsed.botId, parsed.cursor, parsed.limit)
-      : remoteServers.searchAgentConversationMessages(
-          parsed.query,
-          parsed.botId,
-          parsed.cursor,
-          parsed.limit,
-          scoped.serverId,
-        );
-  });
-  handleTrusted(IPC_CHANNELS.agentListConversationReads, parseAgentRequest, (parsed) => {
-    const { serverId } = parsed;
-    return serverId === "local"
-      ? host.listAgentConversationReads()
-      : remoteServers.listAgentConversationReads(serverId);
-  });
-  handleTrusted(IPC_CHANNELS.agentMarkConversationRead, parseAgentRequest, (scoped) => {
-    const parsed = parseMarkConversationRead(scoped.payload);
-    return scoped.serverId === "local"
-      ? host.markAgentConversationRead(parsed)
-      : remoteServers.markAgentConversationRead(parsed, scoped.serverId);
-  });
-  handleTrusted(IPC_CHANNELS.agentSendMessage, parseAgentRequest, (scoped) => {
-    return routeSendMessage(service, remoteServers, scoped.serverId, parseSendMessage(scoped.payload));
-  });
-  handleTrusted(IPC_CHANNELS.agentSetMessageReaction, parseAgentRequest, (scoped) => {
-    const parsed = parseMessageReaction(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.setMessageReaction(parsed)
-      : remoteServers.request(
-          `/v1/agents/${encodeURIComponent(parsed.botId)}/reactions`,
-          {
-            method: "POST",
-            body: parsed,
-          },
-          scoped.serverId,
-          decodeVoid,
-        );
-  });
-  handleTrusted(IPC_CHANNELS.agentChooseAttachments, parseAgentRequest, async (parsed) => {
-    const { serverId, payload } = parsed;
-    const { filter } = parseChooseAttachments(payload);
-    const options: OpenDialogOptions = {
-      properties: ["openFile", "multiSelections"],
-      filters:
-        filter === "images"
-          ? [{ name: "Images", extensions: [...IMAGE_ATTACHMENT_EXTENSIONS] }]
-          : [{ name: "Supported files", extensions: [...ATTACHMENT_FILE_EXTENSIONS] }],
-    };
-    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
-    if (result.canceled) return [];
-    if (serverId === "local") return service.prepareAttachments(result.filePaths);
-    return uploadRemotePaths(remoteServers, serverId, result.filePaths);
-  });
-  handleTrusted(IPC_CHANNELS.agentImportAttachments, parseAgentRequest, (scoped) => {
-    const parsed = parseImportAttachments(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.prepareImportedAttachments(parsed.paths, parsed.data)
-      : uploadRemoteImports(remoteServers, scoped.serverId, parsed);
-  });
-  handleTrusted(IPC_CHANNELS.agentDiscardDraftAttachment, parseAgentRequest, (scoped) => {
-    const attachmentId = requireString(scoped.payload, "attachmentId");
-    return scoped.serverId === "local"
-      ? service.discardDraftAttachment(attachmentId)
-      : remoteServers.request(
-          `/v1/attachments/${encodeURIComponent(attachmentId)}`,
-          { method: "DELETE" },
-          scoped.serverId,
-          decodeVoid,
-        );
-  });
-  handleTrusted(IPC_CHANNELS.agentOpenAttachment, parseAgentRequest, async (scoped) => {
-    const parsed = parseOpenAttachment(scoped.payload);
-    if (scoped.serverId !== "local") {
-      const downloaded = await remoteServers.downloadAttachment(parsed.attachmentId, scoped.serverId);
-      const suggestedName = basename(downloaded.name) || `attachment-${parsed.attachmentId}`;
-      if (parsed.action === "download") {
-        const extension = extname(suggestedName).slice(1).toLowerCase();
-        const saveOptions: Electron.SaveDialogOptions = {
-          defaultPath: join(app.getPath("downloads"), suggestedName),
-          filters: [{ name: "Attachment", extensions: extension ? [extension] : ["*"] }],
-          showsTagField: false,
-        };
-        const result =
-          mainWindow && !mainWindow.isDestroyed()
-            ? await dialog.showSaveDialog(mainWindow, saveOptions)
-            : await dialog.showSaveDialog(saveOptions);
-        if (result.canceled || !result.filePath) return;
-        await writeFile(result.filePath, downloaded.bytes, { mode: 0o600 });
-        return;
-      }
-      const cacheRoot = join(app.getPath("userData"), "remote-attachments");
-      await mkdir(cacheRoot, { recursive: true });
-      const safeName = `${parsed.attachmentId}-${suggestedName}`;
-      const target = join(cacheRoot, safeName);
-      await writeFile(target, downloaded.bytes, { mode: 0o600 });
-      if (parsed.action === "reveal") shell.showItemInFolder(target);
-      else {
-        const openError = await shell.openPath(target);
-        if (openError) throw new Error(openError);
-      }
-      return;
-    }
-    const attachment = await mailbox.resolveAttachment(parsed.attachmentId);
-    if (!attachment) throw new Error("Attachment was not found.");
-    if (parsed.action === "download") {
-      const safeId = basename(parsed.attachmentId).replace(/[^a-z0-9_-]/gi, "-") || "attachment";
-      const mimeExtension = attachment.mimeType.split("/")[1]?.replace(/[^a-z0-9]/gi, "");
-      const suggestedName = `attachment-${safeId}${mimeExtension ? `.${mimeExtension}` : ""}`;
-      const extension = extname(suggestedName).slice(1).toLowerCase();
-      const saveOptions: Electron.SaveDialogOptions = {
-        defaultPath: join(app.getPath("downloads"), suggestedName),
-        filters: [{ name: "Attachment", extensions: extension ? [extension] : ["*"] }],
-        showsTagField: false,
-      };
-      const result =
-        mainWindow && !mainWindow.isDestroyed()
-          ? await dialog.showSaveDialog(mainWindow, saveOptions)
-          : await dialog.showSaveDialog(saveOptions);
-      if (result.canceled || !result.filePath) return;
-      await copyFile(attachment.path, result.filePath);
-      return;
-    }
-    if (parsed.action === "reveal") {
-      shell.showItemInFolder(attachment.path);
-      return;
-    }
-    const error = await shell.openPath(attachment.path);
-    if (error) throw new Error(error);
-  });
-  handleTrusted(IPC_CHANNELS.agentOpenSharedFile, parseAgentRequest, async (scoped) => {
-    const parsed = parseOpenSharedFile(scoped.payload);
-    if (scoped.serverId !== "local") {
-      const downloaded = await remoteServers.downloadSharedFile(parsed.path, scoped.serverId);
-      const cacheRoot = join(app.getPath("userData"), "remote-shared-files");
-      await mkdir(cacheRoot, { recursive: true, mode: 0o700 });
-      const cacheKey = createHash("sha256").update(`${scoped.serverId}:${parsed.path}`).digest("hex");
-      const target = join(cacheRoot, `${cacheKey}-${basename(downloaded.name)}`);
-      await writeFile(target, downloaded.bytes, { mode: 0o600 });
-      await chmod(target, 0o600);
-      const openError = await shell.openPath(target);
-      if (openError) throw new Error(openError);
-      return;
-    }
-    const sharedFile = await service.resolveSharedFile(parsed.path);
-    const openError = await shell.openPath(sharedFile.path);
-    if (openError) throw new Error(openError);
-  });
-  handleTrusted(IPC_CHANNELS.agentOpenWorkspaceFile, parseAgentRequest, async (scoped) => {
-    const parsed = parseOpenWorkspaceFile(scoped.payload);
-    if (scoped.serverId !== "local") {
-      const downloaded = await remoteServers.downloadWorkspaceFile(parsed.botId, parsed.path, scoped.serverId);
-      const cacheRoot = join(app.getPath("userData"), "remote-workspace-files");
-      await mkdir(cacheRoot, { recursive: true, mode: 0o700 });
-      const cacheKey = createHash("sha256").update(`${scoped.serverId}:${parsed.botId}:${parsed.path}`).digest("hex");
-      const target = join(cacheRoot, `${cacheKey}-${basename(downloaded.name)}`);
-      await writeFile(target, downloaded.bytes, { mode: 0o600 });
-      await chmod(target, 0o600);
-      const openError = await shell.openPath(target);
-      if (openError) throw new Error(openError);
-      return;
-    }
-    const workspaceFile = await service.resolveWorkspaceFile(parsed.botId, parsed.path);
-    const openError = await shell.openPath(workspaceFile.path);
-    if (openError) throw new Error(openError);
-  });
-  handleTrusted(IPC_CHANNELS.agentPreviewSharedFile, parseAgentRequest, async (scoped): Promise<FilePreview> => {
-    const parsed = parseOpenSharedFile(scoped.payload);
-    if (scoped.serverId !== "local") {
-      const downloaded = await remoteServers.downloadSharedFile(parsed.path, scoped.serverId);
-      return filePreviewFromBytes(downloaded.name, downloaded.bytes);
-    }
-    const sharedFile = await service.resolveSharedFile(parsed.path);
-    return localFilePreview(sharedFile.path, sharedFile.name, sharedFile.size);
-  });
-  handleTrusted(IPC_CHANNELS.agentPreviewWorkspaceFile, parseAgentRequest, async (scoped): Promise<FilePreview> => {
-    const parsed = parseOpenWorkspaceFile(scoped.payload);
-    if (scoped.serverId !== "local") {
-      const downloaded = await remoteServers.downloadWorkspaceFile(parsed.botId, parsed.path, scoped.serverId);
-      return filePreviewFromBytes(downloaded.name, downloaded.bytes);
-    }
-    const workspaceFile = await service.resolveWorkspaceFile(parsed.botId, parsed.path);
-    return localFilePreview(workspaceFile.path, workspaceFile.name, workspaceFile.size);
-  });
-  handleTrusted(IPC_CHANNELS.agentListQueue, parseAgentRequest, (scoped) => {
-    return routeListQueue(service, remoteServers, scoped.serverId, requireString(scoped.payload, "botId"));
-  });
-  handleTrusted(IPC_CHANNELS.agentAcknowledgeFailedTurn, parseAgentRequest, (scoped) => {
-    const parsed = parseAcknowledgeFailedTurn(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.acknowledgeFailedTurn(parsed.botId, parsed.turnId)
-      : remoteServers.request(
-          `/v1/agents/${encodeURIComponent(parsed.botId)}/failures/acknowledge`,
-          { method: "POST", body: { turnId: parsed.turnId } },
-          scoped.serverId,
-          decodeVoid,
-        );
-  });
-  handleTrusted(IPC_CHANNELS.agentCancelQueuedMessage, parseAgentRequest, (scoped) => {
-    const parsed = parseCancelQueuedMessage(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.cancelQueuedMessage(parsed.botId, parsed.deliveryId)
-      : remoteServers.request(
-          `/v1/agents/${encodeURIComponent(parsed.botId)}/queue/cancel`,
-          {
-            method: "POST",
-            body: { deliveryId: parsed.deliveryId },
-          },
-          scoped.serverId,
-          decodeVoid,
-        );
-  });
-  handleTrusted(IPC_CHANNELS.agentSteerQueuedMessage, parseAgentRequest, (scoped) => {
-    const parsed = parseSteerQueuedMessage(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.steerQueuedMessage(parsed)
-      : remoteServers.request(
-          `/v1/agents/${encodeURIComponent(parsed.botId)}/queue/steer`,
-          {
-            method: "POST",
-            body: { deliveryId: parsed.deliveryId, expectedTurnId: parsed.expectedTurnId },
-          },
-          scoped.serverId,
-          decodeVoid,
-        );
-  });
-  handleTrusted(IPC_CHANNELS.agentUpdateQueuedMessage, parseAgentRequest, (scoped) => {
-    const parsed = parseUpdateQueuedMessage(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.updateQueuedMessage(parsed)
-      : remoteServers.request(
-          `/v1/agents/${encodeURIComponent(parsed.botId)}/queue/update`,
-          {
-            method: "POST",
-            body: {
-              deliveryId: parsed.deliveryId,
-              text: parsed.text,
-              keepAttachmentIds: parsed.keepAttachmentIds,
-              attachmentDraftIds: parsed.attachmentDraftIds,
-            },
-          },
-          scoped.serverId,
-          decodeVoid,
-        );
-  });
-  handleTrusted(IPC_CHANNELS.agentReorderQueue, parseAgentRequest, (scoped) => {
-    const parsed = parseReorderQueue(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.reorderQueue(parsed)
-      : remoteServers.request(
-          `/v1/agents/${encodeURIComponent(parsed.botId)}/queue/reorder`,
-          { method: "POST", body: { deliveryIds: parsed.deliveryIds } },
-          scoped.serverId,
-          decodeVoid,
-        );
-  });
-  handleTrusted(IPC_CHANNELS.agentInterrupt, parseAgentRequest, (scoped) => {
-    const parsed = parseInterrupt(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.interrupt(parsed.botId, parsed.turnId)
-      : remoteServers.request(
-          `/v1/agents/${encodeURIComponent(parsed.botId)}/interrupt`,
-          {
-            method: "POST",
-            body: { turnId: parsed.turnId },
-          },
-          scoped.serverId,
-          decodeVoid,
-        );
-  });
-  handleTrusted(IPC_CHANNELS.agentRespondToPrompt, parseAgentRequest, (scoped) => {
-    const parsed = parsePromptResponse(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.respondToPrompt(parsed)
-      : remoteServers.request("/v1/prompts/respond", { method: "POST", body: parsed }, scoped.serverId, decodeVoid);
-  });
-  handleTrusted(IPC_CHANNELS.agentRespondToApproval, parseAgentRequest, (scoped) => {
-    const parsed = parseApprovalResponse(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.respondToApproval(parsed)
-      : remoteServers.request("/v1/approvals/respond", { method: "POST", body: parsed }, scoped.serverId, decodeVoid);
-  });
-  handleTrusted(IPC_CHANNELS.agentRespondToBrowserTakeover, parseAgentRequest, (scoped) => {
-    const parsed = parseBrowserTakeoverResponse(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.respondToBrowserTakeover(parsed)
-      : remoteServers.request(
-          "/v1/browser-takeovers/respond",
-          { method: "POST", body: parsed },
-          scoped.serverId,
-          decodeVoid,
-        );
-  });
-
-  handleTrusted(IPC_CHANNELS.browserOpen, parseBrowserOpen, (parsed) => {
-    return remoteServers.activeServerId === "local"
-      ? browser.open(parsed.url, parsed.ownerThreadId ?? null, parsed.ownerBotId ?? null, parsed.focus)
-      : remoteServers.request("/v1/browser/open", { method: "POST", body: parsed }, undefined, decodeBrowserTab);
-  });
-  handleTrusted(IPC_CHANNELS.browserActivate, stringPayload("tabId"), (tabId) =>
-    remoteServers.activeServerId === "local"
-      ? browser.activate(tabId)
-      : remoteServers.request("/v1/browser/activate", { method: "POST", body: { tabId } }, undefined, decodeVoid),
-  );
-  handleTrusted(IPC_CHANNELS.browserNavigate, parseBrowserNavigate, (parsed) => {
-    return remoteServers.activeServerId === "local"
-      ? browser.navigate(parsed.tabId, parsed.direction)
-      : remoteServers.request("/v1/browser/navigate", { method: "POST", body: parsed }, undefined, decodeVoid);
-  });
-  handleTrusted(IPC_CHANNELS.browserReload, stringPayload("tabId"), (tabId) =>
-    remoteServers.activeServerId === "local"
-      ? browser.reload(tabId)
-      : remoteServers.request("/v1/browser/reload", { method: "POST", body: { tabId } }, undefined, decodeVoid),
-  );
-  handleTrusted(IPC_CHANNELS.browserClose, stringPayload("tabId"), (tabId) =>
-    remoteServers.activeServerId === "local"
-      ? browser.close(tabId)
-      : remoteServers.request("/v1/browser/close", { method: "POST", body: { tabId } }, undefined, decodeVoid),
-  );
-  handleTrusted(IPC_CHANNELS.browserListTabs, () =>
-    remoteServers.activeServerId === "local"
-      ? browser.listTabs()
-      : remoteServers.request("/v1/browser/tabs", {}, undefined, decodeBrowserTabs),
-  );
-  handleTrusted(IPC_CHANNELS.browserGetDisplayState, (): BrowserDisplayState => browser.getDisplayState());
-  handleTrusted(IPC_CHANNELS.browserGetControlState, () =>
-    remoteServers.activeServerId === "local"
-      ? browser.getControlState()
-      : remoteServers.request("/v1/browser/control", {}, undefined, decodeBrowserControlState),
-  );
-  handleTrusted(IPC_CHANNELS.browserCapturePreview, stringPayload("tabId"), (tabId) =>
-    remoteServers.activeServerId === "local"
-      ? browser.capturePreview(tabId)
-      : remoteServers.request(
-          "/v1/browser/preview",
-          { method: "POST", body: { tabId } },
-          undefined,
-          decodeBrowserPreview,
-        ),
-  );
-  handleTrusted(IPC_CHANNELS.browserSetVisible, parseVisibility, async (parsed) => {
-    if (remoteServers.activeServerId === "local") await browser.setVisible(parsed);
-    else {
-      await remoteServers.request("/v1/browser/visible", { method: "POST", body: parsed }, undefined, decodeVoid);
-    }
-  });
-  handleTrusted(IPC_CHANNELS.browserPictureInPictureOpen, optionalPayload(parseBrowserBounds), (bounds) =>
-    browserPictureInPicture.open(bounds),
-  );
-  handleTrusted(IPC_CHANNELS.browserPictureInPictureClose, () => browserPictureInPicture.close());
-  handleTrusted(IPC_CHANNELS.browserPictureInPictureDock, () => browserPictureInPicture.dock());
-  handleTrusted(IPC_CHANNELS.browserPictureInPictureHide, () => browserPictureInPicture.hide());
+  registerMemoryIpcHandlers({ service, remoteServers });
+  registerRoutineIpcHandlers({ service, remoteServers });
+  registerAttachmentIpcHandlers({ service, mailbox, remoteServers, getMainWindow });
+  registerAgentIpcHandlers({ service, sidebarLayout, host, remoteServers, skills });
+  registerBrowserIpcHandlers({ browserPictureInPicture, browser, remoteServers });
 }
 
 function createWindow(): BrowserWindow {
@@ -2041,29 +1256,29 @@ if (!hasSingleInstanceLock) {
       updateService.on("status", forwardUpdateStatus);
       updateService.start();
       const agentInitialization = new AgentInitializationGate(() => service.initialize());
-      registerIpcHandlers(
+      registerIpcHandlers({
         service,
-        providerRuntimeManager,
-        mailboxStore,
-        browserHost,
+        providerRuntimes: providerRuntimeManager,
+        mailbox: mailboxStore,
+        browser: browserHost,
         browserPictureInPicture,
-        updateService,
+        updater: updateService,
         setupFile,
         analyticsPreferenceFile,
         updatePreferenceFile,
-        () => agentInitialization.start(),
-        sidebarLayoutStore,
+        initializeAgent: () => agentInitialization.start(),
+        sidebarLayout: sidebarLayoutStore,
         host,
         remoteDesktop,
         remoteServers,
-        centralAuthManager,
-        skillMarketplace,
+        centralAuth: centralAuthManager,
+        skills: skillMarketplace,
         hostedSites,
-        agentMarketplace,
-        voiceTranscriptionService,
-        dynamicIslandController,
-        computerUseMacSetupController,
-      );
+        marketplaceAgents: agentMarketplace,
+        voice: voiceTranscriptionService,
+        dynamicIsland: dynamicIslandController,
+        computerUseMacSetup: computerUseMacSetupController,
+      });
       configureApplicationMenu(service, updateService);
       await dynamicIslandController
         .initialize()
@@ -2222,164 +1437,6 @@ function configureRendererPermissions(): void {
     const mediaTypes = ("mediaTypes" in details ? details.mediaTypes : undefined) ?? [];
     callback(canRequestRendererPermission(permission, webContents.getURL(), { mediaTypes }));
   });
-}
-
-function routeUpdateBot(
-  service: AgentService,
-  remoteServers: RemoteServerManager,
-  serverId: string,
-  input: UpdateBotInput,
-) {
-  return serverId === "local"
-    ? service.updateBot(input)
-    : remoteServers.request(
-        `/v1/agents/${encodeURIComponent(input.botId)}`,
-        {
-          method: "PATCH",
-          body: input,
-        },
-        serverId,
-        decodeBotSummary,
-      );
-}
-
-async function routeDeleteBot(
-  service: AgentService,
-  sidebarLayout: SidebarLayoutStore,
-  remoteServers: RemoteServerManager,
-  serverId: string,
-  botId: string,
-): Promise<void> {
-  if (serverId === "local") {
-    await service.deleteBot(botId);
-    await sidebarLayout.removeAgent(botId);
-    return;
-  }
-  await remoteServers.request(`/v1/agents/${encodeURIComponent(botId)}`, { method: "DELETE" }, serverId, decodeVoid);
-}
-
-async function routeDuplicateBot(
-  service: AgentService,
-  sidebarLayout: SidebarLayoutStore,
-  remoteServers: RemoteServerManager,
-  serverId: string,
-  botId: string,
-): Promise<DuplicateBotResult> {
-  if (serverId !== "local") {
-    return remoteServers.duplicateBot(botId, serverId);
-  }
-  const bot = await service.duplicateBot(botId);
-  try {
-    const layout = await sidebarLayout.placeDuplicateAfter(botId, bot.id, [
-      ...service.listBots().map((candidate) => candidate.id),
-      bot.id,
-    ]);
-    return service.commitBotDuplication(bot.id, layout);
-  } catch (error) {
-    const rollbackResults = await Promise.allSettled([service.deleteBot(bot.id), sidebarLayout.removeAgent(bot.id)]);
-    const rollbackErrors = rollbackResults.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
-    if (rollbackErrors.length > 0) {
-      throw new AggregateError(
-        [error, ...rollbackErrors],
-        "Agent duplication failed and the incomplete copy could not be removed.",
-      );
-    }
-    throw error;
-  }
-}
-
-function routeReadConversation(host: HostService, remoteServers: RemoteServerManager, serverId: string, botId: string) {
-  return serverId === "local"
-    ? host.readAgentConversation(botId)
-    : remoteServers.readAgentConversation(botId, serverId);
-}
-
-function routeSendMessage(
-  service: AgentService,
-  remoteServers: RemoteServerManager,
-  serverId: string,
-  input: SendMessageInput,
-) {
-  return serverId === "local"
-    ? service.sendMessage(input)
-    : remoteServers.request(
-        `/v1/agents/${encodeURIComponent(input.botId)}/messages`,
-        {
-          method: "POST",
-          body: input,
-        },
-        serverId,
-        decodeQueuedMessageReceipt,
-      );
-}
-
-function routeListQueue(service: AgentService, remoteServers: RemoteServerManager, serverId: string, botId: string) {
-  return serverId === "local"
-    ? service.listQueue(botId)
-    : remoteServers.request(`/v1/agents/${encodeURIComponent(botId)}/queue`, {}, serverId, decodeQueueSnapshot);
-}
-
-async function uploadRemotePaths(remoteServers: RemoteServerManager, serverId: string, paths: string[]) {
-  if (paths.length > INPUT_LIMITS.attachments) {
-    throw new Error(`Choose at most ${INPUT_LIMITS.attachments} files.`);
-  }
-  for (const path of paths) assertSupportedAttachmentName(basename(path));
-  const files = await Promise.all(
-    paths.map(async (path) => ({
-      name: basename(path),
-      bytes: new Uint8Array(await readFile(path)),
-    })),
-  );
-  const total = files.reduce((sum, file) => sum + file.bytes.byteLength, 0);
-  if (files.some((file) => file.bytes.byteLength > ATTACHMENT_LIMITS.fileBytes)) {
-    throw new Error("A file exceeds the 100 MB limit.");
-  }
-  if (total > ATTACHMENT_LIMITS.totalBytes) {
-    throw new Error("Attachments exceed the 250 MB total limit.");
-  }
-  return Promise.all(
-    files.map((file) => remoteServers.uploadAttachment(file.name, mimeTypeForName(file.name), file.bytes, serverId)),
-  );
-}
-
-async function uploadRemoteImports(
-  remoteServers: RemoteServerManager,
-  serverId: string,
-  input: ImportAttachmentsInput,
-) {
-  if (input.paths.length + input.data.length > INPUT_LIMITS.attachments) {
-    throw new Error(`Choose at most ${INPUT_LIMITS.attachments} files.`);
-  }
-  const pathFiles = await Promise.all(
-    input.paths.map(async (path) => ({
-      name: basename(path),
-      mimeType: mimeTypeForName(path),
-      bytes: new Uint8Array(await readFile(path)),
-    })),
-  );
-  const files = [
-    ...pathFiles,
-    ...input.data.map((item) => ({
-      name: basename(item.name),
-      mimeType: item.mimeType,
-      bytes: item.bytes,
-    })),
-  ];
-  for (const file of files) assertSupportedAttachmentName(file.name);
-  if (files.some((file) => file.bytes.byteLength > ATTACHMENT_LIMITS.fileBytes)) {
-    throw new Error("A file exceeds the 100 MB limit.");
-  }
-  if (files.reduce((sum, file) => sum + file.bytes.byteLength, 0) > ATTACHMENT_LIMITS.totalBytes) {
-    throw new Error("Attachments exceed the 250 MB total limit.");
-  }
-  return Promise.all(
-    files.map((file) => remoteServers.uploadAttachment(file.name, file.mimeType, file.bytes, serverId)),
-  );
-}
-
-function assertSupportedAttachmentName(name: string): void {
-  if (isSupportedAttachmentName(name)) return;
-  throw new Error(`${name} is not supported. Attach ${SUPPORTED_ATTACHMENT_DESCRIPTION}.`);
 }
 
 function configureAttachmentProtocol(mailbox: MailboxStore, agents: AgentService): void {
