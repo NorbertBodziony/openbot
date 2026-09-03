@@ -60,7 +60,8 @@ Two ways past one:
 A rebuttal needs something checkable in it. "Intended", "out of scope", or a promise to fix it
 later leaves the finding `[REMAINS]`, and the reviewer says which part it could not verify. Only
 comments from someone who can merge the pull request are read — organization membership on its
-own is not enough — and only those written after the review being answered.
+own is not enough — and only those written after the review being answered, plus the comment that
+asked for the recheck whatever its timestamp says.
 
 ## Security-sensitive changes
 

@@ -165,6 +165,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          TRIGGER_COMMENT_ID: ${{ github.event.comment.id }}
         run: |
           set -euo pipefail
 
@@ -216,6 +217,23 @@ jobs:
             fi
           fi
 
+          # The comment that asked for this review has to be read even when it predates the
+          # review being carried forward. A comment run queues behind a review in progress,
+          # so by the time it starts that review can have published with a timestamp newer
+          # than the request, and filtering on `since` alone would drop the one comment the
+          # run exists to weigh. Digits only, so the id can only ever be an id.
+          trigger_id=""
+          case "${TRIGGER_COMMENT_ID:-}" in
+            "") ;;
+            *[!0-9]*)
+              echo "::warning title=NorbiAI ignored a malformed comment id::Not reading the triggering comment"
+              ;;
+            *) trigger_id="$TRIGGER_COMMENT_ID" ;;
+          esac
+
+          # An empty `since` selects every comment; an empty `trigger_id` matches no id.
+          since_filter="\"${since}\" == \"\" or .created_at > \"${since}\" or (.id | tostring) == \"${trigger_id}\""
+
           # Only comments written after the review being carried forward, and only from
           # people who can already merge. Older ones were already ruled on, and a rebuttal
           # from someone who cannot merge is not an override channel. `author_association`
@@ -231,7 +249,7 @@ jobs:
                 | select(.author_association == \"OWNER\"
                   or .author_association == \"MEMBER\"
                   or .author_association == \"COLLABORATOR\")
-                | select(\"${since}\" == \"\" or .created_at > \"${since}\")
+                | select(${since_filter})
                 | .user.login] | unique | .[]" 2>/dev/null
           )
           candidates_exit=$?
@@ -261,19 +279,22 @@ jobs:
             esac
           done
 
-          # Newest first, and truncated from the end, because the cap has to keep the
-          # comment that asked for this review: oldest-first truncation drops exactly the
-          # rebuttal the run exists to weigh. The output goes to a file rather than through
-          # `head`, so a closed pipe cannot make `gh` exit nonzero and erase every response.
+          # Newest first, and truncated from the end, because the cap has to keep the comment
+          # that asked for this review: oldest-first truncation drops exactly the rebuttal the
+          # run exists to weigh. `reverse` inside the filter cannot do it — `--paginate --jq`
+          # runs the filter once per page and GitHub returns the oldest page first, so it only
+          # reverses within a page. Each response is emitted as a marked block instead and awk
+          # reverses the blocks across every page. The marker is stripped from the body, so a
+          # comment cannot forge a block boundary.
           responses_raw="$RUNNER_TEMP/norbiai-author-responses-raw.txt"
           set +e
           gh api --paginate \
             "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments?per_page=100" \
             --jq "[.[]
               | select(${login_filter})
-              | select(\"${since}\" == \"\" or .created_at > \"${since}\")
-              | \"### @\(.user.login) at \(.created_at)\n\(.body)\n\"]
-              | reverse | .[]" \
+              | select(${since_filter})
+              | \"<!-- norbiai-response -->\n### @\(.user.login) at \(.created_at)\n\(.body | gsub(\"<!-- norbiai-response -->\"; \"\"))\n\"]
+              | .[]" \
             > "$responses_raw" 2>/dev/null
           responses_exit=$?
           set -e
@@ -281,8 +302,17 @@ jobs:
           if [ "$responses_exit" -ne 0 ]; then
             echo "::warning title=NorbiAI author responses unavailable::Could not read PR comments; continuing without them"
           else
-            head -c 20000 "$responses_raw" > "$responses_file"
-            if [ "$(wc -c < "$responses_raw")" -gt 20000 ]; then
+            responses_ordered="$RUNNER_TEMP/norbiai-author-responses-ordered.txt"
+            awk '
+              /^<!-- norbiai-response -->$/ { blocks++; next }
+              blocks { body[blocks] = body[blocks] $0 "\n" }
+              END { for (i = blocks; i >= 1; i--) printf "%s", body[i] }
+            ' "$responses_raw" > "$responses_ordered"
+
+            # Truncated by reading the file rather than through a pipe, so a closed pipe
+            # cannot make an upstream command exit nonzero and erase every response.
+            head -c 20000 "$responses_ordered" > "$responses_file"
+            if [ "$(wc -c < "$responses_ordered")" -gt 20000 ]; then
               printf '\n[older responses omitted at the size cap]\n' >> "$responses_file"
             fi
           fi
@@ -422,11 +452,16 @@ jobs:
           withdrawn_line=$(grep -n '^## Withdrawn Findings[[:space:]]*$' "$last_message_file" | tail -1 | cut -d: -f1 || true)
           reason=""
 
-          # Presence only, not position: the withdrawal ledger is extracted by its heading
-          # wherever it sits, so ordering it would add a way to fail with nothing gained.
+          # Position counts as much as presence: the published review is copied from
+          # `## Verdict` onward, so a ledger emitted above it never reaches the comment the
+          # next run reads back and the withdrawal is lost while validation passes. Checked
+          # only once the shape below has a `## Findings` line to compare against, so a
+          # malformed review is reported as malformed rather than as a missing ledger.
           withdrawn_ok=true
-          if [ "$withdrawn_required" = true ] && [ -z "$withdrawn_line" ]; then
-            withdrawn_ok=false
+          if [ "$withdrawn_required" = true ] && [ -n "$findings_line" ]; then
+            if [ -z "$withdrawn_line" ] || [ "$withdrawn_line" -lt "$findings_line" ]; then
+              withdrawn_ok=false
+            fi
           fi
 
           if [ "$exit_code" -eq 0 ] &&
@@ -445,7 +480,7 @@ jobs:
             elif [ "$exit_code" -ne 0 ]; then
               reason="Reviewer exited with code ${exit_code}. Human review required."
             elif [ "$withdrawn_ok" != true ]; then
-              reason="Reviewer omitted the Withdrawn Findings section, so a withdrawal could not be carried forward. Human review required."
+              reason="Reviewer did not emit the Withdrawn Findings section after ## Findings, so a withdrawal could not be carried forward. Human review required."
             else
               reason="Reviewer returned malformed output. Human review required."
             fi
@@ -466,6 +501,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Publish PR comment
+        id: publish
         # Only when the reviewer actually ran. `outcome != 'skipped'` was also true for a
         # step that never started, which published an empty review whenever an earlier step
         # failed.
@@ -608,11 +644,21 @@ jobs:
           REVIEW_FILE: ${{ steps.review.outputs.review_file }}
           REVIEW_STATUS: ${{ steps.review.outputs.status }}
           FAILURE_REASON: ${{ steps.review.outputs.failure_reason }}
+          PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
         run: |
           set -euo pipefail
 
           if [ "$REVIEW_STATUS" != "success" ]; then
             echo "::error title=NorbiAI review did not complete::${FAILURE_REASON:-Human review required.}"
+            exit 1
+          fi
+
+          # A review nobody can read is not a review. The comment is where the findings are
+          # answered and where the next run reads the withdrawal ledger back from, so when
+          # publishing fails the gate has to block: otherwise the required status goes green
+          # over a review that exists only in this log.
+          if [ "${PUBLISH_OUTCOME:-}" != "success" ]; then
+            echo "::error title=NorbiAI review was not published::The review comment was not published (publish step: ${PUBLISH_OUTCOME:-did not run}), so neither the findings nor the withdrawal ledger are on the pull request. Human review required."
             exit 1
           fi
 
