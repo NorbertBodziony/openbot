@@ -4910,6 +4910,14 @@ button.chat-action-target:active,
   max-width: min(720px, calc(100% - var(--message-actions-inline-size) - 5px));
 }
 
+.message-entry-bot .ui-bubble:has(.message-data-table-scroll) > .ui-bubble-content {
+  width: 100%;
+}
+
+.message-entry-bot .message-shell:has(.message-data-table-scroll) {
+  align-items: flex-end;
+}
+
 .message-code-block {
   width: 100%;
   min-width: 0;
@@ -5148,26 +5156,15 @@ button.chat-action-target:active,
 }
 
 .message-data-table {
-  width: 100%;
+  width: max-content;
   min-width: max(100%, calc(var(--message-data-table-columns) * 112px));
-  display: flex;
-  flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--openbot-data-table-outer-border);
   border-radius: var(--openbot-radius-lg);
+  border-spacing: 0;
   background: var(--openbot-data-table-header-bg);
   box-shadow: 0 0 0 0.5px var(--openbot-data-table-ring);
   font-size: var(--openbot-text-md);
-}
-
-.message-data-table thead,
-.message-data-table thead tr,
-.message-data-table tbody tr {
-  display: flex;
-}
-
-.message-data-table thead tr {
-  width: 100%;
 }
 
 .message-data-table thead {
@@ -5176,23 +5173,15 @@ button.chat-action-target:active,
 }
 
 .message-data-table tbody {
-  display: flex;
-  flex-direction: column;
-  border-top: 1px solid var(--openbot-data-table-border);
   background: var(--openbot-data-table-body-bg);
 }
 
-.message-data-table tbody tr:not(:last-child) {
+.message-data-table tbody tr:not(:last-child) td {
   border-bottom: 1px solid var(--openbot-data-table-border);
 }
 
 .message-data-table th,
 .message-data-table td {
-  min-width: 0;
-  display: flex;
-  flex: 1 1 0;
-  align-items: center;
-  overflow: hidden;
   padding: 9px 12px;
   color: var(--openbot-data-table-text);
   font-weight: inherit;
@@ -5201,6 +5190,7 @@ button.chat-action-target:active,
 }
 
 .message-data-table thead th {
+  border-bottom: 1px solid var(--openbot-data-table-border);
   padding-top: 7px;
   padding-bottom: 7px;
   color: var(--openbot-data-table-header-text);
@@ -5212,19 +5202,14 @@ button.chat-action-target:active,
 }
 
 .message-data-table-cell-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .message-data-table [data-align="center"] {
-  justify-content: center;
   text-align: center;
 }
 
 .message-data-table [data-align="right"] {
-  justify-content: flex-end;
   text-align: right;
 }
 

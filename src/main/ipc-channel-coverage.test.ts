@@ -56,7 +56,8 @@ const CHANNEL_REFERENCE = /^IPC_CHANNELS\.([A-Za-z0-9_]+)$/;
 const sources = new Map<string, string>();
 
 const mainSources = sourceFilesUnder("src/main");
-const preloadSources = ["src/preload/index.ts"];
+const PRELOAD_MODULE = "src/preload/index.ts";
+const preloadSources = [PRELOAD_MODULE];
 
 // The one module allowed to touch ipcMain, because it is the sender check.
 const TRUSTED_IPC_MODULE = "src/main/trusted-ipc.ts";
@@ -207,6 +208,24 @@ describe("IPC channel coverage", () => {
 
   it("only removes listeners for channels the preload subscribes to", () => {
     expect(unsubscribed.filter((channel) => !subscribed.includes(channel))).toEqual([]);
+  });
+
+  // Every value the preload hands the renderer is validated by a guard in
+  // packages/contracts, the same one the main process uses. A guard written here
+  // instead is a second rule for one type, and the second rule is always the
+  // looser one - the preload's own isBotSummary never checked `provider` and its
+  // isConversationWithReadState accepted any array as the message list. An empty
+  // list is the only form that stays honest: it says the preload declares no rule
+  // of its own rather than counting the ones it does.
+  //
+  // This catches the predicate-shaped recurrence, which is the shape that
+  // actually diverged. A rule inlined into a decodeX body is still invisible here.
+  it("declares no type predicate of its own in the preload", () => {
+    const declared = [...readSource(PRELOAD_MODULE).matchAll(/^function (\w+)\([^)]*\):\s*[\w.<>[\]|" ]+ is /gm)]
+      .map((match) => match[1])
+      .sort();
+
+    expect(declared).toEqual([]);
   });
 });
 

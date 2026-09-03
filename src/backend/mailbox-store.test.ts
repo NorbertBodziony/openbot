@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import { AGENT_RUNTIME_TEXT_LIMIT, AGENT_RUNTIME_WORKING_ITEMS_LIMIT } from "@openbot/contracts/ipc";
+import {
+  AGENT_RUNTIME_TEXT_LIMIT,
+  AGENT_RUNTIME_WORKING_ITEMS_LIMIT,
+  isAttachmentSummary,
+} from "@openbot/contracts/ipc";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MailboxStore } from "./mailbox-store";
 
@@ -123,6 +127,64 @@ describe("MailboxStore", () => {
     const restored = new MailboxStore(userData, join(root, "Legacy Shared"));
     await restored.initialize();
     expect(restored.listQueue("chief").deliveries).toHaveLength(1);
+  });
+
+  // `isStoredAttachment` accepts a persisted attachment with no `previewUrl`, from before the field
+  // existed, and `StoredAttachment extends AttachmentSummary` claims `string | null`, so tsc cannot
+  // see the gap. An `undefined` reaching a summary fails `isAttachmentSummary` at the IPC boundary,
+  // and a boolean guard is all-or-nothing — one such attachment would make the whole conversation
+  // unreadable rather than losing a preview.
+  it("reads a mailbox persisted before attachments carried a preview URL", async () => {
+    const userData = join(root, "no-preview-url-user-data");
+    await mkdir(userData, { recursive: true });
+    const attachmentPath = join(root, "legacy-report.csv");
+    await writeFile(attachmentPath, "account,value\nAcme,42\n");
+    const legacy = {
+      version: 1,
+      messages: [
+        {
+          id: "message-1",
+          sender: { kind: "user" },
+          text: "Legacy request",
+          attachments: [
+            {
+              id: "attachment-1",
+              name: "legacy-report.csv",
+              size: 24,
+              kind: "file",
+              mimeType: "text/csv",
+              previewKind: "text",
+              path: attachmentPath,
+              sha256: "0".repeat(64),
+            },
+          ],
+          replyToMessageId: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      deliveries: [
+        {
+          id: "delivery-1",
+          messageId: "message-1",
+          recipientBotId: "chief",
+          status: "completed",
+          turnId: "turn-1",
+          error: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      drafts: [],
+      pausedBotIds: [],
+      idempotency: {},
+      reactions: [],
+    };
+    await writeFile(join(userData, "mailbox.json"), `${JSON.stringify(legacy, null, 2)}\n`);
+    const imported = new MailboxStore(userData, join(root, "No Preview Shared"));
+    await imported.initialize();
+
+    const attachment = imported.listQueue("chief").deliveries[0]?.attachments[0];
+    expect(attachment).toMatchObject({ id: "attachment-1", previewUrl: null });
+    expect(isAttachmentSummary(attachment)).toBe(true);
   });
 
   it("copies attachments once and fans out independent FIFO deliveries", async () => {

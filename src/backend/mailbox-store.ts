@@ -1461,7 +1461,11 @@ function toAttachmentSummary(attachment: StoredAttachment): AttachmentSummary {
     name: attachment.name,
     size: attachment.size,
     ...metadata,
-    previewUrl: attachment.previewUrl,
+    // `isStoredAttachment` accepts a persisted attachment with no `previewUrl` at all, from before
+    // the field existed. `StoredAttachment extends AttachmentSummary` claims `string | null`, so
+    // tsc cannot see the gap — and an `undefined` reaching the summary fails `isAttachmentSummary`
+    // at the IPC boundary, which would take the whole conversation down with it.
+    previewUrl: attachment.previewUrl ?? null,
   };
 }
 
