@@ -4674,22 +4674,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return this.#store.list().find((candidate) => candidate.id === botId)?.threadId ?? fallback;
   }
 
-  flushDeltas(turnId?: string): void {
-    if (turnId) {
-      this.#flushTurnDeltas(turnId);
-      return;
-    }
-    for (const key of [...this.#pendingDeltas.keys()]) this.#flushDelta(key);
-  }
-
-  pendingDeltaCount(): number {
-    return this.#pendingDeltas.size;
-  }
-
-  async runDueRoutines(now = new Date()): Promise<void> {
-    await this.#processDueRoutines(now);
-  }
-
   #bufferDelta(delta: PendingDelta): void {
     const key = deltaKey(delta);
     const existing = this.#pendingDeltas.get(key);
@@ -5079,12 +5063,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
     }
     if (this.#pendingHostedSiteTerminalEvents.size > 0) this.#scheduleHostedSiteTerminalRetry();
-  }
-
-  flushHostedSiteTerminalRetry(): void {
-    this.#clock.clearTimeout(this.#hostedSiteTerminalRetryTimer);
-    this.#hostedSiteTerminalRetryTimer = null;
-    this.#flushPendingHostedSiteTerminalEvents();
   }
 
   #scheduleHostedSiteTerminalRetry(): void {

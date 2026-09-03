@@ -2,7 +2,6 @@
 
 import { describe, expect, it } from "vitest";
 import { appendDeltaText, deltaKey, shouldFlushDeltaText } from "./delta-buffer";
-import { routineTimerDelayMs } from "./routine-scheduler";
 import { clampTimerMs, computeRestartDelayMs, computeRoutineDelayMs } from "./scheduler";
 
 describe("agent scheduler", () => {
@@ -12,7 +11,6 @@ describe("agent scheduler", () => {
     expect(computeRoutineDelayMs(new Date(1_000).toISOString(), 5_000)).toBe(0);
     expect(computeRoutineDelayMs(new Date(10_000).toISOString(), 1_000)).toBe(9_000);
     expect(computeRoutineDelayMs(new Date(9_999_999_999_999).toISOString(), 0)).toBe(2_147_000_000);
-    expect(routineTimerDelayMs(new Date(10_000).toISOString(), 1_000)).toBe(9_000);
   });
 
   it("backs restart delays off exponentially", () => {
