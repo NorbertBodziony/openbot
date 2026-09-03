@@ -328,11 +328,15 @@ export class HostService extends EventEmitter<HostEvents> {
   }
 
   async configure(input: ConfigureHostInput): Promise<HostStatus> {
-    const identity = await this.#options.store.configureWithAccount(
-      input.serverName,
-      this.#options.getSignedInUser(),
-      input.logo,
-    );
+    const account = this.#options.getSignedInUser();
+    const identity = await this.#options.store.configureWithAccount(input.serverName, account, input.logo);
+    // Nothing is bound while the first host is being written, so neither the store's
+    // `activeAccountId` nor `unbindChangedAccount` can see a switch announced during the
+    // write. Central authentication has the new account the moment it is announced, which
+    // is what the renderer was told, so that is what this is checked against.
+    if (this.#signedInAccountId() !== account.id) {
+      throw new Error("The signed-in account changed while this server was being created.");
+    }
     // The store checked the account before it resolved; the switch can still land between
     // there and here, and publishing then would show A's server to B.
     if (!this.#isActiveHost(identity.serverId)) return this.getStatus();
@@ -407,6 +411,15 @@ export class HostService extends EventEmitter<HostEvents> {
    * for a host the account no longer has would register or upload on the wrong account's
    * behalf. The store's own guards stop the local half; this stops the network half.
    */
+  /** The account central authentication has announced, or none while signed out. */
+  #signedInAccountId(): string | null {
+    try {
+      return this.#options.getSignedInUser().id;
+    } catch {
+      return null;
+    }
+  }
+
   #assertStillActiveHost(serverId: string): void {
     if (!this.#isActiveHost(serverId)) {
       throw new Error("The signed-in account changed while this server was being updated.");

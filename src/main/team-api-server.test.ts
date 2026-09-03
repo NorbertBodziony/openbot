@@ -158,6 +158,8 @@ async function createHostService(
   signIn: (user: CentralAuthUser | null) => Promise<void>;
   /** Holds the team file, so a test can make the store's write fail. */
   root: string;
+  /** Announces an account the way the renderer is told, before the queued switch is applied. */
+  announce: (user: CentralAuthUser) => void;
 }> {
   const root = await mkdtemp(join(tmpdir(), "openbot-host-service-"));
   roots.push(root);
@@ -191,6 +193,9 @@ async function createHostService(
   return {
     service,
     root,
+    announce: (user) => {
+      signedIn = user;
+    },
     signIn: async (user) => {
       signedIn = user;
       await service.applySignedInAccount(user);
@@ -2467,6 +2472,28 @@ describe("HostService account binding", () => {
     await signIn(second);
     expect(service.getStatus().serverId).toBe(secondIdentity.serverId);
     expect(service.getStatus().configured).toBe(true);
+  });
+
+  it("does not create the previous account's server once another account has been announced", async () => {
+    const registrations: string[] = [];
+    const { service, signIn, announce } = await createHostService({
+      registerRemoteHost: async ({ hostId }) => {
+        registrations.push(hostId);
+      },
+    });
+    await signIn(first);
+
+    const pending = service.configure({
+      serverName: "Studio Mac",
+      logo: { mimeType: "image/png", bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) },
+    });
+    // Announced while the logo and the host are being written, with the switch itself queued.
+    announce(second);
+
+    await expect(pending).rejects.toThrow("signed-in account changed");
+    expect(service.getStatus().configured).toBe(false);
+    // Registering would have reserved A's server under B's authentication.
+    expect(registrations).toEqual([]);
   });
 
   it("reports the account's own server again after signing out and back in", async () => {
