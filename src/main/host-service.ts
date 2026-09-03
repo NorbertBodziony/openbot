@@ -356,10 +356,14 @@ export class HostService extends EventEmitter<HostEvents> {
         message: "Registered this OpenBot for WebRTC access.",
       });
     } catch (error) {
-      this.#setStatus({
-        phase: "error",
-        message: error instanceof Error ? error.message : "Could not reserve the public address.",
-      });
+      // A failure that arrives after another account signed in belongs to the host that is
+      // gone, so it must not overwrite the status the new account is looking at.
+      if (this.#isActiveHost(identity.serverId)) {
+        this.#setStatus({
+          phase: "error",
+          message: error instanceof Error ? error.message : "Could not reserve the public address.",
+        });
+      }
     }
     return this.getStatus();
   }
@@ -392,6 +396,12 @@ export class HostService extends EventEmitter<HostEvents> {
    * for a host the account no longer has would register or upload on the wrong account's
    * behalf. The store's own guards stop the local half; this stops the network half.
    */
+  #assertStillActiveHost(serverId: string): void {
+    if (!this.#isActiveHost(serverId)) {
+      throw new Error("The signed-in account changed while this server was being updated.");
+    }
+  }
+
   #isActiveHost(serverId: string): boolean {
     return this.#options.store.getIdentity()?.serverId === serverId;
   }
@@ -665,6 +675,10 @@ export class HostService extends EventEmitter<HostEvents> {
         (member) => member.membershipId === input.memberId,
       );
       if (!current || current.role === "owner") throw new Error("The remote member does not exist.");
+      // The directory read is a round trip, and the account can change during it. Mutating
+      // the previous account's host with the new account's authorization is what this guard
+      // stops; the same check runs again before the result is written back.
+      this.#assertStillActiveHost(hostId);
       if (input.disabled) await this.#options.removeRemoteMember(hostId, input.memberId);
       else
         await this.#options.updateRemoteMember(
@@ -673,6 +687,7 @@ export class HostService extends EventEmitter<HostEvents> {
           input.role ?? current.role,
           input.disabled === false,
         );
+      this.#assertStillActiveHost(hostId);
       const members = await this.#options.listRemoteMembers(hostId);
       const updated = members.find((member) => member.membershipId === input.memberId);
       if (!updated) throw new Error("The remote member does not exist.");

@@ -137,7 +137,15 @@ type HostOptions = ConstructorParameters<typeof HostService>[0];
  * account's host the service is bound to.
  */
 async function createHostService(
-  remote: Pick<HostOptions, "listRemoteInvites" | "registerRemoteHost" | "updateRemoteHostLogo"> = {},
+  remote: Pick<
+    HostOptions,
+    | "listRemoteInvites"
+    | "registerRemoteHost"
+    | "updateRemoteHostLogo"
+    | "listRemoteMembers"
+    | "updateRemoteMember"
+    | "removeRemoteMember"
+  > = {},
 ): Promise<{
   service: HostService;
   /** Reports an account exactly as `forwardCentralAuth` does, sign-out included. */
@@ -2210,6 +2218,7 @@ async function emptyRequest(
 }
 
 type RemoteInvites = Awaited<ReturnType<NonNullable<HostOptions["listRemoteInvites"]>>>;
+type RemoteMembers = Awaited<ReturnType<NonNullable<HostOptions["listRemoteMembers"]>>>;
 
 describe("HostService account binding", () => {
   const first = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
@@ -2309,6 +2318,86 @@ describe("HostService account binding", () => {
 
     // Uploading it here would send A's image under B's authentication.
     expect(logos).toEqual([]);
+  });
+
+  it("does not change a member on the previous account's server once the account has changed", async () => {
+    let releaseRead: (members: RemoteMembers) => void = () => undefined;
+    const reading = new Promise<RemoteMembers>((resolve) => {
+      releaseRead = resolve;
+    });
+    let readStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      readStarted = resolve;
+    });
+    let reads = 0;
+    const mutations: string[] = [];
+    const { service, signIn } = await createHostService({
+      listRemoteMembers: () => {
+        reads += 1;
+        readStarted();
+        return reading;
+      },
+      updateRemoteMember: async (hostId) => {
+        mutations.push(hostId);
+      },
+      removeRemoteMember: async (hostId) => {
+        mutations.push(hostId);
+      },
+      registerRemoteHost: () => Promise.resolve(),
+    });
+    await signIn(first);
+    await service.configure({ serverName: "Studio Mac" });
+
+    const pending = service.updateMember({ memberId: "member-1", role: "admin" });
+    const settled = pending.catch(() => undefined);
+    await started;
+    await signIn(second);
+    releaseRead([
+      {
+        membershipId: "member-1",
+        email: "person@example.com",
+        name: null,
+        avatarUrl: null,
+        role: "member",
+        status: "active",
+        createdAt: 1_000,
+      },
+    ]);
+    await settled;
+
+    await expect(pending).rejects.toThrow("signed-in account changed");
+    // The mutation would have carried B's authorization to A's host.
+    expect(mutations).toEqual([]);
+    expect(reads).toBe(1);
+  });
+
+  it("leaves the new account's status alone when the previous account's registration fails", async () => {
+    let failRegistration: (error: Error) => void = () => undefined;
+    const registration = new Promise<void>((_resolve, reject) => {
+      failRegistration = reject;
+    });
+    let registrationStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      registrationStarted = resolve;
+    });
+    const { service, signIn } = await createHostService({
+      registerRemoteHost: () => {
+        registrationStarted();
+        return registration;
+      },
+    });
+    await signIn(first);
+
+    const pending = service.configure({ serverName: "Studio Mac" });
+    await started;
+    await signIn(second);
+    const beforeFailure = service.getStatus();
+    failRegistration(new Error("Could not reserve the public address."));
+    await pending;
+
+    // B has no server of its own; A's failure must not paint an error over that.
+    expect(service.getStatus()).toEqual(beforeFailure);
+    expect(service.getStatus().phase).not.toBe("error");
   });
 
   it("reports the account's own server again after signing out and back in", async () => {

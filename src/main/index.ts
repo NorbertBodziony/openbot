@@ -181,6 +181,8 @@ let remoteDesktopManager: RemoteDesktopManager | null = null;
 let remoteServerManager: RemoteServerManager | null = null;
 let centralAuthManager: CentralAuthManager | null = null;
 let activeRemotePrincipalId: string | null = null;
+/** Counts account transitions, so queued work for a superseded one is dropped rather than applied. */
+let centralAuthGeneration = 0;
 let activeAnalyticsPrincipalId: string | null = null;
 let remoteAccountSync = Promise.resolve();
 let hostAnalytics: HostAnalytics | null = null;
@@ -751,8 +753,13 @@ function forwardCentralAuth(state: CentralAuthState): void {
   // queued work below can finish, so the host stops answering for the previous account now.
   // The file is left alone until `applySignedInAccount` records the switch.
   hostService?.unbindChangedAccount(state.status === "signed_in" ? state.user : null);
+  const generation = ++centralAuthGeneration;
   remoteAccountSync = remoteAccountSync
     .then(async () => {
+      // Sign-outs and sign-ins can queue up behind one slow teardown. Only the account the
+      // renderer was last told about may be activated; an earlier one would put a host the
+      // user has already left back within reach.
+      if (generation !== centralAuthGeneration) return;
       const nextPrincipalId = state.status === "signed_in" ? state.user.id : null;
       if (activeRemotePrincipalId && activeRemotePrincipalId !== nextPrincipalId) {
         // Best-effort, like every other network step here: a bridge disconnect that

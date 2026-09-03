@@ -241,6 +241,7 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     ownerMembershipId: string;
     devicePublicKey?: string | null;
   }): Promise<RegisteredRemoteHost> {
+    const sessionToken = this.#sessionToken;
     const storedMachineToken = this.#teamHostTokens.get(input.hostId.toLowerCase());
     const result = await this.#authorizedRequest(
       "/v2/remote/hosts/register",
@@ -255,6 +256,12 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
       },
       decodeRegisteredRemoteHost,
     );
+    if (this.#sessionToken !== sessionToken) {
+      // The credential belongs to the account that asked for it. Writing it now would file
+      // it under whichever session is stored next, so the caller is told the registration
+      // no longer applies instead.
+      throw new Error("The signed-in account changed while this server was being registered.");
+    }
     if (result.machineToken) this.#teamHostTokens.set(input.hostId.toLowerCase(), result.machineToken);
     await this.#writeStoredSession();
     return result;
