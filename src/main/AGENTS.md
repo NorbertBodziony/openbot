@@ -8,10 +8,12 @@ renderer do with it".
 ## Where an IPC endpoint goes
 
 A renderer-to-main endpoint is **declared in `packages/contracts`** and **registered in
-`src/main/ipc/`, one file per domain** — never inline in `index.ts`. `registerIpcHandlers` there is
-a dispatcher and nothing else: it wires dependencies and calls one `register*IpcHandlers` per
+`src/main/ipc/`, one file per domain** — never inline in `index.ts`. `registerIpcHandlers` in
+`./ipc/ipc-registry.ts` is a dispatcher and nothing else: it wires dependencies and calls one
+`register*IpcHandlers` per
 domain, so a reviewer can read a domain's whole surface in one file instead of finding it
-interleaved with window and lifecycle code. `register-team-handlers.ts` is the shape to copy — a
+interleaved with window and lifecycle code. `index.ts` calls it once with its module-level state
+(the window, the pending invite, the analytics toggle). `register-team-handlers.ts` is the shape to copy — a
 `*IpcDependencies` interface, object destructuring in the signature, no imports from `index.ts`.
 
 Three things run at module scope in `index.ts` — `app.setPath`, `app.enableSandbox`,
@@ -80,6 +82,6 @@ not import `electron` in the first place.
 
 ## Size
 
-`index.ts` is the dispatcher plus window and lifecycle code and should not grow handlers again.
+`index.ts` wires the dispatcher plus window and lifecycle code and should not grow handlers again.
 `remote-server-manager.ts` is the outlier here; splitting it is its own change, but do not add a
 concern to it because it is already the file that has too many.

@@ -58,22 +58,8 @@ import { performDynamicIslandCriticalAction } from "./dynamic-island-actions";
 import { DynamicIslandWindowController, dynamicIslandNotchSizeForDisplay } from "./dynamic-island-window";
 import { DEVELOPMENT_REMOTE_CLIENT_USERNAME, HostService } from "./host-service";
 import { HostedSiteDesktopService } from "./hosted-site-service";
-import { registerAccountIpcHandlers } from "./ipc/register-account-handlers";
-import { registerAgentIpcHandlers } from "./ipc/register-agent-handlers";
-import { registerAppIpcHandlers } from "./ipc/register-app-handlers";
-import { registerAttachmentIpcHandlers } from "./ipc/register-attachment-handlers";
-import { registerBrowserIpcHandlers } from "./ipc/register-browser-handlers";
-import { registerComputerUseIpcHandlers } from "./ipc/register-computer-use-handlers";
-import { registerDynamicIslandIpcHandlers } from "./ipc/register-dynamic-island-handlers";
-import { registerHostedSiteIpcHandlers } from "./ipc/register-hosted-site-handlers";
-import { registerMarketplaceAgentIpcHandlers } from "./ipc/register-marketplace-agent-handlers";
-import { registerMemoryIpcHandlers } from "./ipc/register-memory-handlers";
-import { registerProviderIpcHandlers } from "./ipc/register-provider-handlers";
-import { registerRoutineIpcHandlers } from "./ipc/register-routine-handlers";
-import { registerSkillIpcHandlers } from "./ipc/register-skill-handlers";
-import { registerTeamIpcHandlers, withLocalHostSummary } from "./ipc/register-team-handlers";
-import { registerUpdateIpcHandlers } from "./ipc/register-update-handlers";
-import { registerVoiceIpcHandlers } from "./ipc/register-voice-handlers";
+import { registerIpcHandlers } from "./ipc/ipc-registry";
+import { withLocalHostSummary } from "./ipc/register-team-handlers";
 import { MacHapticFeedback } from "./mac-haptic-feedback";
 import { readMainWindowBounds, resolveMainWindowBounds, writeMainWindowBounds } from "./main-window-state";
 import { ManagedSkillService } from "./managed-skill-service";
@@ -236,96 +222,11 @@ function configureContentSecurityPolicy(): void {
   });
 }
 
-interface IpcHandlerDependencies {
-  service: AgentService;
-  providerRuntimes: ProviderRuntimeManager;
-  mailbox: MailboxStore;
-  browser: BrowserHost;
-  browserPictureInPicture: BrowserPictureInPicture;
-  updater: UpdateService;
-  setupFile: string;
-  analyticsPreferenceFile: string;
-  updatePreferenceFile: string;
-  initializeAgent: () => Promise<void>;
-  sidebarLayout: SidebarLayoutStore;
-  host: HostService;
-  remoteDesktop: RemoteDesktopManager;
-  remoteServers: RemoteServerManager;
-  centralAuth: CentralAuthManager;
-  skills: SkillMarketplaceService;
-  hostedSites: HostedSiteDesktopService;
-  marketplaceAgents: AgentMarketplaceService;
-  voice: VoiceTranscriptionService;
-  dynamicIsland: DynamicIslandWindowController;
-  computerUseMacSetup: ComputerUseMacSetupWindowController;
-}
-
-function registerIpcHandlers({
-  service,
-  providerRuntimes,
-  mailbox,
-  browser,
-  browserPictureInPicture,
-  updater,
-  setupFile,
-  analyticsPreferenceFile,
-  updatePreferenceFile,
-  initializeAgent,
-  sidebarLayout,
-  host,
-  remoteDesktop,
-  remoteServers,
-  centralAuth,
-  skills,
-  hostedSites,
-  marketplaceAgents,
-  voice,
-  dynamicIsland,
-  computerUseMacSetup,
-}: IpcHandlerDependencies): void {
-  // Every renderer-to-main endpoint is registered by one of these, one file per
-  // domain under ./ipc. Nothing is registered inline here: this is the trust
-  // boundary, and a reviewer should be able to read a domain's whole surface in
-  // one file rather than find it interleaved with window and lifecycle code.
-  const getMainWindow = () => mainWindow;
-
-  registerAppIpcHandlers({
-    service,
-    mailbox,
-    browser,
-    updater,
-    setupFile,
-    analyticsPreferenceFile,
-    initializeAgent,
-    appVariant,
-    getMainWindow,
-    setAnalyticsTrackingEnabled: (enabled) => hostAnalytics?.setTrackingEnabled(enabled),
-  });
-  registerDynamicIslandIpcHandlers({ dynamicIsland });
-  registerComputerUseIpcHandlers({ computerUseMacSetup });
-  registerProviderIpcHandlers({ service, providerRuntimes });
-  registerVoiceIpcHandlers({ voice });
-  registerAccountIpcHandlers({ centralAuth });
-  registerSkillIpcHandlers({ skills, getMainWindow });
-  registerHostedSiteIpcHandlers({ hostedSites, getMainWindow });
-  registerMarketplaceAgentIpcHandlers({ marketplaceAgents });
-  registerUpdateIpcHandlers({ updater, updatePreferenceFile });
-  registerTeamIpcHandlers({
-    host,
-    remoteDesktop,
-    remoteServers,
-    takePendingInvite: () => {
-      inviteReceiverReady = true;
-      const inviteUrl = pendingInviteUrl;
-      pendingInviteUrl = null;
-      return inviteUrl;
-    },
-  });
-  registerMemoryIpcHandlers({ service, remoteServers });
-  registerRoutineIpcHandlers({ service, remoteServers });
-  registerAttachmentIpcHandlers({ service, mailbox, remoteServers, getMainWindow });
-  registerAgentIpcHandlers({ service, sidebarLayout, host, remoteServers, skills });
-  registerBrowserIpcHandlers({ browserPictureInPicture, browser, remoteServers });
+function takePendingInviteUrl(): string | null {
+  inviteReceiverReady = true;
+  const inviteUrl = pendingInviteUrl;
+  pendingInviteUrl = null;
+  return inviteUrl;
 }
 
 function createWindow(): BrowserWindow {
@@ -1256,29 +1157,37 @@ if (!hasSingleInstanceLock) {
       updateService.on("status", forwardUpdateStatus);
       updateService.start();
       const agentInitialization = new AgentInitializationGate(() => service.initialize());
-      registerIpcHandlers({
-        service,
-        providerRuntimes: providerRuntimeManager,
-        mailbox: mailboxStore,
-        browser: browserHost,
-        browserPictureInPicture,
-        updater: updateService,
-        setupFile,
-        analyticsPreferenceFile,
-        updatePreferenceFile,
-        initializeAgent: () => agentInitialization.start(),
-        sidebarLayout: sidebarLayoutStore,
-        host,
-        remoteDesktop,
-        remoteServers,
-        centralAuth: centralAuthManager,
-        skills: skillMarketplace,
-        hostedSites,
-        marketplaceAgents: agentMarketplace,
-        voice: voiceTranscriptionService,
-        dynamicIsland: dynamicIslandController,
-        computerUseMacSetup: computerUseMacSetupController,
-      });
+      registerIpcHandlers(
+        {
+          service,
+          providerRuntimes: providerRuntimeManager,
+          mailbox: mailboxStore,
+          browser: browserHost,
+          browserPictureInPicture,
+          updater: updateService,
+          setupFile,
+          analyticsPreferenceFile,
+          updatePreferenceFile,
+          initializeAgent: () => agentInitialization.start(),
+          sidebarLayout: sidebarLayoutStore,
+          host,
+          remoteDesktop,
+          remoteServers,
+          centralAuth: centralAuthManager,
+          skills: skillMarketplace,
+          hostedSites,
+          marketplaceAgents: agentMarketplace,
+          voice: voiceTranscriptionService,
+          dynamicIsland: dynamicIslandController,
+          computerUseMacSetup: computerUseMacSetupController,
+        },
+        {
+          appVariant,
+          getMainWindow: () => mainWindow,
+          takePendingInvite: takePendingInviteUrl,
+          setAnalyticsTrackingEnabled: (enabled) => hostAnalytics?.setTrackingEnabled(enabled),
+        },
+      );
       configureApplicationMenu(service, updateService);
       await dynamicIslandController
         .initialize()
