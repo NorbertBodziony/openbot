@@ -3,6 +3,7 @@ import type { HostService } from "../host-service";
 import type { RemoteDesktopManager } from "../remote-desktop-manager";
 import type { RemoteServerManager } from "../remote-server-manager";
 import { handleTrusted } from "../trusted-ipc";
+import { parseAgentRequest } from "./agent-inputs";
 import {
   parseCreateTeamInvite,
   parseDirectTyping,
@@ -68,21 +69,25 @@ export function registerTeamIpcHandlers({
   handleTrusted(IPC_CHANNELS.serversListMembers, (serverId: unknown) =>
     remoteServers.listMembers(requireString(serverId, "serverId")),
   );
-  handleTrusted(IPC_CHANNELS.serversUpdateMember, (serverId: unknown, input: unknown) =>
-    remoteServers.updateMember(requireString(serverId, "serverId"), parseUpdateTeamMember(input)),
-  );
-  handleTrusted(IPC_CHANNELS.serversRemoveMember, (serverId: unknown, memberId: unknown) =>
-    remoteServers.removeMember(requireString(serverId, "serverId"), requireString(memberId, "memberId")),
-  );
+  handleTrusted(IPC_CHANNELS.serversUpdateMember, (input: unknown) => {
+    const request = parseAgentRequest(input);
+    return remoteServers.updateMember(request.serverId, parseUpdateTeamMember(request.payload));
+  });
+  handleTrusted(IPC_CHANNELS.serversRemoveMember, (input: unknown) => {
+    const request = parseAgentRequest(input);
+    return remoteServers.removeMember(request.serverId, requireString(request.payload, "memberId"));
+  });
   handleTrusted(IPC_CHANNELS.serversListInvites, (serverId: unknown) =>
     remoteServers.listInvites(requireString(serverId, "serverId")),
   );
-  handleTrusted(IPC_CHANNELS.serversRevokeInvite, (serverId: unknown, inviteId: unknown) =>
-    remoteServers.revokeInvite(requireString(serverId, "serverId"), requireString(inviteId, "inviteId")),
-  );
-  handleTrusted(IPC_CHANNELS.serversCreateInvite, (serverId: unknown, input: unknown) =>
-    remoteServers.createInvite(requireString(serverId, "serverId"), parseCreateTeamInvite(input)),
-  );
+  handleTrusted(IPC_CHANNELS.serversRevokeInvite, (input: unknown) => {
+    const request = parseAgentRequest(input);
+    return remoteServers.revokeInvite(request.serverId, requireString(request.payload, "inviteId"));
+  });
+  handleTrusted(IPC_CHANNELS.serversCreateInvite, (input: unknown) => {
+    const request = parseAgentRequest(input);
+    return remoteServers.createInvite(request.serverId, parseCreateTeamInvite(request.payload));
+  });
   handleTrusted(IPC_CHANNELS.serversSetTyping, (input: unknown) => {
     const parsed = parseSetTeamTyping(input);
     if (remoteServers.activeServerId === "local") host.setTyping(parsed);
