@@ -131,9 +131,9 @@ const QuestionPromptBubble = lazy(() =>
 function conversationBubbleVariant(message: BotMessage): BubbleVariant {
   if (message.author === "you") return "secondary";
   if (message.imageGeneration || (!message.body.trim() && message.attachments?.length)) return "ghost";
-  return messageContentBlocks(message.body, message.streaming === true).some((block) => block.type !== "text")
-    ? "ghost"
-    : "muted";
+  const contentBlocks = messageContentBlocks(message.body, message.streaming === true);
+  if (contentBlocks.some((block) => block.type === "table" || block.type === "comparison-table")) return "muted";
+  return contentBlocks.some((block) => block.type !== "text") ? "ghost" : "muted";
 }
 
 interface RenderedAgentActivity {

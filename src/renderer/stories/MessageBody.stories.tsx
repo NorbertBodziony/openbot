@@ -248,10 +248,10 @@ export const DataTableNarrow: Story = {
       ...message,
       id: "message-data-table-narrow",
       body: [
-        "| Model | Provider | Context | Input | Output | Released |",
-        "| --- | --- | ---: | ---: | ---: | --- |",
-        "| gpt-4o | OpenAI | 128k | $5.00 | $15.00 | May 2024 |",
-        "| claude-3.5 | Anthropic | 200k | $3.00 | $15.00 | June 2024 |",
+        "| Fixture | Market odds H/D/A | Implied H/D/A | Scenario | Pick |",
+        "| --- | ---: | ---: | ---: | --- |",
+        "| Ipswich–Liverpool | 5.25 / 4.60 / 1.57 | 18% / 21% / 61% | 20% / 22% / 58% | Liverpool win |",
+        "| Newcastle–Bournemouth | 2.20 / 3.70 / 3.00 | 43% / 26% / 32% | 45% / 27% / 28% | Newcastle, cautiously |",
       ].join("\n"),
       status: undefined,
       attachments: [],
@@ -261,6 +261,8 @@ export const DataTableNarrow: Story = {
   play: async ({ canvas }) => {
     const region = canvas.getByRole("region", { name: "Data table" });
     await expect(region.scrollWidth).toBeGreaterThan(region.clientWidth);
+    const longFixture = canvas.getByText("Newcastle–Bournemouth");
+    await expect(getComputedStyle(longFixture).textOverflow).toBe("clip");
   },
 };
 

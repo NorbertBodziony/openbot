@@ -408,7 +408,7 @@ const dataTableMessages: RendererBotMessage[] = [
   {
     id: "data-table-user",
     author: "you",
-    body: "Compare the available models by context window and input price.",
+    body: "Compare the upcoming Premier League fixtures.",
     time: "10:02",
     kind: "text",
   },
@@ -416,13 +416,15 @@ const dataTableMessages: RendererBotMessage[] = [
     id: "data-table-agent",
     author: "bot",
     body: [
-      "Here’s a compact comparison:",
+      "Here’s a compact comparison based on the current market:",
       "",
-      "| Model | Context | $/1M in |",
-      "| --- | --- | ---: |",
-      "| gpt-4o | 128k | $5.00 |",
-      "| claude-3.5 | 200k | $3.00 |",
-      "| llama-3.1 | 128k | $0.90 |",
+      "| Fixture | Market odds H/D/A | Implied H/D/A | Scenario | Pick |",
+      "| --- | ---: | ---: | ---: | --- |",
+      "| Ipswich–Liverpool | 5.25 / 4.60 / 1.57 | 18% / 21% / 61% | 20% / 22% / 58% | Liverpool win |",
+      "| Newcastle–Bournemouth | 2.20 / 3.70 / 3.00 | 43% / 26% / 32% | 45% / 27% / 28% | Newcastle, cautiously |",
+      "| Brighton–Leeds | 1.90 / 3.60 / 4.00 | 50% / 26% / 24% | 48% / 27% / 25% | Brighton win |",
+      "",
+      "Long values should remain readable by scrolling the table, and the message actions should stay aligned with the bottom of the response.",
     ].join("\n"),
     time: "10:03",
     kind: "text",
@@ -1148,9 +1150,17 @@ export const DataTableInChat: Story = {
     messages: dataTableMessages,
   },
   play: async ({ canvas }) => {
-    await expect(canvas.getByText("Compare the available models by context window and input price.")).toBeVisible();
-    await expect(canvas.getByRole("table")).toBeVisible();
-    await expect(canvas.getAllByRole("columnheader")).toHaveLength(3);
+    await expect(canvas.getByText("Compare the upcoming Premier League fixtures.")).toBeVisible();
+    const table = canvas.getByRole("table");
+    await expect(table).toBeVisible();
+    await expect(canvas.getAllByRole("columnheader")).toHaveLength(5);
+    const bubble = table.closest<HTMLElement>(".ui-bubble");
+    const actions = canvas.getByRole("toolbar", { name: "Agent message actions" });
+    if (!bubble) throw new Error("The data table message bubble is missing.");
+    await expect(bubble).toHaveAttribute("data-variant", "muted");
+    await expect(
+      Math.abs(actions.getBoundingClientRect().bottom - bubble.getBoundingClientRect().bottom),
+    ).toBeLessThanOrEqual(2);
   },
 };
 
