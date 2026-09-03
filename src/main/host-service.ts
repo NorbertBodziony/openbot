@@ -281,20 +281,14 @@ export class HostService extends EventEmitter<HostEvents> {
     const previousServerId = this.#status.serverId;
     if (this.#boundAccountId !== undefined) {
       this.#runtimeGeneration += 1;
-      // Isolation cannot depend on the teardown succeeding: a WebRTC disconnect rejects
-      // on a command error or a timeout, and leaving the previous account's host bound is
-      // by far the worse failure. Report it and rebind anyway.
-      try {
-        // The same three steps as `stop`, and for the same reason: a start still in flight
-        // belongs to the previous account. The bumped generation makes it abort at its
-        // next checkpoint, and draining it here is what stops `start()` from handing the
-        // new account that superseded operation instead of starting its own host.
-        await this.#stopRuntime();
-        await this.#startOperation;
-        await this.#stopRuntime();
-      } catch (error) {
-        console.error("Unable to stop the host runtime while switching accounts:", error);
-      }
+      // The same three steps as `stop`, and for the same reason: a start still in flight
+      // belongs to the previous account. The bumped generation makes it abort at its next
+      // checkpoint, and draining it here is what stops `start()` from handing the new
+      // account that superseded operation instead of starting its own host. Each step is
+      // attempted on its own, so a gateway that will not come down cannot skip the drain.
+      await this.#attemptTeardown(() => this.#stopRuntime());
+      await this.#attemptTeardown(() => this.#startOperation);
+      await this.#attemptTeardown(() => this.#stopRuntime());
     }
     let activated = false;
     try {
@@ -876,6 +870,19 @@ export class HostService extends EventEmitter<HostEvents> {
 
   async shutdown(): Promise<void> {
     await this.stop(false);
+  }
+
+  /**
+   * Isolation cannot depend on a teardown step succeeding: a WebRTC disconnect rejects on a
+   * command error or a timeout, and leaving the previous account's host bound is by far the
+   * worse failure. Reported, and the steps after it still run.
+   */
+  async #attemptTeardown(step: () => PromiseLike<unknown> | null): Promise<void> {
+    try {
+      await step();
+    } catch (error) {
+      console.error("Unable to stop the host runtime while switching accounts:", error);
+    }
   }
 
   async #stopRuntime(): Promise<void> {
