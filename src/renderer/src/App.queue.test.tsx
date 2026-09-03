@@ -564,7 +564,7 @@ describe("OpenBot connected desktop shell", () => {
       },
     });
     await waitFor(() => expect(disclosure.getAttribute("aria-expanded")).toBe("false"));
-    expect(screen.getByText("Opened x.com.")).toBeVisible();
+    expect(await screen.findByText("Opened x.com.")).toBeVisible();
     expect(screen.getByText("I’ll open x.com in the OpenBot browser.")).toBeInTheDocument();
     expect(screen.getByText("Checking that the page loaded.")).toBeInTheDocument();
 
