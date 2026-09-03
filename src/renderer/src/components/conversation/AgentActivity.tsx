@@ -54,9 +54,13 @@ export function AgentActivityIndicator(props: {
   const label = () => props.detail ?? props.presentation.label;
   return (
     <div class="agent-activity-entry" data-state={props.phase ?? "active"}>
-      <span class="sr-only" role="status" aria-live="polite" aria-atomic="true">
-        {`${props.bot?.name ?? "Agent"} is working: ${label()}`}
-      </span>
+      <span
+        class="sr-only"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        aria-label={`${props.bot?.name ?? "Agent"} is working: ${label()}`}
+      />
       <section class="agent-activity-content" aria-label="Current activity">
         <AgentAvatar
           bot={props.bot}
