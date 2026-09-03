@@ -8,9 +8,10 @@ import type { MobileServer } from "@/features/workspace/context/mobile-workspace
 import { ProfileAvatar } from "@/shared/components/profile-avatar";
 import { SheetScrollEdgeEffect } from "@/shared/components/sheet-scroll-edge-effect";
 
+import { ServerDrawerIconButton } from "./server-drawer-icon-button";
+
 interface ServerDrawerContentProps {
   activeServerId: string;
-  foreground: ViewStyle["backgroundColor"];
   headerHeight: number;
   listTopInset: number;
   muted: ViewStyle["backgroundColor"];
@@ -24,7 +25,6 @@ interface ServerDrawerContentProps {
 
 export function ServerDrawerContent({
   activeServerId,
-  foreground,
   headerHeight,
   listTopInset,
   muted,
@@ -37,7 +37,6 @@ export function ServerDrawerContent({
 }: ServerDrawerContentProps) {
   const emailSeparatorIndex = session.user.email.indexOf("@");
   const displayName = emailSeparatorIndex > 0 ? session.user.email.slice(0, emailSeparatorIndex) : session.user.email;
-  const iconColor = String(foreground);
   const mutedColor = String(muted);
 
   return (
@@ -98,19 +97,6 @@ export function ServerDrawerContent({
             </Pressable>
           );
         })}
-
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Join a server"
-          className="mt-2 min-h-14 flex-row items-center gap-3 rounded-2xl px-3 py-2"
-          onPress={() => onNavigate("/add-server")}
-          style={({ pressed }) => ({ opacity: pressed ? 0.58 : 1 })}
-        >
-          <View className="size-11 items-center justify-center rounded-[15px] border border-border bg-control">
-            <Plus color={iconColor} size={21} strokeWidth={1.8} />
-          </View>
-          <Typography.Paragraph weight="semibold">Join a server</Typography.Paragraph>
-        </Pressable>
       </ScrollView>
 
       <SheetScrollEdgeEffect
@@ -118,23 +104,26 @@ export function ServerDrawerContent({
       />
 
       <View
-        className="absolute right-0 z-20 h-14 justify-center"
-        pointerEvents="none"
+        className="absolute right-0 z-20 h-14 flex-row items-center justify-between pr-3"
+        pointerEvents="box-none"
         style={{ left: -sideInset, paddingLeft: sideInset + 12, top: Math.max(topInset, 16) }}
       >
         <Typography.Heading type="h1" weight="bold">
           Servers
         </Typography.Heading>
+        <ServerDrawerIconButton
+          accessibilityLabel="Join a server"
+          color={mutedColor}
+          fallbackVariant="filled"
+          systemName="plus"
+          onPress={() => onNavigate("/add-server")}
+        >
+          <Plus color={mutedColor} size={18} strokeWidth={2} />
+        </ServerDrawerIconButton>
       </View>
 
-      <View className="mr-3 flex-row items-center gap-2  pt-2">
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Account: ${displayName}`}
-          className="min-h-14 min-w-0 flex-1 flex-row items-center gap-2.5 rounded-2xl px-2 py-2"
-          onPress={() => onNavigate("/settings")}
-          style={({ pressed }) => ({ opacity: pressed ? 0.58 : 1 })}
-        >
+      <View className="mr-3 flex-row items-center gap-2 pt-2">
+        <View className="min-h-14 min-w-0 flex-1 flex-row items-center gap-2.5 rounded-2xl px-2 py-2">
           <ProfileAvatar name={displayName} imageUrl={session.user.avatarUrl} size={36} />
           <View className="min-w-0 flex-1">
             <Typography.Paragraph type="body-sm" weight="semibold" numberOfLines={1}>
@@ -144,17 +133,15 @@ export function ServerDrawerContent({
               {session.user.email}
             </Typography.Paragraph>
           </View>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
+        </View>
+        <ServerDrawerIconButton
           accessibilityLabel="Settings"
-          hitSlop={8}
-          className="size-10 items-center justify-center rounded-full"
+          color={mutedColor}
+          systemName="gearshape"
           onPress={() => onNavigate("/settings")}
-          style={({ pressed }) => ({ opacity: pressed ? 0.58 : 1 })}
         >
           <Settings color={mutedColor} size={18} strokeWidth={1.8} />
-        </Pressable>
+        </ServerDrawerIconButton>
       </View>
     </>
   );
