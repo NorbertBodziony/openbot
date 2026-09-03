@@ -3,12 +3,7 @@ import { existsSync } from "node:fs";
 import { chmod, copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
-import {
-  ATTACHMENT_FILE_EXTENSIONS,
-  IMAGE_ATTACHMENT_EXTENSIONS,
-  isSupportedAttachmentName,
-  SUPPORTED_ATTACHMENT_DESCRIPTION,
-} from "@openbot/contracts/attachment-files";
+import { ATTACHMENT_FILE_EXTENSIONS, IMAGE_ATTACHMENT_EXTENSIONS } from "@openbot/contracts/attachment-files";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { parseInviteUrl } from "@openbot/contracts/invite-links";
 import {
@@ -63,6 +58,7 @@ import { notificationForAgentEvent } from "./agent-notifications";
 import { HostAnalytics } from "./analytics";
 import { readAnalyticsPreference, writeAnalyticsPreference } from "./analytics-preference-store";
 import { readAppVariant, resolveAppIconPath } from "./app-icon";
+import { normalizeAttachmentImports } from "./attachment-import";
 import { BrowserPictureInPicture } from "./browser-picture-in-picture";
 import { CentralAuthManager, readCentralAuthApiUrl, readMobileConnectApiUrl } from "./central-auth-manager";
 import { ComputerUseMacSetupService } from "./computer-use-mac-setup";
@@ -908,15 +904,12 @@ function registerIpcHandlers(
     };
     const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
     if (result.canceled) return [];
-    if (serverId === "local") return service.prepareAttachments(result.filePaths);
-    return uploadRemotePaths(remoteServers, serverId, result.filePaths);
+    return routeImportAttachments(service, remoteServers, serverId, { paths: result.filePaths, data: [] });
   });
-  handleTrusted(IPC_CHANNELS.agentImportAttachments, (input: unknown) => {
+  handleTrusted(IPC_CHANNELS.agentImportAttachments, async (input: unknown) => {
     const scoped = parseAgentRequest(input);
     const parsed = parseImportAttachments(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.prepareImportedAttachments(parsed.paths, parsed.data)
-      : uploadRemoteImports(remoteServers, scoped.serverId, parsed);
+    return routeImportAttachments(service, remoteServers, scoped.serverId, parsed);
   });
   handleTrusted(IPC_CHANNELS.agentDiscardDraftAttachment, (input: unknown) => {
     const scoped = parseAgentRequest(input);
@@ -2453,27 +2446,16 @@ function routeListQueue(service: AgentService, remoteServers: RemoteServerManage
     : remoteServers.request(`/v1/agents/${encodeURIComponent(botId)}/queue`, {}, serverId, decodeQueueSnapshot);
 }
 
-async function uploadRemotePaths(remoteServers: RemoteServerManager, serverId: string, paths: string[]) {
-  if (paths.length > INPUT_LIMITS.attachments) {
-    throw new Error(`Choose at most ${INPUT_LIMITS.attachments} files.`);
-  }
-  for (const path of paths) assertSupportedAttachmentName(basename(path));
-  const files = await Promise.all(
-    paths.map(async (path) => ({
-      name: basename(path),
-      bytes: new Uint8Array(await readFile(path)),
-    })),
-  );
-  const total = files.reduce((sum, file) => sum + file.bytes.byteLength, 0);
-  if (files.some((file) => file.bytes.byteLength > ATTACHMENT_LIMITS.fileBytes)) {
-    throw new Error("A file exceeds the 100 MB limit.");
-  }
-  if (total > ATTACHMENT_LIMITS.totalBytes) {
-    throw new Error("Attachments exceed the 250 MB total limit.");
-  }
-  return Promise.all(
-    files.map((file) => remoteServers.uploadAttachment(file.name, mimeTypeForName(file.name), file.bytes, serverId)),
-  );
+async function routeImportAttachments(
+  service: AgentService,
+  remoteServers: RemoteServerManager,
+  serverId: string,
+  input: ImportAttachmentsInput,
+) {
+  const normalized = await normalizeAttachmentImports(input);
+  return serverId === "local"
+    ? service.prepareImportedAttachments(normalized.paths, normalized.data)
+    : uploadRemoteImports(remoteServers, serverId, normalized);
 }
 
 async function uploadRemoteImports(
@@ -2499,7 +2481,6 @@ async function uploadRemoteImports(
       bytes: item.bytes,
     })),
   ];
-  for (const file of files) assertSupportedAttachmentName(file.name);
   if (files.some((file) => file.bytes.byteLength > ATTACHMENT_LIMITS.fileBytes)) {
     throw new Error("A file exceeds the 100 MB limit.");
   }
@@ -2509,11 +2490,6 @@ async function uploadRemoteImports(
   return Promise.all(
     files.map((file) => remoteServers.uploadAttachment(file.name, file.mimeType, file.bytes, serverId)),
   );
-}
-
-function assertSupportedAttachmentName(name: string): void {
-  if (isSupportedAttachmentName(name)) return;
-  throw new Error(`${name} is not supported. Attach ${SUPPORTED_ATTACHMENT_DESCRIPTION}.`);
 }
 
 function configureAttachmentProtocol(mailbox: MailboxStore, agents: AgentService): void {

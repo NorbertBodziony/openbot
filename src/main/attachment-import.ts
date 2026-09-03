@@ -1,0 +1,398 @@
+import { readFile, stat } from "node:fs/promises";
+import { basename, extname } from "node:path";
+import {
+  attachmentFileExtension,
+  attachmentMimeTypeForName,
+  isSupportedAttachmentImportName,
+  isSupportedAttachmentName,
+  SUPPORTED_ATTACHMENT_IMPORT_DESCRIPTION,
+} from "@openbot/contracts/attachment-files";
+import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import type { AttachmentDataInput, ImportAttachmentsInput } from "@openbot/contracts/ipc";
+import { strFromU8, unzip } from "fflate";
+import PostalMime from "postal-mime";
+
+const ZIP_CENTRAL_SIGNATURE = 0x02014b50;
+const ZIP_LOCAL_SIGNATURE = 0x04034b50;
+const ZIP_ENCRYPTED_FLAG = 1;
+const ZIP_UTF8_FLAG = 0x0800;
+const ZIP_DIRECTORY_ATTRIBUTE = 0x10;
+const UNIX_FILE_TYPE_MASK = 0o170000;
+const UNIX_REGULAR_FILE = 0o100000;
+const UNIX_DIRECTORY = 0o040000;
+const EMAIL_MAX_HEADERS_BYTES = 2 * 1024 * 1024;
+const EMAIL_MAX_NESTING_DEPTH = 32;
+
+interface ZipEntry {
+  name: string;
+  size: number;
+  directory: boolean;
+  crc32: number;
+}
+
+export async function normalizeAttachmentImports(input: ImportAttachmentsInput): Promise<ImportAttachmentsInput> {
+  if (input.paths.length + input.data.length === 0) return { paths: [], data: [] };
+  if (input.paths.length + input.data.length > INPUT_LIMITS.attachments) {
+    throw new Error(`Choose at most ${INPUT_LIMITS.attachments} files.`);
+  }
+
+  const paths: string[] = [];
+  const data: AttachmentDataInput[] = [];
+  for (const path of input.paths) {
+    const name = basename(path);
+    assertSupportedImport(name);
+    if (isContainer(name)) {
+      const metadata = await stat(path);
+      if (!metadata.isFile()) throw new Error(`Only regular files can be attached: ${name}`);
+      if (metadata.size > ATTACHMENT_LIMITS.fileBytes) throw new Error(`${name} exceeds the 100 MB limit.`);
+      data.push(...(await expandContainer(name, new Uint8Array(await readFile(path)))));
+    } else {
+      paths.push(path);
+    }
+  }
+  for (const item of input.data) {
+    const name = basename(item.name);
+    assertSupportedImport(name);
+    if (isContainer(name)) data.push(...(await expandContainer(name, item.bytes)));
+    else data.push({ name, mimeType: item.mimeType, bytes: item.bytes });
+  }
+
+  await assertExpandedLimits(paths, data);
+  return { paths, data };
+}
+
+function isContainer(name: string): boolean {
+  const extension = attachmentFileExtension(name);
+  return extension === "eml" || extension === "zip";
+}
+
+function assertSupportedImport(name: string): void {
+  if (isSupportedAttachmentImportName(name)) return;
+  throw new Error(`${name || "This file"} is not supported. Attach ${SUPPORTED_ATTACHMENT_IMPORT_DESCRIPTION}.`);
+}
+
+async function expandContainer(name: string, bytes: Uint8Array): Promise<AttachmentDataInput[]> {
+  if (bytes.byteLength > ATTACHMENT_LIMITS.fileBytes) throw new Error(`${name} exceeds the 100 MB limit.`);
+  return attachmentFileExtension(name) === "eml" ? expandEmail(name, bytes) : expandZip(name, bytes);
+}
+
+async function expandEmail(name: string, bytes: Uint8Array): Promise<AttachmentDataInput[]> {
+  let email: Awaited<ReturnType<typeof PostalMime.parse>>;
+  try {
+    email = await PostalMime.parse(bytes, {
+      attachmentEncoding: "arraybuffer",
+      maxHeadersSize: EMAIL_MAX_HEADERS_BYTES,
+      maxNestingDepth: EMAIL_MAX_NESTING_DEPTH,
+      rfc822Attachments: true,
+    });
+  } catch {
+    throw new Error(`${name} is malformed or exceeds safe email parsing limits. Export it again and retry.`);
+  }
+  if (email.headers.length === 0 && !email.text?.trim() && !email.html?.trim() && email.attachments.length === 0) {
+    throw new Error(`${name} does not contain a recognizable email message. Export it as EML and retry.`);
+  }
+
+  const stem = safeStem(name);
+  const summary = [
+    email.headers.map((header) => `${header.originalKey}: ${header.value}`).join("\n"),
+    email.text?.trim() || (email.html?.trim() ? "The email body is available in the accompanying HTML file." : ""),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  const result: AttachmentDataInput[] = [textAttachment(`${stem} - email.txt`, summary)];
+  if (email.html?.trim()) result.push(textAttachment(`${stem} - email.html`, email.html, "text/html"));
+
+  const usedNames = new Set(result.map((item) => item.name));
+  for (const [index, attachment] of email.attachments.entries()) {
+    const sourceName = attachment.filename?.trim() || fallbackAttachmentName(attachment.mimeType, index + 1);
+    assertSafeMemberName(name, sourceName);
+    assertLeafEntry(name, sourceName);
+    const outputName = uniqueName(flattenedName(stem, sourceName), usedNames);
+    result.push({
+      name: outputName,
+      mimeType: attachmentMimeTypeForName(outputName),
+      bytes: attachmentBytes(attachment.content, attachment.encoding),
+    });
+  }
+  return result;
+}
+
+async function expandZip(name: string, bytes: Uint8Array): Promise<AttachmentDataInput[]> {
+  const entries = inspectZip(name, bytes).filter((entry) => !entry.directory && !isPlatformMetadata(entry.name));
+  if (entries.length === 0) throw new Error(`${name} does not contain any supported files.`);
+  if (entries.length > INPUT_LIMITS.attachments) {
+    throw new Error(`${name} expands to more than ${INPUT_LIMITS.attachments} attachments. Remove files and retry.`);
+  }
+  for (const entry of entries) {
+    assertSafeMemberName(name, entry.name);
+    assertLeafEntry(name, entry.name);
+    if (entry.size > ATTACHMENT_LIMITS.fileBytes) {
+      throw new Error(
+        `${name} contains ${entry.name}, which exceeds the 100 MB limit. Extract a smaller file and retry.`,
+      );
+    }
+  }
+  const total = entries.reduce((sum, entry) => sum + entry.size, 0);
+  if (total > ATTACHMENT_LIMITS.totalBytes) {
+    throw new Error(`${name} expands beyond the 250 MB total limit. Remove files from the archive and retry.`);
+  }
+
+  let extracted: Record<string, Uint8Array>;
+  try {
+    extracted = await unzipArchive(bytes, new Set(entries.map((entry) => entry.name)));
+  } catch {
+    throw new Error(`${name} is malformed or uses an unsupported ZIP encoding. Recreate the archive and retry.`);
+  }
+  const stem = safeStem(name);
+  const usedNames = new Set<string>();
+  return entries.map((entry) => {
+    const content = extracted[entry.name];
+    if (!content || content.byteLength !== entry.size || crc32(content) !== entry.crc32) {
+      throw new Error(`${name} contains a damaged entry (${entry.name}). Recreate the archive and retry.`);
+    }
+    const outputName = uniqueName(flattenedName(stem, entry.name), usedNames);
+    return { name: outputName, mimeType: attachmentMimeTypeForName(outputName), bytes: content };
+  });
+}
+
+function unzipArchive(bytes: Uint8Array, names: Set<string>): Promise<Record<string, Uint8Array>> {
+  return new Promise((resolve, reject) => {
+    unzip(bytes, { filter: (entry) => names.has(entry.name) }, (error, result) => {
+      if (error) reject(error);
+      else resolve(result);
+    });
+  });
+}
+
+function inspectZip(archiveName: string, bytes: Uint8Array): ZipEntry[] {
+  const endOffset = findZipEnd(bytes);
+  if (endOffset < 0) throw new Error(`${archiveName} is not a valid ZIP archive. Recreate it and retry.`);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const disk = view.getUint16(endOffset + 4, true);
+  const centralDisk = view.getUint16(endOffset + 6, true);
+  const diskEntries = view.getUint16(endOffset + 8, true);
+  const entryCount = view.getUint16(endOffset + 10, true);
+  const centralSize = view.getUint32(endOffset + 12, true);
+  const centralOffset = view.getUint32(endOffset + 16, true);
+  if (disk !== 0 || centralDisk !== 0 || diskEntries !== entryCount) {
+    throw new Error(
+      `${archiveName} is a multi-volume ZIP, which is not supported. Extract it first and attach the files.`,
+    );
+  }
+  if (entryCount === 0xffff || centralSize === 0xffffffff || centralOffset === 0xffffffff) {
+    throw new Error(`${archiveName} uses ZIP64, which is not supported. Extract it first and attach the files.`);
+  }
+  if (centralOffset + centralSize > endOffset) throw new Error(`${archiveName} has a damaged ZIP directory.`);
+
+  const entries: ZipEntry[] = [];
+  const names = new Set<string>();
+  let offset = centralOffset;
+  for (let index = 0; index < entryCount; index += 1) {
+    if (offset + 46 > endOffset || view.getUint32(offset, true) !== ZIP_CENTRAL_SIGNATURE) {
+      throw new Error(`${archiveName} has a damaged ZIP directory.`);
+    }
+    const flags = view.getUint16(offset + 8, true);
+    const compression = view.getUint16(offset + 10, true);
+    const expectedCrc32 = view.getUint32(offset + 16, true);
+    const compressedSize = view.getUint32(offset + 20, true);
+    const size = view.getUint32(offset + 24, true);
+    const nameLength = view.getUint16(offset + 28, true);
+    const extraLength = view.getUint16(offset + 30, true);
+    const commentLength = view.getUint16(offset + 32, true);
+    const externalAttributes = view.getUint32(offset + 38, true);
+    const localOffset = view.getUint32(offset + 42, true);
+    const nextOffset = offset + 46 + nameLength + extraLength + commentLength;
+    if (nextOffset > endOffset || localOffset + 30 > bytes.byteLength) {
+      throw new Error(`${archiveName} has a damaged ZIP directory.`);
+    }
+    const nameBytes = bytes.subarray(offset + 46, offset + 46 + nameLength);
+    const name = strFromU8(nameBytes, (flags & ZIP_UTF8_FLAG) === 0);
+    if (names.has(name)) throw new Error(`${archiveName} contains a duplicate path (${name}). Remove it and retry.`);
+    names.add(name);
+    if (compressedSize === 0xffffffff || size === 0xffffffff || localOffset === 0xffffffff) {
+      throw new Error(`${archiveName} uses ZIP64, which is not supported. Extract it first and attach the files.`);
+    }
+    if ((flags & ZIP_ENCRYPTED_FLAG) !== 0) {
+      throw new Error(`${archiveName} contains a password-protected entry (${name}). Remove the password and retry.`);
+    }
+    if (compression !== 0 && compression !== 8) {
+      throw new Error(
+        `${archiveName} contains ${name} with unsupported ZIP compression. Recreate the archive and retry.`,
+      );
+    }
+    if (view.getUint32(localOffset, true) !== ZIP_LOCAL_SIGNATURE) {
+      throw new Error(`${archiveName} has a damaged ZIP entry (${name}).`);
+    }
+    const localFlags = view.getUint16(localOffset + 6, true);
+    if ((localFlags & ZIP_ENCRYPTED_FLAG) !== 0) {
+      throw new Error(`${archiveName} contains a password-protected entry (${name}). Remove the password and retry.`);
+    }
+    const localNameLength = view.getUint16(localOffset + 26, true);
+    const localExtraLength = view.getUint16(localOffset + 28, true);
+    const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
+    if (dataOffset + compressedSize > centralOffset) {
+      throw new Error(`${archiveName} has a damaged ZIP entry (${name}).`);
+    }
+    const origin = view.getUint8(offset + 5);
+    const unixType = origin === 3 ? (externalAttributes >>> 16) & UNIX_FILE_TYPE_MASK : 0;
+    const directory =
+      name.endsWith("/") || (externalAttributes & ZIP_DIRECTORY_ATTRIBUTE) !== 0 || unixType === UNIX_DIRECTORY;
+    if (unixType !== 0 && unixType !== UNIX_REGULAR_FILE && unixType !== UNIX_DIRECTORY) {
+      throw new Error(`${archiveName} contains a link or special file (${name}). Remove it and retry.`);
+    }
+    entries.push({ name, size, directory, crc32: expectedCrc32 });
+    offset = nextOffset;
+  }
+  if (offset !== centralOffset + centralSize) throw new Error(`${archiveName} has a damaged ZIP directory.`);
+  return entries;
+}
+
+function findZipEnd(bytes: Uint8Array): number {
+  const minimum = Math.max(0, bytes.byteLength - 65_557);
+  for (let offset = bytes.byteLength - 22; offset >= minimum; offset -= 1) {
+    if (
+      bytes[offset] === 0x50 &&
+      bytes[offset + 1] === 0x4b &&
+      bytes[offset + 2] === 0x05 &&
+      bytes[offset + 3] === 0x06
+    ) {
+      const commentLength = bytes[offset + 20] + ((bytes[offset + 21] ?? 0) << 8);
+      if (offset + 22 + commentLength !== bytes.byteLength) continue;
+      return offset;
+    }
+  }
+  return -1;
+}
+
+function crc32(bytes: Uint8Array): number {
+  let value = 0xffffffff;
+  for (const byte of bytes) {
+    value ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) value = (value >>> 1) ^ (0xedb88320 & -(value & 1));
+  }
+  return (value ^ 0xffffffff) >>> 0;
+}
+
+function assertSafeMemberName(container: string, name: string): void {
+  const parts = name.split("/");
+  if (
+    !name ||
+    name.includes("\0") ||
+    name.includes("\\") ||
+    name.startsWith("/") ||
+    /^[a-z]:/iu.test(name) ||
+    parts.some((part) => part === "" || part === "." || part === "..")
+  ) {
+    throw new Error(`${container} contains an unsafe path (${name || "unnamed entry"}). Remove it and retry.`);
+  }
+}
+
+function assertLeafEntry(container: string, name: string): void {
+  if (isContainer(name)) {
+    throw new Error(`${container} contains a nested ${extname(name) || "container"} file (${name}). Extract it first.`);
+  }
+  if (!isSupportedAttachmentName(name)) {
+    throw new Error(
+      `${container} contains an unsupported file (${name}). Remove it or attach a supported file instead.`,
+    );
+  }
+}
+
+function isPlatformMetadata(name: string): boolean {
+  const parts = name.split("/");
+  const leaf = parts.at(-1) ?? "";
+  return parts[0] === "__MACOSX" || leaf === ".DS_Store" || leaf.startsWith("._");
+}
+
+function flattenedName(containerStem: string, memberName: string): string {
+  return safeAttachmentName(`${containerStem} - ${memberName.split("/").join(" - ")}`);
+}
+
+function uniqueName(name: string, used: Set<string>): string {
+  if (!used.has(name)) {
+    used.add(name);
+    return name;
+  }
+  const extension = extname(name);
+  const stem = extension ? name.slice(0, -extension.length) : name;
+  let index = 2;
+  let suffix = `-${index}`;
+  let candidate = `${stem.slice(0, INPUT_LIMITS.attachmentName - extension.length - suffix.length)}${suffix}${extension}`;
+  while (used.has(candidate)) {
+    index += 1;
+    suffix = `-${index}`;
+    candidate = `${stem.slice(0, INPUT_LIMITS.attachmentName - extension.length - suffix.length)}${suffix}${extension}`;
+  }
+  used.add(candidate);
+  return candidate;
+}
+
+function safeStem(name: string): string {
+  const extension = extname(name);
+  return safeAttachmentName(extension ? name.slice(0, -extension.length) : name) || "attachment";
+}
+
+function safeAttachmentName(name: string): string {
+  const value = name
+    .replace(/[^\p{L}\p{N}._ -]+/gu, "-")
+    .replace(/^\.+/u, "")
+    .trim();
+  const extension = extname(value);
+  if (!extension || extension.length >= INPUT_LIMITS.attachmentName) return value.slice(0, INPUT_LIMITS.attachmentName);
+  const stem = value.slice(0, -extension.length);
+  return `${stem.slice(0, INPUT_LIMITS.attachmentName - extension.length)}${extension}`;
+}
+
+function fallbackAttachmentName(mimeType: string, index: number): string {
+  const extension = extensionForMimeType(mimeType);
+  if (!extension) throw new Error(`Email attachment ${index} has no supported filename. Save it separately and retry.`);
+  return `attachment-${index}.${extension}`;
+}
+
+function extensionForMimeType(mimeType: string): string | null {
+  const normalized = mimeType.split(";", 1)[0]?.trim().toLowerCase();
+  const extensions: Record<string, string> = {
+    "application/json": "json",
+    "application/pdf": "pdf",
+    "image/avif": "avif",
+    "image/gif": "gif",
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "text/csv": "csv",
+    "text/html": "html",
+    "text/markdown": "md",
+    "text/plain": "txt",
+  };
+  return normalized ? (extensions[normalized] ?? null) : null;
+}
+
+function attachmentBytes(content: ArrayBuffer | Uint8Array | string, encoding?: "base64" | "utf8"): Uint8Array {
+  if (content instanceof Uint8Array) return content;
+  if (content instanceof ArrayBuffer) return new Uint8Array(content);
+  if (encoding === "base64") return new Uint8Array(Buffer.from(content, "base64"));
+  return new TextEncoder().encode(content);
+}
+
+function textAttachment(name: string, content: string, mimeType = "text/plain"): AttachmentDataInput {
+  return { name: safeAttachmentName(name), mimeType, bytes: new TextEncoder().encode(content) };
+}
+
+async function assertExpandedLimits(paths: string[], data: AttachmentDataInput[]): Promise<void> {
+  if (paths.length + data.length > INPUT_LIMITS.attachments) {
+    throw new Error(`These files expand to more than ${INPUT_LIMITS.attachments} attachments. Import fewer files.`);
+  }
+  const pathSizes = await Promise.all(
+    paths.map(async (path) => {
+      const metadata = await stat(path);
+      if (!metadata.isFile()) throw new Error(`Only regular files can be attached: ${basename(path)}`);
+      if (metadata.size > ATTACHMENT_LIMITS.fileBytes) throw new Error(`${basename(path)} exceeds the 100 MB limit.`);
+      return metadata.size;
+    }),
+  );
+  for (const item of data) {
+    if (item.bytes.byteLength > ATTACHMENT_LIMITS.fileBytes) throw new Error(`${item.name} exceeds the 100 MB limit.`);
+  }
+  const total = [...pathSizes, ...data.map((item) => item.bytes.byteLength)].reduce((sum, size) => sum + size, 0);
+  if (total > ATTACHMENT_LIMITS.totalBytes) throw new Error("Attachments exceed the 250 MB total limit.");
+}

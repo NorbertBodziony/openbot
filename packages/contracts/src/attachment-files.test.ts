@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { ATTACHMENT_FILE_ACCEPT, attachmentMimeTypeForName, isSupportedAttachmentName } from "./attachment-files";
+import {
+  ATTACHMENT_FILE_ACCEPT,
+  attachmentMimeTypeForName,
+  isSupportedAttachmentImportName,
+  isSupportedAttachmentName,
+} from "./attachment-files";
 
 describe("attachment file whitelist", () => {
   it("accepts images, documents, text, Markdown, data, and source files", () => {
@@ -19,12 +24,22 @@ describe("attachment file whitelist", () => {
     expect(isSupportedAttachmentName("no-extension")).toBe(false);
   });
 
+  it("advertises EML and ZIP as import containers without treating them as leaf attachments", () => {
+    expect(isSupportedAttachmentImportName("message.eml")).toBe(true);
+    expect(isSupportedAttachmentImportName("bundle.zip")).toBe(true);
+    expect(isSupportedAttachmentName("message.eml")).toBe(false);
+    expect(isSupportedAttachmentName("bundle.zip")).toBe(false);
+    expect(ATTACHMENT_FILE_ACCEPT).toContain(".eml");
+    expect(ATTACHMENT_FILE_ACCEPT).toContain(".zip");
+  });
+
   it("assigns stable MIME types to supported formats", () => {
     expect(attachmentMimeTypeForName("README.md")).toBe("text/markdown");
     expect(attachmentMimeTypeForName("report.pdf")).toBe("application/pdf");
     expect(attachmentMimeTypeForName("report.docx")).toBe(
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     );
-    expect(attachmentMimeTypeForName("bundle.zip")).toBe("application/octet-stream");
+    expect(attachmentMimeTypeForName("message.eml")).toBe("message/rfc822");
+    expect(attachmentMimeTypeForName("bundle.zip")).toBe("application/zip");
   });
 });

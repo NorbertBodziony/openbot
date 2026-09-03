@@ -191,6 +191,7 @@
     "jose": "catalog:",
     "lucide-solid": "1.33.0",
     "marked": "18.0.10",
+    "postal-mime": "2.7.5",
     "qrcode": "^1.5.4",
     "solid-js": "2.0.0-rc.0",
     "solid-sonner": "0.3.2",

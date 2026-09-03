@@ -5,6 +5,11 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Import EML messages and safely bounded ZIP contents as readable chat attachments, with actionable errors for unsafe
+  or unsupported container entries.
+
 ## [0.4.3] - 2026-09-02
 
 ### Added
