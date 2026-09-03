@@ -439,7 +439,7 @@ describe("TeamStore", () => {
     expect((await readStoredHosts(join(root, "team-v2.json"))).map((host) => host.serverName)).toEqual(["Renamed"]);
   });
 
-  it("takes in what a build without accounts wrote after the upgrade, keeping the copy it supersedes", async () => {
+  it("reconciles what each build did to the host after they went their separate ways", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-team-"));
     roots.push(root);
     const legacyPath = join(root, "team.json");
@@ -452,16 +452,23 @@ describe("TeamStore", () => {
     await writeFile(legacyPath, JSON.stringify(legacyRecord));
     const upgraded = new TeamStore(path, legacyPath);
     await upgraded.initialize();
-    await upgraded.updateIdentity({ serverName: "Renamed here" });
+    const invite = await upgraded.createInvite("member", "alice@example.com");
+    await upgraded.acceptInviteWithAccount(invite.token, {
+      id: "alice-account",
+      email: "alice@example.com",
+      name: "Alice",
+      avatarUrl: null,
+    });
 
-    // The user goes back to the older build and renames the host there instead.
+    // The user goes back to the older build, which knows none of that, and renames the host.
     await writeFile(legacyPath, JSON.stringify({ ...legacyRecord, serverName: "Renamed there" }));
     const restarted = new TeamStore(path, legacyPath);
     await restarted.initialize();
 
+    // The rename happened in one build and the member joined in the other. Both are the
+    // user's work, and coming back to this build keeps both.
     expect(restarted.getIdentity()?.serverName).toBe("Renamed there");
-    const file = JSON.parse(await readFile(path, "utf8"));
-    expect(file.replacedHosts.map((host: { serverName: string }) => host.serverName)).toEqual(["Renamed here"]);
+    expect(restarted.listMembers().map((member) => member.name)).toEqual(["Owner", "Alice"]);
   });
 
   it("keeps each account's host separate and restores it on the next sign-in", async () => {

@@ -82,8 +82,8 @@ interface StoredTeamFile {
    * The legacy record this file last took in. A build without accounts that has written its
    * own file since leaves a different fingerprint, which is how its work is noticed.
    */
-  legacyImport?: { fingerprint: string; serverId: string };
-  /** Hosts a later import of the same server replaced. Never activated, and never dropped. */
+  legacyImport?: { fingerprint: string; record: StoredTeam };
+  /** The host as it stood before a reconcile merged into it. Never activated, never dropped. */
   replacedHosts?: StoredTeam[];
 }
 
@@ -186,23 +186,32 @@ export class TeamStore {
         version: 2,
         activeAccountId: ownerAccountId(legacy.record),
         hosts: [legacy.record],
-        legacyImport: { fingerprint: legacy.fingerprint, serverId: legacy.record.serverId },
+        // A copy of its own: the host below is edited from here on, and the baseline a later
+        // reconcile compares against has to stay the record as it was imported.
+        legacyImport: { fingerprint: legacy.fingerprint, record: structuredClone(legacy.record) },
       };
       await this.#adoptLegacyLogo(legacy.record);
       migrated = true;
     } else if (legacy && legacy.fingerprint !== this.#file.legacyImport?.fingerprint) {
-      // The older build has been run since, and what it wrote is the newer of the two. The
-      // copy it supersedes is kept rather than dropped: both are the user's, and neither
-      // file is a backup of the other.
+      // The older build has been run since it was imported. Neither copy of the host is a
+      // backup of the other - each holds work the other never saw - so they are reconciled
+      // against the record as it was imported rather than one replacing the other.
+      const baseline = this.#file.legacyImport?.record;
       const index = this.#file.hosts.findIndex((host) => host.serverId === legacy.record.serverId);
-      const replaced = index < 0 ? undefined : this.#file.hosts[index];
-      if (replaced) {
-        this.#file.replacedHosts = [...(this.#file.replacedHosts ?? []), replaced];
-        this.#file.hosts[index] = legacy.record;
+      const mine = index < 0 ? undefined : this.#file.hosts[index];
+      if (mine && baseline && baseline.serverId === legacy.record.serverId) {
+        // Copied for the same reason: the merged host below goes on being edited.
+        this.#file.replacedHosts = [...(this.#file.replacedHosts ?? []), structuredClone(mine)];
+        this.#file.hosts[index] = reconcileHost(baseline, mine, legacy.record);
+      } else if (mine) {
+        // No baseline to reconcile against - an upgrade that never recorded one. Keeping
+        // this build's host and filing the other copy is the only choice that drops
+        // nothing.
+        this.#file.replacedHosts = [...(this.#file.replacedHosts ?? []), legacy.record];
       } else {
         this.#file.hosts.push(legacy.record);
       }
-      this.#file.legacyImport = { fingerprint: legacy.fingerprint, serverId: legacy.record.serverId };
+      this.#file.legacyImport = { fingerprint: legacy.fingerprint, record: structuredClone(legacy.record) };
       await this.#adoptLegacyLogo(legacy.record);
       migrated = true;
     }
@@ -1220,6 +1229,47 @@ function ownerAccountId(host: StoredTeam): string | null {
   return hostOwner(host)?.accountId ?? null;
 }
 
+/**
+ * Merges the two copies of one host against the record both started from: what either side
+ * added is kept, what either side removed stays removed, and a field one side changed wins
+ * over the value neither touched. Nothing here can drop work the user did in either build.
+ */
+function reconcileHost(baseline: StoredTeam, mine: StoredTeam, theirs: StoredTeam): StoredTeam {
+  return {
+    ...mine,
+    serverName: pickChanged(baseline.serverName, mine.serverName, theirs.serverName),
+    enabledOnLaunch: pickChanged(baseline.enabledOnLaunch, mine.enabledOnLaunch, theirs.enabledOnLaunch),
+    serverLogo: pickChanged(baseline.serverLogo, mine.serverLogo, theirs.serverLogo),
+    members: reconcileEntries(baseline.members, mine.members, theirs.members),
+    invites: reconcileEntries(baseline.invites, mine.invites, theirs.invites),
+    // A session missing on either side was signed out there, and `reconcileEntries` keeps
+    // it that way rather than handing back a token the user has already revoked.
+    sessions: reconcileEntries(baseline.sessions, mine.sessions, theirs.sessions),
+  };
+}
+
+/** The side that moved, or this build's value when the other side stood still. */
+function pickChanged<T>(baseline: T, mine: T, theirs: T): T {
+  return JSON.stringify(theirs ?? null) === JSON.stringify(baseline ?? null) ? mine : theirs;
+}
+
+function reconcileEntries<T extends { id: string }>(baseline: T[], mine: T[], theirs: T[]): T[] {
+  const before = new Map(baseline.map((entry) => [entry.id, JSON.stringify(entry)]));
+  const merged: T[] = [];
+  const seen = new Set<string>();
+  for (const entry of [...mine, ...theirs]) {
+    if (seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    const ours = mine.find((candidate) => candidate.id === entry.id);
+    const other = theirs.find((candidate) => candidate.id === entry.id);
+    const known = before.get(entry.id);
+    // Known to both and gone from one of them: removed there, so it stays removed.
+    if (known !== undefined && (!ours || !other)) continue;
+    merged.push(other && known !== undefined && JSON.stringify(other) !== known ? other : (ours ?? entry));
+  }
+  return merged;
+}
+
 function isStoredTeamFile(value: unknown): value is StoredTeamFile {
   if (!isDynamicRecord(value)) return false;
   return (
@@ -1230,7 +1280,7 @@ function isStoredTeamFile(value: unknown): value is StoredTeamFile {
     (value.legacyImport === undefined ||
       (isDynamicRecord(value.legacyImport) &&
         isString(value.legacyImport.fingerprint) &&
-        isString(value.legacyImport.serverId))) &&
+        isStoredTeam(value.legacyImport.record))) &&
     (value.replacedHosts === undefined ||
       (Array.isArray(value.replacedHosts) && value.replacedHosts.every((host) => isStoredTeam(host))))
   );

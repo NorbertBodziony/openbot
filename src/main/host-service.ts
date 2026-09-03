@@ -262,7 +262,11 @@ export class HostService extends EventEmitter<HostEvents> {
 
   async applySignedInAccount(user: CentralAuthUser | null): Promise<void> {
     const nextAccountId = user?.id ?? null;
-    if (this.#boundAccountId === nextAccountId) {
+    // `unbindChangedAccount` may have cleared the store since this account was bound, to
+    // stop it answering for an account that was on its way out. Reporting the same account
+    // again then has to activate it, not take it for the host that is already running.
+    const stillBound = this.#options.store.configured || nextAccountId === null;
+    if (this.#boundAccountId === nextAccountId && stillBound) {
       // The same account, reported again - a renamed profile or a new avatar. Rebinding
       // here would stop a host that is happily online.
       if (user && this.#options.store.configured && (await this.#options.store.syncAccount(user))) {

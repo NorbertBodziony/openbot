@@ -2268,6 +2268,21 @@ describe("HostService account binding", () => {
     expect(service.getStatus().serverName).toBeNull();
   });
 
+  it("puts the account's server back when the same account is reported after the unbind", async () => {
+    const { service, signIn } = await createHostService();
+    await signIn(first);
+    const identity = await service.configure({ serverName: "Studio Mac" });
+
+    // A sign-out and an immediate sign-in as the same account: the unbind lands first, and
+    // the queued switch that follows is the only thing that can bind the host again.
+    service.unbindChangedAccount(second);
+    await signIn(first);
+
+    expect(service.getStatus().configured).toBe(true);
+    expect(service.getStatus().serverId).toBe(identity.serverId);
+    expect(service.getStatus().serverName).toBe("Studio Mac");
+  });
+
   it("answers invitations from the host that is active when the read returns", async () => {
     let deliver: (invites: RemoteInvites) => void = () => undefined;
     const loading = new Promise<RemoteInvites>((resolve) => {
