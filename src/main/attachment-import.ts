@@ -16,6 +16,7 @@ const EMAIL_MAX_NESTING_DEPTH = 32;
 const EMAIL_MAX_RFC822_NESTING_DEPTH = 10;
 const EMAIL_MAX_MIME_PARTS = 64;
 const HEADER_DECODER = new TextDecoder("latin1");
+const UTF8_HEADER_DECODER = new TextDecoder("utf-8");
 interface AttachmentBudget {
   count: number;
   bytes: number;
@@ -200,7 +201,11 @@ function addEmailBoundary(name: string, headers: EmailHeaders, boundaries: Set<s
   }
   const match = /(?:^|;)\s*boundary\s*=\s*(?:"((?:\\.|[^"])*)"|([^;\s]+))/iu.exec(headers.contentType);
   const boundary = (match?.[1] ?? match?.[2])?.replace(/\\(.)/gu, "$1");
-  if (boundary) boundaries.add(boundary);
+  if (!boundary) return;
+  if (boundaries.has(boundary)) {
+    throw new Error(`${name} reuses an active MIME boundary, which is not supported. Export it again.`);
+  }
+  boundaries.add(boundary);
 }
 
 function assertNoNestedEmail(name: string, headers: EmailHeaders): void {
@@ -295,11 +300,15 @@ function readEmailHeaders(bytes: Uint8Array, startOffset: number): EmailHeaders 
     }
     offset = line.nextOffset;
     if (line.startOffset === line.endOffset) break;
-    const value = HEADER_DECODER.decode(bytes.subarray(line.startOffset, line.endOffset));
+    const lineBytes = bytes.subarray(line.startOffset, line.endOffset);
+    const value = HEADER_DECODER.decode(lineBytes);
     if (/^[\t ]/u.test(value)) {
       if (current === "content-type") contentType += ` ${value.trim()}`;
       else if (current === "content-disposition") contentDisposition += ` ${value.trim()}`;
       continue;
+    }
+    if (/^\s/u.test(UTF8_HEADER_DECODER.decode(lineBytes))) {
+      throw new Error("Email uses unsupported folded header whitespace. Export it again and retry.");
     }
     const separator = value.indexOf(":");
     if (separator < 1) {

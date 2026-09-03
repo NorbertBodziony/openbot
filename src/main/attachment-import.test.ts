@@ -189,6 +189,45 @@ describe("EML attachment imports", () => {
     await expect(importEmail(email)).rejects.toThrow("duplicate MIME boundary");
   });
 
+  it("rejects a nested multipart that reuses an active boundary", async () => {
+    const email = ENCODER.encode(
+      [
+        "Subject: Reused boundary",
+        "Content-Type: multipart/mixed; boundary=same",
+        "",
+        "--same",
+        "Content-Type: multipart/alternative; boundary=same",
+        "",
+        "--same",
+        "Content-Type: text/plain",
+        "",
+        "Message",
+        "--same--",
+        "--same--",
+      ].join("\r\n"),
+    );
+
+    await expect(importEmail(email)).rejects.toThrow("reuses an active MIME boundary");
+  });
+
+  it.each(["\u000b", "\u00a0"])("rejects nonstandard folded header whitespace %#", async (whitespace) => {
+    const email = ENCODER.encode(
+      [
+        "Subject: Folded boundary",
+        "Content-Type: multipart/mixed;",
+        `${whitespace}boundary=real`,
+        "",
+        "--real",
+        "Content-Type: text/plain",
+        "",
+        "Message",
+        "--real--",
+      ].join("\r\n"),
+    );
+
+    await expect(importEmail(email)).rejects.toThrow("unsupported folded header whitespace");
+  });
+
   it("rejects an oversized aggregate EML header block", async () => {
     const headers = `X-Header: ${"a".repeat(1024)}\r\n`.repeat(2_100);
 
