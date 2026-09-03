@@ -1,3 +1,4 @@
+import { sha256 } from "@noble/hashes/sha2.js";
 import { parseInviteUrl } from "@openbot/contracts/invite-links";
 import { isMobileConnectDevelopmentHost } from "@openbot/contracts/mobile-connect";
 import { isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
@@ -29,6 +30,19 @@ export interface RemoteInvitePreview {
   devicePublicKey: string | null;
 }
 
+export interface RemoteHostKeyStore {
+  get(hostId: string): Promise<string | null>;
+  set(hostId: string, publicKey: string): Promise<void>;
+}
+
+export function remoteHostFingerprint(publicKey: string): string {
+  const digest = sha256(new TextEncoder().encode(publicKey));
+  return btoa(String.fromCharCode(...digest))
+    .replaceAll("+", "-")
+    .replaceAll("/", "_")
+    .replace(/=+$/u, "");
+}
+
 export class RemoteDirectoryError extends Error {
   constructor(
     readonly status: number,
@@ -42,38 +56,55 @@ export class RemoteTeamDirectoryClient {
   readonly #apiUrl: string;
   readonly #token: string;
   readonly #fetch: TeamClientFetch;
+  readonly #hostKeys: RemoteHostKeyStore;
+  #pinTail: Promise<void> = Promise.resolve();
 
-  constructor(input: { apiUrl: string; token: string; fetch: TeamClientFetch }) {
+  constructor(input: { apiUrl: string; token: string; fetch: TeamClientFetch; hostKeys?: RemoteHostKeyStore }) {
     this.#apiUrl = input.apiUrl;
     this.#token = input.token;
     this.#fetch = input.fetch;
+    const keys = new Map<string, string>();
+    this.#hostKeys = input.hostKeys ?? {
+      get: async (hostId) => keys.get(hostId) ?? null,
+      set: async (hostId, key) => {
+        keys.set(hostId, key);
+      },
+    };
   }
 
   async listHosts(): Promise<RemoteTeamHost[]> {
     const value = await this.#request("/v2/remote/hosts/");
     if (!isDynamicRecord(value) || !Array.isArray(value.hosts)) throw new Error("The server list is invalid.");
-    return value.hosts.flatMap((candidate) => {
-      if (!isDynamicRecord(candidate) || !isString(candidate.devicePublicKey) || !candidate.devicePublicKey) return [];
-      if (
-        !isString(candidate.hostId) ||
-        !isString(candidate.name) ||
-        (candidate.logoKey !== null && !isString(candidate.logoKey)) ||
-        !isString(candidate.membershipId) ||
-        (candidate.role !== "owner" && candidate.role !== "admin" && candidate.role !== "member")
-      ) {
-        throw new Error("A server record is invalid.");
-      }
-      return [
-        {
-          hostId: candidate.hostId,
-          name: candidate.name,
-          logoKey: candidate.logoKey,
-          devicePublicKey: candidate.devicePublicKey,
-          membershipId: candidate.membershipId,
-          role: candidate.role,
-        },
-      ];
-    });
+    const hosts = await Promise.all(
+      value.hosts.map(async (candidate): Promise<RemoteTeamHost[]> => {
+        if (!isDynamicRecord(candidate) || !isString(candidate.devicePublicKey) || !candidate.devicePublicKey)
+          return [];
+        if (
+          !isString(candidate.hostId) ||
+          !isString(candidate.name) ||
+          (candidate.logoKey !== null && !isString(candidate.logoKey)) ||
+          !isString(candidate.membershipId) ||
+          (candidate.role !== "owner" && candidate.role !== "admin" && candidate.role !== "member")
+        ) {
+          throw new Error("A server record is invalid.");
+        }
+        const pinnedKey = await this.#hostKeys.get(candidate.hostId);
+        if (pinnedKey && remoteHostFingerprint(candidate.devicePublicKey) !== remoteHostFingerprint(pinnedKey)) {
+          throw new Error("The server identity changed. Refusing to replace the trusted host key.");
+        }
+        return [
+          {
+            hostId: candidate.hostId,
+            name: candidate.name,
+            logoKey: candidate.logoKey,
+            devicePublicKey: pinnedKey ?? candidate.devicePublicKey,
+            membershipId: candidate.membershipId,
+            role: candidate.role,
+          },
+        ];
+      }),
+    );
+    return hosts.flat();
   }
 
   async createBootstrap(hostId: string, clientPublicKey: string): Promise<RemoteTeamBootstrap> {
@@ -135,17 +166,51 @@ export class RemoteTeamDirectoryClient {
       body: { token: invite.token },
       authenticated: false,
     });
-    return decodeInvitePreview(value, invite.serverId);
+    const preview = decodeInvitePreview(value, invite.serverId);
+    if (!preview.devicePublicKey || remoteHostFingerprint(preview.devicePublicKey) !== invite.fingerprint) {
+      throw new Error("The invitation host identity does not match its fingerprint.");
+    }
+    return preview;
   }
 
-  async acceptInvite(inviteUrl: string): Promise<RemoteInvitePreview> {
+  async acceptInvite(inviteUrl: string): Promise<RemoteTeamHost> {
     const invite = parseInviteUrl(inviteUrl);
     const preview = await this.previewInvite(inviteUrl);
-    await this.#request("/v2/remote/invites/accept", {
+    if (!preview.devicePublicKey) throw new Error("The invitation host key is missing.");
+    // Save the pin before consuming the one-use token, including across app restarts.
+    await this.#pinHostKey(invite.serverId, preview.devicePublicKey);
+    const accepted = await this.#request("/v2/remote/invites/accept", {
       method: "POST",
       body: { token: invite.token },
     });
-    return preview;
+    if (
+      !isDynamicRecord(accepted) ||
+      accepted.hostId !== invite.serverId ||
+      !isString(accepted.membershipId) ||
+      !accepted.membershipId ||
+      accepted.role !== preview.role
+    )
+      throw new Error("The account service returned an invalid invitation acceptance.");
+    return {
+      hostId: invite.serverId,
+      name: preview.hostName,
+      logoKey: null,
+      devicePublicKey: preview.devicePublicKey,
+      membershipId: accepted.membershipId,
+      role: preview.role,
+    };
+  }
+
+  #pinHostKey(hostId: string, publicKey: string): Promise<void> {
+    const operation = this.#pinTail.then(async () => {
+      const pinned = await this.#hostKeys.get(hostId);
+      if (pinned && remoteHostFingerprint(pinned) !== remoteHostFingerprint(publicKey)) {
+        throw new Error("The invitation conflicts with the trusted host key.");
+      }
+      await this.#hostKeys.set(hostId, publicKey);
+    });
+    this.#pinTail = operation.catch(() => undefined);
+    return operation;
   }
 
   async #request(

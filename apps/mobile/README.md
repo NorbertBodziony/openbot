@@ -30,6 +30,24 @@ The native UI does not depend on a native WebRTC module. A hidden Expo DOM compo
 events to React Native. This keeps the production transport identical while remaining testable in
 Expo Go without a development build.
 
+Remote connection recovery makes up to five attempts, waiting 10 seconds after each failure. After
+five failures it waits two minutes before starting a new series. The bot list and chat show
+`Reconnecting x/5` and a countdown until the next attempt or series. Countdown ticks are local UI
+updates, not requests. Backgrounding suspends retries; returning respects any remaining wait and
+starts at most one attempt if its deadline has passed. A successful connection resets the counter. Dead
+WebRTC peers are discarded and authenticated again. Recovery reloads cached conversations as well
+as agents and unread counts, including after an event-buffer reset. An interruption of Signal alone
+can resume sooner while the authenticated WebRTC connection is still healthy, without a new ticket.
+
+Invitations pin the desktop public key before acceptance. Pins are stored in the device Keychain /
+Keystore, scoped to the account service and user, and checked on later directory refreshes. Joining
+installs the validated host immediately; a subsequent directory-refresh failure does not undo a
+successful join or require reusing the one-use invitation.
+
+After Mobile Connect has enabled publishing, restarting the development desktop restores its
+WebRTC host as well as its local HTTP API. A local-only `online` status is not enough for mobile
+connections. The separate development test client never auto-publishes.
+
 ## Source structure
 
 The mobile app uses a feature-first structure. Expo Router files stay deliberately thin: `src/app`

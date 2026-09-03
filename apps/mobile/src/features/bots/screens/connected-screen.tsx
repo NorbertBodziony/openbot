@@ -11,6 +11,7 @@ import { BotListRow } from "@/features/bots/components/bot-list-row";
 import { useBotPinTransition } from "@/features/bots/components/bot-pin-transition";
 import { PinnedBotsStrip } from "@/features/bots/components/pinned-bots-strip";
 import { useAppDrawer } from "@/features/servers/components/app-drawer-shell";
+import { ConnectionStatus } from "@/features/workspace/components/connection-status";
 import { type MobileBot, useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { isAndroid, isIOS } from "@/shared/lib/platform";
 
@@ -94,16 +95,7 @@ export function ConnectedScreen() {
         ListHeaderComponent={
           <>
             <PinnedBotsStrip bots={pinnedBots} />
-            {activeServer.state === "offline" ? (
-              <View className="px-5 pb-3 pt-1">
-                <View className="flex-row items-center gap-2 rounded-2xl bg-control px-3 py-2.5">
-                  <WifiOff color={mutedColor} size={17} strokeWidth={1.8} />
-                  <Typography.Paragraph type="body-xs" className="min-w-0 flex-1 text-text-secondary">
-                    {activeServer.connectionMessage ?? "This server is offline. Showing the last available bot list."}
-                  </Typography.Paragraph>
-                </View>
-              </View>
-            ) : null}
+            {servers.length > 0 ? <ConnectionStatus server={activeServer} /> : null}
           </>
         }
         ListEmptyComponent={

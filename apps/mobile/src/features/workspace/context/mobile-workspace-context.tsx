@@ -11,9 +11,12 @@ import {
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
 import {
+  createRemoteConnectionRecovery,
   decodeTeamProtocolSupportV1,
   RemoteTeamDirectoryClient,
   type RemoteTeamHost,
+  remoteRecoveryMessage,
+  resyncRemoteConversations,
   TEAM_PROTOCOL_V3,
 } from "@openbot/team-client";
 import { fetch } from "expo/fetch";
@@ -28,13 +31,14 @@ import {
   useRef,
   useState,
 } from "react";
-import { View } from "react-native";
+import { AppState, View } from "react-native";
 
 import { useMobileSession } from "@/features/auth/context/mobile-session-context";
 import {
   RemoteTeamTransport,
   type RemoteTeamTransportRef,
 } from "@/features/workspace/components/remote-team-transport";
+import { trustedHostKeys } from "@/features/workspace/model/trusted-host-keys";
 import {
   MAX_PINNED_BOTS,
   type MobileBot,
@@ -77,14 +81,22 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   if (!session) throw new Error("MobileWorkspaceProvider requires a signed-in mobile session.");
 
   const directory = useMemo(
-    () => new RemoteTeamDirectoryClient({ apiUrl: session.apiUrl, token: session.sessionToken, fetch }),
-    [session.apiUrl, session.sessionToken],
+    () =>
+      new RemoteTeamDirectoryClient({
+        apiUrl: session.apiUrl,
+        token: session.sessionToken,
+        fetch,
+        hostKeys: trustedHostKeys(session.apiUrl, session.user.id),
+      }),
+    [session.apiUrl, session.sessionToken, session.user.id],
   );
   const transport = useRef<RemoteTeamTransportRef | null>(null);
   const [transportReady, setTransportReady] = useState(false);
   const loadGeneration = useRef(0);
-  const lastAttemptedServerId = useRef<string | null>(null);
-  const [connectionRetrySequence, setConnectionRetrySequence] = useState(0);
+  const directoryGeneration = useRef(0);
+  const recovery = useRef<ReturnType<typeof createRemoteConnectionRecovery> | null>(null);
+  const [foreground, setForeground] = useState(AppState.currentState === "active");
+  const foregroundRef = useRef(foreground);
   const [servers, setServers] = useState<MobileServer[]>([]);
   const [serverDirectoryState, setServerDirectoryState] = useState<MobileServerDirectoryState>("loading");
   const [serverDirectoryError, setServerDirectoryError] = useState<string | null>(null);
@@ -111,7 +123,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         connectionMessage: messages.get(host.hostId) ?? null,
         address: null,
         accent: SERVER_ACCENTS[index % SERVER_ACCENTS.length] ?? SERVER_ACCENTS[0],
-        publicKey: host.devicePublicKey,
+        publicKey: current.find((server) => server.id === host.hostId)?.publicKey ?? host.devicePublicKey,
       }));
     });
     setActiveServerId((current) =>
@@ -122,12 +134,16 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   }, []);
 
   const refreshHosts = useCallback(async () => {
+    const generation = ++directoryGeneration.current;
     setServerDirectoryState("loading");
     setServerDirectoryError(null);
     try {
-      installHosts(await directory.listHosts());
+      const hosts = await directory.listHosts();
+      if (generation !== directoryGeneration.current) return;
+      installHosts(hosts);
       setServerDirectoryState("ready");
     } catch (error) {
+      if (generation !== directoryGeneration.current) return;
       setServerDirectoryState("error");
       setServerDirectoryError(error instanceof Error ? error.message : "The server directory is unavailable.");
       throw error;
@@ -135,27 +151,11 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   }, [directory, installHosts]);
 
   useEffect(() => {
-    let active = true;
-    void directory
-      .listHosts()
-      .then((hosts) => {
-        if (active) {
-          installHosts(hosts);
-          setServerDirectoryState("ready");
-          setServerDirectoryError(null);
-        }
-      })
-      .catch((error) => {
-        if (active) {
-          setServers([]);
-          setServerDirectoryState("error");
-          setServerDirectoryError(error instanceof Error ? error.message : "The server directory is unavailable.");
-        }
-      });
+    void refreshHosts().catch(() => undefined);
     return () => {
-      active = false;
+      directoryGeneration.current += 1;
     };
-  }, [directory, installHosts]);
+  }, [refreshHosts]);
 
   const request = useCallback(
     async <T,>(method: string, path: string, decode: (value: unknown) => T, body?: TeamProtocolV2Json): Promise<T> => {
@@ -196,6 +196,19 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
           .filter(([, state]) => state.unreadCount > 0)
           .map(([id]) => id),
       ]);
+      await resyncRemoteConversations({
+        botIds: summaries.map((bot) => bot.id),
+        cached: conversationsRef.current,
+        load: (botId) => request("GET", `/v1/agents/${encodeURIComponent(botId)}/conversation`, decodeConversation),
+        apply: (snapshot) => setConversations((current) => storeNewestSnapshot(current, snapshot)),
+        isCurrent: () => currentGeneration === loadGeneration.current,
+      });
+      if (currentGeneration !== loadGeneration.current) return;
+      setServers((current) =>
+        current.map((candidate) =>
+          candidate.id === server.id ? { ...candidate, state: "online", connectionMessage: null } : candidate,
+        ),
+      );
     },
     [replaceServerBots, request],
   );
@@ -204,32 +217,49 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
     if (!transportReady || !activeServerId) return;
     const server = serversRef.current.find((candidate) => candidate.id === activeServerId);
     if (!server?.publicKey) return;
-    const retrying = connectionRetrySequence > 0 && lastAttemptedServerId.current === server.id;
-    lastAttemptedServerId.current = server.id;
-    const timer = setTimeout(
-      () => {
+    const controller = createRemoteConnectionRecovery(
+      () => loadServer(server),
+      (error) => {
+        const connectionMessage = error instanceof Error ? error.message : "The server connection failed.";
         setServers((current) =>
           current.map((candidate) =>
-            candidate.id === server.id ? { ...candidate, state: "connecting", connectionMessage: null } : candidate,
+            candidate.id === server.id ? { ...candidate, state: "offline", connectionMessage } : candidate,
           ),
         );
-        void loadServer(server).catch((error) => {
-          const connectionMessage = error instanceof Error ? error.message : "The server connection failed.";
-          setServers((current) =>
-            current.map((candidate) =>
-              candidate.id === server.id ? { ...candidate, state: "offline", connectionMessage } : candidate,
-            ),
-          );
-          setConnectionRetrySequence((current) => current + 1);
-        });
       },
-      retrying ? 3_000 : 0,
+      (status) => {
+        setServers((current) =>
+          current.map((candidate) =>
+            candidate.id === server.id
+              ? {
+                  ...candidate,
+                  state:
+                    status.phase === "online" ? "online" : status.phase === "connecting" ? "connecting" : "offline",
+                  connectionMessage: remoteRecoveryMessage(status),
+                }
+              : candidate,
+          ),
+        );
+      },
     );
+    recovery.current = controller;
+    controller.setActive(foregroundRef.current);
     return () => {
-      clearTimeout(timer);
+      controller.dispose();
+      if (recovery.current === controller) recovery.current = null;
       loadGeneration.current += 1;
     };
-  }, [activeServerId, connectionRetrySequence, loadServer, transportReady]);
+  }, [activeServerId, loadServer, transportReady]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      const active = state === "active";
+      foregroundRef.current = active;
+      setForeground(active);
+      recovery.current?.setActive(active);
+    });
+    return () => subscription.remove();
+  }, []);
 
   const loadConversation = useCallback(
     async (botId: string) => {
@@ -315,9 +345,23 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       selectServer: setActiveServerId,
       refreshServers: refreshHosts,
       addRemoteServer: async ({ inviteUrl }) => {
-        const invite = await directory.acceptInvite(inviteUrl);
-        await refreshHosts();
-        setActiveServerId(invite.hostId);
+        const host = await directory.acceptInvite(inviteUrl);
+        setServers((current) => [
+          ...current.filter((server) => server.id !== host.hostId),
+          {
+            id: host.hostId,
+            name: host.name,
+            kind: "remote",
+            state: "offline",
+            connectionMessage: null,
+            address: null,
+            accent: SERVER_ACCENTS[0],
+            publicKey: host.devicePublicKey,
+          },
+        ]);
+        setActiveServerId(host.hostId);
+        // Membership is already committed. Directory failure must not reuse the consumed invite.
+        void refreshHosts().catch(() => undefined);
       },
       createBot: async (input: CreateBotInput) => {
         const created = await request("POST", "/v1/agents", decodeBot, {
@@ -405,9 +449,15 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       <View className="flex-1">
         {children}
         <RemoteTeamTransport
+          active={foreground}
           ref={setTransport}
           directory={directory}
           onConnectionUpdate={(update) => {
+            if (activeServerId === update.hostId && recovery.current) {
+              if (update.state === "offline") recovery.current.offline();
+              if (update.resync) recovery.current.refresh();
+              return;
+            }
             setServers((current) =>
               current.map((server) =>
                 server.id === update.hostId
@@ -415,13 +465,6 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
                   : server,
               ),
             );
-            if (update.state === "offline" && activeServerId === update.hostId) {
-              setConnectionRetrySequence((current) => current + 1);
-            }
-            if (update.resync) {
-              const server = serversRef.current.find((candidate) => candidate.id === update.hostId);
-              if (server) void loadServer(server).catch(() => undefined);
-            }
           }}
           onTeamEvent={handleTeamEvent}
         />

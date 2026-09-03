@@ -764,7 +764,7 @@ function forwardCentralAuth(state: CentralAuthState): void {
       await host.syncSignedInAccount(state.user);
       hostAnalytics?.flushPending();
       const status = host.getStatus();
-      if (shouldAutoStartHost(status)) await host.start();
+      if (shouldAutoStartHost({ ...status, remoteRole: developmentRemoteRole })) await host.start();
     })
     .catch((error) => {
       console.error("Unable to synchronize the signed-in account:", error);
@@ -1295,10 +1295,10 @@ if (!hasSingleInstanceLock) {
       powerMonitor.on("resume", reconcileDynamicIsland);
       const teamIdentity = teamStore.getIdentity();
       if (
-        !developmentRemoteRole &&
         shouldAutoStartHost({
           configured: Boolean(teamIdentity),
           enabledOnLaunch: teamIdentity?.enabledOnLaunch ?? false,
+          remoteRole: developmentRemoteRole,
         })
       ) {
         void centralAuthInitialization

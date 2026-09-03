@@ -91,6 +91,9 @@ OpenBot Mobile uses the same ticket, authentication transcript, framing, RPC cod
 In Expo Go, an Expo DOM component owns the browser `RTCPeerConnection` inside a hidden WebView and
 passes only serializable, validated commands and events to the native React UI; no native WebRTC
 module or development build is required.
+The persisted hosting preference is restored on startup in both the normal desktop and the
+development host. Starting the development HTTP API alone does not publish WebRTC; Mobile Connect
+needs the published host. The separate development test-client role never auto-publishes.
 Cloudflare issues short ES256 connection tickets and stores the logical session. Signal issues a
 10-minute resume token, so a short Signal update does not end an active WebRTC connection. Signal
 validates a trusted, non-expired resume token locally. After a Signal restart, the first use of a token

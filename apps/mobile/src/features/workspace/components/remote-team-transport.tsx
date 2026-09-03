@@ -1,14 +1,15 @@
 import type { AgentEvent, TeamRealtimeEvent } from "@openbot/contracts/ipc";
 import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
 import type { RemoteTeamDirectoryClient } from "@openbot/team-client";
+import type {
+  RemoteTeamCommand,
+  RemoteTeamCommandResult,
+  RemoteTeamConnectionUpdate,
+} from "@openbot/team-client/remote-peer";
 import * as Crypto from "expo-crypto";
 import { forwardRef, useCallback, useImperativeHandle, useRef, useState } from "react";
 
-import RemoteTeamBridge, {
-  type RemoteTeamCommand,
-  type RemoteTeamCommandResult,
-  type RemoteTeamConnectionUpdate,
-} from "./remote-team-bridge.dom";
+import RemoteTeamBridge from "./remote-team-bridge.dom";
 
 export interface RemoteTeamTransportRef {
   connect(hostId: string, hostPublicKey: string): Promise<void>;
@@ -17,6 +18,7 @@ export interface RemoteTeamTransportRef {
 }
 
 interface RemoteTeamTransportProps {
+  active: boolean;
   directory: RemoteTeamDirectoryClient;
   onConnectionUpdate: (update: RemoteTeamConnectionUpdate) => void;
   onTeamEvent: (hostId: string, event: AgentEvent | TeamRealtimeEvent) => void;
@@ -33,7 +35,7 @@ type RemoteTeamCommandInput =
   | { type: "request"; method: string; path: string; body: TeamProtocolV2Json };
 
 export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeamTransportProps>(
-  function RemoteTeamTransport({ directory, onConnectionUpdate, onTeamEvent }, ref) {
+  function RemoteTeamTransport({ active: foreground, directory, onConnectionUpdate, onTeamEvent }, ref) {
     const [command, setCommand] = useState<RemoteTeamCommand | null>(null);
     const queue = useRef<QueuedCommand[]>([]);
     const active = useRef<QueuedCommand | null>(null);
@@ -100,6 +102,7 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
 
     return (
       <RemoteTeamBridge
+        active={foreground}
         command={command}
         dom={{
           containerStyle: {

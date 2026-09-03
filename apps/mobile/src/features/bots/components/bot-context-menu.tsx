@@ -1,6 +1,7 @@
 import * as Clipboard from "expo-clipboard";
 import * as Haptics from "expo-haptics";
 import { Link, router } from "expo-router";
+import { useRef } from "react";
 import { Alert } from "react-native";
 
 import { useBotPinTransition } from "@/features/bots/components/bot-pin-transition";
@@ -13,6 +14,26 @@ export function useBotContextMenu(bot: MobileBot) {
   const { toggleBotPinAnimated } = useBotPinTransition();
   const isPinned = pinnedBotIds.includes(bot.id);
   const isUnread = unreadBotIds.includes(bot.id);
+  const actionPending = useRef(false);
+
+  async function runBotAction(action: "delete" | "duplicate"): Promise<void> {
+    if (actionPending.current) return;
+    actionPending.current = true;
+    try {
+      if (action === "delete") await deleteBot(bot.id);
+      else await duplicateBot(bot.id);
+      if (isIOS) {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+      }
+    } catch (error) {
+      Alert.alert(
+        action === "delete" ? "Could not delete bot" : "Could not duplicate bot",
+        error instanceof Error ? error.message : "The server could not complete this action. Please try again.",
+      );
+    } finally {
+      actionPending.current = false;
+    }
+  }
 
   const handlePin = () => toggleBotPinAnimated(bot.id);
 
@@ -29,8 +50,7 @@ export function useBotContextMenu(bot: MobileBot) {
         text: "Delete",
         style: "destructive",
         onPress: () => {
-          void deleteBot(bot.id);
-          if (isIOS) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          void runBotAction("delete");
         },
       },
     ]);
@@ -73,8 +93,7 @@ export function useBotContextMenu(bot: MobileBot) {
         <Link.MenuAction
           icon="plus.square.on.square"
           onPress={() => {
-            void duplicateBot(bot.id);
-            if (isIOS) void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            void runBotAction("duplicate");
           }}
         >
           Duplicate

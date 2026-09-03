@@ -12,6 +12,7 @@ import { useBotPinTransition } from "@/features/bots/components/bot-pin-transiti
 import { ChatComposer } from "@/features/chat/components/chat-composer";
 import { ChatHeader } from "@/features/chat/components/chat-header";
 import { type ChatMessage, ChatMessageList } from "@/features/chat/components/chat-message-list";
+import { ConnectionStatus } from "@/features/workspace/components/connection-status";
 import type { MobileBot } from "@/features/workspace/context/mobile-workspace-context";
 import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { isIOS } from "@/shared/lib/platform";
@@ -44,7 +45,7 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
   ]);
   const [draft, setDraft] = useState("");
   const [showStarter, setShowStarter] = useState(true);
-  const { conversations, loadConversation, sendMessage: sendTeamMessage } = useMobileWorkspace();
+  const { conversations, loadConversation, servers, sendMessage: sendTeamMessage } = useMobileWorkspace();
   const conversation = conversations[bot.id];
   const conversationRef = useRef(conversation);
   conversationRef.current = conversation;
@@ -141,6 +142,7 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
           onDismissStarter={() => setShowStarter(false)}
           onSelectStarter={sendMessage}
         />
+        <ConnectionStatus server={servers.find((server) => server.id === bot.serverId)} />
         <ChatComposer
           action={action}
           actionForeground={actionForeground}
