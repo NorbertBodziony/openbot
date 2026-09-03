@@ -47,6 +47,7 @@ import {
 import { desktopAnalytics } from "../analytics";
 import type { BotMessage, BotProfile, ChatActionMarkerModel } from "../data";
 import { activeQueueDeliveries, presentQueueDeliveries, queuedDeliveriesInOrder } from "../queue-reconciliation";
+import { createScopeGuard } from "../scope-lifetime";
 import { appendVoiceTranscript, recordingToWav } from "../voice-recording";
 import { AgentAvatar } from "./AgentAvatar";
 import { ComposerEditor, expandComposerMentions } from "./ComposerEditor";
@@ -1154,6 +1155,17 @@ function createConversationViewScope(props: ConversationProps) {
     });
   }
 
+  /**
+   * "Is the conversation that asked for the microphone still on screen?"
+   *
+   * The controller outlives this view - drafts and an in-flight voice send are
+   * expected to survive leaving the conversation - so `voiceDisposed` no longer
+   * answers this. Without it, a model download that finishes after the user has
+   * switched servers or opened a direct message goes on to open the microphone
+   * with nothing on screen to stop it.
+   */
+  const viewIsMounted = createScopeGuard();
+
   async function startVoiceRecording(): Promise<void> {
     const botId = props.bot?.id;
     const serverId = props.server?.id ?? "local";
@@ -1173,11 +1185,24 @@ function createConversationViewScope(props: ConversationProps) {
         setConversationError(target, modelStatus.message ?? "Could not prepare the voice model.");
         return;
       }
+      if (!viewIsMounted()) {
+        // A model *failure* still reports above, because it belongs to the
+        // conversation that asked for it whether or not that conversation is
+        // still open. Opening the microphone does not: there would be no
+        // recording UI, and nothing to stop it before the duration limit.
+        setVoicePhase("idle");
+        setVoiceModelProgress(null);
+        return;
+      }
       setVoicePhase("requesting");
       setVoiceModelProgress(null);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      if (resources.voiceDisposed || voicePhase() !== "requesting") {
+      if (resources.voiceDisposed || !viewIsMounted() || voicePhase() !== "requesting") {
         for (const track of stream.getTracks()) track.stop();
+        // Permission can be granted after the conversation is gone. Nothing else
+        // has moved the phase on in that case, so this leaves it idle rather than
+        // stuck on a request that will never produce a recording.
+        if (!resources.voiceDisposed && voicePhase() === "requesting") setVoicePhase("idle");
         return;
       }
       const recorder = new MediaRecorder(stream);

@@ -17,10 +17,14 @@ export { createConversationController } from "./conversation-controller";
  *
  * `voiceDisposed` deliberately stays with the controller. It means "the app is
  * going away", not "this view went away", so a transcription that resolves after
- * the switch still lands on the server that started it.
+ * the switch still lands on the server that started it. What replaces it for the
+ * view's own lifetime is the scope guard in `ConversationView`, which keeps a
+ * finished model download from opening the microphone for a conversation nobody
+ * is looking at.
  */
 export function Conversation(props: ConversationProps) {
-  const { resources } = useConversationController();
+  const controller = useConversationController();
+  const { resources } = controller;
 
   onCleanup(() => {
     if (resources.typingIdleTimer) clearTimeout(resources.typingIdleTimer);
@@ -30,7 +34,15 @@ export function Conversation(props: ConversationProps) {
     }
     if (resources.voiceRecordingTimer) clearTimeout(resources.voiceRecordingTimer);
     if (resources.voiceElapsedTimer) clearInterval(resources.voiceElapsedTimer);
-    if (resources.voiceRecorder?.state === "recording") resources.voiceRecorder.stop();
+    if (resources.voiceRecorder?.state === "recording") {
+      // The audio captured so far still belongs to the draft it was dictated
+      // into, and drafts outlive this view, so the recording finishes into text
+      // rather than being thrown away. `transcribing` is what that is, and
+      // leaving the phase on `recording` would offer a stop button for a
+      // recorder that has already been handed over.
+      controller.setVoicePhase("transcribing");
+      resources.voiceRecorder.stop();
+    }
     for (const track of resources.voiceStream?.getTracks() ?? []) track.stop();
   });
 
