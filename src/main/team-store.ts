@@ -873,6 +873,7 @@ export class TeamStore {
       throw new TeamStoreError(`A host can have up to ${INPUT_LIMITS.teamMembers} members.`);
     }
     const credentials = await hashPassword(password);
+    this.#requireUnchangedState(state);
     const member: StoredMember = {
       id: randomUUID(),
       username: normalizedUsername,
@@ -899,6 +900,7 @@ export class TeamStore {
     if (!member || !(await verifyPassword(password, member))) {
       throw new TeamStoreError("The username or password is incorrect.");
     }
+    this.#requireUnchangedState(state);
     const result = this.#createSession(member);
     await this.#persist();
     return result;
@@ -940,7 +942,9 @@ export class TeamStore {
     if (!member || !(await verifyPassword(currentPassword, member))) {
       throw new TeamStoreError("The current password is incorrect.");
     }
-    Object.assign(member, await hashPassword(nextPassword));
+    const credentials = await hashPassword(nextPassword);
+    this.#requireUnchangedState(state);
+    Object.assign(member, credentials);
     state.sessions = state.sessions.filter((session) => session.memberId !== memberId);
     await this.#persist();
   }
@@ -1058,6 +1062,18 @@ export class TeamStore {
   #requireState(): StoredTeam {
     if (!this.#state) throw new TeamStoreError("The team server is not configured.");
     return this.#state;
+  }
+
+  /**
+   * The host this request started on, still the one being served. Hashing a password takes
+   * long enough for an account switch to land in the middle of it, and the host captured
+   * before that await is still in the file: mutating it there would commit a change the
+   * caller is about to be told failed.
+   */
+  #requireUnchangedState(state: StoredTeam): void {
+    if (this.#state !== state) {
+      throw new TeamStoreError("The signed-in account changed while the request was in flight.");
+    }
   }
 
   /**
@@ -1248,12 +1264,26 @@ function reconcileHost(baseline: StoredTeam, mine: StoredTeam, theirs: StoredTea
     serverName: pickChanged(baseline.serverName, mine.serverName, theirs.serverName),
     enabledOnLaunch: pickChanged(baseline.enabledOnLaunch, mine.enabledOnLaunch, theirs.enabledOnLaunch),
     serverLogo: pickChanged(baseline.serverLogo, mine.serverLogo, theirs.serverLogo),
-    members: reconcileEntries(baseline.members, mine.members, theirs.members),
+    members: reconcileMembers(baseline.members, mine.members, theirs.members),
     invites: reconcileEntries(baseline.invites, mine.invites, theirs.invites),
     // A session missing on either side was signed out there, and `reconcileEntries` keeps
     // it that way rather than handing back a token the user has already revoked.
     sessions: reconcileEntries(baseline.sessions, mine.sessions, theirs.sessions),
   };
+}
+
+/**
+ * Members, with one field held back from the merge. The older build binds a member to an
+ * account by email alone, so an address that has changed hands makes it write a different
+ * account's id onto the same member - and taking that back would hand the host, and the
+ * ownership check with it, to whoever holds the address now. An id is only taken from there
+ * for a member this build knows no account for.
+ */
+function reconcileMembers(baseline: StoredMember[], mine: StoredMember[], theirs: StoredMember[]): StoredMember[] {
+  return reconcileEntries(baseline, mine, theirs).map((member) => {
+    const ours = mine.find((candidate) => candidate.id === member.id);
+    return ours?.accountId ? { ...member, accountId: ours.accountId } : member;
+  });
 }
 
 /** The side that moved, or this build's value when the other side stood still. */

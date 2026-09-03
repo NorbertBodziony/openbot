@@ -543,6 +543,58 @@ describe("TeamStore", () => {
     });
   });
 
+  it("keeps the owner's account when the other build binds the host to a recycled address", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-"));
+    roots.push(root);
+    const legacyPath = join(root, "team.json");
+    const path = join(root, "team-v2.json");
+    const owner = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
+    const source = new TeamStore(legacyPath);
+    await source.initialize();
+    const identity = await source.configureWithAccount("Studio Mac", owner);
+    const legacyRecord = await readStoredHost(legacyPath);
+    await writeFile(legacyPath, JSON.stringify(legacyRecord));
+    const upgraded = new TeamStore(path, legacyPath);
+    await upgraded.initialize();
+
+    // The owner releases the address and another account registers it. A build without
+    // accounts knows members by address alone, so signing in there writes the newcomer's
+    // id onto the owner it finds.
+    await writeFile(
+      legacyPath,
+      JSON.stringify({
+        ...legacyRecord,
+        members: legacyRecord.members?.map((member) => ({ ...member, accountId: "account-b" })),
+      }),
+    );
+    const restarted = new TeamStore(path, legacyPath);
+    await restarted.initialize();
+
+    await restarted.activateAccount({ id: "account-b", email: "a@example.com", name: "B", avatarUrl: null });
+    expect(restarted.getIdentity()).toBeNull();
+    await restarted.activateAccount(owner);
+    expect(restarted.getIdentity()?.serverId).toBe(identity.serverId);
+  });
+
+  it("does not change a password once the account it was asked on has gone", async () => {
+    const { store } = await createStore();
+    const owner = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
+    await store.configureWithAccount("Studio Mac", owner);
+    const invite = await store.createInvite("member");
+    const alice = await store.acceptInvite(invite.token, "alice", "a secure team password");
+
+    // The switch lands while the new password is still being hashed.
+    const pending = store.changePassword(alice.member.id, "a secure team password", "a newer secure password");
+    store.unbindActiveHost();
+    await expect(pending).rejects.toThrow();
+
+    // Told it failed, so it has to have failed: the password Alice still has, and the
+    // session it opened, are the ones she is left holding.
+    await store.activateAccount(owner);
+    await expect(store.login("alice", "a secure team password")).resolves.toBeDefined();
+    expect(store.authenticate(alice.sessionToken)?.username).toBe("alice");
+  });
+
   it("keeps each account's host separate and restores it on the next sign-in", async () => {
     const { store, path } = await createStore();
     const first = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
