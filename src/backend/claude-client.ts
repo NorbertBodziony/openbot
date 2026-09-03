@@ -979,13 +979,6 @@ function claudeModelWeeklyWindow(rateLimits: DynamicRecord, model: string | null
     const family = claudeUsageWindow(rateLimits[familyKey], 10_080);
     if (family) return family;
   }
-  for (const candidate of [...recordArray(rateLimits.model_scoped), ...recordArray(rateLimits.limits)]) {
-    const label =
-      stringValue(candidate.display_name) ?? stringValue(candidate.displayName) ?? stringValue(candidate.scope);
-    if (!label || !model.toLowerCase().includes(label.toLowerCase())) continue;
-    const window = claudeUsageWindow(candidate, 10_080);
-    if (window) return window;
-  }
   return null;
 }
 
@@ -1000,10 +993,6 @@ function claudeUsageWindow(value: unknown, windowDurationMins: number): AccountR
     windowDurationMins,
     resetsAt: Number.isFinite(resetMilliseconds) ? resetMilliseconds / 1_000 : null,
   };
-}
-
-function recordArray(value: unknown): DynamicRecord[] {
-  return Array.isArray(value) ? value.filter(isDynamicRecord) : [];
 }
 
 function stringValue(value: unknown): string | null {

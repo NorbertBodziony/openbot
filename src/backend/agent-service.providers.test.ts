@@ -642,12 +642,11 @@ describe.sequential("AgentService: providers", () => {
     const codex = clients.get("codex");
     if (!codex) throw new Error("Codex test client was not created.");
     codex.accountRateLimits = {
-      rateLimits: null,
+      rateLimits: {
+        limitId: "codex",
+        secondary: { usedPercent: 40, windowDurationMins: 10_080, resetsAt: 1_787_040_000 },
+      },
       rateLimitsByLimitId: {
-        codex: {
-          limitId: "codex",
-          secondary: { usedPercent: 40, windowDurationMins: 10_080, resetsAt: 1_787_040_000 },
-        },
         luna: {
           limitId: "luna",
           limitName: "gpt-5.6-luna",
@@ -658,6 +657,11 @@ describe.sequential("AgentService: providers", () => {
 
     await expect(service.getUsage("chief")).resolves.toMatchObject({
       limits: [{ id: "luna", secondary: { usedPercent: 70 } }],
+    });
+
+    await service.updateBot({ botId: "chief", provider: "codex", model: "gpt-5.6-sol" });
+    await expect(service.getUsage("chief")).resolves.toMatchObject({
+      limits: [{ id: "codex", secondary: { usedPercent: 40 } }],
     });
 
     await service.updateBot({ botId: "chief", provider: "claude", model: "claude-sonnet-5" });

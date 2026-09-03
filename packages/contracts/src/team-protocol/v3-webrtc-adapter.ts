@@ -13,7 +13,7 @@ export function encodeTeamProtocolV3WebRtcHttpRequest(
   value: unknown,
   options: { preserveSemanticTags?: boolean } = {},
 ): TeamProtocolV2Json {
-  return duplicateRoute(method, path)
+  return currentV3Route(method, path)
     ? wireJson(decodeTeamProtocolV3CurrentHttpRequest(method, path, value ?? {}))
     : encodeTeamProtocolV2CurrentHttpRequest(method, path, value, options);
 }
@@ -24,7 +24,7 @@ export function decodeTeamProtocolV3WebRtcHttpRequest(
   value: unknown,
   options: { preserveSemanticTags?: boolean } = {},
 ): TeamProtocolV2Json {
-  return duplicateRoute(method, path)
+  return currentV3Route(method, path)
     ? wireJson(decodeTeamProtocolV3CurrentHttpRequest(method, path, value ?? {}))
     : decodeTeamProtocolV2CurrentHttpRequest(method, path, value, options);
 }
@@ -36,7 +36,7 @@ export function encodeTeamProtocolV3WebRtcHttpResponse(
   value: unknown,
   options: { preserveSemanticTags?: boolean } = {},
 ): TeamProtocolV2Json {
-  return duplicateRoute(method, path)
+  return currentV3Route(method, path)
     ? wireJson(decodeTeamProtocolV3CurrentHttpResponse(method, path, status, value ?? null))
     : encodeTeamProtocolV2CurrentHttpResponse(method, path, status, value, options);
 }
@@ -47,7 +47,7 @@ export function decodeTeamProtocolV3WebRtcHttpResponse(
   status: number,
   value: unknown,
 ): TeamProtocolV2Json {
-  return duplicateRoute(method, path)
+  return currentV3Route(method, path)
     ? wireJson(decodeTeamProtocolV3CurrentHttpResponse(method, path, status, value ?? null))
     : decodeTeamProtocolV2CurrentHttpResponse(method, path, status, value);
 }
@@ -55,6 +55,11 @@ export function decodeTeamProtocolV3WebRtcHttpResponse(
 function duplicateRoute(method: string, path: string): boolean {
   const pathname = new URL(path, "http://openbot.invalid").pathname;
   return method === "POST" && /^\/v1\/agents\/[^/]+\/duplicate$/u.test(pathname);
+}
+
+function currentV3Route(method: string, path: string): boolean {
+  const pathname = new URL(path, "http://openbot.invalid").pathname;
+  return duplicateRoute(method, path) || (method === "GET" && /^\/v1\/agents\/[^/]+\/usage$/u.test(pathname));
 }
 
 function wireJson(value: unknown): TeamProtocolV2Json {

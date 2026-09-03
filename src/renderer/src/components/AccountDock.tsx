@@ -98,6 +98,7 @@ export function AccountDock(props: AccountDockProps) {
   let usageRefreshTimer: number | undefined;
   let usageRequestGeneration = 0;
   let usageRequestTargetKey: string | null = null;
+  let usageRequestRevision = -1;
   let legacyTrigger: HTMLButtonElement | undefined;
   let menuTrigger: HTMLButtonElement | undefined;
   let usageTrigger: HTMLButtonElement | undefined;
@@ -162,6 +163,7 @@ export function AccountDock(props: AccountDockProps) {
       if (!targetKey || !ready) {
         usageRequestGeneration += 1;
         usageRequestTargetKey = null;
+        usageRequestRevision = -1;
         setUsageLoading(false);
         setUsageError(null);
         return;
@@ -189,9 +191,16 @@ export function AccountDock(props: AccountDockProps) {
 
   async function refreshUsage() {
     const targetKey = props.usageTargetKey;
-    if (!targetKey || !props.usageReady || (usageLoading() && usageRequestTargetKey === targetKey)) return;
+    const revision = props.usageRefreshRevision;
+    if (
+      !targetKey ||
+      !props.usageReady ||
+      (usageLoading() && usageRequestTargetKey === targetKey && usageRequestRevision === revision)
+    )
+      return;
     const generation = ++usageRequestGeneration;
     usageRequestTargetKey = targetKey;
+    usageRequestRevision = revision;
     setUsageLoading(true);
     setUsageError(null);
     try {

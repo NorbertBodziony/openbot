@@ -85,6 +85,12 @@ describe("Team protocol v3", () => {
     expect(decodeTeamProtocolV3WebRtcHttpResponse("POST", duplicatePath, 201, responseFixture)).toEqual(
       responseFixture,
     );
+    expect(encodeTeamProtocolV3WebRtcHttpRequest("GET", scopedUsagePath, undefined)).toEqual({});
+    expect(
+      decodeTeamProtocolV3WebRtcHttpResponse("GET", scopedUsagePath, 200, {
+        limits: [{ id: "claude", primary: null, secondary: null }],
+      }),
+    ).toEqual({ limits: [{ id: "claude", primary: null, secondary: null }] });
   });
 
   it("reports both update directions when no common protocol exists", () => {

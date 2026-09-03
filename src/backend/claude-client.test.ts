@@ -78,6 +78,7 @@ describe("ClaudeAgentClient", () => {
         five_hour: { utilization: 12, resets_at: "2026-09-03T16:00:00Z" },
         seven_day: { utilization: 34, resets_at: "2026-09-08T00:00:00Z" },
         seven_day_sonnet: { utilization: 82, resets_at: "2026-09-09T00:00:00Z" },
+        model_scoped: [{ display_name: "haiku", utilization: 91, resets_at: "2026-09-03T16:00:00Z" }],
       },
     };
     const client = new ClaudeAgentClient(

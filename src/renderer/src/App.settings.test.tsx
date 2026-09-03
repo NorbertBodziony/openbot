@@ -120,6 +120,44 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("button", { name: "Weekly usage, 18% left" })).toBeInTheDocument();
   });
 
+  it("replaces an in-flight usage request after usage is invalidated", async () => {
+    let resolveInitialUsage!: (usage: AccountUsage) => void;
+    const initialUsageRequest = new Promise<AccountUsage>((resolve) => {
+      resolveInitialUsage = resolve;
+    });
+    vi.mocked(window.openbot.agent.getUsage)
+      .mockReturnValueOnce(initialUsageRequest)
+      .mockResolvedValueOnce({
+        limits: [
+          {
+            id: "codex",
+            primary: null,
+            secondary: { usedPercent: 72, windowDurationMins: 10_080, resetsAt: null },
+          },
+        ],
+      });
+
+    render(() => <App />);
+    await waitFor(() => expect(window.openbot.agent.getUsage).toHaveBeenCalledTimes(1));
+
+    emitAgentEvent?.({ type: "usage-changed", usage: { limits: [] } });
+
+    await waitFor(() => expect(window.openbot.agent.getUsage).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole("button", { name: "Weekly usage, 28% left" })).toBeInTheDocument();
+
+    resolveInitialUsage({
+      limits: [
+        {
+          id: "codex",
+          primary: null,
+          secondary: { usedPercent: 41, windowDurationMins: 10_080, resetsAt: null },
+        },
+      ],
+    });
+    await initialUsageRequest;
+    expect(screen.getByRole("button", { name: "Weekly usage, 28% left" })).toBeInTheDocument();
+  });
+
   it("persists every settings preference through its own IPC channel", async () => {
     vi.mocked(window.openbot.update.getPreference).mockResolvedValue({ autoDownload: false });
     render(() => <App />);
