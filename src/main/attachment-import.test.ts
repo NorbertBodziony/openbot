@@ -236,6 +236,7 @@ describe("attachment container imports", () => {
     const parts = Array.from({ length: 10 }, (_, index) =>
       [
         "--openbot",
+        "Malformed header without a colon",
         `Content-Type: text/plain; name="file-${index}.txt"`,
         `Content-Disposition: attachment; filename="file-${index}.txt"`,
         "",

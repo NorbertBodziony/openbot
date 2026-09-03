@@ -1,6 +1,6 @@
 import { readFile, stat } from "node:fs/promises";
 import { basename, extname } from "node:path";
-import { inflateRaw } from "node:zlib";
+import { crc32, inflateRaw } from "node:zlib";
 import {
   attachmentFileExtension,
   attachmentMimeTypeForName,
@@ -26,12 +26,6 @@ const EMAIL_MAX_NESTING_DEPTH = 32;
 const EMAIL_MAX_RFC822_NESTING_DEPTH = 10;
 const EMAIL_MAX_MIME_PARTS = 64;
 const HEADER_DECODER = new TextDecoder("latin1");
-const CRC32_TABLE = Uint32Array.from({ length: 256 }, (_, index) => {
-  let value = index;
-  for (let bit = 0; bit < 8; bit += 1) value = (value >>> 1) ^ (0xedb88320 & -(value & 1));
-  return value >>> 0;
-});
-
 interface AttachmentBudget {
   count: number;
   bytes: number;
@@ -335,12 +329,6 @@ function findZipEnd(bytes: Uint8Array): number {
   return -1;
 }
 
-function crc32(bytes: Uint8Array): number {
-  let value = 0xffffffff;
-  for (const byte of bytes) value = CRC32_TABLE[(value ^ byte) & 0xff] ^ (value >>> 8);
-  return (value ^ 0xffffffff) >>> 0;
-}
-
 function assertWithinBudget(items: AttachmentDataInput[], budget: AttachmentBudget): void {
   if (items.length > budget.count) {
     throw new Error(`These files expand to more than ${INPUT_LIMITS.attachments} attachments. Import fewer files.`);
@@ -377,10 +365,9 @@ function assertEmailPreflight(name: string, bytes: Uint8Array, budget: Attachmen
       continue;
     }
     const headers = readEmailHeaders(bytes, offset);
-    if (!headers.recognized) continue;
     ({ parts, attachments } = countEmailPart(headers, parts, attachments));
     assertEmailCounts(name, budget, parts, attachments);
-    offset = headers.bodyOffset;
+    if (headers.recognized) offset = headers.bodyOffset;
   }
 }
 
@@ -398,7 +385,7 @@ function countEmailPart(
   parts: number,
   attachments: number,
 ): { parts: number; attachments: number } {
-  if (!headers.recognized) return { parts, attachments };
+  if (!headers.recognized) return { parts: parts + 1, attachments };
   const contentType = headers.contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
   const disposition =
     headers.contentDisposition
@@ -440,15 +427,17 @@ function readEmailHeaders(bytes: Uint8Array, startOffset: number): EmailHeaders 
       continue;
     }
     const separator = value.indexOf(":");
-    if (separator < 1) return { contentType: "", contentDisposition: "", bodyOffset: startOffset, recognized: false };
+    if (separator < 1) {
+      current = null;
+      continue;
+    }
+    recognized = true;
     const key = value.slice(0, separator).trim().toLowerCase();
     current = key === "content-type" || key === "content-disposition" ? key : null;
     if (current === "content-type") {
       contentType = value.slice(separator + 1).trim();
-      recognized = true;
     } else if (current === "content-disposition") {
       contentDisposition = value.slice(separator + 1).trim();
-      recognized = true;
     }
   }
 
