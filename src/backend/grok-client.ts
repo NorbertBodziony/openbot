@@ -19,6 +19,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import { type DynamicRecord, isBoolean, isString } from "@openbot/contracts/runtime-values";
 import type { AgentProvider } from "./agent-client";
+import { redactDiagnostic } from "./app-server-client";
 import type { GrokCliInfo } from "./cli";
 import { type DynamicToolNamespace, LocalMcpBridge, type LocalMcpSession } from "./local-mcp-bridge";
 import {
@@ -129,7 +130,7 @@ export class GrokAgentClient extends EventEmitter<ClientEvents> {
       stream,
     );
     child.stderr.on("data", (chunk: Buffer) => {
-      const message = redactGrokDiagnostic(chunk.toString("utf8").trim());
+      const message = redactDiagnostic(chunk.toString("utf8").trim());
       if (message) this.emit("diagnostic", message);
     });
     child.once("error", (error) => this.#fail(error, child));
@@ -913,15 +914,8 @@ function isAuthenticationError(error: unknown): boolean {
 function grokErrorMessage(error: unknown): string {
   const data = isRecord(error) ? error.data : null;
   const detail = isRecord(data) && isString(data.message) ? data.message : null;
-  if (detail) return redactGrokDiagnostic(detail);
-  return redactGrokDiagnostic(error instanceof Error ? error.message : String(error));
-}
-
-function redactGrokDiagnostic(message: string): string {
-  return message
-    .replace(/(?:xai[-_ ]api[-_ ]key|authorization|bearer|token)["':= ]+[A-Za-z0-9._-]{8,}/gi, "$1 [redacted]")
-    .replace(/xai-[A-Za-z0-9_-]{8,}/gi, "[redacted]")
-    .slice(0, 2_000);
+  if (detail) return redactDiagnostic(detail);
+  return redactDiagnostic(error instanceof Error ? error.message : String(error));
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {

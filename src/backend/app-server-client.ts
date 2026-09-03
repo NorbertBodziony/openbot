@@ -215,6 +215,10 @@ export class CodexAppServerClient extends EventEmitter<ClientEvents> {
 
 export function redactDiagnostic(message: string): string {
   return message
+    .replace(/\bAuthorization\s*:\s*(?:Bearer|Basic)\s+[^\s,;]+/gi, "Authorization: [redacted]")
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, "Bearer [redacted]")
+    .replace(/\b(xai[-_ ]api[-_ ]key|api[-_ ]key|token)\s*["':=]\s*[A-Za-z0-9._~+/=-]{8,}/gi, "$1 [redacted]")
+    .replace(/xai-[A-Za-z0-9_-]{8,}/gi, "[redacted]")
     .replace(/(?:sk|sess|Bearer|token)[-_a-zA-Z0-9.=]{8,}/gi, "[redacted]")
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted-email]")
     .slice(0, 2_000);

@@ -27,6 +27,7 @@ import {
   type RequestId,
   type ResponseDecoder,
   type RpcError,
+  type ThreadItem,
   type ThreadResponse,
   type TurnResponse,
 } from "./protocol";
@@ -101,22 +102,29 @@ interface ClaudeQuery extends AsyncIterable<ClaudeStreamMessage> {
 }
 
 type QueryFactory = (params: Parameters<typeof query>[0]) => ClaudeQuery;
+type SessionHistoryReader = typeof getSessionMessages;
 type ClaudeEffortCapability = { supported: ClaudeEffort[]; defaultEffort: ClaudeEffort } | null;
 
 export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
   readonly provider: AgentProvider = "claude";
   readonly #cli: ClaudeCliInfo;
   readonly #createQuery: QueryFactory;
+  readonly #readSessionMessages: SessionHistoryReader;
   readonly #threads = new Map<string, ThreadRuntime>();
   readonly #pendingServerRequests = new Map<RequestId, PendingServerRequest>();
   readonly #modelEffortCapabilities = new Map<string, ClaudeEffortCapability>();
   readonly #modelSdkValues = new Map<string, string>();
   #running = false;
 
-  constructor(cli: ClaudeCliInfo, createQuery: QueryFactory = query) {
+  constructor(
+    cli: ClaudeCliInfo,
+    createQuery: QueryFactory = query,
+    readSessionMessages: SessionHistoryReader = getSessionMessages,
+  ) {
     super();
     this.#cli = cli;
     this.#createQuery = createQuery;
+    this.#readSessionMessages = readSessionMessages;
   }
 
   get running(): boolean {
@@ -612,9 +620,13 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
 
   async #readThread(threadId: string): Promise<ThreadResponse> {
     const runtime = this.#threads.get(threadId);
-    const messages = await getSessionMessages(threadId, runtime?.config.cwd ? { dir: runtime.config.cwd } : undefined);
+    const messages = await this.#readSessionMessages(
+      threadId,
+      runtime?.config.cwd ? { dir: runtime.config.cwd } : undefined,
+    );
     const turns: NonNullable<ThreadResponse["thread"]["turns"]> = [];
     let current: (typeof turns)[number] | null = null;
+    let currentThinking: ThreadItem | null = null;
     for (const message of messages) {
       if (message.parent_tool_use_id) continue;
       const text = messageText(message.message);
@@ -633,20 +645,27 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
           ],
         };
         turns.push(current);
+        currentThinking = null;
       } else if (message.type === "assistant") {
         const thinking = messageThinking(message.message);
         if (!thinking && !text) continue;
         if (!current) {
           current = { id: message.uuid, status: "completed", items: [] };
           turns.push(current);
+          currentThinking = null;
         }
         if (thinking) {
-          current.items?.push({
-            id: `${message.uuid}:reasoning`,
-            type: "agentMessage",
-            phase: "commentary",
-            text: thinking,
-          });
+          if (currentThinking) {
+            currentThinking.text = `${currentThinking.text ?? ""}\n${thinking}`;
+          } else {
+            currentThinking = {
+              id: `${current.id}:reasoning`,
+              type: "agentMessage",
+              phase: "commentary",
+              text: thinking,
+            };
+            current.items?.push(currentThinking);
+          }
         }
         if (text) current.items?.push({ id: message.uuid, type: "agentMessage", text });
       }

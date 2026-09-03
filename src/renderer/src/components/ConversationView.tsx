@@ -3344,6 +3344,7 @@ export function ConversationTimeline() {
                           >
                             <ThinkingDisclosure
                               message={message() ?? initialMessage}
+                              working={Boolean(props.activeTurnId && message()?.turnId === props.activeTurnId)}
                               open={expandedThinkingMessages()[`${props.bot?.id ?? ""}:${message()?.id ?? ""}`]}
                               onOpenChange={(open) => {
                                 const key = `${props.bot?.id ?? ""}:${message()?.id ?? ""}`;

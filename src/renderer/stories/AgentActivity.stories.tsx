@@ -69,6 +69,7 @@ export const ThinkingLive: IndicatorStory = {
           streaming: true,
           items: THINKING_STEPS,
         }}
+        working={true}
         open={open()}
         onOpenChange={setOpen}
       />
@@ -94,6 +95,7 @@ export const ThinkingDetails: IndicatorStory = {
           kind: "thinking",
           items: THINKING_STEPS,
         }}
+        working={false}
         open={open()}
         onOpenChange={setOpen}
       />

@@ -473,7 +473,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("img", { name: "Chief reacted with 🎉" })).toBeInTheDocument();
   });
 
-  it("groups commentary into a settled thinking disclosure", async () => {
+  it("keeps active commentary expanded and groups it into a settled thinking disclosure", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     emitAgentEvent?.({
@@ -481,8 +481,49 @@ describe("OpenBot connected desktop shell", () => {
       snapshot: {
         botId: "chief",
         threadId: "thread-chief",
-        activeTurnId: null,
+        activeTurnId: "turn-open",
         revision: 1,
+        messages: [
+          {
+            id: "user-open",
+            turnId: "turn-open",
+            author: "user",
+            text: "Open x.com",
+            createdAt: "2026-08-12T10:00:00.000Z",
+            status: "completed",
+          },
+          {
+            id: "commentary-open",
+            turnId: "turn-open",
+            author: "assistant",
+            text: "I’ll open x.com in the OpenBot browser.",
+            createdAt: "2026-08-12T10:00:01.000Z",
+            status: "completed",
+            itemType: "commentary",
+          },
+          {
+            id: "commentary-check",
+            turnId: "turn-open",
+            author: "assistant",
+            text: "Checking that the page loaded.",
+            createdAt: "2026-08-12T10:00:02.000Z",
+            status: "completed",
+            itemType: "commentary",
+          },
+        ],
+      },
+    });
+
+    const disclosure = await screen.findByRole("button", { name: "Show thinking details" });
+    expect(disclosure.getAttribute("aria-expanded")).toBe("true");
+
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 2,
         messages: [
           {
             id: "user-open",
@@ -522,9 +563,7 @@ describe("OpenBot connected desktop shell", () => {
         ],
       },
     });
-
-    const disclosure = await screen.findByRole("button", { name: "Show thinking details" });
-    expect(disclosure.getAttribute("aria-expanded")).toBe("false");
+    await waitFor(() => expect(disclosure.getAttribute("aria-expanded")).toBe("false"));
     expect(screen.getByText("Opened x.com.")).toBeVisible();
     expect(screen.getByText("I’ll open x.com in the OpenBot browser.")).toBeInTheDocument();
     expect(screen.getByText("Checking that the page loaded.")).toBeInTheDocument();
@@ -539,7 +578,7 @@ describe("OpenBot connected desktop shell", () => {
         botId: "chief",
         threadId: "thread-chief",
         activeTurnId: null,
-        revision: 2,
+        revision: 3,
         messages: [
           {
             id: "user-open",

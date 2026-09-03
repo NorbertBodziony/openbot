@@ -89,14 +89,14 @@ function pickActivityLabel(
 
 export function ThinkingDisclosure(props: {
   message: BotMessage;
+  working: boolean;
   open: boolean | undefined;
   onOpenChange: (open: boolean) => void;
 }) {
   const steps = () => props.message.items?.filter((item) => item.trim()) ?? [];
-  const working = () => props.message.streaming === true;
   /* Open while the agent reasons so the trace reads as it arrives, closed once it has answered —
      until the reader decides otherwise. */
-  const expanded = () => props.open ?? working();
+  const expanded = () => props.open ?? props.working;
   return (
     <article class="thinking-entry">
       <div class="thinking-disclosure" data-expanded={expanded()}>
@@ -109,8 +109,8 @@ export function ThinkingDisclosure(props: {
           onClick={() => props.onOpenChange(!expanded())}
         >
           <Sparkles class="thinking-mark" aria-hidden="true" />
-          <span class="thinking-label" role="status" data-working={working()}>
-            {working() ? "Thinking" : "Thought it through"}
+          <span class="thinking-label" role="status" data-working={props.working}>
+            {props.working ? "Thinking" : "Thought it through"}
           </span>
           <ChevronDown class="thinking-chevron" aria-hidden="true" />
         </Button>

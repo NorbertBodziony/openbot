@@ -3,7 +3,7 @@
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ModelInfo, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { ModelInfo, SDKUserMessage, SessionMessage } from "@anthropic-ai/claude-agent-sdk";
 import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ClaudeAgentClient } from "./claude-client";
@@ -69,6 +69,64 @@ afterEach(async () => {
 });
 
 describe("ClaudeAgentClient", () => {
+  it("restores one stable reasoning item for a multi-phase turn", async () => {
+    const turnId = "8bf58506-96a8-4d96-837c-3ab807b79d1f";
+    const history: SessionMessage[] = [
+      {
+        type: "user",
+        uuid: turnId,
+        session_id: "thread-1",
+        parent_tool_use_id: null,
+        parent_agent_id: null,
+        message: { content: "Plan it" },
+      },
+      {
+        type: "assistant",
+        uuid: "phase-1",
+        session_id: "thread-1",
+        parent_tool_use_id: null,
+        parent_agent_id: null,
+        message: { content: [{ type: "thinking", thinking: "Check the inputs." }] },
+      },
+      {
+        type: "assistant",
+        uuid: "phase-2",
+        session_id: "thread-1",
+        parent_tool_use_id: null,
+        parent_agent_id: null,
+        message: { content: [{ type: "thinking", thinking: "Compare the options." }] },
+      },
+      {
+        type: "assistant",
+        uuid: "answer",
+        session_id: "thread-1",
+        parent_tool_use_id: null,
+        parent_agent_id: null,
+        message: { content: [{ type: "text", text: "Use option A." }] },
+      },
+    ];
+    const client = new ClaudeAgentClient(
+      { executable: "/bin/true", version: "2.1.231" },
+      undefined,
+      async () => history,
+    );
+    client.start();
+
+    const result = await client.request("thread/read", { threadId: "thread-1" }, decodeThreadResponse);
+
+    expect(result.thread.turns?.[0]?.items).toEqual([
+      expect.objectContaining({ type: "userMessage" }),
+      {
+        id: `${turnId}:reasoning`,
+        type: "agentMessage",
+        phase: "commentary",
+        text: "Check the inputs.\nCompare the options.",
+      },
+      { id: "answer", type: "agentMessage", text: "Use option A." },
+    ]);
+    await client.stop();
+  });
+
   it("streams a Claude SDK turn through the App Server event contract", async () => {
     root = await mkdtemp(join(tmpdir(), "openbot-claude-client-"));
     const sharedRoot = join(root, "shared");

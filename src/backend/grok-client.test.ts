@@ -177,7 +177,7 @@ describe.sequential("GrokAgentClient", () => {
     );
   });
 
-  it("reports why the Grok CLI refused the turn instead of its generic JSON-RPC error", async () => {
+  it("reports a sanitized reason when the Grok CLI returns a detailed JSON-RPC error", async () => {
     process.env.OPENBOT_FAKE_GROK_MODE = "internal-error";
     client = new GrokAgentClient({ executable, version: "1.0.13" }, 5_000);
     const notifications: AppServerNotification[] = [];
@@ -205,7 +205,8 @@ describe.sequential("GrokAgentClient", () => {
         expect.objectContaining({
           method: "error",
           params: expect.objectContaining({
-            message: "API error (status 402 Payment Required): Grok Build usage balance exhausted",
+            message:
+              "API error (status 402 Payment Required): Grok Build usage balance exhausted; Authorization: [redacted]",
           }),
         }),
       ]),
@@ -547,7 +548,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         error: {
           code: -32603,
           message: "Internal error",
-          data: { message: "API error (status 402 Payment Required): Grok Build usage balance exhausted" },
+          data: {
+            message:
+              "API error (status 402 Payment Required): Grok Build usage balance exhausted; Authorization: Bearer secretsecret",
+          },
         },
       });
       return;
