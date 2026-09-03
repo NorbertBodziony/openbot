@@ -1004,11 +1004,15 @@ const openbotApi: OpenBotDesktopApi = {
     getPresenceFor: (serverId) => ipcRenderer.invoke(IPC_CHANNELS.serversGetPresenceFor, serverId),
     refreshIdentity: (serverId) => ipcRenderer.invoke(IPC_CHANNELS.serversRefreshIdentity, serverId),
     listMembers: (serverId) => ipcRenderer.invoke(IPC_CHANNELS.serversListMembers, serverId),
-    updateMember: (serverId, input) => ipcRenderer.invoke(IPC_CHANNELS.serversUpdateMember, serverId, input),
-    removeMember: (serverId, memberId) => ipcRenderer.invoke(IPC_CHANNELS.serversRemoveMember, serverId, memberId),
+    updateMember: (serverId, input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.serversUpdateMember, { serverId, payload: input }),
+    removeMember: (serverId, memberId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.serversRemoveMember, { serverId, payload: memberId }),
     listInvites: (serverId) => ipcRenderer.invoke(IPC_CHANNELS.serversListInvites, serverId),
-    revokeInvite: (serverId, inviteId) => ipcRenderer.invoke(IPC_CHANNELS.serversRevokeInvite, serverId, inviteId),
-    createInvite: (serverId, input) => ipcRenderer.invoke(IPC_CHANNELS.serversCreateInvite, serverId, input),
+    revokeInvite: (serverId, inviteId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.serversRevokeInvite, { serverId, payload: inviteId }),
+    createInvite: (serverId, input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.serversCreateInvite, { serverId, payload: input }),
     setTyping: (input) => ipcRenderer.invoke(IPC_CHANNELS.serversSetTyping, input),
     onPresence: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: ScopedTeamPresenceSnapshot) => {

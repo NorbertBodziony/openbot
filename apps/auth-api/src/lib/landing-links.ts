@@ -6,7 +6,7 @@ export const OPENBOT_DOWNLOAD_LINKS = {
 } as const;
 
 export const OPENBOT_LINKS = {
-  contact: "https://x.com/norbertbodziony",
+  contact: "https://x.com/OpenBot_",
   download: "#download",
   releases: "https://github.com/NorbertBodziony/openbot/releases",
   repository: "https://github.com/NorbertBodziony/openbot",

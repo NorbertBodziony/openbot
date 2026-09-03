@@ -1416,6 +1416,7 @@ export type AgentEvent =
     }
   | { type: "queue-invalidated"; botId: string }
   | { type: "queue-changed"; snapshot: QueueSnapshot }
+  | { type: "turn-progress"; botId: string; threadId: string; turnId: string; detail: string }
   | { type: "turn-started"; botId: string; threadId: string; turnId: string; origin?: AgentTurnOrigin }
   | {
       type: "turn-completed";
@@ -1499,6 +1500,15 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
       return isIdentifier(value.botId);
     case "queue-changed":
       return isQueueSnapshot(value.snapshot);
+    case "turn-progress":
+      return (
+        isIdentifier(value.botId) &&
+        isIdentifier(value.threadId) &&
+        isIdentifier(value.turnId) &&
+        isString(value.detail) &&
+        value.detail.length > 0 &&
+        value.detail.length <= INPUT_LIMITS.promptQuestion
+      );
     case "turn-started":
     case "turn-completed":
       return (

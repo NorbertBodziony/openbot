@@ -1,3 +1,4 @@
+import { BlurView } from "expo-blur";
 import * as Haptics from "expo-haptics";
 import { type Href, router, usePathname } from "expo-router";
 import { useThemeColor } from "heroui-native/hooks";
@@ -25,7 +26,7 @@ interface AppDrawerContextValue {
 }
 
 const AppDrawerContext = createContext<AppDrawerContextValue | null>(null);
-const DRAWER_SURFACE_RADIUS = 34;
+const DRAWER_SURFACE_MIN_RADIUS = 34;
 const DRAWER_SPRING = {
   dampingRatio: 0.8,
   duration: 300,
@@ -43,13 +44,14 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
   const insets = useSafeAreaInsets();
   const { session } = useMobileSession();
   const { activeServer, selectServer, servers } = useMobileWorkspace();
-  const [foreground, muted] = useThemeColor(["foreground", "muted"]);
+  const [muted] = useThemeColor(["muted"]);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const drawerProgress = useSharedValue(0);
   const drawerWidth = Math.min(360, Math.max(280, width - 52));
   const drawerSideInset = Math.max(insets.left, 18);
   const drawerHeaderHeight = Math.max(insets.top, 16) + 56;
   const drawerListTopInset = drawerHeaderHeight + 8;
+  const surfaceCornerRadius = Math.max(DRAWER_SURFACE_MIN_RADIUS, insets.top, insets.right, insets.bottom, insets.left);
 
   const commitDrawerState = useCallback((open: boolean) => setDrawerOpen(open), []);
 
@@ -133,7 +135,6 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
   );
 
   const surfaceStyle = useAnimatedStyle(() => ({
-    borderRadius: interpolate(drawerProgress.get(), [0, 1], [0, DRAWER_SURFACE_RADIUS]),
     transform: [{ translateX: drawerProgress.get() * drawerWidth }],
   }));
   const drawerStyle = useAnimatedStyle(() => ({
@@ -142,6 +143,9 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
   }));
   const scrimStyle = useAnimatedStyle(() => ({
     opacity: interpolate(drawerProgress.get(), [0, 1], [0, 0.3]),
+  }));
+  const blurStyle = useAnimatedStyle(() => ({
+    opacity: drawerProgress.get(),
   }));
 
   const navigateAfterClosing = useCallback(
@@ -180,7 +184,6 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
           >
             <ServerDrawerContent
               activeServerId={activeServer.id}
-              foreground={foreground}
               headerHeight={drawerHeaderHeight}
               listTopInset={drawerListTopInset}
               muted={muted}
@@ -199,21 +202,28 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
           <GestureDetector gesture={openingGesture}>
             <Animated.View
               className="flex-1 overflow-hidden bg-background"
-              style={[{ boxShadow: "-12px 0 32px rgba(0, 0, 0, 0.28)" }, surfaceStyle]}
+              style={[
+                {
+                  borderCurve: "continuous",
+                  borderRadius: surfaceCornerRadius,
+                  boxShadow: "-12px 0 32px rgba(0, 0, 0, 0.28)",
+                },
+                surfaceStyle,
+              ]}
             >
               {children}
-              <Animated.View
-                className="absolute inset-0 bg-black"
-                pointerEvents={drawerOpen ? "auto" : "none"}
-                style={scrimStyle}
-              >
+              <View className="absolute inset-0" pointerEvents={drawerOpen ? "auto" : "none"}>
+                <Animated.View className="absolute inset-0" pointerEvents="none" style={blurStyle}>
+                  <BlurView intensity={5} style={{ flex: 1 }} tint="systemThickMaterial" />
+                </Animated.View>
+                <Animated.View className="absolute inset-0 bg-drawer-scrim" pointerEvents="none" style={scrimStyle} />
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Close server drawer"
                   className="flex-1"
                   onPress={closeDrawer}
                 />
-              </Animated.View>
+              </View>
             </Animated.View>
           </GestureDetector>
         </View>

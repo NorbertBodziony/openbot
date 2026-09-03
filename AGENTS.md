@@ -212,7 +212,11 @@ SVG and platform colours at their boundaries.
    `bun run check:ui` cover a large class mechanically. If one of them does, skip the test.
 4. **A test that needs a timeout to pass is wrong.** Wait on an observable condition — a state
    change, an emitted event, a resolved promise — never the clock. A sleep long enough to pass on
-   your machine is short enough to flake on a loaded runner.
+   your machine is short enough to flake on a loaded runner. A spy call is such a condition:
+   `await waitFor(() => expect(send).toHaveBeenCalled())` is the sanctioned way to satisfy this
+   rule, and is not the mock-shaped assertion the module-mock warning is about. The barrier
+   synchronizes; the assertions after it carry the consequence. Counting `toHaveBeenCalled*` across
+   the suite cannot tell the two apart, so do not "fix" a barrier by grep.
 5. **Test behaviour, data, and accessible roles and names** — not markup, classes, layout or
    animation timing. Where focus lands *is* behaviour: assert it with `toHaveFocus()`. Assert exact
    text only for a product contract, an error or security message, serialized output, or a

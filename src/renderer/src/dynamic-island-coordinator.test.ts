@@ -4,6 +4,41 @@ import { DynamicIslandCoordinator } from "./dynamic-island-coordinator";
 import type { DynamicIslandPresentationInput } from "./dynamic-island-presentation";
 
 describe("DynamicIslandCoordinator", () => {
+  it("retains progress for the active turn and clears it when the turn completes", () => {
+    const coordinator = new DynamicIslandCoordinator();
+    seedBots(coordinator, "remote", [bot("research", "Research")]);
+    coordinator.applyEvent(
+      scoped("remote", { type: "turn-started", botId: "research", threadId: "thread-1", turnId: "turn-1" }),
+      "local",
+    );
+    coordinator.applyEvent(
+      scoped("remote", {
+        type: "turn-progress",
+        botId: "research",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        detail: "Checking the release…",
+      }),
+      "local",
+    );
+
+    expect(coordinator.serverState("remote")?.turnProgress).toEqual({
+      research: { turnId: "turn-1", detail: "Checking the release…" },
+    });
+
+    coordinator.applyEvent(
+      scoped("remote", {
+        type: "turn-completed",
+        botId: "research",
+        threadId: "thread-1",
+        turnId: "turn-1",
+        status: "completed",
+      }),
+      "local",
+    );
+    expect(coordinator.serverState("remote")?.turnProgress).toEqual({});
+  });
+
   it("selects the highest-priority notification across hosts and applies remote resolutions", () => {
     const coordinator = new DynamicIslandCoordinator();
     seedBots(coordinator, "local", [bot("chief", "Chief")]);

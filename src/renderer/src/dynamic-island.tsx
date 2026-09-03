@@ -10,7 +10,7 @@ import { createSimpleContext } from "./simple-context";
  *
  * This is the one domain that is deliberately cross-server, so it sits above
  * everything per-server. `DynamicIslandCoordinator` keeps a runtime per server
- * id and hands the five turn signals back on a switch (`serverState(serverId)`),
+ * id and hands the six turn signals back on a switch (`serverState(serverId)`),
  * which is why it must outlive any subtree keyed by the active server.
  * `onScopedEvent` is the other half of that: events for a background server
  * arrive here and nowhere else, because no per-server domain exists to receive

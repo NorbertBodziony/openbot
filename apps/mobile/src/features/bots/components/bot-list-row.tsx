@@ -87,6 +87,8 @@ interface BotListRowProps {
   dismissToChat?: boolean;
   enableActions?: boolean;
   enableZoomTransition?: boolean;
+  leftInset?: number;
+  rightInset?: number;
 }
 
 export function BotListRow({
@@ -95,6 +97,8 @@ export function BotListRow({
   dismissToChat = false,
   enableActions = true,
   enableZoomTransition = true,
+  leftInset = 20,
+  rightInset = 20,
 }: BotListRowProps) {
   const [background, accent, accentForeground] = useThemeColor(["background", "accent", "accent-foreground"]);
   const { markBotRead, unreadBotIds } = useMobileWorkspace();
@@ -120,8 +124,13 @@ export function BotListRow({
       <Pressable accessibilityLabel={`Open chat with ${bot.name}`} accessibilityRole="button" className="w-full">
         {({ pressed }) => (
           <View
-            className="min-h-20 w-full flex-row items-center gap-3 px-5 py-3"
-            style={{ backgroundColor: background, opacity: pressed ? 0.58 : 1 }}
+            className="min-h-20 w-full flex-row items-center gap-3 py-3"
+            style={{
+              backgroundColor: background,
+              opacity: pressed ? 0.58 : 1,
+              paddingLeft: leftInset,
+              paddingRight: rightInset,
+            }}
           >
             {enableZoomTransition ? <Link.AppleZoom>{avatar}</Link.AppleZoom> : avatar}
             <BotRowTextReveal active={isUnpinTarget}>

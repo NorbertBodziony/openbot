@@ -87,7 +87,8 @@ export function toBotMessages(messages: ConversationMessage[], ownerAgentId?: st
     const existing = thinkingByTurn.get(key);
     if (existing) {
       const text = cleanAgentMessageText(message.text);
-      if (text.trim()) existing.items = [...(existing.items ?? []), text];
+      existing.items = [...(existing.items ?? []), text];
+      existing.itemIds = [...(existing.itemIds ?? []), message.id];
       existing.streaming = existing.streaming || message.status === "streaming";
       continue;
     }
@@ -103,7 +104,8 @@ export function toBotMessages(messages: ConversationMessage[], ownerAgentId?: st
       streaming: message.status === "streaming",
       itemType: "commentary",
       kind: "thinking",
-      items: text.trim() ? [text] : [],
+      items: [text],
+      itemIds: [message.id],
     };
     thinkingByTurn.set(key, thinking);
     result.push(thinking);
@@ -171,7 +173,8 @@ export function botMessagesEqual(left: BotMessage, right: BotMessage): boolean {
     JSON.stringify(left.exchange) === JSON.stringify(right.exchange) &&
     JSON.stringify(left.routine) === JSON.stringify(right.routine) &&
     JSON.stringify(left.actionMarker) === JSON.stringify(right.actionMarker) &&
-    JSON.stringify(left.items) === JSON.stringify(right.items)
+    JSON.stringify(left.items) === JSON.stringify(right.items) &&
+    JSON.stringify(left.itemIds) === JSON.stringify(right.itemIds)
   );
 }
 

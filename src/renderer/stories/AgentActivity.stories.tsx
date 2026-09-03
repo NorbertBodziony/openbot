@@ -44,13 +44,47 @@ export const TransitionLoop: IndicatorStory = {
   },
 };
 
+const THINKING_STEPS = [
+  "Summer demand spikes for stone-fruit flavors — peach and apricot lead.",
+  "I should check cone inventory before promoting a waffle-bowl special.",
+  "Joy Cone ships in two days, so the special can start on Friday.",
+];
+
+/* Streaming: the header shimmers while the answer is still coming. */
+export const ThinkingLive: IndicatorStory = {
+  args: {
+    bot: STORY_BOTS[0],
+    presentation: { animation: "thinking", label: "Thinking it through…" },
+  },
+  render: () => {
+    const [open, setOpen] = createSignal<boolean | undefined>(undefined);
+    return (
+      <ThinkingDisclosure
+        message={{
+          id: "thinking-live",
+          author: "bot",
+          body: "",
+          time: "10:00",
+          kind: "thinking",
+          streaming: true,
+          items: THINKING_STEPS,
+        }}
+        working={true}
+        open={open()}
+        onOpenChange={setOpen}
+      />
+    );
+  },
+};
+
+/* Settled: the trace collapses and reopens on demand. */
 export const ThinkingDetails: IndicatorStory = {
   args: {
     bot: STORY_BOTS[0],
     presentation: { animation: "thinking", label: "Thinking it through…" },
   },
   render: () => {
-    const [open, setOpen] = createSignal(false);
+    const [open, setOpen] = createSignal<boolean | undefined>(undefined);
     return (
       <ThinkingDisclosure
         message={{
@@ -59,8 +93,9 @@ export const ThinkingDetails: IndicatorStory = {
           body: "",
           time: "10:00",
           kind: "thinking",
-          items: ["Read the brief", "Compared owners", "Drafted next steps"],
+          items: THINKING_STEPS,
         }}
+        working={false}
         open={open()}
         onOpenChange={setOpen}
       />

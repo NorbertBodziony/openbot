@@ -150,7 +150,7 @@ const Agents = createSimpleContext({
           if (existingIndex === -1) return [...current, createStoredProfile(next)];
           const existing = current[existingIndex];
           if (existing) updateStored(existing, next);
-          return current;
+          return [...current];
         });
         analytics.track("agent_action", {
           action: "update",
