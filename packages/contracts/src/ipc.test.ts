@@ -6,14 +6,22 @@ import {
   hostedSiteConversationEvent,
   hostedSiteConversationEventItemType,
   hostedSiteConversationEventText,
+  isAccountUsage,
   isAgentEvent,
+  isAgentModelOption,
+  isAgentStatus,
+  isAttachmentSummary,
   isAvatarHue,
   isAvatarSeed,
   isBotMemory,
+  isBotSummary,
   isConversationMessage,
+  isConversationWithReadState,
   isDynamicIslandAction,
   isHostedSiteConversationEventUrl,
   isMessageReaction,
+  isQueuedMessageReceipt,
+  isQueueSnapshot,
   parseHostedSiteConversationEventItemType,
   parseRoutineConversationEventItemType,
   parseRoutineRunConversationEventItemType,
@@ -543,5 +551,150 @@ describe("memory event validation", () => {
     expect(isBotMemory(memory)).toBe(true);
     expect(isBotMemory({ ...memory, text: "" })).toBe(false);
     expect(isBotMemory({ ...memory, origin: "imported" })).toBe(false);
+  });
+});
+
+describe("renderer-to-main boundary guards", () => {
+  const status = {
+    phase: "ready",
+    cliVersion: "1.4.0",
+    auth: { kind: "chatgpt", email: "pilot@example.com" },
+    capabilities: { chat: "ready", browser: "setup-required", computerUse: "unavailable" },
+    message: null,
+    fullAccess: true,
+  };
+
+  const bot = {
+    id: "bot-1",
+    name: "Chief",
+    title: "Lead engineer",
+    description: "Runs the shop.",
+    notifications: true,
+    provider: "codex",
+    model: "gpt-5-codex",
+    reasoningEffort: "high",
+    threadId: null,
+    workspacePath: "/Users/pilot/OpenBot/Bots/bot-1",
+    preview: "Done",
+    updatedAt: "2026-08-29T10:00:00.000Z",
+    avatarSeed: "chief-1",
+    avatarHue: 215,
+    avatarUrl: null,
+  };
+
+  const attachment = {
+    id: "attachment-1",
+    name: "notes.pdf",
+    size: 2048,
+    kind: "file",
+    mimeType: "application/pdf",
+    previewKind: "pdf",
+    previewUrl: null,
+  };
+
+  const snapshot = {
+    botId: "bot-1",
+    threadId: "thread-1",
+    activeTurnId: null,
+    revision: 3,
+    messages: [
+      {
+        id: "message-1",
+        author: "assistant",
+        text: "Done",
+        createdAt: "2026-08-29T10:00:00.000Z",
+        status: "completed",
+      },
+    ],
+    readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
+  };
+
+  it("narrows the agent phase and capability states to their unions", () => {
+    expect(isAgentStatus(status)).toBe(true);
+    expect(isAgentStatus({ ...status, phase: "sleeping" })).toBe(false);
+    expect(isAgentStatus({ ...status, capabilities: { ...status.capabilities, chat: "yes" } })).toBe(false);
+  });
+
+  it("keeps the agent auth kind open so a newer remote server still reports status", () => {
+    expect(isAgentStatus({ ...status, auth: { kind: "passkey" } })).toBe(true);
+    expect(isAgentStatus({ ...status, auth: "chatgpt" })).toBe(false);
+  });
+
+  it("requires an agent provider and a well-formed avatar on every agent summary", () => {
+    expect(isBotSummary(bot)).toBe(true);
+    const { provider, ...withoutProvider } = bot;
+    expect(isBotSummary(withoutProvider)).toBe(false);
+    expect(isBotSummary({ ...bot, provider: "gemini" })).toBe(false);
+    expect(isBotSummary({ ...bot, avatarSeed: "Not A Seed!" })).toBe(false);
+    expect(isBotSummary({ ...bot, avatarHue: 7 })).toBe(false);
+  });
+
+  it("validates every message inside a conversation, not just the array", () => {
+    expect(isConversationWithReadState(snapshot)).toBe(true);
+    expect(isConversationWithReadState({ ...snapshot, messages: [{ id: "message-1" }] })).toBe(false);
+    expect(isConversationWithReadState({ ...snapshot, readState: { unreadCount: -1 } })).toBe(false);
+    const { readState, ...withoutReadState } = snapshot;
+    expect(isConversationWithReadState(withoutReadState)).toBe(true);
+  });
+
+  it("narrows attachment kind and preview kind", () => {
+    expect(isAttachmentSummary(attachment)).toBe(true);
+    expect(isAttachmentSummary({ ...attachment, kind: "video" })).toBe(false);
+    expect(isAttachmentSummary({ ...attachment, previewKind: "html" })).toBe(false);
+  });
+
+  it("validates the usage windows inside an account usage limit", () => {
+    const usage = {
+      limits: [
+        {
+          id: "codex",
+          primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: null },
+          secondary: null,
+        },
+      ],
+    };
+    expect(isAccountUsage(usage)).toBe(true);
+    expect(isAccountUsage({ limits: [{ ...usage.limits[0], primary: { usedPercent: "25" } }] })).toBe(false);
+  });
+
+  it("validates every delivery inside a queue snapshot and a queued message receipt", () => {
+    const delivery = {
+      id: "delivery-1",
+      messageId: "message-1",
+      recipientBotId: "bot-1",
+      sender: { kind: "user" },
+      text: "Ship it",
+      attachments: [attachment],
+      replyToMessageId: null,
+      status: "queued",
+      position: 1,
+      turnId: null,
+      error: null,
+      createdAt: "2026-08-29T10:00:00.000Z",
+    };
+    expect(isQueueSnapshot({ botId: "bot-1", deliveries: [delivery] })).toBe(true);
+    expect(isQueueSnapshot({ botId: "bot-1", deliveries: [{ ...delivery, status: "pending" }] })).toBe(false);
+
+    const receipt = {
+      messageId: "message-1",
+      deliveries: [{ id: "delivery-1", recipientBotId: "bot-1", status: "queued", position: 1 }],
+    };
+    expect(isQueuedMessageReceipt(receipt)).toBe(true);
+    expect(isQueuedMessageReceipt({ ...receipt, deliveries: [{ id: "delivery-1" }] })).toBe(false);
+  });
+
+  it("requires the provider on every agent model option", () => {
+    const model = {
+      provider: "claude",
+      id: "claude-sonnet-5",
+      name: "Sonnet 5",
+      description: "Balanced reasoning.",
+      defaultReasoningEffort: "medium",
+      supportedReasoningEfforts: ["low", "medium", "high"],
+    };
+    expect(isAgentModelOption(model)).toBe(true);
+    const { provider, ...withoutProvider } = model;
+    expect(isAgentModelOption(withoutProvider)).toBe(false);
+    expect(isAgentModelOption({ ...model, supportedReasoningEfforts: ["low", "extreme"] })).toBe(false);
   });
 });

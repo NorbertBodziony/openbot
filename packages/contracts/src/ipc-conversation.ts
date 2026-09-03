@@ -2,9 +2,11 @@ import { INPUT_LIMITS } from "./input-limits";
 import type { BrowserControlState, BrowserTab } from "./ipc-browser";
 import { isBoolean, isDynamicRecord, isNumber, isOneOf, isString } from "./runtime-values";
 
-export type AgentPhase = "idle" | "starting" | "ready" | "restarting" | "blocked" | "stopped";
+export const AGENT_PHASES = ["idle", "starting", "ready", "restarting", "blocked", "stopped"] as const;
+export type AgentPhase = (typeof AGENT_PHASES)[number];
 
-export type CapabilityState = "ready" | "setup-required" | "unavailable";
+export const CAPABILITY_STATES = ["ready", "setup-required", "unavailable"] as const;
+export type CapabilityState = (typeof CAPABILITY_STATES)[number];
 
 export const AGENT_PROVIDERS = ["codex", "claude", "grok"] as const;
 export type AgentProviderId = (typeof AGENT_PROVIDERS)[number];
@@ -55,6 +57,29 @@ export interface AccountUsage {
   limits: AccountUsageLimit[];
 }
 
+function isAccountUsageWindow(value: unknown): value is AccountUsageWindow {
+  return (
+    isDynamicRecord(value) &&
+    isNumber(value.usedPercent) &&
+    (value.windowDurationMins === null || isNumber(value.windowDurationMins)) &&
+    (value.resetsAt === null || isNumber(value.resetsAt))
+  );
+}
+
+export function isAccountUsage(value: unknown): value is AccountUsage {
+  return (
+    isDynamicRecord(value) &&
+    Array.isArray(value.limits) &&
+    value.limits.every(
+      (limit) =>
+        isDynamicRecord(limit) &&
+        isBoundedString(limit.id, INPUT_LIMITS.identifier) &&
+        (limit.primary === null || isAccountUsageWindow(limit.primary)) &&
+        (limit.secondary === null || isAccountUsageWindow(limit.secondary)),
+    )
+  );
+}
+
 export interface AgentStatus {
   phase: AgentPhase;
   cliVersion: string | null;
@@ -67,6 +92,41 @@ export interface AgentStatus {
   };
   message: string | null;
   fullAccess: true;
+}
+
+// `auth.kind` and `providers[].state` stay bounded strings rather than their declared unions.
+// A remote server one release ahead may send a member we do not know yet, and rejecting the whole
+// status would stop every update from it. `phase` and `capabilities` are narrowed because the main
+// process has always narrowed them, so no shipped server depends on the looser reading.
+function isAgentProviderStatus(value: unknown): value is AgentProviderStatus {
+  return (
+    isDynamicRecord(value) &&
+    isAgentProvider(value.id) &&
+    isBoundedString(value.state, INPUT_LIMITS.identifier) &&
+    isNullableBoundedString(value.version, 160) &&
+    isNullableBoundedString(value.message, INPUT_LIMITS.messageText) &&
+    (value.email === undefined || isNullableBoundedString(value.email, INPUT_LIMITS.email)) &&
+    (value.connectionState === undefined || value.connectionState === "connecting") &&
+    (value.checkError === undefined || isNullableBoundedString(value.checkError, INPUT_LIMITS.messageText))
+  );
+}
+
+export function isAgentStatus(value: unknown): value is AgentStatus {
+  if (!isDynamicRecord(value) || !isDynamicRecord(value.auth) || !isDynamicRecord(value.capabilities)) {
+    return false;
+  }
+  return (
+    isOneOf(AGENT_PHASES, value.phase) &&
+    isNullableBoundedString(value.cliVersion, 160) &&
+    isBoundedString(value.auth.kind, INPUT_LIMITS.identifier) &&
+    isOneOf(CAPABILITY_STATES, value.capabilities.chat) &&
+    isOneOf(CAPABILITY_STATES, value.capabilities.browser) &&
+    isOneOf(CAPABILITY_STATES, value.capabilities.computerUse) &&
+    (value.providers === undefined ||
+      (Array.isArray(value.providers) && value.providers.every(isAgentProviderStatus))) &&
+    isNullableBoundedString(value.message, INPUT_LIMITS.messageText) &&
+    value.fullAccess === true
+  );
 }
 
 export interface BotSummary {
@@ -435,6 +495,19 @@ export function isAvatarHue(value: unknown): value is BotAvatarHue {
   return isOneOf(BOT_AVATAR_HUES, value);
 }
 
+export function isAgentModelOption(value: unknown): value is AgentModelOption {
+  return (
+    isDynamicRecord(value) &&
+    isAgentProvider(value.provider) &&
+    isAgentModel(value.id) &&
+    isBoundedString(value.name, INPUT_LIMITS.agentName) &&
+    isBoundedString(value.description, INPUT_LIMITS.agentDescription) &&
+    isReasoningEffort(value.defaultReasoningEffort) &&
+    Array.isArray(value.supportedReasoningEfforts) &&
+    value.supportedReasoningEfforts.every(isReasoningEffort)
+  );
+}
+
 export interface CreateBotInput {
   name: string;
   description: string;
@@ -556,14 +629,16 @@ export interface FilePreview {
   bytes: Uint8Array | null;
 }
 
-export type QueueDeliveryStatus =
-  | "queued"
-  | "starting"
-  | "running"
-  | "completed"
-  | "failed"
-  | "interrupted"
-  | "cancelled";
+export const QUEUE_DELIVERY_STATUSES = [
+  "queued",
+  "starting",
+  "running",
+  "completed",
+  "failed",
+  "interrupted",
+  "cancelled",
+] as const;
+export type QueueDeliveryStatus = (typeof QUEUE_DELIVERY_STATUSES)[number];
 
 export interface QueueDelivery {
   id: string;
@@ -976,10 +1051,7 @@ function isConversationDelivery(value: unknown): boolean {
   return (
     isDynamicRecord(value) &&
     isIdentifier(value.id) &&
-    isOneOf(
-      ["queued", "starting", "running", "completed", "failed", "interrupted", "cancelled"] as const,
-      value.status,
-    ) &&
+    isOneOf(QUEUE_DELIVERY_STATUSES, value.status) &&
     (value.position === null || (isNumber(value.position) && Number.isInteger(value.position) && value.position >= 1))
   );
 }
@@ -1001,10 +1073,7 @@ function isAgentExchangeSummary(value: unknown): value is AgentExchangeSummary {
         isDynamicRecord(delivery) &&
         isIdentifier(delivery.id) &&
         isIdentifier(delivery.recipientBotId) &&
-        isOneOf(
-          ["queued", "starting", "running", "completed", "failed", "interrupted", "cancelled"] as const,
-          delivery.status,
-        ) &&
+        isOneOf(QUEUE_DELIVERY_STATUSES, delivery.status) &&
         (delivery.position === null ||
           (isNumber(delivery.position) && Number.isInteger(delivery.position) && delivery.position >= 1)) &&
         (delivery.error === null || isBoundedString(delivery.error, INPUT_LIMITS.messageText)),
@@ -1076,7 +1145,7 @@ export interface ConversationReadState {
   throughMessageId: string | null;
 }
 
-function isConversationReadState(value: unknown): value is ConversationReadState {
+export function isConversationReadState(value: unknown): value is ConversationReadState {
   return (
     isDynamicRecord(value) &&
     isNumber(value.unreadCount) &&
@@ -1089,6 +1158,14 @@ function isConversationReadState(value: unknown): value is ConversationReadState
 
 export interface ConversationWithReadState extends ConversationSnapshot {
   readState?: ConversationReadState;
+}
+
+export function isConversationWithReadState(value: unknown): value is ConversationWithReadState {
+  return (
+    isDynamicRecord(value) &&
+    isConversationSnapshot(value) &&
+    (value.readState === undefined || isConversationReadState(value.readState))
+  );
 }
 
 export type ConversationPageAnchor =
@@ -1162,6 +1239,23 @@ export interface QueuedMessageReceipt {
     status: QueueDeliveryStatus;
     position: number | null;
   }>;
+}
+
+export function isQueuedMessageReceipt(value: unknown): value is QueuedMessageReceipt {
+  return (
+    isDynamicRecord(value) &&
+    isIdentifier(value.messageId) &&
+    Array.isArray(value.deliveries) &&
+    value.deliveries.every(
+      (delivery) =>
+        isDynamicRecord(delivery) &&
+        isIdentifier(delivery.id) &&
+        isIdentifier(delivery.recipientBotId) &&
+        isOneOf(QUEUE_DELIVERY_STATUSES, delivery.status) &&
+        (delivery.position === null ||
+          (isNumber(delivery.position) && Number.isInteger(delivery.position) && delivery.position >= 1)),
+    )
+  );
 }
 
 export interface CancelQueuedMessageInput {
@@ -1509,7 +1603,7 @@ function isAgentRuntimeBotSummary(value: unknown): value is AgentRuntimeBotSumma
   );
 }
 
-function isBotSummary(value: unknown): value is BotSummary {
+export function isBotSummary(value: unknown): value is BotSummary {
   if (!isDynamicRecord(value)) return false;
   return (
     isIdentifier(value.id) &&
@@ -1547,7 +1641,7 @@ function isMarketplaceSource(value: unknown): value is NonNullable<BotSummary["m
   );
 }
 
-function isQueueSnapshot(value: unknown): value is QueueSnapshot {
+export function isQueueSnapshot(value: unknown): value is QueueSnapshot {
   return (
     isDynamicRecord(value) &&
     isIdentifier(value.botId) &&
@@ -1580,10 +1674,7 @@ function isQueueDelivery(value: unknown): value is QueueDelivery {
     value.attachments.length <= INPUT_LIMITS.attachments &&
     value.attachments.every(isAttachmentSummary) &&
     (value.replyToMessageId === null || isIdentifier(value.replyToMessageId)) &&
-    isOneOf(
-      ["queued", "starting", "running", "completed", "failed", "interrupted", "cancelled"] as const,
-      value.status,
-    ) &&
+    isOneOf(QUEUE_DELIVERY_STATUSES, value.status) &&
     (value.position === null ||
       (isNumber(value.position) && Number.isInteger(value.position) && value.position >= 1)) &&
     (value.turnId === null || isIdentifier(value.turnId)) &&
@@ -1605,7 +1696,7 @@ function isQueueSender(value: unknown): value is QueueDelivery["sender"] {
   );
 }
 
-function isAttachmentSummary(value: unknown): value is AttachmentSummary {
+export function isAttachmentSummary(value: unknown): value is AttachmentSummary {
   return (
     isDynamicRecord(value) &&
     isIdentifier(value.id) &&
