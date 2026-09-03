@@ -6,7 +6,7 @@ import type {
   ExternalDestination,
   UpdateStatus,
 } from "@openbot/contracts/ipc";
-import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { presentUpdateStatus } from "../update-status";
 import { AccountUpdateIsland } from "./AccountUpdateIsland";
 import {
@@ -48,6 +48,41 @@ interface AccountDockProps {
   onOpenPermissions: () => void;
   onOpenSettings: (trigger: HTMLElement) => void;
   onOpenSkills: () => void;
+}
+
+function AnimatedUsagePercentage(props: { value: number | null }) {
+  let digitGroup: HTMLSpanElement | undefined;
+  const characters = () => (props.value === null ? ["—"] : `${props.value}%`.split(""));
+
+  createEffect(
+    () => props.value,
+    (value) => {
+      if (value === null || !digitGroup) return;
+
+      digitGroup.classList.remove("is-animating");
+      void digitGroup.offsetHeight;
+      digitGroup.classList.add("is-animating");
+    },
+  );
+
+  return (
+    <span ref={digitGroup} class="t-digit-group" aria-hidden="true">
+      <For each={characters()}>
+        {(character, index) => {
+          const stagger = () => {
+            if (index() === characters().length - 2) return "1";
+            if (index() === characters().length - 1) return "2";
+            return undefined;
+          };
+          return (
+            <span class="t-digit" data-stagger={stagger()}>
+              {character}
+            </span>
+          );
+        }}
+      </For>
+    </span>
+  );
 }
 
 export function AccountDock(props: AccountDockProps) {
@@ -470,7 +505,9 @@ export function AccountDock(props: AccountDockProps) {
               >
                 <span class="account-dock-usage-chip">
                   <Gauge aria-hidden="true" />
-                  <strong>{weeklyUsageRemaining() === null ? "—" : `${weeklyUsageRemaining()}%`}</strong>
+                  <strong>
+                    <AnimatedUsagePercentage value={weeklyUsageRemaining()} />
+                  </strong>
                 </span>
               </Popover.Trigger>
               <Popover.Portal>
