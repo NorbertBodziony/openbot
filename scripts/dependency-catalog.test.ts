@@ -66,6 +66,33 @@ describe("dependency catalog", () => {
     expect(underused).toEqual([]);
   });
 
+  // The assertion above only sees dependencies the catalog already names, so on
+  // its own it says nothing about the next shared dependency to arrive. Two
+  // workspaces can both `bun add yaml` with literal versions and stay green,
+  // which is the drift this catalog exists to stop. This is the other direction.
+  it("catalogs every external dependency that two workspaces already share", () => {
+    const users = new Map<string, Map<string, string>>();
+    for (const manifest of manifests) {
+      for (const [, name, version] of readDependencies(manifest)) {
+        const sites = users.get(name) ?? new Map<string, string>();
+        sites.set(manifest, version);
+        users.set(name, sites);
+      }
+    }
+
+    const uncatalogued = [...users]
+      .filter(([name, sites]) => sites.size >= 2 && !(name in catalog) && !(name in NOT_CATALOGUABLE))
+      // A workspace member is resolved by the workspace protocol, not by a version.
+      .filter(([, sites]) => ![...sites.values()].every((version) => version.startsWith("workspace:")))
+      .map(
+        ([name, sites]) =>
+          `${name}: ${[...sites].map(([manifest, version]) => `${version} in ${manifest}`).join(", ")}`,
+      )
+      .sort();
+
+    expect(uncatalogued).toEqual([]);
+  });
+
   // Catalogue one of these and the failure surfaces minutes later in a CI job
   // that does not mention the catalog at all. This is that failure, named.
   it("leaves out the dependencies whose declared version a build tool reads", () => {
