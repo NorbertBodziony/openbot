@@ -56,6 +56,9 @@ const sources = new Map<string, string>();
 const mainSources = sourceFilesUnder("src/main");
 const preloadSources = ["src/preload/index.ts"];
 
+// The one module allowed to touch ipcMain, because it is the sender check.
+const TRUSTED_IPC_MODULE = "src/main/trusted-ipc.ts";
+
 // The preload's agent helpers take the channel as a parameter and pass it on,
 // so the forwarding call names a variable by design. Their own call sites carry
 // the IPC_CHANNELS reference and are what the scan checks, which is why the
@@ -153,6 +156,20 @@ describe("IPC channel coverage", () => {
       .sort();
 
     expect(shared).toEqual([]);
+  });
+
+  // The scan reads the wrappers, and the wrappers are also what enforces sender
+  // validation: handleTrusted rejects a request whose frame is not a trusted
+  // renderer URL. A bare ipcMain.handle elsewhere in the main process is both an
+  // endpoint this file cannot see and one with no sender check at all, so the
+  // registration primitive stays where its wrapper lives.
+  it("registers handlers only through the trusted wrappers", () => {
+    const raw = mainSources
+      .filter((file) => file !== TRUSTED_IPC_MODULE)
+      .flatMap((file) => [...readSource(file).matchAll(/ipcMain\.([A-Za-z0-9_]+)/g)].map((m) => `${file}: ${m[0]}`))
+      .sort();
+
+    expect(raw).toEqual([]);
   });
 
   it("only removes listeners for channels the preload subscribes to", () => {
