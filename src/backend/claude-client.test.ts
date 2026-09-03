@@ -26,7 +26,7 @@ type TestStreamMessage =
       event: {
         type: "content_block_delta";
         index: number;
-        delta: { type: "text_delta"; text: string };
+        delta: { type: "text_delta"; text: string } | { type: "thinking_delta"; thinking: string };
       };
     }
   | {
@@ -160,6 +160,13 @@ fi
       uuid: deliveryId,
       event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hi" } },
     });
+    output.push({
+      type: "stream_event",
+      parent_tool_use_id: null,
+      session_id: thread.thread.id,
+      uuid: deliveryId,
+      event: { type: "content_block_delta", index: 1, delta: { type: "thinking_delta", thinking: "Weighing it" } },
+    });
     output.push(toolUseMessage(thread.thread.id, "tool-message", "tool-use-1", "WebSearch"));
     output.push(toolResultMessage(thread.thread.id, "tool-result", "tool-use-1"));
     output.push({
@@ -192,6 +199,31 @@ fi
           params: expect.objectContaining({
             turnId: deliveryId,
             item: { id: "tool-use-1", type: "toolCall", name: "WebSearch", status: "completed" },
+          }),
+        }),
+        // Extended thinking rides its own item: the `commentary` phase is what routes it to the
+        // thinking disclosure instead of the answer bubble.
+        expect.objectContaining({
+          method: "item/started",
+          params: expect.objectContaining({
+            turnId: deliveryId,
+            item: { id: `${deliveryId}:reasoning`, type: "agentMessage", phase: "commentary" },
+          }),
+        }),
+        expect.objectContaining({
+          method: "item/agentMessage/delta",
+          params: expect.objectContaining({ itemId: `${deliveryId}:reasoning`, delta: "Weighing it" }),
+        }),
+        expect.objectContaining({
+          method: "item/completed",
+          params: expect.objectContaining({
+            turnId: deliveryId,
+            item: {
+              id: `${deliveryId}:reasoning`,
+              type: "agentMessage",
+              phase: "commentary",
+              text: "Weighing it",
+            },
           }),
         }),
         expect.objectContaining({

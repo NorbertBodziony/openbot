@@ -118,6 +118,24 @@ describe.sequential("GrokAgentClient", () => {
         expect.objectContaining({ method: "turn/completed" }),
       ]),
     );
+    // A thought only reaches the thinking disclosure while it is phased as commentary; without the
+    // phase it arrives as an ordinary agent message and renders as a chat bubble.
+    expect(notifications).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "item/started",
+          params: expect.objectContaining({
+            item: expect.objectContaining({ type: "agentMessage", phase: "commentary" }),
+          }),
+        }),
+        expect.objectContaining({
+          method: "item/completed",
+          params: expect.objectContaining({
+            item: expect.objectContaining({ phase: "commentary", text: "GROK_THOUGHT" }),
+          }),
+        }),
+      ]),
+    );
 
     const secondTurn = await client.request(
       "turn/start",
@@ -156,6 +174,41 @@ describe.sequential("GrokAgentClient", () => {
     ).resolves.toEqual(expect.any(Object));
     expect(await readLog()).toEqual(
       expect.arrayContaining([expect.objectContaining({ method: "session/load", sessionId: threadId })]),
+    );
+  });
+
+  it("reports why the Grok CLI refused the turn instead of its generic JSON-RPC error", async () => {
+    process.env.OPENBOT_FAKE_GROK_MODE = "internal-error";
+    client = new GrokAgentClient({ executable, version: "1.0.13" }, 5_000);
+    const notifications: AppServerNotification[] = [];
+    client.on("notification", (notification) => notifications.push(notification));
+    client.start();
+    await client.request("initialize", {}, decodeRecordResponse);
+    const started = await client.request(
+      "thread/start",
+      { cwd: root, runtimeWorkspaceRoots: [root], developerInstructions: "", dynamicTools: [], model: "grok-4.5" },
+      decodeThreadResponse,
+    );
+    await client.request(
+      "turn/start",
+      {
+        threadId: started.thread.id,
+        clientUserMessageId: "turn-1",
+        input: [{ type: "text", text: "Build it" }],
+      },
+      decodeTurnResponse,
+    );
+    await waitFor(() => notifications.some((notification) => notification.method === "turn/completed"));
+
+    expect(notifications).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "error",
+          params: expect.objectContaining({
+            message: "API error (status 402 Payment Required): Grok Build usage balance exhausted",
+          }),
+        }),
+      ]),
     );
   });
 
@@ -375,6 +428,13 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       method: "session/update",
       params: {
         sessionId: pendingPrompt.sessionId,
+        update: { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "GROK_THOUGHT" } },
+      },
+    });
+    write({
+      method: "session/update",
+      params: {
+        sessionId: pendingPrompt.sessionId,
         update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "GROK_DONE" } },
       },
     });
@@ -481,6 +541,17 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   }
   if (message.method === "session/prompt") {
     promptCounter += 1;
+    if (mode === "internal-error") {
+      write({
+        id: message.id,
+        error: {
+          code: -32603,
+          message: "Internal error",
+          data: { message: "API error (status 402 Payment Required): Grok Build usage balance exhausted" },
+        },
+      });
+      return;
+    }
     log({ method: message.method, promptCounter, text: message.params.prompt.filter((block) => block.type === "text").map((block) => block.text).join("\n") });
     if (promptCounter === 1) {
       pendingPrompt = { id: message.id, sessionId: message.params.sessionId };

@@ -50,7 +50,10 @@ interface PendingServerRequest {
 interface GrokTurn {
   id: string;
   itemId: string;
+  thoughtItemId: string;
   text: string;
+  thought: string;
+  thoughtStarted: boolean;
   task: Promise<void>;
 }
 
@@ -399,14 +402,17 @@ export class GrokAgentClient extends EventEmitter<ClientEvents> {
       void this.#requireConnection()
         .prompt({ sessionId: thread.id, prompt: blocks })
         .catch((error) => {
-          this.emit("diagnostic", `Grok steer failed: ${String(error)}`);
+          this.emit("diagnostic", `Grok steer failed: ${grokErrorMessage(error)}`);
         });
       return { turn: { id: turnId, status: "inProgress" }, turnId };
     }
     const turn: GrokTurn = {
       id: turnId,
       itemId: `${turnId}:assistant`,
+      thoughtItemId: `${turnId}:thought`,
       text: "",
+      thought: "",
+      thoughtStarted: false,
       task: Promise.resolve(),
     };
     thread.activeTurn = turn;
@@ -429,7 +435,7 @@ export class GrokAgentClient extends EventEmitter<ClientEvents> {
             : "failed";
       this.#completeTurn(thread, turn, status, status === "failed" ? response.stopReason : null);
     } catch (error) {
-      this.#completeTurn(thread, turn, "failed", error);
+      this.#completeTurn(thread, turn, "failed", grokErrorMessage(error));
     }
   }
 
@@ -448,9 +454,23 @@ export class GrokAgentClient extends EventEmitter<ClientEvents> {
       return;
     }
     if (update.sessionUpdate === "agent_thought_chunk" && update.content.type === "text") {
+      /* A delta carries no phase, so the item has to be opened as `commentary` first — otherwise the
+         thought lands in an ordinary agentMessage and renders as a chat bubble. */
+      if (!turn.thoughtStarted) {
+        turn.thoughtStarted = true;
+        this.emit("notification", {
+          method: "item/started",
+          params: {
+            threadId: thread.id,
+            turnId: turn.id,
+            item: { id: turn.thoughtItemId, type: "agentMessage", phase: "commentary" },
+          },
+        });
+      }
+      turn.thought += update.content.text;
       this.emit("notification", {
         method: "item/agentMessage/delta",
-        params: { threadId: thread.id, turnId: turn.id, itemId: `${turn.id}:thought`, delta: update.content.text },
+        params: { threadId: thread.id, turnId: turn.id, itemId: turn.thoughtItemId, delta: update.content.text },
       });
       return;
     }
@@ -490,6 +510,20 @@ export class GrokAgentClient extends EventEmitter<ClientEvents> {
   #completeTurn(thread: GrokThread, turn: GrokTurn, status: string, error: unknown): void {
     if (thread.activeTurn !== turn) return;
     const item = { id: turn.itemId, type: "agentMessage", text: turn.text } satisfies ThreadItem;
+    const thoughtItem = turn.thoughtStarted
+      ? ({
+          id: turn.thoughtItemId,
+          type: "agentMessage",
+          phase: "commentary",
+          text: turn.thought,
+        } satisfies ThreadItem)
+      : null;
+    if (thoughtItem) {
+      this.emit("notification", {
+        method: "item/completed",
+        params: { threadId: thread.id, turnId: turn.id, item: thoughtItem },
+      });
+    }
     this.emit("notification", { method: "item/completed", params: { threadId: thread.id, turnId: turn.id, item } });
     if (status === "failed" && error) {
       this.emit("notification", {
@@ -501,7 +535,7 @@ export class GrokAgentClient extends EventEmitter<ClientEvents> {
       method: "turn/completed",
       params: { threadId: thread.id, turn: { id: turn.id, status } },
     });
-    thread.turns.push({ id: turn.id, status, items: [item] });
+    thread.turns.push({ id: turn.id, status, items: thoughtItem ? [thoughtItem, item] : [item] });
     thread.activeTurn = null;
   }
 
@@ -871,9 +905,16 @@ function isDynamicToolResult(value: unknown): value is DynamicToolResult {
 }
 
 function isAuthenticationError(error: unknown): boolean {
-  return /auth|login|credential|token|unauthori[sz]ed|api key/i.test(
-    error instanceof Error ? error.message : String(error),
-  );
+  return /auth|login|credential|token|unauthori[sz]ed|api key/i.test(grokErrorMessage(error));
+}
+
+/* A JSON-RPC failure from the Grok CLI says only "Internal error"; what actually went wrong — an
+   exhausted balance, a rejected key, a refused model — is in the error's `data.message`. */
+function grokErrorMessage(error: unknown): string {
+  const data = isRecord(error) ? error.data : null;
+  const detail = isRecord(data) && isString(data.message) ? data.message : null;
+  if (detail) return redactGrokDiagnostic(detail);
+  return redactGrokDiagnostic(error instanceof Error ? error.message : String(error));
 }
 
 function redactGrokDiagnostic(message: string): string {

@@ -55,8 +55,12 @@ interface ThreadConfig {
 interface ActiveTurn {
   id: string;
   itemId: string;
+  reasoningItemId: string;
   text: string;
+  thinking: string;
+  thinkingStarted: boolean;
   assistantMessages: Map<string, string>;
+  thinkingMessages: Map<string, string>;
   toolCalls: Map<string, string>;
 }
 
@@ -381,8 +385,12 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     const activeTurn = {
       id: turnId,
       itemId: `${turnId}:assistant`,
+      reasoningItemId: `${turnId}:reasoning`,
       text: "",
+      thinking: "",
+      thinkingStarted: false,
       assistantMessages: new Map<string, string>(),
+      thinkingMessages: new Map<string, string>(),
       toolCalls: new Map<string, string>(),
     };
     runtime.activeTurn = activeTurn;
@@ -443,15 +451,11 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     if (message.type === "stream_event" && message.parent_tool_use_id === null) {
       const event = message.event;
       const delta = isRecord(event) ? event.delta : null;
-      if (
-        event &&
-        isRecord(event) &&
-        event.type === "content_block_delta" &&
-        isRecord(delta) &&
-        delta.type === "text_delta" &&
-        isString(delta.text)
-      ) {
-        this.#appendDelta(runtime, delta.text);
+      if (event && isRecord(event) && event.type === "content_block_delta" && isRecord(delta)) {
+        if (delta.type === "text_delta" && isString(delta.text)) this.#appendDelta(runtime, delta.text);
+        else if (delta.type === "thinking_delta" && isString(delta.thinking)) {
+          this.#appendThinkingDelta(runtime, delta.thinking);
+        }
       }
       return;
     }
@@ -461,6 +465,14 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       const turn = runtime.activeTurn;
       const text = messageText(message.message);
       if (!turn || !message.uuid) return;
+      const thinking = messageThinking(message.message);
+      if (thinking) {
+        turn.thinkingMessages.set(message.uuid, thinking);
+        const completeThinking = [...turn.thinkingMessages.values()].join("\n");
+        if (completeThinking.startsWith(turn.thinking)) {
+          this.#appendThinkingDelta(runtime, completeThinking.slice(turn.thinking.length));
+        }
+      }
       for (const toolCall of messageToolCalls(message.message)) {
         if (turn.toolCalls.has(toolCall.id)) continue;
         turn.toolCalls.set(toolCall.id, toolCall.name);
@@ -521,6 +533,34 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     });
   }
 
+  /* Claude streams reasoning as its own content block; the app-server vocabulary carries it as a
+     separate agentMessage item whose `commentary` phase becomes the thinking disclosure. */
+  #appendThinkingDelta(runtime: ThreadRuntime, delta: string): void {
+    const turn = runtime.activeTurn;
+    if (!turn || !delta) return;
+    if (!turn.thinkingStarted) {
+      turn.thinkingStarted = true;
+      this.emit("notification", {
+        method: "item/started",
+        params: {
+          threadId: runtime.id,
+          turnId: turn.id,
+          item: { id: turn.reasoningItemId, type: "agentMessage", phase: "commentary" },
+        },
+      });
+    }
+    turn.thinking += delta;
+    this.emit("notification", {
+      method: "item/agentMessage/delta",
+      params: {
+        threadId: runtime.id,
+        turnId: turn.id,
+        itemId: turn.reasoningItemId,
+        delta,
+      },
+    });
+  }
+
   #appendDelta(runtime: ThreadRuntime, delta: string): void {
     const turn = runtime.activeTurn;
     if (!turn || !delta) return;
@@ -539,6 +579,16 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
   #completeTurn(runtime: ThreadRuntime, status: string, error: unknown): void {
     const turn = runtime.activeTurn;
     if (!turn) return;
+    if (turn.thinkingStarted) {
+      this.emit("notification", {
+        method: "item/completed",
+        params: {
+          threadId: runtime.id,
+          turnId: turn.id,
+          item: { id: turn.reasoningItemId, type: "agentMessage", phase: "commentary", text: turn.thinking },
+        },
+      });
+    }
     this.emit("notification", {
       method: "item/completed",
       params: {
@@ -583,12 +633,22 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
           ],
         };
         turns.push(current);
-      } else if (message.type === "assistant" && text) {
+      } else if (message.type === "assistant") {
+        const thinking = messageThinking(message.message);
+        if (!thinking && !text) continue;
         if (!current) {
           current = { id: message.uuid, status: "completed", items: [] };
           turns.push(current);
         }
-        current.items?.push({ id: message.uuid, type: "agentMessage", text });
+        if (thinking) {
+          current.items?.push({
+            id: `${message.uuid}:reasoning`,
+            type: "agentMessage",
+            phase: "commentary",
+            text: thinking,
+          });
+        }
+        if (text) current.items?.push({ id: message.uuid, type: "agentMessage", text });
       }
     }
     return { thread: { id: threadId, turns } };
@@ -914,6 +974,16 @@ function messageText(message: unknown): string {
     .filter(isRecord)
     .filter((block) => block.type === "text" && isString(block.text))
     .map((block) => block.text)
+    .join("\n");
+}
+
+function messageThinking(message: unknown): string {
+  if (!isRecord(message) || !Array.isArray(message.content)) return "";
+  return message.content
+    .filter(isRecord)
+    .filter((block) => block.type === "thinking")
+    .map((block) => getString(block, "thinking"))
+    .filter(isString)
     .join("\n");
 }
 
