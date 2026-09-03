@@ -1,3 +1,4 @@
+import { BlurView } from "expo-blur";
 import * as Haptics from "expo-haptics";
 import { type Href, router, usePathname } from "expo-router";
 import { useThemeColor } from "heroui-native/hooks";
@@ -143,6 +144,9 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
   const scrimStyle = useAnimatedStyle(() => ({
     opacity: interpolate(drawerProgress.get(), [0, 1], [0, 0.3]),
   }));
+  const blurStyle = useAnimatedStyle(() => ({
+    opacity: drawerProgress.get(),
+  }));
 
   const navigateAfterClosing = useCallback(
     (href: Href) => {
@@ -208,18 +212,18 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
               ]}
             >
               {children}
-              <Animated.View
-                className="absolute inset-0 bg-drawer-scrim"
-                pointerEvents={drawerOpen ? "auto" : "none"}
-                style={scrimStyle}
-              >
+              <View className="absolute inset-0" pointerEvents={drawerOpen ? "auto" : "none"}>
+                <Animated.View className="absolute inset-0" pointerEvents="none" style={blurStyle}>
+                  <BlurView intensity={5} style={{ flex: 1 }} tint="systemThickMaterial" />
+                </Animated.View>
+                <Animated.View className="absolute inset-0 bg-drawer-scrim" pointerEvents="none" style={scrimStyle} />
                 <Pressable
                   accessibilityRole="button"
                   accessibilityLabel="Close server drawer"
                   className="flex-1"
                   onPress={closeDrawer}
                 />
-              </Animated.View>
+              </View>
             </Animated.View>
           </GestureDetector>
         </View>
