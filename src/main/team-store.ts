@@ -121,6 +121,8 @@ export interface RemoteDirectoryMember {
 
 export class TeamStore {
   readonly #path: string;
+  /** Read once and never written: the file a build without this envelope still owns. */
+  readonly #legacyPath: string | null;
   readonly #logoRoot: string;
   #file: StoredTeamFile = { version: 2, activeAccountId: null, hosts: [] };
   /** The host of the signed-in account. Every other method reads this one, never `#file.hosts`. */
@@ -137,15 +139,26 @@ export class TeamStore {
    */
   #unreadableFile = false;
 
-  constructor(path: string) {
+  /**
+   * `legacyPath` is the single-host file shipped builds read and write. This store never
+   * writes it, so downgrading finds the host it had rather than a file it cannot parse and
+   * would overwrite - there is no backup of any of this.
+   */
+  constructor(path: string, legacyPath: string | null = null) {
     this.#path = path;
-    this.#logoRoot = join(dirname(path), `${basename(path)}.assets`, "logo");
+    this.#legacyPath = legacyPath;
+    // Named after the file the logos were first stored beside, so an upgrade does not have
+    // to move them.
+    const assetsPath = legacyPath ?? path;
+    this.#logoRoot = join(dirname(assetsPath), `${basename(assetsPath)}.assets`, "logo");
   }
 
   async initialize(): Promise<void> {
     let migrated = false;
+    let found = false;
     try {
       const parsed = JSON.parse(await readFile(this.#path, "utf8"));
+      found = true;
       if (isStoredTeamFile(parsed)) {
         this.#file = parsed;
       } else if (isStoredTeam(parsed)) {
@@ -156,6 +169,19 @@ export class TeamStore {
       }
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    }
+    if (!found && this.#legacyPath) {
+      try {
+        const parsed = JSON.parse(await readFile(this.#legacyPath, "utf8"));
+        // Copied into this store's own file rather than replaced in place. Anything else
+        // there belongs to a build that is not this one, and is left for it.
+        if (isStoredTeam(parsed)) {
+          this.#file = { version: 2, activeAccountId: ownerAccountId(parsed), hosts: [parsed] };
+          migrated = true;
+        }
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+      }
     }
     const activeAccountId = this.#file.activeAccountId;
     this.#state =

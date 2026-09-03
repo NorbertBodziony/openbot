@@ -216,6 +216,8 @@ if (!app.isPackaged) {
 const BROWSER_STATE_FILE = "openbot-browser-state-v1.json";
 const SIDEBAR_LAYOUT_FILE = "openbot-sidebar-layout-v1.json";
 const TEAM_FILE = "openbot-team-server-v1.json";
+/** One host per account. The v1 file above stays as the last build without accounts left it. */
+const TEAM_FILE_V2 = "openbot-team-server-v2.json";
 const REMOTE_SERVERS_FILE = "openbot-remote-servers-v1.json";
 const CENTRAL_AUTH_FILE = "openbot-central-auth-v1.bin";
 const LEGACY_REMOTE_DESKTOP_CREDENTIAL_FILE = "openbot-remote-desktop-credential-v1.json";
@@ -1010,7 +1012,10 @@ if (!hasSingleInstanceLock) {
       );
       const agentMarketplace = new AgentMarketplaceService(centralAuthManager, service, skillMarketplace);
       configureAttachmentProtocol(mailboxStore, service);
-      const teamStore = new TeamStore(join(app.getPath("userData"), TEAM_FILE));
+      const teamStore = new TeamStore(
+        join(app.getPath("userData"), TEAM_FILE_V2),
+        join(app.getPath("userData"), TEAM_FILE),
+      );
       await teamStore.initialize();
       if (developmentRemoteRole) {
         const email =
