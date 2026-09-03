@@ -62,6 +62,9 @@ const TRUSTED_IPC_MODULE = "src/main/trusted-ipc.ts";
 // The parameter both wrappers take and pass straight to ipcMain.
 const WRAPPER_CHANNEL_PARAMETER = "channel";
 
+// The call that makes a registration a trusted one.
+const SENDER_CHECK = "isTrustedRendererUrl";
+
 // The preload's agent helpers take the channel as a parameter and pass it on,
 // so the forwarding call names a variable by design. Their own call sites carry
 // the IPC_CHANNELS reference and are what the scan checks, which is why the
@@ -179,18 +182,25 @@ describe("IPC channel coverage", () => {
   });
 
   // Exempting the wrapper module is what makes the assertion above possible, and
-  // the exemption is only safe while everything it exempts is a wrapper. A third
-  // ipcMain.handle here with a channel of its own would be an endpoint outside
-  // IPC_CHANNELS entirely, so each call must forward the channel it was given.
-  it("registers only the channel it was handed inside the trusted module", () => {
+  // the exemption is only safe while everything it exempts is a wrapper. Two ways
+  // it stops being one: a registration with a channel of its own, which is an
+  // endpoint outside IPC_CHANNELS entirely, and a registration that runs the
+  // handler without the sender check, which is the trust boundary itself. Both
+  // are properties rather than a count of calls, so a third wrapper that has them
+  // stays green.
+  it("validates the sender of every channel it is handed inside the trusted module", () => {
     const source = readSource(TRUSTED_IPC_MODULE);
-    const own: string[] = [];
+    const unguarded: string[] = [];
     for (const match of source.matchAll(/\bipcMain\.([A-Za-z0-9_]+)\s*\(/g)) {
-      const span = argumentAt(source, match.index + match[0].length, 0);
-      if (span?.argument !== WRAPPER_CHANNEL_PARAMETER) own.push(`${match[1]}(${span?.argument ?? "?"})`);
+      const start = match.index + match[0].length;
+      const channel = argumentAt(source, start, 0)?.argument ?? "(unreadable)";
+      if (channel !== WRAPPER_CHANNEL_PARAMETER) unguarded.push(`${match[1]} registers ${channel}`);
+      else if (!callArguments(source, start).includes(SENDER_CHECK)) {
+        unguarded.push(`${match[1]}(${channel}) runs its handler without ${SENDER_CHECK}`);
+      }
     }
 
-    expect(own).toEqual([]);
+    expect(unguarded).toEqual([]);
   });
 
   it("only removes listeners for channels the preload subscribes to", () => {
@@ -276,6 +286,21 @@ function argumentAt(
   }
   if (remaining !== 0) return null;
   return { argument: source.slice(argumentStart, index).trim(), start: argumentStart, end: index };
+}
+
+// The whole argument list of a call whose opening parenthesis has been passed,
+// which is where a registration's handler body sits.
+function callArguments(source: string, start: number): string {
+  let depth = 0;
+  let index = start;
+  while (index < source.length) {
+    const character = source[index];
+    if (character === "(" || character === "[" || character === "{") depth += 1;
+    else if (character === ")" && depth === 0) break;
+    else if (character === ")" || character === "]" || character === "}") depth -= 1;
+    index += 1;
+  }
+  return source.slice(start, index);
 }
 
 function channelOf(call: ChannelCall): string | null {

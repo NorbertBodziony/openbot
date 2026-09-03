@@ -171,12 +171,24 @@ function readNormalizedDeclarations(database: DatabaseSync): readonly Declaratio
   }));
 }
 
+// SQLite stores a CREATE statement close to how it was written, so this text is
+// as much a record of the author's formatting as of the schema. The two paths
+// declare the same table from two different pieces of source - the latest schema
+// and the migration that produced it - and a difference in spacing, punctuation
+// or keyword case between them is not a difference any caller can observe. Only
+// the case inside a string literal is data: a DEFAULT 'grok' is a value.
 function normalizeSql(sql: string): string {
-  return sql
+  const collapsed = sql
     .replaceAll(/"([A-Za-z_][A-Za-z0-9_]*)"/g, "$1")
     .replaceAll(/\bIF NOT EXISTS\b/gi, "")
     .replaceAll(/\s+/g, " ")
+    .replaceAll(/\s*([(),])\s*/g, "$1")
     .trim();
+
+  return collapsed
+    .split(/('(?:[^']|'')*')/)
+    .map((part, index) => (index % 2 === 0 ? part.toUpperCase() : part))
+    .join("");
 }
 
 function readAppliedVersions(database: DatabaseSync): readonly number[] {
