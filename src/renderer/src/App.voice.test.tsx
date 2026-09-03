@@ -105,6 +105,74 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByText("Local voice setup failed")).toBeInTheDocument();
   });
 
+  it("does not open the microphone for a conversation the user has left", async () => {
+    const local = testServer("local", true);
+    const remote = testServer("remote-1", false);
+    let resolvePreparation: ((status: VoiceModelStatus) => void) | undefined;
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+    vi.mocked(window.openbot.servers.select).mockImplementation(async (serverId) => [
+      { ...local, active: serverId === "local" },
+      { ...remote, active: serverId === "remote-1" },
+    ]);
+    vi.mocked(window.openbot.voice.prepareModel).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePreparation = resolve;
+        }),
+    );
+    render(() => <App />);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Create prompt with voice" }));
+    await waitFor(() => expect(window.openbot.voice.prepareModel).toHaveBeenCalledOnce());
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true"),
+    );
+
+    // The download the user walked away from is not the arriving conversation's
+    // problem: it is not told about a model it never asked for, and it can
+    // dictate straight away. The preparation is still unresolved at this point,
+    // and it may never resolve.
+    expect(screen.queryByRole("button", { name: "Downloading voice model" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Create prompt with voice" })).toBeEnabled());
+
+    resolvePreparation?.({ phase: "ready", progress: 100, message: null });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Create prompt with voice" })).toBeEnabled());
+    expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();
+  });
+
+  it("stops offering a recording the user walked away from", async () => {
+    const local = testServer("local", true);
+    const remote = testServer("remote-1", false);
+    let resolveTranscription: ((result: { text: string }) => void) | undefined;
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+    vi.mocked(window.openbot.servers.select).mockImplementation(async (serverId) => [
+      { ...local, active: serverId === "local" },
+      { ...remote, active: serverId === "remote-1" },
+    ]);
+    vi.mocked(window.openbot.voice.transcribe).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveTranscription = resolve;
+        }),
+    );
+    installVoiceRecordingMocks();
+    render(() => <App />);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Create prompt with voice" }));
+    await screen.findByRole("group", { name: "Voice recording" });
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() => expect(window.openbot.voice.transcribe).toHaveBeenCalledOnce());
+    await fireEvent.click(screen.getByRole("button", { name: "Local server" }));
+
+    const composer = await screen.findByRole("textbox", { name: "Message Chief" });
+    expect(composer).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByRole("button", { name: "Stop voice recording" })).not.toBeInTheDocument();
+
+    resolveTranscription?.({ text: "Walked away" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Create prompt with voice" })).toBeEnabled());
+  });
+
   it("submits the accepted voice snapshot and preserves later draft changes", async () => {
     let resolveTranscription: ((result: { text: string }) => void) | undefined;
     vi.mocked(window.openbot.voice.transcribe).mockImplementationOnce(

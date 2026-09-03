@@ -1,9 +1,11 @@
-import type { BotSummary, ConversationPage, ConversationSnapshot } from "@openbot/contracts/ipc";
+import type { BotSummary, ConversationPage, ConversationSnapshot, ServerSummary } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { createSignal, Show } from "solid-js";
 import { expect, it, vi } from "vitest";
-import { App, AppControllerProvider, createAppController, createBotInitialMessage, useAppController } from "./App";
+import { App } from "./App";
+import { useAgents } from "./agents";
 import { desktopAnalytics } from "./analytics";
+import { AppProviders } from "./app-providers";
 import {
   BOTS,
   confirmOnboardingModel,
@@ -17,6 +19,11 @@ import {
   testConversationPage,
   testServer,
 } from "./app-test-harness";
+import { createBotInitialMessage } from "./bot-initial-message";
+import { useConversation } from "./conversation";
+import { useLayout } from "./layout";
+import { useNavigation } from "./navigation";
+import { useServers } from "./servers";
 import { SIDEBAR_PINS_STORAGE_KEY } from "./sidebar-pins";
 import { SIDEBAR_COLLAPSED_STORAGE_KEY } from "./sidebar-sections";
 
@@ -27,28 +34,43 @@ describe("OpenBot connected desktop shell", () => {
 
   it("keeps shell state and subscriptions when a view boundary remounts", async () => {
     function ShellProbe() {
-      const controller = useAppController();
+      const conversation = useConversation();
+      const agents = useAgents();
+      const layout = useLayout();
+      const servers = useServers();
       return (
         <output aria-label="shell controller state">
-          {controller.activeServer()?.id}|{controller.activeBot()?.id}|{controller.activeMessages().length}|
-          {controller.leftPanelWidth()}
+          {servers.activeServer()?.id}|{agents.activeBot()?.id}|{conversation.activeMessages().length}|
+          {layout.leftPanelWidth()}
         </output>
       );
     }
 
+    // The provider subtree sits *above* a remountable view, exactly as `App`
+    // mounts it, so state and subscriptions belong to the providers and the
+    // view is free to come and go.
     function Harness() {
-      const controller = createAppController({});
+      return (
+        <AppProviders>
+          <HarnessBody />
+        </AppProviders>
+      );
+    }
+
+    function HarnessBody() {
+      const layout = useLayout();
+      const navigation = useNavigation();
       const [viewVisible, setViewVisible] = createSignal(true);
       return (
-        <AppControllerProvider controller={controller}>
+        <>
           <button type="button" onClick={() => setViewVisible((current) => !current)}>
             Toggle shell view
           </button>
           <button
             type="button"
             onClick={() => {
-              controller.setLeftPanelWidth(360);
-              controller.selectBot("sales-outbound");
+              layout.setLeftPanelWidth(360);
+              navigation.selectBot("sales-outbound");
             }}
           >
             Set shell state
@@ -56,7 +78,7 @@ describe("OpenBot connected desktop shell", () => {
           <Show when={viewVisible()}>
             <ShellProbe />
           </Show>
-        </AppControllerProvider>
+        </>
       );
     }
 
@@ -771,6 +793,70 @@ describe("OpenBot connected desktop shell", () => {
           ([input]) => input.anchor?.type === "around" && input.anchor.messageId === "wrong-server-message",
         ),
     ).toBe(false);
+  });
+
+  it("keeps a newer Dynamic Island action when the older one's selection is superseded", async () => {
+    const local = testServer("local", true);
+    const studio = testServer("remote-1", false);
+    const office = { ...testServer("remote-2", false), name: "Office PC", apiUrl: "https://office.example.com" };
+    let resolveStudioSelection: ((servers: ServerSummary[]) => void) | undefined;
+    let resolveOfficeBots: ((bots: BotSummary[]) => void) | undefined;
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, studio, office]);
+    vi.mocked(window.openbot.servers.select)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveStudioSelection = resolve;
+          }),
+      )
+      .mockResolvedValueOnce([
+        { ...local, active: false },
+        { ...studio, active: false },
+        { ...office, active: true },
+      ]);
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+    vi.mocked(window.openbot.agent.listBots).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveOfficeBots = resolve;
+        }),
+    );
+
+    emitDynamicIslandAction?.({
+      type: "open-message",
+      serverId: "remote-1",
+      botId: "chief",
+      messageId: "studio-message",
+    });
+    await waitFor(() => expect(resolveStudioSelection).toBeDefined());
+    emitDynamicIslandAction?.({
+      type: "open-message",
+      serverId: "remote-2",
+      botId: "chief",
+      messageId: "office-message",
+    });
+    // The office workspace is mounted but still loading, so it has not consumed
+    // the handoff yet - which is the window in which the superseded selection
+    // for Studio comes back and reports that it lost.
+    await waitFor(() => expect(resolveOfficeBots).toBeDefined());
+    resolveStudioSelection?.([
+      { ...local, active: false },
+      { ...studio, active: true },
+      { ...office, active: false },
+    ]);
+    resolveOfficeBots?.([{ ...BOTS[0], name: "Office Chief" }]);
+
+    expect(await screen.findByRole("heading", { name: "Office Chief" })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(window.openbot.agent.readConversationPage)
+          .mock.calls.flatMap(([input]) => (input.anchor?.type === "around" ? [input.anchor.messageId] : [])),
+      ).toContain("office-message"),
+    );
   });
 
   it("discards a chat-open reload that resolves during a server switch", async () => {

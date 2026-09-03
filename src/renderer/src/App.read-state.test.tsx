@@ -1,7 +1,8 @@
 import type { ConversationPage, DirectConversationSnapshot } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { expect, it, vi } from "vitest";
-import { App, AppControllerProvider, createAppController } from "./App";
+import { App } from "./App";
+import { AppProviders } from "./app-providers";
 import {
   emitAgentEvent,
   emitDirectMessage,
@@ -12,6 +13,7 @@ import {
   testConversationPage,
   testServer,
 } from "./app-test-harness";
+import { useConversation } from "./conversation";
 
 describe("OpenBot connected desktop shell", () => {
   beforeEach(() => {
@@ -66,21 +68,31 @@ describe("OpenBot connected desktop shell", () => {
       });
     });
 
+    // The probe reads the conversation domain from *under* `AppProviders`,
+    // exactly where `App` mounts the view.
     function Harness() {
-      const controller = createAppController({});
       return (
-        <AppControllerProvider controller={controller}>
-          <button type="button" onClick={() => void controller.loadOlderAgentMessages("chief")}>
+        <AppProviders>
+          <HarnessBody />
+        </AppProviders>
+      );
+    }
+
+    function HarnessBody() {
+      const conversation = useConversation();
+      return (
+        <>
+          <button type="button" onClick={() => void conversation.loadOlderAgentMessages("chief")}>
             Load older agent messages
           </button>
           <output aria-label="agent read state">
-            {controller.conversationReads().chief?.unreadCount ?? -1}|
-            {controller
+            {conversation.conversationReads().chief?.unreadCount ?? -1}|
+            {conversation
               .activeMessages()
               .map((message) => message.id)
               .join(",")}
           </output>
-        </AppControllerProvider>
+        </>
       );
     }
 
@@ -710,6 +722,11 @@ describe("OpenBot connected desktop shell", () => {
     });
     render(() => <App />);
     expect(await screen.findByRole("status", { name: "1 new message" })).toBeInTheDocument();
+    // The retry only has something to be stale against once the opening load
+    // has landed, so wait for revision 2 to be on screen before queueing the
+    // stale page. Without this the click can outrun the first page and the
+    // test measures microtask order instead of the revision guard.
+    await screen.findByText("Current revision reply");
 
     vi.mocked(window.openbot.agent.readConversationPage)
       .mockResolvedValueOnce(
@@ -731,6 +748,7 @@ describe("OpenBot connected desktop shell", () => {
         ),
       )
       .mockResolvedValueOnce(currentPage);
+    const readsBeforeOpen = vi.mocked(window.openbot.agent.readConversationPage).mock.calls.length;
     await fireEvent.click(screen.getByRole("button", { name: /Chief/ }));
 
     await waitFor(() =>
@@ -749,6 +767,10 @@ describe("OpenBot connected desktop shell", () => {
       },
       "local",
     );
+    // Opening reads once and the stale revision costs a second read. Falling
+    // back to whatever was already on screen would reach the same read state
+    // with one, so the count is what says the reload was retried.
+    expect(vi.mocked(window.openbot.agent.readConversationPage).mock.calls.length - readsBeforeOpen).toBe(2);
     await waitFor(() => expect(screen.queryByRole("status", { name: "1 new message" })).not.toBeInTheDocument());
   });
 

@@ -3,7 +3,14 @@ import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-lib
 import { expect, it, vi } from "vitest";
 import { App } from "./App";
 import { desktopAnalytics } from "./analytics";
-import { BOTS, emitAgentEvent, emitUpdateStatus, installOpenbotStub, trackAnalytics } from "./app-test-harness";
+import {
+  BOTS,
+  emitAgentEvent,
+  emitUpdateStatus,
+  installOpenbotStub,
+  testServer,
+  trackAnalytics,
+} from "./app-test-harness";
 
 describe("OpenBot connected desktop shell", () => {
   beforeEach(() => {
@@ -314,6 +321,50 @@ describe("OpenBot connected desktop shell", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(screen.getByRole("button", { name: "Agent model: Claude Opus 5" })).toBeEnabled();
     expect(effort).toHaveTextContent("High");
+  });
+
+  it("does not send a queued settings save to the server the user switched to", async () => {
+    const local = testServer("local", true);
+    const remote = testServer("remote-1", false);
+    let resolveModelUpdate!: (bot: BotSummary) => void;
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+    vi.mocked(window.openbot.servers.select).mockImplementation(async (serverId) => [
+      { ...local, active: serverId === "local" },
+      { ...remote, active: serverId === "remote-1" },
+    ]);
+    vi.mocked(window.openbot.agent.updateBot).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveModelUpdate = resolve;
+        }),
+    );
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    await fireEvent.click(within(picker).getByRole("tab", { name: /^Claude:/ }));
+    await fireEvent.click(within(picker).getByRole("option", { name: "Claude Opus 5, default" }));
+    await fireEvent.click(within(picker).getByRole("option", { name: "Claude Sonnet 5" }));
+    expect(window.openbot.agent.updateBot).toHaveBeenCalledOnce();
+
+    await fireEvent.keyDown(picker, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Choose agent model" })).not.toBeInTheDocument());
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true"),
+    );
+
+    const chief = BOTS.find((bot) => bot.id === "chief");
+    if (!chief) throw new Error("Chief fixture is missing");
+    resolveModelUpdate({ ...chief, provider: "claude", model: "claude-opus-5", reasoningEffort: "medium" });
+    await fireEvent.click(screen.getByRole("button", { name: "Local server" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Local server" })).toHaveAttribute("aria-pressed", "true"),
+    );
+    expect(vi.mocked(window.openbot.agent.updateBot).mock.calls).toEqual([
+      [{ botId: "chief", provider: "claude", model: "claude-opus-5", reasoningEffort: "medium" }],
+    ]);
   });
 
   it("rolls back a queued effort when its model save fails", async () => {
