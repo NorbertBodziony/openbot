@@ -60,7 +60,7 @@ const PRELOAD_MODULE = "src/preload/index.ts";
 const preloadSources = [PRELOAD_MODULE];
 
 // The dispatcher, and the directory whose modules it has to reach.
-const DISPATCHER_MODULE = "src/main/index.ts";
+const DISPATCHER_MODULE = "src/main/ipc/ipc-registry.ts";
 const REGISTRAR_DIRECTORY = "src/main/ipc/";
 
 // `export function registerSomethingIpcHandlers(` - the shape src/main/AGENTS.md
@@ -89,7 +89,7 @@ const mainCalls = collectCalls(mainSources);
 const preloadCalls = collectCalls(preloadSources);
 
 const registrars = mainSources
-  .filter((file) => file.startsWith(REGISTRAR_DIRECTORY))
+  .filter((file) => file.startsWith(REGISTRAR_DIRECTORY) && file !== DISPATCHER_MODULE)
   .flatMap((file) =>
     [...readSource(file).matchAll(REGISTRAR_EXPORT)]
       .map((match) => match[1])
@@ -181,6 +181,11 @@ describe("IPC channel coverage", () => {
       .sort();
 
     expect(unreachable).toEqual([]);
+
+    // The dispatcher itself moved out of index.ts, so an index.ts that never
+    // calls it would leave every channel above green while registering nothing
+    // at runtime. Pin the single wiring call.
+    expect(callCount(readSource("src/main/index.ts"), "registerIpcHandlers")).toBe(1);
   });
 
   it("gives every event channel the preload listens for a main process sender", () => {

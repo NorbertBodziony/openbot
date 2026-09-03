@@ -2,8 +2,8 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { constants } from "node:fs";
-import { lstat, open, realpath, stat } from "node:fs/promises";
-import { basename, isAbsolute } from "node:path";
+import { lstat, open, realpath } from "node:fs/promises";
+import { isAbsolute } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   AccountUsage,
@@ -149,6 +149,7 @@ import {
   toolProgressText,
   toThreadItem,
 } from "./agent/thread-items";
+import { resolveSharedFilePath, resolveWorkspaceFilePath } from "./agent/workspace-files";
 import type { AgentClient, AgentProvider } from "./agent-client";
 import { AgentMemoryStore } from "./agent-memory-store";
 import { AgentRoutineStore } from "./agent-routine-store";
@@ -1004,29 +1005,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async resolveSharedFile(inputPath: string): Promise<ResolvedSharedFile> {
-    const sharedRoot = await realpath(this.#store.sharedRoot);
-    const candidatePath = sharedPathFromInput(this.#store.sharedRoot, inputPath);
-    const resolvedPath = await realpath(candidatePath);
-    if (!isWithin(sharedRoot, resolvedPath)) {
-      throw new Error("Shared file must be inside the shared directory.");
-    }
-    const metadata = await stat(resolvedPath);
-    if (!metadata.isFile()) throw new Error("Shared path is not a file.");
-    return { path: resolvedPath, name: basename(resolvedPath), size: metadata.size };
+    return resolveSharedFilePath(this.#store.sharedRoot, inputPath);
   }
 
   async resolveWorkspaceFile(botId: string, inputPath: string): Promise<ResolvedSharedFile> {
     const bot = this.#store.list().find((candidate) => candidate.id === botId);
     if (!bot) throw new Error(`Unknown bot: ${botId}`);
-    const workspaceRoot = await realpath(bot.workspacePath);
-    const candidatePath = workspacePathFromInput(bot.workspacePath, bot.id, inputPath);
-    const resolvedPath = await realpath(candidatePath);
-    if (!isWithin(workspaceRoot, resolvedPath)) {
-      throw new Error("Workspace file must be inside the agent workspace.");
-    }
-    const metadata = await stat(resolvedPath);
-    if (!metadata.isFile()) throw new Error("Workspace path is not a file.");
-    return { path: resolvedPath, name: basename(resolvedPath), size: metadata.size };
+    return resolveWorkspaceFilePath(bot.workspacePath, bot.id, inputPath);
   }
 
   async deleteBot(botId: string): Promise<void> {
