@@ -157,6 +157,38 @@ describe("EML attachment imports", () => {
     await expect(importEmail(email)).rejects.toThrow("extended or continued MIME boundary");
   });
 
+  it("rejects inline RFC822 bodies before parsing", async () => {
+    const email = ENCODER.encode(
+      [
+        "Subject: Forwarded message",
+        "Content-Type: message/rfc822",
+        "Content-Disposition: inline",
+        "Content-Transfer-Encoding: base64",
+        "",
+        "U3ViamVjdDogTmVzdGVkDQoNCkJvZHk=",
+      ].join("\r\n"),
+    );
+
+    await expect(importEmail(email)).rejects.toThrow("nested .eml");
+  });
+
+  it("rejects duplicate MIME boundaries before parsing", async () => {
+    const email = ENCODER.encode(
+      [
+        "Subject: Duplicate boundary",
+        "Content-Type: multipart/mixed; boundary=decoy; boundary=real",
+        "",
+        "--real",
+        "Content-Type: text/plain",
+        "",
+        "Message",
+        "--real--",
+      ].join("\r\n"),
+    );
+
+    await expect(importEmail(email)).rejects.toThrow("duplicate MIME boundary");
+  });
+
   it("rejects an oversized aggregate EML header block", async () => {
     const headers = `X-Header: ${"a".repeat(1024)}\r\n`.repeat(2_100);
 

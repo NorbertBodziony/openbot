@@ -166,6 +166,7 @@ function assertEmailPreflight(name: string, bytes: Uint8Array, budget: Attachmen
   let attachments = 1;
   let hasHtml = false;
   const root = readEmailHeaders(bytes, 0);
+  assertNoNestedEmail(name, root);
   ({ parts, attachments, hasHtml } = countEmailPart(root, parts, attachments, hasHtml));
   assertEmailCounts(name, budget, parts, attachments);
   const boundaries = new Set<string>();
@@ -182,18 +183,11 @@ function assertEmailPreflight(name: string, bytes: Uint8Array, budget: Attachmen
       continue;
     }
     const headers = readEmailHeaders(bytes, offset);
+    assertNoNestedEmail(name, headers);
     ({ parts, attachments, hasHtml } = countEmailPart(headers, parts, attachments, hasHtml));
     assertEmailCounts(name, budget, parts, attachments);
     addEmailBoundary(name, headers, boundaries);
     offset = headers.bodyOffset;
-
-    if (emailContentType(headers) === "message/rfc822" && emailDisposition(headers) === "inline") {
-      const nested = readEmailHeaders(bytes, offset);
-      ({ parts, attachments, hasHtml } = countEmailPart(nested, parts, attachments, hasHtml));
-      assertEmailCounts(name, budget, parts, attachments);
-      addEmailBoundary(name, nested, boundaries);
-      offset = nested.bodyOffset;
-    }
   }
 }
 
@@ -201,9 +195,18 @@ function addEmailBoundary(name: string, headers: EmailHeaders, boundaries: Set<s
   if (/(?:^|;)\s*boundary\*(?:\d+\*?)?\s*=/iu.test(headers.contentType)) {
     throw new Error(`${name} uses an extended or continued MIME boundary, which is not supported. Export it again.`);
   }
+  if ((headers.contentType.match(/(?:^|;)\s*boundary\s*=/giu) ?? []).length > 1) {
+    throw new Error(`${name} uses duplicate MIME boundary parameters, which are not supported. Export it again.`);
+  }
   const match = /(?:^|;)\s*boundary\s*=\s*(?:"((?:\\.|[^"])*)"|([^;\s]+))/iu.exec(headers.contentType);
   const boundary = (match?.[1] ?? match?.[2])?.replace(/\\(.)/gu, "$1");
   if (boundary) boundaries.add(boundary);
+}
+
+function assertNoNestedEmail(name: string, headers: EmailHeaders): void {
+  if (emailContentType(headers) === "message/rfc822") {
+    throw new Error(`${name} contains a nested .eml message, which is not supported. Attach it separately.`);
+  }
 }
 
 function matchEmailBoundary(
