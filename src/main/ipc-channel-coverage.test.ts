@@ -25,7 +25,9 @@ import { describe, expect, it } from "vitest";
 const repositoryRoot = resolve(import.meta.dirname, "../..");
 
 // The channel is the first argument to each of these, except sendToRenderer,
-// where it follows the target window.
+// where it follows the target window. What comes after the channel varies —
+// handleTrusted takes either a handler alone or a payload decoder and a handler —
+// and the scan reads only the channel position, so it does not care.
 const MAIN_HANDLER_CALLEES = ["handleTrusted", "handleTrustedWithEvent"];
 const MAIN_SEND_CALLEES = ["sendToRenderer"];
 const PRELOAD_INVOKE_CALLEES = ["ipcRenderer.invoke", "invokeAgent", "invokeAgentForServer"];
@@ -54,7 +56,16 @@ const CHANNEL_REFERENCE = /^IPC_CHANNELS\.([A-Za-z0-9_]+)$/;
 const sources = new Map<string, string>();
 
 const mainSources = sourceFilesUnder("src/main");
-const preloadSources = ["src/preload/index.ts"];
+const PRELOAD_MODULE = "src/preload/index.ts";
+const preloadSources = [PRELOAD_MODULE];
+
+// The dispatcher, and the directory whose modules it has to reach.
+const DISPATCHER_MODULE = "src/main/index.ts";
+const REGISTRAR_DIRECTORY = "src/main/ipc/";
+
+// `export function registerSomethingIpcHandlers(` - the shape src/main/AGENTS.md
+// requires of every module under src/main/ipc.
+const REGISTRAR_EXPORT = /export function (register[A-Za-z0-9_]*IpcHandlers)\s*\(/g;
 
 // The one module allowed to touch ipcMain, because it is the sender check.
 const TRUSTED_IPC_MODULE = "src/main/trusted-ipc.ts";
@@ -76,6 +87,15 @@ const FORWARDED_CHANNEL_ARGUMENTS: readonly string[] = [
 
 const mainCalls = collectCalls(mainSources);
 const preloadCalls = collectCalls(preloadSources);
+
+const registrars = mainSources
+  .filter((file) => file.startsWith(REGISTRAR_DIRECTORY))
+  .flatMap((file) =>
+    [...readSource(file).matchAll(REGISTRAR_EXPORT)]
+      .map((match) => match[1])
+      .filter((name): name is string => name !== undefined)
+      .map((name) => ({ file, name })),
+  );
 
 const handled = channelsCalledBy(mainCalls, MAIN_HANDLER_CALLEES);
 const sent = channelsCalledBy(mainCalls, MAIN_SEND_CALLEES);
@@ -143,6 +163,26 @@ describe("IPC channel coverage", () => {
     expect(duplicated).toEqual([]);
   });
 
+  // Every test above reads sources, so a registrar the dispatcher never calls
+  // still looks registered while every channel in it rejects at runtime. The
+  // type checker only sees half of that: deleting the call alone is TS6133,
+  // because the call site is the import's only use, but deleting the import
+  // with it compiles. So does a new registrar nobody ever wired up. This is
+  // the other half.
+  it("calls every registrar under src/main/ipc exactly once from the dispatcher", () => {
+    // A blind regex would make this test vacuous rather than red.
+    expect(registrars.length).toBeGreaterThan(10);
+
+    const dispatcher = readSource(DISPATCHER_MODULE);
+    const unreachable = registrars
+      .map(({ file, name }) => ({ file, name, calls: callCount(dispatcher, name) }))
+      .filter(({ calls }) => calls !== 1)
+      .map(({ file, name, calls }) => `${name} (${file}) is called ${calls} times by ${DISPATCHER_MODULE}`)
+      .sort();
+
+    expect(unreachable).toEqual([]);
+  });
+
   it("gives every event channel the preload listens for a main process sender", () => {
     expect(subscribed).toEqual(sent);
   });
@@ -206,6 +246,24 @@ describe("IPC channel coverage", () => {
   it("only removes listeners for channels the preload subscribes to", () => {
     expect(unsubscribed.filter((channel) => !subscribed.includes(channel))).toEqual([]);
   });
+
+  // Every value the preload hands the renderer is validated by a guard in
+  // packages/contracts, the same one the main process uses. A guard written here
+  // instead is a second rule for one type, and the second rule is always the
+  // looser one - the preload's own isBotSummary never checked `provider` and its
+  // isConversationWithReadState accepted any array as the message list. An empty
+  // list is the only form that stays honest: it says the preload declares no rule
+  // of its own rather than counting the ones it does.
+  //
+  // This catches the predicate-shaped recurrence, which is the shape that
+  // actually diverged. A rule inlined into a decodeX body is still invisible here.
+  it("declares no type predicate of its own in the preload", () => {
+    const declared = [...readSource(PRELOAD_MODULE).matchAll(/^function (\w+)\([^)]*\):\s*[\w.<>[\]|" ]+ is /gm)]
+      .map((match) => match[1])
+      .sort();
+
+    expect(declared).toEqual([]);
+  });
 });
 
 // One occurrence of a known call, with the source text of its channel argument
@@ -227,6 +285,12 @@ function sourceFilesUnder(directory: string): readonly string[] {
     else if (entry.name.endsWith(".ts") && !entry.name.includes(".test.")) files.push(path);
   }
   return files;
+}
+
+// The import specifier carries no parenthesis, so this counts call sites and
+// not the name's other appearance in the dispatcher.
+function callCount(source: string, name: string): number {
+  return [...source.matchAll(new RegExp(`\\b${name}\\s*\\(`, "g"))].length;
 }
 
 function readSource(file: string): string {

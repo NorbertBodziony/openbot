@@ -39,14 +39,9 @@ jobs:
           fi
 
       - name: Set up Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.4.0
-
-      - name: Set up Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version-file: .nvmrc
+          install: none
 
       - name: Validate release version
         id: release
@@ -102,14 +97,9 @@ jobs:
           persist-credentials: false
 
       - name: Set up Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        uses: ./.github/actions/setup-bun
         with:
-          bun-version: 1.4.0
-
-      - name: Set up Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version-file: .nvmrc
+          install: none
 
       - name: Require signing and notarization credentials
         shell: bash
@@ -303,17 +293,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: 1.4.0
-
-      - name: Set up Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version-file: .nvmrc
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+        uses: ./.github/actions/setup-bun
 
       - name: Run Windows checks
         run: bun run lint && bun run typecheck && bunx vitest run src/backend/cli.test.ts

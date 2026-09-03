@@ -57,10 +57,49 @@ describe("trusted IPC wrappers", () => {
     expect(handled).toBe(0);
   });
 
-  it("passes a request from the application origin to the handler with its arguments", () => {
-    handleTrusted("test:accept", (first, second) => [first, second]);
+  it("decodes the payload before the handler sees it", () => {
+    handleTrusted(
+      "test:accept",
+      (value) => `decoded:${String(value)}`,
+      (payload) => [payload],
+    );
 
-    expect(registrations.get("test:accept")?.(TRUSTED_EVENT, "one", 2)).toEqual(["one", 2]);
+    expect(registrations.get("test:accept")?.(TRUSTED_EVENT, "one")).toEqual(["decoded:one"]);
+  });
+
+  it("does not run the handler when the decoder rejects the payload", () => {
+    let handled = 0;
+    handleTrusted(
+      "test:bad-payload",
+      () => {
+        throw new Error("Invalid payload.");
+      },
+      () => {
+        handled += 1;
+      },
+    );
+
+    expect(() => registrations.get("test:bad-payload")?.(TRUSTED_EVENT, "one")).toThrow("Invalid payload.");
+    expect(handled).toBe(0);
+  });
+
+  // Ordering, not just outcome: decoding an untrusted renderer's payload is work done on behalf of
+  // a caller already known to be rejected, so the sender check has to come first.
+  it("rejects an untrusted renderer before decoding anything it sent", () => {
+    let decoded = 0;
+    handleTrusted(
+      "test:reject-before-decode",
+      (value) => {
+        decoded += 1;
+        return value;
+      },
+      (payload) => payload,
+    );
+
+    expect(() => registrations.get("test:reject-before-decode")?.(UNTRUSTED_EVENT, "one")).toThrow(
+      "Rejected IPC request from an untrusted renderer.",
+    );
+    expect(decoded).toBe(0);
   });
 
   it("rejects an untrusted renderer for the event-carrying wrapper too", () => {
@@ -75,9 +114,38 @@ describe("trusted IPC wrappers", () => {
     expect(handled).toBe(0);
   });
 
-  it("hands the event to the handler once the renderer is trusted", () => {
-    handleTrustedWithEvent("test:accept-with-event", (event, first) => [event, first]);
+  it("hands the event and the decoded payload to the handler once the renderer is trusted", () => {
+    handleTrustedWithEvent(
+      "test:accept-with-event",
+      (value) => `decoded:${String(value)}`,
+      (event, payload) => [event, payload],
+    );
 
-    expect(registrations.get("test:accept-with-event")?.(TRUSTED_EVENT, "one")).toEqual([TRUSTED_EVENT, "one"]);
+    expect(registrations.get("test:accept-with-event")?.(TRUSTED_EVENT, "one")).toEqual([TRUSTED_EVENT, "decoded:one"]);
+  });
+
+  // Ordering again, one level in: every window of the app shares the trusted origin, so a channel
+  // restricted to one of them authorizes by sender identity. That answers "may this caller use this
+  // channel at all", so it has to settle before the decoder runs — otherwise a caller the channel
+  // rejects still gets to choose which payload-validation error comes back.
+  it("authorizes the sender before decoding a payload it sent", () => {
+    const order: string[] = [];
+    handleTrustedWithEvent(
+      "test:authorized",
+      () => {
+        order.push("authorize");
+        throw new Error("Rejected Dynamic Island IPC request outside the main renderer.");
+      },
+      (value) => {
+        order.push("decode");
+        return value;
+      },
+      (_event, payload) => payload,
+    );
+
+    expect(() => registrations.get("test:authorized")?.(TRUSTED_EVENT, "one")).toThrowError(
+      "Rejected Dynamic Island IPC request outside the main renderer.",
+    );
+    expect(order).toEqual(["authorize"]);
   });
 });

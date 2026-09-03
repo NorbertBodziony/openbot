@@ -58,14 +58,17 @@ import type {
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
 import {
-  isAgentEvent,
-  isAgentModel,
-  isAgentProvider,
-  isAvatarHue,
-  isAvatarSeed,
+  isAccountUsage,
+  isAgentModelOption,
+  isAgentStatus,
+  isAttachmentSummary,
   isBotMemory,
+  isBotSummary,
   isConversationMessage,
-  isReasoningEffort,
+  isConversationReadState,
+  isConversationWithReadState,
+  isQueuedMessageReceipt,
+  isQueueSnapshot,
   isRoutine,
   isRoutineRun,
   isSidebarLayoutSnapshot,
@@ -2228,58 +2231,41 @@ function decodeJoinResult(value: unknown): { member: { role: TeamRole }; session
 }
 
 function decodeDraftAttachment(value: unknown): DraftAttachment {
-  const record = decodeRecord(value, "attachment");
-  const kind = record.kind;
-  const previewKind = record.previewKind;
-  const previewUrl = record.previewUrl;
-  if (!isOneOf(["image", "file"] as const, kind)) throw new Error("Invalid attachment kind.");
-  if (!isOneOf(["image", "pdf", "text", "none"] as const, previewKind)) {
-    throw new Error("Invalid attachment preview kind.");
-  }
-  if (previewUrl !== null && !isString(previewUrl)) {
-    throw new Error("Invalid attachment preview URL.");
-  }
+  if (!isAttachmentSummary(value)) throw new Error("Invalid attachment.");
   return {
-    id: requiredString(record, "id"),
-    name: requiredString(record, "name"),
-    size: requiredNumber(record, "size"),
-    kind,
-    mimeType: requiredString(record, "mimeType"),
-    previewKind,
-    previewUrl,
+    id: value.id,
+    name: value.name,
+    size: value.size,
+    kind: value.kind,
+    mimeType: value.mimeType,
+    previewKind: value.previewKind,
+    previewUrl: value.previewUrl,
   };
 }
 
 export function decodeBotSummary(value: unknown): BotSummary {
   const record = decodeRecord(value, "agent");
-  const model = record.model;
-  const reasoningEffort = record.reasoningEffort;
-  const avatarSeed = record.avatarSeed;
-  const avatarHue = record.avatarHue;
-  const provider = record.provider;
-  const marketplaceSource = decodeMarketplaceSource(record.marketplaceSource);
-  if (!isAgentProvider(provider) || !isAgentModel(model) || !isReasoningEffort(reasoningEffort)) {
-    throw new Error("Invalid agent model configuration.");
-  }
-  if (!isAvatarSeed(avatarSeed) || (avatarHue !== null && !isAvatarHue(avatarHue))) {
-    throw new Error("Invalid agent avatar configuration.");
-  }
+  // Servers older than 63b55606 omit `avatarUrl` entirely. The shared guard requires the field, so
+  // normalize the absent case to null before validating rather than loosening the guard for everyone.
+  const candidate = record.avatarUrl === undefined ? { ...record, avatarUrl: null } : record;
+  if (!isBotSummary(candidate)) throw new Error("Invalid agent.");
+  const marketplaceSource = decodeMarketplaceSource(candidate.marketplaceSource);
   return {
-    id: requiredString(record, "id"),
-    provider,
-    name: requiredString(record, "name"),
-    title: requiredString(record, "title"),
-    description: requiredString(record, "description"),
-    notifications: requiredBoolean(record, "notifications"),
-    model,
-    reasoningEffort,
-    threadId: nullableString(record, "threadId"),
-    workspacePath: requiredString(record, "workspacePath"),
-    preview: requiredString(record, "preview"),
-    updatedAt: nullableString(record, "updatedAt"),
-    avatarSeed,
-    avatarHue,
-    avatarUrl: record.avatarUrl === undefined ? null : nullableString(record, "avatarUrl"),
+    id: candidate.id,
+    provider: candidate.provider,
+    name: candidate.name,
+    title: candidate.title,
+    description: candidate.description,
+    notifications: candidate.notifications,
+    model: candidate.model,
+    reasoningEffort: candidate.reasoningEffort,
+    threadId: candidate.threadId,
+    workspacePath: candidate.workspacePath,
+    preview: candidate.preview,
+    updatedAt: candidate.updatedAt,
+    avatarSeed: candidate.avatarSeed,
+    avatarHue: candidate.avatarHue,
+    avatarUrl: candidate.avatarUrl,
     ...(marketplaceSource === undefined ? {} : { marketplaceSource }),
   };
 }
@@ -2316,61 +2302,21 @@ export function decodeVoid(value: unknown): undefined {
 }
 
 export function decodeAgentStatus(value: unknown): AgentStatus {
-  if (!isAgentStatusValue(value)) {
+  if (!isAgentStatus(value)) {
     throw new Error("Invalid remote agent status.");
   }
   return value;
 }
 
-function isAgentStatusValue(value: unknown): value is AgentStatus {
-  return (
-    isDynamicRecord(value) &&
-    isOneOf(["idle", "starting", "ready", "restarting", "blocked", "stopped"] as const, value.phase) &&
-    isDynamicRecord(value.auth) &&
-    isDynamicRecord(value.capabilities) &&
-    isOneOf(["ready", "setup-required", "unavailable"] as const, value.capabilities.chat) &&
-    isOneOf(["ready", "setup-required", "unavailable"] as const, value.capabilities.browser) &&
-    isOneOf(["ready", "setup-required", "unavailable"] as const, value.capabilities.computerUse) &&
-    (value.message === null || isString(value.message)) &&
-    value.fullAccess === true
-  );
-}
-
 export function decodeAccountUsage(value: unknown): AccountUsage {
-  if (!isAccountUsageValue(value)) {
+  if (!isAccountUsage(value)) {
     throw new Error("Invalid remote account usage.");
   }
   return value;
 }
 
-function isAccountUsageValue(value: unknown): value is AccountUsage {
-  return (
-    isDynamicRecord(value) &&
-    Array.isArray(value.limits) &&
-    value.limits.every(
-      (limit) =>
-        isDynamicRecord(limit) &&
-        isString(limit.id) &&
-        (limit.primary === null || isDynamicRecord(limit.primary)) &&
-        (limit.secondary === null || isDynamicRecord(limit.secondary)),
-    )
-  );
-}
-
 export function decodeAgentModelOptions(value: unknown): AgentModelOption[] {
-  if (
-    !Array.isArray(value) ||
-    !value.every(
-      (model) =>
-        isDynamicRecord(model) &&
-        isAgentModel(model.id) &&
-        isString(model.name) &&
-        isString(model.description) &&
-        isReasoningEffort(model.defaultReasoningEffort) &&
-        Array.isArray(model.supportedReasoningEfforts) &&
-        model.supportedReasoningEfforts.every(isReasoningEffort),
-    )
-  ) {
+  if (!Array.isArray(value) || !value.every(isAgentModelOption)) {
     throw new Error("Invalid remote agent models.");
   }
   return value;
@@ -2446,25 +2392,17 @@ export function decodeDuplicateBotResult(value: unknown): DuplicateBotResult {
 }
 
 export function decodeQueueSnapshot(value: unknown): QueueSnapshot {
-  if (!isQueueSnapshotValue(value)) {
+  if (!isQueueSnapshot(value)) {
     throw new Error("Invalid remote queue.");
   }
   return value;
 }
 
-function isQueueSnapshotValue(value: unknown): value is QueueSnapshot {
-  return isDynamicRecord(value) && isString(value.botId) && Array.isArray(value.deliveries);
-}
-
 export function decodeQueuedMessageReceipt(value: unknown): QueuedMessageReceipt {
-  if (!isQueuedMessageReceiptValue(value)) {
+  if (!isQueuedMessageReceipt(value)) {
     throw new Error("Invalid remote message receipt.");
   }
   return value;
-}
-
-function isQueuedMessageReceiptValue(value: unknown): value is QueuedMessageReceipt {
-  return isDynamicRecord(value) && isString(value.messageId) && Array.isArray(value.deliveries);
 }
 
 export function decodeBrowserTabs(value: unknown): BrowserTab[] {
@@ -2597,19 +2535,11 @@ function decodeDirectConversationReadState(value: unknown): DirectConversationRe
 }
 
 export function decodeConversationReadState(value: unknown): ConversationReadState {
-  const record = decodeRecord(value, "conversation read state");
-  const firstUnreadMessageId = record.firstUnreadMessageId;
-  const throughMessageId = record.throughMessageId;
-  if (firstUnreadMessageId !== null && !isString(firstUnreadMessageId)) {
-    throw new Error("Invalid first unread message.");
-  }
-  if (throughMessageId !== null && !isString(throughMessageId)) {
-    throw new Error("Invalid conversation read boundary.");
-  }
+  if (!isConversationReadState(value)) throw new Error("Invalid conversation read state.");
   return {
-    unreadCount: requiredNumber(record, "unreadCount"),
-    firstUnreadMessageId,
-    throughMessageId,
+    unreadCount: value.unreadCount,
+    firstUnreadMessageId: value.firstUnreadMessageId,
+    throughMessageId: value.throughMessageId,
   };
 }
 
@@ -2621,15 +2551,10 @@ export function decodeConversationReadStates(value: unknown): Record<string, Con
 }
 
 function decodeConversationWithReadState(value: unknown): ConversationWithReadState {
-  const event = { type: "conversation", snapshot: value };
-  if (!isAgentEvent(event) || event.type !== "conversation") {
+  if (!isConversationWithReadState(value)) {
     throw new Error("Invalid agent conversation response.");
   }
-  const record = decodeRecord(value, "agent conversation");
-  return {
-    ...event.snapshot,
-    readState: decodeConversationReadState(record.readState),
-  };
+  return { ...value, readState: decodeConversationReadState(value.readState) };
 }
 
 function decodeConversationPage(value: unknown): ConversationPage {

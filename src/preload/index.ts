@@ -26,16 +26,23 @@ import {
   type ImportAttachmentsInput,
   type InstalledSkill,
   IPC_CHANNELS,
-  isAgentModel,
+  isAccountUsage,
+  isAgentModelOption,
+  isAgentStatus,
+  isAttachmentSummary,
   isAvatarHue,
   isAvatarSeed,
   isBotMemory,
+  isBotSummary,
   isConversationMessage,
+  isConversationReadState,
+  isConversationWithReadState,
   isDynamicIslandAction,
   isDynamicIslandNotchSize,
   isDynamicIslandPreference,
   isDynamicIslandPresentation,
-  isReasoningEffort,
+  isQueuedMessageReceipt,
+  isQueueSnapshot,
   isRoutine,
   isRoutineRun,
   isRoutineSchedule,
@@ -142,7 +149,7 @@ async function importFiles(files: File[]): Promise<void> {
       serverId,
       IPC_CHANNELS.agentImportAttachments,
       input,
-      decodeDraftAttachments,
+      decodeAttachments,
     );
     emitAttachmentImport({ type: "completed", requestId, serverId, attachments });
   } catch (error) {
@@ -178,11 +185,6 @@ function decodeBrowserPreview(value: unknown): BrowserPreview {
     throw new Error("Invalid browser preview.");
   }
   return { dataUrl, width, height };
-}
-
-function nullableString(value: unknown, label: string): value is string | null {
-  if (value !== null && !isString(value)) throw new Error(`Invalid ${label}.`);
-  return true;
 }
 
 function decodeVoid(value: unknown): undefined {
@@ -303,7 +305,7 @@ function decodeFilePreview(value: unknown): FilePreview {
 }
 
 function decodeAgentStatus(value: unknown): AgentStatus {
-  if (!isAgentStatusValue(value)) throw new Error("Invalid agent status response.");
+  if (!isAgentStatus(value)) throw new Error("Invalid agent status response.");
   return value;
 }
 
@@ -318,8 +320,8 @@ function decodeProviderRuntimeSnapshot(value: unknown): ProviderRuntimeSnapshot 
       !isDynamicRecord(status) ||
       !isOneOf(["not-downloaded", "downloading", "finishing", "ready", "download-error"] as const, status.phase) ||
       (status.progress !== null && !isNumber(status.progress)) ||
-      !nullableString(status.message, "provider runtime message") ||
-      !nullableString(status.version, "provider runtime version")
+      (status.message !== null && !isString(status.message)) ||
+      (status.version !== null && !isString(status.version))
     ) {
       throw new Error("Invalid provider runtime response.");
     }
@@ -335,94 +337,21 @@ function decodeProviderRuntimeSnapshot(value: unknown): ProviderRuntimeSnapshot 
   return { revision: value.revision, providers: { codex, claude, grok } };
 }
 
-function isAgentStatusValue(value: unknown): value is AgentStatus {
-  if (!isDynamicRecord(value) || !isDynamicRecord(value.auth)) return false;
-  if (!isDynamicRecord(value.capabilities)) return false;
-  return (
-    isString(value.phase) &&
-    (value.cliVersion === null || isString(value.cliVersion)) &&
-    isString(value.auth.kind) &&
-    isString(value.capabilities.chat) &&
-    isString(value.capabilities.browser) &&
-    isString(value.capabilities.computerUse) &&
-    nullableString(value.message, "status message") &&
-    value.fullAccess === true
-  );
-}
-
 function decodeAccountUsage(value: unknown): AccountUsage {
-  if (!isAccountUsageValue(value)) throw new Error("Invalid agent usage response.");
+  if (!isAccountUsage(value)) throw new Error("Invalid agent usage response.");
   return value;
-}
-
-function isAccountUsageValue(value: unknown): value is AccountUsage {
-  return (
-    isDynamicRecord(value) &&
-    Array.isArray(value.limits) &&
-    value.limits.every(
-      (limit) =>
-        isDynamicRecord(limit) &&
-        isString(limit.id) &&
-        (limit.primary === null || isDynamicRecord(limit.primary)) &&
-        (limit.secondary === null || isDynamicRecord(limit.secondary)),
-    )
-  );
 }
 
 function decodeAgentModels(value: unknown): AgentModelOption[] {
-  if (!isAgentModelList(value)) throw new Error("Invalid agent model response.");
+  if (!Array.isArray(value) || !value.every(isAgentModelOption)) {
+    throw new Error("Invalid agent model response.");
+  }
   return value;
-}
-
-function isAgentModelList(value: unknown): value is AgentModelOption[] {
-  return (
-    Array.isArray(value) &&
-    value.every(
-      (model) =>
-        isDynamicRecord(model) &&
-        isAgentModel(model.id) &&
-        isString(model.name) &&
-        isString(model.description) &&
-        isReasoningEffort(model.defaultReasoningEffort) &&
-        Array.isArray(model.supportedReasoningEfforts) &&
-        model.supportedReasoningEfforts.every(isReasoningEffort),
-    )
-  );
 }
 
 function decodeBot(value: unknown): BotSummary {
   if (!isBotSummary(value)) throw new Error("Invalid agent response.");
   return value;
-}
-
-function isBotSummary(value: unknown): value is BotSummary {
-  return (
-    isDynamicRecord(value) &&
-    isString(value.id) &&
-    isString(value.name) &&
-    isString(value.title) &&
-    isString(value.description) &&
-    isBoolean(value.notifications) &&
-    isAgentModel(value.model) &&
-    isReasoningEffort(value.reasoningEffort) &&
-    nullableString(value.threadId, "thread ID") &&
-    isString(value.workspacePath) &&
-    isString(value.preview) &&
-    nullableString(value.updatedAt, "updated at") &&
-    isString(value.avatarSeed) &&
-    (value.avatarHue === null || isNumber(value.avatarHue)) &&
-    nullableString(value.avatarUrl, "avatar URL") &&
-    (value.marketplaceSource === undefined ||
-      (isDynamicRecord(value.marketplaceSource) &&
-        isString(value.marketplaceSource.agentId) &&
-        isString(value.marketplaceSource.versionId) &&
-        isNumber(value.marketplaceSource.version) &&
-        Number.isInteger(value.marketplaceSource.version) &&
-        Array.isArray(value.marketplaceSource.skillIds) &&
-        value.marketplaceSource.skillIds.every(isString) &&
-        Array.isArray(value.marketplaceSource.routineIds) &&
-        value.marketplaceSource.routineIds.every(isString)))
-  );
 }
 
 function decodeBots(value: unknown): BotSummary[] {
@@ -508,25 +437,9 @@ function decodeConversationReferences(value: unknown): Record<string, Conversati
   return decoded;
 }
 
-function isConversationWithReadState(value: unknown): value is ConversationWithReadState {
-  return (
-    isDynamicRecord(value) &&
-    isString(value.botId) &&
-    nullableString(value.threadId, "thread ID") &&
-    nullableString(value.activeTurnId, "active turn ID") &&
-    isNumber(value.revision) &&
-    Array.isArray(value.messages) &&
-    isDynamicRecord(value.readState)
-  );
-}
-
 function decodeReadState(value: unknown): ConversationReadState {
-  const item = record(value, "conversation read state");
-  return {
-    unreadCount: requiredNumber(item, "unreadCount"),
-    firstUnreadMessageId: requiredNullableString(item, "firstUnreadMessageId"),
-    throughMessageId: requiredNullableString(item, "throughMessageId"),
-  };
+  if (!isConversationReadState(value)) throw new Error("Invalid conversation read state.");
+  return value;
 }
 
 function decodeReadStates(value: unknown): Record<string, ConversationReadState> {
@@ -535,27 +448,10 @@ function decodeReadStates(value: unknown): Record<string, ConversationReadState>
 }
 
 function decodeAttachments(value: unknown): DraftAttachment[] {
-  if (!Array.isArray(value) || !value.every(isDraftAttachment)) {
+  if (!Array.isArray(value) || !value.every(isAttachmentSummary)) {
     throw new Error("Invalid attachment response.");
   }
   return value;
-}
-
-function decodeDraftAttachments(value: unknown): DraftAttachment[] {
-  return decodeAttachments(value);
-}
-
-function isDraftAttachment(value: unknown): value is DraftAttachment {
-  return (
-    isDynamicRecord(value) &&
-    isString(value.id) &&
-    isString(value.name) &&
-    isNumber(value.size) &&
-    isString(value.kind) &&
-    isString(value.mimeType) &&
-    isString(value.previewKind) &&
-    nullableString(value.previewUrl, "preview URL")
-  );
 }
 
 function decodeReceipt(value: unknown): QueuedMessageReceipt {
@@ -565,19 +461,11 @@ function decodeReceipt(value: unknown): QueuedMessageReceipt {
   return value;
 }
 
-function isQueuedMessageReceipt(value: unknown): value is QueuedMessageReceipt {
-  return isDynamicRecord(value) && isString(value.messageId) && Array.isArray(value.deliveries);
-}
-
 function decodeQueue(value: unknown): QueueSnapshot {
   if (!isQueueSnapshot(value)) {
     throw new Error("Invalid queue response.");
   }
   return value;
-}
-
-function isQueueSnapshot(value: unknown): value is QueueSnapshot {
-  return isDynamicRecord(value) && isString(value.botId) && Array.isArray(value.deliveries);
 }
 
 function requiredNumber(value: DynamicRecord, field: string): number {
@@ -1116,11 +1004,15 @@ const openbotApi: OpenBotDesktopApi = {
     getPresenceFor: (serverId) => ipcRenderer.invoke(IPC_CHANNELS.serversGetPresenceFor, serverId),
     refreshIdentity: (serverId) => ipcRenderer.invoke(IPC_CHANNELS.serversRefreshIdentity, serverId),
     listMembers: (serverId) => ipcRenderer.invoke(IPC_CHANNELS.serversListMembers, serverId),
-    updateMember: (serverId, input) => ipcRenderer.invoke(IPC_CHANNELS.serversUpdateMember, serverId, input),
-    removeMember: (serverId, memberId) => ipcRenderer.invoke(IPC_CHANNELS.serversRemoveMember, serverId, memberId),
+    updateMember: (serverId, input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.serversUpdateMember, { serverId, payload: input }),
+    removeMember: (serverId, memberId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.serversRemoveMember, { serverId, payload: memberId }),
     listInvites: (serverId) => ipcRenderer.invoke(IPC_CHANNELS.serversListInvites, serverId),
-    revokeInvite: (serverId, inviteId) => ipcRenderer.invoke(IPC_CHANNELS.serversRevokeInvite, serverId, inviteId),
-    createInvite: (serverId, input) => ipcRenderer.invoke(IPC_CHANNELS.serversCreateInvite, serverId, input),
+    revokeInvite: (serverId, inviteId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.serversRevokeInvite, { serverId, payload: inviteId }),
+    createInvite: (serverId, input) =>
+      ipcRenderer.invoke(IPC_CHANNELS.serversCreateInvite, { serverId, payload: input }),
     setTyping: (input) => ipcRenderer.invoke(IPC_CHANNELS.serversSetTyping, input),
     onPresence: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, payload: ScopedTeamPresenceSnapshot) => {
