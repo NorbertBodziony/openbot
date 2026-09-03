@@ -495,6 +495,32 @@ describe("TeamStore", () => {
     expect(await readStoredHosts(path)).toHaveLength(0);
   });
 
+  it("refuses an identity update that lands after another account has signed in", async () => {
+    const { store, path } = await createStore();
+    const first = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
+    const second = { id: "account-b", email: "b@example.com", name: "B", avatarUrl: null };
+    await store.activateAccount(first);
+    await store.configureWithAccount("Studio Mac", first);
+    await store.activateAccount(second);
+    const secondIdentity = await store.configureWithAccount("Studio Air", second);
+    await store.activateAccount(first);
+
+    const pending = store.updateIdentity({
+      serverName: "Renamed",
+      logo: { mimeType: "image/png", bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) },
+    });
+    // The update rejects while the switch below is still settling, so keep it handled.
+    const settled = pending.catch(() => undefined);
+    await store.activateAccount(second);
+    await settled;
+
+    await expect(pending).rejects.toThrow("no longer the active one");
+    expect(store.getIdentity()).toEqual(secondIdentity);
+    const hosts = await readStoredHosts(path);
+    expect(hosts.map((host) => host.serverName)).toEqual(["Studio Mac", "Studio Air"]);
+    expect(hosts.every((host) => host.serverLogo === undefined)).toBe(true);
+  });
+
   it("refuses a launch preference decided for a host that is no longer active", async () => {
     const { store } = await createStore();
     const first = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
@@ -668,6 +694,7 @@ describe("TeamStore", () => {
 /** Only the stored fields these tests read - the store owns the full shape. */
 interface StoredHostFields {
   serverId?: string;
+  serverName?: string;
   enabledOnLaunch?: boolean;
   serverLogo?: { version?: string; mimeType?: string; bytes?: unknown };
   members?: Array<{ accountId?: string }>;

@@ -480,15 +480,17 @@ export class HostService extends EventEmitter<HostEvents> {
 
   async stop(persistPreference = true): Promise<HostStatus> {
     if (this.#status.phase === "unconfigured") return this.getStatus();
+    const serverId = this.#options.store.getIdentity()?.serverId;
     this.#runtimeGeneration += 1;
     if (persistPreference) this.#options.store.assertOwnerAccount(this.#options.getSignedInUser());
     this.#setStatus({ phase: "stopping", message: "Making this OpenBot private…" });
     await this.#stopRuntime();
     await this.#startOperation;
     await this.#stopRuntime();
-    // The awaits above can outlive this host: an account switch in between must not write
-    // the preference onto the account that just became active.
-    const serverId = this.#options.store.getIdentity()?.serverId;
+    // The awaits above can outlive this host. An account switch in between makes both the
+    // preference and the status below the previous account's, and the account that just
+    // became active already has its own status from `applySignedInAccount`.
+    if (this.#options.store.getIdentity()?.serverId !== serverId) return this.getStatus();
     if (persistPreference && serverId) await this.#options.store.setEnabledOnLaunch(serverId, false);
     this.#setStatus({
       phase: "idle",

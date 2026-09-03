@@ -211,15 +211,7 @@ export class TeamStore {
   }
 
   getIdentity(): TeamIdentity | null {
-    if (!this.#state) return null;
-    return {
-      serverId: this.#state.serverId,
-      serverName: this.#state.serverName,
-      fingerprint: fingerprint(this.#state.publicKey),
-      publicKey: this.#state.publicKey,
-      enabledOnLaunch: this.#state.enabledOnLaunch,
-      logoVersion: this.#state.serverLogo?.version ?? null,
-    };
+    return this.#state ? identityOf(this.#state) : null;
   }
 
   getOwnerEmail(): string | null {
@@ -395,6 +387,15 @@ export class TeamStore {
     const previousLogo = state.serverLogo;
     const nextLogo =
       input.logo === undefined ? previousLogo : input.logo === null ? undefined : await this.#writeLogo(input.logo);
+    // Writing the logo can outlive this host. `#persist` only requires *some* active host, so
+    // without this the name and image asked for here would land on whichever host became
+    // active meanwhile - and the caller would be handed that other account's identity back.
+    if (this.#state !== state) {
+      if (nextLogo && nextLogo.version !== previousLogo?.version) {
+        await this.#removeLogo(nextLogo).catch(() => undefined);
+      }
+      throw new TeamStoreError("This server is no longer the active one for the signed-in account.");
+    }
     if (input.serverName !== undefined) state.serverName = input.serverName.trim();
     state.serverLogo = nextLogo;
     try {
@@ -410,9 +411,7 @@ export class TeamStore {
     if (previousLogo && previousLogo.version !== nextLogo?.version) {
       await this.#removeLogo(previousLogo).catch(() => undefined);
     }
-    const identity = this.getIdentity();
-    if (!identity) throw new Error("The team identity could not be updated.");
-    return identity;
+    return identityOf(state);
   }
 
   resolveLogo(): { path: string; mimeType: AvatarImageInput["mimeType"]; version: string } | null {
@@ -1027,6 +1026,17 @@ function validatePassword(value: string): void {
   if (value.length < 12 || value.length > 256) {
     throw new TeamStoreError("Password must contain 12 to 256 characters.");
   }
+}
+
+function identityOf(host: StoredTeam): TeamIdentity {
+  return {
+    serverId: host.serverId,
+    serverName: host.serverName,
+    fingerprint: fingerprint(host.publicKey),
+    publicKey: host.publicKey,
+    enabledOnLaunch: host.enabledOnLaunch,
+    logoVersion: host.serverLogo?.version ?? null,
+  };
 }
 
 function hostOwner(host: StoredTeam): StoredMember | undefined {
