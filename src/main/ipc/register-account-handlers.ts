@@ -7,7 +7,6 @@ import { handleTrusted } from "../trusted-ipc";
 import { parseEmailCodeVerification, parseProfileName } from "./app-inputs";
 import { parseAvatarImage } from "./avatar-inputs";
 import { stringPayload } from "./validation";
-// The cloud account: email sign-in, profile, and the mobile devices connected to it.
 
 export interface AccountIpcDependencies {
   centralAuth: CentralAuthManager;

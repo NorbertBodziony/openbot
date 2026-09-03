@@ -4,7 +4,6 @@ import { IPC_CHANNELS, type VoiceModelStatus, type VoiceTranscriptionResult } fr
 import { handleTrusted } from "../trusted-ipc";
 import type { VoiceTranscriptionService } from "../voice-transcription-service";
 import { parseVoiceTranscription } from "./voice-inputs";
-// The local Whisper model and dictation.
 
 export interface VoiceIpcDependencies {
   voice: VoiceTranscriptionService;

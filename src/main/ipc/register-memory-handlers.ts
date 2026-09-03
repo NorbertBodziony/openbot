@@ -8,8 +8,6 @@ import { handleTrusted } from "../trusted-ipc";
 import { parseAgentRequest, parseCreateBotMemory, parseDeleteBotMemory, parseUpdateBotMemory } from "./agent-inputs";
 import { requireString } from "./validation";
 
-// An agent's long-lived memories: the notes it carries between threads.
-
 interface MemoryIpcDependencies {
   service: AgentService;
   remoteServers: RemoteServerManager;

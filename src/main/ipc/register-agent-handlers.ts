@@ -51,10 +51,6 @@ import {
   parseUpdateQueuedMessage,
 } from "./agent-inputs";
 import { requireString } from "./validation";
-// An agent's core surface: status, bots, conversations, the queue and the prompts
-// a turn can raise. Memories, routines and attachments are their own registrars.
-// Every one of these routes to the local service or to a remote server by the
-// `serverId` in the request.
 
 export interface AgentIpcDependencies {
   service: AgentService;

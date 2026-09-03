@@ -22,8 +22,6 @@ import {
 } from "./agent-inputs";
 import { requireString } from "./validation";
 
-// Routines: the scheduled standing instructions attached to one agent.
-
 interface RoutineIpcDependencies {
   service: AgentService;
   remoteServers: RemoteServerManager;

@@ -4,7 +4,6 @@ import { IPC_CHANNELS } from "@openbot/contracts/ipc";
 import type { ComputerUseMacSetupWindowController } from "../computer-use-mac-setup-window";
 import { handleTrusted, handleTrustedWithEvent } from "../trusted-ipc";
 import { parseMacPermission } from "./app-inputs";
-// The macOS screen-recording and accessibility permission flow.
 
 export interface ComputerUseIpcDependencies {
   computerUseMacSetup: ComputerUseMacSetupWindowController;

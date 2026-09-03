@@ -5,7 +5,6 @@ import { type BrowserWindow, dialog, type OpenDialogOptions } from "electron";
 import type { HostedSiteDesktopService } from "../hosted-site-service";
 import { handleTrusted } from "../trusted-ipc";
 import { parseDeleteHostedSite, parsePublishHostedSite, parseReplaceHostedSite } from "./app-inputs";
-// Publishing a local directory to a hosted site.
 
 export interface HostedSiteIpcDependencies {
   hostedSites: HostedSiteDesktopService;

@@ -10,8 +10,6 @@ import {
   parseDynamicIslandPreference,
   parseDynamicIslandPresentation,
 } from "./app-inputs";
-// The always-on-top island window: its preference, its presentation, and the actions and
-// haptics it sends back.
 
 export interface DynamicIslandIpcDependencies {
   dynamicIsland: DynamicIslandWindowController;

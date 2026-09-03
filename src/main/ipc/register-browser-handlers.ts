@@ -14,7 +14,6 @@ import {
 import { handleTrusted } from "../trusted-ipc";
 import { parseBrowserBounds, parseBrowserNavigate, parseBrowserOpen, parseVisibility } from "./browser-inputs";
 import { optionalPayload, stringPayload } from "./validation";
-// The embedded browser and its picture-in-picture window.
 
 export interface BrowserIpcDependencies {
   browserPictureInPicture: BrowserPictureInPicture;

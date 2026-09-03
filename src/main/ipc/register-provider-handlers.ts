@@ -6,7 +6,6 @@ import type { AgentService } from "../../backend/agent-service";
 import type { ProviderRuntimeManager } from "../provider-runtime-manager";
 import { handleTrusted } from "../trusted-ipc";
 import { parseProviderId } from "./app-inputs";
-// Signing in to Codex, Claude and Grok, and downloading the CLI runtimes they need.
 
 export interface ProviderIpcDependencies {
   service: AgentService;

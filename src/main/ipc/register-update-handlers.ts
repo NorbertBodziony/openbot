@@ -5,7 +5,6 @@ import { handleTrusted } from "../trusted-ipc";
 import { readUpdatePreference, writeUpdatePreference } from "../update-preference-store";
 import type { UpdateService } from "../update-service";
 import { parseUpdatePreference } from "./app-inputs";
-// The application updater and its auto-download preference.
 
 export interface UpdateIpcDependencies {
   updater: UpdateService;

@@ -5,7 +5,6 @@ import type { AgentMarketplaceService } from "../agent-marketplace-service";
 import { handleTrusted } from "../trusted-ipc";
 import { parseInstallMarketplaceAgent, parseMarketplaceAgentQuery, parseSubmitMarketplaceAgent } from "./app-inputs";
 import { nullishPayload, stringPayload } from "./validation";
-// The agent marketplace: browsing, submitting and installing a published agent.
 
 export interface MarketplaceAgentIpcDependencies {
   marketplaceAgents: AgentMarketplaceService;

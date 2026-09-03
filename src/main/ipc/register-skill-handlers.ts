@@ -6,7 +6,6 @@ import type { SkillMarketplaceService } from "../skill-marketplace-service";
 import { handleTrusted } from "../trusted-ipc";
 import { parseInstallSkill, parseMarketplaceSkillQuery, parseSubmitSkill, parseUninstallSkill } from "./app-inputs";
 import { nullishPayload, stringPayload } from "./validation";
-// The skill marketplace, and the skills installed into a workspace.
 
 export interface SkillIpcDependencies {
   skills: SkillMarketplaceService;

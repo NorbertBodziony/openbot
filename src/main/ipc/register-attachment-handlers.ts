@@ -28,9 +28,6 @@ import {
 } from "./agent-inputs";
 import { requireString } from "./validation";
 
-// Attachments, and the shared and workspace files an agent can open or preview.
-// Every path here crosses to the local filesystem, so the parsers are the boundary.
-
 interface AttachmentIpcDependencies {
   service: AgentService;
   mailbox: MailboxStore;

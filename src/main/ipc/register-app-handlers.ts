@@ -21,9 +21,6 @@ import type { UpdateService } from "../update-service";
 import { parseAnalyticsPreference, parseExternalDestination, parseProvider } from "./app-inputs";
 import { stringPayload } from "./validation";
 
-// App identity, first-run setup, the analytics preference, external links and the data and
-// diagnostics exports.
-
 const EXTERNAL_DESTINATIONS: Record<ExternalDestination, string> = {
   "agent-setup": "https://github.com/NorbertBodziony/openbot/blob/main/docs/TROUBLESHOOTING.md",
   "claude-install": "https://code.claude.com/docs",
