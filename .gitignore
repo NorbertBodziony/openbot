@@ -31,6 +31,8 @@ playwright-report/
 test-results/
 storybook-static/
 Shared/
+!apps/mobile/src/shared/
+!apps/mobile/src/shared/**
 index-*.css
 .openbot-browser-test/
 .openbot-build/
