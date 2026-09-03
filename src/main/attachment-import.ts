@@ -18,6 +18,7 @@ const ZIP_LOCAL_SIGNATURE = 0x04034b50;
 const ZIP_ENCRYPTED_FLAG = 1;
 const ZIP_UTF8_FLAG = 0x0800;
 const ZIP_DIRECTORY_ATTRIBUTE = 0x10;
+const ZIP_UNICODE_PATH_EXTRA = 0x7075;
 const UNIX_FILE_TYPE_MASK = 0o170000;
 const UNIX_REGULAR_FILE = 0o100000;
 const UNIX_DIRECTORY = 0o040000;
@@ -26,6 +27,9 @@ const EMAIL_MAX_NESTING_DEPTH = 32;
 const EMAIL_MAX_RFC822_NESTING_DEPTH = 10;
 const EMAIL_MAX_MIME_PARTS = 64;
 const HEADER_DECODER = new TextDecoder("latin1");
+const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
+const CP437_HIGH =
+  "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■ ";
 interface AttachmentBudget {
   count: number;
   bytes: number;
@@ -257,7 +261,8 @@ function inspectZip(archiveName: string, bytes: Uint8Array): ZipEntry[] {
       throw new Error(`${archiveName} has a damaged ZIP directory.`);
     }
     const nameBytes = bytes.subarray(offset + 46, offset + 46 + nameLength);
-    const name = strFromU8(nameBytes, (flags & ZIP_UTF8_FLAG) === 0);
+    const extraBytes = bytes.subarray(offset + 46 + nameLength, offset + 46 + nameLength + extraLength);
+    const name = decodeZipName(nameBytes, extraBytes, flags);
     if (names.has(name)) throw new Error(`${archiveName} contains a duplicate path (${name}). Remove it and retry.`);
     names.add(name);
     if (compressedSize === 0xffffffff || size === 0xffffffff || localOffset === 0xffffffff) {
@@ -312,6 +317,35 @@ function inspectZip(archiveName: string, bytes: Uint8Array): ZipEntry[] {
   return entries;
 }
 
+function decodeZipName(nameBytes: Uint8Array, extraBytes: Uint8Array, flags: number): string {
+  if ((flags & ZIP_UTF8_FLAG) !== 0) return strFromU8(nameBytes);
+  let offset = 0;
+  const view = new DataView(extraBytes.buffer, extraBytes.byteOffset, extraBytes.byteLength);
+  while (offset + 4 <= extraBytes.byteLength) {
+    const identifier = view.getUint16(offset, true);
+    const size = view.getUint16(offset + 2, true);
+    const nextOffset = offset + 4 + size;
+    if (nextOffset > extraBytes.byteLength) break;
+    if (
+      identifier === ZIP_UNICODE_PATH_EXTRA &&
+      size >= 5 &&
+      extraBytes[offset + 4] === 1 &&
+      view.getUint32(offset + 5, true) === crc32(nameBytes)
+    ) {
+      try {
+        return UTF8_DECODER.decode(extraBytes.subarray(offset + 9, nextOffset));
+      } catch {
+        break;
+      }
+    }
+    offset = nextOffset;
+  }
+
+  let result = "";
+  for (const byte of nameBytes) result += byte < 0x80 ? String.fromCharCode(byte) : CP437_HIGH[byte - 0x80];
+  return result;
+}
+
 function findZipEnd(bytes: Uint8Array): number {
   const minimum = Math.max(0, bytes.byteLength - 65_557);
   for (let offset = bytes.byteLength - 22; offset >= minimum; offset -= 1) {
@@ -352,23 +386,56 @@ interface EmailHeaders {
 function assertEmailPreflight(name: string, bytes: Uint8Array, budget: AttachmentBudget): void {
   let parts = 0;
   let attachments = 1;
-  let offset = 0;
   const root = readEmailHeaders(bytes, 0);
   ({ parts, attachments } = countEmailPart(root, parts, attachments));
   assertEmailCounts(name, budget, parts, attachments);
-  offset = root.bodyOffset;
+  const boundaries = new Set<string>();
+  addEmailBoundary(root, boundaries);
+  let offset = root.bodyOffset;
 
   while (offset < bytes.byteLength) {
     const line = readEmailLine(bytes, offset);
     offset = line.nextOffset;
-    if (line.endOffset - line.startOffset < 3 || bytes[line.startOffset] !== 45 || bytes[line.startOffset + 1] !== 45) {
+    const boundary = matchEmailBoundary(bytes, line, boundaries);
+    if (!boundary) continue;
+    if (boundary.closing) {
+      boundaries.delete(boundary.value);
       continue;
     }
     const headers = readEmailHeaders(bytes, offset);
     ({ parts, attachments } = countEmailPart(headers, parts, attachments));
     assertEmailCounts(name, budget, parts, attachments);
-    if (headers.recognized) offset = headers.bodyOffset;
+    addEmailBoundary(headers, boundaries);
+    offset = headers.bodyOffset;
+
+    if (emailContentType(headers) === "message/rfc822" && emailDisposition(headers) === "inline") {
+      const nested = readEmailHeaders(bytes, offset);
+      ({ parts, attachments } = countEmailPart(nested, parts, attachments));
+      assertEmailCounts(name, budget, parts, attachments);
+      addEmailBoundary(nested, boundaries);
+      offset = nested.bodyOffset;
+    }
   }
+}
+
+function addEmailBoundary(headers: EmailHeaders, boundaries: Set<string>): void {
+  const match = /(?:^|;)\s*boundary\s*=\s*(?:"((?:\\.|[^"])*)"|([^;\s]+))/iu.exec(headers.contentType);
+  const boundary = (match?.[1] ?? match?.[2])?.replace(/\\(.)/gu, "$1");
+  if (boundary) boundaries.add(boundary);
+}
+
+function matchEmailBoundary(
+  bytes: Uint8Array,
+  line: ReturnType<typeof readEmailLine>,
+  boundaries: Set<string>,
+): { value: string; closing: boolean } | null {
+  if (bytes[line.startOffset] !== 45 || bytes[line.startOffset + 1] !== 45) return null;
+  const value = HEADER_DECODER.decode(bytes.subarray(line.startOffset, line.endOffset)).trimEnd();
+  for (const boundary of boundaries) {
+    if (value === `--${boundary}`) return { value: boundary, closing: false };
+    if (value === `--${boundary}--`) return { value: boundary, closing: true };
+  }
+  return null;
 }
 
 function assertEmailCounts(name: string, budget: AttachmentBudget, parts: number, attachments: number): void {
@@ -386,12 +453,8 @@ function countEmailPart(
   attachments: number,
 ): { parts: number; attachments: number } {
   if (!headers.recognized) return { parts: parts + 1, attachments };
-  const contentType = headers.contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
-  const disposition =
-    headers.contentDisposition
-      .trim()
-      .toLowerCase()
-      .match(/^[a-z]+/u)?.[0] ?? "";
+  const contentType = emailContentType(headers);
+  const disposition = emailDisposition(headers);
   const isHtml = contentType === "text/html" && disposition !== "attachment";
   const isAttachment =
     disposition === "attachment" ||
@@ -406,6 +469,19 @@ function countEmailPart(
   };
 }
 
+function emailContentType(headers: EmailHeaders): string {
+  return headers.contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+}
+
+function emailDisposition(headers: EmailHeaders): string {
+  return (
+    headers.contentDisposition
+      .trim()
+      .toLowerCase()
+      .match(/^[a-z]+/u)?.[0] ?? ""
+  );
+}
+
 function readEmailHeaders(bytes: Uint8Array, startOffset: number): EmailHeaders {
   let contentType = "";
   let contentDisposition = "";
@@ -418,7 +494,7 @@ function readEmailHeaders(bytes: Uint8Array, startOffset: number): EmailHeaders 
     offset = line.nextOffset;
     if (line.startOffset === line.endOffset) break;
     if (line.endOffset - line.startOffset > EMAIL_MAX_HEADERS_BYTES) {
-      return { contentType: "", contentDisposition: "", bodyOffset: startOffset, recognized: false };
+      return { contentType: "", contentDisposition: "", bodyOffset: line.nextOffset, recognized: false };
     }
     const value = HEADER_DECODER.decode(bytes.subarray(line.startOffset, line.endOffset));
     if (/^[\t ]/u.test(value)) {

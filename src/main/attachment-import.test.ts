@@ -3,6 +3,7 @@
 import { mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { crc32 } from "node:zlib";
 import { ATTACHMENT_LIMITS } from "@openbot/contracts/input-limits";
 import { strToU8, zipSync } from "fflate";
 import { afterEach, describe, expect, it } from "vitest";
@@ -92,6 +93,21 @@ describe("attachment container imports", () => {
     });
 
     expect(result.data.map((item) => item.name)).toEqual(["bundle - folder - report.txt"]);
+  });
+
+  it("decodes CP437 and Info-ZIP Unicode attachment paths", async () => {
+    const cp437 = patchFirstZipEntry(zipSync({ "cafx.txt": strToU8("legacy") }), (view, central, local) => {
+      view.setUint16(central + 8, view.getUint16(central + 8, true) & ~0x0800, true);
+      view.setUint16(local + 6, view.getUint16(local + 6, true) & ~0x0800, true);
+      view.setUint8(central + 46 + 3, 0x82);
+      view.setUint8(local + 30 + 3, 0x82);
+    });
+    const unicode = zipSync({
+      "cafe.txt": [strToU8("unicode"), { extra: { 28789: unicodePathExtra(strToU8("cafe.txt"), "café.txt") } }],
+    });
+
+    await expect(importZip(cp437)).resolves.toMatchObject({ data: [{ name: "bundle - café.txt" }] });
+    await expect(importZip(unicode)).resolves.toMatchObject({ data: [{ name: "bundle - café.txt" }] });
   });
 
   it.each([
@@ -252,6 +268,13 @@ describe("attachment container imports", () => {
     await expect(importEmail(email)).rejects.toThrow("more than 10 attachments");
   });
 
+  it("does not treat dashed plain-text body lines as MIME boundaries", async () => {
+    const body = Array.from({ length: 70 }, (_, index) => `--- separator ${index}`).join("\r\n");
+    const result = await importEmail(strToU8(["Subject: Dashed", "Content-Type: text/plain", "", body].join("\r\n")));
+
+    expect(new TextDecoder().decode(result.data[0]?.bytes)).toContain("--- separator 69");
+  });
+
   it("rejects unsupported top-level files with the supported next action", async () => {
     await expect(
       normalizeAttachmentImports({
@@ -295,6 +318,16 @@ function emlWithAttachment(filename: string, mimeType: string): Uint8Array {
       "--openbot--",
     ].join("\r\n"),
   );
+}
+
+function unicodePathExtra(legacyName: Uint8Array, unicodeName: string): Uint8Array {
+  const encoded = strToU8(unicodeName);
+  const result = new Uint8Array(5 + encoded.byteLength);
+  const view = new DataView(result.buffer);
+  result[0] = 1;
+  view.setUint32(1, crc32(legacyName), true);
+  result.set(encoded, 5);
+  return result;
 }
 
 function patchFirstZipEntry(
