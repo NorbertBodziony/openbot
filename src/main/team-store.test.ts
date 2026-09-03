@@ -421,16 +421,47 @@ describe("TeamStore", () => {
     const legacyRecord = JSON.stringify(await readStoredHost(legacyPath));
     await writeFile(legacyPath, legacyRecord);
 
+    const legacyLogo = join(root, "team.json.assets", "logo", `${JSON.parse(legacyRecord).serverLogo.version}.png`);
+
     const store = new TeamStore(join(root, "team-v2.json"), legacyPath);
     await store.initialize();
     expect(store.getIdentity()?.serverName).toBe("Studio Mac");
-    // The logo stayed where the older build put it, beside its own file.
+    // Its own copy of the logo, so replacing it below cannot take the older build's away.
     await expect(readFile(store.resolveLogo()?.path ?? "")).resolves.toHaveLength(8);
-    await store.updateIdentity({ serverName: "Renamed" });
+    await store.updateIdentity({
+      serverName: "Renamed",
+      logo: { mimeType: "image/png", bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]) },
+    });
 
     // Downgrading finds the host it configured, not a file it cannot read and would replace.
     expect(await readFile(legacyPath, "utf8")).toBe(legacyRecord);
+    await expect(readFile(legacyLogo)).resolves.toHaveLength(8);
     expect((await readStoredHosts(join(root, "team-v2.json"))).map((host) => host.serverName)).toEqual(["Renamed"]);
+  });
+
+  it("takes in what a build without accounts wrote after the upgrade, keeping the copy it supersedes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-"));
+    roots.push(root);
+    const legacyPath = join(root, "team.json");
+    const path = join(root, "team-v2.json");
+    const owner = { id: "owner-account", email: "owner@example.com", name: "Owner", avatarUrl: null };
+    const source = new TeamStore(legacyPath);
+    await source.initialize();
+    await source.configureWithAccount("Studio Mac", owner);
+    const legacyRecord = await readStoredHost(legacyPath);
+    await writeFile(legacyPath, JSON.stringify(legacyRecord));
+    const upgraded = new TeamStore(path, legacyPath);
+    await upgraded.initialize();
+    await upgraded.updateIdentity({ serverName: "Renamed here" });
+
+    // The user goes back to the older build and renames the host there instead.
+    await writeFile(legacyPath, JSON.stringify({ ...legacyRecord, serverName: "Renamed there" }));
+    const restarted = new TeamStore(path, legacyPath);
+    await restarted.initialize();
+
+    expect(restarted.getIdentity()?.serverName).toBe("Renamed there");
+    const file = JSON.parse(await readFile(path, "utf8"));
+    expect(file.replacedHosts.map((host: { serverName: string }) => host.serverName)).toEqual(["Renamed here"]);
   });
 
   it("keeps each account's host separate and restores it on the next sign-in", async () => {

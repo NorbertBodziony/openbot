@@ -7,7 +7,7 @@ import {
   sign,
   timingSafeEqual,
 } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { avatarFileExtension, isAvatarMimeType, isValidAvatarImage } from "@openbot/contracts/avatar-images";
@@ -78,6 +78,13 @@ interface StoredTeamFile {
   /** The account whose host is active, so a restart activates it before the network answers. */
   activeAccountId: string | null;
   hosts: StoredTeam[];
+  /**
+   * The legacy record this file last took in. A build without accounts that has written its
+   * own file since leaves a different fingerprint, which is how its work is noticed.
+   */
+  legacyImport?: { fingerprint: string; serverId: string };
+  /** Hosts a later import of the same server replaced. Never activated, and never dropped. */
+  replacedHosts?: StoredTeam[];
 }
 
 export interface TeamIdentity {
@@ -124,6 +131,7 @@ export class TeamStore {
   /** Read once and never written: the file a build without this envelope still owns. */
   readonly #legacyPath: string | null;
   readonly #logoRoot: string;
+  readonly #legacyLogoRoot: string | null;
   #file: StoredTeamFile = { version: 2, activeAccountId: null, hosts: [] };
   /** The host of the signed-in account. Every other method reads this one, never `#file.hosts`. */
   #state: StoredTeam | null = null;
@@ -147,10 +155,10 @@ export class TeamStore {
   constructor(path: string, legacyPath: string | null = null) {
     this.#path = path;
     this.#legacyPath = legacyPath;
-    // Named after the file the logos were first stored beside, so an upgrade does not have
-    // to move them.
-    const assetsPath = legacyPath ?? path;
-    this.#logoRoot = join(dirname(assetsPath), `${basename(assetsPath)}.assets`, "logo");
+    // Each file owns its own assets. Sharing one directory would let either build delete a
+    // logo the other's record still points at, leaving it a host it cannot draw.
+    this.#logoRoot = join(dirname(path), `${basename(path)}.assets`, "logo");
+    this.#legacyLogoRoot = legacyPath ? join(dirname(legacyPath), `${basename(legacyPath)}.assets`, "logo") : null;
   }
 
   async initialize(): Promise<void> {
@@ -170,18 +178,33 @@ export class TeamStore {
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
     }
-    if (!found && this.#legacyPath) {
-      try {
-        const parsed = JSON.parse(await readFile(this.#legacyPath, "utf8"));
-        // Copied into this store's own file rather than replaced in place. Anything else
-        // there belongs to a build that is not this one, and is left for it.
-        if (isStoredTeam(parsed)) {
-          this.#file = { version: 2, activeAccountId: ownerAccountId(parsed), hosts: [parsed] };
-          migrated = true;
-        }
-      } catch (error) {
-        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    // Copied into this store's own file rather than replaced in place. Anything else there
+    // belongs to a build that is not this one, and is left for it.
+    const legacy = this.#unreadableFile ? null : await this.#readLegacyRecord();
+    if (legacy && !found) {
+      this.#file = {
+        version: 2,
+        activeAccountId: ownerAccountId(legacy.record),
+        hosts: [legacy.record],
+        legacyImport: { fingerprint: legacy.fingerprint, serverId: legacy.record.serverId },
+      };
+      await this.#adoptLegacyLogo(legacy.record);
+      migrated = true;
+    } else if (legacy && legacy.fingerprint !== this.#file.legacyImport?.fingerprint) {
+      // The older build has been run since, and what it wrote is the newer of the two. The
+      // copy it supersedes is kept rather than dropped: both are the user's, and neither
+      // file is a backup of the other.
+      const index = this.#file.hosts.findIndex((host) => host.serverId === legacy.record.serverId);
+      const replaced = index < 0 ? undefined : this.#file.hosts[index];
+      if (replaced) {
+        this.#file.replacedHosts = [...(this.#file.replacedHosts ?? []), replaced];
+        this.#file.hosts[index] = legacy.record;
+      } else {
+        this.#file.hosts.push(legacy.record);
       }
+      this.#file.legacyImport = { fingerprint: legacy.fingerprint, serverId: legacy.record.serverId };
+      await this.#adoptLegacyLogo(legacy.record);
+      migrated = true;
     }
     const activeAccountId = this.#file.activeAccountId;
     this.#state =
@@ -510,6 +533,35 @@ export class TeamStore {
       throw new TeamStoreError("This server is no longer the active one for the signed-in account.");
     }
     return identityOf(state);
+  }
+
+  /** The record a build without accounts owns, with the fingerprint that dates it. */
+  async #readLegacyRecord(): Promise<{ record: StoredTeam; fingerprint: string } | null> {
+    if (!this.#legacyPath) return null;
+    let raw: string;
+    try {
+      raw = await readFile(this.#legacyPath, "utf8");
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+      throw error;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+    if (!isStoredTeam(parsed)) return null;
+    return { record: parsed, fingerprint: createHash("sha256").update(raw).digest("hex") };
+  }
+
+  /** Copied, never moved: the record left behind still points at the older build's own file. */
+  async #adoptLegacyLogo(record: StoredTeam): Promise<void> {
+    const logo = record.serverLogo;
+    if (!logo || !this.#legacyLogoRoot) return;
+    const name = `${logo.version}.${avatarFileExtension(logo.mimeType)}`;
+    await mkdir(this.#logoRoot, { recursive: true, mode: 0o700 });
+    await copyFile(join(this.#legacyLogoRoot, name), join(this.#logoRoot, name)).catch(() => undefined);
   }
 
   resolveLogo(): { path: string; mimeType: AvatarImageInput["mimeType"]; version: string } | null {
@@ -1174,7 +1226,13 @@ function isStoredTeamFile(value: unknown): value is StoredTeamFile {
     value.version === 2 &&
     (value.activeAccountId === null || isString(value.activeAccountId)) &&
     Array.isArray(value.hosts) &&
-    value.hosts.every((host) => isStoredTeam(host))
+    value.hosts.every((host) => isStoredTeam(host)) &&
+    (value.legacyImport === undefined ||
+      (isDynamicRecord(value.legacyImport) &&
+        isString(value.legacyImport.fingerprint) &&
+        isString(value.legacyImport.serverId))) &&
+    (value.replacedHosts === undefined ||
+      (Array.isArray(value.replacedHosts) && value.replacedHosts.every((host) => isStoredTeam(host))))
   );
 }
 
