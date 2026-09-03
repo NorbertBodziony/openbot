@@ -27,6 +27,10 @@ export { createConversationController } from "./conversation-controller";
  * view's own lifetime is the scope guard in `ConversationView`, which keeps a
  * finished model download from opening the microphone for a conversation nobody
  * is looking at.
+ *
+ * `transcribing` is the one phase this does not release, because unlike the two
+ * it does, it names work that is already running and that finishes into a draft
+ * the user can still reach.
  */
 export function Conversation(props: ConversationProps) {
   const controller = useConversationController();
@@ -34,6 +38,19 @@ export function Conversation(props: ConversationProps) {
 
   onCleanup(() => {
     controller.stopComposerTyping();
+    const phase = controller.voicePhase();
+    if (phase === "preparing" || phase === "requesting") {
+      // A model download and a permission prompt both belong to the
+      // conversation that asked for them, and both can outlive it by a long way
+      // - or never settle at all. The phase does not belong to them: it lives on
+      // the controller, so leaving it here would hand the next conversation a
+      // disabled microphone and someone else's "Downloading voice model". The
+      // abandoned chain still reports its failure where it was asked for,
+      // because the generation counter rather than the phase is what tells it
+      // that it has been superseded.
+      controller.setVoicePhase("idle");
+      controller.setVoiceModelProgress(null);
+    }
     if (resources.voiceRecordingTimer) clearTimeout(resources.voiceRecordingTimer);
     if (resources.voiceElapsedTimer) clearInterval(resources.voiceElapsedTimer);
     if (resources.voiceRecorder?.state === "recording") {

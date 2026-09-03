@@ -54,6 +54,7 @@ interface ConversationResources {
       }
     | undefined;
   voiceDisposed: boolean;
+  voiceRequestGeneration: number;
   filePreviewRequestGeneration: number;
   runtimeSettingsSaveTails: Map<string, Promise<boolean>>;
   runtimeSettingsAttempts: Map<
@@ -119,6 +120,7 @@ export function createStableConversationState(props: Pick<ConversationProps, "on
     voiceServerId: undefined,
     voiceSubmitRequest: undefined,
     voiceDisposed: false,
+    voiceRequestGeneration: 0,
     filePreviewRequestGeneration: 0,
     runtimeSettingsSaveTails: new Map(),
     runtimeSettingsAttempts: new Map(),

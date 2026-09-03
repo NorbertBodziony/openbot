@@ -129,6 +129,13 @@ describe("OpenBot connected desktop shell", () => {
       expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true"),
     );
 
+    // The download the user walked away from is not the arriving conversation's
+    // problem: it is not told about a model it never asked for, and it can
+    // dictate straight away. The preparation is still unresolved at this point,
+    // and it may never resolve.
+    expect(screen.queryByRole("button", { name: "Downloading voice model" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Create prompt with voice" })).toBeEnabled());
+
     resolvePreparation?.({ phase: "ready", progress: 100, message: null });
     await waitFor(() => expect(screen.getByRole("button", { name: "Create prompt with voice" })).toBeEnabled());
     expect(navigator.mediaDevices.getUserMedia).not.toHaveBeenCalled();

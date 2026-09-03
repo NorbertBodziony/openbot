@@ -1174,11 +1174,19 @@ function createConversationViewScope(props: ConversationProps) {
     clearConversationError(target);
     resources.voiceSubmitRequest = undefined;
     setComposerError(null);
+    // Which attempt this is. The phase used to carry that on its own, but it no
+    // longer can: leaving the conversation now returns the phase to `idle`
+    // (see `Conversation.tsx`) so the next conversation is not left with a
+    // disabled microphone, and a later attempt can be in the very same phase
+    // this one was abandoned in. The counter is what tells the two apart, so an
+    // abandoned chain can still report its failure to the conversation that
+    // asked for it without moving a phase that now belongs to someone else.
+    const generation = ++resources.voiceRequestGeneration;
     setVoicePhase("preparing");
     setVoiceModelProgress(0);
     try {
       const modelStatus = await window.openbot.voice.prepareModel();
-      if (resources.voiceDisposed || voicePhase() !== "preparing") return;
+      if (resources.voiceDisposed || resources.voiceRequestGeneration !== generation) return;
       if (modelStatus.phase !== "ready") {
         setVoicePhase("idle");
         setVoiceModelProgress(null);
@@ -1197,12 +1205,14 @@ function createConversationViewScope(props: ConversationProps) {
       setVoicePhase("requesting");
       setVoiceModelProgress(null);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      if (resources.voiceDisposed || !viewIsMounted() || voicePhase() !== "requesting") {
+      if (resources.voiceDisposed || !viewIsMounted() || resources.voiceRequestGeneration !== generation) {
         for (const track of stream.getTracks()) track.stop();
         // Permission can be granted after the conversation is gone. Nothing else
         // has moved the phase on in that case, so this leaves it idle rather than
-        // stuck on a request that will never produce a recording.
-        if (!resources.voiceDisposed && voicePhase() === "requesting") setVoicePhase("idle");
+        // stuck on a request that will never produce a recording - but only while
+        // this is still the newest attempt, so a grant the user has stopped
+        // waiting for cannot cancel the recording they started instead.
+        if (!resources.voiceDisposed && resources.voiceRequestGeneration === generation) setVoicePhase("idle");
         return;
       }
       const recorder = new MediaRecorder(stream);
@@ -1220,7 +1230,9 @@ function createConversationViewScope(props: ConversationProps) {
       setVoicePhase("recording");
       resources.voiceRecordingTimer = setTimeout(stopVoiceRecording, VOICE_AUDIO_LIMITS.maximumSeconds * 1_000);
     } catch (error) {
-      setVoicePhase("idle");
+      // The failure belongs to `target` whether or not that conversation is
+      // still open, but the phase belongs to whoever asked last.
+      if (resources.voiceRequestGeneration === generation) setVoicePhase("idle");
       setConversationError(target, voiceCaptureError(error));
     }
   }
