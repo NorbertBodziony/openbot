@@ -97,6 +97,7 @@ import {
   voiceTranscriptionError,
 } from "./conversation/voice-status";
 import { useConversationController } from "./conversation-controller-context";
+import { createScrollFades } from "./createScrollFades";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import {
   Bubble,
@@ -844,8 +845,7 @@ function createConversationViewScope(props: ConversationProps) {
   onCleanup(() => {
     if (queueExitTimer !== undefined) window.clearTimeout(queueExitTimer);
   });
-  const [fadeAtTop, setFadeAtTop] = createSignal(false);
-  const [fadeAtBottom, setFadeAtBottom] = createSignal(false);
+  const scrollFades = createScrollFades();
   const [showScrollToLatest, setShowScrollToLatest] = createSignal(false);
   const [unreadDividerVisible, setUnreadDividerVisible] = createSignal(false);
   const [virtualScrollMargin, setVirtualScrollMargin] = createSignal(0);
@@ -1081,10 +1081,8 @@ function createConversationViewScope(props: ConversationProps) {
 
   function updateScrollFade(element = scrollElement) {
     if (!element) return;
-    const remaining = element.scrollHeight - element.scrollTop - element.clientHeight;
-    setFadeAtTop(element.scrollTop > 2);
-    setFadeAtBottom(remaining > 2);
-    setShowScrollToLatest(remaining > 80);
+    scrollFades.measure();
+    setShowScrollToLatest(element.scrollHeight - element.scrollTop - element.clientHeight > 80);
   }
 
   function updateVirtualScrollMargin(): void {
@@ -2485,6 +2483,7 @@ function createConversationViewScope(props: ConversationProps) {
   };
   const setScrollElement = (element: HTMLDivElement) => {
     scrollElement = element;
+    scrollFades.adopt(element);
     updateVirtualScrollMargin();
   };
   const setStickToLatest = (value: boolean) => {
@@ -2594,8 +2593,7 @@ function createConversationViewScope(props: ConversationProps) {
     editingDraftBackup,
     expandedEmojiMessageId,
     expandedThinkingMessages,
-    fadeAtBottom,
-    fadeAtTop,
+    scrollFades,
     filePreviewOpen,
     finishVoiceRecording,
     handleChatSearchShortcut,
@@ -2680,8 +2678,6 @@ function createConversationViewScope(props: ConversationProps) {
     setEditingDraftBackup,
     setExpandedEmojiMessageId,
     setExpandedThinkingMessages,
-    setFadeAtBottom,
-    setFadeAtTop,
     setMarkingRead,
     setMediaPreview,
     setOpenMoreMessageId,
@@ -2910,8 +2906,7 @@ export function ConversationTimeline() {
     expandedEmojiMessageId,
     expandedThinkingMessages,
     installedSkills,
-    fadeAtBottom,
-    fadeAtTop,
+    scrollFades,
     jumpToLatestMessage,
     jumpToUnreadMessages,
     markMessageSeen,
@@ -2987,13 +2982,7 @@ export function ConversationTimeline() {
       </Show>
 
       <div
-        class={[
-          "conversation-scroll",
-          {
-            "scroll-fade-top": fadeAtTop(),
-            "scroll-fade-bottom": fadeAtBottom(),
-          },
-        ]}
+        class={["conversation-scroll", scrollFades.classes()]}
         ref={setScrollElement}
         onScroll={(event) => {
           const element = event.currentTarget;

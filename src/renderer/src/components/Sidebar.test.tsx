@@ -429,7 +429,10 @@ describe("Sidebar sections", () => {
 
     dragStartAt(researchItem, dataTransfer, { clientX: 30, clientY: 100 });
     await dragOverFrame(unassigned, dataTransfer, { clientX: 250, clientY: 330 });
+    // With nothing pinned yet, the drag opens a place to pin into; the drop has to close it again.
+    expect(screen.getByText("Drag here to pin")).toBeInTheDocument();
     dropAt(unassigned, dataTransfer, { clientX: 250, clientY: 330 });
+    await waitFor(() => expect(screen.queryByText("Drag here to pin")).not.toBeInTheDocument());
 
     expect(props.onMutateLayout).toHaveBeenCalledWith({
       type: "move-agent",
@@ -697,10 +700,23 @@ describe("Sidebar sections", () => {
     const props = sidebarProps();
     render(() => <Sidebar {...props} layout={sectionLayout()} />);
 
+    // A failed delete keeps the confirmation open to say why, and that message must not still be
+    // waiting there the next time the user opens it.
+    props.onMutateLayout.mockRejectedValueOnce(new Error("Section is in use."));
     await fireEvent.contextMenu(screen.getByRole("button", { name: "Demo" }));
     let sectionMenu = await screen.findByRole("menu", { name: "Section actions" });
     await fireEvent.pointerUp(within(sectionMenu).getByRole("menuitem", { name: "Delete" }), { button: 0 });
-    const dialog = await screen.findByRole("alertdialog", { name: "Delete Demo?" });
+    let dialog = await screen.findByRole("alertdialog", { name: "Delete Demo?" });
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    expect(await within(dialog).findByText("Section is in use.")).toBeInTheDocument();
+    await fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog", { name: "Delete Demo?" })).not.toBeInTheDocument());
+
+    await fireEvent.contextMenu(screen.getByRole("button", { name: "Demo" }));
+    sectionMenu = await screen.findByRole("menu", { name: "Section actions" });
+    await fireEvent.pointerUp(within(sectionMenu).getByRole("menuitem", { name: "Delete" }), { button: 0 });
+    dialog = await screen.findByRole("alertdialog", { name: "Delete Demo?" });
+    expect(within(dialog).queryByText("Section is in use.")).not.toBeInTheDocument();
     expect(dialog).toHaveTextContent("Agents in this section will move to Unassigned");
     await fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
     expect(props.onMutateLayout).toHaveBeenCalledWith({ type: "delete", sectionId: demoId });

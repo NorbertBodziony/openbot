@@ -2,13 +2,12 @@ import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { Routine, RoutineRun, RoutineSchedule } from "@openbot/contracts/ipc";
 import { createEffect, createSignal, For, onCleanup, onSettled, Show } from "solid-js";
 import { type DesktopAnalyticsScope, desktopAnalytics } from "../../analytics";
+import { createScrollFades } from "../createScrollFades";
 import { Button, CirclePause, Clock3, Dialog, Input, Plus, Switch, Textarea } from "../ui";
 import { BackIcon, SettingsForwardIcon } from "./ConversationIcons";
 import { RoutineRunHistory } from "./RoutineRunHistory";
 import { RoutineScheduleEditor } from "./RoutineScheduleEditor";
 import { defaultRoutineSchedule, routineScheduleSummary } from "./routine-schedule-ui";
-
-export type AgentRoutinesView = "list" | "editor";
 
 export interface RoutineSelectionRequest {
   routineId: string;
@@ -33,7 +32,6 @@ interface RoutineDraft {
 interface AgentRoutinesSettingsProps {
   botId: string;
   onCountChange: (count: number) => void;
-  onViewChange?: (view: AgentRoutinesView) => void;
   onBack?: () => void;
   onClose?: () => void;
   selectionRequest?: RoutineSelectionRequest | null;
@@ -54,35 +52,10 @@ export function AgentRoutinesSettings(props: AgentRoutinesSettingsProps) {
   const [confirmDelete, setConfirmDelete] = createSignal(false);
   const [scheduleExpanded, setScheduleExpanded] = createSignal(false);
   const [pendingExit, setPendingExit] = createSignal<PendingRoutineExit | null>(null);
-  const [fadeAtTop, setFadeAtTop] = createSignal(false);
-  const [fadeAtBottom, setFadeAtBottom] = createSignal(false);
-  let routinesBody: HTMLDivElement | undefined;
-  let routinesBodyResizeObserver: ResizeObserver | undefined;
+  const scrollFades = createScrollFades();
   let draftRevision = 0;
 
-  function updateScrollFades(): void {
-    if (!routinesBody) return;
-    const remaining = routinesBody.scrollHeight - routinesBody.scrollTop - routinesBody.clientHeight;
-    setFadeAtTop(routinesBody.scrollTop > 2);
-    setFadeAtBottom(remaining > 2);
-  }
-
-  function bindRoutinesBody(element: HTMLDivElement): void {
-    routinesBody = element;
-    routinesBodyResizeObserver?.disconnect();
-    routinesBodyResizeObserver = new ResizeObserver(updateScrollFades);
-    routinesBodyResizeObserver.observe(element);
-    window.requestAnimationFrame(updateScrollFades);
-  }
-
-  onCleanup(() => routinesBodyResizeObserver?.disconnect());
-
-  createEffect(
-    () => (draft() ? "editor" : "list"),
-    (view) => {
-      props.onViewChange?.(view);
-    },
-  );
+  onCleanup(scrollFades.stop);
 
   async function loadRoutines(): Promise<void> {
     try {
@@ -154,7 +127,7 @@ export function AgentRoutinesSettings(props: AgentRoutinesSettingsProps) {
   createEffect(
     () => [draft(), routines().length, runs().length, loading(), scheduleExpanded(), confirmDelete(), error()] as const,
     () => {
-      window.requestAnimationFrame(updateScrollFades);
+      scrollFades.remeasure();
     },
   );
 
@@ -400,17 +373,7 @@ export function AgentRoutinesSettings(props: AgentRoutinesSettingsProps) {
           </Button>
         </Show>
       </header>
-      <div
-        ref={bindRoutinesBody}
-        class={[
-          "agent-routines-body",
-          {
-            "scroll-fade-top": fadeAtTop(),
-            "scroll-fade-bottom": fadeAtBottom(),
-          },
-        ]}
-        onScroll={updateScrollFades}
-      >
+      <div ref={scrollFades.bind} class={["agent-routines-body", scrollFades.classes()]} onScroll={scrollFades.measure}>
         <Show
           when={draft()}
           fallback={

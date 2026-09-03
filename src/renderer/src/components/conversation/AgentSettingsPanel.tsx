@@ -10,7 +10,7 @@ import type {
   ProviderRuntimeStatus,
   UpdateBotInput,
 } from "@openbot/contracts/ipc";
-import { createEffect, createMemo, createSignal, For, onSettled, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, createStore, For, onSettled, Show } from "solid-js";
 import { normalizeAvatarFile } from "../../avatar-image";
 import { AVATAR_HUE_OPTIONS, avatarCandidateSeeds, avatarHueSwatch } from "../../bloub-avatar";
 import type { BotProfile } from "../../data";
@@ -31,7 +31,7 @@ import {
   Textarea,
 } from "../ui";
 import { AgentMemoriesModal } from "./AgentMemoriesModal";
-import { AgentRoutinesSettings, type AgentRoutinesView, type RoutineSelectionRequest } from "./AgentRoutinesSettings";
+import { AgentRoutinesSettings, type RoutineSelectionRequest } from "./AgentRoutinesSettings";
 import { BackIcon, SettingsForwardIcon } from "./ConversationIcons";
 
 const SETTINGS_PANEL_STORAGE_KEY = "openbot:settings-panel-width";
@@ -72,36 +72,105 @@ interface AgentSettingsPanelProps {
   onOpenRoutineRun?: (messageId: string) => void;
 }
 
+/** The three free-text fields of the panel, each with a flag for edits made since the last save. */
+interface AgentTextFields {
+  description: string;
+  name: string;
+  title: string;
+}
+
+interface AvatarEditor {
+  batch: number;
+  candidateSeed: string;
+  hue: BotAvatarHue | null;
+  pickerOpen: boolean;
+  seed: string;
+  uploadBusy: boolean;
+}
+
+/**
+ * Everything the panel is editing for the agent it currently shows. `fields` and `dirty` stay
+ * parallel records so the props sync can write every field the user has not touched; `runtime` is
+ * one record because the three settings are sent, and rolled back, together.
+ */
+interface AgentSettingsDraft {
+  avatar: AvatarEditor;
+  dirty: Record<keyof AgentTextFields, boolean>;
+  fields: AgentTextFields;
+  memories: { count: number; open: boolean };
+  notifications: boolean;
+  routines: { count: number; open: boolean };
+  runtime: AgentRuntimeSettings;
+  saveError: string | null;
+}
+
 export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
   const [panelWidth, setPanelWidth] = createSignal(
     readPanelWidth(SETTINGS_PANEL_STORAGE_KEY, SETTINGS_PANEL_DEFAULT, SETTINGS_PANEL_MIN, SETTINGS_PANEL_MAX),
   );
-  const [saveError, setSaveError] = createSignal<string | null>(null);
-  const [name, setName] = createSignal("");
-  const [title, setTitle] = createSignal("");
-  const [description, setDescription] = createSignal("");
-  const [dirty, setDirty] = createSignal({ name: false, title: false, description: false });
-  const [notifications, setNotifications] = createSignal(true);
-  const [provider, setProvider] = createSignal<AgentProviderId>(props.bot.provider);
-  const [model, setModel] = createSignal<AgentModelId>("gpt-5.6-luna");
-  const [reasoning, setReasoning] = createSignal<AgentReasoningEffort>("medium");
-  const [avatarPickerOpen, setAvatarPickerOpen] = createSignal(false);
-  const [avatarSeed, setAvatarSeed] = createSignal("agent");
-  const [avatarHue, setAvatarHue] = createSignal<BotAvatarHue | null>(null);
-  const [avatarUploadBusy, setAvatarUploadBusy] = createSignal(false);
-  const [avatarCandidateSeed, setAvatarCandidateSeed] = createSignal("agent");
-  const [avatarBatch, setAvatarBatch] = createSignal(0);
-  const [memoryModalOpen, setMemoryModalOpen] = createSignal(false);
-  const [memoryCount, setMemoryCount] = createSignal(0);
-  const [routinesOpen, setRoutinesOpen] = createSignal(false);
-  const [, setRoutineView] = createSignal<AgentRoutinesView>("list");
-  const [routineCount, setRoutineCount] = createSignal(0);
+  const [draft, setDraft] = createStore<AgentSettingsDraft>({
+    avatar: {
+      batch: 0,
+      candidateSeed: "agent",
+      hue: null,
+      pickerOpen: false,
+      seed: "agent",
+      uploadBusy: false,
+    },
+    dirty: { description: false, name: false, title: false },
+    fields: { description: "", name: "", title: "" },
+    memories: { count: 0, open: false },
+    notifications: true,
+    routines: { count: 0, open: false },
+    runtime: { model: "gpt-5.6-luna", provider: props.bot.provider, reasoningEffort: "medium" },
+    saveError: null,
+  });
   const avatarUrl = () => props.bot.avatarUrl ?? null;
+
+  function setSaveError(message: string | null): void {
+    setDraft((state) => {
+      state.saveError = message;
+    });
+  }
+
+  function setAvatarUploadBusy(busy: boolean): void {
+    setDraft((state) => {
+      state.avatar.uploadBusy = busy;
+    });
+  }
+
+  function setMemoryModalOpen(open: boolean): void {
+    setDraft((state) => {
+      state.memories.open = open;
+    });
+  }
+
+  function setMemoryCount(count: number): void {
+    setDraft((state) => {
+      state.memories.count = count;
+    });
+  }
+
+  function setRoutinesOpen(open: boolean): void {
+    setDraft((state) => {
+      state.routines.open = open;
+    });
+  }
+
+  function setRoutineCount(count: number): void {
+    setDraft((state) => {
+      state.routines.count = count;
+    });
+  }
   const selectedModel = createMemo(() =>
-    props.modelOptions.find((option) => option.provider === provider() && option.id === model()),
+    props.modelOptions.find(
+      (option) => option.provider === draft.runtime.provider && option.id === draft.runtime.model,
+    ),
   );
   const reasoningOptions = createMemo(() => selectedModel()?.supportedReasoningEfforts ?? ["medium" as const]);
-  const avatarCandidates = createMemo(() => avatarCandidateSeeds(props.bot.id, avatarCandidateSeed(), avatarBatch()));
+  const avatarCandidates = createMemo(() =>
+    avatarCandidateSeeds(props.bot.id, draft.avatar.candidateSeed, draft.avatar.batch),
+  );
   let avatarPickerRoot: HTMLDivElement | undefined;
   let avatarFileInput: HTMLInputElement | undefined;
   let lastSignature: string | undefined;
@@ -138,25 +207,39 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
     ({ bot, runtimeSettings, signature }) => {
       if (signature === lastSignature) return;
       const botChanged = bot.id !== lastBotId;
-      const currentDirty = botChanged ? { name: false, title: false, description: false } : dirty();
+      // A field the user has edited keeps its draft, unless this is a different agent, whose values
+      // replace the panel wholesale. Read before the write, so a fresh agent clears the flags here.
+      const keep = {
+        description: !botChanged && draft.dirty.description,
+        name: !botChanged && draft.dirty.name,
+        title: !botChanged && draft.dirty.title,
+      };
       lastSignature = signature;
       lastBotId = bot.id;
-      if (botChanged) setDirty(currentDirty);
-      if (!currentDirty.name) setName(bot.name);
-      if (!currentDirty.title) setTitle(bot.title);
-      if (!currentDirty.description) setDescription(bot.description);
-      setNotifications(bot.notifications);
-      setProvider(runtimeSettings.provider);
-      setModel(runtimeSettings.model);
-      setReasoning(runtimeSettings.reasoningEffort);
-      setAvatarSeed(bot.avatarSeed);
-      setAvatarHue(bot.avatarHue);
+      setDraft((state) => {
+        if (botChanged) {
+          state.dirty.description = false;
+          state.dirty.name = false;
+          state.dirty.title = false;
+        }
+        if (!keep.name) state.fields.name = bot.name;
+        if (!keep.title) state.fields.title = bot.title;
+        if (!keep.description) state.fields.description = bot.description;
+        state.notifications = bot.notifications;
+        state.runtime.provider = runtimeSettings.provider;
+        state.runtime.model = runtimeSettings.model;
+        state.runtime.reasoningEffort = runtimeSettings.reasoningEffort;
+        state.avatar.seed = bot.avatarSeed;
+        state.avatar.hue = bot.avatarHue;
+        if (botChanged) {
+          state.avatar.candidateSeed = bot.avatarSeed;
+          state.avatar.batch = 0;
+          state.avatar.pickerOpen = false;
+          state.memories.open = false;
+          state.routines.open = false;
+        }
+      });
       if (botChanged) {
-        setAvatarCandidateSeed(bot.avatarSeed);
-        setAvatarBatch(0);
-        setAvatarPickerOpen(false);
-        setMemoryModalOpen(false);
-        setRoutinesOpen(false);
         void window.openbot.agent
           .listMemories(bot.id)
           .then((items) => setMemoryCount(items.length))
@@ -178,9 +261,11 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
 
   onSettled(() => {
     const closeAvatarPicker = (event: PointerEvent) => {
-      if (!avatarPickerOpen()) return;
+      if (!draft.avatar.pickerOpen) return;
       if (event.target instanceof Node && avatarPickerRoot?.contains(event.target)) return;
-      setAvatarPickerOpen(false);
+      setDraft((state) => {
+        state.avatar.pickerOpen = false;
+      });
     };
     window.addEventListener("pointerdown", closeAvatarPicker);
     return () => window.removeEventListener("pointerdown", closeAvatarPicker);
@@ -217,38 +302,48 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
 
   function saveName(): void {
     const botId = props.bot.id;
-    const value = name().trim() || "New agent";
-    setName(value);
+    const value = draft.fields.name.trim() || "New agent";
+    setDraft((state) => {
+      state.fields.name = value;
+    });
     void saveBotPatch({ name: value }).then((saved) => {
-      if (saved && props.bot.id === botId && name() === value) {
-        setDirty((current) => ({ ...current, name: false }));
+      if (saved && props.bot.id === botId && draft.fields.name === value) {
+        setDraft((state) => {
+          state.dirty.name = false;
+        });
       }
     });
   }
 
   function saveTitle(): void {
     const botId = props.bot.id;
-    const value = title().trim();
-    setTitle(value);
+    const value = draft.fields.title.trim();
+    setDraft((state) => {
+      state.fields.title = value;
+    });
     void saveBotPatch({ title: value }).then((saved) => {
-      if (saved && props.bot.id === botId && title() === value) {
-        setDirty((current) => ({ ...current, title: false }));
+      if (saved && props.bot.id === botId && draft.fields.title === value) {
+        setDraft((state) => {
+          state.dirty.title = false;
+        });
       }
     });
   }
 
   function saveDescription(): void {
     const botId = props.bot.id;
-    const value = description();
+    const value = draft.fields.description;
     void saveBotPatch({ description: value }).then((saved) => {
-      if (saved && props.bot.id === botId && description() === value) {
-        setDirty((current) => ({ ...current, description: false }));
+      if (saved && props.bot.id === botId && draft.fields.description === value) {
+        setDraft((state) => {
+          state.dirty.description = false;
+        });
       }
     });
   }
 
   async function setCustomAvatar(image: AvatarImageInput | null): Promise<boolean> {
-    if (avatarUploadBusy()) return false;
+    if (draft.avatar.uploadBusy) return false;
     setAvatarUploadBusy(true);
     setSaveError(null);
     try {
@@ -279,7 +374,9 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
 
   async function selectGeneratedAvatar(seed: string): Promise<void> {
     if (avatarUrl() && !(await setCustomAvatar(null))) return;
-    setAvatarSeed(seed);
+    setDraft((state) => {
+      state.avatar.seed = seed;
+    });
     await saveBotPatch({ avatarSeed: seed });
   }
 
@@ -288,44 +385,52 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
       (candidate) => candidate.provider === nextProvider && candidate.id === nextModel,
     );
     if (!option) return;
-    const nextReasoning = option.supportedReasoningEfforts.includes(reasoning())
-      ? reasoning()
-      : option.defaultReasoningEffort;
-    const previousModel = model();
-    const previousProvider = provider();
-    const previousReasoning = reasoning();
+    // A plain copy, not `snapshot`: a snapshot of an unmodified subtree is the store's own object,
+    // which the write below would mutate, leaving nothing to roll back to.
+    const previous: AgentRuntimeSettings = {
+      model: draft.runtime.model,
+      provider: draft.runtime.provider,
+      reasoningEffort: draft.runtime.reasoningEffort,
+    };
     const botId = props.bot.id;
-    const settings = { provider: nextProvider, model: nextModel, reasoningEffort: nextReasoning };
-    setProvider(nextProvider);
-    setModel(nextModel);
-    setReasoning(nextReasoning);
+    const settings: AgentRuntimeSettings = {
+      model: nextModel,
+      provider: nextProvider,
+      reasoningEffort: option.supportedReasoningEfforts.includes(previous.reasoningEffort)
+        ? previous.reasoningEffort
+        : option.defaultReasoningEffort,
+    };
+    setDraft((state) => {
+      state.runtime.provider = settings.provider;
+      state.runtime.model = settings.model;
+      state.runtime.reasoningEffort = settings.reasoningEffort;
+    });
     if (await saveRuntimeSettings(settings, settings, botId)) return;
-    if (
-      props.bot.id !== botId ||
-      provider() !== settings.provider ||
-      model() !== settings.model ||
-      reasoning() !== settings.reasoningEffort
-    ) {
-      return;
-    }
-    setProvider(previousProvider);
-    setModel(previousModel);
-    setReasoning(previousReasoning);
+    // Roll back only what this call wrote: another agent, or a later pick, owns the panel now.
+    if (props.bot.id !== botId || !sameRuntimeSettings(draft.runtime, settings)) return;
+    setDraft((state) => {
+      state.runtime.provider = previous.provider;
+      state.runtime.model = previous.model;
+      state.runtime.reasoningEffort = previous.reasoningEffort;
+    });
   }
 
   async function selectReasoning(nextReasoning: AgentReasoningEffort): Promise<void> {
     const botId = props.bot.id;
-    const previousReasoning = reasoning();
-    const settings = { provider: provider(), model: model(), reasoningEffort: nextReasoning };
-    setReasoning(nextReasoning);
+    const previousReasoning = draft.runtime.reasoningEffort;
+    const settings: AgentRuntimeSettings = {
+      model: draft.runtime.model,
+      provider: draft.runtime.provider,
+      reasoningEffort: nextReasoning,
+    };
+    setDraft((state) => {
+      state.runtime.reasoningEffort = nextReasoning;
+    });
     if (await saveRuntimeSettings(settings, { reasoningEffort: nextReasoning }, botId)) return;
-    if (
-      props.bot.id === botId &&
-      provider() === settings.provider &&
-      model() === settings.model &&
-      reasoning() === nextReasoning
-    ) {
-      setReasoning(previousReasoning);
+    if (props.bot.id === botId && sameRuntimeSettings(draft.runtime, settings)) {
+      setDraft((state) => {
+        state.runtime.reasoningEffort = previousReasoning;
+      });
     }
   }
 
@@ -343,7 +448,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
         onResize={setPanelWidth}
         onResizeEnd={(value) => savePanelWidth(SETTINGS_PANEL_STORAGE_KEY, value)}
       />
-      <Show when={!routinesOpen()}>
+      <Show when={!draft.routines.open}>
         <header class="agent-settings-header">
           <Button
             variant="ghost"
@@ -366,25 +471,27 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
           </Button>
         </header>
       </Show>
-      <Show when={!routinesOpen()}>
+      <Show when={!draft.routines.open}>
         <div class="agent-settings-content">
           <div ref={(element) => (avatarPickerRoot = element)} class="agent-settings-avatar-picker">
             <Popover.Root
-              open={avatarPickerOpen()}
+              open={draft.avatar.pickerOpen}
               placement="bottom"
               gutter={11}
-              onOpenChange={(open) => {
-                if (open) {
-                  setAvatarCandidateSeed(avatarSeed());
-                  setAvatarBatch(0);
-                }
-                setAvatarPickerOpen(open);
-              }}
+              onOpenChange={(open) =>
+                setDraft((state) => {
+                  if (open) {
+                    state.avatar.candidateSeed = state.avatar.seed;
+                    state.avatar.batch = 0;
+                  }
+                  state.avatar.pickerOpen = open;
+                })
+              }
             >
               <Popover.Trigger class="agent-settings-avatar" aria-label="Edit agent avatar">
-                <AgentAvatar seed={avatarSeed()} hue={avatarHue()} url={avatarUrl()} motion="always" />
+                <AgentAvatar seed={draft.avatar.seed} hue={draft.avatar.hue} url={avatarUrl()} motion="always" />
               </Popover.Trigger>
-              <Popover.Content class="avatar-editor" aria-hidden={avatarPickerOpen() ? undefined : "true"}>
+              <Popover.Content class="avatar-editor" aria-hidden={draft.avatar.pickerOpen ? undefined : "true"}>
                 <Popover.Title class="sr-only">Avatar editor</Popover.Title>
                 <Input
                   ref={(element) => (avatarFileInput = element)}
@@ -401,7 +508,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
                       <Button
                         variant="outline"
                         type="button"
-                        disabled={avatarUploadBusy()}
+                        disabled={draft.avatar.uploadBusy}
                         onClick={() => void setCustomAvatar(null)}
                       >
                         Remove
@@ -413,7 +520,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
                   variant="ghost"
                   type="button"
                   class={["avatar-image-upload", { "avatar-image-upload-active": Boolean(avatarUrl()) }]}
-                  disabled={avatarUploadBusy()}
+                  disabled={draft.avatar.uploadBusy}
                   onClick={() => avatarFileInput?.click()}
                 >
                   <span class="avatar-image-upload-preview">
@@ -425,7 +532,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
                         </svg>
                       }
                     >
-                      <AgentAvatar seed={avatarSeed()} hue={avatarHue()} url={avatarUrl()} />
+                      <AgentAvatar seed={draft.avatar.seed} hue={draft.avatar.hue} url={avatarUrl()} />
                     </Show>
                   </span>
                   <span>
@@ -437,13 +544,15 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
                 <div class="avatar-editor-heading">
                   <span>Generated face</span>
                   <div class="avatar-editor-actions">
-                    <Show when={avatarSeed() !== props.bot.id}>
+                    <Show when={draft.avatar.seed !== props.bot.id}>
                       <Button
                         variant="outline"
                         type="button"
                         onClick={() => {
-                          setAvatarCandidateSeed(props.bot.id);
-                          setAvatarBatch(0);
+                          setDraft((state) => {
+                            state.avatar.candidateSeed = props.bot.id;
+                            state.avatar.batch = 0;
+                          });
                           void selectGeneratedAvatar(props.bot.id);
                         }}
                       >
@@ -453,10 +562,12 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
                     <Button
                       variant="outline"
                       type="button"
-                      onClick={() => {
-                        setAvatarCandidateSeed(avatarSeed());
-                        setAvatarBatch((batch) => batch + 1);
-                      }}
+                      onClick={() =>
+                        setDraft((state) => {
+                          state.avatar.candidateSeed = state.avatar.seed;
+                          state.avatar.batch += 1;
+                        })
+                      }
                     >
                       New set
                     </Button>
@@ -470,15 +581,17 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
                         type="button"
                         class={[
                           "avatar-face-choice",
-                          { "avatar-choice-selected": !avatarUrl() && avatarSeed() === seed },
+                          { "avatar-choice-selected": !avatarUrl() && draft.avatar.seed === seed },
                         ]}
                         aria-label={
-                          !avatarUrl() && avatarSeed() === seed ? "Selected avatar" : `Avatar option ${index() + 1}`
+                          !avatarUrl() && draft.avatar.seed === seed
+                            ? "Selected avatar"
+                            : `Avatar option ${index() + 1}`
                         }
-                        aria-pressed={!avatarUrl() && avatarSeed() === seed ? "true" : "false"}
+                        aria-pressed={!avatarUrl() && draft.avatar.seed === seed ? "true" : "false"}
                         onClick={() => void selectGeneratedAvatar(seed)}
                       >
-                        <AgentAvatar seed={seed} hue={avatarHue()} />
+                        <AgentAvatar seed={seed} hue={draft.avatar.hue} />
                       </Button>
                     )}
                   </For>
@@ -491,11 +604,13 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
                   <Button
                     variant="ghost"
                     type="button"
-                    class={["avatar-color-choice", { "avatar-choice-selected": avatarHue() === null }]}
+                    class={["avatar-color-choice", { "avatar-choice-selected": draft.avatar.hue === null }]}
                     aria-label="Automatic avatar color"
-                    aria-pressed={avatarHue() === null ? "true" : "false"}
+                    aria-pressed={draft.avatar.hue === null ? "true" : "false"}
                     onClick={() => {
-                      setAvatarHue(null);
+                      setDraft((state) => {
+                        state.avatar.hue = null;
+                      });
                       void saveBotPatch({ avatarHue: null });
                     }}
                   >
@@ -506,11 +621,13 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
                       <Button
                         variant="ghost"
                         type="button"
-                        class={["avatar-color-choice", { "avatar-choice-selected": avatarHue() === option.hue }]}
+                        class={["avatar-color-choice", { "avatar-choice-selected": draft.avatar.hue === option.hue }]}
                         aria-label={`${option.label} avatar color`}
-                        aria-pressed={avatarHue() === option.hue ? "true" : "false"}
+                        aria-pressed={draft.avatar.hue === option.hue ? "true" : "false"}
                         onClick={() => {
-                          setAvatarHue(option.hue);
+                          setDraft((state) => {
+                            state.avatar.hue = option.hue;
+                          });
                           void saveBotPatch({ avatarHue: option.hue });
                         }}
                       >
@@ -525,27 +642,31 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
           <label class="agent-settings-field">
             <span>Name</span>
             <Input
-              value={name()}
+              value={draft.fields.name}
               aria-label="Agent name"
               maxlength={INPUT_LIMITS.agentName}
-              onValueChange={(value) => {
-                setName(value);
-                setDirty((current) => ({ ...current, name: true }));
-              }}
+              onValueChange={(value) =>
+                setDraft((state) => {
+                  state.fields.name = value;
+                  state.dirty.name = true;
+                })
+              }
               onBlur={saveName}
             />
           </label>
           <label class="agent-settings-field">
             <span>Title</span>
             <Input
-              value={title()}
+              value={draft.fields.title}
               aria-label="Agent title"
               placeholder="Describe what your agent does"
               maxlength={INPUT_LIMITS.agentTitle}
-              onValueChange={(value) => {
-                setTitle(value);
-                setDirty((current) => ({ ...current, title: true }));
-              }}
+              onValueChange={(value) =>
+                setDraft((state) => {
+                  state.fields.title = value;
+                  state.dirty.title = true;
+                })
+              }
               onBlur={saveTitle}
             />
           </label>
@@ -553,14 +674,16 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
             <span>Description</span>
             <Textarea
               rows="4"
-              value={description()}
+              value={draft.fields.description}
               aria-label="Agent description"
               placeholder="What this agent is for"
               maxlength={INPUT_LIMITS.agentDescription}
-              onValueChange={(value) => {
-                setDescription(value);
-                setDirty((current) => ({ ...current, description: true }));
-              }}
+              onValueChange={(value) =>
+                setDraft((state) => {
+                  state.fields.description = value;
+                  state.dirty.description = true;
+                })
+              }
               onBlur={saveDescription}
             />
           </label>
@@ -568,14 +691,14 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
             <Button variant="ghost" type="button" class="agent-settings-link" onClick={() => setMemoryModalOpen(true)}>
               <span class="agent-settings-link-label">Memories</span>
               <span class="agent-settings-link-value">
-                {memoryCount()} saved
+                {draft.memories.count} saved
                 <ChevronRight />
               </span>
             </Button>
             <Button variant="ghost" type="button" class="agent-settings-link" onClick={() => setRoutinesOpen(true)}>
               <span class="agent-settings-link-label">Routines</span>
               <span class="agent-settings-link-value">
-                {routineCount()} configured
+                {draft.routines.count} configured
                 <ChevronRight />
               </span>
             </Button>
@@ -590,8 +713,8 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
                 <ProviderModelPicker
                   variant="field"
                   ariaLabel="Agent model"
-                  provider={provider()}
-                  value={model()}
+                  provider={draft.runtime.provider}
+                  value={draft.runtime.model}
                   agentStatus={props.agentStatus}
                   modelOptions={props.modelOptions}
                   runtimeStatuses={props.providerRuntimeStatuses}
@@ -612,9 +735,9 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
                 <Select<AgentReasoningEffort>
                   class="agent-settings-reasoning-control"
                   options={reasoningOptions()}
-                  value={reasoning()}
+                  value={draft.runtime.reasoningEffort}
                   onChange={(nextReasoning) => {
-                    if (!nextReasoning || nextReasoning === reasoning()) return;
+                    if (!nextReasoning || nextReasoning === draft.runtime.reasoningEffort) return;
                     void selectReasoning(nextReasoning);
                   }}
                   itemComponent={(item) => (
@@ -634,7 +757,7 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
               </div>
             </div>
           </section>
-          <Show when={saveError()}>
+          <Show when={draft.saveError}>
             {(message) => (
               <p class="agent-settings-save-error" role="alert">
                 {message()}
@@ -649,21 +772,22 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
             <Switch
               size="sm"
               aria-label="Notifications"
-              checked={notifications()}
+              checked={draft.notifications}
               onChange={(next) => {
-                setNotifications(next);
+                setDraft((state) => {
+                  state.notifications = next;
+                });
                 void saveBotPatch({ notifications: next });
               }}
             />
           </div>
         </div>
       </Show>
-      <Show when={routinesOpen()}>
+      <Show when={draft.routines.open}>
         <div class="agent-routines-overlay">
           <AgentRoutinesSettings
             botId={props.bot.id}
             onCountChange={setRoutineCount}
-            onViewChange={setRoutineView}
             onBack={() => setRoutinesOpen(false)}
             onClose={props.onClose}
             selectionRequest={props.routineSelectionRequest}
@@ -675,11 +799,20 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
       <AgentMemoriesModal
         botId={props.bot.id}
         botName={props.bot.name}
-        open={memoryModalOpen()}
+        open={draft.memories.open}
         onOpenChange={setMemoryModalOpen}
         onCountChange={setMemoryCount}
       />
     </aside>
+  );
+}
+
+/** True when the panel still shows exactly the settings a save was issued for. */
+function sameRuntimeSettings(current: AgentRuntimeSettings, settings: AgentRuntimeSettings): boolean {
+  return (
+    current.provider === settings.provider &&
+    current.model === settings.model &&
+    current.reasoningEffort === settings.reasoningEffort
   );
 }
 
