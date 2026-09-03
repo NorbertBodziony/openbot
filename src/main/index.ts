@@ -1093,6 +1093,13 @@ if (!hasSingleInstanceLock) {
       const signedInState = centralAuthManager.getState();
       if (signedInState.status === "signed_in") {
         await hostService.applySignedInAccount(signedInState.user);
+      } else if (signedInState.status === "signed_out") {
+        // Sign-out can settle before this service exists, leaving `forwardCentralAuth`
+        // nothing to deactivate. Unbinding here is what stops a persisted
+        // `activeAccountId` from keeping the last account's host configured - and
+        // unconfigurable - while nobody is signed in. A still-loading or failed account
+        // service keeps its host, and the event listener settles it.
+        await hostService.applySignedInAccount(null);
       }
       const analyticsPlatform = process.platform;
       if (analyticsPlatform !== "darwin" && analyticsPlatform !== "win32" && analyticsPlatform !== "linux") {
