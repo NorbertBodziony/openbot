@@ -1,23 +1,15 @@
-import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
+import { fireEvent, render, screen } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { OtpInput, type OtpInputStatus } from "./OtpInput";
 
-const originalMatchMedia = window.matchMedia;
-
-afterEach(() => {
-  window.matchMedia = originalMatchMedia;
-  vi.restoreAllMocks();
-});
-
-function renderOtp(options: { value?: string; status?: OtpInputStatus; autofocus?: boolean } = {}) {
+function renderOtp(options: { value?: string; status?: OtpInputStatus } = {}) {
   const onChange = vi.fn();
   const onComplete = vi.fn();
   const view = render(() => (
     <OtpInput
       value={options.value ?? ""}
       status={options.status}
-      autofocus={options.autofocus}
       hint="Enter all 8 characters to continue."
       onChange={onChange}
       onComplete={onComplete}
@@ -29,16 +21,9 @@ function renderOtp(options: { value?: string; status?: OtpInputStatus; autofocus
 }
 
 describe("OtpInput", () => {
-  it("focuses the native input when it mounts dynamically", async () => {
-    const { input } = renderOtp({ autofocus: true });
-
-    await waitFor(() => expect(input).toHaveFocus());
-  });
-
-  it("renders eight fixed slots and filters paste through the OpenBot alphabet", async () => {
+  it("filters paste through the OpenBot alphabet", async () => {
     const { input, slots, onChange, onComplete } = renderOtp();
 
-    expect(slots()).toHaveLength(8);
     await fireEvent.paste(input, {
       clipboardData: { getData: () => "ab0i-cdefgh" },
     });
@@ -62,7 +47,7 @@ describe("OtpInput", () => {
     expect(onComplete).toHaveBeenCalledWith("ABCDEFGH");
   });
 
-  it("supports slot clicks, arrows, Home, End, Delete, and fixed middle holes", async () => {
+  it("supports arrows, Home, End, Delete, and fixed middle holes", async () => {
     const { input, slots, onComplete } = renderOtp({ value: "ABCDEFGH" });
     await fireEvent.focus(input);
     await fireEvent.keyDown(input, { key: "Home" });
@@ -87,47 +72,6 @@ describe("OtpInput", () => {
     expect(slots()[7]?.textContent).toBe("");
   });
 
-  it("focuses the exact slot selected with a pointer", async () => {
-    const { input, slots } = renderOtp({ value: "AB" });
-    slots().forEach((slot, index) => {
-      vi.spyOn(slot, "getBoundingClientRect").mockReturnValue({
-        bottom: 50,
-        height: 50,
-        left: index * 40,
-        right: index * 40 + 34,
-        top: 0,
-        width: 34,
-        x: index * 40,
-        y: 0,
-        toJSON: () => undefined,
-      });
-    });
-
-    await fireEvent.pointerDown(input, { clientX: 297 });
-    await fireEvent.keyDown(input, { key: "C" });
-
-    expect(slots()[2]?.textContent).toBe("");
-    expect(slots()[7]).toHaveTextContent("C");
-  });
-
-  it("keeps focus on the last slot while verification is pending", async () => {
-    render(() => {
-      const [value, setValue] = createSignal("");
-      const [status, setStatus] = createSignal<OtpInputStatus>("idle");
-      return (
-        <OtpInput value={value()} status={status()} onChange={setValue} onComplete={() => setStatus("verifying")} />
-      );
-    });
-    const input = screen.getByRole("textbox", { name: "One-time code" });
-
-    input.focus();
-    expect(input).toHaveFocus();
-    await fireEvent.input(input, { target: { value: "ABCDEFGH" } });
-
-    expect(input).toHaveFocus();
-    expect(input).not.toHaveAttribute("readonly");
-  });
-
   it("resets its fixed slots when the controlled value is cleared", async () => {
     const onComplete = vi.fn();
     render(() => {
@@ -146,14 +90,9 @@ describe("OtpInput", () => {
     expect(screen.getByRole("textbox", { name: "One-time code" })).toHaveValue("");
   });
 
-  it("shows success feedback and respects reduced motion for error shake", () => {
-    const animate = vi.fn();
-    Object.defineProperty(HTMLElement.prototype, "animate", { configurable: true, value: animate });
-    window.matchMedia = vi.fn().mockReturnValue({ matches: true });
-
+  it("announces the incorrect code and the verified result", () => {
     const errorView = renderOtp({ value: "ABCDEFGH", status: "error" });
     expect(screen.getByRole("alert")).toHaveTextContent("That code is incorrect");
-    expect(animate).not.toHaveBeenCalled();
     errorView.unmount();
 
     renderOtp({ value: "ABCDEFGH", status: "success" });

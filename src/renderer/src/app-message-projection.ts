@@ -1,18 +1,11 @@
-import type {
-  BotSummary,
-  ConversationMessage,
-  ConversationReadState,
-  QueueDeliveryStatus,
-} from "@openbot/contracts/ipc";
+import type { BotSummary, ConversationMessage, QueueDeliveryStatus } from "@openbot/contracts/ipc";
 import {
   hostedSiteConversationEvent,
-  isHostedSiteConversationEventMarker,
-  isRoutineRunConversationEventMarker,
-  ROUTINE_EVENT_ITEM_TYPE_PREFIX,
   routineConversationEvent,
   routineRunConversationEvent,
 } from "@openbot/contracts/ipc";
 import { cleanAgentMessageText } from "./agent-message-text";
+import { isRoutineEventItem } from "./conversation-read-state";
 import type { AgentDeliveryMarkerStatus, BotMessage, BotProfile, ChatActionMarkerModel } from "./data";
 
 export function toBotProfile(stored: BotSummary): BotProfile {
@@ -118,31 +111,6 @@ export function toBotMessages(messages: ConversationMessage[], ownerAgentId?: st
     result.push(thinking);
   }
   return result;
-}
-
-export function readStateForMessages(
-  state: ConversationReadState,
-  messages: ConversationMessage[],
-): ConversationReadState {
-  const throughIndex = state.throughMessageId
-    ? messages.findIndex((message) => message.id === state.throughMessageId)
-    : -1;
-  const unread = messages
-    .slice(throughIndex + 1)
-    .filter(
-      (message) =>
-        message.author !== "user" &&
-        message.itemType !== "commentary" &&
-        message.itemType !== "agent_attachment" &&
-        !message.itemType?.startsWith(ROUTINE_EVENT_ITEM_TYPE_PREFIX) &&
-        !isRoutineRunConversationEventMarker(message.itemType) &&
-        !isHostedSiteConversationEventMarker(message.itemType),
-    );
-  return {
-    ...state,
-    unreadCount: unread.length,
-    firstUnreadMessageId: unread[0]?.id ?? null,
-  };
 }
 
 export function botProfilesEqual(left: BotProfile, right: BotProfile): boolean {
@@ -284,11 +252,7 @@ function chatActionMarker(
       timestamp: message.createdAt,
     };
   }
-  if (
-    message.itemType?.startsWith(ROUTINE_EVENT_ITEM_TYPE_PREFIX) ||
-    isRoutineRunConversationEventMarker(message.itemType) ||
-    isHostedSiteConversationEventMarker(message.itemType)
-  ) {
+  if (isRoutineEventItem(message)) {
     return { kind: "unavailable", label: "Action unavailable", timestamp: message.createdAt };
   }
   return null;

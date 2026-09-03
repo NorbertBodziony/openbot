@@ -1,7 +1,7 @@
 import type { Routine, RoutineRun } from "@openbot/contracts/ipc";
-import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
+import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMockOpenBot, type MockOpenBotControls } from "../../preview/mock-openbot";
 import { AgentRoutinesSettings, type RoutineSelectionRequest } from "./AgentRoutinesSettings";
 
@@ -40,24 +40,25 @@ const run: RoutineRun = {
   updatedAt: "2026-08-25T05:01:00.000Z",
 };
 
-let mock: MockOpenBotControls;
+let mock: MockOpenBotControls | undefined;
 
-beforeEach(() => {
-  mock = createMockOpenBot();
+function setupOpenBot(options?: Parameters<typeof createMockOpenBot>[0]): MockOpenBotControls {
+  mock?.dispose();
+  mock = createMockOpenBot(options);
   window.openbot = mock.api;
-});
+  return mock;
+}
 
 afterEach(() => {
-  mock.dispose();
+  mock?.dispose();
+  mock = undefined;
   vi.restoreAllMocks();
 });
 
 describe("AgentRoutinesSettings", () => {
   it("opens the current routine from a message selection and can reopen it", async () => {
     const renamedRoutine = { ...routine, name: "Renamed morning brief" };
-    mock.dispose();
-    mock = createMockOpenBot({ routines: { chief: [renamedRoutine] } });
-    window.openbot = mock.api;
+    const mock = setupOpenBot({ routines: { chief: [renamedRoutine] } });
     const listRoutineRuns = vi.spyOn(mock.api.agent, "listRoutineRuns");
     const onSelectionRequestHandled = vi.fn();
     const [selectionRequest, setSelectionRequest] = createSignal<RoutineSelectionRequest | null>({
@@ -87,6 +88,7 @@ describe("AgentRoutinesSettings", () => {
   });
 
   it("keeps the routine list open and reports a missing message selection", async () => {
+    setupOpenBot();
     const onSelectionRequestHandled = vi.fn();
     render(() => (
       <AgentRoutinesSettings
@@ -110,9 +112,7 @@ describe("AgentRoutinesSettings", () => {
       name: "Evening brief",
       trigger: { ...routine.trigger, id: "trigger-2", routineId: "routine-2" },
     };
-    mock.dispose();
-    mock = createMockOpenBot({ routines: { chief: [routine, eveningRoutine] } });
-    window.openbot = mock.api;
+    setupOpenBot({ routines: { chief: [routine, eveningRoutine] } });
     const [selectionRequest, setSelectionRequest] = createSignal<RoutineSelectionRequest | null>({
       routineId: routine.id,
       routineName: routine.name,
@@ -132,9 +132,7 @@ describe("AgentRoutinesSettings", () => {
   });
 
   it("protects unsaved changes before opening a run in chat", async () => {
-    mock.dispose();
-    mock = createMockOpenBot({ routines: { chief: [routine] } });
-    window.openbot = mock.api;
+    const mock = setupOpenBot({ routines: { chief: [routine] } });
     vi.spyOn(mock.api.agent, "listRoutineRuns").mockResolvedValue([run]);
     const onOpenRun = vi.fn();
     render(() => <AgentRoutinesSettings botId="chief" onCountChange={vi.fn()} onOpenRun={onOpenRun} />);
@@ -154,6 +152,7 @@ describe("AgentRoutinesSettings", () => {
   });
 
   it("keeps an empty draft local and discards it on Back", async () => {
+    const mock = setupOpenBot();
     const createRoutine = vi.spyOn(mock.api.agent, "createRoutine");
     render(() => <AgentRoutinesSettings botId="chief" onCountChange={vi.fn()} />);
 
@@ -168,9 +167,7 @@ describe("AgentRoutinesSettings", () => {
   });
 
   it("asks before discarding an edited draft on Back", async () => {
-    mock.dispose();
-    mock = createMockOpenBot({ routines: { chief: [routine] } });
-    window.openbot = mock.api;
+    setupOpenBot({ routines: { chief: [routine] } });
     render(() => <AgentRoutinesSettings botId="chief" onCountChange={vi.fn()} />);
 
     await fireEvent.click(await screen.findByRole("button", { name: /Morning brief/ }));
@@ -189,9 +186,7 @@ describe("AgentRoutinesSettings", () => {
   });
 
   it("runs the requested Close action after discard confirmation", async () => {
-    mock.dispose();
-    mock = createMockOpenBot({ routines: { chief: [routine] } });
-    window.openbot = mock.api;
+    setupOpenBot({ routines: { chief: [routine] } });
     const onClose = vi.fn();
     render(() => <AgentRoutinesSettings botId="chief" onCountChange={vi.fn()} onClose={onClose} />);
 
@@ -207,6 +202,7 @@ describe("AgentRoutinesSettings", () => {
   });
 
   it("saves a valid draft only after the user clicks Save", async () => {
+    const mock = setupOpenBot();
     const createRoutine = vi.spyOn(mock.api.agent, "createRoutine");
     const onCountChange = vi.fn();
     render(() => <AgentRoutinesSettings botId="chief" onCountChange={onCountChange} />);
@@ -242,9 +238,7 @@ describe("AgentRoutinesSettings", () => {
   });
 
   it("updates Active, starts a test run, shows history, and confirms deletion", async () => {
-    mock.dispose();
-    mock = createMockOpenBot({ routines: { chief: [routine] } });
-    window.openbot = mock.api;
+    const mock = setupOpenBot({ routines: { chief: [routine] } });
     const updateRoutine = vi.spyOn(mock.api.agent, "updateRoutine");
     const testRoutine = vi.spyOn(mock.api.agent, "testRoutine");
     const deleteRoutine = vi.spyOn(mock.api.agent, "deleteRoutine");
@@ -265,18 +259,14 @@ describe("AgentRoutinesSettings", () => {
     await waitFor(() => expect(testRoutine).toHaveBeenCalledWith({ botId: "chief", routineId: "routine-1" }));
 
     await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-    const actions = screen.getByRole("button", { name: "Delete now" }).parentElement;
-    if (!actions) throw new Error("Expected routine action controls");
     expect(deleteRoutine).not.toHaveBeenCalled();
-    await fireEvent.click(within(actions).getByRole("button", { name: "Delete now" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Delete now" }));
     await waitFor(() => expect(deleteRoutine).toHaveBeenCalledWith({ botId: "chief", routineId: "routine-1" }));
     expect(await screen.findByText("No routines yet.")).toBeInTheDocument();
   });
 
   it("blocks editor navigation while Save is running", async () => {
-    mock.dispose();
-    mock = createMockOpenBot({ routines: { chief: [routine] } });
-    window.openbot = mock.api;
+    const mock = setupOpenBot({ routines: { chief: [routine] } });
     let resolveUpdate: ((value: Routine) => void) | undefined;
     vi.spyOn(mock.api.agent, "updateRoutine").mockImplementation(
       () =>
@@ -299,9 +289,7 @@ describe("AgentRoutinesSettings", () => {
   });
 
   it("offers 96 quarter-hour values and saves a selected time", async () => {
-    mock.dispose();
-    mock = createMockOpenBot({ routines: { chief: [routine] } });
-    window.openbot = mock.api;
+    const mock = setupOpenBot({ routines: { chief: [routine] } });
     const updateRoutine = vi.spyOn(mock.api.agent, "updateRoutine");
     render(() => <AgentRoutinesSettings botId="chief" onCountChange={vi.fn()} />);
 
@@ -329,9 +317,7 @@ describe("AgentRoutinesSettings", () => {
       ...routine,
       trigger: { ...routine.trigger, schedule: { kind: "weekdays", time: "07:07" } },
     };
-    mock.dispose();
-    mock = createMockOpenBot({ routines: { chief: [customTimeRoutine] } });
-    window.openbot = mock.api;
+    setupOpenBot({ routines: { chief: [customTimeRoutine] } });
     render(() => <AgentRoutinesSettings botId="chief" onCountChange={vi.fn()} />);
 
     await fireEvent.click(await screen.findByRole("button", { name: /Morning brief/ }));
@@ -345,9 +331,7 @@ describe("AgentRoutinesSettings", () => {
   });
 
   it("opens the time picker from the keyboard", async () => {
-    mock.dispose();
-    mock = createMockOpenBot({ routines: { chief: [routine] } });
-    window.openbot = mock.api;
+    setupOpenBot({ routines: { chief: [routine] } });
     render(() => <AgentRoutinesSettings botId="chief" onCountChange={vi.fn()} />);
 
     await fireEvent.click(await screen.findByRole("button", { name: /Morning brief/ }));

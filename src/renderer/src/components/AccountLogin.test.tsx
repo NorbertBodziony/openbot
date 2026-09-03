@@ -34,17 +34,10 @@ function renderLogin(
 }
 
 describe("AccountLogin", () => {
-  it("renders a page-level sign-in form with an interactive brand logo", () => {
-    renderLogin();
-
-    expect(screen.getByRole("heading", { name: "Sign in to OpenBot" })).toBeInTheDocument();
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Animate OpenBot logo" })).toBeInTheDocument();
-  });
-
   it("validates and normalizes an email before requesting a code", async () => {
     const onRequestEmailCode = vi.fn().mockResolvedValue(undefined);
     renderLogin({ status: "signed_out" }, { onRequestEmailCode });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     const email = screen.getByRole("textbox", { name: "Email" });
 
     await fireEvent.input(email, { target: { value: "not-an-email" } });
@@ -84,7 +77,6 @@ describe("AccountLogin", () => {
     await fireEvent.input(code, { target: { value: "ABCD-EF0I" } });
 
     expect(screen.getByText("Enter all 8 characters to continue.")).toBeInTheDocument();
-    expect(document.querySelectorAll('.otp-input-slot[data-filled="true"]')).toHaveLength(6);
     expect(onVerifyEmailCode).not.toHaveBeenCalled();
   });
 

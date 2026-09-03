@@ -1,14 +1,19 @@
 import { fireEvent, render, screen } from "@solidjs/testing-library";
 import { createSignal, Show } from "solid-js";
-import { describe, expect, it, vi } from "vitest";
-import { ConversationControllerProvider, type ConversationProps, createConversationController } from "./Conversation";
-import { isDragLeavingConversation } from "./ConversationView";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { createConversationController } from "./Conversation";
+import { type ConversationProps, isDragLeavingConversation } from "./ConversationView";
+import { ConversationControllerProvider } from "./conversation-controller-context";
 
 function controllerProps(onTypingChange = vi.fn()): Pick<ConversationProps, "onTypingChange"> {
   return { onTypingChange };
 }
 
 describe("Conversation HMR boundary", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("keeps the file drop overlay active while dragging across conversation children", () => {
     const panel = document.createElement("main");
     const child = document.createElement("div");
@@ -74,11 +79,11 @@ describe("Conversation HMR boundary", () => {
             Set state
           </button>
           <Show when={viewVisible()}>
-            <output data-testid="header-state">{controller.rightPanels().chief}</output>
-            <output data-testid="timeline-state">{controller.chatSearchQuery()}</output>
-            <output data-testid="composer-state">{controller.drafts().chief?.text}</output>
-            <output data-testid="panel-state">{controller.settingsPanelWidth()}</output>
-            <output data-testid="overlay-state">{controller.openReactionMessageId()}</output>
+            <output aria-label="header state">{controller.rightPanels().chief}</output>
+            <output aria-label="timeline state">{controller.chatSearchQuery()}</output>
+            <output aria-label="composer state">{controller.drafts().chief?.text}</output>
+            <output aria-label="panel state">{controller.settingsPanelWidth()}</output>
+            <output aria-label="overlay state">{controller.openReactionMessageId()}</output>
           </Show>
         </ConversationControllerProvider>
       );
@@ -86,19 +91,19 @@ describe("Conversation HMR boundary", () => {
 
     render(() => <Harness />);
     await fireEvent.click(screen.getByRole("button", { name: "Set state" }));
-    expect(screen.getByTestId("composer-state")).toHaveTextContent("Preserved draft");
-    expect(screen.getByTestId("timeline-state")).toHaveTextContent("rollback owner");
-    expect(screen.getByTestId("header-state")).toHaveTextContent("settings");
+    expect(screen.getByRole("status", { name: "composer state" })).toHaveTextContent("Preserved draft");
+    expect(screen.getByRole("status", { name: "timeline state" })).toHaveTextContent("rollback owner");
+    expect(screen.getByRole("status", { name: "header state" })).toHaveTextContent("settings");
 
     await fireEvent.click(screen.getByRole("button", { name: "Toggle view" }));
-    expect(screen.queryByTestId("composer-state")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "composer state" })).not.toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "Toggle view" }));
 
-    expect(screen.getByTestId("composer-state")).toHaveTextContent("Preserved draft");
-    expect(screen.getByTestId("timeline-state")).toHaveTextContent("rollback owner");
-    expect(screen.getByTestId("header-state")).toHaveTextContent("settings");
-    expect(screen.getByTestId("panel-state")).toHaveTextContent("420");
-    expect(screen.getByTestId("overlay-state")).toHaveTextContent("message-1");
+    expect(screen.getByRole("status", { name: "composer state" })).toHaveTextContent("Preserved draft");
+    expect(screen.getByRole("status", { name: "timeline state" })).toHaveTextContent("rollback owner");
+    expect(screen.getByRole("status", { name: "header state" })).toHaveTextContent("settings");
+    expect(screen.getByRole("status", { name: "panel state" })).toHaveTextContent("420");
+    expect(screen.getByRole("status", { name: "overlay state" })).toHaveTextContent("message-1");
     expect(controller?.drafts().chief?.attachments).toHaveLength(1);
     expect(controller?.drafts().chief?.replyToMessageId).toBe("message-1");
     expect(controller?.editingDeliveryId()).toBe("delivery-1");
@@ -143,6 +148,5 @@ describe("Conversation HMR boundary", () => {
     expect(stopTrack).toHaveBeenCalledOnce();
     vi.runOnlyPendingTimers();
     expect(onTypingChange).toHaveBeenCalledOnce();
-    vi.useRealTimers();
   });
 });

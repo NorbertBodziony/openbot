@@ -12,13 +12,10 @@ import { createEffect, createSignal, onCleanup, onSettled, Show } from "solid-js
 import { expect, fireEvent, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { clipboardFiles } from "../../preload/clipboard-files";
-import {
-  Conversation,
-  ConversationControllerProvider,
-  createConversationController,
-} from "../src/components/Conversation";
+import { Conversation, createConversationController } from "../src/components/Conversation";
 import { BrowserTakeoverCard } from "../src/components/ConversationPrompts";
 import { ConversationView } from "../src/components/ConversationView";
+import { ConversationControllerProvider } from "../src/components/conversation-controller-context";
 import type { BotMessage as RendererBotMessage } from "../src/data";
 import browserTakeoverPreviewUrl from "./assets/browser-takeover-preview.svg";
 import {

@@ -10,7 +10,7 @@
     }
   },
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=24.0.0"
   },
   "dependencies": {
     "@expo/ui": "~57.0.14",
@@ -70,7 +70,8 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "lint": "biome check src",
-    "typecheck": "tsc --noEmit",
+    "codegen": "expo customize tsconfig.json && uniwind generate-artifacts --css ./global.css --dts ./src/uniwind-types.d.ts",
+    "typecheck": "bun run codegen && tsc --noEmit",
     "doctor": "bunx expo-doctor@latest"
   },
   "private": true

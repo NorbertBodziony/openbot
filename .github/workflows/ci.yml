@@ -33,6 +33,11 @@ jobs:
         with:
           bun-version: 1.4.0
 
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
@@ -40,6 +45,9 @@ jobs:
         run: bun run check:desktop
 
   tests:
+    # ubuntu-latest gives 4 vCPUs and vitest uses 3 workers, so this job is
+    # CPU-bound at ~2 minutes. Splitting it across runners saved wall clock but
+    # paid for it with a checkout and an install per shard, so it runs as one.
     name: Tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -52,11 +60,54 @@ jobs:
         with:
           bun-version: 1.4.0
 
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
 
-      - name: Run tests
-        run: bun run test
+      - name: Run desktop tests
+        run: bun run test:desktop
+
+      - name: Run site router tests
+        run: bun run test:sites
+
+  surfaces:
+    # `desktop:typecheck` covers only the desktop projects, so without this job
+    # `apps/mobile`, `apps/site-router` and `packages/team-client` first break at
+    # release time rather than on the pull request that broke them. Mobile's
+    # typecheck generates `expo-env.d.ts` and the uniwind declarations first -
+    # both are gitignored, so a fresh checkout cannot resolve `global.css`.
+    name: Surfaces
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.0
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Typecheck mobile
+        run: bun run mobile:typecheck
+
+      - name: Typecheck site router
+        run: bun run typecheck:sites
+
+      - name: Typecheck team client
+        run: bun run typecheck:team-client
 
   api:
     name: API
@@ -70,6 +121,11 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.0
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
 
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
@@ -89,6 +145,11 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.0
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
 
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
@@ -113,6 +174,11 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.0
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -184,6 +250,11 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.0
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
 
       - name: Install dependencies
         run: bun install --frozen-lockfile

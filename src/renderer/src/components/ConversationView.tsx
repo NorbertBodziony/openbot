@@ -45,11 +45,13 @@ import {
   useContext,
 } from "solid-js";
 import { desktopAnalytics } from "../analytics";
+import { agentConversationKey } from "../conversation-keys";
 import type { BotMessage, BotProfile, ChatActionMarkerModel } from "../data";
+import { activeQueueDeliveries, presentQueueDeliveries, queuedDeliveriesInOrder } from "../queue-reconciliation";
+import { createScopeGuard } from "../scope-lifetime";
 import { appendVoiceTranscript, recordingToWav } from "../voice-recording";
 import { AgentAvatar } from "./AgentAvatar";
 import { ComposerEditor, expandComposerMentions } from "./ComposerEditor";
-import { useConversationController } from "./Conversation";
 import { BrowserTakeoverCard } from "./ConversationPrompts";
 import {
   AgentActivityIndicator,
@@ -94,6 +96,7 @@ import {
   voiceCaptureError,
   voiceTranscriptionError,
 } from "./conversation/voice-status";
+import { useConversationController } from "./conversation-controller-context";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import {
   Bubble,
@@ -682,15 +685,7 @@ function createConversationViewScope(props: ConversationProps) {
     const control = browserControlForTab(tab);
     return control ? props.bots.find((bot) => bot.threadId === control.threadId) : undefined;
   };
-  const activeDeliveries = createMemo(() => {
-    const deliveries = (props.queue?.deliveries ?? []).filter(
-      (delivery) => delivery.status === "starting" || delivery.status === "running",
-    );
-    const activeTurnId = props.activeTurnId;
-    if (!activeTurnId) return deliveries;
-    const matching = deliveries.filter((delivery) => delivery.turnId === activeTurnId || delivery.turnId === null);
-    return matching.length > 0 ? matching : deliveries;
-  });
+  const activeDeliveries = createMemo(() => activeQueueDeliveries(props.queue, props.activeTurnId));
   const [renderedAgentActivity, setRenderedAgentActivity] = createSignal<RenderedAgentActivity | null>(null);
   const [agentActivitySpaceReserved, setAgentActivitySpaceReserved] = createSignal(false);
   const streamingAgentMessage = createMemo(() => {
@@ -852,33 +847,14 @@ function createConversationViewScope(props: ConversationProps) {
     clearAgentActivityExitDelayTimer();
     clearAgentActivityExitTimer();
   });
-  const orderedQueuedDeliveries = createMemo(() =>
-    [...(props.queue?.deliveries ?? [])]
-      .filter((delivery) => delivery.status === "queued")
-      .sort((left, right) => {
-        const leftPosition = left.position ?? Number.MAX_SAFE_INTEGER;
-        const rightPosition = right.position ?? Number.MAX_SAFE_INTEGER;
-        return leftPosition - rightPosition || left.createdAt.localeCompare(right.createdAt);
-      }),
+  const orderedQueuedDeliveries = createMemo(() => queuedDeliveriesInOrder(props.queue));
+  const presentedQueueDeliveries = createMemo(() =>
+    presentQueueDeliveries({
+      snapshot: props.queue,
+      activeTurnId: props.activeTurnId,
+      renderedMessageIds: new Set(props.messages.map((message) => message.id)),
+    }),
   );
-  const presentedQueueDeliveries = createMemo(() => {
-    const snapshot = props.queue;
-    if (!snapshot) return [];
-    const activeTurnId = props.activeTurnId;
-    if (activeDeliveries().length === 0) return [];
-    const renderedMessageIds = new Set(props.messages.map((message) => message.id));
-    const queued = orderedQueuedDeliveries().filter(
-      (delivery) => (!activeTurnId || delivery.turnId !== activeTurnId) && !renderedMessageIds.has(delivery.id),
-    );
-    const steering = snapshot.deliveries.filter(
-      (delivery) =>
-        delivery.status === "starting" &&
-        Boolean(activeTurnId) &&
-        delivery.turnId === activeTurnId &&
-        !renderedMessageIds.has(delivery.id),
-    );
-    return [...queued, ...steering];
-  });
   const [renderedQueueDeliveries, setRenderedQueueDeliveries] = createSignal<QueueDelivery[]>([]);
   const queuePanelVisible = createMemo(() => renderedQueueDeliveries().length > 0);
   let queueExitTimer: number | undefined;
@@ -1022,33 +998,45 @@ function createConversationViewScope(props: ConversationProps) {
   ): Promise<boolean> {
     const botId = targetBotId;
     if (!botId) return false;
-    const previousAttempt = resources.runtimeSettingsAttempts.get(botId);
+    // Both maps live on the controller, which outlives one server, so the key
+    // has to say which server the settings belong to.
+    const settingsKey = agentConversationKey(props.server?.id ?? "local", botId);
+    const previousAttempt = resources.runtimeSettingsAttempts.get(settingsKey);
     const generation = (previousAttempt?.generation ?? 0) + 1;
-    resources.runtimeSettingsAttempts.set(botId, { generation, pending: true, settings });
+    resources.runtimeSettingsAttempts.set(settingsKey, { generation, pending: true, settings });
     if (errorMessage) setComposerError(null);
 
-    const previousSave = resources.runtimeSettingsSaveTails.get(botId);
+    const previousSave = resources.runtimeSettingsSaveTails.get(settingsKey);
     let releaseSave!: (baseValid: boolean) => void;
     const saveTail = new Promise<boolean>((resolve) => {
       releaseSave = resolve;
     });
-    resources.runtimeSettingsSaveTails.set(botId, saveTail);
+    resources.runtimeSettingsSaveTails.set(settingsKey, saveTail);
     let saved: boolean;
     let baseValid = true;
+    let abandoned = false;
     try {
       if (previousSave) baseValid = await previousSave;
+      // `agent.updateBot` is routed by the server main has selected, not by the
+      // bot id in its payload, so a save still queued behind an earlier one when
+      // the user leaves would be applied to whichever server they arrive at. It
+      // belongs to the one it was made on, and that one is gone.
+      abandoned = !viewIsMounted();
       const completePatch = isCompleteRuntimeSettingsPatch(updates);
-      saved = baseValid || completePatch ? await saveBotPatch(updates, botId) : false;
+      saved = !abandoned && (baseValid || completePatch) ? await saveBotPatch(updates, botId) : false;
       if (completePatch) baseValid = saved;
     } finally {
       releaseSave(baseValid);
-      if (resources.runtimeSettingsSaveTails.get(botId) === saveTail) {
-        resources.runtimeSettingsSaveTails.delete(botId);
+      if (resources.runtimeSettingsSaveTails.get(settingsKey) === saveTail) {
+        resources.runtimeSettingsSaveTails.delete(settingsKey);
       }
     }
-    const latestAttempt = resources.runtimeSettingsAttempts.get(botId);
+    const latestAttempt = resources.runtimeSettingsAttempts.get(settingsKey);
     if (latestAttempt?.generation !== generation) return true;
     latestAttempt.pending = false;
+    // Nothing left to report to: the pickers, the composer error and the bot
+    // this would roll back to all belonged to the conversation that is gone.
+    if (abandoned) return false;
     if (saved) {
       const activeBot = props.bot;
       if (activeBot?.id === botId) {
@@ -1215,6 +1203,17 @@ function createConversationViewScope(props: ConversationProps) {
     });
   }
 
+  /**
+   * "Is the conversation that asked for the microphone still on screen?"
+   *
+   * The controller outlives this view - drafts and an in-flight voice send are
+   * expected to survive leaving the conversation - so `voiceDisposed` no longer
+   * answers this. Without it, a model download that finishes after the user has
+   * switched servers or opened a direct message goes on to open the microphone
+   * with nothing on screen to stop it.
+   */
+  const viewIsMounted = createScopeGuard();
+
   async function startVoiceRecording(): Promise<void> {
     const botId = props.bot?.id;
     const serverId = props.server?.id ?? "local";
@@ -1223,22 +1222,45 @@ function createConversationViewScope(props: ConversationProps) {
     clearConversationError(target);
     resources.voiceSubmitRequest = undefined;
     setComposerError(null);
+    // Which attempt this is. The phase used to carry that on its own, but it no
+    // longer can: leaving the conversation now returns the phase to `idle`
+    // (see `Conversation.tsx`) so the next conversation is not left with a
+    // disabled microphone, and a later attempt can be in the very same phase
+    // this one was abandoned in. The counter is what tells the two apart, so an
+    // abandoned chain can still report its failure to the conversation that
+    // asked for it without moving a phase that now belongs to someone else.
+    const generation = ++resources.voiceRequestGeneration;
     setVoicePhase("preparing");
     setVoiceModelProgress(0);
     try {
       const modelStatus = await window.openbot.voice.prepareModel();
-      if (resources.voiceDisposed || voicePhase() !== "preparing") return;
+      if (resources.voiceDisposed || resources.voiceRequestGeneration !== generation) return;
       if (modelStatus.phase !== "ready") {
         setVoicePhase("idle");
         setVoiceModelProgress(null);
         setConversationError(target, modelStatus.message ?? "Could not prepare the voice model.");
         return;
       }
+      if (!viewIsMounted()) {
+        // A model *failure* still reports above, because it belongs to the
+        // conversation that asked for it whether or not that conversation is
+        // still open. Opening the microphone does not: there would be no
+        // recording UI, and nothing to stop it before the duration limit.
+        setVoicePhase("idle");
+        setVoiceModelProgress(null);
+        return;
+      }
       setVoicePhase("requesting");
       setVoiceModelProgress(null);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      if (resources.voiceDisposed || voicePhase() !== "requesting") {
+      if (resources.voiceDisposed || !viewIsMounted() || resources.voiceRequestGeneration !== generation) {
         for (const track of stream.getTracks()) track.stop();
+        // Permission can be granted after the conversation is gone. Nothing else
+        // has moved the phase on in that case, so this leaves it idle rather than
+        // stuck on a request that will never produce a recording - but only while
+        // this is still the newest attempt, so a grant the user has stopped
+        // waiting for cannot cancel the recording they started instead.
+        if (!resources.voiceDisposed && resources.voiceRequestGeneration === generation) setVoicePhase("idle");
         return;
       }
       const recorder = new MediaRecorder(stream);
@@ -1256,7 +1278,9 @@ function createConversationViewScope(props: ConversationProps) {
       setVoicePhase("recording");
       resources.voiceRecordingTimer = setTimeout(stopVoiceRecording, VOICE_AUDIO_LIMITS.maximumSeconds * 1_000);
     } catch (error) {
-      setVoicePhase("idle");
+      // The failure belongs to `target` whether or not that conversation is
+      // still open, but the phase belongs to whoever asked last.
+      if (resources.voiceRequestGeneration === generation) setVoicePhase("idle");
       setConversationError(target, voiceCaptureError(error));
     }
   }
@@ -1663,7 +1687,9 @@ function createConversationViewScope(props: ConversationProps) {
     },
     (bot) => {
       if (!bot) return;
-      const pendingSettings = resources.runtimeSettingsAttempts.get(props.bot?.id ?? "");
+      const pendingSettings = resources.runtimeSettingsAttempts.get(
+        agentConversationKey(props.server?.id ?? "local", props.bot?.id ?? ""),
+      );
       if (
         pendingSettings?.pending &&
         !runtimeSettingsEqual(pendingSettings.settings, {
@@ -1855,11 +1881,7 @@ function createConversationViewScope(props: ConversationProps) {
   }
 
   function stopTeamTyping(): void {
-    if (resources.typingIdleTimer) clearTimeout(resources.typingIdleTimer);
-    resources.typingIdleTimer = undefined;
-    if (!resources.typingBotId) return;
-    props.onTypingChange(resources.typingBotId, false);
-    resources.typingBotId = null;
+    controller.stopComposerTyping();
   }
 
   function addAttachments(selected: DraftAttachment[], target = currentTarget()) {

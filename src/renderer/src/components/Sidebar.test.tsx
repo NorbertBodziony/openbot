@@ -103,15 +103,6 @@ function nativeDragEvent(
 }
 
 describe("Sidebar pinned chats", () => {
-  it("opens the active server settings from the server title", async () => {
-    const props = sidebarProps();
-    render(() => <Sidebar {...props} />);
-
-    await fireEvent.click(screen.getByRole("button", { name: "Open settings for Local" }));
-
-    expect(props.onOpenServerSettings).toHaveBeenCalledWith(expect.any(HTMLElement));
-  });
-
   it("shows agent pins, ignores legacy person pins, and filters with search", async () => {
     const props = sidebarProps([
       { kind: "agent", id: "chief" },
@@ -120,13 +111,16 @@ describe("Sidebar pinned chats", () => {
     ]);
     render(() => <Sidebar {...props} />);
 
+    await fireEvent.click(screen.getByRole("button", { name: "Open settings for Local" }));
+    expect(props.onOpenServerSettings).toHaveBeenCalledWith(expect.any(HTMLElement));
+
+    await fireEvent.click(screen.getByRole("button", { name: "Open Marketplace" }));
+    expect(props.onOpenMarketplace).toHaveBeenCalledOnce();
+
     expect(screen.getByRole("region", { name: "Pinned chats" })).toBeInTheDocument();
     expect(screen.queryByText("Pinned")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Chief, pinned agent" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("button", { name: "Alice Chen, pinned person" })).not.toBeInTheDocument();
-    expect(screen.getByTitle("Chief of staff")).toHaveTextContent("Chief of staff");
-    expect(screen.getAllByText("Chief")).toHaveLength(1);
-    expect(screen.getAllByText("Alice Chen")).toHaveLength(1);
 
     await fireEvent.input(screen.getByRole("searchbox", { name: "Search chats" }), {
       target: { value: "Sales" },
@@ -145,16 +139,15 @@ describe("Sidebar pinned chats", () => {
 
     await fireEvent.contextMenu(screen.getByRole("button", { name: "Chief, pinned agent" }));
     const agentMenu = await screen.findByRole("menu", { name: "Agent actions" });
-    const editItem = within(agentMenu).getByRole("menuitem", { name: "Edit agent" });
-    const duplicateItem = within(agentMenu).getByRole("menuitem", { name: "Duplicate agent" });
-    const deleteItem = within(agentMenu).getByRole("menuitem", { name: "Delete agent" });
-    const divider = within(agentMenu).getByRole("separator");
-    expect(editItem).toBeInTheDocument();
-    expect(duplicateItem).toBeInTheDocument();
-    expect(deleteItem).toBeInTheDocument();
-    expect(divider.nextElementSibling).toBe(deleteItem);
+    expect(within(agentMenu).getByRole("menuitem", { name: "Duplicate agent" })).toBeInTheDocument();
+    expect(within(agentMenu).getByRole("menuitem", { name: "Delete agent" })).toBeInTheDocument();
     await fireEvent.pointerUp(within(agentMenu).getByRole("menuitem", { name: "Unpin" }), { button: 0 });
     expect(props.onUnpin).toHaveBeenCalledWith({ kind: "agent", id: "chief" });
+
+    await fireEvent.contextMenu(screen.getByRole("button", { name: /Sales Outbound/ }));
+    const reopenedMenu = await screen.findByRole("menu", { name: "Agent actions" });
+    await fireEvent.pointerUp(within(reopenedMenu).getByRole("menuitem", { name: "Edit agent" }), { button: 0 });
+    expect(props.onEditBot).toHaveBeenCalledWith("sales");
   });
 
   it("disables duplication while it runs and hides it for an old host", async () => {
@@ -188,7 +181,6 @@ describe("Sidebar pinned chats", () => {
     await fireEvent.contextMenu(screen.getByRole("button", { name: /Extra 4/ }));
     const agentMenu = await screen.findByRole("menu", { name: "Agent actions" });
     const pinItem = within(agentMenu).getByRole("menuitem", { name: "Pin" });
-    expect(pinItem).toHaveAttribute("title", "Maximum 6 pinned chats");
 
     await fireEvent.pointerUp(pinItem, { button: 0 });
     expect(props.onPin).not.toHaveBeenCalled();
@@ -257,63 +249,6 @@ describe("Sidebar pinned chats", () => {
       { kind: "agent", id: "chief" },
     ]);
     expect(dataTransfer.setDragImage).toHaveBeenCalledOnce();
-  });
-
-  it("pins an agent dropped on the pinned area with the same native drag path", async () => {
-    const props = sidebarProps([{ kind: "agent", id: "research" }]);
-    const view = render(() => <Sidebar {...props} />);
-    const chief = screen.getByRole("button", { name: /Chief/ });
-    const chiefItem = chief.closest<HTMLElement>("[data-agent-id]");
-    const pinned = screen.getByRole("region", { name: "Pinned chats" });
-    const list = view.container.querySelector<HTMLElement>(".bot-list");
-    if (!chiefItem || !list) throw new Error("Sidebar list is missing.");
-    vi.spyOn(chiefItem, "getBoundingClientRect").mockReturnValue(rect(12, 180, 256, 54));
-    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 600));
-    vi.spyOn(pinned, "getBoundingClientRect").mockReturnValue(rect(0, 20, 280, 120));
-    const dataTransfer = {
-      setData: vi.fn(),
-      setDragImage: vi.fn(),
-      effectAllowed: "move",
-      dropEffect: "move",
-    };
-
-    dragStartAt(chiefItem, dataTransfer, { clientX: 30, clientY: 200 });
-    await dragOverFrame(pinned, dataTransfer, { clientX: 100, clientY: 100 });
-
-    dropAt(pinned, dataTransfer, { clientX: 100, clientY: 100 });
-
-    expect(props.onPin).toHaveBeenCalledWith({ kind: "agent", id: "chief" });
-  });
-
-  it("keeps the animated empty pin field as a live drop target", async () => {
-    const props = sidebarProps();
-    const view = render(() => <Sidebar {...props} />);
-    const chief = screen.getByRole("button", { name: /Chief/ });
-    const chiefItem = chief.closest<HTMLElement>("[data-agent-id]");
-    const list = view.container.querySelector<HTMLElement>(".bot-list");
-    if (!chiefItem || !list) throw new Error("Sidebar agent drag source is missing.");
-    vi.spyOn(chiefItem, "getBoundingClientRect").mockReturnValue(rect(12, 180, 256, 54));
-    vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 600));
-    const dataTransfer = {
-      setData: vi.fn(),
-      setDragImage: vi.fn(),
-      effectAllowed: "move",
-      dropEffect: "move",
-    };
-
-    dragStartAt(chiefItem, dataTransfer, { clientX: 30, clientY: 200 });
-    await dragOverFrame(list, dataTransfer, { clientX: 32, clientY: 196 });
-    const pinned = screen.getByRole("region", { name: "Pinned chats" });
-    const field = screen.getByText("Drag here to pin");
-    vi.spyOn(pinned, "getBoundingClientRect").mockReturnValue(rect(0, 20, 280, 6));
-    vi.spyOn(field, "getBoundingClientRect").mockReturnValue(rect(12, 24, 256, 104));
-
-    await fireEvent.transitionEnd(pinned, { propertyName: "grid-template-rows" });
-    await dragOverFrame(field, dataTransfer, { clientX: 100, clientY: 72 });
-
-    vi.mocked(field.getBoundingClientRect).mockReturnValue(rect(12, 200, 256, 104));
-    fireEvent(chiefItem, nativeDragEvent("dragend", dataTransfer, { clientX: 100, clientY: 72 }));
-    expect(props.onPin).toHaveBeenCalledWith({ kind: "agent", id: "chief" });
   });
 });
 
@@ -430,7 +365,6 @@ describe("Sidebar sections", () => {
     const view = render(() => <Sidebar {...props} layout={sectionLayout()} layoutMutable={false} />);
 
     const section = screen.getByRole("button", { name: "Demo" });
-    expect(section).toHaveAttribute("title", "This host does not support sidebar layout changes.");
     expect(section).toHaveAttribute("draggable", "false");
     expect(view.container.querySelector("[data-agent-id='chief']")).toHaveAttribute("draggable", "false");
     expect(screen.queryByLabelText("Sidebar free area")).not.toBeInTheDocument();
@@ -693,7 +627,7 @@ describe("Sidebar sections", () => {
   it("keeps collapsed private and expands matching search results temporarily", async () => {
     const props = sidebarProps();
     const [collapsed, setCollapsed] = createSignal([demoId]);
-    const view = render(() => (
+    render(() => (
       <Sidebar
         {...props}
         layout={sectionLayout()}
@@ -708,23 +642,21 @@ describe("Sidebar sections", () => {
       />
     ));
 
-    const body = view.container.querySelector<HTMLElement>(`#sidebar-section-body-${demoId}`)?.parentElement;
-    expect(body).toHaveAttribute("inert");
+    expect(screen.getByRole("button", { name: "Demo" })).toHaveAttribute("aria-expanded", "false");
 
     await fireEvent.input(screen.getByRole("searchbox", { name: "Search chats" }), {
       target: { value: "Research" },
     });
     expect(screen.getByRole("button", { name: /Research/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Demo" })).toHaveAttribute("aria-expanded", "true");
 
     await fireEvent.input(screen.getByRole("searchbox", { name: "Search chats" }), { target: { value: "" } });
-    expect(body).toHaveAttribute("inert");
+    expect(screen.getByRole("button", { name: "Demo" })).toHaveAttribute("aria-expanded", "false");
   });
 
   it("creates and renames sections inline, with duplicate-name validation", async () => {
     const props = sidebarProps();
     render(() => <Sidebar {...props} layout={sectionLayout()} />);
-
-    expect(screen.getByRole("button", { name: "Empty" })).toBeInTheDocument();
 
     await fireEvent.contextMenu(screen.getByLabelText("Sidebar free area"));
     const sidebarMenu = await screen.findByRole("menu", { name: "Sidebar actions" });

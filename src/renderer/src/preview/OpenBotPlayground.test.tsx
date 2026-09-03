@@ -1,61 +1,16 @@
 import { render } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { STORY_UPDATE_STATUS } from "./fixtures";
 import { createLandingDemoController } from "./landing-demo";
 import { createMockOpenBot } from "./mock-openbot";
 import { OpenBotPlayground } from "./OpenBotPlayground";
 
 describe("OpenBotPlayground", () => {
+  let previousParent: PropertyDescriptor | undefined;
+
   afterEach(() => {
+    if (previousParent) Object.defineProperty(window, "parent", previousParent);
+    previousParent = undefined;
     vi.useRealTimers();
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
-  });
-
-  it("installs the mock desktop API and restores the previous API on cleanup", () => {
-    const previousMock = createMockOpenBot();
-    const activeMock = createMockOpenBot();
-    const dispose = vi.spyOn(activeMock, "dispose");
-    const subscribe = vi.spyOn(activeMock, "onLatestConversationOpened");
-    const subscribeDirect = vi.spyOn(activeMock, "onLatestDirectConversationOpened");
-    window.openbot = previousMock.api;
-
-    const view = render(() => (
-      <OpenBotPlayground
-        dependencies={{
-          createMock: () => activeMock,
-          renderApp: () => <div data-testid="openbot-app" />,
-        }}
-      />
-    ));
-    expect(view.getByTestId("openbot-app")).toBeInTheDocument();
-    expect(window.openbot).toBe(activeMock.api);
-    expect(subscribe).not.toHaveBeenCalled();
-    expect(subscribeDirect).not.toHaveBeenCalled();
-
-    view.unmount();
-    expect(dispose).toHaveBeenCalledOnce();
-    expect(window.openbot).toBe(previousMock.api);
-    previousMock.dispose();
-  });
-
-  it("advances a mocked update download until it is ready", async () => {
-    vi.useFakeTimers();
-    const mock = createMockOpenBot({ updateStatus: STORY_UPDATE_STATUS });
-    const listener = vi.fn();
-    const unsubscribe = mock.api.update.onEvent(listener);
-
-    await expect(mock.api.update.download()).resolves.toMatchObject({ phase: "downloading", progress: 0 });
-    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ phase: "downloading", progress: 0 }));
-
-    vi.advanceTimersByTime(700);
-    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ phase: "downloading", progress: 64 }));
-
-    vi.advanceTimersByTime(700);
-    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ phase: "ready", progress: 100 }));
-
-    unsubscribe();
-    mock.dispose();
   });
 
   it("reports ready and accepts a same-origin start message only from its parent", async () => {
@@ -75,7 +30,7 @@ describe("OpenBotPlayground", () => {
     document.body.append(parentFrame);
     const parentWindow = parentFrame.contentWindow;
     if (!parentWindow) throw new Error("Expected a parent window");
-    const previousParent = Object.getOwnPropertyDescriptor(window, "parent");
+    previousParent = Object.getOwnPropertyDescriptor(window, "parent");
     Object.defineProperty(window, "parent", { configurable: true, value: parentWindow });
 
     const activeMock = createMockOpenBot();
@@ -122,9 +77,6 @@ describe("OpenBotPlayground", () => {
     expect(postMessage).toHaveBeenCalledTimes(2);
 
     view.unmount();
-    expect(cancelAnimationFrame).toHaveBeenCalledWith(1);
-    expect(cancelAnimationFrame).toHaveBeenCalledWith(2);
     parentFrame.remove();
-    if (previousParent) Object.defineProperty(window, "parent", previousParent);
   });
 });

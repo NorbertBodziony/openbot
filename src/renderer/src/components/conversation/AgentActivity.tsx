@@ -54,7 +54,7 @@ export function AgentActivityIndicator(props: {
   return (
     <div class="agent-activity-entry" data-state={props.phase ?? "active"}>
       <span class="sr-only" role="status" aria-label={`${props.bot?.name ?? "Agent"} is working`} />
-      <div class="agent-activity-content">
+      <section class="agent-activity-content" aria-label="Current activity">
         <AgentAvatar
           bot={props.bot}
           url={null}
@@ -63,7 +63,7 @@ export function AgentActivityIndicator(props: {
           class="agent-activity-avatar"
         />
         <span class="agent-activity-label">{label()}</span>
-      </div>
+      </section>
     </div>
   );
 }
