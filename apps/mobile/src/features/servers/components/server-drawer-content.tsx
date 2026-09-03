@@ -62,6 +62,7 @@ export function ServerDrawerContent({
               accessibilityLabel={`${serverItem.name}, ${serverItem.state}`}
               className="min-h-16 flex-row items-center gap-3 rounded-2xl px-3 py-2"
               onPress={() => onSelectServer(serverItem.id)}
+              style={({ pressed }) => ({ opacity: pressed ? 0.58 : 1 })}
             >
               {selected ? (
                 <View
@@ -103,6 +104,7 @@ export function ServerDrawerContent({
           accessibilityLabel="Join a server"
           className="mt-2 min-h-14 flex-row items-center gap-3 rounded-2xl px-3 py-2"
           onPress={() => onNavigate("/add-server")}
+          style={({ pressed }) => ({ opacity: pressed ? 0.58 : 1 })}
         >
           <View className="size-11 items-center justify-center rounded-[15px] border border-border bg-control">
             <Plus color={iconColor} size={21} strokeWidth={1.8} />
