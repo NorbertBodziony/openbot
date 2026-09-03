@@ -298,6 +298,12 @@ export class HostService extends EventEmitter<HostEvents> {
     }
     let activated = false;
     try {
+      if (user && this.#signedInAccountId() !== user.id) {
+        // Another account was announced while the runtime was being torn down. Binding this
+        // one now would hand its host, members and invitations to whoever is signed in
+        // instead - and the switch queued for them is what binds theirs.
+        return;
+      }
       if (user) await this.#options.store.activateAccount(user);
       else await this.#options.store.deactivate();
       activated = true;

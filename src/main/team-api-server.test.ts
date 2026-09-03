@@ -2283,6 +2283,19 @@ describe("HostService account binding", () => {
     expect(service.getStatus().serverName).toBe("Studio Mac");
   });
 
+  it("does not bind the previous account's server when its switch is applied too late", async () => {
+    const { service, signIn } = await createHostService();
+    await signIn(first);
+    await service.configure({ serverName: "Studio Mac" });
+    await signIn(second);
+
+    // A's queued switch, arriving after B is the signed-in account.
+    await service.applySignedInAccount(first);
+
+    expect(service.getStatus().configured).toBe(false);
+    expect(() => service.listMembers()).toThrow("The team server is not configured.");
+  });
+
   it("answers invitations from the host that is active when the read returns", async () => {
     let deliver: (invites: RemoteInvites) => void = () => undefined;
     const loading = new Promise<RemoteInvites>((resolve) => {

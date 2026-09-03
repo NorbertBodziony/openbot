@@ -7,6 +7,7 @@ import {
   sign,
   timingSafeEqual,
 } from "node:crypto";
+import { constants } from "node:fs";
 import { copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -190,7 +191,6 @@ export class TeamStore {
         // reconcile compares against has to stay the record as it was imported.
         legacyImport: { fingerprint: legacy.fingerprint, record: structuredClone(legacy.record) },
       };
-      await this.#adoptLegacyLogo(legacy.record);
       migrated = true;
     } else if (legacy && legacy.fingerprint !== this.#file.legacyImport?.fingerprint) {
       // The older build has been run since it was imported. Neither copy of the host is a
@@ -212,9 +212,13 @@ export class TeamStore {
         this.#file.hosts.push(legacy.record);
       }
       this.#file.legacyImport = { fingerprint: legacy.fingerprint, record: structuredClone(legacy.record) };
-      await this.#adoptLegacyLogo(legacy.record);
       migrated = true;
     }
+    const imported = this.#file.legacyImport?.record.serverId;
+    const importedHost = imported === undefined ? undefined : this.#file.hosts.find((h) => h.serverId === imported);
+    // Every start, not only the one that took the record in: a copy that failed once would
+    // otherwise leave the host without its logo for good, with the file still sitting there.
+    if (importedHost) await this.#adoptLegacyLogo(importedHost);
     const activeAccountId = this.#file.activeAccountId;
     this.#state =
       (activeAccountId === null
@@ -570,7 +574,11 @@ export class TeamStore {
     if (!logo || !this.#legacyLogoRoot) return;
     const name = `${logo.version}.${avatarFileExtension(logo.mimeType)}`;
     await mkdir(this.#logoRoot, { recursive: true, mode: 0o700 });
-    await copyFile(join(this.#legacyLogoRoot, name), join(this.#logoRoot, name)).catch(() => undefined);
+    // Never over this build's own copy, and a failure is left for the next start to retry
+    // rather than leaving the host pointing at a logo it has no file for.
+    await copyFile(join(this.#legacyLogoRoot, name), join(this.#logoRoot, name), constants.COPYFILE_EXCL).catch(
+      () => undefined,
+    );
   }
 
   resolveLogo(): { path: string; mimeType: AvatarImageInput["mimeType"]; version: string } | null {

@@ -439,6 +439,35 @@ describe("TeamStore", () => {
     expect((await readStoredHosts(join(root, "team-v2.json"))).map((host) => host.serverName)).toEqual(["Renamed"]);
   });
 
+  it("copies the logo of an imported host on a later start when the first copy could not", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-"));
+    roots.push(root);
+    const legacyPath = join(root, "team.json");
+    const path = join(root, "team-v2.json");
+    const owner = { id: "owner-account", email: "owner@example.com", name: "Owner", avatarUrl: null };
+    const source = new TeamStore(legacyPath);
+    await source.initialize();
+    await source.configureWithAccount("Studio Mac", owner, {
+      mimeType: "image/png",
+      bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    });
+    const legacyLogo = source.resolveLogo();
+    await writeFile(legacyPath, JSON.stringify(await readStoredHost(legacyPath)));
+    // The image is briefly unreadable, so the copy the import makes cannot succeed.
+    await rename(legacyLogo?.path ?? "", `${legacyLogo?.path}.away`);
+
+    const upgraded = new TeamStore(path, legacyPath);
+    await upgraded.initialize();
+    await expect(readFile(upgraded.resolveLogo()?.path ?? "")).rejects.toThrow();
+
+    await rename(`${legacyLogo?.path}.away`, legacyLogo?.path ?? "");
+    const restarted = new TeamStore(path, legacyPath);
+    await restarted.initialize();
+
+    // The host keeps the logo the user gave it, rather than one missed copy costing it.
+    await expect(readFile(restarted.resolveLogo()?.path ?? "")).resolves.toHaveLength(8);
+  });
+
   it("reconciles what each build did to the host after they went their separate ways", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-team-"));
     roots.push(root);
