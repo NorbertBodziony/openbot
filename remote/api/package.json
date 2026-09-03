@@ -12,12 +12,12 @@
   },
   "dependencies": {
     "elysia": "1.4.30",
-    "jose": "6.2.10",
-    "zod": "4.4.3"
+    "jose": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@types/bun": "1.4.0",
-    "typescript": "5.9.3",
-    "vitest": "4.1.10"
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   }
 }
