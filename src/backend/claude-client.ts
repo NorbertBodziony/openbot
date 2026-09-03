@@ -14,11 +14,13 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import { type DynamicRecord, isOneOf, isString } from "@openbot/contracts/runtime-values";
+import { type DynamicRecord, isDynamicRecord, isNumber, isOneOf, isString } from "@openbot/contracts/runtime-values";
 import { z } from "zod";
 import type { AgentProvider } from "./agent-client";
 import type { ClaudeCliInfo } from "./cli";
 import {
+  type AccountRateLimitsReadResult,
+  type AccountRateLimitWindowResult,
   type AccountReadResult,
   type AppServerNotification,
   type AppServerRequest,
@@ -99,6 +101,7 @@ interface ClaudeQuery extends AsyncIterable<ClaudeStreamMessage> {
   supportedModels(): Promise<ModelInfo[]>;
   setModel(model?: string): Promise<void>;
   applyFlagSettings(settings: { effortLevel?: ClaudeEffort | null }): Promise<void>;
+  usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?(): Promise<unknown>;
   close(): void;
 }
 
@@ -160,7 +163,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       case "account/read":
         return decoder(await this.#readAccount());
       case "account/rateLimits/read":
-        return decoder({ rateLimits: null, rateLimitsByLimitId: null });
+        return decoder(await this.#readUsage(getString(params, "model")));
       case "model/list":
         return decoder({ data: await this.#listModels(_timeoutMs) });
       case "plugin/list":
@@ -289,6 +292,28 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       return result;
     } finally {
       if (timeout) clearTimeout(timeout);
+      input.close();
+      claudeQuery.close();
+    }
+  }
+
+  async #readUsage(model: string | null): Promise<AccountRateLimitsReadResult> {
+    const input = new AsyncMessageQueue();
+    const claudeQuery = this.#createQuery({
+      prompt: input,
+      options: {
+        cwd: process.cwd(),
+        pathToClaudeCodeExecutable: this.#cli.executable,
+        settingSources: ["user", "project", "local"],
+        persistSession: false,
+        env: { ...claudeEnvironment(this.#cli), CLAUDE_AGENT_SDK_CLIENT_APP: "openbot/0.1.0" },
+      },
+    });
+    try {
+      const readUsage = claudeQuery.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET;
+      if (!readUsage) return { rateLimits: null, rateLimitsByLimitId: null };
+      return claudeRateLimits(await readUsage.call(claudeQuery), model);
+    } finally {
       input.close();
       claudeQuery.close();
     }
@@ -927,6 +952,66 @@ function claudeEnvironment(cli: ClaudeCliInfo): NodeJS.ProcessEnv {
     ...process.env,
     ...(cli.source === "managed" ? { DISABLE_AUTOUPDATER: "1" } : {}),
   };
+}
+
+function claudeRateLimits(value: unknown, model: string | null): AccountRateLimitsReadResult {
+  if (!isDynamicRecord(value) || value.rate_limits_available !== true || !isDynamicRecord(value.rate_limits)) {
+    return { rateLimits: null, rateLimitsByLimitId: null };
+  }
+  const rateLimits = value.rate_limits;
+  const primary = claudeUsageWindow(rateLimits.five_hour, 300);
+  const secondary = claudeModelWeeklyWindow(rateLimits, model) ?? claudeUsageWindow(rateLimits.seven_day, 10_080);
+  if (!primary && !secondary) return { rateLimits: null, rateLimitsByLimitId: null };
+  return {
+    rateLimits: { limitId: "claude", primary, secondary },
+    rateLimitsByLimitId: null,
+  };
+}
+
+function claudeModelWeeklyWindow(rateLimits: DynamicRecord, model: string | null): AccountRateLimitWindowResult | null {
+  if (!model) return null;
+  const familyKey = model.toLowerCase().includes("opus")
+    ? "seven_day_opus"
+    : model.toLowerCase().includes("sonnet")
+      ? "seven_day_sonnet"
+      : null;
+  if (familyKey) {
+    const family = claudeUsageWindow(rateLimits[familyKey], 10_080);
+    if (family) return family;
+  }
+  for (const candidate of [...recordArray(rateLimits.model_scoped), ...recordArray(rateLimits.limits)]) {
+    const label =
+      stringValue(candidate.display_name) ?? stringValue(candidate.displayName) ?? stringValue(candidate.scope);
+    if (!label || !model.toLowerCase().includes(label.toLowerCase())) continue;
+    const window = claudeUsageWindow(candidate, 10_080);
+    if (window) return window;
+  }
+  return null;
+}
+
+function claudeUsageWindow(value: unknown, windowDurationMins: number): AccountRateLimitWindowResult | null {
+  if (!isDynamicRecord(value)) return null;
+  const usedPercent = numberValue(value.utilization) ?? numberValue(value.percent);
+  if (usedPercent === null) return null;
+  const reset = stringValue(value.resets_at) ?? stringValue(value.resetsAt);
+  const resetMilliseconds = reset ? Date.parse(reset) : Number.NaN;
+  return {
+    usedPercent,
+    windowDurationMins,
+    resetsAt: Number.isFinite(resetMilliseconds) ? resetMilliseconds / 1_000 : null,
+  };
+}
+
+function recordArray(value: unknown): DynamicRecord[] {
+  return Array.isArray(value) ? value.filter(isDynamicRecord) : [];
+}
+
+function stringValue(value: unknown): string | null {
+  return isString(value) && value.trim() ? value.trim() : null;
+}
+
+function numberValue(value: unknown): number | null {
+  return isNumber(value) && Number.isFinite(value) ? value : null;
 }
 
 class AsyncMessageQueue implements AsyncIterable<SDKUserMessage> {

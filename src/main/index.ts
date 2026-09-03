@@ -84,6 +84,7 @@ import { DEVELOPMENT_REMOTE_CLIENT_USERNAME, HostService } from "./host-service"
 import { HostedSiteDesktopService } from "./hosted-site-service";
 import {
   parseAcknowledgeFailedTurn,
+  parseAgentId,
   parseAgentRequest,
   parseApprovalResponse,
   parseBrowserTakeoverResponse,
@@ -559,10 +560,11 @@ function registerIpcHandlers(
       : remoteServers.request("/v1/agents/status", {}, serverId, decodeAgentStatus);
   });
   handleTrusted(IPC_CHANNELS.agentGetUsage, parseAgentRequest, (parsed) => {
-    const { serverId } = parsed;
-    return serverId === "local"
-      ? service.getUsage()
-      : remoteServers.request("/v1/agents/usage", {}, serverId, decodeAccountUsage);
+    const { serverId, payload } = parsed;
+    const botId = parseAgentId(payload);
+    if (serverId === "local") return service.getUsage(botId);
+    if (!remoteServers.supportsCapability(serverId, "model-scoped-usage")) return { limits: [] };
+    return remoteServers.request(`/v1/agents/${encodeURIComponent(botId)}/usage`, {}, serverId, decodeAccountUsage);
   });
   handleTrusted(IPC_CHANNELS.agentListModels, parseAgentRequest, (parsed) => {
     const { serverId } = parsed;

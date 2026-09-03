@@ -982,7 +982,7 @@ const openbotApi: OpenBotDesktopApi = {
   },
   agent: {
     getStatus: () => invokeAgent(IPC_CHANNELS.agentGetStatus, null, decodeAgentStatus),
-    getUsage: () => invokeAgent(IPC_CHANNELS.agentGetUsage, null, decodeAccountUsage),
+    getUsage: (botId) => invokeAgent(IPC_CHANNELS.agentGetUsage, botId, decodeAccountUsage),
     listModels: () => invokeAgent(IPC_CHANNELS.agentListModels, null, decodeAgentModels),
     listBots: () => invokeAgent(IPC_CHANNELS.agentListBots, null, decodeBots),
     listInstalledSkills: (botId) => invokeAgent(IPC_CHANNELS.agentListInstalledSkills, botId, decodeInstalledSkills),

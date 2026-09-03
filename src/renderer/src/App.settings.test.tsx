@@ -1,4 +1,4 @@
-import type { BotSummary } from "@openbot/contracts/ipc";
+import type { AccountUsage, BotSummary } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { expect, it, vi } from "vitest";
 import { App } from "./App";
@@ -21,6 +21,7 @@ describe("OpenBot connected desktop shell", () => {
   it("opens the dock surfaces and closes them from their own controls", async () => {
     render(() => <App />);
     await waitFor(() => expect(window.openbot.agent.getUsage).toHaveBeenCalledTimes(1));
+    expect(window.openbot.agent.getUsage).toHaveBeenCalledWith("chief");
 
     const usageButton = await screen.findByRole("button", { name: "Weekly usage, 59% left" });
     await fireEvent.click(usageButton);
@@ -58,6 +59,65 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.click(within(dialog).getByRole("button", { name: "Close settings" }));
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
+  });
+
+  it("does not present a non-weekly provider limit as weekly usage", async () => {
+    vi.mocked(window.openbot.agent.getUsage).mockResolvedValue({
+      limits: [
+        {
+          id: "claude",
+          primary: { usedPercent: 28, windowDurationMins: 300, resetsAt: null },
+          secondary: { usedPercent: 41, windowDurationMins: 43_200, resetsAt: null },
+        },
+      ],
+    });
+
+    render(() => <App />);
+
+    expect(await screen.findByRole("button", { name: "Weekly usage unavailable" })).toBeInTheDocument();
+  });
+
+  it("keeps usage scoped to the selected model when an earlier request finishes late", async () => {
+    let resolveInitialUsage!: (usage: AccountUsage) => void;
+    const initialUsageRequest = new Promise<AccountUsage>((resolve) => {
+      resolveInitialUsage = resolve;
+    });
+    vi.mocked(window.openbot.agent.getUsage)
+      .mockReturnValueOnce(initialUsageRequest)
+      .mockResolvedValueOnce({
+        limits: [
+          {
+            id: "claude",
+            primary: null,
+            secondary: { usedPercent: 82, windowDurationMins: 10_080, resetsAt: null },
+          },
+        ],
+      });
+
+    render(() => <App />);
+    await waitFor(() => expect(window.openbot.agent.getUsage).toHaveBeenCalledWith("chief"));
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Agent model: Luna" }));
+    const picker = screen.getByRole("dialog", { name: "Choose agent model" });
+    await fireEvent.click(within(picker).getByRole("tab", { name: /^Claude:/ }));
+    await fireEvent.click(within(picker).getByRole("option", { name: "Claude Opus 5, default" }));
+
+    await waitFor(() => expect(window.openbot.agent.getUsage).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole("button", { name: "Weekly usage, 18% left" })).toBeInTheDocument();
+
+    resolveInitialUsage({
+      limits: [
+        {
+          id: "codex",
+          primary: null,
+          secondary: { usedPercent: 41, windowDurationMins: 10_080, resetsAt: null },
+        },
+      ],
+    });
+    await initialUsageRequest;
+    await Promise.resolve();
+
+    expect(screen.getByRole("button", { name: "Weekly usage, 18% left" })).toBeInTheDocument();
   });
 
   it("persists every settings preference through its own IPC channel", async () => {

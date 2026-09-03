@@ -1,5 +1,5 @@
 import type { ServerSummary } from "@openbot/contracts/ipc";
-import type { TeamProtocolV3Capability } from "@openbot/contracts/team-protocol/v3";
+import type { TeamCurrentCapability } from "@openbot/contracts/team-protocol/current";
 
 /**
  * Whether a server can be asked for a capability-gated feature. A local server
@@ -9,9 +9,9 @@ import type { TeamProtocolV3Capability } from "@openbot/contracts/team-protocol/
  */
 export function serverSupportsCapability(
   server: ServerSummary | undefined,
-  capability: TeamProtocolV3Capability,
+  capability: TeamCurrentCapability,
 ): boolean {
-  if (capability === "agent-duplication" && server?.kind === "remote") {
+  if ((capability === "agent-duplication" || capability === "model-scoped-usage") && server?.kind === "remote") {
     return server.compatibility?.capabilities.includes(capability) === true;
   }
   return server?.kind !== "remote" || !server.compatibility || server.compatibility.capabilities.includes(capability);

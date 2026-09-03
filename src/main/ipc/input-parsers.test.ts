@@ -4,6 +4,7 @@ import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { describe, expect, it } from "vitest";
 import {
   parseAcknowledgeFailedTurn,
+  parseAgentId,
   parseAgentRequest,
   parseApprovalResponse,
   parseBrowserTakeoverResponse,
@@ -107,6 +108,12 @@ describe("app IPC input parsing", () => {
     expect(() => parseProfileName("a")).toThrowError(
       `name must contain ${INPUT_LIMITS.profileNameMin} to ${INPUT_LIMITS.profileName} safe characters.`,
     );
+  });
+
+  it("validates model usage agent identifiers", () => {
+    expect(parseAgentId("chief")).toBe("chief");
+    expect(() => parseAgentId(42)).toThrowError("botId is required.");
+    expect(() => parseAgentId("x".repeat(INPUT_LIMITS.identifier + 1))).toThrowError("botId is too long.");
   });
 
   it("keeps setup and permission error messages", () => {

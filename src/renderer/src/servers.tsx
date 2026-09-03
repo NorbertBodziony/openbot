@@ -1,5 +1,5 @@
 import type { HostStatus, ServerSummary } from "@openbot/contracts/ipc";
-import type { TeamProtocolV3Capability } from "@openbot/contracts/team-protocol/v3";
+import type { TeamCurrentCapability } from "@openbot/contracts/team-protocol/current";
 import { createMemo, createSignal, flush, onSettled } from "solid-js";
 import { FALLBACK_HOST_STATUS } from "./app-defaults";
 import { toast } from "./components/ui";
@@ -76,7 +76,7 @@ const Servers = createSimpleContext({
     const activeServer = createMemo(() => servers().find((server) => server.active));
     const activeServerId: () => string = createMemo((): string => activeServer()?.id ?? "local");
 
-    function activeServerSupportsCapability(capability: TeamProtocolV3Capability): boolean {
+    function activeServerSupportsCapability(capability: TeamCurrentCapability): boolean {
       return serverSupportsCapability(activeServer(), capability);
     }
 

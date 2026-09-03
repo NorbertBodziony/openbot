@@ -8,6 +8,7 @@ import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contract
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ClaudeAgentClient } from "./claude-client";
 import {
+  decodeAccountRateLimitsReadResult,
   decodeAccountReadResult,
   decodeModelListResponse,
   decodeRecordResponse,
@@ -70,6 +71,37 @@ afterEach(async () => {
 });
 
 describe("ClaudeAgentClient", () => {
+  it("prefers the active model family weekly limit and falls back to the all-model limit", async () => {
+    const usage = {
+      rate_limits_available: true,
+      rate_limits: {
+        five_hour: { utilization: 12, resets_at: "2026-09-03T16:00:00Z" },
+        seven_day: { utilization: 34, resets_at: "2026-09-08T00:00:00Z" },
+        seven_day_sonnet: { utilization: 82, resets_at: "2026-09-09T00:00:00Z" },
+      },
+    };
+    const client = new ClaudeAgentClient(
+      { executable: "/bin/true", version: "2.1.246" },
+      () => new TestQuery(new TestQueue<TestStreamMessage>(), [], usage),
+    );
+    client.start();
+
+    await expect(
+      client.request("account/rateLimits/read", { model: "claude-sonnet-4-6" }, decodeAccountRateLimitsReadResult),
+    ).resolves.toMatchObject({
+      rateLimits: {
+        primary: { usedPercent: 12, windowDurationMins: 300 },
+        secondary: { usedPercent: 82, windowDurationMins: 10_080 },
+      },
+    });
+    await expect(
+      client.request("account/rateLimits/read", { model: "claude-haiku-4-5" }, decodeAccountRateLimitsReadResult),
+    ).resolves.toMatchObject({
+      rateLimits: { secondary: { usedPercent: 34, windowDurationMins: 10_080 } },
+    });
+    await client.stop();
+  });
+
   it("restores one stable reasoning item for a multi-phase turn", async () => {
     const turnId = "8bf58506-96a8-4d96-837c-3ab807b79d1f";
     const history: SessionMessage[] = [
@@ -854,6 +886,7 @@ class TestQuery implements AsyncIterable<TestStreamMessage> {
   constructor(
     private readonly output: TestQueue<TestStreamMessage>,
     private readonly supportedModelList: ModelInfo[] | Promise<ModelInfo[]> = [],
+    private readonly usageResult: unknown = null,
   ) {}
 
   [Symbol.asyncIterator](): AsyncIterator<TestStreamMessage> {
@@ -866,6 +899,10 @@ class TestQuery implements AsyncIterable<TestStreamMessage> {
 
   async supportedModels(): Promise<ModelInfo[]> {
     return this.supportedModelList;
+  }
+
+  async usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(): Promise<unknown> {
+    return this.usageResult;
   }
 
   async setModel(model?: string): Promise<void> {

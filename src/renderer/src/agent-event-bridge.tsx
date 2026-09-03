@@ -45,7 +45,7 @@ import { useTurns } from "./turns";
 export function AgentEventBridge() {
   const platform = usePlatform();
   const { activeServerId } = useServers();
-  const { setAccountUsage } = useAuth();
+  const { invalidateAccountUsage } = useAuth();
   const { applyAgentStatus } = useProviders();
   const { botList, setModelOptions, explicitlyOpenedAgentChatId, applyStoredBots, appendUiError } = useAgents();
   const {
@@ -90,7 +90,7 @@ export function AgentEventBridge() {
         }
         return;
       case "usage-changed":
-        setAccountUsage(event.usage);
+        invalidateAccountUsage();
         return;
       case "bots-changed":
         applyStoredBots(event.bots);

@@ -35,6 +35,9 @@ interface AccountDockProps {
   appInfo: AppInfo | null;
   agentStatus: AgentStatus;
   accountUsage: AccountUsage | null;
+  usageTargetKey: string | null;
+  usageRefreshRevision: number;
+  usageReady: boolean;
   updateStatus: UpdateStatus;
   compact: boolean;
   withServerRail: boolean;
@@ -57,8 +60,9 @@ export function AccountDock(props: AccountDockProps) {
   const [menuError, setMenuError] = createSignal<string | null>(null);
   const [updateError, setUpdateError] = createSignal<string | null>(null);
   const [loggingOut, setLoggingOut] = createSignal(false);
-  let initialUsageRequested = false;
   let usageRefreshTimer: number | undefined;
+  let usageRequestGeneration = 0;
+  let usageRequestTargetKey: string | null = null;
   let legacyTrigger: HTMLButtonElement | undefined;
   let menuTrigger: HTMLButtonElement | undefined;
   let usageTrigger: HTMLButtonElement | undefined;
@@ -69,14 +73,11 @@ export function AccountDock(props: AccountDockProps) {
     () => props.account.name?.trim() || props.account.email.split("@")[0] || props.account.email,
   );
   const weeklyUsage = createMemo(() => {
-    const limit =
-      props.accountUsage?.limits.find((candidate) => candidate.id === "codex") ?? props.accountUsage?.limits[0];
-    if (!limit) return null;
-    return (
-      [limit.primary, limit.secondary].find((window) => window?.windowDurationMins === 10_080) ??
-      limit.secondary ??
-      limit.primary
-    );
+    for (const limit of props.accountUsage?.limits ?? []) {
+      const weekly = [limit.primary, limit.secondary].find((window) => isWeeklyWindow(window?.windowDurationMins));
+      if (weekly) return weekly;
+    }
+    return null;
   });
   const weeklyUsageRemaining = createMemo(() => {
     const usage = weeklyUsage();
@@ -121,10 +122,15 @@ export function AccountDock(props: AccountDockProps) {
   });
 
   createEffect(
-    () => [hybridLayout(), props.agentStatus.phase, props.accountUsage] as const,
-    ([hybrid, agentPhase, accountUsage]) => {
-      if (!hybrid || agentPhase !== "ready" || accountUsage || initialUsageRequested) return;
-      initialUsageRequested = true;
+    () => [props.usageTargetKey, props.usageReady, props.usageRefreshRevision] as const,
+    ([targetKey, ready]) => {
+      if (!targetKey || !ready) {
+        usageRequestGeneration += 1;
+        usageRequestTargetKey = null;
+        setUsageLoading(false);
+        setUsageError(null);
+        return;
+      }
       void refreshUsage();
     },
   );
@@ -147,15 +153,22 @@ export function AccountDock(props: AccountDockProps) {
   }
 
   async function refreshUsage() {
-    if (usageLoading() || props.agentStatus.phase !== "ready") return;
+    const targetKey = props.usageTargetKey;
+    if (!targetKey || !props.usageReady || (usageLoading() && usageRequestTargetKey === targetKey)) return;
+    const generation = ++usageRequestGeneration;
+    usageRequestTargetKey = targetKey;
     setUsageLoading(true);
     setUsageError(null);
     try {
       await props.onRefreshUsage();
     } catch (cause) {
-      setUsageError(cause instanceof Error ? cause.message : "Usage is unavailable.");
+      if (generation === usageRequestGeneration && props.usageTargetKey === targetKey) {
+        setUsageError(cause instanceof Error ? cause.message : "Usage is unavailable.");
+      }
     } finally {
-      setUsageLoading(false);
+      if (generation === usageRequestGeneration && props.usageTargetKey === targetKey) {
+        setUsageLoading(false);
+      }
     }
   }
 
@@ -571,4 +584,8 @@ export function AccountDock(props: AccountDockProps) {
       </Show>
     </div>
   );
+}
+
+function isWeeklyWindow(durationMins: number | null | undefined): boolean {
+  return durationMins !== null && durationMins !== undefined && Math.abs(durationMins - 10_080) <= 10_080 * 0.05;
 }

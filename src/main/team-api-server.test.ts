@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
+  AccountUsage,
   BotMemory,
   BotSummary,
   ConversationWithReadState,
@@ -1600,6 +1601,16 @@ describe("TeamApiServer administration", () => {
       messageId: "message-tagged",
       deliveries: [],
     }));
+    const usage: AccountUsage = {
+      limits: [
+        {
+          id: "codex",
+          primary: null,
+          secondary: { usedPercent: 40, windowDurationMins: 10_080, resetsAt: 1_788_825_600 },
+        },
+      ],
+    };
+    const getUsage = vi.fn(async () => usage);
     const readConversationPageFor = vi.fn(async (...args: unknown[]) => {
       const options = isDynamicRecord(args[4]) ? args[4] : {};
       const messages = localConversation.messages.filter((message) => {
@@ -1629,6 +1640,7 @@ describe("TeamApiServer administration", () => {
     }));
     const agents = createAgents({
       listBots: () => localBots,
+      getUsage,
       createBot,
       listConversationReads,
       readConversationFor: async (botId: string, _memberId: string) => ({
@@ -1679,6 +1691,14 @@ describe("TeamApiServer administration", () => {
       });
       expect(createBot).toHaveBeenCalledWith(createInput);
       await expect(jsonRequest(base, "/v1/agents", { token: login.sessionToken })).resolves.toEqual(localBots);
+      await expect(
+        jsonRequest(base, "/v1/agents/chief/usage", {
+          token: login.sessionToken,
+          capabilities: [...TEAM_CURRENT_CAPABILITIES],
+          protocol: TEAM_PROTOCOL_V3,
+        }),
+      ).resolves.toEqual(usage);
+      expect(getUsage).toHaveBeenCalledWith("chief");
       await expect(jsonRequest(base, "/v1/agents/chief/conversation", { token: login.sessionToken })).resolves.toEqual({
         ...legacyConversation,
         messages: [legacyConversation.messages[0]],
