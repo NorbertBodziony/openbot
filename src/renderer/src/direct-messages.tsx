@@ -11,6 +11,7 @@ import { desktopAnalytics } from "./analytics";
 import { preserveKnownDirectUnread } from "./conversation-read-state";
 import { usePlatform } from "./platform";
 import { usePresence } from "./presence";
+import { createScopeGuard } from "./scope-lifetime";
 import { useServers } from "./servers";
 import { createSimpleContext } from "./simple-context";
 
@@ -40,19 +41,16 @@ import { createSimpleContext } from "./simple-context";
  *   await. Those checks are what stop a read for the previous server landing on
  *   the new one; they are the idiom the keyed server scope removes later, and
  *   until then removing one is a silent cross-server bug.
- * - **`resetForServer` is the teardown slice `selectServer` runs today, copied
- *   verbatim - including what it does *not* clear.** `directConversationPages`,
+ * - **Nothing is torn down by hand.** The provider is mounted inside the keyed
+ *   server scope, so a switch disposes it outright. `directConversationPages`,
  *   `directOlderLoading`, `directOlderErrors` and `directConversationLoading`
- *   survive a server switch today. That is very likely a leak rather than a
- *   decision, but fixing it here would hide a behaviour change inside a move,
- *   so it stays and gets its own change.
+ *   used to survive a switch, which was a leak rather than a decision; they no
+ *   longer do, and that is the one behaviour this move changes.
  *
  * The load counter is a plain nonce rather than a per-member map because only
  * one direct conversation is open at a time: any newer request, for any member,
- * invalidates the one in flight. `selectServer` bumps it before it awaits
- * `servers.select`, which is why `cancelDirectConversationRequests` is exported
- * separately from `resetForServer` - the invalidation has to happen before the
- * switch, the setters only after it succeeds.
+ * invalidates the one in flight. A request left in flight by a server switch
+ * needs no nonce at all - its owner is gone.
  */
 const DirectMessages = createSimpleContext({
   name: "Direct messages",
@@ -60,6 +58,7 @@ const DirectMessages = createSimpleContext({
     const { appFocused, peopleEnabled } = usePlatform();
     const { activeServer, activeServerId, activeServerSupportsCapability } = useServers();
     const { currentTeamMember, directPeople } = usePresence();
+    const scopeIsCurrent = createScopeGuard();
 
     const [directThreads, setDirectThreads] = createSignal<DirectThreadSummary[]>([]);
     const [directConversations, setDirectConversations] = createSignal<Record<string, DirectConversationSnapshot>>({});
@@ -259,12 +258,12 @@ const DirectMessages = createSimpleContext({
       const operation: Promise<void> = previousOperation
         .catch(() => undefined)
         .then(async () => {
-          if (activeServerId() !== serverId) return;
+          if (!scopeIsCurrent()) return;
           const readState = await window.openbot.servers.markDirectRead({
             memberId,
             throughSequence: boundary,
           });
-          if (activeServerId() !== serverId) return;
+          if (!scopeIsCurrent()) return;
           setDirectConversations((current) => {
             const currentSnapshot = current[memberId];
             if (!currentSnapshot) return current;
@@ -285,7 +284,7 @@ const DirectMessages = createSimpleContext({
             queueMicrotask(() => {
               const latestVisibleSequence = directConversations()[memberId]?.messages.at(-1)?.sequence ?? boundary;
               if (
-                activeServerId() === serverId &&
+                scopeIsCurrent() &&
                 appFocused() &&
                 activeDirectMemberId() === memberId &&
                 latestVisibleSequence > boundary
@@ -400,14 +399,6 @@ const DirectMessages = createSimpleContext({
     }
 
     /** The direct-message slice of the teardown `selectServer` runs. */
-    function resetForServer(): void {
-      setActiveDirectMemberId(null);
-      setDirectConversationError(null);
-      setDirectThreads([]);
-      setDirectConversations({});
-      setDirectTypingMemberIds(new Set<string>());
-    }
-
     // A member can leave the team while their conversation is open. Dropping the
     // selection is what closes the pane; the request bump stops the load that was
     // already on its way from re-opening it.
@@ -472,7 +463,6 @@ const DirectMessages = createSimpleContext({
       setDirectTyping,
       clearDirectSelection,
       cancelDirectConversationRequests,
-      resetForServer,
     };
   },
 });

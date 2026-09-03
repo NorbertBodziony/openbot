@@ -2,7 +2,9 @@ import type { BrowserControlState, BrowserTab, ServerSummary } from "@openbot/co
 import { createSignal } from "solid-js";
 import { desktopAnalytics } from "./analytics";
 import { usePlatform } from "./platform";
+import { createScopeGuard } from "./scope-lifetime";
 import { serverSupportsCapability } from "./server-capabilities";
+import { useServerSwitch } from "./server-switch";
 import { useServers } from "./servers";
 import { createSimpleContext } from "./simple-context";
 
@@ -23,6 +25,10 @@ interface BrowserDisplayState {
  * close - and read by `beginBrowserLoad`, so a load started before either one
  * lands is discarded instead of repainting a stale list.
  *
+ * `browserVisibilitySuspended` is read here but owned by `server-switch.tsx`:
+ * it describes the gap between two server scopes, so it has to outlive both this
+ * provider and the switch that replaces it.
+ *
  * `loadDisplayState`/`loadControlState` build the reads rather than performing
  * them so their caller can put them in the same `Promise.all` as the rest of a
  * server load; both answer the empty state for a preview mount or a server
@@ -35,11 +41,12 @@ const BrowserTabs = createSimpleContext({
   name: "Browser tabs",
   init: () => {
     const { landingPreview } = usePlatform();
-    const { activeServerId, currentServerSelection } = useServers();
+    const { currentServerSelection } = useServers();
+    const { browserVisibilitySuspended } = useServerSwitch();
+    const scopeIsCurrent = createScopeGuard();
 
     const [browserTabs, setBrowserTabs] = createSignal<BrowserTab[]>([]);
     const [activeBrowserTabId, setActiveBrowserTabId] = createSignal<string | null>(null);
-    const [browserVisibilitySuspended, setBrowserVisibilitySuspended] = createSignal(false);
     const [browserControlState, setBrowserControlState] = createSignal<BrowserControlState>({ sessions: [] });
     const browserTabActivationOperations = new Map<string, Promise<void>>();
     let browserChangeRevision = 0;
@@ -103,15 +110,14 @@ const BrowserTabs = createSimpleContext({
 
     async function closeBrowserTab(tabId: string) {
       const analytics = desktopAnalytics.scope();
-      const serverId = activeServerId();
       const selectionIsCurrent = currentServerSelection();
       try {
         await browserTabActivationOperations.get(tabId)?.catch(() => undefined);
-        if (browserVisibilitySuspended() || !selectionIsCurrent() || activeServerId() !== serverId) {
+        if (browserVisibilitySuspended() || !selectionIsCurrent() || !scopeIsCurrent()) {
           return;
         }
         await window.openbot.browser.close(tabId);
-        if (activeServerId() === serverId) {
+        if (scopeIsCurrent()) {
           browserChangeRevision += 1;
           const currentTabs = browserTabs();
           const closedIndex = currentTabs.findIndex((tab) => tab.id === tabId);
@@ -136,7 +142,6 @@ const BrowserTabs = createSimpleContext({
       browserTabs,
       activeBrowserTabId,
       browserVisibilitySuspended,
-      setBrowserVisibilitySuspended,
       browserControlState,
       setBrowserControlState,
       supportsBrowser,

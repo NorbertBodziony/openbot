@@ -196,7 +196,6 @@ describe("OpenBot connected desktop shell", () => {
       connectionSequence: 1,
     };
     vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, provisional]);
-    vi.mocked(window.openbot.servers.select).mockResolvedValueOnce([local, negotiated]);
 
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
@@ -204,9 +203,11 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.browser.listTabs).not.toHaveBeenCalled();
 
     emitServers?.([local, negotiated]);
-    await waitFor(() => expect(window.openbot.servers.select).toHaveBeenCalledWith("remote-1"));
     await waitFor(() => expect(window.openbot.agent.getSidebarLayout).toHaveBeenCalled());
     expect(window.openbot.browser.listTabs).toHaveBeenCalled();
+    // The server was already active, so the workspace reloads by remounting on
+    // the completed handshake. Nothing asks main to select it a second time.
+    expect(window.openbot.servers.select).not.toHaveBeenCalled();
   });
 
   it("keeps a remote approval when Review in OpenBot switches to its host", async () => {

@@ -1127,4 +1127,42 @@ describe("OpenBot connected desktop shell", () => {
     resolveApproval?.();
     await waitFor(() => expect(screen.queryByText("Run this command?")).not.toBeInTheDocument());
   });
+
+  // A queue belongs to one server, and a server switch now discards that
+  // server's whole subtree. The only thing that can bring the queue back is the
+  // seed the rebuilt scope takes from the Dynamic Island coordinator, which
+  // lives above the switch. Nothing else asserts that work queued on a server
+  // is still queued after a visit somewhere else.
+  it("restores the queue of a server the user comes back to", async () => {
+    const local = testServer("local", true);
+    const remote = testServer("remote-1", false);
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+    vi.mocked(window.openbot.servers.select).mockImplementation(async (serverId) => [
+      { ...local, active: serverId === "local" },
+      { ...remote, active: serverId === "remote-1" },
+    ]);
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+
+    emitAgentEvent?.({
+      type: "queue-changed",
+      snapshot: {
+        botId: "chief",
+        deliveries: [
+          queuedDelivery("delivery-running", "Current work", null, { status: "starting" }),
+          queuedDelivery("delivery-next", "Next work", 1),
+        ],
+      },
+    });
+    await screen.findByRole("group", { name: "Queued message 1: Next work" });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true"),
+    );
+    expect(screen.queryByRole("group", { name: "Queued message 1: Next work" })).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Local server" }));
+    expect(await screen.findByRole("group", { name: "Queued message 1: Next work" })).toBeInTheDocument();
+  });
 });

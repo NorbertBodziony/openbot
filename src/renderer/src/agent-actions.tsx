@@ -9,6 +9,7 @@ import { useConversation } from "./conversation";
 import { agentConversationKey, deleteAgentMessageBodies } from "./conversation-keys";
 import { useDirectMessages } from "./direct-messages";
 import { useNavigation } from "./navigation";
+import { createScopeGuard } from "./scope-lifetime";
 import { useServers } from "./servers";
 import { useSidebar } from "./sidebar";
 import { createSimpleContext } from "./simple-context";
@@ -36,6 +37,7 @@ const AgentActions = createSimpleContext({
   name: "Agent actions",
   init: () => {
     const { activeServerId, activeServerSupportsCapability } = useServers();
+    const scopeIsCurrent = createScopeGuard();
     const {
       botList,
       setBotList,
@@ -107,13 +109,12 @@ const AgentActions = createSimpleContext({
     async function duplicateBot(botId: string): Promise<void> {
       if (botSetupOpen() && creatingAgent()) return;
       if (!activeServerSupportsCapability("agent-duplication") || duplicatingBotIds().has(botId)) return;
-      const serverId = activeServerId();
       const analytics = desktopAnalytics.scope();
       const properties = analyticsAgentProperties(botId);
       setDuplicatingBotIds((current) => new Set(current).add(botId));
       try {
         const result = await window.openbot.agent.duplicateBot(botId);
-        if (activeServerId() !== serverId) return;
+        if (!scopeIsCurrent()) return;
         const profile = toBotProfile(result.bot);
         setBotList((current) => [profile, ...current.filter((candidate) => candidate.id !== profile.id)]);
         setSidebarLayout(result.layout);

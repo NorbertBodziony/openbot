@@ -8,14 +8,14 @@ import type {
 import { createMemo, createSignal } from "solid-js";
 import { desktopAnalytics } from "./analytics";
 import { FALLBACK_STATUS } from "./app-defaults";
-import { botProfilesEqual, formatTime, toBotProfile } from "./app-message-projection";
+import { botProfilesEqual, toBotProfile } from "./app-message-projection";
 import { createStoredProfile, updateStored } from "./app-stored-values";
 import { createFirstBotDraft, type FirstBotDraft } from "./components/FirstBotSetup";
-import { agentConversationKey } from "./conversation-keys";
-import type { BotMessage, BotProfile } from "./data";
+import type { BotProfile } from "./data";
 import { useDirectMessages } from "./direct-messages";
 import { useServers } from "./servers";
 import { createSimpleContext } from "./simple-context";
+import { useUiErrors } from "./ui-errors";
 
 /**
  * The agents on the active server: the roster, which one is open, the provider
@@ -28,12 +28,13 @@ import { createSimpleContext } from "./simple-context";
  *   person's conversation is open, so it has to read `activeDirectMember()`;
  *   that is the whole reason this provider nests inside direct messages. Every
  *   other reader of the pair is either in this file or nested below it.
- * - **`uiErrors` and `appendUiError`.** Twenty-odd commands across conversation,
- *   turns and navigation append to it, and all of them sit below this provider.
- *   Its key is `agentConversationKey(serverId, botId)`, which is why nothing
- *   clears it on a server switch: entries for another server can never be read
- *   back. It is the inline error feed of an agent's message list, so it belongs
- *   with the agent rather than with the conversation that renders it.
+ * - **`uiErrors` and `appendUiError`, borrowed from `ui-errors.tsx`.** Twenty-odd
+ *   commands across conversation, turns and navigation append to it, and all of
+ *   them sit below this provider, so this is where they reach it. The store
+ *   itself lives above the per-server scope, because a command can outlive the
+ *   workspace that issued it - a voice message transcribed after the user has
+ *   moved on still fails against the server it was dictated on, and its error has
+ *   to be there when they come back.
  * - **`explicitlyOpenedAgentChatId`**, as an accessor pair rather than a signal.
  *   It is read inside event handling to decide whether a page the user asked
  *   for may overwrite what is on screen; making it reactive would re-run that
@@ -57,13 +58,13 @@ const Agents = createSimpleContext({
   init: () => {
     const { activeServer, activeServerId } = useServers();
     const { activeDirectMember, setDirectTyping } = useDirectMessages();
+    const { uiErrors, setUiErrors, appendUiError } = useUiErrors();
 
     const [botList, setBotList] = createSignal<BotProfile[]>([]);
     const [duplicatingBotIds, setDuplicatingBotIds] = createSignal<Set<string>>(new Set());
     const [modelOptions, setModelOptions] = createSignal<AgentModelOption[]>([]);
     const [activeBotId, setActiveBotId] = createSignal("");
     const [agentChatOpenRevision, setAgentChatOpenRevision] = createSignal(0);
-    const [uiErrors, setUiErrors] = createSignal<Record<string, BotMessage[]>>({});
     const [botSetupOpen, setBotSetupOpen] = createSignal(false);
     const [botSetupDraft, setBotSetupDraft] = createSignal<FirstBotDraft>(createFirstBotDraft());
     const [botSetupError, setBotSetupError] = createSignal<string | null>(null);
@@ -115,24 +116,6 @@ const Agents = createSimpleContext({
         setBotSetupError(null);
         setBotSetupOpen(true);
       }
-    }
-
-    function appendUiError(botId: string, error: unknown, status: string, serverId: string): void {
-      const body = error instanceof Error ? error.message : String(error);
-      const errorKey = agentConversationKey(serverId, botId);
-      setUiErrors((current) => ({
-        ...current,
-        [errorKey]: [
-          ...(current[errorKey] ?? []),
-          {
-            id: `ui-${Date.now()}-${Math.random()}`,
-            author: "bot",
-            body,
-            time: formatTime(new Date().toISOString()),
-            status,
-          },
-        ],
-      }));
     }
 
     function openBotSetup(): void {
@@ -220,20 +203,6 @@ const Agents = createSimpleContext({
       }
     }
 
-    /**
-     * The agent slice of the teardown `selectServer` runs. `uiErrors` is not in
-     * it on purpose: its keys carry the server id, so the entries of a server
-     * you left can never be read back under the one you switched to.
-     */
-    function resetForServer(): void {
-      setBotSetupOpen(false);
-      setBotSetupError(null);
-      setSettingsRequest(null);
-      setBotList([]);
-      setActiveBotId("");
-      openedAgentChatId = null;
-    }
-
     return {
       botList,
       setBotList,
@@ -269,7 +238,6 @@ const Agents = createSimpleContext({
       cancelBotSetup,
       updateBot,
       setAgentAvatar,
-      resetForServer,
     };
   },
 });

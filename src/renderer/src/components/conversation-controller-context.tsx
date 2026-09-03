@@ -1,10 +1,11 @@
 import { createContext, type ParentProps, useContext } from "solid-js";
-import type { createConversationController } from "./Conversation";
+import type { createConversationController } from "./conversation-controller";
 
 /**
- * The controller context lives outside `Conversation.tsx` so the view can read it without importing
- * `Conversation.tsx` back: `Conversation.tsx` imports the view, the view imports this module, and
- * nothing points back. Only the controller's *type* is borrowed, which the compiler erases.
+ * The controller context lives outside `conversation-controller.ts` so the view can read it without
+ * importing the controller back: `app-providers.tsx` creates the controller, the view imports this
+ * module, and nothing points back. Only the controller's *type* is borrowed, which the compiler
+ * erases.
  */
 export type ConversationController = ReturnType<typeof createConversationController>;
 

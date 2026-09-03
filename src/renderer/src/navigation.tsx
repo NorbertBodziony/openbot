@@ -8,6 +8,7 @@ import type { BotMessage } from "./data";
 import { useDirectMessages } from "./direct-messages";
 import { usePlatform } from "./platform";
 import { usePresence } from "./presence";
+import { createScopeGuard } from "./scope-lifetime";
 import { useServers } from "./servers";
 import { createSimpleContext } from "./simple-context";
 
@@ -50,6 +51,7 @@ const Navigation = createSimpleContext({
       appendUiError,
     } = useAgents();
     const { setDirectTyping, clearDirectSelection, openDirectConversation } = useDirectMessages();
+    const scopeIsCurrent = createScopeGuard();
     const {
       pruneInactiveAgentHistory,
       clearReplyIndicators,
@@ -125,7 +127,7 @@ const Navigation = createSimpleContext({
     async function openAgentMessage(botId: string, messageId: string): Promise<void> {
       const serverId = activeServerId();
       await Promise.resolve();
-      if (activeServerId() !== serverId) return;
+      if (!scopeIsCurrent()) return;
       const request = (conversationPageRequests.get(botId) ?? 0) + 1;
       conversationPageRequests.set(botId, request);
       try {
@@ -134,7 +136,7 @@ const Navigation = createSimpleContext({
           anchor: { type: "around", messageId },
           limit: 50,
         });
-        if (conversationPageRequests.get(botId) !== request || activeServerId() !== serverId) return;
+        if (conversationPageRequests.get(botId) !== request || !scopeIsCurrent()) return;
         if (!page.messages.some((message) => message.id === messageId)) {
           throw new Error("This message is no longer available.");
         }
@@ -143,13 +145,13 @@ const Navigation = createSimpleContext({
         try {
           let readBoundary = page.messages.at(-1)?.id ?? messageId;
           try {
-            if (activeServerId() !== serverId) return;
+            if (!scopeIsCurrent()) return;
             const latestPage = await window.openbot.agent.readConversationPage({
               botId,
               anchor: { type: "latest" },
               limit: 1,
             });
-            if (activeServerId() !== serverId) return;
+            if (!scopeIsCurrent()) return;
             readBoundary = latestPage.messages.at(-1)?.id ?? readBoundary;
           } catch {
             // The focused page still gives us a safe read boundary when the latest-page refresh fails.

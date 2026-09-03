@@ -3,7 +3,8 @@ import { createEffect, createMemo, createSignal } from "solid-js";
 import { useAgents } from "./agents";
 import { desktopAnalytics } from "./analytics";
 import { agentConversationKey, promptRequestKey } from "./conversation-keys";
-import type { DynamicIslandPresentationInput } from "./dynamic-island-presentation";
+import { useDynamicIsland } from "./dynamic-island";
+import { createScopeGuard } from "./scope-lifetime";
 import { useServers } from "./servers";
 import { createSimpleContext } from "./simple-context";
 
@@ -11,24 +12,16 @@ type PromptEvent = Extract<AgentEvent, { type: "prompt" }>;
 type BrowserTakeoverEvent = Extract<AgentEvent, { type: "browser-takeover-requested" }>;
 
 /**
- * The slice of per-server state `DynamicIslandCoordinator.serverState` restores.
- * Taken from the coordinator's own input type so the two cannot drift.
- */
-type ServerTurnState = Pick<
-  DynamicIslandPresentationInput,
-  "activeTurns" | "queues" | "pendingPrompts" | "pendingApprovals" | "failedTurns"
->;
-
-/**
  * What each agent is *doing*: the turn it is running, the queue behind it, and
  * the prompt or approval it is blocked on.
  *
  * This is the one domain inside the per-server subtree whose state survives a
- * server switch. `DynamicIslandCoordinator` keeps five of these maps per server
- * and hands them back through `serverState(serverId)`, so `resetForServer` takes
- * that snapshot as its seed instead of clearing to empty. Keeping turns separate
- * from `conversation` is what keeps that seam visible - mixed together, the one
- * layer that is restored would be indistinguishable from the ones that are not.
+ * server switch. `DynamicIslandCoordinator` lives above the keyed boundary,
+ * keeps five of these maps per server and hands them back through
+ * `serverState(serverId)`, so this provider seeds from that snapshot on mount
+ * instead of starting empty. Keeping turns separate from `conversation` is what
+ * keeps that seam visible - mixed together, the one layer that is restored
+ * would be indistinguishable from the ones that are not.
  *
  * Two placements deviate from the plan's inventory, both for the same reason -
  * the edge only points one way:
@@ -43,32 +36,37 @@ type ServerTurnState = Pick<
  *   has already persisted. It moves to `conversation` with that state.
  *
  * `completedTurnByBot`, `routineIdsByConversation`, `presentedPromptResolutions`
- * and `submittedPromptRequests` are deliberately *not* cleared by
- * `resetForServer`: today's `selectServer` does not clear them either, and this
- * module copies that teardown verbatim. `completedTurnByBot` in particular grows
- * for the life of the process. Bot ids are `bot-${uuid}`, so cross-server
- * collision is not a live bug, but the growth is real and gets its own change.
+ * and `submittedPromptRequests` used to survive a switch because nobody cleared
+ * them; they now die with the scope, which is the teardown the old list of
+ * setters kept forgetting. `completedTurnByBot` had grown for the life of the
+ * process.
  */
 const Turns = createSimpleContext({
   name: "Turns",
   init: () => {
     const { activeServerId } = useServers();
+    const { dynamicIslandCoordinator } = useDynamicIsland();
     const { activeBot, activeBotId, agentStatus, appendUiError } = useAgents();
+    const scopeIsCurrent = createScopeGuard();
 
-    const [activeTurns, setActiveTurns] = createSignal<Record<string, string | null>>({});
-    const [failedTurns, setFailedTurns] = createSignal<Record<string, string | undefined>>({});
-    const [queues, setQueues] = createSignal<Record<string, QueueSnapshot>>({});
+    // The layer-2 seed: what this server was doing the last time it was open.
+    const seed = dynamicIslandCoordinator.serverState(activeServerId());
+    const [activeTurns, setActiveTurns] = createSignal<Record<string, string | null>>(seed?.activeTurns ?? {});
+    const [failedTurns, setFailedTurns] = createSignal<Record<string, string | undefined>>(seed?.failedTurns ?? {});
+    const [queues, setQueues] = createSignal<Record<string, QueueSnapshot>>(seed?.queues ?? {});
     const [routineIdsByConversation, setRoutineIdsByConversation] = createSignal<Record<string, string[] | undefined>>(
       {},
     );
     const [pendingPrompts, setPendingPrompts] = createSignal<
       Record<string, PromptEvent | BrowserTakeoverEvent | undefined>
-    >({});
+    >(seed?.pendingPrompts ?? {});
     const [presentedPromptResolutions, setPresentedPromptResolutions] = createSignal<
       Record<string, string | undefined>
     >({});
     const [submittedPromptRequests, setSubmittedPromptRequests] = createSignal<Record<string, string | undefined>>({});
-    const [pendingApprovals, setPendingApprovals] = createSignal<Record<string, AgentApproval | undefined>>({});
+    const [pendingApprovals, setPendingApprovals] = createSignal<Record<string, AgentApproval | undefined>>(
+      seed?.pendingApprovals ?? {},
+    );
     const completedTurnByBot = new Map<string, string>();
     const queueSnapshotRequests = new Map<string, number>();
     const routineSnapshotRequests = new Map<string, number>();
@@ -103,11 +101,11 @@ const Turns = createSimpleContext({
         void window.openbot.agent
           .listQueue(botId)
           .then((queue) => {
-            if (activeServerId() !== serverId || queueSnapshotRequests.get(botId) !== queueRequest) return;
+            if (!scopeIsCurrent() || queueSnapshotRequests.get(botId) !== queueRequest) return;
             setQueues((current) => ({ ...current, [botId]: queue }));
           })
           .catch((error) => {
-            if (activeServerId() === serverId) appendUiError(botId, error, "Queue load failed", serverId);
+            if (scopeIsCurrent()) appendUiError(botId, error, "Queue load failed", serverId);
           });
       },
     );
@@ -310,14 +308,6 @@ const Turns = createSimpleContext({
      * `undefined` for a server the coordinator has not seen. Each field falls
      * back to empty, exactly as `selectServer` did inline.
      */
-    function resetForServer(seed?: ServerTurnState | null): void {
-      setActiveTurns(seed?.activeTurns ?? {});
-      setQueues(seed?.queues ?? {});
-      setPendingPrompts(seed?.pendingPrompts ?? {});
-      setPendingApprovals(seed?.pendingApprovals ?? {});
-      setFailedTurns(seed?.failedTurns ?? {});
-    }
-
     return {
       activeTurns,
       setActiveTurns,
@@ -347,7 +337,6 @@ const Turns = createSimpleContext({
       updateQueuedMessage,
       reorderQueue,
       stopActiveTurn,
-      resetForServer,
     };
   },
 });

@@ -33,8 +33,8 @@ import { createSimpleContext } from "./simple-context";
  * Those three are stored per server and read under `activeServerId()`, so they
  * are *not* torn down on a switch: `localStorage` holds every server's
  * arrangement at once and switching back has to restore it. The layout is the
- * opposite - it belongs to the host and is refetched - which is why
- * `resetForServer` clears that one signal and nothing else.
+ * opposite - it belongs to the host, is refetched on every mount of the keyed
+ * server scope, and so is the only piece of this module a switch discards.
  *
  * `removePinnedItemEverywhere` is the one write that ignores the active server.
  * A deleted agent has to lose its pin on every server that pinned it, because
@@ -145,10 +145,6 @@ const Sidebar = createSimpleContext({
       });
     }
 
-    function resetForServer(): void {
-      setSidebarLayout(defaultSidebarLayout());
-    }
-
     return {
       sidebarLayout,
       setSidebarLayout,
@@ -163,7 +159,6 @@ const Sidebar = createSimpleContext({
       removePinnedSidebarItemEverywhere,
       sidebarPeopleOrder,
       reorderSidebarPeople,
-      resetForServer,
     };
   },
 });

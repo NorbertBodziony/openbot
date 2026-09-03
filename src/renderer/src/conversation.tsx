@@ -7,6 +7,7 @@ import type {
 } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { cleanAgentMessageText } from "./agent-message-text";
+import { useAgentReadTracking } from "./agent-read-tracking";
 import { useAgents } from "./agents";
 import { desktopAnalytics } from "./analytics";
 import {
@@ -19,7 +20,6 @@ import {
 import { createStoredMessage, updateStored } from "./app-stored-values";
 import { agentConversationKey, agentMessageKey, messagePromptRequestKey, promptRequestKey } from "./conversation-keys";
 import {
-  type AgentAutoReadEntry,
   appliedConversationRevision,
   decideAgentAutoRead,
   latestIncomingConversationMessage,
@@ -31,8 +31,10 @@ import {
 import type { BotMessage } from "./data";
 import { useDirectMessages } from "./direct-messages";
 import { usePlatform } from "./platform";
+import { createScopeGuard } from "./scope-lifetime";
 import { useServers } from "./servers";
 import { createSimpleContext } from "./simple-context";
+import { notifyTeamTyping } from "./team-typing";
 import { useTurns } from "./turns";
 
 /**
@@ -66,19 +68,26 @@ import { useTurns } from "./turns";
  *   `agentChatsToRetryRead` is what makes the next page apply the read it could
  *   not apply the first time.
  *
- * `resetForServer` is the slice of `selectServer`'s teardown that belongs here,
- * moved across unchanged. It deliberately clears less than everything: the
- * queued-read sets (`agentChatsToMarkRead`, `agentChatsToRetryRead`,
- * `autoReadAgentMessages`) and the page caches survive a switch, because two
- * read-state tests turn on a read queued on one server still being retried when
- * the user comes back to it. Keyed scoping in a later step replaces the list;
- * widening it here would change behaviour under cover of a move.
+ * Everything here lives and dies with one server: the provider is mounted inside
+ * the keyed scope, so a switch disposes it and the next mount starts from an
+ * empty conversation cache. There is no teardown list to keep in step, which is
+ * the point - the twenty setters `selectServer` used to run are now the absence
+ * of an owner rather than a sequence someone has to remember to extend.
+ *
+ * The three sets that track an *unsettled* read are the exception, and they are
+ * borrowed from `agent-read-tracking.tsx` rather than owned here. A read is
+ * issued against a named server and can still be in flight when the user leaves
+ * it, so its retry marker has to survive the switch to be found on the way back.
+ * `agentChatsRetriedOnOpen` is the one that stays, because it is keyed by bot id
+ * alone and describes this open rather than that read.
  */
 const Conversation = createSimpleContext({
   name: "Conversation",
   init: () => {
     const { appFocused } = usePlatform();
     const { activeServerId } = useServers();
+    const { agentChatsToMarkRead, agentChatsToRetryRead, autoReadAgentMessages } = useAgentReadTracking();
+    const scopeIsCurrent = createScopeGuard();
     const { activeDirectMemberId } = useDirectMessages();
     const {
       activeBot,
@@ -120,10 +129,7 @@ const Conversation = createSimpleContext({
     const [recentReplies, setRecentReplies] = createSignal<Record<string, boolean>>({});
 
     const pendingConversationSnapshots = new Map<string, ConversationSnapshot>();
-    const agentChatsToMarkRead = new Set<string>();
     const agentChatsRetriedOnOpen = new Set<string>();
-    const autoReadAgentMessages = new Map<string, AgentAutoReadEntry>();
-    const agentChatsToRetryRead = new Set<string>();
     const conversationPageRequests = new Map<string, number>();
     const conversationReadOperations = new Map<string, Promise<void>>();
 
@@ -153,7 +159,7 @@ const Conversation = createSimpleContext({
         void window.openbot.agent
           .readConversationPage({ botId, anchor: { type: "latest" }, limit: 50 }, serverId)
           .then((page) => {
-            if (activeServerId() !== serverId || conversationPageRequests.get(botId) !== pageRequest) return;
+            if (!scopeIsCurrent() || conversationPageRequests.get(botId) !== pageRequest) return;
             const pageApplied = applyConversationPage(page, "replace", "latest");
             if (!pageApplied) {
               if (agentChatsToMarkRead.has(trackingKey)) {
@@ -179,7 +185,7 @@ const Conversation = createSimpleContext({
             }
           })
           .catch((error) => {
-            if (activeServerId() !== serverId || conversationPageRequests.get(botId) !== pageRequest) return;
+            if (!scopeIsCurrent() || conversationPageRequests.get(botId) !== pageRequest) return;
             appendUiError(botId, error, "Load failed", serverId);
             if (agentChatsToMarkRead.delete(trackingKey)) markLatestVisibleAgentMessageRead(botId, serverId);
           });
@@ -227,9 +233,20 @@ const Conversation = createSimpleContext({
       return appFocused() && isAgentChatOpen(botId);
     }
 
+    /**
+     * The fallback for an open whose page never arrived: mark whatever the user
+     * can actually see.
+     *
+     * It is skipped when an optimistic read already names the same boundary,
+     * because that read is the same request - either still in flight or already
+     * settled - and asking again would only chain a second identical call behind
+     * it. The two arrive together whenever a live event advances the chat while
+     * the open's page is still on the wire, which is a race, not a rare case.
+     */
     function markLatestVisibleAgentMessageRead(botId: string, serverId: string): void {
       const latestMessageId = latestVisibleAgentMessageId(liveMessages()[botId]);
       if (!latestMessageId) return;
+      if (autoReadAgentMessages.get(agentConversationKey(serverId, botId))?.messageId === latestMessageId) return;
       void markAgentMessagesRead(botId, latestMessageId, serverId).catch((error) =>
         appendUiError(botId, error, "Read state failed", serverId),
       );
@@ -244,7 +261,7 @@ const Conversation = createSimpleContext({
     ): void {
       const trackingKey = agentConversationKey(serverId, botId);
       const applyFallback = () => {
-        if (activeServerId() !== serverId || autoReadAgentMessages.has(trackingKey) || !fallbackState) return;
+        if (!scopeIsCurrent() || autoReadAgentMessages.has(trackingKey) || !fallbackState) return;
         const latest = conversationReads()[botId];
         if (latest?.unreadCount === 0 && latest.throughMessageId === messageId) {
           applyConversationReadState(botId, fallbackState);
@@ -254,7 +271,7 @@ const Conversation = createSimpleContext({
         .readConversationPage({ botId, anchor: { type: "latest" }, limit: 1 }, serverId)
         .then((page) => {
           if (
-            activeServerId() !== serverId ||
+            !scopeIsCurrent() ||
             autoReadAgentMessages.has(trackingKey) ||
             page.revision < minimumRevision ||
             !page.readState
@@ -297,7 +314,7 @@ const Conversation = createSimpleContext({
         if (autoReadAgentMessages.get(trackingKey)?.messageId !== messageId) return;
         autoReadAgentMessages.delete(trackingKey);
         agentChatsToRetryRead.add(trackingKey);
-        if (activeServerId() !== serverId) return;
+        if (!scopeIsCurrent()) return;
         refreshAgentReadStateAfterFailure(
           botId,
           messageId,
@@ -651,7 +668,7 @@ const Conversation = createSimpleContext({
       serverId = activeServerId(),
       onSuccess?: (state: ConversationReadState) => void,
     ): Promise<void> {
-      if (!botId || activeServerId() !== serverId) return;
+      if (!botId || !scopeIsCurrent()) return;
       const requestKey = agentConversationKey(serverId, botId);
       const visibleMessageIdAtStart = latestVisibleAgentMessageId(liveMessages()[botId]);
       const boundary =
@@ -678,14 +695,14 @@ const Conversation = createSimpleContext({
           onSuccess?.(nextState);
           const trackedAutoRead = autoReadAgentMessages.get(requestKey);
           const supersededByAutoRead = Boolean(trackedAutoRead && trackedAutoRead.messageId !== boundary);
-          if (activeServerId() === serverId && !supersededByAutoRead) {
+          if (scopeIsCurrent() && !supersededByAutoRead) {
             applyConversationReadState(botId, nextState);
             if (nextState.unreadCount === 0) clearRecentReply(botId);
           }
           const latestMessageId = latestVisibleAgentMessageId(liveMessages()[botId]);
           if (
             conversationReadOperations.get(requestKey) === operation &&
-            activeServerId() === serverId &&
+            scopeIsCurrent() &&
             isAgentChatReadable(botId) &&
             latestMessageId &&
             latestMessageId !== boundary &&
@@ -694,7 +711,7 @@ const Conversation = createSimpleContext({
             queueMicrotask(() => {
               const latestVisibleMessageId = latestVisibleAgentMessageId(liveMessages()[botId]);
               if (
-                activeServerId() === serverId &&
+                scopeIsCurrent() &&
                 isAgentChatReadable(botId) &&
                 latestVisibleMessageId &&
                 latestVisibleMessageId !== boundary &&
@@ -737,12 +754,6 @@ const Conversation = createSimpleContext({
       setPresentedPromptResolutions((current) => ({ ...current, [botId]: requestKey }));
     }
 
-    function setTeamTyping(botId: string, typing: boolean): void {
-      void window.openbot.servers.setTyping({ botId: typing ? botId : null, typing }).catch(() => {
-        // Typing state is optional and must not interrupt message composition.
-      });
-    }
-
     // The scheduler holds a frame handle across the microtask boundary, so the
     // provider owns cancelling it. Nothing else here needs teardown.
     onCleanup(() => {
@@ -757,17 +768,6 @@ const Conversation = createSimpleContext({
      * alone, so clearing them is what keeps a streaming body or an in-flight
      * page request from crossing servers.
      */
-    function resetForServer(): void {
-      setLiveMessages({});
-      rawAgentMessageBodies.clear();
-      setConversationLoaded({});
-      setConversationRevisions({});
-      setConversationReads({});
-      setConversationWindowModes({});
-      setUnreadReplies({});
-      agentChatsRetriedOnOpen.clear();
-    }
-
     return {
       liveMessages,
       setLiveMessages,
@@ -814,8 +814,7 @@ const Conversation = createSimpleContext({
       sendMessage,
       markAgentMessagesRead,
       presentPromptResolution,
-      setTeamTyping,
-      resetForServer,
+      setTeamTyping: notifyTeamTyping,
     };
   },
 });
