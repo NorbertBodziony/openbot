@@ -480,7 +480,7 @@ describe("OpenBot connected desktop shell", () => {
       ],
     });
 
-    expect(await screen.findByRole("status", { name: "Chief is working" })).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: /^Chief is working:/ })).toBeInTheDocument();
     expect(await screen.findByRole("textbox", { name: "Custom answer for: Which scope?" })).toBeInTheDocument();
 
     const runtimeSnapshot: AgentEvent = {
@@ -499,7 +499,7 @@ describe("OpenBot connected desktop shell", () => {
     };
     emitAgentEvent?.(runtimeSnapshot);
 
-    expect(screen.getByRole("status", { name: "Chief is working" })).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: /^Chief is working:/ })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "Custom answer for: Which scope?" })).toBeInTheDocument();
 
     emitAgentEvent?.({
@@ -509,7 +509,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(screen.queryByRole("textbox", { name: "Custom answer for: Which scope?" })).not.toBeInTheDocument(),
     );
-    await waitFor(() => expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("status", { name: /^Chief is working:/ })).not.toBeInTheDocument());
   });
 
   it("shows live provider-neutral progress and streamed commentary while an agent works", async () => {
@@ -537,7 +537,7 @@ describe("OpenBot connected desktop shell", () => {
     } satisfies ConversationMessage;
 
     emitAgentEvent?.(conversation(1, "turn-live-status", [userMessage]));
-    expect(await screen.findByRole("status", { name: "Chief is working" })).toBeInTheDocument();
+    expect(await screen.findByRole("status", { name: /^Chief is working:/ })).toBeInTheDocument();
 
     emitAgentEvent?.({
       type: "turn-progress",
@@ -597,6 +597,20 @@ describe("OpenBot connected desktop shell", () => {
         "Verifying the final build artifacts",
       ),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("status", { name: "Chief is working: Verifying the final build artifacts" }),
+    ).toBeInTheDocument();
+
+    emitAgentEvent?.({
+      type: "turn-progress",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-live-status",
+      detail: "Reviewing the verification results…",
+    });
+    expect(
+      screen.getByRole("status", { name: "Chief is working: Verifying the final build artifacts" }),
+    ).toBeInTheDocument();
 
     emitAgentEvent?.({
       type: "turn-completed",
@@ -606,7 +620,7 @@ describe("OpenBot connected desktop shell", () => {
       status: "completed",
     });
     emitAgentEvent?.(conversation(5, null, [userMessage, { ...firstCommentary, status: "completed" }]));
-    await waitFor(() => expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("status", { name: /^Chief is working:/ })).not.toBeInTheDocument());
   });
 
   it("merges compact runtime attention into the active server", async () => {

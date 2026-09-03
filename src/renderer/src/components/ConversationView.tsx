@@ -708,7 +708,6 @@ function createConversationViewScope(props: ConversationProps) {
     return `${botId}:message:${streamingMessage.id}`;
   });
   const activeActivityDetail = createMemo(() => {
-    if (props.activityDetail?.trim()) return props.activityDetail.trim();
     const turnId = props.activeTurnId ?? activeDeliveries()[0]?.turnId ?? null;
     let streamingFallback: string | null = null;
     for (let index = props.messages.length - 1; index >= 0; index -= 1) {
@@ -722,7 +721,7 @@ function createConversationViewScope(props: ConversationProps) {
       if (turnId && message.turnId === turnId) return detail;
       if (message.streaming && streamingFallback === null) streamingFallback = detail;
     }
-    return streamingFallback;
+    return props.activityDetail?.trim() || streamingFallback;
   });
   const agentActivity = createMemo<"Working" | null>(() => (activeActivityId() ? "Working" : null));
   const activityPresentation = createMemo<AgentActivityPresentation | null>(() => {
