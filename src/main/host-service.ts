@@ -377,7 +377,10 @@ export class HostService extends EventEmitter<HostEvents> {
       });
       if (await this.#cancelSupersededStart(generation)) return this.getStatus();
       if (this.#options.listRemoteMembers) {
-        await this.#options.store.syncRemoteDirectory(await this.#options.listRemoteMembers(identity.serverId));
+        await this.#options.store.syncRemoteDirectory(
+          identity.serverId,
+          await this.#options.listRemoteMembers(identity.serverId),
+        );
         if (await this.#cancelSupersededStart(generation)) return this.getStatus();
       }
       const bootstrap = await this.#options.issueRemoteHostTicket(identity.serverId);
@@ -481,7 +484,7 @@ export class HostService extends EventEmitter<HostEvents> {
     const hostId = this.#options.store.getIdentity()?.serverId;
     if (hostId && this.#options.listRemoteMembers) {
       return this.#options.listRemoteMembers(hostId).then(async (members) => {
-        await this.#options.store.syncRemoteDirectory(members);
+        await this.#options.store.syncRemoteDirectory(hostId, members);
         return members.map((member) => ({
           id: member.membershipId,
           username: member.email,
@@ -604,7 +607,7 @@ export class HostService extends EventEmitter<HostEvents> {
       const members = await this.#options.listRemoteMembers(hostId);
       const updated = members.find((member) => member.membershipId === input.memberId);
       if (!updated) throw new Error("The remote member does not exist.");
-      await this.#options.store.syncRemoteDirectory(members);
+      await this.#options.store.syncRemoteDirectory(hostId, members);
       return {
         id: updated.membershipId,
         username: updated.email,
@@ -630,7 +633,7 @@ export class HostService extends EventEmitter<HostEvents> {
     if (hostId && this.#options.removeRemoteMember) {
       await this.#options.removeRemoteMember(hostId, memberId);
       if (this.#options.listRemoteMembers) {
-        await this.#options.store.syncRemoteDirectory(await this.#options.listRemoteMembers(hostId));
+        await this.#options.store.syncRemoteDirectory(hostId, await this.#options.listRemoteMembers(hostId));
       }
       return;
     }

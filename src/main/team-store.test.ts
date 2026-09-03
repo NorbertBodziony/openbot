@@ -213,7 +213,7 @@ describe("TeamStore", () => {
     });
     const ownerMembershipId = store.getOwnerMemberId();
     expect(ownerMembershipId).toBeTruthy();
-    await store.syncRemoteDirectory([
+    await store.syncRemoteDirectory(store.getIdentity()?.serverId ?? "missing-host", [
       {
         membershipId: ownerMembershipId ?? "missing-owner",
         email: "owner@example.com",
@@ -269,7 +269,7 @@ describe("TeamStore", () => {
       avatarUrl: null,
     });
     const previousOwnerId = store.getOwnerMemberId();
-    await store.syncRemoteDirectory([
+    await store.syncRemoteDirectory(store.getIdentity()?.serverId ?? "missing-host", [
       {
         membershipId: "host-1:owner",
         email: "owner@example.com",
@@ -296,7 +296,7 @@ describe("TeamStore", () => {
       avatarUrl: null,
     });
     const ownerMembershipId = store.getOwnerMemberId();
-    await store.syncRemoteDirectory([
+    await store.syncRemoteDirectory(store.getIdentity()?.serverId ?? "missing-host", [
       {
         membershipId: ownerMembershipId ?? "missing-owner",
         email: "owner@example.com",
@@ -455,6 +455,33 @@ describe("TeamStore", () => {
 
     await restarted.activateAccount(owner);
     expect(restarted.getIdentity()?.serverId).toBe(identity.serverId);
+  });
+
+  it("refuses a remote directory loaded for a host that is no longer active", async () => {
+    const { store } = await createStore();
+    const first = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
+    const second = { id: "account-b", email: "b@example.com", name: "B", avatarUrl: null };
+    const firstIdentity = await store.configureWithAccount("Studio Mac", first);
+
+    await store.activateAccount(second);
+    await store.configureWithAccount("Loft Mini", second);
+    const ownerMemberId = store.getOwnerMemberId();
+
+    await expect(
+      store.syncRemoteDirectory(firstIdentity.serverId, [
+        {
+          membershipId: "account-a-owner",
+          email: "a@example.com",
+          name: "A",
+          avatarUrl: null,
+          role: "owner",
+          status: "active",
+          createdAt: 1_900_000_000_000,
+        },
+      ]),
+    ).rejects.toThrow("no longer the active one");
+    expect(store.getOwnerMemberId()).toBe(ownerMemberId);
+    expect(store.listMembers().map((member) => member.email)).toEqual(["b@example.com"]);
   });
 
   it("adopts a host configured before accounts existed and records its owner", async () => {

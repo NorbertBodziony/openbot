@@ -438,8 +438,16 @@ export class TeamStore {
     return members;
   }
 
-  async syncRemoteDirectory(remoteMembers: RemoteDirectoryMember[]): Promise<void> {
+  /**
+   * `serverId` names the host the caller loaded this directory for. Signing into another
+   * account swaps the active host, so a directory that was already in flight would
+   * otherwise rewrite the new account's owner membership and disable its members.
+   */
+  async syncRemoteDirectory(serverId: string, remoteMembers: RemoteDirectoryMember[]): Promise<void> {
     const state = this.#requireState();
+    if (state.serverId !== serverId) {
+      throw new TeamStoreError("This server is no longer the active one for the signed-in account.");
+    }
     const remoteOwner = remoteMembers.find((member) => member.role === "owner");
     const localOwner = state.members.find((member) => member.role === "owner");
     if (remoteOwner && localOwner && remoteOwner.membershipId !== localOwner.id) {
