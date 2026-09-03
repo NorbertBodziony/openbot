@@ -12,9 +12,10 @@
 // calls contextBridge.exposeInMainWorld at module scope and exports nothing.
 // Reading the sources is safe here because a channel name is never written as a
 // literal on either side - every reference goes through IPC_CHANNELS. Two tests
-// below keep that true rather than assumed: one rejects a known call that takes
-// a string channel, which the scan would otherwise not see at all, and one
-// rejects an IPC_CHANNELS reference the scan cannot attribute to a known call.
+// below keep that true rather than assumed: one reads the channel argument of
+// every known call and rejects anything but a direct IPC_CHANNELS reference, so
+// a string or a variable cannot slip an endpoint past the scan, and one rejects
+// an IPC_CHANNELS reference no known call reads.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -33,48 +34,70 @@ const PRELOAD_UNSUBSCRIBE_CALLEES = ["ipcRenderer.removeListener", "ipcRenderer.
 
 const declaredChannels = Object.keys(IPC_CHANNELS).sort();
 
+// Two of the calls address a recipient before the channel: sendToRenderer takes
+// the target window, invokeAgentForServer the server id.
+const CHANNEL_AFTER_RECIPIENT = ["sendToRenderer", "invokeAgentForServer"];
+
+// Every call shape the scan knows, with the position its channel argument sits in.
+const CHANNEL_ARGUMENT_POSITION: ReadonlyMap<string, number> = new Map(
+  [
+    ...MAIN_HANDLER_CALLEES,
+    ...MAIN_SEND_CALLEES,
+    ...PRELOAD_INVOKE_CALLEES,
+    ...PRELOAD_SUBSCRIBE_CALLEES,
+    ...PRELOAD_UNSUBSCRIBE_CALLEES,
+  ].map((callee): readonly [string, number] => [callee, CHANNEL_AFTER_RECIPIENT.includes(callee) ? 1 : 0]),
+);
+
+const CHANNEL_REFERENCE = /^IPC_CHANNELS\.([A-Za-z0-9_]+)$/;
+
+const sources = new Map<string, string>();
+
 const mainSources = sourceFilesUnder("src/main");
 const preloadSources = ["src/preload/index.ts"];
 
-const mainReferences = collectReferences(mainSources);
-const preloadReferences = collectReferences(preloadSources);
+// The preload's agent helpers take the channel as a parameter and pass it on,
+// so the forwarding call names a variable by design. Their own call sites carry
+// the IPC_CHANNELS reference and are what the scan checks, which is why the
+// helpers are listed as callees above.
+const FORWARDED_CHANNEL_ARGUMENTS: readonly string[] = [
+  "src/preload/index.ts: invokeAgentForServer(channel)",
+  "src/preload/index.ts: ipcRenderer.invoke(channel)",
+];
 
-const handled = channelsCalledBy(mainReferences, MAIN_HANDLER_CALLEES);
-const sent = channelsCalledBy(mainReferences, MAIN_SEND_CALLEES);
-const invoked = channelsCalledBy(preloadReferences, PRELOAD_INVOKE_CALLEES);
-const subscribed = channelsCalledBy(preloadReferences, PRELOAD_SUBSCRIBE_CALLEES);
-const unsubscribed = channelsCalledBy(preloadReferences, PRELOAD_UNSUBSCRIBE_CALLEES);
+const mainCalls = collectCalls(mainSources);
+const preloadCalls = collectCalls(preloadSources);
+
+const handled = channelsCalledBy(mainCalls, MAIN_HANDLER_CALLEES);
+const sent = channelsCalledBy(mainCalls, MAIN_SEND_CALLEES);
+const invoked = channelsCalledBy(preloadCalls, PRELOAD_INVOKE_CALLEES);
+const subscribed = channelsCalledBy(preloadCalls, PRELOAD_SUBSCRIBE_CALLEES);
+const unsubscribed = channelsCalledBy(preloadCalls, PRELOAD_UNSUBSCRIBE_CALLEES);
 
 describe("IPC channel coverage", () => {
-  // A pattern that matches nothing is green and enforces nothing. This runs
-  // first because every assertion below is only as complete as the scan: a new
-  // helper, or a call shape the scan does not know, would otherwise quietly
-  // shrink the sets being compared instead of failing.
-  it("attributes every IPC_CHANNELS reference in the main process and the preload to a known call", () => {
-    const known = new Set([
-      ...MAIN_HANDLER_CALLEES,
-      ...MAIN_SEND_CALLEES,
-      ...PRELOAD_INVOKE_CALLEES,
-      ...PRELOAD_SUBSCRIBE_CALLEES,
-      ...PRELOAD_UNSUBSCRIBE_CALLEES,
-    ]);
-    const unknown = [...mainReferences, ...preloadReferences]
-      .filter((reference) => !known.has(reference.callee))
-      .map((reference) => `${reference.file}: ${reference.callee}(IPC_CHANNELS.${reference.channel})`);
+  // Every assertion below is only as complete as the scan, so these two run
+  // first. This one reads each known call's channel argument and demands a
+  // direct IPC_CHANNELS reference: a string names a channel the contract never
+  // declared, and a variable hides the wire endpoint from the scan entirely.
+  // Either way the call would contribute nothing to the sets compared below
+  // while sitting on the trust boundary, so it fails here instead.
+  it("names every channel through a direct IPC_CHANNELS reference", () => {
+    const opaque = [...mainCalls, ...preloadCalls]
+      .filter((call) => !CHANNEL_REFERENCE.test(call.argument))
+      .map((call) => `${call.file}: ${call.callee}(${call.argument})`)
+      .filter((site) => !FORWARDED_CHANNEL_ARGUMENTS.includes(site))
+      .sort();
 
-    expect(unknown).toEqual([]);
+    expect(opaque).toEqual([]);
   });
 
-  // The scan finds channels through IPC_CHANNELS references, so a call that
-  // names its channel as a string instead is not an unattributed reference -
-  // it is no reference at all, and every assertion below stays green while an
-  // undeclared handler sits on the trust boundary. This is what makes the
-  // "never written as a literal" claim at the top of this file true rather
-  // than merely believed.
-  it("names every channel through IPC_CHANNELS rather than a string literal", () => {
-    const literals = [...literalChannelCalls(mainSources), ...literalChannelCalls(preloadSources)];
+  // The other half: a reference the scan does not read as a channel argument.
+  // A new helper wrapping IPC_CHANNELS, or a reference sitting in a handler
+  // body, would otherwise quietly shrink the compared sets rather than fail.
+  it("reads every IPC_CHANNELS reference as the channel argument of a known call", () => {
+    const stray = [...strayReferences(mainSources, mainCalls), ...strayReferences(preloadSources, preloadCalls)];
 
-    expect(literals).toEqual([]);
+    expect(stray).toEqual([]);
   });
 
   it("registers or sends every declared channel in the main process, and nothing it does not declare", () => {
@@ -96,12 +119,11 @@ describe("IPC channel coverage", () => {
   // deduplication leaves every set comparison green.
   it("registers each request channel exactly once in the main process", () => {
     const registrations = new Map<string, string[]>();
-    for (const reference of mainReferences) {
-      if (!MAIN_HANDLER_CALLEES.includes(reference.callee)) continue;
-      registrations.set(reference.channel, [
-        ...(registrations.get(reference.channel) ?? []),
-        `${reference.file} ${reference.callee}`,
-      ]);
+    for (const call of mainCalls) {
+      if (!MAIN_HANDLER_CALLEES.includes(call.callee)) continue;
+      const channel = channelOf(call);
+      if (channel === null) continue;
+      registrations.set(channel, [...(registrations.get(channel) ?? []), `${call.file} ${call.callee}`]);
     }
 
     const duplicated = [...registrations]
@@ -116,15 +138,37 @@ describe("IPC channel coverage", () => {
     expect(subscribed).toEqual(sent);
   });
 
+  // Everything above compares IPC_CHANNELS keys, but Electron sees the values.
+  // Two keys carrying one wire string satisfy the exactly-once assertion, since
+  // the keys differ, and still register two handlers for the same channel.
+  it("gives every declared channel its own wire value", () => {
+    const wireValues = new Map<string, string[]>();
+    for (const [key, value] of Object.entries(IPC_CHANNELS)) {
+      wireValues.set(value, [...(wireValues.get(value) ?? []), key]);
+    }
+
+    const shared = [...wireValues]
+      .filter(([, keys]) => keys.length > 1)
+      .map(([value, keys]) => `${value}: ${keys.join(", ")}`)
+      .sort();
+
+    expect(shared).toEqual([]);
+  });
+
   it("only removes listeners for channels the preload subscribes to", () => {
     expect(unsubscribed.filter((channel) => !subscribed.includes(channel))).toEqual([]);
   });
 });
 
-interface ChannelReference {
+// One occurrence of a known call, with the source text of its channel argument
+// and the span that argument occupies. The span is what lets a reference be
+// matched back to the call that reads it.
+interface ChannelCall {
   readonly file: string;
   readonly callee: string;
-  readonly channel: string;
+  readonly argument: string;
+  readonly start: number;
+  readonly end: number;
 }
 
 function sourceFilesUnder(directory: string): readonly string[] {
@@ -137,56 +181,45 @@ function sourceFilesUnder(directory: string): readonly string[] {
   return files;
 }
 
-function collectReferences(files: readonly string[]): readonly ChannelReference[] {
-  const references: ChannelReference[] = [];
-  for (const file of files) {
-    const source = withoutCommentsAndLiterals(readFileSync(join(repositoryRoot, file), "utf8"));
-    for (const match of source.matchAll(/IPC_CHANNELS\.([A-Za-z0-9_]+)/g)) {
-      references.push({
-        file,
-        callee: calleeBefore(source, match.index) ?? "(no enclosing call)",
-        channel: match[1] ?? "",
-      });
-    }
-  }
-  return references;
+function readSource(file: string): string {
+  const cached = sources.get(file);
+  if (cached !== undefined) return cached;
+  const source = withoutCommentsAndLiterals(readFileSync(join(repositoryRoot, file), "utf8"));
+  sources.set(file, source);
+  return source;
 }
 
-// Every call shape the scan knows, with the position its channel argument sits
-// in - first for all of them except sendToRenderer, where it follows the window.
-const CHANNEL_ARGUMENT_POSITION: ReadonlyMap<string, number> = new Map([
-  ...[
-    ...MAIN_HANDLER_CALLEES,
-    ...PRELOAD_INVOKE_CALLEES,
-    ...PRELOAD_SUBSCRIBE_CALLEES,
-    ...PRELOAD_UNSUBSCRIBE_CALLEES,
-  ].map((callee): readonly [string, number] => [callee, 0]),
-  ...MAIN_SEND_CALLEES.map((callee): readonly [string, number] => [callee, 1]),
-]);
-
-// Reports every known call whose channel argument is a string rather than an
-// IPC_CHANNELS reference. A function declaration is not a call site here: its
-// parameter reads as `channel: string`, which does not open with a quote.
-function literalChannelCalls(files: readonly string[]): readonly string[] {
-  const found: string[] = [];
+// Reads each known call forwards from its own name to the argument in the
+// channel position, rather than walking back from an IPC_CHANNELS reference to
+// whatever call appears to enclose it. Only the forward direction sees a call
+// whose channel is a variable or a string, and those are the calls that would
+// otherwise leave the trust boundary unscanned. A `function` keyword before the
+// name marks a declaration of the helper rather than a call to it.
+function collectCalls(files: readonly string[]): readonly ChannelCall[] {
+  const calls: ChannelCall[] = [];
   for (const file of files) {
-    const source = withoutCommentsAndLiterals(readFileSync(join(repositoryRoot, file), "utf8"));
+    const source = readSource(file);
     for (const [callee, position] of CHANNEL_ARGUMENT_POSITION) {
       const pattern = new RegExp(`(?<![A-Za-z0-9_$.])${callee.replaceAll(".", "\\.")}\\s*\\(`, "g");
       for (const match of source.matchAll(pattern)) {
-        const argument = argumentAt(source, match.index + match[0].length, position);
-        if (argument !== null && /^["'`]/.test(argument)) found.push(`${file}: ${callee} takes a string channel`);
+        if (/\bfunction\s*$/.test(source.slice(Math.max(0, match.index - 20), match.index))) continue;
+        const span = argumentAt(source, match.index + match[0].length, position);
+        if (span !== null) calls.push({ file, callee, ...span });
       }
     }
   }
-  return found.sort();
+  return calls;
 }
 
 // Reads the argument at `position` from a call whose opening parenthesis has
 // already been passed, splitting on the commas that sit at the call's own
 // nesting depth so a nested call or object literal is not mistaken for a
 // separator.
-function argumentAt(source: string, start: number, position: number): string | null {
+function argumentAt(
+  source: string,
+  start: number,
+  position: number,
+): { readonly argument: string; readonly start: number; readonly end: number } | null {
   let depth = 0;
   let index = start;
   let argumentStart = start;
@@ -197,45 +230,43 @@ function argumentAt(source: string, start: number, position: number): string | n
     else if (character === ")" && depth === 0) break;
     else if (character === ")" || character === "]" || character === "}") depth -= 1;
     else if (character === "," && depth === 0) {
-      if (remaining === 0) return source.slice(argumentStart, index).trim();
+      if (remaining === 0) break;
       remaining -= 1;
       argumentStart = index + 1;
     }
     index += 1;
   }
-  return remaining === 0 ? source.slice(argumentStart, index).trim() : null;
+  if (remaining !== 0) return null;
+  return { argument: source.slice(argumentStart, index).trim(), start: argumentStart, end: index };
 }
 
-function channelsCalledBy(references: readonly ChannelReference[], callees: readonly string[]): readonly string[] {
-  const channels = new Set(
-    references.filter((reference) => callees.includes(reference.callee)).map((reference) => reference.channel),
-  );
+function channelOf(call: ChannelCall): string | null {
+  return CHANNEL_REFERENCE.exec(call.argument)?.[1] ?? null;
+}
+
+function channelsCalledBy(calls: readonly ChannelCall[], callees: readonly string[]): readonly string[] {
+  const channels = new Set<string>();
+  for (const call of calls) {
+    if (!callees.includes(call.callee)) continue;
+    const channel = channelOf(call);
+    if (channel !== null) channels.add(channel);
+  }
   return [...channels].sort();
 }
 
-// Walks back from a reference to the call it sits in, skipping balanced
-// parentheses so an argument of its own is not mistaken for the callee, and
-// giving up at a statement boundary so a reference outside any call reads as
-// unattributed rather than borrowing an unrelated name.
-function calleeBefore(source: string, index: number): string | null {
-  let depth = 0;
-  let position = index - 1;
-  while (position >= 0) {
-    const character = source[position];
-    if (character === ")") depth += 1;
-    else if (character === "(") {
-      if (depth === 0) break;
-      depth -= 1;
-    } else if (depth === 0 && (character === ";" || character === "{" || character === "}")) return null;
-    position -= 1;
+// Every IPC_CHANNELS reference that does not sit inside a channel argument the
+// scan read.
+function strayReferences(files: readonly string[], calls: readonly ChannelCall[]): readonly string[] {
+  const stray: string[] = [];
+  for (const file of files) {
+    const source = readSource(file);
+    const spans = calls.filter((call) => call.file === file);
+    for (const match of source.matchAll(/IPC_CHANNELS\.([A-Za-z0-9_]+)/g)) {
+      const read = spans.some((span) => span.start <= match.index && match.index < span.end);
+      if (!read) stray.push(`${file}: ${match[0]}`);
+    }
   }
-  if (position < 0) return null;
-
-  let start = position - 1;
-  while (start >= 0 && /\s/.test(source[start] ?? "")) start -= 1;
-  const end = start + 1;
-  while (start >= 0 && /[A-Za-z0-9_$.]/.test(source[start] ?? "")) start -= 1;
-  return source.slice(start + 1, end) || null;
+  return stray.sort();
 }
 
 // Blanks comments and the insides of string, template and regular expression
