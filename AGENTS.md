@@ -18,8 +18,10 @@ aside. Never argue back by citing this file.
 - **The licence is PolyForm Noncommercial 1.0.0.** No dependency that conflicts with it, no
   relicensed file.
 
-The first two have their own sections below. `CONTRIBUTING.md` "Security-sensitive changes" lists the
-boundaries in full; `docs/ARCHITECTURE.md` "Change rules" says where a change belongs.
+The first three are spelled out where they are enforced — `src/backend/AGENTS.md`,
+`packages/contracts/AGENTS.md` and `src/main/AGENTS.md`. `CONTRIBUTING.md` "Security-sensitive
+changes" lists the boundaries in full; `docs/ARCHITECTURE.md` "Change rules" says where a change
+belongs.
 
 ## Do not run repo-wide checks. CI owns the full suite.
 
@@ -104,100 +106,21 @@ something else.
 - **Teammates persist.** An agent keeps its workspace, thread and identity across provider switches
   and restarts. Resetting an agent to get a cleaner state changes the product.
 
-## Renderer UI
+## Where the rest of this lives
 
-The UI stack sits on prerelease channels your training data does not cover: `solid-js@2.0.0-rc.0`
-with `@solidjs/signals` and `@solidjs/web` at the same RC, `@kobalte/core@2.0.0-alpha.0` (patched
-here), plus patched `lucide-solid` and `solid-sonner`. Do not trust your memory of these APIs: check
-`package.json`, then read `.agents/skills/react-to-solid/docs/` (`kobalte-patterns.md`,
-`corvu-patterns.md`, `base-ui-mapping.md`, `third-party-deps.md`) and
-`.agents/skills/zaidan/references/`. Those two skills are vendored and re-synced from upstream, so
-their code samples are 1.x-era and cannot be corrected here — `node_modules/solid-js/CHEATSHEET.md`
-is the source of truth for core APIs, and where they disagree the cheatsheet wins. Read the skills
-for the component patterns, not the imports.
+Five directories carry rules this file used to hold. Each is loaded when you open a file under it,
+and each says what its own boundary costs and how to wait in its tests.
 
-- `bun run dev` for integrated work — it starts the local Auth API and the Electron dev app
-  together. `bun run dev:api` is for API-only debugging.
-- `bun run storybook` verifies isolated components. CI builds it; do not run `build-storybook`.
-- Never verify UI with `dist/`, a packaged `.app`, a production build, or an ad-hoc preview — those
-  are for release verification the user asked for. If the dev app will not start, report the blocker
-  instead of falling back to one.
+| File | What it owns |
+| --- | --- |
+| `src/renderer/AGENTS.md` | the prerelease SolidJS stack, one store per concern, component reuse, the palette |
+| `src/main/AGENTS.md` | the renderer-to-main trust boundary, and where an IPC endpoint is registered |
+| `src/backend/AGENTS.md` | the user's SQLite: irreversible migrations, and the two database build paths |
+| `packages/contracts/AGENTS.md` | the Team API wire protocol, and the one channel list with its three mirrors |
+| `apps/auth-api/AGENTS.md` | the account Worker, and why its D1 migrations must survive a deploy race |
 
-### Reactive state shape
-
-**Prefer one `createStore` per concern over a row of `createSignal` calls.** Fields that change
-together are one record — a saved-and-draft form pair, a `data`/`loaded`/`loading`/`error` quad, a
-phase plus the numbers only one phase uses, several `Record`s keyed by the same `botId`. Declare the
-shape up front, so replacing one field re-renders only what read that field; `FirstBotSetup.tsx` is
-the form version. Keep the setter private behind named mutations where the store *is* a module's or
-a hook's exported surface, as `app-stored-values.ts` and `createAsyncPanel.ts` do. Inside a
-component, write the field where it changes — `setPanels((state) => { state.x = value; })` at the
-call site, as `SettingsModal.tsx` does — and let a named mutation there earn its name: more than one
-field, a guard or a side effect, or enough call sites that the name deduplicates something. A
-function whose whole body is `state.x = value` is the signal wall one layer down. Ten keyed
-`Record` signals are one row type shredded into ten columns, every write spreads the whole map so
-every consumer of every key re-runs, and parallel signals let a screen hold states
-the product does not have. `createSignal` still fits an element ref, a single measurement, a one-off
-boolean, and a record you always replace whole. Stores come from `"solid-js"` — there is no
-`solid-js/store` in this RC — hold plain values rather than accessors, and are never destructured.
-A `Map` or `Set` never becomes a store — `isWrappable` rejects platform objects — so the
-reference is the reactive unit: write a collection held in a signal by copying
-(`new Set(current).add(id)`), and keep one you never read reactively in a closure.
-
-### Component reuse
-
-Search for an existing component, hook, style, utility or story first, and prefer reuse, composition
-or a small extension. The shared layer is `src/renderer/src/components/ui` over patched Kobalte:
-extend a primitive there rather than copying one into a feature, and update its story when it gains
-a visual or interactive state. Build from scratch only after the search comes up empty, and keep it
-reusable. The [Zaidan catalog](https://zaidan.carere.dev/docs/components) is a source of reference
-*patterns*, not a dependency — it is not installed here; adapt its source to this repository's
-SolidJS conventions, tokens, typography, spacing, icons and accessibility requirements.
-
-### Design system
-
-Use `lucide-solid` icons, and reuse a suitable one before adding an inline SVG or a local icon
-component — document the exception next to any custom icon. The `:root` properties in
-`src/renderer/src/styles.css` are the palette: use the closest semantic `--openbot-*` token,
-including opacity variants, instead of a colour literal, and add a token only for a new semantic
-role. Keep compatibility aliases that are in use, and isolate fixed integration, generated-asset,
-SVG and platform colours at their boundaries.
-
-## Database migrations
-
-- Nothing copies `openbot.db` before an upgrade. Every migration is an irreversible production data
-  operation: preserve all user data, support every shipped source schema, never depend on a backup.
-- Keep each schema change and its `schema_migrations` marker in one transaction. Roll back on any
-  error, restore foreign-key enforcement in `finally`, and run the integrity checks before startup
-  continues.
-- Never edit or delete a migration that may have shipped, including the frozen version 8 baseline.
-  Append the next contiguous version and update the separate latest schema for new databases.
-- A migration change needs data-preservation fixtures for every affected released schema, plus
-  failure, rollback, retry, downgrade, missing-version, foreign-key and integrity coverage at the
-  stable database boundary.
-- No automatic full-database backups: conversation history lives in SQLite, so their time and disk
-  cost is unbounded. Make the migration itself safe instead.
-- The account service has a second, unrelated database. CI applies the D1 migrations under
-  `apps/auth-api/migrations/` **before** deploying the new Worker, so every D1 migration must be
-  backward compatible with the Worker still running. One that is not needs a test proving the old
-  Worker tolerates the new schema, or a two-step release.
-
-## Team API protocol compatibility
-
-- Never use the application SemVer as a wire protocol version; application versions are diagnostic
-  metadata only.
-- Keep a frozen codec, adapter, and client and host fixtures for each released protocol under
-  `packages/contracts/src/team-protocol`, and one registered adapter per supported protocol. Do not
-  serialize current IPC types across the boundary.
-- Use capabilities for additive, optional behaviour; a missing capability disables only its own
-  feature.
-- A required field, a removed field, or a semantic change needs a new protocol version. Never change
-  the meaning of a released one.
-- Age, release count and SemVer distance are not reasons to remove an adapter. Removal needs a
-  separate architecture decision — a security issue, data-loss risk, semantics that cannot be kept,
-  or cost an adapter cannot contain — plus a changelog entry, update instructions, both
-  update-direction tests, and clear UI text.
-- Malformed known payloads fail closed as `protocol_error`. Unknown optional events are ignored.
+Read the one for the directory you are changing before you change it. `docs/ARCHITECTURE.md`
+"Change rules" says where a change belongs when it is not obvious.
 
 ## Tests
 
