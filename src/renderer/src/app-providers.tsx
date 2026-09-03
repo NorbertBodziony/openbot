@@ -4,6 +4,7 @@ import { AgentActionsProvider } from "./agent-actions";
 import { AgentEventBridge } from "./agent-event-bridge";
 import { AgentReadTrackingProvider } from "./agent-read-tracking";
 import { AgentsProvider } from "./agents";
+import { AnsweredPromptsProvider } from "./answered-prompts";
 import { AppBootstrap } from "./app-bootstrap";
 import { AuthProvider } from "./auth";
 import { BrowserTabsProvider } from "./browser-tabs";
@@ -85,14 +86,16 @@ export function AppProviders(props: ParentProps<AppProps>): JSX.Element {
                     <ServerSettingsProvider>
                       <RemoteDesktopProvider>
                         <ServerSwitchProvider>
-                          <UiErrorsProvider>
-                            <AgentReadTrackingProvider>
-                              <AppBootstrap />
-                              <ServerScopeBoundary stableConversation={stableConversation}>
-                                {props.children}
-                              </ServerScopeBoundary>
-                            </AgentReadTrackingProvider>
-                          </UiErrorsProvider>
+                          <AnsweredPromptsProvider>
+                            <UiErrorsProvider>
+                              <AgentReadTrackingProvider>
+                                <AppBootstrap />
+                                <ServerScopeBoundary stableConversation={stableConversation}>
+                                  {props.children}
+                                </ServerScopeBoundary>
+                              </AgentReadTrackingProvider>
+                            </UiErrorsProvider>
+                          </AnsweredPromptsProvider>
                         </ServerSwitchProvider>
                       </RemoteDesktopProvider>
                     </ServerSettingsProvider>

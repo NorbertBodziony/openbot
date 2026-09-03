@@ -2,6 +2,7 @@ import type { AgentApproval, AgentEvent, QueueSnapshot } from "@openbot/contract
 import { createEffect, createMemo, createSignal } from "solid-js";
 import { useAgents } from "./agents";
 import { desktopAnalytics } from "./analytics";
+import { useAnsweredPrompts } from "./answered-prompts";
 import { agentConversationKey, promptRequestKey } from "./conversation-keys";
 import { useDynamicIsland } from "./dynamic-island";
 import { createScopeGuard } from "./scope-lifetime";
@@ -35,11 +36,18 @@ type BrowserTakeoverEvent = Extract<AgentEvent, { type: "browser-takeover-reques
  *   reads `liveMessages`, to tell a resolution the user has seen from one main
  *   has already persisted. It moves to `conversation` with that state.
  *
- * `completedTurnByBot`, `routineIdsByConversation`, `presentedPromptResolutions`
- * and `submittedPromptRequests` used to survive a switch because nobody cleared
- * them; they now die with the scope, which is the teardown the old list of
- * setters kept forgetting. `completedTurnByBot` had grown for the life of the
- * process.
+ * `completedTurnByBot` and `routineIdsByConversation` used to survive a switch
+ * because nobody cleared them; they now die with the scope, which is the
+ * teardown the old list of setters kept forgetting. `completedTurnByBot` had
+ * grown for the life of the process.
+ *
+ * `presentedPromptResolutions` and `submittedPromptRequests` are the exception
+ * that proves that rule: they too survived by neglect, but for them the survival
+ * was load-bearing, because an answered prompt is only proved answered by a
+ * snapshot that may arrive after the user has moved to another server. They are
+ * re-exported from here under their own names so nothing downstream can tell,
+ * but they are owned by `answered-prompts.tsx` above the boundary and scoped to
+ * this server by its id.
  */
 const Turns = createSimpleContext({
   name: "Turns",
@@ -60,10 +68,12 @@ const Turns = createSimpleContext({
     const [pendingPrompts, setPendingPrompts] = createSignal<
       Record<string, PromptEvent | BrowserTakeoverEvent | undefined>
     >(seed?.pendingPrompts ?? {});
-    const [presentedPromptResolutions, setPresentedPromptResolutions] = createSignal<
-      Record<string, string | undefined>
-    >({});
-    const [submittedPromptRequests, setSubmittedPromptRequests] = createSignal<Record<string, string | undefined>>({});
+    const {
+      presentedPromptResolutions,
+      setPresentedPromptResolutions,
+      submittedPromptRequests,
+      setSubmittedPromptRequests,
+    } = useAnsweredPrompts().promptMarkersFor(activeServerId());
     const [pendingApprovals, setPendingApprovals] = createSignal<Record<string, AgentApproval | undefined>>(
       seed?.pendingApprovals ?? {},
     );

@@ -710,6 +710,109 @@ describe("OpenBot connected desktop shell", () => {
     expect(calls).toEqual(["typing on", "typing off", "select"]);
   });
 
+  it("does not leave the next server's composer disabled by a send in flight", async () => {
+    const local = testServer("local", true);
+    const remote = testServer("remote-1", false);
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+    vi.mocked(window.openbot.servers.select).mockImplementation(async (serverId) => [
+      { ...local, active: serverId === "local" },
+      { ...remote, active: serverId === "remote-1" },
+    ]);
+    vi.mocked(window.openbot.agent.sendMessage).mockImplementationOnce(() => new Promise(() => undefined));
+
+    render(() => <App />);
+    const composer = await screen.findByRole("textbox", { name: "Message Chief" });
+    composer.textContent = "Still on its way";
+    await fireEvent.input(composer);
+    await fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(window.openbot.agent.sendMessage).toHaveBeenCalledOnce());
+
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true"),
+    );
+
+    expect(await screen.findByRole("button", { name: "Send message" })).toBeEnabled();
+  });
+
+  it("does not offer an answered prompt again after leaving its server and coming back", async () => {
+    const local = testServer("local", true);
+    const remote = testServer("remote-1", false);
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+    vi.mocked(window.openbot.servers.select).mockImplementation(async (serverId) => [
+      { ...local, active: serverId === "local" },
+      { ...remote, active: serverId === "remote-1" },
+    ]);
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+
+    const pendingPrompt = {
+      requestId: "prompt-across-servers",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-across-servers",
+      questions: [{ id: "account", header: "Account", question: "Which account?", isSecret: false, options: null }],
+    };
+    emitAgentEvent?.({ type: "prompt", ...pendingPrompt });
+    const answer = await screen.findByRole("textbox", { name: "Custom answer for: Which account?" });
+    await fireEvent.input(answer, { target: { value: "Acme" } });
+    await fireEvent.keyDown(answer, { key: "Enter" });
+    await waitFor(() => expect(window.openbot.agent.respondToPrompt).toHaveBeenCalledOnce());
+
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true"),
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "Local server" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Local server" })).toHaveAttribute("aria-pressed", "true"),
+    );
+    await screen.findByRole("heading", { name: "Chief" });
+
+    // Main has not seen the answer yet, so its snapshot still reports the prompt
+    // as waiting. The answer is what makes it stale, and the answer was given on
+    // this server before the switch.
+    emitAgentEvent?.({
+      type: "runtime-snapshot",
+      snapshot: {
+        bots: [],
+        activeTurns: [],
+        work: [],
+        latestMessages: [],
+        attentionComplete: true,
+        pendingPrompts: [pendingPrompt],
+        pendingApprovals: [],
+        pendingBrowserTakeovers: [],
+        failedTurns: [],
+      },
+    });
+    // Delivered to the same listener, after the snapshot: once this message is
+    // on screen, the snapshot before it has been applied.
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: null,
+        revision: 30,
+        messages: [
+          {
+            id: "message-after-return",
+            author: "assistant",
+            text: "Back on Local",
+            createdAt: "2026-08-29T10:00:00.000Z",
+            status: "completed",
+          },
+        ],
+      },
+    });
+
+    expect(await screen.findByText("Back on Local")).toBeVisible();
+    expect(screen.queryByRole("textbox", { name: "Custom answer for: Which account?" })).not.toBeInTheDocument();
+  });
+
   it("persists settings and opens managed attachment actions", async () => {
     render(() => <App />);
     await fireEvent.click(await screen.findByRole("button", { name: "View agent settings" }));

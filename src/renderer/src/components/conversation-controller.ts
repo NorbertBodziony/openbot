@@ -91,16 +91,12 @@ export function createStableConversationState(props: Pick<ConversationProps, "on
   const [editingDraftBackup, setEditingDraftBackup] = createSignal<ComposerDraft | null>(null);
   const [editingOriginalAttachmentIds, setEditingOriginalAttachmentIds] = createSignal<string[]>([]);
   const [composerFocusRequest, setComposerFocusRequest] = createSignal(0);
-  const [attachmentBusy, setAttachmentBusy] = createSignal(false);
-  const [composerError, setComposerError] = createSignal<string | null>(null);
   const [conversationErrors, setConversationErrors] = createSignal<Record<string, string>>({});
   const [voicePhase, setVoicePhase] = createSignal<"idle" | "preparing" | "requesting" | "recording" | "transcribing">(
     "idle",
   );
   const [voiceModelProgress, setVoiceModelProgress] = createSignal<number | null>(null);
   const [voiceElapsedSeconds, setVoiceElapsedSeconds] = createSignal(0);
-  const [submitting, setSubmitting] = createSignal(false);
-  const [selectionSending, setSelectionSending] = createSignal(false);
   const [browserPipBounds, setBrowserPipBounds] = createSignal<BrowserBounds | null>(readBrowserPipBounds());
   const [settingsPanelWidth, setSettingsPanelWidth] = createSignal(SETTINGS_PANEL_DEFAULT);
   const [browserPanelWidth, setBrowserPanelWidth] = createSignal(BROWSER_PANEL_DEFAULT);
@@ -169,10 +165,6 @@ export function createStableConversationState(props: Pick<ConversationProps, "on
     setEditingOriginalAttachmentIds,
     composerFocusRequest,
     setComposerFocusRequest,
-    attachmentBusy,
-    setAttachmentBusy,
-    composerError,
-    setComposerError,
     conversationErrors,
     setConversationErrors,
     voicePhase,
@@ -181,10 +173,6 @@ export function createStableConversationState(props: Pick<ConversationProps, "on
     setVoiceModelProgress,
     voiceElapsedSeconds,
     setVoiceElapsedSeconds,
-    submitting,
-    setSubmitting,
-    selectionSending,
-    setSelectionSending,
     browserPipBounds,
     setBrowserPipBounds,
     settingsPanelWidth,
@@ -205,11 +193,23 @@ export function createStableConversationState(props: Pick<ConversationProps, "on
  * shared owner would carry "the computer panel is open for chief" from one
  * server to the next and open the wrong panel on arrival.
  *
+ * `attachmentBusy`, `composerError`, `submitting` and `selectionSending` are
+ * here for the same reason by a different route: they carry no key at all. Each
+ * describes the composer on screen right now - "a send is in flight", "this is
+ * what went wrong" - so a shared owner would disable the arriving server's
+ * composer for the length of the server it was left on, and show that server's
+ * failure underneath it. What has to outlive the conversation goes in
+ * `conversationErrors` instead, which is keyed and sits in the stable half.
+ *
  * Created inside the keyed scope in `app-providers.tsx`, so a server switch
  * discards all of it by unmounting rather than by a list of setters.
  */
 export function createServerConversationState() {
   const [showComposerActions, setShowComposerActions] = createSignal(false);
+  const [attachmentBusy, setAttachmentBusy] = createSignal(false);
+  const [composerError, setComposerError] = createSignal<string | null>(null);
+  const [submitting, setSubmitting] = createSignal(false);
+  const [selectionSending, setSelectionSending] = createSignal(false);
   const [markingRead, setMarkingRead] = createSignal(false);
   const [dropActive, setDropActive] = createSignal(false);
   const [rightPanels, setRightPanels] = createSignal<Record<string, RightPanelMode>>({});
@@ -235,6 +235,14 @@ export function createServerConversationState() {
   return {
     showComposerActions,
     setShowComposerActions,
+    attachmentBusy,
+    setAttachmentBusy,
+    composerError,
+    setComposerError,
+    submitting,
+    setSubmitting,
+    selectionSending,
+    setSelectionSending,
     markingRead,
     setMarkingRead,
     dropActive,

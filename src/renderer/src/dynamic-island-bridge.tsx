@@ -163,6 +163,16 @@ export function DynamicIslandBridge() {
       }
       return;
     }
+    if (!loaded()) {
+      // The right workspace, but it has not filled yet. `selectBot` against an
+      // empty bot list and a read against an empty conversation are the same
+      // half-loaded scope the handoff effect above already waits out, so this
+      // action joins it there. Nothing disposes this bridge in the meantime, so
+      // it is the one that consumes its own entry once `loaded()` turns true -
+      // which is why `publishedAction` stays untouched.
+      setPendingIslandAction(action);
+      return;
+    }
     selectBot(action.botId);
     if (action.type === "open-message") await openAgentMessage(action.botId, action.messageId);
     if (action.type === "open-failure") {
