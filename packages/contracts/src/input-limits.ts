@@ -12,6 +12,10 @@ export const INPUT_LIMITS = {
   avatarUrl: 2_048,
   browserActionText: 50_000,
   agentName: 80,
+  // Model names come from a CLI's `displayName`, which nothing bounds, and the released Team v1
+  // adapter already accepts 160 — so the agent-name limit would reject a model list a shipped peer
+  // is entitled to send.
+  modelName: 160,
   agentTitle: 120,
   agentDescription: 2_000,
   agentMemories: 64,
