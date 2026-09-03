@@ -1,3 +1,7 @@
+import type { IPC_CHANNELS } from "@openbot/contracts/ipc";
+
+export type RendererIpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];
+
 export interface RendererIpcWindow {
   isDestroyed(): boolean;
   webContents: {
@@ -13,7 +17,7 @@ export interface RendererIpcWindow {
 
 export function sendToRenderer(
   window: RendererIpcWindow | null | undefined,
-  channel: string,
+  channel: RendererIpcChannel,
   ...args: unknown[]
 ): boolean {
   if (!window || window.isDestroyed()) return false;
