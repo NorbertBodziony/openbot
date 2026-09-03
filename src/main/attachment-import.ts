@@ -31,12 +31,14 @@ export async function normalizeAttachmentImports(input: ImportAttachmentsInput):
   const data: AttachmentDataInput[] = [];
   let leafCount = 0;
   let leafBytes = 0;
+  let sourceBytes = 0;
   for (const path of input.paths) {
     const name = basename(path);
     assertSupportedImport(name);
     const metadata = await stat(path);
     if (!metadata.isFile()) throw new Error(`Only regular files can be attached: ${name}`);
     if (metadata.size > ATTACHMENT_LIMITS.fileBytes) throw new Error(`${name} exceeds the 100 MB limit.`);
+    sourceBytes += metadata.size;
     if (isEmailImport(name)) continue;
     paths.push(path);
     leafCount += 1;
@@ -45,12 +47,13 @@ export async function normalizeAttachmentImports(input: ImportAttachmentsInput):
   for (const item of input.data) {
     const name = basename(item.name);
     assertSupportedImport(name);
-    if (isEmailImport(name)) continue;
     if (item.bytes.byteLength > ATTACHMENT_LIMITS.fileBytes) throw new Error(`${name} exceeds the 100 MB limit.`);
+    sourceBytes += item.bytes.byteLength;
+    if (isEmailImport(name)) continue;
     leafCount += 1;
     leafBytes += item.bytes.byteLength;
   }
-  if (leafBytes > ATTACHMENT_LIMITS.totalBytes) throw new Error("Attachments exceed the 250 MB total limit.");
+  if (sourceBytes > ATTACHMENT_LIMITS.totalBytes) throw new Error("Attachments exceed the 250 MB total limit.");
 
   const budget: AttachmentBudget = {
     count: INPUT_LIMITS.attachments - leafCount,

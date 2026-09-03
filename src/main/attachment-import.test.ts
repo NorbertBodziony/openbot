@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -74,6 +74,21 @@ describe("EML attachment imports", () => {
     expect(result.paths).toEqual([textPath]);
     expect(result.data).toMatchObject([{ name: "message - email.txt", mimeType: "text/plain" }]);
     expect(new TextDecoder().decode(result.data[0]?.bytes)).toContain("Email body");
+  });
+
+  it("rejects aggregate EML source bytes before parsing", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "openbot-attachment-import-"));
+    temporaryDirectories.push(directory);
+    const paths = await Promise.all(
+      Array.from({ length: 3 }, async (_, index) => {
+        const path = join(directory, `message-${index}.eml`);
+        await writeFile(path, "");
+        await truncate(path, 90 * 1024 * 1024);
+        return path;
+      }),
+    );
+
+    await expect(normalizeAttachmentImports({ paths, data: [] })).rejects.toThrow("250 MB total limit");
   });
 
   it("rejects malformed email and unsafe email attachments transactionally", async () => {
