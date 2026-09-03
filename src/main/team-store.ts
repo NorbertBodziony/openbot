@@ -186,7 +186,6 @@ export class TeamStore {
     // so a failed write can put the whole file back rather than leave half a switch applied
     // with the status naming one account and every write going to another.
     const rollback = structuredClone(this.#file);
-    const previousIndex = this.#state ? hosts.indexOf(this.#state) : -1;
     this.#state =
       hosts.find((host) => ownerAccountId(host) === user.id) ??
       hosts.find((host) => {
@@ -212,10 +211,23 @@ export class TeamStore {
     try {
       await this.#recordActiveAccount();
     } catch (error) {
+      // The file keeps what it had, so nothing is lost. Memory does not go back to the
+      // previous account, though: central authentication has already moved on, and leaving
+      // its host answerable is the failure this whole change exists to prevent. Unbound
+      // until an auth event or a restart records the switch.
       this.#file = rollback;
-      this.#state = previousIndex >= 0 ? (this.#file.hosts[previousIndex] ?? null) : null;
+      this.#state = null;
       throw error;
     }
+  }
+
+  /**
+   * Stops answering for the active host without touching the file. The renderer learns about
+   * a new account before the awaited teardown that follows can finish, so there has to be a
+   * way to stop serving the previous one immediately; `activateAccount` records the switch.
+   */
+  unbindActiveHost(): void {
+    this.#state = null;
   }
 
   /** Signing out unbinds the host without removing it - signing back in restores it. */

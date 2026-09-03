@@ -747,6 +747,10 @@ function forwardCentralAuth(state: CentralAuthState): void {
     if (activeAnalyticsPrincipalId) hostAnalytics?.clear();
     activeAnalyticsPrincipalId = null;
   }
+  // The renderer is told about the new account at the end of this function, before the
+  // queued work below can finish, so the host stops answering for the previous account now.
+  // The file is left alone until `applySignedInAccount` records the switch.
+  hostService?.unbindChangedAccount(state.status === "signed_in" ? state.user : null);
   remoteAccountSync = remoteAccountSync
     .then(async () => {
       const nextPrincipalId = state.status === "signed_in" ? state.user.id : null;

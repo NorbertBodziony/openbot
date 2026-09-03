@@ -136,7 +136,9 @@ type HostOptions = ConstructorParameters<typeof HostService>[0];
  * whole harness it needs. No runtime is started here - these cases are about which
  * account's host the service is bound to.
  */
-async function createHostService(): Promise<{
+async function createHostService(
+  remote: Pick<HostOptions, "listRemoteInvites" | "registerRemoteHost" | "updateRemoteHostLogo"> = {},
+): Promise<{
   service: HostService;
   /** Reports an account exactly as `forwardCentralAuth` does, sign-out included. */
   signIn: (user: CentralAuthUser | null) => Promise<void>;
@@ -167,6 +169,7 @@ async function createHostService(): Promise<{
     },
     redeemCentralTicket: unimplemented,
     sendTeamInviteEmail: unimplemented,
+    ...remote,
   };
   const service = new HostService(options);
   return {
@@ -2206,6 +2209,8 @@ async function emptyRequest(
   expect(response.status).toBe(204);
 }
 
+type RemoteInvites = Awaited<ReturnType<NonNullable<HostOptions["listRemoteInvites"]>>>;
+
 describe("HostService account binding", () => {
   const first = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
   const second = { id: "account-b", email: "b@example.com", name: "B", avatarUrl: null };
@@ -2224,6 +2229,86 @@ describe("HostService account binding", () => {
     expect(status.serverId).toBeNull();
     expect(status.serverName).toBeNull();
     expect(status.enabledOnLaunch).toBe(false);
+  });
+
+  it("stops reporting the previous account's server before the switch is recorded", async () => {
+    const { service, signIn } = await createHostService();
+    await signIn(first);
+    await service.configure({ serverName: "Studio Mac" });
+
+    // What `forwardCentralAuth` calls before it tells the renderer the account changed.
+    service.unbindChangedAccount(second);
+
+    expect(service.getStatus().configured).toBe(false);
+    expect(service.getStatus().serverId).toBeNull();
+    expect(service.getStatus().serverName).toBeNull();
+  });
+
+  it("answers invitations from the host that is active when the read returns", async () => {
+    let deliver: (invites: RemoteInvites) => void = () => undefined;
+    const loading = new Promise<RemoteInvites>((resolve) => {
+      deliver = resolve;
+    });
+    const { service, signIn } = await createHostService({ listRemoteInvites: () => loading });
+    await signIn(second);
+    await service.configure({ serverName: "Studio Air" });
+    await signIn(first);
+    await service.configure({ serverName: "Studio Mac" });
+
+    const pending = service.listInvites();
+    await signIn(second);
+    deliver([
+      {
+        inviteId: "invite-1",
+        role: "member",
+        email: "invited-by-a@example.com",
+        expiresAt: Date.now() + 60_000,
+        usedAt: null,
+        revokedAt: null,
+      },
+    ]);
+
+    // A's invitation, and the address it was sent to, must not reach B's renderer.
+    await expect(pending).resolves.toEqual([]);
+  });
+
+  it("does not push a server update to the remote directory once the account has changed", async () => {
+    let finishRegistration: () => void = () => undefined;
+    const registered = new Promise<void>((resolve) => {
+      finishRegistration = resolve;
+    });
+    let registrationStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      registrationStarted = resolve;
+    });
+    const logos: string[] = [];
+    const { service, signIn } = await createHostService({
+      // Naming the server registers it too; only the update's registration is held open.
+      registerRemoteHost: (input) => {
+        if (input.name !== "Renamed") return Promise.resolve();
+        registrationStarted();
+        return registered;
+      },
+      updateRemoteHostLogo: async (hostId) => {
+        logos.push(hostId);
+        return null;
+      },
+    });
+    await signIn(first);
+    await service.configure({ serverName: "Studio Mac" });
+
+    const pending = service.updateIdentity({
+      serverName: "Renamed",
+      logo: { mimeType: "image/png", bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) },
+    });
+    // The store's own guard covers the window up to here; this is the one after it.
+    await started;
+    await signIn(second);
+    finishRegistration();
+    await pending;
+
+    // Uploading it here would send A's image under B's authentication.
+    expect(logos).toEqual([]);
   });
 
   it("reports the account's own server again after signing out and back in", async () => {

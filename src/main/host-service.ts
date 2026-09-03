@@ -245,6 +245,21 @@ export class HostService extends EventEmitter<HostEvents> {
    * rebuilt from the newly active identity rather than patched, so a second account can
    * never inherit the first one's server name, id or launch preference.
    */
+  /**
+   * The synchronous half of an account change, for callers that announce the new account
+   * before `applySignedInAccount` can finish: it stops this host answering for the previous
+   * one right away. A process that has not applied an account yet is left alone - that is
+   * startup reporting the account the file was already loaded for.
+   */
+  unbindChangedAccount(user: CentralAuthUser | null): void {
+    const nextAccountId = user?.id ?? null;
+    if (this.#boundAccountId === undefined || this.#boundAccountId === nextAccountId) return;
+    if (!this.#options.store.configured) return;
+    this.#options.store.unbindActiveHost();
+    this.#status = initialHostStatus(null, this.#options.unattended ?? false);
+    this.emit("changed", this.getStatus());
+  }
+
   async applySignedInAccount(user: CentralAuthUser | null): Promise<void> {
     const nextAccountId = user?.id ?? null;
     if (this.#boundAccountId === nextAccountId) {
@@ -273,9 +288,19 @@ export class HostService extends EventEmitter<HostEvents> {
         console.error("Unable to stop the host runtime while switching accounts:", error);
       }
     }
-    if (user) await this.#options.store.activateAccount(user);
-    else await this.#options.store.deactivate();
-    this.#boundAccountId = nextAccountId;
+    try {
+      if (user) await this.#options.store.activateAccount(user);
+      else await this.#options.store.deactivate();
+    } finally {
+      // Publish even when activation failed. The previous account is gone either way, and a
+      // status still naming its host would offer the rail a server this process can no
+      // longer answer for - the store has already unbound it.
+      this.#boundAccountId = nextAccountId;
+      this.#publishActiveHost(previousServerId);
+    }
+  }
+
+  #publishActiveHost(previousServerId: string | null): void {
     const identity = this.#options.store.getIdentity();
     if (identity && identity.serverId === previousServerId) {
       // The host this process started with, now confirmed as this account's. Keep the
@@ -313,16 +338,19 @@ export class HostService extends EventEmitter<HostEvents> {
     });
     this.#api.refreshPresence();
     this.#api.refreshIdentity();
+    const ownerMembershipId = this.#requiredOwnerMemberId();
     try {
+      if (!this.#isActiveHost(identity.serverId)) return this.getStatus();
       await this.#options.registerRemoteHost?.({
         hostId: identity.serverId,
         name: identity.serverName,
-        ownerMembershipId: this.#requiredOwnerMemberId(),
+        ownerMembershipId,
         devicePublicKey: identity.publicKey,
       });
-      if (input.logo !== undefined) {
+      if (input.logo !== undefined && this.#isActiveHost(identity.serverId)) {
         await this.#options.updateRemoteHostLogo?.(identity.serverId, input.logo ?? null, identity.logoVersion);
       }
+      if (!this.#isActiveHost(identity.serverId)) return this.getStatus();
       this.#setStatus({
         apiUrl: null,
         message: "Registered this OpenBot for WebRTC access.",
@@ -345,16 +373,27 @@ export class HostService extends EventEmitter<HostEvents> {
       message: "Server identity updated.",
     });
     this.#api.refreshIdentity();
+    const ownerMembershipId = this.#requiredOwnerMemberId();
+    if (!this.#isActiveHost(identity.serverId)) return this.getStatus();
     await this.#options.registerRemoteHost?.({
       hostId: identity.serverId,
       name: identity.serverName,
-      ownerMembershipId: this.#requiredOwnerMemberId(),
+      ownerMembershipId,
       devicePublicKey: identity.publicKey,
     });
-    if (input.logo !== undefined) {
+    if (input.logo !== undefined && this.#isActiveHost(identity.serverId)) {
       await this.#options.updateRemoteHostLogo?.(identity.serverId, input.logo ?? null, identity.logoVersion);
     }
     return this.getStatus();
+  }
+
+  /**
+   * Every remote step runs under the signed-in account's authentication, so one that started
+   * for a host the account no longer has would register or upload on the wrong account's
+   * behalf. The store's own guards stop the local half; this stops the network half.
+   */
+  #isActiveHost(serverId: string): boolean {
+    return this.#options.store.getIdentity()?.serverId === serverId;
   }
 
   start(): Promise<HostStatus> {
@@ -509,7 +548,7 @@ export class HostService extends EventEmitter<HostEvents> {
         // An account switch while the directory loaded makes this list the previous
         // account's. Answer with the now-active host's own members rather than failing a
         // read with the store's cross-account guard.
-        if (this.#options.store.getIdentity()?.serverId !== hostId) return this.#options.store.listMembers();
+        if (!this.#isActiveHost(hostId)) return this.#options.store.listMembers();
         await this.#options.store.syncRemoteDirectory(hostId, members);
         return members.map((member) => ({
           id: member.membershipId,
@@ -591,8 +630,12 @@ export class HostService extends EventEmitter<HostEvents> {
   listInvites(): TeamInviteSummary[] | Promise<TeamInviteSummary[]> {
     const hostId = this.#options.store.getIdentity()?.serverId;
     if (hostId && this.#options.listRemoteInvites) {
-      return this.#options.listRemoteInvites(hostId).then((invites) =>
-        invites
+      return this.#options.listRemoteInvites(hostId).then((invites) => {
+        // As in `listMembers`: a switch while the directory loaded makes these the previous
+        // account's invitations, their email addresses included. Answer with the now-active
+        // host's own rather than handing them to whoever is signed in.
+        if (!this.#isActiveHost(hostId)) return this.#options.store.listInvites();
+        return invites
           .filter((invite) => invite.revokedAt === null)
           .map((invite) => ({
             id: invite.inviteId,
@@ -600,8 +643,8 @@ export class HostService extends EventEmitter<HostEvents> {
             email: invite.email,
             expiresAt: new Date(invite.expiresAt).toISOString(),
             usedAt: invite.usedAt === null ? null : new Date(invite.usedAt).toISOString(),
-          })),
-      );
+          }));
+      });
     }
     return this.#options.store.listInvites();
   }

@@ -556,12 +556,12 @@ describe("TeamStore", () => {
     expect((await readStoredHosts(path)).map((host) => host.serverName)).toEqual(["Studio Air", "Renamed"]);
   });
 
-  it("keeps reporting the account it is bound to when recording the next one fails", async () => {
+  it("leaves no host bound when recording the next account fails", async () => {
     const { store, path } = await createStore();
     const first = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
     const second = { id: "account-b", email: "b@example.com", name: "B", avatarUrl: null };
     await store.activateAccount(first);
-    const identity = await store.configureWithAccount("Studio Mac", first);
+    await store.configureWithAccount("Studio Mac", first);
     const root = path.slice(0, -"/team.json".length);
     const unavailableRoot = `${root}-unavailable`;
 
@@ -569,7 +569,12 @@ describe("TeamStore", () => {
     await expect(store.activateAccount(second)).rejects.toThrow();
     await rename(unavailableRoot, root);
 
-    expect(store.getIdentity()).toEqual(identity);
+    // Signing in as B has already happened elsewhere, so answering for A's host is the
+    // failure this store exists to prevent. Nothing is lost: the file still holds it.
+    expect(store.configured).toBe(false);
+    expect((await readStoredHosts(path)).map((host) => host.serverName)).toEqual(["Studio Mac"]);
+    await store.activateAccount(first);
+    expect(store.getIdentity()?.serverName).toBe("Studio Mac");
   });
 
   it("refuses an identity update that lands after another account has signed in", async () => {
