@@ -8,6 +8,7 @@ import {
   type BrowserDisplayState,
   type CentralAuthState,
   IPC_CHANNELS,
+  LOCAL_SERVER_ID,
   type MacPermissionId,
   type VoiceModelStatus,
 } from "@openbot/contracts/ipc";
@@ -658,7 +659,7 @@ function configureApplicationMenu(service: AgentService, updater: UpdateService)
 }
 
 function forwardAgentEvent(serverId: string, event: AgentEvent, bufferedLive = false): void {
-  if (serverId === "local") hostAnalytics?.handleAgentEvent(event);
+  if (serverId === LOCAL_SERVER_ID) hostAnalytics?.handleAgentEvent(event);
   if (!mainWindow || mainWindow.isDestroyed()) return;
   sendToRenderer(
     mainWindow,

@@ -42,8 +42,6 @@ import type {
   QueueSnapshot,
   RemoteDesktopCapabilities,
   RemoteDesktopSession,
-  Routine,
-  RoutineRun,
   SendDirectMessageInput,
   ServerCompatibility,
   ServerConnectionIssue,
@@ -73,15 +71,20 @@ import {
   isRoutineRun,
   isSidebarLayoutSnapshot,
   isTeamRealtimeEvent,
+  LOCAL_SERVER_ID,
 } from "@openbot/contracts/ipc";
 import {
-  type DynamicRecord,
-  isBoolean,
-  isDynamicRecord,
-  isNumber,
-  isOneOf,
-  isString,
-} from "@openbot/contracts/runtime-values";
+  decodeRecord,
+  emptyDecoder,
+  guardedDecoder,
+  guardedListDecoder,
+  nullableString,
+  requiredBoolean,
+  requiredNumber,
+  requiredString,
+} from "@openbot/contracts/ipc-decoding";
+import { isBoolean, isDynamicRecord, isNumber, isOneOf, isString } from "@openbot/contracts/runtime-values";
+import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import {
   supportsTeamSemanticTags,
   TEAM_CURRENT_CAPABILITIES,
@@ -226,7 +229,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #centralAccount: CentralAccountSession;
   readonly #allowLocalDevelopmentInvites: boolean;
   readonly #appVersion: string | null;
-  #state: StoredRemoteServers = { version: 3, activeServerId: "local", servers: [], hiddenHostIds: [] };
+  #state: StoredRemoteServers = { version: 3, activeServerId: LOCAL_SERVER_ID, servers: [], hiddenHostIds: [] };
   #states = new Map<string, ServerSummary["state"]>();
   #compatibility = new Map<string, ServerCompatibility>();
   #issues = new Map<string, ServerConnectionIssue>();
@@ -338,7 +341,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   list(): ServerSummary[] {
     return [
       {
-        id: "local",
+        id: LOCAL_SERVER_ID,
         name: "Local",
         kind: "local",
         state: "online",
@@ -346,7 +349,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         remoteDesktopAvailable: false,
         logoUrl: null,
         role: null,
-        active: this.#state.activeServerId === "local",
+        active: this.#state.activeServerId === LOCAL_SERVER_ID,
         compatibility: null,
         issue: null,
       },
@@ -405,7 +408,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   select(serverId: string): Promise<ServerSummary[]> {
     const operation = this.#selectChain.then(async () => {
-      if (serverId !== "local" && !this.#state.servers.some((server) => server.id === serverId)) {
+      if (serverId !== LOCAL_SERVER_ID && !this.#state.servers.some((server) => server.id === serverId)) {
         throw new Error("Remote server not found.");
       }
       const previousServerId = this.#state.activeServerId;
@@ -481,7 +484,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     }
     const verifiedIdentity = await this.#verifyIdentity(invite.apiUrl, invite.serverId, invite.fingerprint);
     const accountTicket = await this.#centralAccount.createTeamAuthTicket(invite.serverId);
-    const result = await requestJson(invite.apiUrl, "/v1/join/account", decodeJoinResult, {
+    const result = await requestJson(invite.apiUrl, TEAM_API_ROUTES.join.account, decodeJoinResult, {
       method: "POST",
       body: {
         inviteToken: invite.token,
@@ -564,7 +567,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       };
     }
     const identity = await this.#verifyIdentity(invite.apiUrl, invite.serverId, invite.fingerprint);
-    const preview = await requestJson(invite.apiUrl, "/v1/invitations/preview", decodeInvitePreview, {
+    const preview = await requestJson(invite.apiUrl, TEAM_API_ROUTES.join.invitationPreview, decodeInvitePreview, {
       method: "POST",
       body: { inviteToken: invite.token },
       ...this.#requestProtocol(identity.compatibility),
@@ -584,7 +587,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     try {
       const identity = await this.#verifyIdentity(server.apiUrl, server.id, server.fingerprint);
       const accountTicket = await this.#centralAccount.createTeamAuthTicket(server.id);
-      const result = await requestJson(server.apiUrl, "/v1/auth/account", decodeJoinResult, {
+      const result = await requestJson(server.apiUrl, TEAM_API_ROUTES.auth.account, decodeJoinResult, {
         method: "POST",
         body: { accountTicket },
         ...this.#requestProtocol(identity.compatibility),
@@ -631,7 +634,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async remove(serverId: string): Promise<void> {
-    if (serverId === "local") throw new Error("The local server cannot be removed.");
+    if (serverId === LOCAL_SERVER_ID) throw new Error("The local server cannot be removed.");
     const server = this.#state.servers.find((candidate) => candidate.id === serverId);
     if (server?.transport === "webrtc-v2") {
       if (!this.#webrtcTransport) throw new Error("The WebRTC transport is unavailable.");
@@ -644,7 +647,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     }
     this.#clearServerConnectionState(serverId);
     this.#state.servers = this.#state.servers.filter((server) => server.id !== serverId);
-    if (this.#state.activeServerId === serverId) this.#setActiveServerId("local");
+    if (this.#state.activeServerId === serverId) this.#setActiveServerId(LOCAL_SERVER_ID);
     await this.#persist();
     this.#emitChanged();
   }
@@ -716,10 +719,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#duplicateOperationIds.set(key, operationId);
     try {
       const result = await this.request(
-        `/v1/agents/${encodeURIComponent(botId)}/duplicate`,
+        TEAM_API_ROUTES.agent.duplicate(botId),
         { method: "POST", body: { operationId }, timeoutMs: REMOTE_DUPLICATION_TIMEOUT_MS },
         serverId,
-        decodeDuplicateBotResult,
+        decodeDuplicateBotResultFromHost,
       );
       this.#duplicateOperationIds.delete(key);
       return result;
@@ -732,16 +735,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   listAgentConversationReads(serverId = this.#state.activeServerId): Promise<Record<string, ConversationReadState>> {
-    return this.request("/v1/agents/conversation-reads", {}, serverId, decodeConversationReadStates);
+    return this.request(TEAM_API_ROUTES.agents.conversationReads, {}, serverId, decodeConversationReadStates);
   }
 
   readAgentConversation(botId: string, serverId = this.#state.activeServerId): Promise<ConversationWithReadState> {
-    return this.request(
-      `/v1/agents/${encodeURIComponent(botId)}/conversation`,
-      {},
-      serverId,
-      decodeConversationWithReadState,
-    );
+    return this.request(TEAM_API_ROUTES.agent.conversation(botId), {}, serverId, decodeConversationWithReadState);
   }
 
   readAgentConversationPage(
@@ -751,10 +749,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     serverId = this.#state.activeServerId,
   ): Promise<ConversationPage> {
     return this.request(
-      `/v1/agents/${encodeURIComponent(botId)}/conversation-page${pageQuery(anchor, limit)}`,
+      `${TEAM_API_ROUTES.agent.conversationPage(botId)}${pageQuery(anchor, limit)}`,
       {},
       serverId,
-      decodeConversationPage,
+      decodeConversationPageFromHost,
     );
   }
 
@@ -768,7 +766,12 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const parameters = new URLSearchParams({ q: query, limit: String(limit) });
     if (botId) parameters.set("botId", botId);
     if (cursor) parameters.set("cursor", cursor);
-    return this.request(`/v1/messages/search?${parameters.toString()}`, {}, serverId, decodeConversationSearchPage);
+    return this.request(
+      `${TEAM_API_ROUTES.messages.search}?${parameters.toString()}`,
+      {},
+      serverId,
+      decodeConversationSearchPageFromHost,
+    );
   }
 
   markAgentConversationRead(
@@ -776,7 +779,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     serverId = this.#state.activeServerId,
   ): Promise<ConversationReadState> {
     return this.request(
-      `/v1/agents/${encodeURIComponent(input.botId)}/conversation/read`,
+      TEAM_API_ROUTES.agent.conversationRead(input.botId),
       { method: "POST", body: { throughMessageId: input.throughMessageId } },
       serverId,
       decodeConversationReadState,
@@ -791,7 +794,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   async getPresenceFor(serverId: string): Promise<TeamPresenceSnapshot> {
     try {
-      const snapshot = await this.request("/v1/team/presence", {}, serverId, decodeTeamPresenceSnapshot);
+      const snapshot = await this.request(TEAM_API_ROUTES.team.presence, {}, serverId, decodeTeamPresenceSnapshot);
       this.#presence.set(serverId, snapshot);
       return structuredClone(snapshot);
     } catch (error) {
@@ -837,7 +840,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         })),
       );
     }
-    return this.request("/v1/team/members", {}, serverId, decodeTeamMembers);
+    return this.request(TEAM_API_ROUTES.team.members, {}, serverId, decodeTeamMembers);
   }
 
   updateMember(serverId: string, input: UpdateTeamMemberInput): Promise<TeamMemberSummary> {
@@ -857,7 +860,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       })();
     }
     return this.request(
-      `/v1/team/members/${encodeURIComponent(input.memberId)}`,
+      TEAM_API_ROUTES.team.member(input.memberId),
       { method: "PATCH", body: { role: input.role, disabled: input.disabled } },
       serverId,
       decodeTeamMember,
@@ -868,7 +871,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const server = this.#requireServer(serverId);
     if (server.transport === "webrtc-v2" && this.#webrtcTransport)
       return this.#webrtcTransport.removeMember(serverId, memberId);
-    return this.request(`/v1/team/members/${encodeURIComponent(memberId)}`, { method: "DELETE" }, serverId, decodeVoid);
+    return this.request(TEAM_API_ROUTES.team.member(memberId), { method: "DELETE" }, serverId, decodeVoid);
   }
 
   listInvites(serverId: string): Promise<TeamInviteSummary[]> {
@@ -886,13 +889,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           })),
       );
     }
-    return this.request("/v1/team/invites", {}, serverId, decodeTeamInvites);
+    return this.request(TEAM_API_ROUTES.team.invites, {}, serverId, decodeTeamInvites);
   }
 
   revokeInvite(serverId: string, inviteId: string): Promise<void> {
     const server = this.#requireServer(serverId);
     if (server.transport === "webrtc-v2" && this.#webrtcTransport) return this.#webrtcTransport.revokeInvite(inviteId);
-    return this.request(`/v1/team/invites/${encodeURIComponent(inviteId)}`, { method: "DELETE" }, serverId, decodeVoid);
+    return this.request(TEAM_API_ROUTES.team.invite(inviteId), { method: "DELETE" }, serverId, decodeVoid);
   }
 
   async createInvite(serverId: string, input: { role: "admin" | "member"; email?: string }): Promise<InviteSummary> {
@@ -930,7 +933,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       }
       return result;
     }
-    return this.request("/v1/team/invites", { method: "POST", body: input }, serverId, decodeInviteSummary);
+    return this.request(TEAM_API_ROUTES.team.invites, { method: "POST", body: input }, serverId, decodeInviteSummary);
   }
 
   setTyping(input: SetTeamTypingInput, serverId = this.#state.activeServerId): void {
@@ -945,16 +948,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   listDirectThreads(serverId = this.#state.activeServerId): Promise<DirectThreadSummary[]> {
-    return this.request("/v1/direct/threads", {}, serverId, decodeDirectThreadSummaries);
+    return this.request(TEAM_API_ROUTES.direct.threads, {}, serverId, decodeDirectThreadSummaries);
   }
 
   readDirectConversation(memberId: string, serverId = this.#state.activeServerId): Promise<DirectConversationSnapshot> {
-    return this.request(
-      `/v1/direct/conversations/${encodeURIComponent(memberId)}`,
-      {},
-      serverId,
-      decodeDirectConversationSnapshot,
-    );
+    return this.request(TEAM_API_ROUTES.direct.conversation(memberId), {}, serverId, decodeDirectConversationSnapshot);
   }
 
   readDirectConversationPage(
@@ -964,7 +962,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     serverId = this.#state.activeServerId,
   ): Promise<DirectConversationPage> {
     return this.request(
-      `/v1/direct/conversations/${encodeURIComponent(memberId)}/page${pageQuery(anchor, limit)}`,
+      `${TEAM_API_ROUTES.direct.conversationPage(memberId)}${pageQuery(anchor, limit)}`,
       {},
       serverId,
       decodeDirectConversationPage,
@@ -972,7 +970,12 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   sendDirectMessage(input: SendDirectMessageInput, serverId = this.#state.activeServerId): Promise<DirectMessage> {
-    return this.request("/v1/direct/messages", { method: "POST", body: input }, serverId, decodeDirectMessage);
+    return this.request(
+      TEAM_API_ROUTES.direct.messages,
+      { method: "POST", body: input },
+      serverId,
+      decodeDirectMessage,
+    );
   }
 
   markDirectRead(
@@ -980,7 +983,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     serverId = this.#state.activeServerId,
   ): Promise<DirectConversationReadState> {
     return this.request(
-      `/v1/direct/conversations/${encodeURIComponent(input.memberId)}/read`,
+      TEAM_API_ROUTES.direct.conversationRead(input.memberId),
       { method: "POST", body: { throughSequence: input.throughSequence } },
       serverId,
       decodeDirectConversationReadState,
@@ -1006,7 +1009,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   async createRemoteDesktopSession(serverId: string): Promise<RemoteDesktopSession> {
     const session = await this.request(
-      "/v1/remote-screen/sessions",
+      TEAM_API_ROUTES.remoteScreen.sessions,
       { method: "POST", body: {} },
       serverId,
       decodeRemoteDesktopSession,
@@ -1015,10 +1018,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     if (!this.#remoteViewerProxy) throw new Error("The local remote viewer proxy is unavailable.");
     return {
       ...session,
-      viewerUrl: await this.#remoteViewerProxy.viewerUrl(
-        serverId,
-        `/v1/remote-screen/sessions/${encodeURIComponent(session.id)}/viewer`,
-      ),
+      viewerUrl: await this.#remoteViewerProxy.viewerUrl(serverId, TEAM_API_ROUTES.remoteScreen.viewer(session.id)),
     };
   }
 
@@ -1029,16 +1029,16 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   closeRemoteDesktopSession(serverId: string, sessionId: string): Promise<void> {
-    return this.request(
-      `/v1/remote-screen/sessions/${encodeURIComponent(sessionId)}`,
-      { method: "DELETE" },
-      serverId,
-      decodeVoid,
-    );
+    return this.request(TEAM_API_ROUTES.remoteScreen.session(sessionId), { method: "DELETE" }, serverId, decodeVoid);
   }
 
   selectRemoteDesktopDisplay(serverId: string, displayId: string): Promise<void> {
-    return this.request("/v1/remote-screen/display", { method: "PUT", body: { displayId } }, serverId, decodeVoid);
+    return this.request(
+      TEAM_API_ROUTES.remoteScreen.display,
+      { method: "PUT", body: { displayId } },
+      serverId,
+      decodeVoid,
+    );
   }
 
   async uploadAttachment(
@@ -1048,7 +1048,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     serverId = this.#state.activeServerId,
   ): Promise<DraftAttachment> {
     const server = this.#requireServer(serverId);
-    const url = new URL("/v1/attachments", server.apiUrl);
+    const url = new URL(TEAM_API_ROUTES.attachments, server.apiUrl);
     url.searchParams.set("name", name);
     url.searchParams.set("mime", mimeType || "application/octet-stream");
     const response = await this.#fetch(server, url, {
@@ -1068,7 +1068,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     serverId = this.#state.activeServerId,
   ): Promise<BotSummary> {
     const server = this.#requireServer(serverId);
-    const url = new URL(`/v1/agents/${encodeURIComponent(botId)}/avatar`, server.apiUrl);
+    const url = new URL(TEAM_API_ROUTES.agent.avatar(botId), server.apiUrl);
     const headers = new Headers();
     if (image) headers.set("Content-Type", image.mimeType);
     const response = await this.#fetch(server, url, {
@@ -1091,7 +1091,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     version?: string,
   ): Promise<{ bytes: Uint8Array; mimeType: string }> {
     const server = this.#requireServer(serverId);
-    const url = new URL(`/v1/agents/${encodeURIComponent(botId)}/avatar`, server.apiUrl);
+    const url = new URL(TEAM_API_ROUTES.agent.avatar(botId), server.apiUrl);
     if (version) url.searchParams.set("v", version);
     const response = await this.#fetch(server, url);
     return {
@@ -1108,7 +1108,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       if (!isValidAvatarImage(logo.mimeType, logo.bytes)) throw new Error("Server logo response is invalid.");
       return logo;
     }
-    const url = new URL("/v1/team/logo", server.apiUrl);
+    const url = new URL(TEAM_API_ROUTES.team.logo, server.apiUrl);
     url.searchParams.set("v", version);
     const response = await this.#fetch(server, url);
     const bytes = new Uint8Array(await response.arrayBuffer());
@@ -1141,7 +1141,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     serverId = this.#state.activeServerId,
   ): Promise<{ bytes: Uint8Array; name: string }> {
     const server = this.#requireServer(serverId);
-    const url = new URL("/v1/shared-files", server.apiUrl);
+    const url = new URL(TEAM_API_ROUTES.sharedFiles, server.apiUrl);
     url.searchParams.set("path", sharedPath);
     const response = await this.#fetch(server, url);
     const disposition = response.headers.get("content-disposition") ?? "";
@@ -1158,7 +1158,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     serverId = this.#state.activeServerId,
   ): Promise<{ bytes: Uint8Array; name: string }> {
     const server = this.#requireServer(serverId);
-    const url = new URL("/v1/workspace-files", server.apiUrl);
+    const url = new URL(TEAM_API_ROUTES.workspaceFiles, server.apiUrl);
     url.searchParams.set("botId", botId);
     url.searchParams.set("path", workspacePath);
     const response = await this.#fetch(server, url);
@@ -1250,10 +1250,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     }
     this.#state.servers = servers;
     if (
-      this.#state.activeServerId !== "local" &&
+      this.#state.activeServerId !== LOCAL_SERVER_ID &&
       !this.#state.servers.some((server) => server.id === this.#state.activeServerId)
     ) {
-      this.#setActiveServerId("local");
+      this.#setActiveServerId(LOCAL_SERVER_ID);
     }
     await this.#persist();
   }
@@ -1271,7 +1271,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   async #refreshWebRtcCompatibility(serverId: string): Promise<void> {
     if (!this.#webrtcTransport) return;
-    const host = decodeTeamProtocolSupportV1(await this.#webrtcTransport.request(serverId, "/v1/compatibility"));
+    const host = decodeTeamProtocolSupportV1(
+      await this.#webrtcTransport.request(serverId, TEAM_API_ROUTES.compatibility),
+    );
     this.#compatibility.set(serverId, {
       localAppVersion: this.#appVersion ?? "0.0.0",
       hostAppVersion: host.appVersion,
@@ -1458,7 +1460,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   async #negotiateWebRtcCompatibility(serverId: string): Promise<ServerCompatibility> {
     if (!this.#webrtcTransport) throw new Error("The WebRTC transport is unavailable.");
-    const value = await this.#webrtcTransport.request(serverId, "/v1/compatibility");
+    const value = await this.#webrtcTransport.request(serverId, TEAM_API_ROUTES.compatibility);
     return this.#webrtcCompatibility(decodeTeamProtocolSupportV1(value));
   }
 
@@ -1466,7 +1468,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     if (!this.#appVersion) return this.#assumedCompatibility();
     let host: TeamProtocolSupportV1;
     try {
-      host = await requestJson(apiUrl, "/v1/compatibility", decodeTeamProtocolSupportV1);
+      host = await requestJson(apiUrl, TEAM_API_ROUTES.compatibility, decodeTeamProtocolSupportV1);
     } catch (error) {
       if (error instanceof RemoteRequestError && error.status === 404) {
         throw new RemoteProtocolError("host_update_required", "Update OpenBot on the host before connecting.");
@@ -1571,7 +1573,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const challenge = randomBytes(24).toString("base64url");
     const proof = await requestJson(
       apiUrl,
-      `/v1/identity?challenge=${encodeURIComponent(challenge)}`,
+      `${TEAM_API_ROUTES.identity}?challenge=${encodeURIComponent(challenge)}`,
       decodeIdentityProof,
       {
         ...this.#requestProtocol(compatibility),
@@ -1603,14 +1605,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       if (server.transport === "webrtc-v2") {
         if (!this.#webrtcTransport) throw new Error("The WebRTC transport is unavailable.");
         capabilities = decodeRemoteDesktopCapabilities(
-          await this.#webrtcTransport.request(server.id, "/v1/remote-screen/capabilities", {
+          await this.#webrtcTransport.request(server.id, TEAM_API_ROUTES.remoteScreen.capabilities, {
             preserveSemanticTags: supportsTeamSemanticTags(compatibility.capabilities),
           }),
         );
       } else {
         capabilities = await requestJson(
           server.apiUrl,
-          "/v1/remote-screen/capabilities",
+          TEAM_API_ROUTES.remoteScreen.capabilities,
           decodeRemoteDesktopCapabilities,
           {
             token: this.#token(server),
@@ -1648,7 +1650,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         if (this.#eventControllers.get(serverId) === controller) this.#eventControllers.delete(serverId);
         return;
       }
-      const eventsUrl = new URL("/v1/events", server.apiUrl);
+      const eventsUrl = new URL(TEAM_API_ROUTES.events, server.apiUrl);
       eventsUrl.protocol = eventsUrl.protocol === "https:" ? "wss:" : "ws:";
       const socketProtocols = this.#appVersion
         ? [TEAM_PROTOCOL_V1_WEBSOCKET, `openbot-token.${this.#token(server)}`]
@@ -1893,7 +1895,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   async #hasRejectedEventCredentials(server: StoredRemoteServer): Promise<boolean> {
     try {
       const compatibility = await this.#ensureCompatibility(server);
-      await requestJson(server.apiUrl, "/v1/me", (value) => decodeRecord(value, "team member"), {
+      await requestJson(server.apiUrl, TEAM_API_ROUTES.me, (value) => decodeRecord(value, "team member"), {
         token: this.#token(server),
         ...this.#requestProtocol(compatibility),
       });
@@ -1915,7 +1917,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   async #refreshAgentStateFallback(serverId: string): Promise<void> {
     const generation = this.#advanceEventGeneration(serverId);
-    const bots = await this.request("/v1/agents", {}, serverId, decodeBotSummaries);
+    const bots = await this.request(TEAM_API_ROUTES.agents.all, {}, serverId, decodeBotSummaries);
     if (this.#eventGenerations.get(serverId) !== generation) return;
     this.emit("agent", serverId, { type: "bots-changed", bots });
     await Promise.all(
@@ -1923,7 +1925,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         try {
           const [page, queue] = await Promise.all([
             this.readAgentConversationPage(bot.id, { type: "latest" }, 1, serverId),
-            this.request(`/v1/agents/${encodeURIComponent(bot.id)}/queue`, {}, serverId, decodeQueueSnapshot),
+            this.request(TEAM_API_ROUTES.agent.queue(bot.id), {}, serverId, decodeQueueSnapshot),
           ]);
           if (this.#eventGenerations.get(serverId) !== generation) return;
           const { pageInfo: _, references: __, readState: ___, ...snapshot } = page;
@@ -1993,12 +1995,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         request.dirty = false;
         let snapshot: QueueSnapshot;
         try {
-          snapshot = await this.request(
-            `/v1/agents/${encodeURIComponent(botId)}/queue`,
-            {},
-            serverId,
-            decodeQueueSnapshot,
-          );
+          snapshot = await this.request(TEAM_API_ROUTES.agent.queue(botId), {}, serverId, decodeQueueSnapshot);
         } catch {
           if (request.dirty) continue;
           return;
@@ -2158,35 +2155,6 @@ async function requestJson<T>(
   }
 }
 
-function decodeRecord(value: unknown, label: string): DynamicRecord {
-  if (!isDynamicRecord(value)) throw new Error(`Invalid ${label}.`);
-  return value;
-}
-
-function requiredString(record: DynamicRecord, field: string): string {
-  const value = record[field];
-  if (!isString(value)) throw new Error(`Invalid ${field}.`);
-  return value;
-}
-
-function nullableString(record: DynamicRecord, field: string): string | null {
-  const value = record[field];
-  if (value === null || isString(value)) return value;
-  throw new Error(`Invalid ${field}.`);
-}
-
-function requiredNumber(record: DynamicRecord, field: string): number {
-  const value = record[field];
-  if (!isNumber(value)) throw new Error(`Invalid ${field}.`);
-  return value;
-}
-
-function requiredBoolean(record: DynamicRecord, field: string): boolean {
-  const value = record[field];
-  if (!isBoolean(value)) throw new Error(`Invalid ${field}.`);
-  return value;
-}
-
 function decodeJoinResult(value: unknown): { member: { role: TeamRole }; sessionToken: string } {
   const record = decodeRecord(value, "join response");
   const member = decodeRecord(record.member, "member");
@@ -2263,19 +2231,20 @@ function decodeMarketplaceSource(value: unknown): BotSummary["marketplaceSource"
   };
 }
 
-export function decodeVoid(value: unknown): undefined {
-  if (value !== undefined && value !== null) throw new Error("The remote server returned data.");
-  return undefined;
-}
+export const decodeVoid = emptyDecoder("The remote server returned data.");
 
-export function decodeAgentStatus(value: unknown): AgentStatus {
+// A `FromHost` decoder has a same-shaped `FromMain` twin in `src/preload/index.ts` and is
+// deliberately not the same function: a remote team server is an untrusted sender, so these enumerate
+// what the preload's twin is content to accept as a string. The suffix is there so a later reader
+// does not merge them onto whichever is looser.
+export function decodeAgentStatusFromHost(value: unknown): AgentStatus {
   if (!isAgentStatus(value)) {
     throw new Error("Invalid remote agent status.");
   }
   return value;
 }
 
-export function decodeAccountUsage(value: unknown): AccountUsage {
+export function decodeAccountUsageFromHost(value: unknown): AccountUsage {
   if (!isAccountUsage(value)) {
     throw new Error("Invalid remote account usage.");
   }
@@ -2294,7 +2263,7 @@ export function decodeBotSummaries(value: unknown): BotSummary[] {
   return value.map(decodeBotSummary);
 }
 
-export function decodeInstalledSkills(value: unknown): InstalledSkill[] {
+export function decodeInstalledSkillsFromHost(value: unknown): InstalledSkill[] {
   if (!Array.isArray(value)) throw new Error("Invalid installed skill list.");
   return value.map((item) => {
     const skill = decodeRecord(item, "installed skill");
@@ -2325,32 +2294,17 @@ export function decodeBotMemories(value: unknown): BotMemory[] {
   return value;
 }
 
-export function decodeRoutine(value: unknown): Routine {
-  if (!isRoutine(value)) throw new Error("Invalid remote routine.");
-  return value;
-}
-
-export function decodeRoutines(value: unknown): Routine[] {
-  if (!Array.isArray(value) || !value.every(isRoutine)) throw new Error("Invalid remote routine list.");
-  return value;
-}
-
-export function decodeRoutineRun(value: unknown): RoutineRun {
-  if (!isRoutineRun(value)) throw new Error("Invalid remote routine run.");
-  return value;
-}
-
-export function decodeRoutineRuns(value: unknown): RoutineRun[] {
-  if (!Array.isArray(value) || !value.every(isRoutineRun)) throw new Error("Invalid remote routine history.");
-  return value;
-}
+export const decodeRoutine = guardedDecoder(isRoutine, "remote routine");
+export const decodeRoutines = guardedListDecoder(isRoutine, "remote routine list");
+export const decodeRoutineRun = guardedDecoder(isRoutineRun, "remote routine run");
+export const decodeRoutineRuns = guardedListDecoder(isRoutineRun, "remote routine history");
 
 export function decodeSidebarLayoutSnapshot(value: unknown): SidebarLayoutSnapshot {
   if (!isSidebarLayoutSnapshot(value)) throw new Error("Invalid sidebar layout response.");
   return value;
 }
 
-export function decodeDuplicateBotResult(value: unknown): DuplicateBotResult {
+export function decodeDuplicateBotResultFromHost(value: unknown): DuplicateBotResult {
   const record = decodeRecord(value, "agent duplication");
   return {
     bot: decodeBotSummary(record.bot),
@@ -2384,7 +2338,7 @@ export function decodeBrowserTab(value: unknown): BrowserTab {
   return value;
 }
 
-export function decodeBrowserPreview(value: unknown): BrowserPreview {
+export function decodeBrowserPreviewFromHost(value: unknown): BrowserPreview {
   if (!isBrowserPreviewValue(value)) throw new Error("Invalid remote browser preview.");
   return value;
 }
@@ -2524,7 +2478,7 @@ function decodeConversationWithReadState(value: unknown): ConversationWithReadSt
   return { ...value, readState: decodeConversationReadState(value.readState) };
 }
 
-function decodeConversationPage(value: unknown): ConversationPage {
+function decodeConversationPageFromHost(value: unknown): ConversationPage {
   const record = decodeRecord(value, "agent conversation page");
   return {
     botId: requiredString(record, "botId"),
@@ -2532,13 +2486,13 @@ function decodeConversationPage(value: unknown): ConversationPage {
     activeTurnId: nullableString(record, "activeTurnId"),
     revision: requiredNumber(record, "revision"),
     messages: decodeConversationMessages(record.messages),
-    references: decodeConversationReferences(record.references),
+    references: decodeConversationReferencesFromHost(record.references),
     pageInfo: decodePageInfo(record.pageInfo),
     ...(record.readState === undefined ? {} : { readState: decodeConversationReadState(record.readState) }),
   };
 }
 
-function decodeConversationSearchPage(value: unknown): ConversationSearchPage {
+function decodeConversationSearchPageFromHost(value: unknown): ConversationSearchPage {
   const record = decodeRecord(value, "conversation search page");
   if (!Array.isArray(record.results)) throw new Error("Invalid conversation search results.");
   return {
@@ -2554,14 +2508,9 @@ function decodeConversationSearchPage(value: unknown): ConversationSearchPage {
   };
 }
 
-function decodeConversationMessages(value: unknown): ConversationMessage[] {
-  if (!Array.isArray(value) || !value.every(isConversationMessage)) {
-    throw new Error("Invalid conversation page messages.");
-  }
-  return value;
-}
+const decodeConversationMessages = guardedListDecoder(isConversationMessage, "conversation page messages");
 
-function decodeConversationReferences(value: unknown): Record<string, ConversationMessage> {
+function decodeConversationReferencesFromHost(value: unknown): Record<string, ConversationMessage> {
   const references = decodeRecord(value, "conversation references");
   const decoded: Record<string, ConversationMessage> = {};
   for (const [messageId, message] of Object.entries(references)) {

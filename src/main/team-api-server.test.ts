@@ -23,6 +23,7 @@ import {
   routineRunConversationEventItemType,
 } from "@openbot/contracts/ipc";
 import { isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { TEAM_CURRENT_CAPABILITIES, TEAM_SEMANTIC_TAGS_CAPABILITY } from "@openbot/contracts/team-protocol/current";
 import {
   TEAM_APP_VERSION_HEADER,
@@ -350,6 +351,166 @@ describe("TeamApiServer compatibility", () => {
       ]);
       expect(listInstalledForChatTags).toHaveBeenCalledWith("chief");
     } finally {
+      await api.stop();
+    }
+  });
+});
+
+// `TEAM_API_ROUTES` is the client's half of this router's surface, and until this case nothing linked
+// the two: a path renamed in the table but not in the branch below would leave every remote server
+// asking for a route the host answers "Route not found." to, with no test going red. The table is
+// walked rather than listed, so a new entry cannot quietly skip the check - it arrives with no method
+// declared and fails on `undeclared` until it is named here.
+const ROUTE_METHODS: Record<string, string> = {
+  compatibility: "GET",
+  identity: "GET",
+  events: "GET",
+  me: "GET",
+  attachments: "POST",
+  attachment: "DELETE",
+  sharedFiles: "GET",
+  workspaceFiles: "GET",
+  "join.server": "POST",
+  "join.account": "POST",
+  "join.invitationPreview": "POST",
+  "auth.login": "POST",
+  "auth.account": "POST",
+  "auth.logout": "POST",
+  "auth.password": "POST",
+  "host.remoteMac": "GET",
+  "host.remoteDesktopAccess": "GET",
+  "team.presence": "GET",
+  "team.logo": "GET",
+  "team.members": "GET",
+  "team.member": "PATCH",
+  "team.invites": "GET",
+  "team.invite": "DELETE",
+  "team.sessions": "GET",
+  "team.session": "DELETE",
+  "direct.threads": "GET",
+  "direct.messages": "POST",
+  "direct.conversation": "GET",
+  "direct.conversationPage": "GET",
+  "direct.conversationRead": "POST",
+  "messages.search": "GET",
+  "browser.open": "POST",
+  "browser.activate": "POST",
+  "browser.navigate": "POST",
+  "browser.reload": "POST",
+  "browser.close": "POST",
+  "browser.tabs": "GET",
+  "browser.control": "GET",
+  "browser.preview": "POST",
+  "browser.visible": "POST",
+  "remoteScreen.capabilities": "GET",
+  "remoteScreen.sessions": "POST",
+  "remoteScreen.session": "DELETE",
+  "remoteScreen.display": "PUT",
+  "sidebarLayout.state": "GET",
+  "sidebarLayout.actions": "POST",
+  "respond.prompt": "POST",
+  "respond.approval": "POST",
+  "respond.browserTakeover": "POST",
+  "agents.all": "GET",
+  "agents.status": "GET",
+  "agents.usage": "GET",
+  "agents.models": "GET",
+  "agents.conversationReads": "GET",
+  "agent.one": "PATCH",
+  "agent.skills": "GET",
+  "agent.duplicate": "POST",
+  "agent.avatar": "GET",
+  "agent.conversation": "GET",
+  "agent.conversationPage": "GET",
+  "agent.conversationRead": "POST",
+  "agent.messages": "POST",
+  "agent.reactions": "POST",
+  "agent.interrupt": "POST",
+  "agent.failuresAcknowledge": "POST",
+  "agent.queue": "GET",
+  "agent.queueCancel": "POST",
+  "agent.queueSteer": "POST",
+  "agent.queueUpdate": "POST",
+  "agent.queueReorder": "POST",
+  "agent.memories": "GET",
+  "agent.memory": "PATCH",
+  "agent.routines": "GET",
+  "agent.routine": "PATCH",
+  "agent.routineTest": "POST",
+  "agent.routineRuns": "GET",
+};
+
+// Two entries this router deliberately never answers: the WebSocket upgrade path, and the viewer
+// family `remote-screen-gateway.ts` owns, which answers 404 for a session that does not exist.
+const ROUTES_NOT_SERVED_OVER_HTTP = new Set(["remoteDesktopUpgrade", "remoteScreen.viewer"]);
+
+const ROUTE_SAMPLE_IDS = ["route-sample", "route-sample-other"];
+
+// The table's three shapes: a fixed path, a builder taking one or two ids, and a group of either.
+type RouteNode = string | ((...ids: string[]) => string) | { [key: string]: RouteNode };
+
+function collectRoutes(node: { [key: string]: RouteNode }, trail: string[]): { name: string; path: string }[] {
+  return Object.entries(node).flatMap(([key, value]) => {
+    const name = [...trail, key].join(".");
+    if (typeof value === "string") return [{ name, path: value }];
+    if (typeof value === "function") {
+      return [{ name, path: value(...ROUTE_SAMPLE_IDS.slice(0, value.length)) }];
+    }
+    return collectRoutes(value, [...trail, key]);
+  });
+}
+
+describe("TeamApiServer routing", () => {
+  it("answers every path the shared route table builds", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-routes-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const sidebarLayout = new SidebarLayoutStore(join(root, "sidebar-layout.json"));
+    await sidebarLayout.initialize();
+    const api = new TeamApiServer({
+      store,
+      agents: createAgents({ listBots: () => [] }),
+      sidebarLayout,
+      mailbox: createMailbox(),
+      browser: createBrowser(),
+    });
+    const port = await api.start();
+    const base = `http://127.0.0.1:${port}`;
+    // The point is which paths route, not what the stubs do once reached, so the failures they raise
+    // are expected here and their logging would bury the assertion.
+    const requestFailures = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const login = await jsonRequest<{ sessionToken: string }>(base, TEAM_API_ROUTES.auth.login, {
+        body: { username: "owner", password: "correct horse battery" },
+      });
+      const routes = collectRoutes(TEAM_API_ROUTES, []).filter((route) => !ROUTES_NOT_SERVED_OVER_HTTP.has(route.name));
+      expect(routes.filter((route) => !ROUTE_METHODS[route.name]).map((route) => route.name)).toEqual([]);
+
+      // Signing out invalidates the token every other request needs, so it goes last - otherwise the
+      // routes after it would answer 401 and never reach the router's 404.
+      const ordered = [
+        ...routes.filter((route) => route.name !== "auth.logout"),
+        ...routes.filter((route) => route.name === "auth.logout"),
+      ];
+      const unrouted: string[] = [];
+      for (const route of ordered) {
+        const method = ROUTE_METHODS[route.name];
+        const response = await fetch(`${base}${route.path}`, {
+          method,
+          headers: { Authorization: `Bearer ${login.sessionToken}` },
+        });
+        const body = response.status === 404 ? await response.json() : null;
+        if (isDynamicRecord(body) && body.error === "Route not found.") {
+          unrouted.push(`${method} ${route.path} (${route.name})`);
+        }
+      }
+
+      expect(unrouted).toEqual([]);
+    } finally {
+      requestFailures.mockRestore();
       await api.stop();
     }
   });

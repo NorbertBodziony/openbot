@@ -1,4 +1,6 @@
 import type { DynamicIslandAction } from "@openbot/contracts/ipc";
+import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
+import { routeToServer } from "./ipc/route-to-server";
 
 type CriticalAction = Extract<DynamicIslandAction, { type: "answer-prompt" | "respond-approval" }>;
 
@@ -24,11 +26,17 @@ export async function performDynamicIslandCriticalAction(
 ): Promise<void> {
   if (action.type === "answer-prompt") {
     const input = { requestId: action.requestId, answers: action.answers };
-    if (action.serverId === "local") await local.respondToPrompt(input);
-    else await remote.request("/v1/prompts/respond", { method: "POST", body: input }, action.serverId, decodeVoid);
+    await routeToServer<void>(action.serverId, {
+      local: () => local.respondToPrompt(input),
+      remote: (serverId) =>
+        remote.request(TEAM_API_ROUTES.respond.prompt, { method: "POST", body: input }, serverId, decodeVoid),
+    });
     return;
   }
   const input = { requestId: action.requestId, decision: action.decision };
-  if (action.serverId === "local") await local.respondToApproval(input);
-  else await remote.request("/v1/approvals/respond", { method: "POST", body: input }, action.serverId, decodeVoid);
+  await routeToServer<void>(action.serverId, {
+    local: () => local.respondToApproval(input),
+    remote: (serverId) =>
+      remote.request(TEAM_API_ROUTES.respond.approval, { method: "POST", body: input }, serverId, decodeVoid),
+  });
 }

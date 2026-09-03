@@ -43,6 +43,7 @@ import {
   type UpdateQueuedMessageInput,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import {
   isTeamCurrentCapability,
   supportsTeamSemanticTags,
@@ -289,7 +290,7 @@ export class TeamApiServer {
       const protocols = (request.headers["sec-websocket-protocol"] ?? "").split(",").map((value) => value.trim());
       if (
         this.#options.appVersion &&
-        url.pathname === "/v1/events" &&
+        url.pathname === TEAM_API_ROUTES.events &&
         !protocols.includes(TEAM_PROTOCOL_V1_WEBSOCKET)
       ) {
         socket.write("HTTP/1.1 426 Upgrade Required\r\nConnection: close\r\n\r\n");
@@ -305,7 +306,7 @@ export class TeamApiServer {
         return;
       }
       if (
-        url.pathname === "/v1/events" &&
+        url.pathname === TEAM_API_ROUTES.events &&
         (protocols.includes(TEAM_PROTOCOL_V1_WEBSOCKET) ||
           (!this.#options.appVersion &&
             (protocols.includes(TEST_LEGACY_SNAPSHOT_PROTOCOL) || protocols.includes(TEST_LEGACY_EVENT_PROTOCOL))))
@@ -321,7 +322,7 @@ export class TeamApiServer {
         });
         return;
       }
-      if (url.pathname === "/v1/remote-desktop") {
+      if (url.pathname === TEAM_API_ROUTES.remoteDesktopUpgrade) {
         socket.write("HTTP/1.1 426 Upgrade Required\r\nConnection: close\r\n\r\n");
         socket.destroy();
         return;
@@ -494,7 +495,7 @@ export class TeamApiServer {
         capabilities: clientCapabilities,
       });
 
-      if (method === "GET" && url.pathname === "/v1/compatibility") {
+      if (method === "GET" && url.pathname === TEAM_API_ROUTES.compatibility) {
         return this.#json(response, 200, this.#protocolSupport());
       }
 
@@ -506,7 +507,7 @@ export class TeamApiServer {
       const protocolIssue = this.#protocolIssue(request);
       if (protocolIssue) return this.#json(response, protocolIssue.status, protocolIssue.body);
 
-      if (method === "GET" && url.pathname === "/v1/identity") {
+      if (method === "GET" && url.pathname === TEAM_API_ROUTES.identity) {
         const challenge = url.searchParams.get("challenge");
         return this.#json(
           response,
@@ -514,7 +515,7 @@ export class TeamApiServer {
           challenge ? this.#options.store.getIdentityProof(challenge) : this.#options.store.getIdentity(),
         );
       }
-      if (method === "POST" && url.pathname === "/v1/invitations/preview") {
+      if (method === "POST" && url.pathname === TEAM_API_ROUTES.join.invitationPreview) {
         const body = await readJson(request);
         return this.#json(
           response,
@@ -522,7 +523,7 @@ export class TeamApiServer {
           this.#options.store.previewInvite(stringField(body, "inviteToken", false, INPUT_LIMITS.identifier)),
         );
       }
-      if (method === "POST" && url.pathname === "/v1/join") {
+      if (method === "POST" && url.pathname === TEAM_API_ROUTES.join.server) {
         const body = await readJson(request);
         this.#checkRate(request, stringField(body, "username", false, 64));
         const result = await this.#options.store.acceptInvite(
@@ -532,7 +533,7 @@ export class TeamApiServer {
         );
         return this.#json(response, 201, result);
       }
-      if (method === "POST" && url.pathname === "/v1/join/account") {
+      if (method === "POST" && url.pathname === TEAM_API_ROUTES.join.account) {
         const body = await readJson(request);
         const identity = this.#options.store.getIdentity();
         const user = identity
@@ -549,7 +550,7 @@ export class TeamApiServer {
         );
         return this.#json(response, 201, result);
       }
-      if (method === "POST" && url.pathname === "/v1/auth/login") {
+      if (method === "POST" && url.pathname === TEAM_API_ROUTES.auth.login) {
         const body = await readJson(request);
         this.#checkRate(request, stringField(body, "username", false, 64));
         const result = await this.#options.store.login(
@@ -558,7 +559,7 @@ export class TeamApiServer {
         );
         return this.#json(response, 200, result);
       }
-      if (method === "POST" && url.pathname === "/v1/auth/account") {
+      if (method === "POST" && url.pathname === TEAM_API_ROUTES.auth.account) {
         const body = await readJson(request);
         const identity = this.#options.store.getIdentity();
         const user = identity
@@ -579,13 +580,13 @@ export class TeamApiServer {
         return this.#json(response, 401, { error: "Authentication required." });
       }
 
-      if (method === "POST" && url.pathname === "/v1/auth/logout") {
+      if (method === "POST" && url.pathname === TEAM_API_ROUTES.auth.logout) {
         await this.#options.store.logout(token);
         await this.#options.remoteScreen?.revokeTeamSession(authenticated.sessionId);
         this.refreshPresence();
         return this.#empty(response, 204);
       }
-      if (method === "POST" && url.pathname === "/v1/auth/password") {
+      if (method === "POST" && url.pathname === TEAM_API_ROUTES.auth.password) {
         const body = await readJson(request);
         await this.#options.store.changePassword(
           member.id,
@@ -596,13 +597,13 @@ export class TeamApiServer {
         this.refreshPresence();
         return this.#empty(response, 204);
       }
-      if (method === "GET" && url.pathname === "/v1/me") {
+      if (method === "GET" && url.pathname === TEAM_API_ROUTES.me) {
         return this.#json(response, 200, member);
       }
-      if (method === "GET" && url.pathname === "/v1/team/presence") {
+      if (method === "GET" && url.pathname === TEAM_API_ROUTES.team.presence) {
         return this.#json(response, 200, this.getPresence());
       }
-      if (method === "GET" && url.pathname === "/v1/team/logo") {
+      if (method === "GET" && url.pathname === TEAM_API_ROUTES.team.logo) {
         const logo = this.#options.store.resolveLogo();
         if (!logo || (url.searchParams.get("v") && url.searchParams.get("v") !== logo.version)) {
           return this.#json(response, 404, { error: "Server logo not found." });
@@ -617,15 +618,15 @@ export class TeamApiServer {
         response.end(bytes);
         return;
       }
-      if (method === "GET" && url.pathname === "/v1/events") {
+      if (method === "GET" && url.pathname === TEAM_API_ROUTES.events) {
         return this.#json(response, 426, { error: "Use WebSocket for remote events." });
       }
-      if (method === "GET" && url.pathname === "/v1/remote-screen/capabilities") {
+      if (method === "GET" && url.pathname === TEAM_API_ROUTES.remoteScreen.capabilities) {
         if (!this.#options.remoteScreen)
           throw new RemoteScreenError(503, "host_unavailable", "Remote control is unavailable.");
         return this.#json(response, 200, this.#options.remoteScreen.capabilities());
       }
-      if (method === "POST" && url.pathname === "/v1/remote-screen/sessions") {
+      if (method === "POST" && url.pathname === TEAM_API_ROUTES.remoteScreen.sessions) {
         const identity = this.#options.store.getIdentity();
         if (!identity || !this.#options.remoteScreen) {
           throw new RemoteScreenError(503, "host_unavailable", "Remote control is unavailable.");
@@ -642,7 +643,7 @@ export class TeamApiServer {
           }),
         );
       }
-      if (method === "PUT" && url.pathname === "/v1/remote-screen/display") {
+      if (method === "PUT" && url.pathname === TEAM_API_ROUTES.remoteScreen.display) {
         if (!this.#options.remoteScreen) {
           throw new RemoteScreenError(503, "host_unavailable", "Remote control is unavailable.");
         }
@@ -661,16 +662,16 @@ export class TeamApiServer {
         }
         return this.#empty(response, 204);
       }
-      if (method === "GET" && url.pathname === "/v1/host/remote-mac") {
+      if (method === "GET" && url.pathname === TEAM_API_ROUTES.host.remoteMac) {
         return this.#json(response, 426, { error: "Update required.", code: "protocol_mismatch" });
       }
-      if (method === "GET" && url.pathname === "/v1/host/remote-desktop-access") {
+      if (method === "GET" && url.pathname === TEAM_API_ROUTES.host.remoteDesktopAccess) {
         return this.#json(response, 426, { error: "Update required.", code: "protocol_mismatch" });
       }
-      if (method === "GET" && url.pathname === "/v1/direct/threads") {
+      if (method === "GET" && url.pathname === TEAM_API_ROUTES.direct.threads) {
         return this.#json(response, 200, this.listDirectThreads(member.id));
       }
-      if (method === "GET" && url.pathname === "/v1/messages/search") {
+      if (method === "GET" && url.pathname === TEAM_API_ROUTES.messages.search) {
         const query = url.searchParams.get("q") ?? "";
         if (!query.trim() || query.length > INPUT_LIMITS.messageText) {
           throw new HttpError(400, "A valid search query is required.");
@@ -686,7 +687,7 @@ export class TeamApiServer {
           ),
         );
       }
-      if (method === "POST" && url.pathname === "/v1/direct/messages") {
+      if (method === "POST" && url.pathname === TEAM_API_ROUTES.direct.messages) {
         const body = await readJson(request);
         return this.#json(
           response,
@@ -730,13 +731,13 @@ export class TeamApiServer {
           ),
         );
       }
-      if (method === "GET" && url.pathname === "/v1/browser/tabs") {
+      if (method === "GET" && url.pathname === TEAM_API_ROUTES.browser.tabs) {
         return this.#json(response, 200, this.#options.browser.listTabs());
       }
-      if (method === "GET" && url.pathname === "/v1/browser/control") {
+      if (method === "GET" && url.pathname === TEAM_API_ROUTES.browser.control) {
         return this.#json(response, 200, this.#options.browser.getControlState());
       }
-      if (method === "POST" && url.pathname === "/v1/browser/open") {
+      if (method === "POST" && url.pathname === TEAM_API_ROUTES.browser.open) {
         const body = await readJson(request);
         const focus = body.focus ?? false;
         if (!isBoolean(focus)) throw new HttpError(400, "focus must be a boolean.");
@@ -751,12 +752,12 @@ export class TeamApiServer {
           ),
         );
       }
-      if (method === "POST" && url.pathname === "/v1/browser/activate") {
+      if (method === "POST" && url.pathname === TEAM_API_ROUTES.browser.activate) {
         const body = await readJson(request);
         await this.#options.browser.activate(stringField(body, "tabId"));
         return this.#empty(response, 204);
       }
-      if (method === "POST" && url.pathname === "/v1/browser/navigate") {
+      if (method === "POST" && url.pathname === TEAM_API_ROUTES.browser.navigate) {
         const body = await readJson(request);
         const direction = stringField(body, "direction");
         if (direction !== "back" && direction !== "forward") {
@@ -765,21 +766,21 @@ export class TeamApiServer {
         await this.#options.browser.navigate(stringField(body, "tabId"), direction);
         return this.#empty(response, 204);
       }
-      if (method === "POST" && url.pathname === "/v1/browser/reload") {
+      if (method === "POST" && url.pathname === TEAM_API_ROUTES.browser.reload) {
         const body = await readJson(request);
         await this.#options.browser.reload(stringField(body, "tabId"));
         return this.#empty(response, 204);
       }
-      if (method === "POST" && url.pathname === "/v1/browser/close") {
+      if (method === "POST" && url.pathname === TEAM_API_ROUTES.browser.close) {
         const body = await readJson(request);
         await this.#options.browser.close(stringField(body, "tabId"));
         return this.#empty(response, 204);
       }
-      if (method === "POST" && url.pathname === "/v1/browser/preview") {
+      if (method === "POST" && url.pathname === TEAM_API_ROUTES.browser.preview) {
         const body = await readJson(request);
         return this.#json(response, 200, await this.#options.browser.capturePreview(stringField(body, "tabId")));
       }
-      if (method === "POST" && url.pathname === "/v1/browser/visible") {
+      if (method === "POST" && url.pathname === TEAM_API_ROUTES.browser.visible) {
         const body = await readJson(request);
         if (!isBoolean(body.visible)) throw new HttpError(400, "visible is required.");
         await this.#options.browser.setVisible({
@@ -788,7 +789,7 @@ export class TeamApiServer {
         });
         return this.#empty(response, 204);
       }
-      if (method === "POST" && url.pathname === "/v1/attachments") {
+      if (method === "POST" && url.pathname === TEAM_API_ROUTES.attachments) {
         const name = url.searchParams.get("name")?.trim();
         const mimeType = url.searchParams.get("mime") ?? "application/octet-stream";
         if (!name || basename(name) !== name || name.length > INPUT_LIMITS.attachmentName) {
@@ -821,7 +822,7 @@ export class TeamApiServer {
           return;
         }
       }
-      if (method === "GET" && url.pathname === "/v1/shared-files") {
+      if (method === "GET" && url.pathname === TEAM_API_ROUTES.sharedFiles) {
         const sharedPath = url.searchParams.get("path");
         if (!sharedPath || sharedPath.length > INPUT_LIMITS.path) {
           throw new HttpError(400, "A valid shared file path is required.");
@@ -840,7 +841,7 @@ export class TeamApiServer {
         response.end(bytes);
         return;
       }
-      if (method === "GET" && url.pathname === "/v1/workspace-files") {
+      if (method === "GET" && url.pathname === TEAM_API_ROUTES.workspaceFiles) {
         const botId = url.searchParams.get("botId");
         const workspacePath = url.searchParams.get("path");
         if (!botId || botId.length > INPUT_LIMITS.identifier) {
@@ -863,7 +864,7 @@ export class TeamApiServer {
         response.end(bytes);
         return;
       }
-      if (method === "GET" && url.pathname === "/v1/team/members") {
+      if (method === "GET" && url.pathname === TEAM_API_ROUTES.team.members) {
         requireAdmin(member);
         return this.#json(response, 200, this.#options.store.listMembers());
       }
@@ -895,7 +896,7 @@ export class TeamApiServer {
         this.refreshPresence();
         return this.#empty(response, 204);
       }
-      if (method === "POST" && url.pathname === "/v1/team/invites") {
+      if (method === "POST" && url.pathname === TEAM_API_ROUTES.team.invites) {
         requireAdmin(member);
         const body = await readJson(request);
         const role = stringField(body, "role");
@@ -904,7 +905,7 @@ export class TeamApiServer {
         if (!this.#options.createInvite) throw new HttpError(503, "Invitation service is unavailable.");
         return this.#json(response, 201, await this.#options.createInvite({ role, ...(email ? { email } : {}) }));
       }
-      if (method === "GET" && url.pathname === "/v1/team/invites") {
+      if (method === "GET" && url.pathname === TEAM_API_ROUTES.team.invites) {
         requireAdmin(member);
         return this.#json(response, 200, this.#options.store.listInvites());
       }
@@ -914,7 +915,7 @@ export class TeamApiServer {
         await this.#options.store.revokeInvite(pathIdentifier(inviteMatch[1], "inviteId"));
         return this.#empty(response, 204);
       }
-      if (method === "GET" && url.pathname === "/v1/team/sessions") {
+      if (method === "GET" && url.pathname === TEAM_API_ROUTES.team.sessions) {
         requireAdmin(member);
         return this.#json(response, 200, this.#options.store.listSessions());
       }
@@ -929,13 +930,13 @@ export class TeamApiServer {
         return this.#empty(response, 204);
       }
 
-      if (method === "GET" && url.pathname === "/v1/agents/status") {
+      if (method === "GET" && url.pathname === TEAM_API_ROUTES.agents.status) {
         return this.#json(response, 200, this.#options.agents.getStatus());
       }
-      if (method === "GET" && url.pathname === "/v1/sidebar-layout") {
+      if (method === "GET" && url.pathname === TEAM_API_ROUTES.sidebarLayout.state) {
         return this.#json(response, 200, this.#options.sidebarLayout.getSnapshot());
       }
-      if (method === "POST" && url.pathname === "/v1/sidebar-layout/actions") {
+      if (method === "POST" && url.pathname === TEAM_API_ROUTES.sidebarLayout.actions) {
         const action = parseSidebarLayoutAction(await readJson(request));
         const layout = await this.#options.sidebarLayout.mutate(
           action,
@@ -943,23 +944,23 @@ export class TeamApiServer {
         );
         return this.#json(response, 200, layout);
       }
-      if (method === "GET" && url.pathname === "/v1/agents/usage") {
+      if (method === "GET" && url.pathname === TEAM_API_ROUTES.agents.usage) {
         return this.#json(response, 200, await this.#options.agents.getUsage());
       }
-      if (method === "GET" && url.pathname === "/v1/agents/models") {
+      if (method === "GET" && url.pathname === TEAM_API_ROUTES.agents.models) {
         return this.#json(response, 200, await this.#options.agents.listModels());
       }
-      if (method === "GET" && url.pathname === "/v1/agents") {
+      if (method === "GET" && url.pathname === TEAM_API_ROUTES.agents.all) {
         return this.#json(response, 200, this.#options.agents.listBots());
       }
-      if (method === "GET" && url.pathname === "/v1/agents/conversation-reads") {
+      if (method === "GET" && url.pathname === TEAM_API_ROUTES.agents.conversationReads) {
         return this.#json(
           response,
           200,
           this.#options.agents.listConversationReads(member.id, markerExclusionsForCapabilities(clientCapabilities)),
         );
       }
-      if (method === "POST" && url.pathname === "/v1/agents") {
+      if (method === "POST" && url.pathname === TEAM_API_ROUTES.agents.all) {
         const body = await readJson(request);
         return this.#json(response, 201, await this.#options.agents.createBot(botCreate(body)));
       }
@@ -1194,7 +1195,7 @@ export class TeamApiServer {
         }
       }
 
-      if (method === "POST" && url.pathname === "/v1/prompts/respond") {
+      if (method === "POST" && url.pathname === TEAM_API_ROUTES.respond.prompt) {
         const body = await readJson(request);
         await this.#options.agents.respondToPrompt({
           requestId: promptRequestId(body.requestId),
@@ -1202,7 +1203,7 @@ export class TeamApiServer {
         });
         return this.#empty(response, 204);
       }
-      if (method === "POST" && url.pathname === "/v1/approvals/respond") {
+      if (method === "POST" && url.pathname === TEAM_API_ROUTES.respond.approval) {
         const body = await readJson(request);
         await this.#options.agents.respondToApproval({
           requestId: promptRequestId(body.requestId),
@@ -1210,7 +1211,7 @@ export class TeamApiServer {
         });
         return this.#empty(response, 204);
       }
-      if (method === "POST" && url.pathname === "/v1/browser-takeovers/respond") {
+      if (method === "POST" && url.pathname === TEAM_API_ROUTES.respond.browserTakeover) {
         const body = await readJson(request);
         await this.#options.agents.respondToBrowserTakeover({
           requestId: promptRequestId(body.requestId),

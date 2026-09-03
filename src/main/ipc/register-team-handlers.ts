@@ -4,6 +4,7 @@ import type { RemoteDesktopManager } from "../remote-desktop-manager";
 import type { RemoteServerManager } from "../remote-server-manager";
 import { handleTrusted } from "../trusted-ipc";
 import { parseAgentRequest } from "./agent-inputs";
+import { routeToServer } from "./route-to-server";
 import {
   parseCreateTeamInvite,
   parseDirectTyping,
@@ -51,10 +52,16 @@ export function registerTeamIpcHandlers({
   );
   handleTrusted(IPC_CHANNELS.serversRemove, stringPayload("serverId"), (serverId) => remoteServers.remove(serverId));
   handleTrusted(IPC_CHANNELS.serversGetPresence, () =>
-    remoteServers.activeServerId === "local" ? host.getPresence() : remoteServers.getPresence(),
+    routeToServer(remoteServers.activeServerId, {
+      local: () => host.getPresence(),
+      remote: () => remoteServers.getPresence(),
+    }),
   );
   handleTrusted(IPC_CHANNELS.serversGetPresenceFor, stringPayload("serverId"), (serverId) =>
-    serverId === "local" ? host.getPresence() : remoteServers.getPresenceFor(serverId),
+    routeToServer(serverId, {
+      local: () => host.getPresence(),
+      remote: (target) => remoteServers.getPresenceFor(target),
+    }),
   );
   handleTrusted(IPC_CHANNELS.serversRefreshIdentity, stringPayload("serverId"), (serverId) =>
     remoteServers.refreshIdentity(serverId),
