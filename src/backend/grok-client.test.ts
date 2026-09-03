@@ -177,42 +177,6 @@ describe.sequential("GrokAgentClient", () => {
     );
   });
 
-  it("reports a sanitized reason when the Grok CLI returns a detailed JSON-RPC error", async () => {
-    process.env.OPENBOT_FAKE_GROK_MODE = "internal-error";
-    client = new GrokAgentClient({ executable, version: "1.0.13" }, 5_000);
-    const notifications: AppServerNotification[] = [];
-    client.on("notification", (notification) => notifications.push(notification));
-    client.start();
-    await client.request("initialize", {}, decodeRecordResponse);
-    const started = await client.request(
-      "thread/start",
-      { cwd: root, runtimeWorkspaceRoots: [root], developerInstructions: "", dynamicTools: [], model: "grok-4.5" },
-      decodeThreadResponse,
-    );
-    await client.request(
-      "turn/start",
-      {
-        threadId: started.thread.id,
-        clientUserMessageId: "turn-1",
-        input: [{ type: "text", text: "Build it" }],
-      },
-      decodeTurnResponse,
-    );
-    await waitFor(() => notifications.some((notification) => notification.method === "turn/completed"));
-
-    expect(notifications).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          method: "error",
-          params: expect.objectContaining({
-            message:
-              "API error (status 402 Payment Required): Grok Build usage balance exhausted; Authorization: [redacted]",
-          }),
-        }),
-      ]),
-    );
-  });
-
   it("uses one neutral effort when thought_level is not advertised", async () => {
     process.env.OPENBOT_FAKE_GROK_MODE = "no-thought";
     client = new GrokAgentClient({ executable, version: "1.0.5" }, 5_000);
@@ -542,20 +506,6 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   }
   if (message.method === "session/prompt") {
     promptCounter += 1;
-    if (mode === "internal-error") {
-      write({
-        id: message.id,
-        error: {
-          code: -32603,
-          message: "Internal error",
-          data: {
-            message:
-              "API error (status 402 Payment Required): Grok Build usage balance exhausted; Authorization: Bearer secretsecret",
-          },
-        },
-      });
-      return;
-    }
     log({ method: message.method, promptCounter, text: message.params.prompt.filter((block) => block.type === "text").map((block) => block.text).join("\n") });
     if (promptCounter === 1) {
       pendingPrompt = { id: message.id, sessionId: message.params.sessionId };

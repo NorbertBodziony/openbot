@@ -19,7 +19,6 @@ import {
 } from "@agentclientprotocol/sdk";
 import { type DynamicRecord, isBoolean, isString } from "@openbot/contracts/runtime-values";
 import type { AgentProvider } from "./agent-client";
-import { redactDiagnostic } from "./app-server-client";
 import type { GrokCliInfo } from "./cli";
 import { type DynamicToolNamespace, LocalMcpBridge, type LocalMcpSession } from "./local-mcp-bridge";
 import {
@@ -130,7 +129,7 @@ export class GrokAgentClient extends EventEmitter<ClientEvents> {
       stream,
     );
     child.stderr.on("data", (chunk: Buffer) => {
-      const message = redactDiagnostic(chunk.toString("utf8").trim());
+      const message = redactGrokDiagnostic(chunk.toString("utf8").trim());
       if (message) this.emit("diagnostic", message);
     });
     child.once("error", (error) => this.#fail(error, child));
@@ -403,7 +402,7 @@ export class GrokAgentClient extends EventEmitter<ClientEvents> {
       void this.#requireConnection()
         .prompt({ sessionId: thread.id, prompt: blocks })
         .catch((error) => {
-          this.emit("diagnostic", `Grok steer failed: ${grokErrorMessage(error)}`);
+          this.emit("diagnostic", `Grok steer failed: ${String(error)}`);
         });
       return { turn: { id: turnId, status: "inProgress" }, turnId };
     }
@@ -436,7 +435,7 @@ export class GrokAgentClient extends EventEmitter<ClientEvents> {
             : "failed";
       this.#completeTurn(thread, turn, status, status === "failed" ? response.stopReason : null);
     } catch (error) {
-      this.#completeTurn(thread, turn, "failed", grokErrorMessage(error));
+      this.#completeTurn(thread, turn, "failed", error);
     }
   }
 
@@ -906,16 +905,16 @@ function isDynamicToolResult(value: unknown): value is DynamicToolResult {
 }
 
 function isAuthenticationError(error: unknown): boolean {
-  return /auth|login|credential|token|unauthori[sz]ed|api key/i.test(grokErrorMessage(error));
+  return /auth|login|credential|token|unauthori[sz]ed|api key/i.test(
+    error instanceof Error ? error.message : String(error),
+  );
 }
 
-/* A JSON-RPC failure from the Grok CLI says only "Internal error"; what actually went wrong — an
-   exhausted balance, a rejected key, a refused model — is in the error's `data.message`. */
-function grokErrorMessage(error: unknown): string {
-  const data = isRecord(error) ? error.data : null;
-  const detail = isRecord(data) && isString(data.message) ? data.message : null;
-  if (detail) return redactDiagnostic(detail);
-  return redactDiagnostic(error instanceof Error ? error.message : String(error));
+function redactGrokDiagnostic(message: string): string {
+  return message
+    .replace(/(?:xai[-_ ]api[-_ ]key|authorization|bearer|token)["':= ]+[A-Za-z0-9._-]{8,}/gi, "$1 [redacted]")
+    .replace(/xai-[A-Za-z0-9_-]{8,}/gi, "[redacted]")
+    .slice(0, 2_000);
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
