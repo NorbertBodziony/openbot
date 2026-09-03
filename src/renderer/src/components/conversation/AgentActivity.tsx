@@ -110,7 +110,7 @@ export function ThinkingDisclosure(props: {
         >
           <Sparkles class="thinking-mark" aria-hidden="true" />
           <span class="thinking-label" role="status" data-working={working()}>
-            {working() ? "Thinking" : settledThinkingLabel(props.message)}
+            {working() ? "Thinking" : "Thought it through"}
           </span>
           <ChevronDown class="thinking-chevron" aria-hidden="true" />
         </Button>
@@ -130,10 +130,4 @@ export function ThinkingDisclosure(props: {
       </div>
     </article>
   );
-}
-
-function settledThinkingLabel(message: BotMessage): string {
-  const seconds = Math.round((message.thinkingDurationMs ?? 0) / 1000);
-  if (seconds < 1) return "Thought it through";
-  return `Thought for ${seconds} second${seconds === 1 ? "" : "s"}`;
 }

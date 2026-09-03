@@ -524,7 +524,6 @@ describe("OpenBot connected desktop shell", () => {
     });
 
     const disclosure = await screen.findByRole("button", { name: "Show thinking details" });
-    expect(screen.getByText("Thought for 2 seconds")).toBeInTheDocument();
     expect(disclosure.getAttribute("aria-expanded")).toBe("false");
     expect(screen.getByText("Opened x.com.")).toBeVisible();
     expect(screen.getByText("I’ll open x.com in the OpenBot browser.")).toBeInTheDocument();

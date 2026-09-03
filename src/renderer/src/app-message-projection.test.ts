@@ -64,52 +64,6 @@ describe("toBotMessage", () => {
     ).toBe("Storms are likely. ");
   });
 
-  it("measures reasoning from the first commentary to the answer that ended it", () => {
-    const turn = (id: string, text: string, createdAt: string, itemType?: string) =>
-      ({
-        id,
-        turnId: "turn-1",
-        author: "assistant",
-        text,
-        createdAt,
-        status: "completed",
-        ...(itemType ? { itemType } : {}),
-      }) satisfies ConversationMessage;
-
-    const [thinking] = toBotMessages([
-      turn("commentary-1", "Weighing the options.", "2026-08-31T10:00:01.000Z", "commentary"),
-      turn("commentary-2", "Checking the supplier list.", "2026-08-31T10:00:03.000Z", "commentary"),
-      turn("answer", "Go with Joy Cone.", "2026-08-31T10:00:06.000Z", "final_answer"),
-    ]);
-
-    expect(thinking).toMatchObject({ kind: "thinking", thinkingDurationMs: 5_000 });
-  });
-
-  it("measures reasoning to the last commentary while the answer has not started", () => {
-    const [thinking] = toBotMessages([
-      {
-        id: "commentary-1",
-        turnId: "turn-1",
-        author: "assistant",
-        text: "Weighing the options.",
-        createdAt: "2026-08-31T10:00:01.000Z",
-        status: "completed",
-        itemType: "commentary",
-      },
-      {
-        id: "commentary-2",
-        turnId: "turn-1",
-        author: "assistant",
-        text: "Still weighing.",
-        createdAt: "2026-08-31T10:00:04.000Z",
-        status: "streaming",
-        itemType: "commentary",
-      },
-    ] satisfies ConversationMessage[]);
-
-    expect(thinking).toMatchObject({ streaming: true, thinkingDurationMs: 3_000 });
-  });
-
   it("projects routine event metadata for the conversation timeline", () => {
     const message = {
       id: "routine-event",

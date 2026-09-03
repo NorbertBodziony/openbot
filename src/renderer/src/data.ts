@@ -121,7 +121,6 @@ export interface BotMessage {
   actionMarker?: ChatActionMarkerModel;
   items?: string[];
   itemIds?: string[];
-  thinkingDurationMs?: number;
 }
 
 export interface BotProfile {

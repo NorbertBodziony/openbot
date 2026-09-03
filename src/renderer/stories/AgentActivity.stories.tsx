@@ -76,7 +76,7 @@ export const ThinkingLive: IndicatorStory = {
   },
 };
 
-/* Settled: the trace collapses to the duration, and reopens on demand. */
+/* Settled: the trace collapses and reopens on demand. */
 export const ThinkingDetails: IndicatorStory = {
   args: {
     bot: STORY_BOTS[0],
@@ -93,7 +93,6 @@ export const ThinkingDetails: IndicatorStory = {
           time: "10:00",
           kind: "thinking",
           items: THINKING_STEPS,
-          thinkingDurationMs: 4_000,
         }}
         open={open()}
         onOpenChange={setOpen}

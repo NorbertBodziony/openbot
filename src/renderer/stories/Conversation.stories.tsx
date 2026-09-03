@@ -1278,7 +1278,6 @@ export const ThinkingSettled: Story = {
         time: "10:01",
         kind: "thinking",
         items: ["Read the project brief", "Compared the milestone owners", "Drafted the next action"],
-        thinkingDurationMs: 4_000,
       },
     ],
   },
