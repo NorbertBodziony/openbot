@@ -45,6 +45,7 @@ import {
   useContext,
 } from "solid-js";
 import { desktopAnalytics } from "../analytics";
+import { agentConversationKey } from "../conversation-keys";
 import type { BotMessage, BotProfile, ChatActionMarkerModel } from "../data";
 import { activeQueueDeliveries, presentQueueDeliveries, queuedDeliveriesInOrder } from "../queue-reconciliation";
 import { createScopeGuard } from "../scope-lifetime";
@@ -962,33 +963,45 @@ function createConversationViewScope(props: ConversationProps) {
   ): Promise<boolean> {
     const botId = targetBotId;
     if (!botId) return false;
-    const previousAttempt = resources.runtimeSettingsAttempts.get(botId);
+    // Both maps live on the controller, which outlives one server, so the key
+    // has to say which server the settings belong to.
+    const settingsKey = agentConversationKey(props.server?.id ?? "local", botId);
+    const previousAttempt = resources.runtimeSettingsAttempts.get(settingsKey);
     const generation = (previousAttempt?.generation ?? 0) + 1;
-    resources.runtimeSettingsAttempts.set(botId, { generation, pending: true, settings });
+    resources.runtimeSettingsAttempts.set(settingsKey, { generation, pending: true, settings });
     if (errorMessage) setComposerError(null);
 
-    const previousSave = resources.runtimeSettingsSaveTails.get(botId);
+    const previousSave = resources.runtimeSettingsSaveTails.get(settingsKey);
     let releaseSave!: (baseValid: boolean) => void;
     const saveTail = new Promise<boolean>((resolve) => {
       releaseSave = resolve;
     });
-    resources.runtimeSettingsSaveTails.set(botId, saveTail);
+    resources.runtimeSettingsSaveTails.set(settingsKey, saveTail);
     let saved: boolean;
     let baseValid = true;
+    let abandoned = false;
     try {
       if (previousSave) baseValid = await previousSave;
+      // `agent.updateBot` is routed by the server main has selected, not by the
+      // bot id in its payload, so a save still queued behind an earlier one when
+      // the user leaves would be applied to whichever server they arrive at. It
+      // belongs to the one it was made on, and that one is gone.
+      abandoned = !viewIsMounted();
       const completePatch = isCompleteRuntimeSettingsPatch(updates);
-      saved = baseValid || completePatch ? await saveBotPatch(updates, botId) : false;
+      saved = !abandoned && (baseValid || completePatch) ? await saveBotPatch(updates, botId) : false;
       if (completePatch) baseValid = saved;
     } finally {
       releaseSave(baseValid);
-      if (resources.runtimeSettingsSaveTails.get(botId) === saveTail) {
-        resources.runtimeSettingsSaveTails.delete(botId);
+      if (resources.runtimeSettingsSaveTails.get(settingsKey) === saveTail) {
+        resources.runtimeSettingsSaveTails.delete(settingsKey);
       }
     }
-    const latestAttempt = resources.runtimeSettingsAttempts.get(botId);
+    const latestAttempt = resources.runtimeSettingsAttempts.get(settingsKey);
     if (latestAttempt?.generation !== generation) return true;
     latestAttempt.pending = false;
+    // Nothing left to report to: the pickers, the composer error and the bot
+    // this would roll back to all belonged to the conversation that is gone.
+    if (abandoned) return false;
     if (saved) {
       const activeBot = props.bot;
       if (activeBot?.id === botId) {
@@ -1639,7 +1652,9 @@ function createConversationViewScope(props: ConversationProps) {
     },
     (bot) => {
       if (!bot) return;
-      const pendingSettings = resources.runtimeSettingsAttempts.get(props.bot?.id ?? "");
+      const pendingSettings = resources.runtimeSettingsAttempts.get(
+        agentConversationKey(props.server?.id ?? "local", props.bot?.id ?? ""),
+      );
       if (
         pendingSettings?.pending &&
         !runtimeSettingsEqual(pendingSettings.settings, {
