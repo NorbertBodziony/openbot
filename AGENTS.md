@@ -111,7 +111,10 @@ with `@solidjs/signals` and `@solidjs/web` at the same RC, `@kobalte/core@2.0.0-
 here), plus patched `lucide-solid` and `solid-sonner`. Do not trust your memory of these APIs: check
 `package.json`, then read `.agents/skills/react-to-solid/docs/` (`kobalte-patterns.md`,
 `corvu-patterns.md`, `base-ui-mapping.md`, `third-party-deps.md`) and
-`.agents/skills/zaidan/references/`.
+`.agents/skills/zaidan/references/`. Those two skills are vendored and re-synced from upstream, so
+their code samples are 1.x-era and cannot be corrected here — `node_modules/solid-js/CHEATSHEET.md`
+is the source of truth for core APIs, and where they disagree the cheatsheet wins. Read the skills
+for the component patterns, not the imports.
 
 - `bun run dev` for integrated work — it starts the local Auth API and the Electron dev app
   together. `bun run dev:api` is for API-only debugging.
@@ -119,6 +122,27 @@ here), plus patched `lucide-solid` and `solid-sonner`. Do not trust your memory 
 - Never verify UI with `dist/`, a packaged `.app`, a production build, or an ad-hoc preview — those
   are for release verification the user asked for. If the dev app will not start, report the blocker
   instead of falling back to one.
+
+### Reactive state shape
+
+**Prefer one `createStore` per concern over a row of `createSignal` calls.** Fields that change
+together are one record — a saved-and-draft form pair, a `data`/`loaded`/`loading`/`error` quad, a
+phase plus the numbers only one phase uses, several `Record`s keyed by the same `botId`. Declare the
+shape up front, so replacing one field re-renders only what read that field; `FirstBotSetup.tsx` is
+the form version. Keep the setter private behind named mutations where the store *is* a module's or
+a hook's exported surface, as `app-stored-values.ts` and `createAsyncPanel.ts` do. Inside a
+component, write the field where it changes — `setPanels((state) => { state.x = value; })` at the
+call site, as `SettingsModal.tsx` does — and let a named mutation there earn its name: more than one
+field, a guard or a side effect, or enough call sites that the name deduplicates something. A
+function whose whole body is `state.x = value` is the signal wall one layer down. Ten keyed
+`Record` signals are one row type shredded into ten columns, every write spreads the whole map so
+every consumer of every key re-runs, and parallel signals let a screen hold states
+the product does not have. `createSignal` still fits an element ref, a single measurement, a one-off
+boolean, and a record you always replace whole. Stores come from `"solid-js"` — there is no
+`solid-js/store` in this RC — hold plain values rather than accessors, and are never destructured.
+A `Map` or `Set` never becomes a store — `isWrappable` rejects platform objects — so the
+reference is the reactive unit: write a collection held in a signal by copying
+(`new Set(current).add(id)`), and keep one you never read reactively in a closure.
 
 ### Component reuse
 
@@ -188,7 +212,11 @@ SVG and platform colours at their boundaries.
    `bun run check:ui` cover a large class mechanically. If one of them does, skip the test.
 4. **A test that needs a timeout to pass is wrong.** Wait on an observable condition — a state
    change, an emitted event, a resolved promise — never the clock. A sleep long enough to pass on
-   your machine is short enough to flake on a loaded runner.
+   your machine is short enough to flake on a loaded runner. A spy call is such a condition:
+   `await waitFor(() => expect(send).toHaveBeenCalled())` is the sanctioned way to satisfy this
+   rule, and is not the mock-shaped assertion the module-mock warning is about. The barrier
+   synchronizes; the assertions after it carry the consequence. Counting `toHaveBeenCalled*` across
+   the suite cannot tell the two apart, so do not "fix" a barrier by grep.
 5. **Test behaviour, data, and accessible roles and names** — not markup, classes, layout or
    animation timing. Where focus lands *is* behaviour: assert it with `toHaveFocus()`. Assert exact
    text only for a product contract, an error or security message, serialized output, or a

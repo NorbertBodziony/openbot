@@ -10,9 +10,9 @@ import { useColorScheme, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { withUniwind } from "uniwind";
 
-import { isIOS } from "@/lib/platform";
-import { queryClient } from "@/lib/query-client";
-import { MobileSessionProvider, useMobileSession } from "@/providers/mobile-session-provider";
+import { MobileSessionProvider, useMobileSession } from "@/features/auth/context/mobile-session-context";
+import { isIOS } from "@/shared/lib/platform";
+import { queryClient } from "@/shared/lib/query-client";
 
 export const unstable_settings = {
   initialRouteName: "index",
@@ -20,8 +20,9 @@ export const unstable_settings = {
 
 const UniwindGestureHandlerRootView = withUniwind(GestureHandlerRootView);
 
-function AppNavigation() {
+function RootNavigator() {
   const { loading, session } = useMobileSession();
+
   if (loading) {
     return (
       <View className="flex-1 items-center justify-center bg-background">
@@ -43,7 +44,7 @@ function AppNavigation() {
         <Stack.Screen name="scan-qr-code" options={{ animation: "slide_from_right", title: "Scan QR code" }} />
       </Stack.Protected>
       <Stack.Protected guard={Boolean(session)}>
-        <Stack.Screen name="connected" options={{ animation: "fade", gestureEnabled: false, title: "" }} />
+        <Stack.Screen name="(app)" options={{ animation: "fade", gestureEnabled: false, headerShown: false }} />
       </Stack.Protected>
     </Stack>
   );
@@ -59,7 +60,7 @@ export default function RootLayout() {
           <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
             <StatusBar style="auto" />
             <MobileSessionProvider>
-              <AppNavigation />
+              <RootNavigator />
             </MobileSessionProvider>
           </ThemeProvider>
         </HeroUINativeProvider>

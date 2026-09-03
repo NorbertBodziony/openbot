@@ -6,11 +6,12 @@ import {
   type SidebarLayoutAction,
   type SidebarLayoutSnapshot,
 } from "@openbot/contracts/ipc";
-import { createEffect, createMemo, createSignal, For, onCleanup, onSettled, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, createStore, For, onCleanup, Show } from "solid-js";
 import type { BotProfile } from "../data";
 import { MAX_SIDEBAR_PINNED_ITEMS, type SidebarPinnedItem, sidebarPinnedItemKey } from "../sidebar-pins";
 import { AgentAvatar } from "./AgentAvatar";
 import { createBoundedDragPreview } from "./createBoundedDragPreview";
+import { createScrollFades } from "./createScrollFades";
 import { TeamPersonAvatar, teamMemberName } from "./TeamPersonAvatar";
 import { TypingDots } from "./TypingDots";
 import {
@@ -169,6 +170,62 @@ interface SidebarNativeDragStart {
   source: SidebarDragSource;
 }
 
+/**
+ * The one delete confirmation the sidebar can have open: an agent, or a custom section, never both.
+ * The attempt's progress and the reason it failed live inside the record rather than beside it, so
+ * closing the dialog cannot leave a "Deleting…" button or the previous attempt's message behind.
+ */
+interface SidebarPendingDelete {
+  deleting: boolean;
+  error: string | null;
+  /** The agent or the section, whichever `kind` names. */
+  id: string;
+  /** Which of the two confirmations is on screen. Each dialog renders from one arm. */
+  kind: "agent" | "section";
+}
+
+/** What the section editor is editing: a section about to exist, or the one being renamed. */
+type SidebarSectionEditorTarget = { kind: "create"; agentId?: string } | { kind: "rename"; sectionId: string };
+
+/**
+ * The open section-name editor. The name as typed, its validation message and the save in flight
+ * hang off the editor because none of them means anything without one - a name left behind by a
+ * closed editor is what every `startCreateSection` had to remember to clear.
+ */
+interface SidebarSectionEditor {
+  error: string | null;
+  name: string;
+  saving: boolean;
+  target: SidebarSectionEditorTarget;
+}
+
+/** The two changes the sidebar can have half-made, each waiting on the user rather than on data. */
+interface SidebarPending {
+  deletion: SidebarPendingDelete | null;
+  sectionEditor: SidebarSectionEditor | null;
+}
+
+/**
+ * The reactive projection of the drag in flight: what is being dragged, where it would land, and the
+ * two pieces of drop chrome that outlive a single frame. It is one record because a drag is one
+ * thing - four parallel `dragged*Id` signals let the sidebar claim an agent and a section are being
+ * dragged at once, which is why the list header needed a four-way ternary to pick between them.
+ *
+ * The imperative half of the drag stays in plain locals (`dragSession`, `dragTarget`, the slot
+ * caches) because the pointer pipeline reads its own writes inside one tick, and neither a signal
+ * nor a store publishes a write before the next flush.
+ */
+interface SidebarDrag {
+  /** The empty pinned row, held open so an agent dragged out of a section has somewhere to land. */
+  emptyPinnedDropVisible: boolean;
+  /** How far each section has shifted to make room for the section being dragged. */
+  sectionOffsets: Record<string, number>;
+  /** What is being dragged. Every dragged id below is one arm of this union. */
+  source: SidebarDragSource | null;
+  /** Where it would land. Every drop highlight below is one arm of this union. */
+  target: SidebarDropTarget | null;
+}
+
 function sidebarDropTargetsEqual(left: SidebarDropTarget | null, right: SidebarDropTarget | null): boolean {
   if (left === right) return true;
   if (!left || !right || left.kind !== right.kind) return false;
@@ -317,31 +374,65 @@ function DeleteIcon() {
 export function Sidebar(props: SidebarProps) {
   const layoutMutable = () => props.layoutMutable !== false;
   const [query, setQuery] = createSignal("");
-  const [deleteTargetId, setDeleteTargetId] = createSignal<string | null>(null);
-  const [deleting, setDeleting] = createSignal(false);
-  const [deleteError, setDeleteError] = createSignal<string | null>(null);
-  const [sectionDeleteTargetId, setSectionDeleteTargetId] = createSignal<string | null>(null);
-  const [sectionDeleteError, setSectionDeleteError] = createSignal<string | null>(null);
-  const [deletingSection, setDeletingSection] = createSignal(false);
-  const [sectionEditor, setSectionEditor] = createSignal<
-    { kind: "create"; agentId?: string } | { kind: "rename"; sectionId: string } | null
-  >(null);
-  const [sectionName, setSectionName] = createSignal("");
-  const [sectionNameError, setSectionNameError] = createSignal<string | null>(null);
-  const [savingSection, setSavingSection] = createSignal(false);
-  const [fadeAtTop, setFadeAtTop] = createSignal(false);
-  const [fadeAtBottom, setFadeAtBottom] = createSignal(false);
-  const [draggedPinnedKey, setDraggedPinnedKey] = createSignal<string | null>(null);
-  const [dragOverPinnedKey, setDragOverPinnedKey] = createSignal<string | null>(null);
-  const [pinnedDropActive, setPinnedDropActive] = createSignal(false);
-  const [emptyPinnedDropVisible, setEmptyPinnedDropVisible] = createSignal(false);
-  const [draggedAgentId, setDraggedAgentId] = createSignal<string | null>(null);
-  const [dragOverAgentId, setDragOverAgentId] = createSignal<string | null>(null);
-  const [draggedPersonId, setDraggedPersonId] = createSignal<string | null>(null);
-  const [agentDropSectionId, setAgentDropSectionId] = createSignal<string | null>(null);
-  const [draggedSectionId, setDraggedSectionId] = createSignal<string | null>(null);
-  const [sectionDropTarget, setSectionDropTarget] = createSignal<SectionDropTarget | null>(null);
-  const [sectionDragOffsets, setSectionDragOffsets] = createSignal<Record<string, number>>({});
+  const [pending, setPending] = createStore<SidebarPending>({ deletion: null, sectionEditor: null });
+  // Both dialogs read these: only one confirmation exists, and each dialog only renders while it is
+  // the one. That is also why a section delete no longer needs its own pair of flags.
+  const deleting = () => pending.deletion?.deleting === true;
+  const deleteError = () => pending.deletion?.error ?? null;
+  const scrollFades = createScrollFades();
+  const [drag, setDrag] = createStore<SidebarDrag>({
+    emptyPinnedDropVisible: false,
+    sectionOffsets: {},
+    source: null,
+    target: null,
+  });
+  // The arms of the two unions above. Each one is a memo so that hovering a pinned tile invalidates
+  // the pinned rows only: `drag.target` changes on every hover, these change when their own answer
+  // does. Being derived is also why they can no longer disagree about which drag is in flight.
+  const draggedPinnedKey = createMemo(() => {
+    const source = drag.source;
+    return source?.kind === "agent" && source.origin === "pinned" ? source.key : null;
+  });
+  const draggedAgentId = createMemo(() => {
+    const source = drag.source;
+    return source?.kind === "agent" && source.origin === "section" ? source.id : null;
+  });
+  const draggedSectionId = createMemo(() => {
+    const source = drag.source;
+    return source?.kind === "section" ? source.id : null;
+  });
+  /** Which kind of drag the list is in, for the styling that dims everything the drag cannot reach. */
+  const draggingKind = createMemo(() => {
+    const source = drag.source;
+    if (!source) return undefined;
+    if (source.kind === "agent") return source.origin === "pinned" ? "pinned" : "agent";
+    return source.kind;
+  });
+  const dragOverPinnedKey = createMemo(() => {
+    const target = drag.target;
+    return target?.kind === "pinned" ? target.key : null;
+  });
+  const dragOverAgentId = createMemo(() => {
+    const target = drag.target;
+    return target?.kind === "agent" ? target.target.agentId : null;
+  });
+  /** The section a dragged agent would land in, whether it aims at a row inside it or at the section. */
+  const agentDropSectionId = createMemo(() => {
+    const target = drag.target;
+    if (target?.kind === "agent") return target.target.sectionId;
+    if (target?.kind === "section" && drag.source?.kind === "agent") return target.sectionId;
+    return null;
+  });
+  const sectionDropTarget = createMemo(() => {
+    const target = drag.target;
+    return target?.kind === "section-order" ? target.target : null;
+  });
+  /** The pinned group highlights only while an agent from the list could actually land in it. */
+  const pinnedDropActive = createMemo(() => {
+    const source = drag.source;
+    const pinningFromSidebar = Boolean(source && "origin" in source && source.origin !== "pinned");
+    return drag.target?.kind === "pinned" && pinningFromSidebar && canPinDraggedSidebarItem();
+  });
   const [reorderAnnouncement, setReorderAnnouncement] = createSignal("");
   let botList: HTMLElement | undefined;
   let searchInput: HTMLInputElement | undefined;
@@ -358,8 +449,6 @@ export function Sidebar(props: SidebarProps) {
   let dragTargetFrame: number | null = null;
   let dragScrollFrame: number | null = null;
   let dragScrollSpeed = 0;
-  let currentAgentDropSectionId: string | null = null;
-  let currentAgentDropTarget: AgentDropTarget | null = null;
   let currentSectionDropTarget: SectionDropTarget | null = null;
   let currentPersonDropTarget: PersonDropTarget | null = null;
   let personDragSlots = new Map<string, PersonDragSlot>();
@@ -423,7 +512,10 @@ export function Sidebar(props: SidebarProps) {
       return personMatchesQuery(member, thread, normalizedQuery());
     }),
   );
-  const deleteTarget = createMemo(() => props.bots.find((bot) => bot.id === deleteTargetId()));
+  const deleteTarget = createMemo(() => {
+    const deletion = pending.deletion;
+    return deletion?.kind === "agent" ? props.bots.find((bot) => bot.id === deletion.id) : undefined;
+  });
   const customSectionById = createMemo(() => new Map(props.layout.sections.map((section) => [section.id, section])));
   const collapsedSectionIds = createMemo(() => new Set(props.collapsedSectionIds));
   const filteredBotsBySection = createMemo(() => {
@@ -445,49 +537,65 @@ export function Sidebar(props: SidebarProps) {
       return (filteredBotsBySection().get(sectionId)?.length ?? 0) > 0;
     }),
   );
-  const sectionDeleteTarget = createMemo(() =>
-    props.layout.sections.find((section) => section.id === sectionDeleteTargetId()),
-  );
+  const sectionDeleteTarget = createMemo(() => {
+    const deletion = pending.deletion;
+    return deletion?.kind === "section"
+      ? props.layout.sections.find((section) => section.id === deletion.id)
+      : undefined;
+  });
 
   onCleanup(() => {
     stopSidebarDragging();
+    scrollFades.stop();
   });
-
-  function updateScrollFade() {
-    if (!botList) return;
-    const remaining = botList.scrollHeight - botList.scrollTop - botList.clientHeight;
-    setFadeAtTop(botList.scrollTop > 2);
-    setFadeAtBottom(remaining > 2);
-  }
 
   createEffect(
     () => [resolvedPinnedItems(), filteredBots(), filteredPeople()],
     () => {
-      requestAnimationFrame(updateScrollFade);
+      scrollFades.remeasure();
     },
   );
 
-  onSettled(() => {
-    const resizeObserver = new ResizeObserver(updateScrollFade);
-    if (botList) resizeObserver.observe(botList);
-    requestAnimationFrame(updateScrollFade);
-    return () => {
-      resizeObserver.disconnect();
-    };
-  });
+  function openDelete(kind: SidebarPendingDelete["kind"], id: string): void {
+    setPending((state) => {
+      state.deletion = { deleting: false, error: null, id, kind };
+    });
+  }
+
+  /** Closing the confirmation is what discards a failed attempt's message; nothing else has to. */
+  function closeDelete(): void {
+    setPending((state) => {
+      state.deletion = null;
+    });
+  }
+
+  /** Marks the confirmation as running and drops what the previous attempt said. */
+  function beginDelete(): void {
+    setPending((state) => {
+      if (!state.deletion) return;
+      state.deletion.deleting = true;
+      state.deletion.error = null;
+    });
+  }
+
+  /** A failed delete leaves the confirmation open, no longer running, saying why. */
+  function failDelete(cause: unknown): void {
+    setPending((state) => {
+      if (!state.deletion) return;
+      state.deletion.deleting = false;
+      state.deletion.error = cause instanceof Error ? cause.message : String(cause);
+    });
+  }
 
   async function confirmDelete() {
-    const botId = deleteTargetId();
-    if (!botId || deleting()) return;
-    setDeleting(true);
-    setDeleteError(null);
+    const deletion = pending.deletion;
+    if (deletion?.kind !== "agent" || deletion.deleting) return;
+    beginDelete();
     try {
-      await props.onDeleteBot(botId);
-      setDeleteTargetId(null);
+      await props.onDeleteBot(deletion.id);
+      closeDelete();
     } catch (error) {
-      setDeleteError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setDeleting(false);
+      failDelete(error);
     }
   }
 
@@ -500,9 +608,14 @@ export function Sidebar(props: SidebarProps) {
 
   function startCreateSection(agentId?: string): void {
     props.onExpand();
-    setSectionEditor({ kind: "create", ...(agentId ? { agentId } : {}) });
-    setSectionName("");
-    setSectionNameError(null);
+    setPending((state) => {
+      state.sectionEditor = {
+        error: null,
+        name: "",
+        saving: false,
+        target: { kind: "create", ...(agentId ? { agentId } : {}) },
+      };
+    });
     focusSectionName();
   }
 
@@ -510,66 +623,80 @@ export function Sidebar(props: SidebarProps) {
     const section = customSectionById().get(sectionId);
     if (!section) return;
     props.onExpand();
-    setSectionEditor({ kind: "rename", sectionId });
-    setSectionName(section.name);
-    setSectionNameError(null);
+    setPending((state) => {
+      state.sectionEditor = { error: null, name: section.name, saving: false, target: { kind: "rename", sectionId } };
+    });
     focusSectionName();
   }
 
   function cancelSectionEditor(): void {
-    if (savingSection()) return;
-    setSectionEditor(null);
-    setSectionNameError(null);
+    if (pending.sectionEditor?.saving) return;
+    setPending((state) => {
+      state.sectionEditor = null;
+    });
+  }
+
+  /** The editor owns its validation message, so it cannot be read once the editor has closed. */
+  function setSectionNameError(message: string): void {
+    setPending((state) => {
+      if (state.sectionEditor) state.sectionEditor.error = message;
+    });
   }
 
   async function saveSectionEditor(): Promise<void> {
-    const editor = sectionEditor();
-    if (!editor || savingSection()) return;
-    const name = sectionName().trim();
+    const editor = pending.sectionEditor;
+    if (!editor || editor.saving) return;
+    const name = editor.name.trim();
     if (!name) {
       setSectionNameError("Section name is required.");
       focusSectionName();
       return;
     }
+    const target = editor.target;
     const duplicate = props.layout.sections.some(
       (section) =>
         section.name.toLocaleLowerCase() === name.toLocaleLowerCase() &&
-        !(editor.kind === "rename" && editor.sectionId === section.id),
+        !(target.kind === "rename" && target.sectionId === section.id),
     );
     if (duplicate) {
       setSectionNameError("Section names must be unique.");
       focusSectionName();
       return;
     }
-    setSavingSection(true);
-    setSectionNameError(null);
+    setPending((state) => {
+      if (!state.sectionEditor) return;
+      state.sectionEditor.error = null;
+      state.sectionEditor.saving = true;
+    });
     try {
       await props.onMutateLayout(
-        editor.kind === "create"
-          ? { type: "create", name, ...(editor.agentId ? { agentId: editor.agentId } : {}) }
-          : { type: "rename", sectionId: editor.sectionId, name },
+        target.kind === "create"
+          ? { type: "create", name, ...(target.agentId ? { agentId: target.agentId } : {}) }
+          : { type: "rename", sectionId: target.sectionId, name },
       );
-      setSectionEditor(null);
+      // The editor closes on success, which is also what releases the save it was holding.
+      setPending((state) => {
+        state.sectionEditor = null;
+      });
     } catch (error) {
-      setSectionNameError(error instanceof Error ? error.message : String(error));
+      setPending((state) => {
+        if (!state.sectionEditor) return;
+        state.sectionEditor.error = error instanceof Error ? error.message : String(error);
+        state.sectionEditor.saving = false;
+      });
       focusSectionName();
-    } finally {
-      setSavingSection(false);
     }
   }
 
   async function confirmSectionDelete(): Promise<void> {
-    const sectionId = sectionDeleteTargetId();
-    if (!sectionId || deletingSection()) return;
-    setDeletingSection(true);
-    setSectionDeleteError(null);
+    const deletion = pending.deletion;
+    if (deletion?.kind !== "section" || deletion.deleting) return;
+    beginDelete();
     try {
-      await props.onMutateLayout({ type: "delete", sectionId });
-      setSectionDeleteTargetId(null);
+      await props.onMutateLayout({ type: "delete", sectionId: deletion.id });
+      closeDelete();
     } catch (error) {
-      setSectionDeleteError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setDeletingSection(false);
+      failDelete(error);
     }
   }
 
@@ -620,20 +747,15 @@ export function Sidebar(props: SidebarProps) {
     dragScrollFrame = null;
     dragScrollSpeed = 0;
     dragGeometry = { list: null, pinned: null };
-    currentAgentDropSectionId = null;
-    currentAgentDropTarget = null;
     currentSectionDropTarget = null;
     currentPersonDropTarget = null;
-    setPinnedDropActive(false);
-    setEmptyPinnedDropVisible(false);
-    setDraggedAgentId(null);
-    setDragOverAgentId(null);
-    setDraggedPersonId(null);
-    setAgentDropSectionId(null);
+    setDrag((state) => {
+      state.emptyPinnedDropVisible = false;
+      state.sectionOffsets = {};
+      state.source = null;
+      state.target = null;
+    });
     applyPersonDragOffsets({});
-    setDraggedSectionId(null);
-    setSectionDropTarget(null);
-    setSectionDragOffsets({});
     botList?.querySelector(".sidebar-pinned-group")?.classList.remove("sidebar-pinned-group-agent-drop-target");
     for (const section of botList?.querySelectorAll<HTMLElement>(".sidebar-section") ?? []) {
       section.classList.remove(
@@ -648,8 +770,6 @@ export function Sidebar(props: SidebarProps) {
     sectionDragSlots.clear();
     pinnedDragSlots = [];
     dragPreview.stop();
-    setDraggedPinnedKey(null);
-    setDragOverPinnedKey(null);
   }
 
   function sidebarClickIsSuppressed(event: MouseEvent): boolean {
@@ -657,14 +777,6 @@ export function Sidebar(props: SidebarProps) {
     event.preventDefault();
     event.stopPropagation();
     return true;
-  }
-
-  function activeDraggedSectionId(): string | null {
-    return dragSession?.source.kind === "section" ? dragSession.source.id : null;
-  }
-
-  function activeDraggedPersonId(): string | null {
-    return dragSession?.source.kind === "person" ? dragSession.source.id : null;
   }
 
   function measureSidebarDragTargets(): void {
@@ -748,6 +860,11 @@ export function Sidebar(props: SidebarProps) {
     dragSession = { source: options.source, startScrollTop: botList?.scrollTop ?? 0 };
     dragPoint = { clientX: event.clientX, clientY: event.clientY };
     dragTarget = null;
+    setDrag((state) => {
+      state.sectionOffsets = {};
+      state.source = options.source;
+      state.target = null;
+    });
     measureSidebarDragTargets();
     if (!botList) return;
     dragPreview.start({
@@ -764,8 +881,6 @@ export function Sidebar(props: SidebarProps) {
 
   function startAgentDragging(event: DragEvent & { currentTarget: HTMLElement }, bot: BotProfile): void {
     if (props.compact) return;
-    currentAgentDropSectionId = null;
-    currentAgentDropTarget = null;
     startNativeItemDragging(event, {
       className: "sidebar-agent-drag-preview",
       createPreview: createSidebarAgentDragCard,
@@ -773,9 +888,6 @@ export function Sidebar(props: SidebarProps) {
       previewSize: { height: 94, width: 72 },
       source: { kind: "agent", id: bot.id, origin: "section" },
     });
-    setDraggedAgentId(bot.id);
-    setDragOverAgentId(bot.id);
-    setAgentDropSectionId(null);
   }
 
   function startPersonDragging(event: DragEvent & { currentTarget: HTMLElement }, member: TeamPresenceMember): void {
@@ -787,7 +899,6 @@ export function Sidebar(props: SidebarProps) {
       previewSize: { height: 94, width: 72 },
       source: { kind: "person", id: member.id, origin: "people" },
     });
-    setDraggedPersonId(member.id);
     personDragSlots.get(member.id)?.element.classList.add("sidebar-person-item-dragging");
     applyPersonDragOffsets({});
   }
@@ -800,29 +911,13 @@ export function Sidebar(props: SidebarProps) {
       horizontal: false,
       source: { kind: "section", id: sectionId },
     });
-    setDraggedSectionId(sectionId);
-    setSectionDropTarget(null);
-    setSectionDragOffsets({});
-  }
-
-  function setAgentTarget(target: AgentDropTarget | null, sectionId: string | null): void {
-    const currentTarget = currentAgentDropTarget;
-    if (
-      currentTarget?.agentId === target?.agentId &&
-      currentTarget?.placement === target?.placement &&
-      currentTarget?.sectionId === target?.sectionId &&
-      currentAgentDropSectionId === sectionId
-    ) {
-      return;
-    }
-    currentAgentDropTarget = target;
-    currentAgentDropSectionId = sectionId;
-    setDragOverAgentId(target?.agentId ?? null);
-    setAgentDropSectionId(sectionId);
   }
 
   function computePersonDragOffsets(target: PersonDropTarget | null): Record<string, number> {
-    const sourceMemberId = activeDraggedPersonId();
+    // From the session rather than from `drag.source`: this runs in the same tick as the target
+    // writes that drive it, and a store publishes a write only at the next flush.
+    const source = dragSession?.source;
+    const sourceMemberId = source?.kind === "person" ? source.id : null;
     if (!sourceMemberId || !target) return {};
     const currentIds = filteredPeople().map((member) => member.id);
     const desiredIds = currentIds.filter((memberId) => memberId !== sourceMemberId);
@@ -894,7 +989,8 @@ export function Sidebar(props: SidebarProps) {
   }
 
   function computeSectionDragOffsets(target: SectionDropTarget | null): Record<string, number> {
-    const sourceSectionId = activeDraggedSectionId();
+    const source = dragSession?.source;
+    const sourceSectionId = source?.kind === "section" ? source.id : null;
     if (!sourceSectionId || !target) return {};
     const currentOrder = visibleSectionIds();
     const desiredOrder = currentOrder.filter((candidate) => candidate !== sourceSectionId);
@@ -920,8 +1016,10 @@ export function Sidebar(props: SidebarProps) {
     const currentTarget = currentSectionDropTarget;
     if (currentTarget?.sectionId === target?.sectionId && currentTarget?.placement === target?.placement) return;
     currentSectionDropTarget = target;
-    setSectionDropTarget(target);
-    setSectionDragOffsets(computeSectionDragOffsets(target));
+    const offsets = computeSectionDragOffsets(target);
+    setDrag((state) => {
+      state.sectionOffsets = offsets;
+    });
   }
 
   function targetAgentAt(sourceAgentId: string, agentId: string, clientY: number): AgentDropTarget | null {
@@ -993,7 +1091,6 @@ export function Sidebar(props: SidebarProps) {
   }
 
   function draggedSidebarItem(): SidebarPinnedItem | null {
-    if (draggedPinnedKey()) return null;
     const agentId = draggedAgentId();
     return agentId ? { kind: "agent", id: agentId } : null;
   }
@@ -1133,14 +1230,9 @@ export function Sidebar(props: SidebarProps) {
   function applySidebarDropTarget(target: SidebarDropTarget | null): void {
     if (sidebarDropTargetsEqual(dragTarget, target)) return;
     dragTarget = target;
-    const source = dragSession?.source;
-    const pinningFromSidebar = Boolean(source && "origin" in source && source.origin !== "pinned");
-    setPinnedDropActive(target?.kind === "pinned" && pinningFromSidebar && canPinDraggedSidebarItem());
-    setDragOverPinnedKey(target?.kind === "pinned" ? target.key : null);
-    if (target?.kind === "agent") setAgentTarget(target.target, target.target.sectionId);
-    else if (target?.kind === "section" && dragSession?.source.kind === "agent") {
-      setAgentTarget(null, target.sectionId);
-    } else setAgentTarget(null, null);
+    setDrag((state) => {
+      state.target = target;
+    });
     if (target?.kind === "person") setPersonTarget(target.target);
     else setPersonTarget(null);
     if (target?.kind === "section-order") setSectionTarget(target.target);
@@ -1178,7 +1270,7 @@ export function Sidebar(props: SidebarProps) {
       return;
     }
     applySidebarDropTarget(resolveSidebarDropTarget(dragPoint));
-    updateScrollFade();
+    scrollFades.measure();
     dragScrollFrame = requestAnimationFrame(runSidebarDragAutoScroll);
   }
 
@@ -1286,13 +1378,15 @@ export function Sidebar(props: SidebarProps) {
   function updateSidebarNativeDrag(event: DragEvent): void {
     if (!dragSession) return;
     if (
-      !emptyPinnedDropVisible() &&
+      !drag.emptyPinnedDropVisible &&
       agentPinnedItems().length === 0 &&
       dragSession.source.kind === "agent" &&
       dragSession.source.origin === "section"
     ) {
       const activeSession = dragSession;
-      setEmptyPinnedDropVisible(true);
+      setDrag((state) => {
+        state.emptyPinnedDropVisible = true;
+      });
       queueMicrotask(() => {
         if (dragSession !== activeSession) return;
         measureSidebarDragTargets();
@@ -1312,8 +1406,8 @@ export function Sidebar(props: SidebarProps) {
     if (!dragSession) return;
     event.preventDefault();
     event.stopPropagation();
-    const animatedPinnedTarget = emptyPinnedDropVisible() && dragTarget?.kind === "pinned" ? dragTarget : null;
-    if (emptyPinnedDropVisible() && !animatedPinnedTarget) measureSidebarDragTargets();
+    const animatedPinnedTarget = drag.emptyPinnedDropVisible && dragTarget?.kind === "pinned" ? dragTarget : null;
+    if (drag.emptyPinnedDropVisible && !animatedPinnedTarget) measureSidebarDragTargets();
     const target = animatedPinnedTarget ?? flushSidebarDragTarget({ clientX: event.clientX, clientY: event.clientY });
     commitSidebarDrop(target);
     suppressSidebarClickUntil = Date.now() + 250;
@@ -1322,7 +1416,7 @@ export function Sidebar(props: SidebarProps) {
 
   function endAgentDragging(event: DragEvent): void {
     const canCommitAnimatedPin =
-      emptyPinnedDropVisible() &&
+      drag.emptyPinnedDropVisible &&
       dragSession?.source.kind === "agent" &&
       dragSession.source.origin === "section" &&
       dragTarget?.kind === "pinned" &&
@@ -1336,7 +1430,7 @@ export function Sidebar(props: SidebarProps) {
   }
 
   function sectionDragOffset(sectionId: string): number {
-    return sectionDragOffsets()[sectionId] ?? 0;
+    return drag.sectionOffsets[sectionId] ?? 0;
   }
 
   function sectionDragClasses(sectionId: string) {
@@ -1500,12 +1594,7 @@ export function Sidebar(props: SidebarProps) {
               </ContextMenu.Portal>
             </ContextMenu.Sub>
           </Show>
-          <ContextMenu.Item
-            onSelect={() => {
-              setDeleteError(null);
-              props.onEditBot(bot.id);
-            }}
-          >
+          <ContextMenu.Item onSelect={() => props.onEditBot(bot.id)}>
             <EditIcon />
             <span>Edit agent</span>
           </ContextMenu.Item>
@@ -1521,10 +1610,7 @@ export function Sidebar(props: SidebarProps) {
           <ContextMenu.Separator />
           <ContextMenu.Item
             class="ui-action-menu-danger bot-context-danger"
-            onSelect={() => {
-              setDeleteError(null);
-              setDeleteTargetId(bot.id);
-            }}
+            onSelect={() => openDelete("agent", bot.id)}
           >
             <DeleteIcon />
             <span>Delete agent</span>
@@ -1562,10 +1648,7 @@ export function Sidebar(props: SidebarProps) {
               <ContextMenu.Separator />
               <ContextMenu.Item
                 class="ui-action-menu-danger bot-context-danger"
-                onSelect={() => {
-                  setSectionDeleteError(null);
-                  setSectionDeleteTargetId(sectionId);
-                }}
+                onSelect={() => openDelete("section", sectionId)}
               >
                 <Trash2 class="bot-context-icon bot-context-danger-icon size-4" aria-hidden="true" />
                 <span>Delete</span>
@@ -1578,21 +1661,25 @@ export function Sidebar(props: SidebarProps) {
   }
 
   function sectionEditorHeader() {
+    const editor = () => pending.sectionEditor;
     return (
       <header class="sidebar-section-editor-wrap">
         <Input
           ref={(element) => (sectionNameInput = element)}
           class="sidebar-section-editor"
-          value={sectionName()}
+          value={editor()?.name ?? ""}
           onValueChange={(value) => {
-            setSectionName(value);
-            if (sectionNameError()) setSectionNameError(null);
+            setPending((state) => {
+              if (!state.sectionEditor) return;
+              state.sectionEditor.name = value;
+              state.sectionEditor.error = null;
+            });
           }}
           maxlength={INPUT_LIMITS.sidebarSectionName}
-          aria-label={sectionEditor()?.kind === "rename" ? "Rename section" : "New section name"}
-          aria-invalid={sectionNameError() ? "true" : undefined}
-          title={sectionNameError() ?? undefined}
-          disabled={savingSection()}
+          aria-label={editor()?.target.kind === "rename" ? "Rename section" : "New section name"}
+          aria-invalid={editor()?.error ? "true" : undefined}
+          title={editor()?.error ?? undefined}
+          disabled={editor()?.saving === true}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
               event.preventDefault();
@@ -1605,7 +1692,7 @@ export function Sidebar(props: SidebarProps) {
           onBlur={cancelSectionEditor}
         />
         <ChevronDown class="sidebar-section-editor-chevron size-4" aria-hidden="true" />
-        <Show when={sectionNameError()}>
+        <Show when={editor()?.error}>
           {(message) => (
             <span class="sr-only" role="alert">
               {message()}
@@ -1618,8 +1705,8 @@ export function Sidebar(props: SidebarProps) {
 
   function sectionHeader(sectionId: string, name: string) {
     const editing = () => {
-      const editor = sectionEditor();
-      return editor?.kind === "rename" && editor.sectionId === sectionId;
+      const target = pending.sectionEditor?.target;
+      return target?.kind === "rename" && target.sectionId === sectionId;
     };
     const collapsed = () => sectionIsCollapsed(sectionId);
     return (
@@ -1809,26 +1896,13 @@ export function Sidebar(props: SidebarProps) {
       </div>
 
       <nav
-        ref={(element) => (botList = element)}
+        ref={(element) => {
+          botList = element;
+          scrollFades.bind(element);
+        }}
         aria-label="Chat list"
-        class={[
-          "bot-list",
-          {
-            "scroll-fade-top": fadeAtTop(),
-            "scroll-fade-bottom": fadeAtBottom(),
-          },
-        ]}
-        data-sidebar-dragging={
-          draggedPinnedKey()
-            ? "pinned"
-            : draggedAgentId()
-              ? "agent"
-              : draggedPersonId()
-                ? "person"
-                : draggedSectionId()
-                  ? "section"
-                  : undefined
-        }
+        class={["bot-list", scrollFades.classes()]}
+        data-sidebar-dragging={draggingKind()}
         onDragOver={updateSidebarNativeDrag}
         onDragLeave={(event) => {
           const point = { clientX: event.clientX, clientY: event.clientY };
@@ -1836,7 +1910,7 @@ export function Sidebar(props: SidebarProps) {
           scheduleSidebarDragTarget(point);
         }}
         onDrop={dropSidebarNativeDrag}
-        onScroll={() => updateScrollFade()}
+        onScroll={scrollFades.measure}
       >
         <div class="bot-list-content">
           <Show
@@ -1844,7 +1918,7 @@ export function Sidebar(props: SidebarProps) {
               resolvedPinnedItems().length > 0 ||
               filteredBots().length > 0 ||
               (props.showPeople !== false && filteredPeople().length > 0) ||
-              sectionEditor()?.kind === "create"
+              pending.sectionEditor?.target.kind === "create"
             }
             fallback={
               <Show
@@ -1884,13 +1958,13 @@ export function Sidebar(props: SidebarProps) {
               </Show>
             }
           >
-            <Show when={resolvedPinnedItems().length > 0 || emptyPinnedDropVisible()}>
+            <Show when={resolvedPinnedItems().length > 0 || drag.emptyPinnedDropVisible}>
               <section
                 class={[
                   "sidebar-chat-group sidebar-pinned-group",
                   {
                     "sidebar-pinned-group-agent-drop-target": pinnedDropActive(),
-                    "sidebar-pinned-group-empty-target": emptyPinnedDropVisible(),
+                    "sidebar-pinned-group-empty-target": drag.emptyPinnedDropVisible,
                   },
                 ]}
                 aria-label="Pinned chats"
@@ -1902,7 +1976,7 @@ export function Sidebar(props: SidebarProps) {
                 }}
               >
                 <ul class="sidebar-pinned-list" data-dragging={draggedPinnedKey() ? "" : undefined}>
-                  <Show when={emptyPinnedDropVisible()}>
+                  <Show when={drag.emptyPinnedDropVisible}>
                     <li class="sidebar-pinned-empty-drop">Drag here to pin</li>
                   </Show>
                   <For each={resolvedPinnedItems()}>
@@ -1929,9 +2003,6 @@ export function Sidebar(props: SidebarProps) {
                               data: key(),
                               source: { kind: "agent", id: item.bot.id, key: key(), origin: "pinned" },
                             });
-                            setPinnedDropActive(false);
-                            setDraggedPinnedKey(key());
-                            setDragOverPinnedKey(key());
                           }}
                           onDragEnd={stopSidebarDragging}
                           onKeyDown={(event) => {
@@ -2115,7 +2186,7 @@ export function Sidebar(props: SidebarProps) {
                 );
               }}
             </For>
-            <Show when={sectionEditor()?.kind === "create"}>
+            <Show when={pending.sectionEditor?.target.kind === "create"}>
               <section class="sidebar-chat-group sidebar-section sidebar-section-draft" aria-label="New section">
                 {sectionEditorHeader()}
               </section>
@@ -2143,7 +2214,7 @@ export function Sidebar(props: SidebarProps) {
       <AlertDialog.Root
         open={Boolean(deleteTarget())}
         onOpenChange={(open) => {
-          if (!open && !deleting()) setDeleteTargetId(null);
+          if (!open && !deleting()) closeDelete();
         }}
       >
         <Show when={deleteTarget()}>
@@ -2166,12 +2237,7 @@ export function Sidebar(props: SidebarProps) {
                   </AlertDialog.Description>
                   <Show when={deleteError()}>{(message) => <p class="bot-delete-error">{message()}</p>}</Show>
                   <div class="bot-delete-actions">
-                    <Button
-                      variant="outline"
-                      type="button"
-                      disabled={deleting()}
-                      onClick={() => setDeleteTargetId(null)}
-                    >
+                    <Button variant="outline" type="button" disabled={deleting()} onClick={closeDelete}>
                       Cancel
                     </Button>
                     <Button
@@ -2194,7 +2260,7 @@ export function Sidebar(props: SidebarProps) {
       <AlertDialog.Root
         open={Boolean(sectionDeleteTarget())}
         onOpenChange={(open) => {
-          if (!open && !deletingSection()) setSectionDeleteTargetId(null);
+          if (!open && !deleting()) closeDelete();
         }}
       >
         <Show when={sectionDeleteTarget()}>
@@ -2209,24 +2275,19 @@ export function Sidebar(props: SidebarProps) {
                   <AlertDialog.Description>
                     Agents in this section will move to Unassigned. No agents will be deleted.
                   </AlertDialog.Description>
-                  <Show when={sectionDeleteError()}>{(message) => <p class="bot-delete-error">{message()}</p>}</Show>
+                  <Show when={deleteError()}>{(message) => <p class="bot-delete-error">{message()}</p>}</Show>
                   <div class="bot-delete-actions">
-                    <Button
-                      variant="outline"
-                      type="button"
-                      disabled={deletingSection()}
-                      onClick={() => setSectionDeleteTargetId(null)}
-                    >
+                    <Button variant="outline" type="button" disabled={deleting()} onClick={closeDelete}>
                       Cancel
                     </Button>
                     <Button
                       variant="destructive"
                       type="button"
                       class="bot-delete-confirm"
-                      disabled={deletingSection()}
+                      disabled={deleting()}
                       onClick={() => void confirmSectionDelete()}
                     >
-                      {deletingSection() ? "Deleting…" : "Delete"}
+                      {deleting() ? "Deleting…" : "Delete"}
                     </Button>
                   </div>
                 </AlertDialog.Content>

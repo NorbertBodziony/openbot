@@ -7,6 +7,7 @@ import {
   OPENPANEL_API_URL,
   shouldEnableLandingAnalytics,
 } from "../src/lib/analytics";
+import { OPENBOT_LINKS } from "../src/lib/landing-links";
 
 describe("landing analytics", () => {
   it("enables only the production landing hostname", () => {
@@ -17,7 +18,7 @@ describe("landing analytics", () => {
 
   it("tracks only allowlisted links and download metadata", () => {
     document.body.innerHTML = `
-      <header class="landing-header"><a id="contact" href="https://x.com/norbertbodziony">Contact</a></header>
+      <header class="landing-header"><a id="contact" href="${OPENBOT_LINKS.contact}">Contact</a></header>
       <section class="landing-download"><a id="mac" href="/download/macos">Download</a></section>
       <a id="private" href="https://private.example/secret">Private</a>
     `;

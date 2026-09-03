@@ -10,7 +10,12 @@ import {
 } from "react";
 import { AppState, type AppStateStatus } from "react-native";
 
-import { logoutMobileSession, type MobileSession, readMobileSession, validateMobileSession } from "@/lib/mobile-auth";
+import {
+  logoutMobileSession,
+  type MobileSession,
+  readMobileSession,
+  validateMobileSession,
+} from "@/features/auth/api/mobile-auth";
 
 interface MobileSessionContextValue {
   loading: boolean;

@@ -6,7 +6,7 @@ import * as Crypto from "expo-crypto";
 import * as Device from "expo-device";
 import * as SecureStore from "expo-secure-store";
 
-import { isAndroid, isIOS } from "@/lib/platform";
+import { isAndroid, isIOS } from "@/shared/lib/platform";
 
 const MOBILE_SESSION_KEY = "openbot.mobile.session.v1";
 const MOBILE_DEVICE_ID_KEY = "openbot.mobile.device-id.v1";
