@@ -380,6 +380,9 @@ export class HostService extends EventEmitter<HostEvents> {
   async updateIdentity(input: UpdateHostIdentityInput): Promise<HostStatus> {
     this.#options.store.assertOwnerAccount(this.#options.getSignedInUser());
     const identity = await this.#options.store.updateIdentity(input);
+    // Before anything is published: the store checked the account before it resolved, and a
+    // switch landing in this gap would show the previous account's name and logo.
+    if (!this.#isActiveHost(identity.serverId)) return this.getStatus();
     this.#setStatus({
       serverName: identity.serverName,
       logoUrl: identity.logoVersion ? serverLogoUrl(identity.logoVersion) : null,
@@ -387,7 +390,6 @@ export class HostService extends EventEmitter<HostEvents> {
     });
     this.#api.refreshIdentity();
     const ownerMembershipId = this.#requiredOwnerMemberId();
-    if (!this.#isActiveHost(identity.serverId)) return this.getStatus();
     await this.#options.registerRemoteHost?.({
       hostId: identity.serverId,
       name: identity.serverName,
@@ -704,6 +706,9 @@ export class HostService extends EventEmitter<HostEvents> {
       const updated = members.find((member) => member.membershipId === input.memberId);
       if (!updated) throw new Error("The remote member does not exist.");
       await this.#options.store.syncRemoteDirectory(hostId, members);
+      // Recording the directory is a write too, so the switch can land inside it and the
+      // member below would be the previous account's.
+      this.#assertStillActiveHost(hostId);
       return {
         id: updated.membershipId,
         username: updated.email,
