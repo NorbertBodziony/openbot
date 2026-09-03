@@ -182,8 +182,11 @@ export class TeamStore {
       const owner = hostOwner(host);
       return owner !== undefined && !owner.accountId && !owner.email;
     });
-    const previousState = this.#state;
-    const previousAccountId = this.#file.activeAccountId;
+    // Everything below mutates in memory and is committed by the single write at the end,
+    // so a failed write can put the whole file back rather than leave half a switch applied
+    // with the status naming one account and every write going to another.
+    const rollback = structuredClone(this.#file);
+    const previousIndex = this.#state ? hosts.indexOf(this.#state) : -1;
     this.#state =
       hosts.find((host) => ownerAccountId(host) === user.id) ??
       hosts.find((host) => {
@@ -195,25 +198,23 @@ export class TeamStore {
     this.#file.activeAccountId = user.id;
     // A host configured before accounts existed has no owner email to match on next time,
     // so adopting it has to write the binding rather than rely on `syncAccount`.
-    const adopted = this.#state && this.#state === unbound ? hostOwner(this.#state) : undefined;
-    const adoptedBefore = adopted && { accountId: adopted.accountId, email: adopted.email };
-    if (adopted) {
-      adopted.accountId = user.id;
-      adopted.email = email;
+    if (this.#state && this.#state === unbound) {
+      const owner = hostOwner(this.#state);
+      if (owner) {
+        owner.accountId = user.id;
+        owner.email = email;
+      }
+    }
+    if (this.#state) {
+      this.#applyAccount(user);
+      this.#dropExpired(this.#state);
     }
     try {
       await this.#recordActiveAccount();
     } catch (error) {
-      // Staying bound to a host the file does not name would have the status report one
-      // account while every write went to another.
-      this.#state = previousState;
-      this.#file.activeAccountId = previousAccountId;
-      if (adopted && adoptedBefore) Object.assign(adopted, adoptedBefore);
+      this.#file = rollback;
+      this.#state = previousIndex >= 0 ? (this.#file.hosts[previousIndex] ?? null) : null;
       throw error;
-    }
-    if (this.#state) {
-      await this.syncAccount(user);
-      await this.#prune();
     }
   }
 
@@ -454,6 +455,12 @@ export class TeamStore {
     }
     if (previousLogo && previousLogo.version !== nextLogo?.version) {
       await this.#removeLogo(previousLogo).catch(() => undefined);
+    }
+    // Writing the file yields as well. The change is on disk and belongs to the account that
+    // asked for it, but the caller must not go on to push it to the remote host under the
+    // authentication - and the owner membership - of whichever account is active now.
+    if (this.#state !== state) {
+      throw new TeamStoreError("This server is no longer the active one for the signed-in account.");
     }
     return identityOf(state);
   }
@@ -866,6 +873,14 @@ export class TeamStore {
   }
 
   async syncAccount(user: CentralAuthUser): Promise<boolean> {
+    this.#requireState();
+    if (!this.#applyAccount(user)) return false;
+    await this.#persist();
+    return true;
+  }
+
+  /** The profile half of `syncAccount`, without its write. Reports whether anything moved. */
+  #applyAccount(user: CentralAuthUser): boolean {
     const state = this.#requireState();
     const email = normalizeEmail(user.email);
     const member = state.members.find((candidate) => candidate.email === email || candidate.username === email);
@@ -886,7 +901,6 @@ export class TeamStore {
     member.username = email;
     member.name = name;
     member.avatarUrl = avatarUrl;
-    await this.#persist();
     return true;
   }
 
@@ -951,12 +965,15 @@ export class TeamStore {
 
   async #prune(): Promise<void> {
     if (!this.#state) return;
-    const now = Date.now();
-    this.#state.sessions = this.#state.sessions.filter((session) => Date.parse(session.expiresAt) > now);
-    this.#state.invites = this.#state.invites.filter(
-      (invite) => invite.usedAt !== null || Date.parse(invite.expiresAt) > now,
-    );
+    this.#dropExpired(this.#state);
     await this.#persist();
+  }
+
+  /** The expiry half of `#prune`, without its write. */
+  #dropExpired(host: StoredTeam): void {
+    const now = Date.now();
+    host.sessions = host.sessions.filter((session) => Date.parse(session.expiresAt) > now);
+    host.invites = host.invites.filter((invite) => invite.usedAt !== null || Date.parse(invite.expiresAt) > now);
   }
 
   async #persist(): Promise<void> {

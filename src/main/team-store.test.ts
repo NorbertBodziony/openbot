@@ -534,6 +534,28 @@ describe("TeamStore", () => {
     expect((await readStoredHosts(path)).map((host) => host.serverName)).toEqual(["Studio Air", "Studio Mac"]);
   });
 
+  it("refuses an identity update whose write lands after another account has signed in", async () => {
+    const { store, path } = await createStore();
+    const first = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
+    const second = { id: "account-b", email: "b@example.com", name: "B", avatarUrl: null };
+    await store.activateAccount(second);
+    const secondIdentity = await store.configureWithAccount("Studio Air", second);
+    await store.activateAccount(first);
+    await store.configureWithAccount("Studio Mac", first);
+
+    const pending = store.updateIdentity({ serverName: "Renamed" });
+    const settled = pending.catch(() => undefined);
+    await store.activateAccount(second);
+    await settled;
+
+    // Answering with A's identity has the caller push A's host to the remote directory under
+    // B's authentication and owner membership.
+    await expect(pending).rejects.toThrow("no longer the active one");
+    expect(store.getIdentity()).toEqual(secondIdentity);
+    // The rename is A's own and stays: it is what A asked for and it is already on disk.
+    expect((await readStoredHosts(path)).map((host) => host.serverName)).toEqual(["Studio Air", "Renamed"]);
+  });
+
   it("keeps reporting the account it is bound to when recording the next one fails", async () => {
     const { store, path } = await createStore();
     const first = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
