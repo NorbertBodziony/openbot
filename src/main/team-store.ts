@@ -189,8 +189,12 @@ export class TeamStore {
     this.#state =
       hosts.find((host) => ownerAccountId(host) === user.id) ??
       hosts.find((host) => {
-        const ownerEmail = hostOwner(host)?.email;
-        return ownerEmail ? normalizeEmail(ownerEmail) === email : false;
+        const owner = hostOwner(host);
+        // Only a host whose owner predates accounts is matched by address. An email can be
+        // released and taken by somebody else, and it must not hand them a host that is
+        // already bound to the account that made it.
+        if (!owner || owner.accountId) return false;
+        return owner.email ? normalizeEmail(owner.email) === email : false;
       }) ??
       unbound ??
       null;
@@ -281,7 +285,12 @@ export class TeamStore {
     if (!owner?.email) {
       throw new TeamStoreError("This host is not linked to an OpenBot owner account.");
     }
-    if (normalizeEmail(user.email) !== normalizeEmail(owner.email)) {
+    // The account is the identity once one is recorded; the address is only what an owner
+    // from before accounts can be recognized by, and it can change hands.
+    const matches = owner.accountId
+      ? owner.accountId === user.id
+      : normalizeEmail(user.email) === normalizeEmail(owner.email);
+    if (!matches) {
       throw new TeamStoreError("Sign in with the OpenBot email that created this host.");
     }
   }
@@ -895,7 +904,11 @@ export class TeamStore {
   #applyAccount(user: CentralAuthUser): boolean {
     const state = this.#requireState();
     const email = normalizeEmail(user.email);
-    const member = state.members.find((candidate) => candidate.email === email || candidate.username === email);
+    // By account first, so changing the address on an account keeps it matched to its own
+    // member rather than locking it out of the host it owns.
+    const member =
+      state.members.find((candidate) => candidate.accountId === user.id) ??
+      state.members.find((candidate) => candidate.email === email || candidate.username === email);
     if (!member) return false;
     const name = normalizeName(user.name);
     const avatarUrl = normalizeAvatarUrl(user.avatarUrl);

@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { EventEmitter } from "node:events";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
@@ -156,6 +156,8 @@ async function createHostService(
   service: HostService;
   /** Reports an account exactly as `forwardCentralAuth` does, sign-out included. */
   signIn: (user: CentralAuthUser | null) => Promise<void>;
+  /** Holds the team file, so a test can make the store's write fail. */
+  root: string;
 }> {
   const root = await mkdtemp(join(tmpdir(), "openbot-host-service-"));
   roots.push(root);
@@ -188,6 +190,7 @@ async function createHostService(
   const service = new HostService(options);
   return {
     service,
+    root,
     signIn: async (user) => {
       signedIn = user;
       await service.applySignedInAccount(user);
@@ -2445,6 +2448,25 @@ describe("HostService account binding", () => {
     await expect(pending).rejects.toThrow("signed-in account changed");
     // The mail would name A's server and go out under B's authentication.
     expect(emails).toEqual([]);
+  });
+
+  it("activates the account again after a failed switch instead of leaving it unconfigured", async () => {
+    const { service, signIn, root } = await createHostService({ registerRemoteHost: () => Promise.resolve() });
+    await signIn(first);
+    await service.configure({ serverName: "Studio Mac" });
+    await signIn(second);
+    const secondIdentity = await service.configure({ serverName: "Loft Mini" });
+    await signIn(first);
+
+    // The team file cannot be written while its directory is gone, so recording the switch fails.
+    await rm(root, { recursive: true, force: true });
+    await expect(signIn(second)).rejects.toThrow();
+    expect(service.getStatus().configured).toBe(false);
+
+    await mkdir(root, { recursive: true });
+    await signIn(second);
+    expect(service.getStatus().serverId).toBe(secondIdentity.serverId);
+    expect(service.getStatus().configured).toBe(true);
   });
 
   it("reports the account's own server again after signing out and back in", async () => {

@@ -288,14 +288,20 @@ export class HostService extends EventEmitter<HostEvents> {
         console.error("Unable to stop the host runtime while switching accounts:", error);
       }
     }
+    let activated = false;
     try {
       if (user) await this.#options.store.activateAccount(user);
       else await this.#options.store.deactivate();
+      activated = true;
     } finally {
       // Publish even when activation failed. The previous account is gone either way, and a
       // status still naming its host would offer the rail a server this process can no
       // longer answer for - the store has already unbound it.
-      this.#boundAccountId = nextAccountId;
+      //
+      // A failure leaves the binding unknown rather than recorded, so the next report of the
+      // same account runs activation again instead of short-circuiting into an unconfigured
+      // store the user cannot get out of without restarting.
+      this.#boundAccountId = activated ? nextAccountId : undefined;
       this.#publishActiveHost(previousServerId);
     }
   }
@@ -781,10 +787,15 @@ export class HostService extends EventEmitter<HostEvents> {
             role: input.role,
           });
         } catch (error) {
-          await this.#options.revokeRemoteInvite?.(invite.inviteId);
+          // Revoking spends authorization on a host, so it only happens while that host is
+          // still this account's. Otherwise the invitation stays for the account that owns it.
+          if (this.#isActiveHost(identity.serverId)) await this.#options.revokeRemoteInvite?.(invite.inviteId);
           throw error;
         }
       }
+      // Sending is a round trip of its own, and the link must not come back to a renderer
+      // that has meanwhile been told about another account.
+      this.#assertStillActiveHost(identity.serverId);
       return result;
     }
     if (!this.#status.apiUrl) throw new Error("Make this OpenBot public before creating an invite.");

@@ -440,6 +440,34 @@ describe("TeamStore", () => {
     expect(await readStoredHosts(path)).toHaveLength(2);
   });
 
+  it("does not hand a host to the account that later takes the owner's address", async () => {
+    const { store } = await createStore();
+    const owner = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
+    const identity = await store.configureWithAccount("Studio Mac", owner);
+
+    // The same address, a different account: an address can be released and registered again.
+    const stranger = { id: "account-b", email: "a@example.com", name: "B", avatarUrl: null };
+    await store.activateAccount(stranger);
+    expect(store.getIdentity()).toBeNull();
+
+    await store.activateAccount(owner);
+    expect(store.getIdentity()?.serverId).toBe(identity.serverId);
+    // Nor may the address alone pass the ownership check on the host it names.
+    expect(() => store.assertOwnerAccount(stranger)).toThrow("Sign in with the OpenBot email");
+  });
+
+  it("keeps the owner of a host after the account changes its address", async () => {
+    const { store } = await createStore();
+    const owner = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
+    const identity = await store.configureWithAccount("Studio Mac", owner);
+
+    const renamed = { ...owner, email: "moved@example.com" };
+    await store.activateAccount(renamed);
+    expect(store.getIdentity()?.serverId).toBe(identity.serverId);
+    expect(() => store.assertOwnerAccount(renamed)).not.toThrow();
+    expect(store.listMembers().map((member) => member.email)).toEqual(["moved@example.com"]);
+  });
+
   it("leaves no host bound after signing out, and restores it on the next sign-in", async () => {
     const { store, path } = await createStore();
     const owner = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };

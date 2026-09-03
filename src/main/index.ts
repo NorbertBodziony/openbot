@@ -793,6 +793,12 @@ function forwardCentralAuth(state: CentralAuthState): void {
       // previous account's host is still selected and possibly online.
       if (host) {
         await host.applySignedInAccount(state.user);
+        if (generation !== centralAuthGeneration) {
+          // Another account was announced while this one was being activated. Its own queued
+          // callback binds it; until then no host answers for either.
+          host.unbindChangedAccount(null);
+          return;
+        }
         hostAnalytics?.flushPending();
       }
       try {
