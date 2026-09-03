@@ -12,6 +12,7 @@ import { latestIncomingConversationMessage } from "./conversation-read-state";
 import { reconcileQueuesWithRuntimeWork } from "./dynamic-island-coordinator";
 import { usePlatform } from "./platform";
 import { useProviders } from "./providers";
+import { queueAfterTurnCompleted } from "./queue-reconciliation";
 import { useServers } from "./servers";
 import { useSidebar } from "./sidebar";
 import { useTurns } from "./turns";
@@ -154,15 +155,8 @@ export function AgentEventBridge() {
         setQueues((current) => {
           const snapshot = current[event.botId];
           if (!snapshot) return current;
-          const deliveries = snapshot.deliveries.filter(
-            (delivery) =>
-              !(
-                (delivery.status === "starting" || delivery.status === "running") &&
-                (delivery.turnId === null || delivery.turnId === event.turnId)
-              ),
-          );
-          if (deliveries.length === snapshot.deliveries.length) return current;
-          return { ...current, [event.botId]: { ...snapshot, deliveries } };
+          const next = queueAfterTurnCompleted(snapshot, event.turnId);
+          return next === snapshot ? current : { ...current, [event.botId]: next };
         });
         setPendingPrompts((current) => {
           const pending = current[event.botId];

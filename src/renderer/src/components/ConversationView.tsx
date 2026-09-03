@@ -46,6 +46,7 @@ import {
 } from "solid-js";
 import { desktopAnalytics } from "../analytics";
 import type { BotMessage, BotProfile, ChatActionMarkerModel } from "../data";
+import { activeQueueDeliveries, presentQueueDeliveries, queuedDeliveriesInOrder } from "../queue-reconciliation";
 import { appendVoiceTranscript, recordingToWav } from "../voice-recording";
 import { AgentAvatar } from "./AgentAvatar";
 import { ComposerEditor, expandComposerMentions } from "./ComposerEditor";
@@ -680,15 +681,7 @@ function createConversationViewScope(props: ConversationProps) {
     const control = browserControlForTab(tab);
     return control ? props.bots.find((bot) => bot.threadId === control.threadId) : undefined;
   };
-  const activeDeliveries = createMemo(() => {
-    const deliveries = (props.queue?.deliveries ?? []).filter(
-      (delivery) => delivery.status === "starting" || delivery.status === "running",
-    );
-    const activeTurnId = props.activeTurnId;
-    if (!activeTurnId) return deliveries;
-    const matching = deliveries.filter((delivery) => delivery.turnId === activeTurnId || delivery.turnId === null);
-    return matching.length > 0 ? matching : deliveries;
-  });
+  const activeDeliveries = createMemo(() => activeQueueDeliveries(props.queue, props.activeTurnId));
   const [renderedAgentActivity, setRenderedAgentActivity] = createSignal<RenderedAgentActivity | null>(null);
   const [agentActivitySpaceReserved, setAgentActivitySpaceReserved] = createSignal(false);
   const streamingAgentMessage = createMemo(() => {
@@ -817,33 +810,14 @@ function createConversationViewScope(props: ConversationProps) {
     clearAgentActivityExitDelayTimer();
     clearAgentActivityExitTimer();
   });
-  const orderedQueuedDeliveries = createMemo(() =>
-    [...(props.queue?.deliveries ?? [])]
-      .filter((delivery) => delivery.status === "queued")
-      .sort((left, right) => {
-        const leftPosition = left.position ?? Number.MAX_SAFE_INTEGER;
-        const rightPosition = right.position ?? Number.MAX_SAFE_INTEGER;
-        return leftPosition - rightPosition || left.createdAt.localeCompare(right.createdAt);
-      }),
+  const orderedQueuedDeliveries = createMemo(() => queuedDeliveriesInOrder(props.queue));
+  const presentedQueueDeliveries = createMemo(() =>
+    presentQueueDeliveries({
+      snapshot: props.queue,
+      activeTurnId: props.activeTurnId,
+      renderedMessageIds: new Set(props.messages.map((message) => message.id)),
+    }),
   );
-  const presentedQueueDeliveries = createMemo(() => {
-    const snapshot = props.queue;
-    if (!snapshot) return [];
-    const activeTurnId = props.activeTurnId;
-    if (activeDeliveries().length === 0) return [];
-    const renderedMessageIds = new Set(props.messages.map((message) => message.id));
-    const queued = orderedQueuedDeliveries().filter(
-      (delivery) => (!activeTurnId || delivery.turnId !== activeTurnId) && !renderedMessageIds.has(delivery.id),
-    );
-    const steering = snapshot.deliveries.filter(
-      (delivery) =>
-        delivery.status === "starting" &&
-        Boolean(activeTurnId) &&
-        delivery.turnId === activeTurnId &&
-        !renderedMessageIds.has(delivery.id),
-    );
-    return [...queued, ...steering];
-  });
   const [renderedQueueDeliveries, setRenderedQueueDeliveries] = createSignal<QueueDelivery[]>([]);
   const queuePanelVisible = createMemo(() => renderedQueueDeliveries().length > 0);
   let queueExitTimer: number | undefined;
