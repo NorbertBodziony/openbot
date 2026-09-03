@@ -2,6 +2,7 @@ import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { BotMemory } from "@openbot/contracts/ipc";
 import { createEffect, createSignal, For, onSettled, Show } from "solid-js";
 import { desktopAnalytics } from "../../analytics";
+import { createScrollFades } from "../createScrollFades";
 import { Button, Dialog, IconButton, Plus, Textarea, Trash2, X } from "../ui";
 
 interface AgentMemoriesModalProps {
@@ -22,31 +23,13 @@ export function AgentMemoriesModal(props: AgentMemoriesModalProps) {
   const [editingText, setEditingText] = createSignal("");
   const [savingId, setSavingId] = createSignal<string | null>(null);
   const [clearConfirmation, setClearConfirmation] = createSignal(false);
-  const [fadeAtTop, setFadeAtTop] = createSignal(false);
-  const [fadeAtBottom, setFadeAtBottom] = createSignal(false);
+  const scrollFades = createScrollFades();
   let modalContent: HTMLDivElement | undefined;
-  let memoryList: HTMLUListElement | undefined;
-  let memoryListResizeObserver: ResizeObserver | undefined;
   let newMemoryInput: HTMLTextAreaElement | undefined;
   let editingInput: HTMLTextAreaElement | undefined;
   let confirmationTrigger: HTMLButtonElement | undefined;
 
-  function updateScrollFades(): void {
-    if (!memoryList) return;
-    const remaining = memoryList.scrollHeight - memoryList.scrollTop - memoryList.clientHeight;
-    setFadeAtTop(memoryList.scrollTop > 2);
-    setFadeAtBottom(remaining > 2);
-  }
-
-  function bindMemoryList(element: HTMLUListElement): void {
-    memoryList = element;
-    memoryListResizeObserver?.disconnect();
-    memoryListResizeObserver = new ResizeObserver(updateScrollFades);
-    memoryListResizeObserver.observe(element);
-    window.requestAnimationFrame(updateScrollFades);
-  }
-
-  onSettled(() => () => memoryListResizeObserver?.disconnect());
+  onSettled(() => scrollFades.stop);
 
   async function loadMemories(showLoading = true): Promise<void> {
     if (showLoading) setLoading(true);
@@ -303,15 +286,9 @@ export function AgentMemoriesModal(props: AgentMemoriesModalProps) {
                   fallback={<p class="agent-memory-state">This agent has no saved memories yet.</p>}
                 >
                   <ul
-                    ref={bindMemoryList}
-                    class={[
-                      "agent-memory-list",
-                      {
-                        "scroll-fade-top": fadeAtTop(),
-                        "scroll-fade-bottom": fadeAtBottom(),
-                      },
-                    ]}
-                    onScroll={updateScrollFades}
+                    ref={scrollFades.bind}
+                    class={["agent-memory-list", scrollFades.classes()]}
+                    onScroll={scrollFades.measure}
                   >
                     <For each={memories()}>
                       {(memory) => (

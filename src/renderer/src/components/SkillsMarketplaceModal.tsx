@@ -13,11 +13,12 @@ import type {
   SkillSubmission,
 } from "@openbot/contracts/ipc";
 import { isSkillCategory, SKILL_CATEGORIES } from "@openbot/contracts/ipc";
-import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, createStore, For, onCleanup, Show, snapshot } from "solid-js";
 import { desktopAnalytics } from "../analytics";
 import { normalizeAvatarFile } from "../avatar-image";
 import { AgentAvatar } from "./AgentAvatar";
 import { routineScheduleSummary } from "./conversation/routine-schedule-ui";
+import { createAsyncPanel } from "./createAsyncPanel";
 import {
   ArrowLeft,
   Button,
@@ -60,67 +61,107 @@ const CATEGORY_LABELS: Record<SkillCategory, string> = {
   other: "Other",
 };
 
+/**
+ * What the detail layer shows. Three signals allowed a combination the product does not have - a
+ * loaded skill and a loaded submission at once - and turned "is anything open" into a chain of
+ * three reads that every caller had to spell the same way.
+ */
+type SkillDetail =
+  | { kind: "none" }
+  | { kind: "loading" }
+  | { kind: "skill"; skill: MarketplaceSkillDetail }
+  | { kind: "submission"; submission: SkillSubmission };
+
+/** Which listing is on screen and what narrows it: every field a tab switch resets together. */
+interface SkillsBrowse {
+  category: SkillCategory | null;
+  kind: MarketplaceKind;
+  query: string;
+  tab: Tab;
+  targetBotId: string;
+}
+
+/** The publish form. Meaningful only while `preview` holds a chosen package, and cleared with it. */
+interface SkillPublication {
+  category: SkillCategory;
+  icon: AvatarImageInput | null;
+  iconPreviewUrl: string | null;
+  preview: SkillPackagePreview | null;
+  skillId: string | undefined;
+}
+
+/** Everything the skills half of the marketplace shows, grouped by the surface that owns it. */
+interface SkillsMarketplace {
+  browse: SkillsBrowse;
+  detail: SkillDetail;
+  installed: InstalledSkill[];
+  publication: SkillPublication;
+  skills: MarketplaceSkillSummary[];
+  submissions: SkillSubmission[];
+}
+
 export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
-  const [kind, setKind] = createSignal<MarketplaceKind>("skills");
-  const [tab, setTab] = createSignal<Tab>("discover");
-  const [skills, setSkills] = createSignal<MarketplaceSkillSummary[]>([]);
-  const [submissions, setSubmissions] = createSignal<SkillSubmission[]>([]);
-  const [installed, setInstalled] = createSignal<InstalledSkill[]>([]);
-  const [query, setQuery] = createSignal("");
-  const [category, setCategory] = createSignal<SkillCategory | null>(null);
-  const [targetBotId, setTargetBotId] = createSignal("");
-  const [loading, setLoading] = createSignal(false);
-  const [busyId, setBusyId] = createSignal<string | null>(null);
-  const [detail, setDetail] = createSignal<MarketplaceSkillDetail | null>(null);
-  const [submissionDetail, setSubmissionDetail] = createSignal<SkillSubmission | null>(null);
-  const [detailLoading, setDetailLoading] = createSignal(false);
-  const [error, setError] = createSignal<string | null>(null);
-  const [preview, setPreview] = createSignal<SkillPackagePreview | null>(null);
-  const [publishCategory, setPublishCategory] = createSignal<SkillCategory>("other");
-  const [publishIcon, setPublishIcon] = createSignal<AvatarImageInput | null>(null);
-  const [publishIconPreviewUrl, setPublishIconPreviewUrl] = createSignal<string | null>(null);
-  const [publishSkillId, setPublishSkillId] = createSignal<string | undefined>();
+  const [market, setMarket] = createStore<SkillsMarketplace>({
+    browse: { category: null, kind: "skills", query: "", tab: "discover", targetBotId: "" },
+    detail: { kind: "none" },
+    installed: [],
+    publication: { category: "other", icon: null, iconPreviewUrl: null, preview: null, skillId: undefined },
+    skills: [],
+    submissions: [],
+  });
+  /** Pulse counters, not marketplace state: each one asks the agent panel to do something once. */
   const [agentRefreshVersion, setAgentRefreshVersion] = createSignal(0);
   const [agentAddVersion, setAgentAddVersion] = createSignal(0);
+  const { panel, run, setBusy, setError, setLoading } = createAsyncPanel(marketplaceErrorMessage);
   let marketplaceBody: HTMLDivElement | undefined;
   let listScrollTop = 0;
   let searchTimer: number | undefined;
   let searchInitialized = false;
 
-  const installedById = createMemo(() => new Map(installed().map((item) => [item.skillId, item])));
-  const targetBot = createMemo(() => props.bots.find((bot) => bot.id === targetBotId()) ?? null);
+  const installedById = createMemo(() => new Map(market.installed.map((item) => [item.skillId, item])));
+  const targetBot = createMemo(() => props.bots.find((bot) => bot.id === market.browse.targetBotId) ?? null);
+  // The arms of the detail union, so the JSX narrows here once instead of at every read.
+  const detailOpen = () => market.detail.kind !== "none";
+  const detailLoading = () => market.detail.kind === "loading";
+  const skillDetail = () => (market.detail.kind === "skill" ? market.detail.skill : null);
+  const submissionDetail = () => (market.detail.kind === "submission" ? market.detail.submission : null);
 
   createEffect(
     () => props.open,
     (open) => {
       if (!open) {
-        setDetail(null);
-        setSubmissionDetail(null);
+        closeDetail();
         return;
       }
-      setTargetBotId((current) => current || props.activeBotId || props.bots[0]?.id || "");
+      setMarket((state) => {
+        state.browse.targetBotId = state.browse.targetBotId || props.activeBotId || props.bots[0]?.id || "";
+      });
       void loadSkills();
     },
   );
 
   createEffect(
-    () => query(),
+    () => market.browse.query,
     () => {
       if (searchTimer !== undefined) window.clearTimeout(searchTimer);
       if (!searchInitialized) {
         searchInitialized = true;
         return;
       }
-      if (!props.open || tab() !== "discover") return;
+      if (!props.open || market.browse.tab !== "discover") return;
       searchTimer = window.setTimeout(() => void loadSkills(), SKILLS_SEARCH_DEBOUNCE_MS);
     },
   );
 
   createEffect(
-    () => [props.open, targetBotId()] as const,
+    () => [props.open, market.browse.targetBotId] as const,
     ([open, botId]) => {
       if (open && botId) void loadInstalled(botId);
-      else setInstalled([]);
+      else {
+        setMarket((state) => {
+          state.installed = [];
+        });
+      }
     },
   );
 
@@ -128,31 +169,25 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
     if (searchTimer !== undefined) window.clearTimeout(searchTimer);
   });
 
-  function clearPublishIcon() {
-    setPublishIcon(null);
-    setPublishIconPreviewUrl(null);
+  /** Clears the detail layer whichever arm it is on. */
+  function closeDetail(): void {
+    setMarket((state) => {
+      state.detail = { kind: "none" };
+    });
   }
 
   function selectCategory(nextCategory: SkillCategory | null) {
     if (searchTimer !== undefined) window.clearTimeout(searchTimer);
-    setCategory(nextCategory);
+    setMarket((state) => {
+      state.browse.category = nextCategory;
+    });
     void loadSkills();
-  }
-
-  async function run<T>(work: () => Promise<T>): Promise<T | undefined> {
-    setError(null);
-    try {
-      return await work();
-    } catch (cause) {
-      setError(marketplaceErrorMessage(cause));
-      return undefined;
-    }
   }
 
   async function loadSkills() {
     setLoading(true);
-    const search = query().trim();
-    const selectedCategory = category();
+    const search = market.browse.query.trim();
+    const selectedCategory = market.browse.category;
     const pages = await run(() =>
       selectedCategory
         ? Promise.all([
@@ -173,64 +208,82 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
             ),
           ),
     );
-    if (pages) setSkills(pages.flatMap((page) => page.skills));
+    if (pages) {
+      const skills = pages.flatMap((page) => page.skills);
+      setMarket((state) => {
+        state.skills = skills;
+      });
+    }
     setLoading(false);
   }
 
-  async function loadInstalled(botId = targetBotId()) {
+  async function loadInstalled(botId = market.browse.targetBotId) {
     if (!botId) {
-      setInstalled([]);
+      setMarket((state) => {
+        state.installed = [];
+      });
       return;
     }
     const values = await run(() => window.openbot.skills.listInstalled(botId));
-    if (values) setInstalled(values);
+    if (values) {
+      setMarket((state) => {
+        state.installed = values;
+      });
+    }
   }
 
   async function loadMine() {
     setLoading(true);
     const values = await run(() => window.openbot.skills.listMine());
-    if (values) setSubmissions(values);
+    if (values) {
+      setMarket((state) => {
+        state.submissions = values;
+      });
+    }
     setLoading(false);
   }
 
-  function refresh(next: Tab = tab()) {
+  function refresh(next: Tab = market.browse.tab) {
     if (next === "discover") void loadSkills();
     if (next === "mine") void loadMine();
     if (next === "installed") void loadInstalled();
   }
 
   function selectTab(next: Tab) {
-    setTab(next);
+    const marketplaceKind = market.browse.kind;
     if (marketplaceBody) marketplaceBody.scrollTop = 0;
-    setDetail(null);
-    setSubmissionDetail(null);
-    setPreview(null);
-    clearPublishIcon();
+    setMarket((state) => {
+      state.browse.tab = next;
+      state.detail = { kind: "none" };
+      state.publication.preview = null;
+      state.publication.icon = null;
+      state.publication.iconPreviewUrl = null;
+    });
     setError(null);
-    if (kind() === "skills") refresh(next);
+    if (marketplaceKind === "skills") refresh(next);
   }
 
   function selectKind(next: MarketplaceKind) {
-    setKind(next);
-    setTab("discover");
     if (marketplaceBody) marketplaceBody.scrollTop = 0;
-    setDetail(null);
-    setSubmissionDetail(null);
-    setPreview(null);
+    setMarket((state) => {
+      state.browse.kind = next;
+      state.browse.tab = "discover";
+      state.detail = { kind: "none" };
+      state.publication.preview = null;
+    });
     setError(null);
     if (next === "skills") void loadSkills();
   }
 
   function enterDetails() {
-    if (!detail() && !submissionDetail() && !detailLoading()) {
+    if (!detailOpen()) {
       listScrollTop = marketplaceBody?.scrollTop ?? 0;
     }
     if (marketplaceBody) marketplaceBody.scrollTop = 0;
   }
 
   function leaveDetails() {
-    setDetail(null);
-    setSubmissionDetail(null);
+    closeDetail();
     queueMicrotask(() => {
       if (marketplaceBody) marketplaceBody.scrollTop = listScrollTop;
     });
@@ -239,9 +292,9 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
   async function openDetails(skill: MarketplaceSkillSummary) {
     const analytics = desktopAnalytics.scope();
     enterDetails();
-    setSubmissionDetail(null);
-    setDetail(null);
-    setDetailLoading(true);
+    setMarket((state) => {
+      state.detail = { kind: "loading" };
+    });
     const value = await run(() => window.openbot.skills.get(skill.id));
     analytics.track("marketplace_action", {
       entity: "skill",
@@ -249,22 +302,26 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
       result: value ? "succeeded" : "failed",
       ...(value ? {} : { failure_code: "load_failed" }),
     });
-    if (value) setDetail(value);
-    setDetailLoading(false);
-    if (!value) leaveDetails();
+    if (!value) {
+      leaveDetails();
+      return;
+    }
+    setMarket((state) => {
+      state.detail = { kind: "skill", skill: value };
+    });
   }
 
   async function openDetailsById(skillId: string) {
-    const summary = skills().find((skill) => skill.id === skillId);
+    const summary = market.skills.find((skill) => skill.id === skillId);
     if (summary) {
       await openDetails(summary);
       return;
     }
     enterDetails();
     const analytics = desktopAnalytics.scope();
-    setSubmissionDetail(null);
-    setDetail(null);
-    setDetailLoading(true);
+    setMarket((state) => {
+      state.detail = { kind: "loading" };
+    });
     const value = await run(() => window.openbot.skills.get(skillId));
     analytics.track("marketplace_action", {
       entity: "skill",
@@ -272,9 +329,13 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
       result: value ? "succeeded" : "failed",
       ...(value ? {} : { failure_code: "load_failed" }),
     });
-    if (value) setDetail(value);
-    setDetailLoading(false);
-    if (!value) leaveDetails();
+    if (!value) {
+      leaveDetails();
+      return;
+    }
+    setMarket((state) => {
+      state.detail = { kind: "skill", skill: value };
+    });
   }
 
   function openSubmissionDetails(submission: SkillSubmission) {
@@ -283,8 +344,9 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
       return;
     }
     enterDetails();
-    setDetail(null);
-    setSubmissionDetail(submission);
+    setMarket((state) => {
+      state.detail = { kind: "submission", submission };
+    });
   }
 
   async function install(
@@ -292,13 +354,13 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
     replaceModified = false,
     action: "install" | "update" = "install",
   ) {
-    const botId = targetBotId();
+    const botId = market.browse.targetBotId;
     if (!botId) {
       setError("Switch to Local and create an agent before installing skills.");
       return;
     }
     const analytics = desktopAnalytics.scope();
-    setBusyId(skill.id);
+    setBusy(skill.id);
     const result = await run(() => window.openbot.skills.install({ botId, skillId: skill.id, replaceModified }));
     analytics.track("marketplace_action", {
       entity: "skill",
@@ -307,13 +369,14 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
       ...(result ? {} : { failure_code: action === "update" ? "update_failed" : "install_failed" }),
     });
     if (result) await loadInstalled(botId);
-    setBusyId(null);
+    setBusy(null);
   }
 
   async function updateInstalled(item: InstalledSkill) {
     const analytics = desktopAnalytics.scope();
     const listing =
-      skills().find((skill) => skill.id === item.skillId) ?? (await run(() => window.openbot.skills.get(item.skillId)));
+      market.skills.find((skill) => skill.id === item.skillId) ??
+      (await run(() => window.openbot.skills.get(item.skillId)));
     if (!listing) {
       analytics.track("marketplace_action", {
         entity: "skill",
@@ -332,10 +395,10 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
     const modified = item.state === "modified";
     if (!window.confirm(modified ? `Delete ${item.name} and its local changes?` : `Uninstall ${item.name}?`)) return;
     const analytics = desktopAnalytics.scope();
-    setBusyId(item.skillId);
+    setBusy(item.skillId);
     const removed = await run(async () => {
       await window.openbot.skills.uninstall({
-        botId: targetBotId(),
+        botId: market.browse.targetBotId,
         skillId: item.skillId,
         ...(modified ? { removeModified: true } : {}),
       });
@@ -348,31 +411,35 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
       ...(removed ? {} : { failure_code: "uninstall_failed" }),
     });
     if (removed) await loadInstalled();
-    setBusyId(null);
+    setBusy(null);
   }
 
   async function choosePackage(skillId?: string) {
     const value = await run(() => window.openbot.skills.choosePackage());
     if (!value) return;
-    setPublishSkillId(skillId);
-    setPreview(value);
-    setPublishCategory(
-      skillId ? (submissions().find((item) => item.skillId === skillId)?.category ?? "other") : "other",
-    );
-    clearPublishIcon();
+    const category = skillId
+      ? (market.submissions.find((item) => item.skillId === skillId)?.category ?? "other")
+      : "other";
+    setMarket((state) => {
+      state.publication = { category, icon: null, iconPreviewUrl: null, preview: value, skillId };
+    });
   }
 
   async function submit() {
-    const value = preview();
+    const value = market.publication.preview;
     if (!value) return;
     const analytics = desktopAnalytics.scope();
-    setBusyId("publish");
+    const { category, skillId } = market.publication;
+    // The icon crosses to IPC, which structured-clones it, so it goes as a snapshot rather than as
+    // whatever the store hands back.
+    const icon = snapshot(market.publication.icon);
+    setBusy("publish");
     const created = await run(() =>
       window.openbot.skills.submit({
         draftId: value.draftId,
-        category: publishCategory(),
-        icon: publishIcon(),
-        ...(publishSkillId() ? { skillId: publishSkillId() } : {}),
+        category,
+        icon,
+        ...(skillId ? { skillId } : {}),
       }),
     );
     analytics.track("marketplace_action", {
@@ -382,19 +449,30 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
       ...(created ? {} : { failure_code: "publish_failed" }),
     });
     if (created) {
-      setPreview(null);
-      clearPublishIcon();
+      discardPublication();
       await loadMine();
     }
-    setBusyId(null);
+    setBusy(null);
   }
 
   async function chooseIcon(file: File | undefined) {
     if (!file) return;
     const icon = await run(() => normalizeAvatarFile(file));
     if (!icon) return;
-    setPublishIcon(icon);
-    setPublishIconPreviewUrl(avatarImageDataUrl(icon));
+    const iconPreviewUrl = avatarImageDataUrl(icon);
+    setMarket((state) => {
+      state.publication.icon = icon;
+      state.publication.iconPreviewUrl = iconPreviewUrl;
+    });
+  }
+
+  /** Drops the chosen package and the icon picked for it: neither outlives the other. */
+  function discardPublication(): void {
+    setMarket((state) => {
+      state.publication.preview = null;
+      state.publication.icon = null;
+      state.publication.iconPreviewUrl = null;
+    });
   }
 
   return (
@@ -407,20 +485,20 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
               <nav class="skills-marketplace-kind-tabs" aria-label="Marketplace content types">
                 <Button
                   class="skills-marketplace-kind-tab"
-                  data-active={kind() === "skills" ? "" : undefined}
+                  data-active={market.browse.kind === "skills" ? "" : undefined}
                   variant="ghost"
                   size="sm"
-                  aria-current={kind() === "skills" ? "page" : undefined}
+                  aria-current={market.browse.kind === "skills" ? "page" : undefined}
                   onClick={() => selectKind("skills")}
                 >
                   Skills
                 </Button>
                 <Button
                   class="skills-marketplace-kind-tab"
-                  data-active={kind() === "agents" ? "" : undefined}
+                  data-active={market.browse.kind === "agents" ? "" : undefined}
                   variant="ghost"
                   size="sm"
-                  aria-current={kind() === "agents" ? "page" : undefined}
+                  aria-current={market.browse.kind === "agents" ? "page" : undefined}
                   onClick={() => selectKind("agents")}
                 >
                   Agents
@@ -429,11 +507,11 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
               <span class="skills-marketplace-topbar-divider" aria-hidden="true" />
               <nav
                 class="skills-marketplace-view-tabs"
-                aria-label={`${kind() === "skills" ? "Skills" : "Agent"} views`}
+                aria-label={`${market.browse.kind === "skills" ? "Skills" : "Agent"} views`}
               >
                 <Button
                   class="skills-marketplace-tab"
-                  data-active={tab() === "discover" ? "" : undefined}
+                  data-active={market.browse.tab === "discover" ? "" : undefined}
                   variant="ghost"
                   size="sm"
                   onClick={() => selectTab("discover")}
@@ -442,7 +520,7 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
                 </Button>
                 <Button
                   class="skills-marketplace-tab"
-                  data-active={tab() === "installed" ? "" : undefined}
+                  data-active={market.browse.tab === "installed" ? "" : undefined}
                   variant="ghost"
                   size="sm"
                   onClick={() => selectTab("installed")}
@@ -451,7 +529,7 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
                 </Button>
                 <Button
                   class="skills-marketplace-tab"
-                  data-active={tab() === "mine" ? "" : undefined}
+                  data-active={market.browse.tab === "mine" ? "" : undefined}
                   variant="ghost"
                   size="sm"
                   onClick={() => selectTab("mine")}
@@ -461,9 +539,11 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
               </nav>
               <div class="skills-marketplace-actions">
                 <IconButton
-                  label={kind() === "skills" ? "Refresh skills" : "Refresh agents"}
+                  label={market.browse.kind === "skills" ? "Refresh skills" : "Refresh agents"}
                   variant="ghost"
-                  onClick={() => (kind() === "skills" ? refresh() : setAgentRefreshVersion((version) => version + 1))}
+                  onClick={() =>
+                    market.browse.kind === "skills" ? refresh() : setAgentRefreshVersion((version) => version + 1)
+                  }
                 >
                   <RefreshCw />
                 </IconButton>
@@ -472,11 +552,11 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
                   size="sm"
                   onClick={() => {
                     selectTab("mine");
-                    if (kind() === "skills") void choosePackage();
+                    if (market.browse.kind === "skills") void choosePackage();
                     else setAgentAddVersion((version) => version + 1);
                   }}
                 >
-                  <Plus /> Add {kind() === "skills" ? "skill" : "agent"}
+                  <Plus /> Add {market.browse.kind === "skills" ? "skill" : "agent"}
                 </Button>
                 <IconButton label="Close marketplace" variant="ghost" onClick={() => props.onOpenChange(false)}>
                   <X />
@@ -486,37 +566,49 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
 
             <div
               class="skills-marketplace-body"
-              data-detail-open={detailLoading() || detail() || submissionDetail() ? "" : undefined}
+              data-detail-open={detailOpen() ? "" : undefined}
               ref={(element) => (marketplaceBody = element)}
             >
-              <Show when={kind() === "skills"}>
-                <Show when={tab() === "discover"}>
+              <Show when={market.browse.kind === "skills"}>
+                <Show when={market.browse.tab === "discover"}>
                   <section
                     class="skills-marketplace-discover"
                     aria-label="Discover skills"
-                    aria-hidden={detail() || detailLoading() ? "true" : undefined}
-                    inert={detail() || detailLoading() ? true : undefined}
+                    aria-hidden={skillDetail() || detailLoading() ? "true" : undefined}
+                    inert={skillDetail() || detailLoading() ? true : undefined}
                   >
                     <div class="skills-marketplace-heading">
                       <div>
                         <h1>Skills</h1>
                         <p>Give your agents focused capabilities for repeatable work.</p>
                       </div>
-                      <AgentSelect bots={props.bots} value={targetBotId()} onChange={setTargetBotId} />
+                      <AgentSelect
+                        bots={props.bots}
+                        value={market.browse.targetBotId}
+                        onChange={(botId) =>
+                          setMarket((state) => {
+                            state.browse.targetBotId = botId;
+                          })
+                        }
+                      />
                     </div>
                     <div class="skills-marketplace-search">
                       <Search aria-hidden="true" />
                       <Input
                         aria-label="Search skills"
                         placeholder="Search skills"
-                        value={query()}
-                        onValueChange={setQuery}
+                        value={market.browse.query}
+                        onValueChange={(value) =>
+                          setMarket((state) => {
+                            state.browse.query = value;
+                          })
+                        }
                       />
                     </div>
                     <div class="skills-marketplace-categories">
                       <Button
                         size="sm"
-                        data-active={category() === null ? "" : undefined}
+                        data-active={market.browse.category === null ? "" : undefined}
                         onClick={() => selectCategory(null)}
                       >
                         All
@@ -525,7 +617,7 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
                         {(item) => (
                           <Button
                             size="sm"
-                            data-active={category() === item ? "" : undefined}
+                            data-active={market.browse.category === item ? "" : undefined}
                             onClick={() => selectCategory(item)}
                           >
                             {CATEGORY_LABELS[item]}
@@ -533,19 +625,19 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
                         )}
                       </For>
                     </div>
-                    <Show when={!loading()} fallback={<SkillsListSkeleton category={category()} />}>
+                    <Show when={!panel.loading} fallback={<SkillsListSkeleton category={market.browse.category} />}>
                       <Show
-                        when={skills().length}
+                        when={market.skills.length}
                         fallback={<div class="skills-marketplace-state">No skills match this search.</div>}
                       >
                         <Show
-                          when={category() === null}
+                          when={market.browse.category === null}
                           fallback={
                             <SkillCategorySection
-                              label={CATEGORY_LABELS[category() ?? "other"]}
-                              skills={skills()}
+                              label={CATEGORY_LABELS[market.browse.category ?? "other"]}
+                              skills={market.skills}
                               installedById={installedById()}
-                              busyId={busyId()}
+                              busyId={panel.busy}
                               onInstall={install}
                               onOpen={openDetails}
                             />
@@ -553,14 +645,14 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
                         >
                           <For each={SKILL_CATEGORIES}>
                             {(item) => {
-                              const categorySkills = () => skills().filter((skill) => skill.category === item);
+                              const categorySkills = () => market.skills.filter((skill) => skill.category === item);
                               return (
                                 <Show when={categorySkills().length > 0}>
                                   <SkillCategorySection
                                     label={CATEGORY_LABELS[item]}
                                     skills={categorySkills()}
                                     installedById={installedById()}
-                                    busyId={busyId()}
+                                    busyId={panel.busy}
                                     onInstall={install}
                                     onOpen={openDetails}
                                   />
@@ -574,14 +666,22 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
                   </section>
                 </Show>
 
-                <Show when={tab() === "installed"}>
+                <Show when={market.browse.tab === "installed"}>
                   <section class="skills-marketplace-panel">
                     <div class="skills-marketplace-heading">
                       <div>
                         <h1>Installed</h1>
                         <p>Manage marketplace-owned skills for one local agent.</p>
                       </div>
-                      <AgentSelect bots={props.bots} value={targetBotId()} onChange={setTargetBotId} />
+                      <AgentSelect
+                        bots={props.bots}
+                        value={market.browse.targetBotId}
+                        onChange={(botId) =>
+                          setMarket((state) => {
+                            state.browse.targetBotId = botId;
+                          })
+                        }
+                      />
                     </div>
                     <Show
                       when={targetBot()}
@@ -592,7 +692,7 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
                       }
                     >
                       <Show
-                        when={installed().length}
+                        when={market.installed.length}
                         fallback={
                           <div class="skills-marketplace-state">
                             No marketplace skills are installed for this agent.
@@ -600,7 +700,7 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
                         }
                       >
                         <div class="skills-installed-list">
-                          <For each={installed()}>
+                          <For each={market.installed}>
                             {(item) => (
                               <article class="skills-installed-row">
                                 <Button
@@ -627,7 +727,7 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
                                 </span>
                                 <Button
                                   size="sm"
-                                  loading={busyId() === item.skillId}
+                                  loading={panel.busy === item.skillId}
                                   onClick={() => void updateInstalled(item)}
                                 >
                                   <RefreshCw /> {item.state === "installed" ? "Repair" : "Update"}
@@ -648,7 +748,7 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
                   </section>
                 </Show>
 
-                <Show when={tab() === "mine"}>
+                <Show when={market.browse.tab === "mine"}>
                   <section class="skills-marketplace-panel">
                     <div class="skills-marketplace-heading">
                       <div>
@@ -722,12 +822,12 @@ description: Turn merged work into clear, consistent release notes.
                         Limits: 5 skills total · 5 submitted versions per skill · 10 submitted versions per 24 hours
                       </p>
                     </section>
-                    <Show when={preview()}>
+                    <Show when={market.publication.preview}>
                       {(value) => (
                         <div class="skills-publish-card">
                           <div class="skills-publish-summary">
                             <Show
-                              when={publishIconPreviewUrl()}
+                              when={market.publication.iconPreviewUrl}
                               fallback={
                                 <span class="skills-marketplace-default-icon">
                                   <Puzzle />
@@ -753,10 +853,14 @@ description: Turn merged work into clear, consistent release notes.
                             <label class="skills-publish-category">
                               Category
                               <NativeSelect
-                                value={publishCategory()}
+                                value={market.publication.category}
                                 onChange={(event) => {
                                   const category = event.currentTarget.value;
-                                  if (isSkillCategory(category)) setPublishCategory(category);
+                                  if (isSkillCategory(category)) {
+                                    setMarket((state) => {
+                                      state.publication.category = category;
+                                    });
+                                  }
                                 }}
                               >
                                 <For each={SKILL_CATEGORIES}>
@@ -775,18 +879,12 @@ description: Turn merged work into clear, consistent release notes.
                             </label>
                           </div>
                           <div class="skills-publish-actions">
-                            <Button
-                              variant="ghost"
-                              onClick={() => {
-                                setPreview(null);
-                                clearPublishIcon();
-                              }}
-                            >
+                            <Button variant="ghost" onClick={discardPublication}>
                               Cancel
                             </Button>
                             <Button
                               variant="default"
-                              loading={busyId() === "publish"}
+                              loading={panel.busy === "publish"}
                               loadingLabel="Submitting…"
                               onClick={() => void submit()}
                             >
@@ -796,9 +894,9 @@ description: Turn merged work into clear, consistent release notes.
                         </div>
                       )}
                     </Show>
-                    <Show when={!preview()}>
+                    <Show when={!market.publication.preview}>
                       <Show
-                        when={submissions().length}
+                        when={market.submissions.length}
                         fallback={
                           <div class="skills-marketplace-state">
                             No submissions yet. Choose a skill folder or ZIP to publish.
@@ -806,7 +904,7 @@ description: Turn merged work into clear, consistent release notes.
                         }
                       >
                         <div class="skills-submission-list">
-                          <For each={submissions()}>
+                          <For each={market.submissions}>
                             {(item) => (
                               <article class="skills-submission-row">
                                 <Button
@@ -842,15 +940,15 @@ description: Turn merged work into clear, consistent release notes.
                     </Show>
                   </section>
                 </Show>
-                <Show when={detailLoading() || detail() || submissionDetail()}>
+                <Show when={detailOpen()}>
                   <div class="skills-marketplace-detail-layer">
                     <Show when={!detailLoading()} fallback={<SkillDetailSkeleton />}>
-                      <Show when={detail()} keyed>
+                      <Show when={skillDetail()} keyed>
                         {(skill) => (
                           <SkillDetailView
                             skill={skill}
                             installed={installedById().get(skill.id)}
-                            busy={busyId() === skill.id}
+                            busy={panel.busy === skill.id}
                             onBack={leaveDetails}
                             onInstall={install}
                           />
@@ -862,7 +960,7 @@ description: Turn merged work into clear, consistent release notes.
                     </Show>
                   </div>
                 </Show>
-                <Show when={error()}>
+                <Show when={panel.error}>
                   {(message) => (
                     <div class="skills-marketplace-error" role="alert">
                       {message()}
@@ -870,10 +968,10 @@ description: Turn merged work into clear, consistent release notes.
                   )}
                 </Show>
               </Show>
-              <Show when={kind() === "agents"}>
+              <Show when={market.browse.kind === "agents"}>
                 <AgentMarketplacePanel
                   bots={props.bots}
-                  view={tab()}
+                  view={market.browse.tab}
                   refreshVersion={agentRefreshVersion()}
                   addVersion={agentAddVersion()}
                   onInstalled={props.onAgentInstalled}
@@ -889,6 +987,20 @@ description: Turn merged work into clear, consistent release notes.
   );
 }
 
+/** The agent half's listing, its detail layer, and the one publication being prepared. */
+interface AgentsMarketplace {
+  agents: MarketplaceAgentSummary[];
+  detail: MarketplaceAgentDetail | null;
+  publication: {
+    /** The agent a new version is for, or `undefined` for a first submission. */
+    agentId: string | undefined;
+    preview: AgentPublicationPreview | null;
+    sourceBotId: string;
+  };
+  query: string;
+  submissions: AgentSubmission[];
+}
+
 function AgentMarketplacePanel(props: {
   bots: Array<Pick<BotSummary, "id" | "name" | "marketplaceSource">>;
   view: Tab;
@@ -898,16 +1010,14 @@ function AgentMarketplacePanel(props: {
   onEnterDetail: () => void;
   onLeaveDetail: () => void;
 }) {
-  const [agents, setAgents] = createSignal<MarketplaceAgentSummary[]>([]);
-  const [submissions, setSubmissions] = createSignal<AgentSubmission[]>([]);
-  const [query, setQuery] = createSignal("");
-  const [detail, setDetail] = createSignal<MarketplaceAgentDetail | null>(null);
-  const [preview, setPreview] = createSignal<AgentPublicationPreview | null>(null);
-  const [sourceBotId, setSourceBotId] = createSignal(props.bots[0]?.id ?? "");
-  const [updateAgentId, setUpdateAgentId] = createSignal<string | undefined>();
-  const [loading, setLoading] = createSignal(false);
-  const [busy, setBusy] = createSignal(false);
-  const [error, setError] = createSignal<string | null>(null);
+  const [market, setMarket] = createStore<AgentsMarketplace>({
+    agents: [],
+    detail: null,
+    publication: { agentId: undefined, preview: null, sourceBotId: props.bots[0]?.id ?? "" },
+    query: "",
+    submissions: [],
+  });
+  const { panel, run, setBusy, setError, setLoading } = createAsyncPanel(marketplaceErrorMessage);
   const installedAgents = createMemo(
     () => new Map(props.bots.flatMap((bot) => (bot.marketplaceSource ? [[bot.marketplaceSource.agentId, bot]] : []))),
   );
@@ -918,8 +1028,10 @@ function AgentMarketplacePanel(props: {
   createEffect(
     () => [props.view, props.refreshVersion] as const,
     ([view]) => {
-      setDetail(null);
-      setPreview(null);
+      setMarket((state) => {
+        state.detail = null;
+        state.publication.preview = null;
+      });
       setError(null);
       if (view === "discover") void loadAgents();
       if (view === "mine") void loadMine();
@@ -940,35 +1052,36 @@ function AgentMarketplacePanel(props: {
     if (searchTimer !== undefined) window.clearTimeout(searchTimer);
   });
 
-  async function run<T>(work: () => Promise<T>): Promise<T | undefined> {
-    setError(null);
-    try {
-      return await work();
-    } catch (cause) {
-      setError(marketplaceErrorMessage(cause));
-      return undefined;
-    }
-  }
-
   async function loadAgents() {
     setLoading(true);
-    const search = query().trim();
+    const search = market.query.trim();
     const page = await run(() =>
       window.openbot.marketplaceAgents.list({ ...(search ? { query: search } : {}), limit: 50 }),
     );
-    if (page) setAgents(page.agents);
+    if (page) {
+      const agents = page.agents;
+      setMarket((state) => {
+        state.agents = agents;
+      });
+    }
     setLoading(false);
   }
 
   async function loadMine() {
     setLoading(true);
     const values = await run(() => window.openbot.marketplaceAgents.listMine());
-    if (values) setSubmissions(values);
+    if (values) {
+      setMarket((state) => {
+        state.submissions = values;
+      });
+    }
     setLoading(false);
   }
 
   function updateSearch(value: string) {
-    setQuery(value);
+    setMarket((state) => {
+      state.query = value;
+    });
     if (searchTimer !== undefined) window.clearTimeout(searchTimer);
     searchTimer = window.setTimeout(() => void loadAgents(), SKILLS_SEARCH_DEBOUNCE_MS);
   }
@@ -984,13 +1097,18 @@ function AgentMarketplacePanel(props: {
       result: value ? "succeeded" : "failed",
       ...(value ? {} : { failure_code: "load_failed" }),
     });
-    if (value) setDetail(value);
-    else props.onLeaveDetail();
+    if (value) {
+      setMarket((state) => {
+        state.detail = value;
+      });
+    } else props.onLeaveDetail();
     setLoading(false);
   }
 
   function closeAgent() {
-    setDetail(null);
+    setMarket((state) => {
+      state.detail = null;
+    });
     props.onLeaveDetail();
   }
 
@@ -1024,7 +1142,7 @@ function AgentMarketplacePanel(props: {
     )
       return;
     const analytics = desktopAnalytics.scope();
-    setBusy(true);
+    setBusy(agent.id);
     const value = await run(() =>
       window.openbot.marketplaceAgents.install({
         agentId: agent.id,
@@ -1040,7 +1158,7 @@ function AgentMarketplacePanel(props: {
       ...(value ? {} : { failure_code: updating ? "update_failed" : "install_failed" }),
     });
     if (value) await props.onInstalled?.(value.bot);
-    setBusy(false);
+    setBusy(null);
   }
 
   function installedAgent(agent: MarketplaceAgentSummary) {
@@ -1057,27 +1175,42 @@ function AgentMarketplacePanel(props: {
   }
 
   async function preparePublication(agentId?: string) {
-    const botId = sourceBotId() || props.bots[0]?.id;
+    const botId = market.publication.sourceBotId || props.bots[0]?.id;
     if (!botId) {
       setError("Switch to Local and choose an agent to publish.");
       return;
     }
-    setUpdateAgentId(agentId);
-    setBusy(true);
+    setMarket((state) => {
+      state.publication.agentId = agentId;
+    });
+    setBusy("publish");
     const value = await run(() => window.openbot.marketplaceAgents.preview(botId));
-    if (value) setPreview(value);
-    setBusy(false);
+    if (value) {
+      setMarket((state) => {
+        state.publication.preview = value;
+      });
+    }
+    setBusy(null);
+  }
+
+  /** Drops the previewed publication and the agent it was going to update. */
+  function discardPublication(): void {
+    setMarket((state) => {
+      state.publication.preview = null;
+      state.publication.agentId = undefined;
+    });
   }
 
   async function submitPublication() {
-    const value = preview();
+    const value = market.publication.preview;
     if (!value) return;
     const analytics = desktopAnalytics.scope();
-    setBusy(true);
+    const agentId = market.publication.agentId;
+    setBusy("submit");
     const result = await run(() =>
       window.openbot.marketplaceAgents.submit({
         botId: value.botId,
-        ...(updateAgentId() ? { agentId: updateAgentId() } : {}),
+        ...(agentId ? { agentId } : {}),
       }),
     );
     analytics.track("marketplace_action", {
@@ -1087,18 +1220,17 @@ function AgentMarketplacePanel(props: {
       ...(result ? {} : { failure_code: "publish_failed" }),
     });
     if (result) {
-      setPreview(null);
-      setUpdateAgentId(undefined);
+      discardPublication();
       await loadMine();
     }
-    setBusy(false);
+    setBusy(null);
   }
 
   return (
     <section class="skills-marketplace-panel agent-marketplace-panel" aria-label="Agent marketplace">
       <Show when={props.view === "discover"}>
         <Show
-          when={detail()}
+          when={market.detail}
           keyed
           fallback={
             <>
@@ -1113,18 +1245,18 @@ function AgentMarketplacePanel(props: {
                 <Input
                   aria-label="Search agents"
                   placeholder="Search agents"
-                  value={query()}
+                  value={market.query}
                   onValueChange={updateSearch}
                 />
               </div>
-              <Show when={!loading()} fallback={<div class="skills-marketplace-state">Loading agents…</div>}>
+              <Show when={!panel.loading} fallback={<div class="skills-marketplace-state">Loading agents…</div>}>
                 <Show
-                  when={agents().length}
+                  when={market.agents.length}
                   fallback={<div class="skills-marketplace-state">No agents match this search.</div>}
                 >
                   <AgentCardSection
-                    agents={agents()}
-                    busy={busy()}
+                    agents={market.agents}
+                    busy={panel.busy !== null}
                     action={agentAction}
                     onOpen={openAgent}
                     onInstall={installAgentSummary}
@@ -1153,7 +1285,7 @@ function AgentMarketplacePanel(props: {
                 </div>
                 <Button
                   disabled={agentAction(agent) === "Installed"}
-                  loading={busy()}
+                  loading={panel.busy !== null}
                   loadingLabel={agentAction(agent) === "Update" ? "Updating…" : "Installing…"}
                   onClick={() => void installAgent(agent)}
                 >
@@ -1253,8 +1385,13 @@ function AgentMarketplacePanel(props: {
             <span class="skills-agent-select-control">
               <NativeSelect
                 aria-label="Agent to publish"
-                value={sourceBotId()}
-                onChange={(event) => setSourceBotId(event.currentTarget.value)}
+                value={market.publication.sourceBotId}
+                onChange={(event) => {
+                  const botId = event.currentTarget.value;
+                  setMarket((state) => {
+                    state.publication.sourceBotId = botId;
+                  });
+                }}
                 disabled={!props.bots.length}
               >
                 <Show when={props.bots.length} fallback={<option value="">No local agents</option>}>
@@ -1263,12 +1400,12 @@ function AgentMarketplacePanel(props: {
               </NativeSelect>
               <ChevronDown aria-hidden="true" />
             </span>
-            <Button loading={busy()} onClick={() => void preparePublication()}>
+            <Button loading={panel.busy !== null} onClick={() => void preparePublication()}>
               <Plus /> Add agent
             </Button>
           </div>
         </div>
-        <Show when={preview()} keyed>
+        <Show when={market.publication.preview} keyed>
           {(value) => (
             <div class="skills-publish-card agent-publish-card">
               <div class="skills-publish-summary">
@@ -1283,24 +1420,28 @@ function AgentMarketplacePanel(props: {
               </div>
               <p>Conversation history, memories, model settings, and workspace files are not included.</p>
               <div class="skills-publish-actions">
-                <Button variant="ghost" onClick={() => setPreview(null)}>
+                <Button variant="ghost" onClick={discardPublication}>
                   Cancel
                 </Button>
-                <Button loading={busy()} loadingLabel="Submitting…" onClick={() => void submitPublication()}>
+                <Button
+                  loading={panel.busy !== null}
+                  loadingLabel="Submitting…"
+                  onClick={() => void submitPublication()}
+                >
                   Submit for review
                 </Button>
               </div>
             </div>
           )}
         </Show>
-        <Show when={!preview()}>
-          <Show when={!loading()} fallback={<div class="skills-marketplace-state">Loading submissions…</div>}>
+        <Show when={!market.publication.preview}>
+          <Show when={!panel.loading} fallback={<div class="skills-marketplace-state">Loading submissions…</div>}>
             <Show
-              when={submissions().length}
+              when={market.submissions.length}
               fallback={<div class="skills-marketplace-state">No agent submissions yet.</div>}
             >
               <div class="skills-submission-list">
-                <For each={submissions()}>
+                <For each={market.submissions}>
                   {(item) => (
                     <article class="skills-submission-row agent-submission-row">
                       <AgentAvatar seed={item.avatarSeed} hue={item.avatarHue} url={item.avatarUrl} motion="hover" />
@@ -1329,7 +1470,7 @@ function AgentMarketplacePanel(props: {
           </Show>
         </Show>
       </Show>
-      <Show when={error()}>
+      <Show when={panel.error}>
         {(message) => (
           <div class="skills-marketplace-error" role="alert">
             {message()}

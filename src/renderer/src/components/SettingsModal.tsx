@@ -14,7 +14,7 @@ import type {
 } from "@openbot/contracts/ipc";
 import { isUpdateActivePhase } from "@openbot/contracts/ipc";
 import { normalizeAccountName, validateProfileName } from "@openbot/contracts/validation";
-import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, createStore, For, onCleanup, Show } from "solid-js";
 import { desktopAnalytics } from "../analytics";
 import type { GeneralSettingsValue } from "../app-settings";
 import { normalizeAvatarFile } from "../avatar-image";
@@ -110,6 +110,67 @@ const tabDetails: Record<SettingsTab, { title: string; description: string }> = 
   "hosted-sites": { title: "Hosted sites", description: "View and manage static sites published by your bots." },
 };
 
+interface ProfileNameEdit {
+  busy: boolean;
+  name: string;
+  saveError: string | null;
+  savedName: string;
+  touched: boolean;
+}
+
+interface AvatarUpload {
+  busy: boolean;
+  error: string | null;
+}
+
+/** A generated Mobile Connect code, from the moment it is displayed until it is cleared. */
+interface MobileConnectSession {
+  /** True while the success banner plays its collapse animation. */
+  collapsing: boolean;
+  /**
+   * When this code became able to pair a phone. Null while a replacement code is being generated:
+   * the code on screen is still the old one, and a device that appears now is not its doing.
+   */
+  startedAt: number | null;
+  successDeviceName: string | null;
+  ticket: MobileConnectTicket;
+}
+
+interface MobileConnectPanel {
+  busy: boolean;
+  error: string | null;
+  /** Carries `startedAt`, so neither can exist without the other. */
+  session: MobileConnectSession | null;
+}
+
+interface MobileDeviceList {
+  devices: MobileConnectedDevice[];
+  error: string | null;
+  /** Stays true across a refresh, so the list keeps rendering while `loading` is also true. */
+  loaded: boolean;
+  loading: boolean;
+  revokingSessionId: string | null;
+}
+
+interface HostedSitesPanel {
+  busy: boolean;
+  error: string | null;
+  sites: HostedSiteSummary[];
+}
+
+/**
+ * One record per panel of the dialog. Each group's fields are written together — a save touches
+ * the draft, its error and its busy flag at once — so they are one store rather than a signal
+ * each, and replacing one field re-renders only what read that field.
+ */
+interface SettingsPanels {
+  avatar: AvatarUpload;
+  connect: MobileConnectPanel;
+  devices: MobileDeviceList;
+  hosting: HostedSitesPanel;
+  profile: ProfileNameEdit;
+}
+
 const linkTargetOptions: GeneralSettingsValue["externalLinkTarget"][] = ["Default browser", "OpenBot"];
 type UpdateTrack = "Stable";
 const updateTrackOptions: UpdateTrack[] = ["Stable"];
@@ -119,31 +180,18 @@ const MOBILE_DEVICES_REFRESH_INTERVAL_MS = 60_000;
 const MOBILE_CONNECT_PENDING_REFRESH_INTERVAL_MS = 5_000;
 
 export function SettingsModal(props: SettingsModalProps) {
+  const [panels, setPanels] = createStore<SettingsPanels>({
+    avatar: { busy: false, error: null },
+    connect: { busy: false, error: null, session: null },
+    devices: { devices: [], error: null, loaded: false, loading: false, revokingSessionId: null },
+    hosting: { busy: false, error: null, sites: [] },
+    profile: { busy: false, name: "", saveError: null, savedName: "", touched: false },
+  });
   const [activeTab, setActiveTab] = createSignal<SettingsTab>("general");
-  const [savedProfileName, setSavedProfileName] = createSignal("");
-  const [profileName, setProfileName] = createSignal("");
-  const [profileNameTouched, setProfileNameTouched] = createSignal(false);
-  const [profileNameBusy, setProfileNameBusy] = createSignal(false);
-  const [profileSaveError, setProfileSaveError] = createSignal<string | null>(null);
-  const [avatarBusy, setAvatarBusy] = createSignal(false);
-  const [avatarError, setAvatarError] = createSignal<string | null>(null);
-  const [updateError, setUpdateError] = createSignal<string | null>(null);
-  const [mobileConnect, setMobileConnect] = createSignal<MobileConnectTicket | null>(null);
-  const [mobileConnectBusy, setMobileConnectBusy] = createSignal(false);
-  const [mobileConnectError, setMobileConnectError] = createSignal<string | null>(null);
-  const [mobileConnectNow, setMobileConnectNow] = createSignal(Date.now());
-  const [mobileConnectStartedAt, setMobileConnectStartedAt] = createSignal<number | null>(null);
-  const [mobileConnectSuccessDeviceName, setMobileConnectSuccessDeviceName] = createSignal<string | null>(null);
-  const [mobileConnectCollapsing, setMobileConnectCollapsing] = createSignal(false);
-  const [mobileDevices, setMobileDevices] = createSignal<MobileConnectedDevice[]>([]);
-  const [mobileDevicesLoaded, setMobileDevicesLoaded] = createSignal(false);
-  const [mobileDevicesLoading, setMobileDevicesLoading] = createSignal(false);
-  const [mobileDevicesError, setMobileDevicesError] = createSignal<string | null>(null);
-  const [revokingMobileSessionId, setRevokingMobileSessionId] = createSignal<string | null>(null);
   const [selectedProvider, setSelectedProvider] = createSignal<AgentProviderId | null>(null);
-  const [hostedSites, setHostedSites] = createSignal<HostedSiteSummary[]>([]);
-  const [hostedSitesError, setHostedSitesError] = createSignal<string | null>(null);
-  const [hostingBusy, setHostingBusy] = createSignal(false);
+  const [updateError, setUpdateError] = createSignal<string | null>(null);
+  /** A clock, not panel state: it ticks the code's countdown and the device list's "3m ago" labels. */
+  const [mobileNow, setMobileNow] = createSignal(Date.now());
   let modalElement: HTMLElement | undefined;
   let avatarFileInput: HTMLInputElement | undefined;
   let profileNameInput: HTMLInputElement | undefined;
@@ -160,10 +208,12 @@ export function SettingsModal(props: SettingsModalProps) {
     () => props.account.name,
     () => {
       const name = accountName();
-      setSavedProfileName(normalizeAccountName(name));
-      setProfileName(name);
-      setProfileNameTouched(false);
-      setProfileSaveError(null);
+      setPanels((state) => {
+        state.profile.savedName = normalizeAccountName(name);
+        state.profile.name = name;
+        state.profile.touched = false;
+        state.profile.saveError = null;
+      });
     },
   );
 
@@ -172,7 +222,7 @@ export function SettingsModal(props: SettingsModalProps) {
       open: props.open,
       active: activeTab() === "mobile-connect",
       list: props.onListMobileConnectedDevices,
-      ticketExpiresAt: mobileConnect()?.expiresAt ?? null,
+      ticketExpiresAt: panels.connect.session?.ticket.expiresAt ?? null,
     }),
     ({ open, active, list }) => {
       mobileDevicesRequestRevision += 1;
@@ -181,7 +231,7 @@ export function SettingsModal(props: SettingsModalProps) {
       let timer: number | undefined;
 
       const scheduleRefresh = () => {
-        const ticket = mobileConnect();
+        const ticket = panels.connect.session?.ticket;
         const refreshInterval =
           ticket && ticket.expiresAt > Date.now()
             ? MOBILE_CONNECT_PENDING_REFRESH_INTERVAL_MS
@@ -202,7 +252,7 @@ export function SettingsModal(props: SettingsModalProps) {
     },
   );
 
-  const profileNameValidation = createMemo(() => validateProfileName(profileName()));
+  const profileNameValidation = createMemo(() => validateProfileName(panels.profile.name));
   const normalizedProfileName = () => profileNameValidation().name;
   const profileNameError = () => {
     switch (profileNameValidation().error) {
@@ -218,12 +268,13 @@ export function SettingsModal(props: SettingsModalProps) {
         return null;
     }
   };
-  const visibleProfileNameError = () => profileSaveError() ?? (profileNameTouched() ? profileNameError() : null);
-  const profileNameDirty = () => normalizedProfileName() !== savedProfileName();
+  const visibleProfileNameError = () =>
+    panels.profile.saveError ?? (panels.profile.touched ? profileNameError() : null);
+  const profileNameDirty = () => normalizedProfileName() !== panels.profile.savedName;
   const mobileConnectSecondsRemaining = createMemo(() =>
-    Math.max(0, Math.ceil(((mobileConnect()?.expiresAt ?? 0) - mobileConnectNow()) / 1_000)),
+    Math.max(0, Math.ceil(((panels.connect.session?.ticket.expiresAt ?? 0) - mobileNow()) / 1_000)),
   );
-  const mobileConnectExpired = () => Boolean(mobileConnect() && mobileConnectSecondsRemaining() === 0);
+  const mobileConnectExpired = () => Boolean(panels.connect.session && mobileConnectSecondsRemaining() === 0);
   const mobileConnectExpiryLabel = () => {
     const seconds = mobileConnectSecondsRemaining();
     const minutes = Math.floor(seconds / 60);
@@ -231,11 +282,11 @@ export function SettingsModal(props: SettingsModalProps) {
   };
 
   createEffect(
-    () => ({ open: props.open, ticket: mobileConnect() }),
+    () => ({ open: props.open, ticket: panels.connect.session?.ticket ?? null }),
     ({ open, ticket }) => {
       if (!open || !ticket) return;
-      setMobileConnectNow(Date.now());
-      const timer = window.setInterval(() => setMobileConnectNow(Date.now()), 1_000);
+      setMobileNow(Date.now());
+      const timer = window.setInterval(() => setMobileNow(Date.now()), 1_000);
       return () => window.clearInterval(timer);
     },
   );
@@ -336,86 +387,114 @@ export function SettingsModal(props: SettingsModalProps) {
   }
 
   async function createMobileConnect(): Promise<void> {
-    if (mobileConnectBusy() || !props.onCreateMobileConnect) return;
+    if (panels.connect.busy || !props.onCreateMobileConnect) return;
     clearMobileConnectFeedbackTimers();
-    setMobileConnectBusy(true);
-    setMobileConnectError(null);
-    setMobileConnectSuccessDeviceName(null);
-    setMobileConnectCollapsing(false);
-    setMobileConnectStartedAt(null);
+    setPanels((state) => {
+      state.connect.busy = true;
+      state.connect.error = null;
+      // The old code stays on screen while the new one is generated, but stops being able to pair.
+      if (state.connect.session) {
+        state.connect.session.collapsing = false;
+        state.connect.session.startedAt = null;
+        state.connect.session.successDeviceName = null;
+      }
+    });
     try {
-      let baselineDevices = mobileDevices();
+      let baselineDevices = panels.devices.devices;
       if (props.onListMobileConnectedDevices) {
         const refreshedDevices = await refreshMobileDevices(true);
         if (!refreshedDevices) {
-          throw new Error(mobileDevicesError() ?? "Could not load connected devices before generating a code.");
+          throw new Error(panels.devices.error ?? "Could not load connected devices before generating a code.");
         }
         baselineDevices = refreshedDevices;
       }
       mobileConnectBaselineSessionIds = new Set(baselineDevices.map((device) => device.sessionId));
       const ticket = await props.onCreateMobileConnect();
       const now = Date.now();
-      setMobileConnect(ticket);
-      setMobileConnectStartedAt(now);
-      setMobileConnectNow(now);
+      setPanels((state) => {
+        state.connect.session = { collapsing: false, startedAt: now, successDeviceName: null, ticket };
+      });
+      setMobileNow(now);
     } catch (error) {
-      setMobileConnect(null);
-      setMobileConnectStartedAt(null);
-      setMobileConnectError(error instanceof Error ? error.message : "Could not generate a Mobile Connect code.");
+      setPanels((state) => {
+        state.connect.session = null;
+        state.connect.error = error instanceof Error ? error.message : "Could not generate a Mobile Connect code.";
+      });
     } finally {
-      setMobileConnectBusy(false);
+      setPanels((state) => {
+        state.connect.busy = false;
+      });
     }
   }
 
   async function refreshMobileDevices(showLoading: boolean): Promise<MobileConnectedDevice[] | null> {
     const list = props.onListMobileConnectedDevices;
-    if (!list || revokingMobileSessionId()) return null;
+    if (!list || panels.devices.revokingSessionId) return null;
     const revision = ++mobileDevicesRequestRevision;
-    if (showLoading) setMobileDevicesLoading(true);
+    if (showLoading)
+      setPanels((state) => {
+        state.devices.loading = true;
+      });
     try {
       const devices = await list();
       if (revision !== mobileDevicesRequestRevision) return null;
       const connectedDevice = newlyConnectedMobileDevice(devices);
-      setMobileDevices(devices);
-      setMobileDevicesLoaded(true);
-      setMobileDevicesError(null);
-      setMobileConnectNow(Date.now());
+      setPanels((state) => {
+        state.devices.devices = devices;
+        state.devices.loaded = true;
+        state.devices.error = null;
+      });
+      setMobileNow(Date.now());
       if (connectedDevice) showMobileConnectSuccess(connectedDevice);
       return devices;
     } catch (error) {
       if (revision !== mobileDevicesRequestRevision) return null;
-      setMobileDevicesError(error instanceof Error ? error.message : "Could not load connected devices.");
+      setPanels((state) => {
+        state.devices.error = error instanceof Error ? error.message : "Could not load connected devices.";
+      });
       return null;
     } finally {
-      if (revision === mobileDevicesRequestRevision) setMobileDevicesLoading(false);
+      if (revision === mobileDevicesRequestRevision)
+        setPanels((state) => {
+          state.devices.loading = false;
+        });
     }
   }
 
   function newlyConnectedMobileDevice(devices: MobileConnectedDevice[]): MobileConnectedDevice | null {
-    const startedAt = mobileConnectStartedAt();
-    const ticket = mobileConnect();
-    if (!ticket || startedAt === null || mobileConnectSuccessDeviceName() || Date.now() > ticket.expiresAt + 5_000) {
+    const session = panels.connect.session;
+    const startedAt = session?.startedAt;
+    if (
+      !session ||
+      startedAt === null ||
+      startedAt === undefined ||
+      session.successDeviceName ||
+      Date.now() > session.ticket.expiresAt + 5_000
+    ) {
       return null;
     }
     return (
       devices.find(
         (device) =>
           !mobileConnectBaselineSessionIds.has(device.sessionId) &&
-          (mobileDevicesLoaded() || device.connectedAt >= startedAt - 5_000),
+          (panels.devices.loaded || device.connectedAt >= startedAt - 5_000),
       ) ?? null
     );
   }
 
   function showMobileConnectSuccess(device: MobileConnectedDevice): void {
     clearMobileConnectFeedbackTimers();
-    setMobileConnectSuccessDeviceName(device.name);
+    setPanels((state) => {
+      if (state.connect.session) state.connect.session.successDeviceName = device.name;
+    });
     mobileConnectSuccessTimer = window.setTimeout(() => {
-      setMobileConnectCollapsing(true);
+      setPanels((state) => {
+        if (state.connect.session) state.connect.session.collapsing = true;
+      });
       mobileConnectCleanupTimer = window.setTimeout(() => {
-        setMobileConnect(null);
-        setMobileConnectStartedAt(null);
-        setMobileConnectSuccessDeviceName(null);
-        setMobileConnectCollapsing(false);
+        setPanels((state) => {
+          state.connect.session = null;
+        });
       }, MOBILE_CONNECT_COLLAPSE_MS);
     }, MOBILE_CONNECT_SUCCESS_FEEDBACK_MS);
   }
@@ -430,18 +509,26 @@ export function SettingsModal(props: SettingsModalProps) {
   onCleanup(clearMobileConnectFeedbackTimers);
 
   async function revokeMobileDevice(device: MobileConnectedDevice): Promise<void> {
-    if (!props.onRevokeMobileConnectedDevice || revokingMobileSessionId()) return;
+    if (!props.onRevokeMobileConnectedDevice || panels.devices.revokingSessionId) return;
     mobileDevicesRequestRevision += 1;
-    setMobileDevicesLoading(false);
-    setRevokingMobileSessionId(device.sessionId);
-    setMobileDevicesError(null);
+    setPanels((state) => {
+      state.devices.loading = false;
+      state.devices.revokingSessionId = device.sessionId;
+      state.devices.error = null;
+    });
     try {
       await props.onRevokeMobileConnectedDevice(device.sessionId);
-      setMobileDevices((current) => current.filter((candidate) => candidate.sessionId !== device.sessionId));
+      setPanels((state) => {
+        state.devices.devices = state.devices.devices.filter((candidate) => candidate.sessionId !== device.sessionId);
+      });
     } catch (error) {
-      setMobileDevicesError(error instanceof Error ? error.message : "Could not disconnect this device.");
+      setPanels((state) => {
+        state.devices.error = error instanceof Error ? error.message : "Could not disconnect this device.";
+      });
     } finally {
-      setRevokingMobileSessionId(null);
+      setPanels((state) => {
+        state.devices.revokingSessionId = null;
+      });
     }
   }
 
@@ -452,7 +539,7 @@ export function SettingsModal(props: SettingsModalProps) {
   }
 
   function mobileDeviceTimeLabel(timestamp: number): string {
-    const elapsedSeconds = Math.max(0, Math.floor((mobileConnectNow() - timestamp) / 1_000));
+    const elapsedSeconds = Math.max(0, Math.floor((mobileNow() - timestamp) / 1_000));
     if (elapsedSeconds < 60) return "Just now";
     const elapsedMinutes = Math.floor(elapsedSeconds / 60);
     if (elapsedMinutes < 60) return `${elapsedMinutes}m ago`;
@@ -462,66 +549,91 @@ export function SettingsModal(props: SettingsModalProps) {
   }
 
   async function updateAvatar(image: AvatarImageInput | null): Promise<void> {
-    if (avatarBusy()) return;
-    setAvatarBusy(true);
-    setAvatarError(null);
+    if (panels.avatar.busy) return;
+    setPanels((state) => {
+      state.avatar.busy = true;
+      state.avatar.error = null;
+    });
     try {
       await props.onUpdateAccountAvatar(image);
     } catch (error) {
-      setAvatarError(error instanceof Error ? error.message : "Could not update your profile photo.");
+      setPanels((state) => {
+        state.avatar.error = error instanceof Error ? error.message : "Could not update your profile photo.";
+      });
     } finally {
-      setAvatarBusy(false);
+      setPanels((state) => {
+        state.avatar.busy = false;
+      });
     }
   }
 
   function updateProfileName(value: string): void {
-    setProfileName(value);
-    setProfileSaveError(null);
-    if (validateProfileName(value).error) return;
-    setProfileNameTouched(false);
+    setPanels((state) => {
+      state.profile.name = value;
+      state.profile.saveError = null;
+      if (!validateProfileName(value).error) state.profile.touched = false;
+    });
   }
 
   function resetProfileName(): void {
-    setProfileName(savedProfileName());
-    setProfileNameTouched(false);
-    setProfileSaveError(null);
+    setPanels((state) => {
+      state.profile.name = state.profile.savedName;
+      state.profile.touched = false;
+      state.profile.saveError = null;
+    });
   }
 
   async function saveProfileName(): Promise<void> {
-    if (profileNameBusy()) return;
-    setProfileNameTouched(true);
-    setProfileSaveError(null);
+    if (panels.profile.busy) return;
+    setPanels((state) => {
+      state.profile.touched = true;
+      state.profile.saveError = null;
+    });
     if (profileNameError()) {
       queueMicrotask(() => profileNameInput?.focus({ preventScroll: true }));
       return;
     }
     if (!profileNameDirty()) return;
     const name = normalizedProfileName();
-    setProfileNameBusy(true);
+    setPanels((state) => {
+      state.profile.busy = true;
+    });
     try {
       await props.onUpdateAccountName(name);
-      setSavedProfileName(name);
-      setProfileName(name);
-      setProfileNameTouched(false);
+      setPanels((state) => {
+        state.profile.savedName = name;
+        state.profile.name = name;
+        state.profile.touched = false;
+      });
     } catch (error) {
-      setProfileSaveError(error instanceof Error ? error.message : "Could not update your display name.");
+      setPanels((state) => {
+        state.profile.saveError = error instanceof Error ? error.message : "Could not update your display name.";
+      });
       queueMicrotask(() => profileNameInput?.focus({ preventScroll: true }));
     } finally {
-      setProfileNameBusy(false);
+      setPanels((state) => {
+        state.profile.busy = false;
+      });
     }
   }
 
   async function uploadAvatar(file: File | undefined): Promise<void> {
-    if (!file || avatarBusy()) return;
-    setAvatarBusy(true);
-    setAvatarError(null);
+    if (!file || panels.avatar.busy) return;
+    setPanels((state) => {
+      state.avatar.busy = true;
+      state.avatar.error = null;
+    });
     try {
       const image = await (props.processAvatarFile ?? normalizeAvatarFile)(file);
       await props.onUpdateAccountAvatar(image);
     } catch (error) {
-      setAvatarError(error instanceof Error ? error.message : "Could not process your profile photo.");
+      setPanels((state) => {
+        state.avatar.error = error instanceof Error ? error.message : "Could not process your profile photo.";
+      });
     } finally {
-      setAvatarBusy(false);
+      setPanels((state) => {
+        state.avatar.busy = false;
+      });
       if (avatarFileInput) avatarFileInput.value = "";
     }
   }
@@ -534,12 +646,21 @@ export function SettingsModal(props: SettingsModalProps) {
       try {
         while (hostedSitesReloadRequested) {
           hostedSitesReloadRequested = false;
-          setHostedSitesError(null);
+          setPanels((state) => {
+            state.hosting.error = null;
+          });
           try {
             const api = props.hostedSitesApi;
-            if (api) setHostedSites(await api.list());
+            if (api) {
+              const sites = await api.list();
+              setPanels((state) => {
+                state.hosting.sites = sites;
+              });
+            }
           } catch (error) {
-            setHostedSitesError(error instanceof Error ? error.message : "Could not load hosted sites.");
+            setPanels((state) => {
+              state.hosting.error = error instanceof Error ? error.message : "Could not load hosted sites.";
+            });
           }
         }
       } finally {
@@ -557,11 +678,13 @@ export function SettingsModal(props: SettingsModalProps) {
   );
 
   async function deleteSite(site: HostedSiteSummary): Promise<void> {
-    if (!props.hostedSitesApi || hostingBusy()) return;
+    if (!props.hostedSitesApi || panels.hosting.busy) return;
     if (!window.confirm(`Delete ${site.hostname}? This address will immediately return 410 Gone.`)) return;
     const analytics = desktopAnalytics.scope();
-    setHostingBusy(true);
-    setHostedSitesError(null);
+    setPanels((state) => {
+      state.hosting.busy = true;
+      state.hosting.error = null;
+    });
     try {
       try {
         await props.hostedSitesApi.delete({ siteId: site.id });
@@ -572,7 +695,9 @@ export function SettingsModal(props: SettingsModalProps) {
           result: "failed",
           failure_code: "delete_failed",
         });
-        setHostedSitesError(error instanceof Error ? error.message : "Could not delete the site.");
+        setPanels((state) => {
+          state.hosting.error = error instanceof Error ? error.message : "Could not delete the site.";
+        });
         return;
       }
       analytics.track("hosted_site_action", {
@@ -582,9 +707,13 @@ export function SettingsModal(props: SettingsModalProps) {
       });
       await loadHostedSites();
     } catch (error) {
-      setHostedSitesError(error instanceof Error ? error.message : "Could not reload hosted sites.");
+      setPanels((state) => {
+        state.hosting.error = error instanceof Error ? error.message : "Could not reload hosted sites.";
+      });
     } finally {
-      setHostingBusy(false);
+      setPanels((state) => {
+        state.hosting.busy = false;
+      });
     }
   }
 
@@ -606,16 +735,22 @@ export function SettingsModal(props: SettingsModalProps) {
                 Changes not saved
               </Text>
               <div class="settings-modal-save-actions">
-                <Button type="button" size="sm" variant="ghost" disabled={profileNameBusy()} onClick={resetProfileName}>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={panels.profile.busy}
+                  onClick={resetProfileName}
+                >
                   Reset
                 </Button>
                 <Button
                   type="button"
                   size="sm"
                   variant="default"
-                  loading={profileNameBusy()}
+                  loading={panels.profile.busy}
                   loadingLabel="Saving…"
-                  disabled={profileNameBusy()}
+                  disabled={panels.profile.busy}
                   onClick={() => void saveProfileName()}
                 >
                   Save
@@ -806,7 +941,7 @@ export function SettingsModal(props: SettingsModalProps) {
                     class="settings-identity-name-input"
                     id="settings-profile-name"
                     size="md"
-                    value={profileName()}
+                    value={panels.profile.name}
                     aria-labelledby="settings-profile-name-label"
                     aria-describedby={
                       visibleProfileNameError() ? "settings-profile-name-error" : "settings-profile-name-description"
@@ -815,7 +950,9 @@ export function SettingsModal(props: SettingsModalProps) {
                     onValueChange={updateProfileName}
                     onBlur={() => {
                       if (!profileNameDirty()) return;
-                      setProfileNameTouched(true);
+                      setPanels((state) => {
+                        state.profile.touched = true;
+                      });
                     }}
                     onKeyDown={(event) => {
                       if (event.key !== "Enter" || event.isComposing) return;
@@ -836,8 +973,8 @@ export function SettingsModal(props: SettingsModalProps) {
               <Item class="settings-identity-image-row">
                 <ItemContent>
                   <ItemTitle>Profile photo</ItemTitle>
-                  <ItemDescription class={avatarError() ? "settings-modal-error" : undefined}>
-                    {avatarError() ?? "Shown with your profile in OpenBot."}
+                  <ItemDescription class={panels.avatar.error ? "settings-modal-error" : undefined}>
+                    {panels.avatar.error ?? "Shown with your profile in OpenBot."}
                   </ItemDescription>
                 </ItemContent>
                 <ItemActions class="settings-identity-image-control">
@@ -848,12 +985,12 @@ export function SettingsModal(props: SettingsModalProps) {
                       size="icon-lg"
                       class="settings-identity-image-trigger settings-modal-profile-photo-trigger"
                       aria-label={props.account.avatarUrl ? "Edit profile photo" : "Add profile photo"}
-                      disabled={avatarBusy()}
+                      disabled={panels.avatar.busy}
                       onClick={() => avatarFileInput?.click()}
                     >
                       <UserAvatar user={props.account} class="settings-modal-avatar" decorative />
                     </Button>
-                    <Show when={props.account.avatarUrl && !avatarBusy()}>
+                    <Show when={props.account.avatarUrl && !panels.avatar.busy}>
                       <ImageRemoveButton label="Remove profile photo" onClick={() => void updateAvatar(null)} />
                     </Show>
                   </div>
@@ -891,7 +1028,7 @@ export function SettingsModal(props: SettingsModalProps) {
                   <ItemDescription>
                     The code expires after two minutes and stops working after the first successful scan.
                   </ItemDescription>
-                  <Show when={mobileConnectError()}>
+                  <Show when={panels.connect.error}>
                     {(error) => (
                       <ItemDescription class="settings-modal-error" role="alert">
                         {error()}
@@ -903,22 +1040,22 @@ export function SettingsModal(props: SettingsModalProps) {
                   <Button
                     type="button"
                     size="sm"
-                    loading={mobileConnectBusy()}
+                    loading={panels.connect.busy}
                     loadingLabel="Generating…"
                     disabled={!props.onCreateMobileConnect}
                     onClick={() => void createMobileConnect()}
                   >
-                    {mobileConnect() ? "Generate new code" : "Generate QR code"}
+                    {panels.connect.session ? "Generate new code" : "Generate QR code"}
                   </Button>
                 </ItemActions>
               </Item>
 
-              <Show when={mobileConnect()}>
-                {(ticket) => (
+              <Show when={panels.connect.session}>
+                {(session) => (
                   <div
                     class="settings-mobile-connect-code-collapse"
-                    data-collapsing={mobileConnectCollapsing() ? "" : undefined}
-                    aria-hidden={mobileConnectCollapsing() ? "true" : undefined}
+                    data-collapsing={session().collapsing ? "" : undefined}
+                    aria-hidden={session().collapsing ? "true" : undefined}
                   >
                     <div class="settings-mobile-connect-code-collapse-body">
                       <div class="settings-mobile-connect-code" aria-live="polite">
@@ -938,10 +1075,10 @@ export function SettingsModal(props: SettingsModalProps) {
                         >
                           <div
                             class="settings-mobile-connect-qr-stage"
-                            data-success={mobileConnectSuccessDeviceName() ? "" : undefined}
+                            data-success={session().successDeviceName ? "" : undefined}
                           >
-                            <QrCode value={ticket().qrData} label="Mobile Connect sign-in QR code" />
-                            <Show when={mobileConnectSuccessDeviceName()}>
+                            <QrCode value={session().ticket.qrData} label="Mobile Connect sign-in QR code" />
+                            <Show when={session().successDeviceName}>
                               <div class="settings-mobile-connect-success-mark" aria-hidden="true">
                                 <CircleCheck />
                               </div>
@@ -949,7 +1086,7 @@ export function SettingsModal(props: SettingsModalProps) {
                           </div>
                           <div class="settings-mobile-connect-code-copy">
                             <Show
-                              when={mobileConnectSuccessDeviceName()}
+                              when={session().successDeviceName}
                               fallback={
                                 <>
                                   <Text class="settings-mobile-connect-code-title" variant="body">
@@ -990,7 +1127,7 @@ export function SettingsModal(props: SettingsModalProps) {
             <section class="settings-mobile-devices" aria-labelledby="settings-mobile-devices-title">
               <div class="settings-mobile-devices-heading">
                 <h3 id="settings-mobile-devices-title">Connected devices</h3>
-                <Show when={mobileDevicesLoading()}>
+                <Show when={panels.devices.loading}>
                   <Text as="span" variant="caption" tone="muted" role="status">
                     Refreshing…
                   </Text>
@@ -1011,8 +1148,8 @@ export function SettingsModal(props: SettingsModalProps) {
               <div class="settings-mobile-devices-states">
                 <div
                   class="settings-mobile-devices-state"
-                  data-expanded={mobileDevices().length === 0 ? "" : undefined}
-                  aria-hidden={mobileDevices().length > 0 ? "true" : undefined}
+                  data-expanded={panels.devices.devices.length === 0 ? "" : undefined}
+                  aria-hidden={panels.devices.devices.length > 0 ? "true" : undefined}
                 >
                   <div class="settings-mobile-devices-state-body">
                     <div class="settings-mobile-devices-empty" role="status">
@@ -1030,8 +1167,8 @@ export function SettingsModal(props: SettingsModalProps) {
                 </div>
                 <div
                   class="settings-mobile-devices-state"
-                  data-expanded={mobileDevices().length > 0 ? "" : undefined}
-                  aria-hidden={mobileDevices().length === 0 ? "true" : undefined}
+                  data-expanded={panels.devices.devices.length > 0 ? "" : undefined}
+                  aria-hidden={panels.devices.devices.length === 0 ? "true" : undefined}
                 >
                   <div class="settings-mobile-devices-state-body">
                     <div class="settings-mobile-devices-table-frame">
@@ -1048,7 +1185,7 @@ export function SettingsModal(props: SettingsModalProps) {
                           </tr>
                         </thead>
                         <tbody>
-                          <For each={mobileDevices()}>
+                          <For each={panels.devices.devices}>
                             {(device) => (
                               <tr>
                                 <td>
@@ -1065,7 +1202,7 @@ export function SettingsModal(props: SettingsModalProps) {
                                     type="button"
                                     variant="destructive-ghost"
                                     size="xs"
-                                    loading={revokingMobileSessionId() === device.sessionId}
+                                    loading={panels.devices.revokingSessionId === device.sessionId}
                                     loadingLabel="Disconnecting…"
                                     disabled={!props.onRevokeMobileConnectedDevice}
                                     aria-label={`Disconnect ${device.name}`}
@@ -1083,7 +1220,7 @@ export function SettingsModal(props: SettingsModalProps) {
                   </div>
                 </div>
               </div>
-              <Show when={mobileDevicesError()}>
+              <Show when={panels.devices.error}>
                 {(error) => (
                   <Text class="settings-modal-error" variant="caption" role="alert">
                     {error()}
@@ -1153,18 +1290,18 @@ export function SettingsModal(props: SettingsModalProps) {
           <SettingsSection title="Your sites">
             <Show when={props.hostedSitesApi} fallback={<Text tone="muted">Site hosting is unavailable.</Text>}>
               <div class="hosted-sites-overview">
-                <span class="settings-modal-row-title">{hostedSites().length} of 10 sites</span>
+                <span class="settings-modal-row-title">{panels.hosting.sites.length} of 10 sites</span>
                 <Text tone="muted" variant="caption">
                   Sites expire 30 days after publication. Ask a bot to publish or update a site.
                 </Text>
               </div>
-              <Show when={hostedSitesError()}>{(message) => <p class="settings-modal-error">{message()}</p>}</Show>
+              <Show when={panels.hosting.error}>{(message) => <p class="settings-modal-error">{message()}</p>}</Show>
               <Show
-                when={hostedSites().length > 0}
+                when={panels.hosting.sites.length > 0}
                 fallback={<Text tone="muted">You do not have a hosted site yet. Ask a bot to publish one.</Text>}
               >
                 <ItemGroup class="settings-modal-card hosted-sites-list" surface="subtle">
-                  <For each={hostedSites()}>
+                  <For each={panels.hosting.sites}>
                     {(site) => (
                       <Item class="hosted-sites-row">
                         <ItemContent>
@@ -1205,7 +1342,7 @@ export function SettingsModal(props: SettingsModalProps) {
                             variant="destructive-ghost"
                             size="sm"
                             aria-label={`Delete ${site.hostname}`}
-                            disabled={hostingBusy()}
+                            disabled={panels.hosting.busy}
                             onClick={() => void deleteSite(site)}
                           >
                             <Trash2 size={14} aria-hidden="true" />

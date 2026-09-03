@@ -1,5 +1,6 @@
 import type { ServerSummary } from "@openbot/contracts/ipc";
-import { createEffect, createSignal, For, onCleanup, onSettled, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { createScrollFades } from "./createScrollFades";
 import { createVerticalDragPreview } from "./createVerticalDragPreview";
 import { buttonVariants, ContextMenu, ServerGradientLogo, Tooltip } from "./ui";
 
@@ -22,8 +23,7 @@ export function ServerRail(props: ServerRailProps) {
   const [draggedId, setDraggedId] = createSignal<string | null>(null);
   const [dragOverId, setDragOverId] = createSignal<string | null>(null);
   const [announcement, setAnnouncement] = createSignal("");
-  const [fadeAtTop, setFadeAtTop] = createSignal(false);
-  const [fadeAtBottom, setFadeAtBottom] = createSignal(false);
+  const scrollFades = createScrollFades();
   let railList: HTMLDivElement | undefined;
   let remoteList: HTMLUListElement | undefined;
   let dragSlots: DragSlot[] = [];
@@ -38,19 +38,13 @@ export function ServerRail(props: ServerRailProps) {
   onCleanup(() => {
     stopAutoScroll();
     dragPreview.stop();
-  });
-
-  onSettled(() => {
-    const resizeObserver = new ResizeObserver(updateScrollFade);
-    if (railList) resizeObserver.observe(railList);
-    window.requestAnimationFrame(updateScrollFade);
-    return () => resizeObserver.disconnect();
+    scrollFades.stop();
   });
 
   createEffect(
     () => props.servers.length,
     () => {
-      window.requestAnimationFrame(updateScrollFade);
+      scrollFades.remeasure();
     },
   );
 
@@ -107,16 +101,9 @@ export function ServerRail(props: ServerRailProps) {
     railList.scrollTop += autoScrollVelocity;
     if (railList.scrollTop !== previousScrollTop) {
       updateDragTarget(lastDragClientY);
-      updateScrollFade();
+      scrollFades.measure();
     }
     return railList.scrollTop !== previousScrollTop;
-  }
-
-  function updateScrollFade(): void {
-    if (!railList) return;
-    const remaining = railList.scrollHeight - railList.scrollTop - railList.clientHeight;
-    setFadeAtTop(railList.scrollTop > 2);
-    setFadeAtBottom(remaining > 2);
   }
 
   function runAutoScroll(): void {
@@ -212,15 +199,12 @@ export function ServerRail(props: ServerRailProps) {
       }}
     >
       <div
-        class={[
-          "server-rail-list",
-          {
-            "scroll-fade-top": fadeAtTop(),
-            "scroll-fade-bottom": fadeAtBottom(),
-          },
-        ]}
-        ref={(element) => (railList = element)}
-        onScroll={updateScrollFade}
+        class={["server-rail-list", scrollFades.classes()]}
+        ref={(element) => {
+          railList = element;
+          scrollFades.bind(element);
+        }}
+        onScroll={scrollFades.measure}
       >
         <For each={localServers()} keyed={(server) => server.id}>
           {(server) => (

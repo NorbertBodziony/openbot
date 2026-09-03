@@ -48,7 +48,9 @@ renderer ──► @openbot/contracts ◄── preload ◄── main ──►
   conversation storage.
 - D1 is the source of truth for central accounts, remote membership, invitations, and logical sessions.
 - A local team host owns conversations, files, agents, and the local member projection used by Team API.
-- Renderer signals are projections for the current screen only. They are not durable state.
+- Renderer signals and stores are projections for the current screen only. They are not durable
+  state, and one concern is one record - a row of parallel signals over its fields lets a screen
+  hold states the product does not have.
 
 ## Change rules
 
@@ -68,6 +70,8 @@ renderer ──► @openbot/contracts ◄── preload ◄── main ──►
    `app-providers.tsx`, or through a provider prop; a command that writes to several domains lives
    in a leaf context or a bridge component mounted under all of them. `window.openbot.*` is not a
    dependency. Cycles are rejected by `noImportCycles`, so an upward edge must be `import type`.
+   Prefer one store per concern inside a context over a signal per field: a row of parallel signals
+   is what lets a screen be loading, loaded, and errored at once.
 8. Read those contexts from the smallest component that needs them. A pane calls the `use*()` of the
    domains it renders and nothing else; `WorkspaceShell` reads only what decides *which* pane
    renders, and passes a value down as a prop when two of them would otherwise derive it twice. A
