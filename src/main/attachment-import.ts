@@ -15,8 +15,7 @@ const EMAIL_MAX_HEADERS_BYTES = 2 * 1024 * 1024;
 const EMAIL_MAX_NESTING_DEPTH = 32;
 const EMAIL_MAX_RFC822_NESTING_DEPTH = 10;
 const EMAIL_MAX_MIME_PARTS = 64;
-const HEADER_DECODER = new TextDecoder("latin1");
-const UTF8_HEADER_DECODER = new TextDecoder("utf-8");
+const HEADER_DECODER = new TextDecoder("utf-8");
 interface AttachmentBudget {
   count: number;
   bytes: number;
@@ -167,7 +166,7 @@ function assertEmailPreflight(name: string, bytes: Uint8Array, budget: Attachmen
   let attachments = 1;
   let hasHtml = false;
   const root = readEmailHeaders(bytes, 0);
-  assertNoNestedEmail(name, root);
+  assertSupportedEmailPart(name, root);
   ({ parts, attachments, hasHtml } = countEmailPart(root, parts, attachments, hasHtml));
   assertEmailCounts(name, budget, parts, attachments);
   const boundaries = new Set<string>();
@@ -184,7 +183,7 @@ function assertEmailPreflight(name: string, bytes: Uint8Array, budget: Attachmen
       continue;
     }
     const headers = readEmailHeaders(bytes, offset);
-    assertNoNestedEmail(name, headers);
+    assertSupportedEmailPart(name, headers);
     ({ parts, attachments, hasHtml } = countEmailPart(headers, parts, attachments, hasHtml));
     assertEmailCounts(name, budget, parts, attachments);
     addEmailBoundary(name, headers, boundaries);
@@ -208,9 +207,15 @@ function addEmailBoundary(name: string, headers: EmailHeaders, boundaries: Set<s
   boundaries.add(boundary);
 }
 
-function assertNoNestedEmail(name: string, headers: EmailHeaders): void {
+function assertSupportedEmailPart(name: string, headers: EmailHeaders): void {
   if (emailContentType(headers) === "message/rfc822") {
     throw new Error(`${name} contains a nested .eml message, which is not supported. Attach it separately.`);
+  }
+  if (
+    /(?:^|;)\s*name\*(?:\d+\*?)?\s*=/iu.test(headers.contentType) ||
+    /(?:^|;)\s*filename\*(?:\d+\*?)?\s*=/iu.test(headers.contentDisposition)
+  ) {
+    throw new Error(`${name} uses an extended or continued attachment filename, which is not supported.`);
   }
 }
 
@@ -220,10 +225,14 @@ function matchEmailBoundary(
   boundaries: Set<string>,
 ): { value: string; closing: boolean } | null {
   if (bytes[line.startOffset] !== 45 || bytes[line.startOffset + 1] !== 45) return null;
-  const candidate = HEADER_DECODER.decode(bytes.subarray(line.startOffset + 2, line.endOffset)).trimEnd();
-  if (boundaries.has(candidate)) return { value: candidate, closing: false };
-  const closing = candidate.endsWith("--") ? candidate.slice(0, -2) : "";
-  if (closing && boundaries.has(closing)) return { value: closing, closing: true };
+  const candidate = HEADER_DECODER.decode(bytes.subarray(line.startOffset + 2, line.endOffset));
+  for (const boundary of [...boundaries].reverse()) {
+    if (!candidate.startsWith(boundary)) continue;
+    const suffix = candidate.slice(boundary.length);
+    const closing = suffix.startsWith("--");
+    const trailing = closing ? suffix.slice(2) : suffix;
+    if (/^[\t ]*$/u.test(trailing)) return { value: boundary, closing };
+  }
   return null;
 }
 
@@ -307,7 +316,7 @@ function readEmailHeaders(bytes: Uint8Array, startOffset: number): EmailHeaders 
       else if (current === "content-disposition") contentDisposition += ` ${value.trim()}`;
       continue;
     }
-    if (/^\s/u.test(UTF8_HEADER_DECODER.decode(lineBytes))) {
+    if (/^\s/u.test(HEADER_DECODER.decode(lineBytes))) {
       throw new Error("Email uses unsupported folded header whitespace. Export it again and retry.");
     }
     const separator = value.indexOf(":");

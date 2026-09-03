@@ -210,6 +210,43 @@ describe("EML attachment imports", () => {
     await expect(importEmail(email)).rejects.toThrow("reuses an active MIME boundary");
   });
 
+  it("does not accept nonstandard trailing boundary whitespace", async () => {
+    const parts = Array.from({ length: 65 }, (_, index) =>
+      ["--openbot", "Content-Type: text/plain", "", String(index)].join("\r\n"),
+    );
+    const email = ENCODER.encode(
+      [
+        "Subject: Invalid boundary suffix",
+        "Content-Type: multipart/mixed; boundary=openbot",
+        "",
+        "--openbot--\u00a0",
+        ...parts,
+        "--openbot--",
+      ].join("\r\n"),
+    );
+
+    await expect(importEmail(email)).rejects.toThrow("too many MIME parts");
+  });
+
+  it("rejects continued attachment filenames before parsing", async () => {
+    const email = ENCODER.encode(
+      [
+        "Subject: Continued filename",
+        "Content-Type: multipart/mixed; boundary=openbot",
+        "",
+        "--openbot",
+        "Content-Type: application/pdf",
+        "Content-Disposition: attachment; filename*0=report.; filename*1=pdf",
+        "Content-Transfer-Encoding: base64",
+        "",
+        "JVBERg==",
+        "--openbot--",
+      ].join("\r\n"),
+    );
+
+    await expect(importEmail(email)).rejects.toThrow("extended or continued attachment filename");
+  });
+
   it.each(["\u000b", "\u00a0"])("rejects nonstandard folded header whitespace %#", async (whitespace) => {
     const email = ENCODER.encode(
       [
