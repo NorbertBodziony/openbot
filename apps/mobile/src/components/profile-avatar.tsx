@@ -1,6 +1,7 @@
 import { Image } from "expo-image";
+import { Typography } from "heroui-native";
 import { useState } from "react";
-import { Text, View } from "react-native";
+import { View } from "react-native";
 
 interface ProfileAvatarProps {
   name: string;
@@ -33,12 +34,13 @@ export function ProfileAvatar({ name, imageUrl, accent = "#cdadec", size = 48 }:
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
     >
-      <Text
-        className="font-sans font-semibold text-[#100d12]"
+      <Typography
+        weight="semibold"
         style={{ fontSize: Math.max(12, size * 0.3), lineHeight: size * 0.4 }}
+        className="text-[#100d12]"
       >
         {initials || "O"}
-      </Text>
+      </Typography>
       {imageUrl && !imageFailed ? (
         <Image
           source={{ uri: imageUrl }}

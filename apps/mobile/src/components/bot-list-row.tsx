@@ -2,10 +2,11 @@ import MaskedView from "@react-native-masked-view/masked-view";
 import { BlurView } from "expo-blur";
 import * as Haptics from "expo-haptics";
 import { Link } from "expo-router";
+import { Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
 import { Pin } from "lucide-react-native";
 import { type PropsWithChildren, useEffect, useId, useRef } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, View } from "react-native";
 import ReanimatedSwipeable, { type SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import Animated, {
   Easing,
@@ -125,14 +126,16 @@ export function BotListRow({
               <View className="min-w-0 flex-1 gap-1">
                 <View className="flex-row items-center gap-2">
                   {isUnread ? <View className="size-2 rounded-full bg-accent" /> : null}
-                  <Text className="min-w-0 flex-1 font-sans text-body font-semibold text-foreground" numberOfLines={1}>
+                  <Typography.Paragraph className="min-w-0 flex-1" weight="semibold" numberOfLines={1}>
                     {bot.name}
-                  </Text>
-                  <Text className="font-sans text-caption text-text-dim">{bot.updatedLabel}</Text>
+                  </Typography.Paragraph>
+                  <Typography.Paragraph type="body-xs" className="text-text-dim">
+                    {bot.updatedLabel}
+                  </Typography.Paragraph>
                 </View>
-                <Text className="font-sans text-caption leading-5 text-text-secondary" numberOfLines={1}>
+                <Typography.Paragraph type="body-xs" className="text-text-secondary" numberOfLines={1}>
                   {bot.preview}
-                </Text>
+                </Typography.Paragraph>
               </View>
             </BotRowTextReveal>
           </View>
@@ -187,9 +190,9 @@ export function BotListRow({
             onPress={() => handlePin(swipeable)}
           >
             <Pin color={String(accentForeground)} fill={String(accentForeground)} size={22} strokeWidth={1.8} />
-            <Text className="font-sans text-caption font-semibold" style={{ color: accentForeground }}>
+            <Typography.Paragraph type="body-xs" weight="semibold" style={{ color: accentForeground }}>
               Pin
-            </Text>
+            </Typography.Paragraph>
           </Pressable>
         </View>
       )}

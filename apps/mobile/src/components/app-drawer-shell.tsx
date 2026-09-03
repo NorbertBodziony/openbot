@@ -1,9 +1,10 @@
 import * as Haptics from "expo-haptics";
 import { type Href, router, usePathname } from "expo-router";
+import { Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
 import { Monitor, Plus, Server, Settings, Wifi, WifiOff } from "lucide-react-native";
 import { createContext, type PropsWithChildren, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, Text, useWindowDimensions, View } from "react-native";
+import { Pressable, ScrollView, useWindowDimensions, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   interpolate,
@@ -16,6 +17,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { scheduleOnRN } from "react-native-worklets";
 
 import { ProfileAvatar } from "@/components/profile-avatar";
+import { SheetScrollEdgeEffect } from "@/components/sheet-scroll-edge-effect";
 import { isIOS } from "@/lib/platform";
 import { useMobileSession } from "@/providers/mobile-session-provider";
 import { useMobileWorkspace } from "@/providers/mobile-workspace-provider";
@@ -26,6 +28,7 @@ interface AppDrawerContextValue {
 }
 
 const AppDrawerContext = createContext<AppDrawerContextValue | null>(null);
+const DRAWER_SURFACE_RADIUS = 34;
 const DRAWER_SPRING = {
   dampingRatio: 0.8,
   duration: 300,
@@ -47,6 +50,9 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const drawerProgress = useSharedValue(0);
   const drawerWidth = Math.min(360, Math.max(280, width - 52));
+  const drawerSideInset = Math.max(insets.left, 18);
+  const drawerHeaderHeight = Math.max(insets.top, 16) + 56;
+  const drawerListTopInset = drawerHeaderHeight + 8;
 
   const commitDrawerState = useCallback((open: boolean) => setDrawerOpen(open), []);
 
@@ -130,7 +136,7 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
   );
 
   const surfaceStyle = useAnimatedStyle(() => ({
-    borderRadius: interpolate(drawerProgress.get(), [0, 1], [0, 34]),
+    borderRadius: interpolate(drawerProgress.get(), [0, 1], [0, DRAWER_SURFACE_RADIUS]),
     transform: [{ translateX: drawerProgress.get() * drawerWidth }],
   }));
   const drawerStyle = useAnimatedStyle(() => ({
@@ -170,8 +176,7 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
                 bottom: 0,
                 left: 0,
                 paddingBottom: Math.max(insets.bottom, 12),
-                paddingLeft: Math.max(insets.left, 18),
-                paddingTop: Math.max(insets.top, 16),
+                paddingLeft: drawerSideInset,
                 position: "absolute",
                 top: 0,
                 width: drawerWidth,
@@ -181,13 +186,10 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
             accessibilityElementsHidden={!drawerOpen}
             importantForAccessibility={drawerOpen ? "auto" : "no-hide-descendants"}
           >
-            <View className="px-2 pb-5">
-              <Text className="font-sans text-title font-semibold text-foreground">Servers</Text>
-            </View>
-
             <ScrollView
               className="flex-1"
               contentContainerClassName="gap-1 pr-3"
+              contentContainerStyle={{ paddingTop: drawerListTopInset }}
               contentInsetAdjustmentBehavior="never"
               showsVerticalScrollIndicator={false}
             >
@@ -215,15 +217,15 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
                       <ServerIcon color="#100d12" size={21} strokeWidth={1.8} />
                     </View>
                     <View className="min-w-0 flex-1 gap-0.5">
-                      <Text className="font-sans text-body font-semibold text-foreground" numberOfLines={1}>
+                      <Typography.Paragraph weight="semibold" numberOfLines={1}>
                         {serverItem.name}
-                      </Text>
+                      </Typography.Paragraph>
                       <View className="flex-row items-center gap-1.5">
                         <StateIcon color={mutedColor} size={12} strokeWidth={2} />
-                        <Text className="font-sans text-caption capitalize text-text-secondary">
+                        <Typography.Paragraph type="body-xs" className="capitalize text-text-secondary">
                           {serverItem.state}
                           {serverItem.kind === "remote" ? " · Remote" : " · Paired desktop"}
-                        </Text>
+                        </Typography.Paragraph>
                       </View>
                     </View>
                   </Pressable>
@@ -239,9 +241,30 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
                 <View className="size-11 items-center justify-center rounded-[15px] border border-border bg-control">
                   <Plus color={iconColor} size={21} strokeWidth={1.8} />
                 </View>
-                <Text className="font-sans text-body font-semibold text-foreground">Join a server</Text>
+                <Typography.Paragraph weight="semibold">Join a server</Typography.Paragraph>
               </Pressable>
             </ScrollView>
+
+            <SheetScrollEdgeEffect
+              style={{
+                height: drawerHeaderHeight + 32,
+                left: -drawerSideInset,
+                position: "absolute",
+                right: -DRAWER_SURFACE_RADIUS,
+                top: 0,
+                zIndex: 10,
+              }}
+            />
+
+            <View
+              className="absolute right-0 z-20 h-14 justify-center"
+              pointerEvents="none"
+              style={{ left: -drawerSideInset, paddingLeft: drawerSideInset + 8, top: Math.max(insets.top, 16) }}
+            >
+              <Typography.Heading type="h4" weight="bold">
+                Servers
+              </Typography.Heading>
+            </View>
 
             <View className="mr-3 flex-row items-center gap-2 border-t border-border pt-3">
               <Pressable
@@ -252,12 +275,12 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
               >
                 <ProfileAvatar name={displayName} imageUrl={session.user.avatarUrl} size={44} />
                 <View className="min-w-0 flex-1">
-                  <Text className="font-sans text-body font-semibold text-foreground" numberOfLines={1}>
+                  <Typography.Paragraph weight="semibold" numberOfLines={1}>
                     {displayName}
-                  </Text>
-                  <Text className="font-sans text-caption text-text-secondary" numberOfLines={1} selectable>
+                  </Typography.Paragraph>
+                  <Typography.Paragraph type="body-xs" className="text-text-secondary" numberOfLines={1} selectable>
                     {session.user.email}
-                  </Text>
+                  </Typography.Paragraph>
                 </View>
               </Pressable>
               <Pressable

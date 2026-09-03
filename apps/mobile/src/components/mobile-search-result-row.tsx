@@ -1,6 +1,7 @@
+import { Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
 import { FileText, type LucideIcon, MessageCircle, Repeat2 } from "lucide-react-native";
-import { Text, View } from "react-native";
+import { View } from "react-native";
 
 import { BotListRow } from "@/components/bot-list-row";
 import type { MobileSearchResult } from "@/lib/mobile-search";
@@ -38,14 +39,16 @@ export function MobileSearchResultRow({ result }: { result: MobileSearchResult }
       </View>
       <View className="min-w-0 flex-1 gap-1">
         <View className="flex-row items-baseline gap-2">
-          <Text className="min-w-0 flex-1 font-sans text-body font-semibold text-foreground" numberOfLines={1}>
+          <Typography.Paragraph className="min-w-0 flex-1" weight="semibold" numberOfLines={1}>
             {result.title}
-          </Text>
-          <Text className="font-sans text-caption text-text-dim">{result.updatedLabel}</Text>
+          </Typography.Paragraph>
+          <Typography.Paragraph type="body-xs" className="text-text-dim">
+            {result.updatedLabel}
+          </Typography.Paragraph>
         </View>
-        <Text className="font-sans text-caption leading-5 text-text-secondary" numberOfLines={1}>
+        <Typography.Paragraph type="body-xs" className="text-text-secondary" numberOfLines={1}>
           {result.subtitle}
-        </Text>
+        </Typography.Paragraph>
       </View>
     </View>
   );

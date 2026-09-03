@@ -1,8 +1,8 @@
 import { router, Stack } from "expo-router";
-import { Button } from "heroui-native";
+import { Button, Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
 import { Bot, Layers3, Plus, Search, WifiOff } from "lucide-react-native";
-import { FlatList, Pressable, Text, View } from "react-native";
+import { FlatList, Pressable, View } from "react-native";
 import Animated, { Easing, FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 
 import { useAppDrawer } from "@/components/app-drawer-shell";
@@ -78,9 +78,9 @@ export default function Connected() {
               <View className="px-5 pb-3 pt-1">
                 <View className="flex-row items-center gap-2 rounded-2xl bg-control px-3 py-2.5">
                   <WifiOff color={mutedColor} size={17} strokeWidth={1.8} />
-                  <Text className="min-w-0 flex-1 font-sans text-caption text-text-secondary">
+                  <Typography.Paragraph type="body-xs" className="min-w-0 flex-1 text-text-secondary">
                     This server is offline. Showing the last available bot list.
-                  </Text>
+                  </Typography.Paragraph>
                 </View>
               </View>
             ) : null}
@@ -93,10 +93,10 @@ export default function Connected() {
                 <Bot color={mutedColor} size={30} strokeWidth={1.6} />
               </View>
               <View className="items-center gap-1.5">
-                <Text className="font-sans text-title font-semibold text-foreground">No bots on this server</Text>
-                <Text className="text-center font-sans text-body text-text-secondary">
+                <Typography.Heading type="h4">No bots on this server</Typography.Heading>
+                <Typography.Paragraph align="center" className="text-text-secondary">
                   Add a bot to start working from your phone.
-                </Text>
+                </Typography.Paragraph>
               </View>
               <Button size="md" variant="secondary" onPress={() => router.push("/add-bot")}>
                 <Plus color={iconColor} size={18} strokeWidth={2} />

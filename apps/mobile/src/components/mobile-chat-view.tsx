@@ -1,21 +1,12 @@
 import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
 import * as Haptics from "expo-haptics";
 import { Link, router } from "expo-router";
+import { Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
 import { ArrowLeft, ArrowUp, Mic, Monitor, Plus, X } from "lucide-react-native";
 import { useCallback, useMemo, useRef, useState } from "react";
-import {
-  Alert,
-  KeyboardAvoidingView,
-  Pressable,
-  type ScrollView,
-  Text,
-  TextInput,
-  View,
-  type ViewStyle,
-} from "react-native";
+import { Alert, KeyboardAvoidingView, Pressable, ScrollView, TextInput, View, type ViewStyle } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import Animated, { useAnimatedScrollHandler, useSharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { scheduleOnRN } from "react-native-worklets";
 
@@ -54,7 +45,6 @@ export function MobileChatView({ animateAvatarOnExit = false, bot, userName }: M
   const insets = useSafeAreaInsets();
   const { leaveBotChatAnimated } = useBotPinTransition();
   const scrollViewRef = useRef<ScrollView>(null);
-  const scrollY = useSharedValue(0);
   const [foreground, muted, fieldBackground, raised, action, actionForeground, background] = useThemeColor([
     "foreground",
     "muted",
@@ -76,11 +66,6 @@ export function MobileChatView({ animateAvatarOnExit = false, bot, userName }: M
   const liquidGlassAvailable = isLiquidGlassAvailable();
   const iconColor = String(foreground);
   const userBubbleColor = getBloubAvatarColor(bot.avatarSeed);
-  const handleScroll = useAnimatedScrollHandler({
-    onScroll: (event) => {
-      scrollY.set(event.contentOffset.y);
-    },
-  });
   const handleLeaveConversation = useCallback(() => {
     if (animateAvatarOnExit) leaveBotChatAnimated(bot.id);
     else leaveConversation();
@@ -150,9 +135,9 @@ export function MobileChatView({ animateAvatarOnExit = false, bot, userName }: M
                 <BloubAvatar seed={bot.avatarSeed} size={28} />
               </BotPinAvatar>
             </Link.AppleZoomTarget>
-            <Text className="min-w-0 shrink font-sans text-body font-semibold text-foreground" numberOfLines={1}>
+            <Typography.Paragraph className="min-w-0 shrink" weight="semibold" numberOfLines={1}>
               {bot.name}
-            </Text>
+            </Typography.Paragraph>
           </GlassView>
 
           <View className="flex-1" />
@@ -168,11 +153,10 @@ export function MobileChatView({ animateAvatarOnExit = false, bot, userName }: M
         </View>
 
         <SheetScrollEdgeEffect
-          scrollY={scrollY}
           style={{ height: insets.top + 82, left: 0, position: "absolute", right: 0, top: 0, zIndex: 10 }}
         />
 
-        <Animated.ScrollView
+        <ScrollView
           ref={scrollViewRef}
           className="flex-1"
           contentContainerStyle={{
@@ -186,11 +170,11 @@ export function MobileChatView({ animateAvatarOnExit = false, bot, userName }: M
           contentInsetAdjustmentBehavior="never"
           keyboardDismissMode="interactive"
           keyboardShouldPersistTaps="handled"
-          scrollEventThrottle={16}
           showsVerticalScrollIndicator={false}
-          onScroll={handleScroll}
         >
-          <Text className="pb-1 text-center font-sans text-caption text-text-dim">Today</Text>
+          <Typography.Paragraph type="body-xs" align="center" className="pb-1 text-text-dim">
+            Today
+          </Typography.Paragraph>
 
           {messages.map((message) => (
             <View
@@ -201,13 +185,9 @@ export function MobileChatView({ animateAvatarOnExit = false, bot, userName }: M
                 borderCurve: "continuous",
               }}
             >
-              <Text
-                className="font-sans text-body"
-                selectable
-                style={{ color: message.author === "user" ? "#0a0a0c" : foreground }}
-              >
+              <Typography.Paragraph selectable style={{ color: message.author === "user" ? "#0a0a0c" : foreground }}>
                 {message.body}
-              </Text>
+              </Typography.Paragraph>
             </View>
           ))}
 
@@ -218,12 +198,10 @@ export function MobileChatView({ animateAvatarOnExit = false, bot, userName }: M
             >
               <View className="flex-row items-start gap-3">
                 <View className="min-w-0 flex-1 gap-1">
-                  <Text className="font-sans text-title font-semibold text-foreground">
-                    What should we work on first?
-                  </Text>
-                  <Text className="font-sans text-body text-text-secondary">
+                  <Typography.Heading type="h4">What should we work on first?</Typography.Heading>
+                  <Typography.Paragraph className="text-text-secondary">
                     Pick one, or type your own — we can change course anytime.
-                  </Text>
+                  </Typography.Paragraph>
                 </View>
                 <Pressable
                   accessibilityLabel="Dismiss suggestions"
@@ -249,22 +227,26 @@ export function MobileChatView({ animateAvatarOnExit = false, bot, userName }: M
                     onPress={() => sendMessage(option.label)}
                   >
                     <View className="size-7 items-center justify-center rounded-lg bg-control">
-                      <Text className="font-sans text-caption text-text-secondary">
+                      <Typography.Paragraph type="body-xs" className="text-text-secondary">
                         {String.fromCharCode(65 + index)}
-                      </Text>
+                      </Typography.Paragraph>
                     </View>
                     <View className="min-w-0 flex-1">
-                      <Text className="font-sans text-body font-medium text-foreground">{option.label}</Text>
-                      <Text className="font-sans text-caption text-text-secondary">{option.detail}</Text>
+                      <Typography.Paragraph weight="medium">{option.label}</Typography.Paragraph>
+                      <Typography.Paragraph type="body-xs" className="text-text-secondary">
+                        {option.detail}
+                      </Typography.Paragraph>
                     </View>
                   </Pressable>
                 ))}
               </View>
 
-              <Text className="font-sans text-caption text-text-secondary">Or answer in the chat below</Text>
+              <Typography.Paragraph type="body-xs" className="text-text-secondary">
+                Or answer in the chat below
+              </Typography.Paragraph>
             </View>
           ) : null}
-        </Animated.ScrollView>
+        </ScrollView>
 
         <View className="flex-row items-end gap-2 px-4 pt-2" style={{ paddingBottom: Math.max(insets.bottom, 10) }}>
           <ChatGlassIconButton

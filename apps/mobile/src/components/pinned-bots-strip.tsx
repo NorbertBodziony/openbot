@@ -1,7 +1,8 @@
 import * as Haptics from "expo-haptics";
 import { Link } from "expo-router";
+import { Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 import Animated, {
   CurvedTransition,
   Easing,
@@ -86,9 +87,14 @@ function PinnedBotItem({ bot }: { bot: MobileBot }) {
                 ) : null}
               </BotPinAvatar>
             </Link.AppleZoom>
-            <Text className="w-full text-center font-sans text-caption text-text-secondary" numberOfLines={1}>
+            <Typography.Paragraph
+              type="body-xs"
+              align="center"
+              className="w-full text-text-secondary"
+              numberOfLines={1}
+            >
               {bot.name}
-            </Text>
+            </Typography.Paragraph>
           </Pressable>
         </Link.Trigger>
         {botContextMenu}

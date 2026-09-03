@@ -1,31 +1,29 @@
 import MaskedView from "@react-native-masked-view/masked-view";
 import { BlurView } from "expo-blur";
-import { type StyleProp, useColorScheme, type ViewStyle } from "react-native";
-import Animated, { Extrapolation, interpolate, type SharedValue, useAnimatedStyle } from "react-native-reanimated";
+import { type StyleProp, useColorScheme, View, type ViewStyle } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 
 interface SheetScrollEdgeEffectProps {
-  scrollY: SharedValue<number>;
   style: StyleProp<ViewStyle>;
 }
 
-export function SheetScrollEdgeEffect({ scrollY, style }: SheetScrollEdgeEffectProps) {
+export function SheetScrollEdgeEffect({ style }: SheetScrollEdgeEffectProps) {
   const colorScheme = useColorScheme();
-  const animatedStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(scrollY.get(), [0, 8, 24], [0, 0.55, 1], Extrapolation.CLAMP),
-  }));
+  const blurTint = colorScheme === "dark" ? "dark" : "light";
 
   return (
-    <Animated.View pointerEvents="none" style={[style, animatedStyle]}>
+    <View pointerEvents="none" style={style}>
       <MaskedView
         style={{ flex: 1 }}
         maskElement={
           <Svg height="100%" width="100%">
             <Defs>
               <LinearGradient id="sheet-scroll-edge-mask" x1="0" x2="0" y1="0" y2="1">
-                <Stop offset="0" stopColor="#000000" stopOpacity="0.92" />
-                <Stop offset="0.5" stopColor="#000000" stopOpacity="0.62" />
-                <Stop offset="0.82" stopColor="#000000" stopOpacity="0.18" />
+                <Stop offset="0" stopColor="#000000" stopOpacity="1" />
+                <Stop offset="0.24" stopColor="#000000" stopOpacity="0.96" />
+                <Stop offset="0.5" stopColor="#000000" stopOpacity="0.76" />
+                <Stop offset="0.72" stopColor="#000000" stopOpacity="0.42" />
+                <Stop offset="0.9" stopColor="#000000" stopOpacity="0.1" />
                 <Stop offset="1" stopColor="#000000" stopOpacity="0" />
               </LinearGradient>
             </Defs>
@@ -33,12 +31,16 @@ export function SheetScrollEdgeEffect({ scrollY, style }: SheetScrollEdgeEffectP
           </Svg>
         }
       >
-        <BlurView
-          intensity={52}
-          style={{ flex: 1 }}
-          tint={colorScheme === "dark" ? "systemChromeMaterialDark" : "systemUltraThinMaterialLight"}
-        />
+        <View className="flex-1">
+          <BlurView intensity={100} style={{ flex: 1 }} tint={blurTint} />
+          <BlurView
+            intensity={60}
+            style={{ bottom: 0, left: 0, position: "absolute", right: 0, top: 0 }}
+            tint={blurTint}
+          />
+          <View className="absolute inset-0 bg-scroll-edge-overlay" />
+        </View>
       </MaskedView>
-    </Animated.View>
+    </View>
   );
 }

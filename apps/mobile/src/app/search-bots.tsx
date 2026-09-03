@@ -1,8 +1,9 @@
 import { GlassView, isLiquidGlassAvailable } from "expo-glass-effect";
+import { Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
 import { Search } from "lucide-react-native";
 import { useMemo, useState } from "react";
-import { Text, View } from "react-native";
+import { View } from "react-native";
 
 import { MobileSearchFilterButton } from "@/components/mobile-search-filter-button";
 import { MobileSearchResultRow } from "@/components/mobile-search-result-row";
@@ -64,10 +65,12 @@ export default function SearchBots() {
         filteredResults.map((result) => <MobileSearchResultRow key={result.id} result={result} />)
       ) : (
         <View className="items-center px-8 py-12">
-          <Text className="text-center font-sans text-body font-semibold text-foreground">No matching results</Text>
-          <Text className="mt-1 text-center font-sans text-caption text-text-secondary">
+          <Typography.Paragraph align="center" weight="semibold">
+            No matching results
+          </Typography.Paragraph>
+          <Typography.Paragraph type="body-xs" align="center" className="mt-1 text-text-secondary">
             Try a different search or choose another filter.
-          </Text>
+          </Typography.Paragraph>
         </View>
       )}
     </SheetScrollView>

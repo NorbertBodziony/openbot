@@ -1,7 +1,8 @@
 import { Host, TextInput } from "@expo/ui";
 import { useNativeState } from "@expo/ui/swift-ui";
+import { Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
-import { Text, View } from "react-native";
+import { View } from "react-native";
 
 import type { SheetFormFieldProps } from "@/components/sheet-form-field.types";
 
@@ -25,10 +26,10 @@ export function SheetFormField({
 
   return (
     <View className="gap-2">
-      <Text className="font-sans text-label font-semibold text-foreground">
+      <Typography type="body-sm" weight="semibold">
         {label}
         {isRequired ? " *" : ""}
-      </Text>
+      </Typography>
       <View
         style={{
           backgroundColor: surface,
@@ -61,7 +62,9 @@ export function SheetFormField({
       </View>
       {hint ? (
         <View className="px-1">
-          <Text className="font-sans text-caption leading-4 text-text-secondary">{hint}</Text>
+          <Typography.Paragraph type="body-xs" className="text-text-secondary">
+            {hint}
+          </Typography.Paragraph>
         </View>
       ) : null}
     </View>

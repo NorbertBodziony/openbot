@@ -1,8 +1,8 @@
 import { router } from "expo-router";
-import { Button } from "heroui-native";
+import { Button, Typography } from "heroui-native";
 import { Server } from "lucide-react-native";
 import { useState } from "react";
-import { Keyboard, Pressable, Text, View } from "react-native";
+import { Keyboard, Pressable, View } from "react-native";
 
 import { AppLogo } from "@/components/app-logo";
 import { SheetFormField } from "@/components/sheet-form-field";
@@ -57,10 +57,12 @@ export default function AddServer() {
     >
       <View className="items-center gap-3 px-4">
         <AppLogo animation="blink" followDeviceOrientation interactive size={72} />
-        <Text className="pt-1 text-center font-sans text-heading font-semibold text-foreground">Join a server</Text>
-        <Text className="max-w-80 text-center font-sans text-body text-text-secondary">
+        <Typography.Heading type="h3" align="center" className="pt-1">
+          Join a server
+        </Typography.Heading>
+        <Typography.Paragraph align="center" className="max-w-80 text-text-secondary">
           Paste the invitation you received from a server owner.
-        </Text>
+        </Typography.Paragraph>
       </View>
 
       {reviewedInvite ? (
@@ -70,10 +72,10 @@ export default function AddServer() {
               <Server color="#ffffff" size={23} strokeWidth={1.8} />
             </View>
             <View className="min-w-0 flex-1 gap-0.5">
-              <Text className="font-sans text-body font-semibold text-foreground">Invitation ready</Text>
-              <Text className="font-sans text-caption text-text-secondary" numberOfLines={1} selectable>
+              <Typography.Paragraph weight="semibold">Invitation ready</Typography.Paragraph>
+              <Typography.Paragraph type="body-xs" className="text-text-secondary" numberOfLines={1} selectable>
                 {invitationHost}
-              </Text>
+              </Typography.Paragraph>
             </View>
           </View>
 
@@ -86,7 +88,9 @@ export default function AddServer() {
             className="min-h-11 items-center justify-center"
             onPress={() => setReviewedInvite(null)}
           >
-            <Text className="font-sans text-body font-semibold text-text-secondary">Use another invitation</Text>
+            <Typography.Paragraph weight="semibold" className="text-text-secondary">
+              Use another invitation
+            </Typography.Paragraph>
           </Pressable>
         </View>
       ) : (
@@ -118,7 +122,9 @@ export default function AddServer() {
             className="min-h-11 items-center justify-center"
             onPress={() => router.back()}
           >
-            <Text className="font-sans text-body font-semibold text-text-secondary">Cancel</Text>
+            <Typography.Paragraph weight="semibold" className="text-text-secondary">
+              Cancel
+            </Typography.Paragraph>
           </Pressable>
         </View>
       )}
