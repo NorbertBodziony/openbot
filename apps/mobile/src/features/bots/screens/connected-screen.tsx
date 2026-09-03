@@ -26,7 +26,7 @@ function TransitioningBotRow({ bot }: { bot: MobileBot }) {
 
   return (
     <Animated.View entering={isTarget ? ROW_ENTER : undefined} exiting={isSource ? ROW_EXIT : undefined}>
-      <BotListRow bot={bot} horizontalInset={15} />
+      <BotListRow bot={bot} leftInset={15} rightInset={24} />
     </Animated.View>
   );
 }
