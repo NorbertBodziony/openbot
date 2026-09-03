@@ -209,7 +209,7 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
             >
               {children}
               <Animated.View
-                className="absolute inset-0 bg-black"
+                className="absolute inset-0 bg-drawer-scrim"
                 pointerEvents={drawerOpen ? "auto" : "none"}
                 style={scrimStyle}
               >
