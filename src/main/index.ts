@@ -143,7 +143,7 @@ import {
 import { parseAvatarImage } from "./ipc/avatar-inputs";
 import { parseBrowserBounds, parseBrowserNavigate, parseBrowserOpen, parseVisibility } from "./ipc/browser-inputs";
 import { registerTeamIpcHandlers, withLocalHostSummary } from "./ipc/register-team-handlers";
-import { optionalPayload, requireString, stringPayload } from "./ipc/validation";
+import { nullishPayload, optionalPayload, requireString, stringPayload } from "./ipc/validation";
 import { parseVoiceTranscription } from "./ipc/voice-inputs";
 import { MacHapticFeedback } from "./mac-haptic-feedback";
 import { readMainWindowBounds, resolveMainWindowBounds, writeMainWindowBounds } from "./main-window-state";
@@ -475,7 +475,7 @@ function registerIpcHandlers(
     (sessionId) => centralAuth.revokeMobileConnectedDevice(sessionId),
   );
   handleTrusted(IPC_CHANNELS.authLogout, () => centralAuth.logout());
-  handleTrusted(IPC_CHANNELS.skillsList, optionalPayload(parseMarketplaceSkillQuery), (query) => skills.list(query));
+  handleTrusted(IPC_CHANNELS.skillsList, nullishPayload(parseMarketplaceSkillQuery), (query) => skills.list(query));
   handleTrusted(IPC_CHANNELS.skillsGet, stringPayload("skillId"), (skillId) => skills.get(skillId));
   handleTrusted(IPC_CHANNELS.skillsListMine, () => skills.listMine());
   handleTrusted(IPC_CHANNELS.skillsChoosePackage, async () => {
@@ -503,7 +503,7 @@ function registerIpcHandlers(
   handleTrusted(IPC_CHANNELS.hostedSitesPublish, parsePublishHostedSite, (site) => hostedSites.publish(site));
   handleTrusted(IPC_CHANNELS.hostedSitesReplace, parseReplaceHostedSite, (site) => hostedSites.replace(site));
   handleTrusted(IPC_CHANNELS.hostedSitesDelete, parseDeleteHostedSite, (siteId) => hostedSites.delete(siteId));
-  handleTrusted(IPC_CHANNELS.marketplaceAgentsList, optionalPayload(parseMarketplaceAgentQuery), (query) =>
+  handleTrusted(IPC_CHANNELS.marketplaceAgentsList, nullishPayload(parseMarketplaceAgentQuery), (query) =>
     marketplaceAgents.list(query),
   );
   handleTrusted(IPC_CHANNELS.marketplaceAgentsGet, stringPayload("agentId"), (agentId) =>

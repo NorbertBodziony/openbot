@@ -57,7 +57,7 @@ import {
   parseReorderServers,
   parseUpdateTeamMember,
 } from "./server-inputs";
-import { requireString } from "./validation";
+import { nullishPayload, optionalPayload, requireString } from "./validation";
 import { parseVoiceTranscription } from "./voice-inputs";
 
 describe("app IPC input parsing", () => {
@@ -637,6 +637,18 @@ describe("shared IPC validation", () => {
     expect(() => requireString(" ", "field")).toThrowError("field is required.");
     expect(() => requireString("long", "field", 3)).toThrowError("field is too long.");
     expect(requireString(" value ", "field")).toBe(" value ");
+  });
+
+  // Only the two marketplace queries ever accepted an explicit null as "no query". Collapsing the
+  // two helpers into one would let a null reach a channel like Picture-in-Picture as default bounds,
+  // which is a malformed payload silently succeeding rather than being rejected.
+  it("separates an omitted payload from an explicit null", () => {
+    const decode = (value: unknown) => `decoded:${String(value)}`;
+
+    expect(optionalPayload(decode)(undefined)).toBeUndefined();
+    expect(optionalPayload(decode)(null)).toBe("decoded:null");
+    expect(nullishPayload(decode)(undefined)).toBeUndefined();
+    expect(nullishPayload(decode)(null)).toBeUndefined();
   });
 });
 

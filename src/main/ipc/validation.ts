@@ -18,9 +18,19 @@ export function stringPayload(field: string, maxLength: number = INPUT_LIMITS.id
 
 /**
  * Wraps a decoder for a channel whose payload may legitimately be absent, so an omitted payload
- * stays `undefined` rather than being rejected as malformed.
+ * stays `undefined` rather than being rejected as malformed. An explicit `null` is not an omission
+ * and still goes to the decoder, which is what a caller sending one has always got.
  */
 export function optionalPayload<Payload>(decode: (value: unknown) => Payload): (value: unknown) => Payload | undefined {
+  return (value) => (value === undefined ? undefined : decode(value));
+}
+
+/**
+ * The same, for the two marketplace channels that have shipped treating an explicit `null` as "no
+ * query" alongside an omitted one. Widening `optionalPayload` to cover them instead would make every
+ * other channel newly accept a `null` its decoder used to reject.
+ */
+export function nullishPayload<Payload>(decode: (value: unknown) => Payload): (value: unknown) => Payload | undefined {
   return (value) => (value === null || value === undefined ? undefined : decode(value));
 }
 

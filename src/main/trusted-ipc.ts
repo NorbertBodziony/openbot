@@ -15,11 +15,35 @@ type TrustedRegistration =
   | [handler: () => unknown]
   | [decode: PayloadDecoder<unknown>, handler: (payload: unknown) => unknown];
 
+// `() => Result` alone would not close the hole: a handler declared `(payload?: unknown)`, one with a
+// default, and one taking `...rest` are all assignable to it, so they would bind to the no-payload
+// overload and then be called with nothing. The renderer's payload is dropped rather than passed on,
+// so no unvalidated value reaches a handler either way — but the registration compiles while quietly
+// meaning something else, which is the ambiguity this change exists to remove. Constraining the
+// parameter tuple's own length rejects all three, and says why in the diagnostic.
+type ArityMessage = "this handler takes a payload, so it must be registered with a decoder for it";
+
+type TakesNoArguments<Handler> = Handler extends (...args: infer Args) => unknown
+  ? Args["length"] extends 0
+    ? unknown
+    : ArityMessage
+  : never;
+
+// The event is passed by the wrapper, not the renderer, so a handler may name it or ignore it.
+type TakesEventOnly<Handler> = Handler extends (...args: infer Args) => unknown
+  ? Args["length"] extends 0 | 1
+    ? unknown
+    : ArityMessage
+  : never;
+
 type TrustedEventRegistration =
   | [handler: (event: IpcMainInvokeEvent) => unknown]
   | [decode: PayloadDecoder<unknown>, handler: (event: IpcMainInvokeEvent, payload: unknown) => unknown];
 
-export function handleTrusted<Result>(channel: string, handler: () => Result): void;
+export function handleTrusted<Handler extends () => unknown>(
+  channel: string,
+  handler: Handler & TakesNoArguments<Handler>,
+): void;
 export function handleTrusted<Payload, Result>(
   channel: string,
   decode: PayloadDecoder<Payload>,
@@ -39,7 +63,10 @@ export function handleTrusted(channel: string, ...registration: TrustedRegistrat
   });
 }
 
-export function handleTrustedWithEvent<Result>(channel: string, handler: (event: IpcMainInvokeEvent) => Result): void;
+export function handleTrustedWithEvent<Handler extends (event: IpcMainInvokeEvent) => unknown>(
+  channel: string,
+  handler: Handler & TakesEventOnly<Handler>,
+): void;
 export function handleTrustedWithEvent<Payload, Result>(
   channel: string,
   decode: PayloadDecoder<Payload>,
