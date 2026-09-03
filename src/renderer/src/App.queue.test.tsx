@@ -473,7 +473,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("img", { name: "Chief reacted with 🎉" })).toBeInTheDocument();
   });
 
-  it("groups commentary into a collapsed thinking disclosure", async () => {
+  it("groups commentary into a settled thinking disclosure", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     emitAgentEvent?.({
@@ -523,15 +523,15 @@ describe("OpenBot connected desktop shell", () => {
       },
     });
 
-    const thinkingLabel = await screen.findByText("Thinking");
-    const details = thinkingLabel.closest("details");
-    expect(screen.getByText("I’ll open x.com in the OpenBot browser.")).not.toBeVisible();
-    expect(screen.getByText("Checking that the page loaded.")).not.toBeVisible();
+    const disclosure = await screen.findByRole("button", { name: "Show thinking details" });
+    expect(screen.getByText("Thought for 2 seconds")).toBeInTheDocument();
+    expect(disclosure.getAttribute("aria-expanded")).toBe("false");
     expect(screen.getByText("Opened x.com.")).toBeVisible();
-    expect(screen.getAllByText("Thinking")).toHaveLength(1);
+    expect(screen.getByText("I’ll open x.com in the OpenBot browser.")).toBeInTheDocument();
+    expect(screen.getByText("Checking that the page loaded.")).toBeInTheDocument();
 
-    await fireEvent.click(thinkingLabel);
-    expect(details).toHaveAttribute("open");
+    await fireEvent.click(disclosure);
+    expect(disclosure.getAttribute("aria-expanded")).toBe("true");
     expect(screen.getByText("I’ll open x.com in the OpenBot browser.")).toBeVisible();
 
     emitAgentEvent?.({
@@ -562,7 +562,7 @@ describe("OpenBot connected desktop shell", () => {
         ],
       },
     });
-    await waitFor(() => expect(screen.getByText("Thinking").closest("details")).toBe(details));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Show thinking details" })).toBe(disclosure));
     expect(screen.getByText("I’ll open x.com in the OpenBot browser.")).toBeVisible();
   });
 

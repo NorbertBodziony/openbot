@@ -1,8 +1,9 @@
 import type { StateId } from "@norbert_bodziony/bloub";
-import { For, Show } from "solid-js";
+import { For } from "solid-js";
 import type { BotMessage, BotProfile } from "../../data";
 import { AgentAvatar } from "../AgentAvatar";
-import { ChevronIcon, ThinkingIcon } from "./ConversationIcons";
+import { Button } from "../ui/button";
+import { ChevronDown, Sparkles } from "../ui/icons";
 
 export const AGENT_ACTIVITY_ANIMATIONS = [
   "thinking",
@@ -88,41 +89,51 @@ function pickActivityLabel(
 
 export function ThinkingDisclosure(props: {
   message: BotMessage;
-  open: boolean;
+  open: boolean | undefined;
   onOpenChange: (open: boolean) => void;
 }) {
   const steps = () => props.message.items?.filter((item) => item.trim()) ?? [];
-  const stepCount = () => steps().length;
+  const working = () => props.message.streaming === true;
+  /* Open while the agent reasons so the trace reads as it arrives, closed once it has answered —
+     until the reader decides otherwise. */
+  const expanded = () => props.open ?? working();
   return (
     <article class="thinking-entry">
-      <details
-        class="thinking-disclosure"
-        open={props.open}
-        onToggle={(event) => props.onOpenChange(event.currentTarget.open)}
-      >
-        <summary aria-label="Show thinking details">
-          <span class="thinking-mark" aria-hidden="true">
-            <ThinkingIcon />
+      <div class="thinking-disclosure" data-expanded={expanded()}>
+        <Button
+          variant="ghost"
+          size="xs"
+          class="thinking-summary"
+          aria-expanded={expanded() ? "true" : "false"}
+          aria-label="Show thinking details"
+          onClick={() => props.onOpenChange(!expanded())}
+        >
+          <Sparkles class="thinking-mark" aria-hidden="true" />
+          <span class="thinking-label" role="status" data-working={working()}>
+            {working() ? "Thinking" : settledThinkingLabel(props.message)}
           </span>
-          <span>Thinking</span>
-          <Show when={props.message.streaming}>
-            <span class="thinking-live-dots" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-            </span>
-          </Show>
-          <Show when={!props.message.streaming && stepCount() > 1}>
-            <small>{stepCount()} steps</small>
-          </Show>
-          <span class="thinking-chevron" aria-hidden="true">
-            <ChevronIcon />
-          </span>
-        </summary>
-        <div class="thinking-details">
-          <For each={steps()}>{(item) => <p>{item}</p>}</For>
+          <ChevronDown class="thinking-chevron" aria-hidden="true" />
+        </Button>
+        <div class="thinking-panel" aria-hidden={expanded() ? undefined : "true"}>
+          <div class="thinking-panel-clip">
+            <div class="thinking-details">
+              <For each={steps()}>
+                {(item, index) => (
+                  <p class="thinking-step" style={{ "--thinking-step-index": String(index()) }}>
+                    {item}
+                  </p>
+                )}
+              </For>
+            </div>
+          </div>
         </div>
-      </details>
+      </div>
     </article>
   );
+}
+
+function settledThinkingLabel(message: BotMessage): string {
+  const seconds = Math.round((message.thinkingDurationMs ?? 0) / 1000);
+  if (seconds < 1) return "Thought it through";
+  return `Thought for ${seconds} second${seconds === 1 ? "" : "s"}`;
 }

@@ -344,7 +344,6 @@ const Conversation = createSimpleContext({
 
       const messageKey = agentMessageKey(event.botId, event.messageId);
       let appended = false;
-      let commentaryDetail: string | null = null;
       setLiveMessages((current) => {
         const messages = current[event.botId] ?? [];
         const existing = messages.find((message) => message.id === event.messageId);
@@ -359,7 +358,6 @@ const Conversation = createSimpleContext({
             "") + event.delta;
         rawAgentMessageBodies.set(messageKey, rawBody);
         if (existing) {
-          if (existing.itemType === "commentary") commentaryDetail = cleanAgentMessageText(rawBody);
           updateStored(existing, {
             ...existing,
             body: cleanAgentMessageText(rawBody),
@@ -370,7 +368,6 @@ const Conversation = createSimpleContext({
         if (thinking && thinkingItemIndex >= 0) {
           const items = [...(thinking.items ?? [])];
           items[thinkingItemIndex] = cleanAgentMessageText(rawBody);
-          commentaryDetail = items[thinkingItemIndex] ?? null;
           updateStored(thinking, { ...thinking, items, streaming: true });
           return current;
         }
@@ -391,12 +388,6 @@ const Conversation = createSimpleContext({
           [event.botId]: [...(current[event.botId] ?? []), message],
         };
       });
-      if (commentaryDetail) {
-        setTurnProgress((current) => ({
-          ...current,
-          [event.botId]: { turnId: event.turnId, detail: commentaryDetail ?? "" },
-        }));
-      }
       if (appended) {
         const readState = conversationReads()[event.botId];
         if (isAgentChatReadable(event.botId)) {
@@ -478,22 +469,7 @@ const Conversation = createSimpleContext({
         ...current,
         [botId]: completedTurnByBot.get(botId) === snapshot.activeTurnId ? null : snapshot.activeTurnId,
       }));
-      const latestCommentary = [...snapshot.messages]
-        .reverse()
-        .find(
-          (message) =>
-            message.author === "assistant" &&
-            message.itemType === "commentary" &&
-            message.turnId === snapshot.activeTurnId &&
-            message.text.trim(),
-        );
       setTurnProgress((current) => {
-        if (latestCommentary && snapshot.activeTurnId) {
-          return {
-            ...current,
-            [botId]: { turnId: snapshot.activeTurnId, detail: cleanAgentMessageText(latestCommentary.text) },
-          };
-        }
         const progress = current[botId];
         return progress && progress.turnId !== snapshot.activeTurnId ? withoutBot(current, botId) : current;
       });

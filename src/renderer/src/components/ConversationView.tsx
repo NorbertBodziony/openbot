@@ -707,22 +707,9 @@ function createConversationViewScope(props: ConversationProps) {
     if (current?.bot?.id === botId) return current.activityId;
     return `${botId}:message:${streamingMessage.id}`;
   });
-  const activeActivityDetail = createMemo(() => {
-    const turnId = props.activeTurnId ?? activeDeliveries()[0]?.turnId ?? null;
-    let streamingFallback: string | null = null;
-    for (let index = props.messages.length - 1; index >= 0; index -= 1) {
-      const message = props.messages[index];
-      if (message?.kind !== "thinking") continue;
-      const detail = [...(message.items ?? [])]
-        .reverse()
-        .find((item) => item.trim())
-        ?.trim();
-      if (!detail) continue;
-      if (turnId && message.turnId === turnId) return detail;
-      if (message.streaming && streamingFallback === null) streamingFallback = detail;
-    }
-    return props.activityDetail?.trim() || streamingFallback;
-  });
+  /* Reasoning belongs in the thinking trace, which shows it in full. The status line carries only
+     what the provider reports about the step it is on. */
+  const activeActivityDetail = createMemo(() => props.activityDetail?.trim() || null);
   const agentActivity = createMemo<"Working" | null>(() => (activeActivityId() ? "Working" : null));
   const activityPresentation = createMemo<AgentActivityPresentation | null>(() => {
     const botId = props.bot?.id;
@@ -3357,9 +3344,7 @@ export function ConversationTimeline() {
                           >
                             <ThinkingDisclosure
                               message={message() ?? initialMessage}
-                              open={
-                                expandedThinkingMessages()[`${props.bot?.id ?? ""}:${message()?.id ?? ""}`] === true
-                              }
+                              open={expandedThinkingMessages()[`${props.bot?.id ?? ""}:${message()?.id ?? ""}`]}
                               onOpenChange={(open) => {
                                 const key = `${props.bot?.id ?? ""}:${message()?.id ?? ""}`;
                                 setExpandedThinkingMessages((current) =>

@@ -512,7 +512,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument());
   });
 
-  it("shows live provider-neutral progress and streamed commentary while an agent works", async () => {
+  it("streams commentary into the thinking trace and keeps provider progress in the status line", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await confirmOnboardingModel();
@@ -573,11 +573,13 @@ describe("OpenBot connected desktop shell", () => {
       createdAt: firstCommentary.createdAt,
       revision: 3,
     });
+    // Reasoning reads in the trace, which opens itself while the agent works.
+    const trace = await screen.findByRole("button", { name: "Show thinking details" });
+    expect(trace.getAttribute("aria-expanded")).toBe("true");
+    expect(await screen.findByText("Inspecting the release checks")).toBeInTheDocument();
     expect(
-      await within(screen.getByRole("region", { name: "Current activity" })).findByText(
-        "Inspecting the release checks",
-      ),
-    ).toBeInTheDocument();
+      within(screen.getByRole("region", { name: "Current activity" })).queryByText("Inspecting the release checks"),
+    ).not.toBeInTheDocument();
 
     const latestCommentary = {
       ...firstCommentary,
@@ -592,11 +594,7 @@ describe("OpenBot connected desktop shell", () => {
         latestCommentary,
       ]),
     );
-    expect(
-      await within(screen.getByRole("region", { name: "Current activity" })).findByText(
-        "Verifying the final build artifacts",
-      ),
-    ).toBeInTheDocument();
+    expect(await screen.findAllByText("Verifying the final build artifacts")).not.toHaveLength(0);
     expect(screen.getByRole("status", { name: "Chief is working" })).toBeInTheDocument();
 
     emitAgentEvent?.({
@@ -607,8 +605,15 @@ describe("OpenBot connected desktop shell", () => {
       detail: "Reviewing the verification results…",
     });
     expect(
-      within(screen.getByRole("region", { name: "Current activity" })).getByText("Verifying the final build artifacts"),
+      await within(screen.getByRole("region", { name: "Current activity" })).findByText(
+        "Reviewing the verification results…",
+      ),
     ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("region", { name: "Current activity" })).queryByText(
+        "Verifying the final build artifacts",
+      ),
+    ).not.toBeInTheDocument();
 
     emitAgentEvent?.({
       type: "turn-completed",
@@ -619,6 +624,51 @@ describe("OpenBot connected desktop shell", () => {
     });
     emitAgentEvent?.(conversation(5, null, [userMessage, { ...firstCommentary, status: "completed" }]));
     await waitFor(() => expect(screen.queryByRole("status", { name: "Chief is working" })).not.toBeInTheDocument());
+  });
+
+  it("stops showing reasoning as the current activity once the answer arrives", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+
+    const turnId = "turn-answering";
+    const base = {
+      turnId,
+      author: "assistant",
+      createdAt: "2026-09-02T11:00:01.000Z",
+      status: "completed",
+    } as const;
+    emitAgentEvent?.({
+      type: "conversation",
+      snapshot: {
+        botId: "chief",
+        threadId: "thread-chief",
+        activeTurnId: turnId,
+        revision: 1,
+        messages: [
+          {
+            id: "user-answering",
+            turnId,
+            author: "user",
+            text: "Check the release status",
+            createdAt: "2026-09-02T11:00:00.000Z",
+            status: "completed",
+          },
+          { ...base, id: "commentary-answering", text: "Verifying the build artifacts", itemType: "commentary" },
+          {
+            ...base,
+            id: "answer-answering",
+            text: "The release is green.",
+            createdAt: "2026-09-02T11:00:02.000Z",
+            status: "streaming",
+          },
+        ] satisfies ConversationMessage[],
+      },
+    });
+
+    const activity = await screen.findByRole("region", { name: "Current activity" });
+    expect(within(activity).queryByText("Verifying the build artifacts")).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Show thinking details" })).toBeInTheDocument();
   });
 
   it("merges compact runtime attention into the active server", async () => {

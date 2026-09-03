@@ -3507,31 +3507,29 @@
   width: min(620px, 88%);
 }
 
-.thinking-disclosure summary {
+.thinking-summary {
   display: inline-flex;
+  height: auto;
   min-height: 28px;
   align-items: center;
   gap: 6px;
+  border: 0;
   border-radius: var(--openbot-radius-md);
+  background: none;
   padding: 4px 7px 4px 5px;
   color: var(--openbot-text-muted);
   cursor: pointer;
   font-size: var(--openbot-text-sm);
   line-height: 18px;
-  list-style: none;
   user-select: none;
   transition:
     background var(--openbot-duration-hover) ease,
     color var(--openbot-duration-hover) ease;
 }
 
-.thinking-disclosure summary::-webkit-details-marker {
-  display: none;
-}
-
-.thinking-disclosure summary:hover,
-.thinking-disclosure summary:focus-visible,
-.thinking-disclosure[open] summary {
+.thinking-summary:hover,
+.thinking-summary:focus-visible,
+.thinking-disclosure[data-expanded="true"] .thinking-summary {
   background: var(--openbot-hover);
   color: var(--openbot-text-secondary);
   outline: none;
@@ -3539,27 +3537,34 @@
 
 .thinking-mark,
 .thinking-chevron {
-  display: grid;
-  width: 16px;
-  height: 16px;
-  flex: 0 0 16px;
-  place-items: center;
-}
-
-.thinking-mark svg,
-.thinking-chevron svg {
   width: 14px;
   height: 14px;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.25;
+  flex: 0 0 14px;
+  stroke-width: 1.5;
 }
 
-.thinking-disclosure summary small {
-  color: var(--openbot-text-readable);
-  font: inherit;
+.thinking-label {
+  white-space: nowrap;
+}
+
+/* The sweep marks live reasoning; it settles into flat text the moment the agent answers. */
+.thinking-label[data-working="true"] {
+  background: linear-gradient(
+    90deg,
+    var(--openbot-text-muted) 35%,
+    var(--openbot-text-primary) 50%,
+    var(--openbot-text-muted) 65%
+  );
+  background-clip: text;
+  background-size: 200% 100%;
+  color: transparent;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: thinking-label-shimmer 1.4s linear infinite;
+}
+
+.thinking-label[data-working="false"] {
+  animation: thinking-label-settle var(--openbot-duration-normal) ease-out both;
 }
 
 .thinking-chevron {
@@ -3567,48 +3572,85 @@
   transition: transform var(--openbot-duration-normal) ease;
 }
 
-.thinking-disclosure[open] .thinking-chevron {
+.thinking-disclosure[data-expanded="true"] .thinking-chevron {
   transform: rotate(180deg);
 }
 
-.thinking-live-dots {
-  display: inline-flex;
-  gap: 2px;
-  align-items: center;
+.thinking-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--openbot-duration-normal) cubic-bezier(0.23, 1, 0.32, 1),
+    opacity var(--openbot-duration-normal) cubic-bezier(0.23, 1, 0.32, 1);
 }
 
-.thinking-live-dots i {
-  width: 3px;
-  height: 3px;
-  border-radius: var(--openbot-radius-pill);
-  background: currentColor;
-  animation: agent-activity-dot 900ms ease-in-out infinite;
+.thinking-disclosure[data-expanded="true"] .thinking-panel {
+  grid-template-rows: 1fr;
+  opacity: 1;
 }
 
-.thinking-live-dots i:nth-child(2) {
-  animation-delay: var(--openbot-duration-fast);
-}
-
-.thinking-live-dots i:nth-child(3) {
-  animation-delay: var(--openbot-duration-overlay);
+.thinking-panel-clip {
+  overflow: hidden;
 }
 
 .thinking-details {
+  position: relative;
   margin: 3px 0 4px 12px;
-  border-left: 1px solid var(--openbot-border);
   padding: 3px 0 3px 13px;
   color: var(--openbot-text-muted);
   font-size: var(--openbot-text-sm);
   line-height: 18px;
 }
 
-.thinking-details p {
-  margin: 0;
-  white-space: pre-line;
+.thinking-details::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  background: var(--openbot-border);
+  content: "";
+  inline-size: 1px;
 }
 
-.thinking-details p + p {
+.thinking-step {
+  margin: 0;
+  white-space: pre-line;
+  animation: thinking-step-in var(--openbot-duration-normal) cubic-bezier(0.23, 1, 0.32, 1) both;
+  animation-delay: calc(var(--thinking-step-index) * 80ms);
+}
+
+.thinking-step + .thinking-step {
   margin-top: 6px;
+}
+
+@keyframes thinking-label-shimmer {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+
+@keyframes thinking-label-settle {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes thinking-step-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .chat-action-entry-animated {
@@ -5937,7 +5979,9 @@ button.chat-action-target:active,
   .image-generation-canvas,
   .image-generation-preview,
   .image-generation-label,
-  .agent-activity-label {
+  .agent-activity-label,
+  .thinking-label,
+  .thinking-step {
     animation: none;
     transition: none;
   }
@@ -7175,7 +7219,10 @@ button.chat-action-target:active,
   .bot-row-agent-status-responded,
   .bot-row-agent-status-unread,
   .agent-settings-panel,
-  .agent-picker-menu {
+  .agent-picker-menu,
+  .thinking-summary,
+  .thinking-chevron,
+  .thinking-panel {
     animation: none;
     transition: none;
   }

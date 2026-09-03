@@ -110,7 +110,29 @@ export function toBotMessages(messages: ConversationMessage[], ownerAgentId?: st
     thinkingByTurn.set(key, thinking);
     result.push(thinking);
   }
+  for (const [key, thinking] of thinkingByTurn) {
+    const duration = thinkingDurationMs(messages, key, thinking.createdAt);
+    if (duration !== null) thinking.thinkingDurationMs = duration;
+  }
   return result;
+}
+
+/* How long the agent spent reasoning: from its first commentary to whatever ended the reasoning —
+   the turn's answer, or the last commentary when the answer has not started yet. */
+function thinkingDurationMs(
+  messages: ConversationMessage[],
+  turnKey: string,
+  startedAt: string | undefined,
+): number | null {
+  const started = startedAt ? Date.parse(startedAt) : Number.NaN;
+  if (Number.isNaN(started)) return null;
+  const turnMessages = messages.filter((message) => (message.turnId ?? message.id) === turnKey);
+  const answer = turnMessages.find((message) => message.author === "assistant" && message.itemType !== "commentary");
+  const lastCommentary = turnMessages.filter((message) => message.itemType === "commentary").at(-1);
+  const endedAt = answer?.createdAt ?? lastCommentary?.createdAt;
+  const ended = endedAt ? Date.parse(endedAt) : Number.NaN;
+  if (Number.isNaN(ended) || ended < started) return null;
+  return ended - started;
 }
 
 export function botProfilesEqual(left: BotProfile, right: BotProfile): boolean {
@@ -174,7 +196,8 @@ export function botMessagesEqual(left: BotMessage, right: BotMessage): boolean {
     JSON.stringify(left.routine) === JSON.stringify(right.routine) &&
     JSON.stringify(left.actionMarker) === JSON.stringify(right.actionMarker) &&
     JSON.stringify(left.items) === JSON.stringify(right.items) &&
-    JSON.stringify(left.itemIds) === JSON.stringify(right.itemIds)
+    JSON.stringify(left.itemIds) === JSON.stringify(right.itemIds) &&
+    left.thinkingDurationMs === right.thinkingDurationMs
   );
 }
 
