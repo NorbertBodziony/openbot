@@ -1,5 +1,6 @@
 import type { AgentApproval, AgentEvent, QueueSnapshot } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal } from "solid-js";
+import { seededAttentionPrompts } from "./agent-runtime-snapshot";
 import { useAgents } from "./agents";
 import { desktopAnalytics } from "./analytics";
 import { useAnsweredPrompts } from "./answered-prompts";
@@ -47,7 +48,8 @@ type BrowserTakeoverEvent = Extract<AgentEvent, { type: "browser-takeover-reques
  * snapshot that may arrive after the user has moved to another server. They are
  * re-exported from here under their own names so nothing downstream can tell,
  * but they are owned by `answered-prompts.tsx` above the boundary and scoped to
- * this server by its id.
+ * this server by its id - and they are read before `pendingPrompts` exists,
+ * because the seed below is the first thing that has to consult them.
  */
 const Turns = createSimpleContext({
   name: "Turns",
@@ -65,15 +67,15 @@ const Turns = createSimpleContext({
     const [routineIdsByConversation, setRoutineIdsByConversation] = createSignal<Record<string, string[] | undefined>>(
       {},
     );
-    const [pendingPrompts, setPendingPrompts] = createSignal<
-      Record<string, PromptEvent | BrowserTakeoverEvent | undefined>
-    >(seed?.pendingPrompts ?? {});
     const {
       presentedPromptResolutions,
       setPresentedPromptResolutions,
       submittedPromptRequests,
       setSubmittedPromptRequests,
     } = useAnsweredPrompts().promptMarkersFor(activeServerId());
+    const [pendingPrompts, setPendingPrompts] = createSignal<
+      Record<string, PromptEvent | BrowserTakeoverEvent | undefined>
+    >(seededAttentionPrompts(seed?.pendingPrompts, presentedPromptResolutions(), submittedPromptRequests()));
     const [pendingApprovals, setPendingApprovals] = createSignal<Record<string, AgentApproval | undefined>>(
       seed?.pendingApprovals ?? {},
     );

@@ -771,6 +771,16 @@ describe("OpenBot connected desktop shell", () => {
     );
     await screen.findByRole("heading", { name: "Chief" });
 
+    // Nothing has arrived from main yet: this workspace was seeded from what the
+    // Dynamic Island coordinator remembered, which is the renderer's own
+    // projection and still lists the prompt as pending. The composer is hidden
+    // for as long as something is being asked, so its return is what says the
+    // scope settled without asking again.
+    await waitFor(() => {
+      expect(screen.queryByRole("textbox", { name: "Custom answer for: Which account?" })).not.toBeInTheDocument();
+      expect(screen.getByRole("textbox", { name: "Message Chief" })).toBeVisible();
+    });
+
     // Main has not seen the answer yet, so its snapshot still reports the prompt
     // as waiting. The answer is what makes it stale, and the answer was given on
     // this server before the switch.

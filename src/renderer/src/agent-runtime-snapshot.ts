@@ -42,6 +42,41 @@ export function reconcileAttentionPrompts(
   return next;
 }
 
+/**
+ * The prompts a server scope starts with, out of what the coordinator remembers
+ * that server was blocked on.
+ *
+ * The coordinator's memory is the renderer's own projection played back, so it
+ * still lists a prompt the user answered while main was working out that the
+ * answer had arrived. Seeding it unfiltered remounts `QuestionPromptBubble` on
+ * its first page - the bubble hides the questions in local state that the
+ * remount throws away - and the user is asked again. The two markers outlive the
+ * scope for exactly this window; `reconcileAttentionPrompts` consults the
+ * submitted one against main's snapshots, and this consults both against the
+ * coordinator's, which is the only other way a prompt enters the scope.
+ *
+ * Only prompts are filtered. A browser takeover leaves `pendingPrompts` the
+ * moment main accepts the response, so the projection above this has already
+ * dropped it.
+ */
+export function seededAttentionPrompts(
+  seed: PendingAttentionPrompts | undefined,
+  presentedResolutions: Record<string, string | undefined>,
+  submittedRequests: Record<string, string | undefined>,
+): PendingAttentionPrompts {
+  if (!seed) return {};
+  const next: PendingAttentionPrompts = {};
+  for (const [botId, entry] of Object.entries(seed)) {
+    if (!entry) continue;
+    if (entry.type === "prompt") {
+      const key = promptRequestKey(entry.turnId, entry.requestId);
+      if (key === presentedResolutions[botId] || key === submittedRequests[botId]) continue;
+    }
+    next[botId] = entry;
+  }
+  return next;
+}
+
 export function reconcileAttentionApprovals(
   current: Record<string, AgentApproval | undefined>,
   snapshot: Pick<AgentRuntimeSnapshot, "attentionComplete" | "pendingApprovals">,
