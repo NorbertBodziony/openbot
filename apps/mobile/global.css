@@ -15,6 +15,7 @@
   --color-brand-logo: var(--openbot-logo-production);
   --color-action: var(--openbot-action);
   --color-action-foreground: var(--openbot-action-foreground);
+  --color-drawer-scrim: var(--openbot-drawer-scrim);
   --color-scroll-edge-overlay: var(--openbot-scroll-edge-overlay);
 
   --text-display: 2rem;
@@ -107,6 +108,7 @@
       --openbot-success: #32a85d;
       --openbot-warning: #c58a23;
       --openbot-danger: #d85f58;
+      --openbot-drawer-scrim: #000000;
       --openbot-scroll-edge-overlay: rgba(245, 245, 247, 0.46);
       --openbot-shadow-card: 0 1px 2px rgba(20, 20, 20, 0.05);
       --openbot-shadow-overlay: 0 12px 32px rgba(20, 20, 20, 0.12);
@@ -115,7 +117,7 @@
     @variant dark {
       /* biome-ignore lint/suspicious/noDuplicateCustomProperties: Theme variants intentionally share semantic token names. */
       --openbot-bg-canvas: #070707;
-      --openbot-bg-sidebar: #111111;
+      --openbot-bg-sidebar: var(--openbot-bg-canvas);
       --openbot-bg-surface: #262626;
       --openbot-bg-surface-raised: #2f2f2f;
       --openbot-bg-control: #1b1b1b;
@@ -138,6 +140,7 @@
       --openbot-success: #61c985;
       --openbot-warning: #e3b866;
       --openbot-danger: #e47d75;
+      --openbot-drawer-scrim: #202020;
       --openbot-scroll-edge-overlay: rgba(0, 0, 0, 0.72);
       --openbot-shadow-card: 0 0 0 transparent;
       --openbot-shadow-overlay: 0 12px 32px rgba(0, 0, 0, 0.48);
