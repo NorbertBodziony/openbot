@@ -628,6 +628,9 @@ describe("renderer-to-main boundary guards", () => {
     ];
     expect(isAgentStatus({ ...status, providers })).toBe(true);
     expect(isAgentStatus({ ...status, providers: "codex" })).toBe(false);
+    // Open about values, not about shape: the renderer reads `id` and `state` off every entry.
+    expect(isAgentStatus({ ...status, providers: [null] })).toBe(false);
+    expect(isAgentStatus({ ...status, providers: [{ id: "codex" }] })).toBe(false);
   });
 
   it("requires an agent provider and a well-formed avatar on every agent summary", () => {
@@ -665,6 +668,20 @@ describe("renderer-to-main boundary guards", () => {
     };
     expect(isAccountUsage(usage)).toBe(true);
     expect(isAccountUsage({ limits: [{ ...usage.limits[0], primary: { usedPercent: "25" } }] })).toBe(false);
+    // A window that is numeric but not finite renders as "NaN% remaining"; the released Team v1
+    // validator rejects these for the same payload, so this guard has to agree with it.
+    const window = usage.limits[0].primary;
+    expect(isAccountUsage({ limits: [{ ...usage.limits[0], primary: { ...window, usedPercent: Number.NaN } }] })).toBe(
+      false,
+    );
+    expect(isAccountUsage({ limits: [{ ...usage.limits[0], primary: { ...window, windowDurationMins: -1 } }] })).toBe(
+      false,
+    );
+    expect(
+      isAccountUsage({
+        limits: [{ ...usage.limits[0], primary: { ...window, resetsAt: Number.POSITIVE_INFINITY } }],
+      }),
+    ).toBe(false);
   });
 
   it("validates every delivery inside a queue snapshot and a queued message receipt", () => {

@@ -24,6 +24,11 @@ export type AgentProviderState =
   | "error";
 
 export interface AgentProviderStatus {
+  /**
+   * One of `AgentProviderId`, but treated as an open string at the trust boundary for the same
+   * reason as `state`. Consumers look this up in a map or compare it, so one they do not know
+   * misses rather than throws.
+   */
   id: AgentProviderId;
   /**
    * One of `AgentProviderState`, but treated as an open string at the trust boundary: a remote
@@ -61,12 +66,22 @@ export interface AccountUsage {
   limits: AccountUsageLimit[];
 }
 
+// `isNumber` alone certifies NaN and the infinities, which reach AccountDock as "NaN% remaining".
+// The released Team v1 validator already rejects them for this very payload, so accepting them here
+// would be the shared guard drifting from the wire one it is supposed to agree with.
+function isFiniteNumber(value: unknown): value is number {
+  return isNumber(value) && Number.isFinite(value);
+}
+
 function isAccountUsageWindow(value: unknown): value is AccountUsageWindow {
   return (
     isDynamicRecord(value) &&
-    isNumber(value.usedPercent) &&
-    (value.windowDurationMins === null || isNumber(value.windowDurationMins)) &&
-    (value.resetsAt === null || isNumber(value.resetsAt))
+    isFiniteNumber(value.usedPercent) &&
+    (value.windowDurationMins === null ||
+      (isFiniteNumber(value.windowDurationMins) &&
+        Number.isInteger(value.windowDurationMins) &&
+        value.windowDurationMins >= 0)) &&
+    (value.resetsAt === null || isFiniteNumber(value.resetsAt))
   );
 }
 
@@ -108,6 +123,24 @@ export interface AgentStatus {
 // predicate is all-or-nothing, so validating an entry would let one unrecognized `state` or
 // `connectionState` from a newer server reject `phase`, `auth` and `message` along with it. Nothing
 // branches on a provider field — the renderer looks one up by `id` and falls back when it misses.
+// Deleting this outright went too far. Its problem was two closed unions — `isAgentProvider(id)` and
+// `connectionState === "connecting"` — either of which rejected a whole status over one member a
+// newer peer is entitled to send. The rest was already open, and dropping it too left the guard
+// certifying `AgentProviderStatus[]` for anything array-shaped, `[null]` included, which
+// `providers.tsx` dereferences per entry. Shape is checked; every value stays an open string.
+function isAgentProviderStatus(value: unknown): value is AgentProviderStatus {
+  return (
+    isDynamicRecord(value) &&
+    isBoundedString(value.id, INPUT_LIMITS.identifier) &&
+    isBoundedString(value.state, INPUT_LIMITS.identifier) &&
+    isNullableBoundedString(value.version, 160) &&
+    isNullableBoundedString(value.message, INPUT_LIMITS.messageText) &&
+    (value.email === undefined || isNullableBoundedString(value.email, INPUT_LIMITS.email)) &&
+    (value.connectionState === undefined || isBoundedString(value.connectionState, INPUT_LIMITS.identifier)) &&
+    (value.checkError === undefined || isNullableBoundedString(value.checkError, INPUT_LIMITS.messageText))
+  );
+}
+
 export function isAgentStatus(value: unknown): value is AgentStatus {
   if (!isDynamicRecord(value) || !isDynamicRecord(value.auth) || !isDynamicRecord(value.capabilities)) {
     return false;
@@ -119,7 +152,8 @@ export function isAgentStatus(value: unknown): value is AgentStatus {
     isOneOf(CAPABILITY_STATES, value.capabilities.chat) &&
     isOneOf(CAPABILITY_STATES, value.capabilities.browser) &&
     isOneOf(CAPABILITY_STATES, value.capabilities.computerUse) &&
-    (value.providers === undefined || Array.isArray(value.providers)) &&
+    (value.providers === undefined ||
+      (Array.isArray(value.providers) && value.providers.every(isAgentProviderStatus))) &&
     isNullableBoundedString(value.message, INPUT_LIMITS.messageText) &&
     value.fullAccess === true
   );
