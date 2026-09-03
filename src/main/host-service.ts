@@ -569,6 +569,9 @@ export class HostService extends EventEmitter<HostEvents> {
         // read with the store's cross-account guard.
         if (!this.#isActiveHost(hostId)) return this.#options.store.listMembers();
         await this.#options.store.syncRemoteDirectory(hostId, members);
+        // Recording the directory is a write, and the switch can land during it. The names,
+        // addresses and roles below are the previous account's if it did.
+        if (!this.#isActiveHost(hostId)) return this.#options.store.listMembers();
         return members.map((member) => ({
           id: member.membershipId,
           username: member.email,

@@ -984,7 +984,11 @@ export class TeamStore {
   #hostFor(accountId: string, email: string): StoredTeam | undefined {
     return this.#file.hosts.find((host) => {
       const owner = hostOwner(host);
-      return owner?.accountId === accountId || (owner?.email ? normalizeEmail(owner.email) === email : false);
+      if (!owner) return false;
+      // The same rule as `activateAccount`: an owner bound to an account is that account's
+      // alone, so whoever holds its old address is free to configure a host of their own.
+      if (owner.accountId) return owner.accountId === accountId;
+      return owner.email ? normalizeEmail(owner.email) === email : false;
     });
   }
 

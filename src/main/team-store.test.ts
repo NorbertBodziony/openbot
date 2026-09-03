@@ -449,6 +449,9 @@ describe("TeamStore", () => {
     const stranger = { id: "account-b", email: "a@example.com", name: "B", avatarUrl: null };
     await store.activateAccount(stranger);
     expect(store.getIdentity()).toBeNull();
+    // And is not left in a dead end either: no host of its own, and none it may configure.
+    const strangerIdentity = await store.configureWithAccount("Loft Mini", stranger);
+    expect(strangerIdentity.serverId).not.toBe(identity.serverId);
 
     await store.activateAccount(owner);
     expect(store.getIdentity()?.serverId).toBe(identity.serverId);
