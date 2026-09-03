@@ -130,6 +130,12 @@ export class TeamStore {
     { member: TeamMemberSummary; sessionId: string; createdAt: string; sessionExpiresAt: string }
   >();
   #writeChain = Promise.resolve();
+  /**
+   * The file exists but is neither a v2 envelope nor a v1 record - a file a newer build
+   * wrote, or a damaged one. `#file` is empty only because something else owns this path,
+   * so writing would destroy the user's only copy. Nothing here is backed up.
+   */
+  #unreadableFile = false;
 
   constructor(path: string) {
     this.#path = path;
@@ -145,6 +151,8 @@ export class TeamStore {
       } else if (isStoredTeam(parsed)) {
         this.#file = { version: 2, activeAccountId: ownerAccountId(parsed), hosts: [parsed] };
         migrated = true;
+      } else {
+        this.#unreadableFile = true;
       }
     } catch (error) {
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
@@ -174,6 +182,8 @@ export class TeamStore {
       const owner = hostOwner(host);
       return owner !== undefined && !owner.accountId && !owner.email;
     });
+    const previousState = this.#state;
+    const previousAccountId = this.#file.activeAccountId;
     this.#state =
       hosts.find((host) => ownerAccountId(host) === user.id) ??
       hosts.find((host) => {
@@ -185,14 +195,22 @@ export class TeamStore {
     this.#file.activeAccountId = user.id;
     // A host configured before accounts existed has no owner email to match on next time,
     // so adopting it has to write the binding rather than rely on `syncAccount`.
-    if (this.#state && this.#state === unbound) {
-      const owner = hostOwner(this.#state);
-      if (owner) {
-        owner.accountId = user.id;
-        owner.email = email;
-      }
+    const adopted = this.#state && this.#state === unbound ? hostOwner(this.#state) : undefined;
+    const adoptedBefore = adopted && { accountId: adopted.accountId, email: adopted.email };
+    if (adopted) {
+      adopted.accountId = user.id;
+      adopted.email = email;
     }
-    await this.#persistFile();
+    try {
+      await this.#recordActiveAccount();
+    } catch (error) {
+      // Staying bound to a host the file does not name would have the status report one
+      // account while every write went to another.
+      this.#state = previousState;
+      this.#file.activeAccountId = previousAccountId;
+      if (adopted && adoptedBefore) Object.assign(adopted, adoptedBefore);
+      throw error;
+    }
     if (this.#state) {
       await this.syncAccount(user);
       await this.#prune();
@@ -201,8 +219,26 @@ export class TeamStore {
 
   /** Signing out unbinds the host without removing it - signing back in restores it. */
   async deactivate(): Promise<void> {
+    const previousState = this.#state;
+    const previousAccountId = this.#file.activeAccountId;
     this.#state = null;
     this.#file.activeAccountId = null;
+    try {
+      await this.#recordActiveAccount();
+    } catch (error) {
+      this.#state = previousState;
+      this.#file.activeAccountId = previousAccountId;
+      throw error;
+    }
+  }
+
+  /**
+   * A file with no host records nothing an activation could change, so there is nothing to
+   * write - which is also what keeps signing in from failing, or from overwriting a file
+   * this store could not read. Configuring a server still refuses that file outright.
+   */
+  async #recordActiveAccount(): Promise<void> {
+    if (this.#file.hosts.length === 0) return;
     await this.#persistFile();
   }
 
@@ -333,7 +369,7 @@ export class TeamStore {
       if (serverLogo) await this.#removeLogo(serverLogo).catch(() => undefined);
       throw error;
     }
-    this.#state = {
+    const created: StoredTeam = {
       version: 1,
       serverId: randomUUID(),
       serverName: serverName.trim(),
@@ -357,21 +393,29 @@ export class TeamStore {
       invites: [],
       sessions: [],
     };
-    this.#file.hosts.push(this.#state);
+    this.#file.hosts.push(created);
+    const previousState = this.#state;
     const previousAccountId = this.#file.activeAccountId;
+    this.#state = created;
     this.#file.activeAccountId = user.id;
     try {
       await this.#persistFile();
     } catch (error) {
-      this.#file.hosts.pop();
-      this.#file.activeAccountId = previousAccountId;
-      this.#state = null;
+      this.#file.hosts = this.#file.hosts.filter((host) => host !== created);
+      if (this.#state === created) {
+        this.#state = previousState;
+        this.#file.activeAccountId = previousAccountId;
+      }
       if (serverLogo) await this.#removeLogo(serverLogo).catch(() => undefined);
       throw error;
     }
-    const identity = this.getIdentity();
-    if (!identity) throw new Error("The team identity could not be created.");
-    return identity;
+    // Writing the file yields as well. The host stays - it is on disk and it belongs to the
+    // account that asked for it - but the caller must not go on to apply this configuration,
+    // its logo and its remote registration, to whichever host is active now.
+    if (this.#state !== created) {
+      throw new TeamStoreError("The signed-in account changed while this server was being created.");
+    }
+    return identityOf(created);
   }
 
   async updateIdentity(input: { serverName?: string; logo?: AvatarImageInput | null }): Promise<TeamIdentity> {
@@ -921,6 +965,11 @@ export class TeamStore {
   }
 
   async #persistFile(): Promise<void> {
+    if (this.#unreadableFile) {
+      throw new TeamStoreError(
+        "This computer's team server file could not be read. Move it aside before configuring a server, so it is not overwritten.",
+      );
+    }
     const snapshot = structuredClone(this.#file);
     const operation = this.#writeChain.then(async () => {
       const temporary = `${this.#path}.${randomUUID()}.tmp`;

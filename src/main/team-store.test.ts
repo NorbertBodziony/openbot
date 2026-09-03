@@ -495,6 +495,61 @@ describe("TeamStore", () => {
     expect(await readStoredHosts(path)).toHaveLength(0);
   });
 
+  it("keeps a team file it cannot read instead of writing over it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-"));
+    roots.push(root);
+    const path = join(root, "team.json");
+    // A file a newer build wrote. Nothing here is backed up, so it has to survive.
+    const original = `${JSON.stringify({ version: 3, hosts: [{ serverId: "from-the-future" }] })}\n`;
+    await writeFile(path, original, "utf8");
+    const store = new TeamStore(path);
+    await store.initialize();
+    const account = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
+
+    await store.activateAccount(account);
+    expect(store.configured).toBe(false);
+    await expect(store.configureWithAccount("Studio Mac", account)).rejects.toThrow("could not be read");
+
+    expect(await readFile(path, "utf8")).toBe(original);
+  });
+
+  it("refuses a configuration whose write lands after another account has signed in", async () => {
+    const { store, path } = await createStore();
+    const first = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
+    const second = { id: "account-b", email: "b@example.com", name: "B", avatarUrl: null };
+    await store.activateAccount(second);
+    const secondIdentity = await store.configureWithAccount("Studio Air", second);
+    await store.activateAccount(first);
+
+    const pending = store.configureWithAccount("Studio Mac", first);
+    const settled = pending.catch(() => undefined);
+    await store.activateAccount(second);
+    await settled;
+
+    // Answering with B's own host would have the caller apply A's configuration - its logo,
+    // its remote registration - to the server B was already running.
+    await expect(pending).rejects.toThrow("signed-in account changed");
+    expect(store.getIdentity()).toEqual(secondIdentity);
+    // A's host is A's own and stays stored: signing back in as A must return it.
+    expect((await readStoredHosts(path)).map((host) => host.serverName)).toEqual(["Studio Air", "Studio Mac"]);
+  });
+
+  it("keeps reporting the account it is bound to when recording the next one fails", async () => {
+    const { store, path } = await createStore();
+    const first = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
+    const second = { id: "account-b", email: "b@example.com", name: "B", avatarUrl: null };
+    await store.activateAccount(first);
+    const identity = await store.configureWithAccount("Studio Mac", first);
+    const root = path.slice(0, -"/team.json".length);
+    const unavailableRoot = `${root}-unavailable`;
+
+    await rename(root, unavailableRoot);
+    await expect(store.activateAccount(second)).rejects.toThrow();
+    await rename(unavailableRoot, root);
+
+    expect(store.getIdentity()).toEqual(identity);
+  });
+
   it("refuses an identity update that lands after another account has signed in", async () => {
     const { store, path } = await createStore();
     const first = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
@@ -702,7 +757,13 @@ interface StoredHostFields {
 
 /** The file holds one host per account; every host field a test reads lives under `hosts`. */
 async function readStoredHosts(path: string): Promise<StoredHostFields[]> {
-  return JSON.parse(await readFile(path, "utf8")).hosts;
+  // Nothing worth recording writes no file at all, which stores no host either way.
+  try {
+    return JSON.parse(await readFile(path, "utf8")).hosts;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return [];
+    throw error;
+  }
 }
 
 async function readStoredHost(path: string, index = 0): Promise<StoredHostFields> {

@@ -762,8 +762,14 @@ export class HostService extends EventEmitter<HostEvents> {
   }
 
   async #stopRuntime(): Promise<void> {
-    await this.#webrtcGateway?.stop();
-    await this.#api.stop();
+    try {
+      await this.#webrtcGateway?.stop();
+    } finally {
+      // A failed gateway teardown must not leave the local API listening: the callers that
+      // swallow that failure go on to rebind the store, and a server still up would serve
+      // the previous account's authenticated requests against the new account's data.
+      await this.#api.stop();
+    }
   }
 
   async #cancelSupersededStart(generation: number): Promise<boolean> {
