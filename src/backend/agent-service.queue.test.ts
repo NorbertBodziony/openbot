@@ -156,11 +156,13 @@ describe.sequential("AgentService: queue", () => {
     await service.initialize();
     holdMetadata = true;
 
-    const outcome = await Promise.race([
-      service.refreshProviders().then(() => "resolved" as const),
-      new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), 500)),
-    ]);
-    releaseMetadata?.();
+    let outcome: "resolved" | "rejected" = "rejected";
+    try {
+      await service.refreshProviders();
+      outcome = "resolved";
+    } finally {
+      releaseMetadata?.();
+    }
 
     expect(outcome).toBe("resolved");
     expect(service.getStatus().phase).toBe("ready");

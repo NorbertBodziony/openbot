@@ -90,6 +90,7 @@ import {
   routineStatusForDelivery,
   summarizeOldMessages,
 } from "./agent/delivery-content";
+import { appendDeltaText, deltaKey } from "./agent/delta-buffer";
 import { developerInstructions } from "./agent/developer-instructions";
 import {
   type HostedSiteMutationTool,
@@ -137,6 +138,13 @@ import {
   siteToolString,
 } from "./agent/routine-tools";
 import { compactRuntimeApproval, compactRuntimeQuestion, fitRuntimeSnapshot } from "./agent/runtime-snapshot";
+import {
+  type AgentClock,
+  computeRestartDelayMs,
+  computeRoutineDelayMs,
+  MAX_RESTART_ATTEMPTS,
+  realAgentClock,
+} from "./agent/scheduler";
 import {
   cleanModelName,
   isArchivedThreadError,
@@ -443,6 +451,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #bundledGrokExecutable: string | null | undefined;
   readonly #prepareBotWorkspace: (bot: BotSummary) => Promise<void>;
   readonly #hostedSites: AgentHostedSites | null;
+  readonly #clock: AgentClock;
   readonly #snapshots = new Map<string, ConversationSnapshot>();
   readonly #threadToBot = new Map<string, string>();
   readonly #loadedThreads = new Map<string, AgentClient>();
@@ -507,8 +516,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     bundledGrokExecutable: string | null | undefined = null,
     prepareBotWorkspace: (bot: BotSummary) => Promise<void> = async () => undefined,
     hostedSites: AgentHostedSites | null = null,
+    clock: AgentClock = realAgentClock,
   ) {
     super();
+    this.#clock = clock;
     this.#store = store;
     this.#mailbox = mailbox;
     this.#browser = browser;
@@ -1118,7 +1129,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.#pendingHostedSiteTerminalDeliveries.delete(key);
     }
     if (this.#pendingHostedSiteTerminalEvents.size === 0 && this.#hostedSiteTerminalRetryTimer) {
-      clearTimeout(this.#hostedSiteTerminalRetryTimer);
+      this.#clock.clearTimeout(this.#hostedSiteTerminalRetryTimer);
       this.#hostedSiteTerminalRetryTimer = null;
     }
     if (bot.threadId) {
@@ -1249,17 +1260,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async stop(): Promise<void> {
     this.#stopping = true;
     this.#initialized = false;
-    if (this.#restartTimer) clearTimeout(this.#restartTimer);
+    this.#clock.clearTimeout(this.#restartTimer);
     this.#restartTimer = null;
-    if (this.#routineTimer) clearTimeout(this.#routineTimer);
+    this.#clock.clearTimeout(this.#routineTimer);
     this.#routineTimer = null;
-    if (this.#hostedSiteTerminalRetryTimer) clearTimeout(this.#hostedSiteTerminalRetryTimer);
+    this.#clock.clearTimeout(this.#hostedSiteTerminalRetryTimer);
     this.#hostedSiteTerminalRetryTimer = null;
     this.#pendingHostedSiteTerminalEvents.clear();
     this.#pendingHostedSiteTerminalDeliveries.clear();
     this.#clearCompactionRuntime();
     for (const pending of this.#pendingDeltas.values()) {
-      if (pending.timer) clearTimeout(pending.timer);
+      this.#clock.clearTimeout(pending.timer);
     }
     this.#pendingDeltas.clear();
     this.#pendingHandoffs.clear();
@@ -1278,7 +1289,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#providerConnectionCommands.clear();
     if (claudeLogin?.child.exitCode === null) claudeLogin.child.kill("SIGTERM");
     if (grokLogin?.child.exitCode === null) grokLogin.child.kill("SIGTERM");
-    if (pendingLogin) clearTimeout(pendingLogin.timer);
+    if (pendingLogin) this.#clock.clearTimeout(pendingLogin.timer);
     for (const [botId, snapshot] of this.#snapshots) {
       if (!snapshot.activeTurnId) continue;
       const session = this.#store.activeProviderSession(botId);
@@ -1742,7 +1753,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return this.getStatus();
     }
     this.#codexLogin = null;
-    clearTimeout(pending.timer);
+    this.#clock.clearTimeout(pending.timer);
     try {
       const account = await pending.client.request("account/read", { refreshToken: true }, decodeAccountReadResult);
       if (account.account?.type === "chatgpt") {
@@ -2090,7 +2101,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         decodeAccountLoginStartResult,
       );
       let pending: PendingCodexLogin;
-      const timer = setTimeout(() => {
+      const timer = this.#clock.setTimeout(() => {
         void this.#cancelCodexLogin("ChatGPT connection timed out. Try again.", pending);
       }, CODEX_LOGIN_TIMEOUT_MS);
       timer.unref?.();
@@ -2126,7 +2137,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (pending.client !== source) return;
     if (completion.loginId !== null && completion.loginId !== pending.loginId) return;
     pending.completing = true;
-    clearTimeout(pending.timer);
+    this.#clock.clearTimeout(pending.timer);
 
     if (!completion.success) {
       await this.#failCodexLogin(pending, "ChatGPT connection was not completed. Try again.");
@@ -2156,7 +2167,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const pending = this.#codexLogin;
     if (!pending || (expected && pending !== expected)) return;
     this.#codexLogin = null;
-    clearTimeout(pending.timer);
+    this.#clock.clearTimeout(pending.timer);
     await pending.client
       .request("account/login/cancel", { loginId: pending.loginId }, decodeRecordResponse)
       .catch(() => undefined);
@@ -2167,7 +2178,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async #failCodexLogin(pending: PendingCodexLogin, message: string): Promise<void> {
     if (this.#codexLogin !== pending) return;
-    clearTimeout(pending.timer);
+    this.#clock.clearTimeout(pending.timer);
     this.#codexLogin = null;
     await pending.client.stop().catch(() => undefined);
     this.#setProviderConnectionFailure("codex", new Error(message), pending.cli.version);
@@ -2360,7 +2371,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     });
     const anotherProviderIsReady = this.#clients.size > 0;
 
-    if (this.#restartAttempts >= 3) {
+    if (this.#restartAttempts >= MAX_RESTART_ATTEMPTS) {
       this.#setStatus(
         anotherProviderIsReady
           ? {
@@ -2379,7 +2390,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return;
     }
 
-    const delayMs = 500 * 2 ** this.#restartAttempts;
+    const delayMs = computeRestartDelayMs(this.#restartAttempts);
     this.#restartAttempts += 1;
     this.#setStatus(
       anotherProviderIsReady
@@ -2396,7 +2407,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             message: `${providerLabel(client.provider)} stopped. Retrying (${this.#restartAttempts}/3)…`,
           },
     );
-    this.#restartTimer = setTimeout(() => {
+    this.#restartTimer = this.#clock.setTimeout(() => {
       this.#restartTimer = null;
       void this.#connect("restarting", [client.provider]);
     }, delayMs);
@@ -3861,7 +3872,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
 
     this.#clearCompactionTimer(threadId);
-    const timer = setTimeout(() => {
+    const timer = this.#clock.setTimeout(() => {
       this.#emitError(
         "context_compaction_timeout",
         "Codex context compaction timed out; queued work will continue.",
@@ -3913,12 +3924,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   #clearCompactionTimer(threadId: string): void {
     const timer = this.#compactionTimers.get(threadId);
-    if (timer) clearTimeout(timer);
+    this.#clock.clearTimeout(timer);
     this.#compactionTimers.delete(threadId);
   }
 
   #clearCompactionRuntime(): void {
-    for (const timer of this.#compactionTimers.values()) clearTimeout(timer);
+    for (const timer of this.#compactionTimers.values()) this.#clock.clearTimeout(timer);
     this.#compactionTimers.clear();
     this.#compactingBots.clear();
     this.#contextBudgets.clear();
@@ -4664,15 +4675,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   #bufferDelta(delta: PendingDelta): void {
-    const key = `${delta.externalThreadId}:${delta.turnId}:${delta.messageId}`;
+    const key = deltaKey(delta);
     const existing = this.#pendingDeltas.get(key);
     if (existing) {
-      existing.text += delta.text;
-      if (Buffer.byteLength(existing.text, "utf8") >= 8 * 1024) this.#flushDelta(key);
+      const appended = appendDeltaText(existing.text, delta.text);
+      existing.text = appended.text;
+      if (appended.shouldFlush) this.#flushDelta(key);
       return;
     }
     const pending = { ...delta };
-    pending.timer = setTimeout(() => this.#flushDelta(key), 100);
+    pending.timer = this.#clock.setTimeout(() => this.#flushDelta(key), 100);
     this.#pendingDeltas.set(key, pending);
   }
 
@@ -4680,7 +4692,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const pending = this.#pendingDeltas.get(key);
     if (!pending) return;
     this.#pendingDeltas.delete(key);
-    if (pending.timer) clearTimeout(pending.timer);
+    this.#clock.clearTimeout(pending.timer);
     const snapshot = this.#ensureSnapshot(pending.botId, pending.publicThreadId);
     const persisted = this.#store.database.persistConversation(snapshot, "response.delta-flushed", {
       turnId: pending.turnId,
@@ -4810,13 +4822,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   #armRoutineTimer(): void {
-    if (this.#routineTimer) clearTimeout(this.#routineTimer);
+    this.#clock.clearTimeout(this.#routineTimer);
     this.#routineTimer = null;
     if (!this.#initialized || this.#stopping) return;
     const nextDueAt = this.#routines.nextDueAt(this.#pendingDuplicateBots);
-    if (!nextDueAt) return;
-    const delay = Math.max(0, Math.min(new Date(nextDueAt).getTime() - Date.now(), 2_147_000_000));
-    this.#routineTimer = setTimeout(() => {
+    const delay = computeRoutineDelayMs(nextDueAt, this.#clock.now());
+    if (delay === null) return;
+    this.#routineTimer = this.#clock.setTimeout(() => {
       this.#routineTimer = null;
       void this.#processDueRoutines();
     }, delay);
@@ -5055,7 +5067,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   #scheduleHostedSiteTerminalRetry(): void {
     if (this.#hostedSiteTerminalRetryTimer || this.#stopping) return;
-    this.#hostedSiteTerminalRetryTimer = setTimeout(() => {
+    this.#hostedSiteTerminalRetryTimer = this.#clock.setTimeout(() => {
       this.#hostedSiteTerminalRetryTimer = null;
       this.#flushPendingHostedSiteTerminalEvents();
     }, 1_000);
