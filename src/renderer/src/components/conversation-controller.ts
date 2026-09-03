@@ -124,17 +124,35 @@ export function createStableConversationState(props: Pick<ConversationProps, "on
     runtimeSettingsAttempts: new Map(),
   };
 
+  /**
+   * "The user is not composing to that agent any more."
+   *
+   * It lives on the controller rather than in the view because three owners with
+   * three different lifetimes have to be able to say it: the view, on the
+   * transitions that unmount it; this controller, when the app goes away; and
+   * `server-selection.tsx`, which has to say it *before* `servers.select()` so
+   * the message reaches the server the user was typing on rather than the one
+   * they are arriving at.
+   */
+  function stopComposerTyping(): void {
+    if (resources.typingIdleTimer) clearTimeout(resources.typingIdleTimer);
+    resources.typingIdleTimer = undefined;
+    if (!resources.typingBotId) return;
+    props.onTypingChange(resources.typingBotId, false);
+    resources.typingBotId = null;
+  }
+
   onCleanup(() => {
     resources.voiceDisposed = true;
     if (resources.voiceRecordingTimer) clearTimeout(resources.voiceRecordingTimer);
     if (resources.voiceElapsedTimer) clearInterval(resources.voiceElapsedTimer);
     if (resources.voiceRecorder?.state === "recording") resources.voiceRecorder.stop();
     for (const track of resources.voiceStream?.getTracks() ?? []) track.stop();
-    if (resources.typingIdleTimer) clearTimeout(resources.typingIdleTimer);
-    if (resources.typingBotId) props.onTypingChange(resources.typingBotId, false);
+    stopComposerTyping();
   });
 
   return {
+    stopComposerTyping,
     drafts,
     setDrafts,
     editingBotId,

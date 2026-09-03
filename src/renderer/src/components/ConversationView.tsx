@@ -1819,11 +1819,7 @@ function createConversationViewScope(props: ConversationProps) {
   }
 
   function stopTeamTyping(): void {
-    if (resources.typingIdleTimer) clearTimeout(resources.typingIdleTimer);
-    resources.typingIdleTimer = undefined;
-    if (!resources.typingBotId) return;
-    props.onTypingChange(resources.typingBotId, false);
-    resources.typingBotId = null;
+    controller.stopComposerTyping();
   }
 
   function addAttachments(selected: DraftAttachment[], target = currentTarget()) {

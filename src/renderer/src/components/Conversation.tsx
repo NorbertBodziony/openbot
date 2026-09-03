@@ -15,6 +15,12 @@ export { createConversationController } from "./conversation-controller";
  * message, or another server - has to release both, and this component unmounts
  * on exactly those transitions.
  *
+ * On a server switch the typing indicator is released earlier still, in
+ * `server-selection.tsx`, because by the time this unmounts main has already
+ * moved its active server and the message would reach the wrong one. The call
+ * here is then a no-op, and it is what covers the two transitions that stay
+ * inside one server.
+ *
  * `voiceDisposed` deliberately stays with the controller. It means "the app is
  * going away", not "this view went away", so a transcription that resolves after
  * the switch still lands on the server that started it. What replaces it for the
@@ -27,11 +33,7 @@ export function Conversation(props: ConversationProps) {
   const { resources } = controller;
 
   onCleanup(() => {
-    if (resources.typingIdleTimer) clearTimeout(resources.typingIdleTimer);
-    if (resources.typingBotId) {
-      props.onTypingChange(resources.typingBotId, false);
-      resources.typingBotId = null;
-    }
+    controller.stopComposerTyping();
     if (resources.voiceRecordingTimer) clearTimeout(resources.voiceRecordingTimer);
     if (resources.voiceElapsedTimer) clearInterval(resources.voiceElapsedTimer);
     if (resources.voiceRecorder?.state === "recording") {

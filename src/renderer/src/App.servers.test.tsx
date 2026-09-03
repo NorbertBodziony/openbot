@@ -682,6 +682,34 @@ describe("OpenBot connected desktop shell", () => {
     expect(window.openbot.remoteDesktop.connect).toHaveBeenCalledTimes(1);
   });
 
+  it("tells the server the user is leaving that composing has stopped", async () => {
+    const local = testServer("local", true);
+    const remote = testServer("remote-1", false);
+    const calls: string[] = [];
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
+    vi.mocked(window.openbot.servers.setTyping).mockImplementation(async (input) => {
+      calls.push(input.typing ? "typing on" : "typing off");
+    });
+    vi.mocked(window.openbot.servers.select).mockImplementation(async (serverId) => {
+      calls.push("select");
+      return [
+        { ...local, active: serverId === "local" },
+        { ...remote, active: serverId === "remote-1" },
+      ];
+    });
+
+    render(() => <App />);
+    const composer = await screen.findByRole("textbox", { name: "Message Chief" });
+    composer.textContent = "Half a thought";
+    await fireEvent.input(composer);
+    await waitFor(() => expect(calls).toEqual(["typing on"]));
+
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+
+    await waitFor(() => expect(window.openbot.servers.select).toHaveBeenCalledWith("remote-1"));
+    expect(calls).toEqual(["typing on", "typing off", "select"]);
+  });
+
   it("persists settings and opens managed attachment actions", async () => {
     render(() => <App />);
     await fireEvent.click(await screen.findByRole("button", { name: "View agent settings" }));

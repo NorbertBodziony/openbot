@@ -1,6 +1,8 @@
 import type { AgentProviderId, BotSummary, ServerSummary } from "@openbot/contracts/ipc";
 import { useAgents } from "./agents";
 import { desktopAnalytics } from "./analytics";
+import { useConversationController } from "./components/conversation-controller-context";
+import { useDirectMessages } from "./direct-messages";
 import { useRemoteDesktop } from "./remote-desktop";
 import { useServerSwitch } from "./server-switch";
 import { useServers } from "./servers";
@@ -36,6 +38,8 @@ const ServerSelection = createSimpleContext({
     const { disconnectRemoteDesktopWorkspace } = useRemoteDesktop();
     const { setBrowserVisibilitySuspended, setPendingBotSelection } = useServerSwitch();
     const { botSetupOpen, creatingAgent } = useAgents();
+    const { stopComposerTyping } = useConversationController();
+    const { setDirectTyping } = useDirectMessages();
 
     async function selectServer(
       serverId: string,
@@ -50,6 +54,14 @@ const ServerSelection = createSimpleContext({
       if (switchingServers) setBrowserVisibilitySuspended(true);
       try {
         if (switchingServers) {
+          // Both of these have to happen before `servers.select()`, not when the
+          // scope is disposed. Main moves its active server the moment `select`
+          // resolves, while the keyed boundary tears the scope down only after
+          // `setServers`, so a typing indicator released on the way out would be
+          // addressed to the server being entered and the one being left would
+          // keep showing it until its own timeout.
+          stopComposerTyping();
+          setDirectTyping(false);
           await disconnectRemoteDesktopWorkspace(false);
           if (!selectionIsCurrent()) return false;
           await window.openbot.browser.setVisible({ visible: false }).catch(() => undefined);
