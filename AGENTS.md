@@ -128,10 +128,15 @@ for the component patterns, not the imports.
 **Prefer one `createStore` per concern over a row of `createSignal` calls.** Fields that change
 together are one record — a saved-and-draft form pair, a `data`/`loaded`/`loading`/`error` quad, a
 phase plus the numbers only one phase uses, several `Record`s keyed by the same `botId`. Declare the
-shape up front and keep the setter private behind named mutations, as `app-stored-values.ts` does,
-so replacing one field re-renders only what read that field; `FirstBotSetup.tsx` is the form
-version. Ten keyed `Record` signals are one row type shredded into ten columns, every write spreads
-the whole map so every consumer of every key re-runs, and parallel signals let a screen hold states
+shape up front, so replacing one field re-renders only what read that field; `FirstBotSetup.tsx` is
+the form version. Keep the setter private behind named mutations where the store *is* a module's or
+a hook's exported surface, as `app-stored-values.ts` and `createAsyncPanel.ts` do. Inside a
+component, write the field where it changes — `setPanels((state) => { state.x = value; })` at the
+call site, as `SettingsModal.tsx` does — and let a named mutation there earn its name: more than one
+field, a guard or a side effect, or enough call sites that the name deduplicates something. A
+function whose whole body is `state.x = value` is the signal wall one layer down. Ten keyed
+`Record` signals are one row type shredded into ten columns, every write spreads the whole map so
+every consumer of every key re-runs, and parallel signals let a screen hold states
 the product does not have. `createSignal` still fits an element ref, a single measurement, a one-off
 boolean, and a record you always replace whole. Stores come from `"solid-js"` — there is no
 `solid-js/store` in this RC — hold plain values rather than accessors, and are never destructured.
