@@ -2,9 +2,12 @@
 
 import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isString } from "@openbot/contracts/runtime-values";
+import { TEAM_AGENT_ACTIVITY_CAPABILITY } from "@openbot/contracts/team-protocol/current";
+import { decodeTeamProtocolV1ClientEvent } from "@openbot/contracts/team-protocol/v1";
 import {
   decodeTeamProtocolV2AuthFrame,
   decodeTeamProtocolV2RpcFrame,
@@ -12,13 +15,16 @@ import {
   teamProtocolV2AuthenticationTranscript,
 } from "@openbot/contracts/team-protocol/v2";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { WebSocketServer } from "ws";
 import { TeamStore } from "./team-store";
 import { TeamWebRtcBridge } from "./team-webrtc-bridge";
 import { TeamWebRtcHostGateway } from "./team-webrtc-host-gateway";
 
 const directories: string[] = [];
+const serverCleanups: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
+  await Promise.all(serverCleanups.splice(0).map((cleanup) => cleanup()));
   await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
@@ -47,7 +53,7 @@ class FakeBridge extends TeamWebRtcBridge {
 }
 
 describe("TeamWebRtcHostGateway", () => {
-  it("gets a new machine-authenticated ticket after host authentication expires", async () => {
+  it("refreshes an early event subscription when the peer capabilities arrive", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openbot-webrtc-host-gateway-"));
     directories.push(directory);
     const bridge = new FakeBridge();
@@ -70,6 +76,30 @@ describe("TeamWebRtcHostGateway", () => {
       privateKeyEncoding: { type: "pkcs8", format: "pem" },
     });
     const sessionExpiresAt = Math.floor(Date.now() / 1_000) + 60;
+    const eventScopes: Array<
+      Extract<ReturnType<typeof decodeTeamProtocolV1ClientEvent>, { type: "agent-event-scope" }>
+    > = [];
+    const localServer = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    });
+    const eventsServer = new WebSocketServer({ server: localServer });
+    eventsServer.on("connection", (socket) => {
+      socket.on("message", (data) => {
+        const event = decodeTeamProtocolV1ClientEvent(JSON.parse(data.toString()));
+        if (event.type === "agent-event-scope") eventScopes.push(event);
+      });
+    });
+    await new Promise<void>((resolve) => localServer.listen(0, "127.0.0.1", resolve));
+    const address = localServer.address();
+    if (!address || typeof address === "string") throw new Error("The local Team API did not open a TCP port.");
+    serverCleanups.push(
+      () =>
+        new Promise<void>((resolve) => {
+          for (const client of eventsServer.clients) client.terminate();
+          eventsServer.close(() => localServer.close(() => resolve()));
+        }),
+    );
     const gateway = new TeamWebRtcHostGateway({
       bridge,
       store,
@@ -94,7 +124,7 @@ describe("TeamWebRtcHostGateway", () => {
       hostId: "host-1",
       signalUrl: "wss://signal.example.test/v1/signal",
       ticket: "initial",
-      localApiPort: 43_210,
+      localApiPort: address.port,
     });
     await vi.waitFor(() => expect(bridge.connections).toHaveLength(1));
     bridge.emit("signalReady", "host-1");
@@ -176,6 +206,37 @@ describe("TeamWebRtcHostGateway", () => {
         }),
       ).toBe(true),
     );
+    bridge.emit(
+      "data",
+      "host-1",
+      "events",
+      encodeTeamProtocolV2Frame({
+        version: 2,
+        type: "event-control",
+        control: { type: "runtime-snapshot-request" },
+      }),
+    );
+    await vi.waitFor(() => expect(eventScopes).toHaveLength(1));
+    expect(eventScopes[0]?.capabilities).toEqual([]);
+    bridge.emit(
+      "data",
+      "host-1",
+      "rpc",
+      encodeTeamProtocolV2Frame({
+        version: 2,
+        type: "request",
+        requestId: "capability-request",
+        operation: "http.request",
+        payload: {
+          method: "GET",
+          path: "/v1/agents",
+          body: null,
+          capabilities: [TEAM_AGENT_ACTIVITY_CAPABILITY],
+        },
+      }),
+    );
+    await vi.waitFor(() => expect(eventScopes).toHaveLength(2));
+    expect(eventScopes[1]?.capabilities).toContain(TEAM_AGENT_ACTIVITY_CAPABILITY);
     let resolveFetch!: (response: Response) => void;
     const fetchRequest = vi
       .spyOn(globalThis, "fetch")
@@ -196,7 +257,8 @@ describe("TeamWebRtcHostGateway", () => {
         bridge.sent.filter((message) => {
           if (message.channel !== "rpc" || !isString(message.data)) return false;
           try {
-            return decodeTeamProtocolV2RpcFrame(message.data).type === "response";
+            const frame = decodeTeamProtocolV2RpcFrame(message.data);
+            return frame.type === "response" && frame.requestId === "duplicate-request";
           } catch {
             return false;
           }

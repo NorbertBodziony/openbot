@@ -469,7 +469,12 @@ export class TeamWebRtcHostGateway {
     }
     const peerId = this.#peerId;
     if (!peerId) throw new GatewayError(503, "remote_disconnected", "The WebRTC peer disconnected.");
-    this.#peerCapabilities = new Set(input.capabilities ?? []);
+    const peerCapabilities = new Set(input.capabilities ?? []);
+    const capabilitiesChanged =
+      peerCapabilities.size !== this.#peerCapabilities.size ||
+      [...peerCapabilities].some((capability) => !this.#peerCapabilities.has(capability));
+    this.#peerCapabilities = peerCapabilities;
+    if (capabilitiesChanged) this.#sendAgentEventScope();
     const preserveSemanticTags = supportsTeamSemanticTags(this.#peerCapabilities);
     const uploaded = input.bodyTransferId ? await this.#files.consume(peerId, input.bodyTransferId) : null;
     const response = await fetch(url, {
@@ -539,13 +544,7 @@ export class TeamWebRtcHostGateway {
     this.#eventsSocket = socket;
     socket.once("open", () => {
       this.#eventsReconnectAttempts = 0;
-      socket.send(
-        encodeTeamProtocolV1ClientEvent({
-          type: "agent-event-scope",
-          includeConversations: true,
-          capabilities: TEAM_CURRENT_CAPABILITIES.filter((capability) => this.#peerCapabilities.has(capability)),
-        }),
-      );
+      this.#sendAgentEventScope();
     });
     socket.on("message", (data, binary) => {
       if (binary || !this.#peerId) return;
@@ -577,6 +576,17 @@ export class TeamWebRtcHostGateway {
       this.#eventsSocket = null;
       this.#scheduleLocalEventsReconnect();
     });
+  }
+
+  #sendAgentEventScope(): void {
+    if (this.#eventsSocket?.readyState !== webSockets.WebSocket.OPEN) return;
+    this.#eventsSocket.send(
+      encodeTeamProtocolV1ClientEvent({
+        type: "agent-event-scope",
+        includeConversations: true,
+        capabilities: TEAM_CURRENT_CAPABILITIES.filter((capability) => this.#peerCapabilities.has(capability)),
+      }),
+    );
   }
 
   #scheduleLocalEventsReconnect(): void {
