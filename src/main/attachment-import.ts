@@ -1,5 +1,6 @@
 import { readFile, stat } from "node:fs/promises";
 import { basename, extname } from "node:path";
+import { inflateRaw } from "node:zlib";
 import {
   attachmentFileExtension,
   attachmentMimeTypeForName,
@@ -9,7 +10,7 @@ import {
 } from "@openbot/contracts/attachment-files";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { AttachmentDataInput, ImportAttachmentsInput } from "@openbot/contracts/ipc";
-import { strFromU8, unzip } from "fflate";
+import { strFromU8 } from "fflate";
 import PostalMime from "postal-mime";
 
 const ZIP_CENTRAL_SIGNATURE = 0x02014b50;
@@ -23,6 +24,8 @@ const UNIX_DIRECTORY = 0o040000;
 const EMAIL_MAX_HEADERS_BYTES = 2 * 1024 * 1024;
 const EMAIL_MAX_NESTING_DEPTH = 32;
 const EMAIL_MAX_RFC822_NESTING_DEPTH = 10;
+const EMAIL_MAX_MIME_PARTS = 64;
+const HEADER_DECODER = new TextDecoder("latin1");
 const CRC32_TABLE = Uint32Array.from({ length: 256 }, (_, index) => {
   let value = index;
   for (let bit = 0; bit < 8; bit += 1) value = (value >>> 1) ^ (0xedb88320 & -(value & 1));
@@ -39,6 +42,9 @@ interface ZipEntry {
   size: number;
   directory: boolean;
   crc32: number;
+  compression: number;
+  compressedSize: number;
+  dataOffset: number;
 }
 
 export async function normalizeAttachmentImports(input: ImportAttachmentsInput): Promise<ImportAttachmentsInput> {
@@ -115,12 +121,15 @@ async function expandContainer(
 ): Promise<AttachmentDataInput[]> {
   if (bytes.byteLength > ATTACHMENT_LIMITS.fileBytes) throw new Error(`${name} exceeds the 100 MB limit.`);
   const expanded =
-    attachmentFileExtension(name) === "eml" ? await expandEmail(name, bytes) : await expandZip(name, bytes, budget);
+    attachmentFileExtension(name) === "eml"
+      ? await expandEmail(name, bytes, budget)
+      : await expandZip(name, bytes, budget);
   assertWithinBudget(expanded, budget);
   return expanded;
 }
 
-async function expandEmail(name: string, bytes: Uint8Array): Promise<AttachmentDataInput[]> {
+async function expandEmail(name: string, bytes: Uint8Array, budget: AttachmentBudget): Promise<AttachmentDataInput[]> {
+  assertEmailPreflight(name, bytes, budget);
   let email: Awaited<ReturnType<typeof PostalMime.parse>>;
   try {
     email = await PostalMime.parse(bytes, {
@@ -182,29 +191,32 @@ async function expandZip(name: string, bytes: Uint8Array, budget: AttachmentBudg
     throw new Error("Attachments exceed the 250 MB total limit.");
   }
 
-  let extracted: Record<string, Uint8Array>;
-  try {
-    extracted = await unzipArchive(bytes, new Set(entries.map((entry) => entry.name)));
-  } catch {
-    throw new Error(`${name} is malformed or uses an unsupported ZIP encoding. Recreate the archive and retry.`);
-  }
   const stem = safeStem(name);
   const usedNames = new Set<string>();
-  return entries.map((entry) => {
-    const content = extracted[entry.name];
-    if (!content || content.byteLength !== entry.size || crc32(content) !== entry.crc32) {
+  const result: AttachmentDataInput[] = [];
+  for (const entry of entries) {
+    let content: Uint8Array;
+    try {
+      content = await extractZipEntry(bytes, entry);
+    } catch {
+      throw new Error(`${name} is malformed or uses an unsupported ZIP encoding. Recreate the archive and retry.`);
+    }
+    if (content.byteLength !== entry.size || crc32(content) !== entry.crc32) {
       throw new Error(`${name} contains a damaged entry (${entry.name}). Recreate the archive and retry.`);
     }
     const outputName = uniqueName(flattenedName(stem, entry.name), usedNames);
-    return { name: outputName, mimeType: attachmentMimeTypeForName(outputName), bytes: content };
-  });
+    result.push({ name: outputName, mimeType: attachmentMimeTypeForName(outputName), bytes: content });
+  }
+  return result;
 }
 
-function unzipArchive(bytes: Uint8Array, names: Set<string>): Promise<Record<string, Uint8Array>> {
+function extractZipEntry(bytes: Uint8Array, entry: ZipEntry): Promise<Uint8Array> {
+  const compressed = bytes.subarray(entry.dataOffset, entry.dataOffset + entry.compressedSize);
+  if (entry.compression === 0) return Promise.resolve(compressed.slice());
   return new Promise((resolve, reject) => {
-    unzip(bytes, { filter: (entry) => names.has(entry.name) }, (error, result) => {
+    inflateRaw(compressed, { maxOutputLength: entry.size + 1 }, (error, result) => {
       if (error) reject(error);
-      else resolve(result);
+      else resolve(new Uint8Array(result));
     });
   });
 }
@@ -265,12 +277,18 @@ function inspectZip(archiveName: string, bytes: Uint8Array): ZipEntry[] {
         `${archiveName} contains ${name} with unsupported ZIP compression. Recreate the archive and retry.`,
       );
     }
+    if (compression === 0 && compressedSize !== size) {
+      throw new Error(`${archiveName} has conflicting ZIP sizes for ${name}. Recreate it and retry.`);
+    }
     if (view.getUint32(localOffset, true) !== ZIP_LOCAL_SIGNATURE) {
       throw new Error(`${archiveName} has a damaged ZIP entry (${name}).`);
     }
     const localFlags = view.getUint16(localOffset + 6, true);
     if ((localFlags & ZIP_ENCRYPTED_FLAG) !== 0) {
       throw new Error(`${archiveName} contains a password-protected entry (${name}). Remove the password and retry.`);
+    }
+    if (view.getUint16(localOffset + 8, true) !== compression) {
+      throw new Error(`${archiveName} has conflicting ZIP metadata for ${name}. Recreate it and retry.`);
     }
     const localNameLength = view.getUint16(localOffset + 26, true);
     const localExtraLength = view.getUint16(localOffset + 28, true);
@@ -285,7 +303,15 @@ function inspectZip(archiveName: string, bytes: Uint8Array): ZipEntry[] {
     if (unixType !== 0 && unixType !== UNIX_REGULAR_FILE && unixType !== UNIX_DIRECTORY) {
       throw new Error(`${archiveName} contains a link or special file (${name}). Remove it and retry.`);
     }
-    entries.push({ name, size, directory, crc32: expectedCrc32 });
+    entries.push({
+      name,
+      size,
+      directory,
+      crc32: expectedCrc32,
+      compression,
+      compressedSize,
+      dataOffset,
+    });
     offset = nextOffset;
   }
   if (offset !== centralOffset + centralSize) throw new Error(`${archiveName} has a damaged ZIP directory.`);
@@ -326,6 +352,119 @@ function assertWithinBudget(items: AttachmentDataInput[], budget: AttachmentBudg
 function consumeBudget(budget: AttachmentBudget, items: AttachmentDataInput[]): void {
   budget.count -= items.length;
   budget.bytes -= items.reduce((sum, item) => sum + item.bytes.byteLength, 0);
+}
+
+interface EmailHeaders {
+  contentType: string;
+  contentDisposition: string;
+  bodyOffset: number;
+  recognized: boolean;
+}
+
+function assertEmailPreflight(name: string, bytes: Uint8Array, budget: AttachmentBudget): void {
+  let parts = 0;
+  let attachments = 1;
+  let offset = 0;
+  const root = readEmailHeaders(bytes, 0);
+  ({ parts, attachments } = countEmailPart(root, parts, attachments));
+  assertEmailCounts(name, budget, parts, attachments);
+  offset = root.bodyOffset;
+
+  while (offset < bytes.byteLength) {
+    const line = readEmailLine(bytes, offset);
+    offset = line.nextOffset;
+    if (line.endOffset - line.startOffset < 3 || bytes[line.startOffset] !== 45 || bytes[line.startOffset + 1] !== 45) {
+      continue;
+    }
+    const headers = readEmailHeaders(bytes, offset);
+    if (!headers.recognized) continue;
+    ({ parts, attachments } = countEmailPart(headers, parts, attachments));
+    assertEmailCounts(name, budget, parts, attachments);
+    offset = headers.bodyOffset;
+  }
+}
+
+function assertEmailCounts(name: string, budget: AttachmentBudget, parts: number, attachments: number): void {
+  if (parts > EMAIL_MAX_MIME_PARTS) {
+    throw new Error(`${name} contains too many MIME parts. Remove attachments and retry.`);
+  }
+  if (attachments > budget.count) {
+    throw new Error(`These files expand to more than ${INPUT_LIMITS.attachments} attachments. Import fewer files.`);
+  }
+}
+
+function countEmailPart(
+  headers: EmailHeaders,
+  parts: number,
+  attachments: number,
+): { parts: number; attachments: number } {
+  if (!headers.recognized) return { parts, attachments };
+  const contentType = headers.contentType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+  const disposition =
+    headers.contentDisposition
+      .trim()
+      .toLowerCase()
+      .match(/^[a-z]+/u)?.[0] ?? "";
+  const isHtml = contentType === "text/html" && disposition !== "attachment";
+  const isAttachment =
+    disposition === "attachment" ||
+    (contentType !== "" &&
+      contentType !== "text/plain" &&
+      contentType !== "text/html" &&
+      !contentType.startsWith("multipart/") &&
+      !(contentType === "message/rfc822" && disposition === "inline"));
+  return {
+    parts: parts + 1,
+    attachments: attachments + Number(isHtml) + Number(isAttachment),
+  };
+}
+
+function readEmailHeaders(bytes: Uint8Array, startOffset: number): EmailHeaders {
+  let contentType = "";
+  let contentDisposition = "";
+  let current: "content-type" | "content-disposition" | null = null;
+  let offset = startOffset;
+  let recognized = false;
+
+  while (offset < bytes.byteLength) {
+    const line = readEmailLine(bytes, offset);
+    offset = line.nextOffset;
+    if (line.startOffset === line.endOffset) break;
+    if (line.endOffset - line.startOffset > EMAIL_MAX_HEADERS_BYTES) {
+      return { contentType: "", contentDisposition: "", bodyOffset: startOffset, recognized: false };
+    }
+    const value = HEADER_DECODER.decode(bytes.subarray(line.startOffset, line.endOffset));
+    if (/^[\t ]/u.test(value)) {
+      if (current === "content-type") contentType += ` ${value.trim()}`;
+      else if (current === "content-disposition") contentDisposition += ` ${value.trim()}`;
+      continue;
+    }
+    const separator = value.indexOf(":");
+    if (separator < 1) return { contentType: "", contentDisposition: "", bodyOffset: startOffset, recognized: false };
+    const key = value.slice(0, separator).trim().toLowerCase();
+    current = key === "content-type" || key === "content-disposition" ? key : null;
+    if (current === "content-type") {
+      contentType = value.slice(separator + 1).trim();
+      recognized = true;
+    } else if (current === "content-disposition") {
+      contentDisposition = value.slice(separator + 1).trim();
+      recognized = true;
+    }
+  }
+
+  return { contentType, contentDisposition, bodyOffset: offset, recognized };
+}
+
+function readEmailLine(
+  bytes: Uint8Array,
+  startOffset: number,
+): { startOffset: number; endOffset: number; nextOffset: number } {
+  let endOffset = startOffset;
+  while (endOffset < bytes.byteLength && bytes[endOffset] !== 10 && bytes[endOffset] !== 13) endOffset += 1;
+  let nextOffset = endOffset;
+  if (bytes[nextOffset] === 13) nextOffset += 1;
+  if (bytes[nextOffset] === 10) nextOffset += 1;
+  return { startOffset, endOffset, nextOffset };
 }
 
 function assertSafeMemberName(container: string, name: string): void {

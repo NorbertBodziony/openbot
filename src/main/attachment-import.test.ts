@@ -130,6 +130,20 @@ describe("attachment container imports", () => {
     await expect(importZip(damaged)).rejects.toThrow("damaged entry");
   });
 
+  it("rejects ZIP entries whose output exceeds their declared size", async () => {
+    const expanded = patchFirstZipEntry(
+      zipSync({ "report.txt": strToU8("content".repeat(200_000)) }),
+      (view, central, local) => {
+        view.setUint32(central + 16, 0, true);
+        view.setUint32(central + 24, 0, true);
+        view.setUint32(local + 14, 0, true);
+        view.setUint32(local + 22, 0, true);
+      },
+    );
+
+    await expect(importZip(expanded)).rejects.toThrow("malformed or uses an unsupported ZIP encoding");
+  });
+
   it("rejects malformed, oversized, and over-populated ZIP files", async () => {
     const oversized = patchFirstZipEntry(zipSync({ "report.txt": strToU8("report") }), (view, central, local) => {
       const size = ATTACHMENT_LIMITS.fileBytes + 1;
@@ -216,6 +230,25 @@ describe("attachment container imports", () => {
     }
 
     await expect(importEmail(strToU8(nested))).rejects.toThrow("nested .eml");
+  });
+
+  it("rejects an over-populated EML before parsing its attachments", async () => {
+    const parts = Array.from({ length: 10 }, (_, index) =>
+      [
+        "--openbot",
+        `Content-Type: text/plain; name="file-${index}.txt"`,
+        `Content-Disposition: attachment; filename="file-${index}.txt"`,
+        "",
+        String(index),
+      ].join("\r\n"),
+    );
+    const email = strToU8(
+      ["Subject: Crowded", 'Content-Type: multipart/mixed; boundary="openbot"', "", ...parts, "--openbot--"].join(
+        "\r\n",
+      ),
+    );
+
+    await expect(importEmail(email)).rejects.toThrow("more than 10 attachments");
   });
 
   it("rejects unsupported top-level files with the supported next action", async () => {
