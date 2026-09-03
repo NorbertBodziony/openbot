@@ -40,6 +40,9 @@ import {
   parseDynamicIslandPresentation,
   parseExternalDestination,
   parseMacPermission,
+  parseMarketplaceAgentQuery,
+  parseMarketplaceSkillQuery,
+  parseProfileName,
   parseProvider,
   parseProviderId,
   parseUpdatePreference,
@@ -69,6 +72,41 @@ describe("app IPC input parsing", () => {
     expect(parseAnalyticsPreference({ enabled: false })).toEqual({ enabled: false });
     expect(parseUpdatePreference({ autoDownload: false })).toEqual({ autoDownload: false });
     expect(parseUpdatePreference({ autoDownload: true })).toEqual({ autoDownload: true });
+  });
+
+  // These two channels validated their payload inline until the decoder became a required argument,
+  // so the cases below pin the behaviour that move preserved rather than any new rule. The 100
+  // character cap on `query` is silent truncation, not rejection, and turning it into an error would
+  // be a product change.
+  it("truncates an over-long marketplace search instead of rejecting it", () => {
+    const query = "a".repeat(150);
+    expect(parseMarketplaceSkillQuery({ query })).toEqual({ query: "a".repeat(100) });
+    expect(parseMarketplaceAgentQuery({ query })).toEqual({ query: "a".repeat(100) });
+  });
+
+  it("keeps only the marketplace filters a caller actually sent", () => {
+    expect(parseMarketplaceSkillQuery({})).toEqual({});
+    expect(
+      parseMarketplaceSkillQuery({ featured: true, sort: "installs", cursor: "page-2", limit: 20, category: "coding" }),
+    ).toEqual({ featured: true, sort: "installs", cursor: "page-2", limit: 20, category: "coding" });
+    expect(parseMarketplaceSkillQuery({ featured: false, cursor: 7 })).toEqual({});
+    expect(parseMarketplaceAgentQuery({ featured: true, limit: 5 })).toEqual({ featured: true, limit: 5 });
+  });
+
+  it("separates the two marketplaces by their rejection messages", () => {
+    expect(() => parseMarketplaceSkillQuery(null)).toThrowError("Invalid marketplace query.");
+    expect(() => parseMarketplaceAgentQuery(null)).toThrowError("Invalid agent marketplace query.");
+    expect(() => parseMarketplaceSkillQuery({ sort: "newest" })).toThrowError("Unknown skill sort order.");
+    expect(() => parseMarketplaceAgentQuery({ sort: "newest" })).toThrowError("Unknown agent sort order.");
+    expect(() => parseMarketplaceSkillQuery({ category: "cooking" })).toThrowError("Unknown skill category.");
+  });
+
+  it("applies the profile name rule through one decoder", () => {
+    expect(parseProfileName("  Ada Lovelace  ")).toBe("Ada Lovelace");
+    expect(() => parseProfileName("")).toThrowError("name is required.");
+    expect(() => parseProfileName("a")).toThrowError(
+      `name must contain ${INPUT_LIMITS.profileNameMin} to ${INPUT_LIMITS.profileName} safe characters.`,
+    );
   });
 
   it("keeps setup and permission error messages", () => {

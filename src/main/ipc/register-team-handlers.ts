@@ -13,12 +13,14 @@ import {
   parseLoginServer,
   parseMarkDirectRead,
   parseReadDirectConversationPage,
+  parseRemoteDesktopConnect,
+  parseRemoteDesktopDisplay,
   parseReorderServers,
   parseSendDirectMessage,
   parseSetTeamTyping,
   parseUpdateTeamMember,
 } from "./server-inputs";
-import { isObject, requireString } from "./validation";
+import { requireString, stringPayload } from "./validation";
 
 interface TeamIpcDependencies {
   host: HostService;
@@ -34,133 +36,101 @@ export function registerTeamIpcHandlers({
   takePendingInvite,
 }: TeamIpcDependencies): void {
   handleTrusted(IPC_CHANNELS.serversList, () => withLocalHostSummary(remoteServers.list(), host.getStatus()));
-  handleTrusted(IPC_CHANNELS.serversSelect, (serverId: unknown) =>
-    remoteServers
-      .select(requireString(serverId, "serverId"))
-      .then((servers) => withLocalHostSummary(servers, host.getStatus())),
+  handleTrusted(IPC_CHANNELS.serversSelect, stringPayload("serverId"), (serverId) =>
+    remoteServers.select(serverId).then((servers) => withLocalHostSummary(servers, host.getStatus())),
   );
-  handleTrusted(IPC_CHANNELS.serversReorder, (input: unknown) =>
-    remoteServers
-      .reorder(parseReorderServers(input).serverIds)
-      .then((servers) => withLocalHostSummary(servers, host.getStatus())),
+  handleTrusted(IPC_CHANNELS.serversReorder, parseReorderServers, (request) =>
+    remoteServers.reorder(request.serverIds).then((servers) => withLocalHostSummary(servers, host.getStatus())),
   );
-  handleTrusted(IPC_CHANNELS.serversJoin, (input: unknown) => remoteServers.join(parseJoinServer(input)));
-  handleTrusted(IPC_CHANNELS.serversPreviewInvite, (input: unknown) =>
-    remoteServers.previewInvite(parseJoinServer(input)),
-  );
+  handleTrusted(IPC_CHANNELS.serversJoin, parseJoinServer, (request) => remoteServers.join(request));
+  handleTrusted(IPC_CHANNELS.serversPreviewInvite, parseJoinServer, (request) => remoteServers.previewInvite(request));
   handleTrusted(IPC_CHANNELS.serversTakePendingInvite, takePendingInvite);
-  handleTrusted(IPC_CHANNELS.serversLogin, (input: unknown) => remoteServers.login(parseLoginServer(input)));
-  handleTrusted(IPC_CHANNELS.serversRetryConnection, (serverId: unknown) =>
-    remoteServers.retryConnection(requireString(serverId, "serverId")),
+  handleTrusted(IPC_CHANNELS.serversLogin, parseLoginServer, (request) => remoteServers.login(request));
+  handleTrusted(IPC_CHANNELS.serversRetryConnection, stringPayload("serverId"), (serverId) =>
+    remoteServers.retryConnection(serverId),
   );
-  handleTrusted(IPC_CHANNELS.serversRemove, (serverId: unknown) =>
-    remoteServers.remove(requireString(serverId, "serverId")),
-  );
+  handleTrusted(IPC_CHANNELS.serversRemove, stringPayload("serverId"), (serverId) => remoteServers.remove(serverId));
   handleTrusted(IPC_CHANNELS.serversGetPresence, () =>
     remoteServers.activeServerId === "local" ? host.getPresence() : remoteServers.getPresence(),
   );
-  handleTrusted(IPC_CHANNELS.serversGetPresenceFor, (serverId: unknown) => {
-    const target = requireString(serverId, "serverId");
-    return target === "local" ? host.getPresence() : remoteServers.getPresenceFor(target);
-  });
-  handleTrusted(IPC_CHANNELS.serversRefreshIdentity, (serverId: unknown) =>
-    remoteServers.refreshIdentity(requireString(serverId, "serverId")),
+  handleTrusted(IPC_CHANNELS.serversGetPresenceFor, stringPayload("serverId"), (serverId) =>
+    serverId === "local" ? host.getPresence() : remoteServers.getPresenceFor(serverId),
   );
-  handleTrusted(IPC_CHANNELS.serversListMembers, (serverId: unknown) =>
-    remoteServers.listMembers(requireString(serverId, "serverId")),
+  handleTrusted(IPC_CHANNELS.serversRefreshIdentity, stringPayload("serverId"), (serverId) =>
+    remoteServers.refreshIdentity(serverId),
   );
-  handleTrusted(IPC_CHANNELS.serversUpdateMember, (input: unknown) => {
-    const request = parseAgentRequest(input);
-    return remoteServers.updateMember(request.serverId, parseUpdateTeamMember(request.payload));
-  });
-  handleTrusted(IPC_CHANNELS.serversRemoveMember, (input: unknown) => {
-    const request = parseAgentRequest(input);
-    return remoteServers.removeMember(request.serverId, requireString(request.payload, "memberId"));
-  });
-  handleTrusted(IPC_CHANNELS.serversListInvites, (serverId: unknown) =>
-    remoteServers.listInvites(requireString(serverId, "serverId")),
+  handleTrusted(IPC_CHANNELS.serversListMembers, stringPayload("serverId"), (serverId) =>
+    remoteServers.listMembers(serverId),
   );
-  handleTrusted(IPC_CHANNELS.serversRevokeInvite, (input: unknown) => {
-    const request = parseAgentRequest(input);
-    return remoteServers.revokeInvite(request.serverId, requireString(request.payload, "inviteId"));
-  });
-  handleTrusted(IPC_CHANNELS.serversCreateInvite, (input: unknown) => {
-    const request = parseAgentRequest(input);
-    return remoteServers.createInvite(request.serverId, parseCreateTeamInvite(request.payload));
-  });
-  handleTrusted(IPC_CHANNELS.serversSetTyping, (input: unknown) => {
-    const parsed = parseSetTeamTyping(input);
+  handleTrusted(IPC_CHANNELS.serversUpdateMember, parseAgentRequest, (request) =>
+    remoteServers.updateMember(request.serverId, parseUpdateTeamMember(request.payload)),
+  );
+  handleTrusted(IPC_CHANNELS.serversRemoveMember, parseAgentRequest, (request) =>
+    remoteServers.removeMember(request.serverId, requireString(request.payload, "memberId")),
+  );
+  handleTrusted(IPC_CHANNELS.serversListInvites, stringPayload("serverId"), (serverId) =>
+    remoteServers.listInvites(serverId),
+  );
+  handleTrusted(IPC_CHANNELS.serversRevokeInvite, parseAgentRequest, (request) =>
+    remoteServers.revokeInvite(request.serverId, requireString(request.payload, "inviteId")),
+  );
+  handleTrusted(IPC_CHANNELS.serversCreateInvite, parseAgentRequest, (request) =>
+    remoteServers.createInvite(request.serverId, parseCreateTeamInvite(request.payload)),
+  );
+  handleTrusted(IPC_CHANNELS.serversSetTyping, parseSetTeamTyping, (parsed) => {
     if (remoteServers.activeServerId === "local") host.setTyping(parsed);
     else remoteServers.setTyping(parsed);
   });
   handleTrusted(IPC_CHANNELS.serversListDirectThreads, () =>
     remoteServers.activeServerId === "local" ? host.listDirectThreads() : remoteServers.listDirectThreads(),
   );
-  handleTrusted(IPC_CHANNELS.serversReadDirectConversation, (memberId: unknown) => {
-    const parsedMemberId = requireString(memberId, "memberId");
-    return remoteServers.activeServerId === "local"
-      ? host.readDirectConversation(parsedMemberId)
-      : remoteServers.readDirectConversation(parsedMemberId);
-  });
-  handleTrusted(IPC_CHANNELS.serversReadDirectConversationPage, (input: unknown) => {
-    const parsed = parseReadDirectConversationPage(input);
-    return remoteServers.activeServerId === "local"
+  handleTrusted(IPC_CHANNELS.serversReadDirectConversation, stringPayload("memberId"), (memberId) =>
+    remoteServers.activeServerId === "local"
+      ? host.readDirectConversation(memberId)
+      : remoteServers.readDirectConversation(memberId),
+  );
+  handleTrusted(IPC_CHANNELS.serversReadDirectConversationPage, parseReadDirectConversationPage, (parsed) =>
+    remoteServers.activeServerId === "local"
       ? host.readDirectConversationPage(parsed.memberId, parsed.anchor, parsed.limit)
-      : remoteServers.readDirectConversationPage(parsed.memberId, parsed.anchor, parsed.limit);
-  });
-  handleTrusted(IPC_CHANNELS.serversSendDirectMessage, (input: unknown) => {
-    const parsed = parseSendDirectMessage(input);
-    return remoteServers.activeServerId === "local"
-      ? host.sendDirectMessage(parsed)
-      : remoteServers.sendDirectMessage(parsed);
-  });
-  handleTrusted(IPC_CHANNELS.serversMarkDirectRead, (input: unknown) => {
-    const parsed = parseMarkDirectRead(input);
-    return remoteServers.activeServerId === "local"
-      ? host.markDirectRead(parsed)
-      : remoteServers.markDirectRead(parsed);
-  });
-  handleTrusted(IPC_CHANNELS.serversSetDirectTyping, (input: unknown) => {
-    const parsed = parseDirectTyping(input);
+      : remoteServers.readDirectConversationPage(parsed.memberId, parsed.anchor, parsed.limit),
+  );
+  handleTrusted(IPC_CHANNELS.serversSendDirectMessage, parseSendDirectMessage, (parsed) =>
+    remoteServers.activeServerId === "local" ? host.sendDirectMessage(parsed) : remoteServers.sendDirectMessage(parsed),
+  );
+  handleTrusted(IPC_CHANNELS.serversMarkDirectRead, parseMarkDirectRead, (parsed) =>
+    remoteServers.activeServerId === "local" ? host.markDirectRead(parsed) : remoteServers.markDirectRead(parsed),
+  );
+  handleTrusted(IPC_CHANNELS.serversSetDirectTyping, parseDirectTyping, (parsed) => {
     if (remoteServers.activeServerId === "local") host.setDirectTyping(parsed);
     else remoteServers.setDirectTyping(parsed);
   });
 
   handleTrusted(IPC_CHANNELS.hostGetStatus, () => host.getStatus());
-  handleTrusted(IPC_CHANNELS.hostConfigure, (input: unknown) => host.configure(parseHostConfig(input)));
-  handleTrusted(IPC_CHANNELS.hostUpdateIdentity, (input: unknown) => host.updateIdentity(parseHostIdentity(input)));
+  handleTrusted(IPC_CHANNELS.hostConfigure, parseHostConfig, (config) => host.configure(config));
+  handleTrusted(IPC_CHANNELS.hostUpdateIdentity, parseHostIdentity, (identity) => host.updateIdentity(identity));
   handleTrusted(IPC_CHANNELS.hostGetPresence, () => host.getPresence());
   handleTrusted(IPC_CHANNELS.hostStart, () => host.start());
   handleTrusted(IPC_CHANNELS.hostStop, () => host.stop());
   handleTrusted(IPC_CHANNELS.hostListMembers, () => host.listMembers());
-  handleTrusted(IPC_CHANNELS.hostUpdateMember, (input: unknown) => host.updateMember(parseUpdateTeamMember(input)));
-  handleTrusted(IPC_CHANNELS.hostRemoveMember, (memberId: unknown) =>
-    host.removeMember(requireString(memberId, "memberId")),
-  );
+  handleTrusted(IPC_CHANNELS.hostUpdateMember, parseUpdateTeamMember, (update) => host.updateMember(update));
+  handleTrusted(IPC_CHANNELS.hostRemoveMember, stringPayload("memberId"), (memberId) => host.removeMember(memberId));
   handleTrusted(IPC_CHANNELS.hostListSessions, () => host.listSessions());
-  handleTrusted(IPC_CHANNELS.hostRevokeSession, (sessionId: unknown) =>
-    host.revokeSession(requireString(sessionId, "sessionId")),
+  handleTrusted(IPC_CHANNELS.hostRevokeSession, stringPayload("sessionId"), (sessionId) =>
+    host.revokeSession(sessionId),
   );
   handleTrusted(IPC_CHANNELS.hostListInvites, () => host.listInvites());
-  handleTrusted(IPC_CHANNELS.hostRevokeInvite, (inviteId: unknown) =>
-    host.revokeInvite(requireString(inviteId, "inviteId")),
-  );
-  handleTrusted(IPC_CHANNELS.hostCreateInvite, (input: unknown) => host.createInvite(parseCreateTeamInvite(input)));
+  handleTrusted(IPC_CHANNELS.hostRevokeInvite, stringPayload("inviteId"), (inviteId) => host.revokeInvite(inviteId));
+  handleTrusted(IPC_CHANNELS.hostCreateInvite, parseCreateTeamInvite, (invite) => host.createInvite(invite));
 
   handleTrusted(IPC_CHANNELS.remoteDesktopList, () => remoteDesktop.list());
-  handleTrusted(IPC_CHANNELS.remoteDesktopConnect, (input: unknown) => {
-    if (!isObject(input)) throw new Error("Remote control details are required.");
-    return remoteDesktop.connect({ serverId: requireString(input.serverId, "serverId") });
-  });
-  handleTrusted(IPC_CHANNELS.remoteDesktopSelectDisplay, (input: unknown) => {
-    if (!isObject(input)) throw new Error("Remote display details are required.");
-    return remoteDesktop.selectDisplay(
-      requireString(input.serverId, "serverId"),
-      requireString(input.displayId, "displayId"),
-    );
-  });
-  handleTrusted(IPC_CHANNELS.remoteDesktopDisconnect, (sessionId: unknown) =>
-    remoteDesktop.disconnect(requireString(sessionId, "sessionId")),
+  handleTrusted(IPC_CHANNELS.remoteDesktopConnect, parseRemoteDesktopConnect, (request) =>
+    remoteDesktop.connect(request),
+  );
+  handleTrusted(IPC_CHANNELS.remoteDesktopSelectDisplay, parseRemoteDesktopDisplay, (request) =>
+    remoteDesktop.selectDisplay(request.serverId, request.displayId),
+  );
+  handleTrusted(IPC_CHANNELS.remoteDesktopDisconnect, stringPayload("sessionId"), (sessionId) =>
+    remoteDesktop.disconnect(sessionId),
   );
 }
 
