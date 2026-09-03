@@ -60,34 +60,9 @@ describe("createSimpleContext", () => {
     expect(() => render(() => <Orphan />)).toThrow("Test domain is unavailable outside its provider.");
   });
 
-  it("runs no consumer until a gated domain reports ready", async () => {
-    const [loaded, setLoaded] = createSignal(false);
-    const Domain = createSimpleContext({
-      name: "Test domain",
-      init: () => ({ label: () => "ready" }),
-      ready: () => loaded(),
-    });
-    // A consumer, not a plain child: the point of the gate is that nothing
-    // below it reads the domain early, and only a consumer can do that.
-    const readDomain = vi.fn(Domain.use).mockName("gated consumer");
-    function Reader() {
-      return <output aria-label="reader">{readDomain().label()}</output>;
-    }
-
-    render(() => (
-      <Domain.provider>
-        <Reader />
-      </Domain.provider>
-    ));
-    expect(readDomain).not.toHaveBeenCalled();
-
-    setLoaded(true);
-    await waitFor(() => expect(readDomain).toHaveBeenCalledOnce());
-  });
-
-  it("runs consumers of an ungated domain immediately, leaving readiness to them", async () => {
+  it("runs consumers immediately, leaving readiness to the domain", async () => {
     const Domain = createSimpleContext({ name: "Test domain", init: () => ({ loaded: () => false }) });
-    const readDomain = vi.fn(Domain.use).mockName("ungated consumer");
+    const readDomain = vi.fn(Domain.use).mockName("consumer");
     function Reader() {
       return <output aria-label="reader">{String(readDomain().loaded())}</output>;
     }
