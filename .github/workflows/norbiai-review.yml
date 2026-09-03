@@ -10,11 +10,17 @@ on:
     types: [created]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number }}
-  # A comment must never cancel a review in progress. Concurrency is resolved for the
-  # workflow run, before any job condition or authorization is evaluated, so cancelling on
-  # every event would let anyone who can comment kill a running review. A comment run
-  # queues behind one instead, and takes seconds when its jobs skip.
+  # A comment must never cancel a review, running or queued. Concurrency is resolved for the
+  # workflow run, before any job condition or authorization is evaluated, so a shared group
+  # hands anyone who can comment a way to stop a review: cancelling on every event kills the
+  # one in progress, and queueing does not help either, because GitHub keeps only one
+  # *pending* run per group and a later run evicts it. Any comment on the pull request —
+  # a follow-up from the author, an unauthorized drive-by — would silently cancel the
+  # rebuttal run waiting behind a review, and the recheck it asked for never happened. So
+  # each comment run gets a group of its own, where it can neither cancel nor be cancelled;
+  # the reviews themselves still serialize on the self-hosted runner. Push runs keep the
+  # shared group, where cancelling a review of superseded code is what we want.
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.event.comment.id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -279,13 +285,13 @@ jobs:
             esac
           done
 
-          # Newest first, and truncated from the end, because the cap has to keep the comment
-          # that asked for this review: oldest-first truncation drops exactly the rebuttal the
-          # run exists to weigh. `reverse` inside the filter cannot do it — `--paginate --jq`
-          # runs the filter once per page and GitHub returns the oldest page first, so it only
-          # reverses within a page. Each response is emitted as a marked block instead and awk
-          # reverses the blocks across every page. The marker is stripped from the body, so a
-          # comment cannot forge a block boundary.
+          # Newest first, because the cap has to keep the comment that asked for this review:
+          # oldest-first truncation drops exactly the rebuttal the run exists to weigh.
+          # `reverse` inside the filter cannot do it — `--paginate --jq` runs the filter once
+          # per page and GitHub returns the oldest page first, so it only reverses within a
+          # page. Each response is emitted as a block marked with its comment id instead, and
+          # awk below reorders the blocks across every page. The marker is stripped from the
+          # body, so a comment cannot forge a block boundary or claim another comment's id.
           responses_raw="$RUNNER_TEMP/norbiai-author-responses-raw.txt"
           set +e
           gh api --paginate \
@@ -293,7 +299,7 @@ jobs:
             --jq "[.[]
               | select(${login_filter})
               | select(${since_filter})
-              | \"<!-- norbiai-response -->\n### @\(.user.login) at \(.created_at)\n\(.body | gsub(\"<!-- norbiai-response -->\"; \"\"))\n\"]
+              | \"<!-- norbiai-response \(.id) -->\n### @\(.user.login) at \(.created_at)\n\(.body | gsub(\"<!-- norbiai-response[^>]*-->\"; \"\"))\n\"]
               | .[]" \
             > "$responses_raw" 2>/dev/null
           responses_exit=$?
@@ -302,19 +308,33 @@ jobs:
           if [ "$responses_exit" -ne 0 ]; then
             echo "::warning title=NorbiAI author responses unavailable::Could not read PR comments; continuing without them"
           else
-            responses_ordered="$RUNNER_TEMP/norbiai-author-responses-ordered.txt"
-            awk '
-              /^<!-- norbiai-response -->$/ { blocks++; next }
+            # The comment that asked for this review is emitted first and whole; only the
+            # older responses share what is left of the cap, and they are dropped from the
+            # oldest end. Capping the newest-first order alone was not enough: a GitHub
+            # comment can hold 64 KB, so a long rebuttal could pass the cap on its own and
+            # lose the evidence in its second half — the reviewer would then have the demand
+            # to recheck without the argument for it. Truncating in awk rather than through
+            # `head` also means no closed pipe can make an upstream command exit nonzero and
+            # erase every response. `LC_ALL=C` so the cap counts bytes.
+            LC_ALL=C awk -v trigger="$trigger_id" -v cap=20000 '
+              /^<!-- norbiai-response [0-9]+ -->$/ { blocks++; id[blocks] = $3; next }
               blocks { body[blocks] = body[blocks] $0 "\n" }
-              END { for (i = blocks; i >= 1; i--) printf "%s", body[i] }
-            ' "$responses_raw" > "$responses_ordered"
-
-            # Truncated by reading the file rather than through a pipe, so a closed pipe
-            # cannot make an upstream command exit nonzero and erase every response.
-            head -c 20000 "$responses_ordered" > "$responses_file"
-            if [ "$(wc -c < "$responses_ordered")" -gt 20000 ]; then
-              printf '\n[older responses omitted at the size cap]\n' >> "$responses_file"
-            fi
+              END {
+                for (i = 1; trigger != "" && i <= blocks; i++) {
+                  if (id[i] != trigger) continue
+                  printf "%s", body[i]
+                  used += length(body[i])
+                  shown[i] = 1
+                }
+                for (i = blocks; i >= 1; i--) {
+                  if (i in shown) continue
+                  if (used + length(body[i]) > cap) { omitted = 1; break }
+                  printf "%s", body[i]
+                  used += length(body[i])
+                }
+                if (omitted) printf "\n[older responses omitted at the size cap]\n"
+              }
+            ' "$responses_raw" > "$responses_file"
           fi
 
           {
@@ -423,7 +443,7 @@ jobs:
             else
               printf '[none]\n'
             fi
-            printf '\n## Author responses\n\nNewest first. Truncated from the oldest end when long.\n\n'
+            printf '\n## Author responses\n\nThe comment that asked for this review comes first and in full. The rest are newest first, truncated from the oldest end when long.\n\n'
             if [ -s "$RESPONSES_FILE" ]; then
               cat "$RESPONSES_FILE"
             else
