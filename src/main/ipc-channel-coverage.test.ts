@@ -59,6 +59,9 @@ const preloadSources = ["src/preload/index.ts"];
 // The one module allowed to touch ipcMain, because it is the sender check.
 const TRUSTED_IPC_MODULE = "src/main/trusted-ipc.ts";
 
+// The parameter both wrappers take and pass straight to ipcMain.
+const WRAPPER_CHANNEL_PARAMETER = "channel";
+
 // The preload's agent helpers take the channel as a parameter and pass it on,
 // so the forwarding call names a variable by design. Their own call sites carry
 // the IPC_CHANNELS reference and are what the scan checks, which is why the
@@ -164,12 +167,30 @@ describe("IPC channel coverage", () => {
   // endpoint this file cannot see and one with no sender check at all, so the
   // registration primitive stays where its wrapper lives.
   it("registers handlers only through the trusted wrappers", () => {
+    // The name, not the call: an `import { ipcMain as rawIpc }` elsewhere would
+    // register through a spelling no scan of `ipcMain.` can see, and the binding
+    // has to be named to be aliased.
     const raw = mainSources
       .filter((file) => file !== TRUSTED_IPC_MODULE)
-      .flatMap((file) => [...readSource(file).matchAll(/ipcMain\.([A-Za-z0-9_]+)/g)].map((m) => `${file}: ${m[0]}`))
+      .flatMap((file) => [...readSource(file).matchAll(/\bipcMain\b/g)].map(() => `${file} names ipcMain`))
       .sort();
 
     expect(raw).toEqual([]);
+  });
+
+  // Exempting the wrapper module is what makes the assertion above possible, and
+  // the exemption is only safe while everything it exempts is a wrapper. A third
+  // ipcMain.handle here with a channel of its own would be an endpoint outside
+  // IPC_CHANNELS entirely, so each call must forward the channel it was given.
+  it("registers only the channel it was handed inside the trusted module", () => {
+    const source = readSource(TRUSTED_IPC_MODULE);
+    const own: string[] = [];
+    for (const match of source.matchAll(/\bipcMain\.([A-Za-z0-9_]+)\s*\(/g)) {
+      const span = argumentAt(source, match.index + match[0].length, 0);
+      if (span?.argument !== WRAPPER_CHANNEL_PARAMETER) own.push(`${match[1]}(${span?.argument ?? "?"})`);
+    }
+
+    expect(own).toEqual([]);
   });
 
   it("only removes listeners for channels the preload subscribes to", () => {
