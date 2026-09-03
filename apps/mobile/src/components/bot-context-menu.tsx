@@ -8,7 +8,8 @@ import { isIOS } from "@/lib/platform";
 import { type MobileBot, useMobileWorkspace } from "@/providers/mobile-workspace-provider";
 
 export function useBotContextMenu(bot: MobileBot) {
-  const { deleteBot, duplicateBot, hideBot, markBotUnread, pinnedBotIds, unreadBotIds } = useMobileWorkspace();
+  const { deleteBot, duplicateBot, hideBot, markBotRead, markBotUnread, pinnedBotIds, unreadBotIds } =
+    useMobileWorkspace();
   const { toggleBotPinAnimated } = useBotPinTransition();
   const isPinned = pinnedBotIds.includes(bot.id);
   const isUnread = unreadBotIds.includes(bot.id);
@@ -38,14 +39,14 @@ export function useBotContextMenu(bot: MobileBot) {
   return (
     <Link.Menu>
       <Link.MenuAction
-        disabled={isUnread}
-        icon="envelope.badge"
+        icon={isUnread ? "envelope.open" : "envelope.badge"}
         onPress={() => {
-          markBotUnread(bot.id);
+          if (isUnread) markBotRead(bot.id);
+          else markBotUnread(bot.id);
           if (isIOS) void Haptics.selectionAsync();
         }}
       >
-        Mark unread
+        {isUnread ? "Mark read" : "Mark unread"}
       </Link.MenuAction>
       <Link.MenuAction icon={isPinned ? "pin.slash" : "pin"} isOn={isPinned} onPress={handlePin}>
         {isPinned ? "Unpin" : "Pin"}

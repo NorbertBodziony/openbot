@@ -96,7 +96,7 @@ export function BotListRow({
   enableZoomTransition = true,
 }: BotListRowProps) {
   const [background, accent, accentForeground] = useThemeColor(["background", "accent", "accent-foreground"]);
-  const { unreadBotIds } = useMobileWorkspace();
+  const { markBotRead, unreadBotIds } = useMobileWorkspace();
   const { startBotNavigationAnimated, toggleBotPinAnimated, transition } = useBotPinTransition();
   const pendingPinRef = useRef(false);
   const botContextMenu = useBotContextMenu(bot);
@@ -109,6 +109,7 @@ export function BotListRow({
   );
 
   const handleOpen = () => {
+    markBotRead(bot.id);
     if (dismissToChat) startBotNavigationAnimated(bot.id, avatarLocation);
     if (isIOS) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
   };

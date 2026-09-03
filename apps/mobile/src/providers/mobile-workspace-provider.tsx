@@ -1,4 +1,4 @@
-import { createContext, type PropsWithChildren, useContext, useMemo, useState } from "react";
+import { createContext, type PropsWithChildren, useCallback, useContext, useMemo, useState } from "react";
 
 export type MobileServerKind = "local" | "remote";
 export type MobileServerState = "online" | "offline";
@@ -35,6 +35,7 @@ interface MobileWorkspaceContextValue {
   bots: MobileBot[];
   activeServer: MobileServer;
   activeBots: MobileBot[];
+  hiddenBots: MobileBot[];
   pinnedBotIds: string[];
   unreadBotIds: string[];
   selectServer: (serverId: string) => void;
@@ -42,10 +43,13 @@ interface MobileWorkspaceContextValue {
   deleteBot: (botId: string) => void;
   duplicateBot: (botId: string) => void;
   hideBot: (botId: string) => void;
+  unhideBot: (botId: string) => void;
+  markBotRead: (botId: string) => void;
   markBotUnread: (botId: string) => void;
   toggleBotPin: (botId: string) => ToggleBotPinResult;
 }
 
+//! MOCK DATA RENDERED HERE
 const MOCK_SERVERS: MobileServer[] = [
   {
     id: "local",
@@ -130,6 +134,9 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   const [hiddenBotIds, setHiddenBotIds] = useState<string[]>([]);
   const [pinnedBotIds, setPinnedBotIds] = useState<string[]>([]);
   const [unreadBotIds, setUnreadBotIds] = useState<string[]>([]);
+  const markBotRead = useCallback((botId: string) => {
+    setUnreadBotIds((current) => (current.includes(botId) ? current.filter((id) => id !== botId) : current));
+  }, []);
 
   const value = useMemo<MobileWorkspaceContextValue>(() => {
     const activeServer = servers.find((server) => server.id === activeServerId) ?? servers[0];
@@ -139,10 +146,12 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       bots,
       activeServer,
       activeBots: bots.filter((bot) => bot.serverId === activeServer.id && !hiddenBotIds.includes(bot.id)),
+      hiddenBots: bots.filter((bot) => hiddenBotIds.includes(bot.id)),
       pinnedBotIds,
       unreadBotIds,
       selectServer: setActiveServerId,
       addRemoteServer: ({ inviteUrl }) => {
+        //! MOCK DATA RENDERED HERE
         const invitation = new URL(inviteUrl);
         const id = `remote-${Date.now()}`;
         const invitedName = invitation.searchParams.get("server")?.trim();
@@ -162,6 +171,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       },
       deleteBot: (botId) => {
         setBots((current) => current.filter((bot) => bot.id !== botId));
+        setHiddenBotIds((current) => current.filter((id) => id !== botId));
         setPinnedBotIds((current) => current.filter((id) => id !== botId));
         setUnreadBotIds((current) => current.filter((id) => id !== botId));
       },
@@ -188,6 +198,10 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         setPinnedBotIds((current) => current.filter((id) => id !== botId));
         setUnreadBotIds((current) => current.filter((id) => id !== botId));
       },
+      unhideBot: (botId) => {
+        setHiddenBotIds((current) => current.filter((id) => id !== botId));
+      },
+      markBotRead,
       markBotUnread: (botId) => {
         setUnreadBotIds((current) => (current.includes(botId) ? current : [...current, botId]));
       },
@@ -207,7 +221,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         return "pinned";
       },
     };
-  }, [activeServerId, bots, hiddenBotIds, pinnedBotIds, servers, unreadBotIds]);
+  }, [activeServerId, bots, hiddenBotIds, markBotRead, pinnedBotIds, servers, unreadBotIds]);
 
   return <MobileWorkspaceContext.Provider value={value}>{children}</MobileWorkspaceContext.Provider>;
 }

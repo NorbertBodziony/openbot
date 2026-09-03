@@ -40,6 +40,7 @@ export default function AddServer() {
 
   function joinServer(): void {
     if (!reviewedInvite) return;
+    //! MOCK DATA RENDERED HERE
     addRemoteServer({ inviteUrl: reviewedInvite });
     router.back();
   }

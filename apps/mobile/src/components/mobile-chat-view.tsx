@@ -56,6 +56,7 @@ export function MobileChatView({ animateAvatarOnExit = false, bot, userName }: M
   ]);
   const [draft, setDraft] = useState("");
   const [showStarter, setShowStarter] = useState(true);
+  //! MOCK DATA RENDERED HERE
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: `${bot.id}-hello`,
@@ -84,6 +85,7 @@ export function MobileChatView({ animateAvatarOnExit = false, bot, userName }: M
   );
 
   function sendMessage(value = draft): void {
+    //! MOCK DATA RENDERED HERE
     const body = value.trim();
     if (!body) return;
 

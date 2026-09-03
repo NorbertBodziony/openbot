@@ -1,7 +1,9 @@
+import { type MenuAction, MenuView } from "@expo/ui/community/menu";
 import { router, Stack } from "expo-router";
 import { Button, Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
-import { Bot, Layers3, Plus, Search, WifiOff } from "lucide-react-native";
+import { Bot, Ellipsis, Layers3, Plus, Search, WifiOff } from "lucide-react-native";
+import { useMemo } from "react";
 import { FlatList, Pressable, View } from "react-native";
 import Animated, { Easing, FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 
@@ -53,7 +55,7 @@ function HeaderIconButton({
 
 export default function Connected() {
   const { openDrawer } = useAppDrawer();
-  const { activeBots, activeServer, pinnedBotIds } = useMobileWorkspace();
+  const { activeBots, activeServer, hiddenBots, pinnedBotIds } = useMobileWorkspace();
   const [foreground, muted] = useThemeColor(["foreground", "muted"]);
   const iconColor = String(foreground);
   const mutedColor = String(muted);
@@ -61,6 +63,13 @@ export default function Connected() {
     .map((botId) => activeBots.find((bot) => bot.id === botId))
     .filter((bot): bot is (typeof activeBots)[number] => Boolean(bot));
   const unpinnedBots = activeBots.filter((bot) => !pinnedBotIds.includes(bot.id));
+  const optionsActions = useMemo<MenuAction[]>(
+    () => [
+      { id: "add-bot", title: "Add bot" },
+      ...(hiddenBots.length > 0 ? [{ id: "hidden-chats", title: "Hidden chats" }] : []),
+    ],
+    [hiddenBots.length],
+  );
 
   return (
     <>
@@ -122,9 +131,23 @@ export default function Connected() {
                   <HeaderIconButton accessibilityLabel="Search bots" onPress={() => router.push("/search-bots")}>
                     <Search color={iconColor} size={22} strokeWidth={1.9} />
                   </HeaderIconButton>
-                  <HeaderIconButton accessibilityLabel="Add bot" onPress={() => router.push("/add-bot")}>
-                    <Plus color={iconColor} size={24} strokeWidth={1.9} />
-                  </HeaderIconButton>
+                  <MenuView
+                    actions={optionsActions}
+                    onPressAction={(event) => {
+                      if (event.nativeEvent.event === "add-bot") router.push("/add-bot");
+                      if (event.nativeEvent.event === "hidden-chats") router.push("/hidden-chats");
+                    }}
+                    style={{ height: 44, width: 44 }}
+                  >
+                    <View
+                      accessibilityLabel="More options"
+                      accessibilityRole="button"
+                      accessible
+                      className="size-11 items-center justify-center rounded-full"
+                    >
+                      <Ellipsis color={iconColor} size={24} strokeWidth={1.9} />
+                    </View>
+                  </MenuView>
                 </View>
               )
             : undefined,
@@ -140,10 +163,15 @@ export default function Connected() {
           </Stack.Toolbar>
           <Stack.Toolbar placement="right">
             <Stack.Toolbar.Button icon="magnifyingglass" onPress={() => router.push("/search-bots")} />
-            <Stack.Toolbar.Menu icon="plus">
+            <Stack.Toolbar.Menu icon="ellipsis">
               <Stack.Toolbar.MenuAction icon="plus.circle" onPress={() => router.push("/add-bot")}>
                 Add bot
               </Stack.Toolbar.MenuAction>
+              {hiddenBots.length > 0 ? (
+                <Stack.Toolbar.MenuAction icon="eye.slash" onPress={() => router.push("/hidden-chats")}>
+                  Hidden chats
+                </Stack.Toolbar.MenuAction>
+              ) : null}
             </Stack.Toolbar.Menu>
           </Stack.Toolbar>
         </>

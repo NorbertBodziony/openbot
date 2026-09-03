@@ -7,6 +7,7 @@ import { StatusBar } from "expo-status-bar";
 import { Spinner } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
 import { HeroUINativeProvider } from "heroui-native/provider";
+import type { PropsWithChildren } from "react";
 import { useColorScheme, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { withUniwind } from "uniwind";
@@ -92,6 +93,16 @@ function AppNavigation() {
           }}
         />
         <Stack.Screen
+          name="hidden-chats"
+          options={{
+            contentStyle: { backgroundColor: background },
+            headerShown: false,
+            presentation: "formSheet",
+            sheetAllowedDetents: "fitToContents",
+            sheetGrabberVisible: true,
+          }}
+        />
+        <Stack.Screen
           name="settings"
           options={{
             contentStyle: { backgroundColor: background },
@@ -106,6 +117,19 @@ function AppNavigation() {
   );
 }
 
+function SessionScopedWorkspace({ children }: PropsWithChildren) {
+  const { session } = useMobileSession();
+  const workspaceKey = session ? `${session.apiUrl}:${session.user.id}` : "signed-out";
+
+  return (
+    <MobileWorkspaceProvider key={workspaceKey}>
+      <BotPinTransitionProvider>
+        <AppDrawerShell>{children}</AppDrawerShell>
+      </BotPinTransitionProvider>
+    </MobileWorkspaceProvider>
+  );
+}
+
 export default function RootLayout() {
   const colorScheme = useColorScheme();
 
@@ -116,13 +140,9 @@ export default function RootLayout() {
           <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
             <StatusBar style="auto" />
             <MobileSessionProvider>
-              <MobileWorkspaceProvider>
-                <BotPinTransitionProvider>
-                  <AppDrawerShell>
-                    <AppNavigation />
-                  </AppDrawerShell>
-                </BotPinTransitionProvider>
-              </MobileWorkspaceProvider>
+              <SessionScopedWorkspace>
+                <AppNavigation />
+              </SessionScopedWorkspace>
             </MobileSessionProvider>
           </ThemeProvider>
         </HeroUINativeProvider>

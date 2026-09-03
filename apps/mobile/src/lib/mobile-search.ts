@@ -32,6 +32,7 @@ export const MOBILE_SEARCH_FILTERS: MobileSearchFilterOption[] = [
   { id: "routines", label: "Routines" },
 ];
 
+//! MOCK DATA RENDERED HERE
 const MOCK_SEARCH_RESULTS: MobileSearchTextResult[] = [
   {
     id: "message-project-notes",
