@@ -60,9 +60,22 @@ export function ServerDrawerContent({
               accessibilityRole="button"
               accessibilityState={{ selected }}
               accessibilityLabel={`${serverItem.name}, ${serverItem.state}`}
-              className={`min-h-16 flex-row items-center gap-3 rounded-2xl px-3 py-2 ${selected ? "bg-control-active" : ""}`}
+              className="min-h-16 flex-row items-center gap-3 rounded-2xl px-3 py-2"
               onPress={() => onSelectServer(serverItem.id)}
             >
+              {selected ? (
+                <View
+                  style={{
+                    backgroundColor: serverItem.accent,
+                    borderRadius: 999,
+                    bottom: 16,
+                    left: 0,
+                    position: "absolute",
+                    top: 16,
+                    width: 3,
+                  }}
+                />
+              ) : null}
               <View
                 className="size-11 items-center justify-center rounded-[15px]"
                 style={{ backgroundColor: serverItem.accent, borderCurve: "continuous" }}
@@ -70,7 +83,7 @@ export function ServerDrawerContent({
                 <ServerIcon color="#100d12" size={21} strokeWidth={1.8} />
               </View>
               <View className="min-w-0 flex-1 gap-0.5">
-                <Typography.Paragraph weight="semibold" numberOfLines={1}>
+                <Typography.Paragraph weight={selected ? "bold" : "semibold"} numberOfLines={1}>
                   {serverItem.name}
                 </Typography.Paragraph>
                 <View className="flex-row items-center gap-1.5">
@@ -99,15 +112,15 @@ export function ServerDrawerContent({
       </ScrollView>
 
       <SheetScrollEdgeEffect
-        style={{ height: headerHeight + 32, left: -sideInset, position: "absolute", right: -34, top: 0, zIndex: 10 }}
+        style={{ height: headerHeight + 20, left: -sideInset, position: "absolute", right: -34, top: 0, zIndex: 10 }}
       />
 
       <View
         className="absolute right-0 z-20 h-14 justify-center"
         pointerEvents="none"
-        style={{ left: -sideInset, paddingLeft: sideInset + 8, top: Math.max(topInset, 16) }}
+        style={{ left: -sideInset, paddingLeft: sideInset + 12, top: Math.max(topInset, 16) }}
       >
-        <Typography.Heading type="h4" weight="bold">
+        <Typography.Heading type="h1" weight="bold">
           Servers
         </Typography.Heading>
       </View>
