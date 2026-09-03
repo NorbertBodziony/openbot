@@ -19,6 +19,7 @@ import {
 } from "./app-message-projection";
 import { createStoredMessage, updateStored } from "./app-stored-values";
 import { agentConversationKey, agentMessageKey, messagePromptRequestKey, promptRequestKey } from "./conversation-keys";
+import { mergeConversationPage, windowedSnapshotMessages } from "./conversation-merge";
 import {
   appliedConversationRevision,
   decideAgentAutoRead,
@@ -390,20 +391,10 @@ const Conversation = createSimpleContext({
         const windowMode = conversationWindowModes()[botId] ?? "latest";
         const mappedMessages = retainThinkingMessages(
           previous,
-          pageInfo?.hasOlder
-            ? (() => {
-                const loadedIds = new Set(previous.map((message) => message.id));
-                if (windowMode === "around") {
-                  return allMappedMessages.filter((message) => loadedIds.has(message.id));
-                }
-                const lastLoadedIndex = [...allMappedMessages]
-                  .map((message) => message.id)
-                  .reduce((last, id, index) => (loadedIds.has(id) ? index : last), -1);
-                return allMappedMessages.filter(
-                  (message, index) => loadedIds.has(message.id) || index > lastLoadedIndex,
-                );
-              })()
-            : allMappedMessages,
+          windowedSnapshotMessages(previous, allMappedMessages, {
+            hasOlder: pageInfo?.hasOlder === true,
+            mode: windowMode,
+          }),
         );
         const next = mappedMessages.map((mapped) => {
           const existing = previousById.get(mapped.id);
@@ -482,17 +473,7 @@ const Conversation = createSimpleContext({
           if (!botMessagesEqual(stored, message)) updateStored(stored, { ...message, animate: stored.animate });
           return stored;
         });
-        const existing = merge === "replace" ? [] : currentMessages;
-        const ids = new Set(mapped.map((message) => message.id));
-        return {
-          ...current,
-          [page.botId]:
-            merge === "replace"
-              ? pageMessages
-              : merge === "older"
-                ? [...pageMessages, ...existing.filter((message) => !ids.has(message.id))]
-                : [...existing.filter((message) => !ids.has(message.id)), ...pageMessages],
-        };
+        return { ...current, [page.botId]: mergeConversationPage(currentMessages, pageMessages, merge) };
       });
       setConversationReferences((current) => ({
         ...current,
