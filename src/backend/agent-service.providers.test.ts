@@ -473,9 +473,15 @@ describe.sequential("AgentService: providers", () => {
     );
   });
 
-  it("expands inline file references before sending text to the agent", async () => {
+  it.each([
+    ["codex", "gpt-5.6-luna"],
+    ["claude", "claude-sonnet-5"],
+    ["grok", "grok-4.5"],
+  ] as const)("expands inline file references before sending text to the %s agent", async (provider, model) => {
     const source = join(root, "start-types.d.ts");
     await writeFile(source, "export type Start = true;\n");
+    process.env.OPENBOT_CLAUDE_PATH = await createFakeClaude(root);
+    process.env.OPENBOT_GROK_PATH = await createFakeGrok(root);
     const clients = new Map<AgentProvider, FakeAgentClient>();
     const { store, mailbox } = stores(root);
     service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
@@ -484,6 +490,8 @@ describe.sequential("AgentService: providers", () => {
       return client;
     });
     await service.initialize();
+    await store.getOrCreate("chief");
+    if (provider !== "codex") await service.updateBot({ botId: "chief", provider, model });
     const [draft] = await service.prepareAttachments([source]);
 
     await service.sendMessage({
@@ -491,9 +499,9 @@ describe.sequential("AgentService: providers", () => {
       text: `Review ${serializeAttachmentReference(draft.name, draft.id)}`,
       attachmentDraftIds: [draft.id],
     });
-    await waitFor(() => Boolean(clients.get("codex")?.requests.some((request) => request.method === "turn/start")));
+    await waitFor(() => Boolean(clients.get(provider)?.requests.some((request) => request.method === "turn/start")));
 
-    const turn = clients.get("codex")?.requests.find((request) => request.method === "turn/start");
+    const turn = clients.get(provider)?.requests.find((request) => request.method === "turn/start");
     const inputText = firstInputText(turn?.params);
     expect(inputText).toContain("Review start-types.d.ts");
     expect(inputText).not.toContain("attachment:");
