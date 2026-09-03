@@ -254,7 +254,14 @@ export class HostService extends EventEmitter<HostEvents> {
     const previousServerId = this.#status.serverId;
     if (this.#boundAccountId !== undefined) {
       this.#runtimeGeneration += 1;
-      await this.#stopRuntime();
+      // Isolation cannot depend on the teardown succeeding: a WebRTC disconnect rejects
+      // on a command error or a timeout, and leaving the previous account's host bound is
+      // by far the worse failure. Report it and rebind anyway.
+      try {
+        await this.#stopRuntime();
+      } catch (error) {
+        console.error("Unable to stop the host runtime while switching accounts:", error);
+      }
     }
     if (user) await this.#options.store.activateAccount(user);
     else await this.#options.store.deactivate();

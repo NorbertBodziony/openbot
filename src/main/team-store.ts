@@ -267,6 +267,8 @@ export class TeamStore {
       privateKeyEncoding: { type: "pkcs8", format: "pem" },
     });
     const credentials = await hashPassword(password);
+    // Hashing yields, so a second request could have configured a host meanwhile.
+    if (this.#state) throw new TeamStoreError("The team server is already configured.");
     this.#state = {
       version: 1,
       serverId: randomUUID(),
@@ -309,16 +311,22 @@ export class TeamStore {
     logo?: AvatarImageInput | null,
   ): Promise<TeamIdentity> {
     const email = normalizeEmail(user.email);
-    const activeOwner = this.#state ? hostOwner(this.#state) : undefined;
-    if (this.#hostFor(user.id, email) || (activeOwner && !activeOwner.accountId && !activeOwner.email)) {
-      throw new TeamStoreError("The team server is already configured.");
-    }
+    this.#assertNoHostFor(user.id, email);
     validateServerName(serverName);
     const { publicKey, privateKey } = generateKeyPairSync("ed25519", {
       publicKeyEncoding: { type: "spki", format: "pem" },
       privateKeyEncoding: { type: "pkcs8", format: "pem" },
     });
     const serverLogo = logo ? await this.#writeLogo(logo) : undefined;
+    try {
+      // `#writeLogo` yields, so two concurrent requests could both have passed the guard
+      // above. Re-checking is what stops one account owning two stored hosts, where a
+      // restart would activate the one the status never showed.
+      this.#assertNoHostFor(user.id, email);
+    } catch (error) {
+      if (serverLogo) await this.#removeLogo(serverLogo).catch(() => undefined);
+      throw error;
+    }
     this.#state = {
       version: 1,
       serverId: randomUUID(),
@@ -851,6 +859,14 @@ export class TeamStore {
   #requireState(): StoredTeam {
     if (!this.#state) throw new TeamStoreError("The team server is not configured.");
     return this.#state;
+  }
+
+  /** Rejects a second host for one account, and a second host beside an owner-less one. */
+  #assertNoHostFor(accountId: string, email: string): void {
+    const activeOwner = this.#state ? hostOwner(this.#state) : undefined;
+    if (this.#hostFor(accountId, email) || (activeOwner && !activeOwner.accountId && !activeOwner.email)) {
+      throw new TeamStoreError("The team server is already configured.");
+    }
   }
 
   #hostFor(accountId: string, email: string): StoredTeam | undefined {

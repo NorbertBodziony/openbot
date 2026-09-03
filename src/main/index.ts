@@ -756,18 +756,31 @@ function forwardCentralAuth(state: CentralAuthState): void {
       activeRemotePrincipalId = nextPrincipalId;
       if (state.status !== "signed_in") {
         if (state.status === "signed_out") {
-          await hostService?.stop(false);
+          // Stopping is best-effort; unbinding the host is not, so a failed teardown
+          // must not leave the signed-out account's host bound.
+          try {
+            await hostService?.stop(false);
+          } catch (error) {
+            console.error("Unable to stop the host while signing out:", error);
+          }
           await hostService?.applySignedInAccount(null);
         }
         return;
       }
-      await remoteServerManager?.syncRemoteHosts();
       const host = hostService;
-      if (!host) return;
-      await host.applySignedInAccount(state.user);
-      hostAnalytics?.flushPending();
-      const status = host.getStatus();
-      if (shouldAutoStartHost(status)) await host.start();
+      // The local host is rebound before the joined-server list is synchronized, and the
+      // network failure is contained: this account must not end up signed in while the
+      // previous account's host is still selected and possibly online.
+      if (host) {
+        await host.applySignedInAccount(state.user);
+        hostAnalytics?.flushPending();
+      }
+      try {
+        await remoteServerManager?.syncRemoteHosts();
+      } catch (error) {
+        console.error("Unable to synchronize the joined servers:", error);
+      }
+      if (host && shouldAutoStartHost(host.getStatus())) await host.start();
     })
     .catch((error) => {
       console.error("Unable to synchronize the signed-in account:", error);

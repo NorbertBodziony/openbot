@@ -457,6 +457,27 @@ describe("TeamStore", () => {
     expect(restarted.getIdentity()?.serverId).toBe(identity.serverId);
   });
 
+  it("stores one host when an account configures twice at once", async () => {
+    const { store, path } = await createStore();
+    const owner = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
+    const logo = {
+      mimeType: "image/png" as const,
+      bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    };
+
+    const results = await Promise.allSettled([
+      store.configureWithAccount("Studio Mac", owner, logo),
+      store.configureWithAccount("Loft Mini", owner, logo),
+    ]);
+
+    expect(results.map((result) => result.status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect(await readStoredHosts(path)).toHaveLength(1);
+    const restarted = new TeamStore(path);
+    await restarted.initialize();
+    await restarted.activateAccount(owner);
+    expect(restarted.getIdentity()?.serverId).toBe(store.getIdentity()?.serverId);
+  });
+
   it("refuses a remote directory loaded for a host that is no longer active", async () => {
     const { store } = await createStore();
     const first = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
