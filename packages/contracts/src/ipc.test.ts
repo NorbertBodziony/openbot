@@ -620,6 +620,15 @@ describe("renderer-to-main boundary guards", () => {
     expect(isAgentStatus({ ...status, auth: "chatgpt" })).toBe(false);
   });
 
+  it("keeps provider entries open so one unknown provider field does not reject the whole status", () => {
+    const providers = [
+      { id: "codex", state: "available", version: "1.0.0", message: null },
+      { id: "gemini", state: "rate-limited", version: null, message: null, connectionState: "reconnecting" },
+    ];
+    expect(isAgentStatus({ ...status, providers })).toBe(true);
+    expect(isAgentStatus({ ...status, providers: "codex" })).toBe(false);
+  });
+
   it("requires an agent provider and a well-formed avatar on every agent summary", () => {
     expect(isBotSummary(bot)).toBe(true);
     const { provider, ...withoutProvider } = bot;

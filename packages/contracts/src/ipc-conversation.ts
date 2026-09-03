@@ -25,6 +25,10 @@ export type AgentProviderState =
 
 export interface AgentProviderStatus {
   id: AgentProviderId;
+  /**
+   * One of `AgentProviderState`, but treated as an open string at the trust boundary: a remote
+   * server one release ahead may send a member we do not know yet.
+   */
   state: AgentProviderState;
   version: string | null;
   message: string | null;
@@ -83,6 +87,11 @@ export function isAccountUsage(value: unknown): value is AccountUsage {
 export interface AgentStatus {
   phase: AgentPhase;
   cliVersion: string | null;
+  /**
+   * `kind` is one of the members above, but treated as an open string at the trust boundary: a
+   * remote server one release ahead may send a member we do not know yet, and rejecting the whole
+   * status would stop every update from it.
+   */
   auth: AgentAuthState;
   providers?: AgentProviderStatus[];
   capabilities: {
@@ -94,23 +103,11 @@ export interface AgentStatus {
   fullAccess: true;
 }
 
-// `auth.kind` and `providers[].state` stay bounded strings rather than their declared unions.
-// A remote server one release ahead may send a member we do not know yet, and rejecting the whole
-// status would stop every update from it. `phase` and `capabilities` are narrowed because the main
-// process has always narrowed them, so no shipped server depends on the looser reading.
-function isAgentProviderStatus(value: unknown): value is AgentProviderStatus {
-  return (
-    isDynamicRecord(value) &&
-    isAgentProvider(value.id) &&
-    isBoundedString(value.state, INPUT_LIMITS.identifier) &&
-    isNullableBoundedString(value.version, 160) &&
-    isNullableBoundedString(value.message, INPUT_LIMITS.messageText) &&
-    (value.email === undefined || isNullableBoundedString(value.email, INPUT_LIMITS.email)) &&
-    (value.connectionState === undefined || value.connectionState === "connecting") &&
-    (value.checkError === undefined || isNullableBoundedString(value.checkError, INPUT_LIMITS.messageText))
-  );
-}
-
+// `phase` and `capabilities` are narrowed because the main process has always narrowed them, so no
+// shipped server depends on the looser reading. `providers` is deliberately unchecked: a `value is T`
+// predicate is all-or-nothing, so validating an entry would let one unrecognized `state` or
+// `connectionState` from a newer server reject `phase`, `auth` and `message` along with it. Nothing
+// branches on a provider field — the renderer looks one up by `id` and falls back when it misses.
 export function isAgentStatus(value: unknown): value is AgentStatus {
   if (!isDynamicRecord(value) || !isDynamicRecord(value.auth) || !isDynamicRecord(value.capabilities)) {
     return false;
@@ -122,8 +119,7 @@ export function isAgentStatus(value: unknown): value is AgentStatus {
     isOneOf(CAPABILITY_STATES, value.capabilities.chat) &&
     isOneOf(CAPABILITY_STATES, value.capabilities.browser) &&
     isOneOf(CAPABILITY_STATES, value.capabilities.computerUse) &&
-    (value.providers === undefined ||
-      (Array.isArray(value.providers) && value.providers.every(isAgentProviderStatus))) &&
+    (value.providers === undefined || Array.isArray(value.providers)) &&
     isNullableBoundedString(value.message, INPUT_LIMITS.messageText) &&
     value.fullAccess === true
   );
