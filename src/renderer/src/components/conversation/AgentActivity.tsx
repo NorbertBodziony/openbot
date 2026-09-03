@@ -105,7 +105,7 @@ export function ThinkingDisclosure(props: {
           size="xs"
           class="thinking-summary"
           aria-expanded={expanded() ? "true" : "false"}
-          aria-label="Show thinking details"
+          aria-label={expanded() ? "Hide thinking details" : "Show thinking details"}
           onClick={() => props.onOpenChange(!expanded())}
         >
           <Sparkles class="thinking-mark" aria-hidden="true" />

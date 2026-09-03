@@ -574,7 +574,7 @@ describe("OpenBot connected desktop shell", () => {
       revision: 3,
     });
     // Reasoning reads in the trace, which opens itself while the agent works.
-    const trace = await screen.findByRole("button", { name: "Show thinking details" });
+    const trace = await screen.findByRole("button", { name: "Hide thinking details" });
     expect(trace.getAttribute("aria-expanded")).toBe("true");
     expect(await screen.findByText("Inspecting the release checks")).toBeInTheDocument();
     expect(
@@ -668,7 +668,7 @@ describe("OpenBot connected desktop shell", () => {
 
     const activity = await screen.findByRole("region", { name: "Current activity" });
     expect(within(activity).queryByText("Verifying the build artifacts")).not.toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: "Show thinking details" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Hide thinking details" })).toBeInTheDocument();
   });
 
   it("merges compact runtime attention into the active server", async () => {

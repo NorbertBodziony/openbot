@@ -514,7 +514,7 @@ describe("OpenBot connected desktop shell", () => {
       },
     });
 
-    const disclosure = await screen.findByRole("button", { name: "Show thinking details" });
+    const disclosure = await screen.findByRole("button", { name: "Hide thinking details" });
     expect(disclosure.getAttribute("aria-expanded")).toBe("true");
 
     emitAgentEvent?.({
@@ -564,12 +564,14 @@ describe("OpenBot connected desktop shell", () => {
       },
     });
     await waitFor(() => expect(disclosure.getAttribute("aria-expanded")).toBe("false"));
+    expect(disclosure).toHaveAccessibleName("Show thinking details");
     expect(await screen.findByText("Opened x.com.")).toBeVisible();
     expect(screen.getByText("I’ll open x.com in the OpenBot browser.")).toBeInTheDocument();
     expect(screen.getByText("Checking that the page loaded.")).toBeInTheDocument();
 
     await fireEvent.click(disclosure);
     expect(disclosure.getAttribute("aria-expanded")).toBe("true");
+    expect(disclosure).toHaveAccessibleName("Hide thinking details");
     expect(screen.getByText("I’ll open x.com in the OpenBot browser.")).toBeVisible();
 
     emitAgentEvent?.({
@@ -600,7 +602,7 @@ describe("OpenBot connected desktop shell", () => {
         ],
       },
     });
-    await waitFor(() => expect(screen.getByRole("button", { name: "Show thinking details" })).toBe(disclosure));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Hide thinking details" })).toBe(disclosure));
     expect(screen.getByText("I’ll open x.com in the OpenBot browser.")).toBeVisible();
   });
 
