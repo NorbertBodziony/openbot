@@ -4910,6 +4910,10 @@ button.chat-action-target:active,
   max-width: min(720px, calc(100% - var(--message-actions-inline-size) - 5px));
 }
 
+.message-entry-bot .ui-bubble:has(.message-data-table-scroll) > .ui-bubble-content {
+  width: 100%;
+}
+
 .message-entry-bot .message-shell:has(.message-data-table-scroll) {
   align-items: flex-end;
 }

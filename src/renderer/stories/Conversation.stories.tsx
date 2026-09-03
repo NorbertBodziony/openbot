@@ -1157,6 +1157,7 @@ export const DataTableInChat: Story = {
     const bubble = table.closest<HTMLElement>(".ui-bubble");
     const actions = canvas.getByRole("toolbar", { name: "Agent message actions" });
     if (!bubble) throw new Error("The data table message bubble is missing.");
+    await expect(bubble).toHaveAttribute("data-variant", "muted");
     await expect(
       Math.abs(actions.getBoundingClientRect().bottom - bubble.getBoundingClientRect().bottom),
     ).toBeLessThanOrEqual(2);
