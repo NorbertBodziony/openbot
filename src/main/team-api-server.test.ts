@@ -8,6 +8,7 @@ import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits
 import type {
   BotMemory,
   BotSummary,
+  CentralAuthUser,
   ConversationWithReadState,
   CreateBotInput,
   Routine,
@@ -34,6 +35,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpenBotDatabase } from "../backend/openbot-database";
 import { SidebarLayoutStore } from "../backend/sidebar-layout-store";
 import { TeamChatStore } from "../backend/team-chat-store";
+import { HostService } from "./host-service";
 import { TeamApiServer } from "./team-api-server";
 import { TeamStore } from "./team-store";
 
@@ -124,6 +126,55 @@ function createAgents(overrides: Partial<TestAgents> = {}, events = new EventEmi
     respondToApproval: unimplemented,
     respondToBrowserTakeover: unimplemented,
     ...overrides,
+  };
+}
+
+type HostOptions = ConstructorParameters<typeof HostService>[0];
+
+/**
+ * `HostService` forwards these straight to the Team API, so the doubles above are the
+ * whole harness it needs. No runtime is started here - these cases are about which
+ * account's host the service is bound to.
+ */
+async function createHostService(): Promise<{
+  service: HostService;
+  /** Reports an account exactly as `forwardCentralAuth` does, sign-out included. */
+  signIn: (user: CentralAuthUser | null) => Promise<void>;
+}> {
+  const root = await mkdtemp(join(tmpdir(), "openbot-host-service-"));
+  roots.push(root);
+  const store = new TeamStore(join(root, "team.json"));
+  await store.initialize();
+  let signedIn: CentralAuthUser | null = null;
+  const options: HostOptions = {
+    appVersion: "0.4.0",
+    store,
+    agents: { ...createAgents(), adoptConversationReads: unimplemented },
+    skills: { listInstalledForChatTags: unimplemented },
+    sidebarLayout: {
+      getSnapshot: unimplemented,
+      mutate: unimplemented,
+      removeAgent: unimplemented,
+      placeDuplicateAfter: unimplemented,
+      on: () => undefined,
+      off: () => undefined,
+    },
+    mailbox: createMailbox(),
+    browser: createBrowser(),
+    getSignedInUser: () => {
+      if (!signedIn) throw new Error("No account is signed in.");
+      return signedIn;
+    },
+    redeemCentralTicket: unimplemented,
+    sendTeamInviteEmail: unimplemented,
+  };
+  const service = new HostService(options);
+  return {
+    service,
+    signIn: async (user) => {
+      signedIn = user;
+      await service.applySignedInAccount(user);
+    },
   };
 }
 
@@ -2154,3 +2205,39 @@ async function emptyRequest(
   });
   expect(response.status).toBe(204);
 }
+
+describe("HostService account binding", () => {
+  const first = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
+  const second = { id: "account-b", email: "b@example.com", name: "B", avatarUrl: null };
+
+  it("stops reporting the previous account's server when the account changes", async () => {
+    const { service, signIn } = await createHostService();
+    await signIn(first);
+    await service.configure({ serverName: "Studio Mac" });
+    expect(service.getStatus().serverName).toBe("Studio Mac");
+
+    await signIn(second);
+
+    const status = service.getStatus();
+    expect(status.configured).toBe(false);
+    expect(status.phase).toBe("unconfigured");
+    expect(status.serverId).toBeNull();
+    expect(status.serverName).toBeNull();
+    expect(status.enabledOnLaunch).toBe(false);
+  });
+
+  it("reports the account's own server again after signing out and back in", async () => {
+    const { service, signIn } = await createHostService();
+    await signIn(first);
+    const identity = await service.configure({ serverName: "Studio Mac" });
+
+    await signIn(null);
+    expect(service.getStatus().configured).toBe(false);
+    expect(service.getStatus().serverId).toBeNull();
+
+    await signIn(first);
+    expect(service.getStatus().serverId).toBe(identity.serverId);
+    expect(identity.serverId).not.toBeNull();
+    expect(service.getStatus().serverName).toBe("Studio Mac");
+  });
+});

@@ -56,15 +56,15 @@ describe("TeamStore", () => {
 
   it("recovers the persistence queue after a write failure", async () => {
     const { store, path } = await createStore();
-    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const identity = await store.configure("Studio Mac", "owner", "correct horse battery");
     const root = path.slice(0, -"/team.json".length);
     const unavailableRoot = `${root}-unavailable`;
 
     await rename(root, unavailableRoot);
-    await expect(store.setEnabledOnLaunch(true)).rejects.toThrow();
+    await expect(store.setEnabledOnLaunch(identity.serverId, true)).rejects.toThrow();
     await rename(unavailableRoot, root);
 
-    await expect(store.setEnabledOnLaunch(false)).resolves.toBeUndefined();
+    await expect(store.setEnabledOnLaunch(identity.serverId, false)).resolves.toBeUndefined();
     expect((await readStoredHost(path)).enabledOnLaunch).toBe(false);
   });
 
@@ -476,6 +476,33 @@ describe("TeamStore", () => {
     await restarted.initialize();
     await restarted.activateAccount(owner);
     expect(restarted.getIdentity()?.serverId).toBe(store.getIdentity()?.serverId);
+  });
+
+  it("refuses a launch preference decided for a host that is no longer active", async () => {
+    const { store } = await createStore();
+    const first = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
+    const second = { id: "account-b", email: "b@example.com", name: "B", avatarUrl: null };
+    const firstIdentity = await store.configureWithAccount("Studio Mac", first);
+
+    await store.activateAccount(second);
+    await store.configureWithAccount("Loft Mini", second);
+
+    await expect(store.setEnabledOnLaunch(firstIdentity.serverId, true)).rejects.toThrow("no longer the active one");
+    expect(store.getIdentity()?.enabledOnLaunch).toBe(false);
+    await store.activateAccount(first);
+    expect(store.getIdentity()?.enabledOnLaunch).toBe(false);
+  });
+
+  it("refuses a second host beside an owner-less one that is not active", async () => {
+    const { store, path } = await createStore();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const owner = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
+    await store.deactivate();
+
+    await expect(store.configureWithAccount("Loft Mini", owner)).rejects.toThrow("already configured");
+    expect(await readStoredHosts(path)).toHaveLength(1);
+    await store.activateAccount(owner);
+    expect(store.getIdentity()?.serverName).toBe("Studio Mac");
   });
 
   it("refuses a remote directory loaded for a host that is no longer active", async () => {

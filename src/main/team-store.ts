@@ -257,6 +257,12 @@ export class TeamStore {
     return sign(null, Buffer.from(transcript), this.#state.privateKey).toString("base64url");
   }
 
+  /**
+   * The password path, used by the development connection and by tests. It creates an
+   * owner-less host and deliberately leaves `activeAccountId` alone - no account owns it
+   * yet, and the first one to activate adopts it. `#assertNoHostFor` is what keeps a
+   * second owner-less host from being created beside it.
+   */
   async configure(serverName: string, username: string, password: string): Promise<TeamIdentity> {
     if (this.#state) throw new TeamStoreError("The team server is already configured.");
     validateServerName(serverName);
@@ -428,8 +434,16 @@ export class TeamStore {
     return rm(join(this.#logoRoot, `${logo.version}.${avatarFileExtension(logo.mimeType)}`), { force: true });
   }
 
-  async setEnabledOnLaunch(enabled: boolean): Promise<void> {
+  /**
+   * `serverId` names the host the caller decided this for. Publishing and unpublishing
+   * both span awaits an account switch can land in, and the launch preference of one
+   * account's host must never be written onto another's.
+   */
+  async setEnabledOnLaunch(serverId: string, enabled: boolean): Promise<void> {
     const state = this.#requireState();
+    if (state.serverId !== serverId) {
+      throw new TeamStoreError("This server is no longer the active one for the signed-in account.");
+    }
     state.enabledOnLaunch = enabled;
     await this.#persist();
   }
@@ -861,10 +875,18 @@ export class TeamStore {
     return this.#state;
   }
 
-  /** Rejects a second host for one account, and a second host beside an owner-less one. */
+  /**
+   * Rejects a second host for one account, and a second host beside an owner-less one.
+   * The owner-less check spans every stored host, not just the active one: an inactive
+   * one is exactly what the next `activateAccount` adopts, so letting a second accumulate
+   * would make that adoption a coin toss.
+   */
   #assertNoHostFor(accountId: string, email: string): void {
-    const activeOwner = this.#state ? hostOwner(this.#state) : undefined;
-    if (this.#hostFor(accountId, email) || (activeOwner && !activeOwner.accountId && !activeOwner.email)) {
+    const ownerless = this.#file.hosts.some((host) => {
+      const owner = hostOwner(host);
+      return owner !== undefined && !owner.accountId && !owner.email;
+    });
+    if (this.#hostFor(accountId, email) || ownerless) {
       throw new TeamStoreError("The team server is already configured.");
     }
   }

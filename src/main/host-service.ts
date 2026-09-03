@@ -36,15 +36,11 @@ import type {
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
 import type { AgentService } from "../backend/agent-service";
-import type { BrowserHost } from "../backend/browser-host";
-import type { MailboxStore } from "../backend/mailbox-store";
-import type { SidebarLayoutStore } from "../backend/sidebar-layout-store";
 import type { TeamChatStore } from "../backend/team-chat-store";
 import type { VerifiedRemoteSessionTicket } from "./central-auth-manager";
 import type { RemoteDesktopRuntimePaths } from "./remote-desktop-runtime-artifact";
 import { appendRemoteDiagnosticLog } from "./remote-diagnostics";
 import { RemoteScreenGateway } from "./remote-screen-gateway";
-import type { SkillMarketplaceService } from "./skill-marketplace-service";
 import { TeamApiServer } from "./team-api-server";
 import type { AuthenticatedMember, RemoteDirectoryMember, TeamIdentity, TeamStore } from "./team-store";
 import type { TeamWebRtcBridge } from "./team-webrtc-bridge";
@@ -59,14 +55,22 @@ interface HostEvents {
   directTyping: [event: DirectTypingRealtimeEvent];
 }
 
+/**
+ * The collaborators this service only forwards to the Team API, typed by the narrow
+ * shapes that server already declares rather than by the concrete stores. Nothing here
+ * changes at the call site - `index.ts` still passes the real services - but it lets an
+ * account switch be tested without standing up a database and a browser host.
+ */
+type ForwardedApiOptions = ConstructorParameters<typeof TeamApiServer>[0];
+
 interface HostServiceOptions {
   appVersion: string;
   store: TeamStore;
-  agents: AgentService;
-  skills: SkillMarketplaceService;
-  sidebarLayout: SidebarLayoutStore;
-  mailbox: MailboxStore;
-  browser: BrowserHost;
+  agents: ForwardedApiOptions["agents"] & Pick<AgentService, "adoptConversationReads">;
+  skills: NonNullable<ForwardedApiOptions["skills"]>;
+  sidebarLayout: NonNullable<ForwardedApiOptions["sidebarLayout"]>;
+  mailbox: ForwardedApiOptions["mailbox"];
+  browser: ForwardedApiOptions["browser"];
   chat?: TeamChatStore;
   allowLocalDevelopmentInvites?: boolean;
   logDirectory?: string;
@@ -258,6 +262,12 @@ export class HostService extends EventEmitter<HostEvents> {
       // on a command error or a timeout, and leaving the previous account's host bound is
       // by far the worse failure. Report it and rebind anyway.
       try {
+        // The same three steps as `stop`, and for the same reason: a start still in flight
+        // belongs to the previous account. The bumped generation makes it abort at its
+        // next checkpoint, and draining it here is what stops `start()` from handing the
+        // new account that superseded operation instead of starting its own host.
+        await this.#stopRuntime();
+        await this.#startOperation;
         await this.#stopRuntime();
       } catch (error) {
         console.error("Unable to stop the host runtime while switching accounts:", error);
@@ -404,8 +414,8 @@ export class HostService extends EventEmitter<HostEvents> {
         apiOnline: true,
         message: "This OpenBot is ready for WebRTC connections.",
       });
-      await this.#options.store.setEnabledOnLaunch(true);
       if (await this.#cancelSupersededStart(generation)) return this.getStatus();
+      await this.#options.store.setEnabledOnLaunch(identity.serverId, true);
       this.#setStatus({ phase: "online", enabledOnLaunch: true });
     } catch (error) {
       if (generation !== this.#runtimeGeneration) {
@@ -476,7 +486,10 @@ export class HostService extends EventEmitter<HostEvents> {
     await this.#stopRuntime();
     await this.#startOperation;
     await this.#stopRuntime();
-    if (persistPreference) await this.#options.store.setEnabledOnLaunch(false);
+    // The awaits above can outlive this host: an account switch in between must not write
+    // the preference onto the account that just became active.
+    const serverId = this.#options.store.getIdentity()?.serverId;
+    if (persistPreference && serverId) await this.#options.store.setEnabledOnLaunch(serverId, false);
     this.#setStatus({
       phase: "idle",
       enabledOnLaunch: persistPreference ? false : this.#status.enabledOnLaunch,
@@ -491,6 +504,10 @@ export class HostService extends EventEmitter<HostEvents> {
     const hostId = this.#options.store.getIdentity()?.serverId;
     if (hostId && this.#options.listRemoteMembers) {
       return this.#options.listRemoteMembers(hostId).then(async (members) => {
+        // An account switch while the directory loaded makes this list the previous
+        // account's. Answer with the now-active host's own members rather than failing a
+        // read with the store's cross-account guard.
+        if (this.#options.store.getIdentity()?.serverId !== hostId) return this.#options.store.listMembers();
         await this.#options.store.syncRemoteDirectory(hostId, members);
         return members.map((member) => ({
           id: member.membershipId,

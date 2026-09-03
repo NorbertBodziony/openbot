@@ -610,7 +610,7 @@ async function seedTeam(profilePath: string, botStore: BotStore): Promise<void> 
     name: "Dev Owner",
     avatarUrl: null,
   };
-  await team.configureWithAccount("OpenBot Dev Team", owner);
+  const teamIdentity = await team.configureWithAccount("OpenBot Dev Team", owner);
   const joined = [];
   for (const member of [
     { id: "openbot-dev-alice", email: "alice@example.com", name: "Alice Chen", role: "admin" as const },
@@ -629,7 +629,7 @@ async function seedTeam(profilePath: string, botStore: BotStore): Promise<void> 
   }
   await team.createInvite("member", "new-person@example.com");
   const ownerSession = await team.loginWithAccount(owner);
-  await team.setEnabledOnLaunch(true);
+  await team.setEnabledOnLaunch(teamIdentity.serverId, true);
 
   const [alice, jon, maya] = joined;
   if (!alice || !jon || !maya) throw new Error("The development team members could not be created.");
