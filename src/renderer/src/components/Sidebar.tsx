@@ -2232,8 +2232,8 @@ export function Sidebar(props: SidebarProps) {
                   />
                   <AlertDialog.Title>Delete {bot().name}?</AlertDialog.Title>
                   <AlertDialog.Description>
-                    This removes the agent, its OpenBot queue, and managed files used only by that conversation. Its
-                    workspace and CLI history stay on your Mac.
+                    This permanently removes the agent and its OpenBot conversation, queue, memories, routines, and
+                    workspace. History stored separately by the connected CLI provider is not deleted.
                   </AlertDialog.Description>
                   <Show when={deleteError()}>{(message) => <p class="bot-delete-error">{message()}</p>}</Show>
                   <div class="bot-delete-actions">
