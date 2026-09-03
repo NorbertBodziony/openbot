@@ -52,10 +52,7 @@ function isIncoming(message: { itemType?: string }, fromUser: boolean): boolean 
 }
 
 /** The rule for a message as main sends it. */
-export function isIncomingConversationMessage(message: {
-  author: ConversationMessageAuthor;
-  itemType?: string;
-}): boolean {
+function isIncomingConversationMessage(message: { author: ConversationMessageAuthor; itemType?: string }): boolean {
   return isIncoming(message, message.author === "user");
 }
 
@@ -64,7 +61,7 @@ export function isIncomingConversationMessage(message: {
  * kinds of row the renderer synthesizes itself: streamed thinking and UI notices.
  * Neither exists in main, so neither can be read.
  */
-export function isIncomingAgentMessage(message: BotMessage): boolean {
+function isIncomingAgentMessage(message: BotMessage): boolean {
   return (
     isIncoming(message, message.author === "you") &&
     !message.id.startsWith("thinking:") &&

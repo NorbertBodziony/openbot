@@ -30,7 +30,7 @@ import { createSimpleContext } from "./simple-context";
  * responding to an approval - resolve against the coordinator wherever the user
  * happens to be, so they are never handed across a switch.
  */
-export type ServerScopedIslandAction = Extract<DynamicIslandAction, { serverId: string }>;
+type ServerScopedIslandAction = Extract<DynamicIslandAction, { serverId: string }>;
 
 const ServerSwitch = createSimpleContext({
   name: "Server switch",
