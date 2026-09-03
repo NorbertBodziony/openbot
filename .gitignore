@@ -45,3 +45,5 @@ index-*.css
 /build/remote-desktop-runtime/
 /build/remote-desktop-release/
 Bots
+!apps/mobile/src/features/bots/
+!apps/mobile/src/features/bots/**
