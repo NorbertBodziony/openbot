@@ -2,9 +2,10 @@ import type { BotSummary, ConversationPage, ConversationSnapshot } from "@openbo
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { createSignal, Show } from "solid-js";
 import { expect, it, vi } from "vitest";
-import { App, createAppController, createBotInitialMessage } from "./App";
+import { App } from "./App";
+import { useAgents } from "./agents";
 import { desktopAnalytics } from "./analytics";
-import { AppControllerProvider, useAppController } from "./app-controller-context";
+import { AppProviders } from "./app-providers";
 import {
   BOTS,
   confirmOnboardingModel,
@@ -18,6 +19,11 @@ import {
   testConversationPage,
   testServer,
 } from "./app-test-harness";
+import { createBotInitialMessage } from "./bot-initial-message";
+import { useConversation } from "./conversation";
+import { useLayout } from "./layout";
+import { useNavigation } from "./navigation";
+import { useServers } from "./servers";
 import { SIDEBAR_PINS_STORAGE_KEY } from "./sidebar-pins";
 import { SIDEBAR_COLLAPSED_STORAGE_KEY } from "./sidebar-sections";
 
@@ -28,28 +34,43 @@ describe("OpenBot connected desktop shell", () => {
 
   it("keeps shell state and subscriptions when a view boundary remounts", async () => {
     function ShellProbe() {
-      const controller = useAppController();
+      const conversation = useConversation();
+      const agents = useAgents();
+      const layout = useLayout();
+      const servers = useServers();
       return (
         <output aria-label="shell controller state">
-          {controller.activeServer()?.id}|{controller.activeBot()?.id}|{controller.activeMessages().length}|
-          {controller.leftPanelWidth()}
+          {servers.activeServer()?.id}|{agents.activeBot()?.id}|{conversation.activeMessages().length}|
+          {layout.leftPanelWidth()}
         </output>
       );
     }
 
+    // The provider subtree sits *above* a remountable view, exactly as `App`
+    // mounts it, so state and subscriptions belong to the providers and the
+    // view is free to come and go.
     function Harness() {
-      const controller = createAppController({});
+      return (
+        <AppProviders>
+          <HarnessBody />
+        </AppProviders>
+      );
+    }
+
+    function HarnessBody() {
+      const layout = useLayout();
+      const navigation = useNavigation();
       const [viewVisible, setViewVisible] = createSignal(true);
       return (
-        <AppControllerProvider controller={controller}>
+        <>
           <button type="button" onClick={() => setViewVisible((current) => !current)}>
             Toggle shell view
           </button>
           <button
             type="button"
             onClick={() => {
-              controller.setLeftPanelWidth(360);
-              controller.selectBot("sales-outbound");
+              layout.setLeftPanelWidth(360);
+              navigation.selectBot("sales-outbound");
             }}
           >
             Set shell state
@@ -57,7 +78,7 @@ describe("OpenBot connected desktop shell", () => {
           <Show when={viewVisible()}>
             <ShellProbe />
           </Show>
-        </AppControllerProvider>
+        </>
       );
     }
 

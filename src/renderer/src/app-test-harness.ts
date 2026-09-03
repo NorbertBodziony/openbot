@@ -45,6 +45,132 @@ export let emitDirectTyping: ((event: DirectTypingRealtimeEvent) => void) | unde
 export let emitInvite: ((inviteUrl: string) => void) | undefined;
 export let emitDynamicIslandAction: ((action: DynamicIslandAction) => void) | undefined;
 
+type BridgeListener<Event> = (event: Event) => void;
+
+type EventBridge<Event> = {
+  /** Additive subscription with a working unsubscribe, like `ipcRenderer.on` + `removeListener`. */
+  readonly subscribe: (listener: BridgeListener<Event>) => () => void;
+  /** Live subscriber count, so a test can assert a remount did not accumulate subscriptions. */
+  readonly count: () => number;
+  /** Drop every listener, as installing a fresh stub must. */
+  readonly reset: () => void;
+};
+
+/**
+ * Fans one stub event out to every subscriber, matching the real preload
+ * (`ipcRenderer.on` + `removeListener`) and `preview/mock-openbot.ts`. A
+ * single-holder stub hides the two things that go wrong when state moves into
+ * separate providers: a second subscription silently replaces the first, and a
+ * missing cleanup is invisible because unsubscribing did nothing anyway.
+ *
+ * `publish` keeps the exported `emit*` binding in step with the set, so it is
+ * `undefined` until something subscribes - the condition several tests already
+ * wait on - and a fan-out function afterwards.
+ */
+function createEventBridge<Event>(publish: (emit: BridgeListener<Event> | undefined) => void): EventBridge<Event> {
+  const listeners = new Set<BridgeListener<Event>>();
+  const republish = () => {
+    if (listeners.size === 0) {
+      publish(undefined);
+      return;
+    }
+    publish((event) => {
+      for (const listener of listeners) listener(event);
+    });
+  };
+  return {
+    subscribe(listener) {
+      listeners.add(listener);
+      republish();
+      return () => {
+        listeners.delete(listener);
+        republish();
+      };
+    },
+    count: () => listeners.size,
+    reset() {
+      listeners.clear();
+      republish();
+    },
+  };
+}
+
+const agentEventBridge = createEventBridge<AgentEvent>((emit) => {
+  emitAgentEvent = emit;
+});
+const scopedAgentEventBridge = createEventBridge<ScopedAgentEvent>((emit) => {
+  emitScopedAgentEvent = emit;
+});
+const attachmentImportBridge = createEventBridge<AttachmentImportEvent>((emit) => {
+  emitAttachmentImport = emit;
+});
+const browserPictureInPictureBridge = createEventBridge<BrowserPictureInPictureEvent>((emit) => {
+  emitBrowserPictureInPicture = emit;
+});
+const updateStatusBridge = createEventBridge<UpdateStatus>((emit) => {
+  emitUpdateStatus = emit;
+});
+const authBridge = createEventBridge<CentralAuthState>((emit) => {
+  emitAuth = emit;
+});
+const serversBridge = createEventBridge<ServerSummary[]>((emit) => {
+  emitServers = emit;
+});
+const presenceBridge = createEventBridge<TeamPresenceSnapshot>((emit) => {
+  emitPresence = emit;
+});
+const directMessageBridge = createEventBridge<DirectMessageRealtimeEvent>((emit) => {
+  emitDirectMessage = emit;
+});
+const directTypingBridge = createEventBridge<DirectTypingRealtimeEvent>((emit) => {
+  emitDirectTyping = emit;
+});
+const inviteBridge = createEventBridge<string>((emit) => {
+  emitInvite = emit;
+});
+const dynamicIslandActionBridge = createEventBridge<DynamicIslandAction>((emit) => {
+  emitDynamicIslandAction = emit;
+});
+
+const eventBridges = {
+  agentEvent: agentEventBridge,
+  scopedAgentEvent: scopedAgentEventBridge,
+  attachmentImport: attachmentImportBridge,
+  browserPictureInPicture: browserPictureInPictureBridge,
+  updateStatus: updateStatusBridge,
+  auth: authBridge,
+  servers: serversBridge,
+  presence: presenceBridge,
+  directMessage: directMessageBridge,
+  directTyping: directTypingBridge,
+  invite: inviteBridge,
+  dynamicIslandAction: dynamicIslandActionBridge,
+} as const;
+
+export type BridgeSubscriberCounts = { readonly [Name in keyof typeof eventBridges]: number };
+
+/**
+ * How many listeners each stub event bridge currently holds. Mounting subscribes
+ * and unmounting unsubscribes, so these numbers must return to their post-mount
+ * values after a server switch rather than climbing with every remount.
+ */
+export function subscriberCounts(): BridgeSubscriberCounts {
+  return {
+    agentEvent: agentEventBridge.count(),
+    scopedAgentEvent: scopedAgentEventBridge.count(),
+    attachmentImport: attachmentImportBridge.count(),
+    browserPictureInPicture: browserPictureInPictureBridge.count(),
+    updateStatus: updateStatusBridge.count(),
+    auth: authBridge.count(),
+    servers: serversBridge.count(),
+    presence: presenceBridge.count(),
+    directMessage: directMessageBridge.count(),
+    directTyping: directTypingBridge.count(),
+    invite: inviteBridge.count(),
+    dynamicIslandAction: dynamicIslandActionBridge.count(),
+  };
+}
+
 export const BOTS: BotSummary[] = [
   {
     id: "chief",
@@ -188,18 +314,7 @@ export function installVoiceRecordingMocks(): void {
 }
 
 export function installOpenbotStub(): void {
-  emitAgentEvent = undefined;
-  emitScopedAgentEvent = undefined;
-  emitAttachmentImport = undefined;
-  emitBrowserPictureInPicture = undefined;
-  emitUpdateStatus = undefined;
-  emitAuth = undefined;
-  emitServers = undefined;
-  emitPresence = undefined;
-  emitDirectMessage = undefined;
-  emitDirectTyping = undefined;
-  emitInvite = undefined;
-  emitDynamicIslandAction = undefined;
+  for (const bridge of Object.values(eventBridges)) bridge.reset();
   trackAnalytics.mockClear();
   installAnalyticsSpies();
   window.localStorage.clear();
@@ -247,10 +362,7 @@ export function installOpenbotStub(): void {
         onGeometry: vi.fn().mockReturnValue(() => undefined),
         performAction: vi.fn().mockResolvedValue(undefined),
         performHaptic: vi.fn().mockResolvedValue(undefined),
-        onAction: vi.fn((listener) => {
-          emitDynamicIslandAction = listener;
-          return () => undefined;
-        }),
+        onAction: vi.fn(dynamicIslandActionBridge.subscribe),
         setInteractive: vi.fn().mockResolvedValue(undefined),
       },
       saveSetup: vi.fn().mockImplementation(async ({ preferredProvider }) => ({
@@ -385,10 +497,7 @@ export function installOpenbotStub(): void {
           user: { id: "user-1", email: "person@example.com", name: null, avatarUrl: null },
         }),
         logout: vi.fn().mockResolvedValue({ status: "signed_out" }),
-        onEvent: vi.fn((listener) => {
-          emitAuth = listener;
-          return () => undefined;
-        }),
+        onEvent: vi.fn(authBridge.subscribe),
       },
       agent: {
         getStatus: vi.fn().mockResolvedValue({
@@ -575,10 +684,7 @@ export function installOpenbotStub(): void {
           throughMessageId: input.throughMessageId,
         })),
         chooseAttachments: vi.fn().mockResolvedValue([]),
-        onAttachmentImport: vi.fn((listener) => {
-          emitAttachmentImport = listener;
-          return () => undefined;
-        }),
+        onAttachmentImport: vi.fn(attachmentImportBridge.subscribe),
         discardDraftAttachment: vi.fn().mockResolvedValue(undefined),
         openAttachment: vi.fn().mockResolvedValue(undefined),
         openSharedFile: vi.fn().mockResolvedValue(undefined),
@@ -612,14 +718,8 @@ export function installOpenbotStub(): void {
         respondToPrompt: vi.fn().mockResolvedValue(undefined),
         respondToApproval: vi.fn().mockResolvedValue(undefined),
         respondToBrowserTakeover: vi.fn().mockResolvedValue(undefined),
-        onEvent: vi.fn((listener) => {
-          emitAgentEvent = listener;
-          return () => undefined;
-        }),
-        onScopedEvent: vi.fn((listener) => {
-          emitScopedAgentEvent = listener;
-          return () => undefined;
-        }),
+        onEvent: vi.fn(agentEventBridge.subscribe),
+        onScopedEvent: vi.fn(scopedAgentEventBridge.subscribe),
       },
       browser: {
         open: vi.fn().mockResolvedValue(undefined),
@@ -643,10 +743,7 @@ export function installOpenbotStub(): void {
         closePictureInPicture: vi.fn().mockResolvedValue(undefined),
         dockPictureInPicture: vi.fn().mockResolvedValue(undefined),
         hidePictureInPicture: vi.fn().mockResolvedValue(undefined),
-        onPictureInPictureEvent: vi.fn((listener) => {
-          emitBrowserPictureInPicture = listener;
-          return () => undefined;
-        }),
+        onPictureInPictureEvent: vi.fn(browserPictureInPictureBridge.subscribe),
       },
       update: {
         getStatus: vi.fn().mockResolvedValue({
@@ -676,10 +773,7 @@ export function installOpenbotStub(): void {
         install: vi.fn().mockResolvedValue(undefined),
         getPreference: vi.fn().mockResolvedValue({ autoDownload: true }),
         setPreference: vi.fn(async (input) => input),
-        onEvent: vi.fn((listener) => {
-          emitUpdateStatus = listener;
-          return () => undefined;
-        }),
+        onEvent: vi.fn(updateStatusBridge.subscribe),
       },
       maintenance: {
         exportData: vi.fn().mockResolvedValue({ saved: true }),
@@ -744,10 +838,7 @@ export function installOpenbotStub(): void {
           email: null,
         }),
         setTyping: vi.fn().mockResolvedValue(undefined),
-        onPresence: vi.fn((listener) => {
-          emitPresence = listener;
-          return () => undefined;
-        }),
+        onPresence: vi.fn(presenceBridge.subscribe),
         listDirectThreads: vi.fn().mockResolvedValue([]),
         readDirectConversation: vi.fn().mockImplementation(async (memberId) => ({
           threadId: `thread-${memberId}`,
@@ -780,22 +871,10 @@ export function installOpenbotStub(): void {
           throughSequence: input.throughSequence,
         })),
         setDirectTyping: vi.fn().mockResolvedValue(undefined),
-        onDirectMessage: vi.fn((listener) => {
-          emitDirectMessage = listener;
-          return () => undefined;
-        }),
-        onDirectTyping: vi.fn((listener) => {
-          emitDirectTyping = listener;
-          return () => undefined;
-        }),
-        onEvent: vi.fn((listener) => {
-          emitServers = listener;
-          return () => undefined;
-        }),
-        onInvite: vi.fn((listener) => {
-          emitInvite = listener;
-          return () => undefined;
-        }),
+        onDirectMessage: vi.fn(directMessageBridge.subscribe),
+        onDirectTyping: vi.fn(directTypingBridge.subscribe),
+        onEvent: vi.fn(serversBridge.subscribe),
+        onInvite: vi.fn(inviteBridge.subscribe),
       },
       host: {
         getStatus: vi.fn().mockResolvedValue({

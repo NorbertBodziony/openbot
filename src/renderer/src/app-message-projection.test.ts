@@ -6,13 +6,7 @@ import {
   routineRunConversationEventItemType,
 } from "@openbot/contracts/ipc";
 import { describe, expect, it } from "vitest";
-import {
-  botProfilesEqual,
-  readStateForMessages,
-  toBotMessage,
-  toBotMessages,
-  toBotProfile,
-} from "./app-message-projection";
+import { botProfilesEqual, toBotMessage, toBotMessages, toBotProfile } from "./app-message-projection";
 
 describe("toBotProfile", () => {
   it("preserves marketplace installation metadata for the renderer", () => {
@@ -51,88 +45,6 @@ describe("toBotProfile", () => {
     expect(first.time).toBe(second.time);
     expect(first.preview).toBe(second.preview);
     expect(botProfilesEqual(first, second)).toBe(false);
-  });
-});
-
-describe("readStateForMessages", () => {
-  it("does not count response attachments as unread replies", () => {
-    const messages: ConversationMessage[] = [
-      {
-        id: "attachment",
-        author: "assistant",
-        text: "",
-        createdAt: "2026-08-30T11:00:00.000Z",
-        status: "completed",
-        itemType: "agent_attachment",
-      },
-      {
-        id: "answer",
-        author: "assistant",
-        text: "Here is the screenshot.",
-        createdAt: "2026-08-30T11:01:00.000Z",
-        status: "completed",
-      },
-    ];
-
-    expect(
-      readStateForMessages({ unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null }, messages),
-    ).toMatchObject({ unreadCount: 1, firstUnreadMessageId: "answer" });
-  });
-
-  it("does not count routine event markers as unread replies", () => {
-    const messages: ConversationMessage[] = [
-      {
-        id: "routine-event",
-        author: "system",
-        source: "system",
-        text: "Morning brief",
-        createdAt: "2026-08-30T11:00:00.000Z",
-        status: "completed",
-        itemType: routineConversationEventItemType("created", "routine-1"),
-      },
-    ];
-
-    expect(
-      readStateForMessages({ unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null }, messages),
-    ).toMatchObject({ unreadCount: 0, firstUnreadMessageId: null });
-  });
-
-  it("does not count routine run markers, including malformed markers, as unread replies", () => {
-    const messages: ConversationMessage[] = [
-      {
-        id: "routine-run-event",
-        author: "system",
-        source: "system",
-        text: "Morning brief",
-        createdAt: "2026-08-30T11:00:00.000Z",
-        status: "completed",
-        itemType: routineRunConversationEventItemType("running", "routine-1", "run-1"),
-      },
-      {
-        id: "malformed-routine-run-event",
-        author: "system",
-        source: "system",
-        text: "Morning brief",
-        createdAt: "2026-08-30T11:01:00.000Z",
-        status: "completed",
-        itemType: "routine-run-event:unknown",
-      },
-    ];
-
-    expect(
-      readStateForMessages({ unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null }, messages),
-    ).toMatchObject({ unreadCount: 0, firstUnreadMessageId: null });
-  });
-
-  it("does not count hosted site markers, including malformed markers, as unread replies", () => {
-    const messages: ConversationMessage[] = [
-      hostedSiteMessage("succeeded"),
-      { ...hostedSiteMessage("succeeded"), id: "malformed-site-event", text: "{" },
-    ];
-
-    expect(
-      readStateForMessages({ unreadCount: 0, firstUnreadMessageId: null, throughMessageId: null }, messages),
-    ).toMatchObject({ unreadCount: 0, firstUnreadMessageId: null });
   });
 });
 

@@ -1,6 +1,9 @@
 import type { ServerSummary } from "@openbot/contracts/ipc";
 import { createMemo, For, Loading, lazy, Show } from "solid-js";
-import { useAppController } from "./app-controller-context";
+import { useAgentActions } from "./agent-actions";
+import { useAgents } from "./agents";
+import { useAuth } from "./auth";
+import { useBrowserTabs } from "./browser-tabs";
 import { Conversation } from "./components/Conversation";
 import { FIRST_BOT_SUGGESTIONS, FirstBotSetup } from "./components/FirstBotSetup";
 import { PanelResizer, savePanelWidth } from "./components/PanelResizer";
@@ -8,6 +11,32 @@ import { ServerRail } from "./components/ServerRail";
 import { Sidebar } from "./components/Sidebar";
 import { StaticAccountDock } from "./components/StaticAccountDock";
 import { Alert, AlertContent, AlertDescription, Button, toast } from "./components/ui";
+import { useConversation } from "./conversation";
+import { useDirectMessages } from "./direct-messages";
+import { useLayout } from "./layout";
+import {
+  LEFT_PANEL_COLLAPSE_THRESHOLD,
+  LEFT_PANEL_COMPACT,
+  LEFT_PANEL_DEFAULT,
+  LEFT_PANEL_EXPAND_THRESHOLD,
+  LEFT_PANEL_MAX,
+  LEFT_PANEL_MIN,
+  LEFT_PANEL_STORAGE_KEY,
+} from "./layout-constants";
+import { useNavigation } from "./navigation";
+import { usePlatform } from "./platform";
+import { usePresence } from "./presence";
+import { useProviders } from "./providers";
+import { useRemoteDesktop } from "./remote-desktop";
+import { useServerSelection } from "./server-selection";
+import { useServerSettings } from "./server-settings";
+import { useServers } from "./servers";
+import { useSettings } from "./settings";
+import { useSetup } from "./setup";
+import { useSidebar } from "./sidebar";
+import { computeSidebarAgentStates } from "./sidebar-agent-states";
+import { useTurns } from "./turns";
+import { useUpdates } from "./updates";
 
 const AccountDock = lazy(() => import("./components/AccountDock").then((module) => ({ default: module.AccountDock })));
 const AccountLogin = lazy(() =>
@@ -41,18 +70,11 @@ const SkillsMarketplaceModal = lazy(() =>
   import("./components/SkillsMarketplaceModal").then((module) => ({ default: module.SkillsMarketplaceModal })),
 );
 export function AppAccessGate() {
+  const platform = usePlatform();
+  const auth = useAuth();
+  const setup = useSetup();
+  const { agentStatus } = useAgents();
   const {
-    setupLoaded,
-    appInfo,
-    visibleSignedInAccount,
-    centralAuth,
-    retryCentralAccount,
-    requestEmailCode,
-    verifyEmailCode,
-    logoutCentralAccount,
-    setupState,
-    pendingInviteUrl,
-    agentStatus,
     providerRuntimeStatuses,
     providerRuntimeDownloadsAvailable,
     downloadProviderRuntime,
@@ -64,43 +86,41 @@ export function AppAccessGate() {
     openProviderInstallGuide,
     openProviderSignInGuide,
     refreshAgentProviders,
-    saveSetup,
-    previewInvite,
-    joinRemoteDuringSetup,
-  } = useAppController();
+  } = useProviders();
+  const { joinRemoteDuringSetup } = useServerSelection();
 
   return (
     <Show
-      when={setupLoaded() && appInfo() !== null}
+      when={setup.setupLoaded() && platform.appInfo() !== null}
       fallback={<div class="initial-setup-screen" role="status" aria-label="Loading OpenBot" />}
     >
       <Show
-        when={visibleSignedInAccount()}
+        when={auth.visibleSignedInAccount()}
         fallback={
           <Loading fallback={<div class="initial-setup-screen" role="status" aria-label="Loading OpenBot" />}>
             <AccountLogin
-              variant={appInfo()?.variant ?? "production"}
-              state={centralAuth()}
-              onRetry={retryCentralAccount}
-              onRequestEmailCode={requestEmailCode}
-              onVerifyEmailCode={verifyEmailCode}
-              onReset={logoutCentralAccount}
+              variant={platform.appInfo()?.variant ?? "production"}
+              state={auth.centralAuth()}
+              onRetry={auth.retryCentralAccount}
+              onRequestEmailCode={auth.requestEmailCode}
+              onVerifyEmailCode={auth.verifyEmailCode}
+              onReset={auth.logoutCentralAccount}
             />
           </Loading>
         }
       >
         {(account) => (
           <Show
-            when={setupState()?.completed}
+            when={setup.setupState()?.completed}
             fallback={
               <Show
-                when={pendingInviteUrl().trim()}
+                when={setup.pendingInviteUrl().trim()}
                 fallback={
                   <Loading fallback={<div class="initial-setup-screen" role="status" aria-label="Loading OpenBot" />}>
                     <OnboardingFlow
-                      state={setupState() ?? { completed: false, preferredProvider: null }}
+                      state={setup.setupState() ?? { completed: false, preferredProvider: null }}
                       agentStatus={agentStatus()}
-                      platform={appInfo()?.platform ?? "darwin"}
+                      platform={platform.appInfo()?.platform ?? "darwin"}
                       refreshingProviders={
                         refreshingProviders() ||
                         agentStatus().phase === "starting" ||
@@ -123,22 +143,22 @@ export function AppAccessGate() {
                       onInstallProvider={providerRuntimeDownloadsAvailable() ? undefined : openProviderInstallGuide}
                       onSignInProvider={providerRuntimeDownloadsAvailable() ? undefined : openProviderSignInGuide}
                       onRefreshProviders={providerRuntimeDownloadsAvailable() ? undefined : refreshAgentProviders}
-                      onSave={saveSetup}
+                      onSave={setup.saveSetup}
                     />
                   </Loading>
                 }
               >
                 <Loading fallback={<div class="initial-setup-screen" role="status" aria-label="Loading OpenBot" />}>
                   <InitialSetup
-                    state={setupState() ?? { completed: false, preferredProvider: null }}
+                    state={setup.setupState() ?? { completed: false, preferredProvider: null }}
                     agentStatus={agentStatus()}
-                    platform={appInfo()?.platform ?? "darwin"}
+                    platform={platform.appInfo()?.platform ?? "darwin"}
                     accountEmail={account().email}
-                    inviteUrl={pendingInviteUrl()}
-                    onSave={saveSetup}
-                    onPreviewInvite={previewInvite}
+                    inviteUrl={setup.pendingInviteUrl()}
+                    onSave={setup.saveSetup}
+                    onPreviewInvite={setup.previewInvite}
                     onJoinRemote={joinRemoteDuringSetup}
-                    onLogout={logoutCentralAccount}
+                    onLogout={auth.logoutCentralAccount}
                   />
                 </Loading>
               </Show>
@@ -153,31 +173,54 @@ export function AppAccessGate() {
 }
 
 function WorkspaceShell(props: {
-  account: () => NonNullable<ReturnType<ReturnType<typeof useAppController>["signedInAccount"]>>;
+  account: () => NonNullable<ReturnType<ReturnType<typeof useAuth>["signedInAccount"]>>;
 }) {
+  const { appSettingsOpen, openAppSettings, skillsMarketplaceOpen, setSkillsMarketplaceOpen } = useSettings();
+  const { openServerSettings, serverSettingsOpen } = useServerSettings();
   const {
-    props: appProps,
-    appInfo,
-    setAppFrameElement,
-    leftPanelCompact,
-    remoteDesktopWorkspaceVisible,
-    LEFT_PANEL_COMPACT,
-    leftPanelWidth,
-    servers,
-    selectServer,
-    retryServerConnection,
-    reorderServers,
-    setJoinServerOpen,
-    openServerSettings,
-    activeServer,
+    providerRuntimeStatuses,
+    providerRuntimeDownloadsAvailable,
+    downloadProviderRuntime,
+    cancelProviderRuntimeDownload,
+    connectChatGPT,
+    connectClaude,
+    connectGrok,
+  } = useProviders();
+  const {
+    agentStatus,
     botList,
-    activeDirectMemberId,
-    peopleEnabled,
-    activeServerSupportsCapability,
     activeBot,
-    directPeople,
-    directThreads,
-    sidebarAgentStates,
+    duplicatingBotIds,
+    modelOptions,
+    openBotSetup,
+    cancelBotSetup,
+    botSetupOpen,
+    botSetupDraft,
+    setBotSetupDraft,
+    botSetupError,
+    creatingAgent,
+    settingsRequest,
+    updateBot,
+    setAgentAvatar,
+  } = useAgents();
+  const {
+    activeQueue,
+    activeRoutineIds,
+    pendingPrompts,
+    pendingApprovals,
+    activeTurns,
+    queues,
+    answerPrompt,
+    respondToApproval,
+    respondToBrowserTakeover,
+    cancelQueuedMessage,
+    steerQueuedMessage,
+    updateQueuedMessage,
+    reorderQueue,
+    stopActiveTurn,
+  } = useTurns();
+  const { selectServer } = useServerSelection();
+  const {
     sidebarLayout,
     collapsedSidebarSectionIds,
     mutateSidebarLayout,
@@ -188,43 +231,51 @@ function WorkspaceShell(props: {
     unpinSidebarItem,
     reorderPinnedSidebarItems,
     reorderSidebarPeople,
-    selectBot,
-    selectDirectMember,
-    openBotSetup,
-    cancelBotSetup,
-    editBot,
-    duplicateBot,
-    duplicatingBotIds,
-    deleteBot,
-    setSidebarCollapsed,
-    expandSidebar,
-    accountUsage,
-    updateStatus,
-    agentStatus,
-    providerRuntimeStatuses,
-    providerRuntimeDownloadsAvailable,
-    downloadProviderRuntime,
-    cancelProviderRuntimeDownload,
-    connectChatGPT,
-    connectClaude,
-    connectGrok,
-    refreshAccountUsage,
-    runUpdateAction,
-    logoutCentralAccount,
-    setPermissionsOpen,
-    appSettingsOpen,
-    openAppSettings,
-    skillsMarketplaceOpen,
-    setSkillsMarketplaceOpen,
-    LEFT_PANEL_DEFAULT,
-    LEFT_PANEL_MIN,
-    LEFT_PANEL_MAX,
-    LEFT_PANEL_STORAGE_KEY,
-    LEFT_PANEL_COLLAPSE_THRESHOLD,
-    LEFT_PANEL_EXPAND_THRESHOLD,
-    setLeftPanelWidth,
+  } = useSidebar();
+  const { selectBot, selectDirectMember, openAgentMessage, messageFocusRequest, globalSearchOpen } = useNavigation();
+  const {
+    browserTabs,
+    activeBrowserTabId,
+    browserVisibilitySuspended,
+    browserControlState,
+    activateBrowserTab,
+    closeBrowserTab,
+  } = useBrowserTabs();
+  const { activeRemoteDesktopSession, remoteDesktopWorkspaceVisible, openRemoteDesktopWorkspace } = useRemoteDesktop();
+  const {
+    activeMessages,
+    conversationReferences,
+    conversationReads,
+    conversationLoaded,
+    conversationPages,
+    conversationWindowModes,
+    conversationOlderLoading,
+    conversationOlderErrors,
+    sendMessage,
+    markAgentMessagesRead,
+    loadOlderAgentMessages,
+    loadLatestAgentMessages,
+    searchAgentMessages,
+    setTeamTyping,
+    presentPromptResolution,
+    unreadReplies,
+    recentReplies,
+  } = useConversation();
+  const { createAgent, editBot, duplicateBot, deleteBot } = useAgentActions();
+  const sidebarAgentStates = createMemo(() =>
+    computeSidebarAgentStates({
+      botIds: botList().map((bot) => bot.id),
+      activeTurns: activeTurns(),
+      queues: queues(),
+      unreadReplies: unreadReplies(),
+      recentReplies: recentReplies(),
+    }),
+  );
+  const { teamPresence, currentTeamMember, directPeople } = usePresence();
+  const {
+    activeDirectMemberId,
     activeDirectMember,
-    currentTeamMember,
+    directThreads,
     directConversations,
     directConversationLoading,
     directConversationError,
@@ -237,59 +288,21 @@ function WorkspaceShell(props: {
     loadOlderDirectMessages,
     openDirectMessage,
     setDirectTyping,
-    modelOptions,
-    activeMessages,
-    conversationReferences,
-    conversationReads,
-    conversationLoaded,
-    conversationPages,
-    conversationWindowModes,
-    conversationOlderLoading,
-    conversationOlderErrors,
-    activeQueue,
-    activeRoutineIds,
-    browserTabs,
-    activeBrowserTabId,
-    browserVisibilitySuspended,
-    browserControlState,
-    teamPresence,
-    activeRemoteDesktopSession,
-    pendingPrompts,
-    pendingApprovals,
-    activeTurns,
-    botSetupOpen,
-    botSetupDraft,
-    setBotSetupDraft,
-    botSetupError,
-    globalSearchOpen,
+  } = useDirectMessages();
+  const {
+    servers,
+    activeServer,
+    activeServerSupportsCapability,
     joinServerOpen,
-    serverSettingsOpen,
-    creatingAgent,
-    settingsRequest,
-    messageFocusRequest,
-    createAgent,
-    updateBot,
-    setAgentAvatar,
-    sendMessage,
-    markAgentMessagesRead,
-    loadOlderAgentMessages,
-    loadLatestAgentMessages,
-    searchAgentMessages,
-    openAgentMessage,
-    setTeamTyping,
-    answerPrompt,
-    presentPromptResolution,
-    respondToApproval,
-    respondToBrowserTakeover,
-    cancelQueuedMessage,
-    steerQueuedMessage,
-    updateQueuedMessage,
-    reorderQueue,
-    activateBrowserTab,
-    closeBrowserTab,
-    openRemoteDesktopWorkspace,
-    stopActiveTurn,
-  } = useAppController();
+    setJoinServerOpen,
+    reorderServers,
+    retryServerConnection,
+  } = useServers();
+  const platform = usePlatform();
+  const updates = useUpdates();
+  const auth = useAuth();
+  const setup = useSetup();
+  const layout = useLayout();
 
   const activePrompt = createMemo(() => {
     const bot = activeBot();
@@ -307,23 +320,26 @@ function WorkspaceShell(props: {
     if (server?.kind !== "remote") return null;
     return server.state === "incompatible" || server.issue?.code === "protocol_error" ? server : null;
   });
-  const activePeopleEnabled = createMemo(() => peopleEnabled && activeServerSupportsCapability("direct-messages"));
+  const activePeopleEnabled = createMemo(
+    () => platform.peopleEnabled && activeServerSupportsCapability("direct-messages"),
+  );
 
   return (
     <div
-      ref={setAppFrameElement}
+      ref={platform.setAppFrameElement}
       class={[
         "app-frame",
         {
-          "app-frame-sidebar-compact": leftPanelCompact(),
-          "app-frame-with-server-rail": appInfo()?.platform === "darwin" || appInfo()?.platform === "win32",
-          "app-frame-platform-darwin": appInfo()?.platform === "darwin",
+          "app-frame-sidebar-compact": layout.leftPanelCompact(),
+          "app-frame-with-server-rail":
+            platform.appInfo()?.platform === "darwin" || platform.appInfo()?.platform === "win32",
+          "app-frame-platform-darwin": platform.appInfo()?.platform === "darwin",
         },
       ]}
       aria-hidden={remoteDesktopWorkspaceVisible() ? "true" : undefined}
-      style={`--left-panel-width: ${leftPanelCompact() ? LEFT_PANEL_COMPACT : leftPanelWidth()}px`}
+      style={`--left-panel-width: ${layout.leftPanelCompact() ? LEFT_PANEL_COMPACT : layout.leftPanelWidth()}px`}
     >
-      <Show when={appInfo()?.platform === "darwin" || appInfo()?.platform === "win32"}>
+      <Show when={platform.appInfo()?.platform === "darwin" || platform.appInfo()?.platform === "win32"}>
         <ServerRail
           servers={servers()}
           onSelect={(serverId) =>
@@ -335,7 +351,7 @@ function WorkspaceShell(props: {
           }
           onReorder={(serverIds) => void reorderServers(serverIds)}
           onAdd={() => {
-            if (!appProps.landingPreview) setJoinServerOpen(true);
+            if (!platform.landingPreview) setJoinServerOpen(true);
           }}
           onOpenSettings={openServerSettings}
         />
@@ -373,8 +389,8 @@ function WorkspaceShell(props: {
         duplicatingBotIds={duplicatingBotIds()}
         onDuplicateBot={duplicateBot}
         onDeleteBot={deleteBot}
-        compact={leftPanelCompact()}
-        onExpand={expandSidebar}
+        compact={layout.leftPanelCompact()}
+        onExpand={layout.expandSidebar}
         onOpenMarketplace={() => setSkillsMarketplaceOpen(true)}
         emptyAction={
           botList().length === 0
@@ -391,25 +407,25 @@ function WorkspaceShell(props: {
         fallback={
           <StaticAccountDock
             account={props.account()}
-            compact={leftPanelCompact()}
-            hybrid={appInfo()?.platform === "darwin" && !leftPanelCompact()}
-            withServerRail={appInfo()?.platform === "darwin" || appInfo()?.platform === "win32"}
+            compact={layout.leftPanelCompact()}
+            hybrid={platform.appInfo()?.platform === "darwin" && !layout.leftPanelCompact()}
+            withServerRail={platform.appInfo()?.platform === "darwin" || platform.appInfo()?.platform === "win32"}
           />
         }
       >
         <AccountDock
           account={props.account()}
-          appInfo={appInfo()}
+          appInfo={platform.appInfo()}
           agentStatus={agentStatus()}
-          accountUsage={accountUsage()}
-          updateStatus={updateStatus()}
-          compact={leftPanelCompact()}
-          withServerRail={appInfo()?.platform === "darwin" || appInfo()?.platform === "win32"}
-          onRefreshUsage={refreshAccountUsage}
-          onUpdateAction={runUpdateAction}
-          onLogout={appProps.landingPreview ? undefined : logoutCentralAccount}
+          accountUsage={auth.accountUsage()}
+          updateStatus={updates.status()}
+          compact={layout.leftPanelCompact()}
+          withServerRail={platform.appInfo()?.platform === "darwin" || platform.appInfo()?.platform === "win32"}
+          onRefreshUsage={auth.refreshAccountUsage}
+          onUpdateAction={updates.runAction}
+          onLogout={platform.landingPreview ? undefined : auth.logoutCentralAccount}
           onOpenExternal={(destination) => window.openbot.openExternal(destination)}
-          onOpenPermissions={() => setPermissionsOpen(true)}
+          onOpenPermissions={() => setup.setPermissionsOpen(true)}
           onOpenSettings={openAppSettings}
           onOpenSkills={() => setSkillsMarketplaceOpen(true)}
         />
@@ -419,20 +435,20 @@ function WorkspaceShell(props: {
         label="Resize left sidebar"
         controls="bot-sidebar"
         direction="left"
-        value={leftPanelWidth()}
+        value={layout.leftPanelWidth()}
         defaultValue={LEFT_PANEL_DEFAULT}
         min={LEFT_PANEL_MIN}
         max={LEFT_PANEL_MAX}
-        onResize={setLeftPanelWidth}
+        onResize={layout.setLeftPanelWidth}
         onResizeEnd={(value) => savePanelWidth(LEFT_PANEL_STORAGE_KEY, value)}
         snap={{
           compactValue: LEFT_PANEL_COMPACT,
-          compact: leftPanelCompact(),
+          compact: layout.leftPanelCompact(),
           collapseThreshold: LEFT_PANEL_COLLAPSE_THRESHOLD,
           expandThreshold: LEFT_PANEL_EXPAND_THRESHOLD,
           onCompactChange: (compact) => {
-            if (compact) setSidebarCollapsed(true);
-            else expandSidebar();
+            if (compact) layout.setSidebarCollapsed(true);
+            else layout.expandSidebar();
           },
         }}
       />
@@ -535,10 +551,10 @@ function WorkspaceShell(props: {
           server={activeServer()}
           presence={teamPresence()}
           currentUserEmail={props.account().email}
-          browserEnabled={!appProps.landingPreview && activeServerSupportsCapability("browser-control")}
+          browserEnabled={!platform.landingPreview && activeServerSupportsCapability("browser-control")}
           remoteDesktopSessionActive={Boolean(activeRemoteDesktopSession())}
           remoteDesktopVisible={remoteDesktopWorkspaceVisible()}
-          remoteDesktopEnabled={!appProps.landingPreview && activeServerSupportsCapability("remote-desktop")}
+          remoteDesktopEnabled={!platform.landingPreview && activeServerSupportsCapability("remote-desktop")}
           prompt={activePrompt()}
           approval={activeBot() ? pendingApprovals()[activeBot()?.id ?? ""] : undefined}
           browserTakeover={activeBrowserTakeover()}
@@ -637,37 +653,32 @@ function RemoteCompatibilityScreen(props: { server: ServerSummary; onRetry: () =
 }
 
 function WorkspaceOverlays(props: {
-  account: () => NonNullable<ReturnType<ReturnType<typeof useAppController>["signedInAccount"]>>;
+  account: () => NonNullable<ReturnType<ReturnType<typeof useAuth>["signedInAccount"]>>;
 }) {
+  const { agentStatus, botList, activeBot } = useAgents();
   const {
-    props: appProps,
-    permissionsOpen,
     appSettingsOpen,
     setAppSettingsOpen,
     generalSettings,
-    setGeneralSettings,
+    updateGeneralSettings,
     appSettingsRestoreTarget,
     skillsMarketplaceOpen,
     setSkillsMarketplaceOpen,
-    openInstalledMarketplaceAgent,
-    setupState,
-    agentStatus,
-    appInfo,
-    saveSetup,
-    previewInvite,
-    joinRemoteDuringSetup,
-    logoutCentralAccount,
-    setPermissionsOpen,
-    joinServerOpen,
-    pendingInviteUrl,
-    setJoinServerOpen,
-    setPendingInviteUrl,
-    joinServer,
+  } = useSettings();
+  const {
+    providerRuntimeStatuses,
+    providerRuntimeDownloadsAvailable,
+    downloadProviderRuntime,
+    cancelProviderRuntimeDownload,
+    connectChatGPT,
+    connectClaude,
+    connectGrok,
+  } = useProviders();
+  const {
     serverSettingsTarget,
     serverSettingsOpen,
     setServerSettingsOpen,
     serverSettingsRestoreTarget,
-    hostStatus,
     serverSettingsMembers,
     serverSettingsInvites,
     serverSettingsLoading,
@@ -679,28 +690,10 @@ function WorkspaceOverlays(props: {
     updateServerMember,
     removeServerMember,
     revokeServerInvite,
-    updateStatus,
-    runUpdateAction,
-    updateAccountName,
-    updateAccountAvatar,
-    createMobileConnect,
-    listMobileConnectedDevices,
-    revokeMobileConnectedDevice,
-    providerRuntimeStatuses,
-    providerRuntimeDownloadsAvailable,
-    downloadProviderRuntime,
-    cancelProviderRuntimeDownload,
-    connectChatGPT,
-    connectClaude,
-    connectGrok,
-    globalSearchOpen,
-    botList,
-    activeBot,
-    activeServer,
-    searchGlobalMessages,
-    setGlobalSearchVisibility,
-    selectBot,
-    selectGlobalSearchMessage,
+  } = useServerSettings();
+  const { globalSearchOpen, searchGlobalMessages, setGlobalSearchVisibility, selectBot, selectGlobalSearchMessage } =
+    useNavigation();
+  const {
     remoteDesktopWorkspaceServer,
     remoteDesktopWorkspaceVisible,
     remoteDesktopWorkspaceSession,
@@ -710,23 +703,29 @@ function WorkspaceOverlays(props: {
     disconnectRemoteDesktopWorkspace,
     retryRemoteDesktopWorkspace,
     selectRemoteDesktopDisplay,
-  } = useAppController();
+  } = useRemoteDesktop();
+  const { activeServer, hostStatus, joinServerOpen, setJoinServerOpen } = useServers();
+  const { openInstalledMarketplaceAgent, joinRemoteDuringSetup, joinServer } = useServerSelection();
+  const platform = usePlatform();
+  const updates = useUpdates();
+  const auth = useAuth();
+  const setup = useSetup();
 
   return (
     <>
-      <Show when={permissionsOpen()}>
+      <Show when={setup.permissionsOpen()}>
         <Loading>
           <InitialSetup
             reviewing
-            state={setupState() ?? { completed: true, preferredProvider: "codex" }}
+            state={setup.setupState() ?? { completed: true, preferredProvider: "codex" }}
             agentStatus={agentStatus()}
-            platform={appInfo()?.platform ?? "darwin"}
+            platform={platform.appInfo()?.platform ?? "darwin"}
             accountEmail={props.account().email}
-            onSave={saveSetup}
-            onPreviewInvite={previewInvite}
+            onSave={setup.saveSetup}
+            onPreviewInvite={setup.previewInvite}
             onJoinRemote={joinRemoteDuringSetup}
-            onLogout={appProps.landingPreview ? undefined : logoutCentralAccount}
-            onClose={() => setPermissionsOpen(false)}
+            onLogout={platform.landingPreview ? undefined : auth.logoutCentralAccount}
+            onClose={() => setup.setPermissionsOpen(false)}
           />
         </Loading>
       </Show>
@@ -744,13 +743,13 @@ function WorkspaceOverlays(props: {
       <Show when={joinServerOpen()}>
         <Loading>
           <JoinServerDialog
-            inviteUrl={pendingInviteUrl()}
+            inviteUrl={setup.pendingInviteUrl()}
             accountEmail={props.account().email}
             onClose={() => {
               setJoinServerOpen(false);
-              setPendingInviteUrl("");
+              setup.setPendingInviteUrl("");
             }}
-            onPreview={previewInvite}
+            onPreview={setup.previewInvite}
             onJoin={joinServer}
           />
         </Loading>
@@ -762,7 +761,7 @@ function WorkspaceOverlays(props: {
               open={serverSettingsOpen()}
               onOpenChange={setServerSettingsOpen}
               restoreFocusTarget={serverSettingsRestoreTarget()}
-              platform={appInfo()?.platform ?? "darwin"}
+              platform={platform.appInfo()?.platform ?? "darwin"}
               server={server()}
               hostStatus={server().kind === "local" ? hostStatus() : null}
               members={serverSettingsMembers()}
@@ -785,16 +784,16 @@ function WorkspaceOverlays(props: {
           open={appSettingsOpen()}
           onOpenChange={setAppSettingsOpen}
           value={generalSettings()}
-          onValueChange={setGeneralSettings}
-          appInfo={appInfo()}
-          updateStatus={updateStatus()}
-          onUpdateAction={runUpdateAction}
+          onValueChange={updateGeneralSettings}
+          appInfo={platform.appInfo()}
+          updateStatus={updates.status()}
+          onUpdateAction={updates.runAction}
           account={props.account()}
-          onUpdateAccountName={updateAccountName}
-          onUpdateAccountAvatar={updateAccountAvatar}
-          onCreateMobileConnect={createMobileConnect}
-          onListMobileConnectedDevices={listMobileConnectedDevices}
-          onRevokeMobileConnectedDevice={revokeMobileConnectedDevice}
+          onUpdateAccountName={auth.updateAccountName}
+          onUpdateAccountAvatar={auth.updateAccountAvatar}
+          onCreateMobileConnect={auth.createMobileConnect}
+          onListMobileConnectedDevices={auth.listMobileConnectedDevices}
+          onRevokeMobileConnectedDevice={auth.revokeMobileConnectedDevice}
           agentStatus={agentStatus()}
           providerRuntimeStatuses={
             activeServer()?.kind === "local" && providerRuntimeDownloadsAvailable()
@@ -833,12 +832,12 @@ function WorkspaceOverlays(props: {
           />
         </Loading>
       </Show>
-      <Show when={!appProps.landingPreview && remoteDesktopWorkspaceServer()} keyed>
+      <Show when={!platform.landingPreview && remoteDesktopWorkspaceServer()} keyed>
         {(server) => (
           <Loading>
             <RemoteDesktopWorkspace
               visible={remoteDesktopWorkspaceVisible()}
-              platform={appInfo()?.platform ?? "darwin"}
+              platform={platform.appInfo()?.platform ?? "darwin"}
               server={server}
               session={remoteDesktopWorkspaceSession()}
               connecting={remoteDesktopConnectingServerId() === server.id}

@@ -12,8 +12,10 @@ import {
   emitServers,
   installOpenbotStub,
   queuedDelivery,
+  subscriberCounts,
   testServer,
 } from "./app-test-harness";
+import { TestResizeObserver } from "./setupTests";
 import { SIDEBAR_PINS_STORAGE_KEY } from "./sidebar-pins";
 
 describe("OpenBot connected desktop shell", () => {
@@ -900,5 +902,35 @@ describe("OpenBot connected desktop shell", () => {
     emitServers?.([local, { ...remote, connectionSequence: 3 }]);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(window.openbot.agent.listInstalledSkills).toHaveBeenCalledTimes(2);
+  });
+
+  // Switching servers tears the workspace down and builds it again. Every
+  // subscription taken during that rebuild has to be given back, or a session
+  // that visits a few servers handles each event several times over. Nothing
+  // else asserts this: the counts only became observable once the stub bridges
+  // started holding a set of listeners instead of only the newest one.
+  it("does not accumulate event subscriptions across server switches", async () => {
+    const servers = [testServer("local", true), testServer("remote-1", false)];
+    const activate = (activeId: string) => servers.map((server) => ({ ...server, active: server.id === activeId }));
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce(activate("local"));
+    vi.mocked(window.openbot.servers.select)
+      .mockResolvedValueOnce(activate("remote-1"))
+      .mockResolvedValueOnce(activate("local"));
+
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const afterMount = subscriberCounts();
+    const observersAfterMount = TestResizeObserver.instances.size;
+    // Without a live subscription to compare against, the equality below would hold trivially.
+    expect(afterMount.agentEvent).toBeGreaterThan(0);
+
+    await fireEvent.click(screen.getByRole("button", { name: "Studio Mac server" }));
+    await waitFor(() => expect(window.openbot.servers.select).toHaveBeenCalledWith("remote-1"));
+    await fireEvent.click(screen.getByRole("button", { name: "Local server" }));
+    await waitFor(() => expect(window.openbot.servers.select).toHaveBeenCalledWith("local"));
+    await screen.findByRole("heading", { name: "Chief" });
+
+    expect(subscriberCounts()).toEqual(afterMount);
+    expect(TestResizeObserver.instances.size).toBe(observersAfterMount);
   });
 });
