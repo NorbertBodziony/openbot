@@ -84,7 +84,11 @@ interface StoredTeamFile {
    * own file since leaves a different fingerprint, which is how its work is noticed.
    */
   legacyImport?: { fingerprint: string; record: StoredTeam };
-  /** The host as it stood before a reconcile merged into it. Never activated, never dropped. */
+  /**
+   * The one legacy record a reconcile had no baseline for, so it could not be merged without
+   * dropping the work on one side. Never activated; replaced rather than accumulated, since
+   * a merged host needs no copy - the merge is what keeps both sides.
+   */
   replacedHosts?: StoredTeam[];
 }
 
@@ -200,14 +204,13 @@ export class TeamStore {
       const index = this.#file.hosts.findIndex((host) => host.serverId === legacy.record.serverId);
       const mine = index < 0 ? undefined : this.#file.hosts[index];
       if (mine && baseline && baseline.serverId === legacy.record.serverId) {
-        // Copied for the same reason: the merged host below goes on being edited.
-        this.#file.replacedHosts = [...(this.#file.replacedHosts ?? []), structuredClone(mine)];
         this.#file.hosts[index] = reconcileHost(baseline, mine, legacy.record);
       } else if (mine) {
         // No baseline to reconcile against - an upgrade that never recorded one. Keeping
         // this build's host and filing the other copy is the only choice that drops
-        // nothing.
-        this.#file.replacedHosts = [...(this.#file.replacedHosts ?? []), legacy.record];
+        // nothing. One record, not a growing pile: every write clones and serializes the
+        // whole file, and the next one to land here comes from the same file this did.
+        this.#file.replacedHosts = [legacy.record];
       } else {
         this.#file.hosts.push(legacy.record);
       }

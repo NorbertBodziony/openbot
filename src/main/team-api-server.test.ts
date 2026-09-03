@@ -226,6 +226,44 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
+describe("TeamApiServer teardown", () => {
+  it("closes its listener when the remote screen cannot be stopped", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-teardown-"));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    const unreachable = () => {
+      throw new Error("The remote screen is only asked to stop here.");
+    };
+    const api = new TeamApiServer({
+      store,
+      agents: createAgents(),
+      mailbox: createMailbox(),
+      browser: createBrowser(),
+      remoteScreen: {
+        handlesUpgrade: () => false,
+        handleUpgrade: unreachable,
+        handlesHttp: () => false,
+        handleHttp: unreachable,
+        capabilities: unreachable,
+        createSession: unreachable,
+        selectDisplay: unreachable,
+        closeMemberSession: unreachable,
+        revokeTeamSession: unreachable,
+        revokeMember: unreachable,
+        stop: () => Promise.reject(new Error("The remote screen would not come down.")),
+      },
+    });
+    const port = await api.start();
+
+    await expect(api.stop()).rejects.toThrow("would not come down");
+
+    // Its heartbeat and event listeners are already gone, so a listener still answering here
+    // is one that no longer notices a revoked session - and the next start would hand it back.
+    await expect(fetch(`http://127.0.0.1:${port}/v1/compatibility`)).rejects.toThrow();
+  });
+});
+
 describe("TeamApiServer compatibility", () => {
   it("publishes protocol support and blocks requests without a compatible handshake", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-team-api-compatibility-"));
