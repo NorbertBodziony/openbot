@@ -11,19 +11,28 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: true
+  # A comment must never cancel a review in progress. Concurrency is resolved for the
+  # workflow run, before any job condition or authorization is evaluated, so cancelling on
+  # every event would let anyone who can comment kill a running review. A comment run
+  # queues behind one instead, and takes seconds when its jobs skip.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  review:
-    runs-on: [self-hosted]
-    timeout-minutes: 18
+  # Authorization runs on a hosted runner so an unauthorized request never reaches the
+  # self-hosted one. `author_association` cannot carry this alone: `MEMBER` is any member of
+  # the organization that owns the repository and `COLLABORATOR` includes read and triage,
+  # so neither proves the commenter could merge what a withdrawal would unblock.
+  authorize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
 
     # The push path stays automatic and skips drafts. The comment path is an explicit
     # request from someone who can already merge, so it runs on drafts too: `/norbiai review`
     # means review it now. `github.event.issue.pull_request` is what separates a pull request
-    # comment from an issue comment, and `author_association` is what stops a drive-by
-    # commenter from spending a runner. The same-repository rule is enforced in the first
-    # step, because a comment payload carries no head repository to test here.
+    # comment from an issue comment, and `author_association` is a cheap pre-filter that
+    # keeps a drive-by comment from reaching the permission lookup below. The
+    # same-repository rule is enforced in the review job, because a comment payload carries
+    # no head repository to test here.
     if: >
       (github.event_name == 'pull_request' &&
         github.event.pull_request.head.repo.full_name == github.repository &&
@@ -32,6 +41,48 @@ jobs:
         github.event.issue.pull_request != null &&
         contains(github.event.comment.body, '/norbiai review') &&
         contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Verify the commenter can merge
+        if: github.event_name == 'issue_comment'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMENTER: ${{ github.event.comment.user.login }}
+        run: |
+          set -euo pipefail
+
+          # Fails closed. A lookup error refuses the request rather than letting it through
+          # with an unknown permission. `maintain` answers `write` here and `triage`
+          # answers `read`, so `admin` and `write` are exactly the roles that can merge.
+          if ! permission=$(
+            gh api "repos/${GITHUB_REPOSITORY}/collaborators/${COMMENTER}/permission" \
+              --jq '.permission' 2>/dev/null
+          ); then
+            echo "::error title=NorbiAI could not authorize the request::Could not read the repository permission of @${COMMENTER}."
+            exit 1
+          fi
+
+          case "$permission" in
+            admin | write) ;;
+            *)
+              echo "::error title=NorbiAI ignored the request::@${COMMENTER} has ${permission:-no} access to ${GITHUB_REPOSITORY}. Only someone who can merge the pull request can ask for a finding to be rechecked."
+              exit 1
+              ;;
+          esac
+
+          echo "@${COMMENTER} has ${permission} access."
+
+  review:
+    # Gated by `authorize`, which carries the event filter: a skipped or refused
+    # authorization skips this job, so the self-hosted runner is never allocated for a
+    # request that would not be read anyway.
+    needs: authorize
+    runs-on: [self-hosted]
+    timeout-minutes: 18
 
     permissions:
       contents: read
@@ -167,24 +218,73 @@ jobs:
 
           # Only comments written after the review being carried forward, and only from
           # people who can already merge. Older ones were already ruled on, and a rebuttal
-          # from someone without write access is not an override channel.
+          # from someone who cannot merge is not an override channel. `author_association`
+          # is only the pre-filter that bounds the lookups below: `MEMBER` is any member of
+          # the organization and `COLLABORATOR` covers read and triage, so it says nothing
+          # about permission on this repository.
+          set +e
+          candidates=$(
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments?per_page=100" \
+              --jq "[.[]
+                | select(.user.type != \"Bot\")
+                | select(.author_association == \"OWNER\"
+                  or .author_association == \"MEMBER\"
+                  or .author_association == \"COLLABORATOR\")
+                | select(\"${since}\" == \"\" or .created_at > \"${since}\")
+                | .user.login] | unique | .[]" 2>/dev/null
+          )
+          candidates_exit=$?
+          set -e
+
+          if [ "$candidates_exit" -ne 0 ]; then
+            echo "::warning title=NorbiAI author responses unavailable::Could not read PR comments; continuing without them"
+            candidates=""
+          fi
+
+          # Resolved once per login, then spelled out as a disjunction of equalities: it is
+          # the same filter syntax as above, and a login is `[A-Za-z0-9-]` so interpolating
+          # one cannot escape the string. An unreadable permission drops the commenter.
+          login_filter="false"
+          for login in $candidates; do
+            permission=$(
+              gh api "repos/${GITHUB_REPOSITORY}/collaborators/${login}/permission" \
+                --jq '.permission' 2>/dev/null
+            ) || permission=""
+            case "$permission" in
+              admin | write)
+                login_filter="${login_filter} or .user.login == \"${login}\""
+                ;;
+              *)
+                echo "::notice title=NorbiAI ignored a comment::@${login} has ${permission:-no} access, so their comments are not read as rebuttals"
+                ;;
+            esac
+          done
+
+          # Newest first, and truncated from the end, because the cap has to keep the
+          # comment that asked for this review: oldest-first truncation drops exactly the
+          # rebuttal the run exists to weigh. The output goes to a file rather than through
+          # `head`, so a closed pipe cannot make `gh` exit nonzero and erase every response.
+          responses_raw="$RUNNER_TEMP/norbiai-author-responses-raw.txt"
           set +e
           gh api --paginate \
             "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments?per_page=100" \
             --jq "[.[]
-              | select(.user.type != \"Bot\")
-              | select(.author_association == \"OWNER\"
-                or .author_association == \"MEMBER\"
-                or .author_association == \"COLLABORATOR\")
+              | select(${login_filter})
               | select(\"${since}\" == \"\" or .created_at > \"${since}\")
-              | \"### @\(.user.login) at \(.created_at)\n\(.body)\n\"] | .[]" \
-            2>/dev/null | head -c 20000 > "$responses_file"
-          responses_exit=${PIPESTATUS[0]}
+              | \"### @\(.user.login) at \(.created_at)\n\(.body)\n\"]
+              | reverse | .[]" \
+            > "$responses_raw" 2>/dev/null
+          responses_exit=$?
           set -e
 
           if [ "$responses_exit" -ne 0 ]; then
             echo "::warning title=NorbiAI author responses unavailable::Could not read PR comments; continuing without them"
-            : > "$responses_file"
+          else
+            head -c 20000 "$responses_raw" > "$responses_file"
+            if [ "$(wc -c < "$responses_raw")" -gt 20000 ]; then
+              printf '\n[older responses omitted at the size cap]\n' >> "$responses_file"
+            fi
           fi
 
           {
@@ -252,6 +352,19 @@ jobs:
             echo "::notice title=NorbiAI domain fragments skipped::No composer at the base commit"
           fi
 
+          # Whether this review owes a `## Withdrawn Findings` section is decided by the
+          # prompt that is actually driving it. A PR opened before that section shipped is
+          # reviewed by base-commit instructions that never mention it and must not be
+          # called malformed for omitting it; a prompt that does ask for it must not have a
+          # missing section accepted, or the next run extracts no withdrawals and a
+          # decision already argued resurfaces as new. Read before the PR context is
+          # appended: the title and body are untrusted and would otherwise get a say in how
+          # strictly the reviewer's own output is checked.
+          withdrawn_required=false
+          if grep -q '^## Withdrawn Findings[[:space:]]*$' "$prompt_file"; then
+            withdrawn_required=true
+          fi
+
           {
             printf '\n## PR context\n\n'
             printf 'PR: #%s\n' "$PR_NUMBER"
@@ -280,7 +393,7 @@ jobs:
             else
               printf '[none]\n'
             fi
-            printf '\n## Author responses\n\n'
+            printf '\n## Author responses\n\nNewest first. Truncated from the oldest end when long.\n\n'
             if [ -s "$RESPONSES_FILE" ]; then
               cat "$RESPONSES_FILE"
             else
@@ -306,18 +419,23 @@ jobs:
           start_line=$(grep -n '^## Verdict' "$last_message_file" | tail -1 | cut -d: -f1 || true)
           resolved_line=$(grep -n '^## Resolved Since Previous Review[[:space:]]*$' "$last_message_file" | tail -1 | cut -d: -f1 || true)
           findings_line=$(grep -n '^## Findings[[:space:]]*$' "$last_message_file" | tail -1 | cut -d: -f1 || true)
+          withdrawn_line=$(grep -n '^## Withdrawn Findings[[:space:]]*$' "$last_message_file" | tail -1 | cut -d: -f1 || true)
           reason=""
 
-          # `## Withdrawn Findings` is deliberately not required here. The prompt is read from
-          # the base commit, so a PR opened before the withdrawal section shipped is reviewed
-          # by instructions that never mention it, and demanding the section would mark every
-          # one of those reviews malformed.
+          # Presence only, not position: the withdrawal ledger is extracted by its heading
+          # wherever it sits, so ordering it would add a way to fail with nothing gained.
+          withdrawn_ok=true
+          if [ "$withdrawn_required" = true ] && [ -z "$withdrawn_line" ]; then
+            withdrawn_ok=false
+          fi
+
           if [ "$exit_code" -eq 0 ] &&
             [ -n "$start_line" ] &&
             [ -n "$resolved_line" ] &&
             [ -n "$findings_line" ] &&
             [ "$start_line" -lt "$resolved_line" ] &&
-            [ "$resolved_line" -lt "$findings_line" ]; then
+            [ "$resolved_line" -lt "$findings_line" ] &&
+            [ "$withdrawn_ok" = true ]; then
             tail -n "+${start_line}" "$last_message_file" > "$review_file"
             status=success
           else
@@ -326,6 +444,8 @@ jobs:
               reason="Review timed out after 15 minutes. Human review required."
             elif [ "$exit_code" -ne 0 ]; then
               reason="Reviewer exited with code ${exit_code}. Human review required."
+            elif [ "$withdrawn_ok" != true ]; then
+              reason="Reviewer omitted the Withdrawn Findings section, so a withdrawal could not be carried forward. Human review required."
             else
               reason="Reviewer returned malformed output. Human review required."
             fi
