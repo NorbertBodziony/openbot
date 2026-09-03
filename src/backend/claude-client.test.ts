@@ -38,6 +38,7 @@ type TestStreamMessage =
         content: Array<{
           type: string;
           text?: string;
+          thinking?: string;
           id?: string;
           name?: string;
           tool_use_id?: string;
@@ -290,6 +291,33 @@ fi
         }),
       ]),
     );
+    await client.stop();
+  });
+
+  it("separates streamed reasoning phases the same way as restored history", async () => {
+    const { client, notifications, output, threadId } = await createHarness();
+    const turnId = "99999999-9999-4999-8999-999999999999";
+    await startTurn(client, threadId, turnId);
+
+    output.push(thinkingStreamDelta(threadId, "phase-1", "Check the inputs."));
+    output.push(thinkingMessage(threadId, "phase-1", "Check the inputs."));
+    output.push(thinkingStreamDelta(threadId, "phase-2", "Compare the options."));
+    output.push(thinkingMessage(threadId, "phase-2", "Compare the options."));
+    output.push(resultMessage(threadId, turnId, ""));
+    await waitFor(() => notifications.some((event) => event.method === "turn/completed"));
+
+    const reasoningItemId = `${turnId}:reasoning`;
+    const streamed = notifications
+      .filter((event) => event.method === "item/agentMessage/delta")
+      .filter((event) => getString(event.params, "itemId") === reasoningItemId)
+      .map((event) => getString(event.params, "delta") ?? "")
+      .join("");
+    const completed = notifications.find(
+      (event) =>
+        event.method === "item/completed" && getString(getRecord(event.params, "item"), "id") === reasoningItemId,
+    );
+    expect(streamed).toBe("Check the inputs.\nCompare the options.");
+    expect(getString(getRecord(completed?.params, "item"), "text")).toBe(streamed);
     await client.stop();
   });
 
@@ -706,6 +734,26 @@ function streamDelta(threadId: string, turnId: string, text: string): TestStream
     session_id: threadId,
     uuid: turnId,
     event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } },
+  };
+}
+
+function thinkingStreamDelta(threadId: string, messageId: string, thinking: string): TestStreamMessage {
+  return {
+    type: "stream_event",
+    parent_tool_use_id: null,
+    session_id: threadId,
+    uuid: messageId,
+    event: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking } },
+  };
+}
+
+function thinkingMessage(threadId: string, messageId: string, thinking: string): TestStreamMessage {
+  return {
+    type: "assistant",
+    parent_tool_use_id: null,
+    session_id: threadId,
+    uuid: messageId,
+    message: { content: [{ type: "thinking", thinking }] },
   };
 }
 

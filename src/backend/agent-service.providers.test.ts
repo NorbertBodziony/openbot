@@ -70,7 +70,7 @@ describe.sequential("AgentService: providers", () => {
         (event): event is Extract<AgentEvent, { type: "turn-progress" }> =>
           event.type === "turn-progress" && event.turnId === turnId,
       );
-    expect(progress().at(-1)?.detail).toBe("Reviewing the request and planning the next step…");
+    expect(progress()).toEqual([]);
     const stored = await service.readConversation("chief");
     expect(stored.messages.find((message) => message.id === `activity:${turnId}`)).toBeUndefined();
     const conversationEventCount = () => events.filter((event) => event.type === "conversation").length;

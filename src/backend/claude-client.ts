@@ -60,6 +60,7 @@ interface ActiveTurn {
   text: string;
   thinking: string;
   thinkingStarted: boolean;
+  thinkingStreamId: string | null;
   assistantMessages: Map<string, string>;
   thinkingMessages: Map<string, string>;
   toolCalls: Map<string, string>;
@@ -397,6 +398,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       text: "",
       thinking: "",
       thinkingStarted: false,
+      thinkingStreamId: null,
       assistantMessages: new Map<string, string>(),
       thinkingMessages: new Map<string, string>(),
       toolCalls: new Map<string, string>(),
@@ -462,7 +464,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       if (event && isRecord(event) && event.type === "content_block_delta" && isRecord(delta)) {
         if (delta.type === "text_delta" && isString(delta.text)) this.#appendDelta(runtime, delta.text);
         else if (delta.type === "thinking_delta" && isString(delta.thinking)) {
-          this.#appendThinkingDelta(runtime, delta.thinking);
+          this.#appendThinkingDelta(runtime, delta.thinking, message.uuid);
         }
       }
       return;
@@ -543,7 +545,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
 
   /* Claude streams reasoning as its own content block; the app-server vocabulary carries it as a
      separate agentMessage item whose `commentary` phase becomes the thinking disclosure. */
-  #appendThinkingDelta(runtime: ThreadRuntime, delta: string): void {
+  #appendThinkingDelta(runtime: ThreadRuntime, delta: string, streamId?: string): void {
     const turn = runtime.activeTurn;
     if (!turn || !delta) return;
     if (!turn.thinkingStarted) {
@@ -557,14 +559,16 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
         },
       });
     }
-    turn.thinking += delta;
+    const nextDelta = streamId && turn.thinkingStreamId && streamId !== turn.thinkingStreamId ? `\n${delta}` : delta;
+    if (streamId) turn.thinkingStreamId = streamId;
+    turn.thinking += nextDelta;
     this.emit("notification", {
       method: "item/agentMessage/delta",
       params: {
         threadId: runtime.id,
         turnId: turn.id,
         itemId: turn.reasoningItemId,
-        delta,
+        delta: nextDelta,
       },
     });
   }

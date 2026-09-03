@@ -3579,7 +3579,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           }
         });
         this.#emit({ type: "turn-started", botId, threadId: publicThreadId, turnId, origin });
-        this.#emitTurnProgress(botId, publicThreadId, turnId, "Reviewing the request and planning the next step…");
         this.#emitConversation(snapshot, "turn.started", { turnId });
         return;
       }

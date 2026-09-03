@@ -707,9 +707,18 @@ function createConversationViewScope(props: ConversationProps) {
     if (current?.bot?.id === botId) return current.activityId;
     return `${botId}:message:${streamingMessage.id}`;
   });
-  /* Reasoning belongs in the thinking trace, which shows it in full. The status line carries only
-     what the provider reports about the step it is on. */
-  const activeActivityDetail = createMemo(() => props.activityDetail?.trim() || null);
+  const latestActiveCommentary = createMemo(() => {
+    const activeTurnId = props.activeTurnId;
+    if (!activeTurnId) return null;
+    for (let index = props.messages.length - 1; index >= 0; index -= 1) {
+      const message = props.messages[index];
+      if (message?.turnId !== activeTurnId || message.itemType !== "commentary") continue;
+      const detail = message.body.trim();
+      if (detail) return detail;
+    }
+    return null;
+  });
+  const activeActivityDetail = createMemo(() => latestActiveCommentary() ?? (props.activityDetail?.trim() || null));
   const agentActivity = createMemo<"Working" | null>(() => (activeActivityId() ? "Working" : null));
   const activityPresentation = createMemo<AgentActivityPresentation | null>(() => {
     const botId = props.bot?.id;

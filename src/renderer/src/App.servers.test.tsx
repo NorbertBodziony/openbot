@@ -512,7 +512,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(screen.queryByRole("status", { name: /^Chief is working:/ })).not.toBeInTheDocument());
   });
 
-  it("streams commentary into the thinking trace and keeps provider progress in the status line", async () => {
+  it("streams commentary into both the thinking trace and current activity", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await confirmOnboardingModel();
@@ -581,8 +581,10 @@ describe("OpenBot connected desktop shell", () => {
     expect(trace.getAttribute("aria-expanded")).toBe("true");
     expect(await screen.findByText("Inspecting the release checks")).toBeInTheDocument();
     expect(
-      within(screen.getByRole("region", { name: "Current activity" })).queryByText("Inspecting the release checks"),
-    ).not.toBeInTheDocument();
+      await within(screen.getByRole("region", { name: "Current activity" })).findByText(
+        "Inspecting the release checks",
+      ),
+    ).toBeInTheDocument();
 
     const latestCommentary = {
       ...firstCommentary,
@@ -598,7 +600,9 @@ describe("OpenBot connected desktop shell", () => {
       ]),
     );
     expect(await screen.findAllByText("Verifying the final build artifacts")).not.toHaveLength(0);
-    expect(screen.getByRole("status", { name: /^Chief is working:/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("status", { name: "Chief is working: Verifying the final build artifacts" }),
+    ).toBeInTheDocument();
 
     emitAgentEvent?.({
       type: "turn-progress",
@@ -608,18 +612,8 @@ describe("OpenBot connected desktop shell", () => {
       detail: "Reviewing the verification results…",
     });
     expect(
-      await within(screen.getByRole("region", { name: "Current activity" })).findByText(
-        "Reviewing the verification results…",
-      ),
+      within(screen.getByRole("region", { name: "Current activity" })).getByText("Verifying the final build artifacts"),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("status", { name: "Chief is working: Reviewing the verification results…" }),
-    ).toBeInTheDocument();
-    expect(
-      within(screen.getByRole("region", { name: "Current activity" })).queryByText(
-        "Verifying the final build artifacts",
-      ),
-    ).not.toBeInTheDocument();
 
     emitAgentEvent?.({
       type: "turn-completed",
