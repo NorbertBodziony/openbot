@@ -127,41 +127,13 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
   });
   const avatarUrl = () => props.bot.avatarUrl ?? null;
 
+  /** The message under the form: every save path clears it first and reports its failure through it. */
   function setSaveError(message: string | null): void {
     setDraft((state) => {
       state.saveError = message;
     });
   }
 
-  function setAvatarUploadBusy(busy: boolean): void {
-    setDraft((state) => {
-      state.avatar.uploadBusy = busy;
-    });
-  }
-
-  function setMemoryModalOpen(open: boolean): void {
-    setDraft((state) => {
-      state.memories.open = open;
-    });
-  }
-
-  function setMemoryCount(count: number): void {
-    setDraft((state) => {
-      state.memories.count = count;
-    });
-  }
-
-  function setRoutinesOpen(open: boolean): void {
-    setDraft((state) => {
-      state.routines.open = open;
-    });
-  }
-
-  function setRoutineCount(count: number): void {
-    setDraft((state) => {
-      state.routines.count = count;
-    });
-  }
   const selectedModel = createMemo(() =>
     props.modelOptions.find(
       (option) => option.provider === draft.runtime.provider && option.id === draft.runtime.model,
@@ -242,12 +214,20 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
       if (botChanged) {
         void window.openbot.agent
           .listMemories(bot.id)
-          .then((items) => setMemoryCount(items.length))
-          .catch(() => setMemoryCount(0));
+          .catch(() => [])
+          .then((items) => {
+            setDraft((state) => {
+              state.memories.count = items.length;
+            });
+          });
         void window.openbot.agent
           .listRoutines(bot.id)
-          .then((items) => setRoutineCount(items.length))
-          .catch(() => setRoutineCount(0));
+          .catch(() => [])
+          .then((items) => {
+            setDraft((state) => {
+              state.routines.count = items.length;
+            });
+          });
       }
     },
   );
@@ -255,7 +235,11 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
   createEffect(
     () => ({ request: props.routineSelectionRequest, botId: props.bot.id }),
     ({ request }) => {
-      if (request) setRoutinesOpen(true);
+      if (request) {
+        setDraft((state) => {
+          state.routines.open = true;
+        });
+      }
     },
   );
 
@@ -344,8 +328,10 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
 
   async function setCustomAvatar(image: AvatarImageInput | null): Promise<boolean> {
     if (draft.avatar.uploadBusy) return false;
-    setAvatarUploadBusy(true);
-    setSaveError(null);
+    setDraft((state) => {
+      state.avatar.uploadBusy = true;
+      state.saveError = null;
+    });
     try {
       await props.onSetAgentAvatar(props.bot.id, image);
       return true;
@@ -353,21 +339,27 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
       setSaveError(error instanceof Error ? error.message : "Could not save the agent avatar.");
       return false;
     } finally {
-      setAvatarUploadBusy(false);
+      setDraft((state) => {
+        state.avatar.uploadBusy = false;
+      });
     }
   }
 
   async function uploadAgentAvatar(file: File | undefined): Promise<void> {
     if (!file) return;
-    setAvatarUploadBusy(true);
-    setSaveError(null);
+    setDraft((state) => {
+      state.avatar.uploadBusy = true;
+      state.saveError = null;
+    });
     try {
       const image = await normalizeAvatarFile(file);
       await props.onSetAgentAvatar(props.bot.id, image);
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Could not process the agent avatar.");
     } finally {
-      setAvatarUploadBusy(false);
+      setDraft((state) => {
+        state.avatar.uploadBusy = false;
+      });
       if (avatarFileInput) avatarFileInput.value = "";
     }
   }
@@ -688,14 +680,32 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
             />
           </label>
           <div class="agent-settings-links">
-            <Button variant="ghost" type="button" class="agent-settings-link" onClick={() => setMemoryModalOpen(true)}>
+            <Button
+              variant="ghost"
+              type="button"
+              class="agent-settings-link"
+              onClick={() =>
+                setDraft((state) => {
+                  state.memories.open = true;
+                })
+              }
+            >
               <span class="agent-settings-link-label">Memories</span>
               <span class="agent-settings-link-value">
                 {draft.memories.count} saved
                 <ChevronRight />
               </span>
             </Button>
-            <Button variant="ghost" type="button" class="agent-settings-link" onClick={() => setRoutinesOpen(true)}>
+            <Button
+              variant="ghost"
+              type="button"
+              class="agent-settings-link"
+              onClick={() =>
+                setDraft((state) => {
+                  state.routines.open = true;
+                })
+              }
+            >
               <span class="agent-settings-link-label">Routines</span>
               <span class="agent-settings-link-value">
                 {draft.routines.count} configured
@@ -787,8 +797,16 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
         <div class="agent-routines-overlay">
           <AgentRoutinesSettings
             botId={props.bot.id}
-            onCountChange={setRoutineCount}
-            onBack={() => setRoutinesOpen(false)}
+            onCountChange={(count) =>
+              setDraft((state) => {
+                state.routines.count = count;
+              })
+            }
+            onBack={() =>
+              setDraft((state) => {
+                state.routines.open = false;
+              })
+            }
             onClose={props.onClose}
             selectionRequest={props.routineSelectionRequest}
             onSelectionRequestHandled={props.onRoutineSelectionRequestHandled}
@@ -800,8 +818,16 @@ export default function AgentSettingsPanel(props: AgentSettingsPanelProps) {
         botId={props.bot.id}
         botName={props.bot.name}
         open={draft.memories.open}
-        onOpenChange={setMemoryModalOpen}
-        onCountChange={setMemoryCount}
+        onOpenChange={(open) =>
+          setDraft((state) => {
+            state.memories.open = open;
+          })
+        }
+        onCountChange={(count) =>
+          setDraft((state) => {
+            state.memories.count = count;
+          })
+        }
       />
     </aside>
   );

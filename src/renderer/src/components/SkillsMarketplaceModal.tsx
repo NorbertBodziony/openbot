@@ -126,18 +126,6 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
   const skillDetail = () => (market.detail.kind === "skill" ? market.detail.skill : null);
   const submissionDetail = () => (market.detail.kind === "submission" ? market.detail.submission : null);
 
-  function setQuery(value: string): void {
-    setMarket((state) => {
-      state.browse.query = value;
-    });
-  }
-
-  function setTargetBotId(botId: string): void {
-    setMarket((state) => {
-      state.browse.targetBotId = botId;
-    });
-  }
-
   createEffect(
     () => props.open,
     (open) => {
@@ -145,7 +133,9 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
         closeDetail();
         return;
       }
-      setTargetBotId(market.browse.targetBotId || props.activeBotId || props.bots[0]?.id || "");
+      setMarket((state) => {
+        state.browse.targetBotId = state.browse.targetBotId || props.activeBotId || props.bots[0]?.id || "";
+      });
       void loadSkills();
     },
   );
@@ -167,7 +157,11 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
     () => [props.open, market.browse.targetBotId] as const,
     ([open, botId]) => {
       if (open && botId) void loadInstalled(botId);
-      else setInstalled([]);
+      else {
+        setMarket((state) => {
+          state.installed = [];
+        });
+      }
     },
   );
 
@@ -179,12 +173,6 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
   function closeDetail(): void {
     setMarket((state) => {
       state.detail = { kind: "none" };
-    });
-  }
-
-  function setInstalled(items: InstalledSkill[]): void {
-    setMarket((state) => {
-      state.installed = items;
     });
   }
 
@@ -231,11 +219,17 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
 
   async function loadInstalled(botId = market.browse.targetBotId) {
     if (!botId) {
-      setInstalled([]);
+      setMarket((state) => {
+        state.installed = [];
+      });
       return;
     }
     const values = await run(() => window.openbot.skills.listInstalled(botId));
-    if (values) setInstalled(values);
+    if (values) {
+      setMarket((state) => {
+        state.installed = values;
+      });
+    }
   }
 
   async function loadMine() {
@@ -588,7 +582,15 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
                         <h1>Skills</h1>
                         <p>Give your agents focused capabilities for repeatable work.</p>
                       </div>
-                      <AgentSelect bots={props.bots} value={market.browse.targetBotId} onChange={setTargetBotId} />
+                      <AgentSelect
+                        bots={props.bots}
+                        value={market.browse.targetBotId}
+                        onChange={(botId) =>
+                          setMarket((state) => {
+                            state.browse.targetBotId = botId;
+                          })
+                        }
+                      />
                     </div>
                     <div class="skills-marketplace-search">
                       <Search aria-hidden="true" />
@@ -596,7 +598,11 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
                         aria-label="Search skills"
                         placeholder="Search skills"
                         value={market.browse.query}
-                        onValueChange={setQuery}
+                        onValueChange={(value) =>
+                          setMarket((state) => {
+                            state.browse.query = value;
+                          })
+                        }
                       />
                     </div>
                     <div class="skills-marketplace-categories">
@@ -667,7 +673,15 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
                         <h1>Installed</h1>
                         <p>Manage marketplace-owned skills for one local agent.</p>
                       </div>
-                      <AgentSelect bots={props.bots} value={market.browse.targetBotId} onChange={setTargetBotId} />
+                      <AgentSelect
+                        bots={props.bots}
+                        value={market.browse.targetBotId}
+                        onChange={(botId) =>
+                          setMarket((state) => {
+                            state.browse.targetBotId = botId;
+                          })
+                        }
+                      />
                     </div>
                     <Show
                       when={targetBot()}
