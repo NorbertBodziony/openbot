@@ -125,16 +125,17 @@ export function ServerDrawerContent({
         </Typography.Heading>
       </View>
 
-      <View className="mr-3 flex-row items-center gap-2 border-t border-border pt-3">
+      <View className="mr-3 flex-row items-center gap-2  pt-2">
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={`Account: ${displayName}`}
-          className="min-h-15 min-w-0 flex-1 flex-row items-center gap-3 rounded-2xl px-2 py-1.5"
+          className="min-h-14 min-w-0 flex-1 flex-row items-center gap-2.5 rounded-2xl px-2 py-2"
           onPress={() => onNavigate("/settings")}
+          style={({ pressed }) => ({ opacity: pressed ? 0.58 : 1 })}
         >
-          <ProfileAvatar name={displayName} imageUrl={session.user.avatarUrl} size={44} />
+          <ProfileAvatar name={displayName} imageUrl={session.user.avatarUrl} size={36} />
           <View className="min-w-0 flex-1">
-            <Typography.Paragraph weight="semibold" numberOfLines={1}>
+            <Typography.Paragraph type="body-sm" weight="semibold" numberOfLines={1}>
               {displayName}
             </Typography.Paragraph>
             <Typography.Paragraph type="body-xs" className="text-text-secondary" numberOfLines={1} selectable>
@@ -146,10 +147,11 @@ export function ServerDrawerContent({
           accessibilityRole="button"
           accessibilityLabel="Settings"
           hitSlop={8}
-          className="size-12 items-center justify-center rounded-2xl bg-control"
+          className="size-10 items-center justify-center rounded-full"
           onPress={() => onNavigate("/settings")}
+          style={({ pressed }) => ({ opacity: pressed ? 0.58 : 1 })}
         >
-          <Settings color={iconColor} size={21} strokeWidth={1.8} />
+          <Settings color={mutedColor} size={18} strokeWidth={1.8} />
         </Pressable>
       </View>
     </>
