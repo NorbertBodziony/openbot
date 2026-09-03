@@ -68,7 +68,11 @@ renderer ──► @openbot/contracts ◄── preload ◄── main ──►
    `app-providers.tsx`, or through a provider prop; a command that writes to several domains lives
    in a leaf context or a bridge component mounted under all of them. `window.openbot.*` is not a
    dependency. Cycles are rejected by `noImportCycles`, so an upward edge must be `import type`.
-8. Do not add temporary compatibility paths without a removal condition and a test for that condition. Released Team API protocol adapters are permanent by default and follow the policy below.
+8. Read those contexts from the smallest component that needs them. A pane calls the `use*()` of the
+   domains it renders and nothing else; `WorkspaceShell` reads only what decides *which* pane
+   renders, and passes a value down as a prop when two of them would otherwise derive it twice. A
+   component that assembles another one's props is how the god controller grew back last time.
+9. Do not add temporary compatibility paths without a removal condition and a test for that condition. Released Team API protocol adapters are permanent by default and follow the policy below.
 
 SQLite migration history starts at the frozen version 8 compatibility baseline. Keep the baseline
 schema unchanged, append every later migration in numeric order, and update the separate latest

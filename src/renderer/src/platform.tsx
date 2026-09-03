@@ -1,5 +1,5 @@
 import type { AppInfo } from "@openbot/contracts/ipc";
-import { createSignal, flush, onSettled } from "solid-js";
+import { createMemo, createSignal, flush, onSettled } from "solid-js";
 import type { AppProps } from "./app-providers";
 import { createSimpleContext } from "./simple-context";
 
@@ -58,6 +58,14 @@ const Platform = createSimpleContext({
     return {
       appInfo,
       appFocused,
+      /**
+       * Whether the window draws the vertical server rail. Only the two
+       * platforms whose own chrome leaves room for it do. Three components need
+       * the answer once the view is split along context boundaries - the frame
+       * class, the rail itself and the account dock - so it is derived here
+       * rather than spelled out as a two-branch comparison in each of them.
+       */
+      serverRailVisible: createMemo(() => appInfo()?.platform === "darwin" || appInfo()?.platform === "win32"),
       appInfoLoadedFromHost: () => infoFromHost,
       landingPreview: props.landingPreview === true,
       peopleEnabled: props.peopleEnabled === true,
