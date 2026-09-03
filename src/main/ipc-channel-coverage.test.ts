@@ -25,7 +25,9 @@ import { describe, expect, it } from "vitest";
 const repositoryRoot = resolve(import.meta.dirname, "../..");
 
 // The channel is the first argument to each of these, except sendToRenderer,
-// where it follows the target window.
+// where it follows the target window. What comes after the channel varies —
+// handleTrusted takes either a handler alone or a payload decoder and a handler —
+// and the scan reads only the channel position, so it does not care.
 const MAIN_HANDLER_CALLEES = ["handleTrusted", "handleTrustedWithEvent"];
 const MAIN_SEND_CALLEES = ["sendToRenderer"];
 const PRELOAD_INVOKE_CALLEES = ["ipcRenderer.invoke", "invokeAgent", "invokeAgentForServer"];

@@ -22,7 +22,6 @@ import {
   type FilePreview,
   type ImportAttachmentsInput,
   IPC_CHANNELS,
-  isSkillCategory,
   type MacPermissionId,
   type SendMessageInput,
   type SidebarLayoutSnapshot,
@@ -30,8 +29,6 @@ import {
   type VoiceModelStatus,
   type VoiceTranscriptionResult,
 } from "@openbot/contracts/ipc";
-import { isNumber, isString } from "@openbot/contracts/runtime-values";
-import { validateProfileName } from "@openbot/contracts/validation";
 import {
   app,
   BrowserWindow,
@@ -121,20 +118,32 @@ import {
 } from "./ipc/agent-inputs";
 import {
   parseAnalyticsPreference,
+  parseDeleteHostedSite,
   parseDynamicIslandAction,
   parseDynamicIslandInteractive,
   parseDynamicIslandPreference,
   parseDynamicIslandPresentation,
+  parseEmailCodeVerification,
   parseExternalDestination,
+  parseInstallMarketplaceAgent,
+  parseInstallSkill,
   parseMacPermission,
+  parseMarketplaceAgentQuery,
+  parseMarketplaceSkillQuery,
+  parseProfileName,
   parseProvider,
   parseProviderId,
+  parsePublishHostedSite,
+  parseReplaceHostedSite,
+  parseSubmitMarketplaceAgent,
+  parseSubmitSkill,
+  parseUninstallSkill,
   parseUpdatePreference,
 } from "./ipc/app-inputs";
 import { parseAvatarImage } from "./ipc/avatar-inputs";
 import { parseBrowserBounds, parseBrowserNavigate, parseBrowserOpen, parseVisibility } from "./ipc/browser-inputs";
 import { registerTeamIpcHandlers, withLocalHostSummary } from "./ipc/register-team-handlers";
-import { isObject, optionalBoolean, requireString } from "./ipc/validation";
+import { nullishPayload, optionalPayload, requireString, stringPayload } from "./ipc/validation";
 import { parseVoiceTranscription } from "./ipc/voice-inputs";
 import { MacHapticFeedback } from "./mac-haptic-feedback";
 import { readMainWindowBounds, resolveMainWindowBounds, writeMainWindowBounds } from "./main-window-state";
@@ -362,8 +371,8 @@ function registerIpcHandlers(
   });
   handleTrusted(IPC_CHANNELS.getSetupState, () => readSetupState(setupFile));
   handleTrusted(IPC_CHANNELS.getAnalyticsPreference, () => readAnalyticsPreference(analyticsPreferenceFile));
-  handleTrusted(IPC_CHANNELS.setAnalyticsPreference, async (input: unknown) => {
-    const preference = await writeAnalyticsPreference(analyticsPreferenceFile, parseAnalyticsPreference(input).enabled);
+  handleTrusted(IPC_CHANNELS.setAnalyticsPreference, parseAnalyticsPreference, async (parsed) => {
+    const preference = await writeAnalyticsPreference(analyticsPreferenceFile, parsed.enabled);
     hostAnalytics?.setTrackingEnabled(preference.enabled);
     return preference;
   });
@@ -375,48 +384,55 @@ function registerIpcHandlers(
     );
     return dynamicIsland.preference;
   });
-  handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandSetPreference, (event, input: unknown) => {
-    requireDynamicIslandSender(event.sender.id, dynamicIsland.mainRendererIds, "main renderer");
-    return dynamicIsland.setPreference(parseDynamicIslandPreference(input));
-  });
-  handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandPublishPresentation, (event, input: unknown) => {
-    requireDynamicIslandSender(event.sender.id, dynamicIsland.mainRendererIds, "main renderer");
-    dynamicIsland.publish(parseDynamicIslandPresentation(input));
-  });
+  handleTrustedWithEvent(
+    IPC_CHANNELS.dynamicIslandSetPreference,
+    (event) => requireDynamicIslandSender(event.sender.id, dynamicIsland.mainRendererIds, "main renderer"),
+    parseDynamicIslandPreference,
+    (_event, preference) => dynamicIsland.setPreference(preference),
+  );
+  handleTrustedWithEvent(
+    IPC_CHANNELS.dynamicIslandPublishPresentation,
+    (event) => requireDynamicIslandSender(event.sender.id, dynamicIsland.mainRendererIds, "main renderer"),
+    parseDynamicIslandPresentation,
+    (_event, presentation) => dynamicIsland.publish(presentation),
+  );
   handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandGetPresentation, (event) => {
     requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer");
     return dynamicIsland.presentation;
   });
-  handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandPerformAction, (event, input: unknown) => {
-    requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer");
-    return dynamicIsland.performAction(parseDynamicIslandAction(input));
-  });
+  handleTrustedWithEvent(
+    IPC_CHANNELS.dynamicIslandPerformAction,
+    (event) => requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer"),
+    parseDynamicIslandAction,
+    (_event, action) => dynamicIsland.performAction(action),
+  );
   handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandPerformHaptic, (event) => {
     requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer");
     dynamicIsland.performHaptic();
   });
-  handleTrustedWithEvent(IPC_CHANNELS.dynamicIslandSetInteractive, (event, input: unknown) => {
-    requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer");
-    dynamicIsland.setInteractive(event.sender.id, parseDynamicIslandInteractive(input).interactive);
-  });
-  handleTrusted(IPC_CHANNELS.saveSetup, async (input: unknown): Promise<AppSetupState> => {
-    const preferredProvider = parseProvider(input);
+  handleTrustedWithEvent(
+    IPC_CHANNELS.dynamicIslandSetInteractive,
+    (event) => requireDynamicIslandSender(event.sender.id, dynamicIsland.overlayRendererIds, "Dynamic Island renderer"),
+    parseDynamicIslandInteractive,
+    (event, state) => dynamicIsland.setInteractive(event.sender.id, state.interactive),
+  );
+  handleTrusted(IPC_CHANNELS.saveSetup, parseProvider, async (preferredProvider): Promise<AppSetupState> => {
     const state = await writeSetupState(setupFile, preferredProvider);
     await service.setPreferredProvider(preferredProvider);
     await initializeAgent();
     return state;
   });
   handleTrusted(IPC_CHANNELS.computerUseGetMacSetupState, () => computerUseMacSetup.getState());
-  handleTrusted(IPC_CHANNELS.computerUseOpenMacPermissionSetup, (permission: unknown) =>
-    computerUseMacSetup.open(parseMacPermission(permission)),
+  handleTrusted(IPC_CHANNELS.computerUseOpenMacPermissionSetup, parseMacPermission, (parsed) =>
+    computerUseMacSetup.open(parsed),
   );
   handleTrustedWithEvent(IPC_CHANNELS.computerUseStartHelperDrag, (event) =>
     computerUseMacSetup.startDrag(event.sender),
   );
   handleTrusted(IPC_CHANNELS.computerUseRevealHelper, () => computerUseMacSetup.revealHelper());
   handleTrusted(IPC_CHANNELS.computerUseCloseMacPermissionSetup, () => computerUseMacSetup.close());
-  handleTrusted(IPC_CHANNELS.openExternal, (destination: unknown) => {
-    return shell.openExternal(EXTERNAL_DESTINATIONS[parseExternalDestination(destination)]);
+  handleTrusted(IPC_CHANNELS.openExternal, parseExternalDestination, (parsed) => {
+    return shell.openExternal(EXTERNAL_DESTINATIONS[parsed]);
   });
   handleTrusted(IPC_CHANNELS.connectChatGPT, () =>
     service.connectChatGPT(async (value) => {
@@ -429,70 +445,42 @@ function registerIpcHandlers(
   handleTrusted(IPC_CHANNELS.connectGrok, () => service.connectGrok());
   handleTrusted(IPC_CHANNELS.refreshAgentProviders, () => service.refreshProviders());
   handleTrusted(IPC_CHANNELS.providerRuntimesGetStatus, () => providerRuntimes.getStatus());
-  handleTrusted(IPC_CHANNELS.providerRuntimesDownload, (provider: unknown) =>
-    providerRuntimes.download(parseProviderId(provider)),
-  );
-  handleTrusted(IPC_CHANNELS.providerRuntimesCancel, (provider: unknown) =>
-    providerRuntimes.cancel(parseProviderId(provider)),
-  );
-  handleTrusted(IPC_CHANNELS.openUrl, (value: unknown) => {
-    const url = new URL(requireString(value, "URL", INPUT_LIMITS.browserUrl));
-    if (url.protocol !== "http:" && url.protocol !== "https:") {
+  handleTrusted(IPC_CHANNELS.providerRuntimesDownload, parseProviderId, (parsed) => providerRuntimes.download(parsed));
+  handleTrusted(IPC_CHANNELS.providerRuntimesCancel, parseProviderId, (parsed) => providerRuntimes.cancel(parsed));
+  handleTrusted(IPC_CHANNELS.openUrl, stringPayload("URL", INPUT_LIMITS.browserUrl), (url) => {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       throw new Error("Only HTTP(S) links can open in the external browser.");
     }
-    return shell.openExternal(url.toString());
+    return shell.openExternal(parsed.toString());
   });
   handleTrusted(IPC_CHANNELS.voiceGetModelStatus, (): Promise<VoiceModelStatus> => voice.getModelStatus());
   handleTrusted(IPC_CHANNELS.voicePrepareModel, (): Promise<VoiceModelStatus> => voice.prepareModel());
   handleTrusted(
     IPC_CHANNELS.voiceTranscribe,
-    (input: unknown): Promise<VoiceTranscriptionResult> => voice.transcribe(parseVoiceTranscription(input).audio),
+    parseVoiceTranscription,
+    (transcription): Promise<VoiceTranscriptionResult> => voice.transcribe(transcription.audio),
   );
   handleTrusted(IPC_CHANNELS.authGetState, () => centralAuth.getState());
   handleTrusted(IPC_CHANNELS.authRetry, () => centralAuth.retry());
-  handleTrusted(IPC_CHANNELS.authRequestEmailCode, (email: unknown) =>
-    centralAuth.requestEmailCode(requireString(email, "email", INPUT_LIMITS.email)),
+  handleTrusted(IPC_CHANNELS.authRequestEmailCode, stringPayload("email", INPUT_LIMITS.email), (email) =>
+    centralAuth.requestEmailCode(email),
   );
-  handleTrusted(IPC_CHANNELS.authVerifyEmailCode, (input: unknown) => {
-    if (!isObject(input)) throw new Error("Sign-in code details are required.");
-    return centralAuth.verifyEmailCode(
-      requireString(input.challengeId, "challengeId", INPUT_LIMITS.identifier),
-      requireString(input.code, "code", 32),
-    );
-  });
-  handleTrusted(IPC_CHANNELS.authUpdateName, (input: unknown) => {
-    const rawName = requireString(input, "name", INPUT_LIMITS.accountName);
-    const validation = validateProfileName(rawName);
-    if (validation.error) {
-      throw new Error(
-        `name must contain ${INPUT_LIMITS.profileNameMin} to ${INPUT_LIMITS.profileName} safe characters.`,
-      );
-    }
-    return centralAuth.updateName(validation.name);
-  });
-  handleTrusted(IPC_CHANNELS.authUpdateAvatar, (input: unknown) => centralAuth.updateAvatar(parseAvatarImage(input)));
+  handleTrusted(IPC_CHANNELS.authVerifyEmailCode, parseEmailCodeVerification, (verification) =>
+    centralAuth.verifyEmailCode(verification.challengeId, verification.code),
+  );
+  handleTrusted(IPC_CHANNELS.authUpdateName, parseProfileName, (name) => centralAuth.updateName(name));
+  handleTrusted(IPC_CHANNELS.authUpdateAvatar, parseAvatarImage, (parsed) => centralAuth.updateAvatar(parsed));
   handleTrusted(IPC_CHANNELS.authCreateMobileConnect, () => centralAuth.createMobileConnect());
   handleTrusted(IPC_CHANNELS.authListMobileConnectedDevices, () => centralAuth.listMobileConnectedDevices());
-  handleTrusted(IPC_CHANNELS.authRevokeMobileConnectedDevice, (input: unknown) =>
-    centralAuth.revokeMobileConnectedDevice(requireString(input, "sessionId", INPUT_LIMITS.identifier)),
+  handleTrusted(
+    IPC_CHANNELS.authRevokeMobileConnectedDevice,
+    stringPayload("sessionId", INPUT_LIMITS.identifier),
+    (sessionId) => centralAuth.revokeMobileConnectedDevice(sessionId),
   );
   handleTrusted(IPC_CHANNELS.authLogout, () => centralAuth.logout());
-  handleTrusted(IPC_CHANNELS.skillsList, (input: unknown) => {
-    if (input === null || input === undefined) return skills.list();
-    if (!isObject(input)) throw new Error("Invalid marketplace query.");
-    const category = input.category;
-    if (category !== undefined && !isSkillCategory(category)) throw new Error("Unknown skill category.");
-    if (input.sort !== undefined && input.sort !== "installs") throw new Error("Unknown skill sort order.");
-    return skills.list({
-      ...(isString(input.query) ? { query: input.query.slice(0, 100) } : {}),
-      ...(category ? { category } : {}),
-      ...(input.featured === true ? { featured: true } : {}),
-      ...(input.sort === "installs" ? { sort: "installs" as const } : {}),
-      ...(isString(input.cursor) ? { cursor: input.cursor } : {}),
-      ...(isNumber(input.limit) ? { limit: input.limit } : {}),
-    });
-  });
-  handleTrusted(IPC_CHANNELS.skillsGet, (input: unknown) => skills.get(requireString(input, "skillId")));
+  handleTrusted(IPC_CHANNELS.skillsList, nullishPayload(parseMarketplaceSkillQuery), (query) => skills.list(query));
+  handleTrusted(IPC_CHANNELS.skillsGet, stringPayload("skillId"), (skillId) => skills.get(skillId));
   handleTrusted(IPC_CHANNELS.skillsListMine, () => skills.listMine());
   handleTrusted(IPC_CHANNELS.skillsChoosePackage, async () => {
     const options: OpenDialogOptions = {
@@ -503,34 +491,10 @@ function registerIpcHandlers(
     const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
     return result.canceled || !result.filePaths[0] ? null : skills.stage(result.filePaths[0]);
   });
-  handleTrusted(IPC_CHANNELS.skillsSubmit, (input: unknown) => {
-    if (!isObject(input) || !isSkillCategory(input.category)) throw new Error("Invalid skill submission.");
-    return skills.submit({
-      draftId: requireString(input.draftId, "draftId"),
-      category: input.category,
-      icon: parseAvatarImage(input.icon),
-      ...(input.skillId === undefined ? {} : { skillId: requireString(input.skillId, "skillId") }),
-    });
-  });
-  handleTrusted(IPC_CHANNELS.skillsListInstalled, (input: unknown) =>
-    skills.listInstalled(requireString(input, "botId")),
-  );
-  handleTrusted(IPC_CHANNELS.skillsInstall, (input: unknown) => {
-    if (!isObject(input)) throw new Error("Invalid skill installation.");
-    return skills.install({
-      botId: requireString(input.botId, "botId"),
-      skillId: requireString(input.skillId, "skillId"),
-      ...(input.replaceModified === true ? { replaceModified: true } : {}),
-    });
-  });
-  handleTrusted(IPC_CHANNELS.skillsUninstall, (input: unknown) => {
-    if (!isObject(input)) throw new Error("Invalid skill removal.");
-    return skills.uninstall({
-      botId: requireString(input.botId, "botId"),
-      skillId: requireString(input.skillId, "skillId"),
-      ...(input.removeModified === true ? { removeModified: true } : {}),
-    });
-  });
+  handleTrusted(IPC_CHANNELS.skillsSubmit, parseSubmitSkill, (submission) => skills.submit(submission));
+  handleTrusted(IPC_CHANNELS.skillsListInstalled, stringPayload("botId"), (botId) => skills.listInstalled(botId));
+  handleTrusted(IPC_CHANNELS.skillsInstall, parseInstallSkill, (installation) => skills.install(installation));
+  handleTrusted(IPC_CHANNELS.skillsUninstall, parseUninstallSkill, (removal) => skills.uninstall(removal));
   handleTrusted(IPC_CHANNELS.hostedSitesList, () => hostedSites.list());
   handleTrusted(IPC_CHANNELS.hostedSitesChooseDirectory, async () => {
     const options: OpenDialogOptions = {
@@ -540,73 +504,32 @@ function registerIpcHandlers(
     const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
     return result.canceled ? null : (result.filePaths[0] ?? null);
   });
-  handleTrusted(IPC_CHANNELS.hostedSitesPublish, (input: unknown) => {
-    if (!isObject(input)) throw new Error("Invalid site publication.");
-    const spaFallback = optionalBoolean(input.spaFallback, "spaFallback");
-    return hostedSites.publish({
-      sourcePath: requireString(input.sourcePath, "sourcePath", INPUT_LIMITS.path),
-      title: requireString(input.title, "title", 120),
-      description: requireString(input.description, "description", 500),
-      ...(spaFallback !== undefined ? { spaFallback } : {}),
-    });
-  });
-  handleTrusted(IPC_CHANNELS.hostedSitesReplace, (input: unknown) => {
-    if (!isObject(input)) throw new Error("Invalid site replacement.");
-    const spaFallback = optionalBoolean(input.spaFallback, "spaFallback");
-    return hostedSites.replace({
-      siteId: requireString(input.siteId, "siteId", INPUT_LIMITS.identifier),
-      sourcePath: requireString(input.sourcePath, "sourcePath", INPUT_LIMITS.path),
-      title: requireString(input.title, "title", 120),
-      description: requireString(input.description, "description", 500),
-      ...(spaFallback !== undefined ? { spaFallback } : {}),
-    });
-  });
-  handleTrusted(IPC_CHANNELS.hostedSitesDelete, (input: unknown) => {
-    if (!isObject(input)) throw new Error("Invalid site deletion.");
-    return hostedSites.delete(requireString(input.siteId, "siteId", INPUT_LIMITS.identifier));
-  });
-  handleTrusted(IPC_CHANNELS.marketplaceAgentsList, (input: unknown) => {
-    if (input === null || input === undefined) return marketplaceAgents.list();
-    if (!isObject(input)) throw new Error("Invalid agent marketplace query.");
-    if (input.sort !== undefined && input.sort !== "installs") throw new Error("Unknown agent sort order.");
-    return marketplaceAgents.list({
-      ...(isString(input.query) ? { query: input.query.slice(0, 100) } : {}),
-      ...(input.featured === true ? { featured: true } : {}),
-      ...(input.sort === "installs" ? { sort: "installs" as const } : {}),
-      ...(isString(input.cursor) ? { cursor: input.cursor } : {}),
-      ...(isNumber(input.limit) ? { limit: input.limit } : {}),
-    });
-  });
-  handleTrusted(IPC_CHANNELS.marketplaceAgentsGet, (input: unknown) =>
-    marketplaceAgents.get(requireString(input, "agentId")),
+  handleTrusted(IPC_CHANNELS.hostedSitesPublish, parsePublishHostedSite, (site) => hostedSites.publish(site));
+  handleTrusted(IPC_CHANNELS.hostedSitesReplace, parseReplaceHostedSite, (site) => hostedSites.replace(site));
+  handleTrusted(IPC_CHANNELS.hostedSitesDelete, parseDeleteHostedSite, (siteId) => hostedSites.delete(siteId));
+  handleTrusted(IPC_CHANNELS.marketplaceAgentsList, nullishPayload(parseMarketplaceAgentQuery), (query) =>
+    marketplaceAgents.list(query),
+  );
+  handleTrusted(IPC_CHANNELS.marketplaceAgentsGet, stringPayload("agentId"), (agentId) =>
+    marketplaceAgents.get(agentId),
   );
   handleTrusted(IPC_CHANNELS.marketplaceAgentsListMine, () => marketplaceAgents.listMine());
-  handleTrusted(IPC_CHANNELS.marketplaceAgentsPreview, (input: unknown) =>
-    marketplaceAgents.preview(requireString(input, "botId")),
+  handleTrusted(IPC_CHANNELS.marketplaceAgentsPreview, stringPayload("botId"), (botId) =>
+    marketplaceAgents.preview(botId),
   );
-  handleTrusted(IPC_CHANNELS.marketplaceAgentsSubmit, (input: unknown) => {
-    if (!isObject(input)) throw new Error("Invalid agent submission.");
-    return marketplaceAgents.submit({
-      botId: requireString(input.botId, "botId"),
-      ...(input.agentId === undefined ? {} : { agentId: requireString(input.agentId, "agentId") }),
-    });
-  });
-  handleTrusted(IPC_CHANNELS.marketplaceAgentsInstall, (input: unknown) => {
-    if (!isObject(input)) throw new Error("Invalid agent installation.");
-    return marketplaceAgents.install({
-      agentId: requireString(input.agentId, "agentId"),
-      ...(input.botId === undefined ? {} : { botId: requireString(input.botId, "botId", INPUT_LIMITS.identifier) }),
-      timezone: requireString(input.timezone, "timezone", 255),
-      receiptId: requireString(input.receiptId, "receiptId", INPUT_LIMITS.identifier),
-    });
-  });
+  handleTrusted(IPC_CHANNELS.marketplaceAgentsSubmit, parseSubmitMarketplaceAgent, (submission) =>
+    marketplaceAgents.submit(submission),
+  );
+  handleTrusted(IPC_CHANNELS.marketplaceAgentsInstall, parseInstallMarketplaceAgent, (installation) =>
+    marketplaceAgents.install(installation),
+  );
   handleTrusted(IPC_CHANNELS.updateGetStatus, () => updater.getStatus());
   handleTrusted(IPC_CHANNELS.updateCheck, () => updater.checkForUpdates());
   handleTrusted(IPC_CHANNELS.updateDownload, () => updater.downloadUpdate());
   handleTrusted(IPC_CHANNELS.updateInstall, () => updater.installUpdate());
   handleTrusted(IPC_CHANNELS.updateGetPreference, () => readUpdatePreference(updatePreferenceFile));
-  handleTrusted(IPC_CHANNELS.updateSetPreference, async (input: unknown) => {
-    const preference = await writeUpdatePreference(updatePreferenceFile, parseUpdatePreference(input).autoDownload);
+  handleTrusted(IPC_CHANNELS.updateSetPreference, parseUpdatePreference, async (parsed) => {
+    const preference = await writeUpdatePreference(updatePreferenceFile, parsed.autoDownload);
     updater.setAutoDownload(preference.autoDownload);
     return preference;
   });
@@ -629,32 +552,31 @@ function registerIpcHandlers(
     },
   });
 
-  handleTrusted(IPC_CHANNELS.agentGetStatus, (input: unknown) => {
-    const { serverId } = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentGetStatus, parseAgentRequest, (parsed) => {
+    const { serverId } = parsed;
     return serverId === "local"
       ? service.getStatus()
       : remoteServers.request("/v1/agents/status", {}, serverId, decodeAgentStatus);
   });
-  handleTrusted(IPC_CHANNELS.agentGetUsage, (input: unknown) => {
-    const { serverId } = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentGetUsage, parseAgentRequest, (parsed) => {
+    const { serverId } = parsed;
     return serverId === "local"
       ? service.getUsage()
       : remoteServers.request("/v1/agents/usage", {}, serverId, decodeAccountUsage);
   });
-  handleTrusted(IPC_CHANNELS.agentListModels, (input: unknown) => {
-    const { serverId } = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentListModels, parseAgentRequest, (parsed) => {
+    const { serverId } = parsed;
     return serverId === "local"
       ? service.listModels()
       : remoteServers.request("/v1/agents/models", {}, serverId, decodeAgentModelOptions);
   });
-  handleTrusted(IPC_CHANNELS.agentListBots, (input: unknown) => {
-    const { serverId } = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentListBots, parseAgentRequest, (parsed) => {
+    const { serverId } = parsed;
     return serverId === "local"
       ? service.listBots()
       : remoteServers.request("/v1/agents", {}, serverId, decodeBotSummaries);
   });
-  handleTrusted(IPC_CHANNELS.agentListInstalledSkills, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentListInstalledSkills, parseAgentRequest, (scoped) => {
     const botId = requireString(scoped.payload, "botId", INPUT_LIMITS.identifier);
     return scoped.serverId === "local"
       ? skills.listInstalledForChatTags(botId)
@@ -670,14 +592,16 @@ function registerIpcHandlers(
           )
         : Promise.resolve([]);
   });
-  handleTrusted(IPC_CHANNELS.agentGetSidebarLayout, (input: unknown): Promise<SidebarLayoutSnapshot> => {
-    const { serverId } = parseAgentRequest(input);
-    return serverId === "local"
-      ? Promise.resolve(sidebarLayout.getSnapshot())
-      : remoteServers.request("/v1/sidebar-layout", {}, serverId, decodeSidebarLayoutSnapshot);
-  });
-  handleTrusted(IPC_CHANNELS.agentMutateSidebarLayout, (input: unknown): Promise<SidebarLayoutSnapshot> => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(
+    IPC_CHANNELS.agentGetSidebarLayout,
+    parseAgentRequest,
+    ({ serverId }): Promise<SidebarLayoutSnapshot> => {
+      return serverId === "local"
+        ? Promise.resolve(sidebarLayout.getSnapshot())
+        : remoteServers.request("/v1/sidebar-layout", {}, serverId, decodeSidebarLayoutSnapshot);
+    },
+  );
+  handleTrusted(IPC_CHANNELS.agentMutateSidebarLayout, parseAgentRequest, (scoped): Promise<SidebarLayoutSnapshot> => {
     const action = parseSidebarLayoutAction(scoped.payload);
     return scoped.serverId === "local"
       ? sidebarLayout.mutate(action, new Set(service.listBots().map((bot) => bot.id)))
@@ -688,36 +612,30 @@ function registerIpcHandlers(
           decodeSidebarLayoutSnapshot,
         );
   });
-  handleTrusted(IPC_CHANNELS.agentCreateBot, (input: unknown) => {
-    const { serverId, payload } = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentCreateBot, parseAgentRequest, ({ serverId, payload }) => {
     const parsed = parseCreateBot(payload);
     return serverId === "local"
       ? service.createBot(parsed)
       : remoteServers.request("/v1/agents", { method: "POST", body: parsed }, serverId, decodeBotSummary);
   });
-  handleTrusted(IPC_CHANNELS.agentDuplicateBot, (input: unknown): Promise<DuplicateBotResult> => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentDuplicateBot, parseAgentRequest, (scoped): Promise<DuplicateBotResult> => {
     const botId = requireString(scoped.payload, "botId", INPUT_LIMITS.identifier);
     return routeDuplicateBot(service, sidebarLayout, remoteServers, scoped.serverId, botId);
   });
-  handleTrusted(IPC_CHANNELS.agentUpdateBot, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentUpdateBot, parseAgentRequest, (scoped) => {
     return routeUpdateBot(service, remoteServers, scoped.serverId, parseUpdateBot(scoped.payload));
   });
-  handleTrusted(IPC_CHANNELS.agentSetAvatar, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentSetAvatar, parseAgentRequest, (scoped) => {
     const parsed = parseSetAgentAvatar(scoped.payload);
     return scoped.serverId === "local"
       ? service.setAvatar(parsed.botId, parsed.image)
       : remoteServers.setAgentAvatar(parsed.botId, parsed.image, scoped.serverId);
   });
-  handleTrusted(IPC_CHANNELS.agentDeleteBot, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentDeleteBot, parseAgentRequest, (scoped) => {
     const botId = requireString(scoped.payload, "botId");
     return routeDeleteBot(service, sidebarLayout, remoteServers, scoped.serverId, botId);
   });
-  handleTrusted(IPC_CHANNELS.agentListMemories, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentListMemories, parseAgentRequest, (scoped) => {
     const botId = requireString(scoped.payload, "botId", INPUT_LIMITS.identifier);
     return scoped.serverId === "local"
       ? service.listMemories(botId)
@@ -728,8 +646,7 @@ function registerIpcHandlers(
           decodeBotMemories,
         );
   });
-  handleTrusted(IPC_CHANNELS.agentCreateMemory, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentCreateMemory, parseAgentRequest, (scoped) => {
     const parsed = parseCreateBotMemory(scoped.payload);
     return scoped.serverId === "local"
       ? service.createMemory(parsed)
@@ -740,8 +657,7 @@ function registerIpcHandlers(
           decodeBotMemory,
         );
   });
-  handleTrusted(IPC_CHANNELS.agentUpdateMemory, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentUpdateMemory, parseAgentRequest, (scoped) => {
     const parsed = parseUpdateBotMemory(scoped.payload);
     return scoped.serverId === "local"
       ? service.updateMemory(parsed)
@@ -752,8 +668,7 @@ function registerIpcHandlers(
           decodeBotMemory,
         );
   });
-  handleTrusted(IPC_CHANNELS.agentDeleteMemory, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentDeleteMemory, parseAgentRequest, (scoped) => {
     const parsed = parseDeleteBotMemory(scoped.payload);
     if (scoped.serverId === "local") return service.deleteMemory(parsed);
     return remoteServers.request(
@@ -763,8 +678,7 @@ function registerIpcHandlers(
       decodeVoid,
     );
   });
-  handleTrusted(IPC_CHANNELS.agentClearMemories, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentClearMemories, parseAgentRequest, (scoped) => {
     const botId = requireString(scoped.payload, "botId", INPUT_LIMITS.identifier);
     if (scoped.serverId === "local") return service.clearMemories(botId);
     return remoteServers.request(
@@ -774,15 +688,13 @@ function registerIpcHandlers(
       decodeVoid,
     );
   });
-  handleTrusted(IPC_CHANNELS.agentListRoutines, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentListRoutines, parseAgentRequest, (scoped) => {
     const botId = requireString(scoped.payload, "botId", INPUT_LIMITS.identifier);
     return scoped.serverId === "local"
       ? service.listRoutines(botId)
       : remoteServers.request(`/v1/agents/${encodeURIComponent(botId)}/routines`, {}, scoped.serverId, decodeRoutines);
   });
-  handleTrusted(IPC_CHANNELS.agentCreateRoutine, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentCreateRoutine, parseAgentRequest, (scoped) => {
     const parsed = parseCreateRoutine(scoped.payload);
     return scoped.serverId === "local"
       ? service.createRoutine(parsed)
@@ -793,8 +705,7 @@ function registerIpcHandlers(
           decodeRoutine,
         );
   });
-  handleTrusted(IPC_CHANNELS.agentUpdateRoutine, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentUpdateRoutine, parseAgentRequest, (scoped) => {
     const parsed = parseUpdateRoutine(scoped.payload);
     return scoped.serverId === "local"
       ? service.updateRoutine(parsed)
@@ -805,8 +716,7 @@ function registerIpcHandlers(
           decodeRoutine,
         );
   });
-  handleTrusted(IPC_CHANNELS.agentDeleteRoutine, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentDeleteRoutine, parseAgentRequest, (scoped) => {
     const parsed = parseDeleteRoutine(scoped.payload);
     if (scoped.serverId === "local") return service.deleteRoutine(parsed);
     return remoteServers.request(
@@ -816,8 +726,7 @@ function registerIpcHandlers(
       decodeVoid,
     );
   });
-  handleTrusted(IPC_CHANNELS.agentTestRoutine, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentTestRoutine, parseAgentRequest, (scoped) => {
     const parsed = parseTestRoutine(scoped.payload);
     return scoped.serverId === "local"
       ? service.testRoutine(parsed)
@@ -828,8 +737,7 @@ function registerIpcHandlers(
           decodeRoutineRun,
         );
   });
-  handleTrusted(IPC_CHANNELS.agentListRoutineRuns, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentListRoutineRuns, parseAgentRequest, (scoped) => {
     const parsed = parseListRoutineRuns(scoped.payload);
     return scoped.serverId === "local"
       ? service.listRoutineRuns(parsed)
@@ -840,19 +748,16 @@ function registerIpcHandlers(
           decodeRoutineRuns,
         );
   });
-  handleTrusted(IPC_CHANNELS.agentReadConversation, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentReadConversation, parseAgentRequest, (scoped) => {
     return routeReadConversation(host, remoteServers, scoped.serverId, requireString(scoped.payload, "botId"));
   });
-  handleTrusted(IPC_CHANNELS.agentReadConversationPage, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentReadConversationPage, parseAgentRequest, (scoped) => {
     const parsed = parseReadConversationPage(scoped.payload);
     return scoped.serverId === "local"
       ? host.readAgentConversationPage(parsed.botId, parsed.anchor, parsed.limit)
       : remoteServers.readAgentConversationPage(parsed.botId, parsed.anchor, parsed.limit, scoped.serverId);
   });
-  handleTrusted(IPC_CHANNELS.agentSearchConversationMessages, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentSearchConversationMessages, parseAgentRequest, (scoped) => {
     const parsed = parseSearchConversationMessages(scoped.payload);
     return scoped.serverId === "local"
       ? host.searchAgentConversationMessages(parsed.query, parsed.botId, parsed.cursor, parsed.limit)
@@ -864,25 +769,22 @@ function registerIpcHandlers(
           scoped.serverId,
         );
   });
-  handleTrusted(IPC_CHANNELS.agentListConversationReads, (input: unknown) => {
-    const { serverId } = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentListConversationReads, parseAgentRequest, (parsed) => {
+    const { serverId } = parsed;
     return serverId === "local"
       ? host.listAgentConversationReads()
       : remoteServers.listAgentConversationReads(serverId);
   });
-  handleTrusted(IPC_CHANNELS.agentMarkConversationRead, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentMarkConversationRead, parseAgentRequest, (scoped) => {
     const parsed = parseMarkConversationRead(scoped.payload);
     return scoped.serverId === "local"
       ? host.markAgentConversationRead(parsed)
       : remoteServers.markAgentConversationRead(parsed, scoped.serverId);
   });
-  handleTrusted(IPC_CHANNELS.agentSendMessage, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentSendMessage, parseAgentRequest, (scoped) => {
     return routeSendMessage(service, remoteServers, scoped.serverId, parseSendMessage(scoped.payload));
   });
-  handleTrusted(IPC_CHANNELS.agentSetMessageReaction, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentSetMessageReaction, parseAgentRequest, (scoped) => {
     const parsed = parseMessageReaction(scoped.payload);
     return scoped.serverId === "local"
       ? service.setMessageReaction(parsed)
@@ -896,8 +798,8 @@ function registerIpcHandlers(
           decodeVoid,
         );
   });
-  handleTrusted(IPC_CHANNELS.agentChooseAttachments, async (input: unknown) => {
-    const { serverId, payload } = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentChooseAttachments, parseAgentRequest, async (parsed) => {
+    const { serverId, payload } = parsed;
     const { filter } = parseChooseAttachments(payload);
     const options: OpenDialogOptions = {
       properties: ["openFile", "multiSelections"],
@@ -911,15 +813,13 @@ function registerIpcHandlers(
     if (serverId === "local") return service.prepareAttachments(result.filePaths);
     return uploadRemotePaths(remoteServers, serverId, result.filePaths);
   });
-  handleTrusted(IPC_CHANNELS.agentImportAttachments, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentImportAttachments, parseAgentRequest, (scoped) => {
     const parsed = parseImportAttachments(scoped.payload);
     return scoped.serverId === "local"
       ? service.prepareImportedAttachments(parsed.paths, parsed.data)
       : uploadRemoteImports(remoteServers, scoped.serverId, parsed);
   });
-  handleTrusted(IPC_CHANNELS.agentDiscardDraftAttachment, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentDiscardDraftAttachment, parseAgentRequest, (scoped) => {
     const attachmentId = requireString(scoped.payload, "attachmentId");
     return scoped.serverId === "local"
       ? service.discardDraftAttachment(attachmentId)
@@ -930,8 +830,7 @@ function registerIpcHandlers(
           decodeVoid,
         );
   });
-  handleTrusted(IPC_CHANNELS.agentOpenAttachment, async (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentOpenAttachment, parseAgentRequest, async (scoped) => {
     const parsed = parseOpenAttachment(scoped.payload);
     if (scoped.serverId !== "local") {
       const downloaded = await remoteServers.downloadAttachment(parsed.attachmentId, scoped.serverId);
@@ -990,8 +889,7 @@ function registerIpcHandlers(
     const error = await shell.openPath(attachment.path);
     if (error) throw new Error(error);
   });
-  handleTrusted(IPC_CHANNELS.agentOpenSharedFile, async (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentOpenSharedFile, parseAgentRequest, async (scoped) => {
     const parsed = parseOpenSharedFile(scoped.payload);
     if (scoped.serverId !== "local") {
       const downloaded = await remoteServers.downloadSharedFile(parsed.path, scoped.serverId);
@@ -1009,8 +907,7 @@ function registerIpcHandlers(
     const openError = await shell.openPath(sharedFile.path);
     if (openError) throw new Error(openError);
   });
-  handleTrusted(IPC_CHANNELS.agentOpenWorkspaceFile, async (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentOpenWorkspaceFile, parseAgentRequest, async (scoped) => {
     const parsed = parseOpenWorkspaceFile(scoped.payload);
     if (scoped.serverId !== "local") {
       const downloaded = await remoteServers.downloadWorkspaceFile(parsed.botId, parsed.path, scoped.serverId);
@@ -1028,8 +925,7 @@ function registerIpcHandlers(
     const openError = await shell.openPath(workspaceFile.path);
     if (openError) throw new Error(openError);
   });
-  handleTrusted(IPC_CHANNELS.agentPreviewSharedFile, async (input: unknown): Promise<FilePreview> => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentPreviewSharedFile, parseAgentRequest, async (scoped): Promise<FilePreview> => {
     const parsed = parseOpenSharedFile(scoped.payload);
     if (scoped.serverId !== "local") {
       const downloaded = await remoteServers.downloadSharedFile(parsed.path, scoped.serverId);
@@ -1038,8 +934,7 @@ function registerIpcHandlers(
     const sharedFile = await service.resolveSharedFile(parsed.path);
     return localFilePreview(sharedFile.path, sharedFile.name, sharedFile.size);
   });
-  handleTrusted(IPC_CHANNELS.agentPreviewWorkspaceFile, async (input: unknown): Promise<FilePreview> => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentPreviewWorkspaceFile, parseAgentRequest, async (scoped): Promise<FilePreview> => {
     const parsed = parseOpenWorkspaceFile(scoped.payload);
     if (scoped.serverId !== "local") {
       const downloaded = await remoteServers.downloadWorkspaceFile(parsed.botId, parsed.path, scoped.serverId);
@@ -1048,12 +943,10 @@ function registerIpcHandlers(
     const workspaceFile = await service.resolveWorkspaceFile(parsed.botId, parsed.path);
     return localFilePreview(workspaceFile.path, workspaceFile.name, workspaceFile.size);
   });
-  handleTrusted(IPC_CHANNELS.agentListQueue, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentListQueue, parseAgentRequest, (scoped) => {
     return routeListQueue(service, remoteServers, scoped.serverId, requireString(scoped.payload, "botId"));
   });
-  handleTrusted(IPC_CHANNELS.agentAcknowledgeFailedTurn, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentAcknowledgeFailedTurn, parseAgentRequest, (scoped) => {
     const parsed = parseAcknowledgeFailedTurn(scoped.payload);
     return scoped.serverId === "local"
       ? service.acknowledgeFailedTurn(parsed.botId, parsed.turnId)
@@ -1064,8 +957,7 @@ function registerIpcHandlers(
           decodeVoid,
         );
   });
-  handleTrusted(IPC_CHANNELS.agentCancelQueuedMessage, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentCancelQueuedMessage, parseAgentRequest, (scoped) => {
     const parsed = parseCancelQueuedMessage(scoped.payload);
     return scoped.serverId === "local"
       ? service.cancelQueuedMessage(parsed.botId, parsed.deliveryId)
@@ -1079,8 +971,7 @@ function registerIpcHandlers(
           decodeVoid,
         );
   });
-  handleTrusted(IPC_CHANNELS.agentSteerQueuedMessage, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentSteerQueuedMessage, parseAgentRequest, (scoped) => {
     const parsed = parseSteerQueuedMessage(scoped.payload);
     return scoped.serverId === "local"
       ? service.steerQueuedMessage(parsed)
@@ -1094,8 +985,7 @@ function registerIpcHandlers(
           decodeVoid,
         );
   });
-  handleTrusted(IPC_CHANNELS.agentUpdateQueuedMessage, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentUpdateQueuedMessage, parseAgentRequest, (scoped) => {
     const parsed = parseUpdateQueuedMessage(scoped.payload);
     return scoped.serverId === "local"
       ? service.updateQueuedMessage(parsed)
@@ -1114,8 +1004,7 @@ function registerIpcHandlers(
           decodeVoid,
         );
   });
-  handleTrusted(IPC_CHANNELS.agentReorderQueue, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentReorderQueue, parseAgentRequest, (scoped) => {
     const parsed = parseReorderQueue(scoped.payload);
     return scoped.serverId === "local"
       ? service.reorderQueue(parsed)
@@ -1126,8 +1015,7 @@ function registerIpcHandlers(
           decodeVoid,
         );
   });
-  handleTrusted(IPC_CHANNELS.agentInterrupt, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentInterrupt, parseAgentRequest, (scoped) => {
     const parsed = parseInterrupt(scoped.payload);
     return scoped.serverId === "local"
       ? service.interrupt(parsed.botId, parsed.turnId)
@@ -1141,22 +1029,19 @@ function registerIpcHandlers(
           decodeVoid,
         );
   });
-  handleTrusted(IPC_CHANNELS.agentRespondToPrompt, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentRespondToPrompt, parseAgentRequest, (scoped) => {
     const parsed = parsePromptResponse(scoped.payload);
     return scoped.serverId === "local"
       ? service.respondToPrompt(parsed)
       : remoteServers.request("/v1/prompts/respond", { method: "POST", body: parsed }, scoped.serverId, decodeVoid);
   });
-  handleTrusted(IPC_CHANNELS.agentRespondToApproval, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentRespondToApproval, parseAgentRequest, (scoped) => {
     const parsed = parseApprovalResponse(scoped.payload);
     return scoped.serverId === "local"
       ? service.respondToApproval(parsed)
       : remoteServers.request("/v1/approvals/respond", { method: "POST", body: parsed }, scoped.serverId, decodeVoid);
   });
-  handleTrusted(IPC_CHANNELS.agentRespondToBrowserTakeover, (input: unknown) => {
-    const scoped = parseAgentRequest(input);
+  handleTrusted(IPC_CHANNELS.agentRespondToBrowserTakeover, parseAgentRequest, (scoped) => {
     const parsed = parseBrowserTakeoverResponse(scoped.payload);
     return scoped.serverId === "local"
       ? service.respondToBrowserTakeover(parsed)
@@ -1168,47 +1053,30 @@ function registerIpcHandlers(
         );
   });
 
-  handleTrusted(IPC_CHANNELS.browserOpen, (input: unknown) => {
-    const parsed = parseBrowserOpen(input);
+  handleTrusted(IPC_CHANNELS.browserOpen, parseBrowserOpen, (parsed) => {
     return remoteServers.activeServerId === "local"
       ? browser.open(parsed.url, parsed.ownerThreadId ?? null, parsed.ownerBotId ?? null, parsed.focus)
       : remoteServers.request("/v1/browser/open", { method: "POST", body: parsed }, undefined, decodeBrowserTab);
   });
-  handleTrusted(IPC_CHANNELS.browserActivate, (tabId: unknown) =>
+  handleTrusted(IPC_CHANNELS.browserActivate, stringPayload("tabId"), (tabId) =>
     remoteServers.activeServerId === "local"
-      ? browser.activate(requireString(tabId, "tabId"))
-      : remoteServers.request(
-          "/v1/browser/activate",
-          { method: "POST", body: { tabId: requireString(tabId, "tabId") } },
-          undefined,
-          decodeVoid,
-        ),
+      ? browser.activate(tabId)
+      : remoteServers.request("/v1/browser/activate", { method: "POST", body: { tabId } }, undefined, decodeVoid),
   );
-  handleTrusted(IPC_CHANNELS.browserNavigate, (input: unknown) => {
-    const parsed = parseBrowserNavigate(input);
+  handleTrusted(IPC_CHANNELS.browserNavigate, parseBrowserNavigate, (parsed) => {
     return remoteServers.activeServerId === "local"
       ? browser.navigate(parsed.tabId, parsed.direction)
       : remoteServers.request("/v1/browser/navigate", { method: "POST", body: parsed }, undefined, decodeVoid);
   });
-  handleTrusted(IPC_CHANNELS.browserReload, (tabId: unknown) =>
+  handleTrusted(IPC_CHANNELS.browserReload, stringPayload("tabId"), (tabId) =>
     remoteServers.activeServerId === "local"
-      ? browser.reload(requireString(tabId, "tabId"))
-      : remoteServers.request(
-          "/v1/browser/reload",
-          { method: "POST", body: { tabId: requireString(tabId, "tabId") } },
-          undefined,
-          decodeVoid,
-        ),
+      ? browser.reload(tabId)
+      : remoteServers.request("/v1/browser/reload", { method: "POST", body: { tabId } }, undefined, decodeVoid),
   );
-  handleTrusted(IPC_CHANNELS.browserClose, (tabId: unknown) =>
+  handleTrusted(IPC_CHANNELS.browserClose, stringPayload("tabId"), (tabId) =>
     remoteServers.activeServerId === "local"
-      ? browser.close(requireString(tabId, "tabId"))
-      : remoteServers.request(
-          "/v1/browser/close",
-          { method: "POST", body: { tabId: requireString(tabId, "tabId") } },
-          undefined,
-          decodeVoid,
-        ),
+      ? browser.close(tabId)
+      : remoteServers.request("/v1/browser/close", { method: "POST", body: { tabId } }, undefined, decodeVoid),
   );
   handleTrusted(IPC_CHANNELS.browserListTabs, () =>
     remoteServers.activeServerId === "local"
@@ -1221,26 +1089,24 @@ function registerIpcHandlers(
       ? browser.getControlState()
       : remoteServers.request("/v1/browser/control", {}, undefined, decodeBrowserControlState),
   );
-  handleTrusted(IPC_CHANNELS.browserCapturePreview, (tabId: unknown) => {
-    const parsedTabId = requireString(tabId, "tabId");
-    return remoteServers.activeServerId === "local"
-      ? browser.capturePreview(parsedTabId)
+  handleTrusted(IPC_CHANNELS.browserCapturePreview, stringPayload("tabId"), (tabId) =>
+    remoteServers.activeServerId === "local"
+      ? browser.capturePreview(tabId)
       : remoteServers.request(
           "/v1/browser/preview",
-          { method: "POST", body: { tabId: parsedTabId } },
+          { method: "POST", body: { tabId } },
           undefined,
           decodeBrowserPreview,
-        );
-  });
-  handleTrusted(IPC_CHANNELS.browserSetVisible, async (input: unknown) => {
-    const parsed = parseVisibility(input);
+        ),
+  );
+  handleTrusted(IPC_CHANNELS.browserSetVisible, parseVisibility, async (parsed) => {
     if (remoteServers.activeServerId === "local") await browser.setVisible(parsed);
     else {
       await remoteServers.request("/v1/browser/visible", { method: "POST", body: parsed }, undefined, decodeVoid);
     }
   });
-  handleTrusted(IPC_CHANNELS.browserPictureInPictureOpen, (input: unknown) =>
-    browserPictureInPicture.open(input === undefined ? undefined : parseBrowserBounds(input)),
+  handleTrusted(IPC_CHANNELS.browserPictureInPictureOpen, optionalPayload(parseBrowserBounds), (bounds) =>
+    browserPictureInPicture.open(bounds),
   );
   handleTrusted(IPC_CHANNELS.browserPictureInPictureClose, () => browserPictureInPicture.close());
   handleTrusted(IPC_CHANNELS.browserPictureInPictureDock, () => browserPictureInPicture.dock());
