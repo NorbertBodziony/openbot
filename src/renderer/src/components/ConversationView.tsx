@@ -227,6 +227,7 @@ export interface ConversationProps {
   loadingOlder?: boolean;
   olderError?: string | null;
   activeTurnId: string | null | undefined;
+  activityDetail?: string;
   skillsMarketplaceOpen?: boolean;
   globalOverlayOpen: boolean;
   settingsRequest: { botId: string; nonce: number } | null;
@@ -712,6 +713,7 @@ function createConversationViewScope(props: ConversationProps) {
     return `${botId}:message:${streamingMessage.id}`;
   });
   const activeActivityDetail = createMemo(() => {
+    if (props.activityDetail?.trim()) return props.activityDetail.trim();
     const turnId = props.activeTurnId ?? activeDeliveries()[0]?.turnId ?? null;
     let streamingFallback: string | null = null;
     for (let index = props.messages.length - 1; index >= 0; index -= 1) {

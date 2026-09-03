@@ -9,7 +9,6 @@ import { describe, expect, it } from "vitest";
 import {
   botProfilesEqual,
   readStateForMessages,
-  retainThinkingMessages,
   toBotMessage,
   toBotMessages,
   toBotProfile,
@@ -259,35 +258,6 @@ describe("toBotMessage", () => {
     } satisfies ConversationMessage;
 
     expect(toBotMessage(message).actionMarker).toMatchObject({ kind: "agent-message", status: "partial" });
-  });
-});
-
-describe("retainThinkingMessages", () => {
-  it("drops provider-neutral activity when the turn completes", () => {
-    const previous = toBotMessages([
-      {
-        id: "activity:turn-1",
-        turnId: "turn-1",
-        author: "assistant",
-        text: "Reviewing the latest tool result…",
-        createdAt: "2026-09-02T12:00:00.000Z",
-        status: "streaming",
-        itemType: "commentary",
-      },
-    ]);
-    const next = toBotMessages([
-      {
-        id: "answer-1",
-        turnId: "turn-1",
-        author: "assistant",
-        text: "Done.",
-        createdAt: "2026-09-02T12:00:01.000Z",
-        status: "completed",
-      },
-    ]);
-
-    expect(retainThinkingMessages(previous, next)).toEqual(next);
-    expect(retainThinkingMessages(previous, next, "turn-1")).toEqual([{ ...previous[0], streaming: false }, ...next]);
   });
 });
 

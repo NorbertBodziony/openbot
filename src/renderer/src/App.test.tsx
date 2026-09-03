@@ -1484,8 +1484,9 @@ describe("OpenBot connected desktop shell", () => {
 
     emitAgentEvent?.(conversation(1, "turn-live-status", [userMessage]));
     const status = await screen.findByRole("status", { name: /Chief is working/ });
-    const label = status.querySelector(".agent-activity-label");
+    const label = status.closest(".agent-activity-entry")?.querySelector(".agent-activity-label");
     expect(label?.textContent?.trim()).toBeTruthy();
+    expect(label).not.toHaveAttribute("aria-hidden");
     emitAgentEvent?.({
       type: "turn-progress",
       botId: "chief",
@@ -1494,6 +1495,7 @@ describe("OpenBot connected desktop shell", () => {
       detail: "Searching for current information…",
     });
     await waitFor(() => expect(label).toHaveTextContent("Searching for current information…"));
+    expect(document.querySelector(".thinking-disclosure")).not.toBeInTheDocument();
 
     const firstCommentary = {
       id: "commentary-live-status-1",
@@ -1548,9 +1550,9 @@ describe("OpenBot connected desktop shell", () => {
       turnId: "turn-live-status",
       status: "completed",
     });
-    expect(screen.queryByText("Reviewing the verification results…")).not.toBeInTheDocument();
     emitAgentEvent?.(conversation(5, null, [userMessage, { ...firstCommentary, status: "completed" }]));
     await waitFor(() => expect(screen.queryByRole("status", { name: /Chief is working/ })).not.toBeInTheDocument());
+    expect(screen.queryByText("Reviewing the verification results…")).not.toBeInTheDocument();
   });
 
   it("merges compact runtime attention into the active server", async () => {

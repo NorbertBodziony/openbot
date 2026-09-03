@@ -340,6 +340,9 @@ export function createAppController(props: AppProps = {}) {
   const [conversationOlderLoading, setConversationOlderLoading] = createSignal<Record<string, boolean>>({});
   const [conversationOlderErrors, setConversationOlderErrors] = createSignal<Record<string, string | null>>({});
   const [activeTurns, setActiveTurns] = createSignal<Record<string, string | null>>({});
+  const [turnProgress, setTurnProgress] = createSignal<Record<string, { turnId: string; detail: string } | undefined>>(
+    {},
+  );
   const [failedTurns, setFailedTurns] = createSignal<Record<string, string | undefined>>({});
   const [unreadReplies, setUnreadReplies] = createSignal<Record<string, number>>({});
   const [conversationReads, setConversationReads] = createSignal<Record<string, ConversationReadState>>({});
@@ -1156,7 +1159,10 @@ export function createAppController(props: AppProps = {}) {
         applyConversationDelta(event);
         return;
       case "turn-progress":
-        applyTurnProgress(event);
+        setTurnProgress((current) => ({
+          ...current,
+          [event.botId]: { turnId: event.turnId, detail: cleanAgentMessageText(event.detail) },
+        }));
         return;
       case "queue-changed":
         queueSnapshotRequests.set(event.snapshot.botId, (queueSnapshotRequests.get(event.snapshot.botId) ?? 0) + 1);
@@ -1180,6 +1186,7 @@ export function createAppController(props: AppProps = {}) {
         return;
       case "turn-started":
         completedTurnByBot.delete(event.botId);
+        setTurnProgress((current) => withoutBot(current, event.botId));
         clearRecentReply(event.botId);
         setFailedTurns((current) => withoutBot(current, event.botId));
         setActiveTurns((current) => ({
@@ -1189,13 +1196,9 @@ export function createAppController(props: AppProps = {}) {
         return;
       case "turn-completed":
         completedTurnByBot.set(event.botId, event.turnId);
-        setLiveMessages((current) => {
-          const messages = current[event.botId];
-          if (!messages) return current;
-          const activityId = `thinking:activity:${event.turnId}`;
-          const next = messages.filter((message) => message.id !== activityId);
-          return next.length === messages.length ? current : { ...current, [event.botId]: next };
-        });
+        setTurnProgress((current) =>
+          current[event.botId]?.turnId === event.turnId ? withoutBot(current, event.botId) : current,
+        );
         setFailedTurns((current) =>
           event.status === "failed" ? { ...current, [event.botId]: event.turnId } : withoutBot(current, event.botId),
         );
@@ -1281,7 +1284,13 @@ export function createAppController(props: AppProps = {}) {
   }
 
   function applyAgentRuntimeSnapshot(snapshot: AgentRuntimeSnapshot): void {
-    setActiveTurns(Object.fromEntries(snapshot.activeTurns.map((turn) => [turn.botId, turn.turnId])));
+    const runtimeTurns = new Map(snapshot.activeTurns.map((turn) => [turn.botId, turn.turnId]));
+    setActiveTurns(Object.fromEntries(runtimeTurns));
+    setTurnProgress((current) =>
+      Object.fromEntries(
+        Object.entries(current).filter(([botId, progress]) => progress?.turnId === runtimeTurns.get(botId)),
+      ),
+    );
     setFailedTurns(Object.fromEntries(snapshot.failedTurns.map((turn) => [turn.botId, turn.turnId])));
     setQueues((current) =>
       reconcileQueuesWithRuntimeWork(
@@ -1536,6 +1545,7 @@ export function createAppController(props: AppProps = {}) {
 
     const messageKey = agentMessageKey(event.botId, event.messageId);
     let appended = false;
+    let commentaryDetail: string | null = null;
     setLiveMessages((current) => {
       const messages = current[event.botId] ?? [];
       const existing = messages.find((message) => message.id === event.messageId);
@@ -1550,6 +1560,7 @@ export function createAppController(props: AppProps = {}) {
           "") + event.delta;
       rawAgentMessageBodies.set(messageKey, rawBody);
       if (existing) {
+        if (existing.itemType === "commentary") commentaryDetail = cleanAgentMessageText(rawBody);
         updateStored(existing, {
           ...existing,
           body: cleanAgentMessageText(rawBody),
@@ -1560,6 +1571,7 @@ export function createAppController(props: AppProps = {}) {
       if (thinking && thinkingItemIndex >= 0) {
         const items = [...(thinking.items ?? [])];
         items[thinkingItemIndex] = cleanAgentMessageText(rawBody);
+        commentaryDetail = items[thinkingItemIndex] ?? null;
         updateStored(thinking, { ...thinking, items, streaming: true });
         return current;
       }
@@ -1580,6 +1592,12 @@ export function createAppController(props: AppProps = {}) {
         [event.botId]: [...(current[event.botId] ?? []), message],
       };
     });
+    if (commentaryDetail) {
+      setTurnProgress((current) => ({
+        ...current,
+        [event.botId]: { turnId: event.turnId, detail: commentaryDetail ?? "" },
+      }));
+    }
     if (appended) {
       const readState = conversationReads()[event.botId];
       if (isAgentChatReadable(event.botId)) {
@@ -1593,31 +1611,6 @@ export function createAppController(props: AppProps = {}) {
       }
     }
     setConversationLoaded((current) => ({ ...current, [event.botId]: true }));
-  }
-
-  function applyTurnProgress(event: Extract<AgentEvent, { type: "turn-progress" }>) {
-    setLiveMessages((current) => {
-      const messages = current[event.botId] ?? [];
-      const activityId = `thinking:activity:${event.turnId}`;
-      const existing = messages.find((message) => message.id === activityId);
-      const activity: BotMessage = {
-        id: activityId,
-        turnId: event.turnId,
-        author: "bot",
-        body: "",
-        time: "now",
-        streaming: true,
-        itemType: "commentary",
-        kind: "thinking",
-        items: [cleanAgentMessageText(event.detail)],
-        itemIds: [`activity:${event.turnId}`],
-      };
-      if (existing) {
-        updateStored(existing, activity);
-        return current;
-      }
-      return { ...current, [event.botId]: [...messages, createStoredMessage(activity)] };
-    });
   }
 
   function applyConversation(snapshot: ConversationSnapshot, markNewMessagesRead = false) {
@@ -1648,7 +1641,6 @@ export function createAppController(props: AppProps = {}) {
               return allMappedMessages.filter((message, index) => loadedIds.has(message.id) || index > lastLoadedIndex);
             })()
           : allMappedMessages,
-        snapshot.activeTurnId,
       );
       const next = mappedMessages.map((mapped) => {
         const existing = previousById.get(mapped.id);
@@ -1695,6 +1687,25 @@ export function createAppController(props: AppProps = {}) {
       ...current,
       [botId]: completedTurnByBot.get(botId) === snapshot.activeTurnId ? null : snapshot.activeTurnId,
     }));
+    const latestCommentary = [...snapshot.messages]
+      .reverse()
+      .find(
+        (message) =>
+          message.author === "assistant" &&
+          message.itemType === "commentary" &&
+          message.turnId === snapshot.activeTurnId &&
+          message.text.trim(),
+      );
+    setTurnProgress((current) => {
+      if (latestCommentary && snapshot.activeTurnId) {
+        return {
+          ...current,
+          [botId]: { turnId: snapshot.activeTurnId, detail: cleanAgentMessageText(latestCommentary.text) },
+        };
+      }
+      const progress = current[botId];
+      return progress && progress.turnId !== snapshot.activeTurnId ? withoutBot(current, botId) : current;
+    });
     const readState = conversationReads()[botId];
     const latestIncomingMessage = markNewMessagesRead
       ? [...snapshot.messages]
@@ -4161,6 +4172,7 @@ export function createAppController(props: AppProps = {}) {
     pendingPrompts,
     pendingApprovals,
     activeTurns,
+    turnProgress,
     botSetupOpen,
     botSetupDraft,
     setBotSetupDraft,

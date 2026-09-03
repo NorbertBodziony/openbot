@@ -257,6 +257,7 @@ function WorkspaceShell(props: {
     pendingPrompts,
     pendingApprovals,
     activeTurns,
+    turnProgress,
     botSetupOpen,
     botSetupDraft,
     setBotSetupDraft,
@@ -543,6 +544,7 @@ function WorkspaceShell(props: {
           approval={activeBot() ? pendingApprovals()[activeBot()?.id ?? ""] : undefined}
           browserTakeover={activeBrowserTakeover()}
           activeTurnId={activeBot() ? activeTurns()[activeBot()?.id ?? ""] : null}
+          activityDetail={activeBot() ? turnProgress()[activeBot()?.id ?? ""]?.detail : undefined}
           skillsMarketplaceOpen={skillsMarketplaceOpen()}
           globalOverlayOpen={
             globalSearchOpen() ||
