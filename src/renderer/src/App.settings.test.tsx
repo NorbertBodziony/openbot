@@ -6,6 +6,7 @@ import { desktopAnalytics } from "./analytics";
 import {
   BOTS,
   emitAgentEvent,
+  emitScopedAgentEvent,
   emitUpdateStatus,
   installOpenbotStub,
   testServer,
@@ -538,6 +539,48 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(trigger).toBeEnabled());
     expect(trackAnalytics).not.toHaveBeenCalledWith("system_turn_started", expect.anything());
     expect(trackAnalytics).not.toHaveBeenCalledWith("system_turn_completed", expect.anything());
+  });
+
+  it("propagates an agent rename across the workspace without a refresh", async () => {
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    const started = {
+      type: "turn-started",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-rename",
+    } as const;
+    await waitFor(() => expect(emitScopedAgentEvent).toBeDefined());
+    emitAgentEvent?.(started);
+    emitScopedAgentEvent?.({ serverId: "local", event: started });
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "working",
+        working: [{ bot: { id: "chief", name: "Chief" } }],
+      }),
+    );
+
+    await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
+    const name = await screen.findByRole("textbox", { name: "Agent name" });
+    await fireEvent.input(name, { target: { value: "Coordinator" } });
+    await fireEvent.blur(name);
+
+    await waitFor(() =>
+      expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({ botId: "chief", name: "Coordinator" }),
+    );
+    expect(await screen.findByRole("heading", { name: "Coordinator" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Message Coordinator")).toHaveAttribute("contenteditable", "true");
+    expect(screen.getByRole("button", { name: /Coordinator, Chief of staff/ })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
+        mode: "working",
+        working: [{ bot: { id: "chief", name: "Coordinator" } }],
+      }),
+    );
+
+    await fireEvent.click(screen.getByRole("button", { name: /Sales Outbound/ }));
+    await fireEvent.click(screen.getByRole("button", { name: /Coordinator, Chief of staff/ }));
+    expect(await screen.findByRole("heading", { name: "Coordinator" })).toBeInTheDocument();
   });
 
   it("removes a custom agent avatar and keeps its generated avatar settings", async () => {
