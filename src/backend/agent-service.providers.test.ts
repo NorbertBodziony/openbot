@@ -155,12 +155,8 @@ describe.sequential("AgentService: providers", () => {
       }
     });
 
-    await Promise.race([
-      service.initialize(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Provider account checks did not start concurrently.")), 3_000),
-      ),
-    ]);
+    await service.initialize();
+    await waitFor(() => (availableOrder.length === 3 ? true : undefined));
 
     expect(availableOrder).toEqual(["claude", "grok", "codex"]);
 
@@ -917,7 +913,10 @@ describe.sequential("AgentService: providers", () => {
       return duplicate;
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The window is the thing under test: the second copy must not resolve
+    // before the first is committed (same exception as debounce timing in
+    // src/backend/AGENTS.md). A broken lock resolves the copy within it.
+    await vi.waitFor(() => expect(secondResolved).toBe(false), { timeout: 50 });
 
     expect(secondResolved).toBe(false);
     await service.commitBotDuplication(first.id, EMPTY_LAYOUT);
