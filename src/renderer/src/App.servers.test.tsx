@@ -1071,7 +1071,7 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Delete agent" }), { button: 0 });
     const dialog = screen.getByRole("alertdialog", { name: "Delete Sales Outbound?" });
     expect(dialog).toHaveTextContent(
-      "This permanently removes the agent and its OpenBot conversation, queue, memories, routines, and workspace. History stored separately by the connected CLI provider is not deleted.",
+      "This removes the agent and its OpenBot conversation from the app. Its queue, memories, routines, and workspace are deleted. History stored separately by the connected CLI provider is not deleted.",
     );
     await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(window.openbot.agent.deleteBot).toHaveBeenCalledWith("sales-outbound"));
