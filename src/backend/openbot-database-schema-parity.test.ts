@@ -150,7 +150,7 @@ interface Declaration {
   readonly type: string;
   readonly name: string;
   readonly table: string;
-  readonly sql: string;
+  readonly sql: readonly string[];
 }
 
 // The PRAGMAs above cannot express a partial index's WHERE clause or a CHECK
@@ -167,28 +167,101 @@ function readNormalizedDeclarations(database: DatabaseSync): readonly Declaratio
     type: text(row, "type"),
     name: text(row, "name"),
     table: text(row, "tbl_name"),
-    sql: normalizeSql(text(row, "sql")),
+    sql: tokenizeSql(text(row, "sql")),
   }));
 }
 
 // SQLite stores a CREATE statement close to how it was written, so this text is
 // as much a record of the author's formatting as of the schema. The two paths
 // declare the same table from two different pieces of source - the latest schema
-// and the migration that produced it - and a difference in spacing, punctuation
-// or keyword case between them is not a difference any caller can observe. Only
-// the case inside a string literal is data: a DEFAULT 'grok' is a value.
-function normalizeSql(sql: string): string {
-  const collapsed = sql
-    .replaceAll(/"([A-Za-z_][A-Za-z0-9_]*)"/g, "$1")
-    .replaceAll(/\bIF NOT EXISTS\b/gi, "")
-    .replaceAll(/\s+/g, " ")
-    .replaceAll(/\s*([(),])\s*/g, "$1")
-    .trim();
+// and the migration that produced it - so comparing the text would go red on a
+// space before a comma, `TEXT` against `text`, `x > 0` against `x>0` or a comment
+// only one side carries, none of which any caller can observe. Comparing the
+// token sequence instead drops formatting entirely and keeps what a caller can
+// observe: the identifiers, keywords, operators and literals, in order.
+//
+// A string literal keeps its case, because a DEFAULT 'grok' is data rather than
+// syntax, and IF NOT EXISTS is dropped because only one path writes it.
+function tokenizeSql(sql: string): readonly string[] {
+  const tokens: string[] = [];
+  let index = 0;
 
-  return collapsed
-    .split(/('(?:[^']|'')*')/)
-    .map((part, index) => (index % 2 === 0 ? part.toUpperCase() : part))
-    .join("");
+  while (index < sql.length) {
+    const character = sql[index] ?? "";
+
+    if (/\s/.test(character)) {
+      index += 1;
+      continue;
+    }
+    if (character === "-" && sql[index + 1] === "-") {
+      const newline = sql.indexOf("\n", index);
+      index = newline === -1 ? sql.length : newline + 1;
+      continue;
+    }
+    if (character === "/" && sql[index + 1] === "*") {
+      const close = sql.indexOf("*/", index + 2);
+      index = close === -1 ? sql.length : close + 2;
+      continue;
+    }
+    if (character === "'") {
+      const end = closingQuote(sql, index, "'");
+      tokens.push(sql.slice(index, end));
+      index = end;
+      continue;
+    }
+    if (character === '"' || character === "`" || character === "[") {
+      const closing = character === "[" ? "]" : character;
+      const end = closingQuote(sql, index, closing);
+      tokens.push(sql.slice(index + 1, end - 1).toUpperCase());
+      index = end;
+      continue;
+    }
+    const word = /^[A-Za-z_][A-Za-z0-9_$]*/.exec(sql.slice(index));
+    if (word) {
+      tokens.push(word[0].toUpperCase());
+      index += word[0].length;
+      continue;
+    }
+    const number = /^\d+(\.\d+)?/.exec(sql.slice(index));
+    if (number) {
+      tokens.push(number[0]);
+      index += number[0].length;
+      continue;
+    }
+    const operator = TWO_CHARACTER_OPERATORS.find((candidate) => sql.startsWith(candidate, index));
+    tokens.push(operator ?? character);
+    index += operator?.length ?? 1;
+  }
+
+  return withoutIfNotExists(tokens);
+}
+
+const TWO_CHARACTER_OPERATORS = ["<=", ">=", "<>", "!=", "==", "||", "<<", ">>"];
+
+const IF_NOT_EXISTS = ["IF", "NOT", "EXISTS"];
+
+function withoutIfNotExists(tokens: readonly string[]): readonly string[] {
+  const kept: string[] = [];
+  for (const token of tokens) {
+    kept.push(token);
+    if (kept.slice(-IF_NOT_EXISTS.length).join(" ") === IF_NOT_EXISTS.join(" ")) kept.length -= IF_NOT_EXISTS.length;
+  }
+  return kept;
+}
+
+// A quoted run ends at its closing delimiter, which a doubled delimiter escapes.
+// Returns the offset just past it.
+function closingQuote(sql: string, start: number, closing: string): number {
+  let index = start + 1;
+  while (index < sql.length) {
+    if (sql[index] === closing) {
+      if (sql[index + 1] !== closing) return index + 1;
+      index += 2;
+      continue;
+    }
+    index += 1;
+  }
+  return sql.length;
 }
 
 function readAppliedVersions(database: DatabaseSync): readonly number[] {
