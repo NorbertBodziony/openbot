@@ -22,6 +22,7 @@ const UNIX_REGULAR_FILE = 0o100000;
 const UNIX_DIRECTORY = 0o040000;
 const EMAIL_MAX_HEADERS_BYTES = 2 * 1024 * 1024;
 const EMAIL_MAX_NESTING_DEPTH = 32;
+const EMAIL_MAX_RFC822_NESTING_DEPTH = 10;
 const CRC32_TABLE = Uint32Array.from({ length: 256 }, (_, index) => {
   let value = index;
   for (let bit = 0; bit < 8; bit += 1) value = (value >>> 1) ^ (0xedb88320 & -(value & 1));
@@ -126,6 +127,7 @@ async function expandEmail(name: string, bytes: Uint8Array): Promise<AttachmentD
       attachmentEncoding: "arraybuffer",
       maxHeadersSize: EMAIL_MAX_HEADERS_BYTES,
       maxNestingDepth: EMAIL_MAX_NESTING_DEPTH,
+      maxRfc822NestingDepth: EMAIL_MAX_RFC822_NESTING_DEPTH,
       rfc822Attachments: true,
     });
   } catch {

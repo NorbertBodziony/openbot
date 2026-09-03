@@ -203,6 +203,21 @@ describe("attachment container imports", () => {
     await expect(importEmail(nested)).rejects.toThrow("nested .eml");
   });
 
+  it("bounds explicitly inline nested EML messages", async () => {
+    let nested = ["Subject: Leaf", "Content-Type: text/plain", "", "Leaf"].join("\r\n");
+    for (let depth = 0; depth < 12; depth += 1) {
+      nested = [
+        `Subject: Nested ${depth}`,
+        "Content-Type: message/rfc822",
+        'Content-Disposition: inline; filename="nested.eml"',
+        "",
+        nested,
+      ].join("\r\n");
+    }
+
+    await expect(importEmail(strToU8(nested))).rejects.toThrow("nested .eml");
+  });
+
   it("rejects unsupported top-level files with the supported next action", async () => {
     await expect(
       normalizeAttachmentImports({
