@@ -478,6 +478,23 @@ describe("TeamStore", () => {
     expect(restarted.getIdentity()?.serverId).toBe(store.getIdentity()?.serverId);
   });
 
+  it("refuses a configuration that finishes after another account has signed in", async () => {
+    const { store, path } = await createStore();
+    const first = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
+    const second = { id: "account-b", email: "b@example.com", name: "B", avatarUrl: null };
+    await store.activateAccount(first);
+
+    const pending = store.configureWithAccount("Studio Mac", first, {
+      mimeType: "image/png",
+      bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    });
+    await store.activateAccount(second);
+
+    await expect(pending).rejects.toThrow("signed-in account changed");
+    expect(store.configured).toBe(false);
+    expect(await readStoredHosts(path)).toHaveLength(0);
+  });
+
   it("refuses a launch preference decided for a host that is no longer active", async () => {
     const { store } = await createStore();
     const first = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };

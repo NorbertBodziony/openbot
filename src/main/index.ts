@@ -751,7 +751,13 @@ function forwardCentralAuth(state: CentralAuthState): void {
     .then(async () => {
       const nextPrincipalId = state.status === "signed_in" ? state.user.id : null;
       if (activeRemotePrincipalId && activeRemotePrincipalId !== nextPrincipalId) {
-        await remoteServerManager?.disconnectRemoteSessions();
+        // Best-effort, like every other network step here: a bridge disconnect that
+        // rejects must not stop the local host from leaving the previous account.
+        try {
+          await remoteServerManager?.disconnectRemoteSessions();
+        } catch (error) {
+          console.error("Unable to disconnect the previous account's remote sessions:", error);
+        }
       }
       activeRemotePrincipalId = nextPrincipalId;
       if (state.status !== "signed_in") {

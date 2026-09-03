@@ -319,6 +319,11 @@ export class TeamStore {
     const email = normalizeEmail(user.email);
     this.#assertNoHostFor(user.id, email);
     validateServerName(serverName);
+    // Both `activateAccount` and `deactivate` set this synchronously, so comparing it
+    // after the awaits below is a reliable answer to "is this still the account that
+    // asked?" - a configuration finishing under someone else's session would otherwise
+    // rebind the store to the account that has just signed out.
+    const activeAccountBefore = this.#file.activeAccountId;
     const { publicKey, privateKey } = generateKeyPairSync("ed25519", {
       publicKeyEncoding: { type: "spki", format: "pem" },
       privateKeyEncoding: { type: "pkcs8", format: "pem" },
@@ -329,6 +334,9 @@ export class TeamStore {
       // above. Re-checking is what stops one account owning two stored hosts, where a
       // restart would activate the one the status never showed.
       this.#assertNoHostFor(user.id, email);
+      if (this.#file.activeAccountId !== activeAccountBefore) {
+        throw new TeamStoreError("The signed-in account changed while this server was being created.");
+      }
     } catch (error) {
       if (serverLogo) await this.#removeLogo(serverLogo).catch(() => undefined);
       throw error;
