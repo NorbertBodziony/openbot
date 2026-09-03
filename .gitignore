@@ -31,6 +31,8 @@ playwright-report/
 test-results/
 storybook-static/
 Shared/
+!apps/mobile/src/shared/
+!apps/mobile/src/shared/**
 index-*.css
 .openbot-browser-test/
 .openbot-build/
@@ -45,3 +47,5 @@ index-*.css
 /build/remote-desktop-runtime/
 /build/remote-desktop-release/
 Bots
+!apps/mobile/src/features/bots/
+!apps/mobile/src/features/bots/**

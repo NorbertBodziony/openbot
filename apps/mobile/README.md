@@ -18,7 +18,34 @@ bun run mobile:ios
 bun run mobile:android
 ```
 
-Application routes live in `src/app`. Shared components, hooks, and other application code live in sibling directories under `src`.
+## Source structure
+
+The mobile app uses a feature-first structure. Expo Router files stay deliberately thin: `src/app`
+defines URLs, route groups, guards, and navigator options, while screen implementations live with
+the feature that owns them.
+
+```text
+src/
+  app/                  Expo Router routes and layouts only
+    (app)/              routes available to an authenticated session
+  features/
+    auth/               QR sign-in, session storage, and session context
+    bots/               bot list, bot actions, and pin transitions
+    chat/               chat screen and its focused UI sections
+    search/             search model, controls, results, and screen
+    servers/            server drawer and joining a server
+    settings/           account settings screen
+    workspace/          workspace state, domain types, and prototype fixtures
+  shared/
+    components/         UI used by more than one feature
+    lib/                platform and infrastructure helpers
+```
+
+Keep code inside a feature until a second feature needs it. Move it to `shared` only when it has no
+feature-specific behavior. Shared code must not import from features; direct feature-to-feature reuse
+should stay explicit so it cannot turn into an accidental circular dependency.
+Split screens into focused sections when they combine navigation, local state, and multiple distinct
+UI regions; for example, chat owns separate header, message-list, and composer components.
 
 ## Design development
 
