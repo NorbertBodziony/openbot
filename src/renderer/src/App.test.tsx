@@ -1,4 +1,4 @@
-import type { BotSummary, ConversationPage, ConversationSnapshot } from "@openbot/contracts/ipc";
+import type { BotSummary, ConversationPage, ConversationSnapshot, ServerSummary } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { createSignal, Show } from "solid-js";
 import { expect, it, vi } from "vitest";
@@ -793,6 +793,70 @@ describe("OpenBot connected desktop shell", () => {
           ([input]) => input.anchor?.type === "around" && input.anchor.messageId === "wrong-server-message",
         ),
     ).toBe(false);
+  });
+
+  it("keeps a newer Dynamic Island action when the older one's selection is superseded", async () => {
+    const local = testServer("local", true);
+    const studio = testServer("remote-1", false);
+    const office = { ...testServer("remote-2", false), name: "Office PC", apiUrl: "https://office.example.com" };
+    let resolveStudioSelection: ((servers: ServerSummary[]) => void) | undefined;
+    let resolveOfficeBots: ((bots: BotSummary[]) => void) | undefined;
+    vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, studio, office]);
+    vi.mocked(window.openbot.servers.select)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveStudioSelection = resolve;
+          }),
+      )
+      .mockResolvedValueOnce([
+        { ...local, active: false },
+        { ...studio, active: false },
+        { ...office, active: true },
+      ]);
+    render(() => <App />);
+    await screen.findByRole("heading", { name: "Chief" });
+    await confirmOnboardingModel();
+    await waitFor(() => expect(emitDynamicIslandAction).toBeDefined());
+    vi.mocked(window.openbot.agent.listBots).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveOfficeBots = resolve;
+        }),
+    );
+
+    emitDynamicIslandAction?.({
+      type: "open-message",
+      serverId: "remote-1",
+      botId: "chief",
+      messageId: "studio-message",
+    });
+    await waitFor(() => expect(resolveStudioSelection).toBeDefined());
+    emitDynamicIslandAction?.({
+      type: "open-message",
+      serverId: "remote-2",
+      botId: "chief",
+      messageId: "office-message",
+    });
+    // The office workspace is mounted but still loading, so it has not consumed
+    // the handoff yet - which is the window in which the superseded selection
+    // for Studio comes back and reports that it lost.
+    await waitFor(() => expect(resolveOfficeBots).toBeDefined());
+    resolveStudioSelection?.([
+      { ...local, active: false },
+      { ...studio, active: true },
+      { ...office, active: false },
+    ]);
+    resolveOfficeBots?.([{ ...BOTS[0], name: "Office Chief" }]);
+
+    expect(await screen.findByRole("heading", { name: "Office Chief" })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        vi
+          .mocked(window.openbot.agent.readConversationPage)
+          .mock.calls.flatMap(([input]) => (input.anchor?.type === "around" ? [input.anchor.messageId] : [])),
+      ).toContain("office-message"),
+    );
   });
 
   it("discards a chat-open reload that resolves during a server switch", async () => {

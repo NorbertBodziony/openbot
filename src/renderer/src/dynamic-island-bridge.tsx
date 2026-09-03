@@ -154,7 +154,13 @@ export function DynamicIslandBridge() {
       // domains that are about to be disposed.
       publishedAction = action;
       setPendingIslandAction(action);
-      if (!(await selectServer(action.serverId, false))) setPendingIslandAction(null);
+      // A newer action may have replaced this one while the selection was in
+      // flight, and being superseded is exactly why that selection returns
+      // false. Clearing unconditionally would delete the newer intent before
+      // its own switch lands.
+      if (!(await selectServer(action.serverId, false)) && pendingIslandAction() === action) {
+        setPendingIslandAction(null);
+      }
       return;
     }
     selectBot(action.botId);
