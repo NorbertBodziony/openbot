@@ -710,11 +710,16 @@ function createConversationViewScope(props: ConversationProps) {
   const latestActiveCommentary = createMemo(() => {
     const activeTurnId = props.activeTurnId;
     if (!activeTurnId) return null;
+    const streamingMessage = streamingAgentMessage();
+    if (streamingMessage && streamingMessage.itemType !== "commentary") return null;
     for (let index = props.messages.length - 1; index >= 0; index -= 1) {
       const message = props.messages[index];
       if (message?.turnId !== activeTurnId || message.itemType !== "commentary") continue;
-      const detail = message.body.trim();
-      if (detail) return detail;
+      const items = message.items ?? [message.body];
+      for (let itemIndex = items.length - 1; itemIndex >= 0; itemIndex -= 1) {
+        const detail = items[itemIndex]?.trim();
+        if (detail) return detail;
+      }
     }
     return null;
   });

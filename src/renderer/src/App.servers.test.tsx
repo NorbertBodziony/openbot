@@ -579,7 +579,7 @@ describe("OpenBot connected desktop shell", () => {
     // Reasoning reads in the trace, which opens itself while the agent works.
     const trace = await screen.findByRole("button", { name: "Hide thinking details" });
     expect(trace.getAttribute("aria-expanded")).toBe("true");
-    expect(await screen.findByText("Inspecting the release checks")).toBeInTheDocument();
+    expect(await screen.findAllByText("Inspecting the release checks")).not.toHaveLength(0);
     expect(
       await within(screen.getByRole("region", { name: "Current activity" })).findByText(
         "Inspecting the release checks",
