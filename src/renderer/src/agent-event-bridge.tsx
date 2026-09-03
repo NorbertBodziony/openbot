@@ -1,6 +1,10 @@
 import type { AgentEvent, AgentRuntimeSnapshot } from "@openbot/contracts/ipc";
 import { flush, onSettled } from "solid-js";
-import { cleanAgentMessageText } from "./agent-message-text";
+import {
+  appendLatestRuntimeMessages,
+  reconcileAttentionApprovals,
+  reconcileAttentionPrompts,
+} from "./agent-runtime-snapshot";
 import { useAgents } from "./agents";
 import { withoutBot } from "./app-message-projection";
 import { useAuth } from "./auth";
@@ -235,47 +239,15 @@ export function AgentEventBridge() {
         new Map(snapshot.activeTurns.map((turn) => [turn.botId, turn.turnId])),
       ),
     );
-    setPendingPrompts((current) => {
-      const next = snapshot.attentionComplete ? {} : { ...current };
-      const submitted = submittedPromptRequests();
-      for (const prompt of snapshot.pendingPrompts) {
-        if (promptRequestKey(prompt.turnId, prompt.requestId) !== submitted[prompt.botId]) {
-          next[prompt.botId] = { type: "prompt", ...prompt };
-        }
-      }
-      for (const request of snapshot.pendingBrowserTakeovers) {
-        next[request.botId] = { type: "browser-takeover-requested", request };
-      }
-      return next;
-    });
-    setPendingApprovals((current) => ({
-      ...(snapshot.attentionComplete ? {} : current),
-      ...Object.fromEntries(snapshot.pendingApprovals.map((approval) => [approval.botId, approval])),
-    }));
+    setPendingPrompts((current) => reconcileAttentionPrompts(current, snapshot, submittedPromptRequests()));
+    setPendingApprovals((current) => reconcileAttentionApprovals(current, snapshot));
     for (const botId of new Set(snapshot.latestMessages.map((message) => message.botId))) {
       deleteAgentMessageBodies(rawAgentMessageBodies, botId);
     }
     for (const message of snapshot.latestMessages) {
       rawAgentMessageBodies.set(agentMessageKey(message.botId, message.id), message.text);
     }
-    setLiveMessages((current) => {
-      const next = { ...current };
-      for (const message of snapshot.latestMessages) {
-        const messages = next[message.botId] ?? [];
-        if (messages.some((candidate) => candidate.id === message.id)) continue;
-        next[message.botId] = [
-          ...messages,
-          {
-            id: message.id,
-            author: "bot",
-            body: cleanAgentMessageText(message.text),
-            time: message.createdAt,
-            createdAt: message.createdAt,
-          },
-        ];
-      }
-      return next;
-    });
+    setLiveMessages((current) => appendLatestRuntimeMessages(current, snapshot.latestMessages));
   }
 
   onSettled(() => {
