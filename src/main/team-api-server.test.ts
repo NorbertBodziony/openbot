@@ -137,14 +137,20 @@ type HostOptions = ConstructorParameters<typeof HostService>[0];
  * account's host the service is bound to.
  */
 async function createHostService(
-  remote: Pick<
-    HostOptions,
-    | "listRemoteInvites"
-    | "registerRemoteHost"
-    | "updateRemoteHostLogo"
-    | "listRemoteMembers"
-    | "updateRemoteMember"
-    | "removeRemoteMember"
+  remote: Partial<
+    Pick<
+      HostOptions,
+      | "listRemoteInvites"
+      | "registerRemoteHost"
+      | "updateRemoteHostLogo"
+      | "listRemoteMembers"
+      | "updateRemoteMember"
+      | "removeRemoteMember"
+      | "createRemoteInvite"
+      | "revokeRemoteInvite"
+      | "remoteControlPlaneUrl"
+      | "sendTeamInviteEmail"
+    >
   > = {},
 ): Promise<{
   service: HostService;
@@ -2219,6 +2225,7 @@ async function emptyRequest(
 
 type RemoteInvites = Awaited<ReturnType<NonNullable<HostOptions["listRemoteInvites"]>>>;
 type RemoteMembers = Awaited<ReturnType<NonNullable<HostOptions["listRemoteMembers"]>>>;
+type RemoteInvite = Awaited<ReturnType<NonNullable<HostOptions["createRemoteInvite"]>>>;
 
 describe("HostService account binding", () => {
   const first = { id: "account-a", email: "a@example.com", name: "A", avatarUrl: null };
@@ -2398,6 +2405,46 @@ describe("HostService account binding", () => {
     // B has no server of its own; A's failure must not paint an error over that.
     expect(service.getStatus()).toEqual(beforeFailure);
     expect(service.getStatus().phase).not.toBe("error");
+  });
+
+  it("does not email an invitation created for the account that has just been left", async () => {
+    let releaseInvite: (invite: RemoteInvite) => void = () => undefined;
+    const creating = new Promise<RemoteInvite>((resolve) => {
+      releaseInvite = resolve;
+    });
+    let creationStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      creationStarted = resolve;
+    });
+    const emails: string[] = [];
+    const { service, signIn } = await createHostService({
+      registerRemoteHost: () => Promise.resolve(),
+      remoteControlPlaneUrl: "https://api.openbot.run",
+      createRemoteInvite: () => {
+        creationStarted();
+        return creating;
+      },
+      sendTeamInviteEmail: async ({ email }) => {
+        emails.push(email);
+      },
+    });
+    await signIn(first);
+    await service.configure({ serverName: "Studio Mac" });
+
+    const pending = service.createInvite({ role: "member", email: "guest@example.com" });
+    const settled = pending.catch(() => undefined);
+    await started;
+    await signIn(second);
+    releaseInvite({
+      inviteId: "invite-1",
+      token: "invite-token-that-is-long-enough-for-a-link",
+      expiresAt: Date.now() + 60_000,
+    });
+    await settled;
+
+    await expect(pending).rejects.toThrow("signed-in account changed");
+    // The mail would name A's server and go out under B's authentication.
+    expect(emails).toEqual([]);
   });
 
   it("reports the account's own server again after signing out and back in", async () => {

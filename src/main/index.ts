@@ -770,6 +770,9 @@ function forwardCentralAuth(state: CentralAuthState): void {
           console.error("Unable to disconnect the previous account's remote sessions:", error);
         }
       }
+      // Rechecked after the disconnect: another account can be announced while it awaits,
+      // and activating this one now would put its host back within the newer account's reach.
+      if (generation !== centralAuthGeneration) return;
       activeRemotePrincipalId = nextPrincipalId;
       if (state.status !== "signed_in") {
         if (state.status === "signed_out") {

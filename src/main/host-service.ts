@@ -327,6 +327,9 @@ export class HostService extends EventEmitter<HostEvents> {
       this.#options.getSignedInUser(),
       input.logo,
     );
+    // The store checked the account before it resolved; the switch can still land between
+    // there and here, and publishing then would show A's server to B.
+    if (!this.#isActiveHost(identity.serverId)) return this.getStatus();
     this.#setStatus({
       phase: "idle",
       configured: true,
@@ -751,6 +754,10 @@ export class HostService extends EventEmitter<HostEvents> {
       this.#options.remoteControlPlaneUrl
     ) {
       const invite = await this.#options.createRemoteInvite(identity.serverId, input);
+      // The invitation belongs to the account that asked for it, so it stays on that host
+      // and shows up in its invite list. What must not happen is emailing it under the new
+      // account's authorization, or handing it back to the renderer the new account sees.
+      this.#assertStillActiveHost(identity.serverId);
       const inviteUrl = createInviteUrl({
         apiUrl: this.#options.remoteControlPlaneUrl,
         serverId: identity.serverId,

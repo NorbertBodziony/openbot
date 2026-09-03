@@ -139,6 +139,7 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   #state: CentralAuthState = { status: "loading" };
   #sessionToken: string | null = null;
   readonly #teamHostTokens = new Map<string, string>();
+  #sessionWriteChain: Promise<void> = Promise.resolve();
   #remoteTicketJwks: Promise<z.infer<typeof remoteTicketJwksSchema>> | null = null;
   #initializationPromise: Promise<CentralAuthState> | null = null;
   #emailCodeRequest: EmailCodeRequest | null = null;
@@ -786,7 +787,17 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     };
   }
 
-  async #writeStoredSession(): Promise<void> {
+  #writeStoredSession(): Promise<void> {
+    // Serialized: two writes racing inside their filesystem awaits would let the earlier
+    // one rename its snapshot over the later one, restoring a session the user has left.
+    this.#sessionWriteChain = this.#sessionWriteChain.then(
+      () => this.#writeStoredSessionNow(),
+      () => this.#writeStoredSessionNow(),
+    );
+    return this.#sessionWriteChain;
+  }
+
+  async #writeStoredSessionNow(): Promise<void> {
     if (!this.#sessionToken) return;
     if (!this.#options.canPersist()) {
       await rm(this.#options.storagePath, { force: true });
@@ -814,7 +825,13 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   async #clearStoredSession(): Promise<void> {
     this.#sessionToken = null;
     this.#teamHostTokens.clear();
-    await rm(this.#options.storagePath, { force: true });
+    // Through the same chain as the writes, so a write already in flight cannot put the
+    // file back after it is removed.
+    this.#sessionWriteChain = this.#sessionWriteChain.then(
+      () => rm(this.#options.storagePath, { force: true }),
+      () => rm(this.#options.storagePath, { force: true }),
+    );
+    await this.#sessionWriteChain;
   }
 
   #restoreStoredSession(value: string): void {
