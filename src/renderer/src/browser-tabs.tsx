@@ -1,6 +1,7 @@
 import type { BrowserControlState, BrowserTab, ServerSummary } from "@openbot/contracts/ipc";
 import { createSignal } from "solid-js";
 import { desktopAnalytics } from "./analytics";
+import { activeTabAfterLoad, browserTabsAfterClose } from "./browser-tab-reconciliation";
 import { usePlatform } from "./platform";
 import { createScopeGuard } from "./scope-lifetime";
 import { serverSupportsCapability } from "./server-capabilities";
@@ -77,7 +78,7 @@ const BrowserTabs = createSimpleContext({
       return (state) => {
         if (browserChangeRevision !== requestedAtRevision) return;
         setBrowserTabs(state.tabs);
-        setActiveBrowserTabId(state.activeTabId ?? state.tabs[0]?.id ?? null);
+        setActiveBrowserTabId(activeTabAfterLoad(state));
       };
     }
 
@@ -119,13 +120,9 @@ const BrowserTabs = createSimpleContext({
         await window.openbot.browser.close(tabId);
         if (scopeIsCurrent()) {
           browserChangeRevision += 1;
-          const currentTabs = browserTabs();
-          const closedIndex = currentTabs.findIndex((tab) => tab.id === tabId);
-          const nextTabs = currentTabs.filter((tab) => tab.id !== tabId);
-          setBrowserTabs(nextTabs);
-          setActiveBrowserTabId((current) =>
-            current === tabId ? (nextTabs[closedIndex]?.id ?? nextTabs[closedIndex - 1]?.id ?? null) : current,
-          );
+          const next = browserTabsAfterClose(browserTabs(), tabId, activeBrowserTabId());
+          setBrowserTabs(next.tabs);
+          setActiveBrowserTabId(next.activeTabId);
         }
         analytics.track("browser_action", { action: "close", result: "succeeded" });
       } catch (error) {
