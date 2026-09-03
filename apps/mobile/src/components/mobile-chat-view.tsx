@@ -8,18 +8,20 @@ import {
   Alert,
   KeyboardAvoidingView,
   Pressable,
-  ScrollView,
+  type ScrollView,
   Text,
   TextInput,
   View,
   type ViewStyle,
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, { useAnimatedScrollHandler, useSharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { scheduleOnRN } from "react-native-worklets";
 
-import { BloubAvatar } from "@/components/bloub-avatar";
+import { BloubAvatar, getBloubAvatarColor } from "@/components/bloub-avatar";
 import { BotPinAvatar, useBotPinTransition } from "@/components/bot-pin-transition";
+import { SheetScrollEdgeEffect } from "@/components/sheet-scroll-edge-effect";
 import { isIOS } from "@/lib/platform";
 import type { MobileBot } from "@/providers/mobile-workspace-provider";
 
@@ -52,6 +54,7 @@ export function MobileChatView({ animateAvatarOnExit = false, bot, userName }: M
   const insets = useSafeAreaInsets();
   const { leaveBotChatAnimated } = useBotPinTransition();
   const scrollViewRef = useRef<ScrollView>(null);
+  const scrollY = useSharedValue(0);
   const [foreground, muted, fieldBackground, raised, action, actionForeground, background] = useThemeColor([
     "foreground",
     "muted",
@@ -72,6 +75,12 @@ export function MobileChatView({ animateAvatarOnExit = false, bot, userName }: M
   ]);
   const liquidGlassAvailable = isLiquidGlassAvailable();
   const iconColor = String(foreground);
+  const userBubbleColor = getBloubAvatarColor(bot.avatarSeed);
+  const handleScroll = useAnimatedScrollHandler({
+    onScroll: (event) => {
+      scrollY.set(event.contentOffset.y);
+    },
+  });
   const handleLeaveConversation = useCallback(() => {
     if (animateAvatarOnExit) leaveBotChatAnimated(bot.id);
     else leaveConversation();
@@ -158,7 +167,12 @@ export function MobileChatView({ animateAvatarOnExit = false, bot, userName }: M
           </ChatGlassIconButton>
         </View>
 
-        <ScrollView
+        <SheetScrollEdgeEffect
+          scrollY={scrollY}
+          style={{ height: insets.top + 82, left: 0, position: "absolute", right: 0, top: 0, zIndex: 10 }}
+        />
+
+        <Animated.ScrollView
           ref={scrollViewRef}
           className="flex-1"
           contentContainerStyle={{
@@ -172,8 +186,9 @@ export function MobileChatView({ animateAvatarOnExit = false, bot, userName }: M
           contentInsetAdjustmentBehavior="never"
           keyboardDismissMode="interactive"
           keyboardShouldPersistTaps="handled"
+          scrollEventThrottle={16}
           showsVerticalScrollIndicator={false}
-          onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: false })}
+          onScroll={handleScroll}
         >
           <Text className="pb-1 text-center font-sans text-caption text-text-dim">Today</Text>
 
@@ -182,14 +197,14 @@ export function MobileChatView({ animateAvatarOnExit = false, bot, userName }: M
               key={message.id}
               className={`max-w-[88%] rounded-[22px] px-4 py-3 ${message.author === "user" ? "self-end" : "self-start"}`}
               style={{
-                backgroundColor: message.author === "user" ? action : fieldBackground,
+                backgroundColor: message.author === "user" ? userBubbleColor : fieldBackground,
                 borderCurve: "continuous",
               }}
             >
               <Text
                 className="font-sans text-body"
                 selectable
-                style={{ color: message.author === "user" ? actionForeground : foreground }}
+                style={{ color: message.author === "user" ? "#0a0a0c" : foreground }}
               >
                 {message.body}
               </Text>
@@ -249,7 +264,7 @@ export function MobileChatView({ animateAvatarOnExit = false, bot, userName }: M
               <Text className="font-sans text-caption text-text-secondary">Or answer in the chat below</Text>
             </View>
           ) : null}
-        </ScrollView>
+        </Animated.ScrollView>
 
         <View className="flex-row items-end gap-2 px-4 pt-2" style={{ paddingBottom: Math.max(insets.bottom, 10) }}>
           <ChatGlassIconButton

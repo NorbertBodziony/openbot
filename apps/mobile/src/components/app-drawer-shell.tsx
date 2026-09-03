@@ -1,3 +1,4 @@
+import * as Haptics from "expo-haptics";
 import { type Href, router, usePathname } from "expo-router";
 import { useThemeColor } from "heroui-native/hooks";
 import { Monitor, Plus, Server, Settings, Wifi, WifiOff } from "lucide-react-native";
@@ -15,6 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { scheduleOnRN } from "react-native-worklets";
 
 import { ProfileAvatar } from "@/components/profile-avatar";
+import { isIOS } from "@/lib/platform";
 import { useMobileSession } from "@/providers/mobile-session-provider";
 import { useMobileWorkspace } from "@/providers/mobile-workspace-provider";
 
@@ -31,6 +33,10 @@ const DRAWER_SPRING = {
   reduceMotion: ReduceMotion.System,
 } as const;
 
+function triggerDrawerHaptic(): void {
+  if (isIOS) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+}
+
 export function AppDrawerShell({ children }: PropsWithChildren) {
   const pathname = usePathname();
   const { width } = useWindowDimensions();
@@ -45,6 +51,7 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
   const commitDrawerState = useCallback((open: boolean) => setDrawerOpen(open), []);
 
   const openDrawer = useCallback(() => {
+    triggerDrawerHaptic();
     setDrawerOpen(true);
     drawerProgress.set(
       withSpring(1, DRAWER_SPRING, (finished) => {
@@ -54,6 +61,7 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
   }, [commitDrawerState, drawerProgress]);
 
   const closeDrawer = useCallback(() => {
+    triggerDrawerHaptic();
     drawerProgress.set(
       withSpring(0, DRAWER_SPRING, (finished) => {
         if (finished) scheduleOnRN(commitDrawerState, false);
@@ -80,6 +88,7 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
         .onEnd((event) => {
           const projected = drawerProgress.get() + event.velocityX / drawerWidth / 6;
           const shouldOpen = projected > 0.45;
+          if (shouldOpen) scheduleOnRN(triggerDrawerHaptic);
           drawerProgress.set(
             withSpring(
               shouldOpen ? 1 : 0,
@@ -96,7 +105,9 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
   const closingGesture = useMemo(
     () =>
       Gesture.Pan()
-        .activeOffsetX([-8, 8])
+        .enabled(drawerOpen)
+        .activeOffsetX(-8)
+        .failOffsetX(12)
         .failOffsetY([-12, 12])
         .onUpdate((event) => {
           drawerProgress.set(Math.min(1, Math.max(0, 1 + event.translationX / drawerWidth)));
@@ -104,6 +115,7 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
         .onEnd((event) => {
           const projected = drawerProgress.get() + event.velocityX / drawerWidth / 6;
           const shouldOpen = projected > 0.55;
+          if (!shouldOpen) scheduleOnRN(triggerDrawerHaptic);
           drawerProgress.set(
             withSpring(
               shouldOpen ? 1 : 0,
@@ -114,7 +126,7 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
             ),
           );
         }),
-    [commitDrawerState, drawerProgress, drawerWidth],
+    [commitDrawerState, drawerOpen, drawerProgress, drawerWidth],
   );
 
   const surfaceStyle = useAnimatedStyle(() => ({
@@ -150,122 +162,122 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
 
   return (
     <AppDrawerContext.Provider value={contextValue}>
-      <View className="flex-1 bg-sidebar">
-        <Animated.View
-          style={[
-            {
-              bottom: 0,
-              left: 0,
-              paddingBottom: Math.max(insets.bottom, 12),
-              paddingLeft: Math.max(insets.left, 18),
-              paddingTop: Math.max(insets.top, 16),
-              position: "absolute",
-              top: 0,
-              width: drawerWidth,
-            },
-            drawerStyle,
-          ]}
-          accessibilityElementsHidden={!drawerOpen}
-          importantForAccessibility={drawerOpen ? "auto" : "no-hide-descendants"}
-        >
-          <View className="px-2 pb-5">
-            <Text className="font-sans text-title font-semibold text-foreground">Servers</Text>
-          </View>
-
-          <ScrollView
-            className="flex-1"
-            contentContainerClassName="gap-1 pr-3"
-            contentInsetAdjustmentBehavior="never"
-            showsVerticalScrollIndicator={false}
-          >
-            {servers.map((serverItem) => {
-              const selected = serverItem.id === activeServer.id;
-              const ServerIcon = serverItem.kind === "local" ? Monitor : Server;
-              const StateIcon = serverItem.state === "online" ? Wifi : WifiOff;
-
-              return (
-                <Pressable
-                  key={serverItem.id}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected }}
-                  accessibilityLabel={`${serverItem.name}, ${serverItem.state}`}
-                  className={`min-h-16 flex-row items-center gap-3 rounded-2xl px-3 py-2 ${selected ? "bg-control-active" : ""}`}
-                  onPress={() => {
-                    selectServer(serverItem.id);
-                    closeDrawer();
-                  }}
-                >
-                  <View
-                    className="size-11 items-center justify-center rounded-[15px]"
-                    style={{ backgroundColor: serverItem.accent, borderCurve: "continuous" }}
-                  >
-                    <ServerIcon color="#100d12" size={21} strokeWidth={1.8} />
-                  </View>
-                  <View className="min-w-0 flex-1 gap-0.5">
-                    <Text className="font-sans text-body font-semibold text-foreground" numberOfLines={1}>
-                      {serverItem.name}
-                    </Text>
-                    <View className="flex-row items-center gap-1.5">
-                      <StateIcon color={mutedColor} size={12} strokeWidth={2} />
-                      <Text className="font-sans text-caption capitalize text-text-secondary">
-                        {serverItem.state}
-                        {serverItem.kind === "remote" ? " · Remote" : " · Paired desktop"}
-                      </Text>
-                    </View>
-                  </View>
-                </Pressable>
-              );
-            })}
-
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Join a server"
-              className="mt-2 min-h-14 flex-row items-center gap-3 rounded-2xl px-3 py-2"
-              onPress={() => navigateAfterClosing("/add-server")}
-            >
-              <View className="size-11 items-center justify-center rounded-[15px] border border-border bg-control">
-                <Plus color={iconColor} size={21} strokeWidth={1.8} />
-              </View>
-              <Text className="font-sans text-body font-semibold text-foreground">Join a server</Text>
-            </Pressable>
-          </ScrollView>
-
-          <View className="mr-3 flex-row items-center gap-2 border-t border-border pt-3">
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Account: ${displayName}`}
-              className="min-h-15 min-w-0 flex-1 flex-row items-center gap-3 rounded-2xl px-2 py-1.5"
-              onPress={() => navigateAfterClosing("/settings")}
-            >
-              <ProfileAvatar name={displayName} imageUrl={session.user.avatarUrl} size={44} />
-              <View className="min-w-0 flex-1">
-                <Text className="font-sans text-body font-semibold text-foreground" numberOfLines={1}>
-                  {displayName}
-                </Text>
-                <Text className="font-sans text-caption text-text-secondary" numberOfLines={1} selectable>
-                  {session.user.email}
-                </Text>
-              </View>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Settings"
-              hitSlop={8}
-              className="size-12 items-center justify-center rounded-2xl bg-control"
-              onPress={() => navigateAfterClosing("/settings")}
-            >
-              <Settings color={iconColor} size={21} strokeWidth={1.8} />
-            </Pressable>
-          </View>
-        </Animated.View>
-
-        <GestureDetector gesture={openingGesture}>
+      <GestureDetector gesture={closingGesture}>
+        <View className="flex-1 bg-sidebar">
           <Animated.View
-            className="flex-1 overflow-hidden bg-background"
-            style={[{ boxShadow: "-12px 0 32px rgba(0, 0, 0, 0.28)" }, surfaceStyle]}
+            style={[
+              {
+                bottom: 0,
+                left: 0,
+                paddingBottom: Math.max(insets.bottom, 12),
+                paddingLeft: Math.max(insets.left, 18),
+                paddingTop: Math.max(insets.top, 16),
+                position: "absolute",
+                top: 0,
+                width: drawerWidth,
+              },
+              drawerStyle,
+            ]}
+            accessibilityElementsHidden={!drawerOpen}
+            importantForAccessibility={drawerOpen ? "auto" : "no-hide-descendants"}
           >
-            {children}
-            <GestureDetector gesture={closingGesture}>
+            <View className="px-2 pb-5">
+              <Text className="font-sans text-title font-semibold text-foreground">Servers</Text>
+            </View>
+
+            <ScrollView
+              className="flex-1"
+              contentContainerClassName="gap-1 pr-3"
+              contentInsetAdjustmentBehavior="never"
+              showsVerticalScrollIndicator={false}
+            >
+              {servers.map((serverItem) => {
+                const selected = serverItem.id === activeServer.id;
+                const ServerIcon = serverItem.kind === "local" ? Monitor : Server;
+                const StateIcon = serverItem.state === "online" ? Wifi : WifiOff;
+
+                return (
+                  <Pressable
+                    key={serverItem.id}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    accessibilityLabel={`${serverItem.name}, ${serverItem.state}`}
+                    className={`min-h-16 flex-row items-center gap-3 rounded-2xl px-3 py-2 ${selected ? "bg-control-active" : ""}`}
+                    onPress={() => {
+                      selectServer(serverItem.id);
+                      closeDrawer();
+                    }}
+                  >
+                    <View
+                      className="size-11 items-center justify-center rounded-[15px]"
+                      style={{ backgroundColor: serverItem.accent, borderCurve: "continuous" }}
+                    >
+                      <ServerIcon color="#100d12" size={21} strokeWidth={1.8} />
+                    </View>
+                    <View className="min-w-0 flex-1 gap-0.5">
+                      <Text className="font-sans text-body font-semibold text-foreground" numberOfLines={1}>
+                        {serverItem.name}
+                      </Text>
+                      <View className="flex-row items-center gap-1.5">
+                        <StateIcon color={mutedColor} size={12} strokeWidth={2} />
+                        <Text className="font-sans text-caption capitalize text-text-secondary">
+                          {serverItem.state}
+                          {serverItem.kind === "remote" ? " · Remote" : " · Paired desktop"}
+                        </Text>
+                      </View>
+                    </View>
+                  </Pressable>
+                );
+              })}
+
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Join a server"
+                className="mt-2 min-h-14 flex-row items-center gap-3 rounded-2xl px-3 py-2"
+                onPress={() => navigateAfterClosing("/add-server")}
+              >
+                <View className="size-11 items-center justify-center rounded-[15px] border border-border bg-control">
+                  <Plus color={iconColor} size={21} strokeWidth={1.8} />
+                </View>
+                <Text className="font-sans text-body font-semibold text-foreground">Join a server</Text>
+              </Pressable>
+            </ScrollView>
+
+            <View className="mr-3 flex-row items-center gap-2 border-t border-border pt-3">
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Account: ${displayName}`}
+                className="min-h-15 min-w-0 flex-1 flex-row items-center gap-3 rounded-2xl px-2 py-1.5"
+                onPress={() => navigateAfterClosing("/settings")}
+              >
+                <ProfileAvatar name={displayName} imageUrl={session.user.avatarUrl} size={44} />
+                <View className="min-w-0 flex-1">
+                  <Text className="font-sans text-body font-semibold text-foreground" numberOfLines={1}>
+                    {displayName}
+                  </Text>
+                  <Text className="font-sans text-caption text-text-secondary" numberOfLines={1} selectable>
+                    {session.user.email}
+                  </Text>
+                </View>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Settings"
+                hitSlop={8}
+                className="size-12 items-center justify-center rounded-2xl bg-control"
+                onPress={() => navigateAfterClosing("/settings")}
+              >
+                <Settings color={iconColor} size={21} strokeWidth={1.8} />
+              </Pressable>
+            </View>
+          </Animated.View>
+
+          <GestureDetector gesture={openingGesture}>
+            <Animated.View
+              className="flex-1 overflow-hidden bg-background"
+              style={[{ boxShadow: "-12px 0 32px rgba(0, 0, 0, 0.28)" }, surfaceStyle]}
+            >
+              {children}
               <Animated.View
                 className="absolute inset-0 bg-black"
                 pointerEvents={drawerOpen ? "auto" : "none"}
@@ -278,10 +290,10 @@ export function AppDrawerShell({ children }: PropsWithChildren) {
                   onPress={closeDrawer}
                 />
               </Animated.View>
-            </GestureDetector>
-          </Animated.View>
-        </GestureDetector>
-      </View>
+            </Animated.View>
+          </GestureDetector>
+        </View>
+      </GestureDetector>
     </AppDrawerContext.Provider>
   );
 }

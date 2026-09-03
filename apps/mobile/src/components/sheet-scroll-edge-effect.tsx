@@ -1,6 +1,6 @@
 import MaskedView from "@react-native-masked-view/masked-view";
 import { BlurView } from "expo-blur";
-import type { StyleProp, ViewStyle } from "react-native";
+import { type StyleProp, useColorScheme, type ViewStyle } from "react-native";
 import Animated, { Extrapolation, interpolate, type SharedValue, useAnimatedStyle } from "react-native-reanimated";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 
@@ -10,8 +10,9 @@ interface SheetScrollEdgeEffectProps {
 }
 
 export function SheetScrollEdgeEffect({ scrollY, style }: SheetScrollEdgeEffectProps) {
+  const colorScheme = useColorScheme();
   const animatedStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(scrollY.value, [0, 8, 24], [0, 0.55, 1], Extrapolation.CLAMP),
+    opacity: interpolate(scrollY.get(), [0, 8, 24], [0, 0.55, 1], Extrapolation.CLAMP),
   }));
 
   return (
@@ -32,7 +33,11 @@ export function SheetScrollEdgeEffect({ scrollY, style }: SheetScrollEdgeEffectP
           </Svg>
         }
       >
-        <BlurView intensity={52} style={{ flex: 1 }} tint="systemUltraThinMaterial" />
+        <BlurView
+          intensity={52}
+          style={{ flex: 1 }}
+          tint={colorScheme === "dark" ? "systemChromeMaterialDark" : "systemUltraThinMaterialLight"}
+        />
       </MaskedView>
     </Animated.View>
   );

@@ -23,8 +23,7 @@ export function BloubAvatar({ seed, size = 54 }: BloubAvatarProps) {
       stableIndex(`${seed}:silhouette`, SUPPORTED_SILHOUETTES.length),
     );
     const expression = requiredItem(EXPRESSIONS, stableIndex(`${seed}:expression`, EXPRESSIONS.length));
-    const colorId = requiredItem(AUTOMATIC_COLORS, stableIndex(`${seed}:color`, AUTOMATIC_COLORS.length));
-    const color = COLOR_BY_ID.get(colorId)?.hex ?? "#8b5cf6";
+    const color = getBloubAvatarColor(seed);
     const frozenAt = stableIndex(`${seed}:pose`, 180) / 100;
     const frame = new BotEngine(100, "idle", silhouette.radii, expression).sample(frozenAt);
 
@@ -58,6 +57,11 @@ export function BloubAvatar({ seed, size = 54 }: BloubAvatarProps) {
       <Rect fill={avatar.color} height={316} mask={`url(#${avatar.maskId})`} width={316} x={-158} y={-158} />
     </Svg>
   );
+}
+
+export function getBloubAvatarColor(seed: string): string {
+  const colorId = requiredItem(AUTOMATIC_COLORS, stableIndex(`${seed}:color`, AUTOMATIC_COLORS.length));
+  return COLOR_BY_ID.get(colorId)?.hex ?? "#8b5cf6";
 }
 
 function stableIndex(value: string, length: number): number {
