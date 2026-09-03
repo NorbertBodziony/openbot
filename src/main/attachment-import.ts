@@ -19,6 +19,7 @@ const ZIP_ENCRYPTED_FLAG = 1;
 const ZIP_UTF8_FLAG = 0x0800;
 const ZIP_DIRECTORY_ATTRIBUTE = 0x10;
 const ZIP_UNICODE_PATH_EXTRA = 0x7075;
+const ZIP_MAX_DIRECTORY_ENTRIES = 64;
 const UNIX_FILE_TYPE_MASK = 0o170000;
 const UNIX_REGULAR_FILE = 0o100000;
 const UNIX_DIRECTORY = 0o040000;
@@ -236,6 +237,9 @@ function inspectZip(archiveName: string, bytes: Uint8Array): ZipEntry[] {
   }
   if (entryCount === 0xffff || centralSize === 0xffffffff || centralOffset === 0xffffffff) {
     throw new Error(`${archiveName} uses ZIP64, which is not supported. Extract it first and attach the files.`);
+  }
+  if (entryCount > ZIP_MAX_DIRECTORY_ENTRIES) {
+    throw new Error(`${archiveName} contains too many entries. Import a smaller archive.`);
   }
   if (centralOffset + centralSize > endOffset) throw new Error(`${archiveName} has a damaged ZIP directory.`);
 
@@ -455,14 +459,16 @@ function countEmailPart(
   if (!headers.recognized) return { parts: parts + 1, attachments };
   const contentType = emailContentType(headers);
   const disposition = emailDisposition(headers);
-  const isHtml = contentType === "text/html" && disposition !== "attachment";
+  const named = hasEmailAttachmentName(headers);
   const isAttachment =
+    named ||
     disposition === "attachment" ||
     (contentType !== "" &&
       contentType !== "text/plain" &&
       contentType !== "text/html" &&
       !contentType.startsWith("multipart/") &&
       !(contentType === "message/rfc822" && disposition === "inline"));
+  const isHtml = contentType === "text/html" && !isAttachment;
   return {
     parts: parts + 1,
     attachments: attachments + Number(isHtml) + Number(isAttachment),
@@ -482,6 +488,17 @@ function emailDisposition(headers: EmailHeaders): string {
   );
 }
 
+function hasEmailAttachmentName(headers: EmailHeaders): boolean {
+  const contentName = /(?:^|;)\s*name\s*=\s*(?:"((?:\\.|[^"])*)"|([^;\s]+))/iu.exec(headers.contentType);
+  const dispositionFilename = /(?:^|;)\s*filename\s*=\s*(?:"((?:\\.|[^"])*)"|([^;\s]+))/iu.exec(
+    headers.contentDisposition,
+  );
+  return [contentName, dispositionFilename].some((match) => {
+    const value = (match?.[1] ?? match?.[2])?.replace(/\\(.)/gu, "$1");
+    return Boolean(value?.trim());
+  });
+}
+
 function readEmailHeaders(bytes: Uint8Array, startOffset: number): EmailHeaders {
   let contentType = "";
   let contentDisposition = "";
@@ -491,11 +508,11 @@ function readEmailHeaders(bytes: Uint8Array, startOffset: number): EmailHeaders 
 
   while (offset < bytes.byteLength) {
     const line = readEmailLine(bytes, offset);
+    if (line.nextOffset - startOffset > EMAIL_MAX_HEADERS_BYTES) {
+      throw new Error("Email headers exceed the 2 MB limit. Export a smaller message and retry.");
+    }
     offset = line.nextOffset;
     if (line.startOffset === line.endOffset) break;
-    if (line.endOffset - line.startOffset > EMAIL_MAX_HEADERS_BYTES) {
-      return { contentType: "", contentDisposition: "", bodyOffset: line.nextOffset, recognized: false };
-    }
     const value = HEADER_DECODER.decode(bytes.subarray(line.startOffset, line.endOffset));
     if (/^[\t ]/u.test(value)) {
       if (current === "content-type") contentType += ` ${value.trim()}`;

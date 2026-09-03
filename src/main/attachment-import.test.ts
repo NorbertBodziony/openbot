@@ -169,6 +169,9 @@ describe("attachment container imports", () => {
     const crowded = zipSync(
       Object.fromEntries(Array.from({ length: 11 }, (_, index) => [`file-${index}.txt`, strToU8(String(index))])),
     );
+    const excessiveEntries = zipSync(
+      Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`folder-${index}/`, new Uint8Array()])),
+    );
     const excessiveTotal = patchEveryZipEntry(
       zipSync({ "one.txt": strToU8("1"), "two.txt": strToU8("2"), "three.txt": strToU8("3") }),
       (view, central, local) => {
@@ -181,6 +184,7 @@ describe("attachment container imports", () => {
     await expect(importZip(new Uint8Array([1, 2, 3]))).rejects.toThrow("not a valid ZIP");
     await expect(importZip(oversized)).rejects.toThrow("exceeds the 100 MB limit");
     await expect(importZip(crowded)).rejects.toThrow("more than 10 attachments");
+    await expect(importZip(excessiveEntries)).rejects.toThrow("too many entries");
     await expect(importZip(excessiveTotal)).rejects.toThrow("250 MB total limit");
   });
 
@@ -254,7 +258,6 @@ describe("attachment container imports", () => {
         "--openbot",
         "Malformed header without a colon",
         `Content-Type: text/plain; name="file-${index}.txt"`,
-        `Content-Disposition: attachment; filename="file-${index}.txt"`,
         "",
         String(index),
       ].join("\r\n"),
@@ -266,6 +269,12 @@ describe("attachment container imports", () => {
     );
 
     await expect(importEmail(email)).rejects.toThrow("more than 10 attachments");
+  });
+
+  it("rejects an oversized aggregate EML header block", async () => {
+    const headers = `X-Header: ${"a".repeat(1024)}\r\n`.repeat(2_100);
+
+    await expect(importEmail(strToU8(`${headers}\r\nbody`))).rejects.toThrow("headers exceed the 2 MB limit");
   });
 
   it("does not treat dashed plain-text body lines as MIME boundaries", async () => {
