@@ -46,6 +46,22 @@ Type-only imports (`import type`) are erased by the compiler and stay allowed in
 Do not commit generated `out`, `dist`, coverage, local browser profiles, Electron `userData`, CLI
 state, `.env` files, credentials, real conversations, or user attachments.
 
+### Answering the NorbiAI review
+
+Every push runs the automated reviewer and it blocks the merge on an unresolved P0 or P1 finding.
+Two ways past one:
+
+1. Fix it and push. The next review classifies the finding `[RESOLVED]`.
+2. Show it is wrong. Comment the concrete reason — the guard it misses, the line that already
+   handles it — and include `/norbiai review` anywhere in the same comment. The reviewer rechecks
+   that finding against your argument and marks it `[WITHDRAWN]`, which stops blocking and stays
+   recorded under `## Withdrawn Findings` so a later push does not raise it again.
+
+A rebuttal needs something checkable in it. "Intended", "out of scope", or a promise to fix it
+later leaves the finding `[REMAINS]`, and the reviewer says which part it could not verify. Only
+comments from people with write access are read, and only those written after the review being
+answered.
+
 ## Security-sensitive changes
 
 Preserve the following boundaries and their tests:
