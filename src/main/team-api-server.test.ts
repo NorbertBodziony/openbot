@@ -2494,6 +2494,8 @@ describe("HostService account binding", () => {
     expect(service.getStatus().configured).toBe(false);
     // Registering would have reserved A's server under B's authentication.
     expect(registrations).toEqual([]);
+    // Nor may what was created stay readable: the owner's address is in there.
+    expect(() => service.listMembers()).toThrow("The team server is not configured.");
   });
 
   it("reports the account's own server again after signing out and back in", async () => {

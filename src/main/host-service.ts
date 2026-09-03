@@ -335,6 +335,11 @@ export class HostService extends EventEmitter<HostEvents> {
     // write. Central authentication has the new account the moment it is announced, which
     // is what the renderer was told, so that is what this is checked against.
     if (this.#signedInAccountId() !== account.id) {
+      // The store bound the host as it created it, and refusing the call is not enough on
+      // its own: the members and identity behind it would still answer the new account.
+      this.#options.store.unbindActiveHost();
+      this.#status = initialHostStatus(null, this.#options.unattended ?? false);
+      this.emit("changed", this.getStatus());
       throw new Error("The signed-in account changed while this server was being created.");
     }
     // The store checked the account before it resolved; the switch can still land between
