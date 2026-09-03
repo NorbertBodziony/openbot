@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { TEAM_AGENT_ACTIVITY_CAPABILITY, TEAM_CURRENT_CAPABILITIES } from "./current";
 import requestFixture from "./fixtures/v3/client-http-request.json";
 import responseFixture from "./fixtures/v3/host-http-response.json";
 import {
@@ -49,6 +50,9 @@ describe("Team protocol v3", () => {
     expect(TEAM_PROTOCOL_V1_CAPABILITIES).toContain("hosted-site-event-markers");
     expect(TEAM_PROTOCOL_V3_CAPABILITIES).toContain("agent-duplication");
     expect(TEAM_PROTOCOL_V3_CAPABILITIES).toContain("hosted-site-event-markers");
+    expect(TEAM_PROTOCOL_V1_CAPABILITIES).not.toContain(TEAM_AGENT_ACTIVITY_CAPABILITY);
+    expect(TEAM_PROTOCOL_V3_CAPABILITIES).not.toContain(TEAM_AGENT_ACTIVITY_CAPABILITY);
+    expect(TEAM_CURRENT_CAPABILITIES).toContain(TEAM_AGENT_ACTIVITY_CAPABILITY);
   });
 
   it("registers the v3 route on the WebRTC adapter", () => {

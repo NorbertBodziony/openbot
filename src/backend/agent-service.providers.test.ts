@@ -19,6 +19,7 @@ import {
   FakeAgentClient,
   fakeBrowser,
   firstInputText,
+  notification,
   paramsRecord,
   protocolMessages,
   readTextOrEmpty,
@@ -43,6 +44,74 @@ afterEach(async () => {
 });
 
 describe.sequential("AgentService: providers", () => {
+  it("derives live progress from the provider-neutral turn and tool lifecycle", async () => {
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores(root);
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider, "", false);
+      clients.set(provider, client);
+      return client;
+    });
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
+    await service.initialize();
+    await service.sendMessage({ botId: "chief", text: "Check the latest result" });
+    await waitFor(() => events.some((event) => event.type === "turn-started"));
+    const started = events.find((event) => event.type === "turn-started");
+    const client = clients.get("codex");
+    const threadId = store.activeProviderSession("chief")?.externalSessionId;
+    if (started?.type !== "turn-started" || !client || !threadId) {
+      throw new Error("The fake provider turn did not start.");
+    }
+    const turnId = started.turnId;
+
+    const progress = () =>
+      events.filter(
+        (event): event is Extract<AgentEvent, { type: "turn-progress" }> =>
+          event.type === "turn-progress" && event.turnId === turnId,
+      );
+    expect(progress()).toEqual([]);
+    const stored = await service.readConversation("chief");
+    expect(stored.messages.find((message) => message.id === `activity:${turnId}`)).toBeUndefined();
+    const conversationEventCount = () => events.filter((event) => event.type === "conversation").length;
+    const persistedBeforeTools = conversationEventCount();
+
+    client.emit(
+      "notification",
+      notification("item/started", {
+        threadId,
+        turnId,
+        item: { id: "tool-1", type: "toolCall", name: "web_search", status: "in_progress" },
+      }),
+    );
+    await waitFor(() => progress().at(-1)?.detail === "Searching for current information…");
+
+    client.emit(
+      "notification",
+      notification("item/completed", {
+        threadId,
+        turnId,
+        item: { id: "tool-1", type: "toolCall", name: "web_search", status: "completed" },
+      }),
+    );
+    await waitFor(() => progress().at(-1)?.detail === "Reviewing the sources and information I found…");
+    expect(conversationEventCount()).toBe(persistedBeforeTools);
+
+    client.emit(
+      "notification",
+      notification("item/completed", {
+        threadId,
+        turnId,
+        item: { id: "answer-1", type: "agentMessage", text: "Here is the result." },
+      }),
+    );
+    client.emit(
+      "notification",
+      notification("turn/completed", { threadId, turn: { id: turnId, status: "completed" } }),
+    );
+    await waitFor(() => events.some((event) => event.type === "turn-completed" && event.turnId === turnId));
+  });
+
   it("checks providers concurrently and publishes each completed row", async () => {
     process.env.OPENBOT_CLAUDE_PATH = await createFakeClaude(root);
     process.env.OPENBOT_GROK_PATH = await createFakeGrok(root);

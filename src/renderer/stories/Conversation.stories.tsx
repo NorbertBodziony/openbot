@@ -1267,6 +1267,22 @@ export const Thinking: Story = {
   },
 };
 
+export const ThinkingSettled: Story = {
+  args: {
+    messages: [
+      ...messages,
+      {
+        id: "thinking-2",
+        author: "bot",
+        body: "",
+        time: "10:01",
+        kind: "thinking",
+        items: ["Read the project brief", "Compared the milestone owners", "Drafted the next action"],
+      },
+    ],
+  },
+};
+
 export const Prompt: Story = {
   args: { prompt },
 };

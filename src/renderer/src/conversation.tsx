@@ -16,6 +16,7 @@ import {
   retainThinkingMessages,
   toBotMessage,
   toBotMessages,
+  withoutBot,
 } from "./app-message-projection";
 import { createStoredMessage, updateStored } from "./app-stored-values";
 import { agentConversationKey, agentMessageKey, messagePromptRequestKey, promptRequestKey } from "./conversation-keys";
@@ -112,6 +113,7 @@ const Conversation = createSimpleContext({
       submittedPromptRequests,
       setSubmittedPromptRequests,
       setActiveTurns,
+      setTurnProgress,
     } = useTurns();
 
     const [liveMessages, setLiveMessages] = createSignal<Record<string, BotMessage[]>>({});
@@ -329,23 +331,46 @@ const Conversation = createSimpleContext({
 
     function applyConversationDelta(event: Extract<AgentEvent, { type: "conversation-delta" }>) {
       if (event.revision <= appliedConversationRevision(conversationRevisions(), event.botId)) return;
-      pendingConversationSnapshots.delete(event.botId);
+      const pendingSnapshot = pendingConversationSnapshots.get(event.botId);
+      if (pendingSnapshot) {
+        if (event.revision <= pendingSnapshot.revision) return;
+        pendingConversationSnapshots.delete(event.botId);
+        applyConversation(pendingSnapshot, isAgentChatReadable(event.botId));
+      }
       setConversationRevisions((current) => ({
         ...current,
         [event.botId]: event.revision,
       }));
 
-      const existing = liveMessages()[event.botId]?.find((message) => message.id === event.messageId);
       const messageKey = agentMessageKey(event.botId, event.messageId);
-      const rawBody = (rawAgentMessageBodies.get(messageKey) ?? existing?.body ?? "") + event.delta;
-      rawAgentMessageBodies.set(messageKey, rawBody);
-      if (existing) {
-        updateStored(existing, {
-          ...existing,
-          body: cleanAgentMessageText(rawBody),
-          streaming: true,
-        });
-      } else {
+      let appended = false;
+      setLiveMessages((current) => {
+        const messages = current[event.botId] ?? [];
+        const existing = messages.find((message) => message.id === event.messageId);
+        const thinking = existing
+          ? undefined
+          : messages.find((message) => message.kind === "thinking" && message.itemIds?.includes(event.messageId));
+        const thinkingItemIndex = thinking?.itemIds?.indexOf(event.messageId) ?? -1;
+        const rawBody =
+          (rawAgentMessageBodies.get(messageKey) ??
+            existing?.body ??
+            (thinkingItemIndex >= 0 ? thinking?.items?.[thinkingItemIndex] : "") ??
+            "") + event.delta;
+        rawAgentMessageBodies.set(messageKey, rawBody);
+        if (existing) {
+          updateStored(existing, {
+            ...existing,
+            body: cleanAgentMessageText(rawBody),
+            streaming: true,
+          });
+          return current;
+        }
+        if (thinking && thinkingItemIndex >= 0) {
+          const items = [...(thinking.items ?? [])];
+          items[thinkingItemIndex] = cleanAgentMessageText(rawBody);
+          updateStored(thinking, { ...thinking, items, streaming: true });
+          return current;
+        }
         const message = createStoredMessage({
           id: event.messageId,
           turnId: event.turnId,
@@ -357,10 +382,13 @@ const Conversation = createSimpleContext({
           animate: conversationLoaded()[event.botId] === true,
           kind: "text",
         });
-        setLiveMessages((current) => ({
+        appended = true;
+        return {
           ...current,
           [event.botId]: [...(current[event.botId] ?? []), message],
-        }));
+        };
+      });
+      if (appended) {
         const readState = conversationReads()[event.botId];
         if (isAgentChatReadable(event.botId)) {
           autoMarkAgentMessageRead(event.botId, event.messageId);
@@ -441,6 +469,10 @@ const Conversation = createSimpleContext({
         ...current,
         [botId]: completedTurnByBot.get(botId) === snapshot.activeTurnId ? null : snapshot.activeTurnId,
       }));
+      setTurnProgress((current) => {
+        const progress = current[botId];
+        return progress && progress.turnId !== snapshot.activeTurnId ? withoutBot(current, botId) : current;
+      });
       const readState = conversationReads()[botId];
       const latestIncomingMessage = markNewMessagesRead
         ? latestIncomingConversationMessage(snapshot.messages)

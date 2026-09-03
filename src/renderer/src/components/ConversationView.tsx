@@ -139,6 +139,7 @@ function conversationBubbleVariant(message: BotMessage): BubbleVariant {
 interface RenderedAgentActivity {
   activityId: string;
   bot: BotProfile | undefined;
+  detail: string | null;
   phase: "active" | "exiting";
   presentation: AgentActivityPresentation;
 }
@@ -230,6 +231,7 @@ export interface ConversationProps {
   loadingOlder?: boolean;
   olderError?: string | null;
   activeTurnId: string | null | undefined;
+  activityDetail?: string;
   skillsMarketplaceOpen?: boolean;
   globalOverlayOpen: boolean;
   settingsRequest: { botId: string; nonce: number } | null;
@@ -706,6 +708,23 @@ function createConversationViewScope(props: ConversationProps) {
     if (current?.bot?.id === botId) return current.activityId;
     return `${botId}:message:${streamingMessage.id}`;
   });
+  const latestActiveCommentary = createMemo(() => {
+    const activeTurnId = props.activeTurnId;
+    if (!activeTurnId) return null;
+    const streamingMessage = streamingAgentMessage();
+    if (streamingMessage && streamingMessage.itemType !== "commentary") return null;
+    for (let index = props.messages.length - 1; index >= 0; index -= 1) {
+      const message = props.messages[index];
+      if (message?.turnId !== activeTurnId || message.itemType !== "commentary") continue;
+      const items = message.items ?? [message.body];
+      for (let itemIndex = items.length - 1; itemIndex >= 0; itemIndex -= 1) {
+        const detail = items[itemIndex]?.trim();
+        if (detail) return detail;
+      }
+    }
+    return null;
+  });
+  const activeActivityDetail = createMemo(() => latestActiveCommentary() ?? (props.activityDetail?.trim() || null));
   const agentActivity = createMemo<"Working" | null>(() => (activeActivityId() ? "Working" : null));
   const activityPresentation = createMemo<AgentActivityPresentation | null>(() => {
     const botId = props.bot?.id;
@@ -746,7 +765,13 @@ function createConversationViewScope(props: ConversationProps) {
       clearAgentActivityExitDelayTimer();
       clearAgentActivityExitTimer();
       if (activityId && presentation) {
-        const nextActivity = { activityId, bot, phase: "active" as const, presentation };
+        const nextActivity = {
+          activityId,
+          bot,
+          detail: untrack(activeActivityDetail),
+          phase: "active" as const,
+          presentation,
+        };
         const current = untrack(renderedAgentActivity);
         if (current?.bot?.id === bot?.id) {
           setAgentActivitySpaceReserved(true);
@@ -758,7 +783,7 @@ function createConversationViewScope(props: ConversationProps) {
           agentActivityShowTimer = undefined;
           if (untrack(activeActivityId) === activityId) {
             setAgentActivitySpaceReserved(true);
-            setRenderedAgentActivity(nextActivity);
+            setRenderedAgentActivity({ ...nextActivity, detail: untrack(activeActivityDetail) });
           }
         }, showDelay);
         return;
@@ -789,6 +814,16 @@ function createConversationViewScope(props: ConversationProps) {
       const exitDelay = agentActivityExitDelay();
       if (exitDelay === 0) beginExit();
       else agentActivityExitDelayTimer = window.setTimeout(beginExit, exitDelay);
+    },
+  );
+
+  createEffect(
+    () => ({ activityId: activeActivityId(), detail: activeActivityDetail() }),
+    ({ activityId, detail }) => {
+      if (!activityId) return;
+      setRenderedAgentActivity((current) =>
+        current?.activityId === activityId && current.detail !== detail ? { ...current, detail } : current,
+      );
     },
   );
 
@@ -3312,9 +3347,8 @@ export function ConversationTimeline() {
                           >
                             <ThinkingDisclosure
                               message={message() ?? initialMessage}
-                              open={
-                                expandedThinkingMessages()[`${props.bot?.id ?? ""}:${message()?.id ?? ""}`] === true
-                              }
+                              working={Boolean(props.activeTurnId && message()?.turnId === props.activeTurnId)}
+                              open={expandedThinkingMessages()[`${props.bot?.id ?? ""}:${message()?.id ?? ""}`]}
                               onOpenChange={(open) => {
                                 const key = `${props.bot?.id ?? ""}:${message()?.id ?? ""}`;
                                 setExpandedThinkingMessages((current) =>
@@ -3354,6 +3388,7 @@ export function ConversationTimeline() {
               {(activity) => (
                 <AgentActivityIndicator
                   bot={activity().bot}
+                  detail={activity().detail}
                   presentation={activity().presentation}
                   phase={activity().phase}
                 />

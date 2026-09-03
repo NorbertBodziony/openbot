@@ -196,20 +196,3 @@ export function BrowserReloadIcon() {
     </svg>
   );
 }
-
-export function ThinkingIcon() {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true">
-      <path d="M8 1.75a4.65 4.65 0 0 0-2.85 8.33c.47.36.73.78.78 1.17h4.14c.05-.39.31-.81.78-1.17A4.65 4.65 0 0 0 8 1.75Z" />
-      <path d="M6.3 13h3.4M6.9 14.5h2.2" />
-    </svg>
-  );
-}
-
-export function ChevronIcon() {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true">
-      <path d="m5.75 6.5 2.25 2.25 2.25-2.25" />
-    </svg>
-  );
-}

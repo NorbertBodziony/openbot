@@ -16,6 +16,7 @@ import {
 } from "./dynamic-island-presentation";
 
 type ServerRuntime = DynamicIslandPresentationInput & {
+  turnProgress: Record<string, { turnId: string; detail: string } | undefined>;
   incomingMessageAnchors: Map<string, string>;
   completedBots: Set<string>;
   lastRecordedMessageIds: Map<string, string>;
@@ -30,14 +31,17 @@ export class DynamicIslandCoordinator {
 
   serverState(
     serverId: string,
-  ): Pick<
-    DynamicIslandPresentationInput,
-    "activeTurns" | "queues" | "pendingPrompts" | "pendingApprovals" | "failedTurns"
-  > | null {
+  ):
+    | (Pick<
+        DynamicIslandPresentationInput,
+        "activeTurns" | "queues" | "pendingPrompts" | "pendingApprovals" | "failedTurns"
+      > & { turnProgress: ServerRuntime["turnProgress"] })
+    | null {
     const runtime = this.#servers.get(serverId);
     if (!runtime) return null;
     return structuredClone({
       activeTurns: runtime.activeTurns,
+      turnProgress: runtime.turnProgress,
       queues: runtime.queues,
       pendingPrompts: runtime.pendingPrompts,
       pendingApprovals: runtime.pendingApprovals,
@@ -47,6 +51,10 @@ export class DynamicIslandCoordinator {
 
   replaceServer(input: DynamicIslandPresentationInput): void {
     const previous = this.#servers.get(input.serverId);
+    const turnProgress = { ...previous?.turnProgress };
+    for (const [botId, progress] of Object.entries(turnProgress)) {
+      if (!progress || input.activeTurns[botId] !== progress.turnId) delete turnProgress[botId];
+    }
     const resolvedPrompts = previous?.resolvedPrompts ?? new Map();
     const pendingApprovals = { ...input.pendingApprovals };
     const pendingPrompts = { ...input.pendingPrompts };
@@ -78,6 +86,7 @@ export class DynamicIslandCoordinator {
     }
     this.#servers.set(input.serverId, {
       ...input,
+      turnProgress,
       pendingApprovals,
       pendingPrompts,
       liveMessages,
@@ -110,6 +119,9 @@ export class DynamicIslandCoordinator {
         return;
       case "conversation": {
         runtime.activeTurns[event.snapshot.botId] = event.snapshot.activeTurnId;
+        const progress = runtime.turnProgress[event.snapshot.botId];
+        if (progress && progress.turnId !== event.snapshot.activeTurnId)
+          delete runtime.turnProgress[event.snapshot.botId];
         deleteDynamicIslandMessageBodies(runtime.rawMessageBodies, event.snapshot.botId);
         for (const message of event.snapshot.messages) {
           const key = dynamicIslandMessageKey(event.snapshot.botId, message.id);
@@ -159,7 +171,14 @@ export class DynamicIslandCoordinator {
       case "turn-started":
         runtime.completedBots.delete(event.botId);
         runtime.activeTurns[event.botId] = event.turnId;
+        delete runtime.turnProgress[event.botId];
         delete runtime.failedTurns[event.botId];
+        return;
+      case "turn-progress":
+        runtime.turnProgress[event.botId] = {
+          turnId: event.turnId,
+          detail: cleanAgentMessageText(event.detail),
+        };
         return;
       case "turn-completed":
         if (
@@ -170,6 +189,7 @@ export class DynamicIslandCoordinator {
           runtime.completedBots.add(event.botId);
         }
         runtime.activeTurns[event.botId] = null;
+        if (runtime.turnProgress[event.botId]?.turnId === event.turnId) delete runtime.turnProgress[event.botId];
         runtime.pendingPrompts[event.botId] = undefined;
         runtime.pendingApprovals[event.botId] = undefined;
         if (event.status === "failed") runtime.failedTurns[event.botId] = event.turnId;
@@ -250,6 +270,7 @@ export class DynamicIslandCoordinator {
       serverId,
       bots: [],
       activeTurns: {},
+      turnProgress: {},
       queues: {},
       unreadReplies: {},
       unreadMessageIds: {},

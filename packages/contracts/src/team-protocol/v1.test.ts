@@ -16,6 +16,7 @@ import {
 } from "./v1";
 import {
   decodeTeamProtocolV1CurrentEvent,
+  encodeTeamProtocolV1CurrentEvent,
   encodeTeamProtocolV1CurrentHttpRequest,
   encodeTeamProtocolV1CurrentHttpResponse,
 } from "./v1-adapter";
@@ -118,6 +119,20 @@ describe("Team protocol v1", () => {
       type: "runtime-snapshot",
     });
     expect(decodeTeamProtocolV1Event({ payload: true })).toEqual({ kind: "invalid", type: null });
+  });
+
+  it("keeps optional live activity outside the frozen v1 event codec", () => {
+    const activity = {
+      type: "turn-progress" as const,
+      botId: "chief",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      detail: "Searching for current information…",
+    };
+
+    expect(decodeTeamProtocolV1Event(activity)).toEqual({ kind: "unknown", type: "turn-progress" });
+    expect(decodeTeamProtocolV1CurrentEvent(activity)).toEqual({ kind: "known", event: activity });
+    expect(JSON.parse(encodeTeamProtocolV1CurrentEvent(activity) ?? "null")).toEqual(activity);
   });
 
   it("accepts the frozen minimal runtime snapshot", () => {
