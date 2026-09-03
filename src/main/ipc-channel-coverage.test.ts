@@ -72,6 +72,29 @@ describe("IPC channel coverage", () => {
     expect(invoked).toEqual(handled);
   });
 
+  // The assertions above compare sets, which is right for sends and
+  // subscriptions - a channel may have many of each - but wrong for handlers.
+  // ipcMain.handle throws on a second registration for the same channel, so a
+  // channel registered in two files crashes the app on every launch while
+  // deduplication leaves every set comparison green.
+  it("registers each request channel exactly once in the main process", () => {
+    const registrations = new Map<string, string[]>();
+    for (const reference of mainReferences) {
+      if (!MAIN_HANDLER_CALLEES.includes(reference.callee)) continue;
+      registrations.set(reference.channel, [
+        ...(registrations.get(reference.channel) ?? []),
+        `${reference.file} ${reference.callee}`,
+      ]);
+    }
+
+    const duplicated = [...registrations]
+      .filter(([, sites]) => sites.length > 1)
+      .map(([channel, sites]) => `${channel}: ${sites.join(", ")}`)
+      .sort();
+
+    expect(duplicated).toEqual([]);
+  });
+
   it("gives every event channel the preload listens for a main process sender", () => {
     expect(subscribed).toEqual(sent);
   });
