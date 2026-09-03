@@ -23,6 +23,15 @@ const manifests = ["package.json", ...workspaces.map((workspace) => `${workspace
 
 const DEPENDENCY_FIELDS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
 
+// A "catalog:" specifier is only meaningful to bun. Anything that reads the
+// declared version string itself sees a value it cannot parse, so these keep
+// their literal versions in every manifest that declares them, and the reason
+// travels with the name.
+const NOT_CATALOGUABLE: Readonly<Record<string, string>> = {
+  "solid-js":
+    "storybook-solidjs-vite resolves the Solid major from the declared version to choose its renderer entry, and fails the Storybook build with `Could not detect Solid version` when it cannot.",
+};
+
 describe("dependency catalog", () => {
   it("declares every catalogued dependency as catalog: in every workspace that uses it", () => {
     const literals: string[] = [];
@@ -55,6 +64,34 @@ describe("dependency catalog", () => {
       );
 
     expect(underused).toEqual([]);
+  });
+
+  // Catalogue one of these and the failure surfaces minutes later in a CI job
+  // that does not mention the catalog at all. This is that failure, named.
+  it("leaves out the dependencies whose declared version a build tool reads", () => {
+    const wronglyCatalogued = Object.keys(NOT_CATALOGUABLE)
+      .filter((name) => name in catalog)
+      .map((name) => `${name}: ${NOT_CATALOGUABLE[name]}`);
+
+    expect(wronglyCatalogued).toEqual([]);
+  });
+
+  it("pins the same version everywhere for a dependency the catalog cannot hold", () => {
+    const conflicting: string[] = [];
+    for (const name of Object.keys(NOT_CATALOGUABLE)) {
+      const sites = new Map<string, string[]>();
+      for (const manifest of manifests) {
+        for (const [, dependency, version] of readDependencies(manifest)) {
+          if (dependency === name) sites.set(version, [...(sites.get(version) ?? []), manifest]);
+        }
+      }
+      if (sites.size > 1) {
+        const spread = [...sites].map(([version, where]) => `${version} in ${where.join(", ")}`).sort();
+        conflicting.push(`${name}: ${spread.join(" vs ")}`);
+      }
+    }
+
+    expect(conflicting).toEqual([]);
   });
 });
 

@@ -36,7 +36,7 @@
     "class-variance-authority": "catalog:",
     "fflate": "catalog:",
     "jose": "catalog:",
-    "solid-js": "catalog:",
+    "solid-js": "2.0.0-rc.0",
     "yaml": "catalog:"
   },
   "devDependencies": {

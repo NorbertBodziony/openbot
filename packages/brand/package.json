@@ -13,7 +13,7 @@
   },
   "peerDependencies": {
     "@solidjs/web": "catalog:",
-    "solid-js": "catalog:"
+    "solid-js": "2.0.0-rc.0"
   },
   "devDependencies": {
     "@solidjs/testing-library": "catalog:",
