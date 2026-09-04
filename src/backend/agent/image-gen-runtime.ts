@@ -1,4 +1,4 @@
-import type { AgentEvent, ImageGenerationInfo } from "@openbot/contracts/ipc";
+import type { ImageGenerationInfo } from "@openbot/contracts/ipc";
 import { isString } from "@openbot/contracts/runtime-values";
 import { newAssistantMessage } from "../conversation-snapshots";
 import type { MailboxStore } from "../mailbox-store";
@@ -19,7 +19,6 @@ interface ImageGenerationOperation {
 }
 
 export interface ImageGenHooks {
-  emit(event: AgentEvent): void;
   /** Mirrors the facade's itemId → turnId index used by turn completion. */
   trackItem(itemId: string, turnId: string): void;
 }

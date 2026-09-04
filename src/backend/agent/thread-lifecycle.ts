@@ -67,10 +67,6 @@ export class ThreadLifecycle {
     return this.#pendingHandoffs.get(threadId);
   }
 
-  setPendingHandoff(threadId: string, handoff: string): void {
-    this.#pendingHandoffs.set(threadId, handoff);
-  }
-
   deletePendingHandoff(threadId: string): void {
     this.#pendingHandoffs.delete(threadId);
   }

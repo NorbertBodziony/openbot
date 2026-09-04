@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import type { AgentEvent, ConversationSnapshot } from "@openbot/contracts/ipc";
+import { sortConversationMessages } from "../conversation-snapshots";
 import type { GeneratedAttachmentSource, MailboxStore } from "../mailbox-store";
 import { isWithin, sharedPathFromInput, workspacePathFromInput } from "../workspace-paths";
 import type { ConversationRuntime } from "./conversation-runtime";
@@ -112,6 +113,7 @@ export class AttachmentGateway {
       attachments,
     };
     snapshot.messages.push(message);
+    sortConversationMessages(snapshot.messages);
     try {
       const persisted = this.#mailbox.persistGeneratedAttachmentsWithConversation(
         snapshot,

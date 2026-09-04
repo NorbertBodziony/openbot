@@ -247,7 +247,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       conversation: this.#conversation,
       mailbox,
       hooks: {
-        emit: (event) => this.#emit(event),
         trackItem: (itemId, turnId) => {
           this.#turn.trackItem(itemId, turnId);
         },
@@ -307,7 +306,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       routines: this.#routines,
       threads: this.#threads,
       hooks: {
-        emit: (event) => this.#emit(event),
         emitError: (code, error, botId) => this.#emitError(code, error, botId),
         isStopping: () => this.#stopping,
       },

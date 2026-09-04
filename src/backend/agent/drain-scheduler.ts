@@ -1,4 +1,3 @@
-import type { AgentEvent } from "@openbot/contracts/ipc";
 import type { BotStore } from "../bot-store";
 import type { DeliveryContext, MailboxStore } from "../mailbox-store";
 import { decodeTurnResponse } from "../protocol";
@@ -13,7 +12,6 @@ import { isMissingProviderSessionError, isRequestTimeout, providerForBot } from 
 import type { ThreadLifecycle } from "./thread-lifecycle";
 
 export interface DrainHooks {
-  emit(event: AgentEvent): void;
   emitError(code: string, error: unknown, botId?: string): void;
   isStopping(): boolean;
 }
