@@ -55,6 +55,23 @@ function sourceEntries<T>(values: T[], source: (value: T) => string) {
   });
 }
 
+function CodeSpan({ text, presentation }: { text: string; presentation: TextPresentation }) {
+  return (
+    <View
+      collapsable={false}
+      className={`max-w-full self-start rounded-xl bg-control px-1 ${presentation.type === "body-sm" ? "py-px" : "py-0.5"}`}
+    >
+      <Typography.Code
+        selectable
+        className={presentation.type === "body-sm" ? "bg-transparent p-0 text-xs leading-4" : "bg-transparent p-0"}
+        style={{ ...presentation.style, color: presentation.codeColor }}
+      >
+        {text}
+      </Typography.Code>
+    </View>
+  );
+}
+
 function inline(tokens: Token[], parentPresentation: TextPresentation): ReactNode {
   const lastToken = tokens.findLast((token) => token.type !== "br");
   return sourceEntries(tokens, (token) => token.raw).map(({ value: token, offset }) => {
@@ -70,21 +87,7 @@ function inline(tokens: Token[], parentPresentation: TextPresentation): ReactNod
     }
     if (tokenIs(token, "escape")) return token.text;
     if (tokenIs(token, "codespan")) {
-      return (
-        <View
-          key={offset}
-          collapsable={false}
-          className={`max-w-full self-start rounded-xl bg-control px-1 ${presentation.type === "body-sm" ? "py-px" : "py-0.5"}`}
-        >
-          <Typography.Code
-            selectable
-            className={presentation.type === "body-sm" ? "bg-transparent p-0 text-xs leading-4" : "bg-transparent p-0"}
-            style={{ ...presentation.style, color: presentation.codeColor }}
-          >
-            {token.text}
-          </Typography.Code>
-        </View>
-      );
+      return <CodeSpan key={offset} text={token.text} presentation={presentation} />;
     }
     if (tokenIs(token, "strong") || tokenIs(token, "em") || tokenIs(token, "del")) {
       const style: TextStyle = {
@@ -127,12 +130,59 @@ function inline(tokens: Token[], parentPresentation: TextPresentation): ReactNod
   });
 }
 
+function ListParagraph({ tokens, presentation }: { tokens: Token[]; presentation: TextPresentation }) {
+  const lines: Token[][][] = [[[]]];
+  for (const token of tokens) {
+    const line = lines[lines.length - 1];
+    if (token.type === "br") {
+      lines.push([[]]);
+    } else if (tokenIs(token, "codespan")) {
+      line.push([token], []);
+    } else {
+      line[line.length - 1].push(token);
+    }
+  }
+  const source = (run: Token[]) => run.map((token) => token.raw).join("");
+  return (
+    <View className="min-w-0 gap-1">
+      {sourceEntries(lines, (line) => line.map(source).join("")).map(({ value: line, offset: lineOffset }) => (
+        // Multiline chips must participate in flex layout, not sit inside a fixed-height native text line.
+        <View key={lineOffset} className="min-w-0 flex-row flex-wrap items-center gap-y-1">
+          {sourceEntries(line, source).map(({ value: run, offset }) => {
+            if (!run.length) return null;
+            const token = run[0];
+            if (tokenIs(token, "codespan")) {
+              return <CodeSpan key={offset} text={token.text} presentation={presentation} />;
+            }
+            return (
+              <Typography
+                key={offset}
+                selectable
+                className="max-w-full"
+                type={presentation.type}
+                style={presentation.style}
+              >
+                {inline(run, {
+                  ...presentation,
+                  animateTail: presentation.animateTail && run.at(-1) === tokens.at(-1),
+                })}
+              </Typography>
+            );
+          })}
+        </View>
+      ))}
+    </View>
+  );
+}
+
 function MarkdownBlocks({
   tokens,
   presentation: parentPresentation,
+  inList = false,
 }: {
   tokens: Token[];
   presentation: TextPresentation;
+  inList?: boolean;
 }) {
   const lastToken = tokens.findLast((token) => token.type !== "space" && token.type !== "def");
   return (
@@ -144,6 +194,9 @@ function MarkdownBlocks({
         };
         if (token.type === "space" || token.type === "def") return null;
         if (tokenIs(token, "paragraph") || tokenIs(token, "text")) {
+          if (inList && token.tokens?.some((child) => tokenIs(child, "codespan"))) {
+            return <ListParagraph key={offset} tokens={token.tokens} presentation={presentation} />;
+          }
           return (
             <Typography key={offset} selectable type={presentation.type} style={presentation.style}>
               {token.tokens ? inline(token.tokens, presentation) : token.text}
@@ -185,7 +238,7 @@ function MarkdownBlocks({
         if (tokenIs(token, "blockquote")) {
           return (
             <View key={offset} className="border-l-2 border-separator pl-3">
-              <MarkdownBlocks tokens={token.tokens} presentation={presentation} />
+              <MarkdownBlocks tokens={token.tokens} presentation={presentation} inList={inList} />
             </View>
           );
         }
@@ -206,6 +259,7 @@ function MarkdownBlocks({
                   <View className="min-w-0 flex-1">
                     <MarkdownBlocks
                       tokens={item.tokens}
+                      inList
                       presentation={{
                         ...presentation,
                         animateTail: presentation.animateTail && item === token.items.at(-1),
