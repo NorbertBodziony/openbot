@@ -142,13 +142,73 @@ export interface AutomationSnapshot {
   accessibility: string;
 }
 
+// A control's accessible name is the only thing in an accessibility tree that
+// says what its value means, and `redactText` cannot help here: a login code
+// is a handful of characters that match no secret shape and carry no label. So
+// a node named for a one-time code, a password or a token loses what was
+// entered - inline, and anywhere in its subtree, because a value does not
+// always arrive as the value of the control. `OtpInput` is the case that
+// matters: it clears the native input on every keystroke and rebuilds the code
+// as visible characters, which reach the tree as loose text under the group
+// that holds them.
+const SENSITIVE_CONTROL_NAME = /one[\s-]?time|passcode|password|\botp\b|secret|token|credential|api[\s_-]?key/iu;
+
+// One node of Playwright's aria YAML: indentation, role, quoted accessible
+// name, and either an inline value after the colon or an indented subtree.
+const NAMED_NODE = /^(\s*)- ([a-z]+) "((?:[^"\\]|\\.)*)"(?::(.*))?$/u;
+
+export function redactSensitiveSnapshotValues(yaml: string): string {
+  const lines: string[] = [];
+  // Indentation of each sensitive node still open, innermost last. A stack
+  // rather than one value: the OTP group holds the input, which is sensitive
+  // too, and leaving the inner one has to stay inside the outer.
+  const sensitiveIndents: number[] = [];
+  // Whether the one replacement line has been written for the current run of
+  // dropped nodes.
+  let replaced = false;
+  for (const line of yaml.split("\n")) {
+    if (line.trim() === "") {
+      lines.push(line);
+      continue;
+    }
+    const indent = line.length - line.trimStart().length;
+    while (sensitiveIndents.length > 0 && indent <= (sensitiveIndents.at(-1) ?? 0)) {
+      sensitiveIndents.pop();
+      replaced = false;
+    }
+    const match = NAMED_NODE.exec(line);
+    const name = match?.[3];
+    if (match && name !== undefined && SENSITIVE_CONTROL_NAME.test(name)) {
+      const inline = match[4]?.trim() ?? "";
+      sensitiveIndents.push(indent);
+      // The role and the name stay: an agent still has to see that the control
+      // exists to aim `type` at it. Only what was entered goes.
+      replaced = inline !== "";
+      lines.push(inline === "" ? line : `${match[1]}- ${match[2]} "${name}": [redacted]`);
+      continue;
+    }
+    if (sensitiveIndents.length === 0 || match) {
+      // Outside a sensitive subtree, or a named node inside one - a named node
+      // is structure the developer navigates by, and its own value is judged by
+      // its own name.
+      lines.push(line);
+      continue;
+    }
+    if (!replaced) {
+      lines.push(`${" ".repeat(indent)}- text: "[redacted]"`);
+      replaced = true;
+    }
+  }
+  return lines.join("\n");
+}
+
 export async function snapshotPage(page: Page, logger: Logger = dummyLogger): Promise<AutomationSnapshot> {
   // Redacted before truncation, so a secret cannot survive in the part that is
   // kept. The document leaves this process on stdout and lands in an agent
   // transcript, which is the same kind of path as a log line: a page showing
   // an API token exports it otherwise. `screenshot` is where you look when the
   // literal value is the thing under test.
-  const yaml = redactText(await page.ariaSnapshot({ depth: 30 }));
+  const yaml = redactText(redactSensitiveSnapshotValues(await page.ariaSnapshot({ depth: 30 })));
   const snapshot: AutomationSnapshot = {
     // The sanitized location, not `page.url()`: the snapshot is a document an
     // agent prints and pastes, and a query string on the app route can carry

@@ -14,7 +14,12 @@ import {
   resolveAutomationPort,
 } from "./cdp-client";
 import { describeTarget, findMainPages, isMainAppUrl } from "./page-url";
-import { parseWaitTarget, reportableScreenshotPath, resolveScreenshotPath } from "./tools";
+import {
+  parseWaitTarget,
+  redactSensitiveSnapshotValues,
+  reportableScreenshotPath,
+  resolveScreenshotPath,
+} from "./tools";
 
 describe("isOpenBotBrowser", () => {
   it("accepts the Electron user agent", () => {
@@ -144,6 +149,53 @@ describe("describeTarget", () => {
     // carries its code as a plain segment where no redaction rule sees it.
     expect(describeTarget("http://127.0.0.1:8976/callback/abcdefghij")).toBe("http://127.0.0.1:8976/… (path hidden)");
     expect(describeTarget("http://localhost:5173/index.html")).toBe("http://localhost:5173/index.html");
+  });
+});
+
+describe("redactSensitiveSnapshotValues", () => {
+  it("keeps an email login code out of the document the snapshot prints", () => {
+    // The shape a plain text input produces: the value sits inline after the
+    // accessible name, and six characters match no secret pattern.
+    const yaml = ['- textbox "One-time code": 481902', '- textbox "Email": someone@example.com'].join("\n");
+    expect(redactSensitiveSnapshotValues(yaml)).toBe(
+      ['- textbox "One-time code": [redacted]', '- textbox "Email": someone@example.com'].join("\n"),
+    );
+  });
+
+  it("keeps the code out when it reaches the tree as loose characters instead of a value", () => {
+    // The real `OtpInput` shape: it clears the native input on every keystroke
+    // and rebuilds the code as visible characters, so the code arrives as text
+    // under the group rather than as the value of the control. The control
+    // itself has to survive - an agent needs it to aim `type` - while every
+    // character under the group goes.
+    const yaml = [
+      '- group "One-time code entry":',
+      '  - textbox "One-time code"',
+      '  - text: "4"',
+      '  - text: "8"',
+      '  - text: "1"',
+      "- paragraph: Check your inbox",
+    ].join("\n");
+    expect(redactSensitiveSnapshotValues(yaml)).toBe(
+      [
+        '- group "One-time code entry":',
+        '  - textbox "One-time code"',
+        '  - text: "[redacted]"',
+        "- paragraph: Check your inbox",
+      ].join("\n"),
+    );
+  });
+
+  it("leaves a control the developer needs to read alone, and keeps an empty one honest", () => {
+    const yaml = [
+      '- textbox "New memory":',
+      "  - /placeholder: Add a durable fact",
+      '  - text: "Prefers pierogi"',
+      '- textbox "One-time code":',
+    ].join("\n");
+    // An empty sensitive control must not claim a value was hidden, or a
+    // developer cannot tell a blank field from a redacted one.
+    expect(redactSensitiveSnapshotValues(yaml)).toBe(yaml);
   });
 });
 

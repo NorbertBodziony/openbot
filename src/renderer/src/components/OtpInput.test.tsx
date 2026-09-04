@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@solidjs/testing-library";
+import { fireEvent, render, screen, within } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
 import { OtpInput, type OtpInputStatus } from "./OtpInput";
@@ -35,6 +35,21 @@ describe("OtpInput", () => {
     ).toBe("ABCDEFGH");
     expect(onChange).toHaveBeenLastCalledWith("ABCDEFGH");
     expect(onComplete).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the entered characters inside a group named for the code", async () => {
+    // The native input is cleared on every keystroke, so these characters are
+    // the only copy of the code in the accessibility tree. The group's name is
+    // what tells a screen reader what they are - and what lets
+    // `dev:automation` recognize the subtree it must not print into an agent
+    // transcript, which is why the name is a contract rather than decoration.
+    const { input } = renderOtp();
+
+    await fireEvent.paste(input, { clipboardData: { getData: () => "ABCDEFGH" } });
+
+    const digits = within(screen.getByRole("group", { name: "One-time code entry" }));
+    expect(digits.getByText("A")).toBeInTheDocument();
+    expect(digits.getByText("H")).toBeInTheDocument();
   });
 
   it("accepts native one-time-code autofill and submits only once", async () => {
