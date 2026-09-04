@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { Logger } from "@openbot/logging";
+import { dummyLogger, type Logger } from "@openbot/logging";
 import type { Page } from "playwright-core";
 
 const MAX_SNAPSHOT_LENGTH = 20_000;
@@ -189,7 +189,7 @@ export interface AutomationSnapshot {
   accessibility: string;
 }
 
-export async function snapshotPage(page: Page, logger: Logger): Promise<AutomationSnapshot> {
+export async function snapshotPage(page: Page, logger: Logger = dummyLogger): Promise<AutomationSnapshot> {
   const yaml = await page.ariaSnapshot({ depth: 30 });
   const snapshot: AutomationSnapshot = {
     url: page.url(),
@@ -221,7 +221,7 @@ export async function waitForRole(page: Page, role: AutomationRole, name: string
   await page.getByRole(role, { name }).waitFor({ timeout: timeoutMs });
 }
 
-export async function screenshotTo(page: Page, outPath: string, logger: Logger): Promise<string> {
+export async function screenshotTo(page: Page, outPath: string, logger: Logger = dummyLogger): Promise<string> {
   await mkdir(dirname(outPath), { recursive: true });
   await page.screenshot({ path: outPath });
   logger.info("screenshot saved", outPath);

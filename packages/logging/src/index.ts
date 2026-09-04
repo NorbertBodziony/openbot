@@ -25,45 +25,46 @@ export function redactText(value: string): string {
     .replace(EMAIL, "[redacted-email]");
 }
 
-// `typeof` below narrows the LogValue union the caller handed over, not an
-// already-known domain type, so the no-runtime-typeof warning does not apply.
+// `typeof` below narrows caller-provided unions, not already-known domain
+// types, so the no-runtime-typeof warning does not apply. Conversion is
+// cycle-safe: a revisited object becomes "[circular]" instead of overflowing,
+// so logging a rejection value can never hide the failure it reports.
 export function redactValue(value: LogValue): LogValue {
-  if (typeof value === "string") return redactText(value);
-  if (Array.isArray(value)) return value.map(redactValue);
-  if (typeof value === "object" && value !== null) {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, entry]): [string, LogValue] => [
-        key,
-        SECRET_KEY.test(key) ? "[redacted]" : redactValue(entry),
-      ]),
-    );
-  }
-  return value;
+  return convertValue(value, new Set<object>());
 }
 
 // Converts anything a catch block or an external boundary hands over into a
-// redaction-safe value. Errors keep name, message and stack; anything else
-// falls back to its string form rather than leaking through unredacted.
+// redaction-safe value. Errors keep name, message and stack; bigints keep
+// their `n` suffix because JSON cannot carry them; anything else falls back
+// to its string form rather than leaking through unredacted.
 export function toLogValue(value: unknown): LogValue {
-  if (
-    value === null ||
-    value === undefined ||
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean" ||
-    typeof value === "bigint"
-  ) {
-    return value;
-  }
+  return convertValue(value, new Set<object>());
+}
+
+function convertValue<T>(value: T, seen: Set<object>): LogValue {
+  if (typeof value === "string") return redactText(value);
+  if (value === null) return null;
+  if (value === undefined) return undefined;
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (typeof value === "bigint") return `${value.toString()}n`;
   if (value instanceof Error) {
     const converted: { [key: string]: LogValue } = { name: value.name, message: value.message };
     if (typeof value.stack === "string") converted.stack = value.stack;
     return converted;
   }
-  if (Array.isArray(value)) return value.map(toLogValue);
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return "[circular]";
+    seen.add(value);
+    return value.map((entry: LogValue) => convertValue(entry, seen));
+  }
   if (typeof value === "object") {
+    if (seen.has(value)) return "[circular]";
+    seen.add(value);
     return Object.fromEntries(
-      Object.entries(value).map(([key, entry]): [string, LogValue] => [key, toLogValue(entry)]),
+      Object.entries(value).map(([key, entry]): [string, LogValue] => [
+        key,
+        SECRET_KEY.test(key) ? "[redacted]" : convertValue(entry, seen),
+      ]),
     );
   }
   return String(value);

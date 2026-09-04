@@ -33,6 +33,19 @@ describe("redactValue", () => {
 });
 
 describe("toLogValue", () => {
+  it("breaks reference cycles instead of overflowing", () => {
+    const loop: { name: string; self?: unknown } = { name: "chief" };
+    loop.self = loop;
+    expect(() => toLogValue(loop)).not.toThrow();
+    expect(toLogValue(loop)).toEqual({ name: "chief", self: "[circular]" });
+  });
+
+  it("serializes bigints instead of throwing in JSON.stringify", () => {
+    const lines: string[] = [];
+    const logger = createOpenBotLogger("automation", (line) => lines.push(line));
+    expect(() => logger.info("count", 10n)).not.toThrow();
+    expect(lines[0]).toContain("10n");
+  });
   it("keeps error details while redacting secrets when logged", () => {
     const lines: string[] = [];
     const logger = createOpenBotLogger("automation", (line) => lines.push(line));

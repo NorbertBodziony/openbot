@@ -10,6 +10,7 @@ import {
   type DynamicIslandPresentation,
   IPC_CHANNELS,
 } from "@openbot/contracts/ipc";
+import { createOpenBotLogger } from "@openbot/logging";
 import type { BrowserWindow, Display, Rectangle } from "electron";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as preferenceStore from "./dynamic-island-preference-store";
@@ -280,10 +281,11 @@ describe("dynamic island window geometry", () => {
   it("continues loading other displays when one overlay fails", async () => {
     const root = await temporaryRoot();
     const windows: FakeWindow[] = [];
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const lines: string[] = [];
     const controller = new DynamicIslandWindowController({
       platform: "darwin",
       preferencePath: join(root, "preference.json"),
+      logger: createOpenBotLogger("test", (line) => lines.push(line)),
       createWindow: (bounds) => {
         const window = new FakeWindow(80 + windows.length, bounds);
         windows.push(window);
@@ -305,7 +307,7 @@ describe("dynamic island window geometry", () => {
     expect(windows).toHaveLength(2);
     expect(windows[0]?.destroy).toHaveBeenCalledOnce();
     expect(controller.overlayRendererIds).toEqual(new Set([81]));
-    expect(error).toHaveBeenCalledWith("Unable to load Dynamic Island on display 1:", expect.any(Error));
+    expect(lines.some((line) => line.includes("Unable to load Dynamic Island on display 1:"))).toBe(true);
   });
 
   it("does not recreate overlays when disabling during display loading", async () => {

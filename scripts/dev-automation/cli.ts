@@ -6,7 +6,9 @@ import { createOpenBotLogger } from "@openbot/logging";
 import { connectToDevApp, readAutomationPort } from "./cdp-client";
 import { clickByRole, parseAutomationRole, screenshotTo, snapshotPage, typeByRole } from "./tools";
 
-const logger = createOpenBotLogger("dev-automation");
+// Diagnostics go to stderr so stdout carries only the final JSON document,
+// which stays parseable for the calling agent.
+const logger = createOpenBotLogger("dev-automation", (line) => process.stderr.write(`${line}\n`));
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const SCREENSHOT_ROOT = join(process.cwd(), ".openbot-build", "dev-automation");

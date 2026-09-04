@@ -23,27 +23,54 @@ export interface AutomationSession {
   close: () => Promise<void>;
 }
 
-async function describeTargets(port: number): Promise<string> {
+// A port on the shared dev machine can belong to another Chromium. Refuse
+// anything that does not identify as OpenBot before a mutation can reach it.
+export function isOpenBotBrowser(userAgent: string): boolean {
+  return userAgent.includes("OpenBot/");
+}
+
+// The dev app opens helper surfaces (Dynamic Island popups) beside the main
+// window, in no guaranteed order. Prefer the bare app URL; the popups carry
+// a `surface=` query param.
+export function pickMainPage<T extends { url: () => string }>(pages: T[]): T | undefined {
+  return pages.find((candidate) => !candidate.url().includes("surface=")) ?? pages[0];
+}
+
+async function describeBrowser(port: number): Promise<{ targets: string; userAgent: string }> {
+  const version = await fetch(`http://127.0.0.1:${port}/json/version`, {
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!version.ok) throw new Error(`CDP answered ${version.status}.`);
+  const info = await version.json();
+  const userAgent = isDynamicRecord(info) && isString(info["User-Agent"]) ? info["User-Agent"] : "";
+  if (!isOpenBotBrowser(userAgent)) {
+    throw new Error(
+      `Port ${port} does not belong to OpenBot (User-Agent: ${userAgent || "unknown"}). ` +
+        "Pass --port=<OPENBOT_DEV_REMOTE_DEBUGGING_PORT> of the instance you mean to drive.",
+    );
+  }
   const response = await fetch(`http://127.0.0.1:${port}/json/list`, {
     signal: AbortSignal.timeout(5_000),
   });
   if (!response.ok) throw new Error(`CDP answered ${response.status}.`);
   const payload = await response.json();
   if (!Array.isArray(payload)) throw new Error("CDP answered without a target list.");
-  return payload
+  const targets = payload
     .filter(isDynamicRecord)
     .filter((target) => target.type === "page")
     .map(
       (target) => `- ${isString(target.title) ? target.title : "untitled"} ${isString(target.url) ? target.url : ""}`,
     )
     .join("\n");
+  return { targets, userAgent };
 }
 
 export async function connectToDevApp(port: number, logger: Logger): Promise<AutomationSession> {
   let targets: string;
   try {
-    targets = await describeTargets(port);
-  } catch {
+    targets = (await describeBrowser(port)).targets;
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith(`Port ${port} does not belong to OpenBot`)) throw error;
     throw new Error(
       `No dev app answers on 127.0.0.1:${port}. Reuse the running instance (` +
         "`bun run dev`) instead of starting a second one; " +
@@ -52,11 +79,7 @@ export async function connectToDevApp(port: number, logger: Logger): Promise<Aut
   }
   logger.info(`CDP targets on :${port}`, targets || "(no pages yet)");
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
-  const pages = browser.contexts().flatMap((context) => context.pages());
-  // The dev app opens helper surfaces (Dynamic Island popups) beside the main
-  // window, in no guaranteed order. Prefer the bare app URL; the popups carry
-  // a `surface=` query param.
-  const page = pages.find((candidate) => !candidate.url().includes("surface=")) ?? pages[0];
+  const page = pickMainPage(browser.contexts().flatMap((context) => context.pages()));
   if (!page) {
     await browser.close();
     throw new Error(`Connected over CDP but found no open window on :${port}. Focus the dev app and retry.`);

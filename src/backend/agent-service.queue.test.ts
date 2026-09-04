@@ -315,7 +315,7 @@ describe.sequential("AgentService: queue", () => {
       if (provider === "grok") grokClient = client;
       return client;
     });
-    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const warning = vi.spyOn(process.stderr, "write");
     await service.initialize();
     await store.getOrCreate("chief");
     await service.updateBot({ botId: "chief", provider: "grok", model: "grok-4.5" });
@@ -329,11 +329,13 @@ describe.sequential("AgentService: queue", () => {
     expect(
       (await service.readConversation("chief")).messages.filter((message) => message.author === "user"),
     ).toHaveLength(1);
-    expect(warning).toHaveBeenCalledWith(expect.any(String), {
-      botId: "chief",
-      provider: "grok",
-      outcome: "resumed",
-    });
+    expect(
+      warning.mock.calls.some(
+        ([chunk]) =>
+          String(chunk).includes("Recovered an unavailable provider session.") &&
+          String(chunk).includes('"outcome":"resumed"'),
+      ),
+    ).toBe(true);
     warning.mockRestore();
   });
 
@@ -351,7 +353,7 @@ describe.sequential("AgentService: queue", () => {
       if (provider === "grok") grokClient = client;
       return client;
     });
-    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const warning = vi.spyOn(process.stderr, "write");
     await service.initialize();
     await store.getOrCreate("chief");
     await service.updateBot({ botId: "chief", provider: "grok", model: "grok-4.5" });
@@ -375,11 +377,13 @@ describe.sequential("AgentService: queue", () => {
     const turns = grokClient?.requests.filter((request) => request.method === "turn/start") ?? [];
     expect(firstInputText(turns[1]?.params)).toContain("GROK_DONE");
     expect(firstInputText(turns[1]?.params)).toContain("Continue after recovery");
-    expect(warning).toHaveBeenCalledWith(expect.any(String), {
-      botId: "chief",
-      provider: "grok",
-      outcome: "replaced",
-    });
+    expect(
+      warning.mock.calls.some(
+        ([chunk]) =>
+          String(chunk).includes("Recovered an unavailable provider session.") &&
+          String(chunk).includes('"outcome":"replaced"'),
+      ),
+    ).toBe(true);
     warning.mockRestore();
   });
 
