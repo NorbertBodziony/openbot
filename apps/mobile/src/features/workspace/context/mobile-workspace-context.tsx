@@ -12,16 +12,22 @@ import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-
 import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
 import {
   createRemoteConnectionRecovery,
+  createWorkspacePreferences,
   decodeTeamProtocolSupportV1,
   mergeRemoteUnreadIds,
+  type RemoteConnectionStage,
   RemoteTeamDirectoryClient,
   type RemoteTeamHost,
+  type RemoteWorkspacePreferences,
+  remoteConnectionFailure,
   remoteRecoveryMessage,
   resyncRemoteConversations,
+  TEAM_CONVERSATION_UNREAD_CAPABILITY,
   TEAM_PROTOCOL_V3,
 } from "@openbot/team-client";
 import { fetch } from "expo/fetch";
 import * as Crypto from "expo-crypto";
+import * as SecureStore from "expo-secure-store";
 import {
   createContext,
   type PropsWithChildren,
@@ -32,7 +38,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { AppState, View } from "react-native";
+import { Alert, AppState, View } from "react-native";
 
 import { useMobileSession } from "@/features/auth/context/mobile-session-context";
 import {
@@ -96,6 +102,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   const transport = useRef<RemoteTeamTransportRef | null>(null);
   const [transportReady, setTransportReady] = useState(false);
   const loadGeneration = useRef(0);
+  const connectionStage = useRef<RemoteConnectionStage>("connection");
   const directoryGeneration = useRef(0);
   const recovery = useRef<ReturnType<typeof createRemoteConnectionRecovery> | null>(null);
   const [foreground, setForeground] = useState(AppState.currentState === "active");
@@ -110,13 +117,25 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   const serverBotIds = useRef(new Map<string, Set<string>>());
   const removedServers = useRef(new Set<string>());
   const readRefreshSequence = useRef(0);
+  const serverCapabilities = useRef(new Map<string, string[]>());
   const [activeServerId, setActiveServerId] = useState<string | null>(session.host?.hostId ?? null);
   const activeServerPublicKey = servers.find((server) => server.id === activeServerId)?.publicKey;
   const [conversations, setConversations] = useState<Record<string, ConversationSnapshot>>({});
   const conversationsRef = useRef(conversations);
   conversationsRef.current = conversations;
-  const [hiddenBotIds, setHiddenBotIds] = useState<string[]>([]);
-  const [pinnedBotIds, setPinnedBotIds] = useState<string[]>([]);
+  const preferenceStore = useMemo(
+    () =>
+      createWorkspacePreferences(session.apiUrl, session.user.id, {
+        get: (key) => SecureStore.getItem(key),
+        set: (key, value) =>
+          SecureStore.setItem(key, value, { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY }),
+      }),
+    [session.apiUrl, session.user.id],
+  );
+  const [preferences, setPreferences] = useState<Record<string, RemoteWorkspacePreferences>>({});
+  const hiddenBotIds = (activeServerId ? preferences[activeServerId]?.hidden : null) ?? [];
+  const pinnedBotIds = (activeServerId ? preferences[activeServerId]?.pinned : null) ?? [];
+  const readWrites = useRef(new Map<string, Promise<void>>());
   const [unreadBotIds, setUnreadBotIds] = useState<string[]>([]);
 
   const installHosts = useCallback((hosts: RemoteTeamHost[]) => {
@@ -184,24 +203,33 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   const loadServer = useCallback(
     async (server: MobileServer) => {
       const currentGeneration = ++loadGeneration.current;
+      connectionStage.current = "preferences";
+      const saved = preferenceStore.read(server.id);
+      setPreferences((current) => ({ ...current, [server.id]: saved }));
       const client = transport.current;
       if (!client) throw new Error("The mobile transport is not ready.");
+      connectionStage.current = "connection";
       await client.connect(server.id, server.publicKey);
       if (currentGeneration !== loadGeneration.current) return;
+      connectionStage.current = "compatibility";
       const compatibility = await request("GET", "/v1/compatibility", decodeTeamProtocolSupportV1);
       if (currentGeneration !== loadGeneration.current) return;
       if (compatibility.protocol.minimum > TEAM_PROTOCOL_V3 || compatibility.protocol.maximum < TEAM_PROTOCOL_V3) {
         throw new Error("Update OpenBot Mobile or the desktop app before connecting.");
       }
+      serverCapabilities.current.set(server.id, compatibility.capabilities);
+      connectionStage.current = "agents";
       const summaries = await request("GET", "/v1/agents", decodeBotSummaries);
       if (currentGeneration !== loadGeneration.current) return;
       replaceServerBots(server.id, summaries);
       const readSequence = ++readRefreshSequence.current;
+      connectionStage.current = "reads";
       const reads = await request("GET", "/v1/agents/conversation-reads", decodeConversationReads);
       if (currentGeneration !== loadGeneration.current) return;
       if (readSequence === readRefreshSequence.current) {
         setUnreadBotIds((current) => mergeRemoteUnreadIds(current, reads));
       }
+      connectionStage.current = "conversations";
       await resyncRemoteConversations({
         botIds: summaries.map((bot) => bot.id),
         cached: conversationsRef.current,
@@ -210,23 +238,28 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         isCurrent: () => currentGeneration === loadGeneration.current,
       });
       if (currentGeneration !== loadGeneration.current) return;
+      connectionStage.current = "connection";
       setServers((current) =>
         current.map((candidate) =>
           candidate.id === server.id ? { ...candidate, state: "online", connectionMessage: null } : candidate,
         ),
       );
     },
-    [replaceServerBots, request],
+    [replaceServerBots, request, preferenceStore],
   );
 
   useEffect(() => {
     if (!transportReady || !activeServerId || !activeServerPublicKey) return;
     const server = serversRef.current.find((candidate) => candidate.id === activeServerId);
     if (!server?.publicKey) return;
+    let lastFailure: string | null = null;
+    let failureReported = false;
     const controller = createRemoteConnectionRecovery(
       () => loadServer(server),
       (error) => {
-        const connectionMessage = error instanceof Error ? error.message : "The server connection failed.";
+        if (!failureReported) lastFailure = remoteConnectionFailure(connectionStage.current, error);
+        failureReported = true;
+        const connectionMessage = lastFailure;
         setServers((current) =>
           current.map((candidate) =>
             candidate.id === server.id ? { ...candidate, state: "offline", connectionMessage } : candidate,
@@ -234,6 +267,11 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         );
       },
       (status) => {
+        if (status.phase === "connecting") failureReported = false;
+        if (status.phase === "online") {
+          lastFailure = null;
+          failureReported = false;
+        }
         setServers((current) =>
           current.map((candidate) =>
             candidate.id === server.id
@@ -241,7 +279,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
                   ...candidate,
                   state:
                     status.phase === "online" ? "online" : status.phase === "connecting" ? "connecting" : "offline",
-                  connectionMessage: remoteRecoveryMessage(status),
+                  connectionMessage: remoteRecoveryMessage(status, lastFailure),
                 }
               : candidate,
           ),
@@ -352,29 +390,65 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   );
 
   const markBotRead = useCallback(
-    (botId: string, visibleMessageId?: string) => {
+    (botId: string, visibleMessageId?: string | null) => {
+      if (
+        visibleMessageId === null &&
+        (!activeServerId ||
+          !serverCapabilities.current.get(activeServerId)?.includes(TEAM_CONVERSATION_UNREAD_CAPABILITY))
+      ) {
+        Alert.alert("Update required", "Update this desktop server to mark conversations unread.");
+        return;
+      }
       const sequence = ++readRefreshSequence.current;
       const generation = loadGeneration.current;
-      setUnreadBotIds((current) => (current.includes(botId) ? current.filter((id) => id !== botId) : current));
-      void (async () => {
-        const snapshot = visibleMessageId ? null : (conversationsRef.current[botId] ?? (await loadConversation(botId)));
-        if (generation !== loadGeneration.current) return;
-        const throughMessageId = visibleMessageId ?? snapshot?.messages.at(-1)?.id;
-        if (!throughMessageId) return;
-        const reads = await request(
-          "POST",
-          `/v1/agents/${encodeURIComponent(botId)}/conversation/read`,
-          (value) => decodeConversationReads({ [botId]: value }),
-          { throughMessageId },
-        );
-        if (generation === loadGeneration.current && sequence === readRefreshSequence.current) {
-          setUnreadBotIds((current) => mergeRemoteUnreadIds(current, reads));
-        }
-      })().catch(() => {
-        if (generation === loadGeneration.current) void refreshConversationReads().catch(() => undefined);
+      setUnreadBotIds((current) =>
+        visibleMessageId === null ? [...new Set([...current, botId])] : current.filter((id) => id !== botId),
+      );
+      const write = (readWrites.current.get(botId) ?? Promise.resolve())
+        .then(async () => {
+          if (generation !== loadGeneration.current) return;
+          const snapshot =
+            visibleMessageId !== undefined
+              ? null
+              : (conversationsRef.current[botId] ?? (await loadConversation(botId)));
+          if (generation !== loadGeneration.current) return;
+          const throughMessageId = visibleMessageId !== undefined ? visibleMessageId : snapshot?.messages.at(-1)?.id;
+          if (throughMessageId === undefined) return;
+          const reads = await request(
+            "POST",
+            `/v1/agents/${encodeURIComponent(botId)}/conversation/${visibleMessageId === null ? "unread" : "read"}`,
+            (value) => decodeConversationReads({ [botId]: value }),
+            visibleMessageId === null ? {} : { throughMessageId },
+          );
+          if (generation === loadGeneration.current && sequence === readRefreshSequence.current) {
+            setUnreadBotIds((current) => mergeRemoteUnreadIds(current, reads));
+          }
+        })
+        .catch(() => {
+          if (generation === loadGeneration.current) void refreshConversationReads().catch(() => undefined);
+          if (visibleMessageId === null) Alert.alert("Could not mark unread", "Reconnect to the server and try again.");
+        });
+      readWrites.current.set(botId, write);
+      void write.finally(() => {
+        if (readWrites.current.get(botId) === write) readWrites.current.delete(botId);
       });
     },
-    [request, refreshConversationReads, loadConversation],
+    [request, refreshConversationReads, loadConversation, activeServerId],
+  );
+
+  const updatePreferences = useCallback(
+    (serverId: string, change: (current: RemoteWorkspacePreferences) => RemoteWorkspacePreferences) => {
+      try {
+        const next = change(preferenceStore.read(serverId));
+        preferenceStore.write(serverId, next);
+        setPreferences((current) => ({ ...current, [serverId]: next }));
+        return next;
+      } catch {
+        Alert.alert("Could not save chat preferences", "Your previous preferences have been kept. Please try again.");
+        return null;
+      }
+    },
+    [preferenceStore],
   );
 
   const value = useMemo<MobileWorkspaceContextValue>(() => {
@@ -385,7 +459,9 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       serverDirectoryError,
       bots,
       activeServer,
-      activeBots: bots.filter((bot) => bot.serverId === activeServer.id && !hiddenBotIds.includes(bot.id)),
+      activeBots: preferences[activeServer.id]
+        ? bots.filter((bot) => bot.serverId === activeServer.id && !hiddenBotIds.includes(bot.id))
+        : [],
       hiddenBots: bots.filter((bot) => bot.serverId === activeServer.id && hiddenBotIds.includes(bot.id)),
       pinnedBotIds,
       unreadBotIds,
@@ -410,8 +486,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         setConversations((current) =>
           Object.fromEntries(Object.entries(current).filter(([id]) => !removedIds.has(id))),
         );
-        setHiddenBotIds((current) => current.filter((id) => !removedIds.has(id)));
-        setPinnedBotIds((current) => current.filter((id) => !removedIds.has(id)));
+        updatePreferences(serverId, () => ({ hidden: [], pinned: [] }));
         setUnreadBotIds((current) => current.filter((id) => !removedIds.has(id)));
       },
       refreshServers: refreshHosts,
@@ -472,27 +547,41 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         });
       },
       hideBot: (botId) => {
-        setHiddenBotIds((current) => (current.includes(botId) ? current : [...current, botId]));
-        setPinnedBotIds((current) => current.filter((id) => id !== botId));
-        setUnreadBotIds((current) => current.filter((id) => id !== botId));
+        updatePreferences(activeServer.id, (current) => ({
+          hidden: [...new Set([...current.hidden, botId])],
+          pinned: current.pinned.filter((id) => id !== botId),
+        }));
       },
-      unhideBot: (botId) => setHiddenBotIds((current) => current.filter((id) => id !== botId)),
+      unhideBot: (botId) => {
+        updatePreferences(activeServer.id, (current) => ({
+          ...current,
+          hidden: current.hidden.filter((id) => id !== botId),
+        }));
+      },
       markBotRead,
       markBotUnread: (botId) => {
-        setUnreadBotIds((current) => (current.includes(botId) ? current : [...current, botId]));
+        markBotRead(botId, null);
       },
       toggleBotPin: (botId) => {
         if (pinnedBotIds.includes(botId)) {
-          setPinnedBotIds((current) => current.filter((id) => id !== botId));
-          return "unpinned";
+          return updatePreferences(activeServer.id, (current) => ({
+            ...current,
+            pinned: current.pinned.filter((id) => id !== botId),
+          }))
+            ? "unpinned"
+            : "error";
         }
         const bot = bots.find((item) => item.id === botId);
         const pinnedOnServer = pinnedBotIds.filter((id) =>
           bots.some((item) => item.id === id && item.serverId === bot?.serverId),
         );
         if (pinnedOnServer.length >= MAX_PINNED_BOTS) return "limit";
-        setPinnedBotIds((current) => [...current, botId]);
-        return "pinned";
+        return updatePreferences(activeServer.id, (current) => ({
+          ...current,
+          pinned: [...new Set([...current.pinned, botId])],
+        }))
+          ? "pinned"
+          : "error";
       },
     };
   }, [
@@ -511,6 +600,8 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
     servers,
     session.host,
     unreadBotIds,
+    preferences,
+    updatePreferences,
   ]);
 
   const setTransport = useCallback((instance: RemoteTeamTransportRef | null) => {
@@ -528,7 +619,8 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
           directory={directory}
           onConnectionUpdate={(update) => {
             if (activeServerId === update.hostId && recovery.current) {
-              if (update.state === "offline") recovery.current.offline();
+              if (update.state === "offline")
+                recovery.current.offline(new Error(update.message ?? "The desktop went offline."));
               if (update.resync) recovery.current.refresh();
               return;
             }

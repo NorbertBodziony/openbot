@@ -58,6 +58,13 @@ describe.sequential("AgentService: restart", () => {
     expect(service.listConversationReads("member-other").chief).toEqual(unread);
     await service.markConversationRead("chief", "member-owner", boundary);
     expect(events).toHaveLength(1);
+    await service.markConversationUnread("chief", "member-owner");
+    expect(events.at(-1)).toEqual({ type: "conversation-invalidated", botId: "chief", revision: snapshot.revision });
+    expect(events).toHaveLength(2);
+    expect(service.listConversationReads("member-owner").chief?.unreadCount).toBeGreaterThan(0);
+    expect(service.listConversationReads("member-other").chief).toEqual(unread);
+    await service.markConversationRead("chief", "member-owner", boundary);
+    expect(service.listConversationReads("member-owner").chief?.unreadCount).toBe(0);
   });
 
   it("resumes stored threads and does not replay an uncertain running delivery", async () => {

@@ -18,3 +18,4 @@ export * from "./remote-directory";
 export * from "./remote-recovery";
 export * from "./request-id";
 export * from "./webrtc-framing";
+export * from "./workspace-preferences";

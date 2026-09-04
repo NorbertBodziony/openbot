@@ -1369,6 +1369,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return state;
   }
 
+  async markConversationUnread(botId: string, memberId: string): Promise<ConversationReadState> {
+    const snapshot = await this.readConversation(botId);
+    const state = this.#conversationReads.markUnread(memberId, snapshot);
+    this.#emit({ type: "conversation-invalidated", botId, revision: snapshot.revision });
+    return state;
+  }
+
   prepareAttachments(paths: string[]): Promise<DraftAttachment[]> {
     return this.#mailbox.prepareAttachments(paths);
   }

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createRemoteConnectionRecovery,
   mergeRemoteUnreadIds,
+  remoteConnectionFailure,
   remoteRecoveryMessage,
   resyncRemoteConversations,
 } from "./remote-recovery";
@@ -10,6 +11,48 @@ import {
 afterEach(() => vi.useRealTimers());
 
 describe("remote connection recovery", () => {
+  it("keeps a safe failure reason visible through retries and clears it when connected", async () => {
+    vi.useFakeTimers();
+    let failure: string | null = null;
+    let message: string | null = null;
+    const recovery = createRemoteConnectionRecovery(
+      async () => {},
+      (error) => {
+        failure = remoteConnectionFailure("connection", error);
+      },
+      (status) => {
+        message = remoteRecoveryMessage(status, failure);
+      },
+    );
+    recovery.setActive(true);
+    await vi.advanceTimersByTimeAsync(0);
+    recovery.offline(new Error("The host already has an active remote session."));
+    expect(message).toContain("Connecting to the desktop: The host already has an active remote session.");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(message).toContain("Connecting to the desktop: The host already has an active remote session.");
+    await vi.advanceTimersByTimeAsync(9_000);
+    expect(message).toBeNull();
+    recovery.dispose();
+  });
+
+  it("does not expose credentials or response contents in connection diagnostics", () => {
+    const sensitive = "Bearer test-private-token; secret=private-value; conversation=private-message";
+    expect(remoteConnectionFailure("compatibility", new Error(sensitive))).toBe(
+      "Checking desktop compatibility: Unexpected error.",
+    );
+    expect(remoteConnectionFailure("preferences", new TypeError(sensitive))).toBe(
+      "Loading local chat preferences: TypeError.",
+    );
+    expect(remoteConnectionFailure("agents", new SyntaxError(sensitive))).toBe("Loading agents: SyntaxError.");
+    expect(remoteConnectionFailure("reads", sensitive)).toBe("Loading read status: Unexpected error.");
+    expect(
+      remoteRecoveryMessage(
+        { phase: "cooldown", attempt: 5, remainingSeconds: 120 },
+        remoteConnectionFailure("connection", new Error("The desktop did not connect.")),
+      ),
+    ).toContain("Connecting to the desktop: The desktop did not connect.");
+  });
+
   it("applies live unread changes without erasing another server's unread agents", () => {
     expect(
       mergeRemoteUnreadIds(["other-server", "read-now"], {

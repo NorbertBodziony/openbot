@@ -37,6 +37,43 @@ export interface RemoteTeamCommandResult {
   error?: string;
 }
 
+/** Carries every outstanding command across the native/DOM bridge, keyed by request ID. */
+export function createRemoteCommandMailbox(publish: (commands: RemoteTeamCommand[]) => void) {
+  const pending = new Map<string, { command: RemoteTeamCommand; resolve: (result: RemoteTeamCommandResult) => void }>();
+  let target: { hostId: string; hostPublicKey: string } | null = null;
+  const cancel = () => {
+    for (const [commandId, entry] of pending) {
+      entry.resolve({ commandId, ok: false, error: "The server connection was replaced." });
+    }
+    pending.clear();
+  };
+  return {
+    send(command: RemoteTeamCommand): Promise<RemoteTeamCommandResult> {
+      if (command.type === "disconnect") {
+        cancel();
+        target = null;
+      } else if (command.type === "connect") {
+        if (target?.hostId !== command.hostId || target.hostPublicKey !== command.hostPublicKey) cancel();
+        // A foreground refresh may reuse a healthy peer. Do not reject its live RPCs;
+        // the peer itself rejects them if this turns out to require a reconnect.
+        target = { hostId: command.hostId, hostPublicKey: command.hostPublicKey };
+      }
+      return new Promise((resolve) => {
+        pending.set(command.id, { command, resolve });
+        publish([...pending.values()].map((entry) => entry.command));
+      });
+    },
+    receive(result: RemoteTeamCommandResult) {
+      const entry = pending.get(result.commandId);
+      if (!entry) return;
+      pending.delete(result.commandId);
+      entry.resolve(result);
+      publish([...pending.values()].map((item) => item.command));
+    },
+    dispose: cancel,
+  };
+}
+
 export interface RemoteTeamConnectionUpdate {
   hostId: string;
   state: "connecting" | "online" | "offline";
@@ -116,6 +153,7 @@ export function createRemoteTeamPeer(actions: ActionsRef) {
   let peer: PeerState | null = null;
   let generation = 0;
   const pendingRequests = new Map<string, PendingRequest>();
+  const closingSessions = new Map<string, Promise<void>>();
 
   return {
     execute: (command: RemoteTeamCommand) => executeCommand(command, actions),
@@ -150,6 +188,7 @@ export function createRemoteTeamPeer(actions: ActionsRef) {
     );
   }
   async function executeCommand(command: RemoteTeamCommand, actions: ActionsRef): Promise<RemoteTeamCommandResult> {
+    let commandGeneration = generation;
     try {
       if (command.type === "connect") {
         if (!active) throw new Error("The app is in the background.");
@@ -161,8 +200,11 @@ export function createRemoteTeamPeer(actions: ActionsRef) {
         ) {
           return { commandId: command.id, ok: true };
         }
-        await closePeer(actions.current.endSession);
-        await connectPeer(command.hostId, command.hostPublicKey, actions);
+        // Tear down locally now; connectPeer only waits for this host's cleanup.
+        void closePeer(actions.current.endSession);
+        const connecting = connectPeer(command.hostId, command.hostPublicKey, actions);
+        commandGeneration = generation;
+        await connecting;
         return { commandId: command.id, ok: true };
       }
       if (command.type === "disconnect") {
@@ -173,7 +215,7 @@ export function createRemoteTeamPeer(actions: ActionsRef) {
       return { commandId: command.id, ok: true, status: response.status, body: response.body };
     } catch (error) {
       const message = error instanceof Error ? error.message : "The remote operation failed.";
-      if (command.type === "connect") {
+      if (command.type === "connect" && commandGeneration === generation) {
         await actions.current.onConnectionUpdate({ hostId: command.hostId, state: "offline", message });
       }
       return {
@@ -189,6 +231,10 @@ export function createRemoteTeamPeer(actions: ActionsRef) {
     const currentGeneration = ++generation;
     await actions.current.onConnectionUpdate({ hostId, state: "connecting", message: null });
     const identity = await createEd25519Identity((size) => crypto.getRandomValues(new Uint8Array(size)));
+    // The account API reuses an active logical session. A same-host bootstrap
+    // must not race its revocation, even when failPeer already cleared `peer`.
+    // Cleanup for a different host must never block switching servers.
+    while (closingSessions.has(hostId)) await closingSessions.get(hostId);
     if (currentGeneration !== generation || !active) throw new Error("The connection was replaced.");
     const clientPublicKey = identity.publicKeyPem;
     const bootstrap = await actions.current.getBootstrap(hostId, clientPublicKey);
@@ -452,8 +498,6 @@ export function createRemoteTeamPeer(actions: ActionsRef) {
       if (frame.type !== "response") throw new Error("The host returned an invalid RPC frame.");
       const pending = pendingRequests.get(frame.requestId);
       if (!pending) return;
-      clearTimeout(pending.timer);
-      pendingRequests.delete(frame.requestId);
       if ("error" in frame) pending.reject(new Error(frame.error.message));
       else if (!isDynamicRecord(frame.result) || !isNumber(frame.result.status) || !("body" in frame.result)) {
         pending.reject(new Error("The host returned an invalid response."));
@@ -468,6 +512,10 @@ export function createRemoteTeamPeer(actions: ActionsRef) {
           ),
         });
       }
+      // Keep the request registered until decoding succeeds, so failPeer can
+      // reject the caller if a malformed response tears down the connection.
+      clearTimeout(pending.timer);
+      pendingRequests.delete(frame.requestId);
       return;
     }
     if (kind !== "events") return;
@@ -692,7 +740,15 @@ export function createRemoteTeamPeer(actions: ActionsRef) {
       pending.reject(new Error("The server disconnected."));
     }
     rejectConnection(state, new Error("The server disconnected."));
-    await endSession(state.sessionId).catch(() => undefined);
+    const cleanup = (closingSessions.get(state.hostId) ?? Promise.resolve())
+      .then(() => endSession(state.sessionId))
+      .catch(() => undefined);
+    closingSessions.set(state.hostId, cleanup);
+    try {
+      await cleanup;
+    } finally {
+      if (closingSessions.get(state.hostId) === cleanup) closingSessions.delete(state.hostId);
+    }
   }
 
   function settleConnected(state: PeerState): void {

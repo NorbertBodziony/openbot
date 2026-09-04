@@ -3,7 +3,7 @@ import { TEAM_PROTOCOL_V2_CHANNELS } from "@openbot/contracts/team-protocol/v2";
 import { z } from "zod";
 import { encodeTeamWebRtcPayload, TeamWebRtcPayloadDecoder } from "./team-webrtc-framing";
 
-interface BridgeCommand {
+export interface BridgeCommand {
   commandId: string;
   type: "connect" | "disconnect" | "disconnect-peer" | "send" | "restart-ice" | "close";
   peerId: string;
@@ -42,7 +42,7 @@ const signalMessageSchema = z
     resumed: z.boolean().optional(),
   })
   .loose();
-type SignalMessage = z.infer<typeof signalMessageSchema>;
+export type SignalMessage = z.infer<typeof signalMessageSchema>;
 
 type SignalClientMessage =
   | { type: "offer" | "answer"; version: 1; connectionId: string; channel: "team"; sdp: string }
@@ -61,6 +61,7 @@ interface MainBridgeMessage {
   type: string;
   commandId?: string;
   peerId?: string;
+  hostId?: string;
   channel?: "rpc" | "events" | "files" | "desktop";
   data?: string | ArrayBuffer;
   path?: "p2p" | "relay";
@@ -79,6 +80,8 @@ interface MainBridgeMessage {
 
 interface PeerState {
   id: string;
+  signalHost: PeerState | null;
+  clients: Map<string, PeerState>;
   role: "host" | "client";
   signalUrl: string;
   token: string;
@@ -128,6 +131,8 @@ async function handleCommand(command: BridgeCommand): Promise<void> {
       disconnect(command.peerId);
       const state: PeerState = {
         id: command.peerId,
+        signalHost: null,
+        clients: new Map(),
         role: command.peer,
         signalUrl: command.signalUrl,
         token: command.token,
@@ -152,7 +157,9 @@ async function handleCommand(command: BridgeCommand): Promise<void> {
     } else if (command.type === "disconnect") {
       disconnect(command.peerId);
     } else if (command.type === "disconnect-peer") {
-      disconnectPeerConnection(requirePeer(command.peerId));
+      const state = requirePeer(command.peerId);
+      if (state.signalHost) disconnect(state.id);
+      else disconnectPeerConnection(state);
     } else if (command.type === "send") {
       const state = requirePeer(command.peerId);
       const channel = command.channel ? state.channels[command.channel] : null;
@@ -181,7 +188,13 @@ function connectSignal(state: PeerState): void {
   socket.addEventListener("open", () => {
     state.reconnectAttempt = 0;
     socket.send(
-      JSON.stringify({ type: "hello", version: 1, peer: state.role, token: state.resumeToken ?? state.token }),
+      JSON.stringify({
+        type: "hello",
+        version: 1,
+        peer: state.role,
+        token: state.resumeToken ?? state.token,
+        ...(state.role === "host" ? { multiplex: true } : {}),
+      }),
     );
   });
   socket.addEventListener("message", (event) => {
@@ -197,9 +210,7 @@ function connectSignal(state: PeerState): void {
     if (state.socket !== socket) return;
     state.socket = null;
     if (event.code === 4000) {
-      state.closed = true;
-      disconnectPeerConnection(state);
-      peers.delete(state.id);
+      disconnect(state.id);
       post({ type: "peer-disconnected", peerId: state.id });
       return;
     }
@@ -234,6 +245,15 @@ async function handleSignal(state: PeerState, message: SignalMessage): Promise<v
     state.resumeToken = message.resumeToken ?? state.resumeToken;
     state.connectionId = message.connectionId ?? state.connectionId;
     state.iceServers = message.iceServers ?? state.iceServers;
+    for (const client of state.clients.values()) {
+      client.iceServers = state.iceServers;
+      client.peerConnection?.setConfiguration({
+        iceServers: client.iceServers,
+        bundlePolicy: "max-bundle",
+        iceTransportPolicy: client.iceTransportPolicy,
+      });
+      post({ type: "ice-servers", peerId: client.id, iceServers: client.iceServers });
+    }
     if (state.peerConnection)
       state.peerConnection.setConfiguration({
         iceServers: state.iceServers,
@@ -263,15 +283,35 @@ async function handleSignal(state: PeerState, message: SignalMessage): Promise<v
     }
     return;
   }
-  if (message.type === "peer-ready" && state.role === "host" && message.connectionId) {
-    if (!message.resumed && state.peerConnection) {
-      disconnectPeerConnection(state);
-      post({ type: "peer-disconnected", peerId: state.id });
+  if (message.type === "peer-ready" && state.role === "host" && message.connectionId && message.sessionId) {
+    let client = state.clients.get(message.sessionId);
+    if (client && !message.resumed) {
+      disconnect(client.id);
+      client = undefined;
     }
-    state.connectionId = message.connectionId;
+    if (!client) {
+      client = {
+        ...state,
+        id: crypto.randomUUID(),
+        signalHost: state,
+        clients: new Map(),
+        socket: null,
+        connectionId: null,
+        peerConnection: null,
+        channels: {},
+        payloadDecoders: {},
+        reconnectTimer: null,
+        turnRefreshTimer: null,
+        signalChain: Promise.resolve(),
+      };
+      state.clients.set(message.sessionId, client);
+      peers.set(client.id, client);
+    }
+    client.connectionId = message.connectionId;
     post({
       type: "incoming-peer",
-      peerId: state.id,
+      peerId: client.id,
+      hostId: state.id,
       connectionId: message.connectionId,
       sessionId: message.sessionId,
       userId: message.userId,
@@ -279,10 +319,28 @@ async function handleSignal(state: PeerState, message: SignalMessage): Promise<v
       role: message.role,
       sessionExpiresAt: message.sessionExpiresAt,
     });
-    if (!state.peerConnection) createPeerConnection(state, state.iceServers);
+    if (!client.peerConnection) createPeerConnection(client, client.iceServers);
+    return;
+  }
+  if (state.role === "host" && !state.signalHost && message.connectionId) {
+    const client = [...state.clients.values()].find((peer) => peer.connectionId === message.connectionId);
+    if (client) {
+      try {
+        await handleSignal(client, message);
+      } catch (error) {
+        failPeer(client, error);
+        disconnect(client.id);
+      }
+    }
     return;
   }
   if (message.type === "disconnect" && message.connectionId === state.connectionId) {
+    if (state.signalHost) {
+      // Signal already removed the connection; do not echo a disconnect.
+      state.connectionId = null;
+      disconnect(state.id);
+      return;
+    }
     state.peerConnection?.close();
     state.peerConnection = null;
     state.connectionId = null;
@@ -503,8 +561,9 @@ async function reportSelectedPath(state: PeerState, connection: RTCPeerConnectio
 }
 
 function sendSignal(state: PeerState, message: SignalClientMessage): void {
-  if (!state.socket || state.socket.readyState !== WebSocket.OPEN) throw new Error("Signal is not connected.");
-  state.socket.send(JSON.stringify(message));
+  const socket = (state.signalHost ?? state).socket;
+  if (!socket || socket.readyState !== WebSocket.OPEN) throw new Error("Signal is not connected.");
+  socket.send(JSON.stringify(message));
 }
 
 function scheduleSignalReconnect(state: PeerState): void {
@@ -533,16 +592,24 @@ function disconnect(peerId: string): void {
   const state = peers.get(peerId);
   if (!state) return;
   state.closed = true;
+  for (const child of [...state.clients.values()]) disconnect(child.id);
+  if (state.signalHost) {
+    for (const [sessionId, child] of state.signalHost.clients) {
+      if (child === state) state.signalHost.clients.delete(sessionId);
+    }
+  }
   if (state.reconnectTimer !== null) clearTimeout(state.reconnectTimer);
   if (state.turnRefreshTimer !== null) clearTimeout(state.turnRefreshTimer);
   disconnectPeerConnection(state);
   state.socket?.close(1000, "Peer stopped");
   peers.delete(peerId);
+  if (state.signalHost) post({ type: "peer-disconnected", peerId });
 }
 
 function disconnectPeerConnection(state: PeerState): void {
-  if (state.connectionId && state.socket?.readyState === WebSocket.OPEN) {
-    state.socket.send(JSON.stringify({ type: "disconnect", version: 1, connectionId: state.connectionId }));
+  const socket = (state.signalHost ?? state).socket;
+  if (state.connectionId && socket?.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: "disconnect", version: 1, connectionId: state.connectionId }));
   }
   state.peerConnection?.close();
   state.peerConnection = null;

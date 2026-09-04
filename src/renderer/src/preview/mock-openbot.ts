@@ -1,4 +1,5 @@
 import type {
+  AccountSession,
   AccountUsage,
   AgentEvent,
   AgentModelOption,
@@ -187,6 +188,32 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
   let teamMembers = clone(options.teamMembers ?? STORY_TEAM_MEMBERS);
   let invites = clone(options.invites ?? STORY_INVITES);
   let sessions = clone(options.sessions ?? STORY_SESSIONS);
+  let accountSessions: AccountSession[] = [
+    {
+      sessionId: "22222222-2222-4222-8222-222222222222",
+      name: "This desktop",
+      kind: "desktop",
+      current: true,
+      connectedAt: Date.now() - 86_400_000,
+      lastActiveAt: Date.now(),
+    },
+    {
+      sessionId: "33333333-3333-4333-8333-333333333333",
+      name: "Desktop",
+      kind: "desktop",
+      current: false,
+      connectedAt: Date.now() - 172_800_000,
+      lastActiveAt: Date.now() - 3_600_000,
+    },
+    {
+      sessionId: "11111111-1111-4111-8111-111111111111",
+      name: "Norbert’s iPhone",
+      kind: "mobile",
+      current: false,
+      connectedAt: Date.now() - 86_400_000,
+      lastActiveAt: Date.now() - 60_000,
+    },
+  ];
   let remoteDesktopSessions = clone(options.remoteDesktopSessions ?? [STORY_REMOTE_DESKTOP_SESSION]);
   let updateStatus = clone(options.updateStatus ?? STORY_UPDATE_STATUS);
   const usage = clone(options.usage ?? STORY_USAGE);
@@ -473,16 +500,25 @@ export function createMockOpenBot(options: MockOpenBotOptions = {}): MockOpenBot
           "openbot://mobile-connect?api=https%3A%2F%2Fapi.openbot.run&ticket=preview-mobile-ticket_1234567890abcdef",
         expiresAt: Date.now() + 120_000,
       }),
-      listMobileConnectedDevices: async () => [
-        {
-          sessionId: "11111111-1111-4111-8111-111111111111",
-          name: "Norbert’s iPhone",
-          platform: "ios",
-          connectedAt: Date.now() - 86_400_000,
-          lastActiveAt: Date.now() - 60_000,
-        },
-      ],
-      revokeMobileConnectedDevice: async () => undefined,
+      listMobileConnectedDevices: async () =>
+        accountSessions
+          .filter((session) => session.kind === "mobile")
+          .map((session) => ({
+            sessionId: session.sessionId,
+            name: session.name,
+            platform: "ios",
+            connectedAt: session.connectedAt,
+            lastActiveAt: session.lastActiveAt,
+          })),
+      revokeMobileConnectedDevice: async (sessionId) => {
+        accountSessions = accountSessions.filter(
+          (session) => session.kind !== "mobile" || session.sessionId !== sessionId,
+        );
+      },
+      listAccountSessions: async () => clone(accountSessions),
+      revokeAccountSession: async (sessionId) => {
+        accountSessions = accountSessions.filter((session) => session.sessionId !== sessionId);
+      },
       logout: async () => {
         authState = { status: "signed_out" };
         emitAuthState(authState);

@@ -1,4 +1,5 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import type { AccountSession } from "@openbot/contracts/mobile-connect";
 import { describe, expect, it, vi } from "vitest";
 import { AuthService, generateOneTimeCode, normalizeOneTimeCode } from "../src/server/auth-service";
 import type {
@@ -255,6 +256,31 @@ class MemoryAuthRepository implements AuthRepository {
       const session = [...this.sessions.values()].find((candidate) => candidate.id === device.sessionId);
       return device.userId === userId && Boolean(session && !session.revoked && session.expiresAt > now);
     });
+  }
+
+  async listAccountSessions(userId: string, currentToken: string, now: number): Promise<AccountSession[]> {
+    return [...this.sessions.entries()]
+      .filter(([, session]) => session.user.id === userId && !session.revoked && session.expiresAt > now)
+      .map(([token, session]) => {
+        const device = this.mobileDevices.get(session.id);
+        return {
+          sessionId: session.id,
+          name: device?.name ?? "Desktop",
+          kind: device ? "mobile" : "desktop",
+          current: token === currentToken,
+          connectedAt: device?.connectedAt ?? 0,
+          lastActiveAt: device?.lastActiveAt ?? 0,
+        };
+      });
+  }
+
+  async revokeAccountSession(userId: string, sessionId: string): Promise<boolean> {
+    const session = [...this.sessions.values()].find(
+      (session) => session.id === sessionId && session.user.id === userId,
+    );
+    if (!session || session.revoked) return false;
+    session.revoked = true;
+    return true;
   }
 
   async revokeMobileAuthDevice(userId: string, sessionId: string): Promise<boolean> {

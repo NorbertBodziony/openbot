@@ -1,4 +1,4 @@
-import type { MobileConnectHostBinding } from "@openbot/contracts/mobile-connect";
+import type { AccountSession, MobileConnectHostBinding } from "@openbot/contracts/mobile-connect";
 import { sha256 } from "./crypto";
 import type {
   AuthRepository,
@@ -507,6 +507,30 @@ export class D1AuthRepository implements AuthRepository {
       connectedAt: row.created_at,
       lastActiveAt: row.last_used_at,
     }));
+  }
+
+  async listAccountSessions(userId: string, currentToken: string, now: number): Promise<AccountSession[]> {
+    const result = await this.database
+      .prepare(`
+      SELECT a.id AS sessionId, COALESCE(m.device_name, 'Desktop') AS name,
+        CASE WHEN m.session_id IS NULL THEN 'desktop' ELSE 'mobile' END AS kind,
+        a.token_hash = ? AS is_current, a.created_at AS connectedAt, a.last_used_at AS lastActiveAt
+      FROM auth_sessions a LEFT JOIN mobile_auth_sessions m ON m.session_id = a.id
+      WHERE a.user_id = ? AND a.revoked_at IS NULL AND a.expires_at > ?
+      ORDER BY a.last_used_at DESC, a.created_at DESC
+    `)
+      .bind(await sha256(currentToken), userId, now)
+      .all<Omit<AccountSession, "current"> & { is_current: number }>();
+    return result.results.map(({ is_current, ...session }) => ({ ...session, current: is_current === 1 }));
+  }
+
+  async revokeAccountSession(userId: string, sessionId: string, now: number): Promise<boolean> {
+    // The migration's trigger ends remote sessions and enqueues their disconnect atomically.
+    const result = await this.database
+      .prepare("UPDATE auth_sessions SET revoked_at = ? WHERE id = ? AND user_id = ? AND revoked_at IS NULL")
+      .bind(now, sessionId, userId)
+      .run();
+    return result.meta.changes === 1;
   }
 
   async revokeMobileAuthDevice(userId: string, sessionId: string, now: number): Promise<boolean> {

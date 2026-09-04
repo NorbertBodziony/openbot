@@ -358,6 +358,20 @@ export class AuthService {
     await this.#flushSessionRevocations();
   }
 
+  async listAccountSessions(sessionToken: string) {
+    const user = await this.authenticate(sessionToken);
+    if (!user) throw new AuthServiceError(401, "unauthorized", "The session is invalid.");
+    return this.#repository.listAccountSessions(user.id, sessionToken, this.#now());
+  }
+
+  async revokeAccountSession(sessionToken: string, sessionId: string): Promise<void> {
+    if (!isUuidV4(sessionId)) throw new AuthServiceError(400, "invalid_session", "The session ID is invalid.");
+    const user = await this.authenticate(sessionToken);
+    if (!user) throw new AuthServiceError(401, "unauthorized", "The session is invalid.");
+    await this.#repository.revokeAccountSession(user.id, sessionId, this.#now());
+    await this.#flushSessionRevocations();
+  }
+
   async logout(sessionToken: string): Promise<void> {
     await this.#repository.revokeSession(sessionToken, this.#now());
     await this.#flushSessionRevocations();

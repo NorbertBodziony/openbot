@@ -69,7 +69,23 @@ describe("ConversationReadStore", () => {
     await restoredDatabase.initialize();
     const restored = new ConversationReadStore(restoredDatabase);
     expect(restored.readState("member-a", third).throughMessageId).toBe("message-2");
+    // Mark-unread is an explicit reset, distinct from a stale read acknowledgement.
+    for (let repeat = 0; repeat < 2; repeat += 1) {
+      restored.markUnread("member-a", third);
+      expect(restored.readState("member-a", third)).toMatchObject({ unreadCount: 3, throughMessageId: null });
+      restored.markRead("member-a", third, "message-2");
+      expect(restored.readState("member-a", third)).toMatchObject({ unreadCount: 1, throughMessageId: "message-2" });
+    }
+    restored.markUnread("member-a", third);
+    expect(restored.readState("member-owner", third).throughMessageId).toBe("message-2");
     restoredDatabase.close();
+    const reopenedDatabase = new OpenBotDatabase(root);
+    await reopenedDatabase.initialize();
+    expect(new ConversationReadStore(reopenedDatabase).readState("member-a", third)).toMatchObject({
+      unreadCount: 3,
+      throughMessageId: null,
+    });
+    reopenedDatabase.close();
   });
 
   it("rebases a filtered marker cursor to the preceding supported message", async () => {

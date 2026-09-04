@@ -28,6 +28,12 @@ export function registerAccountIpcHandlers({ centralAuth, host }: AccountIpcDepe
   handleTrusted(IPC_CHANNELS.authUpdateAvatar, parseAvatarImage, (parsed) => centralAuth.updateAvatar(parsed));
   handleTrusted(IPC_CHANNELS.authCreateMobileConnect, () => createHostedMobileConnect({ centralAuth, host }));
   handleTrusted(IPC_CHANNELS.authListMobileConnectedDevices, () => centralAuth.listMobileConnectedDevices());
+  handleTrusted(IPC_CHANNELS.authListAccountSessions, () => centralAuth.listAccountSessions());
+  handleTrusted(
+    IPC_CHANNELS.authRevokeAccountSession,
+    stringPayload("sessionId", INPUT_LIMITS.identifier),
+    (sessionId) => centralAuth.revokeAccountSession(sessionId),
+  );
   handleTrusted(
     IPC_CHANNELS.authRevokeMobileConnectedDevice,
     stringPayload("sessionId", INPUT_LIMITS.identifier),

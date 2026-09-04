@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { exportJWK, generateKeyPair, importJWK, jwtVerify } from "jose";
 import { describe, expect, it } from "vitest";
+import { AuthService } from "../src/server/auth-service";
 import { sha256 } from "../src/server/crypto";
 import { D1AuthRepository } from "../src/server/d1-auth-repository";
 import {
@@ -140,6 +141,76 @@ describe("Remote service authentication", () => {
 });
 
 describe("RemoteControlPlane", () => {
+  it("lists only public account-session metadata and revokes permanent desktops with live remote access", async () => {
+    const database = new DatabaseSync(":memory:");
+    try {
+      database.exec("PRAGMA foreign_keys = ON");
+      const migrations = new URL("../migrations/", import.meta.url);
+      for (const name of readdirSync(migrations)
+        .filter((name) => name.endsWith(".sql"))
+        .sort()) {
+        database.exec(readFileSync(new URL(name, migrations), "utf8"));
+      }
+      database.exec(`
+        INSERT INTO users(id, identity_key, email, created_at, updated_at) VALUES ('owner', 'email:owner@example.com', 'owner@example.com', 1, 1), ('stranger', 'email:stranger@example.com', 'stranger@example.com', 1, 1);
+        INSERT INTO remote_hosts(host_id, owner_user_id, name, device_public_key, auth_epoch, created_at, updated_at) VALUES ('host', 'owner', 'Desktop', 'public-key', 1, 1, 1);
+        INSERT INTO remote_memberships(membership_id, host_id, user_id, role, status, created_at, updated_at) VALUES ('owner-member', 'host', 'owner', 'owner', 'active', 1, 1);
+        INSERT INTO remote_sessions(session_id, host_id, user_id, membership_id, started_at, expires_at) VALUES ('live-desktop', 'host', 'owner', 'owner-member', 1, 8640000000000000);
+      `);
+      const currentId = "00000000-0000-4000-8000-000000000001";
+      const targetId = "00000000-0000-4000-8000-000000000002";
+      const strangerId = "00000000-0000-4000-8000-000000000003";
+      const insert = database.prepare(
+        "INSERT INTO auth_sessions(id, token_hash, user_id, created_at, last_used_at, expires_at) VALUES (?, ?, ?, 1, 1, 8640000000000000)",
+      );
+      insert.run(currentId, await sha256("current-token"), "owner");
+      insert.run(targetId, await sha256("target-token"), "owner");
+      insert.run(strangerId, await sha256("stranger-token"), "stranger");
+      const db = sqliteD1(database);
+      const repository = new D1AuthRepository(db);
+      const delivered: unknown[] = [];
+      const now = 10_000_000_000_000;
+      const service = new AuthService({
+        repository,
+        now: () => now,
+        delivery: { send: async () => {} },
+        flushSessionRevocations: () =>
+          deliverPendingRemoteAuthEvents(
+            {
+              DB: db,
+              REMOTE_AUTH_WEBHOOK_URL: "https://signal.example.test/internal/auth-events",
+              REMOTE_AUTH_WEBHOOK_SECRET: "s".repeat(32),
+            },
+            now,
+            async (_url, init) => {
+              delivered.push(JSON.parse(String(init?.body)));
+              return new Response(null, { status: 204 });
+            },
+          ),
+      });
+      expect(await service.listAccountSessions("current-token")).toEqual([
+        { sessionId: currentId, name: "Desktop", kind: "desktop", current: true, connectedAt: 1, lastActiveAt: now },
+        { sessionId: targetId, name: "Desktop", kind: "desktop", current: false, connectedAt: 1, lastActiveAt: 1 },
+      ]);
+      await expect(service.listAccountSessions("invalid-token")).rejects.toMatchObject({ status: 401 });
+      await expect(service.revokeAccountSession("invalid-token", targetId)).rejects.toMatchObject({ status: 401 });
+      await service.revokeAccountSession("stranger-token", targetId);
+      expect(await service.authenticate("target-token")).toMatchObject({ id: "owner" });
+      expect(delivered).toEqual([]);
+      await service.revokeAccountSession("current-token", targetId);
+      expect(await service.authenticate("target-token")).toBeNull();
+      expect((await service.listAccountSessions("current-token")).map((session) => session.sessionId)).toEqual([
+        currentId,
+      ]);
+      expect(await service.authenticate("stranger-token")).toMatchObject({ id: "stranger" });
+      expect(database.prepare("SELECT ended_at FROM remote_sessions WHERE session_id = 'live-desktop'").get()).toEqual({
+        ended_at: now,
+      });
+      expect(delivered).toEqual([{ type: "remote-session-ended", hostId: "host", sessionId: "live-desktop" }]);
+    } finally {
+      database.close();
+    }
+  });
   it("binds mobile tickets and delivers device revocation for an already connected phone", async () => {
     const database = new DatabaseSync(":memory:");
     try {
@@ -181,6 +252,9 @@ describe("RemoteControlPlane", () => {
         host,
         sessionToken: "phone-token",
       });
+      expect(await repository.listAccountSessions("owner", "phone-token", 1001)).toEqual([
+        { sessionId: "phone", name: "Phone", kind: "mobile", current: true, connectedAt: 1001, lastActiveAt: 1001 },
+      ]);
       await expect(repository.authenticateMobileSession("phone-token", 10_000_000_000_000)).resolves.toMatchObject({
         id: "owner",
       });
@@ -314,6 +388,7 @@ describe("RemoteControlPlane", () => {
     database.exec("PRAGMA foreign_keys = ON");
     database.exec(`
       CREATE TABLE users (id TEXT PRIMARY KEY);
+      CREATE TABLE team_auth_tickets(ticket_hash TEXT PRIMARY KEY);
       CREATE TABLE auth_sessions (
         token_hash TEXT PRIMARY KEY,
         user_id TEXT NOT NULL REFERENCES users(id),
@@ -339,6 +414,8 @@ describe("RemoteControlPlane", () => {
     `);
     database.exec(readFileSync(new URL("../migrations/0012_remote_control_plane.sql", import.meta.url), "utf8"));
     database.exec(readFileSync(new URL("../migrations/0013_remote_session_lifecycle.sql", import.meta.url), "utf8"));
+    database.exec(readFileSync(new URL("../migrations/0017_mobile_session_security.sql", import.meta.url), "utf8"));
+    database.exec(readFileSync(new URL("../migrations/0018_remote_device_sessions.sql", import.meta.url), "utf8"));
     const pair = await generateKeyPair("ES256", { extractable: true });
     const privateJwk = await exportJWK(pair.privateKey);
     const publicJwk = { ...(await exportJWK(pair.publicKey)), kid: "test-key", use: "sig", alg: "ES256" };
@@ -413,6 +490,22 @@ describe("RemoteControlPlane", () => {
     });
 
     const session = await controlPlane.startSession(owner.id, "host-1", "owner-auth");
+    await expect(controlPlane.startSession(owner.id, "host-1", "owner-auth")).resolves.toEqual(session);
+    database
+      .prepare("INSERT INTO auth_sessions(token_hash, user_id, expires_at) VALUES ('other-phone', 'owner', 5000)")
+      .run();
+    const otherPhone = await controlPlane.startSession(owner.id, "host-1", "other-phone");
+    expect(otherPhone.sessionId).not.toBe(session.sessionId);
+    await controlPlane.endAccountSession(owner.id, "other-phone");
+    await expect(controlPlane.issueSessionTicket(owner.id, otherPhone.sessionId, "public-key")).rejects.toMatchObject({
+      code: "session_inactive",
+    });
+    await expect(controlPlane.startSession(owner.id, "host-1", "owner-auth")).resolves.toEqual(session);
+    database
+      .prepare("INSERT INTO auth_sessions(token_hash, user_id, expires_at) VALUES ('repaired-phone', 'owner', 5000)")
+      .run();
+    const repaired = await controlPlane.startSession(owner.id, "host-1", "repaired-phone");
+    expect(repaired.sessionId).not.toBe(otherPhone.sessionId);
     await expect(controlPlane.startSession(owner.id, "host-1", "owner-auth")).resolves.toEqual(session);
     const claims = {
       sessionId: session.sessionId,

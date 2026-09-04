@@ -22,7 +22,7 @@ export interface RemoteTicketClaims {
 }
 
 export type SignalClientMessage =
-  | { type: "hello"; version: 1; peer: "host" | "client"; token: string }
+  | { type: "hello"; version: 1; peer: "host" | "client"; token: string; multiplex?: boolean }
   | { type: "offer" | "answer"; version: 1; connectionId: string; channel: SignalChannel; sdp: string }
   | {
       type: "ice-candidate";
@@ -96,6 +96,7 @@ const signalClientMessageSchema = z.discriminatedUnion("type", [
     version: z.literal(1),
     peer: z.enum(["host", "client"]),
     token: z.string().min(1).max(8_192),
+    multiplex: z.boolean().optional(),
   }),
   z.object({
     type: z.enum(["offer", "answer"]),
