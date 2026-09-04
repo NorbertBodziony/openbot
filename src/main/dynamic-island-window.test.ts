@@ -15,6 +15,7 @@ import type { BrowserWindow, Display, Rectangle } from "electron";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as preferenceStore from "./dynamic-island-preference-store";
 import {
+  DYNAMIC_ISLAND_COLLAPSE_SETTLE_MS,
   DynamicIslandWindowController,
   dynamicIslandNotchSizeForDisplay,
   dynamicIslandWindowBounds,
@@ -77,6 +78,7 @@ function criticalPresentation(
 }
 
 afterEach(async () => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -194,7 +196,12 @@ describe("dynamic island window geometry", () => {
     expect(windows[0]?.destroy).toHaveBeenCalledOnce();
     expect(windows[1]?.setBounds).toHaveBeenCalledWith({ x: 1793, y: 20, width: 614, height: 380 }, false);
 
+    // The window is the only thing clipping the island, so it keeps the tall bounds until the
+    // renderer's collapse animation has landed - otherwise the lower half is cut off at once.
+    vi.useFakeTimers();
     controller.setInteractive(43, false);
+    expect(windows[1]?.setBounds).not.toHaveBeenCalledWith({ x: 1793, y: 20, width: 614, height: 50 }, false);
+    await vi.advanceTimersByTimeAsync(DYNAMIC_ISLAND_COLLAPSE_SETTLE_MS);
     expect(windows[1]?.setBounds).toHaveBeenCalledWith({ x: 1793, y: 20, width: 614, height: 50 }, false);
   });
 
