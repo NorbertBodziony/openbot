@@ -3,7 +3,14 @@
 // copies openbot.db: it drives the instance you already have open.
 import { join } from "node:path";
 import { createOpenBotLogger } from "@openbot/logging";
-import { assertMutationAllowed, connectToDevApp, resolveAutomationPort } from "./cdp-client";
+import {
+  assertMutationAllowed,
+  connectToDevApp,
+  describeDevPages,
+  devBrowserPages,
+  openDevBrowser,
+  resolveAutomationPort,
+} from "./cdp-client";
 import {
   type DevInstanceRecord,
   type DevInstanceService,
@@ -60,6 +67,16 @@ function readTimeout(): number {
     throw new Error("--timeout must be an integer of 1..120000 ms.");
   }
   return timeout;
+}
+
+// Dev is meant to be fully testable, so any window can be driven - but the
+// aim has to be deliberate. An empty selector would match every target and
+// land wherever the list happens to start.
+function readPageSelector(): string | null {
+  const raw = flagValue("--page");
+  if (raw === null) return null;
+  if (raw.trim() === "") throw new Error("--page=<index|url-substring> cannot be empty.");
+  return raw;
 }
 
 function readService(): DevInstanceService {
@@ -142,11 +159,28 @@ async function main(): Promise<void> {
     process.stdout.write(`${JSON.stringify({ instances: records }, null, 2)}\n`);
     return;
   }
-  if (command !== "snapshot" && command !== "click" && command !== "type" && command !== "screenshot") {
-    throw new Error("Usage: bun scripts/dev-automation/cli.ts <instances|snapshot|click|type|screenshot> [flags]");
+  if (
+    command !== "pages" &&
+    command !== "snapshot" &&
+    command !== "click" &&
+    command !== "type" &&
+    command !== "screenshot"
+  ) {
+    throw new Error(
+      "Usage: bun scripts/dev-automation/cli.ts <instances|pages|snapshot|click|type|screenshot> [flags]",
+    );
   }
   const target = resolveTarget(readDevInstanceRecords(), readService());
   logger.info(`target ${target.description}`);
+  if (command === "pages") {
+    const browser = await openDevBrowser(target.port, logger);
+    try {
+      process.stdout.write(`${JSON.stringify({ pages: describeDevPages(devBrowserPages(browser)) }, null, 2)}\n`);
+    } finally {
+      await browser.close();
+    }
+    return;
+  }
   if (command === "click" || command === "type") {
     assertMutationAllowed({
       command,
@@ -161,6 +195,7 @@ async function main(): Promise<void> {
   const timeoutMs = readTimeout();
   const session = await connectToDevApp(target.port, logger, {
     expectedRendererPort: target.expectedRendererPort,
+    pageSelector: readPageSelector(),
   });
   try {
     if (command === "snapshot") {

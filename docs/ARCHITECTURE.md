@@ -93,8 +93,10 @@ renderer ──► @openbot/contracts ◄── preload ◄── main ──►
     renderer port and debugging port to a registry in the per-user temporary directory
     (`scripts/dev-automation/instance-registry.ts`); automation resolves the record of the worktree
     it runs in, verifies the renderer port and the `window.openbot` preload bridge before driving a
-    page, and refuses `click` or `type` on an instance it only inferred. Page URLs reach the
-    diagnostics and the snapshot document only through `describeTarget`.
+    page, and refuses `click` or `type` on an instance it only inferred. Every dev window stays
+    reachable: `pages` lists the targets and `--page=<index|url-substring>` drives any of them, so
+    the app window is the default rather than a limit. Page URLs reach the diagnostics and the
+    snapshot document only through `describeTarget`.
 
 SQLite migration history starts at the frozen version 8 compatibility baseline. Keep the baseline
 schema unchanged, append every later migration in numeric order, and update the separate latest

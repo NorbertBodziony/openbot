@@ -149,13 +149,38 @@ export interface ConnectOptions {
   // Set from the instance registry. Null means nothing published this port, so
   // the only check left is the OpenBot User-Agent.
   expectedRendererPort?: number | null;
+  // A `--page=` selector. This is dev: every window is fair game, including a
+  // Dynamic Island surface and an embedded browser view showing a real site,
+  // because those flows have to be testable too. The app window is only the
+  // default, so a command nobody aimed cannot land in an OAuth page by
+  // accident; naming a target overrides both the route filter and the preload
+  // bridge probe.
+  pageSelector?: string | null;
 }
 
-export async function connectToDevApp(
-  port: number,
-  logger: Logger,
-  options: ConnectOptions = {},
-): Promise<AutomationSession> {
+export interface PageChoice {
+  index: number;
+  target: string;
+}
+
+export function describeDevPages<T extends { url: () => string }>(pages: T[]): PageChoice[] {
+  return pages.map((page, index) => ({ index, target: describeTarget(page.url()) }));
+}
+
+// An index from `dev:automation pages`, or a case-insensitive substring of the
+// target URL. The substring is matched locally against what the developer
+// typed, so it never reaches a log.
+export function matchPages<T extends { url: () => string }>(pages: T[], selector: string): T[] {
+  const index = Number(selector);
+  if (Number.isInteger(index)) {
+    const chosen = index >= 0 ? pages[index] : undefined;
+    return chosen ? [chosen] : [];
+  }
+  const needle = selector.toLowerCase();
+  return pages.filter((page) => page.url().toLowerCase().includes(needle));
+}
+
+export async function openDevBrowser(port: number, logger: Logger): Promise<Browser> {
   let targets: string;
   try {
     targets = (await describeBrowser(port)).targets;
@@ -168,19 +193,38 @@ export async function connectToDevApp(
     );
   }
   logger.info(`CDP targets on :${port}`, targets || "(no pages yet)");
-  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+  return chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+}
+
+export function devBrowserPages(browser: Browser): Page[] {
+  return browser.contexts().flatMap((context) => context.pages());
+}
+
+export async function connectToDevApp(
+  port: number,
+  logger: Logger,
+  options: ConnectOptions = {},
+): Promise<AutomationSession> {
+  const browser = await openDevBrowser(port, logger);
   const expectedRendererPort = options.expectedRendererPort ?? null;
-  const [page, ...ambiguous] = await findRendererPages(
-    browser.contexts().flatMap((context) => context.pages()),
-    expectedRendererPort,
-  );
+  const selector = options.pageSelector ?? null;
+  const pages = devBrowserPages(browser);
+  const [page, ...ambiguous] =
+    selector === null ? await findRendererPages(pages, expectedRendererPort) : matchPages(pages, selector);
   if (!page) {
     await browser.close();
+    if (selector !== null) {
+      throw new Error(
+        `No page on :${port} matches --page=${selector}. Run \`bun run dev:automation pages\` ` +
+          "for the current targets and their indexes.",
+      );
+    }
     throw new Error(
       `Connected over CDP but found no OpenBot main window on :${port}` +
         (expectedRendererPort === null ? ". " : ` serving renderer :${expectedRendererPort}. `) +
         (expectedRendererPort === null
-          ? "Open the app window (helper surfaces and pages without the OpenBot preload bridge are never driven) and retry."
+          ? "Open the app window, or aim at another target with --page=<index|url-substring> " +
+            "from `bun run dev:automation pages`."
           : "That port now belongs to a different dev instance. Re-run `bun run dev:automation instances` " +
             "and name the instance you mean."),
     );
@@ -188,8 +232,11 @@ export async function connectToDevApp(
   if (ambiguous.length > 0) {
     await browser.close();
     throw new Error(
-      `Found ${ambiguous.length + 1} candidate main windows on :${port}, so the target is ambiguous. ` +
-        "Close the extra window, or drive the instance you mean with its own --port=.",
+      `Found ${ambiguous.length + 1} matching pages on :${port}, so the target is ambiguous. ` +
+        "Narrow it with --page=<index|url-substring>, or name the instance with its own --port=. " +
+        `Targets on :${port}:\n${describeDevPages(pages)
+          .map((choice) => `- ${choice.index}: ${choice.target}`)
+          .join("\n")}`,
     );
   }
   logger.info(`driving ${describeTarget(page.url())}`);

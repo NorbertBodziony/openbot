@@ -1,7 +1,14 @@
 // Guardrails that keep automation on the intended dev instance: the wrong
 // port must fail before any click or keystroke can reach another app.
 import { describe, expect, it } from "vitest";
-import { assertMutationAllowed, findRendererPages, isOpenBotBrowser, resolveAutomationPort } from "./cdp-client";
+import {
+  assertMutationAllowed,
+  describeDevPages,
+  findRendererPages,
+  isOpenBotBrowser,
+  matchPages,
+  resolveAutomationPort,
+} from "./cdp-client";
 import { describeTarget, findMainPages, isMainAppUrl } from "./page-url";
 import { resolveScreenshotPath } from "./tools";
 
@@ -65,6 +72,39 @@ describe("findRendererPages", () => {
       },
     };
     await expect(findRendererPages([closing, app])).resolves.toEqual([app]);
+  });
+});
+
+describe("matchPages", () => {
+  // The point of --page= is that dev has nothing off limits: an embedded
+  // browser view or a helper surface is a legitimate target when it is aimed
+  // at by hand.
+  const app = { url: () => "http://localhost:5173/" };
+  const island = { url: () => "http://localhost:5173/?surface=dynamic-island" };
+  const embedded = { url: () => "https://accounts.google.com/o/oauth2/auth" };
+  const pages = [app, island, embedded];
+
+  it("aims at a target by the index the pages command printed", () => {
+    expect(matchPages(pages, "2")).toEqual([embedded]);
+    expect(matchPages(pages, "7")).toEqual([]);
+    expect(matchPages(pages, "-1")).toEqual([]);
+  });
+
+  it("aims at a target by a case-insensitive url fragment", () => {
+    expect(matchPages(pages, "ACCOUNTS.GOOGLE")).toEqual([embedded]);
+    expect(matchPages(pages, "dynamic-island")).toEqual([island]);
+  });
+
+  it("reports every match so an ambiguous aim can be refused", () => {
+    expect(matchPages(pages, "localhost:5173")).toEqual([app, island]);
+  });
+});
+
+describe("describeDevPages", () => {
+  it("numbers the targets it prints and keeps their queries out", () => {
+    expect(describeDevPages([{ url: () => "https://example.com/pay?token=abcdefghij" }])).toEqual([
+      { index: 0, target: "https://example.com (external)" },
+    ]);
   });
 });
 
