@@ -4,7 +4,14 @@
 import { join } from "node:path";
 import { createOpenBotLogger } from "@openbot/logging";
 import { assertMutationAllowed, connectToDevApp, resolveAutomationPort } from "./cdp-client";
-import { clickByRole, parseAutomationRole, screenshotTo, snapshotPage, typeByRole } from "./tools";
+import {
+  clickByRole,
+  parseAutomationRole,
+  resolveScreenshotPath,
+  screenshotTo,
+  snapshotPage,
+  typeByRole,
+} from "./tools";
 
 // Diagnostics go to stderr so stdout carries only the final JSON document,
 // which stays parseable for the calling agent.
@@ -85,8 +92,7 @@ async function main(): Promise<void> {
       const snapshot = await snapshotPage(session.page, logger);
       process.stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`);
     } else if (command === "screenshot") {
-      const out = flagValue("--out") ?? join(SCREENSHOT_ROOT, `screenshot-${Date.now()}.png`);
-      if (out === "") throw new Error("--out=<path> cannot be empty.");
+      const out = resolveScreenshotPath(SCREENSHOT_ROOT, flagValue("--out"), Date.now());
       await screenshotTo(session.page, out, logger);
       process.stdout.write(`${JSON.stringify({ screenshot: out })}\n`);
     }

@@ -63,5 +63,4 @@ const manifest = createReleaseManifest({
   artifacts: parsedArtifacts,
 });
 await writeFile(resolve(output), `${JSON.stringify(manifest, null, 2)}\n`);
-// Machine-readable: release tag consumed by tooling.
-process.stdout.write(`${manifest.tag}\n`);
+console.log(manifest.tag);

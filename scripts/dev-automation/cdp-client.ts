@@ -77,11 +77,46 @@ export function isOpenBotBrowser(userAgent: string): boolean {
   return userAgent.includes("OpenBot/");
 }
 
-// The dev app opens helper surfaces (Dynamic Island popups) beside the main
-// window, in no guaranteed order. Prefer the bare app URL; the popups carry
-// a `surface=` query param.
-export function pickMainPage<T extends { url: () => string }>(pages: T[]): T | undefined {
-  return pages.find((candidate) => !candidate.url().includes("surface=")) ?? pages[0];
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
+}
+
+// A page title or a full URL can carry an OAuth code, a signed download URL or
+// the contents of a visited site, and log redaction recognizes none of those
+// shapes. Diagnostics therefore report where a target lives, never what it
+// says: an embedded browser collapses to its origin, and no title is logged.
+export function describeTarget(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return "(unparseable target)";
+  }
+  if (!isLoopbackHost(parsed.hostname)) return `${parsed.protocol}//${parsed.hostname} (external)`;
+  const surface = parsed.searchParams.get("surface");
+  return `${parsed.origin}${parsed.pathname}${surface === null ? "" : ` [surface]`}`;
+}
+
+// The dev app opens helper surfaces (Dynamic Island popups) and embedded
+// browser views beside the main window, in no guaranteed order. Only the bare
+// renderer route on a loopback origin is the app itself - an embedded view
+// showing an external site must never be a candidate, because `click` and
+// `type` would land on that site instead of OpenBot.
+export function isMainAppUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+  if (!isLoopbackHost(parsed.hostname)) return false;
+  if (parsed.searchParams.has("surface")) return false;
+  return parsed.pathname === "/" || parsed.pathname === "/index.html";
+}
+
+export function findMainPages<T extends { url: () => string }>(pages: T[]): T[] {
+  return pages.filter((candidate) => isMainAppUrl(candidate.url()));
 }
 
 async function describeBrowser(port: number): Promise<{ targets: string; userAgent: string }> {
@@ -106,9 +141,7 @@ async function describeBrowser(port: number): Promise<{ targets: string; userAge
   const targets = payload
     .filter(isDynamicRecord)
     .filter((target) => target.type === "page")
-    .map(
-      (target) => `- ${isString(target.title) ? target.title : "untitled"} ${isString(target.url) ? target.url : ""}`,
-    )
+    .map((target) => `- ${describeTarget(isString(target.url) ? target.url : "")}`)
     .join("\n");
   return { targets, userAgent };
 }
@@ -127,12 +160,22 @@ export async function connectToDevApp(port: number, logger: Logger): Promise<Aut
   }
   logger.info(`CDP targets on :${port}`, targets || "(no pages yet)");
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
-  const page = pickMainPage(browser.contexts().flatMap((context) => context.pages()));
+  const [page, ...ambiguous] = findMainPages(browser.contexts().flatMap((context) => context.pages()));
   if (!page) {
     await browser.close();
-    throw new Error(`Connected over CDP but found no open window on :${port}. Focus the dev app and retry.`);
+    throw new Error(
+      `Connected over CDP but found no OpenBot main window on :${port}. ` +
+        "Open the app window (helper surfaces and embedded browser views are never driven) and retry.",
+    );
   }
-  logger.info(`driving ${page.url()}`);
+  if (ambiguous.length > 0) {
+    await browser.close();
+    throw new Error(
+      `Found ${ambiguous.length + 1} candidate main windows on :${port}, so the target is ambiguous. ` +
+        "Close the extra window, or drive the instance you mean with its own --port=.",
+    );
+  }
+  logger.info(`driving ${describeTarget(page.url())}`);
   page.on("console", (message) => {
     logger.debug(`renderer console [${message.type()}]`, message.text().slice(0, 500));
   });

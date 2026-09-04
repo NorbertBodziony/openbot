@@ -79,7 +79,10 @@ renderer ──► @openbot/contracts ◄── preload ◄── main ──►
    component that assembles another one's props is how the god controller grew back last time.
 9. Do not add temporary compatibility paths without a removal condition and a test for that condition. Released Team API protocol adapters are permanent by default and follow the policy below.
 10. Log through `@openbot/logging` (`ts-log` Logger), never bare `console.*` - Biome's `noConsole`
-    enforces this in `src`, `scripts` and `packages`. Every line is timestamped, prefixed and
+    enforces this in `src`, `scripts` and `packages`. The remote-desktop build recipe files listed in
+    the `Require a recipe version bump` step of `.github/workflows/remote-desktop-runtime.yml` are
+    exempt: any edit to them, cosmetic or not, forces `remoteDesktop.recipeVersion` up and a full
+    native runtime rebuild, so their logging is frozen until the recipe changes for a real reason. Every line is timestamped, prefixed and
     secret-redacted, and redaction covers a serialized payload passed as one string, not only a
     structured param. `info` and above is written by default; `OPENBOT_LOG_LEVEL` lowers the
     threshold. Machine-readable stdout (piped JSON, tags, harness URLs) uses

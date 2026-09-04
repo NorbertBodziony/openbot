@@ -1,5 +1,5 @@
 import { mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, resolve, sep } from "node:path";
 import { dummyLogger, type Logger } from "@openbot/logging";
 import type { Page } from "playwright-core";
 
@@ -134,6 +134,22 @@ export async function typeByRole(
   const control = page.getByRole(role, { name });
   await control.fill(text, { timeout: timeoutMs });
   if (submit) await control.press("Enter", { timeout: timeoutMs });
+}
+
+// `screenshot` is one of the two read-only commands, so its destination must
+// stay inside the build directory: `--out=src/main/index.ts` would otherwise
+// overwrite tracked code without `--allow-mutations`, and `screenshotTo`
+// creates missing parents on the way.
+export function resolveScreenshotPath(root: string, requested: string | null, now: number): string {
+  const base = resolve(root);
+  if (requested === null) return resolve(base, `screenshot-${now}.png`);
+  if (requested === "") throw new Error("--out=<path> cannot be empty.");
+  const target = resolve(base, requested);
+  if (target !== base && !target.startsWith(`${base}${sep}`)) {
+    throw new Error(`--out must stay inside ${base}. Screenshots never write outside the build directory.`);
+  }
+  if (!target.endsWith(".png")) throw new Error("--out must name a .png file.");
+  return target;
 }
 
 export async function screenshotTo(page: Page, outPath: string, logger: Logger = dummyLogger): Promise<string> {

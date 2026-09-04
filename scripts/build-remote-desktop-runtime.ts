@@ -4,10 +4,7 @@ import { accessSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { createOpenBotLogger } from "@openbot/logging";
 import { createRemoteDesktopSourceManifest, loadNativeRuntimeLock } from "./native-runtime-lock";
-
-const logger = createOpenBotLogger("build-remote-desktop-runtime");
 
 const platform = process.platform === "darwin" ? "darwin" : process.platform === "win32" ? "win32" : null;
 if (!platform) throw new Error("The remote desktop runtime supports macOS and Windows only.");
@@ -82,7 +79,7 @@ try {
   ]);
   await writeChecksums(outputRoot);
   await writeChecksums(resolve("build/remote-desktop-runtime"), "DISTRIBUTION-SHA256SUMS.txt");
-  logger.info(`Built the pinned Sunshine and Moonlight Web runtime in ${outputRoot}`);
+  console.log(`Built the pinned Sunshine and Moonlight Web runtime in ${outputRoot}`);
 } finally {
   await rm(workRoot, { recursive: true, force: true });
 }

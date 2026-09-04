@@ -1,7 +1,15 @@
 // Guardrails that keep automation on the intended dev instance: the wrong
 // port must fail before any click or keystroke can reach another app.
 import { describe, expect, it } from "vitest";
-import { assertMutationAllowed, isOpenBotBrowser, pickMainPage, resolveAutomationPort } from "./cdp-client";
+import {
+  assertMutationAllowed,
+  describeTarget,
+  findMainPages,
+  isMainAppUrl,
+  isOpenBotBrowser,
+  resolveAutomationPort,
+} from "./cdp-client";
+import { resolveScreenshotPath } from "./tools";
 
 describe("isOpenBotBrowser", () => {
   it("accepts the Electron user agent", () => {
@@ -14,18 +22,57 @@ describe("isOpenBotBrowser", () => {
   });
 });
 
-describe("pickMainPage", () => {
-  it("prefers the bare app URL over helper surfaces in any order", () => {
-    const island = { url: () => "http://localhost:5173/?surface=dynamic-island" };
-    const main = { url: () => "http://localhost:5173/" };
-    expect(pickMainPage([island, main])).toBe(main);
-    expect(pickMainPage([main, island])).toBe(main);
+describe("findMainPages", () => {
+  const island = { url: () => "http://localhost:5173/?surface=dynamic-island" };
+  const main = { url: () => "http://localhost:5173/" };
+  const embedded = { url: () => "https://accounts.google.com/o/oauth2/auth?code=abcdefghij" };
+
+  it("keeps the bare app route regardless of target order", () => {
+    expect(findMainPages([island, main])).toEqual([main]);
+    expect(findMainPages([main, island])).toEqual([main]);
   });
 
-  it("falls back to the only page when every target is a helper", () => {
-    const island = { url: () => "http://localhost:5173/?surface=dynamic-island" };
-    expect(pickMainPage([island])).toBe(island);
-    expect(pickMainPage([])).toBe(undefined);
+  it("never offers a helper surface or an embedded site as the app", () => {
+    expect(findMainPages([island, embedded])).toEqual([]);
+    expect(findMainPages([])).toEqual([]);
+  });
+
+  it("rejects an external page served from the app route", () => {
+    expect(isMainAppUrl("https://example.com/")).toBe(false);
+    expect(isMainAppUrl("http://127.0.0.1:5173/index.html")).toBe(true);
+    expect(isMainAppUrl("devtools://devtools/bundled/inspector.html")).toBe(false);
+    expect(isMainAppUrl("not a url")).toBe(false);
+  });
+});
+
+describe("describeTarget", () => {
+  it("keeps a visited page's path and query out of the diagnostics", () => {
+    const described = describeTarget("https://accounts.google.com/o/oauth2/auth?code=abcdefghij&state=xyz");
+    expect(described).toBe("https://accounts.google.com (external)");
+  });
+
+  it("keeps the local route recognizable without its query", () => {
+    expect(describeTarget("http://localhost:5173/?token=abcdefghij")).toBe("http://localhost:5173/");
+    expect(describeTarget("http://localhost:5173/?surface=dynamic-island")).toBe("http://localhost:5173/ [surface]");
+  });
+});
+
+describe("resolveScreenshotPath", () => {
+  const root = "/tmp/openbot/.openbot-build/dev-automation";
+
+  it("names a timestamped file inside the build directory by default", () => {
+    expect(resolveScreenshotPath(root, null, 1_700_000_000_000)).toBe(`${root}/screenshot-1700000000000.png`);
+  });
+
+  it("refuses a destination outside the build directory", () => {
+    expect(() => resolveScreenshotPath(root, "src/main/index.ts", 1)).toThrow(/must stay inside|\.png/u);
+    expect(() => resolveScreenshotPath(root, "../../../src/main/index.ts", 1)).toThrow(/must stay inside/u);
+    expect(() => resolveScreenshotPath(root, "/etc/hosts", 1)).toThrow(/must stay inside/u);
+    expect(() => resolveScreenshotPath(root, "", 1)).toThrow(/cannot be empty/u);
+  });
+
+  it("accepts a relative .png name under the build directory", () => {
+    expect(resolveScreenshotPath(root, "run-1/after.png", 1)).toBe(`${root}/run-1/after.png`);
   });
 });
 
