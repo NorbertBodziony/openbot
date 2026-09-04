@@ -613,7 +613,7 @@ function decodeAgentSubmission(value: unknown): AgentSubmission {
     throw new Error("Invalid agent submission.");
   return {
     id: requiredString(item, "id"),
-    agentId: requiredString(item, "agentId"),
+    listingId: requiredString(item, "listingId"),
     name: requiredString(item, "name"),
     title: requiredString(item, "title"),
     description: requiredString(item, "description"),
@@ -653,7 +653,7 @@ function decodeAgentPublicationPreview(value: unknown): AgentPublicationPreview 
     versionId: "preview",
   });
   return {
-    botId: requiredString(item, "botId"),
+    agentId: requiredString(item, "agentId"),
     name: detail.name,
     title: detail.title,
     description: detail.description,
@@ -825,7 +825,7 @@ const openbotApi: OpenBotDesktopApi = {
     install: (input) =>
       ipcRenderer.invoke(IPC_CHANNELS.marketplaceAgentsInstall, input).then((value) => {
         const item = decodeRecord(value, "agent installation");
-        return { bot: decodeBot(item.bot) };
+        return { agent: decodeBot(item.agent) };
       }),
   },
   agent: {

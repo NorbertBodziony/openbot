@@ -128,7 +128,7 @@ export class AgentMarketplace {
     return publicDetail(row);
   }
 
-  async listMine(userId: string): Promise<AgentSubmission[]> {
+  async listMine(userId: string): Promise<AgentSubmissionWire[]> {
     const result = await this.bindings.DB.prepare(
       `SELECT versions.id, versions.agent_id, versions.version, versions.name, versions.title, versions.description,
               versions.avatar_seed, versions.avatar_hue, versions.avatar_key, versions.skills_json,
@@ -149,7 +149,7 @@ export class AgentMarketplace {
     snapshot: unknown;
     avatar: { bytes: Uint8Array; mimeType: string } | null;
     agentId?: string;
-  }): Promise<AgentSubmission> {
+  }): Promise<AgentSubmissionWire> {
     const snapshot = validateSnapshot(input.snapshot);
     const recent = await this.bindings.DB.prepare(
       `SELECT count(*) AS count FROM marketplace_agent_versions versions
@@ -267,7 +267,7 @@ export class AgentMarketplace {
         .run();
   }
 
-  async listPending(): Promise<AgentSubmission[]> {
+  async listPending(): Promise<AgentSubmissionWire[]> {
     const result = await this.bindings.DB.prepare(
       `SELECT versions.id, versions.agent_id, versions.version, versions.name, versions.title, versions.description,
               versions.avatar_seed, versions.avatar_hue, versions.avatar_key, versions.skills_json,
@@ -373,7 +373,7 @@ function validateSnapshot(value: unknown): AgentPublicationPreview {
   )
     throw new AgentMarketplaceError(400, "invalid_agent", "Invalid agent routines.");
   return {
-    botId: publishedAgentId,
+    agentId: publishedAgentId,
     name,
     title,
     description,
@@ -457,7 +457,14 @@ function publicDetail(row: AgentRow): MarketplaceAgentDetail {
   return { ...publicSummary(row), versionId: row.version_id ?? row.id, ...dependencies(row) };
 }
 
-function submission(row: AgentRow): AgentSubmission {
+/**
+ * The submission body a deployed desktop reads spells the marketplace listing `agentId`; in-app that
+ * name now means the local agent, so the contract calls it `listingId`. The wire keeps its spelling:
+ * a Worker deploy can land either side of a desktop release.
+ */
+type AgentSubmissionWire = Omit<AgentSubmission, "listingId"> & { agentId: string };
+
+function submission(row: AgentRow): AgentSubmissionWire {
   const { skills, routines } = dependencies(row);
   if (!isOneOf(["pending", "approved", "rejected"], row.status))
     throw new AgentMarketplaceError(500, "invalid_submission", "The stored agent submission is invalid.");

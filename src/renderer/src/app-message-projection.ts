@@ -140,7 +140,7 @@ function marketplaceSourcesEqual(
 ): boolean {
   if (!left || !right) return left === right;
   return (
-    left.agentId === right.agentId &&
+    left.listingId === right.listingId &&
     left.versionId === right.versionId &&
     left.version === right.version &&
     stringArraysEqual(left.skillIds, right.skillIds) &&

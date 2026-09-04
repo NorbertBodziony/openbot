@@ -178,7 +178,7 @@ export interface BotSummary {
   avatarHue: BotAvatarHue | null;
   avatarUrl: string | null;
   marketplaceSource?: {
-    agentId: string;
+    listingId: string;
     versionId: string;
     version: number;
     skillIds: string[];
@@ -1671,7 +1671,7 @@ export function isBotSummary(value: unknown): value is BotSummary {
 function isMarketplaceSource(value: unknown): value is NonNullable<BotSummary["marketplaceSource"]> {
   return (
     isDynamicRecord(value) &&
-    isIdentifier(value.agentId) &&
+    isIdentifier(value.listingId) &&
     isIdentifier(value.versionId) &&
     isNumber(value.version) &&
     Number.isInteger(value.version) &&

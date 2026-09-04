@@ -835,9 +835,12 @@ function isStoredBot(value: unknown): value is PersistedStoredBot {
 
 function isMarketplaceSource(value: unknown): boolean {
   if (value === undefined) return true;
+  // Agents installed before the marketplace listing id was renamed spell it `agentId`, which now
+  // means the local agent everywhere else. Both spellings are accepted here; `normalizeStoredBot`
+  // writes only the new one back.
   return (
     isRecord(value) &&
-    isString(value.agentId) &&
+    (isString(value.listingId) || isString(value.agentId)) &&
     isString(value.versionId) &&
     isNumber(value.version) &&
     Number.isInteger(value.version) &&
@@ -885,7 +888,35 @@ function normalizeStoredBot(bot: PersistedStoredBot): StoredBot {
     ...bot,
     provider: bot.provider ?? providerForLegacyModel(bot.model),
     avatarUrl: isString(bot.avatarUrl) && parseAgentAvatarUrl(bot.avatarUrl, bot.id) ? bot.avatarUrl : null,
+    ...(bot.marketplaceSource === undefined
+      ? {}
+      : { marketplaceSource: normalizeMarketplaceSource(bot.marketplaceSource) }),
   };
+}
+
+/**
+ * Agents installed before the marketplace listing id was renamed spell it `agentId`, which now means
+ * the local agent everywhere else. `isMarketplaceSource` accepts either spelling; this writes only
+ * the new one back, so a stored agent converts the first time it is read.
+ */
+function normalizeMarketplaceSource(value: unknown): NonNullable<StoredBot["marketplaceSource"]> {
+  if (!isRecord(value)) throw new Error("The stored marketplace source is invalid.");
+  const listingId = isString(value.listingId) ? value.listingId : value.agentId;
+  if (!isString(listingId) || !isString(value.versionId) || !isNumber(value.version)) {
+    throw new Error("The stored marketplace source has no listing id.");
+  }
+  return {
+    listingId,
+    versionId: value.versionId,
+    version: value.version,
+    skillIds: stringList(value.skillIds),
+    routineIds: stringList(value.routineIds),
+  };
+}
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value) || !value.every(isString)) throw new Error("The stored marketplace source is invalid.");
+  return [...value];
 }
 
 function agentAvatarUrl(botId: string, version: string, mimeType: string): string {

@@ -992,8 +992,8 @@ interface AgentsMarketplace {
   agents: MarketplaceAgentSummary[];
   detail: MarketplaceAgentDetail | null;
   publication: {
-    /** The agent a new version is for, or `undefined` for a first submission. */
-    agentId: string | undefined;
+    /** The marketplace listing a new version is for, or `undefined` for a first submission. */
+    listingId: string | undefined;
     preview: AgentPublicationPreview | null;
     sourceBotId: string;
   };
@@ -1013,13 +1013,13 @@ function AgentMarketplacePanel(props: {
   const [market, setMarket] = createStore<AgentsMarketplace>({
     agents: [],
     detail: null,
-    publication: { agentId: undefined, preview: null, sourceBotId: props.bots[0]?.id ?? "" },
+    publication: { listingId: undefined, preview: null, sourceBotId: props.bots[0]?.id ?? "" },
     query: "",
     submissions: [],
   });
   const { panel, run, setBusy, setError, setLoading } = createAsyncPanel(marketplaceErrorMessage);
   const installedAgents = createMemo(
-    () => new Map(props.bots.flatMap((bot) => (bot.marketplaceSource ? [[bot.marketplaceSource.agentId, bot]] : []))),
+    () => new Map(props.bots.flatMap((bot) => (bot.marketplaceSource ? [[bot.marketplaceSource.listingId, bot]] : []))),
   );
   let searchTimer: number | undefined;
   let initialized = false;
@@ -1145,8 +1145,8 @@ function AgentMarketplacePanel(props: {
     setBusy(agent.id);
     const value = await run(() =>
       window.openbot.marketplaceAgents.install({
-        agentId: agent.id,
-        ...(installation ? { botId: installation.id } : {}),
+        listingId: agent.id,
+        ...(installation ? { agentId: installation.id } : {}),
         timezone,
         receiptId: crypto.randomUUID(),
       }),
@@ -1157,7 +1157,7 @@ function AgentMarketplacePanel(props: {
       result: value ? "succeeded" : "failed",
       ...(value ? {} : { failure_code: updating ? "update_failed" : "install_failed" }),
     });
-    if (value) await props.onInstalled?.(value.bot);
+    if (value) await props.onInstalled?.(value.agent);
     setBusy(null);
   }
 
@@ -1174,14 +1174,14 @@ function AgentMarketplacePanel(props: {
       : "Update";
   }
 
-  async function preparePublication(agentId?: string) {
+  async function preparePublication(listingId?: string) {
     const botId = market.publication.sourceBotId || props.bots[0]?.id;
     if (!botId) {
       setError("Switch to Local and choose an agent to publish.");
       return;
     }
     setMarket((state) => {
-      state.publication.agentId = agentId;
+      state.publication.listingId = listingId;
     });
     setBusy("publish");
     const value = await run(() => window.openbot.marketplaceAgents.preview(botId));
@@ -1197,7 +1197,7 @@ function AgentMarketplacePanel(props: {
   function discardPublication(): void {
     setMarket((state) => {
       state.publication.preview = null;
-      state.publication.agentId = undefined;
+      state.publication.listingId = undefined;
     });
   }
 
@@ -1205,12 +1205,12 @@ function AgentMarketplacePanel(props: {
     const value = market.publication.preview;
     if (!value) return;
     const analytics = desktopAnalytics.scope();
-    const agentId = market.publication.agentId;
+    const listingId = market.publication.listingId;
     setBusy("submit");
     const result = await run(() =>
       window.openbot.marketplaceAgents.submit({
-        botId: value.botId,
-        ...(agentId ? { agentId } : {}),
+        agentId: value.agentId,
+        ...(listingId ? { listingId } : {}),
       }),
     );
     analytics.track("marketplace_action", {
@@ -1458,7 +1458,7 @@ function AgentMarketplacePanel(props: {
                         {item.status}
                       </span>
                       <Show when={item.status === "approved" || item.status === "rejected"}>
-                        <Button size="sm" onClick={() => void preparePublication(item.agentId)}>
+                        <Button size="sm" onClick={() => void preparePublication(item.listingId)}>
                           <Plus /> New version
                         </Button>
                       </Show>

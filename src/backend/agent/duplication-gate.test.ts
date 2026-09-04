@@ -73,7 +73,7 @@ describe.sequential("DuplicationGate: copying an agent and the pending window", 
     );
     routineStore.updateRunStatus(oldRun.id, "succeeded");
     service.setMarketplaceSource(source.id, {
-      agentId: "market-research",
+      listingId: "market-research",
       versionId: "market-research-v2",
       version: 2,
       skillIds: ["primary-sources"],
@@ -164,7 +164,7 @@ describe.sequential("DuplicationGate: copying an agent and the pending window", 
       expect(service.listRoutineRuns({ botId: duplicate.id, routineId: routine.id, limit: 10 })).toEqual([]);
     }
     expect(duplicate.marketplaceSource).toMatchObject({
-      agentId: "market-research",
+      listingId: "market-research",
       skillIds: ["primary-sources"],
       routineIds: [duplicateRoutines.find((routine) => routine.name === activeRoutine.name)?.id],
     });

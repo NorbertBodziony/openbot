@@ -27,7 +27,7 @@ describe("toBotProfile", () => {
       avatarHue: null,
       avatarUrl: null,
       marketplaceSource: {
-        agentId: "market-release-coordinator",
+        listingId: "market-release-coordinator",
         versionId: "market-release-coordinator-v2",
         version: 2,
         skillIds: ["release-notes"],

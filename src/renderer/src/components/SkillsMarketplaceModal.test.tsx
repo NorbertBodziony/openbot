@@ -158,7 +158,7 @@ describe("SkillsMarketplaceModal", () => {
     } satisfies BotSummary;
     window.openbot.marketplaceAgents.list = vi.fn(async () => ({ agents: [detail], nextCursor: null }));
     window.openbot.marketplaceAgents.get = vi.fn(async () => detail);
-    window.openbot.marketplaceAgents.install = vi.fn(async () => ({ bot: installedBot }));
+    window.openbot.marketplaceAgents.install = vi.fn(async () => ({ agent: installedBot }));
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const onInstalled = vi.fn();
 
@@ -178,7 +178,7 @@ describe("SkillsMarketplaceModal", () => {
     await waitFor(() => expect(window.openbot.marketplaceAgents.install).toHaveBeenCalled());
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining("1 active routine"));
     expect(window.openbot.marketplaceAgents.install).toHaveBeenCalledWith(
-      expect.objectContaining({ agentId: detail.id }),
+      expect.objectContaining({ listingId: detail.id }),
     );
     await waitFor(() => expect(onInstalled).toHaveBeenCalledWith(installedBot));
     expect(trackMarketplaceAnalytics).toHaveBeenCalledWith("marketplace_action", {
@@ -256,7 +256,7 @@ describe("SkillsMarketplaceModal", () => {
             id: "research-local",
             name: "Research Agent",
             marketplaceSource: {
-              agentId: "research-agent",
+              listingId: "research-agent",
               versionId: "research-v1",
               version: 1,
               skillIds: [],
@@ -267,7 +267,7 @@ describe("SkillsMarketplaceModal", () => {
             id: "writer-local",
             name: "Writer Agent",
             marketplaceSource: {
-              agentId: "writer-agent",
+              listingId: "writer-agent",
               versionId: "writer-v1",
               version: 1,
               skillIds: [],

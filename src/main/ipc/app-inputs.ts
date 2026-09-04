@@ -199,16 +199,18 @@ export function parseDeleteHostedSite(input: unknown): string {
 export function parseSubmitMarketplaceAgent(input: unknown): SubmitMarketplaceAgentInput {
   if (!isObject(input)) throw new Error("Invalid agent submission.");
   return {
-    botId: requireString(input.botId, "botId"),
-    ...(input.agentId === undefined ? {} : { agentId: requireString(input.agentId, "agentId") }),
+    agentId: requireString(input.agentId, "agentId"),
+    ...(input.listingId === undefined ? {} : { listingId: requireString(input.listingId, "listingId") }),
   };
 }
 
 export function parseInstallMarketplaceAgent(input: unknown): InstallMarketplaceAgentInput {
   if (!isObject(input)) throw new Error("Invalid agent installation.");
   return {
-    agentId: requireString(input.agentId, "agentId"),
-    ...(input.botId === undefined ? {} : { botId: requireString(input.botId, "botId", INPUT_LIMITS.identifier) }),
+    listingId: requireString(input.listingId, "listingId"),
+    ...(input.agentId === undefined
+      ? {}
+      : { agentId: requireString(input.agentId, "agentId", INPUT_LIMITS.identifier) }),
     timezone: requireString(input.timezone, "timezone", 255),
     receiptId: requireString(input.receiptId, "receiptId", INPUT_LIMITS.identifier),
   };

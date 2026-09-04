@@ -23,6 +23,25 @@ import {
 import { decodeTeamProtocolV3WebRtcHttpResponse, encodeTeamProtocolV3WebRtcHttpRequest } from "./v3-webrtc-adapter";
 
 const duplicatePath = "/v1/agents/bot-source/duplicate";
+/**
+ * The wire fixture stays byte-identical; only its current-shaped twin moves. `marketplaceSource.agentId`
+ * names a marketplace listing, which in-app is `listingId`, so a current-facing decode must return that
+ * spelling and a current-shaped encode must put `agentId` back on the wire. This asymmetry is the
+ * evidence the vocabulary shim runs on the v3 duplicate route.
+ */
+const currentResponseFixture = {
+  ...responseFixture,
+  bot: {
+    ...responseFixture.bot,
+    marketplaceSource: {
+      listingId: responseFixture.bot.marketplaceSource.agentId,
+      versionId: responseFixture.bot.marketplaceSource.versionId,
+      version: responseFixture.bot.marketplaceSource.version,
+      skillIds: responseFixture.bot.marketplaceSource.skillIds,
+      routineIds: responseFixture.bot.marketplaceSource.routineIds,
+    },
+  },
+};
 const scopedUsagePath = "/v1/agents/bot-source/usage";
 
 describe("Team protocol v3", () => {
@@ -49,11 +68,11 @@ describe("Team protocol v3", () => {
       requestFixture,
     );
     expect(decodeTeamProtocolV3CurrentHttpResponse("POST", duplicatePath, 201, responseFixture)).toEqual(
-      responseFixture,
+      currentResponseFixture,
     );
-    expect(JSON.parse(encodeTeamProtocolV3CurrentHttpResponse("POST", duplicatePath, 201, responseFixture))).toEqual(
-      responseFixture,
-    );
+    expect(
+      JSON.parse(encodeTeamProtocolV3CurrentHttpResponse("POST", duplicatePath, 201, currentResponseFixture)),
+    ).toEqual(responseFixture);
   });
 
   it("requires a valid idempotency key for duplicate requests", () => {
@@ -104,7 +123,7 @@ describe("Team protocol v3", () => {
   it("registers the v3 route on the WebRTC adapter", () => {
     expect(encodeTeamProtocolV3WebRtcHttpRequest("POST", duplicatePath, requestFixture)).toEqual(requestFixture);
     expect(decodeTeamProtocolV3WebRtcHttpResponse("POST", duplicatePath, 201, responseFixture)).toEqual(
-      responseFixture,
+      currentResponseFixture,
     );
     expect(encodeTeamProtocolV3WebRtcHttpRequest("GET", scopedUsagePath, undefined)).toEqual({});
     expect(

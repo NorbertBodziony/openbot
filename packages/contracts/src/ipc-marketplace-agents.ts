@@ -56,7 +56,7 @@ export interface MarketplaceAgentQuery {
 
 export interface AgentSubmission {
   id: string;
-  agentId: string;
+  listingId: string;
   name: string;
   title: string;
   description: string;
@@ -73,7 +73,7 @@ export interface AgentSubmission {
 }
 
 export interface AgentPublicationPreview {
-  botId: string;
+  agentId: string;
   name: string;
   title: string;
   description: string;
@@ -85,17 +85,17 @@ export interface AgentPublicationPreview {
 }
 
 export interface SubmitMarketplaceAgentInput {
-  botId: string;
-  agentId?: string;
+  agentId: string;
+  listingId?: string;
 }
 
 export interface InstallMarketplaceAgentInput {
-  agentId: string;
-  botId?: string;
+  listingId: string;
+  agentId?: string;
   timezone: string;
   receiptId: string;
 }
 
 export interface InstallMarketplaceAgentResult {
-  bot: BotSummary;
+  agent: BotSummary;
 }

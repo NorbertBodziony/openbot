@@ -86,7 +86,7 @@ describe("BotStore", () => {
     const bot = await store.createBot(BOT_PROFILE_INPUT);
 
     store.setMarketplaceSource(bot.id, {
-      agentId: "market-planner",
+      listingId: "market-planner",
       versionId: "market-planner-v2",
       version: 2,
       skillIds: ["planning"],
@@ -96,7 +96,7 @@ describe("BotStore", () => {
     const restored = new BotStore(userData, home);
     await restored.initialize();
     expect(restored.list().find((candidate) => candidate.id === bot.id)?.marketplaceSource).toEqual({
-      agentId: "market-planner",
+      listingId: "market-planner",
       versionId: "market-planner-v2",
       version: 2,
       skillIds: ["planning"],

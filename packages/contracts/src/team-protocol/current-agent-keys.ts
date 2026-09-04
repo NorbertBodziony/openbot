@@ -36,7 +36,7 @@ const CURRENT_TO_WIRE_VALUES: Readonly<Record<string, Readonly<Record<string, st
  * other way, so a global key map would corrupt it in both directions.
  */
 const MARKETPLACE_SOURCE_KEY = "marketplaceSource";
-const WIRE_TO_CURRENT_MARKETPLACE_KEYS: Readonly<Record<string, string>> = {};
+const WIRE_TO_CURRENT_MARKETPLACE_KEYS: Readonly<Record<string, string>> = { agentId: "listingId" };
 const CURRENT_TO_WIRE_MARKETPLACE_KEYS: Readonly<Record<string, string>> = Object.fromEntries(
   Object.entries(WIRE_TO_CURRENT_MARKETPLACE_KEYS).map(([wire, current]) => [current, wire]),
 );

@@ -82,7 +82,7 @@ function decodeMarketplaceSource(value: unknown): BotSummary["marketplaceSource"
   const skillIds = record.skillIds;
   const routineIds = record.routineIds;
   if (
-    !isString(record.agentId) ||
+    !isString(record.listingId) ||
     !isString(record.versionId) ||
     !isNumber(record.version) ||
     !Number.isInteger(record.version) ||
@@ -94,7 +94,7 @@ function decodeMarketplaceSource(value: unknown): BotSummary["marketplaceSource"
     throw new Error("Invalid agent marketplace source.");
   }
   return {
-    agentId: record.agentId,
+    listingId: record.listingId,
     versionId: record.versionId,
     version: record.version,
     skillIds: [...skillIds],

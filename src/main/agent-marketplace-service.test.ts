@@ -108,7 +108,7 @@ describe("AgentMarketplaceService", () => {
     const preview = await marketplace.preview(bot.id);
 
     expect(preview).toEqual({
-      botId: bot.id,
+      agentId: bot.id,
       name: bot.name,
       title: bot.title,
       description: bot.description,
@@ -126,7 +126,7 @@ describe("AgentMarketplaceService", () => {
 
   it("creates an independent agent and preserves active routines in the installer timezone", async () => {
     const { marketplace, agents, skills } = service();
-    await marketplace.install({ agentId: detail.id, timezone: "America/New_York", receiptId: "receipt-1" });
+    await marketplace.install({ listingId: detail.id, timezone: "America/New_York", receiptId: "receipt-1" });
 
     expect(agents.createBotProfile).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -154,7 +154,7 @@ describe("AgentMarketplaceService", () => {
   it("removes a partially created agent when a dependency fails", async () => {
     const { marketplace, agents } = service({ failSkill: true });
     await expect(
-      marketplace.install({ agentId: detail.id, timezone: "Europe/Warsaw", receiptId: "receipt-2" }),
+      marketplace.install({ listingId: detail.id, timezone: "Europe/Warsaw", receiptId: "receipt-2" }),
     ).rejects.toThrow("skill failed");
     expect(agents.deleteBot).toHaveBeenCalledWith(bot.id);
     expect(agents.createRoutine).not.toHaveBeenCalled();
@@ -164,7 +164,7 @@ describe("AgentMarketplaceService", () => {
     const installed = {
       ...bot,
       marketplaceSource: {
-        agentId: detail.id,
+        listingId: detail.id,
         versionId: "market-writer-v1",
         version: 1,
         skillIds: ["retired-skill"],
@@ -175,8 +175,8 @@ describe("AgentMarketplaceService", () => {
     agents.listBots.mockReturnValue([installed]);
 
     const result = await marketplace.install({
-      agentId: detail.id,
-      botId: bot.id,
+      listingId: detail.id,
+      agentId: bot.id,
       timezone: "Europe/Warsaw",
       receiptId: "receipt-update",
     });
@@ -190,8 +190,8 @@ describe("AgentMarketplaceService", () => {
     expect(skills.uninstall).toHaveBeenCalledWith({ botId: bot.id, skillId: "retired-skill" });
     expect(agents.setMarketplaceSource).toHaveBeenCalledWith(
       bot.id,
-      expect.objectContaining({ agentId: detail.id, versionId: detail.versionId, version: detail.version }),
+      expect.objectContaining({ listingId: detail.id, versionId: detail.versionId, version: detail.version }),
     );
-    expect(result.bot.id).toBe(bot.id);
+    expect(result.agent.id).toBe(bot.id);
   });
 });
