@@ -30,7 +30,7 @@ export function WorkspaceAccountDock(props: { account: () => CentralAuthUser }) 
     const bot = activeBot();
     if (!bot || agentStatus().phase !== "ready") return false;
     const provider = agentStatus().providers?.find((candidate) => candidate.id === bot.provider);
-    return provider ? provider.state === "available" : true;
+    return provider ? provider.state === "available" && provider.connectionState !== "connecting" : true;
   });
   const usageTargetKey = createMemo(() => {
     const bot = activeBot();

@@ -96,6 +96,63 @@ describe("OpenBot connected desktop shell", () => {
     ).toBeDisabled();
   });
 
+  it("clears cached usage while the active provider reconnects", async () => {
+    const claudeBots: BotSummary[] = BOTS.map((bot) => ({
+      ...bot,
+      provider: "claude",
+      model: "claude-sonnet-5",
+    }));
+    const currentStatus = await window.openbot.agent.getStatus();
+    vi.mocked(window.openbot.agent.listBots).mockResolvedValue(claudeBots);
+    vi.mocked(window.openbot.agent.getUsage)
+      .mockResolvedValueOnce({
+        limits: [
+          {
+            id: "claude",
+            primary: null,
+            secondary: { usedPercent: 41, windowDurationMins: 10_080, resetsAt: null },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        limits: [
+          {
+            id: "claude",
+            primary: null,
+            secondary: { usedPercent: 80, windowDurationMins: 10_080, resetsAt: null },
+          },
+        ],
+      });
+
+    render(() => <App />);
+    expect(await screen.findByRole("button", { name: "Weekly usage, 59% left" })).toBeInTheDocument();
+
+    emitAgentEvent?.({
+      type: "status",
+      status: {
+        ...currentStatus,
+        providers: currentStatus.providers?.map((provider) =>
+          provider.id === "claude" ? { ...provider, connectionState: "connecting" as const } : provider,
+        ),
+      },
+    });
+
+    expect(await screen.findByRole("button", { name: "Weekly usage unavailable" })).toBeInTheDocument();
+
+    emitAgentEvent?.({
+      type: "status",
+      status: {
+        ...currentStatus,
+        providers: currentStatus.providers?.map((provider) =>
+          provider.id === "claude" ? { ...provider, email: "new@example.com" } : provider,
+        ),
+      },
+    });
+
+    await waitFor(() => expect(window.openbot.agent.getUsage).toHaveBeenCalledTimes(2));
+    expect(await screen.findByRole("button", { name: "Weekly usage, 20% left" })).toBeInTheDocument();
+  });
+
   it("reuses usage when switching between Grok agents on the same model", async () => {
     const grokBots: BotSummary[] = BOTS.map((bot) => ({
       ...bot,
