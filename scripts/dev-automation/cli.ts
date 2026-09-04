@@ -9,6 +9,7 @@ import {
   describeDevPages,
   devBrowserPages,
   openDevBrowser,
+  readTargetId,
   resolveAutomationPort,
 } from "./cdp-client";
 import {
@@ -79,7 +80,7 @@ function readTimeout(): number {
 function readPageSelector(): string | null {
   const raw = flagValue("--page");
   if (raw === null) return null;
-  if (raw.trim() === "") throw new Error("--page=<index|url-substring> cannot be empty.");
+  if (raw.trim() === "") throw new Error("--page=<target-id|url-substring> cannot be empty.");
   return raw;
 }
 
@@ -209,7 +210,8 @@ async function main(): Promise<void> {
   if (command === "pages") {
     const browser = await openDevBrowser(target.port, logger);
     try {
-      process.stdout.write(`${JSON.stringify({ pages: describeDevPages(devBrowserPages(browser)) }, null, 2)}\n`);
+      const pages = await describeDevPages(devBrowserPages(browser), readTargetId);
+      process.stdout.write(`${JSON.stringify({ pages }, null, 2)}\n`);
     } finally {
       await browser.close();
     }

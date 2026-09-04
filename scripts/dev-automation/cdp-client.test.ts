@@ -87,27 +87,43 @@ describe("matchPages", () => {
   const island = { url: () => "http://localhost:5173/?surface=dynamic-island" };
   const embedded = { url: () => "https://accounts.google.com/o/oauth2/auth" };
   const pages = [app, island, embedded];
+  const ids = new Map([
+    [app, "AAAA1111"],
+    [island, "BBBB2222"],
+    [embedded, "CCCC3333"],
+  ]);
+  const readId = async (page: (typeof pages)[number]): Promise<string> => ids.get(page) ?? "";
 
-  it("aims at a target by the index the pages command printed", () => {
-    expect(matchPages(pages, "2")).toEqual([embedded]);
-    expect(matchPages(pages, "7")).toEqual([]);
-    expect(matchPages(pages, "-1")).toEqual([]);
+  it("aims at the target id the pages command printed, whatever the order is now", async () => {
+    // The id has to survive another window closing between two commands,
+    // which is exactly what an array position does not.
+    await expect(matchPages(pages, "cccc3333", readId)).resolves.toEqual([embedded]);
+    await expect(matchPages([embedded, app], "CCCC3333", readId)).resolves.toEqual([embedded]);
+    await expect(matchPages(pages, "DDDD4444", readId)).resolves.toEqual([]);
   });
 
-  it("aims at a target by a case-insensitive url fragment", () => {
-    expect(matchPages(pages, "ACCOUNTS.GOOGLE")).toEqual([embedded]);
-    expect(matchPages(pages, "dynamic-island")).toEqual([island]);
+  it("aims at a target by a case-insensitive url fragment", async () => {
+    await expect(matchPages(pages, "ACCOUNTS.GOOGLE", readId)).resolves.toEqual([embedded]);
+    await expect(matchPages(pages, "dynamic-island", readId)).resolves.toEqual([island]);
   });
 
-  it("reports every match so an ambiguous aim can be refused", () => {
-    expect(matchPages(pages, "localhost:5173")).toEqual([app, island]);
+  it("reports every match so an ambiguous aim can be refused", async () => {
+    await expect(matchPages(pages, "localhost:5173", readId)).resolves.toEqual([app, island]);
+  });
+
+  it("keeps matching by url when a page cannot report its id", async () => {
+    const closing = async (): Promise<string> => {
+      throw new Error("Target closed");
+    };
+    await expect(matchPages(pages, "dynamic-island", closing)).resolves.toEqual([island]);
   });
 });
 
 describe("describeDevPages", () => {
-  it("numbers the targets it prints and keeps their queries out", () => {
-    expect(describeDevPages([{ url: () => "https://example.com/pay?token=abcdefghij" }])).toEqual([
-      { index: 0, target: "https://example.com (external)" },
+  it("names the targets it prints by id and keeps their queries out", async () => {
+    const page = { url: () => "https://example.com/pay?token=abcdefghij" };
+    await expect(describeDevPages([page], async () => "AAAA1111")).resolves.toEqual([
+      { targetId: "AAAA1111", target: "https://example.com (external)" },
     ]);
   });
 });
@@ -121,6 +137,13 @@ describe("describeTarget", () => {
   it("keeps the local route recognizable without its query", () => {
     expect(describeTarget("http://localhost:5173/?token=abcdefghij")).toBe("http://localhost:5173/");
     expect(describeTarget("http://localhost:5173/?surface=dynamic-island")).toBe("http://localhost:5173/ [surface]");
+  });
+
+  it("hides the path of a loopback page that is not an app route", () => {
+    // An embedded view can serve a callback on 127.0.0.1, and such a path
+    // carries its code as a plain segment where no redaction rule sees it.
+    expect(describeTarget("http://127.0.0.1:8976/callback/abcdefghij")).toBe("http://127.0.0.1:8976/… (path hidden)");
+    expect(describeTarget("http://localhost:5173/index.html")).toBe("http://localhost:5173/index.html");
   });
 });
 

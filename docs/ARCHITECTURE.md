@@ -94,7 +94,7 @@ renderer ──► @openbot/contracts ◄── preload ◄── main ──►
     (`scripts/dev-automation/instance-registry.ts`); automation resolves the record of the worktree
     it runs in, verifies the renderer port and the `window.openbot` preload bridge before driving a
     page, and refuses `click` or `type` on an instance it only inferred. Every dev window stays
-    reachable: `pages` lists the targets and `--page=<index|url-substring>` drives any of them, so
+    reachable: `pages` lists the targets and `--page=<target-id|url-substring>` drives any of them, so
     the app window is the default rather than a limit. Page URLs reach the diagnostics and the
     snapshot document only through `describeTarget`.
 

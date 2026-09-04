@@ -7,6 +7,14 @@ function isLoopbackHost(hostname: string): boolean {
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
 }
 
+// The routes the app itself serves, and the only paths worth printing. A
+// loopback origin does not make a page the app: `BrowserHost.open` accepts any
+// address, so a local development server or an OAuth callback on 127.0.0.1 is
+// a target too, and such a path carries its secret as a plain segment
+// (`/callback/<code>`) where no redaction rule would recognize it. Aiming at
+// one of those pages uses its target id, so nothing needs the path.
+const APP_ROUTES = new Set(["/", "/index.html"]);
+
 // A page title or a full URL can carry an OAuth code, a signed download URL or
 // the contents of a visited site, and log redaction recognizes none of those
 // shapes. Diagnostics therefore report where a target lives, never what it
@@ -19,8 +27,9 @@ export function describeTarget(url: string): string {
     return "(unparseable target)";
   }
   if (!isLoopbackHost(parsed.hostname)) return `${parsed.protocol}//${parsed.hostname} (external)`;
-  const surface = parsed.searchParams.get("surface");
-  return `${parsed.origin}${parsed.pathname}${surface === null ? "" : ` [surface]`}`;
+  const surface = parsed.searchParams.get("surface") === null ? "" : " [surface]";
+  if (APP_ROUTES.has(parsed.pathname)) return `${parsed.origin}${parsed.pathname}${surface}`;
+  return `${parsed.origin}/… (path hidden)${surface}`;
 }
 
 // The dev app opens helper surfaces (Dynamic Island popups) and embedded

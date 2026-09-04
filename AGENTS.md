@@ -77,7 +77,7 @@ which of these your change touched.**
    `--allow-mutations` and an instance that was named rather than inferred — the record of this
    worktree counts, `--instance=<id>` and `--port=` name one outright, and another worktree's app is
    readable but never clickable. Nothing about a dev window is off limits: `pages` lists every
-   target and `--page=<index|url-substring>` drives any of them, including a Dynamic Island surface
+   target and `--page=<target-id|url-substring>` drives any of them, including a Dynamic Island surface
    or an embedded browser view. The app window is only what you get when you aim at nothing. `--wait-for=<role>,<name>` settles on an
   accessible target before a capture and after a mutation, so a flow needs no snapshot loop.
 3. **Killing processes by pattern.** `pkill -f electron` or `pkill -f bun` kills other sessions' work

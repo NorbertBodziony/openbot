@@ -159,24 +159,62 @@ export interface ConnectOptions {
 }
 
 export interface PageChoice {
-  index: number;
+  targetId: string;
   target: string;
 }
 
-export function describeDevPages<T extends { url: () => string }>(pages: T[]): PageChoice[] {
-  return pages.map((page, index) => ({ index, target: describeTarget(page.url()) }));
+// CDP's own identifier for a page, and what `pages` prints for aiming at one.
+// An array position cannot do that job: every command opens its own CDP
+// connection, so a window that closed in between shifts each later page down
+// and `--page=1` would drive a target nobody printed - a Dynamic Island
+// surface, or an embedded view showing a real site. A target id names the same
+// page in the next command or nothing at all.
+export type TargetIdReader<T> = (page: T) => Promise<string>;
+
+export async function readTargetId(page: Page): Promise<string> {
+  const session = await page.context().newCDPSession(page);
+  try {
+    // Playwright types this reply against the CDP protocol, so the id needs no
+    // validation: it comes from the browser we already confirmed is OpenBot,
+    // not from a file another account could write.
+    const { targetInfo } = await session.send("Target.getTargetInfo");
+    return targetInfo.targetId;
+  } finally {
+    await session.detach();
+  }
 }
 
-// An index from `dev:automation pages`, or a case-insensitive substring of the
-// target URL. The substring is matched locally against what the developer
-// typed, so it never reaches a log.
-export function matchPages<T extends { url: () => string }>(pages: T[], selector: string): T[] {
-  const index = Number(selector);
-  if (Number.isInteger(index)) {
-    const chosen = index >= 0 ? pages[index] : undefined;
-    return chosen ? [chosen] : [];
+export async function describeDevPages<T extends { url: () => string }>(
+  pages: T[],
+  readId: TargetIdReader<T>,
+): Promise<PageChoice[]> {
+  const choices: PageChoice[] = [];
+  for (const page of pages) {
+    choices.push({ targetId: await readId(page), target: describeTarget(page.url()) });
   }
-  const needle = selector.toLowerCase();
+  return choices;
+}
+
+// A target id from `dev:automation pages`, or a case-insensitive substring of
+// the target URL. The substring is matched locally against what the developer
+// typed, so it never reaches a log.
+export async function matchPages<T extends { url: () => string }>(
+  pages: T[],
+  selector: string,
+  readId: TargetIdReader<T>,
+): Promise<T[]> {
+  const needle = selector.trim().toLowerCase();
+  for (const page of pages) {
+    let id = "";
+    try {
+      id = await readId(page);
+    } catch {
+      // A page closing while we ask for its id cannot be the one we were aimed
+      // at, and the URL match below still gets its chance.
+      continue;
+    }
+    if (id !== "" && id.toLowerCase() === needle) return [page];
+  }
   return pages.filter((page) => page.url().toLowerCase().includes(needle));
 }
 
@@ -210,33 +248,34 @@ export async function connectToDevApp(
   const selector = options.pageSelector ?? null;
   const pages = devBrowserPages(browser);
   const [page, ...ambiguous] =
-    selector === null ? await findRendererPages(pages, expectedRendererPort) : matchPages(pages, selector);
+    selector === null
+      ? await findRendererPages(pages, expectedRendererPort)
+      : await matchPages(pages, selector, readTargetId);
   if (!page) {
     await browser.close();
     if (selector !== null) {
       throw new Error(
         `No page on :${port} matches --page=${selector}. Run \`bun run dev:automation pages\` ` +
-          "for the current targets and their indexes.",
+          "for the current targets and their ids.",
       );
     }
     throw new Error(
       `Connected over CDP but found no OpenBot main window on :${port}` +
         (expectedRendererPort === null ? ". " : ` serving renderer :${expectedRendererPort}. `) +
         (expectedRendererPort === null
-          ? "Open the app window, or aim at another target with --page=<index|url-substring> " +
+          ? "Open the app window, or aim at another target with --page=<target-id|url-substring> " +
             "from `bun run dev:automation pages`."
           : "That port now belongs to a different dev instance. Re-run `bun run dev:automation instances` " +
             "and name the instance you mean."),
     );
   }
   if (ambiguous.length > 0) {
+    const choices = await describeDevPages(pages, readTargetId);
     await browser.close();
     throw new Error(
       `Found ${ambiguous.length + 1} matching pages on :${port}, so the target is ambiguous. ` +
-        "Narrow it with --page=<index|url-substring>, or name the instance with its own --port=. " +
-        `Targets on :${port}:\n${describeDevPages(pages)
-          .map((choice) => `- ${choice.index}: ${choice.target}`)
-          .join("\n")}`,
+        "Narrow it with --page=<target-id|url-substring>, or name the instance with its own --port=. " +
+        `Targets on :${port}:\n${choices.map((choice) => `- ${choice.targetId}: ${choice.target}`).join("\n")}`,
     );
   }
   logger.info(`driving ${describeTarget(page.url())}`);
