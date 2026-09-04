@@ -2,7 +2,6 @@
 
 import { EventEmitter } from "node:events";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
@@ -24,7 +23,7 @@ import {
   routineConversationEventItemType,
   routineRunConversationEventItemType,
 } from "@openbot/contracts/ipc";
-import { isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { TEAM_CURRENT_CAPABILITIES, TEAM_SEMANTIC_TAGS_CAPABILITY } from "@openbot/contracts/team-protocol/current";
 import {
@@ -41,99 +40,24 @@ import { OpenBotDatabase } from "../backend/openbot-database";
 import { SidebarLayoutStore } from "../backend/sidebar-layout-store";
 import { TeamChatStore } from "../backend/team-chat-store";
 import { HostService } from "./host-service";
-import { TeamApiServer } from "./team-api-server";
+import {
+  createAgents,
+  createBrowser,
+  createMailbox,
+  createTeamApiFixture,
+  emptyRequest,
+  jsonRequest,
+  nextJsonEvent,
+  nextJsonEvents,
+  rawRequest,
+  stopTeamApiFixtures,
+  type TeamApiOptions,
+  unimplemented,
+} from "./team-api-server-test-harness";
 import { TeamStore } from "./team-store";
 
 const roots: string[] = [];
-type TeamApiOptions = ConstructorParameters<typeof TeamApiServer>[0];
 type TestAgents = TeamApiOptions["agents"];
-type TestMailbox = TeamApiOptions["mailbox"];
-type TestBrowser = TeamApiOptions["browser"];
-
-interface TestRealtimeEvent {
-  type: string;
-  botId?: string;
-  revision?: number;
-  code?: string;
-  snapshot?: unknown;
-  message?: unknown;
-  senderMemberId?: string;
-  recipientMemberId?: string;
-  typing?: boolean;
-  layout?: unknown;
-}
-
-function unimplemented(..._arguments_: unknown[]): never {
-  throw new Error("This operation is not used by this test.");
-}
-
-function createAgents(overrides: Partial<TestAgents> = {}, events = new EventEmitter()): TestAgents {
-  return {
-    on: (event, listener) => {
-      events.on(event, listener);
-    },
-    off: (event, listener) => {
-      events.off(event, listener);
-    },
-    getStatus: unimplemented,
-    getRuntimeSnapshot: () => ({
-      bots: [],
-      activeTurns: [],
-      work: [],
-      latestMessages: [],
-      attentionComplete: true,
-      pendingPrompts: [],
-      pendingApprovals: [],
-      pendingBrowserTakeovers: [],
-      failedTurns: [],
-    }),
-    getUsage: unimplemented,
-    listModels: unimplemented,
-    listBots: unimplemented,
-    listMemories: unimplemented,
-    createMemory: unimplemented,
-    updateMemory: unimplemented,
-    deleteMemory: unimplemented,
-    clearMemories: unimplemented,
-    listRoutines: unimplemented,
-    createRoutine: unimplemented,
-    updateRoutine: unimplemented,
-    deleteRoutine: unimplemented,
-    testRoutine: unimplemented,
-    listRoutineRuns: unimplemented,
-    listConversationReads: unimplemented,
-    createBot: unimplemented,
-    committedBotDuplication: () => null,
-    duplicateBot: unimplemented,
-    commitBotDuplication: unimplemented,
-    updateBot: unimplemented,
-    deleteBot: unimplemented,
-    setAvatar: unimplemented,
-    resolveAvatar: unimplemented,
-    readConversationFor: unimplemented,
-    readConversationPageFor: unimplemented,
-    searchConversationMessages: unimplemented,
-    markConversationRead: unimplemented,
-    markConversationUnread: unimplemented,
-    prepareImportedAttachments: unimplemented,
-    discardDraftAttachment: unimplemented,
-    resolveSharedFile: unimplemented,
-    resolveWorkspaceFile: unimplemented,
-    sendMessage: unimplemented,
-    listQueue: unimplemented,
-    acknowledgeFailedTurn: unimplemented,
-    setMessageReaction: unimplemented,
-    cancelQueuedMessage: unimplemented,
-    steerQueuedMessage: unimplemented,
-    updateQueuedMessage: unimplemented,
-    reorderQueue: unimplemented,
-    interrupt: unimplemented,
-    respondToPrompt: unimplemented,
-    respondToApproval: unimplemented,
-    respondToBrowserTakeover: unimplemented,
-    ...overrides,
-  };
-}
 
 type HostOptions = ConstructorParameters<typeof HostService>[0];
 
@@ -209,43 +133,22 @@ async function createHostService(
   };
 }
 
-function createMailbox(): TestMailbox {
-  return { resolveAttachment: unimplemented };
-}
-
-function createBrowser(overrides: Partial<TestBrowser> = {}): TestBrowser {
-  return {
-    listTabs: unimplemented,
-    getControlState: unimplemented,
-    open: unimplemented,
-    activate: unimplemented,
-    navigate: unimplemented,
-    reload: unimplemented,
-    close: unimplemented,
-    capturePreview: unimplemented,
-    setVisible: unimplemented,
-    ...overrides,
-  };
-}
-
+// The harness registers no hook of its own - one declared there would run before the ones declared
+// here and delete a directory out from under a listener still being stopped - so this is where its
+// servers come down. `roots` is what is left of the old hook: the `HostService` cases build a
+// `TeamStore` with no server over it.
 afterEach(async () => {
+  await stopTeamApiFixtures();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 describe("TeamApiServer teardown", () => {
   it("closes its listener when the remote screen cannot be stopped", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-teardown-"));
-    roots.push(root);
-    const store = new TeamStore(join(root, "team.json"));
-    await store.initialize();
+    const { start, stop } = await createTeamApiFixture("teardown");
     const unreachable = () => {
       throw new Error("The remote screen is only asked to stop here.");
     };
-    const api = new TeamApiServer({
-      store,
-      agents: createAgents(),
-      mailbox: createMailbox(),
-      browser: createBrowser(),
+    const { port } = await start({
       remoteScreen: {
         handlesUpgrade: () => false,
         handleUpgrade: unreachable,
@@ -260,9 +163,8 @@ describe("TeamApiServer teardown", () => {
         stop: () => Promise.reject(new Error("The remote screen would not come down.")),
       },
     });
-    const port = await api.start();
 
-    await expect(api.stop()).rejects.toThrow("would not come down");
+    await expect(stop()).rejects.toThrow("would not come down");
 
     // Its heartbeat and event listeners are already gone, so a listener still answering here
     // is one that no longer notices a revoked session - and the next start would hand it back.
@@ -272,54 +174,37 @@ describe("TeamApiServer teardown", () => {
 
 describe("TeamApiServer compatibility", () => {
   it("publishes protocol support and blocks requests without a compatible handshake", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-compatibility-"));
-    roots.push(root);
-    const store = new TeamStore(join(root, "team.json"));
-    await store.initialize();
-    const api = new TeamApiServer({
+    const { start } = await createTeamApiFixture("compatibility");
+    const { base } = await start({
       appVersion: "0.4.0",
-      store,
-      agents: createAgents(),
-      mailbox: createMailbox(),
-      browser: createBrowser(),
     });
-    const port = await api.start();
-    const base = `http://127.0.0.1:${port}`;
 
-    try {
-      const compatibility = await fetch(`${base}/v1/compatibility`);
-      expect(compatibility.status).toBe(200);
-      await expect(compatibility.json()).resolves.toMatchObject({
-        appVersion: "0.4.0",
-        protocol: { minimum: 1, maximum: 3 },
-        capabilities: expect.arrayContaining(["browser-control", "remote-desktop", TEAM_SEMANTIC_TAGS_CAPABILITY]),
-      });
+    const compatibility = await fetch(`${base}/v1/compatibility`);
+    expect(compatibility.status).toBe(200);
+    await expect(compatibility.json()).resolves.toMatchObject({
+      appVersion: "0.4.0",
+      protocol: { minimum: 1, maximum: 3 },
+      capabilities: expect.arrayContaining(["browser-control", "remote-desktop", TEAM_SEMANTIC_TAGS_CAPABILITY]),
+    });
 
-      const missing = await fetch(`${base}/v1/identity`);
-      expect(missing.status).toBe(426);
-      await expect(missing.json()).resolves.toMatchObject({ code: "client_update_required" });
+    const missing = await fetch(`${base}/v1/identity`);
+    expect(missing.status).toBe(426);
+    await expect(missing.json()).resolves.toMatchObject({ code: "client_update_required" });
 
-      const newerClient = await fetch(`${base}/v1/identity`, {
-        headers: { [TEAM_PROTOCOL_VERSION_HEADER]: "4", [TEAM_APP_VERSION_HEADER]: "0.5.0" },
-      });
-      expect(newerClient.status).toBe(426);
-      await expect(newerClient.json()).resolves.toMatchObject({ code: "host_update_required" });
+    const newerClient = await fetch(`${base}/v1/identity`, {
+      headers: { [TEAM_PROTOCOL_VERSION_HEADER]: "4", [TEAM_APP_VERSION_HEADER]: "0.5.0" },
+    });
+    expect(newerClient.status).toBe(426);
+    await expect(newerClient.json()).resolves.toMatchObject({ code: "host_update_required" });
 
-      const compatible = await fetch(`${base}/v1/identity`, {
-        headers: { [TEAM_PROTOCOL_VERSION_HEADER]: "1", [TEAM_APP_VERSION_HEADER]: "0.3.9" },
-      });
-      expect(compatible.status).toBe(200);
-    } finally {
-      await api.stop();
-    }
+    const compatible = await fetch(`${base}/v1/identity`, {
+      headers: { [TEAM_PROTOCOL_VERSION_HEADER]: "1", [TEAM_APP_VERSION_HEADER]: "0.3.9" },
+    });
+    expect(compatible.status).toBe(200);
   });
 
   it("serves installed skill summaries", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-skills-"));
-    roots.push(root);
-    const store = new TeamStore(join(root, "team.json"));
-    await store.initialize();
-    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const { start, signIn } = await createTeamApiFixture("skills", { configure: true });
     const listInstalledForChatTags = vi.fn(async () => [
       {
         skillId: "skill-1",
@@ -330,34 +215,22 @@ describe("TeamApiServer compatibility", () => {
         state: "update-available" as const,
       },
     ]);
-    const api = new TeamApiServer({
-      store,
-      agents: createAgents(),
+    const { base } = await start({
       skills: { listInstalledForChatTags },
-      mailbox: createMailbox(),
-      browser: createBrowser(),
     });
-    const port = await api.start();
-    const base = `http://127.0.0.1:${port}`;
 
-    try {
-      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
-        body: { username: "owner", password: "correct horse battery" },
-      });
-      const response = await fetch(`${base}/v1/agents/chief/skills`, {
-        headers: {
-          Authorization: `Bearer ${login.sessionToken}`,
-        },
-      });
+    const token = await signIn();
+    const response = await fetch(`${base}/v1/agents/chief/skills`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
 
-      expect(response.status).toBe(200);
-      await expect(response.json()).resolves.toEqual([
-        expect.objectContaining({ skillId: "skill-1", name: "Release Notes", state: "update-available" }),
-      ]);
-      expect(listInstalledForChatTags).toHaveBeenCalledWith("chief");
-    } finally {
-      await api.stop();
-    }
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual([
+      expect.objectContaining({ skillId: "skill-1", name: "Release Notes", state: "update-available" }),
+    ]);
+    expect(listInstalledForChatTags).toHaveBeenCalledWith("chief");
   });
 });
 
@@ -502,70 +375,55 @@ function collectRoutes(node: { [key: string]: RouteNode }, trail: string[]): { n
 
 describe("TeamApiServer routing", () => {
   it("answers every path the shared route table builds", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-routes-"));
-    roots.push(root);
-    const store = new TeamStore(join(root, "team.json"));
-    await store.initialize();
-    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const { root, start, signIn } = await createTeamApiFixture("routes", { configure: true });
     const sidebarLayout = new SidebarLayoutStore(join(root, "sidebar-layout.json"));
     await sidebarLayout.initialize();
-    const api = new TeamApiServer({
-      store,
+    const { base } = await start({
       agents: createAgents({ listBots: () => [] }),
       sidebarLayout,
-      mailbox: createMailbox(),
-      browser: createBrowser(),
       logger: createOpenBotLogger("test", () => undefined),
     });
-    const port = await api.start();
-    const base = `http://127.0.0.1:${port}`;
     // The point is which paths route, not what the stubs do once reached, so the failures they raise
     // are expected here and their logging would bury the assertion.
 
-    try {
-      const login = await jsonRequest<{ sessionToken: string }>(base, TEAM_API_ROUTES.auth.login, {
-        body: { username: "owner", password: "correct horse battery" },
+    const token = await signIn();
+    const collected = collectRoutes(TEAM_API_ROUTES, []);
+    const routes = collected.filter((route) => !ROUTES_NOT_SERVED_OVER_HTTP.has(route.name));
+    // Both directions, because either one alone can pass while saying nothing: a table walk that
+    // returned nothing would satisfy the first check, and a method left behind by a deleted route
+    // would never be noticed without the second.
+    expect(routes.filter((route) => !ROUTE_METHODS[route.name]).map((route) => route.name)).toEqual([]);
+    expect(Object.keys(ROUTE_METHODS).filter((name) => !collected.some((route) => route.name === name))).toEqual([]);
+
+    // Every route the codec has to name, it names. Renaming a path in the table moves the host and
+    // the client together, so the loop below stays green - this is the half of the surface that
+    // notices, because the frozen adapter does not move with them.
+    const unclassified = routes
+      .filter((route) => !ROUTES_WITHOUT_A_CLASSIFIED_JSON_BODY.has(route.name))
+      .filter((route) => !teamProtocolV1HttpRoute(ROUTE_METHODS[route.name], route.path))
+      .map((route) => `${ROUTE_METHODS[route.name]} ${route.path} (${route.name})`);
+    expect(unclassified).toEqual([]);
+
+    // Signing out invalidates the token every other request needs, so it goes last - otherwise the
+    // routes after it would answer 401 and never reach the router's 404.
+    const ordered = [
+      ...routes.filter((route) => route.name !== "auth.logout"),
+      ...routes.filter((route) => route.name === "auth.logout"),
+    ];
+    const unrouted: string[] = [];
+    for (const route of ordered) {
+      const method = ROUTE_METHODS[route.name];
+      const response = await fetch(`${base}${route.path}`, {
+        method,
+        headers: { Authorization: `Bearer ${token}` },
       });
-      const collected = collectRoutes(TEAM_API_ROUTES, []);
-      const routes = collected.filter((route) => !ROUTES_NOT_SERVED_OVER_HTTP.has(route.name));
-      // Both directions, because either one alone can pass while saying nothing: a table walk that
-      // returned nothing would satisfy the first check, and a method left behind by a deleted route
-      // would never be noticed without the second.
-      expect(routes.filter((route) => !ROUTE_METHODS[route.name]).map((route) => route.name)).toEqual([]);
-      expect(Object.keys(ROUTE_METHODS).filter((name) => !collected.some((route) => route.name === name))).toEqual([]);
-
-      // Every route the codec has to name, it names. Renaming a path in the table moves the host and
-      // the client together, so the loop below stays green - this is the half of the surface that
-      // notices, because the frozen adapter does not move with them.
-      const unclassified = routes
-        .filter((route) => !ROUTES_WITHOUT_A_CLASSIFIED_JSON_BODY.has(route.name))
-        .filter((route) => !teamProtocolV1HttpRoute(ROUTE_METHODS[route.name], route.path))
-        .map((route) => `${ROUTE_METHODS[route.name]} ${route.path} (${route.name})`);
-      expect(unclassified).toEqual([]);
-
-      // Signing out invalidates the token every other request needs, so it goes last - otherwise the
-      // routes after it would answer 401 and never reach the router's 404.
-      const ordered = [
-        ...routes.filter((route) => route.name !== "auth.logout"),
-        ...routes.filter((route) => route.name === "auth.logout"),
-      ];
-      const unrouted: string[] = [];
-      for (const route of ordered) {
-        const method = ROUTE_METHODS[route.name];
-        const response = await fetch(`${base}${route.path}`, {
-          method,
-          headers: { Authorization: `Bearer ${login.sessionToken}` },
-        });
-        const body = response.status === 404 ? await response.json() : null;
-        if (isDynamicRecord(body) && body.error === "Route not found.") {
-          unrouted.push(`${method} ${route.path} (${route.name})`);
-        }
+      const body = response.status === 404 ? await response.json() : null;
+      if (isDynamicRecord(body) && body.error === "Route not found.") {
+        unrouted.push(`${method} ${route.path} (${route.name})`);
       }
-
-      expect(unrouted).toEqual([]);
-    } finally {
-      await api.stop();
     }
+
+    expect(unrouted).toEqual([]);
   });
 });
 
@@ -592,88 +450,62 @@ describe("TeamApiServer status contract", () => {
   }
 
   async function statusFixture(slug: string, options: Partial<TeamApiOptions> = {}) {
-    const root = await mkdtemp(join(tmpdir(), `openbot-team-api-${slug}-`));
-    roots.push(root);
-    const store = new TeamStore(join(root, "team.json"));
-    await store.initialize();
-    await store.configure("Studio Mac", "owner", "correct horse battery");
-    const api = new TeamApiServer({
-      store,
+    const fixture = await createTeamApiFixture(slug, { configure: true });
+    // The stubs are here so that a route can be reached at all and then raise, and the silenced
+    // logger keeps what they raise from burying the row that failed.
+    const { base } = await fixture.start({
       agents: createAgents({ listBots: () => [] }),
-      mailbox: createMailbox(),
-      browser: createBrowser(),
       logger: createOpenBotLogger("test", () => undefined),
       ...options,
     });
-    const port = await api.start();
-    return { api, store, base: `http://127.0.0.1:${port}` };
+    return { base, signIn: fixture.signIn };
   }
 
   // A path the router matches with a regex, reached with a method that branch does not name, falls
   // out of the chain and lands on the one 404. There is no 405 anywhere in this server, and adding
   // one would change the meaning of a released wire protocol.
   it("answers 404 for a matched path reached with an unhandled method", async () => {
-    const { api, base } = await statusFixture("wrong-method");
-    try {
-      const token = (
-        await jsonRequest<{ sessionToken: string }>(base, TEAM_API_ROUTES.auth.login, {
-          body: { username: "owner", password: "correct horse battery" },
-        })
-      ).sessionToken;
-      const cases = [
-        ["PUT", TEAM_API_ROUTES.attachment("a")],
-        ["POST", TEAM_API_ROUTES.direct.conversation("m")],
-        ["PUT", TEAM_API_ROUTES.team.member("m")],
-        ["GET", TEAM_API_ROUTES.team.invite("i")],
-        ["GET", TEAM_API_ROUTES.team.session("s")],
-        ["PUT", TEAM_API_ROUTES.agent.memories("a")],
-        ["DELETE", TEAM_API_ROUTES.agent.routines("a")],
-        ["POST", TEAM_API_ROUTES.agent.avatar("a")],
-      ] as const;
-      const answers: string[] = [];
-      for (const [method, path] of cases) answers.push(await answer(base, method, path, token));
-      expect(answers).toEqual(cases.map(([method, path]) => `${method} ${path} 404 Route not found.`));
-    } finally {
-      await api.stop();
-    }
+    const { base, signIn } = await statusFixture("wrong-method");
+    const token = await signIn();
+    const cases = [
+      ["PUT", TEAM_API_ROUTES.attachment("a")],
+      ["POST", TEAM_API_ROUTES.direct.conversation("m")],
+      ["PUT", TEAM_API_ROUTES.team.member("m")],
+      ["GET", TEAM_API_ROUTES.team.invite("i")],
+      ["GET", TEAM_API_ROUTES.team.session("s")],
+      ["PUT", TEAM_API_ROUTES.agent.memories("a")],
+      ["DELETE", TEAM_API_ROUTES.agent.routines("a")],
+      ["POST", TEAM_API_ROUTES.agent.avatar("a")],
+    ] as const;
+    const answers: string[] = [];
+    for (const [method, path] of cases) answers.push(await answer(base, method, path, token));
+    expect(answers).toEqual(cases.map(([method, path]) => `${method} ${path} 404 Route not found.`));
   });
 
   // The per-agent block decodes its identifiers above the switch that dispatches on the action, so a
   // malformed id is a 400 even when no action would have matched. Moving either decode below its
   // switch turns that into the 404 the row above expects, which is why the two are asserted apart.
   it("answers 400 for a malformed path identifier before any action matches", async () => {
-    const { api, base } = await statusFixture("bad-identifier");
-    try {
-      const token = (
-        await jsonRequest<{ sessionToken: string }>(base, TEAM_API_ROUTES.auth.login, {
-          body: { username: "owner", password: "correct horse battery" },
-        })
-      ).sessionToken;
-      const cases = [
-        ["GET", "/v1/agents/%ZZ/bogus", "botId is invalid."],
-        ["PUT", "/v1/agents/a/memories/%ZZ", "memoryId is invalid."],
-        ["PATCH", "/v1/agents/a/routines/%ZZ", "routineId is invalid."],
-      ] as const;
-      const answers: string[] = [];
-      for (const [method, path] of cases) answers.push(await answer(base, method, path, token));
-      expect(answers).toEqual(cases.map(([method, path, message]) => `${method} ${path} 400 ${message}`));
-    } finally {
-      await api.stop();
-    }
+    const { base, signIn } = await statusFixture("bad-identifier");
+    const token = await signIn();
+    const cases = [
+      ["GET", "/v1/agents/%ZZ/bogus", "botId is invalid."],
+      ["PUT", "/v1/agents/a/memories/%ZZ", "memoryId is invalid."],
+      ["PATCH", "/v1/agents/a/routines/%ZZ", "routineId is invalid."],
+    ] as const;
+    const answers: string[] = [];
+    for (const [method, path] of cases) answers.push(await answer(base, method, path, token));
+    expect(answers).toEqual(cases.map(([method, path, message]) => `${method} ${path} 400 ${message}`));
   });
 
   // The bearer check does not consult the path, so an unknown route without a token is 401 rather
   // than 404. A dispatcher that runs its route modules first and answers 404 when none match would
   // leak the existence of every path it does serve.
   it("answers 401 rather than 404 for an unknown path without a token", async () => {
-    const { api, base } = await statusFixture("unauthenticated");
-    try {
-      const response = await fetch(`${base}/v1/nope`);
-      expect(response.status).toBe(401);
-      expect(await response.json()).toEqual({ error: "Authentication required." });
-    } finally {
-      await api.stop();
-    }
+    const { base } = await statusFixture("unauthenticated");
+    const response = await fetch(`${base}/v1/nope`);
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "Authentication required." });
   });
 
   // Three gates in a fixed order: `compatibility` answers before the protocol gate, and the protocol
@@ -681,17 +513,13 @@ describe("TeamApiServer status contract", () => {
   // able to read the endpoint that tells it to update, so `compatibility` below the gate would be an
   // unbreakable 426 loop.
   it("answers compatibility ahead of the protocol gate, and the protocol gate ahead of the bearer check", async () => {
-    const { api, base } = await statusFixture("gate-order", { appVersion: "0.4.0" });
-    try {
-      const compatibility = await fetch(`${base}${TEAM_API_ROUTES.compatibility}`);
-      expect(compatibility.status).toBe(200);
+    const { base } = await statusFixture("gate-order", { appVersion: "0.4.0" });
+    const compatibility = await fetch(`${base}${TEAM_API_ROUTES.compatibility}`);
+    expect(compatibility.status).toBe(200);
 
-      const gated = await fetch(`${base}${TEAM_API_ROUTES.me}`);
-      expect(gated.status).toBe(426);
-      expect(await gated.json()).toMatchObject({ code: "client_update_required" });
-    } finally {
-      await api.stop();
-    }
+    const gated = await fetch(`${base}${TEAM_API_ROUTES.me}`);
+    expect(gated.status).toBe(426);
+    expect(await gated.json()).toMatchObject({ code: "client_update_required" });
   });
 
   // Node's HTTP parser accepts request targets the WHATWG URL parser rejects, so the prologue records
@@ -699,25 +527,17 @@ describe("TeamApiServer status contract", () => {
   // read, and because `#handle` is invoked as a discarded promise that surfaced as an unhandled
   // rejection over a socket that was never ended - a hung request rather than an answer.
   it("answers a request target the URL parser rejects instead of hanging", async () => {
-    const { api, base } = await statusFixture("unparsable-target");
-    try {
-      const response = await fetch(`${base}/`, { headers: { Authorization: "Bearer x" } });
-      expect(response.status).toBe(401);
-      const raw = await rawRequest(base, "GET //[ HTTP/1.1");
-      expect(raw).toMatch(/^HTTP\/1\.1 \d{3} /);
-    } finally {
-      await api.stop();
-    }
+    const { base } = await statusFixture("unparsable-target");
+    const response = await fetch(`${base}/`, { headers: { Authorization: "Bearer x" } });
+    expect(response.status).toBe(401);
+    const raw = await rawRequest(base, "GET //[ HTTP/1.1");
+    expect(raw).toMatch(/^HTTP\/1\.1 \d{3} /);
   });
 });
 
 describe("TeamApiServer administration", () => {
   it("duplicates an agent through protocol v3 and places it after the source", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-duplicate-"));
-    roots.push(root);
-    const store = new TeamStore(join(root, "team.json"));
-    await store.initialize();
-    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const { root, start, signIn } = await createTeamApiFixture("duplicate", { configure: true });
     const sidebarLayout = new SidebarLayoutStore(join(root, "sidebar-layout.json"));
     await sidebarLayout.initialize();
     const source = {
@@ -769,76 +589,59 @@ describe("TeamApiServer administration", () => {
       { type: "create", name: "Core", agentId: source.id },
       new Set([source.id]),
     );
-    const api = new TeamApiServer({
-      store,
+    const { base } = await start({
       agents,
       sidebarLayout,
-      mailbox: createMailbox(),
-      browser: createBrowser(),
       appVersion: "1.0.0",
     });
-    const port = await api.start();
-    const base = `http://127.0.0.1:${port}`;
 
-    try {
-      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
-        body: { username: "owner", password: "correct horse battery" },
-        protocol: TEAM_PROTOCOL_V3,
-        appVersion: "1.0.0",
-      });
-      const response = await fetch(`${base}/v1/agents/${source.id}/duplicate`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${login.sessionToken}`,
-          "Content-Type": "application/json",
-          [TEAM_PROTOCOL_VERSION_HEADER]: String(TEAM_PROTOCOL_V3),
-          [TEAM_APP_VERSION_HEADER]: "1.0.0",
-        },
-        body: JSON.stringify({ operationId: "7674b664-cd72-4cf9-88ed-6f2e189d551f" }),
-      });
+    const token = await signIn({ protocol: TEAM_PROTOCOL_V3, appVersion: "1.0.0" });
+    const response = await fetch(`${base}/v1/agents/${source.id}/duplicate`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        [TEAM_PROTOCOL_VERSION_HEADER]: String(TEAM_PROTOCOL_V3),
+        [TEAM_APP_VERSION_HEADER]: "1.0.0",
+      },
+      body: JSON.stringify({ operationId: "7674b664-cd72-4cf9-88ed-6f2e189d551f" }),
+    });
 
-      expect(response.status).toBe(201);
-      await expect(response.json()).resolves.toMatchObject({
-        bot: { id: duplicate.id, threadId: null },
-        layout: {
-          agentAssignments: { [source.id]: section.sections[0]?.id, [duplicate.id]: section.sections[0]?.id },
-          agentOrder: [source.id, duplicate.id],
-        },
-      });
-      expect(duplicateBot).toHaveBeenCalledWith(source.id, "7674b664-cd72-4cf9-88ed-6f2e189d551f");
-      expect(commitBotDuplication).toHaveBeenCalledWith(duplicate.id, expect.objectContaining({ revision: 2 }));
-      expect(deleteBot).not.toHaveBeenCalled();
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({
+      bot: { id: duplicate.id, threadId: null },
+      layout: {
+        agentAssignments: { [source.id]: section.sections[0]?.id, [duplicate.id]: section.sections[0]?.id },
+        agentOrder: [source.id, duplicate.id],
+      },
+    });
+    expect(duplicateBot).toHaveBeenCalledWith(source.id, "7674b664-cd72-4cf9-88ed-6f2e189d551f");
+    expect(commitBotDuplication).toHaveBeenCalledWith(duplicate.id, expect.objectContaining({ revision: 2 }));
+    expect(deleteBot).not.toHaveBeenCalled();
 
-      const currentLayout = await sidebarLayout.mutate(
-        { type: "create", name: "Later", agentId: duplicate.id },
-        new Set([source.id, duplicate.id]),
-      );
+    const currentLayout = await sidebarLayout.mutate(
+      { type: "create", name: "Later", agentId: duplicate.id },
+      new Set([source.id, duplicate.id]),
+    );
 
-      const retry = await fetch(`${base}/v1/agents/${source.id}/duplicate`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${login.sessionToken}`,
-          "Content-Type": "application/json",
-          [TEAM_PROTOCOL_VERSION_HEADER]: String(TEAM_PROTOCOL_V3),
-          [TEAM_APP_VERSION_HEADER]: "1.0.0",
-        },
-        body: JSON.stringify({ operationId: "7674b664-cd72-4cf9-88ed-6f2e189d551f" }),
-      });
-      expect(retry.status).toBe(201);
-      await expect(retry.json()).resolves.toMatchObject({ layout: { revision: currentLayout.revision } });
-      expect(duplicateBot).toHaveBeenCalledTimes(1);
-      expect(commitBotDuplication).toHaveBeenCalledTimes(1);
-    } finally {
-      await api.stop();
-    }
+    const retry = await fetch(`${base}/v1/agents/${source.id}/duplicate`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        [TEAM_PROTOCOL_VERSION_HEADER]: String(TEAM_PROTOCOL_V3),
+        [TEAM_APP_VERSION_HEADER]: "1.0.0",
+      },
+      body: JSON.stringify({ operationId: "7674b664-cd72-4cf9-88ed-6f2e189d551f" }),
+    });
+    expect(retry.status).toBe(201);
+    await expect(retry.json()).resolves.toMatchObject({ layout: { revision: currentLayout.revision } });
+    expect(duplicateBot).toHaveBeenCalledTimes(1);
+    expect(commitBotDuplication).toHaveBeenCalledTimes(1);
   });
 
   it("attempts layout cleanup when duplicate deletion reports an error", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-duplicate-rollback-"));
-    roots.push(root);
-    const store = new TeamStore(join(root, "team.json"));
-    await store.initialize();
-    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const { root, start, signIn } = await createTeamApiFixture("duplicate-rollback", { configure: true });
     const sidebarLayout = new SidebarLayoutStore(join(root, "sidebar-layout.json"));
     await sidebarLayout.initialize();
     const duplicate = {
@@ -868,48 +671,31 @@ describe("TeamApiServer administration", () => {
     });
     vi.spyOn(sidebarLayout, "placeDuplicateAfter").mockRejectedValueOnce(new Error("layout persistence failed"));
     const removeAgent = vi.spyOn(sidebarLayout, "removeAgent");
-    const api = new TeamApiServer({
-      store,
+    const { base } = await start({
       agents,
       sidebarLayout,
-      mailbox: createMailbox(),
-      browser: createBrowser(),
       appVersion: "1.0.0",
     });
-    const port = await api.start();
-    const base = `http://127.0.0.1:${port}`;
 
-    try {
-      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
-        body: { username: "owner", password: "correct horse battery" },
-        protocol: TEAM_PROTOCOL_V3,
-        appVersion: "1.0.0",
-      });
-      const response = await fetch(`${base}/v1/agents/chief/duplicate`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${login.sessionToken}`,
-          "Content-Type": "application/json",
-          [TEAM_PROTOCOL_VERSION_HEADER]: String(TEAM_PROTOCOL_V3),
-          [TEAM_APP_VERSION_HEADER]: "1.0.0",
-        },
-        body: JSON.stringify({ operationId: "25dc8b8e-a93b-48f5-9e22-d3a7840f5d4d" }),
-      });
+    const token = await signIn({ protocol: TEAM_PROTOCOL_V3, appVersion: "1.0.0" });
+    const response = await fetch(`${base}/v1/agents/chief/duplicate`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        [TEAM_PROTOCOL_VERSION_HEADER]: String(TEAM_PROTOCOL_V3),
+        [TEAM_APP_VERSION_HEADER]: "1.0.0",
+      },
+      body: JSON.stringify({ operationId: "25dc8b8e-a93b-48f5-9e22-d3a7840f5d4d" }),
+    });
 
-      expect(response.status).toBe(500);
-      expect(deleteBot).toHaveBeenCalledWith(duplicate.id);
-      expect(removeAgent).toHaveBeenCalledWith(duplicate.id);
-    } finally {
-      await api.stop();
-    }
+    expect(response.status).toBe(500);
+    expect(deleteBot).toHaveBeenCalledWith(duplicate.id);
+    expect(removeAgent).toHaveBeenCalledWith(duplicate.id);
   });
 
   it("shares sidebar layout mutations with owner, admin, and member clients", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-sidebar-layout-"));
-    roots.push(root);
-    const store = new TeamStore(join(root, "team.json"));
-    await store.initialize();
-    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const { root, store, start } = await createTeamApiFixture("sidebar-layout", { configure: true });
     const adminInvite = await store.createInvite("admin");
     const memberInvite = await store.createInvite("member");
     const admin = await store.acceptInviteWithAccount(adminInvite.token, {
@@ -963,200 +749,183 @@ describe("TeamApiServer administration", () => {
       ],
     });
     let now = 0;
-    const api = new TeamApiServer({
-      store,
+    const { base, port } = await start({
       agents,
       sidebarLayout,
-      mailbox: createMailbox(),
-      browser: createBrowser(),
       now: () => now,
     });
-    const port = await api.start();
-    const base = `http://127.0.0.1:${port}`;
 
-    try {
-      const owner = await store.login("owner", "correct horse battery");
-      const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/events`, [
-        "openbot-events-v2",
-        `openbot-token.${member.sessionToken}`,
-      ]);
-      const initialEvents = nextJsonEvents(socket, 2);
-      await new Promise<void>((resolve, reject) => {
-        socket.addEventListener("open", () => resolve(), { once: true });
-        socket.addEventListener("error", () => reject(new Error("WebSocket did not open.")), { once: true });
-      });
-      const [initialSnapshot, initialPresence] = await initialEvents;
-      expect(initialSnapshot).toMatchObject({
-        type: "runtime-snapshot",
-        snapshot: { bots: [], activeTurns: [], pendingApprovals: [] },
-      });
-      expect(initialPresence).toMatchObject({ type: "team-presence" });
+    const owner = await store.login("owner", "correct horse battery");
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/events`, [
+      "openbot-events-v2",
+      `openbot-token.${member.sessionToken}`,
+    ]);
+    const initialEvents = nextJsonEvents(socket, 2);
+    await new Promise<void>((resolve, reject) => {
+      socket.addEventListener("open", () => resolve(), { once: true });
+      socket.addEventListener("error", () => reject(new Error("WebSocket did not open.")), { once: true });
+    });
+    const [initialSnapshot, initialPresence] = await initialEvents;
+    expect(initialSnapshot).toMatchObject({
+      type: "runtime-snapshot",
+      snapshot: { bots: [], activeTurns: [], pendingApprovals: [] },
+    });
+    expect(initialPresence).toMatchObject({ type: "team-presence" });
 
-      const conversation = {
-        type: "conversation",
-        snapshot: {
-          botId: "chief",
-          threadId: "thread-chief",
-          activeTurnId: null,
-          revision: 1,
-          messages: [
-            {
-              id: "reply-1",
-              author: "assistant",
-              text: "Done",
-              createdAt: "2026-08-29T10:00:00.000Z",
-              status: "completed",
-            },
-          ],
-        },
-      };
-      getRuntimeSnapshot.mockReturnValueOnce({
-        ...createAgents().getRuntimeSnapshot(),
-        latestMessages: [{ botId: "chief", id: "reply-1", text: "Done", createdAt: "2026-08-29T10:00:00.000Z" }],
-      });
-      const boundedEvents = nextJsonEvents(socket, 2);
-      agentEvents.emit("event", conversation);
-      agentEvents.emit("event", {
-        type: "turn-completed",
+    const conversation = {
+      type: "conversation",
+      snapshot: {
         botId: "chief",
         threadId: "thread-chief",
-        turnId: "turn-1",
-        status: "completed",
-      });
-      await expect(boundedEvents).resolves.toEqual([
-        expect.objectContaining({ type: "turn-completed" }),
-        expect.objectContaining({
-          type: "runtime-snapshot",
-          snapshot: expect.objectContaining({ latestMessages: [expect.objectContaining({ id: "reply-1" })] }),
-        }),
-      ]);
-
-      socket.send(JSON.stringify({ type: "agent-event-scope", includeConversations: true }));
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      const conversationEvent = nextJsonEvent(socket);
-      agentEvents.emit("event", conversation);
-      await expect(conversationEvent).resolves.toEqual({
-        type: "conversation-invalidated",
-        botId: "chief",
+        activeTurnId: null,
         revision: 1,
-      });
-      const queueEvent = nextJsonEvent(socket);
-      agentEvents.emit("event", { type: "queue-changed", snapshot: { botId: "chief", deliveries: [] } });
-      await expect(queueEvent).resolves.toEqual({ type: "queue-invalidated", botId: "chief" });
-
-      const eventAfterUnsupportedActivity = nextJsonEvent(socket);
-      agentEvents.emit("event", {
-        type: "turn-progress",
-        botId: "chief",
-        threadId: "thread-chief",
-        turnId: "turn-1",
-        detail: "Searching for current information…",
-      });
-      agentEvents.emit("event", { type: "bots-changed", bots: [] });
-      await expect(eventAfterUnsupportedActivity).resolves.toMatchObject({ type: "bots-changed" });
-
-      const eventsAfterOversizedConversation = nextJsonEvents(socket, 2);
-      agentEvents.emit("event", {
-        ...conversation,
-        snapshot: {
-          ...conversation.snapshot,
-          messages: [{ ...conversation.snapshot.messages[0], text: "x".repeat(1024 * 1024) }],
-        },
-      });
-      agentEvents.emit("event", { type: "bots-changed", bots: [] });
-      await expect(eventsAfterOversizedConversation).resolves.toEqual([
-        expect.objectContaining({ type: "conversation-invalidated" }),
-        expect.objectContaining({ type: "bots-changed" }),
-      ]);
-
-      const refreshedSnapshot = nextJsonEvent(socket);
-      socket.send(JSON.stringify({ type: "runtime-snapshot-request" }));
-      await expect(refreshedSnapshot).resolves.toMatchObject({ type: "runtime-snapshot" });
-      for (let index = 0; index < 20; index += 1) {
-        socket.send(JSON.stringify({ type: "runtime-snapshot-request" }));
-      }
-      await vi.waitFor(() => expect(getRuntimeSnapshot).toHaveBeenCalledTimes(3));
-
-      for (const [index, token] of [owner.sessionToken, admin.sessionToken, member.sessionToken].entries()) {
-        const event = nextJsonEvent(socket);
-        const layout = await jsonRequest<{ sections: Array<{ name: string }>; revision: number }>(
-          base,
-          "/v1/sidebar-layout/actions",
-          { token, body: { type: "create", name: `Shared ${index + 1}` } },
-        );
-        expect(layout.sections.at(-1)?.name).toBe(`Shared ${index + 1}`);
-        await expect(event).resolves.toMatchObject({
-          type: "sidebar-layout-changed",
-          layout: { revision: index + 1 },
-        });
-      }
-      // Three request/response round-trips have passed through the same socket
-      // since the burst, so the coalescer provably never woke for the other 19.
-      expect(getRuntimeSnapshot).toHaveBeenCalledTimes(3);
-
-      await expect(jsonRequest(base, "/v1/sidebar-layout", { token: member.sessionToken })).resolves.toMatchObject({
-        revision: 3,
-        sections: [{ name: "Shared 1" }, { name: "Shared 2" }, { name: "Shared 3" }],
-      });
-      const firstSocketClosed = new Promise<CloseEvent>((resolve) =>
-        socket.addEventListener("close", resolve, { once: true }),
-      );
-      socket.close();
-      await firstSocketClosed;
-      const oversizedSocket = new WebSocket(`ws://127.0.0.1:${port}/v1/events`, [
-        "openbot-events-v2",
-        `openbot-token.${member.sessionToken}`,
-      ]);
-      const oversizedInitialEvents = nextJsonEvents(oversizedSocket, 2);
-      await new Promise<void>((resolve, reject) => {
-        oversizedSocket.addEventListener("open", () => resolve(), { once: true });
-        oversizedSocket.addEventListener("error", () => reject(new Error("WebSocket did not open.")), { once: true });
-      });
-      await oversizedInitialEvents;
-      const closed = new Promise<CloseEvent>((resolve) =>
-        oversizedSocket.addEventListener("close", resolve, { once: true }),
-      );
-      now = 1_000;
-      getRuntimeSnapshot.mockImplementation(() => ({
-        bots: [],
-        activeTurns: [],
-        work: [],
-        latestMessages: [
+        messages: [
           {
-            botId: "chief",
-            id: "oversized",
-            text: "x".repeat(AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT),
+            id: "reply-1",
+            author: "assistant",
+            text: "Done",
             createdAt: "2026-08-29T10:00:00.000Z",
+            status: "completed",
           },
         ],
-        attentionComplete: true,
-        pendingPrompts: [],
-        pendingApprovals: [],
-        pendingBrowserTakeovers: [],
-        failedTurns: [],
-      }));
-      oversizedSocket.send(JSON.stringify({ type: "runtime-snapshot-request" }));
-      expect((await closed).code).toBe(1011);
-    } finally {
-      await api.stop();
+      },
+    };
+    getRuntimeSnapshot.mockReturnValueOnce({
+      ...createAgents().getRuntimeSnapshot(),
+      latestMessages: [{ botId: "chief", id: "reply-1", text: "Done", createdAt: "2026-08-29T10:00:00.000Z" }],
+    });
+    const boundedEvents = nextJsonEvents(socket, 2);
+    agentEvents.emit("event", conversation);
+    agentEvents.emit("event", {
+      type: "turn-completed",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-1",
+      status: "completed",
+    });
+    await expect(boundedEvents).resolves.toEqual([
+      expect.objectContaining({ type: "turn-completed" }),
+      expect.objectContaining({
+        type: "runtime-snapshot",
+        snapshot: expect.objectContaining({ latestMessages: [expect.objectContaining({ id: "reply-1" })] }),
+      }),
+    ]);
+
+    socket.send(JSON.stringify({ type: "agent-event-scope", includeConversations: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const conversationEvent = nextJsonEvent(socket);
+    agentEvents.emit("event", conversation);
+    await expect(conversationEvent).resolves.toEqual({
+      type: "conversation-invalidated",
+      botId: "chief",
+      revision: 1,
+    });
+    const queueEvent = nextJsonEvent(socket);
+    agentEvents.emit("event", { type: "queue-changed", snapshot: { botId: "chief", deliveries: [] } });
+    await expect(queueEvent).resolves.toEqual({ type: "queue-invalidated", botId: "chief" });
+
+    const eventAfterUnsupportedActivity = nextJsonEvent(socket);
+    agentEvents.emit("event", {
+      type: "turn-progress",
+      botId: "chief",
+      threadId: "thread-chief",
+      turnId: "turn-1",
+      detail: "Searching for current information…",
+    });
+    agentEvents.emit("event", { type: "bots-changed", bots: [] });
+    await expect(eventAfterUnsupportedActivity).resolves.toMatchObject({ type: "bots-changed" });
+
+    const eventsAfterOversizedConversation = nextJsonEvents(socket, 2);
+    agentEvents.emit("event", {
+      ...conversation,
+      snapshot: {
+        ...conversation.snapshot,
+        messages: [{ ...conversation.snapshot.messages[0], text: "x".repeat(1024 * 1024) }],
+      },
+    });
+    agentEvents.emit("event", { type: "bots-changed", bots: [] });
+    await expect(eventsAfterOversizedConversation).resolves.toEqual([
+      expect.objectContaining({ type: "conversation-invalidated" }),
+      expect.objectContaining({ type: "bots-changed" }),
+    ]);
+
+    const refreshedSnapshot = nextJsonEvent(socket);
+    socket.send(JSON.stringify({ type: "runtime-snapshot-request" }));
+    await expect(refreshedSnapshot).resolves.toMatchObject({ type: "runtime-snapshot" });
+    for (let index = 0; index < 20; index += 1) {
+      socket.send(JSON.stringify({ type: "runtime-snapshot-request" }));
     }
+    await vi.waitFor(() => expect(getRuntimeSnapshot).toHaveBeenCalledTimes(3));
+
+    for (const [index, token] of [owner.sessionToken, admin.sessionToken, member.sessionToken].entries()) {
+      const event = nextJsonEvent(socket);
+      const layout = await jsonRequest<{ sections: Array<{ name: string }>; revision: number }>(
+        base,
+        "/v1/sidebar-layout/actions",
+        { token, body: { type: "create", name: `Shared ${index + 1}` } },
+      );
+      expect(layout.sections.at(-1)?.name).toBe(`Shared ${index + 1}`);
+      await expect(event).resolves.toMatchObject({
+        type: "sidebar-layout-changed",
+        layout: { revision: index + 1 },
+      });
+    }
+    // Three request/response round-trips have passed through the same socket
+    // since the burst, so the coalescer provably never woke for the other 19.
+    expect(getRuntimeSnapshot).toHaveBeenCalledTimes(3);
+
+    await expect(jsonRequest(base, "/v1/sidebar-layout", { token: member.sessionToken })).resolves.toMatchObject({
+      revision: 3,
+      sections: [{ name: "Shared 1" }, { name: "Shared 2" }, { name: "Shared 3" }],
+    });
+    const firstSocketClosed = new Promise<CloseEvent>((resolve) =>
+      socket.addEventListener("close", resolve, { once: true }),
+    );
+    socket.close();
+    await firstSocketClosed;
+    const oversizedSocket = new WebSocket(`ws://127.0.0.1:${port}/v1/events`, [
+      "openbot-events-v2",
+      `openbot-token.${member.sessionToken}`,
+    ]);
+    const oversizedInitialEvents = nextJsonEvents(oversizedSocket, 2);
+    await new Promise<void>((resolve, reject) => {
+      oversizedSocket.addEventListener("open", () => resolve(), { once: true });
+      oversizedSocket.addEventListener("error", () => reject(new Error("WebSocket did not open.")), { once: true });
+    });
+    await oversizedInitialEvents;
+    const closed = new Promise<CloseEvent>((resolve) =>
+      oversizedSocket.addEventListener("close", resolve, { once: true }),
+    );
+    now = 1_000;
+    getRuntimeSnapshot.mockImplementation(() => ({
+      bots: [],
+      activeTurns: [],
+      work: [],
+      latestMessages: [
+        {
+          botId: "chief",
+          id: "oversized",
+          text: "x".repeat(AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT),
+          createdAt: "2026-08-29T10:00:00.000Z",
+        },
+      ],
+      attentionComplete: true,
+      pendingPrompts: [],
+      pendingApprovals: [],
+      pendingBrowserTakeovers: [],
+      failedTurns: [],
+    }));
+    oversizedSocket.send(JSON.stringify({ type: "runtime-snapshot-request" }));
+    expect((await closed).code).toBe(1011);
   }, 30_000);
 
   it("keeps legacy event clients connected without sending runtime snapshots", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-legacy-events-"));
-    roots.push(root);
-    const store = new TeamStore(join(root, "team.json"));
-    await store.initialize();
-    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const { store, start } = await createTeamApiFixture("legacy-events", { configure: true });
     const login = await store.login("owner", "correct horse battery");
     const agentEvents = new EventEmitter();
-    const api = new TeamApiServer({
-      store,
+    const { port } = await start({
       agents: createAgents({}, agentEvents),
-      mailbox: createMailbox(),
-      browser: createBrowser(),
     });
-    const port = await api.start();
     const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/events`, [
       "openbot-events",
       `openbot-token.${login.sessionToken}`,
@@ -1232,72 +1001,46 @@ describe("TeamApiServer administration", () => {
       });
     } finally {
       socket.close();
-      await api.stop();
     }
   });
 
   it("does not expose unexpected internal errors", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-errors-"));
-    roots.push(root);
-    const store = new TeamStore(join(root, "team.json"));
-    await store.initialize();
-    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const { start, signIn } = await createTeamApiFixture("errors", { configure: true });
     const internalError = Object.assign(new Error("EACCES: /Users/private/openbot.db"), { code: "EACCES" });
     const lines: string[] = [];
-    const api = new TeamApiServer({
-      store,
+    const { base } = await start({
       agents: createAgents({
         listBots: () => {
           throw internalError;
         },
       }),
-      mailbox: createMailbox(),
-      browser: createBrowser(),
       logger: createOpenBotLogger("test", (line) => lines.push(line)),
     });
-    const port = await api.start();
-    const base = `http://127.0.0.1:${port}`;
 
-    try {
-      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
-        body: { username: "owner", password: "correct horse battery" },
-      });
-      const response = await fetch(`${base}/v1/agents`, {
-        headers: { Authorization: `Bearer ${login.sessionToken}` },
-      });
-      expect(response.status).toBe(500);
-      await expect(response.json()).resolves.toEqual({ error: "Request failed." });
-      expect(lines.some((line) => line.includes("Team API request failed:"))).toBe(true);
+    const token = await signIn();
+    const response = await fetch(`${base}/v1/agents`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({ error: "Request failed." });
+    expect(lines.some((line) => line.includes("Team API request failed:"))).toBe(true);
 
-      const invalidLogin = await fetch(`${base}/v1/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: "owner", password: "wrong password value" }),
-      });
-      expect(invalidLogin.status).toBe(400);
-      await expect(invalidLogin.json()).resolves.toEqual({ error: "The username or password is incorrect." });
-    } finally {
-      await api.stop();
-    }
+    const invalidLogin = await fetch(`${base}/v1/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "owner", password: "wrong password value" }),
+    });
+    expect(invalidLogin.status).toBe(400);
+    await expect(invalidLogin.json()).resolves.toEqual({ error: "The username or password is incorrect." });
   });
 
   it("bounds and expires unauthenticated rate-limit entries", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-rate-limit-"));
-    roots.push(root);
-    const store = new TeamStore(join(root, "team.json"));
-    await store.initialize();
-    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const { start } = await createTeamApiFixture("rate-limit", { configure: true });
     let now = Date.parse("2026-08-22T12:00:00.000Z");
-    const api = new TeamApiServer({
-      store,
-      agents: createAgents(),
-      mailbox: createMailbox(),
-      browser: createBrowser(),
+    const { base } = await start({
       rateLimitCapacity: 2,
       now: () => now,
     });
-    const port = await api.start();
-    const base = `http://127.0.0.1:${port}`;
     const login = (username: string) =>
       fetch(`${base}/v1/auth/login`, {
         method: "POST",
@@ -1305,32 +1048,18 @@ describe("TeamApiServer administration", () => {
         body: JSON.stringify({ username, password: "wrong password value" }),
       });
 
-    try {
-      expect((await login("alice")).status).toBe(400);
-      expect((await login("bob")).status).toBe(400);
-      expect((await login("carol")).status).toBe(429);
+    expect((await login("alice")).status).toBe(400);
+    expect((await login("bob")).status).toBe(400);
+    expect((await login("carol")).status).toBe(429);
 
-      now += 15 * 60 * 1_000 + 1;
-      expect((await login("dave")).status).toBe(400);
-    } finally {
-      await api.stop();
-    }
+    now += 15 * 60 * 1_000 + 1;
+    expect((await login("dave")).status).toBe(400);
   });
 
   it("rejects WebSocket event frames larger than one KiB", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-websocket-limit-"));
-    roots.push(root);
-    const store = new TeamStore(join(root, "team.json"));
-    await store.initialize();
-    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const { store, start } = await createTeamApiFixture("websocket-limit", { configure: true });
     const login = await store.login("owner", "correct horse battery");
-    const api = new TeamApiServer({
-      store,
-      agents: createAgents(),
-      mailbox: createMailbox(),
-      browser: createBrowser(),
-    });
-    const port = await api.start();
+    const { port } = await start();
     const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/events`, [
       "openbot-events",
       `openbot-token.${login.sessionToken}`,
@@ -1348,15 +1077,11 @@ describe("TeamApiServer administration", () => {
       await expect(closed).resolves.toBe(1009);
     } finally {
       socket.close();
-      await api.stop();
     }
   });
 
   it("joins an email-bound invitation with a verified OpenBot account", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-account-"));
-    roots.push(root);
-    const store = new TeamStore(join(root, "team.json"));
-    await store.initialize();
+    const { root, store, start } = await createTeamApiFixture("account");
     await store.configureWithAccount("Studio Mac", {
       id: "owner-account",
       email: "owner@example.com",
@@ -1370,11 +1095,8 @@ describe("TeamApiServer administration", () => {
     const agentEvents = new EventEmitter();
     const presenceSnapshots: TeamPresenceSnapshot[] = [];
     const agents = createAgents({}, agentEvents);
-    const api = new TeamApiServer({
-      store,
+    const { port } = await start({
       agents,
-      mailbox: createMailbox(),
-      browser: createBrowser(),
       redeemCentralTicket: async (ticket, serverId) => {
         if (serverId !== store.getIdentity()?.serverId) return null;
         if (ticket === "valid-team-ticket") {
@@ -1397,7 +1119,6 @@ describe("TeamApiServer administration", () => {
       onPresence: (snapshot) => presenceSnapshots.push(snapshot),
       chat,
     });
-    const port = await api.start();
 
     try {
       const previewResponse = await fetch(`http://127.0.0.1:${port}/v1/invitations/preview`, {
@@ -1565,23 +1286,15 @@ describe("TeamApiServer administration", () => {
         .poll(() => presenceSnapshots.at(-1)?.members.find((member) => member.email === "alice@example.com")?.online)
         .toBe(false);
     } finally {
-      await api.stop();
       database.close();
     }
   });
 
   it("manages invites, members, sessions, and password changes on loopback", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-"));
-    roots.push(root);
-    const store = new TeamStore(join(root, "team.json"));
-    await store.initialize();
-    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const { store, start } = await createTeamApiFixture("server", { configure: true });
     const agents = createAgents();
-    const api = new TeamApiServer({
-      store,
+    const { base } = await start({
       agents,
-      mailbox: createMailbox(),
-      browser: createBrowser(),
       createInvite: async (input) => {
         const created = await store.createInvite(input.role, input.email);
         return {
@@ -1594,117 +1307,92 @@ describe("TeamApiServer administration", () => {
         };
       },
     });
-    const port = await api.start();
-    const base = `http://127.0.0.1:${port}`;
 
-    try {
-      const ownerLogin = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
-        body: { username: "owner", password: "correct horse battery" },
-      });
-      const ownerToken = ownerLogin.sessionToken;
-      const invite = await jsonRequest<{ id: string; inviteUrl: string }>(base, "/v1/team/invites", {
-        token: ownerToken,
-        body: { role: "member" },
-      });
-      const inviteToken = new URL(invite.inviteUrl).searchParams.get("token");
-      expect(inviteToken).not.toBeNull();
-      const joined = await jsonRequest<{ member: { id: string }; sessionToken: string }>(base, "/v1/join", {
-        body: {
-          inviteToken,
-          username: "alice",
-          password: "a secure team password",
-        },
-      });
-      const updated = await jsonRequest<{ role: string }>(base, `/v1/team/members/${joined.member.id}`, {
-        method: "PATCH",
-        token: ownerToken,
-        body: { role: "admin" },
-      });
-      expect(updated.role).toBe("admin");
+    const ownerLogin = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
+      body: { username: "owner", password: "correct horse battery" },
+    });
+    const ownerToken = ownerLogin.sessionToken;
+    const invite = await jsonRequest<{ id: string; inviteUrl: string }>(base, "/v1/team/invites", {
+      token: ownerToken,
+      body: { role: "member" },
+    });
+    const inviteToken = new URL(invite.inviteUrl).searchParams.get("token");
+    expect(inviteToken).not.toBeNull();
+    const joined = await jsonRequest<{ member: { id: string }; sessionToken: string }>(base, "/v1/join", {
+      body: {
+        inviteToken,
+        username: "alice",
+        password: "a secure team password",
+      },
+    });
+    const updated = await jsonRequest<{ role: string }>(base, `/v1/team/members/${joined.member.id}`, {
+      method: "PATCH",
+      token: ownerToken,
+      body: { role: "admin" },
+    });
+    expect(updated.role).toBe("admin");
 
-      const sessions = await jsonRequest<Array<{ id: string; username: string }>>(base, "/v1/team/sessions", {
-        token: ownerToken,
-      });
-      const aliceSession = sessions.find((session) => session.username === "alice");
-      expect(aliceSession).toBeDefined();
-      await emptyRequest(base, `/v1/team/sessions/${aliceSession?.id}`, {
-        method: "DELETE",
-        token: ownerToken,
-      });
-      expect(store.authenticate(joined.sessionToken)).toBeNull();
+    const sessions = await jsonRequest<Array<{ id: string; username: string }>>(base, "/v1/team/sessions", {
+      token: ownerToken,
+    });
+    const aliceSession = sessions.find((session) => session.username === "alice");
+    expect(aliceSession).toBeDefined();
+    await emptyRequest(base, `/v1/team/sessions/${aliceSession?.id}`, {
+      method: "DELETE",
+      token: ownerToken,
+    });
+    expect(store.authenticate(joined.sessionToken)).toBeNull();
 
-      await emptyRequest(base, `/v1/team/invites/${invite.id}`, {
-        method: "DELETE",
-        token: ownerToken,
-      });
-      await emptyRequest(base, `/v1/team/members/${joined.member.id}`, {
-        method: "DELETE",
-        token: ownerToken,
-      });
-      expect(store.listMembers().map((member) => member.username)).toEqual(["owner"]);
-      await emptyRequest(base, "/v1/auth/password", {
-        token: ownerToken,
-        body: {
-          currentPassword: "correct horse battery",
-          newPassword: "a newer secure password",
-        },
-      });
-      expect(store.authenticate(ownerToken)).toBeNull();
-    } finally {
-      await api.stop();
-    }
+    await emptyRequest(base, `/v1/team/invites/${invite.id}`, {
+      method: "DELETE",
+      token: ownerToken,
+    });
+    await emptyRequest(base, `/v1/team/members/${joined.member.id}`, {
+      method: "DELETE",
+      token: ownerToken,
+    });
+    expect(store.listMembers().map((member) => member.username)).toEqual(["owner"]);
+    await emptyRequest(base, "/v1/auth/password", {
+      token: ownerToken,
+      body: {
+        currentPassword: "correct horse battery",
+        newPassword: "a newer secure password",
+      },
+    });
+    expect(store.authenticate(ownerToken)).toBeNull();
   });
 
   it("rejects oversized agent input before it reaches the agent service", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-limits-"));
-    roots.push(root);
-    const store = new TeamStore(join(root, "team.json"));
-    await store.initialize();
-    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const { start, signIn } = await createTeamApiFixture("limits", { configure: true });
     const agents = createAgents();
-    const api = new TeamApiServer({
-      store,
+    const { base } = await start({
       agents,
-      mailbox: createMailbox(),
-      browser: createBrowser(),
     });
-    const port = await api.start();
-    const base = `http://127.0.0.1:${port}`;
 
-    try {
-      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
-        body: { username: "owner", password: "correct horse battery" },
-      });
-      const message = await fetch(`${base}/v1/agents/chief/messages`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${login.sessionToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ text: "x".repeat(INPUT_LIMITS.messageText + 1) }),
-      });
-      expect(message.status).toBe(400);
+    const token = await signIn();
+    const message = await fetch(`${base}/v1/agents/chief/messages`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ text: "x".repeat(INPUT_LIMITS.messageText + 1) }),
+    });
+    expect(message.status).toBe(400);
 
-      const update = await fetch(`${base}/v1/agents/chief`, {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${login.sessionToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ name: "x".repeat(INPUT_LIMITS.agentName + 1) }),
-      });
-      expect(update.status).toBe(400);
-    } finally {
-      await api.stop();
-    }
+    const update = await fetch(`${base}/v1/agents/chief`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ name: "x".repeat(INPUT_LIMITS.agentName + 1) }),
+    });
+    expect(update.status).toBe(400);
   });
 
   it("supports memory operations through the authenticated team API", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-memories-"));
-    roots.push(root);
-    const store = new TeamStore(join(root, "team.json"));
-    await store.initialize();
-    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const { start, signIn } = await createTeamApiFixture("memories", { configure: true });
     const memories: BotMemory[] = [];
     const createMemory = vi.fn((input: { botId: string; text: string }) => {
       const memory: BotMemory = {
@@ -1735,8 +1423,7 @@ describe("TeamApiServer administration", () => {
         if (memories[index]?.botId === botId) memories.splice(index, 1);
       }
     });
-    const api = new TeamApiServer({
-      store,
+    const { base } = await start({
       agents: createAgents({
         listMemories: (botId) => memories.filter((memory) => memory.botId === botId),
         createMemory,
@@ -1744,62 +1431,47 @@ describe("TeamApiServer administration", () => {
         deleteMemory,
         clearMemories,
       }),
-      mailbox: createMailbox(),
-      browser: createBrowser(),
     });
-    const port = await api.start();
-    const base = `http://127.0.0.1:${port}`;
 
-    try {
-      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
-        body: { username: "owner", password: "correct horse battery" },
-      });
-      const token = login.sessionToken;
-      await expect(
-        jsonRequest<BotMemory>(base, "/v1/agents/chief/memories", {
-          token,
-          body: { text: "Uses metric units." },
-        }),
-      ).resolves.toMatchObject({ id: "memory-1", botId: "chief", origin: "manual" });
-      await expect(jsonRequest(base, "/v1/agents/chief/memories", { token })).resolves.toHaveLength(1);
-      await expect(
-        jsonRequest<BotMemory>(base, "/v1/agents/chief/memories/memory-1", {
-          method: "PATCH",
-          token,
-          body: { text: "Uses SI units." },
-        }),
-      ).resolves.toMatchObject({ text: "Uses SI units." });
-      await emptyRequest(base, "/v1/agents/chief/memories/memory-1", { method: "DELETE", token });
-      await expect(jsonRequest(base, "/v1/agents/chief/memories", { token })).resolves.toEqual([]);
-      expect(createMemory).toHaveBeenCalledWith({ botId: "chief", text: "Uses metric units." });
-      expect(updateMemory).toHaveBeenCalledWith({ botId: "chief", memoryId: "memory-1", text: "Uses SI units." });
-      expect(deleteMemory).toHaveBeenCalledWith({ botId: "chief", memoryId: "memory-1" });
-
-      await jsonRequest<BotMemory>(base, "/v1/agents/chief/memories", {
+    const token = await signIn();
+    await expect(
+      jsonRequest<BotMemory>(base, "/v1/agents/chief/memories", {
         token,
-        body: { text: "Clear this memory." },
-      });
-      await emptyRequest(base, "/v1/agents/chief/memories", { method: "DELETE", token });
-      await expect(jsonRequest(base, "/v1/agents/chief/memories", { token })).resolves.toEqual([]);
-      expect(clearMemories).toHaveBeenCalledWith("chief");
+        body: { text: "Uses metric units." },
+      }),
+    ).resolves.toMatchObject({ id: "memory-1", botId: "chief", origin: "manual" });
+    await expect(jsonRequest(base, "/v1/agents/chief/memories", { token })).resolves.toHaveLength(1);
+    await expect(
+      jsonRequest<BotMemory>(base, "/v1/agents/chief/memories/memory-1", {
+        method: "PATCH",
+        token,
+        body: { text: "Uses SI units." },
+      }),
+    ).resolves.toMatchObject({ text: "Uses SI units." });
+    await emptyRequest(base, "/v1/agents/chief/memories/memory-1", { method: "DELETE", token });
+    await expect(jsonRequest(base, "/v1/agents/chief/memories", { token })).resolves.toEqual([]);
+    expect(createMemory).toHaveBeenCalledWith({ botId: "chief", text: "Uses metric units." });
+    expect(updateMemory).toHaveBeenCalledWith({ botId: "chief", memoryId: "memory-1", text: "Uses SI units." });
+    expect(deleteMemory).toHaveBeenCalledWith({ botId: "chief", memoryId: "memory-1" });
 
-      const oversized = await fetch(`${base}/v1/agents/chief/memories`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ text: "x".repeat(INPUT_LIMITS.agentMemoryText + 1) }),
-      });
-      expect(oversized.status).toBe(400);
-    } finally {
-      await api.stop();
-    }
+    await jsonRequest<BotMemory>(base, "/v1/agents/chief/memories", {
+      token,
+      body: { text: "Clear this memory." },
+    });
+    await emptyRequest(base, "/v1/agents/chief/memories", { method: "DELETE", token });
+    await expect(jsonRequest(base, "/v1/agents/chief/memories", { token })).resolves.toEqual([]);
+    expect(clearMemories).toHaveBeenCalledWith("chief");
+
+    const oversized = await fetch(`${base}/v1/agents/chief/memories`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "x".repeat(INPUT_LIMITS.agentMemoryText + 1) }),
+    });
+    expect(oversized.status).toBe(400);
   });
 
   it("supports routine operations through the authenticated team API", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-routines-"));
-    roots.push(root);
-    const store = new TeamStore(join(root, "team.json"));
-    await store.initialize();
-    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const { start, signIn } = await createTeamApiFixture("routines", { configure: true });
     const routines: Routine[] = [];
     const createRoutine = vi.fn((input: Parameters<TestAgents["createRoutine"]>[0]) => {
       const now = "2026-08-25T12:00:00.000Z";
@@ -1851,8 +1523,7 @@ describe("TeamApiServer administration", () => {
       const index = routines.findIndex((routine) => routine.id === routineId);
       if (index >= 0) routines.splice(index, 1);
     });
-    const api = new TeamApiServer({
-      store,
+    const { base } = await start({
       agents: createAgents({
         listRoutines: (botId) => routines.filter((routine) => routine.botId === botId),
         createRoutine,
@@ -1861,56 +1532,41 @@ describe("TeamApiServer administration", () => {
         testRoutine: vi.fn(async () => run),
         listRoutineRuns: vi.fn(() => [run]),
       }),
-      mailbox: createMailbox(),
-      browser: createBrowser(),
     });
-    const port = await api.start();
-    const base = `http://127.0.0.1:${port}`;
 
-    try {
-      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
-        body: { username: "owner", password: "correct horse battery" },
-      });
-      const token = login.sessionToken;
-      await expect(
-        jsonRequest<Routine>(base, "/v1/agents/chief/routines", {
-          token,
-          body: {
-            name: "Morning brief",
-            instruction: "Prepare the brief.",
-            active: true,
-            timezone: "Europe/Warsaw",
-            schedule: { kind: "weekdays", time: "07:00" },
-          },
-        }),
-      ).resolves.toMatchObject({ id: "routine-1", botId: "chief" });
-      await expect(jsonRequest(base, "/v1/agents/chief/routines", { token })).resolves.toHaveLength(1);
-      await expect(
-        jsonRequest<Routine>(base, "/v1/agents/chief/routines/routine-1", {
-          method: "PATCH",
-          token,
-          body: { active: false, schedule: { kind: "daily", time: "09:15" } },
-        }),
-      ).resolves.toMatchObject({ active: false, trigger: { schedule: { kind: "daily", time: "09:15" } } });
-      await expect(
-        jsonRequest<RoutineRun>(base, "/v1/agents/chief/routines/routine-1/test", { token, body: {} }),
-      ).resolves.toMatchObject({ kind: "manual", status: "queued" });
-      await expect(jsonRequest(base, "/v1/agents/chief/routines/routine-1/runs?limit=10", { token })).resolves.toEqual([
-        run,
-      ]);
-      await emptyRequest(base, "/v1/agents/chief/routines/routine-1", { method: "DELETE", token });
-      await expect(jsonRequest(base, "/v1/agents/chief/routines", { token })).resolves.toEqual([]);
-    } finally {
-      await api.stop();
-    }
+    const token = await signIn();
+    await expect(
+      jsonRequest<Routine>(base, "/v1/agents/chief/routines", {
+        token,
+        body: {
+          name: "Morning brief",
+          instruction: "Prepare the brief.",
+          active: true,
+          timezone: "Europe/Warsaw",
+          schedule: { kind: "weekdays", time: "07:00" },
+        },
+      }),
+    ).resolves.toMatchObject({ id: "routine-1", botId: "chief" });
+    await expect(jsonRequest(base, "/v1/agents/chief/routines", { token })).resolves.toHaveLength(1);
+    await expect(
+      jsonRequest<Routine>(base, "/v1/agents/chief/routines/routine-1", {
+        method: "PATCH",
+        token,
+        body: { active: false, schedule: { kind: "daily", time: "09:15" } },
+      }),
+    ).resolves.toMatchObject({ active: false, trigger: { schedule: { kind: "daily", time: "09:15" } } });
+    await expect(
+      jsonRequest<RoutineRun>(base, "/v1/agents/chief/routines/routine-1/test", { token, body: {} }),
+    ).resolves.toMatchObject({ kind: "manual", status: "queued" });
+    await expect(jsonRequest(base, "/v1/agents/chief/routines/routine-1/runs?limit=10", { token })).resolves.toEqual([
+      run,
+    ]);
+    await emptyRequest(base, "/v1/agents/chief/routines/routine-1", { method: "DELETE", token });
+    await expect(jsonRequest(base, "/v1/agents/chief/routines", { token })).resolves.toEqual([]);
   });
 
   it("downloads authenticated shared files through the remote API", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-shared-file-"));
-    roots.push(root);
-    const store = new TeamStore(join(root, "team.json"));
-    await store.initialize();
-    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const { root, start, signIn } = await createTeamApiFixture("shared-file", { configure: true });
     const filePath = join(root, "report.csv");
     await writeFile(filePath, "name,value\nOpenBot,1\n");
     const agents = createAgents({
@@ -1925,63 +1581,42 @@ describe("TeamApiServer administration", () => {
         size: 21,
       }),
     });
-    const api = new TeamApiServer({
-      store,
+    const { base } = await start({
       agents,
-      mailbox: createMailbox(),
-      browser: createBrowser(),
     });
-    const port = await api.start();
-    const base = `http://127.0.0.1:${port}`;
 
-    try {
-      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
-        body: { username: "owner", password: "correct horse battery" },
-      });
-      const response = await fetch(
-        `${base}/v1/shared-files?path=${encodeURIComponent("~/OpenBot/Shared/report.csv")}`,
-        {
-          headers: { Authorization: `Bearer ${login.sessionToken}` },
-        },
-      );
-      expect(response.status).toBe(200);
-      expect(response.headers.get("content-disposition")).toContain("report.csv");
-      expect(await response.text()).toBe("name,value\nOpenBot,1\n");
+    const token = await signIn();
+    const response = await fetch(`${base}/v1/shared-files?path=${encodeURIComponent("~/OpenBot/Shared/report.csv")}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-disposition")).toContain("report.csv");
+    expect(await response.text()).toBe("name,value\nOpenBot,1\n");
 
-      const oversized = await fetch(
-        `${base}/v1/shared-files?path=${encodeURIComponent("~/OpenBot/Shared/large.csv")}`,
-        {
-          headers: { Authorization: `Bearer ${login.sessionToken}` },
-        },
-      );
-      expect(oversized.status).toBe(413);
+    const oversized = await fetch(`${base}/v1/shared-files?path=${encodeURIComponent("~/OpenBot/Shared/large.csv")}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(oversized.status).toBe(413);
 
-      const unauthorized = await fetch(`${base}/v1/shared-files?path=Shared/report.csv`);
-      expect(unauthorized.status).toBe(401);
+    const unauthorized = await fetch(`${base}/v1/shared-files?path=Shared/report.csv`);
+    expect(unauthorized.status).toBe(401);
 
-      const workspaceResponse = await fetch(
-        `${base}/v1/workspace-files?botId=chief&path=${encodeURIComponent("app/page.tsx")}`,
-        {
-          headers: { Authorization: `Bearer ${login.sessionToken}` },
-        },
-      );
-      expect(workspaceResponse.status).toBe(200);
-      expect(workspaceResponse.headers.get("content-disposition")).toContain("chief-page.tsx");
-      expect(await workspaceResponse.text()).toBe("name,value\nOpenBot,1\n");
+    const workspaceResponse = await fetch(
+      `${base}/v1/workspace-files?botId=chief&path=${encodeURIComponent("app/page.tsx")}`,
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      },
+    );
+    expect(workspaceResponse.status).toBe(200);
+    expect(workspaceResponse.headers.get("content-disposition")).toContain("chief-page.tsx");
+    expect(await workspaceResponse.text()).toBe("name,value\nOpenBot,1\n");
 
-      const unauthorizedWorkspace = await fetch(`${base}/v1/workspace-files?botId=chief&path=app/page.tsx`);
-      expect(unauthorizedWorkspace.status).toBe(401);
-    } finally {
-      await api.stop();
-    }
+    const unauthorizedWorkspace = await fetch(`${base}/v1/workspace-files?botId=chief&path=app/page.tsx`);
+    expect(unauthorizedWorkspace.status).toBe(401);
   });
 
   it("publishes agents and conversations from the same local agent service", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-local-instance-"));
-    roots.push(root);
-    const store = new TeamStore(join(root, "team.json"));
-    await store.initialize();
-    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const { root, store, start, signIn } = await createTeamApiFixture("local-instance", { configure: true });
     const localBots: BotSummary[] = [
       {
         id: "chief",
@@ -2136,190 +1771,173 @@ describe("TeamApiServer administration", () => {
       }),
       sendMessage,
     });
-    const api = new TeamApiServer({
-      store,
+    const { base } = await start({
       agents,
-      mailbox: createMailbox(),
-      browser: createBrowser(),
     });
-    const port = await api.start();
-    const base = `http://127.0.0.1:${port}`;
 
-    try {
-      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
-        body: { username: "owner", password: "correct horse battery" },
-      });
-      const createInput: CreateBotInput = {
-        name: "Trip Planner",
-        description: "Builds practical itineraries.",
-        avatarSeed: "setup:trip",
-        avatarHue: 215,
-        initialMessage: "Help me plan a trip.",
-      };
-      await expect(
-        jsonRequest(base, "/v1/agents", { token: login.sessionToken, body: createInput }),
-      ).resolves.toMatchObject({
-        id: "trip-planner",
-        name: "Trip Planner",
-        description: "Builds practical itineraries.",
-        title: "",
-      });
-      expect(createBot).toHaveBeenCalledWith(createInput);
-      await expect(jsonRequest(base, "/v1/agents", { token: login.sessionToken })).resolves.toEqual(localBots);
-      await expect(
-        jsonRequest(base, "/v1/agents/chief/usage", {
-          token: login.sessionToken,
-          capabilities: [...TEAM_CURRENT_CAPABILITIES],
-          protocol: TEAM_PROTOCOL_V3,
-        }),
-      ).resolves.toEqual(usage);
-      expect(getUsage).toHaveBeenCalledWith("chief");
-      await expect(jsonRequest(base, "/v1/agents/chief/conversation", { token: login.sessionToken })).resolves.toEqual({
-        ...legacyConversation,
-        messages: [legacyConversation.messages[0]],
-        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
-      });
-      await expect(
-        jsonRequest(base, "/v1/agents/chief/conversation", {
-          token: login.sessionToken,
-          capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
-        }),
-      ).resolves.toEqual({
-        ...legacyConversation,
-        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "hosted-site-event-1" },
-      });
-      await expect(
-        jsonRequest(base, "/v1/agents/chief/conversation", {
-          token: login.sessionToken,
-          capabilities: [...TEAM_CURRENT_CAPABILITIES],
-        }),
-      ).resolves.toEqual({
-        ...localConversation,
-        readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "hosted-site-event-1" },
-      });
-      await expect(
-        jsonRequest(base, "/v1/agents/chief/conversation-page?limit=10", { token: login.sessionToken }),
-      ).resolves.toMatchObject({
-        messages: [{ id: "message-1" }],
-        readState: { throughMessageId: "message-1" },
-      });
-      expect(readConversationPageFor.mock.calls.at(-1)?.[4]).toEqual({
-        excludeRoutineEvents: true,
-        excludeRoutineRunEvents: true,
-        excludeHostedSiteEvents: true,
-      });
-      await expect(
-        jsonRequest(base, "/v1/agents/chief/conversation-page?limit=10", {
-          token: login.sessionToken,
-          capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
-        }),
-      ).resolves.toMatchObject({ messages: legacyConversation.messages });
-      expect(readConversationPageFor.mock.calls.at(-1)?.[4]).toEqual({
-        excludeRoutineEvents: false,
-        excludeRoutineRunEvents: false,
-        excludeHostedSiteEvents: false,
-      });
-      await expect(jsonRequest(base, "/v1/agents/conversation-reads", { token: login.sessionToken })).resolves.toEqual({
-        chief: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
-      });
-      expect(listConversationReads.mock.calls.at(-1)?.[1]).toEqual({
-        excludeRoutineEvents: true,
-        excludeRoutineRunEvents: true,
-        excludeHostedSiteEvents: true,
-      });
-      await expect(
-        jsonRequest(base, "/v1/agents/conversation-reads", {
-          token: login.sessionToken,
-          capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
-        }),
-      ).resolves.toEqual({
-        chief: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "hosted-site-event-1" },
-      });
-      expect(listConversationReads.mock.calls.at(-1)?.[1]).toEqual({
-        excludeRoutineEvents: false,
-        excludeRoutineRunEvents: false,
-        excludeHostedSiteEvents: false,
-      });
-      await expect(
-        jsonRequest(base, "/v1/agents/chief/conversation/read", {
-          token: login.sessionToken,
-          body: { throughMessageId: "message-1" },
-        }),
-      ).resolves.toEqual({
-        unreadCount: 0,
-        firstUnreadMessageId: null,
-        throughMessageId: "message-1",
-      });
-      const taggedMessage = "Ask @[Research](agent:research) to use @[Sources](skill:sources).";
-      await jsonRequest(base, "/v1/agents/chief/messages", {
-        token: login.sessionToken,
-        protocol: TEAM_PROTOCOL_V3,
+    const token = await signIn();
+    const createInput: CreateBotInput = {
+      name: "Trip Planner",
+      description: "Builds practical itineraries.",
+      avatarSeed: "setup:trip",
+      avatarHue: 215,
+      initialMessage: "Help me plan a trip.",
+    };
+    await expect(jsonRequest(base, "/v1/agents", { token: token, body: createInput })).resolves.toMatchObject({
+      id: "trip-planner",
+      name: "Trip Planner",
+      description: "Builds practical itineraries.",
+      title: "",
+    });
+    expect(createBot).toHaveBeenCalledWith(createInput);
+    await expect(jsonRequest(base, "/v1/agents", { token: token })).resolves.toEqual(localBots);
+    await expect(
+      jsonRequest(base, "/v1/agents/chief/usage", {
+        token: token,
         capabilities: [...TEAM_CURRENT_CAPABILITIES],
-        body: {
-          text: taggedMessage,
-          attachmentDraftIds: [],
-          replyToMessageId: null,
-        },
-      });
-      expect(sendMessage).toHaveBeenCalledWith({
-        botId: "chief",
+        protocol: TEAM_PROTOCOL_V3,
+      }),
+    ).resolves.toEqual(usage);
+    expect(getUsage).toHaveBeenCalledWith("chief");
+    await expect(jsonRequest(base, "/v1/agents/chief/conversation", { token: token })).resolves.toEqual({
+      ...legacyConversation,
+      messages: [legacyConversation.messages[0]],
+      readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
+    });
+    await expect(
+      jsonRequest(base, "/v1/agents/chief/conversation", {
+        token: token,
+        capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
+      }),
+    ).resolves.toEqual({
+      ...legacyConversation,
+      readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "hosted-site-event-1" },
+    });
+    await expect(
+      jsonRequest(base, "/v1/agents/chief/conversation", {
+        token: token,
+        capabilities: [...TEAM_CURRENT_CAPABILITIES],
+      }),
+    ).resolves.toEqual({
+      ...localConversation,
+      readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "hosted-site-event-1" },
+    });
+    await expect(
+      jsonRequest(base, "/v1/agents/chief/conversation-page?limit=10", { token: token }),
+    ).resolves.toMatchObject({
+      messages: [{ id: "message-1" }],
+      readState: { throughMessageId: "message-1" },
+    });
+    expect(readConversationPageFor.mock.calls.at(-1)?.[4]).toEqual({
+      excludeRoutineEvents: true,
+      excludeRoutineRunEvents: true,
+      excludeHostedSiteEvents: true,
+    });
+    await expect(
+      jsonRequest(base, "/v1/agents/chief/conversation-page?limit=10", {
+        token: token,
+        capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
+      }),
+    ).resolves.toMatchObject({ messages: legacyConversation.messages });
+    expect(readConversationPageFor.mock.calls.at(-1)?.[4]).toEqual({
+      excludeRoutineEvents: false,
+      excludeRoutineRunEvents: false,
+      excludeHostedSiteEvents: false,
+    });
+    await expect(jsonRequest(base, "/v1/agents/conversation-reads", { token: token })).resolves.toEqual({
+      chief: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
+    });
+    expect(listConversationReads.mock.calls.at(-1)?.[1]).toEqual({
+      excludeRoutineEvents: true,
+      excludeRoutineRunEvents: true,
+      excludeHostedSiteEvents: true,
+    });
+    await expect(
+      jsonRequest(base, "/v1/agents/conversation-reads", {
+        token: token,
+        capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
+      }),
+    ).resolves.toEqual({
+      chief: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "hosted-site-event-1" },
+    });
+    expect(listConversationReads.mock.calls.at(-1)?.[1]).toEqual({
+      excludeRoutineEvents: false,
+      excludeRoutineRunEvents: false,
+      excludeHostedSiteEvents: false,
+    });
+    await expect(
+      jsonRequest(base, "/v1/agents/chief/conversation/read", {
+        token: token,
+        body: { throughMessageId: "message-1" },
+      }),
+    ).resolves.toEqual({
+      unreadCount: 0,
+      firstUnreadMessageId: null,
+      throughMessageId: "message-1",
+    });
+    const taggedMessage = "Ask @[Research](agent:research) to use @[Sources](skill:sources).";
+    await jsonRequest(base, "/v1/agents/chief/messages", {
+      token: token,
+      protocol: TEAM_PROTOCOL_V3,
+      capabilities: [...TEAM_CURRENT_CAPABILITIES],
+      body: {
         text: taggedMessage,
         attachmentDraftIds: [],
         replyToMessageId: null,
-      });
-      await expect(
-        jsonRequest(base, "/v1/agents/chief/conversation/read", {
-          token: login.sessionToken,
-          capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
-          body: { throughMessageId: "message-1" },
-        }),
-      ).resolves.toEqual({
-        unreadCount: 0,
-        firstUnreadMessageId: null,
-        throughMessageId: "hosted-site-event-1",
-      });
-      await expect(
-        jsonRequest(base, "/v1/agents/chief/conversation/unread", {
-          token: login.sessionToken,
-          protocol: TEAM_PROTOCOL_V3,
-          capabilities: [...TEAM_CURRENT_CAPABILITIES],
-          body: {},
-        }),
-      ).resolves.toEqual({ unreadCount: 1, firstUnreadMessageId: "message-1", throughMessageId: null });
-      expect(markConversationUnread).toHaveBeenCalledWith("chief", store.authenticate(login.sessionToken)?.id);
-      const unsupported = await fetch(`${base}/v1/agents/chief/conversation/unread`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${login.sessionToken}`,
-          "Content-Type": "application/json",
-          [TEAM_PROTOCOL_VERSION_HEADER]: "3",
-        },
-        body: "{}",
-      });
-      expect(unsupported.status).toBe(400);
-      const forgedReader = await fetch(`${base}/v1/agents/chief/conversation/unread`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${login.sessionToken}`,
-          "Content-Type": "application/json",
-          [TEAM_PROTOCOL_VERSION_HEADER]: "3",
-          [TEAM_CAPABILITIES_HEADER]: TEAM_CURRENT_CAPABILITIES.join(","),
-        },
-        body: JSON.stringify({ memberId: "other-reader" }),
-      });
-      expect(forgedReader.status).toBe(400);
-      expect(markConversationUnread).toHaveBeenCalledTimes(1);
-    } finally {
-      await api.stop();
-    }
+      },
+    });
+    expect(sendMessage).toHaveBeenCalledWith({
+      botId: "chief",
+      text: taggedMessage,
+      attachmentDraftIds: [],
+      replyToMessageId: null,
+    });
+    await expect(
+      jsonRequest(base, "/v1/agents/chief/conversation/read", {
+        token: token,
+        capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
+        body: { throughMessageId: "message-1" },
+      }),
+    ).resolves.toEqual({
+      unreadCount: 0,
+      firstUnreadMessageId: null,
+      throughMessageId: "hosted-site-event-1",
+    });
+    await expect(
+      jsonRequest(base, "/v1/agents/chief/conversation/unread", {
+        token: token,
+        protocol: TEAM_PROTOCOL_V3,
+        capabilities: [...TEAM_CURRENT_CAPABILITIES],
+        body: {},
+      }),
+    ).resolves.toEqual({ unreadCount: 1, firstUnreadMessageId: "message-1", throughMessageId: null });
+    expect(markConversationUnread).toHaveBeenCalledWith("chief", store.authenticate(token)?.id);
+    const unsupported = await fetch(`${base}/v1/agents/chief/conversation/unread`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        [TEAM_PROTOCOL_VERSION_HEADER]: "3",
+      },
+      body: "{}",
+    });
+    expect(unsupported.status).toBe(400);
+    const forgedReader = await fetch(`${base}/v1/agents/chief/conversation/unread`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        [TEAM_PROTOCOL_VERSION_HEADER]: "3",
+        [TEAM_CAPABILITIES_HEADER]: TEAM_CURRENT_CAPABILITIES.join(","),
+      },
+      body: JSON.stringify({ memberId: "other-reader" }),
+    });
+    expect(forgedReader.status).toBe(400);
+    expect(markConversationUnread).toHaveBeenCalledTimes(1);
   });
 
   it("responds to authenticated remote interactive requests", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-approval-"));
-    roots.push(root);
-    const store = new TeamStore(join(root, "team.json"));
-    await store.initialize();
-    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const { start, signIn } = await createTeamApiFixture("approval", { configure: true });
     const approvals: unknown[] = [];
     const failures: unknown[] = [];
     const takeovers: unknown[] = [];
@@ -2338,146 +1956,98 @@ describe("TeamApiServer administration", () => {
         takeovers.push(input);
       },
     });
-    const api = new TeamApiServer({
-      store,
+    const { base } = await start({
       agents,
-      mailbox: createMailbox(),
-      browser: createBrowser(),
     });
-    const port = await api.start();
-    const base = `http://127.0.0.1:${port}`;
 
-    try {
-      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
-        body: { username: "owner", password: "correct horse battery" },
-      });
-      await emptyRequest(base, "/v1/approvals/respond", {
-        token: login.sessionToken,
-        body: { requestId: 17, decision: "accept" },
-      });
-      expect(approvals).toEqual([{ requestId: 17, decision: "accept" }]);
-      await emptyRequest(base, "/v1/browser-takeovers/respond", {
-        token: login.sessionToken,
-        body: { requestId: "takeover-17", decision: "complete" },
-      });
-      expect(takeovers).toEqual([{ requestId: "takeover-17", decision: "complete" }]);
-      await emptyRequest(base, "/v1/prompts/respond", {
-        token: login.sessionToken,
-        body: { requestId: "prompt-17", answers: { scope: ["Small"] } },
-      });
-      expect(prompts).toEqual([{ requestId: "prompt-17", answers: { scope: ["Small"] } }]);
-      await emptyRequest(base, "/v1/agents/chief/failures/acknowledge", {
-        token: login.sessionToken,
-        body: { turnId: "turn-failed" },
-      });
-      expect(failures).toEqual([{ botId: "chief", turnId: "turn-failed" }]);
+    const token = await signIn();
+    await emptyRequest(base, "/v1/approvals/respond", {
+      token: token,
+      body: { requestId: 17, decision: "accept" },
+    });
+    expect(approvals).toEqual([{ requestId: 17, decision: "accept" }]);
+    await emptyRequest(base, "/v1/browser-takeovers/respond", {
+      token: token,
+      body: { requestId: "takeover-17", decision: "complete" },
+    });
+    expect(takeovers).toEqual([{ requestId: "takeover-17", decision: "complete" }]);
+    await emptyRequest(base, "/v1/prompts/respond", {
+      token: token,
+      body: { requestId: "prompt-17", answers: { scope: ["Small"] } },
+    });
+    expect(prompts).toEqual([{ requestId: "prompt-17", answers: { scope: ["Small"] } }]);
+    await emptyRequest(base, "/v1/agents/chief/failures/acknowledge", {
+      token: token,
+      body: { turnId: "turn-failed" },
+    });
+    expect(failures).toEqual([{ botId: "chief", turnId: "turn-failed" }]);
 
-      const oversizedPrompt = await fetch(`${base}/v1/prompts/respond`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${login.sessionToken}`,
-          "Content-Type": "application/json",
+    const oversizedPrompt = await fetch(`${base}/v1/prompts/respond`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        requestId: "prompt-18",
+        answers: {
+          first: ["a".repeat(INPUT_LIMITS.promptAnswersTotalText / 2 + 1)],
+          second: ["b".repeat(INPUT_LIMITS.promptAnswersTotalText / 2)],
         },
-        body: JSON.stringify({
-          requestId: "prompt-18",
-          answers: {
-            first: ["a".repeat(INPUT_LIMITS.promptAnswersTotalText / 2 + 1)],
-            second: ["b".repeat(INPUT_LIMITS.promptAnswersTotalText / 2)],
-          },
-        }),
-      });
-      expect(oversizedPrompt.status).toBe(400);
-      expect(prompts).toHaveLength(1);
+      }),
+    });
+    expect(oversizedPrompt.status).toBe(400);
+    expect(prompts).toHaveLength(1);
 
-      const invalid = await fetch(`${base}/v1/approvals/respond`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${login.sessionToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ requestId: 17, decision: "session" }),
-      });
-      expect(invalid.status).toBe(400);
-    } finally {
-      await api.stop();
-    }
+    const invalid = await fetch(`${base}/v1/approvals/respond`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ requestId: 17, decision: "session" }),
+    });
+    expect(invalid.status).toBe(400);
   });
 
   it("returns a bounded browser preview to an authenticated client", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-browser-preview-"));
-    roots.push(root);
-    const store = new TeamStore(join(root, "team.json"));
-    await store.initialize();
-    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const { start, signIn } = await createTeamApiFixture("browser-preview", { configure: true });
     const capturePreview = vi.fn(async () => ({
       dataUrl: "data:image/jpeg;base64,YWJj",
       width: 960,
       height: 600,
     }));
-    const api = new TeamApiServer({
-      store,
-      agents: createAgents(),
-      mailbox: createMailbox(),
+    const { base } = await start({
       browser: createBrowser({ capturePreview }),
     });
-    const port = await api.start();
-    const base = `http://127.0.0.1:${port}`;
 
-    try {
-      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
-        body: { username: "owner", password: "correct horse battery" },
-      });
-      const preview = await jsonRequest<{ dataUrl: string; width: number; height: number }>(
-        base,
-        "/v1/browser/preview",
-        { token: login.sessionToken, body: { tabId: "tab-login" } },
-      );
+    const token = await signIn();
+    const preview = await jsonRequest<{ dataUrl: string; width: number; height: number }>(base, "/v1/browser/preview", {
+      token: token,
+      body: { tabId: "tab-login" },
+    });
 
-      expect(capturePreview).toHaveBeenCalledWith("tab-login");
-      expect(preview).toEqual({ dataUrl: "data:image/jpeg;base64,YWJj", width: 960, height: 600 });
-    } finally {
-      await api.stop();
-    }
+    expect(capturePreview).toHaveBeenCalledWith("tab-login");
+    expect(preview).toEqual({ dataUrl: "data:image/jpeg;base64,YWJj", width: 960, height: 600 });
   });
 
   it("requires the WebRTC protocol for legacy Remote Desktop clients", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-desktop-"));
-    roots.push(root);
-    const store = new TeamStore(join(root, "team.json"));
-    await store.initialize();
-    await store.configure("Studio Mac", "owner", "correct horse battery");
-    const api = new TeamApiServer({
-      store,
-      agents: createAgents(),
-      mailbox: createMailbox(),
-      browser: createBrowser(),
+    const { start, signIn } = await createTeamApiFixture("desktop", { configure: true });
+    const { base } = await start();
+
+    const token = await signIn();
+    const legacy = await fetch(`${base}/v1/host/remote-desktop-access`, {
+      headers: { Authorization: `Bearer ${token}` },
     });
-    const port = await api.start();
-    const base = `http://127.0.0.1:${port}`;
+    expect(legacy.status).toBe(426);
+    await expect(legacy.json()).resolves.toEqual({ error: "Update required.", code: "protocol_mismatch" });
 
-    try {
-      const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
-        body: { username: "owner", password: "correct horse battery" },
-      });
-      const legacy = await fetch(`${base}/v1/host/remote-desktop-access`, {
-        headers: { Authorization: `Bearer ${login.sessionToken}` },
-      });
-      expect(legacy.status).toBe(426);
-      await expect(legacy.json()).resolves.toEqual({ error: "Update required.", code: "protocol_mismatch" });
-
-      const unauthorized = await fetch(`${base}/v1/host/remote-desktop-access`);
-      expect(unauthorized.status).toBe(401);
-    } finally {
-      await api.stop();
-    }
+    const unauthorized = await fetch(`${base}/v1/host/remote-desktop-access`);
+    expect(unauthorized.status).toBe(401);
   });
 
   it("allows an active member to create remote control and rejects an outsider", async () => {
-    const root = await mkdtemp(join(tmpdir(), "openbot-team-api-remote-screen-"));
-    roots.push(root);
-    const store = new TeamStore(join(root, "team.json"));
-    await store.initialize();
-    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const { store, start } = await createTeamApiFixture("remote-screen", { configure: true });
     const invite = await store.createInvite("member");
     const joined = await store.acceptInvite(invite.token, "alice", "a secure team password");
     const now = "2026-08-20T12:00:00.000Z";
@@ -2520,181 +2090,55 @@ describe("TeamApiServer administration", () => {
       revokeTeamSession: vi.fn(async () => undefined),
       revokeMember: vi.fn(async () => undefined),
     };
-    const api = new TeamApiServer({
-      store,
-      agents: createAgents(),
-      mailbox: createMailbox(),
-      browser: createBrowser(),
+    const { base } = await start({
       remoteScreen,
     });
-    const port = await api.start();
-    const base = `http://127.0.0.1:${port}`;
 
-    try {
-      const outsider = await fetch(`${base}/v1/remote-screen/sessions`, { method: "POST" });
-      expect(outsider.status).toBe(401);
-      expect(createSession).not.toHaveBeenCalled();
+    const outsider = await fetch(`${base}/v1/remote-screen/sessions`, { method: "POST" });
+    expect(outsider.status).toBe(401);
+    expect(createSession).not.toHaveBeenCalled();
 
-      const response = await fetch(`${base}/v1/remote-screen/sessions`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${joined.sessionToken}` },
-      });
-      expect(response.status).toBe(201);
-      await expect(response.json()).resolves.toMatchObject({
-        id: "remote-session-1",
-        viewerGrant: "one-use-viewer-grant",
-        phase: "connecting",
-      });
-      expect(createSession).toHaveBeenCalledWith(
-        expect.objectContaining({
-          serverId: store.getIdentity()?.serverId,
-          memberId: joined.member.id,
-          teamSessionId: expect.any(String),
-          teamSessionExpiresAt: joined.sessionExpiresAt,
-        }),
-      );
+    const response = await fetch(`${base}/v1/remote-screen/sessions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${joined.sessionToken}` },
+    });
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toMatchObject({
+      id: "remote-session-1",
+      viewerGrant: "one-use-viewer-grant",
+      phase: "connecting",
+    });
+    expect(createSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverId: store.getIdentity()?.serverId,
+        memberId: joined.member.id,
+        teamSessionId: expect.any(String),
+        teamSessionExpiresAt: joined.sessionExpiresAt,
+      }),
+    );
 
-      const owner = await store.login("owner", "correct horse battery");
-      const disabled = await fetch(`${base}/v1/team/members/${joined.member.id}`, {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${owner.sessionToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ disabled: true }),
-      });
-      expect(disabled.status).toBe(200);
-      expect(remoteScreen.revokeMember).toHaveBeenCalledWith(joined.member.id);
+    const owner = await store.login("owner", "correct horse battery");
+    const disabled = await fetch(`${base}/v1/team/members/${joined.member.id}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${owner.sessionToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ disabled: true }),
+    });
+    expect(disabled.status).toBe(200);
+    expect(remoteScreen.revokeMember).toHaveBeenCalledWith(joined.member.id);
 
-      const blocked = await fetch(`${base}/v1/remote-screen/sessions`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${joined.sessionToken}` },
-      });
-      expect(blocked.status).toBe(401);
-      expect(createSession).toHaveBeenCalledOnce();
-    } finally {
-      await api.stop();
-    }
+    const blocked = await fetch(`${base}/v1/remote-screen/sessions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${joined.sessionToken}` },
+    });
+    expect(blocked.status).toBe(401);
+    expect(createSession).toHaveBeenCalledOnce();
   });
 });
 
-function nextJsonEvent(websocket: WebSocket): Promise<TestRealtimeEvent> {
-  return new Promise((resolve, reject) => {
-    websocket.addEventListener(
-      "message",
-      (message) => resolve(decodeTestRealtimeEvent(JSON.parse(String(message.data)))),
-      { once: true },
-    );
-    websocket.addEventListener("error", () => reject(new Error("WebSocket event failed.")), {
-      once: true,
-    });
-  });
-}
-
-function nextJsonEvents(websocket: WebSocket, count: number): Promise<TestRealtimeEvent[]> {
-  return new Promise((resolve, reject) => {
-    const events: TestRealtimeEvent[] = [];
-    websocket.addEventListener("message", (message) => {
-      events.push(decodeTestRealtimeEvent(JSON.parse(String(message.data))));
-      if (events.length === count) resolve(events);
-    });
-    websocket.addEventListener("error", () => reject(new Error("WebSocket event failed.")), {
-      once: true,
-    });
-  });
-}
-
 // Writes a request line `fetch` would refuse to send, so a target Node accepts and the WHATWG URL
-// parser rejects can reach the router at all. Returns the status line.
-async function rawRequest(base: string, requestLine: string): Promise<string> {
-  const { port } = new URL(base);
-  const socket = connect({ host: "127.0.0.1", port: Number(port) });
-  return await new Promise<string>((resolve, reject) => {
-    socket.on("error", reject);
-    socket.once("data", (chunk: Buffer) => {
-      socket.destroy();
-      resolve(chunk.toString("utf8").split("\r\n", 1)[0] ?? "");
-    });
-    socket.on("connect", () => socket.write(`${requestLine}\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`));
-  });
-}
-
-async function jsonRequest<T>(
-  base: string,
-  path: string,
-  options: {
-    method?: string;
-    token?: string;
-    body?: unknown;
-    capabilities?: string[];
-    protocol?: number;
-    appVersion?: string;
-  } = {},
-): Promise<T> {
-  const response = await fetch(`${base}${path}`, {
-    method: options.method ?? (options.body === undefined ? "GET" : "POST"),
-    headers: {
-      ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
-      ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
-      ...(options.capabilities ? { [TEAM_CAPABILITIES_HEADER]: options.capabilities.join(",") } : {}),
-      ...(options.protocol ? { [TEAM_PROTOCOL_VERSION_HEADER]: String(options.protocol) } : {}),
-      ...(options.appVersion ? { [TEAM_APP_VERSION_HEADER]: options.appVersion } : {}),
-    },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-  });
-  expect(response.ok).toBe(true);
-  return await response.json();
-}
-
-function decodeTestRealtimeEvent(value: unknown): TestRealtimeEvent {
-  if (!isDynamicRecord(value) || !isString(value.type)) {
-    throw new Error("Invalid test realtime event.");
-  }
-  const code = value.code;
-  if (code !== undefined && !isString(code)) throw new Error("Invalid test event code.");
-  const senderMemberId = value.senderMemberId;
-  if (senderMemberId !== undefined && !isString(senderMemberId)) {
-    throw new Error("Invalid test sender.");
-  }
-  const recipientMemberId = value.recipientMemberId;
-  if (recipientMemberId !== undefined && !isString(recipientMemberId)) {
-    throw new Error("Invalid test recipient.");
-  }
-  const typing = value.typing;
-  if (typing !== undefined && !isBoolean(typing)) throw new Error("Invalid test typing state.");
-  const botId = value.botId;
-  if (botId !== undefined && !isString(botId)) throw new Error("Invalid test bot id.");
-  const revision = value.revision;
-  if (revision !== undefined && !isNumber(revision)) throw new Error("Invalid test revision.");
-  return {
-    type: value.type,
-    ...(botId === undefined ? {} : { botId }),
-    ...(revision === undefined ? {} : { revision }),
-    ...(code === undefined ? {} : { code }),
-    ...(value.snapshot === undefined ? {} : { snapshot: value.snapshot }),
-    ...(value.message === undefined ? {} : { message: value.message }),
-    ...(value.layout === undefined ? {} : { layout: value.layout }),
-    ...(senderMemberId === undefined ? {} : { senderMemberId }),
-    ...(recipientMemberId === undefined ? {} : { recipientMemberId }),
-    ...(typing === undefined ? {} : { typing }),
-  };
-}
-
-async function emptyRequest(
-  base: string,
-  path: string,
-  options: { method?: string; token?: string; body?: unknown },
-): Promise<void> {
-  const response = await fetch(`${base}${path}`, {
-    method: options.method ?? "POST",
-    headers: {
-      ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
-      ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
-    },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-  });
-  expect(response.status).toBe(204);
-}
 
 type RemoteInvites = Awaited<ReturnType<NonNullable<HostOptions["listRemoteInvites"]>>>;
 type RemoteMembers = Awaited<ReturnType<NonNullable<HostOptions["listRemoteMembers"]>>>;
