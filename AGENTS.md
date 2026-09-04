@@ -70,9 +70,13 @@ which of these your change touched.**
    profile and one set of default ports, so a second `bun run dev` fights the first and can leave a
    half-written profile behind. Reuse the running instance, or get an isolated one with
    `developmentUserDataName(profile, instanceId)` in `src/main/development-profile.ts`. Drive the
-   running instance for e2e smoke checks with `bun run dev:automation` (`snapshot`/`screenshot`
-   read-only; `click`/`type` need `--allow-mutations --port=…`, because CDP cannot tell OpenBot
-   profiles apart) instead of launching Electron yourself.
+   running instance for e2e smoke checks with `bun run dev:automation` instead of launching Electron
+   yourself. Each dev instance publishes its worktree, profile and ports, so
+   `bun run dev:automation instances` lists what is live and a command run inside a worktree drives
+   that worktree's app. `snapshot`/`screenshot` are read-only; `click`/`type` need
+   `--allow-mutations` and an instance that was named rather than inferred — the record of this
+   worktree counts, `--instance=<id>` and `--port=` name one outright, and another worktree's app is
+   readable but never clickable.
 3. **Killing processes by pattern.** `pkill -f electron` or `pkill -f bun` kills other sessions' work
    mid-write. Target a PID you started, or ask.
 

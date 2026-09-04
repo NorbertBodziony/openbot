@@ -148,7 +148,7 @@ Use `bun run dev:seed --dry-run` to inspect the target and fixture counts withou
 | `bun run dev:test-client` | Start the Auth API, Signal service, local instance, and an isolated second client for team testing. |
 | `bun run dev:seed` | Replace only the app development profile with deterministic showcase data. |
 | `bun run dev:reset` | Delete the local app, test-client, and legacy host development state. |
-| `bun run dev:automation` | Drive the running dev app over CDP: `snapshot`, `screenshot`, `click`/`type` by accessible role (mutations need `--allow-mutations --port=…`, since CDP cannot tell profiles apart). |
+| `bun run dev:automation` | Drive the running dev app over CDP: `instances`, `snapshot`, `screenshot`, `click`/`type` by accessible role (mutations need `--allow-mutations` and a named instance: this worktree's record, `--instance=<id>` or `--port=`). |
 | `bun run check` | Run Biome, both typechecks, offline tests, the browser smoke test, and the production build. |
 | `bun run test:backend` | Run backend tests only. |
 | `bun run test:browser` | Run the local embedded-browser smoke test. |

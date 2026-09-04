@@ -1,14 +1,8 @@
 // Guardrails that keep automation on the intended dev instance: the wrong
 // port must fail before any click or keystroke can reach another app.
 import { describe, expect, it } from "vitest";
-import {
-  assertMutationAllowed,
-  describeTarget,
-  findMainPages,
-  isMainAppUrl,
-  isOpenBotBrowser,
-  resolveAutomationPort,
-} from "./cdp-client";
+import { assertMutationAllowed, findRendererPages, isOpenBotBrowser, resolveAutomationPort } from "./cdp-client";
+import { describeTarget, findMainPages, isMainAppUrl } from "./page-url";
 import { resolveScreenshotPath } from "./tools";
 
 describe("isOpenBotBrowser", () => {
@@ -37,11 +31,40 @@ describe("findMainPages", () => {
     expect(findMainPages([])).toEqual([]);
   });
 
+  it("rejects the app route of another worktree's instance", () => {
+    const sibling = { url: () => "http://localhost:5174/" };
+    expect(findMainPages([sibling, main], 5_173)).toEqual([main]);
+    expect(findMainPages([sibling], 5_173)).toEqual([]);
+  });
+
   it("rejects an external page served from the app route", () => {
     expect(isMainAppUrl("https://example.com/")).toBe(false);
     expect(isMainAppUrl("http://127.0.0.1:5173/index.html")).toBe(true);
     expect(isMainAppUrl("devtools://devtools/bundled/inspector.html")).toBe(false);
     expect(isMainAppUrl("not a url")).toBe(false);
+  });
+});
+
+describe("findRendererPages", () => {
+  // `BrowserHost.open` accepts any http(s) address, so a visited local
+  // development server can wear the app's origin and path. Only the preload
+  // bridge separates them.
+  const app = { url: () => "http://localhost:5173/", evaluate: async () => "object" };
+  const visitedLocalSite = { url: () => "http://localhost:5173/", evaluate: async () => "undefined" };
+
+  it("drives only a page that carries the OpenBot preload bridge", async () => {
+    await expect(findRendererPages([visitedLocalSite, app])).resolves.toEqual([app]);
+    await expect(findRendererPages([visitedLocalSite])).resolves.toEqual([]);
+  });
+
+  it("skips a page that closes or navigates while it is probed", async () => {
+    const closing = {
+      url: () => "http://localhost:5173/",
+      evaluate: async () => {
+        throw new Error("Target page, context or browser has been closed");
+      },
+    };
+    await expect(findRendererPages([closing, app])).resolves.toEqual([app]);
   });
 });
 
@@ -94,18 +117,18 @@ describe("resolveAutomationPort", () => {
 
 describe("assertMutationAllowed", () => {
   it("refuses a mutation without the opt-in flag", () => {
-    expect(() => assertMutationAllowed({ command: "click", allowMutations: false, portExplicit: true })).toThrow(
+    expect(() => assertMutationAllowed({ command: "click", allowMutations: false, instanceNamed: true })).toThrow(
       /--allow-mutations/u,
     );
   });
 
-  it("refuses a mutation that does not name the instance it drives", () => {
-    expect(() => assertMutationAllowed({ command: "type", allowMutations: true, portExplicit: false })).toThrow(
-      /--port=/u,
-    );
+  it("refuses a mutation on an instance that was inferred rather than named", () => {
+    expect(() =>
+      assertMutationAllowed({ command: "type", allowMutations: true, instanceNamed: false, target: ":9333" }),
+    ).toThrow(/--instance=/u);
   });
 
-  it("allows a mutation that opts in and names its port", () => {
-    expect(() => assertMutationAllowed({ command: "click", allowMutations: true, portExplicit: true })).not.toThrow();
+  it("allows a mutation that opts in and names its instance", () => {
+    expect(() => assertMutationAllowed({ command: "click", allowMutations: true, instanceNamed: true })).not.toThrow();
   });
 });

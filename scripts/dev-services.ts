@@ -6,6 +6,12 @@ import { type NetworkInterfaceInfo, networkInterfaces } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createOpenBotLogger, toLogValue } from "@openbot/logging";
+import { developmentUserDataName, readDevelopmentInstanceId } from "../src/main/development-profile";
+import {
+  type DevInstanceRecord,
+  removeDevInstanceRecord,
+  writeDevInstanceRecord,
+} from "./dev-automation/instance-registry";
 import { prepareDevelopmentEnvironment } from "./prepare-dev-environment";
 
 const logger = createOpenBotLogger("dev-services");
@@ -133,6 +139,33 @@ export function createDevelopmentServiceSpec(
   };
 }
 
+// The ports in the spec are the ones this instance actually won, after
+// `findAvailablePort` walked past whatever a sibling worktree already held.
+// Publishing them is what lets `dev:automation` find this instance instead of
+// guessing 9333, so the record carries the worktree it belongs to as well.
+export function createDevInstanceRecord(
+  spec: DevelopmentServiceSpec,
+  pid: number,
+  startedAt: number,
+): DevInstanceRecord | null {
+  if (spec.name !== "app" && spec.name !== "test-client") return null;
+  const rendererPort = readPort(spec.env.OPENBOT_DEV_RENDERER_PORT);
+  const remoteDebuggingPort = readPort(spec.env.OPENBOT_DEV_REMOTE_DEBUGGING_PORT);
+  if (!rendererPort || !remoteDebuggingPort) return null;
+  const instanceId = readDevelopmentInstanceId(spec.env.OPENBOT_DEV_INSTANCE_ID);
+  const profileKind = spec.name === "test-client" ? "test-client" : "app";
+  return {
+    service: spec.name,
+    instanceId: instanceId ?? "default",
+    profile: developmentUserDataName(profileKind, instanceId),
+    projectRoot: spec.cwd,
+    rendererPort,
+    remoteDebuggingPort,
+    pid,
+    startedAt,
+  };
+}
+
 export function parseDevelopmentTarget(args: string[]): {
   target: DevelopmentTarget;
   dryRun: boolean;
@@ -238,11 +271,20 @@ async function main(): Promise<void> {
 
   logger.info(`Starting: ${specs.map((spec) => spec.name).join(", ")}`);
   const processes = new Map<DevelopmentService, ChildProcess>();
+  const publishedInstances: DevInstanceRecord[] = [];
   let stopping = false;
+
+  const unpublishInstances = (): void => {
+    while (publishedInstances.length > 0) {
+      const record = publishedInstances.pop();
+      if (record) removeDevInstanceRecord(record);
+    }
+  };
 
   const stopAll = async (signal: NodeJS.Signals): Promise<void> => {
     if (stopping) return;
     stopping = true;
+    unpublishInstances();
     await stopOwnedProcesses([...processes.values()], signal);
   };
 
@@ -260,6 +302,14 @@ async function main(): Promise<void> {
         detached: process.platform !== "win32",
       });
       processes.set(spec.name, child);
+      const instance = child.pid ? createDevInstanceRecord(spec, child.pid, Date.now()) : null;
+      if (instance) {
+        writeDevInstanceRecord(instance);
+        publishedInstances.push(instance);
+        logger.info(
+          `[${spec.name}] dev:automation can reach this instance with --instance=${instance.instanceId} (:${instance.remoteDebuggingPort}).`,
+        );
+      }
       child.once("error", (error) => {
         logger.error(`[${spec.name}] Could not start:`, error.message);
         void stopAll("SIGTERM").then(() => {

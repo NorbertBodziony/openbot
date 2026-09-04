@@ -5,6 +5,7 @@
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import type { Logger } from "@openbot/logging";
 import { type Browser, chromium, type Page } from "playwright-core";
+import { describeTarget, findMainPages } from "./page-url";
 
 export const DEFAULT_DEV_AUTOMATION_PORT = 9_333;
 export const MIN_DEV_AUTOMATION_PORT = 1_024;
@@ -20,10 +21,10 @@ export interface ResolvedAutomationPort {
   explicit: boolean;
 }
 
-// CDP exposes no per-profile identity (`OPENBOT_DEV_INSTANCE_ID` only changes
-// the user-data directory), so two OpenBot instances are indistinguishable
-// over the protocol. The caller uses `explicit` to demand `--port=` before
-// any mutation, keeping a defaulted port read-only.
+// An explicit `--port=` or `OPENBOT_DEV_REMOTE_DEBUGGING_PORT` names one
+// instance outright. A bare default is a guess: on a machine where several
+// worktrees run dev, 9333 belongs to whichever started first. The caller uses
+// `explicit` to keep such a guess read-only.
 export function resolveAutomationPort(
   flag: string | undefined,
   environment: string | undefined,
@@ -44,12 +45,20 @@ export function resolveAutomationPort(
 export interface MutationGate {
   command: string;
   allowMutations: boolean;
-  portExplicit: boolean;
+  // True when the target was named: an explicit port, an explicit
+  // `--instance=`, or the registry record of the worktree this command runs
+  // in. False for a default port and for the lone instance of some other
+  // worktree, both of which are inferences.
+  instanceNamed: boolean;
+  // How the target was reached, for the refusal message. Empty when nothing
+  // resolved.
+  target?: string;
 }
 
-// The whole safety story of `click` and `type`: they need an opt-in, and they
-// need the caller to name the instance, because CDP exposes no per-profile
-// identity and another agent's dev app may be listening on the default port.
+// The whole safety story of `click` and `type`: they need an opt-in, and the
+// instance they will change has to be named rather than inferred, because
+// several worktrees run dev side by side and a typed message or a click lands
+// in a real profile.
 export function assertMutationAllowed(gate: MutationGate): void {
   if (!gate.allowMutations) {
     throw new Error(
@@ -57,10 +66,12 @@ export function assertMutationAllowed(gate: MutationGate): void {
         "Snapshots and screenshots stay available without it.",
     );
   }
-  if (!gate.portExplicit) {
+  if (!gate.instanceNamed) {
     throw new Error(
-      `${gate.command} changes the live dev app, and CDP cannot tell OpenBot profiles apart. ` +
-        "Re-run with --port=<OPENBOT_DEV_REMOTE_DEBUGGING_PORT> naming the instance you mean to drive.",
+      `${gate.command} changes the live dev app, and the instance was inferred${
+        gate.target ? ` (${gate.target})` : ""
+      }, not named. Run \`bun run dev:automation instances\` and re-run with ` +
+        "--instance=<id> or --port=<OPENBOT_DEV_REMOTE_DEBUGGING_PORT>.",
     );
   }
 }
@@ -77,46 +88,34 @@ export function isOpenBotBrowser(userAgent: string): boolean {
   return userAgent.includes("OpenBot/");
 }
 
-function isLoopbackHost(hostname: string): boolean {
-  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
+// The URL shape alone cannot separate the app from an embedded browser tab:
+// `BrowserHost.open` accepts any http(s) address, so a visited local
+// development server can present the same loopback origin and bare path. Only
+// the app window carries the preload bridge, which `contextBridge` exposes as
+// `window.openbot` and no visited page can fake, so the bridge is the identity
+// check a click or a keystroke is gated on.
+export interface RendererCandidate {
+  url: () => string;
+  evaluate: (probe: string) => Promise<unknown>;
 }
 
-// A page title or a full URL can carry an OAuth code, a signed download URL or
-// the contents of a visited site, and log redaction recognizes none of those
-// shapes. Diagnostics therefore report where a target lives, never what it
-// says: an embedded browser collapses to its origin, and no title is logged.
-export function describeTarget(url: string): string {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return "(unparseable target)";
+// Evaluated inside the page, so it is a string rather than a closure: this
+// file is typechecked against Node's globals and knows nothing about `window`.
+const BRIDGE_PROBE = "typeof window.openbot";
+
+export async function findRendererPages<T extends RendererCandidate>(
+  pages: T[],
+  expectedRendererPort: number | null = null,
+): Promise<T[]> {
+  const confirmed: T[] = [];
+  for (const candidate of findMainPages(pages, expectedRendererPort)) {
+    try {
+      if ((await candidate.evaluate(BRIDGE_PROBE)) === "object") confirmed.push(candidate);
+    } catch {
+      // A page navigating or closing while we probe is not the app we want.
+    }
   }
-  if (!isLoopbackHost(parsed.hostname)) return `${parsed.protocol}//${parsed.hostname} (external)`;
-  const surface = parsed.searchParams.get("surface");
-  return `${parsed.origin}${parsed.pathname}${surface === null ? "" : ` [surface]`}`;
-}
-
-// The dev app opens helper surfaces (Dynamic Island popups) and embedded
-// browser views beside the main window, in no guaranteed order. Only the bare
-// renderer route on a loopback origin is the app itself - an embedded view
-// showing an external site must never be a candidate, because `click` and
-// `type` would land on that site instead of OpenBot.
-export function isMainAppUrl(url: string): boolean {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return false;
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-  if (!isLoopbackHost(parsed.hostname)) return false;
-  if (parsed.searchParams.has("surface")) return false;
-  return parsed.pathname === "/" || parsed.pathname === "/index.html";
-}
-
-export function findMainPages<T extends { url: () => string }>(pages: T[]): T[] {
-  return pages.filter((candidate) => isMainAppUrl(candidate.url()));
+  return confirmed;
 }
 
 async function describeBrowser(port: number): Promise<{ targets: string; userAgent: string }> {
@@ -146,7 +145,17 @@ async function describeBrowser(port: number): Promise<{ targets: string; userAge
   return { targets, userAgent };
 }
 
-export async function connectToDevApp(port: number, logger: Logger): Promise<AutomationSession> {
+export interface ConnectOptions {
+  // Set from the instance registry. Null means nothing published this port, so
+  // the only check left is the OpenBot User-Agent.
+  expectedRendererPort?: number | null;
+}
+
+export async function connectToDevApp(
+  port: number,
+  logger: Logger,
+  options: ConnectOptions = {},
+): Promise<AutomationSession> {
   let targets: string;
   try {
     targets = (await describeBrowser(port)).targets;
@@ -160,12 +169,20 @@ export async function connectToDevApp(port: number, logger: Logger): Promise<Aut
   }
   logger.info(`CDP targets on :${port}`, targets || "(no pages yet)");
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
-  const [page, ...ambiguous] = findMainPages(browser.contexts().flatMap((context) => context.pages()));
+  const expectedRendererPort = options.expectedRendererPort ?? null;
+  const [page, ...ambiguous] = await findRendererPages(
+    browser.contexts().flatMap((context) => context.pages()),
+    expectedRendererPort,
+  );
   if (!page) {
     await browser.close();
     throw new Error(
-      `Connected over CDP but found no OpenBot main window on :${port}. ` +
-        "Open the app window (helper surfaces and embedded browser views are never driven) and retry.",
+      `Connected over CDP but found no OpenBot main window on :${port}` +
+        (expectedRendererPort === null ? ". " : ` serving renderer :${expectedRendererPort}. `) +
+        (expectedRendererPort === null
+          ? "Open the app window (helper surfaces and pages without the OpenBot preload bridge are never driven) and retry."
+          : "That port now belongs to a different dev instance. Re-run `bun run dev:automation instances` " +
+            "and name the instance you mean."),
     );
   }
   if (ambiguous.length > 0) {

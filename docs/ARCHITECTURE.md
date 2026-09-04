@@ -89,7 +89,12 @@ renderer ──► @openbot/contracts ◄── preload ◄── main ──►
     `process.stdout.write` with a `// Machine-readable:` comment instead. Dev automation
     (`scripts/dev-automation`, `bun run dev:automation`) drives the already-running dev app over its
     remote-debugging CDP port and never launches a second instance, seeds, or resets the dev profile.
-    Mutations name their instance with `--port=` because CDP exposes no per-profile identity.
+    Because several worktrees run dev side by side, each instance publishes its worktree, profile,
+    renderer port and debugging port to a registry in the per-user temporary directory
+    (`scripts/dev-automation/instance-registry.ts`); automation resolves the record of the worktree
+    it runs in, verifies the renderer port and the `window.openbot` preload bridge before driving a
+    page, and refuses `click` or `type` on an instance it only inferred. Page URLs reach the
+    diagnostics and the snapshot document only through `describeTarget`.
 
 SQLite migration history starts at the frozen version 8 compatibility baseline. Keep the baseline
 schema unchanged, append every later migration in numeric order, and update the separate latest

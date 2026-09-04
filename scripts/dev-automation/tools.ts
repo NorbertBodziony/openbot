@@ -2,6 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 import { dummyLogger, type Logger } from "@openbot/logging";
 import type { Page } from "playwright-core";
+import { describeTarget } from "./page-url";
 
 const MAX_SNAPSHOT_LENGTH = 20_000;
 
@@ -111,7 +112,10 @@ export interface AutomationSnapshot {
 export async function snapshotPage(page: Page, logger: Logger = dummyLogger): Promise<AutomationSnapshot> {
   const yaml = await page.ariaSnapshot({ depth: 30 });
   const snapshot: AutomationSnapshot = {
-    url: page.url(),
+    // The sanitized location, not `page.url()`: the snapshot is a document an
+    // agent prints and pastes, and a query string on the app route can carry
+    // an OAuth code the redactor would not recognize.
+    url: describeTarget(page.url()),
     title: await page.title(),
     accessibility: yaml.length > MAX_SNAPSHOT_LENGTH ? `${yaml.slice(0, MAX_SNAPSHOT_LENGTH)}…` : yaml,
   };
