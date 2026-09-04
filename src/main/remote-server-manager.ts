@@ -146,7 +146,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       onChanged: () => this.#emitChanged(),
       // The registry never names the event stream. It reports that reconnecting is pointless and the
       // manager decides what that costs -- which is what keeps the socket out of the error path.
-      onReconnectSuspended: (serverId) => this.#events.suspendReconnect(serverId),
+      onReconnectSuspended: (serverId) => this.#suspendServer(serverId),
     });
     this.#centralAccount = centralAccount;
     this.#allowLocalDevelopmentInvites = options.allowLocalDevelopmentInvites ?? false;
@@ -227,6 +227,19 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#webrtcTransport?.on("error", (serverId, code, message) => {
       if (!this.#connections.reportTransportError(serverId, code, message)) this.#events.scheduleReconnect(serverId);
     });
+  }
+
+  /**
+   * What "reconnecting is pointless" costs. Suspending the event stream ends an HTTPS server's
+   * socket with it, but a WebRTC host has no socket there: its events arrive on a data channel the
+   * transport owns, so without this it keeps pushing them from a host the app has just decided it
+   * cannot understand. The suspension is recorded first, so the `disconnected` event this raises
+   * finds the pause already in place and does not schedule a reconnect around it.
+   */
+  #suspendServer(serverId: string): void {
+    this.#events.suspendReconnect(serverId);
+    if (this.#store.find(serverId)?.transport !== "webrtc-v2") return;
+    void this.#webrtcTransport?.disconnect(serverId).catch(() => undefined);
   }
 
   async initialize(): Promise<void> {

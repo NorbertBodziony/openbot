@@ -11,6 +11,7 @@ import { decodeBrowserPreviewFromHost, decodeBrowserTab } from "./remote-device-
 import { RemoteServerManager } from "./remote-server-manager";
 import {
   createRemoteManager,
+  fakeWebRtcTransport,
   stopRemoteFixtures,
   storedHttpsServer,
   stubEventSockets,
@@ -668,6 +669,43 @@ describe("remote connection failures", () => {
 
     expect(sockets[0]?.close).toHaveBeenCalledWith(1000, "Client stopped");
     expect(fixture.server()).toMatchObject({ state: "error", issue: { code: "protocol_error" } });
+  });
+
+  // The same wiring for a WebRTC host, which has no socket to abort: its events arrive on a data
+  // channel the transport owns, so suspending the stream alone left the host pushing events after
+  // the app decided it could not understand the answers it gives.
+  it("closes the event data plane of a WebRTC host that answers with nonsense", async () => {
+    const hostId = "00000000-0000-4000-8000-0000000000ff";
+    const transport = fakeWebRtcTransport([
+      {
+        hostId,
+        name: "Host",
+        logoKey: null,
+        devicePublicKey: null,
+        authEpoch: 1,
+        membershipId: "member-1",
+        role: "member",
+      },
+    ]);
+    const disconnect = vi.spyOn(transport, "disconnect");
+    vi.spyOn(transport, "request").mockImplementation(async (_hostId, path): Promise<TeamProtocolV2Json> => {
+      if (path !== "/v1/compatibility") return { malformed: true };
+      return { appVersion: "0.4.0", protocol: { minimum: 2, maximum: 2 }, capabilities: [] };
+    });
+    const fixture = await createRemoteManager({
+      servers: [storedHttpsServer(hostId, { transport: "webrtc-v2", apiUrl: `webrtc://${hostId}` })],
+      appVersion: "0.4.0",
+      managerOptions: { webrtcTransport: transport },
+    });
+
+    await expect(
+      fixture.manager.request(hostId, "/v1/agents", () => {
+        throw new Error("Unexpected agent payload.");
+      }),
+    ).rejects.toThrow("could not safely use");
+
+    await vi.waitFor(() => expect(disconnect).toHaveBeenCalledWith(hostId));
+    expect(fixture.server(hostId)).toMatchObject({ issue: { code: "protocol_error" } });
   });
 });
 

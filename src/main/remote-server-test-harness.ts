@@ -27,8 +27,11 @@ import { join } from "node:path";
 import type { ServerSummary } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isDynamicRecord } from "@openbot/contracts/runtime-values";
 import { expect, vi } from "vitest";
+import type { RemoteHostSummary } from "./central-auth-manager";
 import { RemoteServerManager } from "./remote-server-manager";
 import type { StoredRemoteServer } from "./remote-server-stored-shape";
+import { TeamWebRtcBridge } from "./team-webrtc-bridge";
+import { TeamWebRtcClientTransport } from "./team-webrtc-client-transport";
 
 // A socket the event stream can drive: `readyState` tracks `close()`, and `close` is a spy so a test
 // can name the code the stream chose to close with.
@@ -105,6 +108,49 @@ export function storedHttpsServer(id: string, overrides: Partial<StoredRemoteSer
     role: "member",
     ...overrides,
   };
+}
+
+/**
+ * A real transport over a bridge that never connects. It is the concrete class because the manager
+ * takes the concrete class, and every control-plane call is a stub: a test wants the object the
+ * manager talks to, not a peer connection.
+ */
+export function fakeWebRtcTransport(hosts: readonly RemoteHostSummary[] = []): TeamWebRtcClientTransport {
+  const bridge = new TeamWebRtcBridge();
+  vi.spyOn(bridge, "connect").mockRejectedValue(new Error("The fake bridge never connects."));
+  vi.spyOn(bridge, "send").mockResolvedValue();
+  vi.spyOn(bridge, "disconnect").mockResolvedValue();
+  return new TeamWebRtcClientTransport({
+    bridge,
+    listHosts: async () => [...hosts],
+    startSession: async () => ({ sessionId: "session-1", hostId: "host-1", expiresAt: Date.now() + 86_400_000 }),
+    issueTicket: async () => ({
+      ticket: "ticket",
+      expiresAt: Date.now() + 180_000,
+      signalUrl: "wss://signal.example.test/v1/signal",
+    }),
+    endSession: async () => undefined,
+    createInvite: async () => ({ inviteId: "invite", token: "token", expiresAt: Date.now() + 60_000 }),
+    listInvites: async () => [],
+    previewInvite: async () => ({
+      inviteId: "invite",
+      hostId: "host-1",
+      hostName: "Host",
+      role: "member",
+      expiresAt: Date.now() + 60_000,
+      emailBound: false,
+      devicePublicKey: null,
+    }),
+    acceptInvite: async () => ({ hostId: "host-1", membershipId: "member-1", role: "member" }),
+    revokeInvite: async () => undefined,
+    listMembers: async () => [],
+    updateMember: async () => undefined,
+    removeMember: async () => undefined,
+    getPrincipalId: () => "user-1",
+    controlPlaneUrl: "https://api.example.test",
+    downloadHostLogo: async () => ({ bytes: new Uint8Array(), mimeType: "image/png" }),
+    transferDirectory: join(tmpdir(), "openbot-remote-harness-transfers"),
+  });
 }
 
 export interface RemoteManagerOptions {
