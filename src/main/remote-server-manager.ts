@@ -4,17 +4,9 @@ import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { isValidAvatarImage } from "@openbot/contracts/avatar-images";
 import { createInviteUrl, parseInviteUrl } from "@openbot/contracts/invite-links";
 import type {
-  AccountUsage,
   AgentEvent,
-  AgentModelOption,
-  AgentStatus,
   AvatarImageInput,
-  BotMemory,
   BotSummary,
-  BrowserControlState,
-  BrowserPreview,
-  BrowserTab,
-  ConversationMessage,
   ConversationPage,
   ConversationPageAnchor,
   ConversationReadState,
@@ -31,14 +23,12 @@ import type {
   DirectTypingRealtimeEvent,
   DraftAttachment,
   DuplicateBotResult,
-  InstalledSkill,
   InvitePreview,
   InviteSummary,
   JoinServerInput,
   LoginServerInput,
   MarkConversationReadInput,
   MarkDirectReadInput,
-  QueuedMessageReceipt,
   QueueSnapshot,
   RemoteDesktopCapabilities,
   RemoteDesktopSession,
@@ -47,7 +37,6 @@ import type {
   ServerConnectionIssue,
   ServerSummary,
   SetTeamTypingInput,
-  SidebarLayoutSnapshot,
   TeamInviteSummary,
   TeamMemberSummary,
   TeamPresenceSnapshot,
@@ -55,35 +44,9 @@ import type {
   TeamRole,
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
-import {
-  isAccountUsage,
-  isAgentModelOption,
-  isAgentStatus,
-  isAttachmentSummary,
-  isBotMemory,
-  isBotSummary,
-  isConversationMessage,
-  isConversationReadState,
-  isConversationWithReadState,
-  isQueuedMessageReceipt,
-  isQueueSnapshot,
-  isRoutine,
-  isRoutineRun,
-  isSidebarLayoutSnapshot,
-  isTeamRealtimeEvent,
-  LOCAL_SERVER_ID,
-} from "@openbot/contracts/ipc";
-import {
-  decodeRecord,
-  emptyDecoder,
-  guardedDecoder,
-  guardedListDecoder,
-  nullableString,
-  requiredBoolean,
-  requiredNumber,
-  requiredString,
-} from "@openbot/contracts/ipc-decoding";
-import { isBoolean, isDynamicRecord, isNumber, isOneOf, isString } from "@openbot/contracts/runtime-values";
+import { LOCAL_SERVER_ID } from "@openbot/contracts/ipc";
+import { decodeRecord } from "@openbot/contracts/ipc-decoding";
+import { isBoolean, isDynamicRecord, isOneOf, isString } from "@openbot/contracts/runtime-values";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import {
   supportsTeamSemanticTags,
@@ -113,6 +76,38 @@ import {
   decodeTeamProtocolV3CurrentHttpResponse,
   encodeTeamProtocolV3CurrentHttpRequest,
 } from "@openbot/contracts/team-protocol/v3-adapter";
+import {
+  decodeBotSummaries,
+  decodeBotSummary,
+  decodeDraftAttachment,
+  decodeDuplicateBotResultFromHost,
+  decodeQueueSnapshot,
+} from "./remote-agent-decoding";
+import {
+  decodeConversationPageFromHost,
+  decodeConversationReadState,
+  decodeConversationReadStates,
+  decodeConversationSearchPageFromHost,
+  decodeConversationWithReadState,
+  decodeDirectConversationPage,
+  decodeDirectConversationReadState,
+  decodeDirectConversationSnapshot,
+  decodeDirectMessage,
+  decodeDirectThreadSummaries,
+} from "./remote-conversation-decoding";
+import { decodeRemoteDesktopCapabilities, decodeRemoteDesktopSession } from "./remote-device-decoding";
+import { decodeVoid, type ResponseDecoder } from "./remote-host-decoding";
+import { addRemotePreviewUrls, isLocalDevelopmentApi, pageQuery, remoteServerLogoUrl } from "./remote-server-urls";
+import {
+  decodeIdentityProof,
+  decodeInvitePreview,
+  decodeInviteSummary,
+  decodeJoinResult,
+  decodeTeamInvites,
+  decodeTeamMember,
+  decodeTeamMembers,
+  decodeTeamPresenceSnapshot,
+} from "./remote-team-decoding";
 import { RemoteViewerProxy } from "./remote-viewer-proxy";
 import { fingerprint } from "./team-store";
 import {
@@ -122,6 +117,35 @@ import {
 } from "./team-webrtc-client-transport";
 
 export { isValidRemoteApiUrl } from "@openbot/contracts/invite-links";
+// Re-exported so this commit moves code without moving any import. The next commit repoints the six
+// importers at the modules above and deletes this block.
+export {
+  decodeAccountUsageFromHost,
+  decodeAgentModelOptions,
+  decodeAgentStatusFromHost,
+  decodeBotMemories,
+  decodeBotMemory,
+  decodeBotSummaries,
+  decodeBotSummary,
+  decodeDuplicateBotResultFromHost,
+  decodeInstalledSkillsFromHost,
+  decodeQueuedMessageReceipt,
+  decodeQueueSnapshot,
+  decodeRoutine,
+  decodeRoutineRun,
+  decodeRoutineRuns,
+  decodeRoutines,
+  decodeSidebarLayoutSnapshot,
+} from "./remote-agent-decoding";
+export { decodeConversationReadState, decodeConversationReadStates } from "./remote-conversation-decoding";
+export {
+  decodeBrowserControlState,
+  decodeBrowserPreviewFromHost,
+  decodeBrowserTab,
+  decodeBrowserTabs,
+} from "./remote-device-decoding";
+export { decodeVoid } from "./remote-host-decoding";
+export { remoteAgentAvatarUrl, remoteAttachmentPreviewUrl, remoteServerLogoUrl } from "./remote-server-urls";
 
 interface StoredRemoteServer {
   id: string;
@@ -196,8 +220,6 @@ const REMOTE_EVENT_INITIAL_BUFFER_LIMIT = 1_000;
 const REMOTE_EVENT_PROTOCOL = "openbot-events";
 const REMOTE_EVENT_SNAPSHOT_PROTOCOL = "openbot-events-v2";
 const LOCAL_TEAM_PROTOCOL = { minimum: TEAM_PROTOCOL_V1, maximum: TEAM_PROTOCOL_V3 } as const;
-
-type ResponseDecoder<T> = (value: unknown) => T;
 
 class RemoteRequestError extends Error {
   readonly status: number;
@@ -2155,555 +2177,6 @@ async function requestJson<T>(
   }
 }
 
-function decodeJoinResult(value: unknown): { member: { role: TeamRole }; sessionToken: string } {
-  const record = decodeRecord(value, "join response");
-  const member = decodeRecord(record.member, "member");
-  const role = member.role;
-  if (!isOneOf(["owner", "admin", "member"] as const, role)) {
-    throw new Error("Invalid member role.");
-  }
-  return { member: { role }, sessionToken: requiredString(record, "sessionToken") };
-}
-
-function decodeDraftAttachment(value: unknown): DraftAttachment {
-  if (!isAttachmentSummary(value)) throw new Error("Invalid attachment.");
-  return {
-    id: value.id,
-    name: value.name,
-    size: value.size,
-    kind: value.kind,
-    mimeType: value.mimeType,
-    previewKind: value.previewKind,
-    previewUrl: value.previewUrl,
-  };
-}
-
-export function decodeBotSummary(value: unknown): BotSummary {
-  const record = decodeRecord(value, "agent");
-  // Servers older than 63b55606 omit `avatarUrl` entirely. The shared guard requires the field, so
-  // normalize the absent case to null before validating rather than loosening the guard for everyone.
-  const candidate = record.avatarUrl === undefined ? { ...record, avatarUrl: null } : record;
-  if (!isBotSummary(candidate)) throw new Error("Invalid agent.");
-  const marketplaceSource = decodeMarketplaceSource(candidate.marketplaceSource);
-  return {
-    id: candidate.id,
-    provider: candidate.provider,
-    name: candidate.name,
-    title: candidate.title,
-    description: candidate.description,
-    notifications: candidate.notifications,
-    model: candidate.model,
-    reasoningEffort: candidate.reasoningEffort,
-    threadId: candidate.threadId,
-    workspacePath: candidate.workspacePath,
-    preview: candidate.preview,
-    updatedAt: candidate.updatedAt,
-    avatarSeed: candidate.avatarSeed,
-    avatarHue: candidate.avatarHue,
-    avatarUrl: candidate.avatarUrl,
-    ...(marketplaceSource === undefined ? {} : { marketplaceSource }),
-  };
-}
-
-function decodeMarketplaceSource(value: unknown): BotSummary["marketplaceSource"] {
-  if (value === undefined) return undefined;
-  const record = decodeRecord(value, "agent marketplace source");
-  const skillIds = record.skillIds;
-  const routineIds = record.routineIds;
-  if (
-    !isString(record.agentId) ||
-    !isString(record.versionId) ||
-    !isNumber(record.version) ||
-    !Number.isInteger(record.version) ||
-    !Array.isArray(skillIds) ||
-    !skillIds.every(isString) ||
-    !Array.isArray(routineIds) ||
-    !routineIds.every(isString)
-  ) {
-    throw new Error("Invalid agent marketplace source.");
-  }
-  return {
-    agentId: record.agentId,
-    versionId: record.versionId,
-    version: record.version,
-    skillIds: [...skillIds],
-    routineIds: [...routineIds],
-  };
-}
-
-export const decodeVoid = emptyDecoder("The remote server returned data.");
-
-// A `FromHost` decoder has a same-shaped `FromMain` twin in `src/preload/index.ts` and is
-// deliberately not the same function: a remote team server is an untrusted sender, so these enumerate
-// what the preload's twin is content to accept as a string. The suffix is there so a later reader
-// does not merge them onto whichever is looser.
-export function decodeAgentStatusFromHost(value: unknown): AgentStatus {
-  if (!isAgentStatus(value)) {
-    throw new Error("Invalid remote agent status.");
-  }
-  return value;
-}
-
-export function decodeAccountUsageFromHost(value: unknown): AccountUsage {
-  if (!isAccountUsage(value)) {
-    throw new Error("Invalid remote account usage.");
-  }
-  return value;
-}
-
-export function decodeAgentModelOptions(value: unknown): AgentModelOption[] {
-  if (!Array.isArray(value) || !value.every(isAgentModelOption)) {
-    throw new Error("Invalid remote agent models.");
-  }
-  return value;
-}
-
-export function decodeBotSummaries(value: unknown): BotSummary[] {
-  if (!Array.isArray(value)) throw new Error("Invalid remote agent list.");
-  return value.map(decodeBotSummary);
-}
-
-export function decodeInstalledSkillsFromHost(value: unknown): InstalledSkill[] {
-  if (!Array.isArray(value)) throw new Error("Invalid installed skill list.");
-  return value.map((item) => {
-    const skill = decodeRecord(item, "installed skill");
-    const state = requiredString(skill, "state");
-    if (!isOneOf(["installed", "update-available", "modified", "needs-repair"] as const, state)) {
-      throw new Error("Invalid installed skill state.");
-    }
-    return {
-      skillId: requiredString(skill, "skillId"),
-      slug: requiredString(skill, "slug"),
-      name: requiredString(skill, "name"),
-      installedVersion: requiredNumber(skill, "installedVersion"),
-      availableVersion: requiredNumber(skill, "availableVersion"),
-      state,
-    };
-  });
-}
-
-export function decodeBotMemory(value: unknown): BotMemory {
-  if (!isBotMemory(value)) throw new Error("Invalid remote agent memory.");
-  return value;
-}
-
-export function decodeBotMemories(value: unknown): BotMemory[] {
-  if (!Array.isArray(value) || !value.every(isBotMemory)) {
-    throw new Error("Invalid remote agent memories.");
-  }
-  return value;
-}
-
-export const decodeRoutine = guardedDecoder(isRoutine, "remote routine");
-export const decodeRoutines = guardedListDecoder(isRoutine, "remote routine list");
-export const decodeRoutineRun = guardedDecoder(isRoutineRun, "remote routine run");
-export const decodeRoutineRuns = guardedListDecoder(isRoutineRun, "remote routine history");
-
-export function decodeSidebarLayoutSnapshot(value: unknown): SidebarLayoutSnapshot {
-  if (!isSidebarLayoutSnapshot(value)) throw new Error("Invalid sidebar layout response.");
-  return value;
-}
-
-export function decodeDuplicateBotResultFromHost(value: unknown): DuplicateBotResult {
-  const record = decodeRecord(value, "agent duplication");
-  return {
-    bot: decodeBotSummary(record.bot),
-    layout: decodeSidebarLayoutSnapshot(record.layout),
-  };
-}
-
-export function decodeQueueSnapshot(value: unknown): QueueSnapshot {
-  if (!isQueueSnapshot(value)) {
-    throw new Error("Invalid remote queue.");
-  }
-  return value;
-}
-
-export function decodeQueuedMessageReceipt(value: unknown): QueuedMessageReceipt {
-  if (!isQueuedMessageReceipt(value)) {
-    throw new Error("Invalid remote message receipt.");
-  }
-  return value;
-}
-
-export function decodeBrowserTabs(value: unknown): BrowserTab[] {
-  if (!Array.isArray(value) || !value.every(isBrowserTabValue)) {
-    throw new Error("Invalid remote browser tabs.");
-  }
-  return value;
-}
-
-export function decodeBrowserTab(value: unknown): BrowserTab {
-  if (!isBrowserTabValue(value)) throw new Error("Invalid remote browser tab.");
-  return value;
-}
-
-export function decodeBrowserPreviewFromHost(value: unknown): BrowserPreview {
-  if (!isBrowserPreviewValue(value)) throw new Error("Invalid remote browser preview.");
-  return value;
-}
-
-function isBrowserPreviewValue(value: unknown): value is BrowserPreview {
-  return (
-    isDynamicRecord(value) &&
-    isString(value.dataUrl) &&
-    value.dataUrl.length <= 2_000_000 &&
-    /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(value.dataUrl) &&
-    isNumber(value.width) &&
-    Number.isSafeInteger(value.width) &&
-    value.width > 0 &&
-    value.width <= 960 &&
-    isNumber(value.height) &&
-    Number.isSafeInteger(value.height) &&
-    value.height > 0 &&
-    value.height <= 600
-  );
-}
-
-function isBrowserTabValue(value: unknown): value is BrowserTab {
-  return (
-    isDynamicRecord(value) &&
-    isString(value.id) &&
-    isString(value.title) &&
-    isString(value.url) &&
-    isBoolean(value.loading) &&
-    (value.ownerThreadId === null || isString(value.ownerThreadId)) &&
-    (value.ownerBotId === null || isString(value.ownerBotId))
-  );
-}
-
-export function decodeBrowserControlState(value: unknown): BrowserControlState {
-  if (!isBrowserControlStateValue(value)) {
-    throw new Error("Invalid remote browser control state.");
-  }
-  return value;
-}
-
-function isBrowserControlStateValue(value: unknown): value is BrowserControlState {
-  return isDynamicRecord(value) && Array.isArray(value.sessions);
-}
-
-function decodeDirectMessage(value: unknown): DirectMessage {
-  const record = decodeRecord(value, "direct message");
-  return {
-    id: requiredString(record, "id"),
-    threadId: requiredString(record, "threadId"),
-    senderMemberId: requiredString(record, "senderMemberId"),
-    recipientMemberId: requiredString(record, "recipientMemberId"),
-    text: requiredString(record, "text"),
-    createdAt: requiredString(record, "createdAt"),
-    sequence: requiredNumber(record, "sequence"),
-  };
-}
-
-function decodeDirectThreadSummary(value: unknown): DirectThreadSummary {
-  const record = decodeRecord(value, "direct thread");
-  return {
-    threadId: requiredString(record, "threadId"),
-    otherMemberId: requiredString(record, "otherMemberId"),
-    lastMessage: decodeDirectMessage(record.lastMessage),
-    unreadCount: requiredNumber(record, "unreadCount"),
-    updatedAt: requiredString(record, "updatedAt"),
-  };
-}
-
-function decodeDirectThreadSummaries(value: unknown): DirectThreadSummary[] {
-  if (!Array.isArray(value)) throw new Error("Invalid direct thread response.");
-  return value.map(decodeDirectThreadSummary);
-}
-
-function decodeDirectConversationSnapshot(value: unknown): DirectConversationSnapshot {
-  const record = decodeRecord(value, "direct conversation");
-  const readState = record.readState;
-  return {
-    threadId: requiredString(record, "threadId"),
-    otherMemberId: requiredString(record, "otherMemberId"),
-    messages: decodeDirectMessages(record.messages),
-    revision: requiredNumber(record, "revision"),
-    ...(readState === undefined ? {} : { readState: decodeDirectConversationReadState(readState) }),
-  };
-}
-
-function decodeDirectConversationPage(value: unknown): DirectConversationPage {
-  const record = decodeRecord(value, "direct conversation page");
-  const readState = record.readState;
-  return {
-    threadId: requiredString(record, "threadId"),
-    otherMemberId: requiredString(record, "otherMemberId"),
-    messages: decodeDirectMessages(record.messages),
-    revision: requiredNumber(record, "revision"),
-    pageInfo: decodePageInfo(record.pageInfo),
-    ...(readState === undefined ? {} : { readState: decodeDirectConversationReadState(readState) }),
-  };
-}
-
-function decodeDirectMessages(value: unknown): DirectMessage[] {
-  if (!Array.isArray(value)) throw new Error("Invalid direct-message list.");
-  return value.map(decodeDirectMessage);
-}
-
-function decodeDirectConversationReadState(value: unknown): DirectConversationReadState {
-  const record = decodeRecord(value, "direct read state");
-  const firstUnreadMessageId = record.firstUnreadMessageId;
-  if (firstUnreadMessageId !== null && !isString(firstUnreadMessageId)) {
-    throw new Error("Invalid first unread message.");
-  }
-  return {
-    unreadCount: requiredNumber(record, "unreadCount"),
-    firstUnreadMessageId,
-    throughSequence: requiredNumber(record, "throughSequence"),
-  };
-}
-
-export function decodeConversationReadState(value: unknown): ConversationReadState {
-  if (!isConversationReadState(value)) throw new Error("Invalid conversation read state.");
-  return {
-    unreadCount: value.unreadCount,
-    firstUnreadMessageId: value.firstUnreadMessageId,
-    throughMessageId: value.throughMessageId,
-  };
-}
-
-export function decodeConversationReadStates(value: unknown): Record<string, ConversationReadState> {
-  const record = decodeRecord(value, "conversation read states");
-  return Object.fromEntries(
-    Object.entries(record).map(([botId, state]) => [botId, decodeConversationReadState(state)]),
-  );
-}
-
-function decodeConversationWithReadState(value: unknown): ConversationWithReadState {
-  if (!isConversationWithReadState(value)) {
-    throw new Error("Invalid agent conversation response.");
-  }
-  return { ...value, readState: decodeConversationReadState(value.readState) };
-}
-
-function decodeConversationPageFromHost(value: unknown): ConversationPage {
-  const record = decodeRecord(value, "agent conversation page");
-  return {
-    botId: requiredString(record, "botId"),
-    threadId: nullableString(record, "threadId"),
-    activeTurnId: nullableString(record, "activeTurnId"),
-    revision: requiredNumber(record, "revision"),
-    messages: decodeConversationMessages(record.messages),
-    references: decodeConversationReferencesFromHost(record.references),
-    pageInfo: decodePageInfo(record.pageInfo),
-    ...(record.readState === undefined ? {} : { readState: decodeConversationReadState(record.readState) }),
-  };
-}
-
-function decodeConversationSearchPageFromHost(value: unknown): ConversationSearchPage {
-  const record = decodeRecord(value, "conversation search page");
-  if (!Array.isArray(record.results)) throw new Error("Invalid conversation search results.");
-  return {
-    results: record.results.map((value) => {
-      const result = decodeRecord(value, "conversation search result");
-      return {
-        botId: requiredString(result, "botId"),
-        message: decodeConversationMessage(result.message, "conversation search message"),
-      };
-    }),
-    total: requiredNumber(record, "total"),
-    nextCursor: nullableString(record, "nextCursor"),
-  };
-}
-
-const decodeConversationMessages = guardedListDecoder(isConversationMessage, "conversation page messages");
-
-function decodeConversationReferencesFromHost(value: unknown): Record<string, ConversationMessage> {
-  const references = decodeRecord(value, "conversation references");
-  const decoded: Record<string, ConversationMessage> = {};
-  for (const [messageId, message] of Object.entries(references)) {
-    decoded[messageId] = decodeConversationMessage(message, "conversation reference");
-  }
-  return decoded;
-}
-
-function decodeConversationMessage(value: unknown, label: string): ConversationMessage {
-  if (!isConversationMessage(value)) throw new Error(`Invalid ${label}.`);
-  return value;
-}
-
-function decodePageInfo(value: unknown): { hasOlder: boolean; olderCursor: string | null } {
-  const record = decodeRecord(value, "conversation page info");
-  return {
-    hasOlder: requiredBoolean(record, "hasOlder"),
-    olderCursor: nullableString(record, "olderCursor"),
-  };
-}
-
-function pageQuery(anchor: ConversationPageAnchor | DirectConversationPageAnchor, limit: number): string {
-  const query = new URLSearchParams({ limit: String(limit) });
-  if (anchor.type === "before") query.set("before", anchor.cursor);
-  if (anchor.type === "around") query.set("around", anchor.messageId);
-  return `?${query.toString()}`;
-}
-
-function decodeIdentityProof(value: unknown): {
-  serverId: string;
-  publicKey: string;
-  serverName: string;
-  fingerprint: string;
-  challenge: string;
-  signature: string;
-  logoVersion: string | null;
-} {
-  const record = decodeRecord(value, "server identity");
-  return {
-    serverId: requiredString(record, "serverId"),
-    publicKey: requiredString(record, "publicKey"),
-    serverName: requiredString(record, "serverName"),
-    fingerprint: requiredString(record, "fingerprint"),
-    challenge: requiredString(record, "challenge"),
-    signature: requiredString(record, "signature"),
-    logoVersion: record.logoVersion === undefined ? null : nullableString(record, "logoVersion"),
-  };
-}
-
-function decodeTeamPresenceSnapshot(value: unknown): TeamPresenceSnapshot {
-  const event = { type: "team-presence", snapshot: value };
-  if (!isTeamRealtimeEvent(event) || event.type !== "team-presence") {
-    throw new Error("Invalid team presence response.");
-  }
-  return event.snapshot;
-}
-
-function decodeTeamMember(value: unknown): TeamMemberSummary {
-  const record = decodeRecord(value, "team member");
-  const role = requiredString(record, "role");
-  if (role !== "owner" && role !== "admin" && role !== "member") throw new Error("Invalid team member role.");
-  return {
-    id: requiredString(record, "id"),
-    username: requiredString(record, "username"),
-    email: nullableString(record, "email"),
-    name: nullableString(record, "name"),
-    avatarUrl: nullableString(record, "avatarUrl"),
-    role,
-    createdAt: requiredString(record, "createdAt"),
-    disabled: requiredBoolean(record, "disabled"),
-  };
-}
-
-function decodeTeamMembers(value: unknown): TeamMemberSummary[] {
-  if (!Array.isArray(value)) throw new Error("Invalid team members response.");
-  return value.map(decodeTeamMember);
-}
-
-function decodeTeamInvite(value: unknown): TeamInviteSummary {
-  const record = decodeRecord(value, "team invitation");
-  const role = requiredString(record, "role");
-  if (role !== "admin" && role !== "member") throw new Error("Invalid invitation role.");
-  return {
-    id: requiredString(record, "id"),
-    role,
-    expiresAt: requiredString(record, "expiresAt"),
-    usedAt: nullableString(record, "usedAt"),
-    email: nullableString(record, "email"),
-  };
-}
-
-function decodeTeamInvites(value: unknown): TeamInviteSummary[] {
-  if (!Array.isArray(value)) throw new Error("Invalid team invitations response.");
-  return value.map(decodeTeamInvite);
-}
-
-function decodeInviteSummary(value: unknown): InviteSummary {
-  const record = decodeRecord(value, "invitation");
-  return { ...decodeTeamInvite(value), inviteUrl: requiredString(record, "inviteUrl") };
-}
-
-function decodeInvitePreview(value: unknown): Pick<InvitePreview, "role" | "expiresAt" | "emailBound"> {
-  const record = decodeRecord(value, "invitation preview");
-  const role = requiredString(record, "role");
-  if (role !== "admin" && role !== "member") throw new Error("Invalid invitation preview response.");
-  return {
-    role,
-    expiresAt: requiredString(record, "expiresAt"),
-    emailBound: requiredBoolean(record, "emailBound"),
-  };
-}
-
-function decodeRemoteDesktopCapabilities(value: unknown): RemoteDesktopCapabilities {
-  const record = decodeRecord(value, "remote control capabilities");
-  const platform = requiredString(record, "platform");
-  if (!isOneOf(["darwin", "win32", "linux"] as const, platform)) throw new Error("Invalid remote platform.");
-  return {
-    ready: requiredBoolean(record, "ready"),
-    platform,
-    unattended: requiredBoolean(record, "unattended"),
-    runtime: requiredString(record, "runtime") === "sunshine-moonlight" ? "sunshine-moonlight" : invalidRuntime(),
-    protocolVersion: requiredNumber(record, "protocolVersion") === 2 ? 2 : invalidProtocolVersion(),
-    displays: decodeRemoteDesktopDisplays(record.displays),
-    selectedDisplayId: nullableString(record, "selectedDisplayId"),
-    activeSessions: requiredNumber(record, "activeSessions"),
-    maxSessions: requiredNumber(record, "maxSessions"),
-  };
-}
-
-function invalidRuntime(): never {
-  throw new Error("Invalid remote desktop runtime.");
-}
-
-function invalidProtocolVersion(): never {
-  throw new Error("Remote desktop update required.");
-}
-
-function decodeRemoteDesktopSession(value: unknown): RemoteDesktopSession {
-  const record = decodeRecord(value, "remote control session");
-  const phase = requiredString(record, "phase");
-  const transport = requiredString(record, "transport");
-  const errorCode = nullableString(record, "errorCode");
-  if (!isOneOf(["starting_host", "connecting", "connected", "disconnecting", "error"] as const, phase)) {
-    throw new Error("Invalid remote control phase.");
-  }
-  if (!isOneOf(["unknown", "p2p", "relay"] as const, transport)) throw new Error("Invalid remote transport.");
-  if (
-    errorCode !== null &&
-    !isOneOf(
-      [
-        "host_unavailable",
-        "host_permissions_required",
-        "session_capacity_reached",
-        "session_expired",
-        "session_revoked",
-        "protocol_mismatch",
-        "connection_failed",
-      ] as const,
-      errorCode,
-    )
-  ) {
-    throw new Error("Invalid remote control error.");
-  }
-  return {
-    id: requiredString(record, "id"),
-    serverId: requiredString(record, "serverId"),
-    viewerUrl: requiredString(record, "viewerUrl"),
-    viewerGrant: requiredString(record, "viewerGrant"),
-    displays: decodeRemoteDesktopDisplays(record.displays),
-    selectedDisplayId: nullableString(record, "selectedDisplayId"),
-    phase,
-    transport,
-    errorCode,
-    message: nullableString(record, "message"),
-    createdAt: requiredString(record, "createdAt"),
-    grantExpiresAt: requiredString(record, "grantExpiresAt"),
-  };
-}
-
-function decodeRemoteDesktopDisplays(value: unknown): RemoteDesktopCapabilities["displays"] {
-  if (!Array.isArray(value)) throw new Error("Invalid remote display list.");
-  return value.map((item) => {
-    const display = decodeRecord(item, "remote display");
-    return {
-      id: requiredString(display, "id"),
-      label: requiredString(display, "label"),
-      width: requiredNumber(display, "width"),
-      height: requiredNumber(display, "height"),
-      primary: requiredBoolean(display, "primary"),
-    };
-  });
-}
-
 function requiredServerSummary(servers: ServerSummary[], serverId: string): ServerSummary {
   const server = servers.find((candidate) => candidate.id === serverId);
   if (!server) throw new Error("Remote server summary is missing.");
@@ -2782,47 +2255,4 @@ function webRtcRequestBody(
   } catch {
     return body;
   }
-}
-
-function isLocalDevelopmentApi(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" && (url.hostname === "localhost" || url.hostname === "127.0.0.1");
-  } catch {
-    return false;
-  }
-}
-
-function addRemotePreviewUrls<T>(value: T, serverId: string): T {
-  if (Array.isArray(value)) {
-    for (const item of value) addRemotePreviewUrls(item, serverId);
-    return value;
-  }
-  if (!isDynamicRecord(value)) return value;
-  const record = value;
-  if ("previewUrl" in record && isString(record.id)) {
-    Reflect.set(record, "previewUrl", remoteAttachmentPreviewUrl(serverId, record.id));
-  }
-  if (isString(record.avatarUrl) && record.avatarUrl.startsWith("openbot-avatar:") && isString(record.id)) {
-    Reflect.set(record, "avatarUrl", remoteAgentAvatarUrl(serverId, record.id, record.avatarUrl));
-  }
-  for (const item of Object.values(record)) addRemotePreviewUrls(item, serverId);
-  return value;
-}
-
-export function remoteAttachmentPreviewUrl(serverId: string, attachmentId: string): string {
-  return `openbot-remote-attachment://${encodeURIComponent(serverId)}/${encodeURIComponent(attachmentId)}`;
-}
-
-export function remoteAgentAvatarUrl(serverId: string, botId: string, sourceUrl: string): string {
-  const source = new URL(sourceUrl);
-  const target = new URL(`openbot-remote-avatar://${encodeURIComponent(serverId)}/${encodeURIComponent(botId)}`);
-  target.search = source.search;
-  return target.toString();
-}
-
-export function remoteServerLogoUrl(serverId: string, version: string): string {
-  const target = new URL(`openbot-remote-server-logo://${encodeURIComponent(serverId)}/logo`);
-  target.searchParams.set("v", version);
-  return target.toString();
 }
