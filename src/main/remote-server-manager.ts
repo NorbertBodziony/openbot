@@ -483,7 +483,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       if (signedIn) {
         // Best effort in both halves. The probe may not reject the sign-in, and neither may writing
         // its answer: the session token is already on disk, so a failure here would report a
-        // sign-in that did not fail and leave the server in `error` with working credentials.
+        // sign-in that did not fail and leave the server in `error` with working credentials. A
+        // probe that rejects leaves the flag untouched; a write that fails leaves the new flag in
+        // memory and off disk, which is what every store mutation does and is the direction that
+        // keeps the token this sign-in just minted usable.
         await this.#client
           .probeRemoteDesktop(signedIn)
           .then((remoteDesktopAvailable) => this.#store.update(server.id, { remoteDesktopAvailable }))
