@@ -1,7 +1,7 @@
 import { useIsFocused } from "expo-router";
 import { Button, Typography } from "heroui-native";
 import { X } from "lucide-react-native";
-import { forwardRef } from "react";
+import { forwardRef, useRef } from "react";
 import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
@@ -30,6 +30,7 @@ interface ChatMessageListProps {
   bot: MobileBot;
   bottomInset: number;
   canSend: boolean;
+  appActive: boolean;
   fieldBackground: ViewStyle["backgroundColor"];
   foreground: ViewStyle["backgroundColor"];
   historyState: "ready" | "connecting" | "waiting" | "loading" | "error";
@@ -50,6 +51,7 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
     bot,
     bottomInset,
     canSend,
+    appActive,
     fieldBackground,
     foreground,
     historyState,
@@ -67,6 +69,18 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
   ref,
 ) {
   const isFocused = useIsFocused();
+  const animateMessages = isFocused && canSend && appActive;
+  const initialMessages = useRef<{ botId: string; ids: Set<string>; live: boolean } | null>(null);
+  if (
+    historyState === "ready" &&
+    (initialMessages.current?.botId !== bot.id || !animateMessages || !initialMessages.current?.live)
+  ) {
+    initialMessages.current = {
+      botId: bot.id,
+      ids: new Set(messages.map((message) => message.id)),
+      live: animateMessages,
+    };
+  }
   const activity = useBotActivity(bot.id);
   const activityLabel =
     activity?.phase === "waiting"
@@ -148,7 +162,13 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
             className={`max-w-[88%] rounded-[30px] px-4 py-3 ${message.author === "user" ? "self-end" : "self-start bg-control/60"}`}
             style={[{ borderCurve: "circular" }, message.author === "user" ? userBubbleStyle : undefined]}
           >
-            <ChatMarkdown body={message.body} color={message.author === "user" ? "#0a0a0c" : foreground} />
+            <ChatMarkdown
+              body={message.body}
+              color={message.author === "user" ? "#0a0a0c" : foreground}
+              streaming={message.author === "bot" && message.streaming}
+              animateInitial={message.author === "bot" && !initialMessages.current?.ids.has(message.id)}
+              animationEnabled={animateMessages}
+            />
           </Animated.View>
         ),
       )}

@@ -179,6 +179,7 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
                       ? "error"
                       : "loading"
             }
+            appActive={appActive}
             fieldBackground={fieldBackground}
             foreground={foreground}
             messages={messages}

@@ -1,7 +1,7 @@
 import type { ConversationMessage } from "@openbot/contracts/ipc";
 
 export type ChatMessage =
-  | { id: string; kind: "message"; author: "bot" | "user"; body: string }
+  | { id: string; kind: "message"; author: "bot" | "user"; body: string; streaming: boolean }
   | { id: string; kind: "thinking"; turnId: string | undefined; steps: { id: string; text: string }[] };
 
 export function projectChatMessages(messages: ConversationMessage[]): ChatMessage[] {
@@ -24,6 +24,7 @@ export function projectChatMessages(messages: ConversationMessage[]): ChatMessag
         kind: "message",
         author: message.author === "user" ? "user" : "bot",
         body: message.text,
+        streaming: message.status === "streaming",
       });
     }
   }

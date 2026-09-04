@@ -4,6 +4,8 @@ import { useThemeColor } from "heroui-native/hooks";
 import { marked, type Token, type Tokens } from "marked";
 import { Fragment, memo, type ReactNode, useMemo } from "react";
 import { Alert, type ColorValue, ScrollView, type TextStyle, View } from "react-native";
+import { StreamingTailText } from "@/features/chat/components/streaming-tail-text";
+import { useStreamingText } from "@/features/chat/components/use-streaming-text";
 
 interface MarkdownTokenByType {
   paragraph: Tokens.Paragraph;
@@ -31,6 +33,7 @@ interface TextPresentation {
   type: "body" | "body-sm" | "h4" | "h5";
   style: TextStyle;
   codeColor: ColorValue;
+  animateTail: boolean;
 }
 
 function webLink(href: string): string | null {
@@ -52,10 +55,19 @@ function sourceEntries<T>(values: T[], source: (value: T) => string) {
   });
 }
 
-function inline(tokens: Token[], presentation: TextPresentation): ReactNode {
+function inline(tokens: Token[], parentPresentation: TextPresentation): ReactNode {
+  const lastToken = tokens.findLast((token) => token.type !== "br");
   return sourceEntries(tokens, (token) => token.raw).map(({ value: token, offset }) => {
+    const presentation = { ...parentPresentation, animateTail: parentPresentation.animateTail && token === lastToken };
     if (token.type === "br") return "\n";
-    if (tokenIs(token, "text")) return token.tokens ? inline(token.tokens, presentation) : token.text;
+    if (tokenIs(token, "text")) {
+      if (token.tokens) return inline(token.tokens, presentation);
+      return presentation.animateTail ? (
+        <StreamingTailText key={offset} body={token.text} type={presentation.type} style={presentation.style} />
+      ) : (
+        token.text
+      );
+    }
     if (tokenIs(token, "escape")) return token.text;
     if (tokenIs(token, "codespan")) {
       return (
@@ -115,10 +127,21 @@ function inline(tokens: Token[], presentation: TextPresentation): ReactNode {
   });
 }
 
-function MarkdownBlocks({ tokens, presentation }: { tokens: Token[]; presentation: TextPresentation }) {
+function MarkdownBlocks({
+  tokens,
+  presentation: parentPresentation,
+}: {
+  tokens: Token[];
+  presentation: TextPresentation;
+}) {
+  const lastToken = tokens.findLast((token) => token.type !== "space" && token.type !== "def");
   return (
     <View className="min-w-0 gap-3">
       {sourceEntries(tokens, (token) => token.raw).map(({ value: token, offset }) => {
+        const presentation = {
+          ...parentPresentation,
+          animateTail: parentPresentation.animateTail && token === lastToken,
+        };
         if (token.type === "space" || token.type === "def") return null;
         if (tokenIs(token, "paragraph") || tokenIs(token, "text")) {
           return (
@@ -181,7 +204,13 @@ function MarkdownBlocks({ tokens, presentation }: { tokens: Token[]; presentatio
                         : "•"}
                   </Typography>
                   <View className="min-w-0 flex-1">
-                    <MarkdownBlocks tokens={item.tokens} presentation={presentation} />
+                    <MarkdownBlocks
+                      tokens={item.tokens}
+                      presentation={{
+                        ...presentation,
+                        animateTail: presentation.animateTail && item === token.items.at(-1),
+                      }}
+                    />
                   </View>
                 </View>
               ))}
@@ -206,7 +235,10 @@ function MarkdownBlocks({ tokens, presentation }: { tokens: Token[]; presentatio
                               fontWeight: cell.header ? "600" : "400",
                             }}
                           >
-                            {inline(cell.tokens, presentation)}
+                            {inline(cell.tokens, {
+                              ...presentation,
+                              animateTail: presentation.animateTail && row === token.rows.at(-1) && cell === row.at(-1),
+                            })}
                           </Typography>
                         </View>
                       ))}
@@ -232,17 +264,29 @@ export const ChatMarkdown = memo(function ChatMarkdown({
   body,
   color,
   compact = false,
+  streaming = false,
+  animateInitial = false,
+  animationEnabled = true,
 }: {
   body: string;
   color: ColorValue | undefined;
   compact?: boolean;
+  streaming?: boolean;
+  animateInitial?: boolean;
+  animationEnabled?: boolean;
 }) {
-  const tokens = useMemo(() => marked.lexer(body, { gfm: true, breaks: true }), [body]);
+  const display = useStreamingText(body, streaming, animateInitial, animationEnabled);
+  const tokens = useMemo(() => marked.lexer(display.body, { gfm: true, breaks: true }), [display.body]);
   const codeColor = useThemeColor("foreground");
   return (
     <MarkdownBlocks
       tokens={tokens}
-      presentation={{ type: compact ? "body-sm" : "body", style: { color }, codeColor }}
+      presentation={{
+        type: compact ? "body-sm" : "body",
+        style: { color: color ?? codeColor },
+        codeColor,
+        animateTail: display.animateTail,
+      }}
     />
   );
 });
