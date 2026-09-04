@@ -12,6 +12,7 @@ import type {
 } from "@openbot/contracts/ipc";
 import { isAgentProvider, isConversationMessage, providerForLegacyModel } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { AgentRoster } from "./database/agent-roster";
 import { ConversationQueries } from "./database/conversation-queries";
 import { DatabaseCore, deleteOrphanReceipts, type OrchestrationEventInput } from "./database/database-core";
 import {
@@ -53,6 +54,7 @@ export type { StoredThreadSummary } from "./database/thread-summaries";
 export class OpenBotDatabase {
   readonly #core: DatabaseCore;
   readonly #conversations: ConversationQueries;
+  readonly #roster: AgentRoster;
   readonly #hostedSiteEvents: HostedSiteEventLog;
   readonly #mailbox: MailboxProjection;
   readonly #sessions: ProviderSessions;
@@ -61,6 +63,7 @@ export class OpenBotDatabase {
   constructor(readonly userDataPath: string) {
     this.#core = new DatabaseCore({ userDataPath });
     this.#conversations = new ConversationQueries({ core: this.#core });
+    this.#roster = new AgentRoster({ core: this.#core });
     this.#hostedSiteEvents = new HostedSiteEventLog({ core: this.#core });
     this.#mailbox = new MailboxProjection({ core: this.#core });
     this.#sessions = new ProviderSessions({ core: this.#core });
@@ -132,130 +135,15 @@ export class OpenBotDatabase {
   }
 
   listAgents(): BotSummary[] {
-    return databaseRows(
-      this.connection.prepare("SELECT agent_json FROM projection_agents ORDER BY sort_order, agent_id").all(),
-    ).map((row) => JSON.parse(requiredStringColumn(row, "agent_json")));
+    return this.#roster.listAgents();
   }
 
   replaceAgents(commandId: string, agents: BotSummary[], eventType: string): void {
-    this.dispatch(
-      commandId,
-      [
-        {
-          aggregateType: "agents",
-          aggregateId: "agents",
-          eventType,
-          payload: { agents },
-        },
-      ],
-      (db, sequences) => {
-        db.exec("DELETE FROM projection_agents");
-        const insert = db.prepare(`
-          INSERT INTO projection_agents
-            (agent_id, thread_id, model, updated_at, sort_order, agent_json, last_event_sequence)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `);
-        agents.forEach((agent, index) => {
-          insert.run(
-            agent.id,
-            agent.threadId,
-            agent.model,
-            agent.updatedAt,
-            index,
-            JSON.stringify(agent),
-            sequences[0],
-          );
-          if (agent.threadId) this.#ensureThreadProjection(db, agent, sequences[0] ?? 0);
-        });
-        return null;
-      },
-    );
+    this.#roster.replaceAgents(commandId, agents, eventType);
   }
 
   hardDeleteAgent(commandId: string, botId: string, threadId: string | null, remainingAgents: BotSummary[]): void {
-    this.dispatch(
-      commandId,
-      [
-        {
-          aggregateType: "agents",
-          aggregateId: "agents",
-          eventType: "agents.rebased-after-delete",
-          payload: { agents: remainingAgents },
-        },
-      ],
-      (db, sequences) => {
-        const sequence = sequences[0] ?? 0;
-        const memoryIds = databaseRows(
-          db.prepare("SELECT memory_id FROM projection_agent_memories WHERE agent_id = ?").all(botId),
-        ).map((row) => requiredStringColumn(row, "memory_id"));
-        const routineIds = databaseRows(
-          db.prepare("SELECT routine_id FROM projection_agent_routines WHERE agent_id = ?").all(botId),
-        ).map((row) => requiredStringColumn(row, "routine_id"));
-        if (memoryIds.length > 0) {
-          const placeholders = memoryIds.map(() => "?").join(", ");
-          db.prepare(
-            `DELETE FROM orchestration_command_receipts WHERE command_id IN (
-               SELECT DISTINCT command_id
-               FROM orchestration_events
-               WHERE aggregate_type = 'agent-memory' AND aggregate_id IN (${placeholders})
-             )`,
-          ).run(...memoryIds);
-          db.prepare(
-            `DELETE FROM orchestration_events
-             WHERE aggregate_type = 'agent-memory' AND aggregate_id IN (${placeholders})`,
-          ).run(...memoryIds);
-        }
-        if (routineIds.length > 0) {
-          const placeholders = routineIds.map(() => "?").join(", ");
-          db.prepare(
-            `DELETE FROM orchestration_command_receipts WHERE command_id IN (
-               SELECT DISTINCT command_id FROM orchestration_events
-               WHERE aggregate_type IN ('agent-routine', 'routine-run') AND aggregate_id IN (${placeholders})
-             )`,
-          ).run(...routineIds);
-          db.prepare(
-            `DELETE FROM orchestration_events
-             WHERE aggregate_type IN ('agent-routine', 'routine-run') AND aggregate_id IN (${placeholders})`,
-          ).run(...routineIds);
-        }
-        db.prepare(
-          `DELETE FROM orchestration_command_receipts WHERE command_id IN (
-             SELECT DISTINCT command_id FROM orchestration_events
-             WHERE aggregate_type = 'hosted-site-terminal'
-               AND event_type = 'hosted-site.terminal-pending'
-               AND json_extract(payload_json, '$.botId') = ?
-           )`,
-        ).run(botId);
-        db.prepare(
-          `DELETE FROM orchestration_events
-           WHERE aggregate_type = 'hosted-site-terminal'
-             AND event_type = 'hosted-site.terminal-pending'
-             AND json_extract(payload_json, '$.botId') = ?`,
-        ).run(botId);
-        const sensitiveFilter = threadId
-          ? `(aggregate_id = ? OR aggregate_id = ? OR
-              (aggregate_type = 'agents' AND aggregate_id = 'agents' AND sequence < ?))`
-          : `(aggregate_id = ? OR
-              (aggregate_type = 'agents' AND aggregate_id = 'agents' AND sequence < ?))`;
-        const sensitiveParameters = threadId ? ([botId, threadId, sequence] as const) : ([botId, sequence] as const);
-        db.prepare(
-          `DELETE FROM orchestration_command_receipts WHERE command_id IN (
-             SELECT DISTINCT command_id FROM orchestration_events WHERE ${sensitiveFilter}
-           )`,
-        ).run(...sensitiveParameters);
-        db.prepare(`DELETE FROM orchestration_events WHERE ${sensitiveFilter}`).run(...sensitiveParameters);
-        db.prepare("DELETE FROM projection_agents WHERE agent_id = ?").run(botId);
-        db.prepare("DELETE FROM projection_agent_memories WHERE agent_id = ?").run(botId);
-        db.prepare("DELETE FROM projection_agent_routines WHERE agent_id = ?").run(botId);
-        db.prepare("DELETE FROM projection_reactions WHERE agent_id = ?").run(botId);
-        db.prepare("DELETE FROM projection_deliveries WHERE recipient_agent_id = ?").run(botId);
-        db.prepare("DELETE FROM projection_queue_state WHERE agent_id = ?").run(botId);
-        if (threadId) {
-          db.prepare("DELETE FROM projection_threads WHERE thread_id = ?").run(threadId);
-        }
-        return null;
-      },
-    );
+    this.#roster.hardDeleteAgent(commandId, botId, threadId, remainingAgents);
   }
 
   readConversation(botId: string, threadId: string | null): ConversationSnapshot {
@@ -325,9 +213,9 @@ export class OpenBotDatabase {
       ],
       (db, sequences) => {
         const sequence = sequences[0] ?? snapshot.revision;
-        const agent = this.listAgents().find((candidate) => candidate.id === snapshot.botId);
+        const agent = this.#roster.listAgents().find((candidate) => candidate.id === snapshot.botId);
         if (!agent) throw new Error(`Unknown agent for conversation: ${snapshot.botId}`);
-        this.#ensureThreadProjection(db, agent, sequence);
+        this.#roster.ensureThreadProjection(db, agent, sequence);
         db.prepare(
           `UPDATE projection_threads
            SET active_turn_id = ?, updated_at = ?, last_event_sequence = ? WHERE thread_id = ?`,
@@ -466,11 +354,11 @@ export class OpenBotDatabase {
       ],
       (db, sequences) => {
         const sequence = sequences[0] ?? 0;
-        const agent = this.listAgents().find((candidate) => candidate.id === input.botId);
+        const agent = this.#roster.listAgents().find((candidate) => candidate.id === input.botId);
         if (!agent || agent.threadId !== input.threadId) {
           throw new Error(`Unknown agent thread for conversation append: ${input.botId}`);
         }
-        this.#ensureThreadProjection(db, agent, sequence);
+        this.#roster.ensureThreadProjection(db, agent, sequence);
         const ordinalRow = databaseRow(
           db
             .prepare(
@@ -845,27 +733,6 @@ export class OpenBotDatabase {
 
   readMailboxState(): unknown | null {
     return this.#mailbox.readMailboxState();
-  }
-
-  #ensureThreadProjection(db: DatabaseSync, agent: BotSummary, sequence: number): void {
-    if (!agent.threadId) return;
-    db.prepare(`
-      INSERT INTO projection_threads
-        (thread_id, agent_id, title, active_turn_id, created_at, updated_at, last_event_sequence)
-      VALUES (?, ?, ?, NULL, ?, ?, ?)
-      ON CONFLICT(thread_id) DO UPDATE SET
-        agent_id = excluded.agent_id,
-        title = excluded.title,
-        updated_at = excluded.updated_at,
-        last_event_sequence = MAX(projection_threads.last_event_sequence, excluded.last_event_sequence)
-    `).run(
-      agent.threadId,
-      agent.id,
-      agent.name,
-      agent.updatedAt ?? new Date().toISOString(),
-      agent.updatedAt ?? new Date().toISOString(),
-      sequence,
-    );
   }
 }
 
