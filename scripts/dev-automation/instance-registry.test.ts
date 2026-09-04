@@ -1,7 +1,7 @@
 // The registry exists because several worktrees run dev at once. What it has
 // to get right is which of them a command drives, and that a dead instance
 // never keeps offering its port to the next one.
-import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -210,6 +210,15 @@ describe("assertOwnerOnlyDirectory", () => {
     expect(() =>
       assertOwnerOnlyDirectory("/tmp/registry", { uid: 501, mode: 0o40700, symbolicLink: true }, 501),
     ).toThrow("not owned by this user");
+  });
+
+  it("guards the reader too, not only the writer", () => {
+    const directory = mkdtempSync(join(tmpdir(), "openbot-registry-read-"));
+    writeDevInstanceRecord(record(), directory);
+    chmodSync(directory, 0o777);
+    // A reader that never publishes would otherwise trust a planted record.
+    expect(() => readDevInstanceRecords(directory, () => true)).toThrow("accessible to other accounts");
+    rmSync(directory, { recursive: true, force: true });
   });
 
   it("accepts the owner-only directory dev publishes into", () => {

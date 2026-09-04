@@ -163,6 +163,18 @@ export function readDevInstanceRecords(
   isAlive: (pid: number) => boolean = isProcessAlive,
 ): DevInstanceRecord[] {
   if (!existsSync(directory)) return [];
+  // The same gate as the writer, for the same reason and it has to be here
+  // too: a directory another account can write lets it plant a record naming
+  // this worktree, a live pid and a CDP endpoint of its choosing, which
+  // `selectDevInstance` would then classify as the local worktree instance a
+  // mutation is allowed to drive. Validating only on publish leaves a reader
+  // that never published wide open.
+  const directoryStats = lstatSync(directory);
+  assertOwnerOnlyDirectory(directory, {
+    uid: directoryStats.uid,
+    mode: directoryStats.mode,
+    symbolicLink: directoryStats.isSymbolicLink(),
+  });
   const records: DevInstanceRecord[] = [];
   for (const entry of readdirSync(directory)) {
     if (!entry.endsWith(".json")) continue;
