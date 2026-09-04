@@ -158,8 +158,16 @@ export function AccountDock(props: AccountDockProps) {
   });
 
   createEffect(
-    () => [props.usageTargetKey, props.usageReady, props.usageRefreshRevision] as const,
-    ([targetKey, ready]) => {
+    () =>
+      [
+        props.usageTargetKey,
+        props.usageReady,
+        props.usageRefreshRevision,
+        hybridLayout(),
+        menuOpen(),
+        usageOpen(),
+      ] as const,
+    ([targetKey, ready, revision, hybrid, menu, usage]) => {
       if (!targetKey || !ready) {
         usageRequestGeneration += 1;
         usageRequestTargetKey = null;
@@ -168,6 +176,8 @@ export function AccountDock(props: AccountDockProps) {
         setUsageError(null);
         return;
       }
+      if (!hybrid && !menu && !usage) return;
+      if (usageRequestTargetKey === targetKey && usageRequestRevision === revision) return;
       void refreshUsage();
     },
   );

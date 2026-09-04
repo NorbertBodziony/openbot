@@ -61,6 +61,23 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "General" })).not.toBeInTheDocument());
   });
 
+  it("loads usage lazily when the account menu hides it", async () => {
+    vi.mocked(window.openbot.getAppInfo).mockResolvedValue({
+      name: "OpenBot",
+      version: "0.1.0",
+      platform: "win32",
+      variant: "production",
+    });
+
+    render(() => <App />);
+    const accountButton = await screen.findByRole("button", { name: "Open account menu" });
+    await Promise.resolve();
+
+    expect(window.openbot.agent.getUsage).not.toHaveBeenCalled();
+    await fireEvent.click(accountButton);
+    await waitFor(() => expect(window.openbot.agent.getUsage).toHaveBeenCalledWith("chief"));
+  });
+
   it("does not present a non-weekly provider limit as weekly usage", async () => {
     vi.mocked(window.openbot.agent.getUsage).mockResolvedValue({
       limits: [
