@@ -6,12 +6,8 @@ import { basename, isAbsolute } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   AccountUsage,
-  AgentApproval,
-  AgentApprovalKind,
   AgentEvent,
   AgentModelOption,
-  AgentPromptQuestion,
-  AgentPromptResolution,
   AgentRuntimeSnapshot,
   AgentStatus,
   AttachmentDataInput,
@@ -21,7 +17,6 @@ import type {
   BotSummary,
   BrowserControlState,
   BrowserTab,
-  BrowserTakeoverRequest,
   ConversationMessage,
   ConversationPage,
   ConversationPageAnchor,
@@ -59,13 +54,13 @@ import type {
   UpdateRoutineInput,
 } from "@openbot/contracts/ipc";
 import {
-  AGENT_RUNTIME_ATTENTION_LIMIT,
   AGENT_RUNTIME_TEXT_LIMIT,
   isMessageReaction,
   routineConversationEventItemType,
   routineRunConversationEventItemType,
 } from "@openbot/contracts/ipc";
 import { isBoolean, isString } from "@openbot/contracts/runtime-values";
+import { AttentionRegistry } from "./agent/attention-registry";
 import { ContextCompaction } from "./agent/context-compaction";
 import { ConversationRuntime, withDatabaseTransaction } from "./agent/conversation-runtime";
 import {
@@ -81,13 +76,8 @@ import {
   summarizeOldMessages,
 } from "./agent/delivery-content";
 import { developerInstructions } from "./agent/developer-instructions";
-import {
-  type AgentHostedSites,
-  HOSTED_SITE_APPROVAL_METHOD,
-  HostedSiteCoordinator,
-  type HostedSiteMutationContext,
-} from "./agent/hosted-site-coordinator";
-import { type HostedSiteMutationTool, isHostedSiteMutationTool } from "./agent/hosted-site-events";
+import { type AgentHostedSites, HostedSiteCoordinator } from "./agent/hosted-site-coordinator";
+import { isHostedSiteMutationTool } from "./agent/hosted-site-events";
 import {
   decodeGeneratedImage,
   generatedImageName,
@@ -96,19 +86,6 @@ import {
   isImageGenerationItem,
   markIncompleteImageGeneration,
 } from "./agent/image-generation";
-import {
-  approvalPermissions,
-  browserTakeoverError,
-  browserTakeoverResult,
-  commandText,
-  dynamicPromptResult,
-  mcpElicitationQuestion,
-  mcpElicitationResult,
-  promptQuestions,
-  promptResolution,
-  questionPromptText,
-  validPromptQuestions,
-} from "./agent/prompts";
 import { type AgentClientFactory, ProviderRuntime } from "./agent/provider-runtime";
 import {
   localTimezone,
@@ -119,7 +96,7 @@ import {
   routineToolSchedule,
   routineToolString,
 } from "./agent/routine-tools";
-import { compactRuntimeApproval, compactRuntimeQuestion, fitRuntimeSnapshot } from "./agent/runtime-snapshot";
+import { fitRuntimeSnapshot } from "./agent/runtime-snapshot";
 import {
   isArchivedThreadError,
   isDynamicToolCall,
@@ -159,7 +136,6 @@ import {
   getRecord,
   getString,
   isRecord,
-  type RequestId,
   type ResponseDecoder,
   type ThreadItem,
 } from "./protocol";
@@ -183,33 +159,6 @@ interface AgentBrowserHost {
   endControl(threadId: string, turnId: string): void;
   listTabs(): BrowserTab[];
   handleDynamicTool(params: DynamicToolCallParams): Promise<DynamicToolResult>;
-}
-
-interface PendingPrompt {
-  client: AgentClient;
-  id: RequestId;
-  responseKind: "dynamic-tool" | "mcp-elicitation" | "user-input";
-  params: unknown;
-  botId: string;
-  publicThreadId: string;
-  turnId: string;
-  messageId: string;
-  questions: AgentPromptQuestion[];
-}
-
-interface PendingApproval {
-  client: AgentClient;
-  id: RequestId;
-  method: string;
-  params: unknown;
-  approval: AgentApproval;
-  hostedSiteMutation?: HostedSiteMutationContext;
-}
-
-interface PendingBrowserTakeover {
-  params: DynamicToolCallParams;
-  request: BrowserTakeoverRequest;
-  resolve: (result: DynamicToolResult) => void;
 }
 
 interface PendingDelta {
@@ -264,9 +213,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #prepareBotWorkspace: (bot: BotSummary) => Promise<void>;
   readonly #hostedSites: HostedSiteCoordinator;
   readonly #conversation: ConversationRuntime;
-  readonly #pendingPrompts = new Map<RequestId, PendingPrompt>();
-  readonly #pendingApprovals = new Map<RequestId, PendingApproval>();
-  readonly #pendingBrowserTakeovers = new Map<RequestId, PendingBrowserTakeover>();
+  readonly #attention: AttentionRegistry;
   readonly #failedTurns = new Map<string, string>();
   readonly #itemTurns = new Map<string, string>();
   readonly #imageGenerationOperations = new Map<string, ImageGenerationOperation>();
@@ -339,9 +286,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         },
         onProviderLost: (client) => {
           this.#compaction.dispose();
-          this.#clearPendingPrompts(client);
-          this.#clearPendingBrowserTakeovers();
-          this.#pendingApprovals.clear();
+          this.#attention.clearPrompts(client);
+          this.#attention.clearBrowserTakeovers();
+          this.#attention.clearApprovals();
           this.#browser.clearControls();
         },
         isStopping: () => this.#stopping,
@@ -361,12 +308,20 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       emitError: (code, error, botId) => this.#emitError(code, error, botId),
       scheduleDrain: (botId) => this.#scheduleDrain(botId),
     });
+    this.#attention = new AttentionRegistry({
+      conversation: this.#conversation,
+      browser: this.#browser,
+      hostedSites: this.#hostedSites,
+      routines: {
+        markNeedsAttention: (turnId) => this.#markRoutineNeedsAttention(turnId),
+        markRunningForTurn: (turnId) => this.#markRoutineRunningForTurn(turnId),
+      },
+      emit: (event) => this.#emit(event),
+      emitError: (code, error, botId) => this.#emitError(code, error, botId),
+      emitRuntimeSnapshot: () => this.#emitRuntimeSnapshot(),
+    });
     this.#browser.onChanged((tabs, activeTabId) => {
-      for (const [requestId, pending] of this.#pendingBrowserTakeovers) {
-        if (!tabs.some((tab) => tab.id === pending.request.tabId)) {
-          this.#resolveBrowserTakeover(requestId, pending, "cancel");
-        }
-      }
+      this.#attention.cancelTakeoversForMissingTabs(tabs);
       this.#emit({ type: "browser-changed", tabs, activeTabId });
     });
     this.#browser.onControlChanged((state) => {
@@ -429,25 +384,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         });
       }
     }
-    const attentionComplete =
-      this.#pendingPrompts.size + this.#pendingApprovals.size + this.#pendingBrowserTakeovers.size <=
-      AGENT_RUNTIME_ATTENTION_LIMIT;
-    let remainingAttention = AGENT_RUNTIME_ATTENTION_LIMIT;
-    const pendingPrompts = [...this.#pendingPrompts.values()].slice(0, remainingAttention).map((pending) => ({
-      requestId: pending.id,
-      botId: pending.botId,
-      threadId: pending.publicThreadId,
-      turnId: pending.turnId,
-      questions: pending.questions.map(compactRuntimeQuestion),
-    }));
-    remainingAttention -= pendingPrompts.length;
-    const pendingApprovals = [...this.#pendingApprovals.values()]
-      .slice(0, remainingAttention)
-      .map((pending) => compactRuntimeApproval(pending.approval));
-    remainingAttention -= pendingApprovals.length;
-    const pendingBrowserTakeovers = [...this.#pendingBrowserTakeovers.values()]
-      .slice(0, remainingAttention)
-      .map((pending) => structuredClone(pending.request));
     return fitRuntimeSnapshot({
       bots: runtimeBots,
       activeTurns,
@@ -456,10 +392,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.#failedTurns,
       ),
       latestMessages,
-      attentionComplete,
-      pendingPrompts,
-      pendingApprovals,
-      pendingBrowserTakeovers,
+      ...this.#attention.runtimeAttention(),
       failedTurns: [...this.#failedTurns].map(([botId, turnId]) => ({ botId, turnId })),
     });
   }
@@ -894,11 +827,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const hasPendingWork = this.#mailbox
       .listQueue(botId)
       .deliveries.some((delivery) => ["queued", "starting", "running"].includes(delivery.status));
-    const hasAttention =
-      [...this.#pendingPrompts.values()].some((pending) => pending.botId === botId) ||
-      [...this.#pendingApprovals.values()].some((pending) => pending.approval.botId === botId) ||
-      [...this.#pendingBrowserTakeovers.values()].some((pending) => pending.request.botId === botId);
-    if (hasPendingWork || hasAttention || this.#conversation.snapshot(botId)?.activeTurnId) {
+    if (hasPendingWork || this.#attention.hasAttentionFor(botId) || this.#conversation.snapshot(botId)?.activeTurnId) {
       throw new Error("Wait for the agent to finish and clear its queue before duplicating it.");
     }
   }
@@ -1014,9 +943,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#pendingHandoffs.clear();
     this.#pendingMemoryMutations.clear();
     this.#pendingRuntimeRefreshes.clear();
-    this.#clearPendingPrompts();
-    this.#clearPendingBrowserTakeovers();
-    this.#pendingApprovals.clear();
+    this.#attention.clearPrompts();
+    this.#attention.clearBrowserTakeovers();
+    this.#attention.clearApprovals();
     this.#failedTurns.clear();
     const clients = this.#providers.dispose();
     for (const [botId, snapshot] of this.#conversation.activeSnapshots()) {
@@ -1265,76 +1194,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async respondToPrompt(input: RespondToPromptInput): Promise<void> {
-    const pending = this.#pendingPrompts.get(input.requestId);
-    if (!pending) throw new Error("This prompt is no longer active.");
-    const questionIds = new Set(pending.questions.map((question) => question.id));
-    if (Object.keys(input.answers).some((id) => !questionIds.has(id))) {
-      throw new Error("A prompt answer does not match an active question.");
-    }
-    this.#markRoutineRunningForTurn(getString(pending.params, "turnId"));
-
-    const result =
-      pending.responseKind === "dynamic-tool"
-        ? dynamicPromptResult(input.answers)
-        : pending.responseKind === "mcp-elicitation"
-          ? mcpElicitationResult(pending.params, input.answers)
-          : {
-              answers: Object.fromEntries(
-                Object.entries(input.answers).map(([id, values]) => [id, { answers: values }]),
-              ),
-            };
-    pending.client.respond(pending.id, result);
-    this.#pendingPrompts.delete(input.requestId);
-    this.#emit({ type: "agent-input-resolved", kind: "prompt", requestId: input.requestId, botId: pending.botId });
-    try {
-      this.#resolvePersistedPrompt(pending, promptResolution(pending.questions, input.answers));
-    } catch (error) {
-      this.#emitError("prompt_persistence_failed", error, pending.botId);
-    }
-    this.#emitRuntimeSnapshot();
+    await this.#attention.respondToPrompt(input);
   }
 
   async respondToApproval(input: RespondToApprovalInput): Promise<void> {
-    const pending = this.#pendingApprovals.get(input.requestId);
-    if (!pending) throw new Error("This approval is no longer active.");
-    this.#markRoutineRunningForTurn(getString(pending.params, "turnId"));
-
-    if (pending.hostedSiteMutation) {
-      this.#pendingApprovals.delete(input.requestId);
-      await this.#hostedSites.resolveApproval(
-        pending.hostedSiteMutation,
-        { client: pending.client, id: pending.id, botId: pending.approval.botId },
-        input.decision,
-      );
-    } else if (pending.approval.kind === "permissions") {
-      const permissions = getRecord(pending.params, "permissions") ?? {};
-      pending.client.respond(pending.id, {
-        permissions: input.decision === "accept" ? permissions : {},
-        scope: "turn",
-      });
-    } else if (pending.method === "applyPatchApproval" || pending.method === "execCommandApproval") {
-      pending.client.respond(pending.id, {
-        decision:
-          input.decision === "accept" ? "approved" : { denied: { rejection: "The user declined this action." } },
-      });
-    } else {
-      pending.client.respond(pending.id, { decision: input.decision });
-    }
-    this.#pendingApprovals.delete(input.requestId);
-    this.#emit({
-      type: "agent-input-resolved",
-      kind: "approval",
-      requestId: input.requestId,
-      botId: pending.approval.botId,
-    });
-    this.#emitRuntimeSnapshot();
+    await this.#attention.respondToApproval(input);
   }
 
   async respondToBrowserTakeover(input: RespondToBrowserTakeoverInput): Promise<void> {
-    const pending = this.#pendingBrowserTakeovers.get(input.requestId);
-    if (!pending) throw new Error("This browser takeover is no longer active.");
-    this.#markRoutineRunningForTurn(pending.request.turnId);
-    this.#resolveBrowserTakeover(input.requestId, pending, input.decision);
+    await this.#attention.respondToBrowserTakeover(input);
   }
 
   async #ensureThread(bot: BotSummary, client: AgentClient): Promise<string> {
@@ -1446,17 +1314,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     try {
       switch (request.method) {
         case "item/commandExecution/requestApproval":
-          this.#surfaceApproval(client, request, "command");
+          this.#attention.surfaceApproval(client, request, "command");
           return;
         case "item/fileChange/requestApproval":
-          this.#surfaceApproval(client, request, "file-change");
+          this.#attention.surfaceApproval(client, request, "file-change");
           return;
         case "item/permissions/requestApproval":
-          this.#surfaceApproval(client, request, "permissions");
+          this.#attention.surfaceApproval(client, request, "permissions");
           return;
         case "applyPatchApproval":
         case "execCommandApproval":
-          this.#surfaceLegacyApproval(client, request);
+          this.#attention.surfaceLegacyApproval(client, request);
           return;
         case "item/tool/call": {
           if (!isDynamicToolCall(request.params)) throw new Error("Invalid dynamic tool request.");
@@ -1464,7 +1332,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             const botId = this.#conversation.botForThread(request.params.threadId);
             if (!botId) throw new Error("The browsing OpenBot agent is unknown.");
             if (request.params.tool === "request_takeover") {
-              client.respond(request.id, await this.#surfaceBrowserTakeover(request));
+              client.respond(request.id, await this.#attention.surfaceBrowserTakeover(request));
               return;
             }
             client.respond(
@@ -1479,11 +1347,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           }
           if (request.params.namespace === "openbot") {
             if (request.params.tool === "ask_user") {
-              this.#surfaceDynamicPrompt(client, request);
+              this.#attention.surfaceDynamicPrompt(client, request);
               return;
             }
             if (isHostedSiteMutationTool(request.params.tool)) {
-              await this.#surfaceHostedSiteApproval(client, request, request.params, request.params.tool);
+              await this.#attention.surfaceHostedSiteApproval(client, request, request.params, request.params.tool);
               return;
             }
             client.respond(request.id, await this.#handleOpenBotTool(request.params));
@@ -1492,10 +1360,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           throw new Error(`Unsupported dynamic tool namespace: ${request.params.namespace}`);
         }
         case "item/tool/requestUserInput":
-          this.#surfacePrompt(client, request);
+          this.#attention.surfacePrompt(client, request);
           return;
         case "mcpServer/elicitation/request":
-          this.#surfaceMcpElicitation(client, request);
+          this.#attention.surfaceMcpElicitation(client, request);
           return;
         case "currentTime/read":
           client.respond(request.id, { currentTimeAt: Math.floor(Date.now() / 1_000) });
@@ -2541,7 +2409,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const turnId = getString(turn, "id");
         if (!turnId) return;
         const status = getString(turn, "status") ?? "completed";
-        this.#clearPendingRequestsForTurn(threadId, turnId);
+        this.#attention.clearForTurn(threadId, turnId);
         if (this.#compaction.isCompactionTurn(threadId, turnId)) {
           this.#compaction.finish(botId, threadId, status);
           return;
@@ -2875,360 +2743,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (this.#imageGenerationOperations.has(key)) this.#imageGenerationOperations.delete(key);
     }
     this.#interruptedTurns.delete(`${threadId}:${turnId}`);
-  }
-
-  #surfaceApproval(client: AgentClient, request: AppServerRequest, kind: AgentApprovalKind): void {
-    const threadId = getString(request.params, "threadId");
-    const turnId = getString(request.params, "turnId") ?? (kind === "file-change" ? String(request.id) : null);
-    const botId = threadId ? this.#conversation.botForThread(threadId) : undefined;
-    if (!threadId || !turnId || !botId) {
-      this.#respondToMalformedApproval(client, request);
-      return;
-    }
-
-    const approval: AgentApproval = {
-      requestId: request.id,
-      botId,
-      threadId: this.#conversation.publicThreadId(botId, threadId),
-      turnId,
-      kind,
-      command: commandText(request.params),
-      cwd: getString(request.params, "cwd"),
-      reason: getString(request.params, "reason"),
-      grantRoot: getString(request.params, "grantRoot"),
-      permissions: kind === "permissions" ? approvalPermissions(request.params) : null,
-    };
-    this.#pendingApprovals.set(request.id, {
-      client,
-      id: request.id,
-      method: request.method,
-      params: request.params,
-      approval,
-    });
-    this.#markRoutineNeedsAttention(turnId);
-    this.#emit({ type: "approval", approval });
-  }
-
-  async #surfaceHostedSiteApproval(
-    client: AgentClient,
-    request: AppServerRequest,
-    params: DynamicToolCallParams,
-    tool: HostedSiteMutationTool,
-  ): Promise<void> {
-    const prepared = await this.#hostedSites.prepareApproval(client, request, params, tool);
-    if (!prepared) return;
-    this.#pendingApprovals.set(request.id, {
-      client,
-      id: request.id,
-      method: HOSTED_SITE_APPROVAL_METHOD,
-      params,
-      approval: prepared.approval,
-      hostedSiteMutation: prepared.mutation,
-    });
-    this.#markRoutineNeedsAttention(prepared.approval.turnId);
-    this.#emit({ type: "approval", approval: prepared.approval });
-  }
-
-  #surfaceLegacyApproval(client: AgentClient, request: AppServerRequest): void {
-    const threadId = getString(request.params, "conversationId");
-    const botId = threadId ? this.#conversation.botForThread(threadId) : undefined;
-    if (!threadId || !botId) {
-      this.#respondToMalformedApproval(client, request);
-      return;
-    }
-
-    const kind: AgentApprovalKind = request.method === "execCommandApproval" ? "command" : "file-change";
-    const approval: AgentApproval = {
-      requestId: request.id,
-      botId,
-      threadId: this.#conversation.publicThreadId(botId, threadId),
-      turnId: getString(request.params, "turnId") ?? String(request.id),
-      kind,
-      command: commandText(request.params),
-      cwd: getString(request.params, "cwd"),
-      reason: getString(request.params, "reason"),
-      grantRoot: getString(request.params, "grantRoot"),
-      permissions: null,
-    };
-    this.#pendingApprovals.set(request.id, {
-      client,
-      id: request.id,
-      method: request.method,
-      params: request.params,
-      approval,
-    });
-    this.#markRoutineNeedsAttention(approval.turnId);
-    this.#emit({ type: "approval", approval });
-  }
-
-  #respondToMalformedApproval(client: AgentClient, request: AppServerRequest): void {
-    if (request.method === "item/permissions/requestApproval") {
-      client.respond(request.id, { permissions: {}, scope: "turn" });
-      return;
-    }
-    if (request.method === "applyPatchApproval" || request.method === "execCommandApproval") {
-      client.respond(request.id, {
-        decision: { denied: { rejection: "OpenBot could not identify this approval." } },
-      });
-      return;
-    }
-    client.respond(request.id, { decision: "decline" });
-  }
-
-  #clearPendingRequestsForTurn(threadId: string, turnId: string): void {
-    for (const [requestId, pending] of this.#pendingPrompts) {
-      const pendingThreadId = getString(pending.params, "threadId");
-      const pendingTurnId = getString(pending.params, "turnId");
-      if (pendingThreadId === threadId && pendingTurnId === turnId) {
-        this.#resolvePersistedPrompt(pending, { status: "expired" });
-        this.#pendingPrompts.delete(requestId);
-      }
-    }
-    for (const [requestId, pending] of this.#pendingApprovals) {
-      const pendingThreadId = getString(pending.params, "threadId") ?? getString(pending.params, "conversationId");
-      const pendingTurnId = getString(pending.params, "turnId");
-      if (pendingThreadId === threadId && (!pendingTurnId || pendingTurnId === turnId)) {
-        this.#pendingApprovals.delete(requestId);
-      }
-    }
-    for (const [requestId, pending] of this.#pendingBrowserTakeovers) {
-      if (pending.params.threadId === threadId && pending.params.turnId === turnId) {
-        this.#resolveBrowserTakeover(requestId, pending, "cancel");
-      }
-    }
-  }
-
-  #clearPendingPrompts(client?: AgentClient): void {
-    for (const [requestId, pending] of this.#pendingPrompts) {
-      if (client && pending.client !== client) continue;
-      this.#resolvePersistedPrompt(pending, { status: "expired" });
-      this.#pendingPrompts.delete(requestId);
-    }
-  }
-
-  #clearPendingBrowserTakeovers(): void {
-    for (const [requestId, pending] of this.#pendingBrowserTakeovers) {
-      this.#resolveBrowserTakeover(requestId, pending, "cancel");
-    }
-  }
-
-  #resolveBrowserTakeover(
-    requestId: RequestId,
-    pending: PendingBrowserTakeover,
-    decision: RespondToBrowserTakeoverInput["decision"],
-  ): void {
-    this.#pendingBrowserTakeovers.delete(requestId);
-    this.#emit({
-      type: "browser-takeover-resolved",
-      requestId: pending.request.requestId,
-      botId: pending.request.botId,
-    });
-    this.#emitRuntimeSnapshot();
-    pending.resolve(browserTakeoverResult(decision));
-  }
-
-  #surfaceBrowserTakeover(request: AppServerRequest): Promise<DynamicToolResult> {
-    if (!isDynamicToolCall(request.params)) return Promise.resolve(browserTakeoverError());
-    const params = request.params;
-    const { threadId, turnId } = params;
-    const botId = this.#conversation.botForThread(threadId);
-    const args = getRecord(params, "arguments");
-    const tabId = getString(args, "tabId");
-    const publicThreadId = botId ? this.#conversation.publicThreadId(botId, threadId) : null;
-    const tab = tabId ? this.#browser.listTabs().find((candidate) => candidate.id === tabId) : undefined;
-    if (
-      !botId ||
-      !turnId ||
-      !tabId ||
-      !publicThreadId ||
-      !tab ||
-      tab.ownerThreadId !== publicThreadId ||
-      tab.ownerBotId !== botId
-    ) {
-      return Promise.resolve(browserTakeoverError());
-    }
-
-    const takeover: BrowserTakeoverRequest = {
-      requestId: request.id,
-      botId,
-      threadId: publicThreadId,
-      turnId,
-      tabId,
-    };
-    return new Promise((resolve) => {
-      this.#pendingBrowserTakeovers.set(request.id, {
-        params,
-        request: takeover,
-        resolve,
-      });
-      this.#markRoutineNeedsAttention(turnId);
-      this.#emit({ type: "browser-takeover-requested", request: takeover });
-    });
-  }
-
-  #surfaceDynamicPrompt(client: AgentClient, request: AppServerRequest): void {
-    const threadId = getString(request.params, "threadId");
-    const turnId = getString(request.params, "turnId");
-    const botId = threadId ? this.#conversation.botForThread(threadId) : undefined;
-    const publicThreadId = threadId && botId ? this.#conversation.publicThreadId(botId, threadId) : null;
-    const args = getRecord(request.params, "arguments");
-    const questions = promptQuestions(args);
-    if (!threadId || !turnId || !botId || !publicThreadId || !validPromptQuestions(questions)) {
-      client.respond(request.id, {
-        success: false,
-        contentItems: [
-          {
-            type: "inputText",
-            text: "OpenBot could not create a user question.",
-          },
-        ],
-      });
-      return;
-    }
-
-    const messageId = this.#persistQuestionPrompt(botId, publicThreadId, turnId, request.id, questions);
-    this.#pendingPrompts.set(request.id, {
-      client,
-      id: request.id,
-      responseKind: "dynamic-tool",
-      params: request.params,
-      botId,
-      publicThreadId,
-      turnId,
-      messageId,
-      questions,
-    });
-    this.#markRoutineNeedsAttention(turnId);
-    this.#emit({
-      type: "prompt",
-      requestId: request.id,
-      botId,
-      threadId: publicThreadId,
-      turnId,
-      questions,
-    });
-  }
-
-  #surfacePrompt(client: AgentClient, request: AppServerRequest): void {
-    const threadId = getString(request.params, "threadId");
-    const turnId = getString(request.params, "turnId");
-    const botId = threadId ? this.#conversation.botForThread(threadId) : undefined;
-    if (!threadId || !turnId || !botId) {
-      client.respond(request.id, { answers: {} });
-      return;
-    }
-
-    const questions = promptQuestions(request.params);
-    if (!validPromptQuestions(questions)) {
-      client.respond(request.id, { answers: {} });
-      return;
-    }
-    const publicThreadId = this.#conversation.publicThreadId(botId, threadId);
-    const messageId = this.#persistQuestionPrompt(botId, publicThreadId, turnId, request.id, questions);
-    this.#pendingPrompts.set(request.id, {
-      client,
-      id: request.id,
-      responseKind: "user-input",
-      params: request.params,
-      botId,
-      publicThreadId,
-      turnId,
-      messageId,
-      questions,
-    });
-    this.#markRoutineNeedsAttention(turnId);
-    this.#emit({
-      type: "prompt",
-      requestId: request.id,
-      botId,
-      threadId: publicThreadId,
-      turnId,
-      questions,
-    });
-  }
-
-  #surfaceMcpElicitation(client: AgentClient, request: AppServerRequest): void {
-    const threadId = getString(request.params, "threadId");
-    const turnId = getString(request.params, "turnId");
-    const botId = threadId ? this.#conversation.botForThread(threadId) : undefined;
-    const publicThreadId = threadId && botId ? this.#conversation.publicThreadId(botId, threadId) : null;
-    const question = mcpElicitationQuestion(request.params);
-    if (!threadId || !turnId || !botId || !publicThreadId || !question) {
-      client.respond(request.id, { action: "decline", content: null, _meta: null });
-      this.#emitError(
-        "mcp_safety_handoff",
-        "A local plugin requested an unsupported security hand-off, so OpenBot declined it.",
-        botId,
-      );
-      return;
-    }
-
-    const questions = [question];
-    const messageId = this.#persistQuestionPrompt(botId, publicThreadId, turnId, request.id, questions);
-    this.#pendingPrompts.set(request.id, {
-      client,
-      id: request.id,
-      responseKind: "mcp-elicitation",
-      params: request.params,
-      botId,
-      publicThreadId,
-      turnId,
-      messageId,
-      questions,
-    });
-    this.#markRoutineNeedsAttention(turnId);
-    this.#emit({
-      type: "prompt",
-      requestId: request.id,
-      botId,
-      threadId: publicThreadId,
-      turnId,
-      questions,
-    });
-  }
-
-  #persistQuestionPrompt(
-    botId: string,
-    publicThreadId: string,
-    turnId: string,
-    requestId: RequestId,
-    questions: AgentPromptQuestion[],
-  ): string {
-    const snapshot = this.#conversation.ensureSnapshot(botId, publicThreadId);
-    const messageId = `question-prompt:${turnId}:${String(requestId)}`;
-    const existing = snapshot.messages.find((message) => message.id === messageId);
-    if (!existing) {
-      snapshot.messages.push({
-        id: messageId,
-        turnId,
-        author: "assistant",
-        source: "assistant",
-        text: questionPromptText(questions, null),
-        createdAt: new Date().toISOString(),
-        status: "completed",
-        itemType: "question_prompt",
-        questionPrompt: {
-          requestId,
-          questions: structuredClone(questions),
-          resolution: null,
-        },
-      });
-      this.#conversation.emitConversation(snapshot, "prompt.requested", { turnId, requestId });
-    }
-    return messageId;
-  }
-
-  #resolvePersistedPrompt(pending: PendingPrompt, resolution: AgentPromptResolution): void {
-    const snapshot = this.#conversation.ensureSnapshot(pending.botId, pending.publicThreadId);
-    const message = snapshot.messages.find((candidate) => candidate.id === pending.messageId);
-    if (!message?.questionPrompt || message.questionPrompt.resolution !== null) return;
-    message.questionPrompt.resolution = structuredClone(resolution);
-    message.text = questionPromptText(message.questionPrompt.questions, resolution);
-    this.#conversation.emitConversation(snapshot, "prompt.resolved", {
-      turnId: pending.turnId,
-      requestId: pending.id,
-      status: resolution.status,
-    });
   }
 
   #applyPendingRuntimeRefresh(bot: BotSummary): void {
