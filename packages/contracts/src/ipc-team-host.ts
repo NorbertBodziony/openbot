@@ -1,5 +1,10 @@
 import type { AvatarImageInput } from "./ipc-conversation";
 
+// The id every IPC payload carries for "this computer" rather than a remote team server. It is a
+// wire value the main process, the preload bridge and the renderer all compare against, so it lives
+// beside the types they share instead of being retyped at each comparison.
+export const LOCAL_SERVER_ID = "local";
+
 export type ServerConnectionState = "online" | "connecting" | "offline" | "error" | "incompatible";
 export type TeamRole = "owner" | "admin" | "member";
 

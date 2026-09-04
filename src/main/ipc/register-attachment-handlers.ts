@@ -12,6 +12,7 @@ import {
 } from "@openbot/contracts/attachment-files";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { type FilePreview, type ImportAttachmentsInput, IPC_CHANNELS } from "@openbot/contracts/ipc";
+import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { app, type BrowserWindow, dialog, type OpenDialogOptions, shell } from "electron";
 import type { AgentService } from "../../backend/agent-service";
 import type { MailboxStore } from "../../backend/mailbox-store";
@@ -26,6 +27,7 @@ import {
   parseOpenSharedFile,
   parseOpenWorkspaceFile,
 } from "./agent-inputs";
+import { routeToServer } from "./route-to-server";
 import { requireString } from "./validation";
 
 interface AttachmentIpcDependencies {
@@ -54,140 +56,157 @@ export function registerAttachmentIpcHandlers({
     };
     const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
     if (result.canceled) return [];
-    if (serverId === "local") return service.prepareAttachments(result.filePaths);
-    return uploadRemotePaths(remoteServers, serverId, result.filePaths);
+    return routeToServer(serverId, {
+      local: () => service.prepareAttachments(result.filePaths),
+      remote: (target) => uploadRemotePaths(remoteServers, target, result.filePaths),
+    });
   });
   handleTrusted(IPC_CHANNELS.agentImportAttachments, parseAgentRequest, (scoped) => {
     const parsed = parseImportAttachments(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.prepareImportedAttachments(parsed.paths, parsed.data)
-      : uploadRemoteImports(remoteServers, scoped.serverId, parsed);
+    return routeToServer(scoped.serverId, {
+      local: () => service.prepareImportedAttachments(parsed.paths, parsed.data),
+      remote: (serverId) => uploadRemoteImports(remoteServers, serverId, parsed),
+    });
   });
   handleTrusted(IPC_CHANNELS.agentDiscardDraftAttachment, parseAgentRequest, (scoped) => {
     const attachmentId = requireString(scoped.payload, "attachmentId");
-    return scoped.serverId === "local"
-      ? service.discardDraftAttachment(attachmentId)
-      : remoteServers.request(
-          `/v1/attachments/${encodeURIComponent(attachmentId)}`,
-          { method: "DELETE" },
-          scoped.serverId,
-          decodeVoid,
-        );
+    return routeToServer(scoped.serverId, {
+      local: () => service.discardDraftAttachment(attachmentId),
+      remote: (serverId) =>
+        remoteServers.request(TEAM_API_ROUTES.attachment(attachmentId), { method: "DELETE" }, serverId, decodeVoid),
+    });
   });
-  handleTrusted(IPC_CHANNELS.agentOpenAttachment, parseAgentRequest, async (scoped) => {
-    const mainWindow = getMainWindow();
+  handleTrusted(IPC_CHANNELS.agentOpenAttachment, parseAgentRequest, (scoped) => {
     const parsed = parseOpenAttachment(scoped.payload);
-    if (scoped.serverId !== "local") {
-      const downloaded = await remoteServers.downloadAttachment(parsed.attachmentId, scoped.serverId);
-      const suggestedName = basename(downloaded.name) || `attachment-${parsed.attachmentId}`;
-      if (parsed.action === "download") {
-        const extension = extname(suggestedName).slice(1).toLowerCase();
-        const saveOptions: Electron.SaveDialogOptions = {
-          defaultPath: join(app.getPath("downloads"), suggestedName),
-          filters: [{ name: "Attachment", extensions: extension ? [extension] : ["*"] }],
-          showsTagField: false,
-        };
-        const result =
-          mainWindow && !mainWindow.isDestroyed()
-            ? await dialog.showSaveDialog(mainWindow, saveOptions)
-            : await dialog.showSaveDialog(saveOptions);
-        if (result.canceled || !result.filePath) return;
-        await writeFile(result.filePath, downloaded.bytes, { mode: 0o600 });
-        return;
-      }
-      const cacheRoot = join(app.getPath("userData"), "remote-attachments");
-      await mkdir(cacheRoot, { recursive: true });
-      const safeName = `${parsed.attachmentId}-${suggestedName}`;
-      const target = join(cacheRoot, safeName);
-      await writeFile(target, downloaded.bytes, { mode: 0o600 });
-      if (parsed.action === "reveal") shell.showItemInFolder(target);
-      else {
-        const openError = await shell.openPath(target);
-        if (openError) throw new Error(openError);
-      }
-      return;
-    }
-    const attachment = await mailbox.resolveAttachment(parsed.attachmentId);
-    if (!attachment) throw new Error("Attachment was not found.");
-    if (parsed.action === "download") {
-      const safeId = basename(parsed.attachmentId).replace(/[^a-z0-9_-]/gi, "-") || "attachment";
-      const mimeExtension = attachment.mimeType.split("/")[1]?.replace(/[^a-z0-9]/gi, "");
-      const suggestedName = `attachment-${safeId}${mimeExtension ? `.${mimeExtension}` : ""}`;
-      const extension = extname(suggestedName).slice(1).toLowerCase();
-      const saveOptions: Electron.SaveDialogOptions = {
-        defaultPath: join(app.getPath("downloads"), suggestedName),
-        filters: [{ name: "Attachment", extensions: extension ? [extension] : ["*"] }],
-        showsTagField: false,
-      };
-      const result =
-        mainWindow && !mainWindow.isDestroyed()
-          ? await dialog.showSaveDialog(mainWindow, saveOptions)
-          : await dialog.showSaveDialog(saveOptions);
-      if (result.canceled || !result.filePath) return;
-      await copyFile(attachment.path, result.filePath);
-      return;
-    }
-    if (parsed.action === "reveal") {
-      shell.showItemInFolder(attachment.path);
-      return;
-    }
-    const error = await shell.openPath(attachment.path);
-    if (error) throw new Error(error);
+    return routeToServer<void>(scoped.serverId, {
+      local: async () => {
+        const attachment = await mailbox.resolveAttachment(parsed.attachmentId);
+        if (!attachment) throw new Error("Attachment was not found.");
+        if (parsed.action === "download") {
+          const safeId = basename(parsed.attachmentId).replace(/[^a-z0-9_-]/gi, "-") || "attachment";
+          const mimeExtension = attachment.mimeType.split("/")[1]?.replace(/[^a-z0-9]/gi, "");
+          const suggestedName = `attachment-${safeId}${mimeExtension ? `.${mimeExtension}` : ""}`;
+          const filePath = await chooseSavePath(getMainWindow(), suggestedName);
+          if (!filePath) return;
+          await copyFile(attachment.path, filePath);
+          return;
+        }
+        if (parsed.action === "reveal") {
+          shell.showItemInFolder(attachment.path);
+          return;
+        }
+        await openPath(attachment.path);
+      },
+      remote: async (serverId) => {
+        const downloaded = await remoteServers.downloadAttachment(parsed.attachmentId, serverId);
+        const suggestedName = basename(downloaded.name) || `attachment-${parsed.attachmentId}`;
+        if (parsed.action === "download") {
+          const filePath = await chooseSavePath(getMainWindow(), suggestedName);
+          if (!filePath) return;
+          await writeFile(filePath, downloaded.bytes, { mode: 0o600 });
+          return;
+        }
+        const cacheRoot = join(app.getPath("userData"), "remote-attachments");
+        await mkdir(cacheRoot, { recursive: true });
+        const target = join(cacheRoot, `${parsed.attachmentId}-${suggestedName}`);
+        await writeFile(target, downloaded.bytes, { mode: 0o600 });
+        if (parsed.action === "reveal") shell.showItemInFolder(target);
+        else await openPath(target);
+      },
+    });
   });
-  handleTrusted(IPC_CHANNELS.agentOpenSharedFile, parseAgentRequest, async (scoped) => {
+  handleTrusted(IPC_CHANNELS.agentOpenSharedFile, parseAgentRequest, (scoped) => {
     const parsed = parseOpenSharedFile(scoped.payload);
-    if (scoped.serverId !== "local") {
-      const downloaded = await remoteServers.downloadSharedFile(parsed.path, scoped.serverId);
-      const cacheRoot = join(app.getPath("userData"), "remote-shared-files");
-      await mkdir(cacheRoot, { recursive: true, mode: 0o700 });
-      const cacheKey = createHash("sha256").update(`${scoped.serverId}:${parsed.path}`).digest("hex");
-      const target = join(cacheRoot, `${cacheKey}-${basename(downloaded.name)}`);
-      await writeFile(target, downloaded.bytes, { mode: 0o600 });
-      await chmod(target, 0o600);
-      const openError = await shell.openPath(target);
-      if (openError) throw new Error(openError);
-      return;
-    }
-    const sharedFile = await service.resolveSharedFile(parsed.path);
-    const openError = await shell.openPath(sharedFile.path);
-    if (openError) throw new Error(openError);
+    return routeToServer<void>(scoped.serverId, {
+      local: async () => {
+        const sharedFile = await service.resolveSharedFile(parsed.path);
+        await openPath(sharedFile.path);
+      },
+      remote: async (serverId) => {
+        const downloaded = await remoteServers.downloadSharedFile(parsed.path, serverId);
+        const target = await cacheRemoteFile("remote-shared-files", `${serverId}:${parsed.path}`, downloaded);
+        await openPath(target);
+      },
+    });
   });
-  handleTrusted(IPC_CHANNELS.agentOpenWorkspaceFile, parseAgentRequest, async (scoped) => {
+  handleTrusted(IPC_CHANNELS.agentOpenWorkspaceFile, parseAgentRequest, (scoped) => {
     const parsed = parseOpenWorkspaceFile(scoped.payload);
-    if (scoped.serverId !== "local") {
-      const downloaded = await remoteServers.downloadWorkspaceFile(parsed.botId, parsed.path, scoped.serverId);
-      const cacheRoot = join(app.getPath("userData"), "remote-workspace-files");
-      await mkdir(cacheRoot, { recursive: true, mode: 0o700 });
-      const cacheKey = createHash("sha256").update(`${scoped.serverId}:${parsed.botId}:${parsed.path}`).digest("hex");
-      const target = join(cacheRoot, `${cacheKey}-${basename(downloaded.name)}`);
-      await writeFile(target, downloaded.bytes, { mode: 0o600 });
-      await chmod(target, 0o600);
-      const openError = await shell.openPath(target);
-      if (openError) throw new Error(openError);
-      return;
-    }
-    const workspaceFile = await service.resolveWorkspaceFile(parsed.botId, parsed.path);
-    const openError = await shell.openPath(workspaceFile.path);
-    if (openError) throw new Error(openError);
+    return routeToServer<void>(scoped.serverId, {
+      local: async () => {
+        const workspaceFile = await service.resolveWorkspaceFile(parsed.botId, parsed.path);
+        await openPath(workspaceFile.path);
+      },
+      remote: async (serverId) => {
+        const downloaded = await remoteServers.downloadWorkspaceFile(parsed.botId, parsed.path, serverId);
+        const key = `${serverId}:${parsed.botId}:${parsed.path}`;
+        const target = await cacheRemoteFile("remote-workspace-files", key, downloaded);
+        await openPath(target);
+      },
+    });
   });
-  handleTrusted(IPC_CHANNELS.agentPreviewSharedFile, parseAgentRequest, async (scoped): Promise<FilePreview> => {
+  handleTrusted(IPC_CHANNELS.agentPreviewSharedFile, parseAgentRequest, (scoped): Promise<FilePreview> => {
     const parsed = parseOpenSharedFile(scoped.payload);
-    if (scoped.serverId !== "local") {
-      const downloaded = await remoteServers.downloadSharedFile(parsed.path, scoped.serverId);
-      return filePreviewFromBytes(downloaded.name, downloaded.bytes);
-    }
-    const sharedFile = await service.resolveSharedFile(parsed.path);
-    return localFilePreview(sharedFile.path, sharedFile.name, sharedFile.size);
+    return routeToServer(scoped.serverId, {
+      local: async () => {
+        const sharedFile = await service.resolveSharedFile(parsed.path);
+        return localFilePreview(sharedFile.path, sharedFile.name, sharedFile.size);
+      },
+      remote: async (serverId) => {
+        const downloaded = await remoteServers.downloadSharedFile(parsed.path, serverId);
+        return filePreviewFromBytes(downloaded.name, downloaded.bytes);
+      },
+    });
   });
-  handleTrusted(IPC_CHANNELS.agentPreviewWorkspaceFile, parseAgentRequest, async (scoped): Promise<FilePreview> => {
+  handleTrusted(IPC_CHANNELS.agentPreviewWorkspaceFile, parseAgentRequest, (scoped): Promise<FilePreview> => {
     const parsed = parseOpenWorkspaceFile(scoped.payload);
-    if (scoped.serverId !== "local") {
-      const downloaded = await remoteServers.downloadWorkspaceFile(parsed.botId, parsed.path, scoped.serverId);
-      return filePreviewFromBytes(downloaded.name, downloaded.bytes);
-    }
-    const workspaceFile = await service.resolveWorkspaceFile(parsed.botId, parsed.path);
-    return localFilePreview(workspaceFile.path, workspaceFile.name, workspaceFile.size);
+    return routeToServer(scoped.serverId, {
+      local: async () => {
+        const workspaceFile = await service.resolveWorkspaceFile(parsed.botId, parsed.path);
+        return localFilePreview(workspaceFile.path, workspaceFile.name, workspaceFile.size);
+      },
+      remote: async (serverId) => {
+        const downloaded = await remoteServers.downloadWorkspaceFile(parsed.botId, parsed.path, serverId);
+        return filePreviewFromBytes(downloaded.name, downloaded.bytes);
+      },
+    });
   });
+}
+
+// A remote file has to land on disk before the OS can open it. Owner-only, under a per-server and
+// per-path digest so two servers sharing a file name cannot overwrite each other.
+async function cacheRemoteFile(
+  directory: string,
+  cacheKeyInput: string,
+  downloaded: { name: string; bytes: Uint8Array },
+): Promise<string> {
+  const cacheRoot = join(app.getPath("userData"), directory);
+  await mkdir(cacheRoot, { recursive: true, mode: 0o700 });
+  const cacheKey = createHash("sha256").update(cacheKeyInput).digest("hex");
+  const target = join(cacheRoot, `${cacheKey}-${basename(downloaded.name)}`);
+  await writeFile(target, downloaded.bytes, { mode: 0o600 });
+  await chmod(target, 0o600);
+  return target;
+}
+
+// `shell.openPath` reports failure by resolving with the message rather than rejecting.
+async function openPath(path: string): Promise<void> {
+  const error = await shell.openPath(path);
+  if (error) throw new Error(error);
+}
+
+// Returns the chosen path, or undefined when the user cancelled.
+async function chooseSavePath(mainWindow: BrowserWindow | null, suggestedName: string): Promise<string | undefined> {
+  const extension = extname(suggestedName).slice(1).toLowerCase();
+  const options: Electron.SaveDialogOptions = {
+    defaultPath: join(app.getPath("downloads"), suggestedName),
+    filters: [{ name: "Attachment", extensions: extension ? [extension] : ["*"] }],
+    showsTagField: false,
+  };
+  const result =
+    mainWindow && !mainWindow.isDestroyed()
+      ? await dialog.showSaveDialog(mainWindow, options)
+      : await dialog.showSaveDialog(options);
+  return result.canceled ? undefined : result.filePath || undefined;
 }
 
 async function uploadRemotePaths(remoteServers: RemoteServerManager, serverId: string, paths: string[]) {

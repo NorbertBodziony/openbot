@@ -8,6 +8,7 @@ import {
   type BrowserDisplayState,
   type CentralAuthState,
   IPC_CHANNELS,
+  LOCAL_SERVER_ID,
   type MacPermissionId,
   type VoiceModelStatus,
 } from "@openbot/contracts/ipc";
@@ -453,7 +454,7 @@ function createWindow(): BrowserWindow {
     }
     const tabId = browserHost?.activeTabId;
     if (
-      remoteServerManager?.activeServerId !== "local" ||
+      remoteServerManager?.activeServerId !== LOCAL_SERVER_ID ||
       !browserHost?.visible ||
       !tabId ||
       !isCloseBrowserTabShortcut(input)
@@ -671,7 +672,7 @@ function configureApplicationMenu(service: AgentService, updater: UpdateService)
 }
 
 function forwardAgentEvent(serverId: string, event: AgentEvent, bufferedLive = false): void {
-  if (serverId === "local") hostAnalytics?.handleAgentEvent(event);
+  if (serverId === LOCAL_SERVER_ID) hostAnalytics?.handleAgentEvent(event);
   if (!mainWindow || mainWindow.isDestroyed()) return;
   sendToRenderer(
     mainWindow,
@@ -1601,7 +1602,7 @@ function configureServerLogoProtocols(teamStore: TeamStore): void {
     try {
       const url = new URL(request.url);
       const logo = teamStore.resolveLogo();
-      if (url.hostname !== "local" || !logo || logo.version !== url.searchParams.get("v")) {
+      if (url.hostname !== LOCAL_SERVER_ID || !logo || logo.version !== url.searchParams.get("v")) {
         return new Response("Not found", { status: 404 });
       }
       return new Response(await readFile(logo.path), {
