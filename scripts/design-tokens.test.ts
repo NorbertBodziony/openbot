@@ -56,7 +56,7 @@ describe("design tokens", () => {
   it("declares every token in the shared palette and nowhere else", () => {
     const redeclared: string[] = [];
     for (const surface of SURFACES) {
-      for (const file of surface.rootDeclarations) {
+      for (const file of stylesheetsOf(surface)) {
         for (const name of readRootTokens(file).keys()) {
           if (sharedTokens.has(name) && !(name in SURFACE_OVERRIDES)) redeclared.push(`${file}: ${name}`);
         }
@@ -137,6 +137,18 @@ function readRootTokens(path: string): Map<string, string> {
   }
 
   return tokens;
+}
+
+// Every stylesheet a surface loads, not just the entry point it names. Checking
+// only the entry would leave the guarantee open at the likeliest place to break
+// it: a partial under styles/ opening its own :root block is a second declaration
+// site, and nothing about the import graph makes that visible.
+function stylesheetsOf(surface: (typeof SURFACES)[number]): readonly string[] {
+  const paths = new Set<string>(surface.rootDeclarations);
+  for (const source of surface.sources) {
+    for (const path of filesUnder(source)) if (extname(path) === ".css") paths.add(path);
+  }
+  return [...paths];
 }
 
 // The text of a line, cut at every brace, with the braces kept as their own parts.
