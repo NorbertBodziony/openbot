@@ -1765,6 +1765,7 @@ textarea {
   transition:
     border-color var(--openbot-duration-hover) ease,
     background-color var(--openbot-duration-hover) ease,
+    box-shadow var(--openbot-duration-hover) ease,
     opacity var(--openbot-duration-fast) ease,
     transform var(--openbot-duration-slow) cubic-bezier(0.32, 0.72, 0, 1);
 }
@@ -1774,12 +1775,17 @@ textarea {
   background: var(--openbot-bg-surface);
 }
 
+.search-field:has(input:focus-visible) {
+  box-shadow: var(--openbot-focus-ring);
+}
+
 .search-field input {
   min-width: 0;
   flex: 1;
   border: 0;
   outline: 0;
   background: transparent;
+  box-shadow: none;
   color: var(--openbot-text-primary);
   font-size: var(--openbot-text-md);
   line-height: 18px;
@@ -3381,6 +3387,31 @@ textarea {
   text-align: right;
 }
 
+.account-dock-usage-loading {
+  display: inline-flex;
+  width: 4ch;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.account-dock-usage-loading i {
+  width: 3px;
+  height: 3px;
+  border-radius: var(--openbot-radius-pill);
+  background: currentColor;
+  --typing-dot-travel: -1px;
+  animation: typing-dot-pulse 900ms ease-in-out infinite;
+}
+
+.account-dock-usage-loading i:nth-child(2) {
+  animation-delay: var(--openbot-duration-fast);
+}
+
+.account-dock-usage-loading i:nth-child(3) {
+  animation-delay: var(--openbot-duration-overlay);
+}
+
 .account-usage-popover {
   position: relative;
   z-index: 80;
@@ -3925,6 +3956,10 @@ textarea {
 
   .account-menu-icon-spinning {
     animation-duration: 1.6s;
+  }
+
+  .account-dock-usage-loading i {
+    animation: none;
   }
 }
 

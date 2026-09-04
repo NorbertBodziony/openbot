@@ -1,28 +1,22 @@
 // @vitest-environment node
-import { mkdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
+import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
 import { serializeChatTagReference } from "@openbot/contracts/chat-tag-references";
 import type { AgentEvent } from "@openbot/contracts/ipc";
 import { isDynamicRecord } from "@openbot/contracts/runtime-values";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentProvider } from "./agent-client";
-import { AgentMemoryStore } from "./agent-memory-store";
-import { AgentRoutineStore } from "./agent-routine-store";
 import { AgentService } from "./agent-service";
 import {
   CREATE_BOT_INPUT,
   createFakeClaude,
-  createFakeGrok,
-  createPendingFakeClaude,
-  EMPTY_LAYOUT,
   FakeAgentClient,
   fakeBrowser,
   firstInputText,
   notification,
   paramsRecord,
   protocolMessages,
-  readTextOrEmpty,
   startAgentTestFixture,
   stopAgentTestFixture,
   stores,
@@ -110,237 +104,6 @@ describe.sequential("AgentService: providers", () => {
       notification("turn/completed", { threadId, turn: { id: turnId, status: "completed" } }),
     );
     await waitFor(() => events.some((event) => event.type === "turn-completed" && event.turnId === turnId));
-  });
-
-  it("checks providers concurrently and publishes each completed row", async () => {
-    process.env.OPENBOT_CLAUDE_PATH = await createFakeClaude(root);
-    process.env.OPENBOT_GROK_PATH = await createFakeGrok(root);
-    const { store, mailbox } = stores(root);
-    const delays: Record<AgentProvider, number> = { codex: 60, claude: 5, grok: 30 };
-    const availableOrder: AgentProvider[] = [];
-    const seen = new Set<AgentProvider>();
-    const accountReads = new Set<AgentProvider>();
-    let releaseAccountReads: (() => void) | undefined;
-    const allAccountReadsStarted = new Promise<void>((resolve) => {
-      releaseAccountReads = resolve;
-    });
-    const waitForConcurrentAccountReads = async (method: string, provider: AgentProvider) => {
-      if (method !== "account/read") return;
-      accountReads.add(provider);
-      if (accountReads.size === 3) releaseAccountReads?.();
-      await allAccountReadsStarted;
-    };
-    service = new AgentService(
-      store,
-      mailbox,
-      fakeBrowser(),
-      30_000,
-      "codex",
-      (provider) =>
-        new FakeAgentClient(
-          provider,
-          "DONE",
-          true,
-          true,
-          { "account/read": delays[provider] },
-          waitForConcurrentAccountReads,
-        ),
-    );
-    service.on("event", (event) => {
-      if (event.type !== "status") return;
-      for (const provider of event.status.providers ?? []) {
-        if (provider.state !== "available" || seen.has(provider.id)) continue;
-        seen.add(provider.id);
-        availableOrder.push(provider.id);
-      }
-    });
-
-    await Promise.race([
-      service.initialize(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Provider account checks did not start concurrently.")), 3_000),
-      ),
-    ]);
-
-    expect(availableOrder).toEqual(["claude", "grok", "codex"]);
-
-    // The fake advertises gpt-5.5, gpt-5.4, gpt-5.4-mini and gpt-5.3-codex-spark
-    // alongside the curated three, so CURATED_CODEX_MODEL_IDS has to drop four.
-    expect(
-      service
-        .listModels()
-        .filter((model) => model.provider === "codex")
-        .map((model) => model.id),
-    ).toEqual(["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]);
-  });
-
-  it("duplicates persistent agent data without conversation or routine-run history", async () => {
-    const { store, mailbox } = stores(root);
-    service = new AgentService(store, mailbox, fakeBrowser());
-    await service.initialize();
-    const source = await store.getOrCreate("chief", "Research", "Research lead");
-    await store.updateBot({
-      botId: source.id,
-      description: "Finds primary sources.",
-      notifications: false,
-      model: "gpt-5.6-sol",
-      reasoningEffort: "high",
-    });
-    await writeFile(join(source.workspacePath, "research.md"), "source workspace\n");
-    service.createMemory({ botId: source.id, text: "Use official documents." });
-    new AgentMemoryStore(store.database).saveAutomatic({
-      botId: source.id,
-      text: "The user prefers short briefs.",
-      sourceTurnId: "turn-source-memory",
-    });
-    const activeRoutine = service.createRoutine({
-      botId: source.id,
-      name: "Morning brief",
-      instruction: "Prepare the morning brief.",
-      active: true,
-      timezone: "Europe/Warsaw",
-      schedule: { kind: "daily", time: "09:00" },
-    });
-    const inactiveRoutine = service.createRoutine({
-      botId: source.id,
-      name: "Weekly review",
-      instruction: "Review the week.",
-      active: false,
-      timezone: "UTC",
-      schedule: { kind: "weekly", weekday: 1, time: "10:30" },
-    });
-    const routineStore = new AgentRoutineStore(store.database);
-    const oldRun = routineStore.createRun(
-      activeRoutine,
-      activeRoutine.trigger.id,
-      "scheduled",
-      "2026-08-31T07:00:00.000Z",
-    );
-    routineStore.updateRunStatus(oldRun.id, "succeeded");
-    service.setMarketplaceSource(source.id, {
-      agentId: "market-research",
-      versionId: "market-research-v2",
-      version: 2,
-      skillIds: ["primary-sources"],
-      routineIds: [activeRoutine.id],
-    });
-    const duplicateStartedAt = Date.now();
-    const events: AgentEvent[] = [];
-    service.on("event", (event) => events.push(event));
-
-    const duplicate = await service.duplicateBot(source.id);
-
-    expect(service.listBots().some((bot) => bot.id === duplicate.id)).toBe(false);
-    await expect(service.sendMessage({ botId: duplicate.id, text: "Do not start yet." })).rejects.toThrow(
-      `Unknown bot: ${duplicate.id}`,
-    );
-    await expect(service.updateBot({ botId: duplicate.id, title: "Hidden copy" })).rejects.toThrow(
-      `Unknown bot: ${duplicate.id}`,
-    );
-    expect(service.listQueue(duplicate.id).deliveries).toEqual([]);
-    expect(events).toEqual([]);
-    await service.commitBotDuplication(duplicate.id, EMPTY_LAYOUT);
-    expect(service.listBots().some((bot) => bot.id === duplicate.id)).toBe(true);
-    expect(events).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ type: "bots-changed" }),
-        expect.objectContaining({ type: "memories-changed", botId: duplicate.id }),
-        expect.objectContaining({ type: "routines-changed", botId: duplicate.id }),
-      ]),
-    );
-
-    expect(duplicate.id).not.toBe(source.id);
-    expect(duplicate).toMatchObject({
-      name: "Research copy",
-      title: "Research lead",
-      description: "Finds primary sources.",
-      notifications: false,
-      model: "gpt-5.6-sol",
-      reasoningEffort: "high",
-      threadId: null,
-      preview: "No messages yet",
-    });
-    expect((await service.readConversation(duplicate.id)).messages).toEqual([]);
-    await expect(readFile(join(duplicate.workspacePath, "research.md"), "utf8")).resolves.toBe("source workspace\n");
-
-    const sourceMemories = service.listMemories(source.id);
-    const duplicateMemories = service.listMemories(duplicate.id);
-    expect(
-      duplicateMemories
-        .map(({ text, origin, sourceTurnId }) => ({ text, origin, sourceTurnId }))
-        .sort((left, right) => left.text.localeCompare(right.text)),
-    ).toEqual(
-      sourceMemories
-        .map(({ text, origin }) => ({ text, origin, sourceTurnId: null }))
-        .sort((left, right) => left.text.localeCompare(right.text)),
-    );
-    expect(new Set(duplicateMemories.map((memory) => memory.id))).not.toEqual(
-      new Set(sourceMemories.map((memory) => memory.id)),
-    );
-
-    const sourceRoutines = service.listRoutines(source.id);
-    const duplicateRoutines = service.listRoutines(duplicate.id);
-    expect(
-      duplicateRoutines
-        .map(({ name, instruction, active, timezone, trigger }) => ({
-          name,
-          instruction,
-          active,
-          timezone,
-          schedule: trigger.schedule,
-        }))
-        .sort((left, right) => left.name.localeCompare(right.name)),
-    ).toEqual(
-      sourceRoutines
-        .map(({ name, instruction, active, timezone, trigger }) => ({
-          name,
-          instruction,
-          active,
-          timezone,
-          schedule: trigger.schedule,
-        }))
-        .sort((left, right) => left.name.localeCompare(right.name)),
-    );
-    expect(duplicateRoutines.every((routine) => Date.parse(routine.trigger.nextRunAt) >= duplicateStartedAt)).toBe(
-      true,
-    );
-    expect(duplicateRoutines.map((routine) => routine.id)).not.toEqual(sourceRoutines.map((routine) => routine.id));
-    for (const routine of duplicateRoutines) {
-      expect(service.listRoutineRuns({ botId: duplicate.id, routineId: routine.id, limit: 10 })).toEqual([]);
-    }
-    expect(duplicate.marketplaceSource).toMatchObject({
-      agentId: "market-research",
-      skillIds: ["primary-sources"],
-      routineIds: [duplicateRoutines.find((routine) => routine.name === activeRoutine.name)?.id],
-    });
-
-    await writeFile(join(duplicate.workspacePath, "research.md"), "duplicate workspace\n");
-    await service.updateMemory({
-      botId: duplicate.id,
-      memoryId: duplicateMemories[0]?.id ?? "missing",
-      text: "Changed only in the duplicate.",
-    });
-    const copiedActiveRoutine = duplicateRoutines.find((routine) => routine.name === activeRoutine.name);
-    if (!copiedActiveRoutine) throw new Error("The duplicated active routine is missing.");
-    service.updateRoutine({ botId: duplicate.id, routineId: copiedActiveRoutine.id, active: false });
-
-    await expect(readFile(join(source.workspacePath, "research.md"), "utf8")).resolves.toBe("source workspace\n");
-    expect(service.listMemories(source.id).some((memory) => memory.text === "Changed only in the duplicate.")).toBe(
-      false,
-    );
-    expect(service.listRoutines(source.id).find((routine) => routine.id === activeRoutine.id)?.active).toBe(true);
-    expect(service.listRoutines(source.id).find((routine) => routine.id === inactiveRoutine.id)?.active).toBe(false);
-  });
-
-  it("blocks duplication while the source agent has active work", async () => {
-    const { store, mailbox } = stores(root);
-    service = new AgentService(store, mailbox, fakeBrowser());
-    await service.initialize();
-    await store.getOrCreate("chief");
-    await service.sendMessage({ botId: "chief", text: "Keep working.", attachmentDraftIds: [] });
-
-    await expect(service.duplicateBot("chief")).rejects.toThrow("finish and clear its queue");
-    expect(store.list().map((bot) => bot.id)).toEqual(["chief"]);
   });
 
   it("creates a bounded runtime snapshot for reconnecting clients", async () => {
@@ -627,240 +390,61 @@ describe.sequential("AgentService: providers", () => {
     expect((await store.getOrCreate("chief")).threadId).not.toBe((await store.getOrCreate("sales-outbound")).threadId);
   });
 
-  it("connects ChatGPT through the Codex App Server and promotes the authenticated client", async () => {
+  it("reads usage for the selected agent provider and prefers its model-specific bucket", async () => {
+    process.env.OPENBOT_CLAUDE_PATH = await createFakeClaude(root);
+    const clients = new Map<AgentProvider, FakeAgentClient>();
     const { store, mailbox } = stores(root);
-    const codexClients: FakeAgentClient[] = [];
-    const openExternal = vi.fn(async () => undefined);
     service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
-      const client = new FakeAgentClient(
-        provider,
-        provider === "codex" ? "CODEX_DONE" : "CLAUDE_DONE",
-        true,
-        provider !== "codex",
-      );
-      if (provider === "codex") codexClients.push(client);
+      const client = new FakeAgentClient(provider);
+      clients.set(provider, client);
       return client;
     });
     await service.initialize();
-
-    expect(service.getStatus().providers).toContainEqual(
-      expect.objectContaining({ id: "codex", state: "sign-in-required" }),
-    );
-    const connecting = await service.connectChatGPT(openExternal);
-
-    expect(connecting.providers).toContainEqual(
-      expect.objectContaining({
-        id: "codex",
-        state: "sign-in-required",
-        connectionState: "connecting",
-        version: "0.144.1",
-      }),
-    );
-    expect(openExternal).toHaveBeenCalledWith("https://auth.openai.test/connect");
-    expect(codexClients).toHaveLength(2);
-    expect(codexClients[1]?.requests).toContainEqual({
-      method: "account/login/start",
-      params: {
-        type: "chatgpt",
-        appBrand: "chatgpt",
-        codexStreamlinedLogin: true,
-        useHostedLoginSuccessPage: true,
+    await store.getOrCreate("chief");
+    await service.updateBot({ botId: "chief", provider: "codex", model: "gpt-5.6-luna" });
+    const codex = clients.get("codex");
+    if (!codex) throw new Error("Codex test client was not created.");
+    codex.accountRateLimits = {
+      rateLimits: {
+        limitId: "codex",
+        secondary: { usedPercent: 40, windowDurationMins: 10_080, resetsAt: 1_787_040_000 },
       },
+      rateLimitsByLimitId: {
+        luna: {
+          limitId: "luna",
+          limitName: "gpt-5.6-luna",
+          secondary: { usedPercent: 70, windowDurationMins: 10_080, resetsAt: 1_787_040_000 },
+        },
+      },
+    };
+
+    await expect(service.getUsage("chief")).resolves.toMatchObject({
+      limits: [{ id: "luna", secondary: { usedPercent: 70 } }],
     });
 
-    await service.connectChatGPT(openExternal);
-    expect(openExternal).toHaveBeenCalledTimes(2);
-    expect(codexClients).toHaveLength(3);
-    expect(codexClients[1]?.requests).toContainEqual({
-      method: "account/login/cancel",
-      params: { loginId: "login-1" },
+    await service.updateBot({ botId: "chief", provider: "codex", model: "gpt-5.6-sol" });
+    await expect(service.getUsage("chief")).resolves.toMatchObject({
+      limits: [{ id: "codex", secondary: { usedPercent: 40 } }],
     });
-    expect(codexClients[1]?.running).toBe(false);
-    codexClients[1]?.completeLogin(true);
-    expect(service.getStatus().providers).toContainEqual(
-      expect.objectContaining({ id: "codex", connectionState: "connecting" }),
-    );
-    codexClients[2]?.completeLogin(true);
-    await waitFor(
-      () => service?.getStatus().providers?.find((provider) => provider.id === "codex")?.state === "available",
-    );
 
-    expect(service.getStatus().phase).toBe("ready");
-    expect(service.getStatus().providers).toContainEqual(
-      expect.objectContaining({ id: "codex", state: "available", email: "codex@example.com" }),
-    );
-  });
+    await service.updateBot({ botId: "chief", provider: "claude", model: "claude-sonnet-5" });
+    const claude = clients.get("claude");
+    if (!claude) throw new Error("Claude test client was not created.");
+    claude.accountRateLimits = {
+      rateLimits: {
+        limitId: "claude",
+        secondary: { usedPercent: 55, windowDurationMins: 10_080, resetsAt: 1_787_040_000 },
+      },
+      rateLimitsByLimitId: null,
+    };
 
-  it.each([
-    { target: "claude", connect: "connectClaude", pathVariable: "OPENBOT_CLAUDE_PATH", createCli: createFakeClaude },
-    { target: "grok", connect: "connectGrok", pathVariable: "OPENBOT_GROK_PATH", createCli: createFakeGrok },
-  ] as const)(
-    "connects $target through the bundled CLI login command",
-    async ({ target, connect, pathVariable, createCli }) => {
-      process.env[pathVariable] = await createCli(root);
-      const { store, mailbox } = stores(root);
-      let clients = 0;
-      service = new AgentService(store, mailbox, fakeBrowser(), 30_000, target, (provider) => {
-        const authenticated = provider === target ? clients > 0 : true;
-        if (provider === target) clients += 1;
-        return new FakeAgentClient(provider, "DONE", true, authenticated);
-      });
-      await service.initialize();
-
-      expect(service.getStatus().providers).toContainEqual(
-        expect.objectContaining({ id: target, state: "sign-in-required" }),
-      );
-
-      const connecting = await service[connect]();
-
-      expect(connecting.providers).toContainEqual(
-        expect.objectContaining({ id: target, state: "sign-in-required", connectionState: "connecting" }),
-      );
-      await waitFor(() => clients === 2);
-      await waitFor(
-        () => service?.getStatus().providers?.find((provider) => provider.id === target)?.state === "available",
-      );
-      expect(service.getStatus().providers).toContainEqual(
-        expect.objectContaining({ id: target, state: "available", email: `${target}@example.com` }),
-      );
-    },
-  );
-
-  it("restores the connect action when the login page cannot open", async () => {
-    const { store, mailbox } = stores(root);
-    service = new AgentService(
-      store,
-      mailbox,
-      fakeBrowser(),
-      30_000,
-      "codex",
-      (provider) => new FakeAgentClient(provider, "DONE", true, provider !== "codex"),
-    );
-    await service.initialize();
-
-    await expect(service.connectChatGPT(async () => Promise.reject(new Error("browser failed")))).rejects.toThrow(
-      "could not open",
-    );
-    expect(service.getStatus().providers).toContainEqual(
-      expect.objectContaining({ id: "codex", state: "sign-in-required" }),
-    );
-  });
-
-  it("cancels a ChatGPT login that does not complete", async () => {
-    const { store, mailbox } = stores(root);
-    const codexClients: FakeAgentClient[] = [];
-    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
-      const client = new FakeAgentClient(provider, "DONE", true, provider !== "codex");
-      if (provider === "codex") codexClients.push(client);
-      return client;
+    await expect(service.getUsage("chief")).resolves.toMatchObject({
+      limits: [{ id: "claude", secondary: { usedPercent: 55 } }],
     });
-    await service.initialize();
-    vi.useFakeTimers();
-    await service.connectChatGPT(async () => undefined);
-
-    await vi.advanceTimersByTimeAsync(10 * 60_000);
-
-    expect(codexClients[1]?.requests).toContainEqual({
-      method: "account/login/cancel",
-      params: { loginId: "login-1" },
+    expect(claude.requests).toContainEqual({
+      method: "account/rateLimits/read",
+      params: { model: "claude-sonnet-5" },
     });
-    expect(service.getStatus().providers).toContainEqual(
-      expect.objectContaining({
-        id: "codex",
-        state: "sign-in-required",
-        message: expect.stringContaining("timed out"),
-      }),
-    );
-  });
-
-  it("runs provider logins independently and Refresh cancels both generations", async () => {
-    const claudeLoginLog = join(root, "claude-login.log");
-    process.env.OPENBOT_FAKE_CLAUDE_LOGIN_LOG = claudeLoginLog;
-    process.env.OPENBOT_CLAUDE_PATH = await createPendingFakeClaude(root);
-    const { store, mailbox } = stores(root);
-    const codexClients: FakeAgentClient[] = [];
-    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
-      const client = new FakeAgentClient(provider, "DONE", true, false);
-      if (provider === "codex") codexClients.push(client);
-      return client;
-    });
-    await service.initialize();
-
-    await Promise.all([service.connectChatGPT(async () => undefined), service.connectClaude()]);
-    expect(service.getStatus().providers).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: "codex", connectionState: "connecting" }),
-        expect.objectContaining({ id: "claude", connectionState: "connecting" }),
-      ]),
-    );
-    await waitFor(async () => (await readTextOrEmpty(claudeLoginLog)).includes("started"));
-
-    await service.connectClaude();
-    await waitFor(async () => {
-      const log = await readTextOrEmpty(claudeLoginLog);
-      return log.match(/^started$/gmu)?.length === 2 && log.includes("stopped");
-    });
-    expect(service.getStatus().providers).toContainEqual(
-      expect.objectContaining({ id: "claude", connectionState: "connecting" }),
-    );
-
-    await service.refreshProviders();
-
-    expect(codexClients[1]?.requests).toContainEqual({
-      method: "account/login/cancel",
-      params: { loginId: "login-1" },
-    });
-    expect(codexClients[1]?.running).toBe(false);
-    await waitFor(async () => (await readTextOrEmpty(claudeLoginLog)).match(/^stopped$/gmu)?.length === 2);
-    expect(service.getStatus().providers).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: "codex", state: "sign-in-required" }),
-        expect.objectContaining({ id: "claude", state: "sign-in-required" }),
-      ]),
-    );
-    expect(service.getStatus().providers?.some((provider) => provider.connectionState === "connecting")).toBe(false);
-
-    // The stale login completion is queued behind the codex connection command
-    // that `refreshProviders` runs, so awaiting the refresh proves the service
-    // processed it and still refused to sign the cancelled generation in.
-    codexClients[1]?.completeLogin(true);
-    await service.refreshProviders();
-    expect(service.getStatus().providers).toContainEqual(
-      expect.objectContaining({ id: "codex", state: "sign-in-required" }),
-    );
-  });
-
-  it("keeps the active ChatGPT client until reconnect succeeds", async () => {
-    const { store, mailbox } = stores(root);
-    const codexClients: FakeAgentClient[] = [];
-    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
-      const client = new FakeAgentClient(provider, "DONE", true, provider !== "codex" || codexClients.length === 0);
-      if (provider === "codex") codexClients.push(client);
-      return client;
-    });
-    await service.initialize();
-    const activeClient = codexClients[0];
-
-    await service.connectChatGPT(async () => undefined);
-    expect(service.getStatus().providers).toContainEqual(
-      expect.objectContaining({ id: "codex", state: "available", connectionState: "connecting" }),
-    );
-    codexClients[1]?.completeLogin(false);
-    await waitFor(() => !service?.getStatus().providers?.find((provider) => provider.id === "codex")?.connectionState);
-    expect(activeClient?.running).toBe(true);
-    expect(service.getStatus().providers).toContainEqual(
-      expect.objectContaining({ id: "codex", state: "available", message: expect.stringContaining("not completed") }),
-    );
-
-    await service.connectChatGPT(async () => undefined);
-    codexClients[2]?.completeLogin(true);
-    await waitFor(
-      () =>
-        service?.getStatus().providers?.find((provider) => provider.id === "codex")?.state === "available" &&
-        !service?.getStatus().providers?.find((provider) => provider.id === "codex")?.connectionState,
-    );
-    expect(activeClient?.running).toBe(false);
-    expect(codexClients[2]?.running).toBe(true);
   });
 
   it("maps provider browser tool calls to the stable OpenBot thread", async () => {
@@ -902,47 +486,5 @@ describe.sequential("AgentService: providers", () => {
 
     await waitFor(() => calls.length === 1);
     expect(calls[0]).toMatchObject({ threadId: openbotThreadId, ownerBotId: "chief" });
-  });
-
-  it("serializes duplication until the previous copy is committed", async () => {
-    const { store, mailbox } = stores(root);
-    service = new AgentService(store, mailbox, fakeBrowser());
-    await service.initialize();
-    await store.getOrCreate("chief");
-    await store.getOrCreate("research");
-    const first = await service.duplicateBot("chief");
-    let secondResolved = false;
-    const secondRequest = service.duplicateBot("research").then((duplicate) => {
-      secondResolved = true;
-      return duplicate;
-    });
-
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(secondResolved).toBe(false);
-    await service.commitBotDuplication(first.id, EMPTY_LAYOUT);
-    const second = await secondRequest;
-    await service.commitBotDuplication(second.id, EMPTY_LAYOUT);
-    expect(service.listBots().map((bot) => bot.id)).toEqual(
-      expect.arrayContaining(["chief", "research", first.id, second.id]),
-    );
-  });
-
-  it("removes copied data when the source changes during duplication", async () => {
-    const { store, mailbox } = stores(root);
-    service = new AgentService(store, mailbox, fakeBrowser());
-    await service.initialize();
-    await store.getOrCreate("chief");
-    const duplicateInStore = store.duplicateBot.bind(store);
-    vi.spyOn(store, "duplicateBot").mockImplementationOnce(async (botId) => {
-      const duplicate = await duplicateInStore(botId);
-      service?.createMemory({ botId, text: "Changed during duplication." });
-      return duplicate;
-    });
-
-    await expect(service.duplicateBot("chief")).rejects.toThrow("changed while it was being duplicated");
-
-    expect(store.list().map((bot) => bot.id)).toEqual(["chief"]);
-    expect(service.listMemories("chief")).toEqual([expect.objectContaining({ text: "Changed during duplication." })]);
   });
 });

@@ -11,6 +11,7 @@ interface TeamWebRtcBridgeEvents {
   incoming: [
     peerId: string,
     connection: {
+      hostId: string;
       connectionId: string;
       sessionId: string;
       userId: string;
@@ -43,6 +44,7 @@ const bridgeMessageSchema = z
     type: z.string().optional(),
     commandId: z.string().optional(),
     peerId: z.string().optional(),
+    hostId: z.string().optional(),
     channel: z.enum(["rpc", "events", "files", "desktop"]).optional(),
     data: z.union([z.string(), z.instanceof(ArrayBuffer)]).optional(),
     path: z.enum(["p2p", "relay"]).optional(),
@@ -218,6 +220,7 @@ export class TeamWebRtcBridge extends EventEmitter<TeamWebRtcBridgeEvents> {
     if (!message.peerId) return;
     if (
       message.type === "incoming-peer" &&
+      message.hostId &&
       message.connectionId &&
       message.sessionId &&
       message.userId &&
@@ -226,6 +229,7 @@ export class TeamWebRtcBridge extends EventEmitter<TeamWebRtcBridgeEvents> {
       message.sessionExpiresAt
     ) {
       this.emit("incoming", message.peerId, {
+        hostId: message.hostId,
         connectionId: message.connectionId,
         sessionId: message.sessionId,
         userId: message.userId,

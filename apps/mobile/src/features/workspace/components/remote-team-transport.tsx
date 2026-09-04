@@ -1,13 +1,14 @@
 import type { AgentEvent, TeamRealtimeEvent } from "@openbot/contracts/ipc";
 import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
 import type { RemoteTeamDirectoryClient } from "@openbot/team-client";
-import type {
-  RemoteTeamCommand,
-  RemoteTeamCommandResult,
-  RemoteTeamConnectionUpdate,
+import {
+  createRemoteCommandMailbox,
+  type RemoteTeamCommand,
+  type RemoteTeamCommandResult,
+  type RemoteTeamConnectionUpdate,
 } from "@openbot/team-client/remote-peer";
 import * as Crypto from "expo-crypto";
-import { forwardRef, useCallback, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 
 import RemoteTeamBridge from "./remote-team-bridge.dom";
 
@@ -24,11 +25,6 @@ interface RemoteTeamTransportProps {
   onTeamEvent: (hostId: string, event: AgentEvent | TeamRealtimeEvent) => void;
 }
 
-interface QueuedCommand {
-  command: RemoteTeamCommand;
-  resolve: (result: RemoteTeamCommandResult) => void;
-}
-
 type RemoteTeamCommandInput =
   | { type: "connect"; hostId: string; hostPublicKey: string }
   | { type: "disconnect" }
@@ -36,30 +32,24 @@ type RemoteTeamCommandInput =
 
 export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeamTransportProps>(
   function RemoteTeamTransport({ active: foreground, directory, onConnectionUpdate, onTeamEvent }, ref) {
-    const [command, setCommand] = useState<RemoteTeamCommand | null>(null);
-    const queue = useRef<QueuedCommand[]>([]);
-    const active = useRef<QueuedCommand | null>(null);
-
-    const pump = useCallback(() => {
-      if (active.current || queue.current.length === 0) return;
-      active.current = queue.current.shift() ?? null;
-      setCommand(active.current?.command ?? null);
-    }, []);
+    const [commands, setCommands] = useState<RemoteTeamCommand[]>([]);
+    const mailboxRef = useRef<ReturnType<typeof createRemoteCommandMailbox> | null>(null);
+    if (!mailboxRef.current) mailboxRef.current = createRemoteCommandMailbox(setCommands);
+    const mailbox = mailboxRef.current;
+    useEffect(() => () => mailbox.dispose(), [mailbox]);
 
     const enqueue = useCallback(
-      (next: RemoteTeamCommandInput): Promise<RemoteTeamCommandResult> =>
-        new Promise((resolve) => {
-          const id = Crypto.randomUUID();
-          const command: RemoteTeamCommand =
-            next.type === "connect"
-              ? { id, type: "connect", hostId: next.hostId, hostPublicKey: next.hostPublicKey }
-              : next.type === "request"
-                ? { id, type: "request", method: next.method, path: next.path, body: next.body }
-                : { id, type: "disconnect" };
-          queue.current.push({ command, resolve });
-          pump();
-        }),
-      [pump],
+      (next: RemoteTeamCommandInput): Promise<RemoteTeamCommandResult> => {
+        const id = Crypto.randomUUID();
+        const command: RemoteTeamCommand =
+          next.type === "connect"
+            ? { id, type: "connect", hostId: next.hostId, hostPublicKey: next.hostPublicKey }
+            : next.type === "request"
+              ? { id, type: "request", method: next.method, path: next.path, body: next.body }
+              : { id, type: "disconnect" };
+        return mailbox.send(command);
+      },
+      [mailbox],
     );
 
     useImperativeHandle(
@@ -90,20 +80,15 @@ export const RemoteTeamTransport = forwardRef<RemoteTeamTransportRef, RemoteTeam
 
     const handleCommandResult = useCallback(
       async (result: RemoteTeamCommandResult) => {
-        const current = active.current;
-        if (!current || current.command.id !== result.commandId) return;
-        active.current = null;
-        setCommand(null);
-        current.resolve(result);
-        queueMicrotask(pump);
+        mailbox.receive(result);
       },
-      [pump],
+      [mailbox],
     );
 
     return (
       <RemoteTeamBridge
         active={foreground}
-        command={command}
+        commands={commands}
         dom={{
           containerStyle: {
             flex: 0,

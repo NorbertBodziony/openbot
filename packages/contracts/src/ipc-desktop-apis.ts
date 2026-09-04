@@ -148,7 +148,7 @@ import type { VoiceModelStatus, VoiceTranscriptionInput, VoiceTranscriptionResul
 
 export interface AgentDesktopApi {
   getStatus: () => Promise<AgentStatus>;
-  getUsage: () => Promise<AccountUsage>;
+  getUsage: (botId: string) => Promise<AccountUsage>;
   listModels: () => Promise<AgentModelOption[]>;
   listBots: () => Promise<BotSummary[]>;
   listInstalledSkills: (botId: string) => Promise<InstalledSkill[]>;

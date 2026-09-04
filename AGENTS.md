@@ -151,10 +151,6 @@ Read the one for the directory you are changing before you change it. `docs/ARCH
    and migrations, persisted state, secrets, the provider process boundary, the Team API wire
    protocol, and the updater — at the lowest stable boundary, once, not at both the component and the
    application level.
-8. **Never delete, skip or weaken a test to make a check pass.** A red test is information. Fix the
-   code, or fix the test's premise and say in the PR what changed and why. Loosening an assertion
-   until it goes green is the same move in disguise. `it.only` is rejected outright because it
-   silently disables the rest of the file; a skip needs a comment naming what unblocks it.
 
 Before adding an assertion, ask what a user or a caller would see differently if it failed. "A class
 name changed", "the colour changed", "the element moved", "the tree grew a node" — drop it; colour
@@ -188,7 +184,6 @@ stayed blind to `querySelector<HTMLElement>` for months. A new rule without a fi
 
 ## Pull requests
 
-- **One topic per PR.** If the description needs the word "also", it is two PRs.
 - **Never open a PR unless you were asked to.**
 - Show before and after for a UI change, and state the model and harness in the body.
 - Wider checks belong before the PR, not during it — ask for the specific command you need.

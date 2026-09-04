@@ -242,6 +242,37 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     return result.devices;
   }
 
+  async listAccountSessions() {
+    const result = await this.#authorizedRequest(
+      "/v1/mobile-auth/devices?includeDesktop=true",
+      { method: "GET" },
+      (value) =>
+        z
+          .object({
+            sessions: z.array(
+              z.object({
+                sessionId: z.string().uuid(),
+                name: z.string(),
+                kind: z.enum(["desktop", "mobile"]),
+                current: z.boolean(),
+                connectedAt: z.number().finite(),
+                lastActiveAt: z.number().finite(),
+              }),
+            ),
+          })
+          .parse(value),
+    );
+    return result.sessions;
+  }
+
+  async revokeAccountSession(sessionId: string): Promise<void> {
+    await this.#authorizedRequest(
+      `/v1/mobile-auth/devices/${encodeURIComponent(sessionId)}?includeDesktop=true`,
+      { method: "DELETE" },
+      () => undefined,
+    );
+  }
+
   async revokeMobileConnectedDevice(sessionId: string): Promise<void> {
     await this.#authorizedRequest(
       `/v1/mobile-auth/devices/${encodeURIComponent(sessionId)}`,

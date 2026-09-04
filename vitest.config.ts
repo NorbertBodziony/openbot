@@ -38,6 +38,7 @@ export default defineConfig({
             "scripts/**/*.test.ts",
             "packages/contracts/**/*.test.ts",
             "packages/team-client/**/*.test.ts",
+            "apps/mobile/src/features/auth/api/*.test.ts",
           ],
           exclude: [...configDefaults.exclude, "**/*.dom.test.ts"],
         },
@@ -52,6 +53,12 @@ export default defineConfig({
         },
       },
     ],
-    exclude: [...configDefaults.exclude, "apps/**", "tests/visual/**", ".openbot-build/**", "build/whisper/**"],
+    exclude: [
+      ...configDefaults.exclude,
+      "apps/auth-api/**",
+      "tests/visual/**",
+      ".openbot-build/**",
+      "build/whisper/**",
+    ],
   },
 });

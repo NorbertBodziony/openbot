@@ -24,8 +24,10 @@ export interface MobileSession {
   apiUrl: string;
   sessionToken: string;
   user: CentralAuthUser;
-  host?: MobileConnectHostBinding;
+  host: MobileConnectHostBinding;
 }
+
+type MobileCredential = Pick<MobileSession, "apiUrl" | "sessionToken">;
 
 export async function redeemMobileConnectUrl(value: string): Promise<MobileSession> {
   const payload = parseMobileConnectUrl(value);
@@ -33,6 +35,10 @@ export async function redeemMobileConnectUrl(value: string): Promise<MobileSessi
     throw new Error("This is not a valid OpenBot Mobile Connect code.");
   }
   if (!payload.host) throw new Error("Generate a new Mobile Connect code in an updated desktop app.");
+
+  // Do not consume a one-time ticket or overwrite a permanent legacy token before
+  // its revocation is confirmed. Retry cleanup against the OLD account service.
+  await serializeMobileSessionStorage(() => readStoredSessionAndRevokeInvalid(true));
 
   let response: Response;
   let body: unknown;
@@ -72,16 +78,35 @@ export async function redeemMobileConnectUrl(value: string): Promise<MobileSessi
 }
 
 export async function readMobileSession(): Promise<MobileSession | null> {
-  return serializeMobileSessionStorage(async () => {
-    const stored = await SecureStore.getItemAsync(MOBILE_SESSION_KEY);
-    if (!stored) return null;
-    try {
-      return decodeStoredMobileSession(JSON.parse(stored));
-    } catch {
-      await SecureStore.deleteItemAsync(MOBILE_SESSION_KEY);
-      return null;
+  return serializeMobileSessionStorage(() => readStoredSessionAndRevokeInvalid(false));
+}
+
+// Called only inside the storage queue. Invalid sessions are never returned to
+// the workspace, even offline. Retain their encrypted credential solely for
+// revocation retries on startup or before the next QR redemption; these tokens
+// deliberately never expire and must not be silently discarded or overwritten.
+async function readStoredSessionAndRevokeInvalid(requireRevocation: boolean): Promise<MobileSession | null> {
+  const stored = await SecureStore.getItemAsync(MOBILE_SESSION_KEY);
+  if (!stored) return null;
+  let credential: MobileCredential | null = null;
+  try {
+    const value = JSON.parse(stored);
+    credential = decodeStoredMobileCredential(value);
+    return decodeStoredMobileSession(value);
+  } catch {
+    if (credential) {
+      try {
+        await revokeMobileCredential(credential);
+      } catch {
+        if (requireRevocation) {
+          throw new Error("Could not revoke the previous mobile session. Check your connection and scan again.");
+        }
+        return null;
+      }
     }
-  });
+    await SecureStore.deleteItemAsync(MOBILE_SESSION_KEY);
+    return null;
+  }
 }
 
 export async function validateMobileSession(session: MobileSession): Promise<MobileSession | null> {
@@ -107,16 +132,38 @@ export async function validateMobileSession(session: MobileSession): Promise<Mob
 }
 
 export async function logoutMobileSession(session: MobileSession): Promise<void> {
-  await Promise.all([
-    deleteMobileSessionIfCurrent(session.sessionToken),
-    withMobileAuthRequestTimeout(async (signal) => {
-      await fetch(new URL("/v1/mobile-auth/session", session.apiUrl).toString(), {
+  await revokeMobileCredential(session);
+  await deleteMobileSessionIfCurrent(session.sessionToken);
+}
+
+async function revokeMobileCredential(session: MobileCredential): Promise<void> {
+  try {
+    await withMobileAuthRequestTimeout(async (signal) => {
+      const response = await fetch(new URL("/v1/mobile-auth/session", session.apiUrl).toString(), {
         method: "DELETE",
         headers: { Authorization: `Bearer ${session.sessionToken}` },
         signal,
       });
-    }),
-  ]);
+      if (!response.ok) throw new Error("The account service did not confirm revocation.");
+    });
+  } catch {
+    // Revocation may have committed before DELETE timed out, lost its response,
+    // or failed while notifying peers. Check the token instead of treating an
+    // ambiguous transport result as proof that the session is still active.
+    try {
+      const revoked = await withMobileAuthRequestTimeout(async (signal) => {
+        const response = await fetch(new URL("/v1/mobile-auth/session", session.apiUrl).toString(), {
+          headers: { Authorization: `Bearer ${session.sessionToken}` },
+          signal,
+        });
+        return response.status === 401;
+      });
+      if (revoked) return;
+    } catch {
+      // Without confirmation, keep the credential available for another attempt.
+    }
+    throw new Error("Could not confirm sign-out. Check your connection and try again.");
+  }
 }
 
 async function withMobileAuthRequestTimeout<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
@@ -167,7 +214,7 @@ async function deleteMobileSessionIfCurrent(sessionToken: string): Promise<void>
     const stored = await SecureStore.getItemAsync(MOBILE_SESSION_KEY);
     if (!stored) return;
     try {
-      if (decodeStoredMobileSession(JSON.parse(stored)).sessionToken !== sessionToken) return;
+      if (decodeStoredMobileCredential(JSON.parse(stored)).sessionToken !== sessionToken) return;
     } catch {
       // Corrupt session data cannot represent a newer valid session while storage operations are serialized.
     }
@@ -206,23 +253,35 @@ function decodeMobileSession(value: unknown, apiUrl: string): MobileSession {
   if (!isDynamicRecord(value) || !isString(value.sessionToken) || value.sessionToken.length > 512) {
     throw new Error("The account service returned an invalid mobile session.");
   }
-  if (value.host !== undefined && !isMobileConnectHostBinding(value.host))
-    throw new Error("The mobile session host is invalid.");
+  if (!isMobileConnectHostBinding(value.host)) throw new Error("The mobile session host is invalid.");
   return {
     apiUrl,
     sessionToken: value.sessionToken,
     user: decodeUser(value.user),
-    ...(isMobileConnectHostBinding(value.host) ? { host: value.host } : {}),
+    host: value.host,
   };
 }
 
 function decodeStoredMobileSession(value: unknown): MobileSession {
-  if (!isDynamicRecord(value) || !isString(value.apiUrl)) throw new Error("Invalid stored mobile session.");
+  const credential = decodeStoredMobileCredential(value);
+  return decodeMobileSession(value, credential.apiUrl);
+}
+
+// This minimal decoder is only for cleanup, never for restoring authentication.
+function decodeStoredMobileCredential(value: unknown): MobileCredential {
+  if (
+    !isDynamicRecord(value) ||
+    !isString(value.apiUrl) ||
+    !isString(value.sessionToken) ||
+    !value.sessionToken ||
+    value.sessionToken.length > 512
+  )
+    throw new Error("Invalid stored mobile credential.");
   const parsed = parseMobileConnectUrl(
     `openbot://mobile-connect?api=${encodeURIComponent(value.apiUrl)}&ticket=${"x".repeat(32)}`,
   );
   if (!parsed) throw new Error("Invalid stored account API.");
-  return decodeMobileSession(value, parsed.apiUrl);
+  return { apiUrl: parsed.apiUrl, sessionToken: value.sessionToken };
 }
 
 function decodeUser(value: unknown): CentralAuthUser {

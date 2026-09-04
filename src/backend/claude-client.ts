@@ -14,11 +14,13 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import { type DynamicRecord, isOneOf, isString } from "@openbot/contracts/runtime-values";
+import { type DynamicRecord, isDynamicRecord, isNumber, isOneOf, isString } from "@openbot/contracts/runtime-values";
 import { z } from "zod";
 import type { AgentProvider } from "./agent-client";
 import type { ClaudeCliInfo } from "./cli";
 import {
+  type AccountRateLimitsReadResult,
+  type AccountRateLimitWindowResult,
   type AccountReadResult,
   type AppServerNotification,
   type AppServerRequest,
@@ -99,6 +101,7 @@ interface ClaudeQuery extends AsyncIterable<ClaudeStreamMessage> {
   supportedModels(): Promise<ModelInfo[]>;
   setModel(model?: string): Promise<void>;
   applyFlagSettings(settings: { effortLevel?: ClaudeEffort | null }): Promise<void>;
+  usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?(): Promise<unknown>;
   close(): void;
 }
 
@@ -111,6 +114,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
   readonly #cli: ClaudeCliInfo;
   readonly #createQuery: QueryFactory;
   readonly #readSessionMessages: SessionHistoryReader;
+  readonly #requestTimeoutMs: number;
   readonly #threads = new Map<string, ThreadRuntime>();
   readonly #pendingServerRequests = new Map<RequestId, PendingServerRequest>();
   readonly #modelEffortCapabilities = new Map<string, ClaudeEffortCapability>();
@@ -121,11 +125,13 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     cli: ClaudeCliInfo,
     createQuery: QueryFactory = query,
     readSessionMessages: SessionHistoryReader = getSessionMessages,
+    requestTimeoutMs = 30_000,
   ) {
     super();
     this.#cli = cli;
     this.#createQuery = createQuery;
     this.#readSessionMessages = readSessionMessages;
+    this.#requestTimeoutMs = requestTimeoutMs;
   }
 
   get running(): boolean {
@@ -150,8 +156,8 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     this.#pendingServerRequests.clear();
   }
 
-  request<T>(method: string, params: unknown, decoder: ResponseDecoder<T>, _timeoutMs?: number): Promise<T>;
-  async request<T>(method: string, params: unknown, decoder: ResponseDecoder<T>, _timeoutMs?: number): Promise<T> {
+  request<T>(method: string, params: unknown, decoder: ResponseDecoder<T>, timeoutMs?: number): Promise<T>;
+  async request<T>(method: string, params: unknown, decoder: ResponseDecoder<T>, timeoutMs?: number): Promise<T> {
     if (!this.#running) throw new Error("Claude Agent SDK is not running.");
 
     switch (method) {
@@ -160,9 +166,9 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       case "account/read":
         return decoder(await this.#readAccount());
       case "account/rateLimits/read":
-        return decoder({ rateLimits: null, rateLimitsByLimitId: null });
+        return decoder(await this.#readUsage(getString(params, "model"), timeoutMs ?? this.#requestTimeoutMs));
       case "model/list":
-        return decoder({ data: await this.#listModels(_timeoutMs) });
+        return decoder({ data: await this.#listModels(timeoutMs) });
       case "plugin/list":
         return decoder({ marketplaces: [] });
       case "thread/start": {
@@ -287,6 +293,40 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       for (const [id, capability] of effortCapabilities) this.#modelEffortCapabilities.set(id, capability);
       for (const [id, value] of sdkValues) this.#modelSdkValues.set(id, value);
       return result;
+    } finally {
+      if (timeout) clearTimeout(timeout);
+      input.close();
+      claudeQuery.close();
+    }
+  }
+
+  async #readUsage(model: string | null, timeoutMs: number): Promise<AccountRateLimitsReadResult> {
+    const input = new AsyncMessageQueue();
+    const claudeQuery = this.#createQuery({
+      prompt: input,
+      options: {
+        cwd: process.cwd(),
+        pathToClaudeCodeExecutable: this.#cli.executable,
+        settingSources: ["user", "project", "local"],
+        persistSession: false,
+        env: { ...claudeEnvironment(this.#cli), CLAUDE_AGENT_SDK_CLIENT_APP: "openbot/0.1.0" },
+      },
+    });
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const readUsage = claudeQuery.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET;
+      if (!readUsage) return { rateLimits: null, rateLimitsByLimitId: null };
+      const usage = await Promise.race([
+        readUsage.call(claudeQuery),
+        new Promise<unknown>((_, reject) => {
+          timeout = setTimeout(() => {
+            input.close();
+            claudeQuery.close();
+            reject(new Error("Claude request timed out: account/rateLimits/read"));
+          }, timeoutMs);
+        }),
+      ]);
+      return claudeRateLimits(usage, model);
     } finally {
       if (timeout) clearTimeout(timeout);
       input.close();
@@ -927,6 +967,55 @@ function claudeEnvironment(cli: ClaudeCliInfo): NodeJS.ProcessEnv {
     ...process.env,
     ...(cli.source === "managed" ? { DISABLE_AUTOUPDATER: "1" } : {}),
   };
+}
+
+function claudeRateLimits(value: unknown, model: string | null): AccountRateLimitsReadResult {
+  if (!isDynamicRecord(value) || value.rate_limits_available !== true || !isDynamicRecord(value.rate_limits)) {
+    return { rateLimits: null, rateLimitsByLimitId: null };
+  }
+  const rateLimits = value.rate_limits;
+  const primary = claudeUsageWindow(rateLimits.five_hour, 300);
+  const secondary = claudeModelWeeklyWindow(rateLimits, model) ?? claudeUsageWindow(rateLimits.seven_day, 10_080);
+  if (!primary && !secondary) return { rateLimits: null, rateLimitsByLimitId: null };
+  return {
+    rateLimits: { limitId: "claude", primary, secondary },
+    rateLimitsByLimitId: null,
+  };
+}
+
+function claudeModelWeeklyWindow(rateLimits: DynamicRecord, model: string | null): AccountRateLimitWindowResult | null {
+  if (!model) return null;
+  const familyKey = model.toLowerCase().includes("opus")
+    ? "seven_day_opus"
+    : model.toLowerCase().includes("sonnet")
+      ? "seven_day_sonnet"
+      : null;
+  if (familyKey) {
+    const family = claudeUsageWindow(rateLimits[familyKey], 10_080);
+    if (family) return family;
+  }
+  return null;
+}
+
+function claudeUsageWindow(value: unknown, windowDurationMins: number): AccountRateLimitWindowResult | null {
+  if (!isDynamicRecord(value)) return null;
+  const usedPercent = numberValue(value.utilization) ?? numberValue(value.percent);
+  if (usedPercent === null) return null;
+  const reset = stringValue(value.resets_at) ?? stringValue(value.resetsAt);
+  const resetMilliseconds = reset ? Date.parse(reset) : Number.NaN;
+  return {
+    usedPercent,
+    windowDurationMins,
+    resetsAt: Number.isFinite(resetMilliseconds) ? resetMilliseconds / 1_000 : null,
+  };
+}
+
+function stringValue(value: unknown): string | null {
+  return isString(value) && value.trim() ? value.trim() : null;
+}
+
+function numberValue(value: unknown): number | null {
+  return isNumber(value) && Number.isFinite(value) ? value : null;
 }
 
 class AsyncMessageQueue implements AsyncIterable<SDKUserMessage> {

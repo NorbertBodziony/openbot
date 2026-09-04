@@ -62,6 +62,8 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
   const historyRequestRef = useRef(0);
   const { conversations, loadConversation, markBotRead, servers, sendMessage: sendTeamMessage } = useMobileWorkspace();
   const conversation = conversations[bot.id];
+  const conversationRef = useRef(conversation);
+  conversationRef.current = conversation;
   const activity = useBotActivity(bot.id);
   const messages = useMemo(() => projectChatMessages(conversation?.messages ?? []), [conversation]);
   const liquidGlassAvailable = isLiquidGlassAvailable();
@@ -92,10 +94,20 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
   const fetchHistory = useCallback(() => {
     if (!serverOnline) return;
     const requestId = ++historyRequestRef.current;
+    const revisionBeforeLoad = conversationRef.current?.revision ?? null;
     setHistoryLoadFailed(false);
-    void loadConversation(bot.id).catch(() => {
-      if (historyRequestRef.current === requestId) setHistoryLoadFailed(true);
-    });
+    void loadConversation(bot.id)
+      .then((snapshot) => {
+        if (
+          historyRequestRef.current === requestId &&
+          (revisionBeforeLoad === null || snapshot.revision > revisionBeforeLoad)
+        ) {
+          initialScrollBotIdRef.current = bot.id;
+        }
+      })
+      .catch(() => {
+        if (historyRequestRef.current === requestId) setHistoryLoadFailed(true);
+      });
   }, [bot.id, loadConversation, serverOnline]);
 
   useEffect(() => {

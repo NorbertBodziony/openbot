@@ -98,6 +98,19 @@ describe("CentralAuthManager", () => {
         });
       }
       if (url.pathname === "/v1/mobile-auth/devices" && init?.method === "GET") {
+        if (url.searchParams.get("includeDesktop") === "true")
+          return Response.json({
+            sessions: [
+              {
+                sessionId: "11111111-1111-4111-8111-111111111111",
+                name: "Desktop",
+                kind: "desktop",
+                current: false,
+                connectedAt: 1000,
+                lastActiveAt: 2000,
+              },
+            ],
+          });
         return Response.json({
           devices: [
             {
@@ -158,6 +171,23 @@ describe("CentralAuthManager", () => {
       },
     ]);
     await manager.revokeMobileConnectedDevice("11111111-1111-4111-8111-111111111111");
+    expect(await manager.listAccountSessions()).toEqual([
+      {
+        sessionId: "11111111-1111-4111-8111-111111111111",
+        name: "Desktop",
+        kind: "desktop",
+        current: false,
+        connectedAt: 1000,
+        lastActiveAt: 2000,
+      },
+    ]);
+    await manager.revokeAccountSession("11111111-1111-4111-8111-111111111111");
+    const [revokeUrl, revokeOptions] = fetchMock.mock.calls.at(-1) ?? [];
+    expect(revokeUrl?.toString()).toBe(
+      "http://127.0.0.1:3100/v1/mobile-auth/devices/11111111-1111-4111-8111-111111111111?includeDesktop=true",
+    );
+    expect(revokeOptions?.method).toBe("DELETE");
+    expect(new Headers(revokeOptions?.headers).get("Authorization")).toBe("Bearer session-secret");
     await manager.sendTeamInviteEmail({
       email: "alice@example.com",
       serverName: "Studio Mac",
@@ -188,7 +218,7 @@ describe("CentralAuthManager", () => {
       path: "/v1/mobile-auth/devices/11111111-1111-4111-8111-111111111111",
       authorization: "Bearer session-secret",
     });
-    expect(requests[8]).toMatchObject({
+    expect(requests.at(-1)).toMatchObject({
       path: "/v1/team-invitations/email",
       authorization: "Bearer session-secret",
     });

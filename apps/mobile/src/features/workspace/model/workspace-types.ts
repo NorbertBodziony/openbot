@@ -34,7 +34,7 @@ export interface MobileBot {
 
 export const MAX_PINNED_BOTS = 6;
 
-export type ToggleBotPinResult = "limit" | "pinned" | "unpinned";
+export type ToggleBotPinResult = "limit" | "pinned" | "unpinned" | "error";
 
 interface AddRemoteServerInput {
   inviteUrl: string;

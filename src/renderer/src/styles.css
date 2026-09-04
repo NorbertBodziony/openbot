@@ -254,6 +254,13 @@
   --openbot-duration-toast-exit: 220ms;
   --openbot-duration-island-content: 340ms;
   --openbot-duration-island-content-exit: 220ms;
+  --digit-dur: 500ms;
+  --digit-distance: 8px;
+  --digit-stagger: 70ms;
+  --digit-blur: 2px;
+  --digit-ease: cubic-bezier(0.34, 1.45, 0.64, 1);
+  --digit-dir-x: 0;
+  --digit-dir-y: 1;
   --stream-gap: 60ms;
   --stream-fade: 400ms;
   --stream-blur: 2px;

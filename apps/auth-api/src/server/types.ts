@@ -1,3 +1,4 @@
+import type { AccountSession } from "@openbot/contracts/mobile-connect";
 import { isDynamicRecord, isFunction } from "@openbot/contracts/runtime-values";
 
 export interface WorkerBindings {
@@ -133,6 +134,8 @@ export interface EmailChallengeRecord {
 }
 
 export interface AuthRepository {
+  listAccountSessions(userId: string, currentToken: string, now: number): Promise<AccountSession[]>;
+  revokeAccountSession(userId: string, sessionId: string, now: number): Promise<boolean>;
   latestEmailChallengeAt(email: string): Promise<number | null>;
   findEmailChallenge(idHash: string): Promise<EmailChallengeRecord | null>;
   createEmailChallenge(input: {

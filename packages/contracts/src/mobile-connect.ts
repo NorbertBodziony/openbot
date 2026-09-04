@@ -45,6 +45,15 @@ export interface MobileConnectedDevice {
   lastActiveAt: number;
 }
 
+export interface AccountSession {
+  sessionId: string;
+  name: string;
+  kind: "desktop" | "mobile";
+  current: boolean;
+  connectedAt: number;
+  lastActiveAt: number;
+}
+
 export interface MobileConnectPayload {
   apiUrl: string;
   ticket: string;

@@ -10,18 +10,75 @@ export interface RemoteRecoveryStatus {
   remainingSeconds: number;
 }
 
-export function remoteRecoveryMessage(status: RemoteRecoveryStatus): string | null {
+export type RemoteConnectionStage =
+  | "preferences"
+  | "connection"
+  | "compatibility"
+  | "agents"
+  | "reads"
+  | "conversations";
+
+const CONNECTION_STAGES: Record<RemoteConnectionStage, string> = {
+  preferences: "Loading local chat preferences",
+  connection: "Connecting to the desktop",
+  compatibility: "Checking desktop compatibility",
+  agents: "Loading agents",
+  reads: "Loading read status",
+  conversations: "Loading conversations",
+};
+
+// Only fixed protocol messages may appear in diagnostics. Arbitrary server or
+// decoder errors can contain request bodies, credentials, or conversation text.
+const SAFE_CONNECTION_ERRORS = new Set([
+  "The app is in the background.",
+  "The connection was replaced.",
+  "The selected server is offline.",
+  "The server disconnected.",
+  "The desktop went offline.",
+  "The desktop did not connect.",
+  "The desktop connection needs to be restored.",
+  "The host already has an active remote session.",
+  "The host is offline.",
+  "The remote session ended.",
+  "Remote ticket is invalid or expired.",
+  "The desktop identity could not be verified.",
+  "The host sent data before authentication.",
+  "The host event stream has a gap.",
+  "The host returned a malformed event.",
+  "The saved chat preferences could not be read.",
+  "The desktop request timed out.",
+  "The remote session is invalid.",
+  "The connection ticket is invalid.",
+  "The WebRTC channel is not open.",
+  "Signal is offline.",
+  "Update OpenBot Mobile or the desktop app before connecting.",
+]);
+
+export function remoteConnectionFailure(stage: RemoteConnectionStage, error: unknown): string {
+  const reason =
+    error instanceof Error && SAFE_CONNECTION_ERRORS.has(error.message)
+      ? error.message
+      : error instanceof TypeError
+        ? "TypeError."
+        : error instanceof SyntaxError
+          ? "SyntaxError."
+          : "Unexpected error.";
+  return `${CONNECTION_STAGES[stage]}: ${reason}`;
+}
+
+export function remoteRecoveryMessage(status: RemoteRecoveryStatus, failure?: string | null): string | null {
   if (status.phase === "online") return null;
+  const detail = failure ? `\n${failure}` : "";
   if (status.phase === "cooldown") {
     const minutes = Math.floor(status.remainingSeconds / 60);
     const seconds = String(status.remainingSeconds % 60).padStart(2, "0");
-    return `Connection failed after ${REMOTE_RETRY_LIMIT} attempts. Retrying in ${minutes}:${seconds}.`;
+    return `Connection failed after ${REMOTE_RETRY_LIMIT} attempts. Retrying in ${minutes}:${seconds}.${detail}`;
   }
   if (status.phase === "waiting") {
     const reason = status.attempt === 0 ? "Connection lost." : "Connection attempt failed.";
-    return `${reason} Retrying in ${status.remainingSeconds}s.`;
+    return `${reason} Retrying in ${status.remainingSeconds}s.${detail}`;
   }
-  return `Reconnecting ${status.attempt}/${REMOTE_RETRY_LIMIT}`;
+  return `Reconnecting ${status.attempt}/${REMOTE_RETRY_LIMIT}${detail}`;
 }
 
 /** One recovery attempt at a time. Background time never starts network work. */
@@ -109,7 +166,9 @@ export function createRemoteConnectionRecovery(
         else void run();
       }
     },
-    offline() {
+    offline(error?: unknown) {
+      if (disposed) return;
+      if (error !== undefined) onError(error);
       retryRequested = true;
       scheduleRetry();
     },

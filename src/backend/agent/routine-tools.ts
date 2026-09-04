@@ -41,10 +41,13 @@ export function localTimezone(): string {
   }
 }
 
-export function openBotToolResult(value: unknown): {
+/** The shape every `openbot` namespace dynamic tool answers with. */
+export interface OpenBotToolResponse {
   success: boolean;
   contentItems: Array<{ type: "inputText"; text: string }>;
-} {
+}
+
+export function openBotToolResult(value: unknown): OpenBotToolResponse {
   return {
     success: true,
     contentItems: [{ type: "inputText", text: JSON.stringify(value) }],
