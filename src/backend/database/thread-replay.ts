@@ -248,7 +248,10 @@ export class ThreadReplay {
       ).run(latest.activeTurnId, new Date().toISOString(), latestSequence, threadId);
       db.exec("COMMIT");
     } catch (error) {
-      db.exec("ROLLBACK");
+      // SQLite auto-rolls back on some failures (a full disk, a statement-level abort). An
+      // unguarded ROLLBACK then throws "cannot rollback - no transaction is active" and replaces
+      // the original error, so the user is told about the rollback instead of the full disk.
+      if (db.isTransaction) db.exec("ROLLBACK");
       throw error;
     }
     return this.#conversations.readConversation(thread.agent_id, threadId);
