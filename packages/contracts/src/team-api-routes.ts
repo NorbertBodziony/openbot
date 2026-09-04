@@ -122,6 +122,7 @@ export const TEAM_API_ROUTES = {
   agent: {
     // PATCH updates, DELETE removes.
     one: (botId: string) => `/v1/agents/${segment(botId)}`,
+    usage: (botId: string) => `/v1/agents/${segment(botId)}/usage`,
     skills: (botId: string) => `/v1/agents/${segment(botId)}/skills`,
     duplicate: (botId: string) => `/v1/agents/${segment(botId)}/duplicate`,
     avatar: (botId: string) => `/v1/agents/${segment(botId)}/avatar`,

@@ -51,6 +51,10 @@ export function parseAgentRequest(value: unknown): AgentIpcRequest {
   };
 }
 
+export function parseAgentId(value: unknown): string {
+  return requireString(value, "botId", INPUT_LIMITS.identifier);
+}
+
 export function parseSidebarLayoutAction(value: unknown): SidebarLayoutAction {
   if (!isObject(value) || !isString(value.type)) throw new Error("Invalid sidebar layout action.");
   switch (value.type) {
