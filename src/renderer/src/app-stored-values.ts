@@ -1,5 +1,5 @@
 import { createStore } from "solid-js";
-import type { BotMessage, BotProfile } from "./data";
+import type { AgentMessage, AgentProfile } from "./data";
 
 /**
  * Agent profiles and messages are handed to the view as stores, so replacing one
@@ -8,29 +8,29 @@ import type { BotMessage, BotProfile } from "./data";
  * readable value and only `updateStored` can write.
  */
 
-type StoredValue = BotProfile | BotMessage;
+type StoredValue = AgentProfile | AgentMessage;
 type StoredSetter = (value: StoredValue) => void;
 
 const storeSetters = new WeakMap<object, StoredSetter>();
 
-function isBotProfile(value: StoredValue): value is BotProfile {
+function isAgentProfile(value: StoredValue): value is AgentProfile {
   return "avatarSeed" in value;
 }
 
-export function createStoredProfile(value: BotProfile): BotProfile {
+export function createStoredProfile(value: AgentProfile): AgentProfile {
   const initial = Object.assign({}, value);
   const [store, setStore] = createStore(initial);
   storeSetters.set(store, (next) => {
-    if (isBotProfile(next)) setStore(() => next);
+    if (isAgentProfile(next)) setStore(() => next);
   });
   return store;
 }
 
-export function createStoredMessage(value: BotMessage): BotMessage {
+export function createStoredMessage(value: AgentMessage): AgentMessage {
   const initial = Object.assign({}, value);
   const [store, setStore] = createStore(initial);
   storeSetters.set(store, (next) => {
-    if (!isBotProfile(next)) setStore(() => next);
+    if (!isAgentProfile(next)) setStore(() => next);
   });
   return store;
 }

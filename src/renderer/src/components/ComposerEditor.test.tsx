@@ -5,7 +5,7 @@ import type { DraftAttachment, InstalledSkill } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { BotProfile } from "../data";
+import type { AgentProfile } from "../data";
 import { ComposerEditor } from "./ComposerEditor";
 
 const originalMatchMedia = window.matchMedia;
@@ -17,7 +17,7 @@ afterEach(() => {
 function renderComposer(
   attachments: DraftAttachment[] = [],
   initialValue = "",
-  bots: BotProfile[] = [],
+  agents: AgentProfile[] = [],
   skills: InstalledSkill[] = [],
 ) {
   const onSubmit = vi.fn();
@@ -28,8 +28,8 @@ function renderComposer(
     const [value, setValue] = createSignal(initialValue);
     return (
       <ComposerEditor
-        botId="chief"
-        bots={bots}
+        agentId="chief"
+        agents={agents}
         skills={skills}
         attachments={attachments}
         value={value()}
@@ -72,7 +72,7 @@ function placeCaret(container: Node, offset: number): void {
   selection?.addRange(range);
 }
 
-function testBot(id: string, name: string, description = ""): BotProfile {
+function testAgent(id: string, name: string, description = ""): AgentProfile {
   return {
     id,
     provider: "codex",
@@ -96,8 +96,8 @@ describe("ComposerEditor", () => {
     const [focusRequest, setFocusRequest] = createSignal(0);
     render(() => (
       <ComposerEditor
-        botId="chief"
-        bots={[]}
+        agentId="chief"
+        agents={[]}
         value="Queued message"
         placeholder="Message Chief"
         ariaLabel="Message Chief"
@@ -310,7 +310,7 @@ describe("ComposerEditor", () => {
   });
 
   it("finds mention targets by title and description", async () => {
-    const design: BotProfile = {
+    const design: AgentProfile = {
       id: "design",
       provider: "codex",
       name: "Studio",
@@ -326,7 +326,7 @@ describe("ComposerEditor", () => {
       time: "",
       preview: "",
     };
-    const research: BotProfile = { ...design, id: "research", name: "Research", description: "Finds sources." };
+    const research: AgentProfile = { ...design, id: "research", name: "Research", description: "Finds sources." };
     const { editor } = renderComposer([], "", [design, research]);
     editor.textContent = "@interface";
     placeCaretAtEnd(editor);
@@ -337,8 +337,8 @@ describe("ComposerEditor", () => {
   });
 
   it("navigates the mention picker with arrows and inserts the active agent with Enter", async () => {
-    const research = testBot("research", "Research");
-    const sales = testBot("sales", "Sales");
+    const research = testAgent("research", "Research");
+    const sales = testAgent("sales", "Sales");
     const { editor, onSubmit, onValueChange } = renderComposer([], "", [research, sales]);
     editor.textContent = "@";
     placeCaretAtEnd(editor);
@@ -409,8 +409,8 @@ describe("ComposerEditor", () => {
     const onValueChange = vi.fn();
     render(() => (
       <ComposerEditor
-        botId="chief"
-        bots={[]}
+        agentId="chief"
+        agents={[]}
         skills={skills()}
         value={value()}
         placeholder="Message Chief"
@@ -438,7 +438,7 @@ describe("ComposerEditor", () => {
   });
 
   it("removes a leading mention atomically with Backspace", async () => {
-    const research = testBot("research", "Research");
+    const research = testAgent("research", "Research");
     const { editor, onValueChange } = renderComposer([], "@[Research](research)after", [research]);
     const trailingText = editor.lastChild;
     if (!trailingText) throw new Error("Composer did not render trailing text");
@@ -453,7 +453,7 @@ describe("ComposerEditor", () => {
   });
 
   it("removes a trailing mention atomically with Delete", async () => {
-    const research = testBot("research", "Research");
+    const research = testAgent("research", "Research");
     const { editor, onValueChange } = renderComposer([], "before@[Research](research)", [research]);
     const leadingText = editor.firstChild;
     if (!leadingText) throw new Error("Composer did not render leading text");
@@ -468,7 +468,7 @@ describe("ComposerEditor", () => {
   });
 
   it("removes the automatic mention space without creating a phantom line", async () => {
-    const research = testBot("research", "Research");
+    const research = testAgent("research", "Research");
     const { editor, onValueChange } = renderComposer([], "", [research]);
     editor.textContent = "before @";
     placeCaretAtEnd(editor);
@@ -490,7 +490,7 @@ describe("ComposerEditor", () => {
   });
 
   it("keeps the caret editable after removing a mention from the middle", async () => {
-    const research = testBot("research", "Research");
+    const research = testAgent("research", "Research");
     const { editor, onValueChange } = renderComposer([], "before@[Research](research)after", [research]);
     const token = editor.querySelector<HTMLElement>('[data-mention-id="research"]');
     if (!token) throw new Error("Composer did not render the mention");
@@ -572,8 +572,8 @@ describe("ComposerEditor", () => {
   it("renders missing file references as plain text", () => {
     render(() => (
       <ComposerEditor
-        botId="chief"
-        bots={[]}
+        agentId="chief"
+        agents={[]}
         attachments={[]}
         value={serializeAttachmentReference("missing.md", "missing")}
         placeholder="Message Chief"

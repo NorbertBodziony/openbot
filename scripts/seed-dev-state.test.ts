@@ -7,7 +7,7 @@ import { attachmentReferenceIds } from "@openbot/contracts/attachment-references
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentMemoryStore } from "../src/backend/agent-memory-store";
 import { AgentRoutineStore } from "../src/backend/agent-routine-store";
-import { BotStore } from "../src/backend/agent-store";
+import { AgentStore } from "../src/backend/agent-store";
 import { MailboxStore } from "../src/backend/mailbox-store";
 import { TeamChatStore } from "../src/backend/team-chat-store";
 import { developmentUserDataName } from "../src/main/development-profile";
@@ -54,16 +54,18 @@ describe("development state seed", () => {
       preferredProvider: "codex",
     });
 
-    const bots = new BotStore(profilePath, homeDirectory);
-    await bots.initialize();
-    const mailbox = new MailboxStore(profilePath, bots.sharedRoot, bots.database);
+    const agents = new AgentStore(profilePath, homeDirectory);
+    await agents.initialize();
+    const mailbox = new MailboxStore(profilePath, agents.sharedRoot, agents.database);
     await mailbox.initialize();
-    const summaries = bots.list();
+    const summaries = agents.list();
     expect(summaries).toHaveLength(4);
-    expect(summaries.every((bot) => bot.threadId !== null)).toBe(true);
-    expect(summaries.every((bot) => bot.model === "gpt-5.6-luna" && bot.reasoningEffort === "low")).toBe(true);
+    expect(summaries.every((agent) => agent.threadId !== null)).toBe(true);
+    expect(summaries.every((agent) => agent.model === "gpt-5.6-luna" && agent.reasoningEffort === "low")).toBe(true);
 
-    const persistedMessages = summaries.flatMap((bot) => bots.database.readConversation(bot.id, bot.threadId).messages);
+    const persistedMessages = summaries.flatMap(
+      (agent) => agents.database.readConversation(agent.id, agent.threadId).messages,
+    );
     expect(persistedMessages.some((message) => message.status === "failed")).toBe(true);
     expect(persistedMessages.some((message) => message.status === "interrupted")).toBe(true);
     expect(
@@ -96,7 +98,7 @@ describe("development state seed", () => {
     const referencedIds = new Set(persistedMessages.flatMap((message) => [...attachmentReferenceIds(message.text)]));
     expect(referencedIds).toEqual(new Set(attachments.keys()));
 
-    const exchanges = summaries.flatMap((bot) => mailbox.conversationMessages(bot.id));
+    const exchanges = summaries.flatMap((agent) => mailbox.conversationMessages(agent.id));
     expect(
       exchanges.some(
         (message) =>
@@ -113,12 +115,12 @@ describe("development state seed", () => {
     ).toBe(true);
     expect(
       summaries
-        .flatMap((bot) => mailbox.listQueue(bot.id).deliveries)
+        .flatMap((agent) => mailbox.listQueue(agent.id).deliveries)
         .filter((delivery) => delivery.status === "queued"),
     ).toHaveLength(0);
 
-    const memoryStore = new AgentMemoryStore(bots.database);
-    const memories = summaries.flatMap((bot) => memoryStore.list(bot.id));
+    const memoryStore = new AgentMemoryStore(agents.database);
+    const memories = summaries.flatMap((agent) => memoryStore.list(agent.id));
     expect(memories).toHaveLength(7);
     expect(memories.some((memory) => memory.origin === "manual")).toBe(true);
     const automaticMemories = memories.filter((memory) => memory.origin === "automatic");
@@ -126,17 +128,17 @@ describe("development state seed", () => {
     const conversationTurnIds = new Set(persistedMessages.map((message) => message.turnId).filter(Boolean));
     expect(automaticMemories.every((memory) => conversationTurnIds.has(memory.sourceTurnId ?? undefined))).toBe(true);
 
-    const routineStore = new AgentRoutineStore(bots.database);
-    const routines = summaries.flatMap((bot) => routineStore.list(bot.id));
+    const routineStore = new AgentRoutineStore(agents.database);
+    const routines = summaries.flatMap((agent) => routineStore.list(agent.id));
     expect(routines).toHaveLength(5);
     expect(routines.some((routine) => routine.active)).toBe(true);
     expect(routines.some((routine) => !routine.active)).toBe(true);
-    const runs = routines.flatMap((routine) => routineStore.listRuns(routine.botId, routine.id, 10));
+    const runs = routines.flatMap((routine) => routineStore.listRuns(routine.agentId, routine.id, 10));
     expect(runs).toHaveLength(3);
     expect(runs.map((run) => run.status)).toEqual(expect.arrayContaining(["succeeded", "failed"]));
     for (const run of runs) {
       expect(run.deliveryId).not.toBeNull();
-      expect(mailbox.conversationMessages(run.botId)).toContainEqual(
+      expect(mailbox.conversationMessages(run.agentId)).toContainEqual(
         expect.objectContaining({
           id: run.deliveryId,
           source: "routine",
@@ -163,11 +165,11 @@ describe("development state seed", () => {
     expect(members).toHaveLength(4);
     expect(team.listInvites().filter((invite) => invite.usedAt === null)).toHaveLength(1);
     expect(team.listSessions()).toHaveLength(4);
-    const chat = new TeamChatStore(bots.database);
+    const chat = new TeamChatStore(agents.database);
     const directThreads = chat.listThreads(owner?.id ?? "");
     expect(directThreads).toHaveLength(3);
     expect(directThreads.reduce((total, thread) => total + thread.unreadCount, 0)).toBeGreaterThan(0);
-    bots.database.close();
+    agents.database.close();
 
     await expect(readFile(productionSentinel, "utf8")).resolves.toBe("production");
     await expect(readFile(testClientSentinel, "utf8")).resolves.toBe("test client");

@@ -13,10 +13,10 @@ import type {
   QueueSnapshot,
   ServerSummary,
   TeamPresenceSnapshot,
-  UpdateBotInput,
+  UpdateAgentInput,
 } from "@openbot/contracts/ipc";
 import { createEffect, Show } from "solid-js";
-import type { BotMessage, BotProfile } from "../data";
+import type { AgentMessage, AgentProfile } from "../data";
 import { ConversationComposer } from "./conversation/ConversationComposer";
 import { ConversationHeader } from "./conversation/ConversationHeader";
 import { ConversationOverlays } from "./conversation/ConversationOverlays";
@@ -26,7 +26,7 @@ import { ConversationViewScopeContext, createConversationViewScope } from "./con
 import { MessageSelectionActions } from "./conversation/SelectionActions";
 
 export interface ConversationTarget {
-  botId: string;
+  agentId: string;
   serverId: string;
 }
 
@@ -36,12 +36,12 @@ export interface ConversationProps {
   onDownloadProvider?: (provider: AgentProviderId) => void | Promise<void>;
   onCancelProviderDownload?: (provider: AgentProviderId) => void | Promise<void>;
   onConnectProvider?: (provider: AgentProviderId) => void | Promise<void>;
-  bot: BotProfile | undefined;
-  bots: BotProfile[];
+  agent: AgentProfile | undefined;
+  agents: AgentProfile[];
   availableRoutineIds?: readonly string[];
   modelOptions: AgentModelOption[];
-  messages: BotMessage[];
-  messageReferences?: Record<string, BotMessage>;
+  messages: AgentMessage[];
+  messageReferences?: Record<string, AgentMessage>;
   unreadCount: number;
   firstUnreadMessageId: string | null;
   loaded: boolean;
@@ -53,8 +53,8 @@ export interface ConversationProps {
   activityDetail?: string;
   skillsMarketplaceOpen?: boolean;
   globalOverlayOpen: boolean;
-  settingsRequest: { botId: string; nonce: number } | null;
-  messageFocusRequest: { botId: string; messageId: string; nonce: number } | null;
+  settingsRequest: { agentId: string; nonce: number } | null;
+  messageFocusRequest: { agentId: string; messageId: string; nonce: number } | null;
   queue: QueueSnapshot | undefined;
   browserTabs: BrowserTab[];
   activeBrowserTabId: string | null;
@@ -70,9 +70,9 @@ export interface ConversationProps {
   prompt: Extract<AgentEvent, { type: "prompt" }> | undefined;
   approval: Extract<AgentEvent, { type: "approval" }>["approval"] | undefined;
   browserTakeover: Extract<AgentEvent, { type: "browser-takeover-requested" }>["request"] | undefined;
-  onSelectAgent: (botId: string) => void;
-  onUpdateBot: (botId: string, updates: Omit<UpdateBotInput, "botId">) => Promise<void>;
-  onSetAgentAvatar: (botId: string, image: AvatarImageInput | null) => Promise<void>;
+  onSelectAgent: (agentId: string) => void;
+  onUpdateAgent: (agentId: string, updates: Omit<UpdateAgentInput, "agentId">) => Promise<void>;
+  onSetAgentAvatar: (agentId: string, image: AvatarImageInput | null) => Promise<void>;
   onSendMessage: (
     body: string,
     attachmentDraftIds: string[],
@@ -84,9 +84,9 @@ export interface ConversationProps {
   onLoadLatest?: () => Promise<void>;
   onSearchMessages?: (query: string) => Promise<{ messageIds: string[]; total: number }>;
   onOpenSearchMessage?: (messageId: string) => Promise<void>;
-  onTypingChange: (botId: string, typing: boolean) => void;
+  onTypingChange: (agentId: string, typing: boolean) => void;
   onAnswerPrompt: (answers: Record<string, string[]>) => Promise<boolean>;
-  onPromptResolutionPresented?: (botId: string, turnId: string, requestId: string | number) => void;
+  onPromptResolutionPresented?: (agentId: string, turnId: string, requestId: string | number) => void;
   onRespondToApproval: (decision: "accept" | "decline") => Promise<boolean>;
   onRespondToBrowserTakeover: (decision: "complete" | "cancel") => Promise<boolean>;
   onCancelQueuedMessage: (deliveryId: string) => void;
@@ -120,7 +120,7 @@ export interface MediaPreview {
 }
 
 export interface SidebarFilePreview {
-  ownerBotId: string;
+  ownerAgentId: string;
   source: "shared" | "workspace";
   path: string;
   preview: FilePreview;
@@ -183,8 +183,8 @@ export function ConversationView(props: ConversationProps) {
         }}
       >
         <MessageSelectionActions
-          contextKey={props.bot?.id}
-          disabled={!props.bot || !agentReady() || submitting()}
+          contextKey={props.agent?.id}
+          disabled={!props.agent || !agentReady() || submitting()}
           onSend={sendSelectionInstruction}
         />
         <Show when={dropActive()}>

@@ -5,15 +5,15 @@ import type { DraftAttachment, InstalledSkill } from "@openbot/contracts/ipc";
 import { Portal } from "@solidjs/web";
 import { createEffect, createMemo, createSignal, createUniqueId, Show } from "solid-js";
 import { createStaticAvatarSvg } from "../bloub-avatar";
-import type { BotProfile } from "../data";
+import type { AgentProfile } from "../data";
 import { AgentAvatar } from "./AgentAvatar";
 import { AnchoredTooltip } from "./conversation/AnchoredTooltip";
 import { AttachmentReferenceVisual, appendAttachmentReferenceVisual } from "./conversation/AttachmentReference";
 import { Listbox, Puzzle } from "./ui";
 
 interface ComposerEditorProps {
-  botId: string | undefined;
-  bots: BotProfile[];
+  agentId: string | undefined;
+  agents: AgentProfile[];
   skills?: InstalledSkill[];
   attachments?: DraftAttachment[];
   value: string;
@@ -48,17 +48,17 @@ export function expandComposerMentions(value: string): string {
 }
 
 type PickerOption =
-  | { type: "bot"; bot: BotProfile }
+  | { type: "agent"; agent: AgentProfile }
   | { type: "skill"; skill: InstalledSkill }
   | { type: "attachment"; attachment: DraftAttachment };
 
 function pickerOptionKey(option: PickerOption): string {
-  if (option.type === "bot") return `bot:${option.bot.id}`;
+  if (option.type === "agent") return `agent:${option.agent.id}`;
   return option.type === "skill" ? `skill:${option.skill.skillId}` : `attachment:${option.attachment.id}`;
 }
 
 function pickerOptionText(option: PickerOption): string {
-  if (option.type === "bot") return `${option.bot.name} Agent`;
+  if (option.type === "agent") return `${option.agent.name} Agent`;
   return option.type === "skill" ? `${option.skill.name} Skill` : `${option.attachment.name} File`;
 }
 
@@ -75,12 +75,12 @@ export function ComposerEditor(props: ComposerEditorProps) {
     left: 0,
     width: 0,
   });
-  const matchingBots = createMemo(() => {
+  const matchingAgents = createMemo(() => {
     const query = mention()?.query.trim().toLocaleLowerCase() ?? "";
-    return props.bots.filter(
-      (bot) =>
-        bot.id !== props.botId &&
-        (!query || `${bot.name} ${bot.title} ${bot.description}`.toLocaleLowerCase().includes(query)),
+    return props.agents.filter(
+      (agent) =>
+        agent.id !== props.agentId &&
+        (!query || `${agent.name} ${agent.title} ${agent.description}`.toLocaleLowerCase().includes(query)),
     );
   });
   const matchingAttachments = createMemo(() => {
@@ -99,7 +99,7 @@ export function ComposerEditor(props: ComposerEditorProps) {
     );
   });
   const matchingOptions = createMemo<PickerOption[]>(() => [
-    ...matchingBots().map((bot) => ({ type: "bot" as const, bot })),
+    ...matchingAgents().map((agent) => ({ type: "agent" as const, agent })),
     ...matchingSkills().map((skill) => ({ type: "skill" as const, skill })),
     ...matchingAttachments().map((attachment) => ({
       type: "attachment" as const,
@@ -112,7 +112,7 @@ export function ComposerEditor(props: ComposerEditorProps) {
   });
   const pickerOptionElements = new Map<string, HTMLElement>();
   let editor: HTMLDivElement | undefined;
-  let lastBotId: string | undefined;
+  let lastAgentId: string | undefined;
   let lastAttachmentKey = "";
   let lastSkillKey = "";
   let lastEmittedValue = "";
@@ -148,26 +148,27 @@ export function ComposerEditor(props: ComposerEditorProps) {
 
   createEffect(
     () => ({
-      botId: props.botId,
+      agentId: props.agentId,
       value: props.value,
-      bots: props.bots,
+      agents: props.agents,
       skills: props.skills ?? [],
       attachments: props.attachments ?? [],
       focusRequest: props.focusRequest ?? 0,
     }),
-    ({ botId, value, bots, skills, attachments, focusRequest }) => {
+    ({ agentId, value, agents, skills, attachments, focusRequest }) => {
       if (!editor) return;
       const attachmentKey = attachments.map((attachment) => `${attachment.id}:${attachment.name}`).join("|");
       const skillKey = skills.map((skill) => `${skill.skillId}:${skill.name}:${skill.state}`).join("|");
-      const contentChanged = botId !== lastBotId || value !== lastEmittedValue || attachmentKey !== lastAttachmentKey;
+      const contentChanged =
+        agentId !== lastAgentId || value !== lastEmittedValue || attachmentKey !== lastAttachmentKey;
       const skillsChanged = skillKey !== lastSkillKey;
       const focusRequested = focusRequest > lastFocusRequest;
       if (contentChanged) {
-        lastBotId = botId;
+        lastAgentId = agentId;
         lastAttachmentKey = attachmentKey;
         lastEmittedValue = value;
         setAttachmentTooltip(null);
-        renderEditorValue(editor, value, bots, skills, attachments, attachmentTokenActions);
+        renderEditorValue(editor, value, agents, skills, attachments, attachmentTokenActions);
         syncTrailingLineSentinel(editor, value);
         setMention(null);
       } else if (skillsChanged) {
@@ -188,7 +189,14 @@ export function ComposerEditor(props: ComposerEditorProps) {
     if (value.length > INPUT_LIMITS.messageText) {
       value = truncateComposerValue(value, INPUT_LIMITS.messageText);
       setAttachmentTooltip(null);
-      renderEditorValue(editor, value, props.bots, props.skills ?? [], props.attachments ?? [], attachmentTokenActions);
+      renderEditorValue(
+        editor,
+        value,
+        props.agents,
+        props.skills ?? [],
+        props.attachments ?? [],
+        attachmentTokenActions,
+      );
       placeCaretAtEnd(editor);
     }
     syncTrailingLineSentinel(editor, value);
@@ -259,8 +267,8 @@ export function ComposerEditor(props: ComposerEditorProps) {
     if (!range) return;
     range.deleteContents();
     const token =
-      option.type === "bot"
-        ? createMentionToken(option.bot)
+      option.type === "agent"
+        ? createMentionToken(option.agent)
         : option.type === "skill"
           ? createSkillToken(option.skill)
           : createAttachmentToken(option.attachment, attachmentTokenActions);
@@ -450,7 +458,7 @@ export function ComposerEditor(props: ComposerEditorProps) {
     renderEditorValue(
       editor,
       nextValue,
-      props.bots,
+      props.agents,
       props.skills ?? [],
       props.attachments ?? [],
       attachmentTokenActions,
@@ -544,11 +552,11 @@ export function ComposerEditor(props: ComposerEditorProps) {
               const option = item.rawValue;
               const optionIndex = () =>
                 matchingOptions().findIndex((candidate) => pickerOptionKey(candidate) === item.key);
-              const firstSkillIndex = () => matchingBots().length;
-              const firstAttachmentIndex = () => matchingBots().length + matchingSkills().length;
+              const firstSkillIndex = () => matchingAgents().length;
+              const firstAttachmentIndex = () => matchingAgents().length + matchingSkills().length;
               return (
                 <>
-                  <Show when={option.type === "bot" && item.index === 0}>
+                  <Show when={option.type === "agent" && item.index === 0}>
                     <div class="mention-picker-section">Agents</div>
                   </Show>
                   <Show when={option.type === "skill" && item.index === firstSkillIndex()}>
@@ -571,8 +579,8 @@ export function ComposerEditor(props: ComposerEditorProps) {
                     onPointerDown={(event) => event.preventDefault()}
                     onMouseEnter={() => setActiveOption(optionIndex())}
                   >
-                    {option.type === "bot" ? (
-                      <AgentAvatar bot={option.bot} />
+                    {option.type === "agent" ? (
+                      <AgentAvatar agent={option.agent} />
                     ) : option.type === "skill" ? (
                       <span class="mention-picker-skill-icon" aria-hidden="true">
                         <Puzzle />
@@ -581,13 +589,13 @@ export function ComposerEditor(props: ComposerEditorProps) {
                       <AttachmentReferenceVisual name={option.attachment.name} />
                     )}
                     <strong>
-                      {option.type === "bot"
-                        ? option.bot.name
+                      {option.type === "agent"
+                        ? option.agent.name
                         : option.type === "skill"
                           ? option.skill.name
                           : option.attachment.name}
                     </strong>
-                    <span>{option.type === "bot" ? "Agent" : option.type === "skill" ? "Skill" : "File"}</span>
+                    <span>{option.type === "agent" ? "Agent" : option.type === "skill" ? "Skill" : "File"}</span>
                   </Listbox.Item>
                 </>
               );
@@ -685,29 +693,29 @@ function usesTouchLayout(): boolean {
   return window.matchMedia?.("(hover: none), (pointer: coarse)").matches ?? false;
 }
 
-function createMentionToken(bot: BotProfile): HTMLSpanElement {
+function createMentionToken(agent: AgentProfile): HTMLSpanElement {
   const token = document.createElement("span");
   token.className = "composer-mention-token";
   token.contentEditable = "false";
-  token.dataset.mentionId = bot.id;
-  token.dataset.mentionName = bot.name;
-  token.setAttribute("aria-label", `Agent ${bot.name}`);
+  token.dataset.mentionId = agent.id;
+  token.dataset.mentionName = agent.name;
+  token.setAttribute("aria-label", `Agent ${agent.name}`);
   const avatar = document.createElement("span");
   avatar.className = "composer-mention-avatar bot-avatar-motion-hover";
-  if (bot.avatarUrl) {
+  if (agent.avatarUrl) {
     const image = document.createElement("img");
-    image.src = bot.avatarUrl;
+    image.src = agent.avatarUrl;
     image.alt = "";
     image.draggable = false;
     image.addEventListener("error", () => {
-      scheduleStaticMentionAvatar(avatar, bot);
+      scheduleStaticMentionAvatar(avatar, agent);
     });
     avatar.append(image);
   } else {
-    scheduleStaticMentionAvatar(avatar, bot);
+    scheduleStaticMentionAvatar(avatar, agent);
   }
   const name = document.createElement("span");
-  name.textContent = bot.name;
+  name.textContent = agent.name;
   token.append(avatar, name);
   return token;
 }
@@ -772,7 +780,7 @@ function syncSkillTokens(editor: HTMLDivElement, skills: InstalledSkill[]): void
 function renderEditorValue(
   editor: HTMLDivElement,
   value: string,
-  bots: BotProfile[],
+  agents: AgentProfile[],
   skills: InstalledSkill[],
   attachments: DraftAttachment[],
   attachmentTokenActions: AttachmentTokenActions,
@@ -802,17 +810,17 @@ function renderEditorValue(
       continue;
     }
     const id = target.startsWith("agent:") ? target.slice("agent:".length) : target;
-    const bot = bots.find((candidate) => candidate.id === id);
-    editor.append(bot ? createMentionToken(bot) : createUnavailableTagToken("agent", id, name));
+    const agent = agents.find((candidate) => candidate.id === id);
+    editor.append(agent ? createMentionToken(agent) : createUnavailableTagToken("agent", id, name));
     cursor = index + match[0].length;
   }
   if (cursor < value.length) editor.append(document.createTextNode(value.slice(cursor)));
 }
 
-function scheduleStaticMentionAvatar(avatar: HTMLElement, bot: BotProfile): void {
+function scheduleStaticMentionAvatar(avatar: HTMLElement, agent: AgentProfile): void {
   queueMicrotask(() => {
     if (!avatar.isConnected) return;
-    avatar.replaceChildren(createStaticAvatarSvg(bot.avatarSeed, bot.avatarHue));
+    avatar.replaceChildren(createStaticAvatarSvg(agent.avatarSeed, agent.avatarHue));
   });
 }
 

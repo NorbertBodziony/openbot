@@ -130,7 +130,7 @@ describe("Conversation HMR boundary", () => {
 
     function Harness() {
       const controller = createConversationController(controllerProps(onTypingChange));
-      controller.resources.typingBotId = "chief";
+      controller.resources.typingAgentId = "chief";
       controller.resources.typingIdleTimer = setTimeout(() => undefined, 60_000);
       controller.resources.voiceRecorder = { state: "recording", stop: stopRecorder };
       controller.resources.voiceStream = { getTracks: () => [{ stop: stopTrack }] };

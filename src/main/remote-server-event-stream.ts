@@ -31,12 +31,12 @@ import { decodeRecord } from "@openbot/contracts/ipc-decoding";
 import { isString } from "@openbot/contracts/runtime-values";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { TEAM_CURRENT_CAPABILITIES, type TeamCurrentCapability } from "@openbot/contracts/team-protocol/current";
+import { TEAM_PROTOCOL_V1_WEBSOCKET } from "@openbot/contracts/team-protocol/v1";
 import {
-  encodeTeamProtocolV1ClientEvent,
-  TEAM_PROTOCOL_V1_WEBSOCKET,
-  type TeamProtocolV1ClientEvent,
-} from "@openbot/contracts/team-protocol/v1";
-import { decodeTeamProtocolV1CurrentEvent } from "@openbot/contracts/team-protocol/v1-adapter";
+  decodeTeamProtocolV1CurrentEvent,
+  encodeTeamProtocolV1CurrentClientEvent,
+  type TeamProtocolV1CurrentClientEvent,
+} from "@openbot/contracts/team-protocol/v1-adapter";
 import { RemoteProtocolError, RemoteRequestError } from "./remote-server-errors";
 import { requestJson } from "./remote-server-http";
 import type { RemoteServerDirectory, StoredRemoteServerView } from "./remote-server-store";
@@ -166,7 +166,7 @@ export class RemoteEventStream {
         continue;
       }
       if (this.#supportsRuntimeSnapshots(server.id, socket)) {
-        socket.send(encodeTeamProtocolV1ClientEvent({ type: "runtime-snapshot-request" }));
+        socket.send(encodeTeamProtocolV1CurrentClientEvent({ type: "runtime-snapshot-request" }));
       } else {
         void this.#agents.refreshAgentState(server.id).catch(() => undefined);
       }
@@ -175,10 +175,10 @@ export class RemoteEventStream {
 
   // A client event only reaches a host over an open socket. WebRTC hosts are the caller's problem:
   // they have their own transport method, and no socket here to hold.
-  send(serverId: string, event: TeamProtocolV1ClientEvent): void {
+  send(serverId: string, event: TeamProtocolV1CurrentClientEvent): void {
     const socket = this.#sockets.get(serverId);
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    socket.send(encodeTeamProtocolV1ClientEvent(event));
+    socket.send(encodeTeamProtocolV1CurrentClientEvent(event));
   }
 
   syncScopes(): void {
@@ -463,7 +463,7 @@ export class RemoteEventStream {
       return;
     }
     socket.send(
-      encodeTeamProtocolV1ClientEvent({
+      encodeTeamProtocolV1CurrentClientEvent({
         type: "agent-event-scope",
         includeConversations: this.#servers.activeServerId === serverId,
         ...(this.#appVersion ? { capabilities: TEAM_CURRENT_CAPABILITIES } : {}),

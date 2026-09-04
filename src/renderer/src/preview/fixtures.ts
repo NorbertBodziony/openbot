@@ -2,8 +2,8 @@ import type {
   AccountUsage,
   AgentModelOption,
   AgentStatus,
+  AgentSummary,
   AttachmentSummary,
-  BotSummary,
   BrowserControlState,
   BrowserTab,
   ConversationMessage,
@@ -19,11 +19,11 @@ import type {
   TeamSessionSummary,
   UpdateStatus,
 } from "@openbot/contracts/ipc";
-import type { BotProfile } from "../data";
+import type { AgentProfile } from "../data";
 
 export const STORY_NOW = "2026-08-19T10:00:00.000Z";
 
-export const STORY_BOT_SUMMARIES: BotSummary[] = [
+export const STORY_AGENT_SUMMARIES: AgentSummary[] = [
   {
     id: "chief",
     provider: "codex",
@@ -34,7 +34,7 @@ export const STORY_BOT_SUMMARIES: BotSummary[] = [
     model: "gpt-5.6-luna",
     reasoningEffort: "medium",
     threadId: "thread-chief",
-    workspacePath: "/mock/OpenBot/Bots/chief",
+    workspacePath: "/mock/OpenBot/Agents/chief",
     preview: "I pulled together the latest project notes and next steps.",
     updatedAt: STORY_NOW,
     avatarSeed: "chief",
@@ -51,7 +51,7 @@ export const STORY_BOT_SUMMARIES: BotSummary[] = [
     model: "claude-sonnet-5",
     reasoningEffort: "high",
     threadId: "thread-research",
-    workspacePath: "/mock/OpenBot/Bots/research",
+    workspacePath: "/mock/OpenBot/Agents/research",
     preview: "Three useful sources are ready for your review.",
     updatedAt: "2026-08-18T16:32:00.000Z",
     avatarSeed: "research",
@@ -68,7 +68,7 @@ export const STORY_BOT_SUMMARIES: BotSummary[] = [
     model: "gpt-5.6-terra",
     reasoningEffort: "medium",
     threadId: "thread-sales",
-    workspacePath: "/mock/OpenBot/Bots/sales",
+    workspacePath: "/mock/OpenBot/Agents/sales",
     preview: "The follow-up draft is ready to send.",
     updatedAt: "2026-08-17T09:20:00.000Z",
     avatarSeed: "sales-outbound",
@@ -77,21 +77,21 @@ export const STORY_BOT_SUMMARIES: BotSummary[] = [
   },
 ];
 
-export const STORY_BOTS: BotProfile[] = STORY_BOT_SUMMARIES.map((bot, index) => ({
-  id: bot.id,
-  provider: bot.provider,
-  name: bot.name,
-  title: bot.title,
-  description: bot.description,
-  notifications: bot.notifications,
-  model: bot.model,
-  reasoningEffort: bot.reasoningEffort,
-  threadId: bot.threadId,
-  avatarSeed: bot.avatarSeed,
-  avatarHue: bot.avatarHue,
-  avatarUrl: bot.avatarUrl,
+export const STORY_AGENTS: AgentProfile[] = STORY_AGENT_SUMMARIES.map((agent, index) => ({
+  id: agent.id,
+  provider: agent.provider,
+  name: agent.name,
+  title: agent.title,
+  description: agent.description,
+  notifications: agent.notifications,
+  model: agent.model,
+  reasoningEffort: agent.reasoningEffort,
+  threadId: agent.threadId,
+  avatarSeed: agent.avatarSeed,
+  avatarHue: agent.avatarHue,
+  avatarUrl: agent.avatarUrl,
   time: index === 0 ? "10:00" : index === 1 ? "Yesterday" : "Mon",
-  preview: bot.preview,
+  preview: agent.preview,
 }));
 
 export const STORY_MODELS: AgentModelOption[] = [
@@ -237,20 +237,20 @@ export const STORY_CONVERSATION_MESSAGES: ConversationMessage[] = [
     exchange: {
       direction: "outgoing",
       messageId: "message-exchange",
-      senderBotId: "chief",
-      recipientBotIds: ["research", "sales"],
+      senderAgentId: "chief",
+      recipientAgentIds: ["research", "sales"],
       replyToMessageId: null,
       deliveries: [
         {
           id: "delivery-research",
-          recipientBotId: "research",
+          recipientAgentId: "research",
           status: "completed",
           position: null,
           error: null,
         },
         {
           id: "delivery-sales",
-          recipientBotId: "sales",
+          recipientAgentId: "sales",
           status: "running",
           position: 1,
           error: null,
@@ -269,14 +269,14 @@ export const STORY_CONVERSATION_MESSAGES: ConversationMessage[] = [
 ];
 
 export const STORY_SNAPSHOTS: Record<string, ConversationSnapshot> = Object.fromEntries(
-  STORY_BOT_SUMMARIES.map((bot) => [
-    bot.id,
+  STORY_AGENT_SUMMARIES.map((agent) => [
+    agent.id,
     {
-      botId: bot.id,
-      threadId: bot.threadId,
+      agentId: agent.id,
+      threadId: agent.threadId,
       activeTurnId: null,
       revision: 1,
-      messages: bot.id === "chief" ? STORY_CONVERSATION_MESSAGES : [],
+      messages: agent.id === "chief" ? STORY_CONVERSATION_MESSAGES : [],
     },
   ]),
 );
@@ -294,7 +294,7 @@ export const STORY_PRESENCE: TeamPresenceSnapshot = {
       createdAt: "2026-01-10T08:00:00.000Z",
       disabled: false,
       online: true,
-      typingBotId: null,
+      typingAgentId: null,
     },
     {
       id: "member-alice",
@@ -305,7 +305,7 @@ export const STORY_PRESENCE: TeamPresenceSnapshot = {
       createdAt: "2026-02-01T08:00:00.000Z",
       disabled: false,
       online: true,
-      typingBotId: "chief",
+      typingAgentId: "chief",
     },
     {
       id: "member-jon",
@@ -316,7 +316,7 @@ export const STORY_PRESENCE: TeamPresenceSnapshot = {
       createdAt: "2026-03-15T08:00:00.000Z",
       disabled: false,
       online: false,
-      typingBotId: null,
+      typingAgentId: null,
     },
     {
       id: "member-maya",
@@ -327,7 +327,7 @@ export const STORY_PRESENCE: TeamPresenceSnapshot = {
       createdAt: "2026-04-11T08:00:00.000Z",
       disabled: false,
       online: true,
-      typingBotId: null,
+      typingAgentId: null,
     },
   ],
 };
@@ -407,7 +407,7 @@ export const STORY_BROWSER_TABS: BrowserTab[] = [
     url: "https://openbot.run/docs",
     loading: false,
     ownerThreadId: "thread-chief",
-    ownerBotId: "chief",
+    ownerAgentId: "chief",
   },
 ];
 

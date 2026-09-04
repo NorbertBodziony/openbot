@@ -9,9 +9,9 @@ export { createConversationController } from "./conversation-controller";
  *
  * The controller itself is created above the per-server scope (see
  * `app-providers.tsx`), because composer drafts, an in-flight voice send and a
- * queued-message edit are keyed by `serverId:botId` and are expected to still be
+ * queued-message edit are keyed by `serverId:agentId` and are expected to still be
  * there when the user comes back. What *is* scoped is the typing indicator and
- * the microphone: leaving the conversation - by opening Bot setup, a direct
+ * the microphone: leaving the conversation - by opening Agent setup, a direct
  * message, or another server - has to release both, and this component unmounts
  * on exactly those transitions.
  *

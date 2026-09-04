@@ -23,14 +23,14 @@ describe("landing demo controller", () => {
     const events: AgentEvent[] = [];
     const unsubscribe = mock.api.agent.onEvent((event) => events.push(event));
 
-    const sent = await mock.api.agent.sendMessage({ botId: "chief", text: "Check it", attachmentDraftIds: [] });
+    const sent = await mock.api.agent.sendMessage({ agentId: "chief", text: "Check it", attachmentDraftIds: [] });
     const started = events.find((event) => event.type === "turn-started");
     const progress = events.find((event) => event.type === "turn-progress");
 
     expect(sent.deliveries).toHaveLength(1);
     expect(progress).toMatchObject({
       type: "turn-progress",
-      botId: "chief",
+      agentId: "chief",
       turnId: started?.type === "turn-started" ? started.turnId : undefined,
     });
     expect(progress?.type === "turn-progress" ? progress.detail : "").not.toBe("");
@@ -44,7 +44,7 @@ describe("landing demo controller", () => {
     const events: AgentEvent[] = [];
     const unsubscribe = mock.api.agent.onEvent((event) => events.push(event));
     const controller = createLandingDemoController(mock);
-    await mock.api.agent.readConversationPage({ botId: "chief", anchor: { type: "latest" }, limit: 50 });
+    await mock.api.agent.readConversationPage({ agentId: "chief", anchor: { type: "latest" }, limit: 50 });
 
     controller.activate();
     vi.advanceTimersByTime(249);
@@ -81,7 +81,7 @@ describe("landing demo controller", () => {
       "launch-metrics.csv",
     ]);
     expect(answer?.reaction).toBe("✅");
-    expect(handoff?.exchange?.recipientBotIds).toEqual(["launch"]);
+    expect(handoff?.exchange?.recipientAgentIds).toEqual(["launch"]);
     expect(snapshot.activeTurnId).toBeNull();
     expect((await mock.api.agent.listQueue("chief")).deliveries).toHaveLength(0);
     expect(events.some((event) => event.type === "turn-completed" && event.status === "completed")).toBe(true);
@@ -96,11 +96,11 @@ describe("landing demo controller", () => {
     const events: AgentEvent[] = [];
     const unsubscribe = mock.api.agent.onEvent((event) => events.push(event));
     const controller = createLandingDemoController(mock);
-    await mock.api.agent.readConversationPage({ botId: "chief", anchor: { type: "latest" }, limit: 50 });
+    await mock.api.agent.readConversationPage({ agentId: "chief", anchor: { type: "latest" }, limit: 50 });
     controller.activate();
     vi.advanceTimersByTime(500);
 
-    await mock.api.agent.readConversationPage({ botId: "builder", anchor: { type: "latest" }, limit: 50 });
+    await mock.api.agent.readConversationPage({ agentId: "builder", anchor: { type: "latest" }, limit: 50 });
     expect(mock.readConversationSnapshot("chief").activeTurnId).toBeNull();
     expect((await mock.api.agent.listQueue("chief")).deliveries).toHaveLength(0);
     expect(events.some((event) => event.type === "turn-completed" && event.status === "interrupted")).toBe(true);
@@ -121,7 +121,7 @@ describe("landing demo controller", () => {
     mock.updateConversationSnapshot("chief", (snapshot) => {
       snapshot.messages = [...snapshot.messages, manualMessage];
     });
-    await mock.api.agent.readConversationPage({ botId: "chief", anchor: { type: "latest" }, limit: 50 });
+    await mock.api.agent.readConversationPage({ agentId: "chief", anchor: { type: "latest" }, limit: 50 });
     expect(
       mock
         .readConversationSnapshot("chief")
@@ -256,15 +256,15 @@ describe("landing demo controller", () => {
     ["research", ["launch-brief.md", "launch-metrics.csv", "evidence-map.md"]],
     ["builder", ["evidence-map.md", "rollout-checklist.md"]],
     ["launch", ["release-note.md"]],
-  ])("commits the complete %s story in one update for reduced motion", async (botId, files) => {
+  ])("commits the complete %s story in one update for reduced motion", async (agentId, files) => {
     const mock = createMockOpenBot(LANDING_PREVIEW_OPTIONS);
     const events: AgentEvent[] = [];
     const unsubscribe = mock.api.agent.onEvent((event) => events.push(event));
     const controller = createLandingDemoController(mock, { reducedMotion: true });
-    await mock.api.agent.readConversationPage({ botId, anchor: { type: "latest" }, limit: 50 });
+    await mock.api.agent.readConversationPage({ agentId, anchor: { type: "latest" }, limit: 50 });
 
     controller.activate();
-    const snapshot = mock.readConversationSnapshot(botId);
+    const snapshot = mock.readConversationSnapshot(agentId);
     const answer = snapshot.messages.find((message) => message.id.endsWith(":answer"));
     expect(answer?.attachments?.map((attachment) => attachment.name)).toEqual(files);
     expect(snapshot.messages.some((message) => message.id.endsWith(":handoff"))).toBe(true);

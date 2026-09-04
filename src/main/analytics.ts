@@ -2,7 +2,7 @@ import {
   AGENT_PROVIDERS,
   AGENT_REASONING_EFFORTS,
   type AgentEvent,
-  type BotSummary,
+  type AgentSummary,
   type CentralAuthUser,
   type ConversationMessage,
   hostedSiteConversationEvent,
@@ -39,7 +39,7 @@ export interface HostAnalyticsOptions {
   appVersion: string;
   platform: "darwin" | "win32" | "linux";
   resolveOwner: () => AnalyticsIdentity | null;
-  resolveBot: (botId: string) => BotSummary | null;
+  resolveAgent: (agentId: string) => AgentSummary | null;
 }
 
 const HOST_ALLOWLIST = {
@@ -71,7 +71,7 @@ type ActiveTurn = {
 
 export class HostAnalytics {
   readonly #resolveOwner: HostAnalyticsOptions["resolveOwner"];
-  readonly #resolveBot: HostAnalyticsOptions["resolveBot"];
+  readonly #resolveAgent: HostAnalyticsOptions["resolveAgent"];
   readonly #client: HostOpenPanelClient | null;
   #identifiedOwner: AnalyticsIdentity | null = null;
   #trackingEnabled: boolean;
@@ -87,7 +87,7 @@ export class HostAnalytics {
     createClient: ClientFactory = (clientOptions) => new OpenPanelBase(clientOptions),
   ) {
     this.#resolveOwner = options.resolveOwner;
-    this.#resolveBot = options.resolveBot;
+    this.#resolveAgent = options.resolveAgent;
     this.#trackingEnabled = options.trackingEnabled ?? true;
     if (!options.enabled) {
       this.#client = null;
@@ -131,7 +131,7 @@ export class HostAnalytics {
         this.#track(
           "system_turn_started",
           {
-            ...this.#botProperties(event.botId),
+            ...this.#agentProperties(event.agentId),
             origin: event.origin ?? "unknown",
           },
           owner,
@@ -146,7 +146,7 @@ export class HostAnalytics {
         this.#track(
           "system_turn_completed",
           {
-            ...this.#botProperties(event.botId),
+            ...this.#agentProperties(event.agentId),
             origin,
             status: normalizedTurnStatus(event.status),
             ...(activeTurn === undefined
@@ -161,7 +161,7 @@ export class HostAnalytics {
         this.#track(
           "system_agent_input_requested",
           {
-            ...this.#botProperties(event.botId),
+            ...this.#agentProperties(event.agentId),
             origin: this.#activeTurns.get(event.turnId)?.origin ?? "unknown",
             kind: "prompt",
             prompt_count: event.questions.length,
@@ -174,7 +174,7 @@ export class HostAnalytics {
         this.#track(
           "system_agent_input_requested",
           {
-            ...this.#botProperties(event.approval.botId),
+            ...this.#agentProperties(event.approval.agentId),
             origin: this.#activeTurns.get(event.approval.turnId)?.origin ?? "unknown",
             kind: "approval",
             approval_kind: event.approval.kind,
@@ -184,7 +184,7 @@ export class HostAnalytics {
         return;
       case "error":
         this.#track("system_operation_failed", {
-          ...(event.botId ? this.#botProperties(event.botId) : {}),
+          ...(event.agentId ? this.#agentProperties(event.agentId) : {}),
           area: "agent",
           failure_code: systemFailureCode(event.code),
         });
@@ -332,9 +332,9 @@ export class HostAnalytics {
     );
   }
 
-  #botProperties(botId: string): HostProperties {
-    const bot = this.#resolveBot(botId);
-    return bot ? { provider: bot.provider, model: bot.model, reasoning_effort: bot.reasoningEffort } : {};
+  #agentProperties(agentId: string): HostProperties {
+    const agent = this.#resolveAgent(agentId);
+    return agent ? { provider: agent.provider, model: agent.model, reasoning_effort: agent.reasoningEffort } : {};
   }
 
   #pruneActiveTurns(now: number): void {
@@ -428,7 +428,7 @@ function sanitizeHostProperty(name: HostEventName, key: string, value: unknown):
   }
   if (key === "model") return isAgentModel(value) ? value : undefined;
   if (key === "origin") {
-    return isOneOf(["user", "routine", "bot", "unknown"] as const, value) ? value : undefined;
+    return isOneOf(["user", "routine", "agent", "unknown"] as const, value) ? value : undefined;
   }
   if (key === "status") return isString(value) ? normalizedTurnStatus(value) : undefined;
   if (key === "kind") return isOneOf(["prompt", "approval"] as const, value) ? value : undefined;

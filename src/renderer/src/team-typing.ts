@@ -6,8 +6,8 @@
  * controller in `app-providers.tsx`, which is not. Neither can import the other,
  * and the call carries no cached state - it is one fire-and-forget IPC.
  */
-export function notifyTeamTyping(botId: string, typing: boolean): void {
-  void window.openbot.servers.setTyping({ botId: typing ? botId : null, typing }).catch(() => {
+export function notifyTeamTyping(agentId: string, typing: boolean): void {
+  void window.openbot.servers.setTyping({ agentId: typing ? agentId : null, typing }).catch(() => {
     // Typing state is optional and must not interrupt message composition.
   });
 }

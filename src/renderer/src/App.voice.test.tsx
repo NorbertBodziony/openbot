@@ -30,7 +30,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "conversation",
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-chief",
         activeTurnId: "turn-active",
         revision: 2,
@@ -201,7 +201,7 @@ describe("OpenBot connected desktop shell", () => {
     resolveTranscription?.({ text: "Voice transcript" });
     await waitFor(() =>
       expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith(
-        { botId: "chief", text: "Existing draft Voice transcript", attachmentDraftIds: [] },
+        { agentId: "chief", text: "Existing draft Voice transcript", attachmentDraftIds: [] },
         "local",
       ),
     );
@@ -288,7 +288,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith(
         {
-          botId: "chief",
+          agentId: "chief",
           text: "Message for local Chief",
           attachmentDraftIds: [],
         },
@@ -355,7 +355,7 @@ describe("OpenBot connected desktop shell", () => {
     );
     installVoiceRecordingMocks();
     vi.mocked(window.openbot.agent.listQueue).mockResolvedValueOnce({
-      botId: "chief",
+      agentId: "chief",
       deliveries: [
         queuedDelivery("delivery-running", "Running", null, { status: "running", turnId: "turn-running" }),
         queuedDelivery("delivery-voice-edit", "Queued draft", 1),
@@ -379,7 +379,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.updateQueuedMessage).toHaveBeenCalledWith(
         {
-          botId: "chief",
+          agentId: "chief",
           deliveryId: "delivery-voice-edit",
           text: "Queued draft Voice transcript",
           keepAttachmentIds: [],
@@ -400,7 +400,7 @@ describe("OpenBot connected desktop shell", () => {
       { ...remote, active: serverId === "remote-1" },
     ]);
     vi.mocked(window.openbot.agent.listQueue).mockResolvedValueOnce({
-      botId: "chief",
+      agentId: "chief",
       deliveries: [
         queuedDelivery("delivery-running", "Running", null, { status: "running", turnId: "turn-running" }),
         queuedDelivery("delivery-edit", "Queued draft", 1),

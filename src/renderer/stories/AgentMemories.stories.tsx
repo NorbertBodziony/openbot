@@ -1,15 +1,15 @@
-import type { BotMemory } from "@openbot/contracts/ipc";
+import type { AgentMemory } from "@openbot/contracts/ipc";
 import { onCleanup } from "solid-js";
 import { expect, fireEvent, fn, waitFor, within } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import AgentSettingsPanel from "../src/components/conversation/AgentSettingsPanel";
-import { STORY_AGENT_STATUS, STORY_BOTS, STORY_MODELS } from "./fixtures";
+import { STORY_AGENT_STATUS, STORY_AGENTS, STORY_MODELS } from "./fixtures";
 import { createMockOpenBot } from "./mock-openbot";
 
-const chiefMemories: BotMemory[] = [
+const chiefMemories: AgentMemory[] = [
   {
     id: "memory-automatic",
-    botId: "chief",
+    agentId: "chief",
     text: "The user prefers short progress updates with the result first.",
     origin: "automatic",
     sourceTurnId: "turn-42",
@@ -18,7 +18,7 @@ const chiefMemories: BotMemory[] = [
   },
   {
     id: "memory-manual",
-    botId: "chief",
+    agentId: "chief",
     text: "Use Bun for package scripts in OpenBot.",
     origin: "manual",
     sourceTurnId: null,
@@ -27,7 +27,7 @@ const chiefMemories: BotMemory[] = [
   },
   {
     id: "memory-decision",
-    botId: "chief",
+    agentId: "chief",
     text: "Keep capabilities and group coordination outside memory version 1.",
     origin: "automatic",
     sourceTurnId: "turn-57",
@@ -36,9 +36,9 @@ const chiefMemories: BotMemory[] = [
   },
 ];
 
-const fullMemoryList: BotMemory[] = Array.from({ length: 64 }, (_, index) => ({
+const fullMemoryList: AgentMemory[] = Array.from({ length: 64 }, (_, index) => ({
   id: `memory-${index + 1}`,
-  botId: "chief",
+  agentId: "chief",
   text: `Durable working preference ${index + 1}: keep the result clear and concise.`,
   origin: index % 3 === 0 ? "manual" : "automatic",
   sourceTurnId: index % 3 === 0 ? null : `turn-${index + 1}`,
@@ -46,7 +46,7 @@ const fullMemoryList: BotMemory[] = Array.from({ length: 64 }, (_, index) => ({
   updatedAt: "2026-08-24T14:30:00.000Z",
 }));
 
-function AgentMemoriesStory(props: { memories: BotMemory[] }) {
+function AgentMemoriesStory(props: { memories: AgentMemory[] }) {
   const previousApi = window.openbot;
   const mock = createMockOpenBot({ memories: { chief: props.memories } });
   window.openbot = mock.api;
@@ -59,11 +59,11 @@ function AgentMemoriesStory(props: { memories: BotMemory[] }) {
   return (
     <main class="agent-memories-story-stage">
       <AgentSettingsPanel
-        bot={STORY_BOTS[0]}
+        agent={STORY_AGENTS[0]}
         runtimeSettings={{
-          provider: STORY_BOTS[0].provider,
-          model: STORY_BOTS[0].model,
-          reasoningEffort: STORY_BOTS[0].reasoningEffort,
+          provider: STORY_AGENTS[0].provider,
+          model: STORY_AGENTS[0].model,
+          reasoningEffort: STORY_AGENTS[0].reasoningEffort,
         }}
         agentStatus={STORY_AGENT_STATUS}
         modelOptions={STORY_MODELS}
@@ -71,15 +71,15 @@ function AgentMemoriesStory(props: { memories: BotMemory[] }) {
         maxWidth={() => 640}
         onClose={fn()}
         onWidthChange={fn()}
-        onUpdateBot={async (botId, updates) => {
-          await mock.api.agent.updateBot({ botId, ...updates });
+        onUpdateAgent={async (agentId, updates) => {
+          await mock.api.agent.updateAgent({ agentId, ...updates });
         }}
-        onUpdateRuntimeSettings={async (botId, _settings, updates) => {
-          await mock.api.agent.updateBot({ botId, ...updates });
+        onUpdateRuntimeSettings={async (agentId, _settings, updates) => {
+          await mock.api.agent.updateAgent({ agentId, ...updates });
           return true;
         }}
-        onSetAgentAvatar={async (botId, image) => {
-          await mock.api.agent.setAvatar({ botId, image });
+        onSetAgentAvatar={async (agentId, image) => {
+          await mock.api.agent.setAvatar({ agentId, image });
         }}
       />
     </main>
@@ -90,11 +90,11 @@ const meta = {
   title: "Settings/Agent Memories",
   component: AgentSettingsPanel,
   args: {
-    bot: STORY_BOTS[0],
+    agent: STORY_AGENTS[0],
     runtimeSettings: {
-      provider: STORY_BOTS[0].provider,
-      model: STORY_BOTS[0].model,
-      reasoningEffort: STORY_BOTS[0].reasoningEffort,
+      provider: STORY_AGENTS[0].provider,
+      model: STORY_AGENTS[0].model,
+      reasoningEffort: STORY_AGENTS[0].reasoningEffort,
     },
     agentStatus: STORY_AGENT_STATUS,
     modelOptions: STORY_MODELS,
@@ -102,7 +102,7 @@ const meta = {
     maxWidth: () => 640,
     onClose: fn(),
     onWidthChange: fn(),
-    onUpdateBot: fn(async () => undefined),
+    onUpdateAgent: fn(async () => undefined),
     onUpdateRuntimeSettings: fn(async () => true),
     onSetAgentAvatar: fn(async () => undefined),
   },

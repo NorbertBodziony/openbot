@@ -1,14 +1,14 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   AgentEvent,
-  BotMemory,
-  CreateBotMemoryInput,
-  DeleteBotMemoryInput,
-  UpdateBotMemoryInput,
+  AgentMemory,
+  CreateAgentMemoryInput,
+  DeleteAgentMemoryInput,
+  UpdateAgentMemoryInput,
 } from "@openbot/contracts/ipc";
 import { isString } from "@openbot/contracts/runtime-values";
 import { AgentMemoryStore } from "../agent-memory-store";
-import type { BotStore } from "../agent-store";
+import type { AgentStore } from "../agent-store";
 import { type DynamicToolCallParams, isRecord } from "../protocol";
 import type { ConversationRuntime } from "./conversation-runtime";
 import { type OpenBotToolResponse, openBotToolResult } from "./routine-tools";
@@ -17,7 +17,7 @@ type PendingMemoryMutation =
   | {
       callId: string;
       type: "remember";
-      botId: string;
+      agentId: string;
       epoch: number;
       memoryId?: string;
       text: string;
@@ -27,17 +27,17 @@ type PendingMemoryMutation =
   | {
       callId: string;
       type: "forget";
-      botId: string;
+      agentId: string;
       epoch: number;
       memoryId: string;
       expectedUpdatedAt: string;
     };
 
 export interface AgentMemoriesOptions {
-  store: BotStore;
+  store: AgentStore;
   conversation: ConversationRuntime;
   emit(event: AgentEvent): void;
-  emitError(code: string, error: unknown, botId?: string): void;
+  emitError(code: string, error: unknown, agentId?: string): void;
 }
 
 /**
@@ -51,10 +51,10 @@ export interface AgentMemoriesOptions {
  * than resurrecting a memory the user just deleted.
  */
 export class AgentMemories {
-  readonly #store: BotStore;
+  readonly #store: AgentStore;
   readonly #conversation: ConversationRuntime;
   readonly #emit: (event: AgentEvent) => void;
-  readonly #emitError: (code: string, error: unknown, botId?: string) => void;
+  readonly #emitError: (code: string, error: unknown, agentId?: string) => void;
   readonly #memories: AgentMemoryStore;
   readonly #pending = new Map<string, PendingMemoryMutation[]>();
   readonly #epochs = new Map<string, number>();
@@ -67,50 +67,50 @@ export class AgentMemories {
     this.#memories = new AgentMemoryStore(options.store.database);
   }
 
-  list(botId: string): BotMemory[] {
-    this.#conversation.requireKnownBot(botId);
-    return this.#memories.list(botId);
+  list(agentId: string): AgentMemory[] {
+    this.#conversation.requireKnownAgent(agentId);
+    return this.#memories.list(agentId);
   }
 
-  /** Unchecked read for callers that already hold the bot, such as the developer instructions. */
-  listFor(botId: string): BotMemory[] {
-    return this.#memories.list(botId);
+  /** Unchecked read for callers that already hold the agent, such as the developer instructions. */
+  listFor(agentId: string): AgentMemory[] {
+    return this.#memories.list(agentId);
   }
 
-  create(input: CreateBotMemoryInput): BotMemory {
-    this.#conversation.requireKnownBot(input.botId);
-    const memory = this.#memories.createManual(input.botId, input.text);
-    this.stateChanged(input.botId);
+  create(input: CreateAgentMemoryInput): AgentMemory {
+    this.#conversation.requireKnownAgent(input.agentId);
+    const memory = this.#memories.createManual(input.agentId, input.text);
+    this.stateChanged(input.agentId);
     return memory;
   }
 
-  update(input: UpdateBotMemoryInput): BotMemory {
-    this.#conversation.requireKnownBot(input.botId);
-    const memory = this.#memories.updateManual(input.botId, input.memoryId, input.text);
-    this.stateChanged(input.botId);
+  update(input: UpdateAgentMemoryInput): AgentMemory {
+    this.#conversation.requireKnownAgent(input.agentId);
+    const memory = this.#memories.updateManual(input.agentId, input.memoryId, input.text);
+    this.stateChanged(input.agentId);
     return memory;
   }
 
-  delete(input: DeleteBotMemoryInput): void {
-    this.#conversation.requireKnownBot(input.botId);
-    if (!this.#memories.delete(input.botId, input.memoryId)) {
+  delete(input: DeleteAgentMemoryInput): void {
+    this.#conversation.requireKnownAgent(input.agentId);
+    if (!this.#memories.delete(input.agentId, input.memoryId)) {
       throw new Error("This memory no longer exists.");
     }
-    this.stateChanged(input.botId);
+    this.stateChanged(input.agentId);
   }
 
-  clear(botId: string): void {
-    this.#conversation.requireKnownBot(botId);
-    this.#epochs.set(botId, this.#epoch(botId) + 1);
-    if (this.#memories.clear(botId) > 0) this.stateChanged(botId);
+  clear(agentId: string): void {
+    this.#conversation.requireKnownAgent(agentId);
+    this.#epochs.set(agentId, this.#epoch(agentId) + 1);
+    if (this.#memories.clear(agentId) > 0) this.stateChanged(agentId);
   }
 
-  duplicate(sourceBotId: string, targetBotId: string): void {
-    this.#memories.duplicate(sourceBotId, targetBotId);
+  duplicate(sourceAgentId: string, targetAgentId: string): void {
+    this.#memories.duplicate(sourceAgentId, targetAgentId);
   }
 
   /** The two `openbot` memory tools. Returns null when `tool` is not one of them. */
-  handleTool(params: DynamicToolCallParams, senderBotId: string): OpenBotToolResponse | null {
+  handleTool(params: DynamicToolCallParams, senderAgentId: string): OpenBotToolResponse | null {
     if (params.tool === "remember") {
       const args = params.arguments;
       if (!isRecord(args) || !isString(args.text)) throw new Error("Memory text is required.");
@@ -124,13 +124,13 @@ export class AgentMemories {
       ) {
         throw new Error("memoryId is invalid.");
       }
-      const current = memoryId ? this.#memories.get(senderBotId, memoryId) : null;
+      const current = memoryId ? this.#memories.get(senderAgentId, memoryId) : null;
       if (memoryId && !current) throw new Error("This memory does not belong to the current agent.");
       this.#stage(params.turnId, {
         callId: params.callId,
         type: "remember",
-        botId: senderBotId,
-        epoch: this.#epoch(senderBotId),
+        agentId: senderAgentId,
+        epoch: this.#epoch(senderAgentId),
         ...(memoryId ? { memoryId } : {}),
         text,
         sourceTurnId: params.turnId,
@@ -149,13 +149,13 @@ export class AgentMemories {
       ) {
         throw new Error("memoryId is required.");
       }
-      const current = this.#memories.get(senderBotId, args.memoryId);
+      const current = this.#memories.get(senderAgentId, args.memoryId);
       if (!current) throw new Error("This memory does not belong to the current agent.");
       this.#stage(params.turnId, {
         callId: params.callId,
         type: "forget",
-        botId: senderBotId,
-        epoch: this.#epoch(senderBotId),
+        agentId: senderAgentId,
+        epoch: this.#epoch(senderAgentId),
         memoryId: current.id,
         expectedUpdatedAt: current.updatedAt,
       });
@@ -171,20 +171,20 @@ export class AgentMemories {
     this.#pending.delete(turnId);
     if (status !== "completed" || pending.length === 0) return;
 
-    const affectedBots = new Set<string>();
+    const affectedAgents = new Set<string>();
     for (const mutation of pending) {
-      if (mutation.epoch !== this.#epoch(mutation.botId)) continue;
-      const before = JSON.stringify(this.#memories.list(mutation.botId));
+      if (mutation.epoch !== this.#epoch(mutation.agentId)) continue;
+      const before = JSON.stringify(this.#memories.list(mutation.agentId));
       try {
         if (mutation.type === "remember") this.#memories.saveAutomatic(mutation);
-        else this.#memories.delete(mutation.botId, mutation.memoryId, mutation.expectedUpdatedAt);
+        else this.#memories.delete(mutation.agentId, mutation.memoryId, mutation.expectedUpdatedAt);
       } catch (error) {
-        this.#emitError("memory_commit_failed", error, mutation.botId);
+        this.#emitError("memory_commit_failed", error, mutation.agentId);
         continue;
       }
-      if (JSON.stringify(this.#memories.list(mutation.botId)) !== before) affectedBots.add(mutation.botId);
+      if (JSON.stringify(this.#memories.list(mutation.agentId)) !== before) affectedAgents.add(mutation.agentId);
     }
-    for (const botId of affectedBots) this.stateChanged(botId);
+    for (const agentId of affectedAgents) this.stateChanged(agentId);
   }
 
   clearPending(): void {
@@ -195,11 +195,11 @@ export class AgentMemories {
    * A memory change invalidates the developer instructions the provider was started with, so the
    * thread is unloaded and the next turn rebuilds them.
    */
-  stateChanged(botId: string): void {
-    const bot = this.#conversation.requireKnownBot(botId);
-    const session = this.#store.activeProviderSession(bot.id);
+  stateChanged(agentId: string): void {
+    const agent = this.#conversation.requireKnownAgent(agentId);
+    const session = this.#store.activeProviderSession(agent.id);
     if (session) this.#conversation.unloadThread(session.externalSessionId);
-    this.#emit({ type: "memories-changed", botId });
+    this.#emit({ type: "memories-changed", agentId });
   }
 
   #stage(turnId: string, mutation: PendingMemoryMutation): void {
@@ -208,7 +208,7 @@ export class AgentMemories {
     this.#pending.set(turnId, pending);
   }
 
-  #epoch(botId: string): number {
-    return this.#epochs.get(botId) ?? 0;
+  #epoch(agentId: string): number {
+    return this.#epochs.get(agentId) ?? 0;
   }
 }

@@ -3,7 +3,7 @@ import { createMemo, createSignal } from "solid-js";
 import type { ConversationProps, MediaPreview, RightPanelMode, SidebarFilePreview } from "../../ConversationView";
 
 export interface RoutineSettingsRequest {
-  botId: string;
+  agentId: string;
   routineId: string;
   routineName: string;
   nonce: number;
@@ -32,32 +32,32 @@ export function createPanelsStore(deps: PanelsStoreDeps) {
   let routineSettingsRequestNonce = 0;
 
   const activeRightPanel = createMemo<RightPanelMode>(() => {
-    const botId = deps.props.bot?.id;
-    return botId ? (deps.rightPanels()[botId] ?? "none") : "none";
+    const agentId = deps.props.agent?.id;
+    return agentId ? (deps.rightPanels()[agentId] ?? "none") : "none";
   });
   const settingsOpen = () => activeRightPanel() === "settings";
   const filePreviewOpen = () =>
-    activeRightPanel() === "file-preview" && deps.sidebarFilePreview()?.ownerBotId === deps.props.bot?.id;
+    activeRightPanel() === "file-preview" && deps.sidebarFilePreview()?.ownerAgentId === deps.props.agent?.id;
 
-  function setActiveRightPanel(mode: RightPanelMode, botId = deps.props.bot?.id) {
-    if (!botId) return;
+  function setActiveRightPanel(mode: RightPanelMode, agentId = deps.props.agent?.id) {
+    if (!agentId) return;
     if (mode !== "settings") {
-      setRoutineSettingsRequest((current) => (current?.botId === botId ? null : current));
+      setRoutineSettingsRequest((current) => (current?.agentId === agentId ? null : current));
     }
-    deps.setRightPanels((current) => (current[botId] === mode ? current : { ...current, [botId]: mode }));
+    deps.setRightPanels((current) => (current[agentId] === mode ? current : { ...current, [agentId]: mode }));
   }
 
   function openRoutineSettings(routine: { routineId: string; name: string }): void {
-    const botId = deps.props.bot?.id;
-    if (!botId) return;
+    const agentId = deps.props.agent?.id;
+    if (!agentId) return;
     routineSettingsRequestNonce += 1;
     setRoutineSettingsRequest({
-      botId,
+      agentId,
       routineId: routine.routineId,
       routineName: routine.name,
       nonce: routineSettingsRequestNonce,
     });
-    setActiveRightPanel("settings", botId);
+    setActiveRightPanel("settings", agentId);
   }
 
   function handleRoutineSettingsRequest(nonce: number): void {
@@ -128,28 +128,28 @@ export function createPanelsStore(deps: PanelsStoreDeps) {
   }
 
   function openSharedFile(path: string) {
-    const ownerBotId = deps.props.bot?.id;
-    if (!ownerBotId) return;
+    const ownerAgentId = deps.props.agent?.id;
+    if (!ownerAgentId) return;
     const generation = deps.nextFilePreviewGeneration();
     void window.openbot.agent.previewSharedFile({ path }).then(
       (preview) => {
-        if (generation !== deps.currentFilePreviewGeneration() || deps.props.bot?.id !== ownerBotId) return;
-        deps.setSidebarFilePreview({ ownerBotId, source: "shared", path, preview });
-        setActiveRightPanel("file-preview", ownerBotId);
+        if (generation !== deps.currentFilePreviewGeneration() || deps.props.agent?.id !== ownerAgentId) return;
+        deps.setSidebarFilePreview({ ownerAgentId, source: "shared", path, preview });
+        setActiveRightPanel("file-preview", ownerAgentId);
       },
       (error) => deps.setComposerError(error instanceof Error ? error.message : String(error)),
     );
   }
 
   function openWorkspaceFile(path: string) {
-    const botId = deps.props.bot?.id;
-    if (!botId) return;
+    const agentId = deps.props.agent?.id;
+    if (!agentId) return;
     const generation = deps.nextFilePreviewGeneration();
-    void window.openbot.agent.previewWorkspaceFile({ botId, path }).then(
+    void window.openbot.agent.previewWorkspaceFile({ agentId, path }).then(
       (preview) => {
-        if (generation !== deps.currentFilePreviewGeneration() || deps.props.bot?.id !== botId) return;
-        deps.setSidebarFilePreview({ ownerBotId: botId, source: "workspace", path, preview });
-        setActiveRightPanel("file-preview", botId);
+        if (generation !== deps.currentFilePreviewGeneration() || deps.props.agent?.id !== agentId) return;
+        deps.setSidebarFilePreview({ ownerAgentId: agentId, source: "workspace", path, preview });
+        setActiveRightPanel("file-preview", agentId);
       },
       (error) => deps.setComposerError(error instanceof Error ? error.message : String(error)),
     );
@@ -161,7 +161,7 @@ export function createPanelsStore(deps: PanelsStoreDeps) {
     const request =
       file.source === "shared"
         ? window.openbot.agent.openSharedFile({ path: file.path })
-        : window.openbot.agent.openWorkspaceFile({ botId: file.ownerBotId, path: file.path });
+        : window.openbot.agent.openWorkspaceFile({ agentId: file.ownerAgentId, path: file.path });
     void request.catch((error) => deps.setComposerError(error instanceof Error ? error.message : String(error)));
   }
 

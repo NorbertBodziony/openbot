@@ -6,24 +6,24 @@ import {
   reconcileAttentionPrompts,
 } from "./agent-runtime-snapshot";
 import { promptRequestKey } from "./conversation-keys";
-import type { BotMessage } from "./data";
+import type { AgentMessage } from "./data";
 
 const prompt = (
-  botId: string,
+  agentId: string,
   requestId: string,
   turnId = "turn-1",
 ): AgentRuntimeSnapshot["pendingPrompts"][number] => ({
   requestId,
-  botId,
-  threadId: `thread-${botId}`,
+  agentId,
+  threadId: `thread-${agentId}`,
   turnId,
   questions: [{ id: "q", header: "Header", question: "Question?", isSecret: false, options: null }],
 });
 
-const approval = (botId: string, requestId: string): AgentRuntimeApproval => ({
+const approval = (agentId: string, requestId: string): AgentRuntimeApproval => ({
   requestId,
-  botId,
-  threadId: `thread-${botId}`,
+  agentId,
+  threadId: `thread-${agentId}`,
   turnId: "turn-1",
   kind: "command",
   command: "ls",
@@ -34,10 +34,10 @@ const approval = (botId: string, requestId: string): AgentRuntimeApproval => ({
   truncated: false,
 });
 
-const takeover = (botId: string, requestId: string) => ({
+const takeover = (agentId: string, requestId: string) => ({
   requestId,
-  botId,
-  threadId: `thread-${botId}`,
+  agentId,
+  threadId: `thread-${agentId}`,
   turnId: "turn-1",
   tabId: "tab-1",
 });
@@ -153,8 +153,8 @@ describe("reconcileAttentionApprovals", () => {
 });
 
 describe("appendLatestRuntimeMessages", () => {
-  const snapshotMessage = (botId: string, id: string, text: string) => ({
-    botId,
+  const snapshotMessage = (agentId: string, id: string, text: string) => ({
+    agentId,
     id,
     text,
     createdAt: "2026-01-01T00:00:00.000Z",
@@ -166,7 +166,7 @@ describe("appendLatestRuntimeMessages", () => {
     expect(next.chief).toEqual([
       {
         id: "m1",
-        author: "bot",
+        author: "agent",
         body: "Done",
         time: "2026-01-01T00:00:00.000Z",
         createdAt: "2026-01-01T00:00:00.000Z",
@@ -175,17 +175,17 @@ describe("appendLatestRuntimeMessages", () => {
   });
 
   it("leaves a message the transcript already holds", () => {
-    const current: Record<string, BotMessage[]> = {
-      chief: [{ id: "m1", author: "bot", body: "The full answer", time: "t" }],
+    const current: Record<string, AgentMessage[]> = {
+      chief: [{ id: "m1", author: "agent", body: "The full answer", time: "t" }],
     };
 
     const next = appendLatestRuntimeMessages(current, [snapshotMessage("chief", "m1", "The full")]);
 
-    expect(next.chief).toEqual([{ id: "m1", author: "bot", body: "The full answer", time: "t" }]);
+    expect(next.chief).toEqual([{ id: "m1", author: "agent", body: "The full answer", time: "t" }]);
   });
 
   it("keeps the messages before the one it appends", () => {
-    const current: Record<string, BotMessage[]> = {
+    const current: Record<string, AgentMessage[]> = {
       chief: [{ id: "m1", author: "you", body: "Go", time: "t" }],
     };
 

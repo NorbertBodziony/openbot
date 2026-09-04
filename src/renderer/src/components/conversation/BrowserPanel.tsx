@@ -1,7 +1,7 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type { BrowserControlAction, BrowserControlSession, BrowserTab } from "@openbot/contracts/ipc";
 import { createEffect, createSignal, For, Show } from "solid-js";
-import type { BotProfile } from "../../data";
+import type { AgentProfile } from "../../data";
 import { PanelResizer, readPanelWidth, savePanelWidth } from "../PanelResizer";
 import { Button, buttonVariants, Input, PictureInPicture2, Tabs } from "../ui";
 import {
@@ -39,7 +39,7 @@ interface BrowserPanelProps {
   defaultWidth: () => number;
   maxWidth: () => number;
   controlForTab: (tab: BrowserTab) => BrowserControlSession | undefined;
-  controllerForTab: (tab: BrowserTab) => BotProfile | undefined;
+  controllerForTab: (tab: BrowserTab) => AgentProfile | undefined;
   onAddressChange: (value: string) => void;
   onAddressEditingChange: (editing: boolean) => void;
   onOpenAddress: (address?: string) => void;

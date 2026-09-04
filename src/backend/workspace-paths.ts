@@ -8,10 +8,10 @@ export function sharedPathFromInput(sharedRoot: string, inputPath: string): stri
   return isAbsolute(inputPath) ? inputPath : join(sharedRoot, normalized);
 }
 
-export function workspacePathFromInput(workspaceRoot: string, botId: string, inputPath: string): string {
+export function workspacePathFromInput(workspaceRoot: string, agentId: string, inputPath: string): string {
   const decoded = decodePath(inputPath.trim());
   const normalized = decoded.replaceAll("\\", "/");
-  for (const prefix of [`~/OpenBot/Bots/${botId}/`, `OpenBot/Bots/${botId}/`]) {
+  for (const prefix of [`~/OpenBot/Agents/${agentId}/`, `OpenBot/Agents/${agentId}/`]) {
     if (normalized.startsWith(prefix)) return join(workspaceRoot, normalized.slice(prefix.length));
   }
   return isAbsolute(decoded) ? decoded : join(workspaceRoot, normalized);

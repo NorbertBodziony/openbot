@@ -16,22 +16,22 @@ import {
 import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { SheetScrollView } from "@/shared/components/sheet-scroll-view";
 
-export function SearchBotsScreen() {
-  const { activeBots } = useMobileWorkspace();
+export function SearchAgentsScreen() {
+  const { activeAgents } = useMobileWorkspace();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<MobileSearchCategory>("all");
   const [muted, fieldBackground] = useThemeColor(["muted", "default"]);
   const liquidGlassAvailable = isLiquidGlassAvailable();
   const filteredResults = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
-    return createMobileSearchResults(activeBots).filter((result) => {
+    return createMobileSearchResults(activeAgents).filter((result) => {
       const matchesCategory = category === "all" || result.category === category;
       const matchesQuery =
         !normalizedQuery ||
         getMobileSearchResultText(result).some((value) => value.toLocaleLowerCase().includes(normalizedQuery));
       return matchesCategory && matchesQuery;
     });
-  }, [activeBots, category, query]);
+  }, [activeAgents, category, query]);
 
   return (
     <SheetScrollView

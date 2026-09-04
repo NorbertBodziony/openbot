@@ -2,9 +2,9 @@ import { expect, fn } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { ChatActionMarker } from "../src/components/conversation/ChatActionMarker";
 import { Heading, Text } from "../src/components/ui";
-import type { BotProfile, ChatActionMarkerModel } from "../src/data";
+import type { AgentProfile, ChatActionMarkerModel } from "../src/data";
 
-const bots: BotProfile[] = [bot("research", "Research"), bot("sales", "Sales")];
+const agents: AgentProfile[] = [agent("research", "Research"), agent("sales", "Sales")];
 const onSelectAgent = fn();
 const onOpenRoutine = fn();
 const onOpenHostedSite = fn();
@@ -34,7 +34,7 @@ export const AllStates: Story = {
             ],
             "in-progress",
           )}
-          bots={bots}
+          agents={agents}
           onSelectAgent={onSelectAgent}
         />
         <ChatActionMarker
@@ -43,13 +43,13 @@ export const AllStates: Story = {
             direction: "incoming",
             sourceAgentId: "research",
           }}
-          bots={bots}
+          agents={agents}
           onSelectAgent={onSelectAgent}
         />
         {routineStatuses.map((status) => (
           <ChatActionMarker
             marker={routineMarker(status)}
-            bots={bots}
+            agents={agents}
             onSelectAgent={onSelectAgent}
             onOpenRoutine={onOpenRoutine}
           />
@@ -57,7 +57,7 @@ export const AllStates: Story = {
         {routineActions.map((action) => (
           <ChatActionMarker
             marker={lifecycleMarker(action)}
-            bots={bots}
+            agents={agents}
             routineAvailable={action !== "deleted"}
             onSelectAgent={onSelectAgent}
             onOpenRoutine={onOpenRoutine}
@@ -67,7 +67,7 @@ export const AllStates: Story = {
           siteStatuses.map((status) => (
             <ChatActionMarker
               marker={siteMarker(action, status)}
-              bots={bots}
+              agents={agents}
               onSelectAgent={onSelectAgent}
               onOpenHostedSite={onOpenHostedSite}
             />
@@ -75,7 +75,7 @@ export const AllStates: Story = {
         )}
         <ChatActionMarker
           marker={{ kind: "unavailable", label: "Action unavailable", timestamp: timestamp }}
-          bots={bots}
+          agents={agents}
           onSelectAgent={onSelectAgent}
         />
       </section>
@@ -100,14 +100,14 @@ export const CompactAndUnavailable: Story = {
             ...routineMarker("needs-attention"),
             routineName: "Portfolio review with a long unavailable routine name",
           }}
-          bots={bots}
+          agents={agents}
           routineAvailable={false}
           onSelectAgent={onSelectAgent}
           onOpenRoutine={onOpenRoutine}
         />
         <ChatActionMarker
           marker={agentMarker([{ agentId: "missing", status: "failed" }], "failed")}
-          bots={bots}
+          agents={agents}
           onSelectAgent={onSelectAgent}
         />
         <ChatActionMarker
@@ -115,7 +115,7 @@ export const CompactAndUnavailable: Story = {
             ...siteMarker("publish", "running"),
             title: "A very long public launch page title that must remain compact in a narrow conversation",
           }}
-          bots={bots}
+          agents={agents}
           onSelectAgent={onSelectAgent}
           onOpenHostedSite={onOpenHostedSite}
         />
@@ -133,7 +133,7 @@ export const ReducedMotion: Story = {
       <section class="chat-primitives-stage chat-primitives-stage-narrow" aria-label="Reduced motion chat marker">
         <ChatActionMarker
           marker={siteMarker("replace", "running")}
-          bots={bots}
+          agents={agents}
           onSelectAgent={onSelectAgent}
           onOpenHostedSite={onOpenHostedSite}
         />
@@ -234,7 +234,7 @@ function siteMarker(
   };
 }
 
-function bot(id: string, name: string): BotProfile {
+function agent(id: string, name: string): AgentProfile {
   return {
     id,
     name,

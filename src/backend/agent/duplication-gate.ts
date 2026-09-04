@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import type { AgentEvent, BotSummary, DuplicateBotResult, SidebarLayoutSnapshot } from "@openbot/contracts/ipc";
-import { type BotStore, duplicationProfileSignature } from "../agent-store";
+import type { AgentEvent, AgentSummary, DuplicateAgentResult, SidebarLayoutSnapshot } from "@openbot/contracts/ipc";
+import { type AgentStore, duplicationProfileSignature } from "../agent-store";
 import type { MailboxStore } from "../mailbox-store";
 import type { AgentMemories } from "./agent-memories";
 import type { ConversationRuntime } from "./conversation-runtime";
@@ -8,17 +8,17 @@ import type { RoutineScheduler } from "./routine-scheduler";
 
 export interface DuplicationHooks {
   emit(event: AgentEvent): void;
-  listBots(): BotSummary[];
+  listAgents(): AgentSummary[];
   /** Removes a half-written copy: its workspace, mailbox rows and provider sessions. */
-  deleteBotData(bot: BotSummary): Promise<void>;
-  /** A bot with an outstanding question is not idle, even with an empty queue. */
-  hasAttentionFor(botId: string): boolean;
+  deleteAgentData(agent: AgentSummary): Promise<void>;
+  /** A agent with an outstanding question is not idle, even with an empty queue. */
+  hasAttentionFor(agentId: string): boolean;
   /** Re-arms a queue this gate held, so a message that waited out a copy is not stranded. */
-  scheduleDrain(botId: string): void;
+  scheduleDrain(agentId: string): void;
 }
 
 export interface DuplicationGateOptions {
-  store: BotStore;
+  store: AgentStore;
   mailbox: MailboxStore;
   conversation: ConversationRuntime;
   memories: AgentMemories;
@@ -30,26 +30,26 @@ export interface DuplicationGateOptions {
  * Copying an agent, and the window between the copy existing and the user accepting it.
  *
  * A duplicate is created in the database before the user has confirmed where it goes, so for that
- * window it is a real row that must not behave like a real agent: it is hidden from `listBots`, it
+ * window it is a real row that must not behave like a real agent: it is hidden from `listAgents`, it
  * never drains its queue, its routines never fire, and `Unknown agent` is the honest answer for it.
  * Every path out of that window — commit, delete, or a failed copy — has to clear the same four
  * maps, which is why they live in one class rather than beside the code that happens to set them.
  *
- * The copy itself is guarded twice over. `#duplicatingBots` refuses a second concurrent copy of one
+ * The copy itself is guarded twice over. `#duplicatingAgents` refuses a second concurrent copy of one
  * source; `#commitQueue` serialises commits so two duplications cannot interleave their store
  * writes; and the source signature is re-compared after every step, so an agent edited mid-copy
  * aborts rather than producing a duplicate that matches neither state.
  */
 export class DuplicationGate {
-  readonly #store: BotStore;
+  readonly #store: AgentStore;
   readonly #mailbox: MailboxStore;
   readonly #conversation: ConversationRuntime;
   readonly #memories: AgentMemories;
   readonly #routines: RoutineScheduler;
   readonly #hooks: DuplicationHooks;
-  readonly #duplicatingBots = new Set<string>();
-  readonly #pendingBots = new Set<string>();
-  readonly #pendingOperations = new Map<string, { operationId: string; sourceBotId: string }>();
+  readonly #duplicatingAgents = new Set<string>();
+  readonly #pendingAgents = new Set<string>();
+  readonly #pendingOperations = new Map<string, { operationId: string; sourceAgentId: string }>();
   readonly #pendingReleases = new Map<string, () => void>();
   #commitQueue: Promise<void> = Promise.resolve();
 
@@ -66,46 +66,46 @@ export class DuplicationGate {
    * The duplication clause in the drain mute registry. A pending copy never drains at all, and a
    * source holds its queue for the length of the copy.
    *
-   * `assertBotIdle` already refuses to start duplicating a busy agent, but it only looks once, and
+   * `assertAgentIdle` already refuses to start duplicating a busy agent, but it only looks once, and
    * copying a large workspace runs for seconds afterwards. Without this clause a message arriving
    * inside that window starts a turn that writes into the tree being copied, and the workspace
    * fingerprint then rejects the copy — correctly, but the user loses it. Holding the queue answers
    * the same message a few seconds later and keeps the copy.
    */
-  mayDrain(botId: string): boolean {
-    return !this.#pendingBots.has(botId) && !this.#duplicatingBots.has(botId);
+  mayDrain(agentId: string): boolean {
+    return !this.#pendingAgents.has(agentId) && !this.#duplicatingAgents.has(agentId);
   }
 
   /** A pending duplicate is not yet an agent: it is hidden, and unknown to anything that looks up. */
-  isPending(botId: string): boolean {
-    return this.#pendingBots.has(botId);
+  isPending(agentId: string): boolean {
+    return this.#pendingAgents.has(agentId);
   }
 
-  pendingBots(): ReadonlySet<string> {
-    return this.#pendingBots;
+  pendingAgents(): ReadonlySet<string> {
+    return this.#pendingAgents;
   }
 
-  visibleBots(bots: BotSummary[]): BotSummary[] {
-    return bots.filter((bot) => !this.#pendingBots.has(bot.id));
+  visibleAgents(agents: AgentSummary[]): AgentSummary[] {
+    return agents.filter((agent) => !this.#pendingAgents.has(agent.id));
   }
 
-  async duplicate(sourceBotId: string, operationId: string = randomUUID()): Promise<BotSummary> {
+  async duplicate(sourceAgentId: string, operationId: string = randomUUID()): Promise<AgentSummary> {
     const releaseDuplication = await this.#acquireCommitLock();
     let releaseOnExit = true;
-    let duplicate: BotSummary | null = null;
+    let duplicate: AgentSummary | null = null;
     try {
-      const source = this.#conversation.requireKnownBot(sourceBotId);
-      if (this.#duplicatingBots.has(sourceBotId)) throw new Error("This agent is already being duplicated.");
-      this.assertBotIdle(sourceBotId);
-      const sourceSignature = this.#sourceSignature(sourceBotId);
-      this.#duplicatingBots.add(sourceBotId);
-      duplicate = await this.#store.duplicateBot(sourceBotId, operationId);
-      this.#pendingBots.add(duplicate.id);
-      this.#pendingOperations.set(duplicate.id, { operationId, sourceBotId });
-      this.#assertSourceUnchanged(sourceBotId, sourceSignature);
-      this.#memories.duplicate(sourceBotId, duplicate.id);
-      const routines = this.#routines.duplicate(sourceBotId, duplicate.id, new Date());
-      this.#assertSourceUnchanged(sourceBotId, sourceSignature);
+      const source = this.#conversation.requireKnownAgent(sourceAgentId);
+      if (this.#duplicatingAgents.has(sourceAgentId)) throw new Error("This agent is already being duplicated.");
+      this.assertAgentIdle(sourceAgentId);
+      const sourceSignature = this.#sourceSignature(sourceAgentId);
+      this.#duplicatingAgents.add(sourceAgentId);
+      duplicate = await this.#store.duplicateAgent(sourceAgentId, operationId);
+      this.#pendingAgents.add(duplicate.id);
+      this.#pendingOperations.set(duplicate.id, { operationId, sourceAgentId });
+      this.#assertSourceUnchanged(sourceAgentId, sourceSignature);
+      this.#memories.duplicate(sourceAgentId, duplicate.id);
+      const routines = this.#routines.duplicate(sourceAgentId, duplicate.id, new Date());
+      this.#assertSourceUnchanged(sourceAgentId, sourceSignature);
       if (source.marketplaceSource) {
         duplicate = this.#store.setMarketplaceSource(duplicate.id, {
           ...structuredClone(source.marketplaceSource),
@@ -115,7 +115,7 @@ export class DuplicationGate {
           }),
         });
       }
-      this.#assertSourceUnchanged(sourceBotId, sourceSignature);
+      this.#assertSourceUnchanged(sourceAgentId, sourceSignature);
       const completedDuplicate = duplicate;
       this.#pendingReleases.set(completedDuplicate.id, releaseDuplication);
       releaseOnExit = false;
@@ -124,8 +124,8 @@ export class DuplicationGate {
       if (!duplicate) throw error;
       let rollbackError: unknown;
       try {
-        await this.#hooks.deleteBotData(duplicate);
-        this.#pendingBots.delete(duplicate.id);
+        await this.#hooks.deleteAgentData(duplicate);
+        this.#pendingAgents.delete(duplicate.id);
         this.#pendingOperations.delete(duplicate.id);
       } catch (caught) {
         rollbackError = caught;
@@ -139,66 +139,66 @@ export class DuplicationGate {
       }
       throw error;
     } finally {
-      this.#duplicatingBots.delete(sourceBotId);
+      this.#duplicatingAgents.delete(sourceAgentId);
       // The mute always lifts here, so whatever queued behind it drains now.
-      this.#hooks.scheduleDrain(sourceBotId);
+      this.#hooks.scheduleDrain(sourceAgentId);
       if (releaseOnExit) releaseDuplication();
     }
   }
 
-  async commit(botId: string, layout: SidebarLayoutSnapshot): Promise<DuplicateBotResult> {
-    if (!this.#pendingBots.has(botId)) throw new Error("This agent duplication is not pending.");
-    const operation = this.#pendingOperations.get(botId);
+  async commit(agentId: string, layout: SidebarLayoutSnapshot): Promise<DuplicateAgentResult> {
+    if (!this.#pendingAgents.has(agentId)) throw new Error("This agent duplication is not pending.");
+    const operation = this.#pendingOperations.get(agentId);
     if (!operation) throw new Error("This agent duplication operation is unavailable.");
-    const releaseDuplication = this.#pendingReleases.get(botId);
+    const releaseDuplication = this.#pendingReleases.get(agentId);
     try {
-      const result = await this.#store.commitBotDuplication(
-        botId,
+      const result = await this.#store.commitAgentDuplication(
+        agentId,
         operation.operationId,
-        operation.sourceBotId,
+        operation.sourceAgentId,
         layout,
       );
-      this.#pendingBots.delete(botId);
-      this.#pendingOperations.delete(botId);
-      this.#hooks.emit({ type: "bots-changed", bots: this.#hooks.listBots() });
-      if (this.#memories.listFor(result.bot.id).length > 0) this.#memories.stateChanged(result.bot.id);
-      if (this.#routines.listFor(result.bot.id).length > 0) this.#routines.stateChanged(result.bot.id);
+      this.#pendingAgents.delete(agentId);
+      this.#pendingOperations.delete(agentId);
+      this.#hooks.emit({ type: "agents-changed", agents: this.#hooks.listAgents() });
+      if (this.#memories.listFor(result.agent.id).length > 0) this.#memories.stateChanged(result.agent.id);
+      if (this.#routines.listFor(result.agent.id).length > 0) this.#routines.stateChanged(result.agent.id);
       this.#routines.arm();
       return result;
     } finally {
-      this.#pendingReleases.delete(botId);
+      this.#pendingReleases.delete(agentId);
       releaseDuplication?.();
     }
   }
 
   /**
-   * Hands a bot deletion the commit-lock release it must run, so deleting a duplicate the user
+   * Hands a agent deletion the commit-lock release it must run, so deleting a duplicate the user
    * rejected does not leave the next duplication waiting on a lock nobody holds. Returns whether
-   * the bot was pending, which is what decides if `bots-changed` still needs emitting.
+   * the agent was pending, which is what decides if `agents-changed` still needs emitting.
    */
-  releaseForDelete(botId: string): { wasPending: boolean; release: () => void } {
-    const wasPending = this.#pendingBots.has(botId);
-    const release = this.#pendingReleases.get(botId);
+  releaseForDelete(agentId: string): { wasPending: boolean; release: () => void } {
+    const wasPending = this.#pendingAgents.has(agentId);
+    const release = this.#pendingReleases.get(agentId);
     return {
       wasPending,
       release: () => {
         if (!wasPending) return;
-        this.#pendingReleases.delete(botId);
+        this.#pendingReleases.delete(agentId);
         release?.();
       },
     };
   }
 
-  forget(botId: string): void {
-    this.#pendingBots.delete(botId);
-    this.#pendingOperations.delete(botId);
+  forget(agentId: string): void {
+    this.#pendingAgents.delete(agentId);
+    this.#pendingOperations.delete(agentId);
   }
 
   /** The precondition for starting a copy: nothing is waiting, and nothing is in flight. */
-  assertBotIdle(botId: string): void {
-    const queued = this.#mailbox.listQueue(botId).deliveries.some((delivery) => delivery.status === "queued");
+  assertAgentIdle(agentId: string): void {
+    const queued = this.#mailbox.listQueue(agentId).deliveries.some((delivery) => delivery.status === "queued");
     if (queued) throw new Error("Wait for the agent to finish and clear its queue before duplicating it.");
-    this.#assertBotQuiet(botId);
+    this.#assertAgentQuiet(agentId);
   }
 
   /**
@@ -209,11 +209,11 @@ export class DuplicationGate {
    * touched the workspace. So it is deliberately not counted here: counting it would let any
    * incoming message destroy a copy that is seconds from finishing.
    */
-  #assertBotQuiet(botId: string): void {
+  #assertAgentQuiet(agentId: string): void {
     const inFlight = this.#mailbox
-      .listQueue(botId)
+      .listQueue(agentId)
       .deliveries.some((delivery) => delivery.status === "starting" || delivery.status === "running");
-    if (inFlight || this.#hooks.hasAttentionFor(botId) || this.#conversation.snapshot(botId)?.activeTurnId) {
+    if (inFlight || this.#hooks.hasAttentionFor(agentId) || this.#conversation.snapshot(agentId)?.activeTurnId) {
       throw new Error("Wait for the agent to finish and clear its queue before duplicating it.");
     }
   }
@@ -233,17 +233,17 @@ export class DuplicationGate {
    * Signs the same profile the store signs, so the two layers cannot disagree about what "changed"
    * means — otherwise narrowing one of them just moves the identical error message one frame out.
    */
-  #sourceSignature(botId: string): string {
+  #sourceSignature(agentId: string): string {
     return JSON.stringify({
-      bot: duplicationProfileSignature(this.#conversation.requireKnownBot(botId)),
-      memories: this.#memories.listFor(botId),
-      routines: this.#routines.listFor(botId),
+      agent: duplicationProfileSignature(this.#conversation.requireKnownAgent(agentId)),
+      memories: this.#memories.listFor(agentId),
+      routines: this.#routines.listFor(agentId),
     });
   }
 
-  #assertSourceUnchanged(botId: string, signature: string): void {
-    this.#assertBotQuiet(botId);
-    if (this.#sourceSignature(botId) !== signature) {
+  #assertSourceUnchanged(agentId: string, signature: string): void {
+    this.#assertAgentQuiet(agentId);
+    if (this.#sourceSignature(agentId) !== signature) {
       throw new Error("The agent changed while it was being duplicated. Try again.");
     }
   }

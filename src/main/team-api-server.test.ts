@@ -7,11 +7,11 @@ import { join } from "node:path";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   AccountUsage,
-  BotMemory,
-  BotSummary,
+  AgentMemory,
+  AgentSummary,
   CentralAuthUser,
   ConversationWithReadState,
-  CreateBotInput,
+  CreateAgentInput,
   Routine,
   RoutineRun,
   TeamPresenceSnapshot,
@@ -49,6 +49,11 @@ type TestAgents = TeamApiOptions["agents"];
 type TestMailbox = TeamApiOptions["mailbox"];
 type TestBrowser = TeamApiOptions["browser"];
 
+/**
+ * The projection a test applies to a frame read straight off the socket, so its keys are the frozen
+ * Team API wire spelling: `botId`, not the current `agentId` the fake agent service beside it speaks.
+ * Both vocabularies in one file is the shim doing its job, not a missed rename.
+ */
 interface TestRealtimeEvent {
   type: string;
   botId?: string;
@@ -76,7 +81,7 @@ function createAgents(overrides: Partial<TestAgents> = {}, events = new EventEmi
     },
     getStatus: unimplemented,
     getRuntimeSnapshot: () => ({
-      bots: [],
+      agents: [],
       activeTurns: [],
       work: [],
       latestMessages: [],
@@ -88,7 +93,7 @@ function createAgents(overrides: Partial<TestAgents> = {}, events = new EventEmi
     }),
     getUsage: unimplemented,
     listModels: unimplemented,
-    listBots: unimplemented,
+    listAgents: unimplemented,
     listMemories: unimplemented,
     createMemory: unimplemented,
     updateMemory: unimplemented,
@@ -101,12 +106,12 @@ function createAgents(overrides: Partial<TestAgents> = {}, events = new EventEmi
     testRoutine: unimplemented,
     listRoutineRuns: unimplemented,
     listConversationReads: unimplemented,
-    createBot: unimplemented,
-    committedBotDuplication: () => null,
-    duplicateBot: unimplemented,
-    commitBotDuplication: unimplemented,
-    updateBot: unimplemented,
-    deleteBot: unimplemented,
+    createAgent: unimplemented,
+    committedAgentDuplication: () => null,
+    duplicateAgent: unimplemented,
+    commitAgentDuplication: unimplemented,
+    updateAgent: unimplemented,
+    deleteAgent: unimplemented,
     setAvatar: unimplemented,
     resolveAvatar: unimplemented,
     readConversationFor: unimplemented,
@@ -510,7 +515,7 @@ describe("TeamApiServer routing", () => {
     await sidebarLayout.initialize();
     const api = new TeamApiServer({
       store,
-      agents: createAgents({ listBots: () => [] }),
+      agents: createAgents({ listAgents: () => [] }),
       sidebarLayout,
       mailbox: createMailbox(),
       browser: createBrowser(),
@@ -593,7 +598,7 @@ describe("TeamApiServer administration", () => {
       avatarSeed: "chief",
       avatarHue: null,
       avatarUrl: null,
-    } satisfies BotSummary;
+    } satisfies AgentSummary;
     const duplicate = {
       ...source,
       id: "chief-copy",
@@ -601,26 +606,26 @@ describe("TeamApiServer administration", () => {
       threadId: null,
       workspacePath: join(root, "chief-copy"),
       preview: "No messages yet",
-    } satisfies BotSummary;
-    let bots: BotSummary[] = [source];
-    const duplicateBot = vi.fn(async () => {
-      bots = [duplicate, source];
+    } satisfies AgentSummary;
+    let roster: AgentSummary[] = [source];
+    const duplicateAgent = vi.fn(async () => {
+      roster = [duplicate, source];
       return duplicate;
     });
-    let committedDuplicate: Awaited<ReturnType<TestAgents["commitBotDuplication"]>> | null = null;
-    const commitBotDuplication = vi.fn(async (_botId, layout) => {
-      committedDuplicate = { bot: duplicate, layout };
+    let committedDuplicate: Awaited<ReturnType<TestAgents["commitAgentDuplication"]>> | null = null;
+    const commitAgentDuplication = vi.fn(async (_agentId, layout) => {
+      committedDuplicate = { agent: duplicate, layout };
       return committedDuplicate;
     });
-    const deleteBot = vi.fn(async (botId: string) => {
-      bots = bots.filter((bot) => bot.id !== botId);
+    const deleteAgent = vi.fn(async (agentId: string) => {
+      roster = roster.filter((agent) => agent.id !== agentId);
     });
     const agents = createAgents({
-      listBots: () => bots,
-      committedBotDuplication: () => committedDuplicate,
-      duplicateBot,
-      commitBotDuplication,
-      deleteBot,
+      listAgents: () => roster,
+      committedAgentDuplication: () => committedDuplicate,
+      duplicateAgent,
+      commitAgentDuplication,
+      deleteAgent,
     });
     const section = await sidebarLayout.mutate(
       { type: "create", name: "Core", agentId: source.id },
@@ -662,9 +667,9 @@ describe("TeamApiServer administration", () => {
           agentOrder: [source.id, duplicate.id],
         },
       });
-      expect(duplicateBot).toHaveBeenCalledWith(source.id, "7674b664-cd72-4cf9-88ed-6f2e189d551f");
-      expect(commitBotDuplication).toHaveBeenCalledWith(duplicate.id, expect.objectContaining({ revision: 2 }));
-      expect(deleteBot).not.toHaveBeenCalled();
+      expect(duplicateAgent).toHaveBeenCalledWith(source.id, "7674b664-cd72-4cf9-88ed-6f2e189d551f");
+      expect(commitAgentDuplication).toHaveBeenCalledWith(duplicate.id, expect.objectContaining({ revision: 2 }));
+      expect(deleteAgent).not.toHaveBeenCalled();
 
       const currentLayout = await sidebarLayout.mutate(
         { type: "create", name: "Later", agentId: duplicate.id },
@@ -683,8 +688,8 @@ describe("TeamApiServer administration", () => {
       });
       expect(retry.status).toBe(201);
       await expect(retry.json()).resolves.toMatchObject({ layout: { revision: currentLayout.revision } });
-      expect(duplicateBot).toHaveBeenCalledTimes(1);
-      expect(commitBotDuplication).toHaveBeenCalledTimes(1);
+      expect(duplicateAgent).toHaveBeenCalledTimes(1);
+      expect(commitAgentDuplication).toHaveBeenCalledTimes(1);
     } finally {
       await api.stop();
     }
@@ -714,14 +719,14 @@ describe("TeamApiServer administration", () => {
       avatarSeed: "chief",
       avatarHue: null,
       avatarUrl: null,
-    } satisfies BotSummary;
-    const deleteBot = vi.fn(async () => {
+    } satisfies AgentSummary;
+    const deleteAgent = vi.fn(async () => {
       throw new Error("agent cleanup failed");
     });
     const agents = createAgents({
-      listBots: () => [duplicate],
-      duplicateBot: vi.fn(async () => duplicate),
-      deleteBot,
+      listAgents: () => [duplicate],
+      duplicateAgent: vi.fn(async () => duplicate),
+      deleteAgent,
     });
     vi.spyOn(sidebarLayout, "placeDuplicateAfter").mockRejectedValueOnce(new Error("layout persistence failed"));
     const removeAgent = vi.spyOn(sidebarLayout, "removeAgent");
@@ -754,7 +759,7 @@ describe("TeamApiServer administration", () => {
       });
 
       expect(response.status).toBe(500);
-      expect(deleteBot).toHaveBeenCalledWith(duplicate.id);
+      expect(deleteAgent).toHaveBeenCalledWith(duplicate.id);
       expect(removeAgent).toHaveBeenCalledWith(duplicate.id);
     } finally {
       await api.stop();
@@ -784,7 +789,7 @@ describe("TeamApiServer administration", () => {
     const sidebarLayout = new SidebarLayoutStore(join(root, "sidebar-layout.json"));
     await sidebarLayout.initialize();
     const getRuntimeSnapshot = vi.fn<TestAgents["getRuntimeSnapshot"]>(() => ({
-      bots: [],
+      agents: [],
       activeTurns: [],
       work: [],
       latestMessages: [],
@@ -799,7 +804,7 @@ describe("TeamApiServer administration", () => {
       on: (event, listener) => agentEvents.on(event, listener),
       off: (event, listener) => agentEvents.off(event, listener),
       getRuntimeSnapshot,
-      listBots: () => [
+      listAgents: () => [
         {
           id: "chief",
           provider: "codex",
@@ -816,7 +821,7 @@ describe("TeamApiServer administration", () => {
           avatarSeed: "chief",
           avatarHue: null,
           avatarUrl: null,
-        } satisfies BotSummary,
+        } satisfies AgentSummary,
       ],
     });
     let now = 0;
@@ -852,7 +857,7 @@ describe("TeamApiServer administration", () => {
       const conversation = {
         type: "conversation",
         snapshot: {
-          botId: "chief",
+          agentId: "chief",
           threadId: "thread-chief",
           activeTurnId: null,
           revision: 1,
@@ -869,13 +874,13 @@ describe("TeamApiServer administration", () => {
       };
       getRuntimeSnapshot.mockReturnValueOnce({
         ...createAgents().getRuntimeSnapshot(),
-        latestMessages: [{ botId: "chief", id: "reply-1", text: "Done", createdAt: "2026-08-29T10:00:00.000Z" }],
+        latestMessages: [{ agentId: "chief", id: "reply-1", text: "Done", createdAt: "2026-08-29T10:00:00.000Z" }],
       });
       const boundedEvents = nextJsonEvents(socket, 2);
       agentEvents.emit("event", conversation);
       agentEvents.emit("event", {
         type: "turn-completed",
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-chief",
         turnId: "turn-1",
         status: "completed",
@@ -898,18 +903,18 @@ describe("TeamApiServer administration", () => {
         revision: 1,
       });
       const queueEvent = nextJsonEvent(socket);
-      agentEvents.emit("event", { type: "queue-changed", snapshot: { botId: "chief", deliveries: [] } });
+      agentEvents.emit("event", { type: "queue-changed", snapshot: { agentId: "chief", deliveries: [] } });
       await expect(queueEvent).resolves.toEqual({ type: "queue-invalidated", botId: "chief" });
 
       const eventAfterUnsupportedActivity = nextJsonEvent(socket);
       agentEvents.emit("event", {
         type: "turn-progress",
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-chief",
         turnId: "turn-1",
         detail: "Searching for current information…",
       });
-      agentEvents.emit("event", { type: "bots-changed", bots: [] });
+      agentEvents.emit("event", { type: "agents-changed", agents: [] });
       await expect(eventAfterUnsupportedActivity).resolves.toMatchObject({ type: "bots-changed" });
 
       const eventsAfterOversizedConversation = nextJsonEvents(socket, 2);
@@ -920,7 +925,7 @@ describe("TeamApiServer administration", () => {
           messages: [{ ...conversation.snapshot.messages[0], text: "x".repeat(1024 * 1024) }],
         },
       });
-      agentEvents.emit("event", { type: "bots-changed", bots: [] });
+      agentEvents.emit("event", { type: "agents-changed", agents: [] });
       await expect(eventsAfterOversizedConversation).resolves.toEqual([
         expect.objectContaining({ type: "conversation-invalidated" }),
         expect.objectContaining({ type: "bots-changed" }),
@@ -975,12 +980,12 @@ describe("TeamApiServer administration", () => {
       );
       now = 1_000;
       getRuntimeSnapshot.mockImplementation(() => ({
-        bots: [],
+        agents: [],
         activeTurns: [],
         work: [],
         latestMessages: [
           {
-            botId: "chief",
+            agentId: "chief",
             id: "oversized",
             text: "x".repeat(AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT),
             createdAt: "2026-08-29T10:00:00.000Z",
@@ -1029,14 +1034,14 @@ describe("TeamApiServer administration", () => {
       expect(socket.protocol).toBe("openbot-events");
       const supportedEvent = nextJsonEvent(socket);
       agentEvents.emit("event", { type: "runtime-snapshot", snapshot: createAgents().getRuntimeSnapshot() });
-      agentEvents.emit("event", { type: "bots-changed", bots: [] });
+      agentEvents.emit("event", { type: "agents-changed", agents: [] });
       await expect(supportedEvent).resolves.toMatchObject({ type: "bots-changed" });
 
       const conversationEvent = nextJsonEvent(socket);
       agentEvents.emit("event", {
         type: "conversation",
         snapshot: {
-          botId: "chief",
+          agentId: "chief",
           threadId: "thread-chief",
           activeTurnId: null,
           revision: 2,
@@ -1104,7 +1109,7 @@ describe("TeamApiServer administration", () => {
     const api = new TeamApiServer({
       store,
       agents: createAgents({
-        listBots: () => {
+        listAgents: () => {
           throw internalError;
         },
       }),
@@ -1562,11 +1567,11 @@ describe("TeamApiServer administration", () => {
     const store = new TeamStore(join(root, "team.json"));
     await store.initialize();
     await store.configure("Studio Mac", "owner", "correct horse battery");
-    const memories: BotMemory[] = [];
-    const createMemory = vi.fn((input: { botId: string; text: string }) => {
-      const memory: BotMemory = {
+    const memories: AgentMemory[] = [];
+    const createMemory = vi.fn((input: { agentId: string; text: string }) => {
+      const memory: AgentMemory = {
         id: "memory-1",
-        botId: input.botId,
+        agentId: input.agentId,
         text: input.text,
         origin: "manual",
         sourceTurnId: null,
@@ -1576,26 +1581,26 @@ describe("TeamApiServer administration", () => {
       memories.push(memory);
       return memory;
     });
-    const updateMemory = vi.fn((input: { botId: string; memoryId: string; text: string }) => {
-      const memory = memories.find((item) => item.id === input.memoryId && item.botId === input.botId);
+    const updateMemory = vi.fn((input: { agentId: string; memoryId: string; text: string }) => {
+      const memory = memories.find((item) => item.id === input.memoryId && item.agentId === input.agentId);
       if (!memory) throw new Error("Memory not found.");
       memory.text = input.text;
       memory.updatedAt = "2026-08-25T12:01:00.000Z";
       return memory;
     });
-    const deleteMemory = vi.fn((input: { botId: string; memoryId: string }) => {
-      const index = memories.findIndex((item) => item.id === input.memoryId && item.botId === input.botId);
+    const deleteMemory = vi.fn((input: { agentId: string; memoryId: string }) => {
+      const index = memories.findIndex((item) => item.id === input.memoryId && item.agentId === input.agentId);
       if (index >= 0) memories.splice(index, 1);
     });
-    const clearMemories = vi.fn((botId: string) => {
+    const clearMemories = vi.fn((agentId: string) => {
       for (let index = memories.length - 1; index >= 0; index -= 1) {
-        if (memories[index]?.botId === botId) memories.splice(index, 1);
+        if (memories[index]?.agentId === agentId) memories.splice(index, 1);
       }
     });
     const api = new TeamApiServer({
       store,
       agents: createAgents({
-        listMemories: (botId) => memories.filter((memory) => memory.botId === botId),
+        listMemories: (agentId) => memories.filter((memory) => memory.agentId === agentId),
         createMemory,
         updateMemory,
         deleteMemory,
@@ -1613,14 +1618,14 @@ describe("TeamApiServer administration", () => {
       });
       const token = login.sessionToken;
       await expect(
-        jsonRequest<BotMemory>(base, "/v1/agents/chief/memories", {
+        jsonRequest<AgentMemory>(base, "/v1/agents/chief/memories", {
           token,
           body: { text: "Uses metric units." },
         }),
       ).resolves.toMatchObject({ id: "memory-1", botId: "chief", origin: "manual" });
       await expect(jsonRequest(base, "/v1/agents/chief/memories", { token })).resolves.toHaveLength(1);
       await expect(
-        jsonRequest<BotMemory>(base, "/v1/agents/chief/memories/memory-1", {
+        jsonRequest<AgentMemory>(base, "/v1/agents/chief/memories/memory-1", {
           method: "PATCH",
           token,
           body: { text: "Uses SI units." },
@@ -1628,11 +1633,11 @@ describe("TeamApiServer administration", () => {
       ).resolves.toMatchObject({ text: "Uses SI units." });
       await emptyRequest(base, "/v1/agents/chief/memories/memory-1", { method: "DELETE", token });
       await expect(jsonRequest(base, "/v1/agents/chief/memories", { token })).resolves.toEqual([]);
-      expect(createMemory).toHaveBeenCalledWith({ botId: "chief", text: "Uses metric units." });
-      expect(updateMemory).toHaveBeenCalledWith({ botId: "chief", memoryId: "memory-1", text: "Uses SI units." });
-      expect(deleteMemory).toHaveBeenCalledWith({ botId: "chief", memoryId: "memory-1" });
+      expect(createMemory).toHaveBeenCalledWith({ agentId: "chief", text: "Uses metric units." });
+      expect(updateMemory).toHaveBeenCalledWith({ agentId: "chief", memoryId: "memory-1", text: "Uses SI units." });
+      expect(deleteMemory).toHaveBeenCalledWith({ agentId: "chief", memoryId: "memory-1" });
 
-      await jsonRequest<BotMemory>(base, "/v1/agents/chief/memories", {
+      await jsonRequest<AgentMemory>(base, "/v1/agents/chief/memories", {
         token,
         body: { text: "Clear this memory." },
       });
@@ -1662,7 +1667,7 @@ describe("TeamApiServer administration", () => {
       const now = "2026-08-25T12:00:00.000Z";
       const routine: Routine = {
         id: "routine-1",
-        botId: input.botId,
+        agentId: input.agentId,
         name: input.name,
         instruction: input.instruction,
         active: input.active,
@@ -1682,7 +1687,7 @@ describe("TeamApiServer administration", () => {
       return routine;
     });
     const updateRoutine = vi.fn((input: Parameters<TestAgents["updateRoutine"]>[0]) => {
-      const routine = routines.find((item) => item.id === input.routineId && item.botId === input.botId);
+      const routine = routines.find((item) => item.id === input.routineId && item.agentId === input.agentId);
       if (!routine) throw new Error("Routine not found.");
       if (input.name !== undefined) routine.name = input.name;
       if (input.active !== undefined) routine.active = input.active;
@@ -1692,7 +1697,7 @@ describe("TeamApiServer administration", () => {
     const run: RoutineRun = {
       id: "run-1",
       routineId: "routine-1",
-      botId: "chief",
+      agentId: "chief",
       triggerId: null,
       kind: "manual",
       scheduledFor: "2026-08-25T12:05:00.000Z",
@@ -1704,6 +1709,10 @@ describe("TeamApiServer administration", () => {
       createdAt: "2026-08-25T12:05:00.000Z",
       updatedAt: "2026-08-25T12:05:00.000Z",
     };
+    // The run above is what the fake agent service returns, so it says `agentId`; the run the assertion
+    // below reads back came off `fetch` as frozen wire JSON, which still says `botId`.
+    const { agentId: runAgentId, ...runRest } = run;
+    const wireRun = { ...runRest, botId: runAgentId };
     const deleteRoutine = vi.fn(async ({ routineId }: { routineId: string }) => {
       const index = routines.findIndex((routine) => routine.id === routineId);
       if (index >= 0) routines.splice(index, 1);
@@ -1711,7 +1720,7 @@ describe("TeamApiServer administration", () => {
     const api = new TeamApiServer({
       store,
       agents: createAgents({
-        listRoutines: (botId) => routines.filter((routine) => routine.botId === botId),
+        listRoutines: (agentId) => routines.filter((routine) => routine.agentId === agentId),
         createRoutine,
         updateRoutine,
         deleteRoutine,
@@ -1753,7 +1762,7 @@ describe("TeamApiServer administration", () => {
         jsonRequest<RoutineRun>(base, "/v1/agents/chief/routines/routine-1/test", { token, body: {} }),
       ).resolves.toMatchObject({ kind: "manual", status: "queued" });
       await expect(jsonRequest(base, "/v1/agents/chief/routines/routine-1/runs?limit=10", { token })).resolves.toEqual([
-        run,
+        wireRun,
       ]);
       await emptyRequest(base, "/v1/agents/chief/routines/routine-1", { method: "DELETE", token });
       await expect(jsonRequest(base, "/v1/agents/chief/routines", { token })).resolves.toEqual([]);
@@ -1776,9 +1785,9 @@ describe("TeamApiServer administration", () => {
         name: path.includes("large") ? "large.csv" : "report.csv",
         size: path.includes("large") ? ATTACHMENT_LIMITS.fileBytes + 1 : 21,
       }),
-      resolveWorkspaceFile: async (botId, path) => ({
+      resolveWorkspaceFile: async (agentId, path) => ({
         path: filePath,
-        name: `${botId}-${path.split("/").at(-1)}`,
+        name: `${agentId}-${path.split("/").at(-1)}`,
         size: 21,
       }),
     });
@@ -1817,7 +1826,7 @@ describe("TeamApiServer administration", () => {
       expect(unauthorized.status).toBe(401);
 
       const workspaceResponse = await fetch(
-        `${base}/v1/workspace-files?botId=chief&path=${encodeURIComponent("app/page.tsx")}`,
+        `${base}/v1/workspace-files?agentId=chief&path=${encodeURIComponent("app/page.tsx")}`,
         {
           headers: { Authorization: `Bearer ${login.sessionToken}` },
         },
@@ -1826,7 +1835,7 @@ describe("TeamApiServer administration", () => {
       expect(workspaceResponse.headers.get("content-disposition")).toContain("chief-page.tsx");
       expect(await workspaceResponse.text()).toBe("name,value\nOpenBot,1\n");
 
-      const unauthorizedWorkspace = await fetch(`${base}/v1/workspace-files?botId=chief&path=app/page.tsx`);
+      const unauthorizedWorkspace = await fetch(`${base}/v1/workspace-files?agentId=chief&path=app/page.tsx`);
       expect(unauthorizedWorkspace.status).toBe(401);
     } finally {
       await api.stop();
@@ -1839,7 +1848,7 @@ describe("TeamApiServer administration", () => {
     const store = new TeamStore(join(root, "team.json"));
     await store.initialize();
     await store.configure("Studio Mac", "owner", "correct horse battery");
-    const localBots: BotSummary[] = [
+    const localAgents: AgentSummary[] = [
       {
         id: "chief",
         provider: "codex",
@@ -1859,7 +1868,7 @@ describe("TeamApiServer administration", () => {
       },
     ];
     const localConversation: ConversationWithReadState = {
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-chief",
       activeTurnId: null,
       revision: 1,
@@ -1905,9 +1914,9 @@ describe("TeamApiServer administration", () => {
         },
       ],
     };
-    const createBot = vi.fn(
-      async (input: CreateBotInput): Promise<BotSummary> => ({
-        ...localBots[0],
+    const createAgent = vi.fn(
+      async (input: CreateAgentInput): Promise<AgentSummary> => ({
+        ...localAgents[0],
         id: "trip-planner",
         name: input.name,
         title: "",
@@ -1923,6 +1932,14 @@ describe("TeamApiServer administration", () => {
         ...localConversation.messages.slice(1),
       ],
     };
+    /**
+     * Everything the fake agent service hands the host is current-shaped, so it says `agentId`. Everything
+     * an assertion below reads back came off `fetch` or the socket as frozen Team API wire JSON, which
+     * still says `botId`. Both vocabularies in one file is the shim doing its job, not a missed rename.
+     */
+    const { agentId: localAgentId, ...localConversationRest } = localConversation;
+    const wireConversation = { ...localConversationRest, botId: localAgentId };
+    const wireLegacyConversation = { ...wireConversation, messages: legacyConversation.messages };
     const sendMessage = vi.fn<TestAgents["sendMessage"]>(async () => ({
       messageId: "message-tagged",
       deliveries: [],
@@ -1964,25 +1981,25 @@ describe("TeamApiServer administration", () => {
         throughMessageId: options.excludeHostedSiteEvents ? "message-1" : "hosted-site-event-1",
       },
     }));
-    const markConversationUnread = vi.fn(async (_botId: string, _memberId: string) => ({
+    const markConversationUnread = vi.fn(async (_agentId: string, _memberId: string) => ({
       unreadCount: 1,
       firstUnreadMessageId: "message-1",
       throughMessageId: null,
     }));
     const agents = createAgents({
-      listBots: () => localBots,
+      listAgents: () => localAgents,
       getUsage,
-      createBot,
+      createAgent,
       listConversationReads,
       markConversationUnread,
-      readConversationFor: async (botId: string, _memberId: string) => ({
+      readConversationFor: async (agentId: string, _memberId: string) => ({
         ...localConversation,
-        botId,
+        agentId,
         readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "hosted-site-event-1" },
       }),
       readConversationPageFor,
       markConversationRead: async (
-        _botId: string,
+        _agentId: string,
         _memberId: string,
         throughMessageId: string | null,
         options: { excludeHostedSiteEvents?: boolean } = {},
@@ -2006,7 +2023,7 @@ describe("TeamApiServer administration", () => {
       const login = await jsonRequest<{ sessionToken: string }>(base, "/v1/auth/login", {
         body: { username: "owner", password: "correct horse battery" },
       });
-      const createInput: CreateBotInput = {
+      const createInput: CreateAgentInput = {
         name: "Trip Planner",
         description: "Builds practical itineraries.",
         avatarSeed: "setup:trip",
@@ -2021,8 +2038,8 @@ describe("TeamApiServer administration", () => {
         description: "Builds practical itineraries.",
         title: "",
       });
-      expect(createBot).toHaveBeenCalledWith(createInput);
-      await expect(jsonRequest(base, "/v1/agents", { token: login.sessionToken })).resolves.toEqual(localBots);
+      expect(createAgent).toHaveBeenCalledWith(createInput);
+      await expect(jsonRequest(base, "/v1/agents", { token: login.sessionToken })).resolves.toEqual(localAgents);
       await expect(
         jsonRequest(base, "/v1/agents/chief/usage", {
           token: login.sessionToken,
@@ -2032,8 +2049,8 @@ describe("TeamApiServer administration", () => {
       ).resolves.toEqual(usage);
       expect(getUsage).toHaveBeenCalledWith("chief");
       await expect(jsonRequest(base, "/v1/agents/chief/conversation", { token: login.sessionToken })).resolves.toEqual({
-        ...legacyConversation,
-        messages: [legacyConversation.messages[0]],
+        ...wireLegacyConversation,
+        messages: [wireLegacyConversation.messages[0]],
         readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "message-1" },
       });
       await expect(
@@ -2042,7 +2059,7 @@ describe("TeamApiServer administration", () => {
           capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
         }),
       ).resolves.toEqual({
-        ...legacyConversation,
+        ...wireLegacyConversation,
         readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "hosted-site-event-1" },
       });
       await expect(
@@ -2051,7 +2068,7 @@ describe("TeamApiServer administration", () => {
           capabilities: [...TEAM_CURRENT_CAPABILITIES],
         }),
       ).resolves.toEqual({
-        ...localConversation,
+        ...wireConversation,
         readState: { unreadCount: 0, firstUnreadMessageId: null, throughMessageId: "hosted-site-event-1" },
       });
       await expect(
@@ -2070,7 +2087,7 @@ describe("TeamApiServer administration", () => {
           token: login.sessionToken,
           capabilities: [...TEAM_PROTOCOL_V1_CAPABILITIES],
         }),
-      ).resolves.toMatchObject({ messages: legacyConversation.messages });
+      ).resolves.toMatchObject({ messages: wireLegacyConversation.messages });
       expect(readConversationPageFor.mock.calls.at(-1)?.[4]).toEqual({
         excludeRoutineEvents: false,
         excludeRoutineRunEvents: false,
@@ -2119,7 +2136,7 @@ describe("TeamApiServer administration", () => {
         },
       });
       expect(sendMessage).toHaveBeenCalledWith({
-        botId: "chief",
+        agentId: "chief",
         text: taggedMessage,
         attachmentDraftIds: [],
         replyToMessageId: null,
@@ -2182,8 +2199,8 @@ describe("TeamApiServer administration", () => {
     const takeovers: unknown[] = [];
     const prompts: unknown[] = [];
     const agents = createAgents({
-      acknowledgeFailedTurn: (botId, turnId) => {
-        failures.push({ botId, turnId });
+      acknowledgeFailedTurn: (agentId, turnId) => {
+        failures.push({ agentId, turnId });
       },
       respondToPrompt: async (input: unknown) => {
         prompts.push(input);
@@ -2227,7 +2244,7 @@ describe("TeamApiServer administration", () => {
         token: login.sessionToken,
         body: { turnId: "turn-failed" },
       });
-      expect(failures).toEqual([{ botId: "chief", turnId: "turn-failed" }]);
+      expect(failures).toEqual([{ agentId: "chief", turnId: "turn-failed" }]);
 
       const oversizedPrompt = await fetch(`${base}/v1/prompts/respond`, {
         method: "POST",
@@ -2505,7 +2522,7 @@ function decodeTestRealtimeEvent(value: unknown): TestRealtimeEvent {
   const typing = value.typing;
   if (typing !== undefined && !isBoolean(typing)) throw new Error("Invalid test typing state.");
   const botId = value.botId;
-  if (botId !== undefined && !isString(botId)) throw new Error("Invalid test bot id.");
+  if (botId !== undefined && !isString(botId)) throw new Error("Invalid test agent id.");
   const revision = value.revision;
   if (revision !== undefined && !isNumber(revision)) throw new Error("Invalid test revision.");
   return {

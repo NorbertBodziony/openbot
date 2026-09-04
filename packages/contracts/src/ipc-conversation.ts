@@ -161,7 +161,7 @@ export function isAgentStatus(value: unknown): value is AgentStatus {
   );
 }
 
-export interface BotSummary {
+export interface AgentSummary {
   id: string;
   name: string;
   title: string;
@@ -175,7 +175,7 @@ export interface BotSummary {
   preview: string;
   updatedAt: string | null;
   avatarSeed: string;
-  avatarHue: BotAvatarHue | null;
+  avatarHue: AvatarHue | null;
   avatarUrl: string | null;
   marketplaceSource?: {
     listingId: string;
@@ -186,31 +186,31 @@ export interface BotSummary {
   };
 }
 
-export type BotMemoryOrigin = "automatic" | "manual";
+export type AgentMemoryOrigin = "automatic" | "manual";
 
-export interface BotMemory {
+export interface AgentMemory {
   id: string;
-  botId: string;
+  agentId: string;
   text: string;
-  origin: BotMemoryOrigin;
+  origin: AgentMemoryOrigin;
   sourceTurnId: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface CreateBotMemoryInput {
-  botId: string;
+export interface CreateAgentMemoryInput {
+  agentId: string;
   text: string;
 }
 
-export interface UpdateBotMemoryInput {
-  botId: string;
+export interface UpdateAgentMemoryInput {
+  agentId: string;
   memoryId: string;
   text: string;
 }
 
-export interface DeleteBotMemoryInput {
-  botId: string;
+export interface DeleteAgentMemoryInput {
+  agentId: string;
   memoryId: string;
 }
 
@@ -249,7 +249,7 @@ export interface RoutineTrigger {
 
 export interface Routine {
   id: string;
-  botId: string;
+  agentId: string;
   name: string;
   instruction: string;
   active: boolean;
@@ -271,7 +271,7 @@ export type RoutineRunStatus =
 export interface RoutineRun {
   id: string;
   routineId: string;
-  botId: string;
+  agentId: string;
   triggerId: string | null;
   kind: "scheduled" | "manual";
   scheduledFor: string;
@@ -285,7 +285,7 @@ export interface RoutineRun {
 }
 
 export interface CreateRoutineInput {
-  botId: string;
+  agentId: string;
   name: string;
   instruction: string;
   active: boolean;
@@ -294,7 +294,7 @@ export interface CreateRoutineInput {
 }
 
 export interface UpdateRoutineInput {
-  botId: string;
+  agentId: string;
   routineId: string;
   name?: string;
   instruction?: string;
@@ -303,17 +303,17 @@ export interface UpdateRoutineInput {
 }
 
 export interface DeleteRoutineInput {
-  botId: string;
+  agentId: string;
   routineId: string;
 }
 
 export interface TestRoutineInput {
-  botId: string;
+  agentId: string;
   routineId: string;
 }
 
 export interface ListRoutineRunsInput {
-  botId: string;
+  agentId: string;
   routineId: string;
   limit?: number;
 }
@@ -358,7 +358,7 @@ export function isRoutine(value: unknown): value is Routine {
   return (
     isDynamicRecord(value) &&
     isString(value.id) &&
-    isString(value.botId) &&
+    isString(value.agentId) &&
     isString(value.name) &&
     isString(value.instruction) &&
     isBoolean(value.active) &&
@@ -374,7 +374,7 @@ export function isRoutineRun(value: unknown): value is RoutineRun {
     isDynamicRecord(value) &&
     isString(value.id) &&
     isString(value.routineId) &&
-    isString(value.botId) &&
+    isString(value.agentId) &&
     (value.triggerId === null || isString(value.triggerId)) &&
     isOneOf(["scheduled", "manual"] as const, value.kind) &&
     isString(value.scheduledFor) &&
@@ -430,15 +430,15 @@ function integerInRange(value: unknown, minimum: number, maximum: number): value
   return isNumber(value) && Number.isInteger(value) && value >= minimum && value <= maximum;
 }
 
-export function isBotMemory(value: unknown): value is BotMemory {
+export function isAgentMemory(value: unknown): value is AgentMemory {
   return (
     isDynamicRecord(value) &&
     isString(value.id) &&
     value.id.length > 0 &&
     value.id.length <= INPUT_LIMITS.identifier &&
-    isString(value.botId) &&
-    value.botId.length > 0 &&
-    value.botId.length <= INPUT_LIMITS.identifier &&
+    isString(value.agentId) &&
+    value.agentId.length > 0 &&
+    value.agentId.length <= INPUT_LIMITS.identifier &&
     isString(value.text) &&
     value.text.length > 0 &&
     value.text.length <= INPUT_LIMITS.agentMemoryText &&
@@ -498,8 +498,8 @@ export interface AgentModelOption {
   supportedReasoningEfforts: AgentReasoningEffort[];
 }
 
-export const BOT_AVATAR_HUES = [0, 30, 55, 100, 150, 185, 215, 245, 280, 320] as const;
-export type BotAvatarHue = (typeof BOT_AVATAR_HUES)[number];
+export const AVATAR_HUES = [0, 30, 55, 100, 150, 185, 215, 245, 280, 320] as const;
+export type AvatarHue = (typeof AVATAR_HUES)[number];
 
 export function isAgentModel(value: unknown): value is AgentModelId {
   return isString(value) && value.length > 0 && value.length <= 160 && /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(value);
@@ -523,8 +523,8 @@ export function isAvatarSeed(value: unknown): value is string {
   return isString(value) && /^[a-z0-9:-]{1,128}$/.test(value);
 }
 
-export function isAvatarHue(value: unknown): value is BotAvatarHue {
-  return isOneOf(BOT_AVATAR_HUES, value);
+export function isAvatarHue(value: unknown): value is AvatarHue {
+  return isOneOf(AVATAR_HUES, value);
 }
 
 export function isAgentModelOption(value: unknown): value is AgentModelOption {
@@ -540,16 +540,16 @@ export function isAgentModelOption(value: unknown): value is AgentModelOption {
   );
 }
 
-export interface CreateBotInput {
+export interface CreateAgentInput {
   name: string;
   description: string;
   avatarSeed: string;
-  avatarHue: BotAvatarHue | null;
+  avatarHue: AvatarHue | null;
   initialMessage: string;
 }
 
-export interface UpdateBotInput {
-  botId: string;
+export interface UpdateAgentInput {
+  agentId: string;
   name?: string;
   title?: string;
   description?: string;
@@ -558,11 +558,11 @@ export interface UpdateBotInput {
   model?: AgentModelId;
   reasoningEffort?: AgentReasoningEffort;
   avatarSeed?: string;
-  avatarHue?: BotAvatarHue | null;
+  avatarHue?: AvatarHue | null;
 }
 
-export interface DuplicateBotResult {
-  bot: BotSummary;
+export interface DuplicateAgentResult {
+  agent: AgentSummary;
   layout: SidebarLayoutSnapshot;
 }
 
@@ -572,7 +572,7 @@ export interface AvatarImageInput {
 }
 
 export interface SetAgentAvatarInput {
-  botId: string;
+  agentId: string;
   image: AvatarImageInput | null;
 }
 
@@ -647,7 +647,7 @@ export interface OpenSharedFileInput {
 }
 
 export interface OpenWorkspaceFileInput {
-  botId: string;
+  agentId: string;
   path: string;
 }
 
@@ -675,10 +675,10 @@ export type QueueDeliveryStatus = (typeof QUEUE_DELIVERY_STATUSES)[number];
 export interface QueueDelivery {
   id: string;
   messageId: string;
-  recipientBotId: string;
+  recipientAgentId: string;
   sender:
     | { kind: "user" }
-    | { kind: "bot"; botId: string }
+    | { kind: "agent"; agentId: string }
     | { kind: "routine"; routineId: string; runId: string; routineName: string; scheduledFor: string };
   text: string;
   attachments: AttachmentSummary[];
@@ -691,7 +691,7 @@ export interface QueueDelivery {
 }
 
 export interface QueueSnapshot {
-  botId: string;
+  agentId: string;
   deliveries: QueueDelivery[];
 }
 
@@ -725,7 +725,7 @@ export interface ConversationMessage {
   status: "streaming" | "completed" | "failed" | "interrupted";
   itemType?: string;
   source?: "user" | "assistant" | "agent" | "system" | "routine";
-  senderBotId?: string;
+  senderAgentId?: string;
   replyToMessageId?: string | null;
   attachments?: AttachmentSummary[];
   imageGeneration?: ImageGenerationInfo;
@@ -1055,7 +1055,7 @@ export function isConversationMessage(value: unknown): value is ConversationMess
       value.source === "agent" ||
       value.source === "system" ||
       value.source === "routine") &&
-    (value.senderBotId === undefined || isIdentifier(value.senderBotId)) &&
+    (value.senderAgentId === undefined || isIdentifier(value.senderAgentId)) &&
     (value.replyToMessageId === undefined || value.replyToMessageId === null || isIdentifier(value.replyToMessageId)) &&
     (value.attachments === undefined ||
       (Array.isArray(value.attachments) &&
@@ -1093,10 +1093,10 @@ function isAgentExchangeSummary(value: unknown): value is AgentExchangeSummary {
     isDynamicRecord(value) &&
     isOneOf(["incoming", "outgoing"] as const, value.direction) &&
     isIdentifier(value.messageId) &&
-    isIdentifier(value.senderBotId) &&
-    Array.isArray(value.recipientBotIds) &&
-    value.recipientBotIds.length <= INPUT_LIMITS.messageRecipients &&
-    value.recipientBotIds.every(isIdentifier) &&
+    isIdentifier(value.senderAgentId) &&
+    Array.isArray(value.recipientAgentIds) &&
+    value.recipientAgentIds.length <= INPUT_LIMITS.messageRecipients &&
+    value.recipientAgentIds.every(isIdentifier) &&
     (value.replyToMessageId === null || isIdentifier(value.replyToMessageId)) &&
     Array.isArray(value.deliveries) &&
     value.deliveries.length <= INPUT_LIMITS.messageRecipients &&
@@ -1104,7 +1104,7 @@ function isAgentExchangeSummary(value: unknown): value is AgentExchangeSummary {
       (delivery) =>
         isDynamicRecord(delivery) &&
         isIdentifier(delivery.id) &&
-        isIdentifier(delivery.recipientBotId) &&
+        isIdentifier(delivery.recipientAgentId) &&
         isOneOf(QUEUE_DELIVERY_STATUSES, delivery.status) &&
         (delivery.position === null ||
           (isNumber(delivery.position) && Number.isInteger(delivery.position) && delivery.position >= 1)) &&
@@ -1118,7 +1118,7 @@ export const MORE_MESSAGE_REACTIONS = ["🔥", "👏", "🙏", "🤔", "👀", "
 export const ALL_MESSAGE_REACTIONS = [...MESSAGE_REACTIONS, ...MORE_MESSAGE_REACTIONS] as const;
 export type MessageReaction = string;
 
-export type ConversationReactionActor = { kind: "user" } | { kind: "bot"; botId: string };
+export type ConversationReactionActor = { kind: "user" } | { kind: "agent"; agentId: string };
 
 export interface ConversationReaction {
   emoji: MessageReaction;
@@ -1137,21 +1137,21 @@ export function isConversationReaction(value: unknown): value is ConversationRea
   if (!isDynamicRecord(value) || !isMessageReaction(value.emoji) || !isDynamicRecord(value.actor)) return false;
   return (
     value.actor.kind === "user" ||
-    (value.actor.kind === "bot" && isString(value.actor.botId) && value.actor.botId.length > 0)
+    (value.actor.kind === "agent" && isString(value.actor.agentId) && value.actor.agentId.length > 0)
   );
 }
 
 export interface AgentExchangeSummary {
   direction: "incoming" | "outgoing";
   messageId: string;
-  senderBotId: string;
-  recipientBotIds: string[];
+  senderAgentId: string;
+  recipientAgentIds: string[];
   replyToMessageId: string | null;
-  deliveries: Array<Pick<QueueDelivery, "id" | "recipientBotId" | "status" | "position" | "error">>;
+  deliveries: Array<Pick<QueueDelivery, "id" | "recipientAgentId" | "status" | "position" | "error">>;
 }
 
 export interface ConversationSnapshot {
-  botId: string;
+  agentId: string;
   threadId: string | null;
   activeTurnId: string | null;
   revision: number;
@@ -1161,7 +1161,7 @@ export interface ConversationSnapshot {
 function isConversationSnapshot(value: unknown): value is ConversationSnapshot {
   return (
     isDynamicRecord(value) &&
-    isIdentifier(value.botId) &&
+    isIdentifier(value.agentId) &&
     (value.threadId === null || isIdentifier(value.threadId)) &&
     (value.activeTurnId === null || isIdentifier(value.activeTurnId)) &&
     isNumber(value.revision) &&
@@ -1212,13 +1212,13 @@ export interface ConversationPageInfo {
 }
 
 export interface ReadConversationPageInput {
-  botId: string;
+  agentId: string;
   anchor?: ConversationPageAnchor;
   limit?: number;
 }
 
 export interface ConversationPage {
-  botId: string;
+  agentId: string;
   threadId: string | null;
   activeTurnId: string | null;
   revision: number;
@@ -1230,13 +1230,13 @@ export interface ConversationPage {
 
 export interface SearchConversationMessagesInput {
   query: string;
-  botId?: string;
+  agentId?: string;
   cursor?: string;
   limit?: number;
 }
 
 export interface ConversationSearchResult {
-  botId: string;
+  agentId: string;
   message: ConversationMessage;
 }
 
@@ -1247,19 +1247,19 @@ export interface ConversationSearchPage {
 }
 
 export interface MarkConversationReadInput {
-  botId: string;
+  agentId: string;
   throughMessageId: string | null;
 }
 
 export interface SendMessageInput {
-  botId: string;
+  agentId: string;
   text: string;
   attachmentDraftIds?: string[];
   replyToMessageId?: string | null;
 }
 
 export interface SetMessageReactionInput {
-  botId: string;
+  agentId: string;
   messageId: string;
   emoji: MessageReaction | null;
 }
@@ -1268,7 +1268,7 @@ export interface QueuedMessageReceipt {
   messageId: string;
   deliveries: Array<{
     id: string;
-    recipientBotId: string;
+    recipientAgentId: string;
     status: QueueDeliveryStatus;
     position: number | null;
   }>;
@@ -1283,7 +1283,7 @@ export function isQueuedMessageReceipt(value: unknown): value is QueuedMessageRe
       (delivery) =>
         isDynamicRecord(delivery) &&
         isIdentifier(delivery.id) &&
-        isIdentifier(delivery.recipientBotId) &&
+        isIdentifier(delivery.recipientAgentId) &&
         isOneOf(QUEUE_DELIVERY_STATUSES, delivery.status) &&
         (delivery.position === null ||
           (isNumber(delivery.position) && Number.isInteger(delivery.position) && delivery.position >= 1)),
@@ -1292,23 +1292,23 @@ export function isQueuedMessageReceipt(value: unknown): value is QueuedMessageRe
 }
 
 export interface CancelQueuedMessageInput {
-  botId: string;
+  agentId: string;
   deliveryId: string;
 }
 
 export interface AcknowledgeFailedTurnInput {
-  botId: string;
+  agentId: string;
   turnId: string;
 }
 
 export interface SteerQueuedMessageInput {
-  botId: string;
+  agentId: string;
   deliveryId: string;
   expectedTurnId: string;
 }
 
 export interface UpdateQueuedMessageInput {
-  botId: string;
+  agentId: string;
   deliveryId: string;
   text: string;
   keepAttachmentIds: string[];
@@ -1316,12 +1316,12 @@ export interface UpdateQueuedMessageInput {
 }
 
 export interface ReorderQueueInput {
-  botId: string;
+  agentId: string;
   deliveryIds: string[];
 }
 
 export interface InterruptTurnInput {
-  botId: string;
+  agentId: string;
   turnId: string;
 }
 
@@ -1332,7 +1332,7 @@ export interface RespondToPromptInput {
 
 export interface BrowserTakeoverRequest {
   requestId: string | number;
-  botId: string;
+  agentId: string;
   threadId: string;
   turnId: string;
   tabId: string;
@@ -1355,7 +1355,7 @@ export interface AgentApprovalPermissions {
 
 export interface AgentApproval {
   requestId: string | number;
-  botId: string;
+  agentId: string;
   threadId: string;
   turnId: string;
   kind: AgentApprovalKind;
@@ -1367,21 +1367,21 @@ export interface AgentApproval {
 }
 
 export interface AgentRuntimeSnapshot {
-  bots: AgentRuntimeBotSummary[];
-  activeTurns: Array<{ botId: string; threadId: string; turnId: string }>;
+  agents: AgentRuntimeRosterEntry[];
+  activeTurns: Array<{ agentId: string; threadId: string; turnId: string }>;
   work: AgentRuntimeWorkItem[];
-  latestMessages: Array<{ botId: string; id: string; text: string; createdAt: string }>;
+  latestMessages: Array<{ agentId: string; id: string; text: string; createdAt: string }>;
   attentionComplete: boolean;
   pendingPrompts: Array<{
     requestId: string | number;
-    botId: string;
+    agentId: string;
     threadId: string;
     turnId: string;
     questions: AgentRuntimePromptQuestion[];
   }>;
   pendingApprovals: AgentRuntimeApproval[];
   pendingBrowserTakeovers: BrowserTakeoverRequest[];
-  failedTurns: Array<{ botId: string; turnId: string }>;
+  failedTurns: Array<{ agentId: string; turnId: string }>;
 }
 
 export const AGENT_RUNTIME_TEXT_LIMIT = 240;
@@ -1392,20 +1392,20 @@ export const AGENT_RUNTIME_ATTENTION_LIMIT = 4;
 export const AGENT_RUNTIME_PERMISSION_PATHS_LIMIT = 3;
 export const AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT = 256 * 1024;
 
-export interface AgentRuntimeBotSummary {
+export interface AgentRuntimeRosterEntry {
   id: string;
   name: string;
   notifications: boolean;
   preview: string;
   updatedAt: string | null;
   avatarSeed: string;
-  avatarHue: BotAvatarHue | null;
+  avatarHue: AvatarHue | null;
   avatarUrl: string | null;
 }
 
 export interface AgentRuntimeWorkItem {
   id: string;
-  botId: string;
+  agentId: string;
   turnId: string | null;
   status: "starting" | "running" | "failed";
   text: string;
@@ -1429,21 +1429,21 @@ export interface RespondToApprovalInput {
   decision: "accept" | "decline";
 }
 
-export type AgentTurnOrigin = "user" | "routine" | "bot" | "unknown";
+export type AgentTurnOrigin = "user" | "routine" | "agent" | "unknown";
 
 export type AgentEvent =
   | { type: "status"; status: AgentStatus }
   | { type: "usage-changed"; usage: AccountUsage }
-  | { type: "bots-changed"; bots: BotSummary[] }
-  | { type: "memories-changed"; botId: string }
-  | { type: "routines-changed"; botId: string }
+  | { type: "agents-changed"; agents: AgentSummary[] }
+  | { type: "memories-changed"; agentId: string }
+  | { type: "routines-changed"; agentId: string }
   | { type: "sidebar-layout-changed"; layout: SidebarLayoutSnapshot }
   | { type: "conversation"; snapshot: ConversationSnapshot }
-  | { type: "conversation-invalidated"; botId: string; revision: number }
+  | { type: "conversation-invalidated"; agentId: string; revision: number }
   | { type: "conversation-page"; page: ConversationPage }
   | {
       type: "conversation-delta";
-      botId: string;
+      agentId: string;
       threadId: string;
       turnId: string;
       messageId: string;
@@ -1451,13 +1451,13 @@ export type AgentEvent =
       createdAt: string;
       revision: number;
     }
-  | { type: "queue-invalidated"; botId: string }
+  | { type: "queue-invalidated"; agentId: string }
   | { type: "queue-changed"; snapshot: QueueSnapshot }
-  | { type: "turn-progress"; botId: string; threadId: string; turnId: string; detail: string }
-  | { type: "turn-started"; botId: string; threadId: string; turnId: string; origin?: AgentTurnOrigin }
+  | { type: "turn-progress"; agentId: string; threadId: string; turnId: string; detail: string }
+  | { type: "turn-started"; agentId: string; threadId: string; turnId: string; origin?: AgentTurnOrigin }
   | {
       type: "turn-completed";
-      botId: string;
+      agentId: string;
       threadId: string;
       turnId: string;
       status: string;
@@ -1466,7 +1466,7 @@ export type AgentEvent =
   | {
       type: "prompt";
       requestId: string | number;
-      botId: string;
+      agentId: string;
       threadId: string;
       turnId: string;
       questions: AgentPromptQuestion[];
@@ -1475,15 +1475,15 @@ export type AgentEvent =
       type: "agent-input-resolved";
       kind: "prompt" | "approval";
       requestId: string | number;
-      botId: string;
+      agentId: string;
     }
   | { type: "browser-takeover-requested"; request: BrowserTakeoverRequest }
-  | { type: "browser-takeover-resolved"; requestId: string | number; botId: string }
+  | { type: "browser-takeover-resolved"; requestId: string | number; agentId: string }
   | { type: "approval"; approval: AgentApproval }
   | { type: "runtime-snapshot"; snapshot: AgentRuntimeSnapshot }
   | { type: "browser-changed"; tabs: BrowserTab[]; activeTabId: string | null }
   | { type: "browser-control-changed"; state: BrowserControlState }
-  | { type: "error"; botId?: string; code: string; message: string };
+  | { type: "error"; agentId?: string; code: string; message: string };
 
 export function isAgentEvent(value: unknown): value is AgentEvent {
   if (!isDynamicRecord(value) || !isString(value.type)) return false;
@@ -1492,19 +1492,24 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
       return isDynamicRecord(value.status);
     case "usage-changed":
       return isDynamicRecord(value.usage);
-    case "bots-changed":
-      return Array.isArray(value.bots) && value.bots.length <= INPUT_LIMITS.agents && value.bots.every(isBotSummary);
+    case "agents-changed":
+      return (
+        Array.isArray(value.agents) && value.agents.length <= INPUT_LIMITS.agents && value.agents.every(isAgentSummary)
+      );
     case "memories-changed":
-      return isString(value.botId) && value.botId.length > 0 && value.botId.length <= INPUT_LIMITS.identifier;
+      return isString(value.agentId) && value.agentId.length > 0 && value.agentId.length <= INPUT_LIMITS.identifier;
     case "routines-changed":
-      return isString(value.botId) && value.botId.length > 0 && value.botId.length <= INPUT_LIMITS.identifier;
+      return isString(value.agentId) && value.agentId.length > 0 && value.agentId.length <= INPUT_LIMITS.identifier;
     case "sidebar-layout-changed":
       return isSidebarLayoutSnapshot(value.layout);
     case "conversation":
       return isConversationSnapshot(value.snapshot);
     case "conversation-invalidated":
       return (
-        isIdentifier(value.botId) && isNumber(value.revision) && Number.isInteger(value.revision) && value.revision >= 0
+        isIdentifier(value.agentId) &&
+        isNumber(value.revision) &&
+        Number.isInteger(value.revision) &&
+        value.revision >= 0
       );
     case "conversation-page": {
       const page = value.page;
@@ -1525,7 +1530,7 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
     }
     case "conversation-delta":
       return (
-        isString(value.botId) &&
+        isString(value.agentId) &&
         isString(value.threadId) &&
         isString(value.turnId) &&
         isString(value.messageId) &&
@@ -1534,12 +1539,12 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
         isNumber(value.revision)
       );
     case "queue-invalidated":
-      return isIdentifier(value.botId);
+      return isIdentifier(value.agentId);
     case "queue-changed":
       return isQueueSnapshot(value.snapshot);
     case "turn-progress":
       return (
-        isIdentifier(value.botId) &&
+        isIdentifier(value.agentId) &&
         isIdentifier(value.threadId) &&
         isIdentifier(value.turnId) &&
         isString(value.detail) &&
@@ -1549,7 +1554,7 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
     case "turn-started":
     case "turn-completed":
       return (
-        isString(value.botId) &&
+        isString(value.agentId) &&
         isString(value.threadId) &&
         isString(value.turnId) &&
         (value.origin === undefined || isAgentTurnOrigin(value.origin))
@@ -1557,7 +1562,7 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
     case "prompt":
       return (
         (isString(value.requestId) || isNumber(value.requestId)) &&
-        isString(value.botId) &&
+        isString(value.agentId) &&
         isString(value.threadId) &&
         isString(value.turnId) &&
         Array.isArray(value.questions) &&
@@ -1568,12 +1573,12 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
       return (
         (value.kind === "prompt" || value.kind === "approval") &&
         (isString(value.requestId) || isNumber(value.requestId)) &&
-        isString(value.botId)
+        isString(value.agentId)
       );
     case "browser-takeover-requested":
       return isBrowserTakeoverRequest(value.request);
     case "browser-takeover-resolved":
-      return (isString(value.requestId) || isNumber(value.requestId)) && isString(value.botId);
+      return (isString(value.requestId) || isNumber(value.requestId)) && isString(value.agentId);
     case "approval":
       return isAgentApproval(value.approval);
     case "runtime-snapshot":
@@ -1592,14 +1597,14 @@ export function isAgentEvent(value: unknown): value is AgentEvent {
 function isAgentRuntimeSnapshot(value: unknown): value is AgentRuntimeSnapshot {
   if (!isDynamicRecord(value)) return false;
   return (
-    Array.isArray(value.bots) &&
-    value.bots.length <= INPUT_LIMITS.agents &&
-    value.bots.every(isAgentRuntimeBotSummary) &&
+    Array.isArray(value.agents) &&
+    value.agents.length <= INPUT_LIMITS.agents &&
+    value.agents.every(isAgentRuntimeRosterEntry) &&
     Array.isArray(value.activeTurns) &&
     value.activeTurns.length <= INPUT_LIMITS.agents &&
     value.activeTurns.every(
       (turn) =>
-        isDynamicRecord(turn) && isIdentifier(turn.botId) && isIdentifier(turn.threadId) && isIdentifier(turn.turnId),
+        isDynamicRecord(turn) && isIdentifier(turn.agentId) && isIdentifier(turn.threadId) && isIdentifier(turn.turnId),
     ) &&
     Array.isArray(value.work) &&
     value.work.length <= AGENT_RUNTIME_WORKING_ITEMS_LIMIT + AGENT_RUNTIME_ATTENTION_LIMIT &&
@@ -1609,7 +1614,7 @@ function isAgentRuntimeSnapshot(value: unknown): value is AgentRuntimeSnapshot {
     value.latestMessages.every(
       (message) =>
         isDynamicRecord(message) &&
-        isIdentifier(message.botId) &&
+        isIdentifier(message.agentId) &&
         isIdentifier(message.id) &&
         isBoundedString(message.text, AGENT_RUNTIME_TEXT_LIMIT) &&
         isBoundedString(message.createdAt, 160),
@@ -1628,11 +1633,11 @@ function isAgentRuntimeSnapshot(value: unknown): value is AgentRuntimeSnapshot {
       AGENT_RUNTIME_ATTENTION_LIMIT &&
     Array.isArray(value.failedTurns) &&
     value.failedTurns.length <= INPUT_LIMITS.agents &&
-    value.failedTurns.every((turn) => isDynamicRecord(turn) && isIdentifier(turn.botId) && isIdentifier(turn.turnId))
+    value.failedTurns.every((turn) => isDynamicRecord(turn) && isIdentifier(turn.agentId) && isIdentifier(turn.turnId))
   );
 }
 
-function isAgentRuntimeBotSummary(value: unknown): value is AgentRuntimeBotSummary {
+function isAgentRuntimeRosterEntry(value: unknown): value is AgentRuntimeRosterEntry {
   return (
     isDynamicRecord(value) &&
     isIdentifier(value.id) &&
@@ -1646,7 +1651,7 @@ function isAgentRuntimeBotSummary(value: unknown): value is AgentRuntimeBotSumma
   );
 }
 
-export function isBotSummary(value: unknown): value is BotSummary {
+export function isAgentSummary(value: unknown): value is AgentSummary {
   if (!isDynamicRecord(value)) return false;
   return (
     isIdentifier(value.id) &&
@@ -1668,7 +1673,7 @@ export function isBotSummary(value: unknown): value is BotSummary {
   );
 }
 
-function isMarketplaceSource(value: unknown): value is NonNullable<BotSummary["marketplaceSource"]> {
+function isMarketplaceSource(value: unknown): value is NonNullable<AgentSummary["marketplaceSource"]> {
   return (
     isDynamicRecord(value) &&
     isIdentifier(value.listingId) &&
@@ -1687,7 +1692,7 @@ function isMarketplaceSource(value: unknown): value is NonNullable<BotSummary["m
 export function isQueueSnapshot(value: unknown): value is QueueSnapshot {
   return (
     isDynamicRecord(value) &&
-    isIdentifier(value.botId) &&
+    isIdentifier(value.agentId) &&
     Array.isArray(value.deliveries) &&
     value.deliveries.every(isQueueDelivery)
   );
@@ -1697,7 +1702,7 @@ function isRuntimeWorkItem(value: unknown): value is AgentRuntimeWorkItem {
   return (
     isDynamicRecord(value) &&
     isIdentifier(value.id) &&
-    isIdentifier(value.botId) &&
+    isIdentifier(value.agentId) &&
     (value.turnId === null || isIdentifier(value.turnId)) &&
     isOneOf(["starting", "running", "failed"] as const, value.status) &&
     isBoundedString(value.text, AGENT_RUNTIME_TEXT_LIMIT) &&
@@ -1710,7 +1715,7 @@ function isQueueDelivery(value: unknown): value is QueueDelivery {
     isDynamicRecord(value) &&
     isIdentifier(value.id) &&
     isIdentifier(value.messageId) &&
-    isIdentifier(value.recipientBotId) &&
+    isIdentifier(value.recipientAgentId) &&
     isQueueSender(value.sender) &&
     isBoundedString(value.text, INPUT_LIMITS.messageText) &&
     Array.isArray(value.attachments) &&
@@ -1729,7 +1734,7 @@ function isQueueDelivery(value: unknown): value is QueueDelivery {
 function isQueueSender(value: unknown): value is QueueDelivery["sender"] {
   if (!isDynamicRecord(value)) return false;
   if (value.kind === "user") return true;
-  if (value.kind === "bot") return isIdentifier(value.botId);
+  if (value.kind === "agent") return isIdentifier(value.agentId);
   return (
     value.kind === "routine" &&
     isIdentifier(value.routineId) &&
@@ -1757,7 +1762,7 @@ function isRuntimePrompt(value: unknown): value is AgentRuntimeSnapshot["pending
   return (
     isDynamicRecord(value) &&
     isRequestId(value.requestId) &&
-    isIdentifier(value.botId) &&
+    isIdentifier(value.agentId) &&
     isIdentifier(value.threadId) &&
     isIdentifier(value.turnId) &&
     Array.isArray(value.questions) &&
@@ -1789,7 +1794,7 @@ function isRuntimeApproval(value: unknown): value is AgentRuntimeApproval {
   if (!isDynamicRecord(value)) return false;
   return (
     isRequestId(value.requestId) &&
-    isIdentifier(value.botId) &&
+    isIdentifier(value.agentId) &&
     isIdentifier(value.threadId) &&
     isIdentifier(value.turnId) &&
     isOneOf(["command", "file-change", "permissions"] as const, value.kind) &&
@@ -1824,7 +1829,7 @@ function isAgentApproval(value: unknown): value is AgentApproval {
   if (!isDynamicRecord(value)) return false;
   return (
     isRequestId(value.requestId) &&
-    isIdentifier(value.botId) &&
+    isIdentifier(value.agentId) &&
     isIdentifier(value.threadId) &&
     isIdentifier(value.turnId) &&
     isOneOf(["command", "file-change", "permissions"] as const, value.kind) &&
@@ -1850,7 +1855,7 @@ function isBrowserTakeoverRequest(value: unknown): value is BrowserTakeoverReque
   return (
     isDynamicRecord(value) &&
     isRequestId(value.requestId) &&
-    isIdentifier(value.botId) &&
+    isIdentifier(value.agentId) &&
     isIdentifier(value.threadId) &&
     isIdentifier(value.turnId) &&
     isIdentifier(value.tabId)
@@ -1882,7 +1887,7 @@ function isBoundedString(value: unknown, maximum: number): value is string {
 }
 
 function isAgentTurnOrigin(value: unknown): value is AgentTurnOrigin {
-  return value === "user" || value === "routine" || value === "bot" || value === "unknown";
+  return value === "user" || value === "routine" || value === "agent" || value === "unknown";
 }
 
 export function isSidebarLayoutSnapshot(value: unknown): value is SidebarLayoutSnapshot {

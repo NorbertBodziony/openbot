@@ -1,6 +1,6 @@
-import type { MobileBot } from "@/features/workspace/context/mobile-workspace-context";
+import type { MobileAgent } from "@/features/workspace/context/mobile-workspace-context";
 
-export type MobileSearchCategory = "all" | "messages" | "bots" | "files" | "routines";
+export type MobileSearchCategory = "all" | "messages" | "agents" | "files" | "routines";
 export type MobileSearchResultCategory = Exclude<MobileSearchCategory, "all">;
 
 export interface MobileSearchFilterOption {
@@ -10,24 +10,24 @@ export interface MobileSearchFilterOption {
 
 interface MobileSearchTextResult {
   id: string;
-  category: Exclude<MobileSearchResultCategory, "bots">;
+  category: Exclude<MobileSearchResultCategory, "agents">;
   title: string;
   subtitle: string;
   updatedLabel: string;
 }
 
-interface MobileSearchBotResult {
+interface MobileSearchAgentResult {
   id: string;
-  category: "bots";
-  bot: MobileBot;
+  category: "agents";
+  agent: MobileAgent;
 }
 
-export type MobileSearchResult = MobileSearchTextResult | MobileSearchBotResult;
+export type MobileSearchResult = MobileSearchTextResult | MobileSearchAgentResult;
 
 export const MOBILE_SEARCH_FILTERS: MobileSearchFilterOption[] = [
   { id: "all", label: "All" },
   { id: "messages", label: "Messages" },
-  { id: "bots", label: "Bots" },
+  { id: "agents", label: "Agents" },
   { id: "files", label: "Files" },
   { id: "routines", label: "Routines" },
 ];
@@ -78,20 +78,20 @@ const MOCK_SEARCH_RESULTS: MobileSearchTextResult[] = [
   },
 ];
 
-export function createMobileSearchResults(activeBots: MobileBot[]): MobileSearchResult[] {
+export function createMobileSearchResults(activeAgents: MobileAgent[]): MobileSearchResult[] {
   return [
-    ...activeBots.map<MobileSearchBotResult>((bot) => ({
-      id: `bot-${bot.id}`,
-      category: "bots",
-      bot,
+    ...activeAgents.map<MobileSearchAgentResult>((agent) => ({
+      id: `agent-${agent.id}`,
+      category: "agents",
+      agent,
     })),
     ...MOCK_SEARCH_RESULTS,
   ];
 }
 
 export function getMobileSearchResultText(result: MobileSearchResult): string[] {
-  if (result.category === "bots") {
-    return [result.bot.name, result.bot.title, result.bot.preview];
+  if (result.category === "agents") {
+    return [result.agent.name, result.agent.title, result.agent.preview];
   }
 
   return [result.title, result.subtitle];

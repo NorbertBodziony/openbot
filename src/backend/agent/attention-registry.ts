@@ -49,7 +49,7 @@ interface PendingPrompt {
   id: RequestId;
   responseKind: "dynamic-tool" | "mcp-elicitation" | "user-input";
   params: unknown;
-  botId: string;
+  agentId: string;
   publicThreadId: string;
   turnId: string;
   messageId: string;
@@ -104,7 +104,7 @@ export interface AttentionRegistryOptions {
   hostedSites: HostedSiteApprovals;
   routines: RoutineAttention;
   emit(event: AgentEvent): void;
-  emitError(code: string, error: unknown, botId?: string): void;
+  emitError(code: string, error: unknown, agentId?: string): void;
   emitRuntimeSnapshot(): void;
 }
 
@@ -129,7 +129,7 @@ export class AttentionRegistry {
   readonly #hostedSites: HostedSiteApprovals;
   readonly #routines: RoutineAttention;
   readonly #emit: (event: AgentEvent) => void;
-  readonly #emitError: (code: string, error: unknown, botId?: string) => void;
+  readonly #emitError: (code: string, error: unknown, agentId?: string) => void;
   readonly #emitRuntimeSnapshot: () => void;
   readonly #prompts = new Map<RequestId, PendingPrompt>();
   readonly #approvals = new Map<RequestId, PendingApproval>();
@@ -145,11 +145,11 @@ export class AttentionRegistry {
     this.#emitRuntimeSnapshot = options.emitRuntimeSnapshot;
   }
 
-  hasAttentionFor(botId: string): boolean {
+  hasAttentionFor(agentId: string): boolean {
     return (
-      [...this.#prompts.values()].some((pending) => pending.botId === botId) ||
-      [...this.#approvals.values()].some((pending) => pending.approval.botId === botId) ||
-      [...this.#takeovers.values()].some((pending) => pending.request.botId === botId)
+      [...this.#prompts.values()].some((pending) => pending.agentId === agentId) ||
+      [...this.#approvals.values()].some((pending) => pending.approval.agentId === agentId) ||
+      [...this.#takeovers.values()].some((pending) => pending.request.agentId === agentId)
     );
   }
 
@@ -160,7 +160,7 @@ export class AttentionRegistry {
     let remainingAttention = AGENT_RUNTIME_ATTENTION_LIMIT;
     const pendingPrompts = [...this.#prompts.values()].slice(0, remainingAttention).map((pending) => ({
       requestId: pending.id,
-      botId: pending.botId,
+      agentId: pending.agentId,
       threadId: pending.publicThreadId,
       turnId: pending.turnId,
       questions: pending.questions.map(compactRuntimeQuestion),
@@ -197,11 +197,11 @@ export class AttentionRegistry {
             };
     pending.client.respond(pending.id, result);
     this.#prompts.delete(input.requestId);
-    this.#emit({ type: "agent-input-resolved", kind: "prompt", requestId: input.requestId, botId: pending.botId });
+    this.#emit({ type: "agent-input-resolved", kind: "prompt", requestId: input.requestId, agentId: pending.agentId });
     try {
       this.#resolvePersistedPrompt(pending, promptResolution(pending.questions, input.answers));
     } catch (error) {
-      this.#emitError("prompt_persistence_failed", error, pending.botId);
+      this.#emitError("prompt_persistence_failed", error, pending.agentId);
     }
     this.#emitRuntimeSnapshot();
   }
@@ -215,7 +215,7 @@ export class AttentionRegistry {
       this.#approvals.delete(input.requestId);
       await this.#hostedSites.resolveApproval(
         pending.hostedSiteMutation,
-        { client: pending.client, id: pending.id, botId: pending.approval.botId },
+        { client: pending.client, id: pending.id, agentId: pending.approval.agentId },
         input.decision,
       );
     } else if (pending.approval.kind === "permissions") {
@@ -237,7 +237,7 @@ export class AttentionRegistry {
       type: "agent-input-resolved",
       kind: "approval",
       requestId: input.requestId,
-      botId: pending.approval.botId,
+      agentId: pending.approval.agentId,
     });
     this.#emitRuntimeSnapshot();
   }
@@ -252,16 +252,16 @@ export class AttentionRegistry {
   surfaceApproval(client: AgentClient, request: AppServerRequest, kind: AgentApprovalKind): void {
     const threadId = getString(request.params, "threadId");
     const turnId = getString(request.params, "turnId") ?? (kind === "file-change" ? String(request.id) : null);
-    const botId = threadId ? this.#conversation.botForThread(threadId) : undefined;
-    if (!threadId || !turnId || !botId) {
+    const agentId = threadId ? this.#conversation.agentForThread(threadId) : undefined;
+    if (!threadId || !turnId || !agentId) {
       this.#respondToMalformedApproval(client, request);
       return;
     }
 
     const approval: AgentApproval = {
       requestId: request.id,
-      botId,
-      threadId: this.#conversation.publicThreadId(botId, threadId),
+      agentId,
+      threadId: this.#conversation.publicThreadId(agentId, threadId),
       turnId,
       kind,
       command: commandText(request.params),
@@ -303,8 +303,8 @@ export class AttentionRegistry {
 
   surfaceLegacyApproval(client: AgentClient, request: AppServerRequest): void {
     const threadId = getString(request.params, "conversationId");
-    const botId = threadId ? this.#conversation.botForThread(threadId) : undefined;
-    if (!threadId || !botId) {
+    const agentId = threadId ? this.#conversation.agentForThread(threadId) : undefined;
+    if (!threadId || !agentId) {
       this.#respondToMalformedApproval(client, request);
       return;
     }
@@ -312,8 +312,8 @@ export class AttentionRegistry {
     const kind: AgentApprovalKind = request.method === "execCommandApproval" ? "command" : "file-change";
     const approval: AgentApproval = {
       requestId: request.id,
-      botId,
-      threadId: this.#conversation.publicThreadId(botId, threadId),
+      agentId,
+      threadId: this.#conversation.publicThreadId(agentId, threadId),
       turnId: getString(request.params, "turnId") ?? String(request.id),
       kind,
       command: commandText(request.params),
@@ -337,26 +337,26 @@ export class AttentionRegistry {
     if (!isDynamicToolCall(request.params)) return Promise.resolve(browserTakeoverError());
     const params = request.params;
     const { threadId, turnId } = params;
-    const botId = this.#conversation.botForThread(threadId);
+    const agentId = this.#conversation.agentForThread(threadId);
     const args = getRecord(params, "arguments");
     const tabId = getString(args, "tabId");
-    const publicThreadId = botId ? this.#conversation.publicThreadId(botId, threadId) : null;
+    const publicThreadId = agentId ? this.#conversation.publicThreadId(agentId, threadId) : null;
     const tab = tabId ? this.#browser.listTabs().find((candidate) => candidate.id === tabId) : undefined;
     if (
-      !botId ||
+      !agentId ||
       !turnId ||
       !tabId ||
       !publicThreadId ||
       !tab ||
       tab.ownerThreadId !== publicThreadId ||
-      tab.ownerBotId !== botId
+      tab.ownerAgentId !== agentId
     ) {
       return Promise.resolve(browserTakeoverError());
     }
 
     const takeover: BrowserTakeoverRequest = {
       requestId: request.id,
-      botId,
+      agentId,
       threadId: publicThreadId,
       turnId,
       tabId,
@@ -375,11 +375,11 @@ export class AttentionRegistry {
   surfaceDynamicPrompt(client: AgentClient, request: AppServerRequest): void {
     const threadId = getString(request.params, "threadId");
     const turnId = getString(request.params, "turnId");
-    const botId = threadId ? this.#conversation.botForThread(threadId) : undefined;
-    const publicThreadId = threadId && botId ? this.#conversation.publicThreadId(botId, threadId) : null;
+    const agentId = threadId ? this.#conversation.agentForThread(threadId) : undefined;
+    const publicThreadId = threadId && agentId ? this.#conversation.publicThreadId(agentId, threadId) : null;
     const args = getRecord(request.params, "arguments");
     const questions = promptQuestions(args);
-    if (!threadId || !turnId || !botId || !publicThreadId || !validPromptQuestions(questions)) {
+    if (!threadId || !turnId || !agentId || !publicThreadId || !validPromptQuestions(questions)) {
       client.respond(request.id, {
         success: false,
         contentItems: [
@@ -392,13 +392,13 @@ export class AttentionRegistry {
       return;
     }
 
-    const messageId = this.#persistQuestionPrompt(botId, publicThreadId, turnId, request.id, questions);
+    const messageId = this.#persistQuestionPrompt(agentId, publicThreadId, turnId, request.id, questions);
     this.#prompts.set(request.id, {
       client,
       id: request.id,
       responseKind: "dynamic-tool",
       params: request.params,
-      botId,
+      agentId,
       publicThreadId,
       turnId,
       messageId,
@@ -408,7 +408,7 @@ export class AttentionRegistry {
     this.#emit({
       type: "prompt",
       requestId: request.id,
-      botId,
+      agentId,
       threadId: publicThreadId,
       turnId,
       questions,
@@ -418,8 +418,8 @@ export class AttentionRegistry {
   surfacePrompt(client: AgentClient, request: AppServerRequest): void {
     const threadId = getString(request.params, "threadId");
     const turnId = getString(request.params, "turnId");
-    const botId = threadId ? this.#conversation.botForThread(threadId) : undefined;
-    if (!threadId || !turnId || !botId) {
+    const agentId = threadId ? this.#conversation.agentForThread(threadId) : undefined;
+    if (!threadId || !turnId || !agentId) {
       client.respond(request.id, { answers: {} });
       return;
     }
@@ -429,14 +429,14 @@ export class AttentionRegistry {
       client.respond(request.id, { answers: {} });
       return;
     }
-    const publicThreadId = this.#conversation.publicThreadId(botId, threadId);
-    const messageId = this.#persistQuestionPrompt(botId, publicThreadId, turnId, request.id, questions);
+    const publicThreadId = this.#conversation.publicThreadId(agentId, threadId);
+    const messageId = this.#persistQuestionPrompt(agentId, publicThreadId, turnId, request.id, questions);
     this.#prompts.set(request.id, {
       client,
       id: request.id,
       responseKind: "user-input",
       params: request.params,
-      botId,
+      agentId,
       publicThreadId,
       turnId,
       messageId,
@@ -446,7 +446,7 @@ export class AttentionRegistry {
     this.#emit({
       type: "prompt",
       requestId: request.id,
-      botId,
+      agentId,
       threadId: publicThreadId,
       turnId,
       questions,
@@ -456,27 +456,27 @@ export class AttentionRegistry {
   surfaceMcpElicitation(client: AgentClient, request: AppServerRequest): void {
     const threadId = getString(request.params, "threadId");
     const turnId = getString(request.params, "turnId");
-    const botId = threadId ? this.#conversation.botForThread(threadId) : undefined;
-    const publicThreadId = threadId && botId ? this.#conversation.publicThreadId(botId, threadId) : null;
+    const agentId = threadId ? this.#conversation.agentForThread(threadId) : undefined;
+    const publicThreadId = threadId && agentId ? this.#conversation.publicThreadId(agentId, threadId) : null;
     const question = mcpElicitationQuestion(request.params);
-    if (!threadId || !turnId || !botId || !publicThreadId || !question) {
+    if (!threadId || !turnId || !agentId || !publicThreadId || !question) {
       client.respond(request.id, { action: "decline", content: null, _meta: null });
       this.#emitError(
         "mcp_safety_handoff",
         "A local plugin requested an unsupported security hand-off, so OpenBot declined it.",
-        botId,
+        agentId,
       );
       return;
     }
 
     const questions = [question];
-    const messageId = this.#persistQuestionPrompt(botId, publicThreadId, turnId, request.id, questions);
+    const messageId = this.#persistQuestionPrompt(agentId, publicThreadId, turnId, request.id, questions);
     this.#prompts.set(request.id, {
       client,
       id: request.id,
       responseKind: "mcp-elicitation",
       params: request.params,
-      botId,
+      agentId,
       publicThreadId,
       turnId,
       messageId,
@@ -486,7 +486,7 @@ export class AttentionRegistry {
     this.#emit({
       type: "prompt",
       requestId: request.id,
-      botId,
+      agentId,
       threadId: publicThreadId,
       turnId,
       questions,
@@ -567,20 +567,20 @@ export class AttentionRegistry {
     this.#emit({
       type: "browser-takeover-resolved",
       requestId: pending.request.requestId,
-      botId: pending.request.botId,
+      agentId: pending.request.agentId,
     });
     this.#emitRuntimeSnapshot();
     pending.resolve(browserTakeoverResult(decision));
   }
 
   #persistQuestionPrompt(
-    botId: string,
+    agentId: string,
     publicThreadId: string,
     turnId: string,
     requestId: RequestId,
     questions: AgentPromptQuestion[],
   ): string {
-    const snapshot = this.#conversation.ensureSnapshot(botId, publicThreadId);
+    const snapshot = this.#conversation.ensureSnapshot(agentId, publicThreadId);
     const messageId = `question-prompt:${turnId}:${String(requestId)}`;
     const existing = snapshot.messages.find((message) => message.id === messageId);
     if (!existing) {
@@ -605,7 +605,7 @@ export class AttentionRegistry {
   }
 
   #resolvePersistedPrompt(pending: PendingPrompt, resolution: AgentPromptResolution): void {
-    const snapshot = this.#conversation.ensureSnapshot(pending.botId, pending.publicThreadId);
+    const snapshot = this.#conversation.ensureSnapshot(pending.agentId, pending.publicThreadId);
     const message = snapshot.messages.find((candidate) => candidate.id === pending.messageId);
     if (!message?.questionPrompt || message.questionPrompt.resolution !== null) return;
     message.questionPrompt.resolution = structuredClone(resolution);

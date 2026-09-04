@@ -1,6 +1,6 @@
 import { Stack } from "expo-router/stack";
 import { useThemeColor } from "heroui-native/hooks";
-import { BotPinTransitionProvider } from "@/features/agents/components/agent-pin-transition";
+import { AgentPinTransitionProvider } from "@/features/agents/components/agent-pin-transition";
 import { useMobileSession } from "@/features/auth/context/mobile-session-context";
 import { AppDrawerShell } from "@/features/servers/components/app-drawer-shell";
 import { MobileWorkspaceProvider } from "@/features/workspace/context/mobile-workspace-context";
@@ -107,11 +107,11 @@ export default function AuthenticatedLayout() {
 
   return (
     <MobileWorkspaceProvider key={workspaceKey}>
-      <BotPinTransitionProvider>
+      <AgentPinTransitionProvider>
         <AppDrawerShell>
           <AuthenticatedStack />
         </AppDrawerShell>
-      </BotPinTransitionProvider>
+      </AgentPinTransitionProvider>
     </MobileWorkspaceProvider>
   );
 }

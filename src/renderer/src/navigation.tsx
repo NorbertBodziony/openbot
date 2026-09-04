@@ -1,10 +1,10 @@
 import { createSignal } from "solid-js";
 import { useAgents } from "./agents";
 import { desktopAnalytics } from "./analytics";
-import { toBotMessage } from "./app-message-projection";
+import { toAgentMessage } from "./app-message-projection";
 import { useConversation } from "./conversation";
 import { agentConversationKey } from "./conversation-keys";
-import type { BotMessage } from "./data";
+import type { AgentMessage } from "./data";
 import { useDirectMessages } from "./direct-messages";
 import { usePlatform } from "./platform";
 import { usePresence } from "./presence";
@@ -17,7 +17,7 @@ import { createSimpleContext } from "./simple-context";
  * either, and the global search that finds them.
  *
  * This is the leaf, and it is a context rather than a set of loose functions
- * because of what `selectBot` does. One call writes to agents (setup dialog,
+ * because of what `selectAgent` does. One call writes to agents (setup dialog,
  * active id, chat-open revision), to conversation (history pruning, reply
  * indicators, the read-tracking sets) and to direct messages (typing, selection)
  * - three domains, none of which may reach into the others. A command that
@@ -39,11 +39,11 @@ const Navigation = createSimpleContext({
     const { activeServerId } = useServers();
     const { currentTeamMember, directPeople } = usePresence();
     const {
-      activeBotId,
-      setActiveBotId,
-      botSetupOpen,
-      setBotSetupOpen,
-      setBotSetupError,
+      activeAgentId,
+      setActiveAgentId,
+      agentSetupOpen,
+      setAgentSetupOpen,
+      setAgentSetupError,
       creatingAgent,
       setSettingsRequest,
       setExplicitlyOpenedAgentChatId,
@@ -65,37 +65,37 @@ const Navigation = createSimpleContext({
 
     const [globalSearchOpen, setGlobalSearchOpen] = createSignal(false);
     const [messageFocusRequest, setMessageFocusRequest] = createSignal<{
-      botId: string;
+      agentId: string;
       messageId: string;
       nonce: number;
     } | null>(null);
 
-    function selectBot(botId: string) {
-      if (botSetupOpen() && creatingAgent()) return;
-      const previousBotId = activeBotId();
-      if (previousBotId && previousBotId !== botId) pruneInactiveAgentHistory(previousBotId);
-      setBotSetupOpen(false);
-      setBotSetupError(null);
+    function selectAgent(agentId: string) {
+      if (agentSetupOpen() && creatingAgent()) return;
+      const previousAgentId = activeAgentId();
+      if (previousAgentId && previousAgentId !== agentId) pruneInactiveAgentHistory(previousAgentId);
+      setAgentSetupOpen(false);
+      setAgentSetupError(null);
       setDirectTyping(false);
       clearDirectSelection();
-      clearReplyIndicators(botId);
-      const trackingKey = agentConversationKey(activeServerId(), botId);
+      clearReplyIndicators(agentId);
+      const trackingKey = agentConversationKey(activeServerId(), agentId);
       autoReadAgentMessages.delete(trackingKey);
       agentChatsToMarkRead.add(trackingKey);
-      agentChatsRetriedOnOpen.delete(botId);
-      setExplicitlyOpenedAgentChatId(botId);
-      setActiveBotId(botId);
+      agentChatsRetriedOnOpen.delete(agentId);
+      setExplicitlyOpenedAgentChatId(agentId);
+      setActiveAgentId(agentId);
       setAgentChatOpenRevision((current) => current + 1);
     }
 
     async function selectDirectMember(memberId: string): Promise<void> {
-      if (botSetupOpen() && creatingAgent()) return;
+      if (agentSetupOpen() && creatingAgent()) return;
       if (!peopleEnabled || !currentTeamMember() || !directPeople().some((member) => member.id === memberId)) return;
-      const previousBotId = activeBotId();
-      if (previousBotId) pruneInactiveAgentHistory(previousBotId);
+      const previousAgentId = activeAgentId();
+      if (previousAgentId) pruneInactiveAgentHistory(previousAgentId);
       setExplicitlyOpenedAgentChatId(null);
-      setBotSetupOpen(false);
-      setBotSetupError(null);
+      setAgentSetupOpen(false);
+      setAgentSetupError(null);
       setSettingsRequest(null);
       await openDirectConversation(memberId);
     }
@@ -104,14 +104,14 @@ const Navigation = createSimpleContext({
       setGlobalSearchOpen(open);
     }
 
-    async function searchGlobalMessages(query: string): Promise<Array<{ botId: string; message: BotMessage }>> {
+    async function searchGlobalMessages(query: string): Promise<Array<{ agentId: string; message: AgentMessage }>> {
       const analytics = desktopAnalytics.scope();
       try {
         const page = await window.openbot.agent.searchConversationMessages({ query, limit: 100 });
         analytics.track("search_action", { scope: "global", result: "succeeded", result_count: page.total });
         return page.results.map((result) => ({
-          botId: result.botId,
-          message: toBotMessage(result.message, result.botId),
+          agentId: result.agentId,
+          message: toAgentMessage(result.message, result.agentId),
         }));
       } catch (error) {
         analytics.track("search_action", { scope: "global", result: "failed", failure_code: "search_failed" });
@@ -119,35 +119,35 @@ const Navigation = createSimpleContext({
       }
     }
 
-    function selectGlobalSearchMessage(botId: string, messageId: string): void {
-      selectBot(botId);
-      void openAgentMessage(botId, messageId);
+    function selectGlobalSearchMessage(agentId: string, messageId: string): void {
+      selectAgent(agentId);
+      void openAgentMessage(agentId, messageId);
     }
 
-    async function openAgentMessage(botId: string, messageId: string): Promise<void> {
+    async function openAgentMessage(agentId: string, messageId: string): Promise<void> {
       const serverId = activeServerId();
       await Promise.resolve();
       if (!scopeIsCurrent()) return;
-      const request = (conversationPageRequests.get(botId) ?? 0) + 1;
-      conversationPageRequests.set(botId, request);
+      const request = (conversationPageRequests.get(agentId) ?? 0) + 1;
+      conversationPageRequests.set(agentId, request);
       try {
         const page = await window.openbot.agent.readConversationPage({
-          botId,
+          agentId,
           anchor: { type: "around", messageId },
           limit: 50,
         });
-        if (conversationPageRequests.get(botId) !== request || !scopeIsCurrent()) return;
+        if (conversationPageRequests.get(agentId) !== request || !scopeIsCurrent()) return;
         if (!page.messages.some((message) => message.id === messageId)) {
           throw new Error("This message is no longer available.");
         }
         applyConversationPage(page, "replace", "around");
-        setMessageFocusRequest({ botId, messageId, nonce: Date.now() });
+        setMessageFocusRequest({ agentId, messageId, nonce: Date.now() });
         try {
           let readBoundary = page.messages.at(-1)?.id ?? messageId;
           try {
             if (!scopeIsCurrent()) return;
             const latestPage = await window.openbot.agent.readConversationPage({
-              botId,
+              agentId,
               anchor: { type: "latest" },
               limit: 1,
             });
@@ -156,17 +156,17 @@ const Navigation = createSimpleContext({
           } catch {
             // The focused page still gives us a safe read boundary when the latest-page refresh fails.
           }
-          await markAgentMessagesRead(botId, readBoundary, serverId);
+          await markAgentMessagesRead(agentId, readBoundary, serverId);
         } catch (error) {
-          appendUiError(botId, error, "Read state failed", serverId);
+          appendUiError(agentId, error, "Read state failed", serverId);
         }
       } catch (error) {
-        appendUiError(botId, error, "Message load failed", serverId);
+        appendUiError(agentId, error, "Message load failed", serverId);
       }
     }
 
     return {
-      selectBot,
+      selectAgent,
       selectDirectMember,
       openAgentMessage,
       messageFocusRequest,

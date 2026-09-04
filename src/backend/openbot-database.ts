@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type {
   AgentProviderId,
-  BotSummary,
+  AgentSummary,
   ConversationMessage,
   ConversationPage,
   ConversationPageAnchor,
@@ -110,50 +110,50 @@ export class OpenBotDatabase {
   }
 
   deletePendingHostedSiteTerminalEvent(
-    botId: string,
+    agentId: string,
     operationId: string,
     status: Exclude<HostedSiteConversationEventStatus, "running">,
   ): void {
-    this.#hostedSiteEvents.deletePendingHostedSiteTerminalEvent(botId, operationId, status);
+    this.#hostedSiteEvents.deletePendingHostedSiteTerminalEvent(agentId, operationId, status);
   }
 
   recordActiveHostedSiteConversationEvent(event: ActiveHostedSiteConversationEvent): void {
     this.#hostedSiteEvents.recordActiveHostedSiteConversationEvent(event);
   }
 
-  deleteActiveHostedSiteConversationEvent(botId: string, operationId: string): void {
-    this.#hostedSiteEvents.deleteActiveHostedSiteConversationEvent(botId, operationId);
+  deleteActiveHostedSiteConversationEvent(agentId: string, operationId: string): void {
+    this.#hostedSiteEvents.deleteActiveHostedSiteConversationEvent(agentId, operationId);
   }
 
   activeHostedSiteConversationEvents(): ActiveHostedSiteConversationEvent[] {
     return this.#hostedSiteEvents.activeHostedSiteConversationEvents();
   }
 
-  listAgents(): BotSummary[] {
+  listAgents(): AgentSummary[] {
     return this.#roster.listAgents();
   }
 
-  replaceAgents(commandId: string, agents: BotSummary[], eventType: string): void {
+  replaceAgents(commandId: string, agents: AgentSummary[], eventType: string): void {
     this.#roster.replaceAgents(commandId, agents, eventType);
   }
 
-  hardDeleteAgent(commandId: string, botId: string, threadId: string | null, remainingAgents: BotSummary[]): void {
-    this.#roster.hardDeleteAgent(commandId, botId, threadId, remainingAgents);
+  hardDeleteAgent(commandId: string, agentId: string, threadId: string | null, remainingAgents: AgentSummary[]): void {
+    this.#roster.hardDeleteAgent(commandId, agentId, threadId, remainingAgents);
   }
 
-  readConversation(botId: string, threadId: string | null): ConversationSnapshot {
-    return this.#conversations.readConversation(botId, threadId);
+  readConversation(agentId: string, threadId: string | null): ConversationSnapshot {
+    return this.#conversations.readConversation(agentId, threadId);
   }
 
   readConversationRuntime(
-    botId: string,
+    agentId: string,
     threadId: string | null,
   ): { activeTurnId: string | null; latestMessage: ConversationMessage | null } {
-    return this.#conversations.readConversationRuntime(botId, threadId);
+    return this.#conversations.readConversationRuntime(agentId, threadId);
   }
 
   readConversationPage(
-    botId: string,
+    agentId: string,
     threadId: string | null,
     anchor: ConversationPageAnchor = { type: "latest" },
     requestedLimit = 50,
@@ -163,7 +163,7 @@ export class OpenBotDatabase {
       excludeHostedSiteEvents?: boolean;
     } = {},
   ): ConversationPage {
-    return this.#conversations.readConversationPage(botId, threadId, anchor, requestedLimit, options);
+    return this.#conversations.readConversationPage(agentId, threadId, anchor, requestedLimit, options);
   }
 
   supportedConversationCursor(
@@ -180,11 +180,11 @@ export class OpenBotDatabase {
 
   searchConversationMessages(
     query: string,
-    botId?: string,
+    agentId?: string,
     cursor?: string,
     requestedLimit = 100,
   ): ConversationSearchPage {
-    return this.#conversations.searchConversationMessages(query, botId, cursor, requestedLimit);
+    return this.#conversations.searchConversationMessages(query, agentId, cursor, requestedLimit);
   }
 
   persistConversation(
@@ -197,7 +197,7 @@ export class OpenBotDatabase {
   }
 
   appendConversationMessage(input: {
-    botId: string;
+    agentId: string;
     threadId: string;
     activeTurnId: string | null;
     message: ConversationMessage;
@@ -304,10 +304,10 @@ export class OpenBotDatabase {
   }
 }
 
-export function providerForStoredModel(model: BotSummary["model"]): AgentProviderId {
+export function providerForStoredModel(model: AgentSummary["model"]): AgentProviderId {
   return providerForLegacyModel(model);
 }
 
-export function stableThreadId(botId: string): string {
-  return `openbot-thread-${botId}`;
+export function stableThreadId(agentId: string): string {
+  return `openbot-thread-${agentId}`;
 }

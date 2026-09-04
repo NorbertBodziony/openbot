@@ -27,7 +27,7 @@ export interface VoiceStoreDeps {
     voiceSubmitRequest:
       | undefined
       | {
-          botId: string;
+          agentId: string;
           serverId: string;
           draft: ComposerDraft;
           queuedEdit: { deliveryId: string; originalAttachmentIds: string[] } | undefined;
@@ -39,7 +39,7 @@ export interface VoiceStoreDeps {
     voiceRecordingTimer: ReturnType<typeof setTimeout> | undefined;
     voiceElapsedTimer: ReturnType<typeof setInterval> | undefined;
     voiceChunks: Blob[];
-    voiceBotId: string | undefined;
+    voiceAgentId: string | undefined;
     voiceServerId: string | undefined;
   };
   voicePhase: () => "idle" | "preparing" | "requesting" | "recording" | "transcribing";
@@ -62,10 +62,10 @@ export function createVoiceStore(deps: VoiceStoreDeps) {
   const { resources } = deps;
 
   async function startVoiceRecording(): Promise<void> {
-    const botId = deps.props.bot?.id;
+    const agentId = deps.props.agent?.id;
     const serverId = deps.props.server?.id ?? "local";
-    if (!botId || deps.voicePhase() !== "idle") return;
-    const target = { botId, serverId };
+    if (!agentId || deps.voicePhase() !== "idle") return;
+    const target = { agentId, serverId };
     deps.clearConversationError(target);
     resources.voiceSubmitRequest = undefined;
     deps.setComposerError(null);
@@ -97,7 +97,7 @@ export function createVoiceStore(deps: VoiceStoreDeps) {
       const recorder = new MediaRecorder(stream);
       resources.voiceStream = stream;
       resources.voiceRecorder = recorder;
-      resources.voiceBotId = botId;
+      resources.voiceAgentId = agentId;
       resources.voiceServerId = serverId;
       resources.voiceChunks = [];
       recorder.addEventListener("dataavailable", (event) => {
@@ -131,16 +131,16 @@ export function createVoiceStore(deps: VoiceStoreDeps) {
   }
 
   async function finishVoiceRecording(mimeType: string): Promise<void> {
-    const targetBotId = resources.voiceBotId;
+    const targetAgentId = resources.voiceAgentId;
     const targetServerId = resources.voiceServerId;
     const chunks = resources.voiceChunks;
     const submitRequest = resources.voiceSubmitRequest;
     resources.voiceRecorder = undefined;
-    resources.voiceBotId = undefined;
+    resources.voiceAgentId = undefined;
     resources.voiceServerId = undefined;
     resources.voiceChunks = [];
     resources.voiceSubmitRequest = undefined;
-    if (!targetBotId || !targetServerId || resources.voiceDisposed) return;
+    if (!targetAgentId || !targetServerId || resources.voiceDisposed) return;
     const analytics = desktopAnalytics.scope();
     const audioDurationSeconds = deps.voiceElapsedSeconds();
     const startedAt = performance.now();
@@ -155,12 +155,12 @@ export function createVoiceStore(deps: VoiceStoreDeps) {
         duration_ms: Math.max(0, Math.round(performance.now() - startedAt)),
       });
       if (resources.voiceDisposed) return;
-      const recordingTarget = { botId: targetBotId, serverId: targetServerId };
+      const recordingTarget = { agentId: targetAgentId, serverId: targetServerId };
       deps.clearConversationError(recordingTarget);
       const draft = submitRequest?.draft ?? deps.drafts()[composerDraftKey(recordingTarget)] ?? EMPTY_DRAFT;
       const transcribedDraft = { ...draft, text: appendVoiceTranscript(draft.text, result.text) };
       if (submitRequest) {
-        const target = { botId: submitRequest.botId, serverId: submitRequest.serverId };
+        const target = { agentId: submitRequest.agentId, serverId: submitRequest.serverId };
         let delivered: boolean;
         if (submitRequest.queuedEdit) {
           delivered = await deps.hooks.saveEdit(
@@ -178,7 +178,7 @@ export function createVoiceStore(deps: VoiceStoreDeps) {
       } else {
         const key = composerDraftKey(recordingTarget);
         deps.setDrafts((current) => ({ ...current, [key]: transcribedDraft }));
-        if (deps.props.bot?.id === targetBotId && (deps.props.server?.id ?? "local") === targetServerId) {
+        if (deps.props.agent?.id === targetAgentId && (deps.props.server?.id ?? "local") === targetServerId) {
           deps.setComposerFocusRequest((current) => current + 1);
         }
       }
@@ -190,7 +190,7 @@ export function createVoiceStore(deps: VoiceStoreDeps) {
         failure_code: "transcription_failed",
       });
       if (!resources.voiceDisposed) {
-        const target = { botId: targetBotId, serverId: targetServerId };
+        const target = { agentId: targetAgentId, serverId: targetServerId };
         deps.setConversationErrors((current) => ({
           ...current,
           [composerDraftKey(target)]: voiceTranscriptionError(error),

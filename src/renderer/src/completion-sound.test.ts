@@ -1,8 +1,8 @@
-import type { AgentEvent, BotSummary } from "@openbot/contracts/ipc";
+import type { AgentEvent, AgentSummary } from "@openbot/contracts/ipc";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { playCompletionSoundForAgentEvent, shouldPlayCompletionSound } from "./completion-sound";
 
-const bot = { id: "chief", notifications: true } satisfies Pick<BotSummary, "id" | "notifications">;
+const agent = { id: "chief", notifications: true } satisfies Pick<AgentSummary, "id" | "notifications">;
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -10,19 +10,19 @@ afterEach(() => {
 
 describe("completion sound", () => {
   it("plays only for successful turns from notification-enabled agents", () => {
-    expect(shouldPlayCompletionSound(completed("completed"), [bot], storage())).toBe(true);
-    expect(shouldPlayCompletionSound(completed("failed"), [bot], storage())).toBe(false);
-    expect(shouldPlayCompletionSound(completed("interrupted"), [bot], storage())).toBe(false);
-    expect(shouldPlayCompletionSound(completed("completed"), [{ ...bot, notifications: false }], storage())).toBe(
+    expect(shouldPlayCompletionSound(completed("completed"), [agent], storage())).toBe(true);
+    expect(shouldPlayCompletionSound(completed("failed"), [agent], storage())).toBe(false);
+    expect(shouldPlayCompletionSound(completed("interrupted"), [agent], storage())).toBe(false);
+    expect(shouldPlayCompletionSound(completed("completed"), [{ ...agent, notifications: false }], storage())).toBe(
       false,
     );
     expect(shouldPlayCompletionSound(completed("completed"), [], storage())).toBe(false);
-    expect(shouldPlayCompletionSound({ type: "bots-changed", bots: [] }, [bot], storage())).toBe(false);
+    expect(shouldPlayCompletionSound({ type: "agents-changed", agents: [] }, [agent], storage())).toBe(false);
   });
 
   it("defaults to enabled and honors the persisted opt-out", () => {
-    expect(shouldPlayCompletionSound(completed("completed"), [bot], storage())).toBe(true);
-    expect(shouldPlayCompletionSound(completed("completed"), [bot], storage("false"))).toBe(false);
+    expect(shouldPlayCompletionSound(completed("completed"), [agent], storage())).toBe(true);
+    expect(shouldPlayCompletionSound(completed("completed"), [agent], storage("false"))).toBe(false);
   });
 
   it("schedules one short descending plop and releases its nodes", async () => {
@@ -51,7 +51,7 @@ describe("completion sound", () => {
     });
     vi.stubGlobal("AudioContext", AudioContextMock);
 
-    playCompletionSoundForAgentEvent(completed("completed"), [bot], storage());
+    playCompletionSoundForAgentEvent(completed("completed"), [agent], storage());
     await vi.waitFor(() => expect(oscillator.start).toHaveBeenCalledWith(2));
 
     expect(oscillator.type).toBe("sine");
@@ -67,7 +67,7 @@ describe("completion sound", () => {
 function completed(status: string): AgentEvent {
   return {
     type: "turn-completed",
-    botId: "chief",
+    agentId: "chief",
     threadId: "thread-chief",
     turnId: "turn-1",
     status,

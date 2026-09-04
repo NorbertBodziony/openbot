@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { describe, expect, it, vi } from "vitest";
-import { STORY_BOTS, STORY_DIRECT_THREADS, STORY_PRESENCE } from "../../stories/fixtures";
+import { STORY_AGENTS, STORY_DIRECT_THREADS, STORY_PRESENCE } from "../../stories/fixtures";
 import type { SidebarPinnedItem } from "../sidebar-pins";
 import { defaultSidebarLayout } from "../sidebar-sections";
 import { Sidebar } from "./Sidebar";
@@ -10,8 +10,8 @@ function sidebarProps(pinnedItems: SidebarPinnedItem[] = []) {
   return {
     serverName: "Local",
     onOpenServerSettings: vi.fn(),
-    bots: STORY_BOTS,
-    activeBotId: "chief",
+    agents: STORY_AGENTS,
+    activeAgentId: "chief",
     people: STORY_PRESENCE.members,
     directThreads: STORY_DIRECT_THREADS,
     activeDirectMemberId: null,
@@ -29,12 +29,12 @@ function sidebarProps(pinnedItems: SidebarPinnedItem[] = []) {
     onUnpin: vi.fn(),
     onReorderPinned: vi.fn(),
     onReorderPeople: vi.fn(),
-    onSelectBot: vi.fn(),
+    onSelectAgent: vi.fn(),
     onSelectPerson: vi.fn(),
-    onCreateBot: vi.fn(),
-    onEditBot: vi.fn(),
-    onDuplicateBot: vi.fn(async () => undefined),
-    onDeleteBot: vi.fn(async () => undefined),
+    onCreateAgent: vi.fn(),
+    onEditAgent: vi.fn(),
+    onDuplicateAgent: vi.fn(async () => undefined),
+    onDeleteAgent: vi.fn(async () => undefined),
     compact: false,
     onExpand: vi.fn(),
     onOpenMarketplace: vi.fn(),
@@ -43,10 +43,10 @@ function sidebarProps(pinnedItems: SidebarPinnedItem[] = []) {
 
 function sidebarPropsWithExtraAgents(pinnedItems: SidebarPinnedItem[], count: number) {
   const props = sidebarProps(pinnedItems);
-  props.bots = [
-    ...STORY_BOTS,
+  props.agents = [
+    ...STORY_AGENTS,
     ...Array.from({ length: count }, (_, index) => ({
-      ...STORY_BOTS[2],
+      ...STORY_AGENTS[2],
       id: `extra-${index + 1}`,
       name: `Extra ${index + 1}`,
       threadId: `thread-extra-${index + 1}`,
@@ -147,16 +147,16 @@ describe("Sidebar pinned chats", () => {
     await fireEvent.contextMenu(screen.getByRole("button", { name: /Sales Outbound/ }));
     const reopenedMenu = await screen.findByRole("menu", { name: "Agent actions" });
     await fireEvent.pointerUp(within(reopenedMenu).getByRole("menuitem", { name: "Edit agent" }), { button: 0 });
-    expect(props.onEditBot).toHaveBeenCalledWith("sales");
+    expect(props.onEditAgent).toHaveBeenCalledWith("sales");
   });
 
   it("disables duplication while it runs and hides it for an old host", async () => {
     const props = sidebarProps();
-    const { unmount } = render(() => <Sidebar {...props} duplicatingBotIds={new Set(["chief"])} />);
+    const { unmount } = render(() => <Sidebar {...props} duplicatingAgentIds={new Set(["chief"])} />);
 
     await fireEvent.contextMenu(screen.getByRole("button", { name: /Chief/ }));
     expect(screen.getByRole("menuitem", { name: "Duplicating…" })).toHaveAttribute("aria-disabled", "true");
-    expect(props.onDuplicateBot).not.toHaveBeenCalled();
+    expect(props.onDuplicateAgent).not.toHaveBeenCalled();
     unmount();
 
     render(() => <Sidebar {...props} duplicateSupported={false} />);
@@ -377,13 +377,13 @@ describe("Sidebar sections", () => {
     expect(props.onMutateLayout).not.toHaveBeenCalled();
   });
 
-  it("removes an agent row when the controlled bot list changes", async () => {
+  it("removes an agent row when the controlled agent list changes", async () => {
     const props = sidebarProps();
-    const [bots, setBots] = createSignal(STORY_BOTS);
-    render(() => <Sidebar {...props} bots={bots()} />);
+    const [agents, setAgents] = createSignal(STORY_AGENTS);
+    render(() => <Sidebar {...props} agents={agents()} />);
 
     const sales = screen.getByRole("button", { name: /Sales/ });
-    setBots((current) => current.filter((bot) => bot.id !== "sales"));
+    setAgents((current) => current.filter((agent) => agent.id !== "sales"));
 
     await waitFor(() => expect(sales).not.toBeInTheDocument());
   });

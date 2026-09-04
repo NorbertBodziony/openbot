@@ -2,8 +2,8 @@ import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   AgentApproval,
   AgentEvent,
+  DynamicIslandAgentIdentity,
   DynamicIslandApprovalItem,
-  DynamicIslandBotIdentity,
   DynamicIslandFailureItem,
   DynamicIslandPresentation,
   DynamicIslandPromptItem,
@@ -22,7 +22,7 @@ type AttentionCandidate =
 
 export interface DynamicIslandPresentationInput {
   serverId: string;
-  bots: DynamicIslandBotSource[];
+  agents: DynamicIslandAgentSource[];
   activeTurns: Record<string, string | null>;
   queues: Record<string, QueueSnapshot>;
   unreadReplies: Record<string, number>;
@@ -33,11 +33,11 @@ export interface DynamicIslandPresentationInput {
   failedTurns: Record<string, string | undefined>;
 }
 
-export interface DynamicIslandBotSource {
+export interface DynamicIslandAgentSource {
   id: string;
   name: string;
   avatarSeed: string;
-  avatarHue: DynamicIslandBotIdentity["avatarHue"];
+  avatarHue: DynamicIslandAgentIdentity["avatarHue"];
   avatarUrl: string | null;
   notifications: boolean;
   preview?: string;
@@ -67,14 +67,14 @@ export function selectDynamicIslandPresentation(
 }
 
 export function countDynamicIslandAttention(input: DynamicIslandPresentationInput): number {
-  const visibleBots = input.bots.filter((bot) => bot.notifications);
-  return collectAttention(input, new Map(visibleBots.map((bot) => [bot.id, bot]))).length;
+  const visibleAgents = input.agents.filter((agent) => agent.notifications);
+  return collectAttention(input, new Map(visibleAgents.map((agent) => [agent.id, agent]))).length;
 }
 
 export function createDynamicIslandPresentation(input: DynamicIslandPresentationInput): DynamicIslandPresentation {
-  const visibleBots = input.bots.filter((bot) => bot.notifications);
-  const botsById = new Map(visibleBots.map((bot) => [bot.id, bot]));
-  const attentionItems = collectAttention(input, botsById).sort(
+  const visibleAgents = input.agents.filter((agent) => agent.notifications);
+  const agentsById = new Map(visibleAgents.map((agent) => [agent.id, agent]));
+  const attentionItems = collectAttention(input, agentsById).sort(
     (left, right) => presentationPriority(left.mode) - presentationPriority(right.mode),
   );
   const attention = attentionItems[0];
@@ -98,34 +98,36 @@ export function createDynamicIslandPresentation(input: DynamicIslandPresentation
   }
   if (attention?.mode === "failed") return { serverId: input.serverId, mode: "failed", item: attention.item };
 
-  const working = visibleBots
-    .filter((bot) => isBotWorking(bot.id, input))
+  const working = visibleAgents
+    .filter((agent) => isAgentWorking(agent.id, input))
     .slice(0, 3)
-    .map((bot) => ({ bot: botIdentity(bot), task: currentTask(bot.id, input.queues) }));
+    .map((agent) => ({ agent: agentIdentity(agent), task: currentTask(agent.id, input.queues) }));
   if (working.length > 0) return { serverId: input.serverId, mode: "working", working };
 
-  const message = latestUnreadMessage(input, visibleBots);
+  const message = latestUnreadMessage(input, visibleAgents);
   if (message) {
     return {
       serverId: input.serverId,
       mode: "message",
-      unreadCount: visibleBots.reduce((total, bot) => total + Math.max(0, input.unreadReplies[bot.id] ?? 0), 0),
+      unreadCount: visibleAgents.reduce((total, agent) => total + Math.max(0, input.unreadReplies[agent.id] ?? 0), 0),
       message,
     };
   }
   return { serverId: input.serverId, mode: "idle" };
 }
 
-function latestUnreadMessage(input: DynamicIslandPresentationInput, bots: readonly DynamicIslandBotSource[]) {
-  return bots
-    .filter((bot) => (input.unreadReplies[bot.id] ?? 0) > 0)
-    .flatMap((bot) => {
-      const message = [...(input.liveMessages[bot.id] ?? [])].reverse().find((candidate) => candidate.author === "bot");
-      const messageId = message?.id ?? input.unreadMessageIds?.[bot.id];
-      const text = message?.body.trim() || bot.preview?.trim();
+function latestUnreadMessage(input: DynamicIslandPresentationInput, agents: readonly DynamicIslandAgentSource[]) {
+  return agents
+    .filter((agent) => (input.unreadReplies[agent.id] ?? 0) > 0)
+    .flatMap((agent) => {
+      const message = [...(input.liveMessages[agent.id] ?? [])]
+        .reverse()
+        .find((candidate) => candidate.author === "agent");
+      const messageId = message?.id ?? input.unreadMessageIds?.[agent.id];
+      const text = message?.body.trim() || agent.preview?.trim();
       if (!messageId || !text) return [];
-      const createdAt = message?.createdAt || bot.updatedAt || message?.time || new Date(0).toISOString();
-      return [{ bot: botIdentity(bot), messageId, text: truncate(text, 600), createdAt }];
+      const createdAt = message?.createdAt || agent.updatedAt || message?.time || new Date(0).toISOString();
+      return [{ agent: agentIdentity(agent), messageId, text: truncate(text, 600), createdAt }];
     })
     .sort((left, right) => messageTimestamp(right.createdAt) - messageTimestamp(left.createdAt))[0];
 }
@@ -135,12 +137,12 @@ function messageTimestamp(value: string): number {
   return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
-function isBotWorking(botId: string, input: DynamicIslandPresentationInput): boolean {
-  return Boolean(input.activeTurns[botId]) || Boolean(runningDelivery(input.queues[botId]));
+function isAgentWorking(agentId: string, input: DynamicIslandPresentationInput): boolean {
+  return Boolean(input.activeTurns[agentId]) || Boolean(runningDelivery(input.queues[agentId]));
 }
 
-function currentTask(botId: string, queues: Record<string, QueueSnapshot>): string {
-  return truncate(runningDelivery(queues[botId])?.text.trim() || "Working on your request", 240);
+function currentTask(agentId: string, queues: Record<string, QueueSnapshot>): string {
+  return truncate(runningDelivery(queues[agentId])?.text.trim() || "Working on your request", 240);
 }
 
 function runningDelivery(snapshot: QueueSnapshot | undefined) {
@@ -149,17 +151,17 @@ function runningDelivery(snapshot: QueueSnapshot | undefined) {
 
 function collectAttention(
   input: DynamicIslandPresentationInput,
-  botsById: Map<string, DynamicIslandBotSource>,
+  agentsById: Map<string, DynamicIslandAgentSource>,
 ): AttentionCandidate[] {
   const items: AttentionCandidate[] = [];
-  for (const [botId, approval] of Object.entries(input.pendingApprovals)) {
-    const bot = botsById.get(botId);
-    if (!bot || !approval) continue;
+  for (const [agentId, approval] of Object.entries(input.pendingApprovals)) {
+    const agent = agentsById.get(agentId);
+    if (!agent || !approval) continue;
     items.push({
       mode: "approval",
       item: {
         requestId: approval.requestId,
-        bot: botIdentity(bot),
+        agent: agentIdentity(agent),
         title: approvalTitle(approval),
         detail: truncateNullable(approval.reason ?? approval.command),
         truncated:
@@ -194,9 +196,9 @@ function collectAttention(
       },
     });
   }
-  for (const [botId, event] of Object.entries(input.pendingPrompts)) {
-    const bot = botsById.get(botId);
-    if (!bot || !event) continue;
+  for (const [agentId, event] of Object.entries(input.pendingPrompts)) {
+    const agent = agentsById.get(agentId);
+    if (!agent || !event) continue;
     if (event.type === "prompt") {
       const questions = normalizeQuestions(event.questions);
       const question = questions[0];
@@ -204,7 +206,7 @@ function collectAttention(
         mode: "question",
         item: {
           requestId: event.requestId,
-          bot: botIdentity(bot),
+          agent: agentIdentity(agent),
           title: truncate(question?.header || "Question from your agent", 180),
           detail: truncateNullable(question?.question),
           questions,
@@ -216,23 +218,23 @@ function collectAttention(
       mode: "takeover",
       item: {
         requestId: event.request.requestId,
-        bot: botIdentity(bot),
+        agent: agentIdentity(agent),
         title: "Browser step needs you",
         detail: "Complete the sign-in, verification, or consent in the browser.",
       },
     });
   }
-  for (const [botId, turnId] of Object.entries(input.failedTurns)) {
-    const bot = botsById.get(botId);
-    if (!bot || !turnId) continue;
-    const delivery = input.queues[botId]?.deliveries.find(
+  for (const [agentId, turnId] of Object.entries(input.failedTurns)) {
+    const agent = agentsById.get(agentId);
+    if (!agent || !turnId) continue;
+    const delivery = input.queues[agentId]?.deliveries.find(
       (candidate) => candidate.status === "failed" && candidate.turnId === turnId,
     );
     items.push({
       mode: "failed",
       item: {
         turnId,
-        bot: botIdentity(bot),
+        agent: agentIdentity(agent),
         title: "Task failed",
         detail: failureDetail(delivery?.error),
       },
@@ -307,12 +309,12 @@ function presentationAttentionCount(presentation: DynamicIslandPresentation): nu
   return 0;
 }
 
-function botIdentity(bot: DynamicIslandBotSource): DynamicIslandBotIdentity {
+function agentIdentity(agent: DynamicIslandAgentSource): DynamicIslandAgentIdentity {
   return {
-    id: bot.id,
-    name: bot.name,
-    avatarSeed: bot.avatarSeed,
-    avatarHue: bot.avatarHue,
-    avatarUrl: bot.avatarUrl,
+    id: agent.id,
+    name: agent.name,
+    avatarSeed: agent.avatarSeed,
+    avatarHue: agent.avatarHue,
+    avatarUrl: agent.avatarUrl,
   };
 }

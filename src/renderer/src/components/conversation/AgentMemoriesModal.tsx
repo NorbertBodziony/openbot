@@ -1,20 +1,20 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import type { BotMemory } from "@openbot/contracts/ipc";
+import type { AgentMemory } from "@openbot/contracts/ipc";
 import { createEffect, createSignal, For, onSettled, Show } from "solid-js";
 import { desktopAnalytics } from "../../analytics";
 import { createScrollFades } from "../createScrollFades";
 import { Button, Dialog, IconButton, Plus, Textarea, Trash2, X } from "../ui";
 
 interface AgentMemoriesModalProps {
-  botId: string;
-  botName: string;
+  agentId: string;
+  agentName: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCountChange: (count: number) => void;
 }
 
 export function AgentMemoriesModal(props: AgentMemoriesModalProps) {
-  const [memories, setMemories] = createSignal<BotMemory[]>([]);
+  const [memories, setMemories] = createSignal<AgentMemory[]>([]);
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [addOpen, setAddOpen] = createSignal(false);
@@ -35,7 +35,7 @@ export function AgentMemoriesModal(props: AgentMemoriesModalProps) {
     if (showLoading) setLoading(true);
     setError(null);
     try {
-      const next = await window.openbot.agent.listMemories(props.botId);
+      const next = await window.openbot.agent.listMemories(props.agentId);
       setMemories(next);
       props.onCountChange(next.length);
     } catch (caught) {
@@ -46,7 +46,7 @@ export function AgentMemoriesModal(props: AgentMemoriesModalProps) {
   }
 
   createEffect(
-    () => [props.open, props.botId] as const,
+    () => [props.open, props.agentId] as const,
     ([open]) => {
       if (!open) return;
       setEditingId(null);
@@ -58,11 +58,11 @@ export function AgentMemoriesModal(props: AgentMemoriesModalProps) {
   );
 
   createEffect(
-    () => [props.open, props.botId] as const,
-    ([open, botId]) => {
+    () => [props.open, props.agentId] as const,
+    ([open, agentId]) => {
       if (!open) return;
       return window.openbot.agent.onEvent((event) => {
-        if (event.type !== "memories-changed" || event.botId !== botId) return;
+        if (event.type !== "memories-changed" || event.agentId !== agentId) return;
         void loadMemories(false);
       });
     },
@@ -76,7 +76,7 @@ export function AgentMemoriesModal(props: AgentMemoriesModalProps) {
     setSavingId("new");
     setError(null);
     try {
-      await window.openbot.agent.createMemory({ botId: props.botId, text });
+      await window.openbot.agent.createMemory({ agentId: props.agentId, text });
       analytics.track("memory_action", { action: "create", result: "succeeded" });
       operationSucceeded = true;
       setNewText("");
@@ -92,7 +92,7 @@ export function AgentMemoriesModal(props: AgentMemoriesModalProps) {
     }
   }
 
-  function startEditing(memory: BotMemory): void {
+  function startEditing(memory: AgentMemory): void {
     if (savingId()) return;
     setEditingId(memory.id);
     setEditingText(memory.text);
@@ -116,7 +116,7 @@ export function AgentMemoriesModal(props: AgentMemoriesModalProps) {
     setNewText("");
   }
 
-  async function updateMemory(memory: BotMemory): Promise<void> {
+  async function updateMemory(memory: AgentMemory): Promise<void> {
     const text = editingText().trim();
     if (!text) return;
     if (text === memory.text) {
@@ -128,7 +128,7 @@ export function AgentMemoriesModal(props: AgentMemoriesModalProps) {
     setSavingId(memory.id);
     setError(null);
     try {
-      await window.openbot.agent.updateMemory({ botId: props.botId, memoryId: memory.id, text });
+      await window.openbot.agent.updateMemory({ agentId: props.agentId, memoryId: memory.id, text });
       analytics.track("memory_action", { action: "update", result: "succeeded" });
       operationSucceeded = true;
       setEditingId(null);
@@ -143,13 +143,13 @@ export function AgentMemoriesModal(props: AgentMemoriesModalProps) {
     }
   }
 
-  async function deleteMemory(memory: BotMemory): Promise<void> {
+  async function deleteMemory(memory: AgentMemory): Promise<void> {
     const analytics = desktopAnalytics.scope();
     let operationSucceeded = false;
     setSavingId(memory.id);
     setError(null);
     try {
-      await window.openbot.agent.deleteMemory({ botId: props.botId, memoryId: memory.id });
+      await window.openbot.agent.deleteMemory({ agentId: props.agentId, memoryId: memory.id });
       analytics.track("memory_action", { action: "delete", result: "succeeded" });
       operationSucceeded = true;
       if (editingId() === memory.id) setEditingId(null);
@@ -170,7 +170,7 @@ export function AgentMemoriesModal(props: AgentMemoriesModalProps) {
     setSavingId("clear");
     setError(null);
     try {
-      await window.openbot.agent.clearMemories(props.botId);
+      await window.openbot.agent.clearMemories(props.agentId);
       analytics.track("memory_action", { action: "clear", result: "succeeded" });
       operationSucceeded = true;
       setClearConfirmation(false);
@@ -207,7 +207,7 @@ export function AgentMemoriesModal(props: AgentMemoriesModalProps) {
             <header class="agent-memories-header">
               <div class="agent-memories-heading">
                 <Dialog.Title>Memories</Dialog.Title>
-                <Dialog.Description class="sr-only">Saved memories for {props.botName}</Dialog.Description>
+                <Dialog.Description class="sr-only">Saved memories for {props.agentName}</Dialog.Description>
               </div>
               <div class="agent-memories-header-actions">
                 <IconButton
@@ -390,7 +390,7 @@ export function AgentMemoriesModal(props: AgentMemoriesModalProps) {
             <div class="agent-memory-confirm-content">
               <Dialog.Title>Clear all memories?</Dialog.Title>
               <Dialog.Description>
-                OpenBot will permanently remove all {memories().length} saved memories for {props.botName}. Original
+                OpenBot will permanently remove all {memories().length} saved memories for {props.agentName}. Original
                 messages will stay in the conversation history.
               </Dialog.Description>
               <Show when={error()}>

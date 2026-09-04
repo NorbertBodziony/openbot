@@ -24,21 +24,23 @@ import { decodeTeamProtocolV3WebRtcHttpResponse, encodeTeamProtocolV3WebRtcHttpR
 
 const duplicatePath = "/v1/agents/bot-source/duplicate";
 /**
- * The wire fixture stays byte-identical; only its current-shaped twin moves. `marketplaceSource.agentId`
- * names a marketplace listing, which in-app is `listingId`, so a current-facing decode must return that
- * spelling and a current-shaped encode must put `agentId` back on the wire. This asymmetry is the
- * evidence the vocabulary shim runs on the v3 duplicate route.
+ * The wire fixture stays byte-identical; only its current-shaped twin moves. The wire says `bot`, in-app
+ * that is `agent`. `marketplaceSource.agentId` runs the other way: on the wire it names a marketplace
+ * listing, which in-app is `listingId`. A current-facing decode must return both new spellings and a
+ * current-shaped encode must put both wire spellings back. This asymmetry is the evidence the vocabulary
+ * shim runs on the v3 duplicate route.
  */
+const { bot, ...responseRest } = responseFixture;
 const currentResponseFixture = {
-  ...responseFixture,
-  bot: {
-    ...responseFixture.bot,
+  ...responseRest,
+  agent: {
+    ...bot,
     marketplaceSource: {
-      listingId: responseFixture.bot.marketplaceSource.agentId,
-      versionId: responseFixture.bot.marketplaceSource.versionId,
-      version: responseFixture.bot.marketplaceSource.version,
-      skillIds: responseFixture.bot.marketplaceSource.skillIds,
-      routineIds: responseFixture.bot.marketplaceSource.routineIds,
+      listingId: bot.marketplaceSource.agentId,
+      versionId: bot.marketplaceSource.versionId,
+      version: bot.marketplaceSource.version,
+      skillIds: bot.marketplaceSource.skillIds,
+      routineIds: bot.marketplaceSource.routineIds,
     },
   },
 };

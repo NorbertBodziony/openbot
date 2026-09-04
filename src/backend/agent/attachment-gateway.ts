@@ -10,13 +10,13 @@ import { type OpenBotToolResponse, openBotToolResult } from "./routine-tools";
 
 export interface AttachmentGatewayHooks {
   emit(event: AgentEvent): void;
-  emitError(code: string, error: unknown, botId?: string): void;
+  emitError(code: string, error: unknown, agentId?: string): void;
 }
 
 export interface AttachmentGatewayOptions {
   conversation: ConversationRuntime;
   mailbox: MailboxStore;
-  /** `BotStore.sharedRoot`, passed as a string so this class never opens the store. */
+  /** `AgentStore.sharedRoot`, passed as a string so this class never opens the store. */
   sharedRoot: string;
   hooks: AttachmentGatewayHooks;
 }
@@ -48,14 +48,14 @@ export class AttachmentGateway {
   }
 
   attachFiles(
-    senderBotId: string,
+    senderAgentId: string,
     params: { threadId: string; turnId: string; callId: string },
     paths: string[],
     messageId: string,
   ): Promise<OpenBotToolResponse> {
     const inFlight = this.#inFlight.get(messageId);
     if (inFlight) return inFlight;
-    const command = this.#attachFilesToResponse(senderBotId, params, paths, messageId);
+    const command = this.#attachFilesToResponse(senderAgentId, params, paths, messageId);
     this.#inFlight.set(messageId, command);
     return command.finally(() => {
       if (this.#inFlight.get(messageId) === command) this.#inFlight.delete(messageId);
@@ -71,13 +71,13 @@ export class AttachmentGateway {
   }
 
   async #attachFilesToResponse(
-    senderBotId: string,
+    senderAgentId: string,
     params: { threadId: string; turnId: string; callId: string },
     paths: string[],
     messageId: string,
   ): Promise<OpenBotToolResponse> {
-    const publicThreadId = this.#conversation.publicThreadId(senderBotId, params.threadId);
-    const snapshot = this.#conversation.ensureSnapshot(senderBotId, publicThreadId);
+    const publicThreadId = this.#conversation.publicThreadId(senderAgentId, params.threadId);
+    const snapshot = this.#conversation.ensureSnapshot(senderAgentId, publicThreadId);
     const existing = snapshot.messages.find((message) => message.id === messageId);
     if (existing) {
       return openBotToolResult({
@@ -90,12 +90,12 @@ export class AttachmentGateway {
       });
     }
 
-    const sources = await this.#openSources(senderBotId, paths);
+    const sources = await this.#openSources(senderAgentId, paths);
     let attachments: Awaited<ReturnType<MailboxStore["stageGeneratedAttachments"]>>;
     try {
       attachments = await this.#mailbox.stageGeneratedAttachments({
         sources,
-        ownerBotId: senderBotId,
+        ownerAgentId: senderAgentId,
         ownerThreadId: publicThreadId,
       });
     } finally {
@@ -137,7 +137,7 @@ export class AttachmentGateway {
       this.#hooks.emit({ type: "conversation", snapshot: structuredClone(snapshot) });
     } catch (error) {
       try {
-        this.#hooks.emitError("conversation_publication_failed", error, senderBotId);
+        this.#hooks.emitError("conversation_publication_failed", error, senderAgentId);
       } catch {
         // A committed attachment remains successful even if event listeners fail.
       }
@@ -149,8 +149,8 @@ export class AttachmentGateway {
     });
   }
 
-  async #openSources(botId: string, paths: string[]): Promise<GeneratedAttachmentSource[]> {
-    const results = await Promise.allSettled(paths.map((path) => this.#openSource(botId, path)));
+  async #openSources(agentId: string, paths: string[]): Promise<GeneratedAttachmentSource[]> {
+    const results = await Promise.allSettled(paths.map((path) => this.#openSource(agentId, path)));
     const sources = results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
     const failure = results.find((result) => result.status === "rejected");
     if (failure?.status === "rejected") {
@@ -164,10 +164,10 @@ export class AttachmentGateway {
     return sources;
   }
 
-  async #openSource(botId: string, inputPath: string): Promise<GeneratedAttachmentSource> {
-    const bot = this.#conversation.requireKnownBot(botId);
+  async #openSource(agentId: string, inputPath: string): Promise<GeneratedAttachmentSource> {
+    const agent = this.#conversation.requireKnownAgent(agentId);
     const value = inputPath.trim();
-    const [workspaceRoot, sharedRoot] = await Promise.all([realpath(bot.workspacePath), realpath(this.#sharedRoot)]);
+    const [workspaceRoot, sharedRoot] = await Promise.all([realpath(agent.workspacePath), realpath(this.#sharedRoot)]);
     const normalized = value.replaceAll("\\", "/");
     const sharedReference = ["~/OpenBot/Shared/", "OpenBot/Shared/", "Shared/"].some((prefix) =>
       normalized.startsWith(prefix),
@@ -176,7 +176,7 @@ export class AttachmentGateway {
       ? [value]
       : sharedReference
         ? [sharedPathFromInput(this.#sharedRoot, value)]
-        : [workspacePathFromInput(bot.workspacePath, bot.id, value), sharedPathFromInput(this.#sharedRoot, value)];
+        : [workspacePathFromInput(agent.workspacePath, agent.id, value), sharedPathFromInput(this.#sharedRoot, value)];
 
     for (const candidate of candidates) {
       try {

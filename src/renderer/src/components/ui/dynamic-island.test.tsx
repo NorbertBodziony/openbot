@@ -12,7 +12,7 @@ describe("DynamicIsland", () => {
       const [state, setState] = createSignal<DynamicIslandViewState>("compact");
       return (
         <DynamicIsland
-          label="working bots"
+          label="working agents"
           state={state()}
           onStateChange={(next, reason) => {
             changed(next, reason);
@@ -25,14 +25,14 @@ describe("DynamicIsland", () => {
       );
     });
 
-    const toggle = screen.getByRole("button", { name: "Expand working bots" });
+    const toggle = screen.getByRole("button", { name: "Expand working agents" });
     toggle.focus();
     await fireEvent.click(toggle, { detail: 1 });
     expect(changed).toHaveBeenCalledWith("expanded", "pointer");
     expect(screen.getByRole("button", { name: "Open Chief" })).toBeVisible();
     await fireEvent.keyDown(screen.getByRole("button", { name: "Open Chief" }), { key: "Escape" });
     expect(changed).toHaveBeenLastCalledWith("compact", "escape");
-    expect(screen.getByRole("button", { name: "Expand working bots" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: "Expand working agents" })).toHaveAttribute("aria-expanded", "false");
   });
 
   it("makes the mounted panel inert as soon as it collapses", async () => {
@@ -68,7 +68,7 @@ describe("DynamicIsland", () => {
       const [state, setState] = createSignal<DynamicIslandViewState>("compact");
       return (
         <DynamicIsland
-          label="working bots"
+          label="working agents"
           state={state()}
           hoverBehavior="expand"
           onStateChange={(next, reason) => {
@@ -82,7 +82,7 @@ describe("DynamicIsland", () => {
       );
     });
 
-    const island = screen.getByRole("region", { name: "working bots" });
+    const island = screen.getByRole("region", { name: "working agents" });
     await fireEvent.mouseEnter(island);
     expect(changed).not.toHaveBeenCalled();
     expect(screen.getByText("active")).toBeVisible();

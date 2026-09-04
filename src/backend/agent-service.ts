@@ -6,26 +6,26 @@ import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   AccountUsage,
   AgentEvent,
+  AgentMemory,
   AgentModelOption,
   AgentRuntimeSnapshot,
   AgentStatus,
+  AgentSummary,
   AttachmentDataInput,
   AvatarImageInput,
-  BotMemory,
-  BotSummary,
   ConversationPage,
   ConversationPageAnchor,
   ConversationReadState,
   ConversationSearchPage,
   ConversationSnapshot,
   ConversationWithReadState,
-  CreateBotInput,
-  CreateBotMemoryInput,
+  CreateAgentInput,
+  CreateAgentMemoryInput,
   CreateRoutineInput,
-  DeleteBotMemoryInput,
+  DeleteAgentMemoryInput,
   DeleteRoutineInput,
   DraftAttachment,
-  DuplicateBotResult,
+  DuplicateAgentResult,
   ListRoutineRunsInput,
   QueuedMessageReceipt,
   QueueSnapshot,
@@ -40,8 +40,8 @@ import type {
   SidebarLayoutSnapshot,
   SteerQueuedMessageInput,
   TestRoutineInput,
-  UpdateBotInput,
-  UpdateBotMemoryInput,
+  UpdateAgentInput,
+  UpdateAgentMemoryInput,
   UpdateQueuedMessageInput,
   UpdateRoutineInput,
 } from "@openbot/contracts/ipc";
@@ -71,11 +71,11 @@ import { type AgentClientFactory, ProviderRuntime } from "./agent/provider-runti
 import { type RoutineMutationOptions, RoutineScheduler } from "./agent/routine-scheduler";
 import { type OpenBotToolResponse, openBotToolResult } from "./agent/routine-tools";
 import { fitRuntimeSnapshot } from "./agent/runtime-snapshot";
-import { isDynamicToolCall, providerForBot, providerLabel } from "./agent/thread-items";
+import { isDynamicToolCall, providerForAgent, providerLabel } from "./agent/thread-items";
 import { ThreadLifecycle } from "./agent/thread-lifecycle";
 import { type AgentBrowserHost, TurnLifecycle } from "./agent/turn-lifecycle";
 import type { AgentClient, AgentProvider } from "./agent-client";
-import type { BotStore } from "./agent-store";
+import type { AgentStore } from "./agent-store";
 import { OPENBOT_BROWSER_NAMESPACE } from "./browser-host";
 import { type ConversationMarkerExclusions, ConversationReadStore } from "./conversation-read-store";
 import { mergeConversationSnapshots } from "./conversation-snapshots";
@@ -102,14 +102,14 @@ export interface ResolvedSharedFile {
 }
 
 export class AgentService extends EventEmitter<AgentServiceEvents> {
-  readonly #store: BotStore;
+  readonly #store: AgentStore;
   readonly #mailbox: MailboxStore;
   readonly #browser: AgentBrowserHost;
   readonly #conversationReads: ConversationReadStore;
   readonly #memories: AgentMemories;
   readonly #routines: RoutineScheduler;
   readonly #providers: ProviderRuntime;
-  readonly #prepareBotWorkspace: (bot: BotSummary) => Promise<void>;
+  readonly #prepareAgentWorkspace: (agent: AgentSummary) => Promise<void>;
   readonly #hostedSites: HostedSiteCoordinator;
   readonly #conversation: ConversationRuntime;
   readonly #attention: AttentionRegistry;
@@ -127,7 +127,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   #stopping = false;
 
   constructor(
-    store: BotStore,
+    store: AgentStore,
     mailbox: MailboxStore,
     browser: AgentBrowserHost,
     requestTimeoutMs = 30_000,
@@ -136,7 +136,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     bundledCodexExecutable: string | null | undefined = undefined,
     bundledClaudeExecutable: string | null | undefined = null,
     bundledGrokExecutable: string | null | undefined = null,
-    prepareBotWorkspace: (bot: BotSummary) => Promise<void> = async () => undefined,
+    prepareAgentWorkspace: (agent: AgentSummary) => Promise<void> = async () => undefined,
     hostedSites: AgentHostedSites | null = null,
   ) {
     super();
@@ -144,17 +144,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#mailbox = mailbox;
     this.#browser = browser;
     this.#conversationReads = new ConversationReadStore(store.database);
-    this.#prepareBotWorkspace = prepareBotWorkspace;
+    this.#prepareAgentWorkspace = prepareAgentWorkspace;
     this.#conversation = new ConversationRuntime(
       store,
       (event) => this.#emit(event),
-      () => this.listBots(),
+      () => this.listAgents(),
     );
     this.#memories = new AgentMemories({
       store,
       conversation: this.#conversation,
       emit: (event) => this.#emit(event),
-      emitError: (code, error, botId) => this.#emitError(code, error, botId),
+      emitError: (code, error, agentId) => this.#emitError(code, error, agentId),
     });
     this.#routines = new RoutineScheduler({
       store,
@@ -162,14 +162,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       conversation: this.#conversation,
       hooks: {
         emit: (event) => this.#emit(event),
-        emitError: (code, error, botId) => this.#emitError(code, error, botId),
-        emitQueue: (botId) => this.#mailboxSync.emitQueue(botId),
-        scheduleDrain: (botId) => this.#drain.scheduleDrain(botId),
-        interrupt: (botId, turnId) => this.interrupt(botId, turnId),
-        awaitDrain: (botId) => this.#drain.taskFor(botId),
+        emitError: (code, error, agentId) => this.#emitError(code, error, agentId),
+        emitQueue: (agentId) => this.#mailboxSync.emitQueue(agentId),
+        scheduleDrain: (agentId) => this.#drain.scheduleDrain(agentId),
+        interrupt: (agentId, turnId) => this.interrupt(agentId, turnId),
+        awaitDrain: (agentId) => this.#drain.taskFor(agentId),
         syncMailboxMessages: (snapshot) => this.#mailboxSync.syncMailboxMessages(snapshot),
-        listBots: () => this.listBots(),
-        pendingDuplicateBots: () => this.#duplication.pendingBots(),
+        listAgents: () => this.listAgents(),
+        pendingDuplicateAgents: () => this.#duplication.pendingAgents(),
         isRunning: () => this.#initialized && !this.#stopping,
       },
     });
@@ -177,7 +177,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       store,
       conversation: this.#conversation,
       hostedSites,
-      emitError: (code, error, botId) => this.#emitError(code, error, botId),
+      emitError: (code, error, agentId) => this.#emitError(code, error, agentId),
       isStopping: () => this.#stopping,
     });
     this.#providers = new ProviderRuntime({
@@ -190,7 +190,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         onProvidersReady: async () => {
           await this.#boot.reconcileUnresolvedDeliveries();
           void this.#boot.backfillProviderHistory();
-          for (const bot of this.#store.list()) this.#drain.scheduleDrain(bot.id);
+          for (const agent of this.#store.list()) this.#drain.scheduleDrain(agent.id);
         },
         onProviderLost: (client) => {
           this.#compaction.dispose();
@@ -202,7 +202,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         isStopping: () => this.#stopping,
       },
       emit: (event) => this.#emit(event),
-      emitError: (code, error, botId) => this.#emitError(code, error, botId),
+      emitError: (code, error, agentId) => this.#emitError(code, error, agentId),
       requestTimeoutMs,
       preferredProvider,
       clientFactory,
@@ -213,8 +213,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#compaction = new ContextCompaction({
       store,
       providers: this.#providers,
-      emitError: (code, error, botId) => this.#emitError(code, error, botId),
-      scheduleDrain: (botId) => this.#drain.scheduleDrain(botId),
+      emitError: (code, error, agentId) => this.#emitError(code, error, agentId),
+      scheduleDrain: (agentId) => this.#drain.scheduleDrain(agentId),
     });
     this.#attention = new AttentionRegistry({
       conversation: this.#conversation,
@@ -222,7 +222,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       hostedSites: this.#hostedSites,
       routines: this.#routines,
       emit: (event) => this.#emit(event),
-      emitError: (code, error, botId) => this.#emitError(code, error, botId),
+      emitError: (code, error, agentId) => this.#emitError(code, error, agentId),
       emitRuntimeSnapshot: () => this.#emitRuntimeSnapshot(),
     });
     this.#duplication = new DuplicationGate({
@@ -233,10 +233,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       routines: this.#routines,
       hooks: {
         emit: (event) => this.#emit(event),
-        listBots: () => this.listBots(),
-        deleteBotData: (bot) => this.#deleteBotData(bot),
-        hasAttentionFor: (botId) => this.#attention.hasAttentionFor(botId),
-        scheduleDrain: (botId) => this.#drain.scheduleDrain(botId),
+        listAgents: () => this.listAgents(),
+        deleteAgentData: (agent) => this.#deleteAgentData(agent),
+        hasAttentionFor: (agentId) => this.#attention.hasAttentionFor(agentId),
+        scheduleDrain: (agentId) => this.#drain.scheduleDrain(agentId),
       },
     });
     this.#browser.onChanged((tabs, activeTabId) => {
@@ -264,7 +264,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       routines: this.#routines,
       hooks: {
         emit: (event) => this.#emit(event),
-        emitError: (code, error, botId) => this.#emitError(code, error, botId),
+        emitError: (code, error, agentId) => this.#emitError(code, error, agentId),
       },
     });
     this.#boot = new BootRecovery({
@@ -273,7 +273,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       providers: this.#providers,
       conversation: this.#conversation,
       mailboxSync: this.#mailboxSync,
-      hooks: { emitError: (code, error, botId) => this.#emitError(code, error, botId) },
+      hooks: { emitError: (code, error, agentId) => this.#emitError(code, error, agentId) },
     });
     this.#attachments = new AttachmentGateway({
       conversation: this.#conversation,
@@ -281,7 +281,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       sharedRoot: store.sharedRoot,
       hooks: {
         emit: (event) => this.#emit(event),
-        emitError: (code, error, botId) => this.#emitError(code, error, botId),
+        emitError: (code, error, agentId) => this.#emitError(code, error, agentId),
       },
     });
     this.#threads = new ThreadLifecycle({
@@ -291,8 +291,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       memories: this.#memories,
       compaction: this.#compaction,
       hooks: {
-        logRecovery: (botId, provider, outcome) =>
-          logger.warn("Recovered an unavailable provider session.", { botId, provider, outcome }),
+        logRecovery: (agentId, provider, outcome) =>
+          logger.warn("Recovered an unavailable provider session.", { agentId, provider, outcome }),
       },
     });
     this.#drain = new DrainScheduler({
@@ -306,7 +306,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       routines: this.#routines,
       threads: this.#threads,
       hooks: {
-        emitError: (code, error, botId) => this.#emitError(code, error, botId),
+        emitError: (code, error, agentId) => this.#emitError(code, error, agentId),
         isStopping: () => this.#stopping,
       },
     });
@@ -327,10 +327,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       deltas: this.#deltas,
       hooks: {
         emit: (event) => this.#emit(event),
-        emitError: (code, error, botId) => this.#emitError(code, error, botId),
+        emitError: (code, error, agentId) => this.#emitError(code, error, agentId),
         emitRuntimeSnapshot: () => this.#emitRuntimeSnapshot(),
-        scheduleDrain: (botId) => this.#drain.scheduleDrain(botId),
-        listBots: () => this.listBots(),
+        scheduleDrain: (agentId) => this.#drain.scheduleDrain(agentId),
+        listAgents: () => this.listAgents(),
       },
     });
   }
@@ -339,33 +339,33 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return this.#providers.status();
   }
 
-  async getUsage(botId?: string): Promise<AccountUsage> {
-    if (!botId) return this.#providers.usage();
-    const bot = this.listBots().find((candidate) => candidate.id === botId);
-    if (!bot) throw new Error("Agent not found.");
-    return this.#providers.usage({ provider: bot.provider, model: bot.model });
+  async getUsage(agentId?: string): Promise<AccountUsage> {
+    if (!agentId) return this.#providers.usage();
+    const agent = this.listAgents().find((candidate) => candidate.id === agentId);
+    if (!agent) throw new Error("Agent not found.");
+    return this.#providers.usage({ provider: agent.provider, model: agent.model });
   }
 
-  listBots(): BotSummary[] {
-    return this.#duplication.visibleBots(this.#store.list());
+  listAgents(): AgentSummary[] {
+    return this.#duplication.visibleAgents(this.#store.list());
   }
 
   getRuntimeSnapshot(): AgentRuntimeSnapshot {
-    const bots = this.listBots();
-    const runtimeBots: AgentRuntimeSnapshot["bots"] = bots.map((bot) => ({
-      id: bot.id,
-      name: bot.name,
-      notifications: bot.notifications,
-      preview: bot.preview.slice(0, AGENT_RUNTIME_TEXT_LIMIT),
-      updatedAt: bot.updatedAt,
-      avatarSeed: bot.avatarSeed,
-      avatarHue: bot.avatarHue,
-      avatarUrl: bot.avatarUrl,
+    const agents = this.listAgents();
+    const runtimeAgents: AgentRuntimeSnapshot["agents"] = agents.map((agent) => ({
+      id: agent.id,
+      name: agent.name,
+      notifications: agent.notifications,
+      preview: agent.preview.slice(0, AGENT_RUNTIME_TEXT_LIMIT),
+      updatedAt: agent.updatedAt,
+      avatarSeed: agent.avatarSeed,
+      avatarHue: agent.avatarHue,
+      avatarUrl: agent.avatarUrl,
     }));
     const activeTurns: AgentRuntimeSnapshot["activeTurns"] = [];
     const latestMessages: AgentRuntimeSnapshot["latestMessages"] = [];
-    for (const bot of bots) {
-      const live = this.#conversation.snapshot(bot.id);
+    for (const agent of agents) {
+      const live = this.#conversation.snapshot(agent.id);
       const liveLatest = [...(live?.messages ?? [])]
         .reverse()
         .find(
@@ -377,16 +377,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         );
       const persisted =
         !live || !liveLatest
-          ? this.#store.database.readConversationRuntime(bot.id, bot.threadId)
+          ? this.#store.database.readConversationRuntime(agent.id, agent.threadId)
           : { activeTurnId: null, latestMessage: null };
       const activeTurnId = live ? live.activeTurnId : persisted.activeTurnId;
-      if (activeTurnId && bot.threadId) {
-        activeTurns.push({ botId: bot.id, threadId: bot.threadId, turnId: activeTurnId });
+      if (activeTurnId && agent.threadId) {
+        activeTurns.push({ agentId: agent.id, threadId: agent.threadId, turnId: activeTurnId });
       }
       const latest = liveLatest ?? persisted.latestMessage;
       if (latest) {
         latestMessages.push({
-          botId: bot.id,
+          agentId: agent.id,
           id: latest.id,
           text: latest.text.slice(0, AGENT_RUNTIME_TEXT_LIMIT),
           createdAt: latest.createdAt,
@@ -394,40 +394,40 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
     }
     return fitRuntimeSnapshot({
-      bots: runtimeBots,
+      agents: runtimeAgents,
       activeTurns,
       work: this.#mailbox.listRuntimeWork(
-        bots.map((bot) => bot.id),
+        agents.map((agent) => agent.id),
         this.#turn.failedTurns(),
       ),
       latestMessages,
       ...this.#attention.runtimeAttention(),
-      failedTurns: [...this.#turn.failedTurns()].map(([botId, turnId]) => ({ botId, turnId })),
+      failedTurns: [...this.#turn.failedTurns()].map(([agentId, turnId]) => ({ agentId, turnId })),
     });
   }
 
-  listMemories(botId: string): BotMemory[] {
-    return this.#memories.list(botId);
+  listMemories(agentId: string): AgentMemory[] {
+    return this.#memories.list(agentId);
   }
 
-  createMemory(input: CreateBotMemoryInput): BotMemory {
+  createMemory(input: CreateAgentMemoryInput): AgentMemory {
     return this.#memories.create(input);
   }
 
-  updateMemory(input: UpdateBotMemoryInput): BotMemory {
+  updateMemory(input: UpdateAgentMemoryInput): AgentMemory {
     return this.#memories.update(input);
   }
 
-  deleteMemory(input: DeleteBotMemoryInput): void {
+  deleteMemory(input: DeleteAgentMemoryInput): void {
     this.#memories.delete(input);
   }
 
-  clearMemories(botId: string): void {
-    this.#memories.clear(botId);
+  clearMemories(agentId: string): void {
+    this.#memories.clear(agentId);
   }
 
-  listRoutines(botId: string): Routine[] {
-    return this.#routines.list(botId);
+  listRoutines(agentId: string): Routine[] {
+    return this.#routines.list(agentId);
   }
 
   createRoutine(input: CreateRoutineInput, options: RoutineMutationOptions = {}): Routine {
@@ -454,15 +454,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return this.#providers.listModels();
   }
 
-  async createBot(input: CreateBotInput): Promise<BotSummary> {
+  async createAgent(input: CreateAgentInput): Promise<AgentSummary> {
     const initialMessage = input.initialMessage.trim();
     if (!initialMessage) throw new Error("Initial message is required.");
     if (input.initialMessage.length > INPUT_LIMITS.messageText) throw new Error("Initial message is too long.");
-    let bot = await this.#store.createBot(input);
+    let agent = await this.#store.createAgent(input);
     try {
-      await this.#prepareBotWorkspace(bot);
+      await this.#prepareAgentWorkspace(agent);
       const preferredProvider = this.#providers.preferredProvider();
-      if (preferredProvider !== bot.provider) {
+      if (preferredProvider !== agent.provider) {
         const models = this.#providers.listModels();
         const preferredDefault =
           preferredProvider === "codex" ? "gpt-5.6-luna" : preferredProvider === "claude" ? "claude-opus-5" : null;
@@ -470,23 +470,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           models.find((model) => model.provider === preferredProvider && model.id === preferredDefault) ??
           models.find((model) => model.provider === preferredProvider);
         if (!preferredModel) throw new Error(`${providerLabel(preferredProvider)} has no available model.`);
-        bot = await this.#store.updateBot({
-          botId: bot.id,
+        agent = await this.#store.updateAgent({
+          agentId: agent.id,
           provider: preferredProvider,
           model: preferredModel.id,
           reasoningEffort: preferredModel.defaultReasoningEffort,
         });
       }
-      await this.sendMessage({ botId: bot.id, text: initialMessage, attachmentDraftIds: [] });
-      return this.#store.list().find((candidate) => candidate.id === bot.id) ?? bot;
+      await this.sendMessage({ agentId: agent.id, text: initialMessage, attachmentDraftIds: [] });
+      return this.#store.list().find((candidate) => candidate.id === agent.id) ?? agent;
     } catch (error) {
       let rollbackError: unknown;
       try {
-        await this.#deleteBotData(bot);
+        await this.#deleteAgentData(agent);
       } catch (caught) {
         rollbackError = caught;
       }
-      this.#emit({ type: "bots-changed", bots: this.listBots() });
+      this.#emit({ type: "agents-changed", agents: this.listAgents() });
       if (rollbackError) {
         throw new AggregateError(
           [error, rollbackError],
@@ -497,40 +497,42 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  async createBotProfile(input: Omit<CreateBotInput, "initialMessage"> & { title?: string }): Promise<BotSummary> {
-    let bot = await this.#store.createBot(input);
+  async createAgentProfile(
+    input: Omit<CreateAgentInput, "initialMessage"> & { title?: string },
+  ): Promise<AgentSummary> {
+    let agent = await this.#store.createAgent(input);
     try {
-      await this.#prepareBotWorkspace(bot);
-      if (input.title) bot = await this.#store.updateBot({ botId: bot.id, title: input.title });
-      this.#emit({ type: "bots-changed", bots: this.listBots() });
-      return bot;
+      await this.#prepareAgentWorkspace(agent);
+      if (input.title) agent = await this.#store.updateAgent({ agentId: agent.id, title: input.title });
+      this.#emit({ type: "agents-changed", agents: this.listAgents() });
+      return agent;
     } catch (error) {
-      await this.#deleteBotData(bot);
+      await this.#deleteAgentData(agent);
       throw error;
     }
   }
 
-  committedBotDuplication(operationId: string, sourceBotId: string): DuplicateBotResult | null {
-    return this.#store.committedBotDuplication(operationId, sourceBotId);
+  committedAgentDuplication(operationId: string, sourceAgentId: string): DuplicateAgentResult | null {
+    return this.#store.committedAgentDuplication(operationId, sourceAgentId);
   }
 
-  duplicateBot(sourceBotId: string, operationId: string = randomUUID()): Promise<BotSummary> {
-    return this.#duplication.duplicate(sourceBotId, operationId);
+  duplicateAgent(sourceAgentId: string, operationId: string = randomUUID()): Promise<AgentSummary> {
+    return this.#duplication.duplicate(sourceAgentId, operationId);
   }
 
-  commitBotDuplication(botId: string, layout: SidebarLayoutSnapshot): Promise<DuplicateBotResult> {
-    return this.#duplication.commit(botId, layout);
+  commitAgentDuplication(agentId: string, layout: SidebarLayoutSnapshot): Promise<DuplicateAgentResult> {
+    return this.#duplication.commit(agentId, layout);
   }
 
-  setMarketplaceSource(botId: string, source: NonNullable<BotSummary["marketplaceSource"]>): BotSummary {
-    const bot = this.#store.setMarketplaceSource(botId, source);
-    this.#emit({ type: "bots-changed", bots: this.listBots() });
-    return bot;
+  setMarketplaceSource(agentId: string, source: NonNullable<AgentSummary["marketplaceSource"]>): AgentSummary {
+    const agent = this.#store.setMarketplaceSource(agentId, source);
+    this.#emit({ type: "agents-changed", agents: this.listAgents() });
+    return agent;
   }
 
-  async updateBot(input: UpdateBotInput): Promise<BotSummary> {
-    this.#conversation.requireKnownBot(input.botId);
-    const previous = this.#store.list().find((bot) => bot.id === input.botId);
+  async updateAgent(input: UpdateAgentInput): Promise<AgentSummary> {
+    this.#conversation.requireKnownAgent(input.agentId);
+    const previous = this.#store.list().find((agent) => agent.id === input.agentId);
     const requestedModel = input.model
       ? this.#providers
           .listModels()
@@ -541,16 +543,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (input.provider && requestedModel && requestedModel.provider !== input.provider) {
       throw new Error("The selected model does not belong to that provider.");
     }
-    if (requestedProvider && previous && requestedProvider !== providerForBot(previous)) {
+    if (requestedProvider && previous && requestedProvider !== providerForAgent(previous)) {
       if (!input.model || !input.provider) {
         throw new Error("Changing provider requires an atomic provider and model selection.");
       }
       const hasPendingWork = this.#mailbox
-        .listQueue(input.botId)
+        .listQueue(input.agentId)
         .deliveries.some((delivery) => ["queued", "starting", "running"].includes(delivery.status));
       const activeTurn =
-        this.#conversation.snapshot(input.botId)?.activeTurnId ??
-        (previous.threadId ? this.#store.database.readConversation(input.botId, previous.threadId).activeTurnId : null);
+        this.#conversation.snapshot(input.agentId)?.activeTurnId ??
+        (previous.threadId
+          ? this.#store.database.readConversation(input.agentId, previous.threadId).activeTurnId
+          : null);
       if (hasPendingWork || activeTurn) {
         throw new Error("Wait for the active turn and queue to finish before changing provider.");
       }
@@ -562,41 +566,41 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       input.description !== undefined ||
       input.model !== undefined ||
       input.reasoningEffort !== undefined;
-    const bot = await this.#store.updateBot({
+    const agent = await this.#store.updateAgent({
       ...input,
       ...(requestedModel && !input.provider ? { provider: requestedModel.provider } : {}),
     });
-    const activeSession = this.#store.activeProviderSession(bot.id);
-    if (previous?.threadId && requestedProvider && requestedProvider !== providerForBot(previous)) {
+    const activeSession = this.#store.activeProviderSession(agent.id);
+    if (previous?.threadId && requestedProvider && requestedProvider !== providerForAgent(previous)) {
       this.#store.database.deactivateProviderSessions(previous.threadId);
     } else if (activeSession && (input.model || input.reasoningEffort)) {
       this.#store.database.updateProviderSessionConfig(
         activeSession.id,
         activeSession.threadId,
-        bot.model,
-        bot.reasoningEffort,
+        agent.model,
+        agent.reasoningEffort,
       );
     }
     if (profileChanged && activeSession) {
       // Re-resume before the next turn so App Server receives the updated standing instructions.
       this.#conversation.unloadThread(activeSession.externalSessionId);
     }
-    this.#emit({ type: "bots-changed", bots: this.listBots() });
-    return bot;
+    this.#emit({ type: "agents-changed", agents: this.listAgents() });
+    return agent;
   }
 
-  async setAvatar(botId: string, image: AvatarImageInput | null): Promise<BotSummary> {
-    const bot = await this.#store.setAvatar(botId, image);
-    this.#emit({ type: "bots-changed", bots: this.listBots() });
-    return bot;
+  async setAvatar(agentId: string, image: AvatarImageInput | null): Promise<AgentSummary> {
+    const agent = await this.#store.setAvatar(agentId, image);
+    this.#emit({ type: "agents-changed", agents: this.listAgents() });
+    return agent;
   }
 
-  refreshBotRuntime(botId: string): void {
-    this.#threads.refreshBotRuntime(botId);
+  refreshAgentRuntime(agentId: string): void {
+    this.#threads.refreshAgentRuntime(agentId);
   }
 
-  resolveAvatar(botId: string): { path: string; mimeType: AvatarImageInput["mimeType"]; version: string } | null {
-    return this.#store.resolveAvatar(botId);
+  resolveAvatar(agentId: string): { path: string; mimeType: AvatarImageInput["mimeType"]; version: string } | null {
+    return this.#store.resolveAvatar(agentId);
   }
 
   async resolveSharedFile(inputPath: string): Promise<ResolvedSharedFile> {
@@ -611,11 +615,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return { path: resolvedPath, name: basename(resolvedPath), size: metadata.size };
   }
 
-  async resolveWorkspaceFile(botId: string, inputPath: string): Promise<ResolvedSharedFile> {
-    const bot = this.#store.list().find((candidate) => candidate.id === botId);
-    if (!bot) throw new Error(`Unknown agent: ${botId}`);
-    const workspaceRoot = await realpath(bot.workspacePath);
-    const candidatePath = workspacePathFromInput(bot.workspacePath, bot.id, inputPath);
+  async resolveWorkspaceFile(agentId: string, inputPath: string): Promise<ResolvedSharedFile> {
+    const agent = this.#store.list().find((candidate) => candidate.id === agentId);
+    if (!agent) throw new Error(`Unknown agent: ${agentId}`);
+    const workspaceRoot = await realpath(agent.workspacePath);
+    const candidatePath = workspacePathFromInput(agent.workspacePath, agent.id, inputPath);
     const resolvedPath = await realpath(candidatePath);
     if (!isWithin(workspaceRoot, resolvedPath)) {
       throw new Error("Workspace file must be inside the agent workspace.");
@@ -625,52 +629,52 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return { path: resolvedPath, name: basename(resolvedPath), size: metadata.size };
   }
 
-  async deleteBot(botId: string): Promise<void> {
-    const bot = this.#store.list().find((candidate) => candidate.id === botId);
-    if (!bot) throw new Error(`Unknown agent: ${botId}`);
+  async deleteAgent(agentId: string): Promise<void> {
+    const agent = this.#store.list().find((candidate) => candidate.id === agentId);
+    if (!agent) throw new Error(`Unknown agent: ${agentId}`);
     const hasPendingWork = this.#mailbox
-      .listQueue(botId)
+      .listQueue(agentId)
       .deliveries.some((delivery) => ["queued", "starting", "running"].includes(delivery.status));
-    if (hasPendingWork || this.#conversation.snapshot(botId)?.activeTurnId) {
+    if (hasPendingWork || this.#conversation.snapshot(agentId)?.activeTurnId) {
       throw new Error("Stop the agent and cancel its queued messages before deleting it.");
     }
 
-    const { wasPending, release } = this.#duplication.releaseForDelete(botId);
+    const { wasPending, release } = this.#duplication.releaseForDelete(agentId);
     try {
-      await this.#deleteBotData(bot);
+      await this.#deleteAgentData(agent);
     } finally {
       release();
     }
-    this.#duplication.forget(botId);
-    if (!wasPending) this.#emit({ type: "bots-changed", bots: this.listBots() });
+    this.#duplication.forget(agentId);
+    if (!wasPending) this.#emit({ type: "agents-changed", agents: this.listAgents() });
     this.#routines.arm();
   }
 
-  async #deleteBotData(bot: BotSummary): Promise<void> {
-    const providerSessions = bot.threadId ? this.#store.database.listProviderSessions(bot.threadId) : [];
+  async #deleteAgentData(agent: AgentSummary): Promise<void> {
+    const providerSessions = agent.threadId ? this.#store.database.listProviderSessions(agent.threadId) : [];
     const errors: unknown[] = [];
     try {
-      await this.#mailbox.deleteBotData(bot.id);
+      await this.#mailbox.deleteAgentData(agent.id);
     } catch (error) {
       errors.push(error);
     }
     try {
-      await this.#store.deleteBot(bot.id);
+      await this.#store.deleteAgent(agent.id);
     } catch (error) {
       errors.push(error);
     }
-    this.#conversation.forgetBot(bot.id);
-    this.#turn.forgetBot(bot.id);
-    this.#drain.forgetBot(bot.id);
-    this.#hostedSites.forgetBot(bot.id);
-    if (bot.threadId) {
+    this.#conversation.forgetAgent(agent.id);
+    this.#turn.forgetAgent(agent.id);
+    this.#drain.forgetAgent(agent.id);
+    this.#hostedSites.forgetAgent(agent.id);
+    if (agent.threadId) {
       for (const session of providerSessions) {
         this.#conversation.unbindThread(session.externalSessionId);
         this.#conversation.unloadThread(session.externalSessionId);
         this.#compaction.forgetThread(session.externalSessionId);
       }
     }
-    this.#compaction.forgetBot(bot.id);
+    this.#compaction.forgetAgent(agent.id);
     if (errors.length > 0) throw new AggregateError(errors, "The agent data could not be removed completely.");
   }
 
@@ -683,7 +687,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#routines.skipMissed(new Date());
     this.#initialized = true;
     await this.#providers.start();
-    for (const bot of this.#store.list()) this.#mailboxSync.emitQueue(bot.id);
+    for (const agent of this.#store.list()) this.#mailboxSync.emitQueue(agent.id);
     await this.#routines.resumePendingRuns();
     this.#routines.arm();
   }
@@ -729,10 +733,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#attention.clearBrowserTakeovers();
     this.#attention.clearApprovals();
     const clients = this.#providers.dispose();
-    for (const [botId, snapshot] of this.#conversation.activeSnapshots()) {
+    for (const [agentId, snapshot] of this.#conversation.activeSnapshots()) {
       if (!snapshot.activeTurnId) continue;
-      const session = this.#store.activeProviderSession(botId);
-      if (session) this.#images.interrupt(botId, session.externalSessionId, snapshot.activeTurnId);
+      const session = this.#store.activeProviderSession(agentId);
+      if (session) this.#images.interrupt(agentId, session.externalSessionId, snapshot.activeTurnId);
     }
     this.#turn.dispose();
     this.#drain.dispose();
@@ -746,18 +750,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#providers.markStopped();
   }
 
-  async readConversation(botId: string): Promise<ConversationSnapshot> {
-    const bot = await this.#store.getOrCreate(botId);
-    const persisted = this.#store.database.readConversation(botId, bot.threadId);
-    const live = this.#conversation.snapshot(botId);
+  async readConversation(agentId: string): Promise<ConversationSnapshot> {
+    const agent = await this.#store.getOrCreate(agentId);
+    const persisted = this.#store.database.readConversation(agentId, agent.threadId);
+    const live = this.#conversation.snapshot(agentId);
     const snapshot = live?.activeTurnId ? mergeConversationSnapshots(persisted, live) : persisted;
     this.#mailboxSync.syncMailboxMessages(snapshot);
-    this.#conversation.setSnapshot(botId, snapshot);
+    this.#conversation.setSnapshot(agentId, snapshot);
     return structuredClone(snapshot);
   }
 
-  async readConversationFor(botId: string, memberId: string): Promise<ConversationWithReadState> {
-    const snapshot = await this.readConversation(botId);
+  async readConversationFor(agentId: string, memberId: string): Promise<ConversationWithReadState> {
+    const snapshot = await this.readConversation(agentId);
     return {
       ...snapshot,
       readState: this.#conversationReads.readState(memberId, snapshot),
@@ -765,30 +769,30 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async readConversationPageFor(
-    botId: string,
+    agentId: string,
     memberId: string,
     anchor: ConversationPageAnchor = { type: "latest" },
     limit = 50,
     options: ConversationMarkerExclusions = {},
   ): Promise<ConversationPage> {
-    const bot = await this.#store.getOrCreate(botId);
-    this.#mailboxSync.reconcilePersistedMailboxMessages(bot);
-    const page = this.#store.database.readConversationPage(botId, bot.threadId, anchor, limit, options);
+    const agent = await this.#store.getOrCreate(agentId);
+    this.#mailboxSync.reconcilePersistedMailboxMessages(agent);
+    const page = this.#store.database.readConversationPage(agentId, agent.threadId, anchor, limit, options);
     return {
       ...page,
-      readState: this.#conversationReads.readStateForThread(memberId, bot.threadId, options),
+      readState: this.#conversationReads.readStateForThread(memberId, agent.threadId, options),
     };
   }
 
-  searchConversationMessages(query: string, botId?: string, cursor?: string, limit = 100): ConversationSearchPage {
-    return this.#store.database.searchConversationMessages(query, botId, cursor, limit);
+  searchConversationMessages(query: string, agentId?: string, cursor?: string, limit = 100): ConversationSearchPage {
+    return this.#store.database.searchConversationMessages(query, agentId, cursor, limit);
   }
 
   listConversationReads(
     memberId: string,
     options: ConversationMarkerExclusions = {},
   ): Record<string, ConversationReadState> {
-    return this.#conversationReads.listStates(memberId, this.listBots(), options);
+    return this.#conversationReads.listStates(memberId, this.listAgents(), options);
   }
 
   adoptConversationReads(sourceMemberId: string, targetMemberId: string): void {
@@ -796,26 +800,26 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async markConversationRead(
-    botId: string,
+    agentId: string,
     memberId: string,
     throughMessageId: string | null,
     options: ConversationMarkerExclusions = {},
   ): Promise<ConversationReadState> {
-    const snapshot = await this.readConversation(botId);
+    const snapshot = await this.readConversation(agentId);
     const previous = this.#conversationReads.readState(memberId, snapshot).throughMessageId;
     const state = this.#conversationReads.markRead(memberId, snapshot, throughMessageId, options);
     if (this.#conversationReads.readState(memberId, snapshot).throughMessageId !== previous) {
       // Read cursors are shared by a member's devices, not by every team member.
       // Invalidate without broadcasting a reader's cursor; each client reloads its own state.
-      this.#emit({ type: "conversation-invalidated", botId, revision: snapshot.revision });
+      this.#emit({ type: "conversation-invalidated", agentId, revision: snapshot.revision });
     }
     return state;
   }
 
-  async markConversationUnread(botId: string, memberId: string): Promise<ConversationReadState> {
-    const snapshot = await this.readConversation(botId);
+  async markConversationUnread(agentId: string, memberId: string): Promise<ConversationReadState> {
+    const snapshot = await this.readConversation(agentId);
     const state = this.#conversationReads.markUnread(memberId, snapshot);
-    this.#emit({ type: "conversation-invalidated", botId, revision: snapshot.revision });
+    this.#emit({ type: "conversation-invalidated", agentId, revision: snapshot.revision });
     return state;
   }
 
@@ -831,54 +835,54 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return this.#mailbox.discardDraft(id);
   }
 
-  listQueue(botId: string): QueueSnapshot {
-    return this.#mailbox.listQueue(botId);
+  listQueue(agentId: string): QueueSnapshot {
+    return this.#mailbox.listQueue(agentId);
   }
 
-  acknowledgeFailedTurn(botId: string, turnId: string): void {
-    this.#turn.acknowledgeFailedTurn(botId, turnId);
+  acknowledgeFailedTurn(agentId: string, turnId: string): void {
+    this.#turn.acknowledgeFailedTurn(agentId, turnId);
   }
 
-  async cancelQueuedMessage(botId: string, deliveryId: string): Promise<void> {
-    await this.#mailbox.cancel(botId, deliveryId);
-    this.#mailboxSync.emitQueue(botId);
+  async cancelQueuedMessage(agentId: string, deliveryId: string): Promise<void> {
+    await this.#mailbox.cancel(agentId, deliveryId);
+    this.#mailboxSync.emitQueue(agentId);
   }
 
   async updateQueuedMessage(input: UpdateQueuedMessageInput): Promise<void> {
     await this.#mailbox.updateQueuedMessage(
-      input.botId,
+      input.agentId,
       input.deliveryId,
       input.text,
       input.keepAttachmentIds,
       input.attachmentDraftIds,
     );
-    const snapshot = this.#conversation.snapshot(input.botId);
+    const snapshot = this.#conversation.snapshot(input.agentId);
     if (snapshot) this.#mailboxSync.syncMailboxMessages(snapshot);
-    this.#mailboxSync.emitQueue(input.botId);
+    this.#mailboxSync.emitQueue(input.agentId);
     if (snapshot) this.#conversation.emitConversation(snapshot, "queue.message-updated");
   }
 
   async reorderQueue(input: ReorderQueueInput): Promise<void> {
-    await this.#mailbox.reorderQueue(input.botId, input.deliveryIds);
-    this.#mailboxSync.emitQueue(input.botId);
+    await this.#mailbox.reorderQueue(input.agentId, input.deliveryIds);
+    this.#mailboxSync.emitQueue(input.agentId);
   }
 
   async steerQueuedMessage(input: SteerQueuedMessageInput): Promise<void> {
-    const bot = await this.#store.getOrCreate(input.botId);
-    const client = this.#providers.requireReadyClient(providerForBot(bot));
-    const session = this.#store.activeProviderSession(bot.id);
-    const snapshot = this.#conversation.ensureSnapshot(bot.id, bot.threadId);
+    const agent = await this.#store.getOrCreate(input.agentId);
+    const client = this.#providers.requireReadyClient(providerForAgent(agent));
+    const session = this.#store.activeProviderSession(agent.id);
+    const snapshot = this.#conversation.ensureSnapshot(agent.id, agent.threadId);
     if (!session || !snapshot.activeTurnId || snapshot.activeTurnId !== input.expectedTurnId) {
       throw new Error("The active turn changed before this message could be steered.");
     }
     const context = this.#mailbox.getDelivery(input.deliveryId);
-    if (!context || context.delivery.recipientBotId !== bot.id || context.delivery.status !== "queued") {
+    if (!context || context.delivery.recipientAgentId !== agent.id || context.delivery.status !== "queued") {
       throw new Error("Only queued messages can be steered.");
     }
 
     const turnId = snapshot.activeTurnId;
     await this.#mailbox.markSteering(input.deliveryId, turnId);
-    this.#mailboxSync.emitQueue(bot.id);
+    this.#mailboxSync.emitQueue(agent.id);
     try {
       await client.request(
         "turn/steer",
@@ -892,79 +896,79 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       );
       await this.#mailbox.markRunning(input.deliveryId, turnId);
       this.#mailboxSync.syncMailboxMessages(snapshot);
-      this.#mailboxSync.emitQueue(bot.id);
+      this.#mailboxSync.emitQueue(agent.id);
       this.#conversation.emitConversation(snapshot, "queue.message-steered", { deliveryId: input.deliveryId });
     } catch (error) {
       await this.#mailbox.restoreQueued(input.deliveryId);
-      this.#mailboxSync.emitQueue(bot.id);
+      this.#mailboxSync.emitQueue(agent.id);
       throw error;
     }
   }
 
   async sendMessage(input: SendMessageInput): Promise<QueuedMessageReceipt> {
-    if (this.#duplication.isPending(input.botId)) throw new Error(`Unknown agent: ${input.botId}`);
-    const bot = await this.#store.getOrCreate(input.botId);
-    await this.ensureProvider(providerForBot(bot));
+    if (this.#duplication.isPending(input.agentId)) throw new Error(`Unknown agent: ${input.agentId}`);
+    const agent = await this.#store.getOrCreate(input.agentId);
+    await this.ensureProvider(providerForAgent(agent));
     const receipt = await this.#mailbox.enqueue({
       sender: { kind: "user" },
-      recipientBotIds: [bot.id],
+      recipientAgentIds: [agent.id],
       text: input.text,
       draftIds: input.attachmentDraftIds ?? [],
       replyToMessageId: input.replyToMessageId ?? null,
     });
     const delivery = this.#mailbox.getDelivery(receipt.deliveries[0].id);
     if (!delivery) throw new Error("Unable to create queued message.");
-    const snapshot = this.#conversation.ensureSnapshot(bot.id, bot.threadId);
+    const snapshot = this.#conversation.ensureSnapshot(agent.id, agent.threadId);
     this.#mailboxSync.syncMailboxMessages(snapshot);
     await this.#store.updatePreview(
-      bot.id,
+      agent.id,
       displayMessageReferences(
         delivery.delivery.text,
         delivery.delivery.attachments,
         agentNamesById(this.#store.list()),
       ) || delivery.delivery.attachments.map((item) => item.name).join(", "),
     );
-    this.#emit({ type: "bots-changed", bots: this.listBots() });
+    this.#emit({ type: "agents-changed", agents: this.listAgents() });
     this.#conversation.emitConversation(snapshot);
-    this.#mailboxSync.emitQueue(bot.id);
-    this.#drain.scheduleDrain(bot.id);
+    this.#mailboxSync.emitQueue(agent.id);
+    this.#drain.scheduleDrain(agent.id);
     return receipt;
   }
 
   async setMessageReaction(input: SetMessageReactionInput): Promise<void> {
-    const bot = await this.#store.getOrCreate(input.botId);
-    const snapshot = this.#conversation.ensureSnapshot(bot.id, bot.threadId);
+    const agent = await this.#store.getOrCreate(input.agentId);
+    const snapshot = this.#conversation.ensureSnapshot(agent.id, agent.threadId);
     if (!snapshot.messages.some((message) => message.id === input.messageId)) {
-      await this.readConversation(bot.id);
+      await this.readConversation(agent.id);
     }
-    const current = this.#conversation.ensureSnapshot(bot.id, bot.threadId);
+    const current = this.#conversation.ensureSnapshot(agent.id, agent.threadId);
     if (!current.messages.some((message) => message.id === input.messageId)) {
       throw new Error("The message is no longer available.");
     }
-    await this.#mailbox.setReaction(bot.id, input.messageId, { kind: "user" }, input.emoji);
+    await this.#mailbox.setReaction(agent.id, input.messageId, { kind: "user" }, input.emoji);
     this.#mailboxSync.syncMailboxMessages(current);
     this.#conversation.emitConversation(current);
   }
 
-  async interrupt(botId: string, turnId: string): Promise<void> {
-    const bot = await this.#store.getOrCreate(botId);
-    const client = this.#providers.requireReadyClient(providerForBot(bot));
-    const session = this.#store.activeProviderSession(botId);
+  async interrupt(agentId: string, turnId: string): Promise<void> {
+    const agent = await this.#store.getOrCreate(agentId);
+    const client = this.#providers.requireReadyClient(providerForAgent(agent));
+    const session = this.#store.activeProviderSession(agentId);
     if (!session) return;
-    this.#images.interrupt(botId, session.externalSessionId, turnId);
+    this.#images.interrupt(agentId, session.externalSessionId, turnId);
     await client.request("turn/interrupt", { threadId: session.externalSessionId, turnId }, decodeRecordResponse);
   }
 
   async interruptAll(): Promise<void> {
     if (!this.#providers.isReady()) return;
     const requests: Promise<unknown>[] = [];
-    for (const [botId, snapshot] of this.#conversation.activeSnapshots()) {
+    for (const [agentId, snapshot] of this.#conversation.activeSnapshots()) {
       if (!snapshot.threadId || !snapshot.activeTurnId) continue;
-      const bot = this.#store.list().find((candidate) => candidate.id === botId);
-      const client = bot ? this.#providers.clientForBot(bot) : null;
-      const session = bot ? this.#store.activeProviderSession(bot.id) : null;
+      const agent = this.#store.list().find((candidate) => candidate.id === agentId);
+      const client = agent ? this.#providers.clientForAgent(agent) : null;
+      const session = agent ? this.#store.activeProviderSession(agent.id) : null;
       if (!client || !session) continue;
-      this.#images.interrupt(botId, session.externalSessionId, snapshot.activeTurnId);
+      this.#images.interrupt(agentId, session.externalSessionId, snapshot.activeTurnId);
       requests.push(
         client
           .request(
@@ -975,7 +979,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
             },
             decodeRecordResponse,
           )
-          .catch((error) => this.#emitError("interrupt_failed", error, botId)),
+          .catch((error) => this.#emitError("interrupt_failed", error, agentId)),
       );
     }
     await Promise.all(requests);
@@ -1012,8 +1016,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         case "item/tool/call": {
           if (!isDynamicToolCall(request.params)) throw new Error("Invalid dynamic tool request.");
           if (request.params.namespace === OPENBOT_BROWSER_NAMESPACE) {
-            const botId = this.#conversation.botForThread(request.params.threadId);
-            if (!botId) throw new Error("The browsing OpenBot agent is unknown.");
+            const agentId = this.#conversation.agentForThread(request.params.threadId);
+            if (!agentId) throw new Error("The browsing OpenBot agent is unknown.");
             if (request.params.tool === "request_takeover") {
               client.respond(request.id, await this.#attention.surfaceBrowserTakeover(request));
               return;
@@ -1022,8 +1026,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               request.id,
               await this.#browser.handleDynamicTool({
                 ...request.params,
-                threadId: this.#conversation.publicThreadId(botId, request.params.threadId),
-                ownerBotId: botId,
+                threadId: this.#conversation.publicThreadId(agentId, request.params.threadId),
+                ownerAgentId: agentId,
               }),
             );
             return;
@@ -1070,8 +1074,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async #handleOpenBotTool(params: DynamicToolCallParams): Promise<OpenBotToolResponse> {
-    const senderBotId = this.#conversation.botForThread(params.threadId);
-    if (!senderBotId) throw new Error("The sending OpenBot agent is unknown.");
+    const senderAgentId = this.#conversation.agentForThread(params.threadId);
+    if (!senderAgentId) throw new Error("The sending OpenBot agent is unknown.");
 
     if (params.tool === "list_sites") {
       return openBotToolResult({ sites: await this.#hostedSites.listSites(), limit: 10 });
@@ -1091,18 +1095,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
 
       const messageId = responseAttachmentMessageId(params.threadId, params.turnId, params.callId);
-      return this.#attachments.attachFiles(senderBotId, params, args.paths, messageId);
+      return this.#attachments.attachFiles(senderAgentId, params, args.paths, messageId);
     }
 
     if (params.tool === "list_agents") {
-      const agents = this.listBots().map((bot) => {
-        const queue = this.#mailbox.listQueue(bot.id);
+      const agents = this.listAgents().map((agent) => {
+        const queue = this.#mailbox.listQueue(agent.id);
         return {
-          id: bot.id,
-          name: bot.name,
-          title: bot.title,
-          description: bot.description,
-          status: this.#conversation.snapshot(bot.id)?.activeTurnId
+          id: agent.id,
+          name: agent.name,
+          title: agent.title,
+          description: agent.description,
+          status: this.#conversation.snapshot(agent.id)?.activeTurnId
             ? "working"
             : queue.deliveries.some((delivery) => delivery.status === "queued")
               ? "queued"
@@ -1118,19 +1122,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (params.tool === "update_profile") {
       const args = params.arguments;
       if (!isRecord(args)) throw new Error("update_profile arguments are required.");
-      const botId = args.botId;
-      if (!isString(botId) || !botId.trim()) throw new Error("botId is required.");
+      const agentId = args.agentId;
+      if (!isString(agentId) || !agentId.trim()) throw new Error("agentId is required.");
       const profileFields = ["name", "title", "description"] as const;
       if (!profileFields.some((field) => args[field] !== undefined)) {
         throw new Error("At least one profile field is required.");
       }
-      const input: UpdateBotInput = { botId };
+      const input: UpdateAgentInput = { agentId };
       for (const field of profileFields) {
         const value = args[field];
         if (value !== undefined && !isString(value)) throw new Error(`${field} must be a string.`);
         if (value !== undefined) input[field] = value;
       }
-      const updated = await this.updateBot(input);
+      const updated = await this.updateAgent(input);
       return {
         success: true,
         contentItems: [
@@ -1147,10 +1151,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       };
     }
 
-    const routineResult = await this.#routines.handleTool(params, senderBotId);
+    const routineResult = await this.#routines.handleTool(params, senderAgentId);
     if (routineResult) return routineResult;
 
-    const memoryResult = this.#memories.handleTool(params, senderBotId);
+    const memoryResult = this.#memories.handleTool(params, senderAgentId);
     if (memoryResult) return memoryResult;
 
     if (params.tool === "react_to_user_message") {
@@ -1159,16 +1163,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         throw new Error("emoji must be exactly one complete Unicode emoji.");
       }
       const delivery = this.#mailbox
-        .findDeliveriesByTurn(senderBotId, params.turnId)
+        .findDeliveriesByTurn(senderAgentId, params.turnId)
         .find((candidate) => candidate.delivery.sender.kind === "user");
       if (!delivery) throw new Error("Only the current user message can receive an agent reaction.");
       await this.#mailbox.setReaction(
-        senderBotId,
+        senderAgentId,
         delivery.delivery.id,
-        { kind: "bot", botId: senderBotId },
+        { kind: "agent", agentId: senderAgentId },
         args.emoji,
       );
-      const snapshot = this.#conversation.ensureSnapshot(senderBotId, params.threadId);
+      const snapshot = this.#conversation.ensureSnapshot(senderAgentId, params.threadId);
       this.#mailboxSync.syncMailboxMessages(snapshot);
       this.#conversation.emitConversation(snapshot);
       return openBotToolResult({ status: "reacted", messageId: delivery.delivery.id, emoji: args.emoji });
@@ -1177,15 +1181,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (params.tool !== "send_message" || !isRecord(params.arguments)) {
       throw new Error(`Unsupported OpenBot tool: ${params.tool}`);
     }
-    const recipientValues = params.arguments.recipientBotIds;
+    const recipientValues = params.arguments.recipientAgentIds;
     if (!Array.isArray(recipientValues) || !recipientValues.every((item) => isString(item))) {
-      throw new Error("recipientBotIds must be an array of bot ids.");
+      throw new Error("recipientAgentIds must be an array of agent ids.");
     }
     if (recipientValues.length !== new Set(recipientValues).size) {
       throw new Error("Duplicate recipients are not allowed.");
     }
-    if (recipientValues.includes(senderBotId)) throw new Error("An agent cannot message itself.");
-    const knownIds = new Set(this.listBots().map((bot) => bot.id));
+    if (recipientValues.includes(senderAgentId)) throw new Error("An agent cannot message itself.");
+    const knownIds = new Set(this.listAgents().map((agent) => agent.id));
     for (const recipient of recipientValues) {
       if (!knownIds.has(recipient)) throw new Error(`Unknown OpenBot agent: ${recipient}`);
     }
@@ -1200,8 +1204,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!isString(params.arguments.text)) throw new Error("text is required.");
 
     const receipt = await this.#mailbox.enqueue({
-      sender: { kind: "bot", botId: senderBotId },
-      recipientBotIds: recipientValues,
+      sender: { kind: "agent", agentId: senderAgentId },
+      recipientAgentIds: recipientValues,
       text: params.arguments.text,
       sourcePaths: paths,
       replyToMessageId: replyToMessageId ?? null,
@@ -1211,7 +1215,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.#mailboxSync.emitQueue(recipient);
       this.#drain.scheduleDrain(recipient);
     }
-    const snapshot = this.#conversation.ensureSnapshot(senderBotId, params.threadId);
+    const snapshot = this.#conversation.ensureSnapshot(senderAgentId, params.threadId);
     this.#mailboxSync.syncMailboxMessages(snapshot);
     this.#conversation.emitConversation(snapshot);
     return {
@@ -1220,10 +1224,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     };
   }
 
-  #emitError(code: string, error: unknown, botId?: string): void {
+  #emitError(code: string, error: unknown, agentId?: string): void {
     this.#emit({
       type: "error",
-      botId,
+      agentId,
       code,
       message: error instanceof Error ? error.message : String(error),
     });

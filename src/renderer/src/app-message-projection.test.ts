@@ -1,4 +1,4 @@
-import type { BotSummary, ConversationMessage } from "@openbot/contracts/ipc";
+import type { AgentSummary, ConversationMessage } from "@openbot/contracts/ipc";
 import {
   hostedSiteConversationEventItemType,
   hostedSiteConversationEventText,
@@ -6,11 +6,11 @@ import {
   routineRunConversationEventItemType,
 } from "@openbot/contracts/ipc";
 import { describe, expect, it } from "vitest";
-import { botProfilesEqual, toBotMessage, toBotMessages, toBotProfile } from "./app-message-projection";
+import { agentProfilesEqual, toAgentMessage, toAgentMessages, toAgentProfile } from "./app-message-projection";
 
-describe("toBotProfile", () => {
+describe("toAgentProfile", () => {
   it("preserves marketplace installation metadata for the renderer", () => {
-    const bot = {
+    const agent = {
       id: "release-coordinator",
       name: "Release Coordinator",
       title: "Launch partner",
@@ -33,22 +33,22 @@ describe("toBotProfile", () => {
         skillIds: ["release-notes"],
         routineIds: ["release-check-in"],
       },
-    } satisfies BotSummary;
+    } satisfies AgentSummary;
 
-    expect(toBotProfile(bot).marketplaceSource).toEqual(bot.marketplaceSource);
+    expect(toAgentProfile(agent).marketplaceSource).toEqual(agent.marketplaceSource);
   });
 
   it("detects metadata changes hidden by the formatted preview time", () => {
-    const first = toBotProfile(botSummary("2026-08-29T10:00:01.000Z"));
-    const second = toBotProfile(botSummary("2026-08-29T10:00:40.000Z"));
+    const first = toAgentProfile(agentSummary("2026-08-29T10:00:01.000Z"));
+    const second = toAgentProfile(agentSummary("2026-08-29T10:00:40.000Z"));
 
     expect(first.time).toBe(second.time);
     expect(first.preview).toBe(second.preview);
-    expect(botProfilesEqual(first, second)).toBe(false);
+    expect(agentProfilesEqual(first, second)).toBe(false);
   });
 });
 
-describe("toBotMessage", () => {
+describe("toAgentMessage", () => {
   it("removes internal citation markers from completed and streaming agent text", () => {
     const message = {
       id: "forecast",
@@ -58,9 +58,10 @@ describe("toBotMessage", () => {
       status: "completed",
     } satisfies ConversationMessage;
 
-    expect(toBotMessage(message).body).toBe("Storms are likely. ");
+    expect(toAgentMessage(message).body).toBe("Storms are likely. ");
     expect(
-      toBotMessage({ ...message, text: "Storms are likely. \u{e200}cite\u{e202}turn0fore", status: "streaming" }).body,
+      toAgentMessage({ ...message, text: "Storms are likely. \u{e200}cite\u{e202}turn0fore", status: "streaming" })
+        .body,
     ).toBe("Storms are likely. ");
   });
 
@@ -75,7 +76,7 @@ describe("toBotMessage", () => {
       itemType: routineConversationEventItemType("created", "routine-1"),
     } satisfies ConversationMessage;
 
-    expect(toBotMessage(message, "chief")).toMatchObject({
+    expect(toAgentMessage(message, "chief")).toMatchObject({
       kind: "action-marker",
       actionMarker: {
         kind: "routine-lifecycle",
@@ -112,16 +113,16 @@ describe("toBotMessage", () => {
       itemType: routineRunConversationEventItemType("running", "routine-1", "run-1"),
     } satisfies ConversationMessage;
 
-    expect(toBotMessages([invocation], "chief")[0]).toMatchObject({
+    expect(toAgentMessages([invocation], "chief")[0]).toMatchObject({
       body: "Prepare the brief.",
       actionMarker: { kind: "routine-run", status: "queued", runId: "run-1" },
     });
-    expect(toBotMessage(running, "chief").actionMarker).toMatchObject({
+    expect(toAgentMessage(running, "chief").actionMarker).toMatchObject({
       kind: "routine-run",
       status: "running",
       runId: "run-1",
     });
-    expect(toBotMessage({ ...running, itemType: "routine-run-event:future" }, "chief").actionMarker).toEqual({
+    expect(toAgentMessage({ ...running, itemType: "routine-run-event:future" }, "chief").actionMarker).toEqual({
       kind: "unavailable",
       label: "Action unavailable",
       timestamp: running.createdAt,
@@ -130,7 +131,7 @@ describe("toBotMessage", () => {
 
   it("projects hosted site events and falls back for malformed data", () => {
     const published = hostedSiteMessage("succeeded");
-    expect(toBotMessage(published, "chief")).toMatchObject({
+    expect(toAgentMessage(published, "chief")).toMatchObject({
       kind: "action-marker",
       actionMarker: {
         kind: "hosted-site",
@@ -141,7 +142,7 @@ describe("toBotMessage", () => {
         hostname: "launch-page-23456789ab.openbot.site",
       },
     });
-    expect(toBotMessage({ ...published, text: "{" }, "chief").actionMarker).toEqual({
+    expect(toAgentMessage({ ...published, text: "{" }, "chief").actionMarker).toEqual({
       kind: "unavailable",
       label: "Action unavailable",
       timestamp: published.createdAt,
@@ -159,17 +160,17 @@ describe("toBotMessage", () => {
       exchange: {
         direction: "outgoing",
         messageId: "message-1",
-        senderBotId: "chief",
-        recipientBotIds: ["research", "sales"],
+        senderAgentId: "chief",
+        recipientAgentIds: ["research", "sales"],
         replyToMessageId: null,
         deliveries: [
-          { id: "delivery-1", recipientBotId: "research", status: "completed", position: null, error: null },
-          { id: "delivery-2", recipientBotId: "sales", status: "failed", position: null, error: "No" },
+          { id: "delivery-1", recipientAgentId: "research", status: "completed", position: null, error: null },
+          { id: "delivery-2", recipientAgentId: "sales", status: "failed", position: null, error: "No" },
         ],
       },
     } satisfies ConversationMessage;
 
-    expect(toBotMessage(message).actionMarker).toMatchObject({ kind: "agent-message", status: "partial" });
+    expect(toAgentMessage(message).actionMarker).toMatchObject({ kind: "agent-message", status: "partial" });
   });
 });
 
@@ -190,7 +191,7 @@ function hostedSiteMessage(status: "succeeded"): ConversationMessage {
   };
 }
 
-function botSummary(updatedAt: string): BotSummary {
+function agentSummary(updatedAt: string): AgentSummary {
   return {
     id: "chief",
     name: "Chief",

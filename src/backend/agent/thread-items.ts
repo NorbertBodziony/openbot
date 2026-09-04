@@ -75,8 +75,8 @@ export function cleanModelName(value: string | undefined, fallback: string): str
   return value.replace(/^GPT-5\.6[\s:–—-]*/i, "").trim() || fallback;
 }
 
-export function providerForBot(bot: { provider: AgentProvider }): AgentProvider {
-  return bot.provider;
+export function providerForAgent(agent: { provider: AgentProvider }): AgentProvider {
+  return agent.provider;
 }
 
 export function providerLabel(provider: AgentProvider): "Claude" | "Codex" | "Grok" {

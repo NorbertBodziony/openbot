@@ -1,4 +1,4 @@
-import type { AgentProviderId, BotSummary, ServerSummary } from "@openbot/contracts/ipc";
+import type { AgentProviderId, AgentSummary, ServerSummary } from "@openbot/contracts/ipc";
 import { useAgents } from "./agents";
 import { desktopAnalytics } from "./analytics";
 import { useConversationController } from "./components/conversation-controller-context";
@@ -36,8 +36,8 @@ const ServerSelection = createSimpleContext({
     const { pendingInviteUrl, setPendingInviteUrl, saveSetup } = useSetup();
     const { setSkillsMarketplaceOpen } = useSettings();
     const { disconnectRemoteDesktopWorkspace } = useRemoteDesktop();
-    const { setBrowserVisibilitySuspended, setPendingBotSelection } = useServerSwitch();
-    const { botSetupOpen, creatingAgent } = useAgents();
+    const { setBrowserVisibilitySuspended, setPendingAgentSelection } = useServerSwitch();
+    const { agentSetupOpen, creatingAgent } = useAgents();
     const { stopComposerTyping } = useConversationController();
     const { setDirectTyping } = useDirectMessages();
 
@@ -46,7 +46,7 @@ const ServerSelection = createSimpleContext({
       trackSelection = true,
       recoverAuthoritativeServer = true,
     ): Promise<boolean> {
-      if (botSetupOpen() && creatingAgent()) return false;
+      if (agentSetupOpen() && creatingAgent()) return false;
       const selectionIsCurrent = beginServerSelection();
       const analytics = desktopAnalytics.scope();
       const previousServerId = servers().find((server) => server.active)?.id;
@@ -109,12 +109,12 @@ const ServerSelection = createSimpleContext({
       }
     }
 
-    async function openInstalledMarketplaceAgent(bot: BotSummary): Promise<void> {
+    async function openInstalledMarketplaceAgent(agent: AgentSummary): Promise<void> {
       if (!(await selectServer("local", false))) return;
       // Published rather than called: if this was a switch, the navigation
-      // domain that owns `selectBot` has already been replaced by the one in
+      // domain that owns `selectAgent` has already been replaced by the one in
       // the new scope, and that is the one that has to run it.
-      setPendingBotSelection(bot.id);
+      setPendingAgentSelection(agent.id);
       setSkillsMarketplaceOpen(false);
     }
 

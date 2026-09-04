@@ -58,7 +58,7 @@ export function ConversationPanels() {
           <Loading>
             <FilePreviewPanel
               preview={file().preview}
-              bots={props.bots}
+              agents={props.agents}
               defaultWidth={() =>
                 (conversationPanelElement()?.clientWidth || window.innerWidth) * BROWSER_PANEL_DEFAULT_RATIO
               }
@@ -115,11 +115,11 @@ export function ConversationPanels() {
         />
       </Show>
 
-      <Show when={settingsOpen() && props.bot}>
-        {(bot) => (
+      <Show when={settingsOpen() && props.agent}>
+        {(agent) => (
           <Loading>
             <AgentSettingsPanel
-              bot={bot()}
+              agent={agent()}
               runtimeSettings={{
                 provider: settingsProvider(),
                 model: settingsModel(),
@@ -143,10 +143,12 @@ export function ConversationPanels() {
               }
               onClose={() => setActiveRightPanel("none")}
               onWidthChange={setSettingsPanelWidth}
-              onUpdateBot={props.onUpdateBot}
+              onUpdateAgent={props.onUpdateAgent}
               onUpdateRuntimeSettings={updateRuntimeSettings}
               onSetAgentAvatar={props.onSetAgentAvatar}
-              routineSelectionRequest={routineSettingsRequest()?.botId === bot().id ? routineSettingsRequest() : null}
+              routineSelectionRequest={
+                routineSettingsRequest()?.agentId === agent().id ? routineSettingsRequest() : null
+              }
               onRoutineSelectionRequestHandled={handleRoutineSettingsRequest}
               onOpenRoutineRun={props.onOpenSearchMessage ? openRoutineRunMessage : undefined}
             />

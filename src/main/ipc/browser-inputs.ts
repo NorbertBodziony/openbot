@@ -17,10 +17,10 @@ export function parseBrowserOpen(value: unknown): BrowserOpenInput {
       value.ownerThreadId === null || value.ownerThreadId === undefined
         ? null
         : requireString(value.ownerThreadId, "ownerThreadId"),
-    ownerBotId:
-      value.ownerBotId === null || value.ownerBotId === undefined
+    ownerAgentId:
+      value.ownerAgentId === null || value.ownerAgentId === undefined
         ? null
-        : requireString(value.ownerBotId, "ownerBotId"),
+        : requireString(value.ownerAgentId, "ownerAgentId"),
     focus: value.focus ?? false,
   };
 }

@@ -33,7 +33,7 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.input(composer);
     await waitFor(() =>
       expect(window.openbot.servers.setTyping).toHaveBeenCalledWith({
-        botId: "chief",
+        agentId: "chief",
         typing: true,
       }),
     );
@@ -44,14 +44,14 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.keyDown(composer, { key: "Enter" });
     await waitFor(() =>
       expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith(
-        { botId: "chief", text: "Run this Monday", attachmentDraftIds: [] },
+        { agentId: "chief", text: "Run this Monday", attachmentDraftIds: [] },
         "local",
       ),
     );
     await waitFor(() =>
       expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
         {
-          botId: "chief",
+          agentId: "chief",
           throughMessageId: "delivery-1",
         },
         "local",
@@ -77,7 +77,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "conversation",
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-chief",
         activeTurnId: null,
         revision: 1,
@@ -104,13 +104,13 @@ describe("OpenBot connected desktop shell", () => {
 
     await waitFor(() =>
       expect(window.openbot.agent.markConversationRead).toHaveBeenCalledWith(
-        { botId: "chief", throughMessageId: "delivery-1" },
+        { agentId: "chief", throughMessageId: "delivery-1" },
         "local",
       ),
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(vi.mocked(window.openbot.agent.markConversationRead).mock.calls).toEqual([
-      [{ botId: "chief", throughMessageId: "delivery-1" }, "local"],
+      [{ agentId: "chief", throughMessageId: "delivery-1" }, "local"],
     ]);
   });
 
@@ -131,7 +131,7 @@ describe("OpenBot connected desktop shell", () => {
           createdAt: "2026-08-18T10:00:00.000Z",
           disabled: false,
           online: true,
-          typingBotId: null,
+          typingAgentId: null,
         },
         {
           id: "member-alice",
@@ -142,7 +142,7 @@ describe("OpenBot connected desktop shell", () => {
           createdAt: "2026-08-18T11:00:00.000Z",
           disabled: false,
           online: true,
-          typingBotId: null,
+          typingAgentId: null,
         },
       ],
     });
@@ -281,7 +281,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "conversation",
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-chief",
         activeTurnId: null,
         revision: 1,
@@ -308,7 +308,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith(
         {
-          botId: "chief",
+          agentId: "chief",
           text: "Yes, today please",
           attachmentDraftIds: [],
           replyToMessageId: "assistant-1",
@@ -326,7 +326,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "conversation",
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-chief",
         activeTurnId: null,
         revision: 1,
@@ -367,7 +367,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith(
         {
-          botId: "chief",
+          agentId: "chief",
           text: "Improve this selected text.\n\n> friendlier closing sentence",
           attachmentDraftIds: [],
           replyToMessageId: "assistant-selection",
@@ -399,7 +399,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "conversation",
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-chief",
         activeTurnId: null,
         revision: 1,
@@ -420,7 +420,7 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.pointerDown(screen.getByRole("button", { name: "Add reaction" }), { button: 0 });
     await fireEvent.pointerUp(screen.getByRole("menuitemradio", { name: "React with ❤️" }), { button: 0 });
     expect(window.openbot.agent.setMessageReaction).toHaveBeenCalledWith({
-      botId: "chief",
+      agentId: "chief",
       messageId: "assistant-actions",
       emoji: "❤️",
     });
@@ -441,7 +441,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "conversation",
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-chief",
         activeTurnId: null,
         revision: 1,
@@ -455,7 +455,7 @@ describe("OpenBot connected desktop shell", () => {
             reaction: "❤️",
             reactions: [
               { emoji: "❤️", actor: { kind: "user" } },
-              { emoji: "🎉", actor: { kind: "bot", botId: "chief" } },
+              { emoji: "🎉", actor: { kind: "agent", agentId: "chief" } },
             ],
           },
         ],
@@ -465,7 +465,7 @@ describe("OpenBot connected desktop shell", () => {
     await screen.findByRole("img", { name: "Chief reacted with 🎉" });
     await fireEvent.click(screen.getByRole("button", { name: "Remove your reaction ❤️" }));
     expect(window.openbot.agent.setMessageReaction).toHaveBeenCalledWith({
-      botId: "chief",
+      agentId: "chief",
       messageId: "user-reactions",
       emoji: null,
     });
@@ -479,7 +479,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "conversation",
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-chief",
         activeTurnId: "turn-open",
         revision: 1,
@@ -520,7 +520,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "conversation",
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-chief",
         activeTurnId: null,
         revision: 2,
@@ -577,7 +577,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "conversation",
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-chief",
         activeTurnId: null,
         revision: 3,
@@ -631,13 +631,13 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     await waitFor(() =>
       expect(window.openbot.agent.sendMessage).toHaveBeenCalledWith(
-        { botId: "chief", text: "", attachmentDraftIds: ["draft-1"] },
+        { agentId: "chief", text: "", attachmentDraftIds: ["draft-1"] },
         "local",
       ),
     );
   });
 
-  it("keeps an asynchronous attachment error with the bot that received the paste", async () => {
+  it("keeps an asynchronous attachment error with the agent that received the paste", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     emitAttachmentImport?.({ type: "started", requestId: "paste-error", serverId: "local" });
@@ -694,22 +694,22 @@ describe("OpenBot connected desktop shell", () => {
 
     emitAgentEvent?.({
       type: "queue-changed",
-      snapshot: { botId: "chief", deliveries: [firstStarting] },
+      snapshot: { agentId: "chief", deliveries: [firstStarting] },
     });
     expect(screen.queryByRole("region", { name: "Message queue" })).not.toBeInTheDocument();
 
     emitAgentEvent?.({
       type: "queue-changed",
-      snapshot: { botId: "chief", deliveries: [firstStarting, second] },
+      snapshot: { agentId: "chief", deliveries: [firstStarting, second] },
     });
     await screen.findByRole("group", { name: "Queued message 1: Next work" });
     expect(screen.queryByRole("group", { name: /Current work/ })).not.toBeInTheDocument();
 
-    emitAgentEvent?.({ type: "turn-started", botId: "chief", threadId: "thread-chief", turnId: "turn-live" });
+    emitAgentEvent?.({ type: "turn-started", agentId: "chief", threadId: "thread-chief", turnId: "turn-live" });
     emitAgentEvent?.({
       type: "queue-changed",
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         deliveries: [
           { ...firstStarting, status: "running", turnId: "turn-live" },
           { ...second, status: "starting", position: null, turnId: "turn-live" },
@@ -727,7 +727,7 @@ describe("OpenBot connected desktop shell", () => {
 
     emitAgentEvent?.({
       type: "turn-completed",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-chief",
       turnId: "turn-live",
       status: "completed",
@@ -735,7 +735,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "queue-changed",
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         deliveries: [
           { ...second, position: 1, turnId: null },
           { ...third, position: 2 },
@@ -747,14 +747,14 @@ describe("OpenBot connected desktop shell", () => {
     const secondStarting = { ...second, status: "starting" as const, position: null, turnId: "turn-next" };
     emitAgentEvent?.({
       type: "queue-changed",
-      snapshot: { botId: "chief", deliveries: [secondStarting, third] },
+      snapshot: { agentId: "chief", deliveries: [secondStarting, third] },
     });
     await screen.findByRole("group", { name: "Queued message 2: Later work" });
     expect(screen.queryByRole("group", { name: /Next work/ })).not.toBeInTheDocument();
   });
 
   it("keeps the complete agent draft when creation fails", async () => {
-    vi.mocked(window.openbot.agent.createBot).mockRejectedValueOnce(
+    vi.mocked(window.openbot.agent.createAgent).mockRejectedValueOnce(
       new Error("The first message could not be queued."),
     );
     render(() => <App />);
@@ -781,7 +781,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "prompt",
       requestId: "prompt-1",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-1",
       turnId: "turn-1",
       questions: [
@@ -808,7 +808,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "conversation",
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-1",
         activeTurnId: "turn-1",
         revision: 20,
@@ -854,7 +854,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "prompt",
       requestId: "prompt-failure",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-1",
       turnId: "turn-failure",
       questions: [
@@ -884,7 +884,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "prompt",
       requestId: "prompt-external",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-1",
       turnId: "turn-external",
       questions: [
@@ -902,7 +902,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "conversation",
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-1",
         activeTurnId: "turn-external",
         revision: 20,
@@ -950,7 +950,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "conversation",
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-1",
         activeTurnId: "turn-first",
         revision: 20,
@@ -986,7 +986,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "prompt",
       requestId: "prompt-first",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-1",
       turnId: "turn-first",
       questions: [
@@ -1007,7 +1007,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "conversation",
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-1",
         activeTurnId: "turn-first",
         revision: 21,
@@ -1045,7 +1045,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "prompt",
       requestId: "prompt-second",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-1",
       turnId: "turn-second",
       questions: [
@@ -1070,7 +1070,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "conversation",
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-1",
         activeTurnId: null,
         revision: 20,
@@ -1109,7 +1109,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "prompt",
       requestId: "prompt-reused",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-1",
       turnId: "turn-new",
       questions: [
@@ -1142,7 +1142,7 @@ describe("OpenBot connected desktop shell", () => {
       type: "approval",
       approval: {
         requestId: "approval-1",
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-1",
         turnId: "turn-1",
         kind: "command",
@@ -1187,7 +1187,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "queue-changed",
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         deliveries: [
           queuedDelivery("delivery-running", "Current work", null, { status: "starting" }),
           queuedDelivery("delivery-next", "Next work", 1),

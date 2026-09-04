@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { BotSummary, ConversationMessage } from "@openbot/contracts/ipc";
+import type { AgentSummary, ConversationMessage } from "@openbot/contracts/ipc";
 import type { AgentClient, AgentProvider } from "../src/backend/agent-client";
 import { CodexAppServerClient } from "../src/backend/app-server-client";
 import { ClaudeAgentClient } from "../src/backend/claude-client";
@@ -76,14 +76,14 @@ async function runProvider(
   database: OpenBotDatabase,
   provider: AgentProvider,
   client: AgentClient,
-  model: BotSummary["model"],
+  model: AgentSummary["model"],
 ): Promise<void> {
-  const botId = `smoke-${provider}`;
-  const threadId = `openbot-thread-${botId}`;
+  const agentId = `smoke-${provider}`;
+  const threadId = `openbot-thread-${agentId}`;
   const workspace = join(root, "workspace", provider);
   await mkdir(workspace, { recursive: true, mode: 0o700 });
-  const bot: BotSummary = {
-    id: botId,
+  const agent: AgentSummary = {
+    id: agentId,
     provider,
     name: `${provider} smoke`,
     title: "Storage verification",
@@ -95,11 +95,11 @@ async function runProvider(
     workspacePath: workspace,
     preview: "No messages yet",
     updatedAt: new Date().toISOString(),
-    avatarSeed: botId,
+    avatarSeed: agentId,
     avatarHue: null,
     avatarUrl: null,
   };
-  database.replaceAgents(`smoke:agent:${provider}`, [...database.listAgents(), bot], "agent.created");
+  database.replaceAgents(`smoke:agent:${provider}`, [...database.listAgents(), agent], "agent.created");
 
   const userMessage: ConversationMessage = {
     id: randomUUID(),
@@ -196,7 +196,7 @@ async function runProvider(
     assistantMessage.turnId = turnId;
     database.persistConversation(
       {
-        botId,
+        agentId,
         threadId,
         activeTurnId: turnId,
         revision: 0,
@@ -209,7 +209,7 @@ async function runProvider(
     assistantMessage.status = "completed";
     database.persistConversation(
       {
-        botId,
+        agentId,
         threadId,
         activeTurnId: null,
         revision: 0,
@@ -218,7 +218,7 @@ async function runProvider(
       "turn.completed",
       { provider, turnId, status: "completed" },
     );
-    const stored = database.readConversation(botId, threadId);
+    const stored = database.readConversation(agentId, threadId);
     if (
       stored.activeTurnId !== null ||
       stored.messages.length !== 2 ||

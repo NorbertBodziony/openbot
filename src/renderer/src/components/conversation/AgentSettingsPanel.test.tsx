@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { STORY_AGENT_STATUS, STORY_BOTS, STORY_MODELS } from "../../preview/fixtures";
+import { STORY_AGENT_STATUS, STORY_AGENTS, STORY_MODELS } from "../../preview/fixtures";
 import { createMockOpenBot, type MockOpenBotControls } from "../../preview/mock-openbot";
 import AgentSettingsPanel, { type AgentRuntimeSettings } from "./AgentSettingsPanel";
 
@@ -25,7 +25,7 @@ describe("AgentSettingsPanel", () => {
     const onUpdateRuntimeSettings = vi.fn(async () => false);
     render(() => (
       <AgentSettingsPanel
-        bot={{ ...STORY_BOTS[0], provider: "codex", model: "gpt-5.6-sol", reasoningEffort: "xhigh" }}
+        agent={{ ...STORY_AGENTS[0], provider: "codex", model: "gpt-5.6-sol", reasoningEffort: "xhigh" }}
         runtimeSettings={runtimeSettings}
         agentStatus={STORY_AGENT_STATUS}
         modelOptions={STORY_MODELS}
@@ -33,7 +33,7 @@ describe("AgentSettingsPanel", () => {
         maxWidth={() => 640}
         onClose={vi.fn()}
         onWidthChange={vi.fn()}
-        onUpdateBot={vi.fn(async () => undefined)}
+        onUpdateAgent={vi.fn(async () => undefined)}
         onUpdateRuntimeSettings={onUpdateRuntimeSettings}
         onSetAgentAvatar={vi.fn(async () => undefined)}
       />
@@ -46,7 +46,7 @@ describe("AgentSettingsPanel", () => {
 
     await waitFor(() =>
       expect(onUpdateRuntimeSettings).toHaveBeenCalledWith(
-        STORY_BOTS[0].id,
+        STORY_AGENTS[0].id,
         { provider: "claude", model: "claude-sonnet-5", reasoningEffort: "high" },
         { provider: "claude", model: "claude-sonnet-5", reasoningEffort: "high" },
       ),

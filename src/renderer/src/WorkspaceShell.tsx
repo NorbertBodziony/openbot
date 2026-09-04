@@ -9,7 +9,7 @@ import { RemoteCompatibilityScreen } from "./RemoteCompatibilityScreen";
 import { useRemoteDesktop } from "./remote-desktop";
 import { useServers } from "./servers";
 import { WorkspaceAccountDock } from "./WorkspaceAccountDock";
-import { WorkspaceBotSetup } from "./WorkspaceAgentSetup";
+import { WorkspaceAgentSetup } from "./WorkspaceAgentSetup";
 import { WorkspaceConversation } from "./WorkspaceConversation";
 import { WorkspaceDirectConversation } from "./WorkspaceDirectConversation";
 import { WorkspaceLeftPanelResizer } from "./WorkspaceLeftPanelResizer";
@@ -31,15 +31,15 @@ import { WorkspaceSidebar } from "./WorkspaceSidebar";
  *
  * The order of the children is the paint order the stylesheet expects, and the
  * three middle-pane `<Show>`s are mutually exclusive by construction: a blocked
- * remote server wins over everything, then the Bot form, then a person, then a
- * Bot.
+ * remote server wins over everything, then the Agent form, then a person, then a
+ * Agent.
  */
 export function WorkspaceShell(props: { account: () => CentralAuthUser }) {
   const platform = usePlatform();
   const layout = useLayout();
   const { activeServer, activeServerSupportsCapability, retryServerConnection } = useServers();
   const { remoteDesktopWorkspaceVisible } = useRemoteDesktop();
-  const { botSetupOpen } = useAgents();
+  const { agentSetupOpen } = useAgents();
   const { activeDirectMember } = useDirectMessages();
 
   const blockedRemoteServer = createMemo(() => {
@@ -72,13 +72,13 @@ export function WorkspaceShell(props: { account: () => CentralAuthUser }) {
       <Show when={blockedRemoteServer()} keyed>
         {(server) => <RemoteCompatibilityScreen server={server} onRetry={() => retryServerConnection(server.id)} />}
       </Show>
-      <Show when={!blockedRemoteServer() && botSetupOpen()}>
-        <WorkspaceBotSetup />
+      <Show when={!blockedRemoteServer() && agentSetupOpen()}>
+        <WorkspaceAgentSetup />
       </Show>
-      <Show when={!blockedRemoteServer() && activePeopleEnabled() && !botSetupOpen() && activeDirectMember()} keyed>
+      <Show when={!blockedRemoteServer() && activePeopleEnabled() && !agentSetupOpen() && activeDirectMember()} keyed>
         {(member) => <WorkspaceDirectConversation member={member} />}
       </Show>
-      <Show when={!blockedRemoteServer() && !botSetupOpen() && !activeDirectMember()}>
+      <Show when={!blockedRemoteServer() && !agentSetupOpen() && !activeDirectMember()}>
         <WorkspaceConversation account={props.account} />
       </Show>
       <WorkspaceOverlays account={props.account} />

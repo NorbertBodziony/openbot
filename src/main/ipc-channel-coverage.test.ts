@@ -250,7 +250,7 @@ describe("IPC channel coverage", () => {
   // Every value the preload hands the renderer is validated by a guard in
   // packages/contracts, the same one the main process uses. A guard written here
   // instead is a second rule for one type, and the second rule is always the
-  // looser one - the preload's own isBotSummary never checked `provider` and its
+  // looser one - the preload's own isAgentSummary never checked `provider` and its
   // isConversationWithReadState accepted any array as the message list. An empty
   // list is the only form that stays honest: it says the preload declares no rule
   // of its own rather than counting the ones it does.

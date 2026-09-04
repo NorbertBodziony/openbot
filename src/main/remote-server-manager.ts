@@ -4,8 +4,8 @@ import { isValidAvatarImage } from "@openbot/contracts/avatar-images";
 import { parseInviteUrl } from "@openbot/contracts/invite-links";
 import type {
   AgentEvent,
+  AgentSummary,
   AvatarImageInput,
-  BotSummary,
   ConversationPage,
   ConversationPageAnchor,
   ConversationReadState,
@@ -21,7 +21,7 @@ import type {
   DirectTypingInput,
   DirectTypingRealtimeEvent,
   DraftAttachment,
-  DuplicateBotResult,
+  DuplicateAgentResult,
   InvitePreview,
   InviteSummary,
   JoinServerInput,
@@ -42,7 +42,7 @@ import { LOCAL_SERVER_ID } from "@openbot/contracts/ipc";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import type { TeamCurrentCapability } from "@openbot/contracts/team-protocol/current";
 import { decodeTeamProtocolV1CurrentHttpResponse } from "@openbot/contracts/team-protocol/v1-adapter";
-import { decodeBotSummary, decodeDraftAttachment, decodeDuplicateBotResultFromHost } from "./remote-agent-decoding";
+import { decodeAgentSummary, decodeDraftAttachment, decodeDuplicateAgentResultFromHost } from "./remote-agent-decoding";
 import {
   decodeConversationPageFromHost,
   decodeConversationReadState,
@@ -565,15 +565,15 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     return this.#client.request(serverId, path, decoder, init);
   }
 
-  async duplicateBot(botId: string, serverId = this.#store.activeServerId): Promise<DuplicateBotResult> {
-    const key = `${serverId}\0${botId}`;
+  async duplicateAgent(agentId: string, serverId = this.#store.activeServerId): Promise<DuplicateAgentResult> {
+    const key = `${serverId}\0${agentId}`;
     const operationId = this.#duplicateOperationIds.get(key) ?? randomUUID();
     this.#duplicateOperationIds.set(key, operationId);
     try {
       const result = await this.request(
         serverId,
-        TEAM_API_ROUTES.agent.duplicate(botId),
-        decodeDuplicateBotResultFromHost,
+        TEAM_API_ROUTES.agent.duplicate(agentId),
+        decodeDuplicateAgentResultFromHost,
         { method: "POST", body: { operationId }, timeoutMs: REMOTE_DUPLICATION_TIMEOUT_MS },
       );
       this.#duplicateOperationIds.delete(key);
@@ -590,32 +590,32 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     return this.request(serverId, TEAM_API_ROUTES.agents.conversationReads, decodeConversationReadStates);
   }
 
-  readAgentConversation(botId: string, serverId = this.#store.activeServerId): Promise<ConversationWithReadState> {
-    return this.request(serverId, TEAM_API_ROUTES.agent.conversation(botId), decodeConversationWithReadState);
+  readAgentConversation(agentId: string, serverId = this.#store.activeServerId): Promise<ConversationWithReadState> {
+    return this.request(serverId, TEAM_API_ROUTES.agent.conversation(agentId), decodeConversationWithReadState);
   }
 
   readAgentConversationPage(
-    botId: string,
+    agentId: string,
     anchor: ConversationPageAnchor = { type: "latest" },
     limit = 50,
     serverId = this.#store.activeServerId,
   ): Promise<ConversationPage> {
     return this.request(
       serverId,
-      `${TEAM_API_ROUTES.agent.conversationPage(botId)}${pageQuery(anchor, limit)}`,
+      `${TEAM_API_ROUTES.agent.conversationPage(agentId)}${pageQuery(anchor, limit)}`,
       decodeConversationPageFromHost,
     );
   }
 
   searchAgentConversationMessages(
     query: string,
-    botId?: string,
+    agentId?: string,
     cursor?: string,
     limit = 100,
     serverId = this.#store.activeServerId,
   ): Promise<ConversationSearchPage> {
     const parameters = new URLSearchParams({ q: query, limit: String(limit) });
-    if (botId) parameters.set("botId", botId);
+    if (agentId) parameters.set("agentId", agentId);
     if (cursor) parameters.set("cursor", cursor);
     return this.request(
       serverId,
@@ -628,7 +628,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     input: MarkConversationReadInput,
     serverId = this.#store.activeServerId,
   ): Promise<ConversationReadState> {
-    return this.request(serverId, TEAM_API_ROUTES.agent.conversationRead(input.botId), decodeConversationReadState, {
+    return this.request(serverId, TEAM_API_ROUTES.agent.conversationRead(input.agentId), decodeConversationReadState, {
       method: "POST",
       body: { throughMessageId: input.throughMessageId },
     });
@@ -687,7 +687,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   setTyping(input: SetTeamTypingInput, serverId = this.#store.activeServerId): void {
     const server = this.#store.find(serverId);
     if (server?.transport === "webrtc-v2") {
-      void this.#webrtcTransport?.setTyping(serverId, input.botId, input.typing).catch(() => undefined);
+      void this.#webrtcTransport?.setTyping(serverId, input.agentId, input.typing).catch(() => undefined);
       return;
     }
     this.#events.send(serverId, { type: "team-typing", ...input });
@@ -798,12 +798,12 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async setAgentAvatar(
-    botId: string,
+    agentId: string,
     image: AvatarImageInput | null,
     serverId = this.#store.activeServerId,
-  ): Promise<BotSummary> {
+  ): Promise<AgentSummary> {
     const server = this.#store.require(serverId);
-    const url = new URL(TEAM_API_ROUTES.agent.avatar(botId), server.apiUrl);
+    const url = new URL(TEAM_API_ROUTES.agent.avatar(agentId), server.apiUrl);
     const headers = new Headers();
     if (image) headers.set("Content-Type", image.mimeType);
     const response = await this.#client.fetch(server, url, {
@@ -817,16 +817,16 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       response.status,
       await response.json(),
     );
-    return addRemotePreviewUrls(decodeBotSummary(value), server.id);
+    return addRemotePreviewUrls(decodeAgentSummary(value), server.id);
   }
 
   async downloadAgentAvatar(
-    botId: string,
+    agentId: string,
     serverId = this.#store.activeServerId,
     version?: string,
   ): Promise<{ bytes: Uint8Array; mimeType: string }> {
     const server = this.#store.require(serverId);
-    const url = new URL(TEAM_API_ROUTES.agent.avatar(botId), server.apiUrl);
+    const url = new URL(TEAM_API_ROUTES.agent.avatar(agentId), server.apiUrl);
     if (version) url.searchParams.set("v", version);
     const response = await this.#client.fetch(server, url);
     return {
@@ -888,13 +888,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async downloadWorkspaceFile(
-    botId: string,
+    agentId: string,
     workspacePath: string,
     serverId = this.#store.activeServerId,
   ): Promise<{ bytes: Uint8Array; name: string }> {
     const server = this.#store.require(serverId);
     const url = new URL(TEAM_API_ROUTES.workspaceFiles, server.apiUrl);
-    url.searchParams.set("botId", botId);
+    url.searchParams.set("agentId", agentId);
     url.searchParams.set("path", workspacePath);
     const response = await this.#client.fetch(server, url);
     const disposition = response.headers.get("content-disposition") ?? "";

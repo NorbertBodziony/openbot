@@ -9,10 +9,13 @@ import {
   toWireAgentKeysObjectForPath,
 } from "./current-agent-keys";
 import {
+  decodeTeamProtocolV1ClientEvent,
   decodeTeamProtocolV1Event,
   decodeTeamProtocolV1HttpRequest,
   decodeTeamProtocolV1HttpResponse,
+  encodeTeamProtocolV1ClientEvent,
   encodeTeamProtocolV1Event,
+  type TeamProtocolV1ClientEvent,
   type TeamProtocolV1EventDecodeResult,
   type TeamProtocolV1JsonObject,
   type TeamProtocolV1JsonValue,
@@ -122,4 +125,36 @@ function toWireAgentKeysForRequestPath(path: string, value: TeamProtocolV1JsonVa
 
 function toCurrentAgentKeysForResponsePath(path: string, value: TeamProtocolV1JsonValue): TeamProtocolV1JsonValue {
   return isDynamicRecord(value) ? toCurrentAgentKeysObjectForPath(path, value) : toCurrentAgentKeys(value);
+}
+
+/**
+ * The client control channel is the one frozen payload a caller builds by hand rather than handing to
+ * the key walk, so its single agent field is converted field by field. Widening it to the walk would
+ * mean asserting the result back into the union; naming the one member keeps `tsc` doing the checking.
+ */
+export type TeamProtocolV1CurrentClientEvent =
+  | Exclude<TeamProtocolV1ClientEvent, { type: "team-typing" }>
+  | { type: "team-typing"; agentId: string | null; typing: boolean };
+
+/** The subset a v2 event-control frame carries: everything except the scope declaration. */
+export type TeamProtocolV1CurrentEventControl = Exclude<
+  TeamProtocolV1CurrentClientEvent,
+  { type: "agent-event-scope" }
+>;
+
+export function toWireTeamProtocolV1ClientEvent(
+  event: TeamProtocolV1CurrentEventControl,
+): Exclude<TeamProtocolV1ClientEvent, { type: "agent-event-scope" }>;
+export function toWireTeamProtocolV1ClientEvent(event: TeamProtocolV1CurrentClientEvent): TeamProtocolV1ClientEvent;
+export function toWireTeamProtocolV1ClientEvent(event: TeamProtocolV1CurrentClientEvent): TeamProtocolV1ClientEvent {
+  return event.type === "team-typing" ? { type: event.type, botId: event.agentId, typing: event.typing } : event;
+}
+
+export function encodeTeamProtocolV1CurrentClientEvent(event: TeamProtocolV1CurrentClientEvent): string {
+  return encodeTeamProtocolV1ClientEvent(toWireTeamProtocolV1ClientEvent(event));
+}
+
+export function decodeTeamProtocolV1CurrentClientEvent(value: unknown): TeamProtocolV1CurrentClientEvent {
+  const event = decodeTeamProtocolV1ClientEvent(value);
+  return event.type === "team-typing" ? { type: event.type, agentId: event.botId, typing: event.typing } : event;
 }

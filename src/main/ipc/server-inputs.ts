@@ -136,12 +136,12 @@ export function parseSetTeamTyping(value: unknown): SetTeamTypingInput {
   if (!isObject(value) || !isBoolean(value.typing)) {
     throw new Error("Invalid typing state.");
   }
-  if (value.botId !== null && !isString(value.botId)) {
+  if (value.agentId !== null && !isString(value.agentId)) {
     throw new Error("Invalid typing agent.");
   }
-  if (value.typing && !value.botId) throw new Error("A typing agent is required.");
+  if (value.typing && !value.agentId) throw new Error("A typing agent is required.");
   return {
-    botId: value.botId === null ? null : requireString(value.botId, "botId", INPUT_LIMITS.identifier),
+    agentId: value.agentId === null ? null : requireString(value.agentId, "agentId", INPUT_LIMITS.identifier),
     typing: value.typing,
   };
 }

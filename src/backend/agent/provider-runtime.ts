@@ -5,7 +5,7 @@ import type {
   AgentModelOption,
   AgentProviderStatus,
   AgentStatus,
-  BotSummary,
+  AgentSummary,
 } from "@openbot/contracts/ipc";
 import { isReasoningEffort } from "@openbot/contracts/ipc";
 import { isString } from "@openbot/contracts/runtime-values";
@@ -39,7 +39,7 @@ import {
   updateProviderStatus,
   waitForSuccessfulProcess,
 } from "./provider-status";
-import { cleanModelName, providerForBot, providerLabel } from "./thread-items";
+import { cleanModelName, providerForAgent, providerLabel } from "./thread-items";
 
 const CODEX_LOGIN_TIMEOUT_MS = 10 * 60_000;
 const CLAUDE_LOGIN_TIMEOUT_MS = 10 * 60_000;
@@ -84,7 +84,7 @@ export interface ProviderHooks {
 export interface ProviderPort {
   isReady(): boolean;
   clientFor(provider: AgentProvider): AgentClient | null;
-  clientForBot(bot: BotSummary): AgentClient | null;
+  clientForAgent(agent: AgentSummary): AgentClient | null;
   listModels(): AgentModelOption[];
 }
 
@@ -172,7 +172,7 @@ export class ProviderRuntime implements ProviderPort {
   readonly #conversation: ConversationRuntime;
   readonly #hooks: ProviderHooks;
   readonly #emit: (event: AgentEvent) => void;
-  readonly #emitError: (code: string, error: unknown, botId?: string) => void;
+  readonly #emitError: (code: string, error: unknown, agentId?: string) => void;
   readonly #requestTimeoutMs: number;
   readonly #clientFactory: AgentClientFactory | null;
   readonly #bundledCodexExecutable: string | null | undefined;
@@ -198,7 +198,7 @@ export class ProviderRuntime implements ProviderPort {
     conversation: ConversationRuntime;
     hooks: ProviderHooks;
     emit: (event: AgentEvent) => void;
-    emitError: (code: string, error: unknown, botId?: string) => void;
+    emitError: (code: string, error: unknown, agentId?: string) => void;
     requestTimeoutMs: number;
     preferredProvider: AgentProvider;
     clientFactory: AgentClientFactory | null;
@@ -354,8 +354,8 @@ export class ProviderRuntime implements ProviderPort {
     });
   }
 
-  clientForBot(bot: BotSummary): AgentClient | null {
-    return this.#clients.get(providerForBot(bot)) ?? null;
+  clientForAgent(agent: AgentSummary): AgentClient | null {
+    return this.#clients.get(providerForAgent(agent)) ?? null;
   }
 
   requireReadyClient(provider: AgentProvider): AgentClient {

@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import {
-  type BotSummary,
+  type AgentSummary,
   type ConversationMessage,
   hostedSiteConversationEventItemType,
   hostedSiteConversationEventText,
@@ -11,7 +11,7 @@ import { OpenPanelBase } from "@openpanel/web";
 import { describe, expect, it, vi } from "vitest";
 import { HostAnalytics, type HostOpenPanelClient, sanitizeHostEvent } from "./analytics";
 
-const BOT: BotSummary = {
+const AGENT: AgentSummary = {
   id: "chief",
   provider: "codex",
   name: "Chief",
@@ -75,7 +75,7 @@ describe("host analytics", () => {
         appVersion: "1.2.3",
         platform: "darwin",
         resolveOwner: () => ({ id: "owner-account", email: "owner@example.com" }),
-        resolveBot: (botId) => (botId === BOT.id ? BOT : null),
+        resolveAgent: (agentId) => (agentId === AGENT.id ? AGENT : null),
       },
       () => client,
     );
@@ -86,15 +86,15 @@ describe("host analytics", () => {
 
     analytics.handleAgentEvent({
       type: "turn-started",
-      botId: BOT.id,
-      threadId: BOT.threadId ?? "",
+      agentId: AGENT.id,
+      threadId: AGENT.threadId ?? "",
       turnId: "turn-private",
       origin: "user",
     });
     analytics.handleAgentEvent({
       type: "turn-completed",
-      botId: BOT.id,
-      threadId: BOT.threadId ?? "",
+      agentId: AGENT.id,
+      threadId: AGENT.threadId ?? "",
       turnId: "turn-private",
       origin: "user",
       status: "completed",
@@ -136,14 +136,14 @@ describe("host analytics", () => {
         appVersion: "1.2.3",
         platform: "darwin",
         resolveOwner: () => owner,
-        resolveBot: () => BOT,
+        resolveAgent: () => AGENT,
       },
       () => client,
     );
     analytics.handleAgentEvent({
       type: "turn-started",
-      botId: BOT.id,
-      threadId: BOT.threadId ?? "",
+      agentId: AGENT.id,
+      threadId: AGENT.threadId ?? "",
       turnId: "turn-1",
       origin: "routine",
     });
@@ -162,8 +162,8 @@ describe("host analytics", () => {
     );
     analytics.handleAgentEvent({
       type: "turn-completed",
-      botId: BOT.id,
-      threadId: BOT.threadId ?? "",
+      agentId: AGENT.id,
+      threadId: AGENT.threadId ?? "",
       turnId: "turn-1",
       origin: "unknown",
       status: "completed",
@@ -183,7 +183,7 @@ describe("host analytics", () => {
         appVersion: "1.2.3",
         platform: "darwin",
         resolveOwner: () => owner,
-        resolveBot: () => BOT,
+        resolveAgent: () => AGENT,
       },
       () => client,
     );
@@ -207,7 +207,7 @@ describe("host analytics", () => {
         appVersion: "1.2.3",
         platform: "darwin",
         resolveOwner: () => owner,
-        resolveBot: () => BOT,
+        resolveAgent: () => AGENT,
       },
       () => client,
     );
@@ -242,7 +242,7 @@ describe("host analytics", () => {
           appVersion: "1.2.3",
           platform: "darwin",
           resolveOwner: () => ({ id: "owner-account", email: "owner@example.com" }),
-          resolveBot: () => BOT,
+          resolveAgent: () => AGENT,
         },
         (options) => new OpenPanelBase(options),
       );
@@ -282,7 +282,7 @@ describe("host analytics", () => {
         appVersion: "1.2.3",
         platform: "darwin",
         resolveOwner: () => owner,
-        resolveBot: () => BOT,
+        resolveAgent: () => AGENT,
       },
       () => client,
     );
@@ -298,8 +298,8 @@ describe("host analytics", () => {
     analytics.handleAgentEvent({
       type: "conversation",
       snapshot: {
-        botId: BOT.id,
-        threadId: BOT.threadId,
+        agentId: AGENT.id,
+        threadId: AGENT.threadId,
         activeTurnId: null,
         revision: 1,
         messages: [running, runningFailed, runningCancelled, runningInterrupted],
@@ -323,11 +323,11 @@ describe("host analytics", () => {
     ];
     analytics.handleAgentEvent({
       type: "conversation",
-      snapshot: { botId: BOT.id, threadId: BOT.threadId, activeTurnId: null, revision: 2, messages },
+      snapshot: { agentId: AGENT.id, threadId: AGENT.threadId, activeTurnId: null, revision: 2, messages },
     });
     analytics.handleAgentEvent({
       type: "conversation",
-      snapshot: { botId: BOT.id, threadId: BOT.threadId, activeTurnId: null, revision: 3, messages },
+      snapshot: { agentId: AGENT.id, threadId: AGENT.threadId, activeTurnId: null, revision: 3, messages },
     });
 
     expect(client.track).toHaveBeenCalledTimes(4);
@@ -369,7 +369,7 @@ describe("host analytics", () => {
         appVersion: "1.2.3",
         platform: "darwin",
         resolveOwner: () => ({ id: "owner-account", email: "owner@example.com" }),
-        resolveBot: () => BOT,
+        resolveAgent: () => AGENT,
       },
       () => client,
     );
@@ -381,8 +381,8 @@ describe("host analytics", () => {
     analytics.handleAgentEvent({
       type: "conversation",
       snapshot: {
-        botId: BOT.id,
-        threadId: BOT.threadId,
+        agentId: AGENT.id,
+        threadId: AGENT.threadId,
         activeTurnId: null,
         revision: 1,
         messages,
@@ -390,7 +390,7 @@ describe("host analytics", () => {
     });
     analytics.handleAgentEvent({
       type: "conversation",
-      snapshot: { botId: BOT.id, threadId: BOT.threadId, activeTurnId: null, revision: 2, messages },
+      snapshot: { agentId: AGENT.id, threadId: AGENT.threadId, activeTurnId: null, revision: 2, messages },
     });
 
     expect(client.track).not.toHaveBeenCalled();
@@ -405,14 +405,14 @@ describe("host analytics", () => {
         appVersion: "1.2.3",
         platform: "darwin",
         resolveOwner: () => owner,
-        resolveBot: () => BOT,
+        resolveAgent: () => AGENT,
       },
       () => client,
     );
     const running = hostedSiteMessage("hosted-running", "publish", "running", "operation-owner");
     analytics.handleAgentEvent({
       type: "conversation",
-      snapshot: { botId: BOT.id, threadId: BOT.threadId, activeTurnId: null, revision: 1, messages: [running] },
+      snapshot: { agentId: AGENT.id, threadId: AGENT.threadId, activeTurnId: null, revision: 1, messages: [running] },
     });
 
     analytics.clear();
@@ -420,8 +420,8 @@ describe("host analytics", () => {
     analytics.handleAgentEvent({
       type: "conversation",
       snapshot: {
-        botId: BOT.id,
-        threadId: BOT.threadId,
+        agentId: AGENT.id,
+        threadId: AGENT.threadId,
         activeTurnId: null,
         revision: 2,
         messages: [running, hostedSiteMessage("hosted-succeeded", "publish", "succeeded", "operation-owner")],
@@ -441,14 +441,14 @@ describe("host analytics", () => {
         appVersion: "1.2.3",
         platform: "darwin",
         resolveOwner: () => owner,
-        resolveBot: () => BOT,
+        resolveAgent: () => AGENT,
       },
       () => client,
     );
     const running = hostedSiteMessage("hosted-running", "publish", "running", "operation-pending");
     analytics.handleAgentEvent({
       type: "conversation",
-      snapshot: { botId: BOT.id, threadId: BOT.threadId, activeTurnId: null, revision: 1, messages: [running] },
+      snapshot: { agentId: AGENT.id, threadId: AGENT.threadId, activeTurnId: null, revision: 1, messages: [running] },
     });
 
     owner = null;
@@ -456,8 +456,8 @@ describe("host analytics", () => {
     analytics.handleAgentEvent({
       type: "conversation",
       snapshot: {
-        botId: BOT.id,
-        threadId: BOT.threadId,
+        agentId: AGENT.id,
+        threadId: AGENT.threadId,
         activeTurnId: null,
         revision: 2,
         messages: [running, hostedSiteMessage("hosted-succeeded", "publish", "succeeded", "operation-pending")],
@@ -491,7 +491,7 @@ describe("host analytics", () => {
         appVersion: "1.2.3",
         platform: "darwin",
         resolveOwner: () => owner,
-        resolveBot: () => BOT,
+        resolveAgent: () => AGENT,
       },
       () => client,
     );
@@ -521,7 +521,7 @@ describe("host analytics", () => {
         appVersion: "1.2.3",
         platform: "darwin",
         resolveOwner: () => ({ id: "owner-account", email: "owner@example.com" }),
-        resolveBot: () => BOT,
+        resolveAgent: () => AGENT,
       },
       () => client,
     );
@@ -542,7 +542,7 @@ describe("host analytics", () => {
         appVersion: "1.2.3",
         platform: "darwin",
         resolveOwner: () => ({ id: "owner-account", email: " Owner@EXAMPLE.COM " }),
-        resolveBot: () => BOT,
+        resolveAgent: () => AGENT,
       },
       () => client,
     );
@@ -555,7 +555,10 @@ describe("host analytics", () => {
   it("drops unsafe runtime fields", () => {
     expect(
       sanitizeHostEvent("system_operation_failed", {
-        ...Object.assign({ area: "agent", failure_code: "interrupt_failed" }, { raw_error: "secret", botId: "chief" }),
+        ...Object.assign(
+          { area: "agent", failure_code: "interrupt_failed" },
+          { raw_error: "secret", agentId: "chief" },
+        ),
       }),
     ).toEqual({ area: "agent", failure_code: "interrupt_failed" });
     expect(
@@ -577,14 +580,14 @@ describe("host analytics", () => {
         appVersion: "1.2.3",
         platform: "darwin",
         resolveOwner: () => ({ id: "owner-account", email: "owner@example.com" }),
-        resolveBot: () => BOT,
+        resolveAgent: () => AGENT,
       },
       () => client,
     );
     const started = {
       type: "turn-started" as const,
-      botId: BOT.id,
-      threadId: BOT.threadId ?? "",
+      agentId: AGENT.id,
+      threadId: AGENT.threadId ?? "",
       turnId: "turn-1",
       origin: "routine" as const,
     };
@@ -592,8 +595,8 @@ describe("host analytics", () => {
     analytics.handleAgentEvent(started);
     analytics.handleAgentEvent({
       type: "turn-completed",
-      botId: BOT.id,
-      threadId: BOT.threadId ?? "",
+      agentId: AGENT.id,
+      threadId: AGENT.threadId ?? "",
       turnId: "turn-1",
       origin: "unknown",
       status: "completed",
@@ -615,15 +618,15 @@ describe("host analytics", () => {
         appVersion: "1.2.3",
         platform: "darwin",
         resolveOwner: () => owner,
-        resolveBot: () => BOT,
+        resolveAgent: () => AGENT,
       },
       () => client,
     );
 
     analytics.handleAgentEvent({
       type: "turn-started",
-      botId: BOT.id,
-      threadId: BOT.threadId ?? "",
+      agentId: AGENT.id,
+      threadId: AGENT.threadId ?? "",
       turnId: "turn-account-bound",
       origin: "user",
     });
@@ -632,15 +635,15 @@ describe("host analytics", () => {
     analytics.handleAgentEvent({
       type: "prompt",
       requestId: "request-1",
-      botId: BOT.id,
-      threadId: BOT.threadId ?? "",
+      agentId: AGENT.id,
+      threadId: AGENT.threadId ?? "",
       turnId: "turn-account-bound",
       questions: [],
     });
     analytics.handleAgentEvent({
       type: "turn-completed",
-      botId: BOT.id,
-      threadId: BOT.threadId ?? "",
+      agentId: AGENT.id,
+      threadId: AGENT.threadId ?? "",
       turnId: "turn-account-bound",
       origin: "unknown",
       status: "completed",
@@ -661,15 +664,15 @@ describe("host analytics", () => {
         appVersion: "1.2.3",
         platform: "darwin",
         resolveOwner: () => owner,
-        resolveBot: () => BOT,
+        resolveAgent: () => AGENT,
       },
       () => client,
     );
 
     analytics.handleAgentEvent({
       type: "turn-started",
-      botId: BOT.id,
-      threadId: BOT.threadId ?? "",
+      agentId: AGENT.id,
+      threadId: AGENT.threadId ?? "",
       turnId: "turn-after-logout",
       origin: "user",
     });
@@ -677,8 +680,8 @@ describe("host analytics", () => {
     owner = null;
     analytics.handleAgentEvent({
       type: "turn-completed",
-      botId: BOT.id,
-      threadId: BOT.threadId ?? "",
+      agentId: AGENT.id,
+      threadId: AGENT.threadId ?? "",
       turnId: "turn-after-logout",
       origin: "unknown",
       status: "completed",
@@ -701,7 +704,7 @@ describe("host analytics", () => {
         appVersion: "1.2.3",
         platform: "darwin",
         resolveOwner: () => owner,
-        resolveBot: () => BOT,
+        resolveAgent: () => AGENT,
       },
       () => client,
     );
@@ -724,7 +727,7 @@ describe("host analytics", () => {
     );
   });
 
-  it("adds safe bot context to host failures", () => {
+  it("adds safe agent context to host failures", () => {
     const client = fakeClient();
     const analytics = new HostAnalytics(
       {
@@ -732,11 +735,11 @@ describe("host analytics", () => {
         appVersion: "1.2.3",
         platform: "darwin",
         resolveOwner: () => ({ id: "owner-account", email: "owner@example.com" }),
-        resolveBot: () => BOT,
+        resolveAgent: () => AGENT,
       },
       () => client,
     );
-    analytics.handleAgentEvent({ type: "error", botId: BOT.id, code: "interrupt_failed", message: "private" });
+    analytics.handleAgentEvent({ type: "error", agentId: AGENT.id, code: "interrupt_failed", message: "private" });
 
     expect(client.track).toHaveBeenCalledWith("system_operation_failed", {
       provider: "codex",
@@ -757,14 +760,14 @@ describe("host analytics", () => {
         appVersion: "1.2.3",
         platform: "darwin",
         resolveOwner: () => ({ id: "owner-account", email: "owner@example.com" }),
-        resolveBot: () => BOT,
+        resolveAgent: () => AGENT,
       },
       () => client,
     );
     analytics.handleAgentEvent({
       type: "turn-started",
-      botId: BOT.id,
-      threadId: BOT.threadId ?? "",
+      agentId: AGENT.id,
+      threadId: AGENT.threadId ?? "",
       turnId: "turn-1",
       origin: "user",
     });
@@ -774,14 +777,14 @@ describe("host analytics", () => {
     const running = hostedSiteMessage("hosted-running", "publish", "running", "operation-opted-out");
     analytics.handleAgentEvent({
       type: "conversation",
-      snapshot: { botId: BOT.id, threadId: BOT.threadId, activeTurnId: null, revision: 1, messages: [running] },
+      snapshot: { agentId: AGENT.id, threadId: AGENT.threadId, activeTurnId: null, revision: 1, messages: [running] },
     });
     analytics.setTrackingEnabled(true);
     analytics.handleAgentEvent({
       type: "conversation",
       snapshot: {
-        botId: BOT.id,
-        threadId: BOT.threadId,
+        agentId: AGENT.id,
+        threadId: AGENT.threadId,
         activeTurnId: null,
         revision: 2,
         messages: [running, hostedSiteMessage("hosted-succeeded", "publish", "succeeded", "operation-opted-out")],
@@ -789,8 +792,8 @@ describe("host analytics", () => {
     });
     analytics.handleAgentEvent({
       type: "turn-started",
-      botId: BOT.id,
-      threadId: BOT.threadId ?? "",
+      agentId: AGENT.id,
+      threadId: AGENT.threadId ?? "",
       turnId: "turn-2",
       origin: "user",
     });
@@ -806,7 +809,7 @@ describe("host analytics", () => {
         appVersion: "1.2.3",
         platform: "darwin",
         resolveOwner: () => ({ id: "owner-account", email: "owner@example.com" }),
-        resolveBot: () => BOT,
+        resolveAgent: () => AGENT,
       },
       () => client,
     );

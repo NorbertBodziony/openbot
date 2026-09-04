@@ -2,15 +2,15 @@ import { createEffect, createSignal } from "solid-js";
 import { expect, fireEvent, fn } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import {
-  DEFAULT_FIRST_BOT_DRAFT,
-  FIRST_BOT_SUGGESTIONS,
-  type FirstBotDraft,
-  FirstBotSetup,
-  type FirstBotSetupProps,
-  type FirstBotSuggestion,
+  DEFAULT_FIRST_AGENT_DRAFT,
+  FIRST_AGENT_SUGGESTIONS,
+  type FirstAgentDraft,
+  FirstAgentSetup,
+  type FirstAgentSetupProps,
+  type FirstAgentSuggestion,
 } from "../src/components/FirstAgentSetup";
 
-function draftFromSuggestion(suggestion: FirstBotSuggestion): FirstBotDraft {
+function draftFromSuggestion(suggestion: FirstAgentSuggestion): FirstAgentDraft {
   return {
     name: suggestion.name,
     purpose: suggestion.purpose,
@@ -20,8 +20,8 @@ function draftFromSuggestion(suggestion: FirstBotSuggestion): FirstBotDraft {
   };
 }
 
-function ControlledFirstBotSetup(props: FirstBotSetupProps) {
-  const [draft, setDraft] = createSignal<FirstBotDraft>({ ...props.value });
+function ControlledFirstAgentSetup(props: FirstAgentSetupProps) {
+  const [draft, setDraft] = createSignal<FirstAgentDraft>({ ...props.value });
 
   createEffect(
     () => props.value,
@@ -31,7 +31,7 @@ function ControlledFirstBotSetup(props: FirstBotSetupProps) {
   );
 
   return (
-    <FirstBotSetup
+    <FirstAgentSetup
       {...props}
       value={draft()}
       onChange={(value) => {
@@ -42,9 +42,9 @@ function ControlledFirstBotSetup(props: FirstBotSetupProps) {
   );
 }
 
-const args: FirstBotSetupProps = {
-  value: DEFAULT_FIRST_BOT_DRAFT,
-  suggestions: FIRST_BOT_SUGGESTIONS,
+const args: FirstAgentSetupProps = {
+  value: DEFAULT_FIRST_AGENT_DRAFT,
+  suggestions: FIRST_AGENT_SUGGESTIONS,
   submitting: false,
   onChange: fn(),
   onSubmit: fn(),
@@ -52,21 +52,21 @@ const args: FirstBotSetupProps = {
 
 const meta = {
   title: "Setup/FirstAgentSetup",
-  component: FirstBotSetup,
+  component: FirstAgentSetup,
   args,
   parameters: {
     layout: "fullscreen",
     viewport: {
       options: {
-        firstBotSmall: {
+        firstAgentSmall: {
           name: "First agent — 700 × 720",
           styles: { width: "700px", height: "720px" },
         },
       },
     },
   },
-  render: (storyArgs) => <ControlledFirstBotSetup {...storyArgs} />,
-} satisfies Meta<typeof FirstBotSetup>;
+  render: (storyArgs) => <ControlledFirstAgentSetup {...storyArgs} />,
+} satisfies Meta<typeof FirstAgentSetup>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;
@@ -98,7 +98,7 @@ export const Default: Story = {
     await expect(canvasElement.querySelector(".first-bot-live-avatar .bot-avatar-motion-idle")).toBeInTheDocument();
     await expect(canvasElement.querySelector(".first-bot-live-avatar")).toHaveAttribute(
       "data-avatar-seed",
-      DEFAULT_FIRST_BOT_DRAFT.avatarSeed,
+      DEFAULT_FIRST_AGENT_DRAFT.avatarSeed,
     );
 
     suggestionList.scrollLeft = suggestionList.scrollWidth;
@@ -119,7 +119,7 @@ export const Interactions: Story = {
     });
     await userEvent.click(tripPlanner);
 
-    const suggestion = FIRST_BOT_SUGGESTIONS[1];
+    const suggestion = FIRST_AGENT_SUGGESTIONS[1];
     if (!suggestion) throw new Error("The Trip Planner suggestion is missing.");
     await expect(canvas.getByRole("textbox", { name: "Name" })).toHaveValue(suggestion.name);
     await expect(canvas.getByRole("textbox", { name: "What should this agent help with?" })).toHaveValue(
@@ -151,17 +151,17 @@ export const Interactions: Story = {
   },
 };
 
-const selectedSuggestion = FIRST_BOT_SUGGESTIONS[1];
+const selectedSuggestion = FIRST_AGENT_SUGGESTIONS[1];
 
 export const SuggestionSelected: Story = {
   args: {
-    value: selectedSuggestion ? draftFromSuggestion(selectedSuggestion) : DEFAULT_FIRST_BOT_DRAFT,
+    value: selectedSuggestion ? draftFromSuggestion(selectedSuggestion) : DEFAULT_FIRST_AGENT_DRAFT,
   },
 };
 
 export const Submitting: Story = {
   args: {
-    value: selectedSuggestion ? draftFromSuggestion(selectedSuggestion) : DEFAULT_FIRST_BOT_DRAFT,
+    value: selectedSuggestion ? draftFromSuggestion(selectedSuggestion) : DEFAULT_FIRST_AGENT_DRAFT,
     mode: "additional",
     submitting: true,
     onCancel: fn(),
@@ -176,7 +176,7 @@ export const Submitting: Story = {
 };
 
 export const SmallWindow: Story = {
-  parameters: { viewport: { defaultViewport: "firstBotSmall" } },
+  parameters: { viewport: { defaultViewport: "firstAgentSmall" } },
   play: async ({ canvas, canvasElement }) => {
     const suggestionList = canvasElement.querySelector<HTMLElement>(".first-bot-suggestion-list");
     if (!suggestionList) throw new Error("The agent suggestion list is missing.");

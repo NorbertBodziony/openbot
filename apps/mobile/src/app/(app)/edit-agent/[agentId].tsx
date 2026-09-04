@@ -1,1 +1,1 @@
-export { EditBotScreen as default } from "@/features/agents/screens/edit-agent-screen";
+export { EditAgentScreen as default } from "@/features/agents/screens/edit-agent-screen";

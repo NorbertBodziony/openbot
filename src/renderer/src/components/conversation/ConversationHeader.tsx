@@ -13,7 +13,7 @@ export function ConversationHeader() {
   const {
     actingBrowserControl,
     agentActivity,
-    browserControlBot,
+    browserControlAgent,
     hideBrowserPanel,
     props,
     screenOpen,
@@ -28,8 +28,8 @@ export function ConversationHeader() {
   return (
     <header class="window-drag conversation-header">
       <div class="conversation-heading-group">
-        <Show when={props.bot}>
-          {(bot) => (
+        <Show when={props.agent}>
+          {(agent) => (
             <Button
               variant="ghost"
               size="sm"
@@ -40,14 +40,14 @@ export function ConversationHeader() {
               onFocus={() => void loadAgentSettingsPanel()}
               onClick={() => setActiveRightPanel("settings")}
             >
-              <AgentAvatar bot={bot()} />
-              <h1>{bot().name}</h1>
+              <AgentAvatar agent={agent()} />
+              <h1>{agent().name}</h1>
             </Button>
           )}
         </Show>
       </div>
       <div class="conversation-header-actions no-drag">
-        <Show when={props.bot}>
+        <Show when={props.agent}>
           <ProviderModelPicker
             provider={settingsProvider()}
             value={settingsModel()}
@@ -101,7 +101,7 @@ export function ConversationHeader() {
             ]}
             aria-label={
               actingBrowserControl()
-                ? `${browserControlBot()?.name ?? "Agent"} is controlling the browser`
+                ? `${browserControlAgent()?.name ?? "Agent"} is controlling the browser`
                 : screenOpen()
                   ? "Hide computer"
                   : "Open computer"

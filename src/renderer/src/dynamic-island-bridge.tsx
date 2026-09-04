@@ -1,7 +1,7 @@
 import type { DynamicIslandAction } from "@openbot/contracts/ipc";
 import { createEffect, onSettled } from "solid-js";
 import { useAgents } from "./agents";
-import { withoutBot } from "./app-message-projection";
+import { withoutAgent } from "./app-message-projection";
 import { toast } from "./components/ui";
 import { useConversation } from "./conversation";
 import { promptRequestKey } from "./conversation-keys";
@@ -46,7 +46,7 @@ export function DynamicIslandBridge() {
   const { selectServer } = useServerSelection();
   const { loaded } = useServerScope();
   const { pendingIslandAction, setPendingIslandAction } = useServerSwitch();
-  const { botList, appendUiError } = useAgents();
+  const { agentList, appendUiError } = useAgents();
   const {
     activeTurns,
     queues,
@@ -59,7 +59,7 @@ export function DynamicIslandBridge() {
     setFailedTurns,
   } = useTurns();
   const { unreadReplies, conversationReads, liveMessages } = useConversation();
-  const { selectBot, openAgentMessage } = useNavigation();
+  const { selectAgent, openAgentMessage } = useNavigation();
   /** The handoff this bridge published, so it never consumes or clears its own. */
   let publishedAction: DynamicIslandAction | null = null;
 
@@ -68,12 +68,12 @@ export function DynamicIslandBridge() {
       if (platform.landingPreview || !loaded()) return null;
       return {
         serverId: activeServerId(),
-        bots: botList(),
+        agents: agentList(),
         activeTurns: activeTurns(),
         queues: queues(),
         unreadReplies: unreadReplies(),
         unreadMessageIds: Object.fromEntries(
-          Object.entries(conversationReads()).map(([botId, state]) => [botId, state.firstUnreadMessageId]),
+          Object.entries(conversationReads()).map(([agentId, state]) => [agentId, state.firstUnreadMessageId]),
         ),
         liveMessages: liveMessages(),
         pendingPrompts: pendingPrompts(),
@@ -103,7 +103,7 @@ export function DynamicIslandBridge() {
         return;
       }
       // The action opens a message or a failure inside this workspace, so it has
-      // to wait for the workspace. Acting on a half-loaded scope reads a bot list
+      // to wait for the workspace. Acting on a half-loaded scope reads a agent list
       // and a conversation window that are still empty.
       if (!ready) return;
       setPendingIslandAction(null);
@@ -126,12 +126,12 @@ export function DynamicIslandBridge() {
     if (action.type === "open-app") return;
     if (action.type === "answer-prompt") {
       dynamicIslandCoordinator.resolveAction(action);
-      const prompt = pendingPrompts()[action.botId];
+      const prompt = pendingPrompts()[action.agentId];
       if (prompt?.type === "prompt" && String(prompt.requestId) === String(action.requestId)) {
-        setPendingPrompts((current) => ({ ...current, [action.botId]: undefined }));
+        setPendingPrompts((current) => ({ ...current, [action.agentId]: undefined }));
         setSubmittedPromptRequests((current) => ({
           ...current,
-          [action.botId]: promptRequestKey(prompt.turnId, prompt.requestId) ?? undefined,
+          [action.agentId]: promptRequestKey(prompt.turnId, prompt.requestId) ?? undefined,
         }));
       }
       publishDynamicIslandPresentation();
@@ -140,9 +140,9 @@ export function DynamicIslandBridge() {
     if (action.type === "respond-approval") {
       dynamicIslandCoordinator.resolveAction(action);
       setPendingApprovals((current) => {
-        const approval = current[action.botId];
+        const approval = current[action.agentId];
         return approval && String(approval.requestId) === String(action.requestId)
-          ? { ...current, [action.botId]: undefined }
+          ? { ...current, [action.agentId]: undefined }
           : current;
       });
       publishDynamicIslandPresentation();
@@ -164,8 +164,8 @@ export function DynamicIslandBridge() {
       return;
     }
     if (!loaded()) {
-      // The right workspace, but it has not filled yet. `selectBot` against an
-      // empty bot list and a read against an empty conversation are the same
+      // The right workspace, but it has not filled yet. `selectAgent` against an
+      // empty agent list and a read against an empty conversation are the same
       // half-loaded scope the handoff effect above already waits out, so this
       // action joins it there. Nothing disposes this bridge in the meantime, so
       // it is the one that consumes its own entry once `loaded()` turns true -
@@ -173,17 +173,17 @@ export function DynamicIslandBridge() {
       setPendingIslandAction(action);
       return;
     }
-    selectBot(action.botId);
-    if (action.type === "open-message") await openAgentMessage(action.botId, action.messageId);
+    selectAgent(action.agentId);
+    if (action.type === "open-message") await openAgentMessage(action.agentId, action.messageId);
     if (action.type === "open-failure") {
       try {
-        await window.openbot.agent.acknowledgeFailedTurn({ botId: action.botId, turnId: action.turnId });
+        await window.openbot.agent.acknowledgeFailedTurn({ agentId: action.agentId, turnId: action.turnId });
       } catch (error) {
-        appendUiError(action.botId, error, "Acknowledge failed", action.serverId);
+        appendUiError(action.agentId, error, "Acknowledge failed", action.serverId);
         return;
       }
       setFailedTurns((current) =>
-        current[action.botId] === action.turnId ? withoutBot(current, action.botId) : current,
+        current[action.agentId] === action.turnId ? withoutAgent(current, action.agentId) : current,
       );
       dynamicIslandCoordinator.resolveAction(action);
       publishDynamicIslandPresentation();

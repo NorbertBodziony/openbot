@@ -11,11 +11,11 @@ import {
 } from "react-native";
 
 import { getBloubAvatarColor } from "@/features/agents/components/bloub-avatar";
-import type { MobileBot } from "@/features/workspace/context/mobile-workspace-context";
+import type { MobileAgent } from "@/features/workspace/context/mobile-workspace-context";
 
 export interface ChatMessage {
   id: string;
-  author: "bot" | "user";
+  author: "agent" | "user";
   body: string;
 }
 
@@ -26,7 +26,7 @@ const STARTER_OPTIONS = [
 ] as const;
 
 interface ChatMessageListProps {
-  bot: MobileBot;
+  agent: MobileAgent;
   fieldBackground: ViewStyle["backgroundColor"];
   foreground: ViewStyle["backgroundColor"];
   messages: ChatMessage[];
@@ -42,7 +42,7 @@ interface ChatMessageListProps {
 
 export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(function ChatMessageList(
   {
-    bot,
+    agent,
     fieldBackground,
     foreground,
     messages,
@@ -57,7 +57,7 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
   },
   ref,
 ) {
-  const userBubbleColor = getBloubAvatarColor(bot.avatarSeed, bot.avatarHue);
+  const userBubbleColor = getBloubAvatarColor(agent.avatarSeed, agent.avatarHue);
 
   return (
     <ScrollView

@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentProvider } from "./agent-client";
 import { AgentService } from "./agent-service";
 import {
-  CREATE_BOT_INPUT,
+  CREATE_AGENT_INPUT,
   createFakeClaude,
   FakeAgentClient,
   fakeBrowser,
@@ -49,7 +49,7 @@ describe.sequential("AgentService: providers", () => {
     const events: AgentEvent[] = [];
     service.on("event", (event) => events.push(event));
     await service.initialize();
-    await service.sendMessage({ botId: "chief", text: "Check the latest result" });
+    await service.sendMessage({ agentId: "chief", text: "Check the latest result" });
     await waitFor(() => events.some((event) => event.type === "turn-started"));
     const started = events.find((event) => event.type === "turn-started");
     const client = clients.get("codex");
@@ -113,7 +113,7 @@ describe.sequential("AgentService: providers", () => {
     await store.getOrCreate("chief");
 
     expect(service.getRuntimeSnapshot()).toMatchObject({
-      bots: [expect.objectContaining({ id: "chief" })],
+      agents: [expect.objectContaining({ id: "chief" })],
       activeTurns: [],
       work: [],
       attentionComplete: true,
@@ -122,8 +122,8 @@ describe.sequential("AgentService: providers", () => {
       pendingBrowserTakeovers: [],
       failedTurns: [],
     });
-    expect(service.getRuntimeSnapshot().bots[0]).not.toHaveProperty("workspacePath");
-    expect(service.getRuntimeSnapshot().bots[0]).not.toHaveProperty("description");
+    expect(service.getRuntimeSnapshot().agents[0]).not.toHaveProperty("workspacePath");
+    expect(service.getRuntimeSnapshot().agents[0]).not.toHaveProperty("description");
   });
 
   it("resolves only regular files inside the shared directory", async () => {
@@ -163,7 +163,7 @@ describe.sequential("AgentService: providers", () => {
         routineName: "Morning brief",
         scheduledFor: "2026-08-25T07:00:00.000Z",
       },
-      recipientBotIds: ["chief"],
+      recipientAgentIds: ["chief"],
       text: "Prepare the morning brief.",
       idempotencyKey: "test:routine-history:run-1",
     });
@@ -186,10 +186,10 @@ describe.sequential("AgentService: providers", () => {
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
 
-    const bot = await store.createBot(CREATE_BOT_INPUT);
-    const appDirectory = join(bot.workspacePath, "app");
+    const agent = await store.createAgent(CREATE_AGENT_INPUT);
+    const appDirectory = join(agent.workspacePath, "app");
     const page = join(appDirectory, "page.tsx");
-    const spaced = join(bot.workspacePath, "lutra brand board.html");
+    const spaced = join(agent.workspacePath, "lutra brand board.html");
     const outside = join(root, "outside.html");
     const link = join(appDirectory, "outside-link.html");
     await mkdir(appDirectory, { recursive: true });
@@ -198,20 +198,20 @@ describe.sequential("AgentService: providers", () => {
     await writeFile(outside, "secret\n");
     await symlink(outside, link);
 
-    await expect(service.resolveWorkspaceFile(bot.id, "app/page.tsx")).resolves.toMatchObject({
+    await expect(service.resolveWorkspaceFile(agent.id, "app/page.tsx")).resolves.toMatchObject({
       path: await realpath(page),
       name: "page.tsx",
     });
-    await expect(service.resolveWorkspaceFile(bot.id, page)).resolves.toMatchObject({
+    await expect(service.resolveWorkspaceFile(agent.id, page)).resolves.toMatchObject({
       path: await realpath(page),
       name: "page.tsx",
     });
-    await expect(service.resolveWorkspaceFile(bot.id, "lutra%20brand%20board.html")).resolves.toMatchObject({
+    await expect(service.resolveWorkspaceFile(agent.id, "lutra%20brand%20board.html")).resolves.toMatchObject({
       path: await realpath(spaced),
       name: "lutra brand board.html",
     });
-    await expect(service.resolveWorkspaceFile(bot.id, outside)).rejects.toThrow("inside the agent workspace");
-    await expect(service.resolveWorkspaceFile(bot.id, link)).rejects.toThrow("inside the agent workspace");
+    await expect(service.resolveWorkspaceFile(agent.id, outside)).rejects.toThrow("inside the agent workspace");
+    await expect(service.resolveWorkspaceFile(agent.id, link)).rejects.toThrow("inside the agent workspace");
     await expect(service.resolveWorkspaceFile("missing", page)).rejects.toThrow("Unknown agent");
   });
 
@@ -223,7 +223,7 @@ describe.sequential("AgentService: providers", () => {
     service.on("event", (event) => events.push(event));
     await service.initialize();
 
-    await service.sendMessage({ botId: "chief", text: "First task" });
+    await service.sendMessage({ agentId: "chief", text: "First task" });
     await waitFor(() => events.some((event) => event.type === "turn-started"));
 
     expect(events).not.toEqual(
@@ -250,7 +250,7 @@ describe.sequential("AgentService: providers", () => {
     const [draft] = await service.prepareAttachments([source]);
 
     await service.sendMessage({
-      botId: "chief",
+      agentId: "chief",
       text: `Review ${serializeAttachmentReference(draft.name, draft.id)}`,
       attachmentDraftIds: [draft.id],
     });
@@ -274,7 +274,7 @@ describe.sequential("AgentService: providers", () => {
     await store.getOrCreate("research", "Research Lead", "Research partner");
 
     await service.sendMessage({
-      botId: "chief",
+      agentId: "chief",
       text: `Ask ${serializeChatTagReference("agent", "Old Research", "research")} to use ${serializeChatTagReference("skill", "Release Notes", "skill-1")}.`,
     });
     await waitFor(() => Boolean(clients.get("codex")?.requests.some((request) => request.method === "turn/start")));
@@ -313,8 +313,8 @@ describe.sequential("AgentService: providers", () => {
         },
       ],
     });
-    await service.sendMessage({ botId: "chief", text: "First task" });
-    await service.sendMessage({ botId: "sales-outbound", text: "Second task" });
+    await service.sendMessage({ agentId: "chief", text: "First task" });
+    await service.sendMessage({ agentId: "sales-outbound", text: "Second task" });
     await waitFor(
       async () => (await protocolMessages(logPath)).filter((item) => item.method === "turn/start").length === 2,
     );
@@ -347,7 +347,7 @@ describe.sequential("AgentService: providers", () => {
       expect(params.developerInstructions).toContain("openbot.attach_files_to_response");
       expect(params.developerInstructions).toContain("sadness, disappointment, frustration, loneliness");
       expect(params.developerInstructions).toContain("An emoji written inside your answer does not count");
-      expect(params.developerInstructions).toContain("Omit botId to target yourself");
+      expect(params.developerInstructions).toContain("Omit agentId to target yourself");
       expect(params.dynamicTools).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ type: "namespace", name: "openbot_browser" }),
@@ -401,7 +401,7 @@ describe.sequential("AgentService: providers", () => {
     });
     await service.initialize();
     await store.getOrCreate("chief");
-    await service.updateBot({ botId: "chief", provider: "codex", model: "gpt-5.6-luna" });
+    await service.updateAgent({ agentId: "chief", provider: "codex", model: "gpt-5.6-luna" });
     const codex = clients.get("codex");
     if (!codex) throw new Error("Codex test client was not created.");
     codex.accountRateLimits = {
@@ -422,12 +422,12 @@ describe.sequential("AgentService: providers", () => {
       limits: [{ id: "luna", secondary: { usedPercent: 70 } }],
     });
 
-    await service.updateBot({ botId: "chief", provider: "codex", model: "gpt-5.6-sol" });
+    await service.updateAgent({ agentId: "chief", provider: "codex", model: "gpt-5.6-sol" });
     await expect(service.getUsage("chief")).resolves.toMatchObject({
       limits: [{ id: "codex", secondary: { usedPercent: 40 } }],
     });
 
-    await service.updateBot({ botId: "chief", provider: "claude", model: "claude-sonnet-5" });
+    await service.updateAgent({ agentId: "chief", provider: "claude", model: "claude-sonnet-5" });
     const claude = clients.get("claude");
     if (!claude) throw new Error("Claude test client was not created.");
     claude.accountRateLimits = {
@@ -462,7 +462,7 @@ describe.sequential("AgentService: providers", () => {
       return client;
     });
     await service.initialize();
-    await service.sendMessage({ botId: "chief", text: "Browse" });
+    await service.sendMessage({ agentId: "chief", text: "Browse" });
     await waitFor(() => Boolean(store.activeProviderSession("chief")));
 
     const providerThreadId = store.activeProviderSession("chief")?.externalSessionId;
@@ -485,6 +485,6 @@ describe.sequential("AgentService: providers", () => {
     });
 
     await waitFor(() => calls.length === 1);
-    expect(calls[0]).toMatchObject({ threadId: openbotThreadId, ownerBotId: "chief" });
+    expect(calls[0]).toMatchObject({ threadId: openbotThreadId, ownerAgentId: "chief" });
   });
 });

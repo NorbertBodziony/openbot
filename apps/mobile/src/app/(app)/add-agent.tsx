@@ -1,1 +1,1 @@
-export { AddBotScreen as default } from "@/features/agents/screens/add-agent-screen";
+export { AddAgentScreen as default } from "@/features/agents/screens/add-agent-screen";

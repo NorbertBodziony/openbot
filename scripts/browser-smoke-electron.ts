@@ -192,7 +192,7 @@ async function main(): Promise<void> {
     const childTab = browser
       .listTabs()
       .find((candidate) => candidate.id !== tab.id && candidate.url.includes("/child"));
-    if (childTab?.ownerThreadId !== "smoke-thread" || childTab.ownerBotId !== "smoke-bot") {
+    if (childTab?.ownerThreadId !== "smoke-thread" || childTab.ownerAgentId !== "smoke-bot") {
       throw new Error("A target=_blank tab did not preserve agent ownership.");
     }
     process.stdout.write("BrowserHost: child-tab ownership passed.\n");
@@ -253,18 +253,18 @@ async function main(): Promise<void> {
       threadId: "smoke-thread",
       turnId: "browser-smoke-turn",
       callId: "browser-smoke-call",
-      ownerBotId: "smoke-bot",
+      ownerAgentId: "smoke-bot",
       namespace: "openbot_browser",
       tool: "open",
       arguments: { url: `${origin}/cookie` },
     });
     if (!toolResult.success) throw new Error("Dynamic browser tool failed.");
-    const otherBotTab = await browser.open(`${origin}/cookie`, "smoke-thread", "other-bot");
+    const otherAgentTab = await browser.open(`${origin}/cookie`, "smoke-thread", "other-bot");
     const scopedTabsResult = await browser.handleDynamicTool({
       threadId: "smoke-thread",
       turnId: "browser-smoke-scope-turn",
       callId: "browser-smoke-scope-call",
-      ownerBotId: "smoke-bot",
+      ownerAgentId: "smoke-bot",
       namespace: "openbot_browser",
       tool: "list_tabs",
       arguments: {},
@@ -275,7 +275,7 @@ async function main(): Promise<void> {
       !scopedTabsResult.success ||
       !isDynamicRecord(scopedTabsPayload) ||
       !Array.isArray(scopedTabsPayload.tabs) ||
-      scopedTabsPayload.tabs.some((candidate) => isDynamicRecord(candidate) && candidate.id === otherBotTab.id)
+      scopedTabsPayload.tabs.some((candidate) => isDynamicRecord(candidate) && candidate.id === otherAgentTab.id)
     ) {
       throw new Error("Dynamic browser tools exposed another agent's tab.");
     }
@@ -283,22 +283,22 @@ async function main(): Promise<void> {
       threadId: "smoke-thread",
       turnId: "browser-smoke-scope-turn",
       callId: "browser-smoke-cross-agent-call",
-      ownerBotId: "smoke-bot",
+      ownerAgentId: "smoke-bot",
       namespace: "openbot_browser",
       tool: "snapshot",
-      arguments: { tabId: otherBotTab.id },
+      arguments: { tabId: otherAgentTab.id },
     });
     if (crossAgentSnapshot.success) throw new Error("Dynamic browser tools accessed another agent's tab.");
     const crossAgentClose = await browser.handleDynamicTool({
       threadId: "smoke-thread",
       turnId: "browser-smoke-cross-agent-close-turn",
       callId: "browser-smoke-cross-agent-close-call",
-      ownerBotId: "smoke-bot",
+      ownerAgentId: "smoke-bot",
       namespace: "openbot_browser",
       tool: "close_tab",
-      arguments: { tabId: otherBotTab.id },
+      arguments: { tabId: otherAgentTab.id },
     });
-    if (crossAgentClose.success || !browser.listTabs().some((candidate) => candidate.id === otherBotTab.id)) {
+    if (crossAgentClose.success || !browser.listTabs().some((candidate) => candidate.id === otherAgentTab.id)) {
       throw new Error("Dynamic browser tools closed another agent's tab.");
     }
     const closableToolTab = await browser.open(`${origin}/cookie`, "smoke-thread", "smoke-bot");
@@ -306,7 +306,7 @@ async function main(): Promise<void> {
       threadId: "smoke-thread",
       turnId: "browser-smoke-close-turn-1",
       callId: "browser-smoke-close-call-1",
-      ownerBotId: "smoke-bot",
+      ownerAgentId: "smoke-bot",
       namespace: "openbot_browser",
       tool: "close_tab",
       arguments: { tabId: closableToolTab.id },
@@ -315,7 +315,7 @@ async function main(): Promise<void> {
       threadId: "smoke-thread",
       turnId: "browser-smoke-close-turn-2",
       callId: "browser-smoke-close-call-2",
-      ownerBotId: "smoke-bot",
+      ownerAgentId: "smoke-bot",
       namespace: "openbot_browser",
       tool: "close_tab",
       arguments: { tabId: closableToolTab.id },
@@ -360,7 +360,7 @@ async function main(): Promise<void> {
     const restoredTab = restoredTabs.find((candidate) => candidate.id === persistedTab.id);
     if (
       restoredTab?.ownerThreadId !== "persisted-thread" ||
-      restoredTab?.ownerBotId !== "persisted-bot" ||
+      restoredTab?.ownerAgentId !== "persisted-bot" ||
       restoredBrowser.activeTabId !== persistedTab.id
     ) {
       throw new Error("Browser tabs did not survive a BrowserHost restart.");

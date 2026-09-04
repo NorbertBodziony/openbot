@@ -83,7 +83,7 @@ describe("DynamicIslandSurface", () => {
       expect(mock.performAction).toHaveBeenCalledWith({
         type: "answer-prompt",
         serverId: "local",
-        botId: "research",
+        agentId: "research",
         requestId: "research-questions",
         answers: { source: ["Official data"], format: ["Comparison table"] },
       }),
@@ -117,7 +117,7 @@ describe("DynamicIslandSurface", () => {
       expect(mock.performAction).toHaveBeenCalledWith({
         type: "review-attention",
         serverId: "local",
-        botId: "research",
+        agentId: "research",
         requestId: "secret-question",
       }),
     );
@@ -215,7 +215,7 @@ function questionPresentation(
     serverId: "local",
     mode: "question",
     remainingCount: 0,
-    item: { requestId, bot: RESEARCH, title, detail, questions },
+    item: { requestId, agent: RESEARCH, title, detail, questions },
   };
 }
 
@@ -235,7 +235,7 @@ function approvalPresentation(requestId: string): DynamicIslandPresentation {
     remainingCount: 0,
     item: {
       requestId,
-      bot: RESEARCH,
+      agent: RESEARCH,
       title: "Command needs review",
       detail: "Run the test suite.",
       truncated: false,

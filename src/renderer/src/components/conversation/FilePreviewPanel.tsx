@@ -1,6 +1,6 @@
 import type { FilePreview } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
-import type { BotProfile } from "../../data";
+import type { AgentProfile } from "../../data";
 import { PanelResizer, readPanelWidth, savePanelWidth } from "../PanelResizer";
 import { Button, ExternalLink, File, X } from "../ui";
 import { MarkdownMessageText } from "./MarkdownMessageText";
@@ -12,7 +12,7 @@ const TEXT_LIMIT = 1_000_000;
 
 interface FilePreviewPanelProps {
   preview: FilePreview;
-  bots: BotProfile[];
+  agents: AgentProfile[];
   defaultWidth: () => number;
   maxWidth: () => number;
   onWidthChange: (width: number) => void;
@@ -112,7 +112,7 @@ export default function FilePreviewPanel(props: FilePreviewPanelProps) {
           <article class="file-preview-markdown message-markdown">
             <MarkdownMessageText
               body={text().value}
-              bots={props.bots}
+              agents={props.agents}
               attachments={[]}
               citations={[]}
               showCitationFooter={false}

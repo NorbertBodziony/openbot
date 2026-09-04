@@ -71,8 +71,8 @@ describe("redactText", () => {
     expect(redactText(redactText("password=hunter2"))).toBe("password=[redacted]");
   });
 
-  it("leaves identifiers such as bot UUIDs untouched", () => {
-    const uuid = "bot-3fa85f64-5717-4562-b3fc-2c963f66afa6";
+  it("leaves identifiers such as agent UUIDs untouched", () => {
+    const uuid = "agent-3fa85f64-5717-4562-b3fc-2c963f66afa6";
     expect(redactText(`loaded ${uuid}`)).toBe(`loaded ${uuid}`);
   });
 });

@@ -804,15 +804,15 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
           ),
           tool(
             "list_routines",
-            "List routines for this agent, or for another local agent when botId is provided.",
-            { botId: z.string().min(1).max(INPUT_LIMITS.identifier).optional() },
+            "List routines for this agent, or for another local agent when agentId is provided.",
+            { agentId: z.string().min(1).max(INPUT_LIMITS.identifier).optional() },
             (args) => call("openbot", "list_routines", args),
           ),
           tool(
             "create_routine",
-            "Create a scheduled routine for this agent, or for another local agent when botId is provided.",
+            "Create a scheduled routine for this agent, or for another local agent when agentId is provided.",
             {
-              botId: z.string().min(1).max(INPUT_LIMITS.identifier).optional(),
+              agentId: z.string().min(1).max(INPUT_LIMITS.identifier).optional(),
               name: z.string().min(1).max(INPUT_LIMITS.routineName),
               instruction: z.string().min(1).max(INPUT_LIMITS.routineInstruction),
               schedule: routineScheduleZodSchema,
@@ -823,9 +823,9 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
           ),
           tool(
             "update_routine",
-            "Update, pause, or resume an existing routine for this agent, or for another local agent when botId is provided.",
+            "Update, pause, or resume an existing routine for this agent, or for another local agent when agentId is provided.",
             {
-              botId: z.string().min(1).max(INPUT_LIMITS.identifier).optional(),
+              agentId: z.string().min(1).max(INPUT_LIMITS.identifier).optional(),
               routineId: z.string().min(1).max(INPUT_LIMITS.identifier),
               name: z.string().min(1).max(INPUT_LIMITS.routineName).optional(),
               instruction: z.string().min(1).max(INPUT_LIMITS.routineInstruction).optional(),
@@ -836,18 +836,18 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
           ),
           tool(
             "delete_routine",
-            "Delete an existing routine for this agent, or for another local agent when botId is provided.",
+            "Delete an existing routine for this agent, or for another local agent when agentId is provided.",
             {
-              botId: z.string().min(1).max(INPUT_LIMITS.identifier).optional(),
+              agentId: z.string().min(1).max(INPUT_LIMITS.identifier).optional(),
               routineId: z.string().min(1).max(INPUT_LIMITS.identifier),
             },
             (args) => call("openbot", "delete_routine", args),
           ),
           tool(
             "test_routine",
-            "Queue one manual test run of an existing routine for this agent, or for another local agent when botId is provided.",
+            "Queue one manual test run of an existing routine for this agent, or for another local agent when agentId is provided.",
             {
-              botId: z.string().min(1).max(INPUT_LIMITS.identifier).optional(),
+              agentId: z.string().min(1).max(INPUT_LIMITS.identifier).optional(),
               routineId: z.string().min(1).max(INPUT_LIMITS.identifier),
             },
             (args) => call("openbot", "test_routine", args),
@@ -877,7 +877,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
             "send_message",
             "Send an asynchronous message or local files to OpenBot teammates.",
             {
-              recipientBotIds: z.array(z.string()).min(1).max(32),
+              recipientAgentIds: z.array(z.string()).min(1).max(32),
               text: z.string().min(1).max(100_000),
               paths: z.array(z.string()).max(10).optional(),
               replyToMessageId: z.string().nullable().optional(),

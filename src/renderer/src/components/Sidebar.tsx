@@ -1,5 +1,5 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import type { BotAvatarHue, DirectThreadSummary, TeamPresenceMember } from "@openbot/contracts/ipc";
+import type { AvatarHue, DirectThreadSummary, TeamPresenceMember } from "@openbot/contracts/ipc";
 import {
   SIDEBAR_PEOPLE_SECTION_ID,
   SIDEBAR_UNASSIGNED_SECTION_ID,
@@ -7,7 +7,7 @@ import {
   type SidebarLayoutSnapshot,
 } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, createStore, For, onCleanup, Show } from "solid-js";
-import type { BotProfile } from "../data";
+import type { AgentProfile } from "../data";
 import { MAX_SIDEBAR_PINNED_ITEMS, type SidebarPinnedItem, sidebarPinnedItemKey } from "../sidebar-pins";
 import { AgentAvatar } from "./AgentAvatar";
 import { createBoundedDragPreview } from "./createBoundedDragPreview";
@@ -40,8 +40,8 @@ import {
 interface SidebarProps {
   serverName: string;
   onOpenServerSettings: (trigger: HTMLElement) => void;
-  bots: BotProfile[];
-  activeBotId: string;
+  agents: AgentProfile[];
+  activeAgentId: string;
   showPeople?: boolean;
   people: TeamPresenceMember[];
   directThreads: DirectThreadSummary[];
@@ -58,29 +58,29 @@ interface SidebarProps {
   onUnpin: (item: SidebarPinnedItem) => void;
   onReorderPinned: (items: SidebarPinnedItem[]) => void;
   onReorderPeople: (memberIds: string[]) => void;
-  onSelectBot: (botId: string) => void;
+  onSelectAgent: (agentId: string) => void;
   onSelectPerson: (memberId: string) => void;
   onPreloadDirectConversation?: () => void;
-  onCreateBot: () => void;
-  onEditBot: (botId: string) => void;
+  onCreateAgent: () => void;
+  onEditAgent: (agentId: string) => void;
   duplicateSupported?: boolean;
-  duplicatingBotIds?: ReadonlySet<string>;
-  onDuplicateBot?: (botId: string) => Promise<void>;
-  onDeleteBot: (botId: string) => Promise<void>;
+  duplicatingAgentIds?: ReadonlySet<string>;
+  onDuplicateAgent?: (agentId: string) => Promise<void>;
+  onDeleteAgent: (agentId: string) => Promise<void>;
   compact: boolean;
   onExpand: () => void;
   onOpenMarketplace: () => void;
   emptyAction?: {
     label: string;
     avatarSeed: string;
-    avatarHue: BotAvatarHue | null;
+    avatarHue: AvatarHue | null;
     onSelect: () => void;
   };
 }
 
 export type SidebarAgentState = { kind: "working" } | { kind: "responded" } | { kind: "unread"; count: number };
 
-type ResolvedPinnedItem = { ref: SidebarPinnedItem; bot: BotProfile };
+type ResolvedPinnedItem = { ref: SidebarPinnedItem; agent: AgentProfile };
 
 interface DragSlot {
   bottom: number;
@@ -280,7 +280,7 @@ function SidebarPinnedAvatar(props: { item: ResolvedPinnedItem; agentState: () =
           screen, which is all day, and bought nothing: the shape is 24 px and nobody is
           looking at it while they work in the pane next to it. `"hover"` brings it back the
           moment a pointer arrives, and real work still animates on its own. */}
-      <AgentAvatar bot={props.item.bot} motion={props.agentState()?.kind === "working" ? "working" : "hover"} />
+      <AgentAvatar agent={props.item.agent} motion={props.agentState()?.kind === "working" ? "working" : "hover"} />
       <Show when={props.agentState()}>{(state) => <SidebarAgentIndicator state={state()} />}</Show>
     </span>
   );
@@ -438,7 +438,7 @@ export function Sidebar(props: SidebarProps) {
     return drag.target?.kind === "pinned" && pinningFromSidebar && canPinDraggedSidebarItem();
   });
   const [reorderAnnouncement, setReorderAnnouncement] = createSignal("");
-  let botList: HTMLElement | undefined;
+  let agentList: HTMLElement | undefined;
   let searchInput: HTMLInputElement | undefined;
   let sectionNameInput: HTMLInputElement | undefined;
   let pinnedDragSlots: DragSlot[] = [];
@@ -465,26 +465,26 @@ export function Sidebar(props: SidebarProps) {
   const normalizedQuery = createMemo(() => query().trim().toLowerCase());
   const agentPinnedItems = createMemo(() => props.pinnedItems.filter((item) => item.kind === "agent"));
   const pinnedKeys = createMemo(() => new Set(agentPinnedItems().map(sidebarPinnedItemKey)));
-  const botById = createMemo(() => new Map(props.bots.map((bot) => [bot.id, bot])));
+  const agentById = createMemo(() => new Map(props.agents.map((agent) => [agent.id, agent])));
   const personById = createMemo(() => new Map(props.people.map((member) => [member.id, member])));
   const resolvedPinnedItems = createMemo<ResolvedPinnedItem[]>(() => {
     const items: ResolvedPinnedItem[] = [];
     for (const ref of agentPinnedItems()) {
       if (ref.kind === "agent") {
-        const bot = botById().get(ref.id);
-        if (bot && botMatchesQuery(bot, normalizedQuery())) items.push({ ref, bot });
+        const agent = agentById().get(ref.id);
+        if (agent && agentMatchesQuery(agent, normalizedQuery())) items.push({ ref, agent });
       }
     }
     return items;
   });
-  const filteredBots = createMemo(() => {
+  const filteredAgents = createMemo(() => {
     const orderIndex = new Map(props.layout.agentOrder.map((agentId, index) => [agentId, index]));
-    const naturalIndex = new Map(props.bots.map((bot, index) => [bot.id, index]));
-    return props.bots
+    const naturalIndex = new Map(props.agents.map((agent, index) => [agent.id, index]));
+    return props.agents
       .filter(
-        (bot) =>
-          !pinnedKeys().has(sidebarPinnedItemKey({ kind: "agent", id: bot.id })) &&
-          botMatchesQuery(bot, normalizedQuery()),
+        (agent) =>
+          !pinnedKeys().has(sidebarPinnedItemKey({ kind: "agent", id: agent.id })) &&
+          agentMatchesQuery(agent, normalizedQuery()),
       )
       .sort(
         (left, right) =>
@@ -518,16 +518,16 @@ export function Sidebar(props: SidebarProps) {
   );
   const deleteTarget = createMemo(() => {
     const deletion = pending.deletion;
-    return deletion?.kind === "agent" ? props.bots.find((bot) => bot.id === deletion.id) : undefined;
+    return deletion?.kind === "agent" ? props.agents.find((agent) => agent.id === deletion.id) : undefined;
   });
   const customSectionById = createMemo(() => new Map(props.layout.sections.map((section) => [section.id, section])));
   const collapsedSectionIds = createMemo(() => new Set(props.collapsedSectionIds));
-  const filteredBotsBySection = createMemo(() => {
-    const groups = new Map<string, BotProfile[]>();
-    for (const bot of filteredBots()) {
-      const assigned = props.layout.agentAssignments[bot.id];
+  const filteredAgentsBySection = createMemo(() => {
+    const groups = new Map<string, AgentProfile[]>();
+    for (const agent of filteredAgents()) {
+      const assigned = props.layout.agentAssignments[agent.id];
       const sectionId = assigned && customSectionById().has(assigned) ? assigned : SIDEBAR_UNASSIGNED_SECTION_ID;
-      groups.set(sectionId, [...(groups.get(sectionId) ?? []), bot]);
+      groups.set(sectionId, [...(groups.get(sectionId) ?? []), agent]);
     }
     return groups;
   });
@@ -535,10 +535,10 @@ export function Sidebar(props: SidebarProps) {
     props.layout.order.filter((sectionId) => {
       if (sectionId === SIDEBAR_PEOPLE_SECTION_ID) return props.showPeople !== false && filteredPeople().length > 0;
       if (customSectionById().has(sectionId)) {
-        return !normalizedQuery() || (filteredBotsBySection().get(sectionId)?.length ?? 0) > 0;
+        return !normalizedQuery() || (filteredAgentsBySection().get(sectionId)?.length ?? 0) > 0;
       }
       if (sectionId !== SIDEBAR_UNASSIGNED_SECTION_ID) return false;
-      return (filteredBotsBySection().get(sectionId)?.length ?? 0) > 0;
+      return (filteredAgentsBySection().get(sectionId)?.length ?? 0) > 0;
     }),
   );
   const sectionDeleteTarget = createMemo(() => {
@@ -554,7 +554,7 @@ export function Sidebar(props: SidebarProps) {
   });
 
   createEffect(
-    () => [resolvedPinnedItems(), filteredBots(), filteredPeople()],
+    () => [resolvedPinnedItems(), filteredAgents(), filteredPeople()],
     () => {
       scrollFades.remeasure();
     },
@@ -596,7 +596,7 @@ export function Sidebar(props: SidebarProps) {
     if (deletion?.kind !== "agent" || deletion.deleting) return;
     beginDelete();
     try {
-      await props.onDeleteBot(deletion.id);
+      await props.onDeleteAgent(deletion.id);
       closeDelete();
     } catch (error) {
       failDelete(error);
@@ -760,8 +760,8 @@ export function Sidebar(props: SidebarProps) {
       state.target = null;
     });
     applyPersonDragOffsets({});
-    botList?.querySelector(".sidebar-pinned-group")?.classList.remove("sidebar-pinned-group-agent-drop-target");
-    for (const section of botList?.querySelectorAll<HTMLElement>(".sidebar-section") ?? []) {
+    agentList?.querySelector(".sidebar-pinned-group")?.classList.remove("sidebar-pinned-group-agent-drop-target");
+    for (const section of agentList?.querySelectorAll<HTMLElement>(".sidebar-section") ?? []) {
       section.classList.remove(
         "sidebar-section-agent-drop-target",
         "sidebar-section-drop-before",
@@ -788,17 +788,17 @@ export function Sidebar(props: SidebarProps) {
     agentDragSlots = new Map();
     personDragSlots = new Map();
     pinnedDragSlots = [];
-    const startScrollTop = botList?.scrollTop ?? 0;
+    const startScrollTop = agentList?.scrollTop ?? 0;
     sectionDragStartScrollTop = startScrollTop;
     agentDragStartScrollTop = startScrollTop;
-    if (!botList) return;
-    const pinnedGroup = botList.querySelector<HTMLElement>(".sidebar-pinned-group");
+    if (!agentList) return;
+    const pinnedGroup = agentList.querySelector<HTMLElement>(".sidebar-pinned-group");
     const pinnedTarget = pinnedGroup?.querySelector<HTMLElement>(".sidebar-pinned-empty-drop") ?? pinnedGroup;
     dragGeometry = {
-      list: botList.getBoundingClientRect(),
+      list: agentList.getBoundingClientRect(),
       pinned: pinnedTarget?.getBoundingClientRect() ?? null,
     };
-    for (const section of botList.querySelectorAll<HTMLElement>("[data-section-id]")) {
+    for (const section of agentList.querySelectorAll<HTMLElement>("[data-section-id]")) {
       const sectionId = section.dataset.sectionId;
       if (!sectionId) continue;
       const bounds = section.getBoundingClientRect();
@@ -809,7 +809,7 @@ export function Sidebar(props: SidebarProps) {
         centerY: bounds.top + bounds.height / 2,
       });
     }
-    for (const row of botList.querySelectorAll<HTMLElement>("[data-agent-id]")) {
+    for (const row of agentList.querySelectorAll<HTMLElement>("[data-agent-id]")) {
       const agentId = row.dataset.agentId;
       if (!agentId) continue;
       const bounds = row.getBoundingClientRect();
@@ -823,7 +823,7 @@ export function Sidebar(props: SidebarProps) {
         top: bounds.top,
       });
     }
-    for (const row of botList.querySelectorAll<HTMLElement>("[data-person-id]")) {
+    for (const row of agentList.querySelectorAll<HTMLElement>("[data-person-id]")) {
       const memberId = row.dataset.personId;
       if (!memberId) continue;
       const bounds = row.getBoundingClientRect();
@@ -835,7 +835,7 @@ export function Sidebar(props: SidebarProps) {
         top: bounds.top,
       });
     }
-    for (const item of botList.querySelectorAll<HTMLElement>("[data-pinned-key]")) {
+    for (const item of agentList.querySelectorAll<HTMLElement>("[data-pinned-key]")) {
       const key = item.dataset.pinnedKey;
       if (!key) continue;
       const bounds = item.getBoundingClientRect();
@@ -861,7 +861,7 @@ export function Sidebar(props: SidebarProps) {
     }
     event.dataTransfer?.setData("text/plain", options.data);
     if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
-    dragSession = { source: options.source, startScrollTop: botList?.scrollTop ?? 0 };
+    dragSession = { source: options.source, startScrollTop: agentList?.scrollTop ?? 0 };
     dragPoint = { clientX: event.clientX, clientY: event.clientY };
     dragTarget = null;
     setDrag((state) => {
@@ -870,9 +870,9 @@ export function Sidebar(props: SidebarProps) {
       state.target = null;
     });
     measureSidebarDragTargets();
-    if (!botList) return;
+    if (!agentList) return;
     dragPreview.start({
-      bounds: botList,
+      bounds: agentList,
       className: options.className,
       createPreview: options.createPreview,
       event,
@@ -883,14 +883,14 @@ export function Sidebar(props: SidebarProps) {
     window.addEventListener("blur", stopSidebarDragging, { once: true });
   }
 
-  function startAgentDragging(event: DragEvent & { currentTarget: HTMLElement }, bot: BotProfile): void {
+  function startAgentDragging(event: DragEvent & { currentTarget: HTMLElement }, agent: AgentProfile): void {
     if (props.compact) return;
     startNativeItemDragging(event, {
       className: "sidebar-agent-drag-preview",
       createPreview: createSidebarAgentDragCard,
-      data: `openbot-agent:${bot.id}`,
+      data: `openbot-agent:${agent.id}`,
       previewSize: { height: 94, width: 72 },
-      source: { kind: "agent", id: bot.id, origin: "section" },
+      source: { kind: "agent", id: agent.id, origin: "section" },
     });
   }
 
@@ -1031,7 +1031,7 @@ export function Sidebar(props: SidebarProps) {
     const sourceSlot = agentDragSlots.get(sourceAgentId);
     const slot = agentDragSlots.get(agentId);
     if (!slot) return null;
-    const scrollDelta = (botList?.scrollTop ?? 0) - agentDragStartScrollTop;
+    const scrollDelta = (agentList?.scrollTop ?? 0) - agentDragStartScrollTop;
     const placement =
       sourceSlot?.sectionId === slot.sectionId
         ? sourceSlot.top < slot.top
@@ -1049,8 +1049,8 @@ export function Sidebar(props: SidebarProps) {
   }
 
   function moveDraggedAgent(agentId: string, target: AgentDropTarget): void {
-    const sectionBots = filteredBotsBySection().get(target.sectionId) ?? [];
-    const idsWithoutSource = sectionBots.map((bot) => bot.id).filter((candidate) => candidate !== agentId);
+    const sectionAgents = filteredAgentsBySection().get(target.sectionId) ?? [];
+    const idsWithoutSource = sectionAgents.map((agent) => agent.id).filter((candidate) => candidate !== agentId);
     const targetIndex = idsWithoutSource.indexOf(target.agentId);
     if (targetIndex < 0) return;
     const beforeAgentId = target.placement === "before" ? target.agentId : (idsWithoutSource[targetIndex + 1] ?? null);
@@ -1064,7 +1064,7 @@ export function Sidebar(props: SidebarProps) {
       .then(
         () =>
           setReorderAnnouncement(
-            `Moved ${botById().get(agentId)?.name ?? "agent"} in ${sectionLabel(target.sectionId)}.`,
+            `Moved ${agentById().get(agentId)?.name ?? "agent"} in ${sectionLabel(target.sectionId)}.`,
           ),
         (error) => setReorderAnnouncement(error instanceof Error ? error.message : String(error)),
       );
@@ -1103,7 +1103,7 @@ export function Sidebar(props: SidebarProps) {
     const item = draggedSidebarItem();
     if (!item || !canPinDraggedSidebarItem()) return false;
     props.onPin(item);
-    const name = botById().get(item.id)?.name ?? "agent";
+    const name = agentById().get(item.id)?.name ?? "agent";
     setReorderAnnouncement(`Pinned ${name}.`);
     return true;
   }
@@ -1144,12 +1144,12 @@ export function Sidebar(props: SidebarProps) {
   }
 
   function sectionAtPoint(point: SidebarDragPoint): SectionDragSlot | null {
-    const scrollDelta = (botList?.scrollTop ?? 0) - sectionDragStartScrollTop;
+    const scrollDelta = (agentList?.scrollTop ?? 0) - sectionDragStartScrollTop;
     return closestVerticalSlot(sectionDragSlots.values(), point.clientY, scrollDelta);
   }
 
   function agentAtPoint(point: SidebarDragPoint, sectionId: string): AgentDragSlot | null {
-    const scrollDelta = (botList?.scrollTop ?? 0) - agentDragStartScrollTop;
+    const scrollDelta = (agentList?.scrollTop ?? 0) - agentDragStartScrollTop;
     return closestVerticalSlot(
       agentDragSlots.values(),
       point.clientY,
@@ -1159,12 +1159,12 @@ export function Sidebar(props: SidebarProps) {
   }
 
   function personAtPoint(point: SidebarDragPoint): PersonDragSlot | null {
-    const scrollDelta = (botList?.scrollTop ?? 0) - (dragSession?.startScrollTop ?? 0);
+    const scrollDelta = (agentList?.scrollTop ?? 0) - (dragSession?.startScrollTop ?? 0);
     return closestVerticalSlot(personDragSlots.values(), point.clientY, scrollDelta);
   }
 
   function pinnedTargetAtPoint(point: SidebarDragPoint): SidebarDropTarget | null {
-    const scrollDelta = (botList?.scrollTop ?? 0) - (dragSession?.startScrollTop ?? 0);
+    const scrollDelta = (agentList?.scrollTop ?? 0) - (dragSession?.startScrollTop ?? 0);
     if (!pointInRect(point, dragGeometry.pinned, scrollDelta)) return null;
     const source = dragSession?.source;
     if (!source) return null;
@@ -1191,7 +1191,7 @@ export function Sidebar(props: SidebarProps) {
 
     if (session.source.kind === "section") {
       if (section.sectionId === session.source.id) return null;
-      const scrollDelta = (botList?.scrollTop ?? 0) - sectionDragStartScrollTop;
+      const scrollDelta = (agentList?.scrollTop ?? 0) - sectionDragStartScrollTop;
       return {
         kind: "section-order",
         target: {
@@ -1266,10 +1266,10 @@ export function Sidebar(props: SidebarProps) {
 
   function runSidebarDragAutoScroll(): void {
     dragScrollFrame = null;
-    if (!botList || !dragSession || !dragPoint || dragScrollSpeed === 0) return;
-    const previousScrollTop = botList.scrollTop;
-    botList.scrollTop += dragScrollSpeed;
-    if (botList.scrollTop === previousScrollTop) {
+    if (!agentList || !dragSession || !dragPoint || dragScrollSpeed === 0) return;
+    const previousScrollTop = agentList.scrollTop;
+    agentList.scrollTop += dragScrollSpeed;
+    if (agentList.scrollTop === previousScrollTop) {
       dragScrollSpeed = 0;
       return;
     }
@@ -1296,8 +1296,8 @@ export function Sidebar(props: SidebarProps) {
   }
 
   function moveAgentAction(agentId: string, target: AgentDropTarget): SidebarLayoutAction | null {
-    const sectionBots = filteredBotsBySection().get(target.sectionId) ?? [];
-    const idsWithoutSource = sectionBots.map((bot) => bot.id).filter((candidate) => candidate !== agentId);
+    const sectionAgents = filteredAgentsBySection().get(target.sectionId) ?? [];
+    const idsWithoutSource = sectionAgents.map((agent) => agent.id).filter((candidate) => candidate !== agentId);
     const targetIndex = idsWithoutSource.indexOf(target.agentId);
     if (targetIndex < 0) return null;
     return {
@@ -1337,7 +1337,7 @@ export function Sidebar(props: SidebarProps) {
     try {
       if (action) await props.onMutateLayout(action);
       props.onUnpin({ kind: "agent", id: source.id });
-      setReorderAnnouncement(`Moved ${botById().get(source.id)?.name ?? "agent"} to ${sectionLabel(sectionId)}.`);
+      setReorderAnnouncement(`Moved ${agentById().get(source.id)?.name ?? "agent"} to ${sectionLabel(sectionId)}.`);
     } catch (error) {
       setReorderAnnouncement(error instanceof Error ? error.message : String(error));
     }
@@ -1363,7 +1363,7 @@ export function Sidebar(props: SidebarProps) {
         void props.onMutateLayout(appendAgentAction(source.id, target.sectionId)).then(
           () =>
             setReorderAnnouncement(
-              `Moved ${botById().get(source.id)?.name ?? "agent"} to ${sectionLabel(target.sectionId)}.`,
+              `Moved ${agentById().get(source.id)?.name ?? "agent"} to ${sectionLabel(target.sectionId)}.`,
             ),
           (error) => setReorderAnnouncement(error instanceof Error ? error.message : String(error)),
         );
@@ -1487,7 +1487,7 @@ export function Sidebar(props: SidebarProps) {
     const sourceSlot = sourceAgentId ? agentDragSlots.get(sourceAgentId) : undefined;
     const targetSlot = targetAgentId ? agentDragSlots.get(targetAgentId) : undefined;
     if (!sourceSlot || !targetSlot || sourceSlot.sectionId !== targetSlot.sectionId) return { x: 0, y: 0 };
-    const keys = (filteredBotsBySection().get(sourceSlot.sectionId) ?? []).map((bot) => bot.id);
+    const keys = (filteredAgentsBySection().get(sourceSlot.sectionId) ?? []).map((agent) => agent.id);
     if (sourceAgentId === targetAgentId || agentId === sourceAgentId) return { x: 0, y: 0 };
     const sourceIndex = keys.indexOf(sourceAgentId);
     const targetIndex = keys.indexOf(targetAgentId);
@@ -1530,15 +1530,15 @@ export function Sidebar(props: SidebarProps) {
     return draggedSidebarItem() !== null && agentPinnedItems().length < MAX_SIDEBAR_PINNED_ITEMS;
   }
 
-  function agentActions(bot: BotProfile, pinned: boolean) {
-    const ref: SidebarPinnedItem = { kind: "agent", id: bot.id };
+  function agentActions(agent: AgentProfile, pinned: boolean) {
+    const ref: SidebarPinnedItem = { kind: "agent", id: agent.id };
     const pinLimitReached = !pinned && agentPinnedItems().length >= MAX_SIDEBAR_PINNED_ITEMS;
     const assignedSectionId = () =>
-      customSectionById().has(props.layout.agentAssignments[bot.id] ?? "")
-        ? props.layout.agentAssignments[bot.id]
+      customSectionById().has(props.layout.agentAssignments[agent.id] ?? "")
+        ? props.layout.agentAssignments[agent.id]
         : null;
     const assign = (sectionId: string | null) => {
-      void props.onMutateLayout({ type: "assign", agentId: bot.id, sectionId }).catch((error) => {
+      void props.onMutateLayout({ type: "assign", agentId: agent.id, sectionId }).catch((error) => {
         setReorderAnnouncement(error instanceof Error ? error.message : String(error));
       });
     };
@@ -1590,7 +1590,7 @@ export function Sidebar(props: SidebarProps) {
                     <span>Unassigned</span>
                   </ContextMenu.Item>
                   <ContextMenu.Separator />
-                  <ContextMenu.Item onSelect={() => startCreateSection(bot.id)}>
+                  <ContextMenu.Item onSelect={() => startCreateSection(agent.id)}>
                     <FolderPlus class="bot-context-icon size-4" aria-hidden="true" />
                     <span>New section</span>
                   </ContextMenu.Item>
@@ -1598,23 +1598,23 @@ export function Sidebar(props: SidebarProps) {
               </ContextMenu.Portal>
             </ContextMenu.Sub>
           </Show>
-          <ContextMenu.Item onSelect={() => props.onEditBot(bot.id)}>
+          <ContextMenu.Item onSelect={() => props.onEditAgent(agent.id)}>
             <EditIcon />
             <span>Edit agent</span>
           </ContextMenu.Item>
-          <Show when={props.duplicateSupported !== false && props.onDuplicateBot}>
+          <Show when={props.duplicateSupported !== false && props.onDuplicateAgent}>
             <ContextMenu.Item
-              disabled={props.duplicatingBotIds?.has(bot.id)}
-              onSelect={() => void props.onDuplicateBot?.(bot.id).catch(() => undefined)}
+              disabled={props.duplicatingAgentIds?.has(agent.id)}
+              onSelect={() => void props.onDuplicateAgent?.(agent.id).catch(() => undefined)}
             >
               <Copy class="bot-context-icon size-4" aria-hidden="true" />
-              <span>{props.duplicatingBotIds?.has(bot.id) ? "Duplicating…" : "Duplicate agent"}</span>
+              <span>{props.duplicatingAgentIds?.has(agent.id) ? "Duplicating…" : "Duplicate agent"}</span>
             </ContextMenu.Item>
           </Show>
           <ContextMenu.Separator />
           <ContextMenu.Item
             class="ui-action-menu-danger bot-context-danger"
-            onSelect={() => openDelete("agent", bot.id)}
+            onSelect={() => openDelete("agent", agent.id)}
           >
             <DeleteIcon />
             <span>Delete agent</span>
@@ -1751,24 +1751,24 @@ export function Sidebar(props: SidebarProps) {
     );
   }
 
-  function agentRow(bot: BotProfile) {
-    const title = () => bot.title.trim();
-    const working = () => props.agentStates[bot.id]?.kind === "working";
-    const dragOffset = createMemo(() => agentDragOffset(bot.id));
+  function agentRow(agent: AgentProfile) {
+    const title = () => agent.title.trim();
+    const working = () => props.agentStates[agent.id]?.kind === "working";
+    const dragOffset = createMemo(() => agentDragOffset(agent.id));
     return (
       /* biome-ignore lint/a11y/noStaticElementInteractions: Native drag belongs to the wrapper around the accessible button. */
       <div
         class={[
           "sidebar-agent-item",
           {
-            "sidebar-agent-item-dragging": draggedAgentId() === bot.id,
+            "sidebar-agent-item-dragging": draggedAgentId() === agent.id,
             "sidebar-agent-item-shifting": dragOffset().y !== 0,
           },
         ]}
         style={`--sidebar-agent-drag-y: ${dragOffset().y}px;`}
-        data-agent-id={bot.id}
+        data-agent-id={agent.id}
         draggable={!layoutMutable() || props.compact ? "false" : "true"}
-        onDragStart={(event: DragEvent & { currentTarget: HTMLElement }) => startAgentDragging(event, bot)}
+        onDragStart={(event: DragEvent & { currentTarget: HTMLElement }) => startAgentDragging(event, agent)}
         onDragEnd={endAgentDragging}
       >
         <ContextMenu.Root modal={false}>
@@ -1779,24 +1779,24 @@ export function Sidebar(props: SidebarProps) {
               buttonVariants({ variant: "ghost" }),
               "bot-row agent-row",
               {
-                "bot-row-active": props.activeBotId === bot.id,
-                "sidebar-agent-row-dragging": draggedAgentId() === bot.id,
+                "bot-row-active": props.activeAgentId === agent.id,
+                "sidebar-agent-row-dragging": draggedAgentId() === agent.id,
               },
             ]}
-            aria-label={`${bot.name}${title() ? `, ${title()}` : ""}. ${bot.preview}`}
-            aria-pressed={props.activeBotId === bot.id ? "true" : "false"}
+            aria-label={`${agent.name}${title() ? `, ${title()}` : ""}. ${agent.preview}`}
+            aria-pressed={props.activeAgentId === agent.id ? "true" : "false"}
             onClick={(event: MouseEvent) => {
-              if (!sidebarClickIsSuppressed(event)) props.onSelectBot(bot.id);
+              if (!sidebarClickIsSuppressed(event)) props.onSelectAgent(agent.id);
             }}
           >
             <span class="bot-row-avatar">
-              <AgentAvatar bot={bot} motion={working() ? "working" : "hover"} />
-              <Show when={props.agentStates[bot.id]}>{(state) => <SidebarAgentIndicator state={state()} />}</Show>
+              <AgentAvatar agent={agent} motion={working() ? "working" : "hover"} />
+              <Show when={props.agentStates[agent.id]}>{(state) => <SidebarAgentIndicator state={state()} />}</Show>
             </span>
             <span class="bot-row-copy">
               <span class="bot-row-heading">
                 <span class="bot-row-title">
-                  <strong>{bot.name}</strong>
+                  <strong>{agent.name}</strong>
                   <Show when={title()}>
                     {(label) => (
                       <Badge class="bot-role-badge" size="sm" title={label()}>
@@ -1805,15 +1805,15 @@ export function Sidebar(props: SidebarProps) {
                     )}
                   </Show>
                 </span>
-                <span class="bot-row-time">{bot.time}</span>
+                <span class="bot-row-time">{agent.time}</span>
               </span>
-              <span class="bot-row-preview">{bot.preview}</span>
+              <span class="bot-row-preview">{agent.preview}</span>
             </span>
-            <Show when={props.agentStates[bot.id]}>
+            <Show when={props.agentStates[agent.id]}>
               {(state) => <span class="sr-only">{sidebarAgentStateLabel(state())}</span>}
             </Show>
           </ContextMenu.Trigger>
-          {agentActions(bot, false)}
+          {agentActions(agent, false)}
         </ContextMenu.Root>
       </div>
     );
@@ -1861,7 +1861,7 @@ export function Sidebar(props: SidebarProps) {
             variant="ghost"
             type="button"
             class="sidebar-icon-button sidebar-new-button no-drag"
-            onClick={props.onCreateBot}
+            onClick={props.onCreateAgent}
             aria-label="Create new agent"
             aria-hidden={props.compact ? "true" : undefined}
             tabindex={props.compact ? -1 : 0}
@@ -1901,7 +1901,7 @@ export function Sidebar(props: SidebarProps) {
 
       <nav
         ref={(element) => {
-          botList = element;
+          agentList = element;
           scrollFades.bind(element);
         }}
         aria-label="Chat list"
@@ -1920,7 +1920,7 @@ export function Sidebar(props: SidebarProps) {
           <Show
             when={
               resolvedPinnedItems().length > 0 ||
-              filteredBots().length > 0 ||
+              filteredAgents().length > 0 ||
               (props.showPeople !== false && filteredPeople().length > 0) ||
               pending.sectionEditor?.target.kind === "create"
             }
@@ -1929,7 +1929,7 @@ export function Sidebar(props: SidebarProps) {
                 when={!query().trim() && props.emptyAction}
                 fallback={
                   <p class="empty-search">
-                    {query().trim() ? "No matches" : props.bots.length ? "No matches" : "No agents yet"}
+                    {query().trim() ? "No matches" : props.agents.length ? "No matches" : "No agents yet"}
                   </p>
                 }
               >
@@ -1987,8 +1987,8 @@ export function Sidebar(props: SidebarProps) {
                     {(item) => {
                       const key = () => sidebarPinnedItemKey(item.ref);
                       const dragOffset = createMemo(() => pinnedDragOffset(key()));
-                      const name = () => item.bot.name;
-                      const title = () => item.bot.title.trim();
+                      const name = () => item.agent.name;
+                      const title = () => item.agent.title.trim();
                       return (
                         <li
                           class={[
@@ -2005,7 +2005,7 @@ export function Sidebar(props: SidebarProps) {
                             startNativeItemDragging(event, {
                               className: "sidebar-pinned-drag-preview",
                               data: key(),
-                              source: { kind: "agent", id: item.bot.id, key: key(), origin: "pinned" },
+                              source: { kind: "agent", id: item.agent.id, key: key(), origin: "pinned" },
                             });
                           }}
                           onDragEnd={stopSidebarDragging}
@@ -2028,13 +2028,13 @@ export function Sidebar(props: SidebarProps) {
                                 buttonVariants({ variant: "ghost" }),
                                 "bot-row sidebar-pinned-row",
                                 "agent-row",
-                                { "bot-row-active": props.activeBotId === item.bot.id },
+                                { "bot-row-active": props.activeAgentId === item.agent.id },
                               ]}
-                              aria-label={`${item.bot.name}, pinned agent`}
-                              aria-pressed={props.activeBotId === item.bot.id ? "true" : "false"}
-                              onClick={() => props.onSelectBot(item.bot.id)}
+                              aria-label={`${item.agent.name}, pinned agent`}
+                              aria-pressed={props.activeAgentId === item.agent.id ? "true" : "false"}
+                              onClick={() => props.onSelectAgent(item.agent.id)}
                             >
-                              <SidebarPinnedAvatar item={item} agentState={() => props.agentStates[item.bot.id]} />
+                              <SidebarPinnedAvatar item={item} agentState={() => props.agentStates[item.agent.id]} />
                               <span class="bot-row-copy sidebar-pinned-copy">
                                 <strong class="sidebar-pinned-name" title={name()}>
                                   {name()}
@@ -2047,11 +2047,11 @@ export function Sidebar(props: SidebarProps) {
                                   )}
                                 </Show>
                               </span>
-                              <Show when={props.agentStates[item.bot.id]}>
+                              <Show when={props.agentStates[item.agent.id]}>
                                 {(state) => <span class="sr-only">{sidebarAgentStateLabel(state())}</span>}
                               </Show>
                             </ContextMenu.Trigger>
-                            {agentActions(item.bot, true)}
+                            {agentActions(item.agent, true)}
                           </ContextMenu.Root>
                         </li>
                       );
@@ -2159,14 +2159,14 @@ export function Sidebar(props: SidebarProps) {
                   );
                 }
 
-                const bots = () => filteredBotsBySection().get(sectionId) ?? [];
+                const agents = () => filteredAgentsBySection().get(sectionId) ?? [];
                 const name = () =>
                   sectionId === SIDEBAR_UNASSIGNED_SECTION_ID
                     ? "Unassigned"
                     : (customSectionById().get(sectionId)?.name ?? "");
                 return (
                   <Show
-                    when={name() && (bots().length > 0 || (customSectionById().has(sectionId) && !normalizedQuery()))}
+                    when={name() && (agents().length > 0 || (customSectionById().has(sectionId) && !normalizedQuery()))}
                   >
                     <section
                       class={["sidebar-chat-group sidebar-section", sectionDragClasses(sectionId)]}
@@ -2182,7 +2182,7 @@ export function Sidebar(props: SidebarProps) {
                         inert={sectionIsCollapsed(sectionId) ? true : undefined}
                       >
                         <div id={`sidebar-section-body-${sectionId}`} class="sidebar-section-body">
-                          <For each={bots()}>{(bot) => agentRow(bot)}</For>
+                          <For each={agents()}>{(agent) => agentRow(agent)}</For>
                         </div>
                       </div>
                     </section>
@@ -2222,19 +2222,19 @@ export function Sidebar(props: SidebarProps) {
         }}
       >
         <Show when={deleteTarget()}>
-          {(bot) => (
+          {(agent) => (
             <AlertDialog.Portal>
               <AlertDialog.Overlay class="bot-delete-backdrop">
                 <AlertDialog.Content class="bot-delete-dialog">
                   <AgentAvatar
-                    bot={bot()}
+                    agent={agent()}
                     style={{
                       width: "44px",
                       height: "44px",
                       "margin-bottom": "15px",
                     }}
                   />
-                  <AlertDialog.Title>Delete {bot().name}?</AlertDialog.Title>
+                  <AlertDialog.Title>Delete {agent().name}?</AlertDialog.Title>
                   <AlertDialog.Description>
                     This removes the agent and its OpenBot conversation from the app. Its queue, memories, routines, and
                     workspace are deleted. History stored separately by the connected CLI provider is not deleted.
@@ -2320,8 +2320,8 @@ function sidebarMessageTime(value: string): string {
   }).format(date);
 }
 
-function botMatchesQuery(bot: BotProfile, query: string): boolean {
-  return !query || `${bot.name} ${bot.title} ${bot.description} ${bot.preview}`.toLowerCase().includes(query);
+function agentMatchesQuery(agent: AgentProfile, query: string): boolean {
+  return !query || `${agent.name} ${agent.title} ${agent.description} ${agent.preview}`.toLowerCase().includes(query);
 }
 
 function personMatchesQuery(

@@ -1,10 +1,10 @@
-import type { BotSummary, MarketplaceAgentDetail } from "@openbot/contracts/ipc";
+import type { AgentSummary, MarketplaceAgentDetail } from "@openbot/contracts/ipc";
 import { describe, expect, it, vi } from "vitest";
 import { AgentMarketplaceService } from "./agent-marketplace-service";
 
 const intervalSchedule = { kind: "interval", amount: 1, unit: "days", anchorAt: "2026-01-01T00:00:00.000Z" } as const;
 
-const bot: BotSummary = {
+const agent: AgentSummary = {
   id: "bot-writer",
   name: "Writer",
   title: "Editorial partner",
@@ -25,15 +25,15 @@ const bot: BotSummary = {
 const detail: MarketplaceAgentDetail = {
   id: "market-writer",
   versionId: "market-writer-v2",
-  name: bot.name,
-  title: bot.title,
-  description: bot.description,
+  name: agent.name,
+  title: agent.title,
+  description: agent.description,
   creatorName: "Ada",
   version: 2,
   installs: 0,
   featured: false,
-  avatarSeed: bot.avatarSeed,
-  avatarHue: bot.avatarHue,
+  avatarSeed: agent.avatarSeed,
+  avatarHue: agent.avatarHue,
   avatarUrl: null,
   skillCount: 1,
   routineCount: 1,
@@ -52,11 +52,11 @@ const detail: MarketplaceAgentDetail = {
 
 function service(overrides: { failSkill?: boolean } = {}) {
   const agents = {
-    listBots: vi.fn(() => [bot]),
+    listAgents: vi.fn(() => [agent]),
     listRoutines: vi.fn(() => [
       {
         id: "routine-private-id",
-        botId: bot.id,
+        agentId: agent.id,
         name: "Editorial brief",
         instruction: "Prepare the daily editorial brief.",
         active: true,
@@ -67,13 +67,13 @@ function service(overrides: { failSkill?: boolean } = {}) {
       },
     ]),
     resolveAvatar: vi.fn(() => null),
-    createBotProfile: vi.fn(async () => bot),
-    updateBot: vi.fn(async () => bot),
-    setAvatar: vi.fn(async () => bot),
+    createAgentProfile: vi.fn(async () => agent),
+    updateAgent: vi.fn(async () => agent),
+    setAvatar: vi.fn(async () => agent),
     createRoutine: vi.fn(() => ({ id: "routine-marketplace-id" })),
     deleteRoutine: vi.fn(async () => undefined),
-    setMarketplaceSource: vi.fn((_botId, source) => ({ ...bot, marketplaceSource: source })),
-    deleteBot: vi.fn(async () => undefined),
+    setMarketplaceSource: vi.fn((_agentId, source) => ({ ...agent, marketplaceSource: source })),
+    deleteAgent: vi.fn(async () => undefined),
   };
   const skills = {
     listPublishable: vi.fn(async () => detail.skills),
@@ -105,15 +105,15 @@ function service(overrides: { failSkill?: boolean } = {}) {
 describe("AgentMarketplaceService", () => {
   it("publishes only the public profile, approved skills, and routine definitions", async () => {
     const { marketplace } = service();
-    const preview = await marketplace.preview(bot.id);
+    const preview = await marketplace.preview(agent.id);
 
     expect(preview).toEqual({
-      agentId: bot.id,
-      name: bot.name,
-      title: bot.title,
-      description: bot.description,
-      avatarSeed: bot.avatarSeed,
-      avatarHue: bot.avatarHue,
+      agentId: agent.id,
+      name: agent.name,
+      title: agent.title,
+      description: agent.description,
+      avatarSeed: agent.avatarSeed,
+      avatarHue: agent.avatarHue,
       avatarUrl: null,
       skills: detail.skills,
       routines: detail.routines,
@@ -128,7 +128,7 @@ describe("AgentMarketplaceService", () => {
     const { marketplace, agents, skills } = service();
     await marketplace.install({ listingId: detail.id, timezone: "America/New_York", receiptId: "receipt-1" });
 
-    expect(agents.createBotProfile).toHaveBeenCalledWith(
+    expect(agents.createAgentProfile).toHaveBeenCalledWith(
       expect.objectContaining({
         name: detail.name,
         title: detail.title,
@@ -136,13 +136,13 @@ describe("AgentMarketplaceService", () => {
       }),
     );
     expect(skills.installVersion).toHaveBeenCalledWith({
-      botId: bot.id,
+      agentId: agent.id,
       skillId: "editing",
       versionId: "editing-v2",
     });
     expect(agents.createRoutine).toHaveBeenCalledWith(
       expect.objectContaining({
-        botId: bot.id,
+        agentId: agent.id,
         active: true,
         timezone: "America/New_York",
         schedule: expect.objectContaining({ kind: "interval", anchorAt: expect.not.stringContaining("2026-01-01") }),
@@ -156,13 +156,13 @@ describe("AgentMarketplaceService", () => {
     await expect(
       marketplace.install({ listingId: detail.id, timezone: "Europe/Warsaw", receiptId: "receipt-2" }),
     ).rejects.toThrow("skill failed");
-    expect(agents.deleteBot).toHaveBeenCalledWith(bot.id);
+    expect(agents.deleteAgent).toHaveBeenCalledWith(agent.id);
     expect(agents.createRoutine).not.toHaveBeenCalled();
   });
 
   it("updates an installed marketplace agent in place", async () => {
     const installed = {
-      ...bot,
+      ...agent,
       marketplaceSource: {
         listingId: detail.id,
         versionId: "market-writer-v1",
@@ -172,26 +172,26 @@ describe("AgentMarketplaceService", () => {
       },
     };
     const { marketplace, agents, skills } = service();
-    agents.listBots.mockReturnValue([installed]);
+    agents.listAgents.mockReturnValue([installed]);
 
     const result = await marketplace.install({
       listingId: detail.id,
-      agentId: bot.id,
+      agentId: agent.id,
       timezone: "Europe/Warsaw",
       receiptId: "receipt-update",
     });
 
-    expect(agents.createBotProfile).not.toHaveBeenCalled();
-    expect(agents.updateBot).toHaveBeenCalledWith(expect.objectContaining({ botId: bot.id, name: detail.name }));
+    expect(agents.createAgentProfile).not.toHaveBeenCalled();
+    expect(agents.updateAgent).toHaveBeenCalledWith(expect.objectContaining({ agentId: agent.id, name: detail.name }));
     expect(agents.deleteRoutine).toHaveBeenCalledWith(
-      { botId: bot.id, routineId: "routine-old-id" },
+      { agentId: agent.id, routineId: "routine-old-id" },
       { recordConversationEvent: false },
     );
-    expect(skills.uninstall).toHaveBeenCalledWith({ botId: bot.id, skillId: "retired-skill" });
+    expect(skills.uninstall).toHaveBeenCalledWith({ agentId: agent.id, skillId: "retired-skill" });
     expect(agents.setMarketplaceSource).toHaveBeenCalledWith(
-      bot.id,
+      agent.id,
       expect.objectContaining({ listingId: detail.id, versionId: detail.versionId, version: detail.version }),
     );
-    expect(result.agent.id).toBe(bot.id);
+    expect(result.agent.id).toBe(agent.id);
   });
 });

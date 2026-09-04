@@ -4,7 +4,7 @@ import { copyFile, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promise
 import { arch, release as osRelease, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import type { BotSummary, ExportResult } from "@openbot/contracts/ipc";
+import type { AgentSummary, ExportResult } from "@openbot/contracts/ipc";
 import { app, type BrowserWindow, dialog } from "electron";
 import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
@@ -36,10 +36,10 @@ export async function exportOpenBotData(
   const archiveCandidate = `${destination}.${randomUUID()}.tmp.zip`;
   try {
     await mkdir(exportRoot, { recursive: true, mode: 0o700 });
-    const bots = context.service.listBots();
+    const agents = context.service.listAgents();
     const [conversations, queues, attachments] = await Promise.all([
-      Promise.all(bots.map((bot) => context.service.readConversation(bot.id))),
-      Promise.resolve(bots.map((bot) => context.service.listQueue(bot.id))),
+      Promise.all(agents.map((agent) => context.service.readConversation(agent.id))),
+      Promise.resolve(agents.map((agent) => context.service.listQueue(agent.id))),
       context.mailbox.listExportAttachments(),
     ]);
     const manifest = {
@@ -50,8 +50,8 @@ export async function exportOpenBotData(
         includes: ["agent profiles", "agent memories", "conversation snapshots", "queues", "attachments"],
         excludes: ["Codex credentials", "browser cookies", "agent workspace files"],
       },
-      bots: bots.map(toBackupBot),
-      memories: bots.flatMap((bot) => context.service.listMemories(bot.id)),
+      agents: agents.map(toBackupAgent),
+      memories: agents.flatMap((agent) => context.service.listMemories(agent.id)),
       conversations,
       queues,
     };
@@ -96,11 +96,11 @@ export async function exportDiagnostics(
   if (!destination) return { saved: false };
 
   const status = context.service.getStatus();
-  const bots = context.service.listBots();
-  const queueCounts = bots.map((bot) => {
-    const queue = context.service.listQueue(bot.id);
+  const agents = context.service.listAgents();
+  const queueCounts = agents.map((agent) => {
+    const queue = context.service.listQueue(agent.id);
     return {
-      botId: bot.id,
+      agentId: agent.id,
       deliveries: Object.fromEntries(
         ["queued", "starting", "running", "completed", "failed", "interrupted", "cancelled"].map((deliveryStatus) => [
           deliveryStatus,
@@ -129,7 +129,7 @@ export async function exportDiagnostics(
       authentication: status.auth.kind,
       capabilities: status.capabilities,
       fullAccess: status.fullAccess,
-      botCount: bots.length,
+      agentCount: agents.length,
       queues: queueCounts,
     },
     browser: {
@@ -171,21 +171,21 @@ async function chooseExportDestination(
   return result.canceled || !result.filePath ? null : result.filePath;
 }
 
-function toBackupBot(bot: BotSummary): Omit<BotSummary, "workspacePath"> {
+function toBackupAgent(agent: AgentSummary): Omit<AgentSummary, "workspacePath"> {
   return {
-    id: bot.id,
-    provider: bot.provider,
-    name: bot.name,
-    title: bot.title,
-    description: bot.description,
-    notifications: bot.notifications,
-    model: bot.model,
-    reasoningEffort: bot.reasoningEffort,
-    threadId: bot.threadId,
-    preview: bot.preview,
-    updatedAt: bot.updatedAt,
-    avatarSeed: bot.avatarSeed,
-    avatarHue: bot.avatarHue,
-    avatarUrl: bot.avatarUrl,
+    id: agent.id,
+    provider: agent.provider,
+    name: agent.name,
+    title: agent.title,
+    description: agent.description,
+    notifications: agent.notifications,
+    model: agent.model,
+    reasoningEffort: agent.reasoningEffort,
+    threadId: agent.threadId,
+    preview: agent.preview,
+    updatedAt: agent.updatedAt,
+    avatarSeed: agent.avatarSeed,
+    avatarHue: agent.avatarHue,
+    avatarUrl: agent.avatarUrl,
   };
 }

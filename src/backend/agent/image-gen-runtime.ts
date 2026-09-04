@@ -55,7 +55,7 @@ export class ImageGenRuntime {
    * Handles one streaming item when it is an image-generation item.
    * Returns true when handled, so the caller can fall through for the rest.
    */
-  handleItem(botId: string, threadId: string, turnId: string, item: ThreadItem, completed: boolean): boolean {
+  handleItem(agentId: string, threadId: string, turnId: string, item: ThreadItem, completed: boolean): boolean {
     if (!isImageGenerationItem(item)) return false;
     const operationKey = `${threadId}:${turnId}:${item.id}`;
     const state = this.#operations.get(operationKey) ?? {
@@ -64,17 +64,17 @@ export class ImageGenRuntime {
     };
     state.interrupted ||= this.#interruptedTurns.has(`${threadId}:${turnId}`);
     this.#operations.set(operationKey, state);
-    state.promise = this.#applyImageGenerationItem(botId, threadId, turnId, item, completed, state);
+    state.promise = this.#applyImageGenerationItem(agentId, threadId, turnId, item, completed, state);
     return true;
   }
 
-  interrupt(botId: string, threadId: string, turnId: string): void {
+  interrupt(agentId: string, threadId: string, turnId: string): void {
     this.#interruptedTurns.add(`${threadId}:${turnId}`);
     for (const [key, operation] of this.#operations) {
       if (!key.startsWith(`${threadId}:${turnId}:`)) continue;
       operation.interrupted = true;
     }
-    const snapshot = this.#conversation.ensureSnapshot(botId, threadId);
+    const snapshot = this.#conversation.ensureSnapshot(agentId, threadId);
     let changed = false;
     for (const message of snapshot.messages) {
       if (
@@ -118,7 +118,7 @@ export class ImageGenRuntime {
   }
 
   async #applyImageGenerationItem(
-    botId: string,
+    agentId: string,
     threadId: string,
     turnId: string,
     item: ThreadItem,
@@ -126,7 +126,7 @@ export class ImageGenRuntime {
     operation: ImageGenerationOperation,
   ): Promise<void> {
     if (!isString(item.id)) return;
-    const snapshot = this.#conversation.ensureSnapshot(botId, threadId);
+    const snapshot = this.#conversation.ensureSnapshot(agentId, threadId);
     let message = snapshot.messages.find((candidate) => candidate.id === item.id);
     if (!message) {
       message = newAssistantMessage(item.id, turnId);
@@ -178,7 +178,7 @@ export class ImageGenRuntime {
           attachment = await this.#mailbox.storeGeneratedAttachment({
             sourcePath: savedPath,
             name: generatedImageName(savedPath),
-            ownerBotId: botId,
+            ownerAgentId: agentId,
             ownerThreadId: threadId,
           });
         } catch (error) {
@@ -187,7 +187,7 @@ export class ImageGenRuntime {
             bytes: decodeGeneratedImage(result),
             name: "generated-image.png",
             mimeType: "image/png",
-            ownerBotId: botId,
+            ownerAgentId: agentId,
             ownerThreadId: threadId,
           });
         }
@@ -196,14 +196,14 @@ export class ImageGenRuntime {
           bytes: decodeGeneratedImage(result),
           name: "generated-image.png",
           mimeType: "image/png",
-          ownerBotId: botId,
+          ownerAgentId: agentId,
           ownerThreadId: threadId,
         });
       } else {
         throw new Error("Image generation did not return an image.");
       }
       if (operation.interrupted) {
-        const interruptedSnapshot = this.#conversation.ensureSnapshot(botId, threadId);
+        const interruptedSnapshot = this.#conversation.ensureSnapshot(agentId, threadId);
         const interruptedMessage = interruptedSnapshot.messages.find((candidate) => candidate.id === item.id);
         if (interruptedMessage?.imageGeneration) {
           interruptedMessage.status = "interrupted";
@@ -212,7 +212,7 @@ export class ImageGenRuntime {
         }
         return;
       }
-      const latestSnapshot = this.#conversation.ensureSnapshot(botId, threadId);
+      const latestSnapshot = this.#conversation.ensureSnapshot(agentId, threadId);
       const latestMessage = latestSnapshot.messages.find((candidate) => candidate.id === item.id);
       if (!latestMessage?.imageGeneration) return;
       latestMessage.attachments = [attachment];
@@ -221,7 +221,7 @@ export class ImageGenRuntime {
       this.#conversation.emitConversation(latestSnapshot);
       return;
     } catch (error) {
-      const latestSnapshot = this.#conversation.ensureSnapshot(botId, threadId);
+      const latestSnapshot = this.#conversation.ensureSnapshot(agentId, threadId);
       const latestMessage = latestSnapshot.messages.find((candidate) => candidate.id === item.id);
       if (!latestMessage?.imageGeneration) return;
       latestMessage.status = "failed";

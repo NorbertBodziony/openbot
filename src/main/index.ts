@@ -31,7 +31,7 @@ import {
 import electronUpdater from "electron-updater";
 import { z } from "zod";
 import { AgentService } from "../backend/agent-service";
-import { BotStore } from "../backend/agent-store";
+import { AgentStore } from "../backend/agent-store";
 import { BrowserHost } from "../backend/browser-host";
 import { isCloseBrowserTabShortcut, isSelectAllShortcut, isToggleDevToolsShortcut } from "../backend/browser-shortcuts";
 import { MailboxStore } from "../backend/mailbox-store";
@@ -693,7 +693,7 @@ function forwardAgentEvent(serverId: string, event: AgentEvent, bufferedLive = f
   );
   if (mainWindow.isFocused() || !Notification.isSupported()) return;
 
-  const content = notificationForAgentEvent(event, agentService?.listBots() ?? []);
+  const content = notificationForAgentEvent(event, agentService?.listAgents() ?? []);
   if (!content) return;
   const notification = new Notification(content);
   notification.on("click", () => {
@@ -967,7 +967,7 @@ if (!hasSingleInstanceLock) {
       centralAuthManager.on("changed", forwardCentralAuth);
       const centralAuth = centralAuthManager;
       const centralAuthInitialization = centralAuthManager.initialize();
-      const store = new BotStore(app.getPath("userData"), homedir());
+      const store = new AgentStore(app.getPath("userData"), homedir());
       await store.initialize();
       const managedSkills = new ManagedSkillService(
         app.isPackaged
@@ -978,7 +978,7 @@ if (!hasSingleInstanceLock) {
       const hostedSites = new HostedSiteDesktopService(centralAuthManager);
       const sidebarLayoutStore = new SidebarLayoutStore(join(app.getPath("userData"), SIDEBAR_LAYOUT_FILE));
       await sidebarLayoutStore.initialize();
-      await sidebarLayoutStore.reconcileAgents(new Set(store.list().map((bot) => bot.id)));
+      await sidebarLayoutStore.reconcileAgents(new Set(store.list().map((agent) => agent.id)));
       mailboxStore = new MailboxStore(app.getPath("userData"), store.sharedRoot, store.database);
       await mailboxStore.initialize();
       configureApplicationProtocol();
@@ -1022,7 +1022,7 @@ if (!hasSingleInstanceLock) {
         providerRuntimeManager.executablePath("codex"),
         providerRuntimeManager.executablePath("claude"),
         providerRuntimeManager.executablePath("grok"),
-        (bot) => managedSkills.syncBot(bot),
+        (agent) => managedSkills.syncAgent(agent),
         hostedSites,
       );
       const service = agentService;
@@ -1034,8 +1034,8 @@ if (!hasSingleInstanceLock) {
       });
       const skillMarketplace = new SkillMarketplaceService(
         centralAuthManager,
-        () => service.listBots(),
-        async (botId) => service.refreshBotRuntime(botId),
+        () => service.listAgents(),
+        async (agentId) => service.refreshAgentRuntime(agentId),
       );
       const agentMarketplace = new AgentMarketplaceService(centralAuthManager, service, skillMarketplace);
       configureAttachmentProtocol(mailboxStore, service);
@@ -1191,7 +1191,7 @@ if (!hasSingleInstanceLock) {
             ? state.user
             : null;
         },
-        resolveBot: (botId) => service.listBots().find((bot) => bot.id === botId) ?? null,
+        resolveAgent: (agentId) => service.listAgents().find((agent) => agent.id === agentId) ?? null,
       });
       hostAnalytics.flushPending();
       remoteServerManager = new RemoteServerManager(
@@ -1571,8 +1571,8 @@ function configureAttachmentProtocol(mailbox: MailboxStore, agents: AgentService
     try {
       const url = new URL(request.url);
       if (url.hostname !== "agent") return new Response("Not found", { status: 404 });
-      const botId = decodeURIComponent(url.pathname.split("/").filter(Boolean)[0] ?? "");
-      const avatar = botId ? agents.resolveAvatar(botId) : null;
+      const agentId = decodeURIComponent(url.pathname.split("/").filter(Boolean)[0] ?? "");
+      const avatar = agentId ? agents.resolveAvatar(agentId) : null;
       if (!avatar || avatar.version !== url.searchParams.get("v")) {
         return new Response("Not found", { status: 404 });
       }
@@ -1591,13 +1591,13 @@ function configureAttachmentProtocol(mailbox: MailboxStore, agents: AgentService
     try {
       const url = new URL(request.url);
       const serverId = decodeURIComponent(url.hostname);
-      const botId = decodeURIComponent(url.pathname.split("/").filter(Boolean)[0] ?? "");
-      if (!remoteServerManager || !serverId || !botId) {
+      const agentId = decodeURIComponent(url.pathname.split("/").filter(Boolean)[0] ?? "");
+      if (!remoteServerManager || !serverId || !agentId) {
         return new Response("Not found", { status: 404 });
       }
       const version = url.searchParams.get("v");
       if (!version) return new Response("Not found", { status: 404 });
-      const avatar = await remoteServerManager.downloadAgentAvatar(botId, serverId, version);
+      const avatar = await remoteServerManager.downloadAgentAvatar(agentId, serverId, version);
       return new Response(Buffer.from(avatar.bytes), {
         headers: {
           "Content-Type": avatar.mimeType,

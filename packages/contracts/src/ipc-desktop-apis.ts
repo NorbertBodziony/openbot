@@ -28,25 +28,25 @@ import type {
   AccountUsage,
   AcknowledgeFailedTurnInput,
   AgentEvent,
+  AgentMemory,
   AgentModelOption,
   AgentProviderId,
   AgentStatus,
+  AgentSummary,
   AttachmentImportEvent,
-  BotMemory,
-  BotSummary,
   CancelQueuedMessageInput,
   ChooseAttachmentsInput,
   ConversationPage,
   ConversationReadState,
   ConversationSearchPage,
   ConversationWithReadState,
-  CreateBotInput,
-  CreateBotMemoryInput,
+  CreateAgentInput,
+  CreateAgentMemoryInput,
   CreateRoutineInput,
-  DeleteBotMemoryInput,
+  DeleteAgentMemoryInput,
   DeleteRoutineInput,
   DraftAttachment,
-  DuplicateBotResult,
+  DuplicateAgentResult,
   FilePreview,
   InterruptTurnInput,
   ListRoutineRunsInput,
@@ -72,8 +72,8 @@ import type {
   SidebarLayoutSnapshot,
   SteerQueuedMessageInput,
   TestRoutineInput,
-  UpdateBotInput,
-  UpdateBotMemoryInput,
+  UpdateAgentInput,
+  UpdateAgentMemoryInput,
   UpdateQueuedMessageInput,
   UpdateRoutineInput,
 } from "./ipc-conversation";
@@ -148,29 +148,29 @@ import type { VoiceModelStatus, VoiceTranscriptionInput, VoiceTranscriptionResul
 
 export interface AgentDesktopApi {
   getStatus: () => Promise<AgentStatus>;
-  getUsage: (botId: string) => Promise<AccountUsage>;
+  getUsage: (agentId: string) => Promise<AccountUsage>;
   listModels: () => Promise<AgentModelOption[]>;
-  listBots: () => Promise<BotSummary[]>;
-  listInstalledSkills: (botId: string) => Promise<InstalledSkill[]>;
+  listAgents: () => Promise<AgentSummary[]>;
+  listInstalledSkills: (agentId: string) => Promise<InstalledSkill[]>;
   getSidebarLayout: () => Promise<SidebarLayoutSnapshot>;
   mutateSidebarLayout: (action: SidebarLayoutAction) => Promise<SidebarLayoutSnapshot>;
-  createBot: (input: CreateBotInput) => Promise<BotSummary>;
-  duplicateBot: (botId: string) => Promise<DuplicateBotResult>;
-  updateBot: (input: UpdateBotInput) => Promise<BotSummary>;
-  setAvatar: (input: SetAgentAvatarInput) => Promise<BotSummary>;
-  deleteBot: (botId: string) => Promise<void>;
-  listMemories: (botId: string) => Promise<BotMemory[]>;
-  createMemory: (input: CreateBotMemoryInput) => Promise<BotMemory>;
-  updateMemory: (input: UpdateBotMemoryInput) => Promise<BotMemory>;
-  deleteMemory: (input: DeleteBotMemoryInput) => Promise<void>;
-  clearMemories: (botId: string) => Promise<void>;
-  listRoutines: (botId: string) => Promise<Routine[]>;
+  createAgent: (input: CreateAgentInput) => Promise<AgentSummary>;
+  duplicateAgent: (agentId: string) => Promise<DuplicateAgentResult>;
+  updateAgent: (input: UpdateAgentInput) => Promise<AgentSummary>;
+  setAvatar: (input: SetAgentAvatarInput) => Promise<AgentSummary>;
+  deleteAgent: (agentId: string) => Promise<void>;
+  listMemories: (agentId: string) => Promise<AgentMemory[]>;
+  createMemory: (input: CreateAgentMemoryInput) => Promise<AgentMemory>;
+  updateMemory: (input: UpdateAgentMemoryInput) => Promise<AgentMemory>;
+  deleteMemory: (input: DeleteAgentMemoryInput) => Promise<void>;
+  clearMemories: (agentId: string) => Promise<void>;
+  listRoutines: (agentId: string) => Promise<Routine[]>;
   createRoutine: (input: CreateRoutineInput) => Promise<Routine>;
   updateRoutine: (input: UpdateRoutineInput) => Promise<Routine>;
   deleteRoutine: (input: DeleteRoutineInput) => Promise<void>;
   testRoutine: (input: TestRoutineInput) => Promise<RoutineRun>;
   listRoutineRuns: (input: ListRoutineRunsInput) => Promise<RoutineRun[]>;
-  readConversation: (botId: string) => Promise<ConversationWithReadState>;
+  readConversation: (agentId: string) => Promise<ConversationWithReadState>;
   readConversationPage: (input: ReadConversationPageInput, serverId?: string) => Promise<ConversationPage>;
   searchConversationMessages: (input: SearchConversationMessagesInput) => Promise<ConversationSearchPage>;
   listConversationReads: () => Promise<Record<string, ConversationReadState>>;
@@ -185,7 +185,7 @@ export interface AgentDesktopApi {
   previewWorkspaceFile: (input: OpenWorkspaceFileInput) => Promise<FilePreview>;
   sendMessage: (input: SendMessageInput, serverId?: string) => Promise<QueuedMessageReceipt>;
   setMessageReaction: (input: SetMessageReactionInput) => Promise<void>;
-  listQueue: (botId: string) => Promise<QueueSnapshot>;
+  listQueue: (agentId: string) => Promise<QueueSnapshot>;
   acknowledgeFailedTurn: (input: AcknowledgeFailedTurnInput) => Promise<void>;
   cancelQueuedMessage: (input: CancelQueuedMessageInput) => Promise<void>;
   steerQueuedMessage: (input: SteerQueuedMessageInput) => Promise<void>;
@@ -203,7 +203,7 @@ export interface MarketplaceAgentsDesktopApi {
   list: (query?: MarketplaceAgentQuery) => Promise<MarketplaceAgentPage>;
   get: (agentId: string) => Promise<MarketplaceAgentDetail>;
   listMine: () => Promise<AgentSubmission[]>;
-  preview: (botId: string) => Promise<AgentPublicationPreview>;
+  preview: (agentId: string) => Promise<AgentPublicationPreview>;
   submit: (input: SubmitMarketplaceAgentInput) => Promise<AgentSubmission>;
   install: (input: InstallMarketplaceAgentInput) => Promise<InstallMarketplaceAgentResult>;
 }
@@ -335,7 +335,7 @@ export interface SkillsDesktopApi {
   listMine: () => Promise<SkillSubmission[]>;
   choosePackage: () => Promise<SkillPackagePreview | null>;
   submit: (input: SubmitSkillInput) => Promise<SkillSubmission>;
-  listInstalled: (botId: string) => Promise<InstalledSkill[]>;
+  listInstalled: (agentId: string) => Promise<InstalledSkill[]>;
   install: (input: InstallSkillInput) => Promise<InstalledSkill>;
   uninstall: (input: UninstallSkillInput) => Promise<void>;
 }

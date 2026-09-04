@@ -1,29 +1,29 @@
-import type { AgentEvent, BotSummary } from "@openbot/contracts/ipc";
+import type { AgentEvent, AgentSummary } from "@openbot/contracts/ipc";
 
 const COMPLETION_SOUND_STORAGE_KEY = "openbot:completion-sound-enabled";
 const COMPLETION_SOUND_DURATION_SECONDS = 0.22;
 
 let completionAudioContext: AudioContext | undefined;
 
-type NotificationBot = Pick<BotSummary, "id" | "notifications">;
+type NotificationAgent = Pick<AgentSummary, "id" | "notifications">;
 type PreferenceStorage = Pick<Storage, "getItem">;
 
 export function shouldPlayCompletionSound(
   event: AgentEvent,
-  bots: NotificationBot[],
+  agents: NotificationAgent[],
   storage: PreferenceStorage = window.localStorage,
 ): boolean {
   if (event.type !== "turn-completed" || event.status !== "completed") return false;
   if (storage.getItem(COMPLETION_SOUND_STORAGE_KEY) === "false") return false;
-  return bots.some((bot) => bot.id === event.botId && bot.notifications);
+  return agents.some((agent) => agent.id === event.agentId && agent.notifications);
 }
 
 export function playCompletionSoundForAgentEvent(
   event: AgentEvent,
-  bots: NotificationBot[],
+  agents: NotificationAgent[],
   storage: PreferenceStorage = window.localStorage,
 ): void {
-  if (!shouldPlayCompletionSound(event, bots, storage)) return;
+  if (!shouldPlayCompletionSound(event, agents, storage)) return;
   void playCompletionSound();
 }
 

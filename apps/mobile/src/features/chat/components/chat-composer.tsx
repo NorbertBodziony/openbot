@@ -7,7 +7,7 @@ import { ChatGlassIconButton } from "@/features/chat/components/chat-glass-icon-
 interface ChatComposerProps {
   action: ViewStyle["backgroundColor"];
   actionForeground: ViewStyle["backgroundColor"];
-  botName: string;
+  agentName: string;
   bottomInset: number;
   draft: string;
   fallbackBackground: ViewStyle["backgroundColor"];
@@ -22,7 +22,7 @@ interface ChatComposerProps {
 export function ChatComposer({
   action,
   actionForeground,
-  botName,
+  agentName,
   bottomInset,
   draft,
   fallbackBackground,
@@ -62,9 +62,9 @@ export function ChatComposer({
         }}
       >
         <TextInput
-          accessibilityLabel={`Message ${botName}`}
+          accessibilityLabel={`Message ${agentName}`}
           className="min-w-0 flex-1 font-sans text-foreground"
-          placeholder={`Ask ${botName}`}
+          placeholder={`Ask ${agentName}`}
           placeholderTextColor={muted}
           returnKeyType="send"
           selectionColor={foreground}

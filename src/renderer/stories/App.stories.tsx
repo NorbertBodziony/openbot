@@ -4,7 +4,7 @@ import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { App } from "../src/App";
 import type { MockOpenBotOptions } from "../src/preview/mock-openbot";
 import { OpenBotPlayground } from "../src/preview/OpenBotPlayground";
-import { STORY_AGENT_STATUS, STORY_APP_INFO, STORY_BOT_SUMMARIES, STORY_SERVERS } from "./fixtures";
+import { STORY_AGENT_STATUS, STORY_AGENT_SUMMARIES, STORY_APP_INFO, STORY_SERVERS } from "./fixtures";
 
 const meta = {
   title: "App",
@@ -92,7 +92,7 @@ export const CommandSearch: Story = {
     await expect(page.findByRole("option", { name: /launch milestones/i })).resolves.toBeInTheDocument();
 
     await userEvent.clear(input);
-    await userEvent.click(page.getByRole("tab", { name: "Bots" }));
+    await userEvent.click(page.getByRole("tab", { name: "Agents" }));
     await userEvent.type(input, "research");
     await expect(page.findByRole("option", { name: /Research/ })).resolves.toBeInTheDocument();
 
@@ -240,7 +240,7 @@ export const EmptyWorkspace: Story = {
   render: () => (
     <OpenBotPlayground
       options={{
-        bots: [],
+        agents: [],
         servers: STORY_SERVERS.filter((server) => server.kind === "local"),
         presence: { serverId: "local", updatedAt: "2026-08-24T12:00:00.000Z", members: [] },
         directThreads: [],
@@ -376,7 +376,7 @@ export const AgentStarting: Story = {
           phase: "starting",
           message: "Starting local agent CLIs…",
         },
-        bots: STORY_BOT_SUMMARIES.slice(0, 1),
+        agents: STORY_AGENT_SUMMARIES.slice(0, 1),
       }}
     />
   ),

@@ -38,7 +38,7 @@ describe.sequential("RoutineScheduler: routine mutations, runs and tools", () =>
     });
     await service.initialize();
     await store.getOrCreate("design", "Design Studio", "Product design");
-    await service.sendMessage({ botId: "chief", text: "Manage our routines." });
+    await service.sendMessage({ agentId: "chief", text: "Manage our routines." });
     await waitFor(() => Boolean(store.activeProviderSession("chief")));
 
     const client = clients.get("codex");
@@ -53,14 +53,14 @@ describe.sequential("RoutineScheduler: routine mutations, runs and tools", () =>
     expect(ownCreate.error).toBeUndefined();
     const ownRoutine = openBotToolPayload(ownCreate.result);
     expect(ownRoutine).toMatchObject({
-      botId: "chief",
+      agentId: "chief",
       name: "Morning brief",
       active: true,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     });
 
     const otherCreate = await callOpenBotTool(client, threadId, "create_routine", {
-      botId: "design",
+      agentId: "design",
       name: "Weekly review",
       instruction: "Review the current design work.",
       active: false,
@@ -69,15 +69,15 @@ describe.sequential("RoutineScheduler: routine mutations, runs and tools", () =>
     });
     expect(otherCreate.error).toBeUndefined();
     const otherRoutine = openBotToolPayload(otherCreate.result);
-    expect(otherRoutine).toMatchObject({ botId: "design", active: false, timezone: "UTC" });
+    expect(otherRoutine).toMatchObject({ agentId: "design", active: false, timezone: "UTC" });
 
-    const listResult = await callOpenBotTool(client, threadId, "list_routines", { botId: "design" });
+    const listResult = await callOpenBotTool(client, threadId, "list_routines", { agentId: "design" });
     expect(openBotToolPayload(listResult.result).routines).toEqual([
       expect.objectContaining({ id: otherRoutine.id, name: "Weekly review" }),
     ]);
 
     const updated = await callOpenBotTool(client, threadId, "update_routine", {
-      botId: "design",
+      agentId: "design",
       routineId: otherRoutine.id,
       active: true,
       schedule: { kind: "weekdays", time: "08:15" },
@@ -89,12 +89,12 @@ describe.sequential("RoutineScheduler: routine mutations, runs and tools", () =>
     });
 
     const testRun = await callOpenBotTool(client, threadId, "test_routine", {
-      botId: "design",
+      agentId: "design",
       routineId: otherRoutine.id,
     });
     expect(openBotToolPayload(testRun.result)).toMatchObject({
       routineId: otherRoutine.id,
-      botId: "design",
+      agentId: "design",
       kind: "manual",
       status: "queued",
     });
@@ -102,7 +102,7 @@ describe.sequential("RoutineScheduler: routine mutations, runs and tools", () =>
     const deleted = await callOpenBotTool(client, threadId, "delete_routine", { routineId: ownRoutine.id });
     expect(openBotToolPayload(deleted.result)).toEqual({
       deleted: true,
-      botId: "chief",
+      agentId: "chief",
       routineId: ownRoutine.id,
     });
     expect(service.listRoutines("chief")).toEqual([]);
@@ -132,25 +132,25 @@ describe.sequential("RoutineScheduler: routine mutations, runs and tools", () =>
       return client;
     });
     await service.initialize();
-    const bot = await store.getOrCreate("chief");
+    const agent = await store.getOrCreate("chief");
     const routine = service.createRoutine({
-      botId: bot.id,
+      agentId: agent.id,
       name: "Active routine",
       instruction: "Remain active until deletion.",
       active: true,
       timezone: "UTC",
       schedule: { kind: "daily", time: "09:00" },
     });
-    const run = await service.testRoutine({ botId: bot.id, routineId: routine.id });
+    const run = await service.testRoutine({ agentId: agent.id, routineId: routine.id });
     await waitFor(() =>
       service
-        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        ?.listRoutineRuns({ agentId: agent.id, routineId: routine.id, limit: 10 })
         .some((candidate) => candidate.id === run.id && candidate.status === "running"),
     );
-    const runningDelivery = service.listQueue(bot.id).deliveries.find((delivery) => delivery.status === "running");
+    const runningDelivery = service.listQueue(agent.id).deliveries.find((delivery) => delivery.status === "running");
     if (!runningDelivery?.turnId || !client) throw new Error("The active routine turn did not start.");
 
-    await service.deleteRoutine({ botId: bot.id, routineId: routine.id });
+    await service.deleteRoutine({ agentId: agent.id, routineId: routine.id });
 
     expect(client.requests).toContainEqual(
       expect.objectContaining({
@@ -158,7 +158,7 @@ describe.sequential("RoutineScheduler: routine mutations, runs and tools", () =>
         params: expect.objectContaining({ turnId: runningDelivery.turnId }),
       }),
     );
-    const events = (await service.readConversation(bot.id)).messages.flatMap(
+    const events = (await service.readConversation(agent.id)).messages.flatMap(
       (message) => routineRunConversationEvent(message) ?? [],
     );
     expect(events).toContainEqual(
@@ -178,22 +178,22 @@ describe.sequential("RoutineScheduler: routine mutations, runs and tools", () =>
       );
     service = createService();
     await service.initialize();
-    const bot = await store.getOrCreate("chief");
+    const agent = await store.getOrCreate("chief");
     const routine = service.createRoutine({
-      botId: bot.id,
+      agentId: agent.id,
       name: "Atomic run",
       instruction: "Keep run state and history together.",
       active: true,
       timezone: "UTC",
       schedule: { kind: "daily", time: "09:00" },
     });
-    await service.testRoutine({ botId: bot.id, routineId: routine.id });
-    await service.testRoutine({ botId: bot.id, routineId: routine.id });
-    await waitFor(() => service?.listQueue(bot.id).deliveries.some((delivery) => delivery.status === "queued"));
-    const queued = service.listQueue(bot.id).deliveries.find((delivery) => delivery.status === "queued");
+    await service.testRoutine({ agentId: agent.id, routineId: routine.id });
+    await service.testRoutine({ agentId: agent.id, routineId: routine.id });
+    await waitFor(() => service?.listQueue(agent.id).deliveries.some((delivery) => delivery.status === "queued"));
+    const queued = service.listQueue(agent.id).deliveries.find((delivery) => delivery.status === "queued");
     if (!queued) throw new Error("The queued routine delivery is missing.");
     const queuedRun = service
-      .listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+      .listRoutineRuns({ agentId: agent.id, routineId: routine.id, limit: 10 })
       .find((run) => run.deliveryId === queued.id);
     if (!queuedRun) throw new Error("The queued routine run is missing.");
     const appendConversationMessage = store.database.appendConversationMessage.bind(store.database);
@@ -206,16 +206,16 @@ describe.sequential("RoutineScheduler: routine mutations, runs and tools", () =>
       return appendConversationMessage(input);
     });
 
-    await expect(service.cancelQueuedMessage(bot.id, queued.id)).rejects.toThrow(
+    await expect(service.cancelQueuedMessage(agent.id, queued.id)).rejects.toThrow(
       "transition marker persistence failed",
     );
     expect(
       service
-        .listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .listRoutineRuns({ agentId: agent.id, routineId: routine.id, limit: 10 })
         .find((run) => run.deliveryId === queued.id),
     ).toMatchObject({ status: "queued" });
     const cancelledMarkers = async () =>
-      (await service?.readConversation(bot.id))?.messages.filter((message) => {
+      (await service?.readConversation(agent.id))?.messages.filter((message) => {
         const event = routineRunConversationEvent(message);
         return event?.runId === queuedRun.id && event.status === "cancelled";
       }) ?? [];
@@ -226,7 +226,7 @@ describe.sequential("RoutineScheduler: routine mutations, runs and tools", () =>
 
     expect(
       service
-        .listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        .listRoutineRuns({ agentId: agent.id, routineId: routine.id, limit: 10 })
         .find((run) => run.deliveryId === queued.id),
     ).toMatchObject({ status: "cancelled" });
     expect(await cancelledMarkers()).toHaveLength(1);
@@ -241,14 +241,14 @@ describe.sequential("RoutineScheduler: routine mutations, runs and tools", () =>
     });
     await service.initialize();
     await store.getOrCreate("design", "Design Studio", "Product design");
-    await service.sendMessage({ botId: "chief", text: "Validate routine requests." });
+    await service.sendMessage({ agentId: "chief", text: "Validate routine requests." });
     await waitFor(() => Boolean(store.activeProviderSession("chief")));
 
     const client = clients.get("codex");
     const threadId = store.activeProviderSession("chief")?.externalSessionId;
     if (!client || !threadId) throw new Error("The routine validation test thread did not start.");
 
-    await expectOpenBotToolError(client, threadId, "list_routines", { botId: "missing" }, "Unknown agent");
+    await expectOpenBotToolError(client, threadId, "list_routines", { agentId: "missing" }, "Unknown agent");
     await expectOpenBotToolError(
       client,
       threadId,
@@ -274,7 +274,7 @@ describe.sequential("RoutineScheduler: routine mutations, runs and tools", () =>
     );
 
     const routine = service.createRoutine({
-      botId: "chief",
+      agentId: "chief",
       name: "Owned routine",
       instruction: "Remain owned by Chief.",
       active: true,
@@ -292,7 +292,7 @@ describe.sequential("RoutineScheduler: routine mutations, runs and tools", () =>
       client,
       threadId,
       "update_routine",
-      { botId: "design", routineId: routine.id, active: false },
+      { agentId: "design", routineId: routine.id, active: false },
       "routine no longer exists",
     );
   });
@@ -300,15 +300,15 @@ describe.sequential("RoutineScheduler: routine mutations, runs and tools", () =>
     const { store, mailbox } = stores(root);
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
-    const bot = await store.getOrCreate("chief");
-    const initialBot = store.list().find((candidate) => candidate.id === bot.id);
+    const agent = await store.getOrCreate("chief");
+    const initialAgent = store.list().find((candidate) => candidate.id === agent.id);
     vi.spyOn(store.database, "persistConversation").mockImplementationOnce(() => {
       throw new Error("conversation persistence failed");
     });
 
     expect(() =>
       service?.createRoutine({
-        botId: bot.id,
+        agentId: agent.id,
         name: "Atomic routine",
         instruction: "Do not persist half of this change.",
         active: true,
@@ -316,33 +316,33 @@ describe.sequential("RoutineScheduler: routine mutations, runs and tools", () =>
         schedule: { kind: "daily", time: "09:00" },
       }),
     ).toThrow("conversation persistence failed");
-    expect(service.listRoutines(bot.id)).toEqual([]);
-    expect((await service.readConversation(bot.id)).messages).toEqual([]);
-    expect(store.list().find((candidate) => candidate.id === bot.id)).toMatchObject({
-      threadId: initialBot?.threadId ?? null,
-      updatedAt: initialBot?.updatedAt ?? null,
+    expect(service.listRoutines(agent.id)).toEqual([]);
+    expect((await service.readConversation(agent.id)).messages).toEqual([]);
+    expect(store.list().find((candidate) => candidate.id === agent.id)).toMatchObject({
+      threadId: initialAgent?.threadId ?? null,
+      updatedAt: initialAgent?.updatedAt ?? null,
     });
   });
   it("restores queued routine work when a delete marker cannot persist", async () => {
     const { store, mailbox } = stores(root);
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
-    const bot = await store.getOrCreate("chief");
+    const agent = await store.getOrCreate("chief");
     const routine = service.createRoutine({
-      botId: bot.id,
+      agentId: agent.id,
       name: "Queued routine",
       instruction: "Keep this queued when deletion fails.",
       active: true,
       timezone: "UTC",
       schedule: { kind: "daily", time: "09:00" },
     });
-    await service.testRoutine({ botId: bot.id, routineId: routine.id });
-    await service.testRoutine({ botId: bot.id, routineId: routine.id });
-    await waitFor(() => service?.listQueue(bot.id).deliveries.some((delivery) => delivery.status === "queued"));
-    const queuedDelivery = service.listQueue(bot.id).deliveries.find((delivery) => delivery.status === "queued");
+    await service.testRoutine({ agentId: agent.id, routineId: routine.id });
+    await service.testRoutine({ agentId: agent.id, routineId: routine.id });
+    await waitFor(() => service?.listQueue(agent.id).deliveries.some((delivery) => delivery.status === "queued"));
+    const queuedDelivery = service.listQueue(agent.id).deliveries.find((delivery) => delivery.status === "queued");
     if (!queuedDelivery) throw new Error("The queued routine delivery is missing.");
     const queuedRun = service
-      .listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+      .listRoutineRuns({ agentId: agent.id, routineId: routine.id, limit: 10 })
       .find((run) => run.deliveryId === queuedDelivery.id);
     if (!queuedRun) throw new Error("The queued routine run is missing.");
     const persistConversation = store.database.persistConversation.bind(store.database);
@@ -351,24 +351,26 @@ describe.sequential("RoutineScheduler: routine mutations, runs and tools", () =>
       return persistConversation(...args);
     });
 
-    await expect(service.deleteRoutine({ botId: bot.id, routineId: routine.id })).rejects.toThrow(
+    await expect(service.deleteRoutine({ agentId: agent.id, routineId: routine.id })).rejects.toThrow(
       "delete marker persistence failed",
     );
-    expect(service.listRoutines(bot.id)).toEqual([expect.objectContaining({ id: routine.id })]);
-    const restoredDelivery = service.listQueue(bot.id).deliveries.find((delivery) => delivery.id === queuedDelivery.id);
+    expect(service.listRoutines(agent.id)).toEqual([expect.objectContaining({ id: routine.id })]);
+    const restoredDelivery = service
+      .listQueue(agent.id)
+      .deliveries.find((delivery) => delivery.id === queuedDelivery.id);
     expect(restoredDelivery).toBeDefined();
     expect(["queued", "starting", "running"]).toContain(restoredDelivery?.status);
     const restoredRun = service
-      .listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+      .listRoutineRuns({ agentId: agent.id, routineId: routine.id, limit: 10 })
       .find((run) => run.id === queuedRun.id);
     expect(restoredRun).toBeDefined();
     expect(["queued", "running"]).toContain(restoredRun?.status);
     await waitFor(() =>
       service
-        ?.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })
+        ?.listRoutineRuns({ agentId: agent.id, routineId: routine.id, limit: 10 })
         .some((run) => run.status === "interrupted"),
     );
-    expect(service.listRoutineRuns({ botId: bot.id, routineId: routine.id, limit: 10 })).toEqual(
+    expect(service.listRoutineRuns({ agentId: agent.id, routineId: routine.id, limit: 10 })).toEqual(
       expect.arrayContaining([expect.objectContaining({ status: "interrupted" })]),
     );
   });

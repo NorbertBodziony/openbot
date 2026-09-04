@@ -1,9 +1,9 @@
 import type {
   AgentEvent,
-  BotMemory,
-  CreateBotMemoryInput,
-  DeleteBotMemoryInput,
-  UpdateBotMemoryInput,
+  AgentMemory,
+  CreateAgentMemoryInput,
+  DeleteAgentMemoryInput,
+  UpdateAgentMemoryInput,
 } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import type { Mock } from "vitest";
@@ -12,9 +12,9 @@ import { type AnalyticsEventName, type DesktopAnalyticsEvents, desktopAnalytics 
 import { createMockOpenBot, type MockOpenBotControls } from "../../preview/mock-openbot";
 import { AgentMemoriesModal } from "./AgentMemoriesModal";
 
-const firstMemory: BotMemory = {
+const firstMemory: AgentMemory = {
   id: "memory-1",
-  botId: "chief",
+  agentId: "chief",
   text: "Uses metric units.",
   origin: "automatic",
   sourceTurnId: "turn-1",
@@ -22,13 +22,13 @@ const firstMemory: BotMemory = {
   updatedAt: "2026-08-24T12:00:00.000Z",
 };
 
-let memoryState: BotMemory[];
+let memoryState: AgentMemory[];
 let emitAgentEvent: ((event: AgentEvent) => void) | undefined;
-let listMemories: Mock<(botId: string) => Promise<BotMemory[]>>;
-let createMemory: Mock<(input: CreateBotMemoryInput) => Promise<BotMemory>>;
-let updateMemory: Mock<(input: UpdateBotMemoryInput) => Promise<BotMemory>>;
-let deleteMemory: Mock<(input: DeleteBotMemoryInput) => Promise<void>>;
-let clearMemories: Mock<(botId: string) => Promise<void>>;
+let listMemories: Mock<(agentId: string) => Promise<AgentMemory[]>>;
+let createMemory: Mock<(input: CreateAgentMemoryInput) => Promise<AgentMemory>>;
+let updateMemory: Mock<(input: UpdateAgentMemoryInput) => Promise<AgentMemory>>;
+let deleteMemory: Mock<(input: DeleteAgentMemoryInput) => Promise<void>>;
+let clearMemories: Mock<(agentId: string) => Promise<void>>;
 let activeMock: MockOpenBotControls | undefined;
 const trackMemoryAnalytics = vi.fn();
 
@@ -50,11 +50,11 @@ beforeEach(() => {
   memoryState = [];
   emitAgentEvent = undefined;
   listMemories = vi.fn(async () => [...memoryState]);
-  createMemory = vi.fn(async (input: { botId: string; text: string }) => {
-    const memory: BotMemory = {
+  createMemory = vi.fn(async (input: { agentId: string; text: string }) => {
+    const memory: AgentMemory = {
       ...firstMemory,
       id: "memory-new",
-      botId: input.botId,
+      agentId: input.agentId,
       text: input.text,
       origin: "manual",
       sourceTurnId: null,
@@ -62,18 +62,18 @@ beforeEach(() => {
     memoryState.push(memory);
     return memory;
   });
-  updateMemory = vi.fn(async (input: { botId: string; memoryId: string; text: string }) => {
-    const memory = memoryState.find((item) => item.id === input.memoryId && item.botId === input.botId);
+  updateMemory = vi.fn(async (input: { agentId: string; memoryId: string; text: string }) => {
+    const memory = memoryState.find((item) => item.id === input.memoryId && item.agentId === input.agentId);
     if (!memory) throw new Error("Memory not found.");
     memory.text = input.text;
     memory.updatedAt = "2026-08-25T12:00:00.000Z";
     return memory;
   });
-  deleteMemory = vi.fn(async (input: { botId: string; memoryId: string }) => {
-    memoryState = memoryState.filter((item) => item.id !== input.memoryId || item.botId !== input.botId);
+  deleteMemory = vi.fn(async (input: { agentId: string; memoryId: string }) => {
+    memoryState = memoryState.filter((item) => item.id !== input.memoryId || item.agentId !== input.agentId);
   });
-  clearMemories = vi.fn(async (botId: string) => {
-    memoryState = memoryState.filter((item) => item.botId !== botId);
+  clearMemories = vi.fn(async (agentId: string) => {
+    memoryState = memoryState.filter((item) => item.agentId !== agentId);
   });
 
   activeMock = createMockOpenBot();
@@ -93,7 +93,7 @@ describe("AgentMemoriesModal", () => {
   it("shows the empty state, adds a memory, and refreshes after a memory event", async () => {
     const onCountChange = vi.fn();
     render(() => (
-      <AgentMemoriesModal botId="chief" botName="Chief" open onOpenChange={vi.fn()} onCountChange={onCountChange} />
+      <AgentMemoriesModal agentId="chief" agentName="Chief" open onOpenChange={vi.fn()} onCountChange={onCountChange} />
     ));
 
     expect(await screen.findByRole("dialog", { name: "Memories" })).toBeInTheDocument();
@@ -115,7 +115,7 @@ describe("AgentMemoriesModal", () => {
 
     await waitFor(() =>
       expect(createMemory).toHaveBeenCalledWith({
-        botId: "chief",
+        agentId: "chief",
         text: "Prefers short status reports.",
       }),
     );
@@ -129,7 +129,7 @@ describe("AgentMemoriesModal", () => {
     });
 
     memoryState.push({ ...firstMemory, id: "memory-remote", text: "Remote change" });
-    emitAgentEvent?.({ type: "memories-changed", botId: "chief" });
+    emitAgentEvent?.({ type: "memories-changed", agentId: "chief" });
     expect(await screen.findByText("Remote change")).toBeInTheDocument();
     expect(onCountChange).toHaveBeenLastCalledWith(2);
   });
@@ -137,7 +137,7 @@ describe("AgentMemoriesModal", () => {
   it("edits a memory and deletes it without confirmation", async () => {
     memoryState = [{ ...firstMemory }];
     render(() => (
-      <AgentMemoriesModal botId="chief" botName="Chief" open onOpenChange={vi.fn()} onCountChange={vi.fn()} />
+      <AgentMemoriesModal agentId="chief" agentName="Chief" open onOpenChange={vi.fn()} onCountChange={vi.fn()} />
     ));
 
     expect(await screen.findByText("Uses metric units.")).toBeInTheDocument();
@@ -149,12 +149,12 @@ describe("AgentMemoriesModal", () => {
     const saveButton = screen.getByRole("button", { name: "Save" });
     await fireEvent.click(saveButton);
     expect(await screen.findByText("Uses SI units.")).toBeInTheDocument();
-    expect(updateMemory).toHaveBeenCalledWith({ botId: "chief", memoryId: "memory-1", text: "Uses SI units." });
+    expect(updateMemory).toHaveBeenCalledWith({ agentId: "chief", memoryId: "memory-1", text: "Uses SI units." });
 
     const deleteButton = screen.getByRole("button", { name: "Delete memory" });
     await waitFor(() => expect(deleteButton).toBeEnabled());
     await fireEvent.click(deleteButton);
-    await waitFor(() => expect(deleteMemory).toHaveBeenCalledWith({ botId: "chief", memoryId: "memory-1" }));
+    await waitFor(() => expect(deleteMemory).toHaveBeenCalledWith({ agentId: "chief", memoryId: "memory-1" }));
     expect(screen.queryByRole("dialog", { name: "Delete this memory?" })).not.toBeInTheDocument();
     expect(await screen.findByText("This agent has no saved memories yet.")).toBeInTheDocument();
   });
@@ -162,7 +162,7 @@ describe("AgentMemoriesModal", () => {
   it("requires confirmation before clearing all memories", async () => {
     memoryState = [{ ...firstMemory }, { ...firstMemory, id: "memory-2", text: "Prefers short status reports." }];
     render(() => (
-      <AgentMemoriesModal botId="chief" botName="Chief" open onOpenChange={vi.fn()} onCountChange={vi.fn()} />
+      <AgentMemoriesModal agentId="chief" agentName="Chief" open onOpenChange={vi.fn()} onCountChange={vi.fn()} />
     ));
 
     expect(await screen.findByText("Uses metric units.")).toBeInTheDocument();
@@ -194,7 +194,7 @@ describe("AgentMemoriesModal", () => {
     listMemories.mockRejectedValueOnce(new Error("Memory service is unavailable."));
     const onOpenChange = vi.fn();
     render(() => (
-      <AgentMemoriesModal botId="chief" botName="Chief" open onOpenChange={onOpenChange} onCountChange={vi.fn()} />
+      <AgentMemoriesModal agentId="chief" agentName="Chief" open onOpenChange={onOpenChange} onCountChange={vi.fn()} />
     ));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Memory service is unavailable.");

@@ -1,8 +1,8 @@
 import { type Block, BloubBot, defaultCycle, makeBlock, POSES, type StateId } from "@norbert_bodziony/bloub";
-import type { BotAvatarHue } from "@openbot/contracts/ipc";
+import type { AvatarHue } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, onSettled, Show } from "solid-js";
 import { type AvatarMotion, bloubAvatarProfile, type SupportedAvatarSilhouetteId } from "../bloub-avatar";
-import type { BotProfile } from "../data";
+import type { AgentProfile } from "../data";
 
 const DEFAULT_CYCLE: Block[] = defaultCycle().blocks;
 // An avatar is 24 to 40 px of morphing blob, and every drawn frame costs a style
@@ -22,9 +22,9 @@ function slowerBlock(state: StateId): Block {
 }
 
 interface AgentAvatarProps {
-  bot?: Pick<BotProfile, "avatarSeed" | "avatarHue" | "avatarUrl">;
+  agent?: Pick<AgentProfile, "avatarSeed" | "avatarHue" | "avatarUrl">;
   seed?: string;
-  hue?: BotAvatarHue | null;
+  hue?: AvatarHue | null;
   url?: string | null;
   motion?: AvatarMotion;
   cycleOffset?: number;
@@ -36,10 +36,10 @@ interface AgentAvatarProps {
 }
 
 export function AgentAvatar(props: AgentAvatarProps) {
-  const seed = () => props.seed ?? props.bot?.avatarSeed ?? "agent";
-  const hue = () => (props.hue !== undefined ? props.hue : (props.bot?.avatarHue ?? null));
+  const seed = () => props.seed ?? props.agent?.avatarSeed ?? "agent";
+  const hue = () => (props.hue !== undefined ? props.hue : (props.agent?.avatarHue ?? null));
   const motion = () => props.motion ?? "hover";
-  const url = () => (props.url !== undefined ? props.url : (props.bot?.avatarUrl ?? null));
+  const url = () => (props.url !== undefined ? props.url : (props.agent?.avatarUrl ?? null));
   const [imageFailed, setImageFailed] = createSignal(false);
   createEffect(
     () => url(),
@@ -74,7 +74,7 @@ export function AgentAvatar(props: AgentAvatarProps) {
 
 function GeneratedAvatar(props: {
   seed: string;
-  hue: BotAvatarHue | null;
+  hue: AvatarHue | null;
   motion: AvatarMotion;
   cycleOffset?: number;
   animationOffset?: number;

@@ -130,9 +130,14 @@ describe("Team protocol v1", () => {
       detail: "Searching for current information…",
     };
 
+    // The wire keeps `botId`; in-app the same event says `agentId`. This asymmetry is the proof that the
+    // vocabulary shim also runs on the branch that bypasses the frozen codec.
+    const { botId, ...rest } = activity;
+    const currentActivity = { ...rest, agentId: botId };
+
     expect(decodeTeamProtocolV1Event(activity)).toEqual({ kind: "unknown", type: "turn-progress" });
-    expect(decodeTeamProtocolV1CurrentEvent(activity)).toEqual({ kind: "known", event: activity });
-    expect(JSON.parse(encodeTeamProtocolV1CurrentEvent(activity) ?? "null")).toEqual(activity);
+    expect(decodeTeamProtocolV1CurrentEvent(activity)).toEqual({ kind: "known", event: currentActivity });
+    expect(JSON.parse(encodeTeamProtocolV1CurrentEvent(currentActivity) ?? "null")).toEqual(activity);
   });
 
   it("accepts the frozen minimal runtime snapshot", () => {
@@ -151,7 +156,10 @@ describe("Team protocol v1", () => {
       },
     };
 
-    expect(decodeTeamProtocolV1CurrentEvent(event)).toEqual({ kind: "known", event });
+    const { bots, ...snapshot } = event.snapshot;
+    const currentEvent = { ...event, snapshot: { ...snapshot, agents: bots } };
+
+    expect(decodeTeamProtocolV1CurrentEvent(event)).toEqual({ kind: "known", event: currentEvent });
   });
 
   it("rejects unregistered HTTP routes and malformed known payloads", () => {

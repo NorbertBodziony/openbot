@@ -6,7 +6,7 @@ import { usePresence } from "./presence";
 import { useServers } from "./servers";
 
 /**
- * A conversation with a person rather than a Bot. The member is a prop because
+ * A conversation with a person rather than a Agent. The member is a prop because
  * the shell holds it in a keyed `<Show>`: switching to another person has to
  * remount the transcript, and a `useDirectMessages()` read here would keep the
  * same component alive across the change and leave the previous scroll state on

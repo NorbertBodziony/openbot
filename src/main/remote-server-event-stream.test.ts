@@ -96,6 +96,9 @@ describe("remote event connections", () => {
     expect(sockets).toHaveLength(3);
     expect(sockets[2]?.url).toContain("server-1.trycloudflare.com");
 
+    // A frame the socket delivers came off the host, so it is frozen Team API wire JSON and says
+    // `botId`. The event the manager emits is current-shaped and says `agentId`; the adapter in
+    // between is what converts. Both vocabularies in one file is the shim doing its job.
     sockets[2]?.emit({
       type: "turn-started",
       botId: "research",
@@ -104,7 +107,7 @@ describe("remote event connections", () => {
     });
     expect(agentEvent).toHaveBeenCalledWith(
       "server-1",
-      expect.objectContaining({ type: "turn-started", botId: "research" }),
+      expect.objectContaining({ type: "turn-started", agentId: "research" }),
     );
 
     fixture.manager.refreshRuntimeSnapshots();
@@ -171,7 +174,7 @@ describe("remote event connections", () => {
   });
 
   it("buffers events while fallback state is loaded", async () => {
-    const bot = {
+    const agent = {
       id: "chief",
       provider: "codex",
       name: "Chief",
@@ -181,7 +184,7 @@ describe("remote event connections", () => {
       model: "gpt-5.6-luna",
       reasoningEffort: "medium",
       threadId: "thread-chief",
-      workspacePath: "/OpenBot/Bots/chief",
+      workspacePath: "/OpenBot/Agents/chief",
       preview: "No messages yet",
       updatedAt: null,
       avatarSeed: "chief",
@@ -195,10 +198,12 @@ describe("remote event connections", () => {
       createdAt: "2026-08-29T10:01:00.000Z",
       status: "completed",
     };
+    // Everything a stub answers or the socket delivers stands in for the host, so it is frozen wire
+    // JSON and says `botId`; the events the manager emits below are current-shaped.
     const conversation = (revision: number, messages: unknown[]) =>
       Response.json({
-        botId: bot.id,
-        threadId: bot.threadId,
+        botId: agent.id,
+        threadId: agent.threadId,
         activeTurnId: "turn-1",
         revision,
         messages,
@@ -209,10 +214,10 @@ describe("remote event connections", () => {
     const initialConversation = deferredRoute();
     stubTeamFetch({
       routes: {
-        "/v1/agents": () => Response.json([bot]),
+        "/v1/agents": () => Response.json([agent]),
         "/v1/agents/chief/conversation-page": initialConversation.handler,
       },
-      fallback: () => Response.json({ botId: bot.id, deliveries: [] }),
+      fallback: () => Response.json({ botId: agent.id, deliveries: [] }),
     });
     // The v1 subprotocol has no runtime snapshot, so the client loads the agent state itself and has
     // to hold live events until it lands.
@@ -226,8 +231,8 @@ describe("remote event connections", () => {
     sockets[0]?.emit({
       type: "conversation",
       snapshot: {
-        botId: bot.id,
-        threadId: bot.threadId,
+        botId: agent.id,
+        threadId: agent.threadId,
         activeTurnId: null,
         revision: 2,
         messages: [liveReply],

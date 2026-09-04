@@ -35,7 +35,7 @@ interface InternalTab {
   view: WebContentsView;
   requestedUrl: string;
   ownerThreadId: string | null;
-  ownerBotId: string | null;
+  ownerAgentId: string | null;
   revision: number;
   queue: Promise<unknown>;
   focusOnVisible: boolean;
@@ -48,7 +48,7 @@ interface StoredBrowserState {
     id: string;
     url: string;
     ownerThreadId: string | null;
-    ownerBotId: string | null;
+    ownerAgentId: string | null;
   }>;
 }
 
@@ -185,7 +185,7 @@ export class BrowserHost {
     if (state.tabs.length === 0) return;
 
     const tabs = state.tabs.slice(0, INPUT_LIMITS.browserTabs).map((stored) => {
-      const tab = this.#createTab(stored.id, stored.url, stored.ownerThreadId, stored.ownerBotId);
+      const tab = this.#createTab(stored.id, stored.url, stored.ownerThreadId, stored.ownerAgentId);
       this.#tabs.set(tab.id, tab);
       this.#bindTabEvents(tab);
       return tab;
@@ -271,14 +271,14 @@ export class BrowserHost {
   async open(
     url: string,
     ownerThreadId: string | null = null,
-    ownerBotId: string | null = null,
+    ownerAgentId: string | null = null,
     focus = false,
   ): Promise<BrowserTab> {
     if (this.#tabs.size >= INPUT_LIMITS.browserTabs) {
       throw new Error(`The browser can have up to ${INPUT_LIMITS.browserTabs} open tabs.`);
     }
     const normalizedUrl = normalizeBrowserUrl(url);
-    const tab = this.#createTab(randomUUID(), normalizedUrl, ownerThreadId, ownerBotId);
+    const tab = this.#createTab(randomUUID(), normalizedUrl, ownerThreadId, ownerAgentId);
 
     this.#tabs.set(tab.id, tab);
     this.#bindTabEvents(tab);
@@ -453,7 +453,7 @@ export class BrowserHost {
       switch (params.tool) {
         case "open": {
           const url = requiredString(args, "url", INPUT_LIMITS.browserUrl);
-          const tab = await this.open(url, params.threadId, params.ownerBotId ?? null);
+          const tab = await this.open(url, params.threadId, params.ownerAgentId ?? null);
           this.#updateControlTab(params, tab.id);
           return textResult({ tab });
         }
@@ -536,7 +536,7 @@ export class BrowserHost {
     await this.#persistState();
   }
 
-  #createTab(id: string, requestedUrl: string, ownerThreadId: string | null, ownerBotId: string | null): InternalTab {
+  #createTab(id: string, requestedUrl: string, ownerThreadId: string | null, ownerAgentId: string | null): InternalTab {
     if (this.#destroyPromise) throw new Error("BrowserHost is shutting down.");
     const view = this.#createView();
     view.webContents.setUserAgent(embeddedBrowserUserAgentForUrl(this.#session.getUserAgent(), requestedUrl));
@@ -546,7 +546,7 @@ export class BrowserHost {
       view,
       requestedUrl,
       ownerThreadId,
-      ownerBotId,
+      ownerAgentId,
       revision: 0,
       queue: Promise.resolve(),
       focusOnVisible: false,
@@ -646,7 +646,7 @@ export class BrowserHost {
       contents.setUserAgent(embeddedBrowserUserAgentForUrl(this.#session.getUserAgent(), event.url));
     });
     contents.setWindowOpenHandler(({ url }) => {
-      if (isAllowedMainUrl(url)) void this.open(url, tab.ownerThreadId, tab.ownerBotId);
+      if (isAllowedMainUrl(url)) void this.open(url, tab.ownerThreadId, tab.ownerAgentId);
       return { action: "deny" };
     });
   }
@@ -767,7 +767,7 @@ export class BrowserHost {
   #canUseToolTab(params: DynamicToolCallParams, tab: BrowserTab): boolean {
     return (
       tab.ownerThreadId === params.threadId &&
-      (tab.ownerBotId === null || tab.ownerBotId === (params.ownerBotId ?? null))
+      (tab.ownerAgentId === null || tab.ownerAgentId === (params.ownerAgentId ?? null))
     );
   }
 
@@ -846,7 +846,7 @@ export class BrowserHost {
         id: tab.id,
         url: persistentBrowserUrl(currentTabUrl(tab)),
         ownerThreadId: tab.ownerThreadId,
-        ownerBotId: tab.ownerBotId,
+        ownerAgentId: tab.ownerAgentId,
       })),
     };
     this.#persistQueue = this.#persistQueue
@@ -990,7 +990,10 @@ function isStoredBrowserTab(value: unknown): value is StoredBrowserState["tabs"]
   ) {
     return false;
   }
-  if (value.ownerBotId !== null && (!isString(value.ownerBotId) || value.ownerBotId.length > INPUT_LIMITS.identifier)) {
+  if (
+    value.ownerAgentId !== null &&
+    (!isString(value.ownerAgentId) || value.ownerAgentId.length > INPUT_LIMITS.identifier)
+  ) {
     return false;
   }
   return isPersistableBrowserUrl(value.url);
@@ -1030,7 +1033,7 @@ function toPublicTab(tab: InternalTab): BrowserTab {
     url: currentTabUrl(tab),
     loading: tab.view.webContents.isLoading(),
     ownerThreadId: tab.ownerThreadId,
-    ownerBotId: tab.ownerBotId,
+    ownerAgentId: tab.ownerAgentId,
   };
 }
 

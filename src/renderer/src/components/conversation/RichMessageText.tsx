@@ -2,7 +2,7 @@ import { type ChatTagKind, chatTagReferences } from "@openbot/contracts/chat-tag
 import type { AttachmentSummary, InstalledSkill } from "@openbot/contracts/ipc";
 import type { JSX } from "@solidjs/web";
 import { createMemo, createSignal, createUniqueId, For, onCleanup, Show } from "solid-js";
-import type { BotProfile, MessageCitation } from "../../data";
+import type { AgentProfile, MessageCitation } from "../../data";
 import { AgentAvatar } from "../AgentAvatar";
 import { Button, Puzzle } from "../ui";
 import { AnchoredTooltip } from "./AnchoredTooltip";
@@ -12,11 +12,11 @@ import { messageFileReferences } from "./FileReference";
 
 export interface RichMessageTextProps {
   body: string;
-  bots: BotProfile[];
+  agents: AgentProfile[];
   skills?: InstalledSkill[];
   attachments?: AttachmentSummary[];
   citations?: MessageCitation[];
-  onSelectAgent: (botId: string) => void;
+  onSelectAgent: (agentId: string) => void;
   onOpenLink: (url: string) => void;
   onOpenAttachment?: (attachment: AttachmentSummary) => void;
   onOpenSharedFile?: (path: string) => void;
@@ -33,7 +33,7 @@ export function RichMessageText(props: RichMessageTextProps) {
     () => new Map((props.attachments ?? []).map((attachment) => [attachment.id, attachment])),
   );
   const parts = createMemo(() =>
-    richMessageParts(props.body, props.bots, props.skills ?? [], citationsByNumber(), attachmentsById()),
+    richMessageParts(props.body, props.agents, props.skills ?? [], citationsByNumber(), attachmentsById()),
   );
   const renderedParts = createMemo(() => {
     const values = parts();
@@ -114,17 +114,17 @@ export function RichMessageText(props: RichMessageTextProps) {
               </MessageLink>
             );
           }
-          if (part.bot) {
+          if (part.agent) {
             return (
               <Button
                 variant="ghost"
                 type="button"
                 class="message-agent-tag"
-                aria-label={`Open agent ${part.bot.name}`}
-                onClick={() => props.onSelectAgent(part.bot?.id ?? "")}
+                aria-label={`Open agent ${part.agent.name}`}
+                onClick={() => props.onSelectAgent(part.agent?.id ?? "")}
               >
-                <AgentAvatar bot={part.bot} />
-                <span>{part.bot.name}</span>
+                <AgentAvatar agent={part.agent} />
+                <span>{part.agent.name}</span>
               </Button>
             );
           }
@@ -294,7 +294,7 @@ function usesTouchLayout(): boolean {
 
 interface RichMessagePart {
   text: string;
-  bot?: BotProfile;
+  agent?: AgentProfile;
   skill?: InstalledSkill;
   unavailableKind?: ChatTagKind;
   citation?: MessageCitation;
@@ -305,14 +305,14 @@ interface RichMessagePart {
 
 function richMessageParts(
   body: string,
-  bots: BotProfile[],
+  agents: AgentProfile[],
   skills: InstalledSkill[],
   citationsByNumber: Map<number, MessageCitation>,
   attachmentsById: Map<string, AttachmentSummary>,
 ): RichMessagePart[] {
   const parts: RichMessagePart[] = [];
-  for (const taggedReference of semanticTagParts(body, bots, skills)) {
-    if (taggedReference.bot || taggedReference.skill || taggedReference.unavailableKind) {
+  for (const taggedReference of semanticTagParts(body, agents, skills)) {
+    if (taggedReference.agent || taggedReference.skill || taggedReference.unavailableKind) {
       parts.push(taggedReference);
       continue;
     }
@@ -324,8 +324,8 @@ function richMessageParts(
       for (const part of linkedMessageParts(referencedPart.text)) {
         if (part.url) parts.push(part);
         else {
-          for (const taggedPart of taggedMessageParts(part.text, bots)) {
-            if (taggedPart.bot) {
+          for (const taggedPart of taggedMessageParts(part.text, agents)) {
+            if (taggedPart.agent) {
               parts.push(taggedPart);
             } else {
               parts.push(...citedMessageParts(taggedPart.text, citationsByNumber));
@@ -338,7 +338,7 @@ function richMessageParts(
   return parts;
 }
 
-function semanticTagParts(body: string, bots: BotProfile[], skills: InstalledSkill[]): RichMessagePart[] {
+function semanticTagParts(body: string, agents: AgentProfile[], skills: InstalledSkill[]): RichMessagePart[] {
   const references = chatTagReferences(body);
   if (references.length === 0) return [{ text: body }];
   const parts: RichMessagePart[] = [];
@@ -346,8 +346,8 @@ function semanticTagParts(body: string, bots: BotProfile[], skills: InstalledSki
   for (const reference of references) {
     if (reference.start > cursor) parts.push({ text: body.slice(cursor, reference.start) });
     if (reference.kind === "agent") {
-      const bot = bots.find((candidate) => candidate.id === reference.id);
-      parts.push(bot ? { text: bot.name, bot } : { text: reference.name, unavailableKind: "agent" });
+      const agent = agents.find((candidate) => candidate.id === reference.id);
+      parts.push(agent ? { text: agent.name, agent } : { text: reference.name, unavailableKind: "agent" });
     } else {
       const skill = skills.find(
         (candidate) => candidate.skillId === reference.id && candidate.state !== "needs-repair",
@@ -450,26 +450,26 @@ function CitationArrowIcon() {
   );
 }
 
-function taggedMessageParts(body: string, bots: BotProfile[]) {
-  const orderedBots = [...bots].sort((left, right) => right.name.length - left.name.length);
-  if (orderedBots.length === 0) return [{ text: body, bot: undefined }];
-  const botsByName = new Map(orderedBots.map((bot) => [bot.name.toLocaleLowerCase(), bot]));
+function taggedMessageParts(body: string, agents: AgentProfile[]) {
+  const orderedAgents = [...agents].sort((left, right) => right.name.length - left.name.length);
+  if (orderedAgents.length === 0) return [{ text: body, agent: undefined }];
+  const agentsByName = new Map(orderedAgents.map((agent) => [agent.name.toLocaleLowerCase(), agent]));
   const expression = new RegExp(
-    `@(${orderedBots.map((bot) => escapeExpression(bot.name)).join("|")})(?=$|[\\s.,!?;:()\\[\\]{}])`,
+    `@(${orderedAgents.map((agent) => escapeExpression(agent.name)).join("|")})(?=$|[\\s.,!?;:()\\[\\]{}])`,
     "giu",
   );
-  const parts: Array<{ text: string; bot: BotProfile | undefined }> = [];
+  const parts: Array<{ text: string; agent: AgentProfile | undefined }> = [];
   let cursor = 0;
   for (const match of body.matchAll(expression)) {
     const index = match.index ?? 0;
-    if (index > cursor) parts.push({ text: body.slice(cursor, index), bot: undefined });
+    if (index > cursor) parts.push({ text: body.slice(cursor, index), agent: undefined });
     const name = match[1] ?? "";
-    const bot = botsByName.get(name.toLocaleLowerCase());
-    parts.push({ text: match[0], bot });
+    const agent = agentsByName.get(name.toLocaleLowerCase());
+    parts.push({ text: match[0], agent });
     cursor = index + match[0].length;
   }
-  if (cursor < body.length) parts.push({ text: body.slice(cursor), bot: undefined });
-  return parts.length > 0 ? parts : [{ text: body, bot: undefined }];
+  if (cursor < body.length) parts.push({ text: body.slice(cursor), agent: undefined });
+  return parts.length > 0 ? parts : [{ text: body, agent: undefined }];
 }
 
 function escapeExpression(value: string): string {

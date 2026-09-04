@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, parse, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type BotAvatarHue, isAvatarHue, isSkillCategory, type SkillCategory } from "@openbot/contracts/ipc";
+import { type AvatarHue, isAvatarHue, isSkillCategory, type SkillCategory } from "@openbot/contracts/ipc";
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import { unzipSync, zipSync } from "fflate";
@@ -36,7 +36,7 @@ interface AgentSpec {
   name: string;
   title: string;
   description: string;
-  avatarHue: BotAvatarHue;
+  avatarHue: AvatarHue;
   skills: string[];
 }
 

@@ -1,5 +1,5 @@
 import type {
-  BotSummary,
+  AgentSummary,
   InstalledSkill,
   MarketplaceAgentDetail,
   MarketplaceSkillPage,
@@ -89,8 +89,8 @@ describe("SkillsMarketplaceModal", () => {
     render(() => (
       <SkillsMarketplaceModal
         open
-        bots={[{ id: "writer", name: "Writer" }]}
-        activeBotId="writer"
+        agents={[{ id: "writer", name: "Writer" }]}
+        activeAgentId="writer"
         onOpenChange={() => undefined}
       />
     ));
@@ -139,7 +139,7 @@ describe("SkillsMarketplaceModal", () => {
         },
       ],
     };
-    const installedBot = {
+    const installedAgent = {
       id: "bot-installed",
       name: detail.name,
       title: detail.title,
@@ -155,18 +155,18 @@ describe("SkillsMarketplaceModal", () => {
       avatarSeed: detail.avatarSeed,
       avatarHue: detail.avatarHue,
       avatarUrl: detail.avatarUrl,
-    } satisfies BotSummary;
+    } satisfies AgentSummary;
     window.openbot.marketplaceAgents.list = vi.fn(async () => ({ agents: [detail], nextCursor: null }));
     window.openbot.marketplaceAgents.get = vi.fn(async () => detail);
-    window.openbot.marketplaceAgents.install = vi.fn(async () => ({ agent: installedBot }));
+    window.openbot.marketplaceAgents.install = vi.fn(async () => ({ agent: installedAgent }));
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const onInstalled = vi.fn();
 
     render(() => (
       <SkillsMarketplaceModal
         open
-        bots={[]}
-        activeBotId=""
+        agents={[]}
+        activeAgentId=""
         onOpenChange={() => undefined}
         onAgentInstalled={onInstalled}
       />
@@ -180,7 +180,7 @@ describe("SkillsMarketplaceModal", () => {
     expect(window.openbot.marketplaceAgents.install).toHaveBeenCalledWith(
       expect.objectContaining({ listingId: detail.id }),
     );
-    await waitFor(() => expect(onInstalled).toHaveBeenCalledWith(installedBot));
+    await waitFor(() => expect(onInstalled).toHaveBeenCalledWith(installedAgent));
     expect(trackMarketplaceAnalytics).toHaveBeenCalledWith("marketplace_action", {
       entity: "agent",
       action: "install",
@@ -209,7 +209,7 @@ describe("SkillsMarketplaceModal", () => {
     window.openbot.marketplaceAgents.list = vi.fn(async () => ({ agents: [agent], nextCursor: null }));
     window.openbot.marketplaceAgents.get = vi.fn().mockRejectedValue(new Error("private response"));
 
-    render(() => <SkillsMarketplaceModal open bots={[]} activeBotId="" onOpenChange={() => undefined} />);
+    render(() => <SkillsMarketplaceModal open agents={[]} activeAgentId="" onOpenChange={() => undefined} />);
     screen.getByRole("button", { name: "Agents" }).click();
     (await screen.findByRole("button", { name: "Install" })).click();
 
@@ -251,7 +251,7 @@ describe("SkillsMarketplaceModal", () => {
     render(() => (
       <SkillsMarketplaceModal
         open
-        bots={[
+        agents={[
           {
             id: "research-local",
             name: "Research Agent",
@@ -275,7 +275,7 @@ describe("SkillsMarketplaceModal", () => {
             },
           },
         ]}
-        activeBotId="research-local"
+        activeAgentId="research-local"
         onOpenChange={() => undefined}
       />
     ));
@@ -289,7 +289,7 @@ describe("SkillsMarketplaceModal", () => {
 
   it("waits 500ms after typing before searching", async () => {
     vi.useFakeTimers();
-    render(() => <SkillsMarketplaceModal open bots={[]} activeBotId="" onOpenChange={() => undefined} />);
+    render(() => <SkillsMarketplaceModal open agents={[]} activeAgentId="" onOpenChange={() => undefined} />);
     await Promise.resolve();
     await Promise.resolve();
     const list = vi.mocked(window.openbot.skills.list);
@@ -313,8 +313,8 @@ describe("SkillsMarketplaceModal", () => {
     render(() => (
       <SkillsMarketplaceModal
         open
-        bots={[{ id: "writer", name: "Writer" }]}
-        activeBotId="writer"
+        agents={[{ id: "writer", name: "Writer" }]}
+        activeAgentId="writer"
         onOpenChange={() => undefined}
       />
     ));
@@ -340,8 +340,8 @@ describe("SkillsMarketplaceModal", () => {
     render(() => (
       <SkillsMarketplaceModal
         open
-        bots={[{ id: "writer", name: "Writer" }]}
-        activeBotId="writer"
+        agents={[{ id: "writer", name: "Writer" }]}
+        activeAgentId="writer"
         onOpenChange={() => undefined}
       />
     ));
@@ -374,8 +374,8 @@ describe("SkillsMarketplaceModal", () => {
     render(() => (
       <SkillsMarketplaceModal
         open
-        bots={[{ id: "writer", name: "Writer" }]}
-        activeBotId="writer"
+        agents={[{ id: "writer", name: "Writer" }]}
+        activeAgentId="writer"
         onOpenChange={() => undefined}
       />
     ));
@@ -405,7 +405,7 @@ describe("SkillsMarketplaceModal", () => {
       },
     ];
     window.openbot.skills.listMine = vi.fn(async () => submissions);
-    render(() => <SkillsMarketplaceModal open bots={[]} activeBotId="" onOpenChange={() => undefined} />);
+    render(() => <SkillsMarketplaceModal open agents={[]} activeAgentId="" onOpenChange={() => undefined} />);
 
     screen.getByRole("button", { name: "My submissions" }).click();
     const listing = await screen.findByRole("button", { name: "View Release Notes submission details" });
@@ -441,7 +441,7 @@ describe("SkillsMarketplaceModal", () => {
       files: ["SKILL.md"],
       size: 1024,
     }));
-    render(() => <SkillsMarketplaceModal open bots={[]} activeBotId="" onOpenChange={() => undefined} />);
+    render(() => <SkillsMarketplaceModal open agents={[]} activeAgentId="" onOpenChange={() => undefined} />);
 
     screen.getByRole("button", { name: "My submissions" }).click();
     (await screen.findByRole("button", { name: "Choose folder or ZIP" })).click();
@@ -472,7 +472,7 @@ describe("SkillsMarketplaceModal", () => {
     window.openbot.skills.submit = vi.fn(async () => {
       throw new Error("Error invoking remote method 'skills:submit': Error: A skill with this name already exists.");
     });
-    render(() => <SkillsMarketplaceModal open bots={[]} activeBotId="" onOpenChange={() => undefined} />);
+    render(() => <SkillsMarketplaceModal open agents={[]} activeAgentId="" onOpenChange={() => undefined} />);
 
     screen.getByRole("button", { name: "My submissions" }).click();
     (await screen.findByRole("button", { name: "Choose folder or ZIP" })).click();

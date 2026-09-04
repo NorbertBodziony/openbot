@@ -4,10 +4,10 @@ import {
   type AgentIpcRequest,
   type CancelQueuedMessageInput,
   type ChooseAttachmentsInput,
-  type CreateBotInput,
-  type CreateBotMemoryInput,
+  type CreateAgentInput,
+  type CreateAgentMemoryInput,
   type CreateRoutineInput,
-  type DeleteBotMemoryInput,
+  type DeleteAgentMemoryInput,
   type DeleteRoutineInput,
   type ImportAttachmentsInput,
   type InterruptTurnInput,
@@ -34,8 +34,8 @@ import {
   type SidebarLayoutAction,
   type SteerQueuedMessageInput,
   type TestRoutineInput,
-  type UpdateBotInput,
-  type UpdateBotMemoryInput,
+  type UpdateAgentInput,
+  type UpdateAgentMemoryInput,
   type UpdateQueuedMessageInput,
   type UpdateRoutineInput,
 } from "@openbot/contracts/ipc";
@@ -52,7 +52,7 @@ export function parseAgentRequest(value: unknown): AgentIpcRequest {
 }
 
 export function parseAgentId(value: unknown): string {
-  return requireString(value, "botId", INPUT_LIMITS.identifier);
+  return requireString(value, "agentId", INPUT_LIMITS.identifier);
 }
 
 export function parseSidebarLayoutAction(value: unknown): SidebarLayoutAction {
@@ -121,7 +121,7 @@ export function parseSidebarLayoutAction(value: unknown): SidebarLayoutAction {
   }
 }
 
-export function parseCreateBot(value: unknown): CreateBotInput {
+export function parseCreateAgent(value: unknown): CreateAgentInput {
   if (!isObject(value)) throw new Error("Invalid agent creation request.");
   const avatarHue = value.avatarHue;
   if (!isAvatarSeed(value.avatarSeed)) throw new Error("Invalid avatar seed.");
@@ -135,27 +135,27 @@ export function parseCreateBot(value: unknown): CreateBotInput {
   };
 }
 
-export function parseCreateBotMemory(value: unknown): CreateBotMemoryInput {
+export function parseCreateAgentMemory(value: unknown): CreateAgentMemoryInput {
   if (!isObject(value)) throw new Error("Invalid memory creation request.");
   return {
-    botId: requireString(value.botId, "botId", INPUT_LIMITS.identifier),
+    agentId: requireString(value.agentId, "agentId", INPUT_LIMITS.identifier),
     text: requireString(value.text, "text", INPUT_LIMITS.agentMemoryText),
   };
 }
 
-export function parseUpdateBotMemory(value: unknown): UpdateBotMemoryInput {
+export function parseUpdateAgentMemory(value: unknown): UpdateAgentMemoryInput {
   if (!isObject(value)) throw new Error("Invalid memory update request.");
   return {
-    botId: requireString(value.botId, "botId", INPUT_LIMITS.identifier),
+    agentId: requireString(value.agentId, "agentId", INPUT_LIMITS.identifier),
     memoryId: requireString(value.memoryId, "memoryId", INPUT_LIMITS.identifier),
     text: requireString(value.text, "text", INPUT_LIMITS.agentMemoryText),
   };
 }
 
-export function parseDeleteBotMemory(value: unknown): DeleteBotMemoryInput {
+export function parseDeleteAgentMemory(value: unknown): DeleteAgentMemoryInput {
   if (!isObject(value)) throw new Error("Invalid memory deletion request.");
   return {
-    botId: requireString(value.botId, "botId", INPUT_LIMITS.identifier),
+    agentId: requireString(value.agentId, "agentId", INPUT_LIMITS.identifier),
     memoryId: requireString(value.memoryId, "memoryId", INPUT_LIMITS.identifier),
   };
 }
@@ -164,7 +164,7 @@ export function parseCreateRoutine(value: unknown): CreateRoutineInput {
   if (!isObject(value)) throw new Error("Invalid routine creation request.");
   if (!isBoolean(value.active)) throw new Error("active must be a boolean.");
   return {
-    botId: requireString(value.botId, "botId", INPUT_LIMITS.identifier),
+    agentId: requireString(value.agentId, "agentId", INPUT_LIMITS.identifier),
     name: requireString(value.name, "name", INPUT_LIMITS.routineName),
     instruction: requireString(value.instruction, "instruction", INPUT_LIMITS.routineInstruction),
     active: value.active,
@@ -176,7 +176,7 @@ export function parseCreateRoutine(value: unknown): CreateRoutineInput {
 export function parseUpdateRoutine(value: unknown): UpdateRoutineInput {
   if (!isObject(value)) throw new Error("Invalid routine update request.");
   const parsed: UpdateRoutineInput = {
-    botId: requireString(value.botId, "botId", INPUT_LIMITS.identifier),
+    agentId: requireString(value.agentId, "agentId", INPUT_LIMITS.identifier),
     routineId: requireString(value.routineId, "routineId", INPUT_LIMITS.identifier),
   };
   if (value.name !== undefined) parsed.name = requireString(value.name, "name", INPUT_LIMITS.routineName);
@@ -195,7 +195,7 @@ export function parseUpdateRoutine(value: unknown): UpdateRoutineInput {
 export function parseDeleteRoutine(value: unknown): DeleteRoutineInput {
   if (!isObject(value)) throw new Error("Invalid routine deletion request.");
   return {
-    botId: requireString(value.botId, "botId", INPUT_LIMITS.identifier),
+    agentId: requireString(value.agentId, "agentId", INPUT_LIMITS.identifier),
     routineId: requireString(value.routineId, "routineId", INPUT_LIMITS.identifier),
   };
 }
@@ -222,7 +222,7 @@ function parseRoutineSchedule(value: unknown): CreateRoutineInput["schedule"] {
 export function parseReadConversationPage(value: unknown): ReadConversationPageInput {
   if (!isObject(value)) throw new Error("Invalid conversation page request.");
   return {
-    botId: requireString(value.botId, "botId", INPUT_LIMITS.identifier),
+    agentId: requireString(value.agentId, "agentId", INPUT_LIMITS.identifier),
     anchor: parsePageAnchor(value.anchor),
     limit: parsePageLimit(value.limit),
   };
@@ -235,7 +235,9 @@ export function parseSearchConversationMessages(value: unknown): SearchConversat
   const limit = parsePageLimit(value.limit ?? 100);
   return {
     query,
-    ...(value.botId === undefined ? {} : { botId: requireString(value.botId, "botId", INPUT_LIMITS.identifier) }),
+    ...(value.agentId === undefined
+      ? {}
+      : { agentId: requireString(value.agentId, "agentId", INPUT_LIMITS.identifier) }),
     ...(value.cursor === undefined ? {} : { cursor: requireString(value.cursor, "cursor", 2048) }),
     limit,
   };
@@ -280,7 +282,7 @@ export function parseSendMessage(value: unknown): SendMessageInput {
     throw new Error("Invalid reply target.");
   }
   return {
-    botId: requireString(value.botId, "botId"),
+    agentId: requireString(value.agentId, "agentId"),
     text: value.text,
     attachmentDraftIds,
     replyToMessageId: replyToMessageId?.trim() || null,
@@ -294,7 +296,7 @@ export function parseMessageReaction(value: unknown): SetMessageReactionInput {
     throw new Error("Invalid message reaction.");
   }
   return {
-    botId: requireString(value.botId, "botId"),
+    agentId: requireString(value.agentId, "agentId"),
     messageId: requireString(value.messageId, "messageId"),
     emoji,
   };
@@ -307,16 +309,16 @@ export function parseMarkConversationRead(value: unknown): MarkConversationReadI
     throw new Error("Invalid conversation read boundary.");
   }
   return {
-    botId: requireString(value.botId, "botId", INPUT_LIMITS.identifier),
+    agentId: requireString(value.agentId, "agentId", INPUT_LIMITS.identifier),
     throughMessageId:
       throughMessageId === null ? null : requireString(throughMessageId, "throughMessageId", INPUT_LIMITS.identifier),
   };
 }
 
-export function parseUpdateBot(value: unknown): UpdateBotInput {
+export function parseUpdateAgent(value: unknown): UpdateAgentInput {
   if (!isObject(value)) throw new Error("Invalid agent update request.");
   if (value.role !== undefined) throw new Error("Invalid role.");
-  const result: UpdateBotInput = { botId: requireString(value.botId, "botId") };
+  const result: UpdateAgentInput = { agentId: requireString(value.agentId, "agentId") };
   const limits = {
     name: INPUT_LIMITS.agentName,
     title: INPUT_LIMITS.agentTitle,
@@ -365,7 +367,7 @@ export function parseUpdateBot(value: unknown): UpdateBotInput {
 export function parseSetAgentAvatar(value: unknown): SetAgentAvatarInput {
   if (!isObject(value)) throw new Error("Invalid agent avatar request.");
   return {
-    botId: requireString(value.botId, "botId"),
+    agentId: requireString(value.agentId, "agentId"),
     image: parseAvatarImage(value.image),
   };
 }
@@ -421,7 +423,7 @@ export function parseOpenSharedFile(value: unknown): OpenSharedFileInput {
 export function parseOpenWorkspaceFile(value: unknown): OpenWorkspaceFileInput {
   if (!isObject(value)) throw new Error("Invalid workspace file request.");
   return {
-    botId: requireString(value.botId, "botId", INPUT_LIMITS.identifier),
+    agentId: requireString(value.agentId, "agentId", INPUT_LIMITS.identifier),
     path: requireString(value.path, "path", INPUT_LIMITS.path),
   };
 }
@@ -429,7 +431,7 @@ export function parseOpenWorkspaceFile(value: unknown): OpenWorkspaceFileInput {
 export function parseCancelQueuedMessage(value: unknown): CancelQueuedMessageInput {
   if (!isObject(value)) throw new Error("Invalid queue cancellation request.");
   return {
-    botId: requireString(value.botId, "botId"),
+    agentId: requireString(value.agentId, "agentId"),
     deliveryId: requireString(value.deliveryId, "deliveryId"),
   };
 }
@@ -437,7 +439,7 @@ export function parseCancelQueuedMessage(value: unknown): CancelQueuedMessageInp
 export function parseAcknowledgeFailedTurn(value: unknown): AcknowledgeFailedTurnInput {
   if (!isObject(value)) throw new Error("Invalid failed turn acknowledgement.");
   return {
-    botId: requireString(value.botId, "botId"),
+    agentId: requireString(value.agentId, "agentId"),
     turnId: requireString(value.turnId, "turnId"),
   };
 }
@@ -445,7 +447,7 @@ export function parseAcknowledgeFailedTurn(value: unknown): AcknowledgeFailedTur
 export function parseSteerQueuedMessage(value: unknown): SteerQueuedMessageInput {
   if (!isObject(value)) throw new Error("Invalid queued steer request.");
   return {
-    botId: requireString(value.botId, "botId"),
+    agentId: requireString(value.agentId, "agentId"),
     deliveryId: requireString(value.deliveryId, "deliveryId"),
     expectedTurnId: requireString(value.expectedTurnId, "expectedTurnId"),
   };
@@ -462,7 +464,7 @@ export function parseUpdateQueuedMessage(value: unknown): UpdateQueuedMessageInp
     throw new Error("A message or attachment is required.");
   }
   return {
-    botId: requireString(value.botId, "botId"),
+    agentId: requireString(value.agentId, "agentId"),
     deliveryId: requireString(value.deliveryId, "deliveryId"),
     text: value.text,
     keepAttachmentIds,
@@ -473,7 +475,7 @@ export function parseUpdateQueuedMessage(value: unknown): UpdateQueuedMessageInp
 export function parseReorderQueue(value: unknown): ReorderQueueInput {
   if (!isObject(value)) throw new Error("Invalid queue reorder request.");
   return {
-    botId: requireString(value.botId, "botId"),
+    agentId: requireString(value.agentId, "agentId"),
     deliveryIds: parseIdentifierList(value.deliveryIds, "delivery ids"),
   };
 }
@@ -493,7 +495,7 @@ function parseIdentifierList(value: unknown, label: string): string[] {
 export function parseInterrupt(value: unknown): InterruptTurnInput {
   if (!isObject(value)) throw new Error("Invalid interrupt request.");
   return {
-    botId: requireString(value.botId, "botId"),
+    agentId: requireString(value.agentId, "agentId"),
     turnId: requireString(value.turnId, "turnId"),
   };
 }

@@ -1,17 +1,17 @@
-import type { AccountUsage, BotSummary, ServerSummary, UpdateStatus } from "@openbot/contracts/ipc";
+import type { AccountUsage, AgentSummary, ServerSummary, UpdateStatus } from "@openbot/contracts/ipc";
 import { Portal } from "@solidjs/web";
 import { createEffect, createSignal, onCleanup, onSettled, Show } from "solid-js";
 import { fn } from "storybook/test";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import productionLogoUrl from "../src/assets/openbot-logo-production.png";
 import { AccountUpdateIsland } from "../src/components/AccountUpdateIsland";
-import { STORY_BOT_SUMMARIES, STORY_SERVERS, STORY_UPDATE_STATUS, STORY_USAGE } from "../src/preview/fixtures";
+import { STORY_AGENT_SUMMARIES, STORY_SERVERS, STORY_UPDATE_STATUS, STORY_USAGE } from "../src/preview/fixtures";
 import { OpenBotPlayground } from "../src/preview/OpenBotPlayground";
 import "./AccountDockConcepts.css";
 
 type UpdateIslandState = "none" | "available" | "ready";
 
-const CONCEPT_BOT_NAMES = [
+const CONCEPT_AGENT_NAMES = [
   "Launch planner",
   "Product research",
   "Design critic",
@@ -49,19 +49,19 @@ const CONCEPT_SERVER_NAMES = [
   "Sandbox",
 ];
 
-const CONCEPT_AVATAR_HUES: BotSummary["avatarHue"][] = [150, 185, 215, 245, 280, 320, 0, 30, 55, 100];
+const CONCEPT_AVATAR_HUES: AgentSummary["avatarHue"][] = [150, 185, 215, 245, 280, 320, 0, 30, 55, 100];
 
-const CONCEPT_BOTS: BotSummary[] = [
-  ...STORY_BOT_SUMMARIES,
-  ...CONCEPT_BOT_NAMES.map((name, index) => {
-    const source = STORY_BOT_SUMMARIES[index % STORY_BOT_SUMMARIES.length];
-    const id = `dock-concept-bot-${index + 1}`;
+const CONCEPT_AGENTS: AgentSummary[] = [
+  ...STORY_AGENT_SUMMARIES,
+  ...CONCEPT_AGENT_NAMES.map((name, index) => {
+    const source = STORY_AGENT_SUMMARIES[index % STORY_AGENT_SUMMARIES.length];
+    const id = `dock-concept-agent-${index + 1}`;
     return {
       ...source,
       id,
       name,
       threadId: `thread-${id}`,
-      workspacePath: `/mock/OpenBot/Bots/${id}`,
+      workspacePath: `/mock/OpenBot/Agents/${id}`,
       preview: index % 2 === 0 ? "A new update is ready for review." : "The latest task is in progress.",
       updatedAt: new Date(Date.parse("2026-08-28T10:00:00.000Z") - index * 3_600_000).toISOString(),
       avatarSeed: id,
@@ -246,7 +246,7 @@ function AccountDockConceptPlayground(props: AccountDockConceptPlaygroundProps) 
               avatarUrl: productionLogoUrl,
             },
           },
-          bots: CONCEPT_BOTS,
+          agents: CONCEPT_AGENTS,
           servers: CONCEPT_SERVERS,
           usage: usageWithRemaining(props.remainingPercent),
           updateStatus: NEUTRAL_UPDATE_STATUS,

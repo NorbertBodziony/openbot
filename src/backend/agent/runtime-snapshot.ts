@@ -63,7 +63,7 @@ export function compactRuntimeApproval(approval: AgentApproval): AgentRuntimeSna
 export function fitRuntimeSnapshot(snapshot: AgentRuntimeSnapshot): AgentRuntimeSnapshot {
   if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
 
-  snapshot.bots = snapshot.bots.map((bot) => ({ ...bot, preview: "", avatarUrl: null }));
+  snapshot.agents = snapshot.agents.map((agent) => ({ ...agent, preview: "", avatarUrl: null }));
   if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
 
   snapshot.work = [];
@@ -105,11 +105,11 @@ export function fitRuntimeSnapshot(snapshot: AgentRuntimeSnapshot): AgentRuntime
   }
   if (runtimeSnapshotBytes(snapshot) <= AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT) return snapshot;
 
-  snapshot.bots = snapshot.bots.map((bot) => ({
-    ...bot,
-    name: bot.name.slice(0, 40),
+  snapshot.agents = snapshot.agents.map((agent) => ({
+    ...agent,
+    name: agent.name.slice(0, 40),
     preview: "",
-    avatarSeed: bot.id,
+    avatarSeed: agent.id,
     avatarUrl: null,
   }));
   return snapshot;

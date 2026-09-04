@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentRoutineStore } from "./agent-routine-store";
-import { BotStore } from "./agent-store";
+import { AgentStore } from "./agent-store";
 import { OpenBotDatabase } from "./openbot-database";
 
 const roots: string[] = [];
@@ -19,7 +19,7 @@ describe("AgentRoutineStore", () => {
     const { database, routines } = await setup();
     const routine = routines.create(
       {
-        botId: "chief",
+        agentId: "chief",
         name: "Morning brief",
         instruction: "Prepare the daily brief.",
         active: true,
@@ -31,7 +31,7 @@ describe("AgentRoutineStore", () => {
     expect(routine.trigger.schedule).toEqual({ kind: "weekdays", time: "07:00" });
 
     const run = routines.createRun(routine, routine.trigger.id, "scheduled", "2026-08-26T05:00:00.000Z");
-    routines.update({ botId: "chief", routineId: routine.id, name: "Changed name", instruction: "New text" });
+    routines.update({ agentId: "chief", routineId: routine.id, name: "Changed name", instruction: "New text" });
     expect(routines.listRuns("chief", routine.id, 10)[0]).toMatchObject({
       id: run.id,
       routineName: "Morning brief",
@@ -48,7 +48,7 @@ describe("AgentRoutineStore", () => {
   it("does not create a duplicate scheduled run", async () => {
     const { database, routines } = await setup();
     const routine = routines.create({
-      botId: "chief",
+      agentId: "chief",
       name: "Check queue",
       instruction: "Check the queue.",
       active: true,
@@ -67,7 +67,7 @@ describe("AgentRoutineStore", () => {
     const { database, routines } = await setup();
     const routine = routines.create(
       {
-        botId: "chief",
+        agentId: "chief",
         name: "Quarter hour",
         instruction: "Run the check.",
         active: true,
@@ -87,7 +87,7 @@ describe("AgentRoutineStore", () => {
     const now = new Date("2026-08-25T10:00:00.000Z");
     routines.create(
       {
-        botId: "chief",
+        agentId: "chief",
         name: "Quarter hour",
         instruction: "Run every quarter hour.",
         active: true,
@@ -98,7 +98,7 @@ describe("AgentRoutineStore", () => {
     );
     routines.create(
       {
-        botId: "research",
+        agentId: "research",
         name: "Half hour",
         instruction: "Run every half hour.",
         active: true,
@@ -110,7 +110,7 @@ describe("AgentRoutineStore", () => {
     const excluded = new Set(["chief"]);
 
     expect(routines.nextDueAt(excluded)).toBe("2026-08-25T10:30:00.000Z");
-    expect(routines.due(new Date("2026-08-25T10:31:00.000Z"), excluded).map((due) => due.routine.botId)).toEqual([
+    expect(routines.due(new Date("2026-08-25T10:31:00.000Z"), excluded).map((due) => due.routine.agentId)).toEqual([
       "research",
     ]);
     database.close();
@@ -120,7 +120,7 @@ describe("AgentRoutineStore", () => {
     const { database, routines } = await setup();
     const routine = routines.create(
       {
-        botId: "chief",
+        agentId: "chief",
         name: "Morning brief",
         instruction: "Prepare the brief.",
         active: true,
@@ -129,10 +129,10 @@ describe("AgentRoutineStore", () => {
       },
       new Date("2026-08-25T08:00:00.000Z"),
     );
-    routines.update({ botId: "chief", routineId: routine.id, active: false }, new Date("2026-08-25T08:30:00.000Z"));
+    routines.update({ agentId: "chief", routineId: routine.id, active: false }, new Date("2026-08-25T08:30:00.000Z"));
 
     const resumed = routines.update(
-      { botId: "chief", routineId: routine.id, active: true },
+      { agentId: "chief", routineId: routine.id, active: true },
       new Date("2026-08-27T10:00:00.000Z"),
     );
 
@@ -146,7 +146,7 @@ describe("AgentRoutineStore", () => {
     const { database, routines } = await setup();
     const routine = routines.create(
       {
-        botId: "chief",
+        agentId: "chief",
         name: "Morning brief",
         instruction: "Prepare the brief.",
         active: false,
@@ -158,7 +158,7 @@ describe("AgentRoutineStore", () => {
 
     const resumed = routines.update(
       {
-        botId: "chief",
+        agentId: "chief",
         routineId: routine.id,
         active: true,
         schedule: { kind: "weekdays", time: "08:15" },
@@ -181,21 +181,21 @@ describe("AgentRoutineStore", () => {
   it("removes routines when the agent is deleted", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-routine-agent-delete-"));
     roots.push(root);
-    const bots = new BotStore(join(root, "data"), join(root, "home"));
-    await bots.initialize();
-    const bot = await bots.getOrCreate("chief");
-    const routines = new AgentRoutineStore(bots.database);
+    const agents = new AgentStore(join(root, "data"), join(root, "home"));
+    await agents.initialize();
+    const agent = await agents.getOrCreate("chief");
+    const routines = new AgentRoutineStore(agents.database);
     routines.create({
-      botId: bot.id,
+      agentId: agent.id,
       name: "Temporary",
       instruction: "Remove this routine.",
       active: true,
       timezone: "UTC",
       schedule: { kind: "daily", time: "09:00" },
     });
-    await bots.deleteBot(bot.id);
-    expect(routines.list(bot.id)).toEqual([]);
-    bots.database.close();
+    await agents.deleteAgent(agent.id);
+    expect(routines.list(agent.id)).toEqual([]);
+    agents.database.close();
   });
 });
 

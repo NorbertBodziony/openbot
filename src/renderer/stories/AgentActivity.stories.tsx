@@ -1,7 +1,7 @@
 import { createSignal, onSettled } from "solid-js";
 import type { Meta, StoryObj } from "storybook-solidjs-vite";
 import { AgentActivityIndicator, ThinkingDisclosure } from "../src/components/conversation/AgentActivity";
-import { STORY_BOTS } from "./fixtures";
+import { STORY_AGENTS } from "./fixtures";
 
 const indicatorMeta = {
   title: "Conversation/AgentActivityIndicator",
@@ -14,21 +14,21 @@ type IndicatorStory = StoryObj<typeof indicatorMeta>;
 
 export const Working: IndicatorStory = {
   args: {
-    bot: STORY_BOTS[0],
+    agent: STORY_AGENTS[0],
     presentation: { animation: "orbit", label: "Connecting the dots…" },
   },
 };
 
 export const Playful: IndicatorStory = {
   args: {
-    bot: STORY_BOTS[1],
+    agent: STORY_AGENTS[1],
     presentation: { animation: "comet", label: "Tiny gears are turning…" },
   },
 };
 
 export const TransitionLoop: IndicatorStory = {
   args: {
-    bot: STORY_BOTS[0],
+    agent: STORY_AGENTS[0],
     presentation: { animation: "wide", label: "Putting the answer together…" },
   },
   render: (args) => {
@@ -53,7 +53,7 @@ const THINKING_STEPS = [
 /* Streaming: the header shimmers while the answer is still coming. */
 export const ThinkingLive: IndicatorStory = {
   args: {
-    bot: STORY_BOTS[0],
+    agent: STORY_AGENTS[0],
     presentation: { animation: "thinking", label: "Thinking it through…" },
   },
   render: () => {
@@ -62,7 +62,7 @@ export const ThinkingLive: IndicatorStory = {
       <ThinkingDisclosure
         message={{
           id: "thinking-live",
-          author: "bot",
+          author: "agent",
           body: "",
           time: "10:00",
           kind: "thinking",
@@ -80,7 +80,7 @@ export const ThinkingLive: IndicatorStory = {
 /* Settled: the trace collapses and reopens on demand. */
 export const ThinkingDetails: IndicatorStory = {
   args: {
-    bot: STORY_BOTS[0],
+    agent: STORY_AGENTS[0],
     presentation: { animation: "thinking", label: "Thinking it through…" },
   },
   render: () => {
@@ -89,7 +89,7 @@ export const ThinkingDetails: IndicatorStory = {
       <ThinkingDisclosure
         message={{
           id: "thinking-story",
-          author: "bot",
+          author: "agent",
           body: "",
           time: "10:00",
           kind: "thinking",

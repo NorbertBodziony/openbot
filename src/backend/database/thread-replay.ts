@@ -328,7 +328,7 @@ function conversationSnapshotValue(value: DynamicRecord | null): ConversationSna
   const messages = value.messages.filter(isConversationMessage);
   if (messages.length !== value.messages.length) return null;
   return {
-    botId: agentId,
+    agentId,
     threadId: value.threadId,
     activeTurnId: value.activeTurnId,
     revision: value.revision,

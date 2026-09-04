@@ -55,7 +55,7 @@ function runForStatus(status: RoutineRun["status"], index: number): RoutineRun {
   return {
     id: `run-${status}`,
     routineId: "routine-1",
-    botId: "chief",
+    agentId: "chief",
     triggerId: index === 0 ? null : "trigger-1",
     kind: index === 0 ? "manual" : "scheduled",
     scheduledFor,

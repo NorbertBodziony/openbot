@@ -1,10 +1,5 @@
 import { INPUT_LIMITS } from "./input-limits";
-import {
-  type AgentApprovalKind,
-  type AgentApprovalPermissions,
-  type BotAvatarHue,
-  isAvatarHue,
-} from "./ipc-conversation";
+import { type AgentApprovalKind, type AgentApprovalPermissions, type AvatarHue, isAvatarHue } from "./ipc-conversation";
 import { isBoolean, isDynamicRecord, isNumber, isString } from "./runtime-values";
 
 export interface DynamicIslandPreference {
@@ -23,21 +18,21 @@ export const DEFAULT_DYNAMIC_ISLAND_PREFERENCE = {
   additionalDisplaysEnabled: true,
 } as const satisfies DynamicIslandPreference;
 
-export interface DynamicIslandBotIdentity {
+export interface DynamicIslandAgentIdentity {
   id: string;
   name: string;
   avatarSeed: string;
-  avatarHue: BotAvatarHue | null;
+  avatarHue: AvatarHue | null;
   avatarUrl: string | null;
 }
 
 export interface DynamicIslandWorkingItem {
-  bot: DynamicIslandBotIdentity;
+  agent: DynamicIslandAgentIdentity;
   task: string;
 }
 
 export interface DynamicIslandMessageItem {
-  bot: DynamicIslandBotIdentity;
+  agent: DynamicIslandAgentIdentity;
   messageId: string;
   text: string;
   createdAt: string;
@@ -53,7 +48,7 @@ export interface DynamicIslandQuestionItem {
 
 export interface DynamicIslandPromptItem {
   requestId: string | number;
-  bot: DynamicIslandBotIdentity;
+  agent: DynamicIslandAgentIdentity;
   title: string;
   detail: string | null;
   questions: DynamicIslandQuestionItem[];
@@ -61,7 +56,7 @@ export interface DynamicIslandPromptItem {
 
 export interface DynamicIslandApprovalItem {
   requestId: string | number;
-  bot: DynamicIslandBotIdentity;
+  agent: DynamicIslandAgentIdentity;
   title: string;
   detail: string | null;
   truncated: boolean;
@@ -77,14 +72,14 @@ export interface DynamicIslandApprovalItem {
 
 export interface DynamicIslandTakeoverItem {
   requestId: string | number;
-  bot: DynamicIslandBotIdentity;
+  agent: DynamicIslandAgentIdentity;
   title: string;
   detail: string | null;
 }
 
 export interface DynamicIslandFailureItem {
   turnId: string;
-  bot: DynamicIslandBotIdentity;
+  agent: DynamicIslandAgentIdentity;
   title: string;
   detail: string | null;
 }
@@ -112,21 +107,21 @@ export type DynamicIslandPresentation =
 
 export type DynamicIslandAction =
   | { type: "open-app" }
-  | { type: "open-bot"; serverId: string; botId: string }
-  | { type: "open-message"; serverId: string; botId: string; messageId: string }
-  | { type: "open-failure"; serverId: string; botId: string; turnId: string }
-  | { type: "review-attention"; serverId: string; botId: string; requestId: string | number }
+  | { type: "open-agent"; serverId: string; agentId: string }
+  | { type: "open-message"; serverId: string; agentId: string; messageId: string }
+  | { type: "open-failure"; serverId: string; agentId: string; turnId: string }
+  | { type: "review-attention"; serverId: string; agentId: string; requestId: string | number }
   | {
       type: "answer-prompt";
       serverId: string;
-      botId: string;
+      agentId: string;
       requestId: string | number;
       answers: Record<string, string[]>;
     }
   | {
       type: "respond-approval";
       serverId: string;
-      botId: string;
+      agentId: string;
       requestId: string | number;
       decision: "accept" | "decline";
     };
@@ -179,8 +174,8 @@ export function isDynamicIslandPresentation(value: unknown): value is DynamicIsl
 export function isDynamicIslandAction(value: unknown): value is DynamicIslandAction {
   if (!isDynamicRecord(value) || !isString(value.type)) return false;
   if (value.type === "open-app") return true;
-  if (!isShortString(value.serverId, 160) || !isShortString(value.botId, 160)) return false;
-  if (value.type === "open-bot") return true;
+  if (!isShortString(value.serverId, 160) || !isShortString(value.agentId, 160)) return false;
+  if (value.type === "open-agent") return true;
   if (value.type === "open-message") return isShortString(value.messageId, 160);
   if (value.type === "open-failure") return isShortString(value.turnId, 160);
   if (value.type === "review-attention") {
@@ -210,7 +205,7 @@ function isNullableShortString(value: unknown, length: number): value is string 
   return value === null || isShortString(value, length);
 }
 
-function isBotIdentity(value: unknown): value is DynamicIslandBotIdentity {
+function isAgentIdentity(value: unknown): value is DynamicIslandAgentIdentity {
   return (
     isDynamicRecord(value) &&
     isShortString(value.id, 160) &&
@@ -222,13 +217,13 @@ function isBotIdentity(value: unknown): value is DynamicIslandBotIdentity {
 }
 
 function isWorkingItem(value: unknown): value is DynamicIslandWorkingItem {
-  return isDynamicRecord(value) && isBotIdentity(value.bot) && isShortString(value.task, 240);
+  return isDynamicRecord(value) && isAgentIdentity(value.agent) && isShortString(value.task, 240);
 }
 
 function isMessageItem(value: unknown): value is DynamicIslandMessageItem {
   return (
     isDynamicRecord(value) &&
-    isBotIdentity(value.bot) &&
+    isAgentIdentity(value.agent) &&
     isShortString(value.messageId, 160) &&
     isShortString(value.text, 600) &&
     isShortString(value.createdAt, 80)
@@ -239,7 +234,7 @@ function isPromptItem(value: unknown): value is DynamicIslandPromptItem {
   return (
     isDynamicRecord(value) &&
     isDynamicIslandRequestId(value.requestId) &&
-    isBotIdentity(value.bot) &&
+    isAgentIdentity(value.agent) &&
     isShortString(value.title, 180) &&
     isNullableShortString(value.detail, 600) &&
     Array.isArray(value.questions) &&
@@ -252,7 +247,7 @@ function isApprovalItem(value: unknown): value is DynamicIslandApprovalItem {
   return (
     isDynamicRecord(value) &&
     isDynamicIslandRequestId(value.requestId) &&
-    isBotIdentity(value.bot) &&
+    isAgentIdentity(value.agent) &&
     isShortString(value.title, 180) &&
     isNullableShortString(value.detail, 600) &&
     isBoolean(value.truncated) &&
@@ -264,7 +259,7 @@ function isTakeoverItem(value: unknown): value is DynamicIslandTakeoverItem {
   return (
     isDynamicRecord(value) &&
     isDynamicIslandRequestId(value.requestId) &&
-    isBotIdentity(value.bot) &&
+    isAgentIdentity(value.agent) &&
     isShortString(value.title, 180) &&
     isNullableShortString(value.detail, 600)
   );
@@ -274,7 +269,7 @@ function isFailureItem(value: unknown): value is DynamicIslandFailureItem {
   return (
     isDynamicRecord(value) &&
     isShortString(value.turnId, 160) &&
-    isBotIdentity(value.bot) &&
+    isAgentIdentity(value.agent) &&
     isShortString(value.title, 180) &&
     isNullableShortString(value.detail, 600)
   );

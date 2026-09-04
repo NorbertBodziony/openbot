@@ -236,8 +236,8 @@ describe("remote connection recovery", () => {
 
 describe("conversation recovery after an event reset", () => {
   it("replaces stale cached conversations only for agents in the recovered server", async () => {
-    const snapshot = (botId: string, text: string, revision: number): ConversationSnapshot => ({
-      botId,
+    const snapshot = (agentId: string, text: string, revision: number): ConversationSnapshot => ({
+      agentId,
       threadId: null,
       activeTurnId: null,
       revision,
@@ -249,14 +249,14 @@ describe("conversation recovery after an event reset", () => {
     };
     const loaded: string[] = [];
     await resyncRemoteConversations({
-      botIds: ["local", "unopened"],
+      agentIds: ["local", "unopened"],
       cached,
       load: async (id) => {
         loaded.push(id);
         return snapshot(id, "missed response", 2);
       },
       apply: (value) => {
-        cached[value.botId] = value;
+        cached[value.agentId] = value;
       },
       isCurrent: () => true,
     });
@@ -266,11 +266,17 @@ describe("conversation recovery after an event reset", () => {
   });
   it("does not apply a recovery snapshot after switching servers", async () => {
     let current = true;
-    const old: ConversationSnapshot = { botId: "bot", threadId: null, activeTurnId: null, revision: 1, messages: [] };
+    const old: ConversationSnapshot = {
+      agentId: "agent",
+      threadId: null,
+      activeTurnId: null,
+      revision: 1,
+      messages: [],
+    };
     let displayed = old;
     await resyncRemoteConversations({
-      botIds: ["bot"],
-      cached: { bot: old },
+      agentIds: ["agent"],
+      cached: { agent: old },
       load: async () => {
         current = false;
         return { ...old, revision: 2 };

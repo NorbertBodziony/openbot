@@ -37,7 +37,7 @@ export interface BrowserStoreDeps {
     {
       promise: Promise<void>;
       serverId: string;
-      botId: string | null;
+      agentId: string | null;
       url: string;
       existingTabIds: Set<string>;
     }
@@ -54,10 +54,12 @@ export function createBrowserStore(deps: BrowserStoreDeps) {
     deps.props.browserEnabled !== false && !deps.props.browserVisibilitySuspended;
   const browserTabs = createMemo(() => {
     if (deps.props.browserEnabled === false) return [];
-    const bot = deps.props.bot;
-    if (!bot) return [];
+    const agent = deps.props.agent;
+    if (!agent) return [];
     return deps.props.browserTabs.filter((tab) =>
-      tab.ownerBotId ? tab.ownerBotId === bot.id : Boolean(bot.threadId && tab.ownerThreadId === bot.threadId),
+      tab.ownerAgentId
+        ? tab.ownerAgentId === agent.id
+        : Boolean(agent.threadId && tab.ownerThreadId === agent.threadId),
     );
   });
   const closingBrowserTabIds = new Set<string>();
@@ -73,9 +75,9 @@ export function createBrowserStore(deps: BrowserStoreDeps) {
     () => browserTabs().map((tab) => ({ id: tab.id, url: tab.url })),
     (tabs) => {
       const serverId = deps.props.server?.id ?? "local";
-      const botId = deps.props.bot?.id ?? null;
+      const agentId = deps.props.agent?.id ?? null;
       for (const [requestKey, request] of deps.browserOpenRequests) {
-        if (request.serverId !== serverId || request.botId !== botId) continue;
+        if (request.serverId !== serverId || request.agentId !== agentId) continue;
         const tabAppeared = tabs.some(
           (tab) => canonicalBrowserUrl(tab.url) === request.url && !request.existingTabIds.has(tab.id),
         );
@@ -201,10 +203,10 @@ export function createBrowserStore(deps: BrowserStoreDeps) {
     const forActiveTab = activeTab?.ownerThreadId
       ? sessions.filter((session) => session.threadId === activeTab.ownerThreadId)
       : [];
-    const forActiveBot = deps.props.bot?.threadId
-      ? sessions.filter((session) => session.threadId === deps.props.bot?.threadId)
+    const forActiveAgent = deps.props.agent?.threadId
+      ? sessions.filter((session) => session.threadId === deps.props.agent?.threadId)
       : [];
-    const candidates = forActiveTab.length > 0 ? forActiveTab : forActiveBot;
+    const candidates = forActiveTab.length > 0 ? forActiveTab : forActiveAgent;
     return (
       [...candidates]
         .sort((left, right) => right.startedAt.localeCompare(left.startedAt))
@@ -215,9 +217,9 @@ export function createBrowserStore(deps: BrowserStoreDeps) {
     const control = activeBrowserControl();
     return control?.phase === "acting" ? control : undefined;
   });
-  const browserControlBot = createMemo(() => {
+  const browserControlAgent = createMemo(() => {
     const control = activeBrowserControl();
-    return control ? deps.props.bots.find((bot) => bot.threadId === control.threadId) : undefined;
+    return control ? deps.props.agents.find((agent) => agent.threadId === control.threadId) : undefined;
   });
   const browserControlForTab = (tab: BrowserTab) => {
     const sessions = deps.props.browserControlState.sessions.filter(
@@ -230,7 +232,7 @@ export function createBrowserStore(deps: BrowserStoreDeps) {
   };
   const browserControllerForTab = (tab: BrowserTab) => {
     const control = browserControlForTab(tab);
-    return control ? deps.props.bots.find((bot) => bot.threadId === control.threadId) : undefined;
+    return control ? deps.props.agents.find((agent) => agent.threadId === control.threadId) : undefined;
   };
 
   async function openBrowserAddress(address = deps.browserAddress()) {
@@ -241,17 +243,17 @@ export function createBrowserStore(deps: BrowserStoreDeps) {
     const analytics = desktopAnalytics.scope();
     const url = /^https?:\/\//i.test(value) ? value : `https://${value}`;
     const serverId = deps.props.server?.id ?? "local";
-    const botId = deps.props.bot?.id ?? null;
+    const agentId = deps.props.agent?.id ?? null;
     const canonicalUrl = canonicalBrowserUrl(url);
-    const requestKey = JSON.stringify([serverId, botId, canonicalUrl]);
+    const requestKey = JSON.stringify([serverId, agentId, canonicalUrl]);
     const pendingRequest = deps.browserOpenRequests.get(requestKey);
     if (pendingRequest) return pendingRequest.promise;
     const request = (async () => {
       try {
         const tab = await window.openbot.browser.open({
           url,
-          ownerThreadId: deps.props.bot?.threadId ?? null,
-          ownerBotId: deps.props.bot?.id ?? null,
+          ownerThreadId: deps.props.agent?.threadId ?? null,
+          ownerAgentId: deps.props.agent?.id ?? null,
           focus: true,
         });
         deps.setBrowserAddress(tab.url);
@@ -268,7 +270,7 @@ export function createBrowserStore(deps: BrowserStoreDeps) {
     const pendingRequestState = {
       promise: request,
       serverId,
-      botId,
+      agentId,
       url: canonicalUrl,
       existingTabIds: new Set(browserTabs().map((tab) => tab.id)),
     };
@@ -358,7 +360,7 @@ export function createBrowserStore(deps: BrowserStoreDeps) {
     respondToBrowserTakeover,
     activeBrowserControl,
     actingBrowserControl,
-    browserControlBot,
+    browserControlAgent,
     browserControlForTab,
     browserControllerForTab,
     openBrowserAddress,

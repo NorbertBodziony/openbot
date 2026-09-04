@@ -1,13 +1,13 @@
 import {
   type AccountUsage,
   type AgentIpcRequest,
+  type AgentMemory,
   type AgentModelOption,
   type AgentPublicationPreview,
   type AgentStatus,
   type AgentSubmission,
+  type AgentSummary,
   type AttachmentImportEvent,
-  type BotMemory,
-  type BotSummary,
   type BrowserPreview,
   type ComputerUseMacSetupState,
   type ConversationMessage,
@@ -16,7 +16,7 @@ import {
   type ConversationSearchPage,
   type ConversationWithReadState,
   type DraftAttachment,
-  type DuplicateBotResult,
+  type DuplicateAgentResult,
   type DynamicIslandAction,
   type DynamicIslandGeometry,
   type DynamicIslandPreference,
@@ -27,13 +27,13 @@ import {
   type InstalledSkill,
   IPC_CHANNELS,
   isAccountUsage,
+  isAgentMemory,
   isAgentModelOption,
   isAgentStatus,
+  isAgentSummary,
   isAttachmentSummary,
   isAvatarHue,
   isAvatarSeed,
-  isBotMemory,
-  isBotSummary,
   isConversationMessage,
   isConversationReadState,
   isConversationWithReadState,
@@ -333,25 +333,25 @@ function decodeAgentModels(value: unknown): AgentModelOption[] {
   return value;
 }
 
-function decodeBot(value: unknown): BotSummary {
-  if (!isBotSummary(value)) throw new Error("Invalid agent response.");
+function decodeAgent(value: unknown): AgentSummary {
+  if (!isAgentSummary(value)) throw new Error("Invalid agent response.");
   return value;
 }
 
-function decodeBots(value: unknown): BotSummary[] {
-  if (!Array.isArray(value) || !value.every(isBotSummary)) {
+function decodeAgents(value: unknown): AgentSummary[] {
+  if (!Array.isArray(value) || !value.every(isAgentSummary)) {
     throw new Error("Invalid agent list response.");
   }
   return value;
 }
 
-function decodeMemory(value: unknown): BotMemory {
-  if (!isBotMemory(value)) throw new Error("Invalid agent memory response.");
+function decodeMemory(value: unknown): AgentMemory {
+  if (!isAgentMemory(value)) throw new Error("Invalid agent memory response.");
   return value;
 }
 
-function decodeMemories(value: unknown): BotMemory[] {
-  if (!Array.isArray(value) || !value.every(isBotMemory)) throw new Error("Invalid agent memories response.");
+function decodeMemories(value: unknown): AgentMemory[] {
+  if (!Array.isArray(value) || !value.every(isAgentMemory)) throw new Error("Invalid agent memories response.");
   return value;
 }
 
@@ -360,9 +360,9 @@ function decodeSidebarLayout(value: unknown): SidebarLayoutSnapshot {
   return value;
 }
 
-function decodeDuplicateBotResultFromMain(value: unknown): DuplicateBotResult {
+function decodeDuplicateAgentResultFromMain(value: unknown): DuplicateAgentResult {
   const item = decodeRecord(value, "agent duplication");
-  return { bot: decodeBot(item.bot), layout: decodeSidebarLayout(item.layout) };
+  return { agent: decodeAgent(item.agent), layout: decodeSidebarLayout(item.layout) };
 }
 
 function decodeConversation(value: unknown): ConversationWithReadState {
@@ -371,12 +371,12 @@ function decodeConversation(value: unknown): ConversationWithReadState {
 }
 
 function decodeConversationPageFromMain(value: unknown): ConversationPage {
-  if (!isDynamicRecord(value) || !isString(value.botId) || !Array.isArray(value.messages)) {
+  if (!isDynamicRecord(value) || !isString(value.agentId) || !Array.isArray(value.messages)) {
     throw new Error("Invalid conversation page response.");
   }
   const pageInfo = decodeRecord(value.pageInfo, "conversation page info");
   return {
-    botId: value.botId,
+    agentId: value.agentId,
     threadId: nullableString(value, "threadId"),
     activeTurnId: nullableString(value, "activeTurnId"),
     revision: requiredNumber(value, "revision"),
@@ -397,7 +397,7 @@ function decodeConversationSearchPageFromMain(value: unknown): ConversationSearc
     results: item.results.map((value) => {
       const result = decodeRecord(value, "conversation search result");
       if (!isConversationMessage(result.message)) throw new Error("Invalid conversation search message.");
-      return { botId: requiredString(result, "botId"), message: result.message };
+      return { agentId: requiredString(result, "agentId"), message: result.message };
     }),
     total: requiredNumber(item, "total"),
     nextCursor: nullableString(item, "nextCursor"),
@@ -423,7 +423,7 @@ function decodeReadState(value: unknown): ConversationReadState {
 
 function decodeReadStates(value: unknown): Record<string, ConversationReadState> {
   const item = decodeRecord(value, "conversation reads");
-  return Object.fromEntries(Object.entries(item).map(([botId, state]) => [botId, decodeReadState(state)]));
+  return Object.fromEntries(Object.entries(item).map(([agentId, state]) => [agentId, decodeReadState(state)]));
 }
 
 function decodeAttachments(value: unknown): DraftAttachment[] {
@@ -639,7 +639,7 @@ function decodeAgentPublicationPreview(value: unknown): AgentPublicationPreview 
   const item = decodeRecord(value, "agent publication preview");
   const detail = decodeMarketplaceAgentDetail({
     ...item,
-    id: item.botId,
+    id: item.agentId,
     creatorName: "",
     version: 1,
     installs: 0,
@@ -802,8 +802,8 @@ const openbotApi: OpenBotDesktopApi = {
     listMine: () => ipcRenderer.invoke(IPC_CHANNELS.skillsListMine).then(decodeSubmissions),
     choosePackage: () => ipcRenderer.invoke(IPC_CHANNELS.skillsChoosePackage).then(decodeSkillPreview),
     submit: (input) => ipcRenderer.invoke(IPC_CHANNELS.skillsSubmit, input).then(decodeSubmission),
-    listInstalled: (botId) =>
-      ipcRenderer.invoke(IPC_CHANNELS.skillsListInstalled, botId).then(decodeInstalledSkillsFromMain),
+    listInstalled: (agentId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.skillsListInstalled, agentId).then(decodeInstalledSkillsFromMain),
     install: (input) => ipcRenderer.invoke(IPC_CHANNELS.skillsInstall, input).then(decodeInstalledSkill),
     uninstall: (input) => ipcRenderer.invoke(IPC_CHANNELS.skillsUninstall, input).then(decodeVoid),
   },
@@ -819,41 +819,41 @@ const openbotApi: OpenBotDesktopApi = {
       ipcRenderer.invoke(IPC_CHANNELS.marketplaceAgentsList, query ?? null).then(decodeMarketplaceAgentPage),
     get: (agentId) => ipcRenderer.invoke(IPC_CHANNELS.marketplaceAgentsGet, agentId).then(decodeMarketplaceAgentDetail),
     listMine: () => ipcRenderer.invoke(IPC_CHANNELS.marketplaceAgentsListMine).then(decodeAgentSubmissions),
-    preview: (botId) =>
-      ipcRenderer.invoke(IPC_CHANNELS.marketplaceAgentsPreview, botId).then(decodeAgentPublicationPreview),
+    preview: (agentId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.marketplaceAgentsPreview, agentId).then(decodeAgentPublicationPreview),
     submit: (input) => ipcRenderer.invoke(IPC_CHANNELS.marketplaceAgentsSubmit, input).then(decodeAgentSubmission),
     install: (input) =>
       ipcRenderer.invoke(IPC_CHANNELS.marketplaceAgentsInstall, input).then((value) => {
         const item = decodeRecord(value, "agent installation");
-        return { agent: decodeBot(item.agent) };
+        return { agent: decodeAgent(item.agent) };
       }),
   },
   agent: {
     getStatus: () => invokeAgent(IPC_CHANNELS.agentGetStatus, null, decodeAgentStatusFromMain),
-    getUsage: (botId) => invokeAgent(IPC_CHANNELS.agentGetUsage, botId, decodeAccountUsageFromMain),
+    getUsage: (agentId) => invokeAgent(IPC_CHANNELS.agentGetUsage, agentId, decodeAccountUsageFromMain),
     listModels: () => invokeAgent(IPC_CHANNELS.agentListModels, null, decodeAgentModels),
-    listBots: () => invokeAgent(IPC_CHANNELS.agentListBots, null, decodeBots),
-    listInstalledSkills: (botId) =>
-      invokeAgent(IPC_CHANNELS.agentListInstalledSkills, botId, decodeInstalledSkillsFromMain),
+    listAgents: () => invokeAgent(IPC_CHANNELS.agentList, null, decodeAgents),
+    listInstalledSkills: (agentId) =>
+      invokeAgent(IPC_CHANNELS.agentListInstalledSkills, agentId, decodeInstalledSkillsFromMain),
     getSidebarLayout: () => invokeAgent(IPC_CHANNELS.agentGetSidebarLayout, null, decodeSidebarLayout),
     mutateSidebarLayout: (action) => invokeAgent(IPC_CHANNELS.agentMutateSidebarLayout, action, decodeSidebarLayout),
-    createBot: (input) => invokeAgent(IPC_CHANNELS.agentCreateBot, input, decodeBot),
-    duplicateBot: (botId) => invokeAgent(IPC_CHANNELS.agentDuplicateBot, botId, decodeDuplicateBotResultFromMain),
-    updateBot: (input) => invokeAgent(IPC_CHANNELS.agentUpdateBot, input, decodeBot),
-    setAvatar: (input) => invokeAgent(IPC_CHANNELS.agentSetAvatar, input, decodeBot),
-    deleteBot: (botId) => invokeAgent(IPC_CHANNELS.agentDeleteBot, botId, decodeVoid),
-    listMemories: (botId) => invokeAgent(IPC_CHANNELS.agentListMemories, botId, decodeMemories),
+    createAgent: (input) => invokeAgent(IPC_CHANNELS.agentCreate, input, decodeAgent),
+    duplicateAgent: (agentId) => invokeAgent(IPC_CHANNELS.agentDuplicate, agentId, decodeDuplicateAgentResultFromMain),
+    updateAgent: (input) => invokeAgent(IPC_CHANNELS.agentUpdate, input, decodeAgent),
+    setAvatar: (input) => invokeAgent(IPC_CHANNELS.agentSetAvatar, input, decodeAgent),
+    deleteAgent: (agentId) => invokeAgent(IPC_CHANNELS.agentDelete, agentId, decodeVoid),
+    listMemories: (agentId) => invokeAgent(IPC_CHANNELS.agentListMemories, agentId, decodeMemories),
     createMemory: (input) => invokeAgent(IPC_CHANNELS.agentCreateMemory, input, decodeMemory),
     updateMemory: (input) => invokeAgent(IPC_CHANNELS.agentUpdateMemory, input, decodeMemory),
     deleteMemory: (input) => invokeAgent(IPC_CHANNELS.agentDeleteMemory, input, decodeVoid),
-    clearMemories: (botId) => invokeAgent(IPC_CHANNELS.agentClearMemories, botId, decodeVoid),
-    listRoutines: (botId) => invokeAgent(IPC_CHANNELS.agentListRoutines, botId, decodeRoutines),
+    clearMemories: (agentId) => invokeAgent(IPC_CHANNELS.agentClearMemories, agentId, decodeVoid),
+    listRoutines: (agentId) => invokeAgent(IPC_CHANNELS.agentListRoutines, agentId, decodeRoutines),
     createRoutine: (input) => invokeAgent(IPC_CHANNELS.agentCreateRoutine, input, decodeRoutine),
     updateRoutine: (input) => invokeAgent(IPC_CHANNELS.agentUpdateRoutine, input, decodeRoutine),
     deleteRoutine: (input) => invokeAgent(IPC_CHANNELS.agentDeleteRoutine, input, decodeVoid),
     testRoutine: (input) => invokeAgent(IPC_CHANNELS.agentTestRoutine, input, decodeRoutineRun),
     listRoutineRuns: (input) => invokeAgent(IPC_CHANNELS.agentListRoutineRuns, input, decodeRoutineRuns),
-    readConversation: (botId) => invokeAgent(IPC_CHANNELS.agentReadConversation, botId, decodeConversation),
+    readConversation: (agentId) => invokeAgent(IPC_CHANNELS.agentReadConversation, agentId, decodeConversation),
     readConversationPage: (input, serverId = selectedServerId) =>
       invokeAgentForServer(serverId, IPC_CHANNELS.agentReadConversationPage, input, decodeConversationPageFromMain),
     searchConversationMessages: (input) =>
@@ -876,7 +876,7 @@ const openbotApi: OpenBotDesktopApi = {
     sendMessage: (input, serverId = selectedServerId) =>
       invokeAgentForServer(serverId, IPC_CHANNELS.agentSendMessage, input, decodeReceipt),
     setMessageReaction: (input) => invokeAgent(IPC_CHANNELS.agentSetMessageReaction, input, decodeVoid),
-    listQueue: (botId) => invokeAgent(IPC_CHANNELS.agentListQueue, botId, decodeQueue),
+    listQueue: (agentId) => invokeAgent(IPC_CHANNELS.agentListQueue, agentId, decodeQueue),
     acknowledgeFailedTurn: (input) => invokeAgent(IPC_CHANNELS.agentAcknowledgeFailedTurn, input, decodeVoid),
     cancelQueuedMessage: (input) => invokeAgent(IPC_CHANNELS.agentCancelQueuedMessage, input, decodeVoid),
     steerQueuedMessage: (input) => invokeAgent(IPC_CHANNELS.agentSteerQueuedMessage, input, decodeVoid),

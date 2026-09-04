@@ -18,8 +18,8 @@ export function registerMarketplaceAgentIpcHandlers({ marketplaceAgents }: Marke
     marketplaceAgents.get(agentId),
   );
   handleTrusted(IPC_CHANNELS.marketplaceAgentsListMine, () => marketplaceAgents.listMine());
-  handleTrusted(IPC_CHANNELS.marketplaceAgentsPreview, stringPayload("botId"), (botId) =>
-    marketplaceAgents.preview(botId),
+  handleTrusted(IPC_CHANNELS.marketplaceAgentsPreview, stringPayload("agentId"), (agentId) =>
+    marketplaceAgents.preview(agentId),
   );
   handleTrusted(IPC_CHANNELS.marketplaceAgentsSubmit, parseSubmitMarketplaceAgent, (submission) =>
     marketplaceAgents.submit(submission),

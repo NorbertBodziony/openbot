@@ -14,7 +14,7 @@ describe("RichMessageText tooltips", () => {
     render(() => (
       <RichMessageText
         body="Use @[Old name](skill:skill-1) and ask @[Former](agent:agent-removed)."
-        bots={[]}
+        agents={[]}
         skills={[
           {
             skillId: "skill-1",
@@ -50,7 +50,7 @@ describe("RichMessageText tooltips", () => {
     render(() => (
       <RichMessageText
         body="Here is raport.csv."
-        bots={[]}
+        agents={[]}
         attachments={[attachment]}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
@@ -70,7 +70,7 @@ describe("RichMessageText tooltips", () => {
     render(() => (
       <RichMessageText
         body="Open ~/OpenBot/Shared/raport.csv."
-        bots={[]}
+        agents={[]}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}
         onOpenSharedFile={onOpenSharedFile}
@@ -89,7 +89,7 @@ describe("RichMessageText tooltips", () => {
     render(() => (
       <RichMessageText
         body="Read the source [1]."
-        bots={[]}
+        agents={[]}
         citations={[
           {
             number: 1,
@@ -137,7 +137,7 @@ describe("RichMessageText tooltips", () => {
     render(() => (
       <RichMessageText
         body={`Review ${serializeAttachmentReference(attachment.name, attachment.id)}`}
-        bots={[]}
+        agents={[]}
         attachments={[attachment]}
         onSelectAgent={vi.fn()}
         onOpenLink={vi.fn()}

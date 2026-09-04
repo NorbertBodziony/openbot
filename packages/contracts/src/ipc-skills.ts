@@ -88,13 +88,13 @@ export interface InstalledSkill {
 }
 
 export interface InstallSkillInput {
-  botId: string;
+  agentId: string;
   skillId: string;
   replaceModified?: boolean;
 }
 
 export interface UninstallSkillInput {
-  botId: string;
+  agentId: string;
   skillId: string;
   removeModified?: boolean;
 }

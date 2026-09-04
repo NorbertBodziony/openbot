@@ -1,6 +1,6 @@
 import type {
+  AgentSummary,
   AttachmentSummary,
-  BotSummary,
   ConversationMessage,
   ConversationSnapshot,
   DirectConversationSnapshot,
@@ -14,7 +14,7 @@ import type { MockOpenBotOptions } from "./mock-openbot";
 
 const LANDING_PREVIEW_NOW = "2026-08-21T10:00:00.000Z";
 
-const LANDING_PREVIEW_BOTS: BotSummary[] = [
+const LANDING_PREVIEW_AGENTS: AgentSummary[] = [
   {
     id: "chief",
     provider: "codex",
@@ -25,7 +25,7 @@ const LANDING_PREVIEW_BOTS: BotSummary[] = [
     model: "gpt-5.6-luna",
     reasoningEffort: "low",
     threadId: "thread-chief",
-    workspacePath: "/mock/OpenBot/Bots/chief",
+    workspacePath: "/mock/OpenBot/Agents/chief",
     preview: "The launch plan is ready with owners, evidence, and next actions.",
     updatedAt: LANDING_PREVIEW_NOW,
     avatarSeed: "chief",
@@ -42,7 +42,7 @@ const LANDING_PREVIEW_BOTS: BotSummary[] = [
     model: "gpt-5.6-luna",
     reasoningEffort: "low",
     threadId: "thread-research",
-    workspacePath: "/mock/OpenBot/Bots/research",
+    workspacePath: "/mock/OpenBot/Agents/research",
     preview: "The source review and evidence map are complete.",
     updatedAt: "2026-08-21T09:48:00.000Z",
     avatarSeed: "research",
@@ -59,7 +59,7 @@ const LANDING_PREVIEW_BOTS: BotSummary[] = [
     model: "gpt-5.6-luna",
     reasoningEffort: "low",
     threadId: "thread-builder",
-    workspacePath: "/mock/OpenBot/Bots/builder",
+    workspacePath: "/mock/OpenBot/Agents/builder",
     preview: "The implementation checklist includes tests and rollback steps.",
     updatedAt: "2026-08-21T09:36:00.000Z",
     avatarSeed: "builder",
@@ -76,7 +76,7 @@ const LANDING_PREVIEW_BOTS: BotSummary[] = [
     model: "gpt-5.6-luna",
     reasoningEffort: "low",
     threadId: "thread-launch",
-    workspacePath: "/mock/OpenBot/Bots/launch",
+    workspacePath: "/mock/OpenBot/Agents/launch",
     preview: "The launch brief is ready for final review.",
     updatedAt: "2026-08-21T09:24:00.000Z",
     avatarSeed: "launch",
@@ -147,20 +147,20 @@ const LANDING_PREVIEW_CHIEF_MESSAGES: ConversationMessage[] = [
     exchange: {
       direction: "outgoing",
       messageId: "landing-chief-exchange",
-      senderBotId: "chief",
-      recipientBotIds: ["research", "builder"],
+      senderAgentId: "chief",
+      recipientAgentIds: ["research", "builder"],
       replyToMessageId: "landing-chief-plan",
       deliveries: [
         {
           id: "landing-delivery-research",
-          recipientBotId: "research",
+          recipientAgentId: "research",
           status: "completed",
           position: null,
           error: null,
         },
         {
           id: "landing-delivery-builder",
-          recipientBotId: "builder",
+          recipientAgentId: "builder",
           status: "completed",
           position: null,
           error: null,
@@ -179,14 +179,14 @@ const LANDING_PREVIEW_CHIEF_MESSAGES: ConversationMessage[] = [
 ];
 
 const LANDING_PREVIEW_SNAPSHOTS: Record<string, ConversationSnapshot> = Object.fromEntries(
-  LANDING_PREVIEW_BOTS.map((bot) => [
-    bot.id,
+  LANDING_PREVIEW_AGENTS.map((agent) => [
+    agent.id,
     {
-      botId: bot.id,
-      threadId: bot.threadId,
+      agentId: agent.id,
+      threadId: agent.threadId,
       activeTurnId: null,
       revision: 1,
-      messages: bot.id === "chief" ? LANDING_PREVIEW_CHIEF_MESSAGES : [],
+      messages: agent.id === "chief" ? LANDING_PREVIEW_CHIEF_MESSAGES : [],
     },
   ]),
 );
@@ -364,7 +364,7 @@ export const LANDING_PREVIEW_OPTIONS = {
       avatarUrl: null,
     },
   },
-  bots: LANDING_PREVIEW_BOTS,
+  agents: LANDING_PREVIEW_AGENTS,
   snapshots: LANDING_PREVIEW_SNAPSHOTS,
   servers: LANDING_PREVIEW_SERVERS,
   directThreads: LANDING_PREVIEW_DIRECT_THREADS,

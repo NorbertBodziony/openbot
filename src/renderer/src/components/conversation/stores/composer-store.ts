@@ -11,22 +11,22 @@ export interface ComposerStoreDeps {
   setDrafts: (update: (current: Record<string, ComposerDraft>) => Record<string, ComposerDraft>) => void;
   conversationErrors: () => Record<string, string>;
   setConversationErrors: (update: (current: Record<string, string>) => Record<string, string>) => void;
-  editingBotId: () => string | null;
+  editingAgentId: () => string | null;
   editingServerId: () => string | null;
   editingDeliveryId: () => string | null;
   seenMessageIds: Set<string>;
 }
 
 export function currentConversationTarget(props: ConversationProps): ConversationTarget | undefined {
-  const botId = props.bot?.id;
-  return botId ? { botId, serverId: props.server?.id ?? "local" } : undefined;
+  const agentId = props.agent?.id;
+  return agentId ? { agentId, serverId: props.server?.id ?? "local" } : undefined;
 }
 
 export function createComposerStore(deps: ComposerStoreDeps) {
   const currentTarget = (): ConversationTarget | undefined => currentConversationTarget(deps.props);
   const currentEditingDeliveryId = createMemo(() => {
     const target = currentTarget();
-    return target && deps.editingBotId() === target.botId && deps.editingServerId() === target.serverId
+    return target && deps.editingAgentId() === target.agentId && deps.editingServerId() === target.serverId
       ? deps.editingDeliveryId()
       : null;
   });
@@ -51,7 +51,7 @@ export function createComposerStore(deps: ComposerStoreDeps) {
   });
 
   const markMessageSeen = (messageId: string): boolean => {
-    const key = `${deps.props.bot?.id ?? "none"}:${messageId}`;
+    const key = `${deps.props.agent?.id ?? "none"}:${messageId}`;
     if (deps.seenMessageIds.has(key)) return false;
     deps.seenMessageIds.add(key);
     return true;

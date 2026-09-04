@@ -6,11 +6,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BotStore } from "./agent-store";
+import { AgentStore } from "./agent-store";
 
 const temporaryRoots: string[] = [];
-const BOT_PROFILE_INPUT = {
-  name: "Planning Bot",
+const AGENT_PROFILE_INPUT = {
+  name: "Planning Agent",
   description: "Builds clear plans for everyday tasks.",
   avatarSeed: "setup:planning",
   avatarHue: 215,
@@ -27,34 +27,34 @@ afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((root) => rm(root, { recursive: true })));
 });
 
-describe("BotStore", () => {
+describe("AgentStore", () => {
   it("starts a new user with no agents", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
-    const store = new BotStore(join(root, "user-data"), join(root, "home"));
+    const store = new AgentStore(join(root, "user-data"), join(root, "home"));
 
     await store.initialize();
 
     expect(store.list()).toEqual([]);
   });
 
-  it("creates separate bot workspaces and a shared directory", async () => {
+  it("creates separate agent workspaces and a shared directory", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
     const userData = join(root, "user-data");
     const home = join(root, "home");
-    const store = new BotStore(userData, home);
+    const store = new AgentStore(userData, home);
 
     await store.initialize();
     const chief = await store.getOrCreate("chief");
     const sales = await store.getOrCreate("sales-outbound");
 
-    expect(chief.workspacePath).toBe(join(home, "OpenBot", "Bots", "chief"));
+    expect(chief.workspacePath).toBe(join(home, "OpenBot", "Agents", "chief"));
     expect(chief.description).toBe("");
     expect(chief.preview).toBe("No messages yet");
     expect(chief.model).toBe("gpt-5.6-luna");
     expect(chief.reasoningEffort).toBe("medium");
-    expect(sales.workspacePath).toBe(join(home, "OpenBot", "Bots", "sales-outbound"));
+    expect(sales.workspacePath).toBe(join(home, "OpenBot", "Agents", "sales-outbound"));
     expect(store.sharedRoot).toBe(join(home, "OpenBot", "Shared"));
     expect(chief.workspacePath).not.toBe(sales.workspacePath);
   });
@@ -63,14 +63,14 @@ describe("BotStore", () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
     const userData = join(root, "user-data");
-    const store = new BotStore(userData, join(root, "home"));
+    const store = new AgentStore(userData, join(root, "home"));
     await store.initialize();
 
     await store.getOrCreate("chief");
     const threadId = await store.ensureThreadId("chief");
-    const restored = new BotStore(userData, join(root, "home"));
+    const restored = new AgentStore(userData, join(root, "home"));
     await restored.initialize();
-    expect(restored.list().find((bot) => bot.id === "chief")?.threadId).toBe(threadId);
+    expect(restored.list().find((agent) => agent.id === "chief")?.threadId).toBe(threadId);
     await expect(readFile(join(userData, "bots.json"), "utf8")).rejects.toMatchObject({
       code: "ENOENT",
     });
@@ -81,11 +81,11 @@ describe("BotStore", () => {
     temporaryRoots.push(root);
     const userData = join(root, "user-data");
     const home = join(root, "home");
-    const store = new BotStore(userData, home);
+    const store = new AgentStore(userData, home);
     await store.initialize();
-    const bot = await store.createBot(BOT_PROFILE_INPUT);
+    const agent = await store.createAgent(AGENT_PROFILE_INPUT);
 
-    store.setMarketplaceSource(bot.id, {
+    store.setMarketplaceSource(agent.id, {
       listingId: "market-planner",
       versionId: "market-planner-v2",
       version: 2,
@@ -93,9 +93,9 @@ describe("BotStore", () => {
       routineIds: ["routine-marketplace"],
     });
 
-    const restored = new BotStore(userData, home);
+    const restored = new AgentStore(userData, home);
     await restored.initialize();
-    expect(restored.list().find((candidate) => candidate.id === bot.id)?.marketplaceSource).toEqual({
+    expect(restored.list().find((candidate) => candidate.id === agent.id)?.marketplaceSource).toEqual({
       listingId: "market-planner",
       versionId: "market-planner-v2",
       version: 2,
@@ -113,7 +113,7 @@ describe("BotStore", () => {
     const legacy = {
       version: 1,
       examplesInitialized: true,
-      bots: [
+      agents: [
         {
           id: "chief",
           name: "Chief",
@@ -123,7 +123,7 @@ describe("BotStore", () => {
           model: "gpt-5.6-luna",
           reasoningEffort: "medium",
           threadId: "native-codex-thread",
-          workspacePath: join(root, "home", "OpenBot", "Bots", "chief"),
+          workspacePath: join(root, "home", "OpenBot", "Agents", "chief"),
           preview: "Hello",
           updatedAt: "2026-01-01T00:00:00.000Z",
           avatarShape: "cloud",
@@ -133,10 +133,10 @@ describe("BotStore", () => {
     };
     await writeFile(statePath, `${JSON.stringify(legacy, null, 2)}\n`);
 
-    const restored = new BotStore(userData, join(root, "home"));
+    const restored = new AgentStore(userData, join(root, "home"));
     await restored.initialize();
 
-    expect(restored.list().find((bot) => bot.id === "chief")).toMatchObject({
+    expect(restored.list().find((agent) => agent.id === "chief")).toMatchObject({
       avatarSeed: "chief",
       avatarHue: null,
     });
@@ -155,7 +155,7 @@ describe("BotStore", () => {
     const legacy = {
       version: 2,
       examplesInitialized: true,
-      bots: [
+      agents: [
         {
           id: "writer",
           name: "Writer",
@@ -165,7 +165,7 @@ describe("BotStore", () => {
           model: "claude-sonnet-5",
           reasoningEffort: "high",
           threadId: null,
-          workspacePath: join(root, "home", "OpenBot", "Bots", "writer"),
+          workspacePath: join(root, "home", "OpenBot", "Agents", "writer"),
           preview: "No messages yet",
           updatedAt: null,
           avatarSeed: "writer",
@@ -175,7 +175,7 @@ describe("BotStore", () => {
     };
     const source = `${JSON.stringify(legacy, null, 2)}\n`;
     await writeFile(statePath, source);
-    const store = new BotStore(userData, join(root, "home"));
+    const store = new AgentStore(userData, join(root, "home"));
     await store.initialize();
 
     expect(store.list()).toMatchObject([{ id: "writer", model: "claude-sonnet-5", threadId: null, avatarHue: 215 }]);
@@ -193,14 +193,14 @@ describe("BotStore", () => {
       {
         version: 2,
         examplesInitialized: true,
-        bots: [{ id: "chief", role: "Coordinator" }],
+        agents: [{ id: "chief", role: "Coordinator" }],
       },
       null,
       2,
     )}\n`;
     await writeFile(statePath, source);
 
-    const store = new BotStore(userData, join(root, "home"));
+    const store = new AgentStore(userData, join(root, "home"));
     await expect(store.initialize()).rejects.toThrow("old role field");
     await expect(readFile(statePath, "utf8")).resolves.toBe(source);
   });
@@ -209,31 +209,35 @@ describe("BotStore", () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
     const userData = join(root, "user-data");
-    const store = new BotStore(userData, join(root, "home"));
+    const store = new AgentStore(userData, join(root, "home"));
     await store.initialize();
 
-    const first = await store.createBot({ ...BOT_PROFILE_INPUT, name: "First Bot", avatarSeed: "setup:first" });
-    const second = await store.createBot({ ...BOT_PROFILE_INPUT, name: "Second Bot", avatarSeed: "setup:second" });
+    const first = await store.createAgent({ ...AGENT_PROFILE_INPUT, name: "First Agent", avatarSeed: "setup:first" });
+    const second = await store.createAgent({
+      ...AGENT_PROFILE_INPUT,
+      name: "Second Agent",
+      avatarSeed: "setup:second",
+    });
 
     expect(first.id).not.toBe(second.id);
-    expect(first.name).toBe("First Bot");
-    expect(second.name).toBe("Second Bot");
+    expect(first.name).toBe("First Agent");
+    expect(second.name).toBe("Second Agent");
     expect(first.title).toBe("");
     expect(second.title).toBe("");
     expect(
       store
         .list()
         .slice(0, 2)
-        .map((bot) => bot.id),
+        .map((agent) => agent.id),
     ).toEqual([second.id, first.id]);
 
-    const reloaded = new BotStore(userData, join(root, "home"));
+    const reloaded = new AgentStore(userData, join(root, "home"));
     await reloaded.initialize();
     expect(
       reloaded
         .list()
         .slice(0, 2)
-        .map((bot) => bot.id),
+        .map((agent) => agent.id),
     ).toEqual([second.id, first.id]);
   });
 
@@ -242,11 +246,11 @@ describe("BotStore", () => {
     temporaryRoots.push(root);
     const userData = join(root, "user-data");
     const home = join(root, "home");
-    const store = new BotStore(userData, home);
+    const store = new AgentStore(userData, home);
     await store.initialize();
     const source = await store.getOrCreate("chief", "Research", "Research lead");
-    await store.updateBot({
-      botId: source.id,
+    await store.updateAgent({
+      agentId: source.id,
       description: "Finds primary sources.",
       notifications: false,
       provider: "claude",
@@ -271,10 +275,10 @@ describe("BotStore", () => {
 
     const firstOperationId = randomUUID();
     const secondOperationId = randomUUID();
-    const duplicate = await store.duplicateBot(source.id, firstOperationId);
-    const secondDuplicate = await store.duplicateBot(source.id, secondOperationId);
-    await store.commitBotDuplication(duplicate.id, firstOperationId, source.id, EMPTY_LAYOUT);
-    await store.commitBotDuplication(secondDuplicate.id, secondOperationId, source.id, EMPTY_LAYOUT);
+    const duplicate = await store.duplicateAgent(source.id, firstOperationId);
+    const secondDuplicate = await store.duplicateAgent(source.id, secondOperationId);
+    await store.commitAgentDuplication(duplicate.id, firstOperationId, source.id, EMPTY_LAYOUT);
+    await store.commitAgentDuplication(secondDuplicate.id, secondOperationId, source.id, EMPTY_LAYOUT);
 
     expect(duplicate).toMatchObject({
       name: "Research copy",
@@ -315,9 +319,9 @@ describe("BotStore", () => {
     await expect(readFile(join(duplicate.workspacePath, "skills.lock"), "utf8")).resolves.toBe("research@3\n");
     await expect(readFile(join(source.workspacePath, "skills.lock"), "utf8")).resolves.toBe("research@1\n");
 
-    const reloaded = new BotStore(userData, home);
+    const reloaded = new AgentStore(userData, home);
     await reloaded.initialize();
-    expect(reloaded.list().map((bot) => bot.id)).toEqual(
+    expect(reloaded.list().map((agent) => agent.id)).toEqual(
       expect.arrayContaining([source.id, duplicate.id, secondDuplicate.id]),
     );
   });
@@ -327,16 +331,16 @@ describe("BotStore", () => {
     temporaryRoots.push(root);
     const userData = join(root, "user-data");
     const home = join(root, "home");
-    const store = new BotStore(userData, home);
+    const store = new AgentStore(userData, home);
     await store.initialize();
     const source = await store.getOrCreate("chief");
     await writeFile(join(source.workspacePath, "note.txt"), "source\n");
-    const duplicate = await store.duplicateBot(source.id);
+    const duplicate = await store.duplicateAgent(source.id);
 
-    const recovered = new BotStore(userData, home);
+    const recovered = new AgentStore(userData, home);
     await recovered.initialize();
 
-    expect(recovered.list().map((bot) => bot.id)).toEqual([source.id]);
+    expect(recovered.list().map((agent) => agent.id)).toEqual([source.id]);
     await expect(readFile(join(duplicate.workspacePath, "note.txt"), "utf8")).rejects.toMatchObject({
       code: "ENOENT",
     });
@@ -349,29 +353,29 @@ describe("BotStore", () => {
     const userData = join(root, "user-data");
     const home = join(root, "home");
     const operationId = randomUUID();
-    const store = new BotStore(userData, home);
+    const store = new AgentStore(userData, home);
     await store.initialize();
     const source = await store.getOrCreate("chief");
-    const duplicate = await store.duplicateBot(source.id, operationId);
-    const committed = await store.commitBotDuplication(duplicate.id, operationId, source.id, EMPTY_LAYOUT);
-    const currentBot = await store.updateBot({ botId: duplicate.id, title: "Current title" });
+    const duplicate = await store.duplicateAgent(source.id, operationId);
+    const committed = await store.commitAgentDuplication(duplicate.id, operationId, source.id, EMPTY_LAYOUT);
+    const currentAgent = await store.updateAgent({ agentId: duplicate.id, title: "Current title" });
 
-    const restored = new BotStore(userData, home);
+    const restored = new AgentStore(userData, home);
     await restored.initialize();
 
-    expect(restored.committedBotDuplication(operationId, source.id)).toEqual({ ...committed, bot: currentBot });
-    expect(restored.list().filter((bot) => bot.name === duplicate.name)).toHaveLength(1);
+    expect(restored.committedAgentDuplication(operationId, source.id)).toEqual({ ...committed, agent: currentAgent });
+    expect(restored.list().filter((agent) => agent.name === duplicate.name)).toHaveLength(1);
 
-    await restored.deleteBot(duplicate.id);
+    await restored.deleteAgent(duplicate.id);
 
-    expect(restored.committedBotDuplication(operationId, source.id)).toBeNull();
+    expect(restored.committedAgentDuplication(operationId, source.id)).toBeNull();
   });
 
   it("removes a partial duplicate when profile persistence fails", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-duplicate-rollback-"));
     temporaryRoots.push(root);
     const home = join(root, "home");
-    const store = new BotStore(join(root, "user-data"), home);
+    const store = new AgentStore(join(root, "user-data"), home);
     await store.initialize();
     const source = await store.getOrCreate("chief");
     await writeFile(join(source.workspacePath, "note.txt"), "keep\n");
@@ -379,29 +383,29 @@ describe("BotStore", () => {
       throw new Error("database unavailable");
     });
 
-    await expect(store.duplicateBot(source.id)).rejects.toThrow("database unavailable");
+    await expect(store.duplicateAgent(source.id)).rejects.toThrow("database unavailable");
 
-    expect(store.list().map((bot) => bot.id)).toEqual([source.id]);
-    expect(await readdir(join(home, "OpenBot", "Bots"))).toEqual([source.id]);
+    expect(store.list().map((agent) => agent.id)).toEqual([source.id]);
+    expect(await readdir(join(home, "OpenBot", "Agents"))).toEqual([source.id]);
     await expect(readFile(join(source.workspacePath, "note.txt"), "utf8")).resolves.toBe("keep\n");
   });
 
   it("duplicates an agent whose preview moves while its workspace is being copied", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-duplicate-preview-"));
     temporaryRoots.push(root);
-    const store = new BotStore(join(root, "user-data"), join(root, "home"));
+    const store = new AgentStore(join(root, "user-data"), join(root, "home"));
     await store.initialize();
     const source = await store.getOrCreate("chief", "Research", "Research lead");
     await writeFile(join(source.workspacePath, "note.txt"), "keep\n");
     const resolveAvatar = store.resolveAvatar.bind(store);
-    vi.spyOn(store, "resolveAvatar").mockImplementationOnce((botId) => {
+    vi.spyOn(store, "resolveAvatar").mockImplementationOnce((agentId) => {
       // A message landing mid-copy moves `preview`, `updatedAt` and `threadId`. Copying a real
       // workspace takes seconds, so this window is wide enough to hit in ordinary use.
       void store.updatePreview(source.id, "Where are we on the sources?");
-      return resolveAvatar(botId);
+      return resolveAvatar(agentId);
     });
 
-    const duplicate = await store.duplicateBot(source.id);
+    const duplicate = await store.duplicateAgent(source.id);
 
     expect(duplicate).toMatchObject({ name: "Research copy", preview: "No messages yet", threadId: null });
     await expect(readFile(join(duplicate.workspacePath, "note.txt"), "utf8")).resolves.toBe("keep\n");
@@ -411,53 +415,53 @@ describe("BotStore", () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-duplicate-profile-"));
     temporaryRoots.push(root);
     const home = join(root, "home");
-    const store = new BotStore(join(root, "user-data"), home);
+    const store = new AgentStore(join(root, "user-data"), home);
     await store.initialize();
     const source = await store.getOrCreate("chief", "Research", "Research lead");
     const resolveAvatar = store.resolveAvatar.bind(store);
-    vi.spyOn(store, "resolveAvatar").mockImplementationOnce((botId) => {
-      void store.updateBot({ botId: source.id, description: "Finds primary sources." });
-      return resolveAvatar(botId);
+    vi.spyOn(store, "resolveAvatar").mockImplementationOnce((agentId) => {
+      void store.updateAgent({ agentId: source.id, description: "Finds primary sources." });
+      return resolveAvatar(agentId);
     });
 
-    await expect(store.duplicateBot(source.id)).rejects.toThrow("changed while it was being duplicated");
+    await expect(store.duplicateAgent(source.id)).rejects.toThrow("changed while it was being duplicated");
 
-    expect(store.list().map((bot) => bot.id)).toEqual([source.id]);
-    expect(await readdir(join(home, "OpenBot", "Bots"))).toEqual([source.id]);
+    expect(store.list().map((agent) => agent.id)).toEqual([source.id]);
+    expect(await readdir(join(home, "OpenBot", "Agents"))).toEqual([source.id]);
   });
 
   it("rejects duplication after the host reaches its agent limit", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-duplicate-limit-"));
     temporaryRoots.push(root);
-    const store = new BotStore(join(root, "user-data"), join(root, "home"));
+    const store = new AgentStore(join(root, "user-data"), join(root, "home"));
     await store.initialize();
     const source = await store.getOrCreate("agent-0");
     for (let index = 1; index < INPUT_LIMITS.agents; index += 1) {
       await store.getOrCreate(`agent-${index}`);
     }
 
-    await expect(store.duplicateBot(source.id)).rejects.toThrow(`up to ${INPUT_LIMITS.agents} agents`);
+    await expect(store.duplicateAgent(source.id)).rejects.toThrow(`up to ${INPUT_LIMITS.agents} agents`);
     expect(store.list()).toHaveLength(INPUT_LIMITS.agents);
   });
 
-  it("validates the complete Bot profile before it writes data", async () => {
+  it("validates the complete Agent profile before it writes data", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
-    const store = new BotStore(join(root, "user-data"), join(root, "home"));
+    const store = new AgentStore(join(root, "user-data"), join(root, "home"));
     await store.initialize();
 
-    await expect(store.createBot({ ...BOT_PROFILE_INPUT, name: " " })).rejects.toThrow("Agent name is required.");
-    await expect(store.createBot({ ...BOT_PROFILE_INPUT, description: " " })).rejects.toThrow(
+    await expect(store.createAgent({ ...AGENT_PROFILE_INPUT, name: " " })).rejects.toThrow("Agent name is required.");
+    await expect(store.createAgent({ ...AGENT_PROFILE_INPUT, description: " " })).rejects.toThrow(
       "Agent description is required.",
     );
-    await expect(store.createBot({ ...BOT_PROFILE_INPUT, avatarSeed: "" })).rejects.toThrow("Invalid avatar seed.");
+    await expect(store.createAgent({ ...AGENT_PROFILE_INPUT, avatarSeed: "" })).rejects.toThrow("Invalid avatar seed.");
     expect(store.list()).toEqual([]);
   });
 
-  it("rejects path traversal bot ids", async () => {
+  it("rejects path traversal agent ids", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
-    const store = new BotStore(join(root, "data"), join(root, "home"));
+    const store = new AgentStore(join(root, "data"), join(root, "home"));
     await store.initialize();
 
     await expect(store.getOrCreate("../outside")).rejects.toThrow("Invalid agent id");
@@ -468,11 +472,11 @@ describe("BotStore", () => {
     temporaryRoots.push(root);
     const userData = join(root, "user-data");
     const statePath = join(userData, "bots.json");
-    const unsupported = '{"version":999,"examplesInitialized":true,"bots":[]}\n';
+    const unsupported = '{"version":999,"examplesInitialized":true,"agents":[]}\n';
     await mkdir(userData, { recursive: true });
     await writeFile(statePath, unsupported);
 
-    const store = new BotStore(userData, join(root, "home"));
+    const store = new AgentStore(userData, join(root, "home"));
     await expect(store.initialize()).rejects.toThrow("refusing to overwrite");
     await expect(readFile(statePath, "utf8")).resolves.toBe(unsupported);
   });
@@ -481,12 +485,12 @@ describe("BotStore", () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
     const userData = join(root, "user-data");
-    const store = new BotStore(userData, join(root, "home"));
+    const store = new AgentStore(userData, join(root, "home"));
     await store.initialize();
 
     await store.getOrCreate("chief");
-    await store.updateBot({
-      botId: "chief",
+    await store.updateAgent({
+      agentId: "chief",
       name: "Coordinator",
       title: "Operations lead",
       description: "Keeps the team aligned",
@@ -496,9 +500,9 @@ describe("BotStore", () => {
       avatarSeed: "chief:avatar:2:4",
       avatarHue: 215,
     });
-    const restored = new BotStore(userData, join(root, "home"));
+    const restored = new AgentStore(userData, join(root, "home"));
     await restored.initialize();
-    expect(restored.list().find((bot) => bot.id === "chief")).toMatchObject({
+    expect(restored.list().find((agent) => agent.id === "chief")).toMatchObject({
       name: "Coordinator",
       title: "Operations lead",
       description: "Keeps the team aligned",
@@ -514,7 +518,7 @@ describe("BotStore", () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
     const userData = join(root, "user-data");
-    const store = new BotStore(userData, join(root, "home"));
+    const store = new AgentStore(userData, join(root, "home"));
     await store.initialize();
     await store.getOrCreate("chief");
     const image = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -525,19 +529,19 @@ describe("BotStore", () => {
     expect(storedAvatar?.mimeType).toBe("image/png");
     await expect(readFile(storedAvatar?.path ?? "")).resolves.toEqual(Buffer.from(image));
 
-    const restored = new BotStore(userData, join(root, "home"));
+    const restored = new AgentStore(userData, join(root, "home"));
     await restored.initialize();
-    expect(restored.list().find((bot) => bot.id === "chief")?.avatarUrl).toBe(updated.avatarUrl);
+    expect(restored.list().find((agent) => agent.id === "chief")?.avatarUrl).toBe(updated.avatarUrl);
     const restoredPath = restored.resolveAvatar("chief")?.path ?? "";
     await restored.setAvatar("chief", null);
-    expect(restored.list().find((bot) => bot.id === "chief")?.avatarUrl).toBeNull();
+    expect(restored.list().find((agent) => agent.id === "chief")?.avatarUrl).toBeNull();
     await expect(readFile(restoredPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("restores the previous avatar when SQLite persistence fails", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
-    const store = new BotStore(join(root, "user-data"), join(root, "home"));
+    const store = new AgentStore(join(root, "user-data"), join(root, "home"));
     await store.initialize();
     await store.getOrCreate("chief");
     const image = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -550,34 +554,34 @@ describe("BotStore", () => {
     await expect(store.setAvatar("chief", { mimeType: "image/png", bytes: image })).rejects.toThrow(
       "database unavailable",
     );
-    expect(store.list().find((bot) => bot.id === "chief")).toMatchObject({
+    expect(store.list().find((agent) => agent.id === "chief")).toMatchObject({
       avatarUrl: original.avatarUrl,
       updatedAt: original.updatedAt,
     });
     await expect(readFile(originalAvatar?.path ?? "")).resolves.toEqual(Buffer.from(image));
 
     await expect(store.setAvatar("chief", null)).rejects.toThrow("database unavailable");
-    expect(store.list().find((bot) => bot.id === "chief")?.avatarUrl).toBe(original.avatarUrl);
+    expect(store.list().find((agent) => agent.id === "chief")?.avatarUrl).toBe(original.avatarUrl);
     await expect(readFile(originalAvatar?.path ?? "")).resolves.toEqual(Buffer.from(image));
   });
 
   it("rejects agent fields above their limits without truncating stored values", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
-    const store = new BotStore(join(root, "user-data"), join(root, "home"));
+    const store = new AgentStore(join(root, "user-data"), join(root, "home"));
     await store.initialize();
     await store.getOrCreate("chief");
 
-    await expect(store.updateBot({ botId: "chief", name: "x".repeat(INPUT_LIMITS.agentName + 1) })).rejects.toThrow(
+    await expect(store.updateAgent({ agentId: "chief", name: "x".repeat(INPUT_LIMITS.agentName + 1) })).rejects.toThrow(
       "Agent name is too long",
     );
     await expect(
-      store.updateBot({
-        botId: "chief",
+      store.updateAgent({
+        agentId: "chief",
         description: "x".repeat(INPUT_LIMITS.agentDescription + 1),
       }),
     ).rejects.toThrow("Agent description is too long");
-    expect(store.list().find((bot) => bot.id === "chief")).toMatchObject({
+    expect(store.list().find((agent) => agent.id === "chief")).toMatchObject({
       name: "Chief",
       description: "",
     });
@@ -586,32 +590,32 @@ describe("BotStore", () => {
   it("keeps the OpenBot thread when the model changes provider", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
-    const store = new BotStore(join(root, "user-data"), join(root, "home"));
+    const store = new AgentStore(join(root, "user-data"), join(root, "home"));
     await store.initialize();
     await store.getOrCreate("chief");
     const threadId = await store.ensureThreadId("chief");
 
-    const claude = await store.updateBot({ botId: "chief", provider: "claude", model: "claude-sonnet-5" });
+    const claude = await store.updateAgent({ agentId: "chief", provider: "claude", model: "claude-sonnet-5" });
     expect(claude.threadId).toBe(threadId);
 
-    const opus = await store.updateBot({ botId: "chief", provider: "claude", model: "claude-opus-5" });
+    const opus = await store.updateAgent({ agentId: "chief", provider: "claude", model: "claude-opus-5" });
     expect(opus.threadId).toBe(threadId);
   });
 
   it("keeps provider sessions private and creates a new session when returning", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
     temporaryRoots.push(root);
-    const store = new BotStore(join(root, "user-data"), join(root, "home"));
+    const store = new AgentStore(join(root, "user-data"), join(root, "home"));
     await store.initialize();
     await store.getOrCreate("chief");
     const publicThreadId = await store.ensureThreadId("chief");
     store.bindProviderSession("chief", "codex-native-1");
     store.database.deactivateProviderSessions(publicThreadId);
 
-    await store.updateBot({ botId: "chief", provider: "claude", model: "claude-sonnet-5" });
+    await store.updateAgent({ agentId: "chief", provider: "claude", model: "claude-sonnet-5" });
     store.bindProviderSession("chief", "claude-native-1");
     store.database.deactivateProviderSessions(publicThreadId);
-    await store.updateBot({ botId: "chief", provider: "codex", model: "gpt-5.6-sol" });
+    await store.updateAgent({ agentId: "chief", provider: "codex", model: "gpt-5.6-sol" });
     expect(store.activeProviderSession("chief")).toBeNull();
     store.bindProviderSession("chief", "codex-native-2");
 
@@ -629,16 +633,16 @@ describe("BotStore", () => {
     temporaryRoots.push(root);
     const userData = join(root, "user-data");
     const home = join(root, "home");
-    const store = new BotStore(userData, home);
+    const store = new AgentStore(userData, home);
     await store.initialize();
 
-    const bot = await store.createBot(BOT_PROFILE_INPUT);
-    await writeFile(join(bot.workspacePath, "generated.txt"), "workspace data");
-    await store.deleteBot(bot.id);
+    const agent = await store.createAgent(AGENT_PROFILE_INPUT);
+    await writeFile(join(agent.workspacePath, "generated.txt"), "workspace data");
+    await store.deleteAgent(agent.id);
     expect(store.list()).toEqual([]);
-    await expect(readFile(join(bot.workspacePath, "generated.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(agent.workspacePath, "generated.txt"))).rejects.toMatchObject({ code: "ENOENT" });
 
-    const restored = new BotStore(userData, home);
+    const restored = new AgentStore(userData, home);
     await restored.initialize();
     expect(restored.list()).toEqual([]);
   });

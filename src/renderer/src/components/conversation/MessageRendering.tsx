@@ -1,7 +1,7 @@
 import type { AttachmentSummary, InstalledSkill, MessageReaction } from "@openbot/contracts/ipc";
 import { MESSAGE_REACTIONS, MORE_MESSAGE_REACTIONS } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack } from "solid-js";
-import type { BotMessage, BotProfile } from "../../data";
+import type { AgentMessage, AgentProfile } from "../../data";
 import { Button, DropdownMenu } from "../ui";
 import { AttachmentCards } from "./AttachmentCards";
 import { CodeBlock } from "./CodeBlock";
@@ -39,15 +39,15 @@ function streamingTextGapMs(): number {
   return value.endsWith("s") && !value.endsWith("ms") ? amount * 1000 : amount;
 }
 
-function createStreamingBody(message: () => BotMessage) {
+function createStreamingBody(message: () => AgentMessage) {
   const initialMessage = untrack(message);
   const animateInitialText =
-    initialMessage.author === "bot" &&
+    initialMessage.author === "agent" &&
     initialMessage.streaming === true &&
     initialMessage.animate === true &&
     !prefersReducedStreamingMotion();
   let targetBody = initialMessage.body;
-  let targetStreaming = initialMessage.author === "bot" && initialMessage.streaming === true;
+  let targetStreaming = initialMessage.author === "agent" && initialMessage.streaming === true;
   const [body, setBody] = createSignal(animateInitialText ? "" : initialMessage.body);
   const [animateTail, setAnimateTail] = createSignal(false);
   const [smoothHeight, setSmoothHeight] = createSignal(targetStreaming);
@@ -93,7 +93,7 @@ function createStreamingBody(message: () => BotMessage) {
   createEffect(
     () => ({
       body: message().body,
-      streaming: message().author === "bot" && message().streaming === true,
+      streaming: message().author === "agent" && message().streaming === true,
     }),
     ({ body: nextBody, streaming }) => {
       targetBody = nextBody;
@@ -127,11 +127,11 @@ function createStreamingBody(message: () => BotMessage) {
 }
 
 export function MessageBody(props: {
-  message: BotMessage;
-  referencedMessage?: BotMessage;
-  bots: BotProfile[];
+  message: AgentMessage;
+  referencedMessage?: AgentMessage;
+  agents: AgentProfile[];
   skills?: InstalledSkill[];
-  onSelectAgent: (botId: string) => void;
+  onSelectAgent: (agentId: string) => void;
   onOpenLink: (url: string) => void;
   onPreview: (attachment: AttachmentSummary) => void;
   onAttachmentAction: (attachment: AttachmentSummary, action: "open" | "reveal" | "download") => void;
@@ -158,17 +158,17 @@ export function MessageBody(props: {
     );
   });
   const standaloneImageAttachments = createMemo(() =>
-    props.message.author === "bot"
+    props.message.author === "agent"
       ? standaloneAttachments().filter((attachment) => attachment.previewKind === "image")
       : [],
   );
   const standaloneFileAttachments = createMemo(() =>
-    props.message.author === "bot"
+    props.message.author === "agent"
       ? standaloneAttachments().filter((attachment) => attachment.previewKind !== "image")
       : standaloneAttachments(),
   );
   const contentBlocks = createMemo<MessageContentBlock[]>(() =>
-    props.message.author === "bot"
+    props.message.author === "agent"
       ? messageContentBlocks(streamedBody(), props.message.streaming === true)
       : [{ type: "text", text: selectionInstruction()?.instruction ?? props.message.body }],
   );
@@ -184,12 +184,12 @@ export function MessageBody(props: {
   createSmoothHeightResize({
     container: () => messageContentResize,
     content: () => messageContent,
-    enabled: () => props.message.author === "bot" && streamingBody.smoothHeight(),
+    enabled: () => props.message.author === "agent" && streamingBody.smoothHeight(),
   });
   const renderMarkdownInline = (body: string) => (
     <MarkdownInlineText
       body={body}
-      bots={props.bots}
+      agents={props.agents}
       skills={props.skills}
       attachments={props.message.attachments}
       citations={props.message.citations}
@@ -212,7 +212,7 @@ export function MessageBody(props: {
             <p>
               <RichMessageText
                 body={referenced().body || "Attachment"}
-                bots={props.bots}
+                agents={props.agents}
                 skills={props.skills}
                 attachments={referenced().attachments}
                 citations={referenced().citations}
@@ -233,7 +233,7 @@ export function MessageBody(props: {
       </Show>
       <div class="message-content-resize" ref={(element) => (messageContentResize = element)}>
         <div class="message-content-blocks" ref={(element) => (messageContent = element)}>
-          <Show when={props.message.author === "bot" ? streamedBody() : props.message.body}>
+          <Show when={props.message.author === "agent" ? streamedBody() : props.message.body}>
             <For each={contentBlocks()}>
               {(block, index) => {
                 if (block.type === "comparison-table") {
@@ -248,7 +248,7 @@ export function MessageBody(props: {
                     />
                   );
                 }
-                if (props.message.author === "bot") {
+                if (props.message.author === "agent") {
                   return (
                     <div
                       class={`message-copy message-markdown${streamingBody.animateTail() ? " t-stream" : ""}`}
@@ -256,7 +256,7 @@ export function MessageBody(props: {
                     >
                       <MarkdownMessageText
                         body={block.text}
-                        bots={props.bots}
+                        agents={props.agents}
                         skills={props.skills}
                         attachments={props.message.attachments}
                         citations={props.message.citations}
@@ -280,7 +280,7 @@ export function MessageBody(props: {
                   <p class="message-copy">
                     <RichMessageText
                       body={block.text}
-                      bots={props.bots}
+                      agents={props.agents}
                       skills={props.skills}
                       attachments={props.message.attachments}
                       citations={props.message.citations}
@@ -365,7 +365,7 @@ function imageGenerationStatus(
 }
 
 export function MessageActions(props: {
-  message: BotMessage;
+  message: AgentMessage;
   pickerOpen: boolean;
   moreOpen: boolean;
   expandedEmoji: boolean;

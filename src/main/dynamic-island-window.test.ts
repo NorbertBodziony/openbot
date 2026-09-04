@@ -38,9 +38,9 @@ function criticalPresentation(
   mode: "approval" | "question",
   requestId: string,
   serverId = "local",
-  botId = "chief",
+  agentId = "chief",
 ): DynamicIslandPresentation {
-  const bot = { id: botId, name: "Chief", avatarSeed: botId, avatarHue: 215 as const, avatarUrl: null };
+  const agent = { id: agentId, name: "Chief", avatarSeed: agentId, avatarHue: 215 as const, avatarUrl: null };
   if (mode === "approval") {
     return {
       serverId,
@@ -48,7 +48,7 @@ function criticalPresentation(
       remainingCount: 0,
       item: {
         requestId,
-        bot,
+        agent,
         title: "Approve",
         detail: "Review the request.",
         truncated: false,
@@ -69,7 +69,7 @@ function criticalPresentation(
     remainingCount: 0,
     item: {
       requestId,
-      bot,
+      agent,
       title: "Choose",
       detail: "Choose an option.",
       questions: [{ id: "choice", header: "Choose", question: "Choose an option.", isSecret: false, options: null }],
@@ -504,7 +504,7 @@ describe("dynamic island window geometry", () => {
     const action: DynamicIslandAction = {
       type: "answer-prompt",
       serverId: "local",
-      botId: "research",
+      agentId: "research",
       requestId: "prompt-1",
       answers: { source: ["Official data"] },
     };
@@ -546,7 +546,7 @@ describe("dynamic island window geometry", () => {
     const action = {
       type: "answer-prompt",
       serverId: "local",
-      botId: "chief",
+      agentId: "chief",
       requestId: "prompt-shared",
       answers: { source: ["Official data"] },
     } satisfies DynamicIslandAction;
@@ -586,7 +586,7 @@ describe("dynamic island window geometry", () => {
     const action = {
       type: "answer-prompt",
       serverId: "local",
-      botId: "chief",
+      agentId: "chief",
       requestId: "prompt-pinned",
       answers: { source: ["Official data"] },
     } satisfies DynamicIslandAction;
@@ -617,7 +617,7 @@ describe("dynamic island window geometry", () => {
     const action: DynamicIslandAction = {
       type: "answer-prompt",
       serverId: "remote",
-      botId: "research",
+      agentId: "research",
       requestId: "prompt-stale",
       answers: { source: ["Official data"] },
     };
@@ -648,7 +648,7 @@ describe("dynamic island window geometry", () => {
     const action = {
       type: "open-failure",
       serverId: "local",
-      botId: "research",
+      agentId: "research",
       turnId: "turn-failed",
     } satisfies DynamicIslandAction;
     mainWindow.webContents.isLoadingMainFrame.mockReturnValue(true);

@@ -39,7 +39,7 @@ describe("remote browser responses", () => {
         url: "https://example.com/",
         loading: false,
         ownerThreadId: "thread-1",
-        ownerBotId: "bot-1",
+        ownerAgentId: "bot-1",
       }),
     ).toMatchObject({ id: "tab-1", url: "https://example.com/" });
     expect(() => decodeBrowserTab(undefined)).toThrowError("Invalid remote browser tab.");
@@ -606,7 +606,7 @@ describe("remote server order", () => {
         expect(url.searchParams.get("path")).toBe("~/OpenBot/Shared/report.csv");
       } else {
         expect(url.pathname).toBe("/v1/workspace-files");
-        expect(url.searchParams.get("botId")).toBe("chief");
+        expect(url.searchParams.get("agentId")).toBe("chief");
         expect(url.searchParams.get("path")).toBe("app/page.tsx");
       }
       return new Response(bytes, {

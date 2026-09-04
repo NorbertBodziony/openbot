@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { expandAttachmentReferences } from "@openbot/contracts/attachment-references";
 import { expandChatTagReferences } from "@openbot/contracts/chat-tag-references";
-import type { BotSummary, ConversationSnapshot, QueueDeliveryStatus } from "@openbot/contracts/ipc";
+import type { AgentSummary, ConversationSnapshot, QueueDeliveryStatus } from "@openbot/contracts/ipc";
 import type { DeliveryContext } from "../mailbox-store";
 
 export function responseAttachmentMessageId(threadId: string, turnId: string, callId: string): string {
@@ -11,7 +11,7 @@ export function responseAttachmentMessageId(threadId: string, turnId: string, ca
 
 export function conversationContentSignature(snapshot: ConversationSnapshot): string {
   return JSON.stringify({
-    botId: snapshot.botId,
+    agentId: snapshot.agentId,
     threadId: snapshot.threadId,
     activeTurnId: snapshot.activeTurnId,
     messages: snapshot.messages,
@@ -78,8 +78,8 @@ export function displayMessageReferences(
   );
 }
 
-export function agentNamesById(bots: BotSummary[]): ReadonlyMap<string, string> {
-  return new Map(bots.map((bot) => [bot.id, bot.name]));
+export function agentNamesById(agents: AgentSummary[]): ReadonlyMap<string, string> {
+  return new Map(agents.map((agent) => [agent.id, agent.name]));
 }
 
 export function lastUserPrompt(snapshot: ConversationSnapshot): string | null {
@@ -98,7 +98,7 @@ export function renderHandoffMessage(
   const attachmentMetadata = (message.attachments ?? [])
     .map((attachment) => `[attachment: ${attachment.name}; ${attachment.mimeType}; ${attachment.size} bytes]`)
     .join("\n");
-  const sender = message.senderBotId ? ` agent:${message.senderBotId}` : "";
+  const sender = message.senderAgentId ? ` agent:${message.senderAgentId}` : "";
   return [
     `[${message.createdAt}] ${message.author}${sender}:`,
     displayMessageReferences(message.text, message.attachments ?? [], agentNames),
@@ -124,7 +124,7 @@ export function summarizeOldMessages(
       .trim();
     const excerpt = normalized.length > 600 ? `${normalized.slice(0, 597)}...` : normalized;
     const attachments = (message.attachments ?? []).map((item) => item.name).join(", ");
-    return `- ${message.author}${message.senderBotId ? ` (${message.senderBotId})` : ""}: ${excerpt}${attachments ? ` [attachments: ${attachments}]` : ""}`;
+    return `- ${message.author}${message.senderAgentId ? ` (${message.senderAgentId})` : ""}: ${excerpt}${attachments ? ` [attachments: ${attachments}]` : ""}`;
   });
   const summary = [`Summary of ${messages.length} older user-visible messages:`, ...lines].join("\n");
   return summary.length > maximumCharacters

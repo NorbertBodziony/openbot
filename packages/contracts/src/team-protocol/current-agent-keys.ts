@@ -14,14 +14,27 @@ import type { TeamProtocolV1JsonObject, TeamProtocolV1JsonValue } from "./v1";
  */
 
 /** Frozen wire spelling -> current in-app spelling. */
-const WIRE_TO_CURRENT_KEYS: Readonly<Record<string, string>> = {};
+const WIRE_TO_CURRENT_KEYS: Readonly<Record<string, string>> = {
+  bot: "agent",
+  botId: "agentId",
+  bots: "agents",
+  ownerBotId: "ownerAgentId",
+  recipientBotId: "recipientAgentId",
+  recipientBotIds: "recipientAgentIds",
+  senderBotId: "senderAgentId",
+  typingBotId: "typingAgentId",
+};
 
 const CURRENT_TO_WIRE_KEYS: Readonly<Record<string, string>> = Object.fromEntries(
   Object.entries(WIRE_TO_CURRENT_KEYS).map(([wire, current]) => [current, wire]),
 );
 
 /** Values, not keys: the discriminants that spell the product agent. Keyed by the property holding them. */
-const WIRE_TO_CURRENT_VALUES: Readonly<Record<string, Readonly<Record<string, string>>>> = {};
+const WIRE_TO_CURRENT_VALUES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  kind: { bot: "agent" },
+  origin: { bot: "agent" },
+  type: { "bots-changed": "agents-changed" },
+};
 
 const CURRENT_TO_WIRE_VALUES: Readonly<Record<string, Readonly<Record<string, string>>>> = Object.fromEntries(
   Object.entries(WIRE_TO_CURRENT_VALUES).map(([key, mapping]) => [

@@ -1,10 +1,10 @@
-import type { AccountUsage, BotSummary } from "@openbot/contracts/ipc";
+import type { AccountUsage, AgentSummary } from "@openbot/contracts/ipc";
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { expect, it, vi } from "vitest";
 import { App } from "./App";
 import { desktopAnalytics } from "./analytics";
 import {
-  BOTS,
+  AGENTS,
   emitAgentEvent,
   emitScopedAgentEvent,
   emitUpdateStatus,
@@ -97,13 +97,13 @@ describe("OpenBot connected desktop shell", () => {
   });
 
   it("clears cached usage while the active provider reconnects", async () => {
-    const claudeBots: BotSummary[] = BOTS.map((bot) => ({
-      ...bot,
+    const claudeAgents: AgentSummary[] = AGENTS.map((agent) => ({
+      ...agent,
       provider: "claude",
       model: "claude-sonnet-5",
     }));
     const currentStatus = await window.openbot.agent.getStatus();
-    vi.mocked(window.openbot.agent.listBots).mockResolvedValue(claudeBots);
+    vi.mocked(window.openbot.agent.listAgents).mockResolvedValue(claudeAgents);
     vi.mocked(window.openbot.agent.getUsage)
       .mockResolvedValueOnce({
         limits: [
@@ -154,12 +154,12 @@ describe("OpenBot connected desktop shell", () => {
   });
 
   it("reuses usage when switching between Grok agents on the same model", async () => {
-    const grokBots: BotSummary[] = BOTS.map((bot) => ({
-      ...bot,
+    const grokAgents: AgentSummary[] = AGENTS.map((agent) => ({
+      ...agent,
       provider: "grok",
       model: "grok-4",
     }));
-    vi.mocked(window.openbot.agent.listBots).mockResolvedValue(grokBots);
+    vi.mocked(window.openbot.agent.listAgents).mockResolvedValue(grokAgents);
 
     render(() => <App />);
     await waitFor(() => expect(window.openbot.agent.getUsage).toHaveBeenCalledWith("chief"));
@@ -315,7 +315,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(window.openbot.auth.logout).toHaveBeenCalledOnce());
     expect(trackAnalytics).toHaveBeenCalledWith("account_sign_out", { result: "succeeded" });
     expect(await screen.findByRole("heading", { name: "Sign in to OpenBot" })).toBeInTheDocument();
-    expect(window.openbot.agent.deleteBot).not.toHaveBeenCalled();
+    expect(window.openbot.agent.deleteAgent).not.toHaveBeenCalled();
   });
 
   it("shows an available update, downloads it, and exposes restart to install", async () => {
@@ -449,13 +449,13 @@ describe("OpenBot connected desktop shell", () => {
     expect(within(picker).getByRole("option", { name: "Luna, default" })).toHaveAttribute("aria-selected", "true");
 
     await fireEvent.click(within(picker).getByRole("tab", { name: /^Claude:/ }));
-    expect(window.openbot.agent.updateBot).not.toHaveBeenCalled();
+    expect(window.openbot.agent.updateAgent).not.toHaveBeenCalled();
     expect(within(picker).getByText("2.1.231 (Claude Code)")).toBeInTheDocument();
     await fireEvent.click(within(picker).getByRole("option", { name: "Claude Opus 5, default" }));
 
     await waitFor(() =>
-      expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
-        botId: "chief",
+      expect(window.openbot.agent.updateAgent).toHaveBeenCalledWith({
+        agentId: "chief",
         model: "claude-opus-5",
         provider: "claude",
         reasoningEffort: "medium",
@@ -469,10 +469,10 @@ describe("OpenBot connected desktop shell", () => {
   });
 
   it("persists rapid model and effort changes in order as complete settings", async () => {
-    const chief = BOTS.find((bot) => bot.id === "chief");
+    const chief = AGENTS.find((agent) => agent.id === "chief");
     if (!chief) throw new Error("Chief fixture is missing");
-    let resolveModelUpdate!: (bot: BotSummary) => void;
-    vi.mocked(window.openbot.agent.updateBot)
+    let resolveModelUpdate!: (agent: AgentSummary) => void;
+    vi.mocked(window.openbot.agent.updateAgent)
       .mockImplementationOnce(
         () =>
           new Promise((resolve) => {
@@ -496,7 +496,7 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
     await fireEvent.click(screen.getByRole("option", { name: "High" }));
 
-    expect(window.openbot.agent.updateBot).toHaveBeenCalledTimes(1);
+    expect(window.openbot.agent.updateAgent).toHaveBeenCalledTimes(1);
     expect(effort).toHaveTextContent("High");
     resolveModelUpdate({
       ...chief,
@@ -506,10 +506,10 @@ describe("OpenBot connected desktop shell", () => {
     });
 
     await waitFor(() =>
-      expect(vi.mocked(window.openbot.agent.updateBot).mock.calls).toEqual([
+      expect(vi.mocked(window.openbot.agent.updateAgent).mock.calls).toEqual([
         [
           {
-            botId: "chief",
+            agentId: "chief",
             provider: "claude",
             model: "claude-opus-5",
             reasoningEffort: "medium",
@@ -517,14 +517,14 @@ describe("OpenBot connected desktop shell", () => {
         ],
         [
           {
-            botId: "chief",
+            agentId: "chief",
             reasoningEffort: "high",
           },
         ],
       ]),
     );
-    expect(window.openbot.agent.updateBot).toHaveBeenLastCalledWith({
-      botId: "chief",
+    expect(window.openbot.agent.updateAgent).toHaveBeenLastCalledWith({
+      agentId: "chief",
       reasoningEffort: "high",
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -535,13 +535,13 @@ describe("OpenBot connected desktop shell", () => {
   it("does not send a queued settings save to the server the user switched to", async () => {
     const local = testServer("local", true);
     const remote = testServer("remote-1", false);
-    let resolveModelUpdate!: (bot: BotSummary) => void;
+    let resolveModelUpdate!: (agent: AgentSummary) => void;
     vi.mocked(window.openbot.servers.list).mockResolvedValueOnce([local, remote]);
     vi.mocked(window.openbot.servers.select).mockImplementation(async (serverId) => [
       { ...local, active: serverId === "local" },
       { ...remote, active: serverId === "remote-1" },
     ]);
-    vi.mocked(window.openbot.agent.updateBot).mockImplementationOnce(
+    vi.mocked(window.openbot.agent.updateAgent).mockImplementationOnce(
       () =>
         new Promise((resolve) => {
           resolveModelUpdate = resolve;
@@ -555,7 +555,7 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(within(picker).getByRole("tab", { name: /^Claude:/ }));
     await fireEvent.click(within(picker).getByRole("option", { name: "Claude Opus 5, default" }));
     await fireEvent.click(within(picker).getByRole("option", { name: "Claude Sonnet 5" }));
-    expect(window.openbot.agent.updateBot).toHaveBeenCalledOnce();
+    expect(window.openbot.agent.updateAgent).toHaveBeenCalledOnce();
 
     await fireEvent.keyDown(picker, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Choose agent model" })).not.toBeInTheDocument());
@@ -564,21 +564,21 @@ describe("OpenBot connected desktop shell", () => {
       expect(screen.getByRole("button", { name: "Studio Mac server" })).toHaveAttribute("aria-pressed", "true"),
     );
 
-    const chief = BOTS.find((bot) => bot.id === "chief");
+    const chief = AGENTS.find((agent) => agent.id === "chief");
     if (!chief) throw new Error("Chief fixture is missing");
     resolveModelUpdate({ ...chief, provider: "claude", model: "claude-opus-5", reasoningEffort: "medium" });
     await fireEvent.click(screen.getByRole("button", { name: "Local server" }));
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Local server" })).toHaveAttribute("aria-pressed", "true"),
     );
-    expect(vi.mocked(window.openbot.agent.updateBot).mock.calls).toEqual([
-      [{ botId: "chief", provider: "claude", model: "claude-opus-5", reasoningEffort: "medium" }],
+    expect(vi.mocked(window.openbot.agent.updateAgent).mock.calls).toEqual([
+      [{ agentId: "chief", provider: "claude", model: "claude-opus-5", reasoningEffort: "medium" }],
     ]);
   });
 
   it("rolls back a queued effort when its model save fails", async () => {
     let rejectModelUpdate!: (error: Error) => void;
-    vi.mocked(window.openbot.agent.updateBot).mockImplementationOnce(
+    vi.mocked(window.openbot.agent.updateAgent).mockImplementationOnce(
       () =>
         new Promise((_, reject) => {
           rejectModelUpdate = reject;
@@ -594,19 +594,19 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
     await fireEvent.click(screen.getByRole("option", { name: "Extra high" }));
 
-    expect(window.openbot.agent.updateBot).toHaveBeenCalledTimes(1);
+    expect(window.openbot.agent.updateAgent).toHaveBeenCalledTimes(1);
     rejectModelUpdate(new Error("Model failed"));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Could not change effort. Try again.");
-    expect(window.openbot.agent.updateBot).toHaveBeenCalledTimes(1);
+    expect(window.openbot.agent.updateAgent).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("button", { name: "Agent model: Luna" })).toBeEnabled();
     expect(effort).toHaveTextContent("Medium");
     await fireEvent.click(screen.getByRole("button", { name: "Agent model: Luna" }));
   });
 
   it("reconciles a concurrent model update after an effort save succeeds", async () => {
-    let resolveEffortUpdate!: (bot: BotSummary) => void;
-    vi.mocked(window.openbot.agent.updateBot).mockImplementationOnce(
+    let resolveEffortUpdate!: (agent: AgentSummary) => void;
+    vi.mocked(window.openbot.agent.updateAgent).mockImplementationOnce(
       () =>
         new Promise((resolve) => {
           resolveEffortUpdate = resolve;
@@ -621,13 +621,16 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
     await fireEvent.click(screen.getByRole("option", { name: "High" }));
 
-    const chief = BOTS.find((bot) => bot.id === "chief");
+    const chief = AGENTS.find((agent) => agent.id === "chief");
     if (!chief) throw new Error("Chief fixture is missing");
-    const concurrentBot = { ...chief, model: "gpt-5.6-sol" as const, reasoningEffort: "high" as const };
-    emitAgentEvent?.({ type: "bots-changed", bots: BOTS.map((bot) => (bot.id === "chief" ? concurrentBot : bot)) });
+    const concurrentAgent = { ...chief, model: "gpt-5.6-sol" as const, reasoningEffort: "high" as const };
+    emitAgentEvent?.({
+      type: "agents-changed",
+      agents: AGENTS.map((agent) => (agent.id === "chief" ? concurrentAgent : agent)),
+    });
     expect(screen.getByRole("button", { name: "Agent model: Luna" })).toBeEnabled();
 
-    resolveEffortUpdate(concurrentBot);
+    resolveEffortUpdate(concurrentAgent);
 
     expect(await screen.findByRole("button", { name: "Agent model: Sol" })).toBeEnabled();
     expect(effort).toHaveTextContent("High");
@@ -636,7 +639,7 @@ describe("OpenBot connected desktop shell", () => {
 
   it("does not roll back a newer effort when an older save fails", async () => {
     let rejectFirstUpdate!: (error: Error) => void;
-    vi.mocked(window.openbot.agent.updateBot).mockImplementationOnce(
+    vi.mocked(window.openbot.agent.updateAgent).mockImplementationOnce(
       () =>
         new Promise((_, reject) => {
           rejectFirstUpdate = reject;
@@ -653,11 +656,11 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.pointerDown(effort, { pointerType: "mouse", button: 0 });
     await fireEvent.click(screen.getByRole("option", { name: "Low" }));
 
-    expect(window.openbot.agent.updateBot).toHaveBeenCalledTimes(1);
+    expect(window.openbot.agent.updateAgent).toHaveBeenCalledTimes(1);
     rejectFirstUpdate(new Error("Older effort failed"));
-    await waitFor(() => expect(window.openbot.agent.updateBot).toHaveBeenCalledTimes(2));
-    expect(window.openbot.agent.updateBot).toHaveBeenLastCalledWith({
-      botId: "chief",
+    await waitFor(() => expect(window.openbot.agent.updateAgent).toHaveBeenCalledTimes(2));
+    expect(window.openbot.agent.updateAgent).toHaveBeenLastCalledWith({
+      agentId: "chief",
       reasoningEffort: "low",
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -667,7 +670,7 @@ describe("OpenBot connected desktop shell", () => {
 
   it("does not roll back or report an effort failure after switching agents", async () => {
     let rejectUpdate!: (error: Error) => void;
-    vi.mocked(window.openbot.agent.updateBot).mockImplementationOnce(
+    vi.mocked(window.openbot.agent.updateAgent).mockImplementationOnce(
       () =>
         new Promise((_, reject) => {
           rejectUpdate = reject;
@@ -691,7 +694,7 @@ describe("OpenBot connected desktop shell", () => {
   });
 
   it("rolls back a failed header model change and reports the error", async () => {
-    vi.mocked(window.openbot.agent.updateBot).mockRejectedValueOnce(new Error("Provider failed"));
+    vi.mocked(window.openbot.agent.updateAgent).mockRejectedValueOnce(new Error("Provider failed"));
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await screen.findByRole("button", { name: "Agent model: Luna" });
@@ -708,7 +711,7 @@ describe("OpenBot connected desktop shell", () => {
   });
 
   it("rolls back a failed header effort change and reports the error", async () => {
-    vi.mocked(window.openbot.agent.updateBot).mockRejectedValueOnce(new Error("Effort failed"));
+    vi.mocked(window.openbot.agent.updateAgent).mockRejectedValueOnce(new Error("Effort failed"));
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
 
@@ -731,7 +734,7 @@ describe("OpenBot connected desktop shell", () => {
 
     emitAgentEvent?.({
       type: "turn-started",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-chief",
       turnId: "turn-1",
     });
@@ -739,7 +742,7 @@ describe("OpenBot connected desktop shell", () => {
 
     emitAgentEvent?.({
       type: "turn-completed",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-chief",
       turnId: "turn-1",
       status: "completed",
@@ -754,7 +757,7 @@ describe("OpenBot connected desktop shell", () => {
     await screen.findByRole("heading", { name: "Chief" });
     const started = {
       type: "turn-started",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-chief",
       turnId: "turn-rename",
     } as const;
@@ -764,7 +767,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
         mode: "working",
-        working: [{ bot: { id: "chief", name: "Chief" } }],
+        working: [{ agent: { id: "chief", name: "Chief" } }],
       }),
     );
 
@@ -774,7 +777,7 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.blur(name);
 
     await waitFor(() =>
-      expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({ botId: "chief", name: "Coordinator" }),
+      expect(window.openbot.agent.updateAgent).toHaveBeenCalledWith({ agentId: "chief", name: "Coordinator" }),
     );
     expect(await screen.findByRole("heading", { name: "Coordinator" })).toBeInTheDocument();
     expect(screen.getByLabelText("Message Coordinator")).toHaveAttribute("contenteditable", "true");
@@ -782,7 +785,7 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() =>
       expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
         mode: "working",
-        working: [{ bot: { id: "chief", name: "Coordinator" } }],
+        working: [{ agent: { id: "chief", name: "Coordinator" } }],
       }),
     );
 
@@ -792,8 +795,8 @@ describe("OpenBot connected desktop shell", () => {
   });
 
   it("removes a custom agent avatar and keeps its generated avatar settings", async () => {
-    vi.mocked(window.openbot.agent.listBots).mockResolvedValueOnce([
-      { ...BOTS[0], avatarUrl: "openbot-avatar://agent/chief?v=image-1" },
+    vi.mocked(window.openbot.agent.listAgents).mockResolvedValueOnce([
+      { ...AGENTS[0], avatarUrl: "openbot-avatar://agent/chief?v=image-1" },
     ]);
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
@@ -802,8 +805,8 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(within(settings).getByRole("button", { name: "Edit agent avatar" }));
     const editor = within(settings).getByRole("dialog", { name: "Avatar editor" });
     await fireEvent.click(within(editor).getByRole("button", { name: "Remove" }));
-    await waitFor(() => expect(window.openbot.agent.setAvatar).toHaveBeenCalledWith({ botId: "chief", image: null }));
-    expect(window.openbot.agent.updateBot).not.toHaveBeenCalledWith(
+    await waitFor(() => expect(window.openbot.agent.setAvatar).toHaveBeenCalledWith({ agentId: "chief", image: null }));
+    expect(window.openbot.agent.updateAgent).not.toHaveBeenCalledWith(
       expect.objectContaining({ avatarSeed: expect.any(String) }),
     );
   });
@@ -828,8 +831,8 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(within(picker).getByRole("tab", { name: /^Claude:/ }));
     await fireEvent.click(within(picker).getByRole("option", { name: "Claude Opus 5, default" }));
     await waitFor(() =>
-      expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
-        botId: "sales-outbound",
+      expect(window.openbot.agent.updateAgent).toHaveBeenCalledWith({
+        agentId: "sales-outbound",
         model: "claude-opus-5",
         provider: "claude",
         reasoningEffort: "medium",
@@ -837,7 +840,7 @@ describe("OpenBot connected desktop shell", () => {
     );
   });
 
-  it("does not remount agent text fields or discard in-progress edits on bot list refresh", async () => {
+  it("does not remount agent text fields or discard in-progress edits on agent list refresh", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await fireEvent.click(screen.getByRole("button", { name: "View agent settings" }));
@@ -850,11 +853,11 @@ describe("OpenBot connected desktop shell", () => {
       await fireEvent.input(name, { target: { value: draft } });
       refresh += 1;
       emitAgentEvent?.({
-        type: "bots-changed",
-        bots: BOTS.map((bot) =>
-          bot.id === "chief"
-            ? { ...bot, preview: `Backend refresh ${refresh}`, notifications: refresh % 2 === 0 }
-            : bot,
+        type: "agents-changed",
+        agents: AGENTS.map((agent) =>
+          agent.id === "chief"
+            ? { ...agent, preview: `Backend refresh ${refresh}`, notifications: refresh % 2 === 0 }
+            : agent,
         ),
       });
       expect(name).toHaveValue(draft);
@@ -871,11 +874,11 @@ describe("OpenBot connected desktop shell", () => {
       await fireEvent.input(title, { target: { value: draft } });
       refresh += 1;
       emitAgentEvent?.({
-        type: "bots-changed",
-        bots: BOTS.map((bot) =>
-          bot.id === "chief"
-            ? { ...bot, preview: `Backend refresh ${refresh}`, notifications: refresh % 2 === 0 }
-            : bot,
+        type: "agents-changed",
+        agents: AGENTS.map((agent) =>
+          agent.id === "chief"
+            ? { ...agent, preview: `Backend refresh ${refresh}`, notifications: refresh % 2 === 0 }
+            : agent,
         ),
       });
       expect(title).toHaveValue(draft);
@@ -890,11 +893,11 @@ describe("OpenBot connected desktop shell", () => {
       await fireEvent.input(description, { target: { value: draft } });
       refresh += 1;
       emitAgentEvent?.({
-        type: "bots-changed",
-        bots: BOTS.map((bot) =>
-          bot.id === "chief"
-            ? { ...bot, preview: `Backend refresh ${refresh}`, notifications: refresh % 2 === 0 }
-            : bot,
+        type: "agents-changed",
+        agents: AGENTS.map((agent) =>
+          agent.id === "chief"
+            ? { ...agent, preview: `Backend refresh ${refresh}`, notifications: refresh % 2 === 0 }
+            : agent,
         ),
       });
       expect(description).toHaveValue(draft);

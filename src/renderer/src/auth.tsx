@@ -200,10 +200,10 @@ const Auth = createSimpleContext({
       });
     }
 
-    async function refreshAccountUsage(botId: string, targetKey: string): Promise<AccountUsage> {
+    async function refreshAccountUsage(agentId: string, targetKey: string): Promise<AccountUsage> {
       selectAccountUsageTarget(targetKey);
       const generation = ++accountUsageRequestGeneration;
-      const usage = await window.openbot.agent.getUsage(botId);
+      const usage = await window.openbot.agent.getUsage(agentId);
       if (generation === accountUsageRequestGeneration && accountUsageState.targetKey === targetKey) {
         setAccountUsageState((state) => {
           state.data = usage;

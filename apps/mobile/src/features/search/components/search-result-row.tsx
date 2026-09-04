@@ -3,10 +3,10 @@ import { useThemeColor } from "heroui-native/hooks";
 import { FileText, type LucideIcon, MessageCircle, Repeat2 } from "lucide-react-native";
 import { View } from "react-native";
 
-import { BotListRow } from "@/features/agents/components/agent-list-row";
+import { AgentListRow } from "@/features/agents/components/agent-list-row";
 import type { MobileSearchResult } from "@/features/search/model/mobile-search";
 
-const RESULT_ICONS: Record<Exclude<MobileSearchResult["category"], "bots">, LucideIcon> = {
+const RESULT_ICONS: Record<Exclude<MobileSearchResult["category"], "agents">, LucideIcon> = {
   messages: MessageCircle,
   files: FileText,
   routines: Repeat2,
@@ -15,11 +15,11 @@ const RESULT_ICONS: Record<Exclude<MobileSearchResult["category"], "bots">, Luci
 export function MobileSearchResultRow({ result }: { result: MobileSearchResult }) {
   const [muted, controlBackground] = useThemeColor(["muted", "default"]);
 
-  if (result.category === "bots") {
+  if (result.category === "agents") {
     return (
-      <BotListRow
+      <AgentListRow
         avatarLocation="search"
-        bot={result.bot}
+        agent={result.agent}
         dismissToChat
         enableActions={false}
         enableZoomTransition={false}

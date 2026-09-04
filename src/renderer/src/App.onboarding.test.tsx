@@ -459,13 +459,13 @@ describe("OpenBot connected desktop shell", () => {
   });
 
   it("opens the required first-agent setup for a new user", async () => {
-    vi.mocked(window.openbot.agent.listBots).mockResolvedValueOnce([]);
+    vi.mocked(window.openbot.agent.listAgents).mockResolvedValueOnce([]);
     render(() => <App />);
 
     expect(await screen.findByRole("heading", { name: "Create your first agent" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create agent" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
-    expect(window.openbot.agent.createBot).not.toHaveBeenCalled();
+    expect(window.openbot.agent.createAgent).not.toHaveBeenCalled();
   });
 
   it("guides signed-out users before enabling chat", async () => {

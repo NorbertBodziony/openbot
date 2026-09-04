@@ -1,30 +1,30 @@
 import { type PropsWithChildren, useEffect, useRef } from "react";
 import { View } from "react-native";
 
-import { type BotAvatarLocation, useBotPinTransition } from "@/features/agents/components/agent-pin-transition";
+import { type AgentAvatarLocation, useAgentPinTransition } from "@/features/agents/components/agent-pin-transition";
 
-interface BotPinAvatarProps extends PropsWithChildren {
-  botId: string;
-  location: BotAvatarLocation;
+interface AgentPinAvatarProps extends PropsWithChildren {
+  agentId: string;
+  location: AgentAvatarLocation;
   size: number;
 }
 
-export function BotPinAvatar({ botId, children, location, size }: BotPinAvatarProps) {
+export function AgentPinAvatar({ agentId, children, location, size }: AgentPinAvatarProps) {
   const ref = useRef<View>(null);
-  const { notifyAvatarLayout, registerAvatar, transition } = useBotPinTransition();
+  const { notifyAvatarLayout, registerAvatar, transition } = useAgentPinTransition();
 
   useEffect(() => {
-    registerAvatar(botId, location, ref.current);
-    return () => registerAvatar(botId, location, null);
-  }, [botId, location, registerAvatar]);
+    registerAvatar(agentId, location, ref.current);
+    return () => registerAvatar(agentId, location, null);
+  }, [agentId, location, registerAvatar]);
 
-  const hidden = transition?.botId === botId && (transition.source === location || transition.target === location);
+  const hidden = transition?.agentId === agentId && (transition.source === location || transition.target === location);
 
   return (
     <View
       ref={ref}
       collapsable={false}
-      onLayout={() => notifyAvatarLayout(botId, location)}
+      onLayout={() => notifyAvatarLayout(agentId, location)}
       style={{ height: size, opacity: hidden ? 0 : 1, width: size }}
     >
       {children}

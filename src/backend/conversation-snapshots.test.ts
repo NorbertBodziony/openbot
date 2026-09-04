@@ -28,7 +28,7 @@ describe("provider conversation history", () => {
 
 function snapshot(messages: ConversationMessage[]): ConversationSnapshot {
   return {
-    botId: "chief",
+    agentId: "chief",
     threadId: "thread-1",
     activeTurnId: null,
     revision: 1,

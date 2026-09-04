@@ -1,26 +1,27 @@
 import { useAgentActions } from "./agent-actions";
 import { useAgents } from "./agents";
-import { FIRST_BOT_SUGGESTIONS, FirstBotSetup } from "./components/FirstAgentSetup";
+import { FIRST_AGENT_SUGGESTIONS, FirstAgentSetup } from "./components/FirstAgentSetup";
 
 /**
- * The create-a-Bot form, which takes over the conversation pane instead of
- * opening over it. `mode` is derived from the Bot list rather than passed in
+ * The create-an-agent form, which takes over the conversation pane instead of
+ * opening over it. `mode` is derived from the agent list rather than passed in
  * because the first agent and the fifth are the same command with different copy.
  */
-export function WorkspaceBotSetup() {
-  const { botList, botSetupDraft, setBotSetupDraft, botSetupError, creatingAgent, cancelBotSetup } = useAgents();
+export function WorkspaceAgentSetup() {
+  const { agentList, agentSetupDraft, setAgentSetupDraft, agentSetupError, creatingAgent, cancelAgentSetup } =
+    useAgents();
   const { createAgent } = useAgentActions();
 
   return (
-    <FirstBotSetup
-      value={botSetupDraft()}
-      suggestions={FIRST_BOT_SUGGESTIONS}
-      mode={botList().length === 0 ? "first" : "additional"}
+    <FirstAgentSetup
+      value={agentSetupDraft()}
+      suggestions={FIRST_AGENT_SUGGESTIONS}
+      mode={agentList().length === 0 ? "first" : "additional"}
       submitting={creatingAgent()}
-      error={botSetupError()}
-      onChange={setBotSetupDraft}
+      error={agentSetupError()}
+      onChange={setAgentSetupDraft}
       onSubmit={createAgent}
-      onCancel={botList().length > 0 ? cancelBotSetup : undefined}
+      onCancel={agentList().length > 0 ? cancelAgentSetup : undefined}
     />
   );
 }

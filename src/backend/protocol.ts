@@ -31,7 +31,7 @@ export interface DynamicToolCallParams {
   threadId: string;
   turnId: string;
   callId: string;
-  ownerBotId?: string | null;
+  ownerAgentId?: string | null;
   namespace: string | null;
   tool: string;
   arguments: unknown;

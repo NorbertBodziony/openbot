@@ -1,11 +1,11 @@
 import { BotEngine, COLOR_BY_ID, EXPRESSION_BY_ID, SHAPE_BY_ID } from "@norbert_bodziony/bloub";
 import { bloubAvatarProfile } from "@openbot/brand/bloub-avatar";
-import type { BotAvatarHue } from "@openbot/contracts/ipc";
+import type { AvatarHue } from "@openbot/contracts/ipc";
 import { useMemo } from "react";
 import Svg, { Defs, Mask, Path, Rect } from "react-native-svg";
 
 interface BloubAvatarProps {
-  hue: BotAvatarHue | null;
+  hue: AvatarHue | null;
   seed: string;
   size?: number;
 }
@@ -53,7 +53,7 @@ export function BloubAvatar({ hue, seed, size = 54 }: BloubAvatarProps) {
   );
 }
 
-export function getBloubAvatarColor(seed: string, hue: BotAvatarHue | null): string {
+export function getBloubAvatarColor(seed: string, hue: AvatarHue | null): string {
   const profile = bloubAvatarProfile(seed, hue);
   return COLOR_BY_ID.get(profile.color)?.hex ?? "#8b5cf6";
 }

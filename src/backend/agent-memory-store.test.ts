@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentMemoryStore } from "./agent-memory-store";
-import { BotStore } from "./agent-store";
+import { AgentStore } from "./agent-store";
 import { OpenBotDatabase } from "./openbot-database";
 
 const roots: string[] = [];
@@ -47,7 +47,7 @@ describe("AgentMemoryStore", () => {
 
     expect(
       memories.saveAutomatic({
-        botId: "chief",
+        agentId: "chief",
         memoryId: created.id,
         text: "Use npm for package scripts.",
         sourceTurnId: "turn-1",
@@ -62,7 +62,7 @@ describe("AgentMemoryStore", () => {
     const { database, memories } = await setup();
     const created = memories.createManual("chief", "The subscription costs $200.");
     const corrected = memories.saveAutomatic({
-      botId: "chief",
+      agentId: "chief",
       memoryId: created.id,
       text: "The subscription costs $300.",
       sourceTurnId: "turn-correction",
@@ -139,21 +139,21 @@ describe("AgentMemoryStore", () => {
   it("removes every memory and memory event when its agent is deleted", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-memory-delete-agent-"));
     roots.push(root);
-    const botStore = new BotStore(join(root, "data"), join(root, "home"));
-    await botStore.initialize();
-    const bot = await botStore.getOrCreate("chief");
-    const memories = new AgentMemoryStore(botStore.database);
-    const created = memories.createManual(bot.id, "Remove this with the agent.");
+    const agentStore = new AgentStore(join(root, "data"), join(root, "home"));
+    await agentStore.initialize();
+    const agent = await agentStore.getOrCreate("chief");
+    const memories = new AgentMemoryStore(agentStore.database);
+    const created = memories.createManual(agent.id, "Remove this with the agent.");
 
-    await botStore.deleteBot(bot.id);
+    await agentStore.deleteAgent(agent.id);
 
-    expect(memories.list(bot.id)).toEqual([]);
+    expect(memories.list(agent.id)).toEqual([]);
     expect(
-      botStore.database.connection
+      agentStore.database.connection
         .prepare("SELECT COUNT(*) AS count FROM orchestration_events WHERE aggregate_id = ?")
         .get(created.id),
     ).toMatchObject({ count: 0 });
-    botStore.database.close();
+    agentStore.database.close();
   });
 });
 

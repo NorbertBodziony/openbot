@@ -74,7 +74,7 @@ function headingLevel(depth: number): 1 | 2 | 3 | 4 | 5 | 6 {
 export function MarkdownMessageText(props: MarkdownMessageTextProps) {
   const tokens = createMemo(() => marked.lexer(props.body, { breaks: true, gfm: true }));
   const contentProps = (): MarkdownContentProps => ({
-    bots: props.bots,
+    agents: props.agents,
     skills: props.skills,
     attachments: props.attachments,
     citations: props.citations,
@@ -106,7 +106,7 @@ export function MarkdownInlineText(
 ) {
   const tokens = createMemo(() => marked.Lexer.lexInline(props.body, { breaks: true, gfm: true }));
   const contentProps = (): MarkdownContentProps => ({
-    bots: props.bots,
+    agents: props.agents,
     skills: props.skills,
     attachments: props.attachments,
     citations: props.citations,

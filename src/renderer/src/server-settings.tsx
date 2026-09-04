@@ -84,7 +84,7 @@ const ServerSettings = createSimpleContext({
           (members ?? presence.members).map((member) => ({
             ...member,
             online: presenceById.get(member.id)?.online ?? false,
-            typingBotId: presenceById.get(member.id)?.typingBotId ?? null,
+            typingAgentId: presenceById.get(member.id)?.typingAgentId ?? null,
           })),
         );
         setServerSettingsInvites(invites);

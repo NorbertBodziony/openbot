@@ -1,8 +1,8 @@
 import { AppLogo } from "@openbot/brand";
 import type {
   DynamicIslandAction,
+  DynamicIslandAgentIdentity,
   DynamicIslandApprovalItem,
-  DynamicIslandBotIdentity,
   DynamicIslandFailureItem,
   DynamicIslandPresentation,
   DynamicIslandPromptItem,
@@ -239,24 +239,24 @@ function compactStatusGeometry(
   const mode = statusMode(presentation.mode);
   if (!mode) return undefined;
 
-  const bot = compactStatusBot(presentation);
+  const agent = compactStatusAgent(presentation);
   const workingAvatarCount =
     presentation.mode === "working" ? Math.min(COMPACT_INDICES.length, presentation.working.length) : 0;
-  if (!bot && workingAvatarCount === 0) return undefined;
+  if (!agent && workingAvatarCount === 0) return undefined;
 
   const badge = OPENBOT_ISLAND_MODE_CONFIG[mode].badge;
   if (!badge) return undefined;
   const badgeWidth = Math.ceil(measureCompactText(badge.label, 600) + STATUS_COMPACT_BADGE_CHROME_WIDTH);
-  const measuredNameWidth = bot ? measureCompactText(bot.name, 600) : 0;
+  const measuredNameWidth = agent ? measureCompactText(agent.name, 600) : 0;
   const notchNameWidth = Math.min(STATUS_COMPACT_NAME_MAX_WIDTH.notch, Math.ceil(measuredNameWidth));
   const islandNameWidth = Math.min(STATUS_COMPACT_NAME_MAX_WIDTH.island, Math.ceil(measuredNameWidth));
   const workingAvatarStackWidth =
     STATUS_COMPACT_AVATAR_WIDTH +
     Math.max(0, workingAvatarCount - 1) * (STATUS_COMPACT_AVATAR_WIDTH - STATUS_COMPACT_AVATAR_OVERLAP);
-  const notchLeadingContentWidth = bot
+  const notchLeadingContentWidth = agent
     ? STATUS_COMPACT_AVATAR_WIDTH + STATUS_COMPACT_IDENTITY_GAP + notchNameWidth
     : workingAvatarStackWidth;
-  const islandLeadingContentWidth = bot
+  const islandLeadingContentWidth = agent
     ? STATUS_COMPACT_AVATAR_WIDTH + STATUS_COMPACT_IDENTITY_GAP + islandNameWidth
     : workingAvatarStackWidth;
   const notchLeadingWidth = STATUS_COMPACT_NOTCH_EDGE_PADDING + notchLeadingContentWidth;
@@ -587,7 +587,7 @@ function CompactLeading(props: {
   presentation: DynamicIslandPresentation;
   displayMode?: "notch" | "island";
 }): JSX.Element {
-  const statusBot = () => compactStatusBot(props.presentation);
+  const statusAgent = () => compactStatusAgent(props.presentation);
   const working = () => (props.presentation.mode === "working" ? props.presentation.working : []);
   return (
     <span class="dynamic-island-surface-content-swap dynamic-island-surface-compact-swap">
@@ -609,7 +609,7 @@ function CompactLeading(props: {
                   <Show when={working()[index]}>
                     {(item) => (
                       <span class="dynamic-island-surface-avatar-stack-item">
-                        <IslandAvatar bot={item().bot} working />
+                        <IslandAvatar agent={item().agent} working />
                       </span>
                     )}
                   </Show>
@@ -617,11 +617,13 @@ function CompactLeading(props: {
               </For>
             </span>
             <Show when={working().length === 1 ? working()[0] : undefined}>
-              {(item) => <CompactBotName name={item().bot.name} displayMode={props.displayMode} />}
+              {(item) => <CompactAgentName name={item().agent.name} displayMode={props.displayMode} />}
             </Show>
           </span>
         </Match>
-        <Match when={statusBot()}>{(bot) => <CompactBotIdentity bot={bot()} displayMode={props.displayMode} />}</Match>
+        <Match when={statusAgent()}>
+          {(agent) => <CompactAgentIdentity agent={agent()} displayMode={props.displayMode} />}
+        </Match>
       </Switch>
     </span>
   );
@@ -640,8 +642,8 @@ function CompactTrailing(props: { presentation: DynamicIslandPresentation }): JS
   );
 }
 
-function CompactBotIdentity(props: {
-  bot: DynamicIslandBotIdentity;
+function CompactAgentIdentity(props: {
+  agent: DynamicIslandAgentIdentity;
   displayMode?: "notch" | "island";
   working?: boolean;
 }): JSX.Element {
@@ -650,13 +652,13 @@ function CompactBotIdentity(props: {
       class="dynamic-island-surface-leading-anchor dynamic-island-surface-compact-identity"
       data-island-spatial-anchor="center"
     >
-      <IslandAvatar bot={props.bot} working={props.working} />
-      <CompactBotName name={props.bot.name} displayMode={props.displayMode} />
+      <IslandAvatar agent={props.agent} working={props.working} />
+      <CompactAgentName name={props.agent.name} displayMode={props.displayMode} />
     </span>
   );
 }
 
-function CompactBotName(props: { name: string; displayMode?: "notch" | "island" }): JSX.Element {
+function CompactAgentName(props: { name: string; displayMode?: "notch" | "island" }): JSX.Element {
   const nameMaxWidth = () =>
     props.displayMode === "island" ? STATUS_COMPACT_NAME_MAX_WIDTH.island : STATUS_COMPACT_NAME_MAX_WIDTH.notch;
   return (
@@ -752,16 +754,16 @@ function ExpandedContent(props: {
                       class="dynamic-island-surface-row dynamic-island-surface-animated-row"
                       onClick={() =>
                         props.onAction({
-                          type: "open-bot",
+                          type: "open-agent",
                           serverId: props.presentation.serverId,
-                          botId: item().bot.id,
+                          agentId: item().agent.id,
                         })
                       }
                     >
                       <span class="dynamic-island-surface-working-avatar-slot" aria-hidden="true" />
-                      <IslandContentSwap contentKey={`${item().bot.id}:${item().task}`}>
+                      <IslandContentSwap contentKey={`${item().agent.id}:${item().task}`}>
                         <span class="dynamic-island-surface-row-copy" data-island-motion-content>
-                          <strong>{item().bot.name}</strong>
+                          <strong>{item().agent.name}</strong>
                           <small>{item().task}</small>
                         </span>
                       </IslandContentSwap>
@@ -778,7 +780,7 @@ function ExpandedContent(props: {
           <article class="dynamic-island-message-first-panel">
             <IslandContentSwap contentKey={message().messageId} block>
               <DynamicIslandIdentity
-                name={message().bot.name}
+                name={message().agent.name}
                 status="replied"
                 description={message().text}
                 trailing={<time datetime={message().createdAt}>now</time>}
@@ -792,7 +794,7 @@ function ExpandedContent(props: {
                   props.onAction({
                     type: "open-message",
                     serverId: props.presentation.serverId,
-                    botId: message().bot.id,
+                    agentId: message().agent.id,
                     messageId: message().messageId,
                   })
                 }
@@ -843,7 +845,7 @@ function FailureContent(props: {
   return (
     <NotificationContent
       contentKey={`${props.item.turnId}:${props.item.detail ?? ""}`}
-      name={props.item.bot.name}
+      name={props.item.agent.name}
       status="failed"
       description={props.item.detail ?? "The task stopped before it could finish."}
       action={
@@ -853,7 +855,7 @@ function FailureContent(props: {
             props.onAction({
               type: "open-failure",
               serverId: props.serverId,
-              botId: props.item.bot.id,
+              agentId: props.item.agent.id,
               turnId: props.item.turnId,
             })
           }
@@ -873,7 +875,7 @@ function TakeoverContent(props: {
   return (
     <NotificationContent
       contentKey={`${props.item.requestId}:${props.item.detail ?? ""}`}
-      name={props.item.bot.name}
+      name={props.item.agent.name}
       status="needs you"
       description={props.item.detail ?? "Complete the browser step so the agent can continue."}
       action={
@@ -883,7 +885,7 @@ function TakeoverContent(props: {
             props.onAction({
               type: "review-attention",
               serverId: props.serverId,
-              botId: props.item.bot.id,
+              agentId: props.item.agent.id,
               requestId: props.item.requestId,
             })
           }
@@ -924,14 +926,14 @@ function ApprovalContent(props: {
     props.onAction({
       type: "review-attention",
       serverId: props.serverId,
-      botId: props.item.bot.id,
+      agentId: props.item.agent.id,
       requestId: props.item.requestId,
     });
   const respond = (decision: "accept" | "decline") =>
     props.onAction({
       type: "respond-approval",
       serverId: props.serverId,
-      botId: props.item.bot.id,
+      agentId: props.item.agent.id,
       requestId: props.item.requestId,
       decision,
     });
@@ -939,7 +941,7 @@ function ApprovalContent(props: {
   return (
     <div class="dynamic-island-surface-panel dynamic-island-surface-attention-panel">
       <DynamicIslandIdentity
-        name={props.item.bot.name}
+        name={props.item.agent.name}
         status="needs approval"
         description={props.item.approval.reason ?? props.item.detail ?? "Review the requested action before it runs."}
       />
@@ -1013,7 +1015,7 @@ function QuestionContent(props: {
     props.onAction({
       type: "review-attention",
       serverId: props.serverId,
-      botId: props.item.bot.id,
+      agentId: props.item.agent.id,
       requestId: props.item.requestId,
     });
 
@@ -1029,7 +1031,7 @@ function QuestionContent(props: {
     void props.onAction({
       type: "answer-prompt",
       serverId: props.serverId,
-      botId: props.item.bot.id,
+      agentId: props.item.agent.id,
       requestId: props.item.requestId,
       answers: nextAnswers,
     });
@@ -1089,7 +1091,7 @@ function QuestionContent(props: {
   return (
     <div class="dynamic-island-surface-panel dynamic-island-surface-question-panel">
       <DynamicIslandIdentity
-        name={props.item.bot.name}
+        name={props.item.agent.name}
         status="asks"
         description={questionText()}
         descriptionRef={(element) => {
@@ -1330,17 +1332,17 @@ function ApprovalContext(props: { item: DynamicIslandApprovalItem }): JSX.Elemen
   );
 }
 
-function IslandAvatar(props: { bot: DynamicIslandBotIdentity; working?: boolean }): JSX.Element {
+function IslandAvatar(props: { agent: DynamicIslandAgentIdentity; working?: boolean }): JSX.Element {
   return (
     <AgentAvatar
-      bot={props.bot}
+      agent={props.agent}
       // `"idle"` here meant a morph that never stops. bloub's `autoPause` cannot
       // help an overlay pinned over the notch - Chromium always calls it visible -
       // and every drawn frame rewrites 64 bezier segments per path, which costs a
       // style recalculation and a layout, not just a paint. Measured on one of the
       // two notch windows: 4.1% of a core and 115 layouts per five seconds with the
       // avatar, 0.5% and one layout without, all day, whatever application the user
-      // is actually in. `"hover"` holds the resting pose and brings the bot back the
+      // is actually in. `"hover"` holds the resting pose and brings the agent back the
       // moment a pointer reaches the island, so the motion is there when someone is
       // looking at it. Work still animates on its own.
       motion={props.working ? "working" : "hover"}
@@ -1376,12 +1378,12 @@ function IslandContentSwap(props: {
   );
 }
 
-function compactStatusBot(presentation: DynamicIslandPresentation): DynamicIslandBotIdentity | undefined {
+function compactStatusAgent(presentation: DynamicIslandPresentation): DynamicIslandAgentIdentity | undefined {
   if (presentation.mode === "idle") return undefined;
   if (presentation.mode === "working")
-    return presentation.working.length === 1 ? presentation.working[0]?.bot : undefined;
-  if (presentation.mode === "message") return presentation.message.bot;
-  return presentation.item.bot;
+    return presentation.working.length === 1 ? presentation.working[0]?.agent : undefined;
+  if (presentation.mode === "message") return presentation.message.agent;
+  return presentation.item.agent;
 }
 
 function statusMode(mode: DynamicIslandPresentation["mode"]): StatusMode | undefined {

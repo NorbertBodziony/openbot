@@ -7,26 +7,26 @@ import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspac
 import { SheetFormField } from "@/shared/components/sheet-form-field";
 import { SheetScrollView } from "@/shared/components/sheet-scroll-view";
 
-export function EditBotScreen() {
+export function EditAgentScreen() {
   const { agentId } = useLocalSearchParams<{ agentId: string }>();
-  const resolvedBotId = Array.isArray(agentId) ? agentId[0] : agentId;
-  const { bots, updateBot } = useMobileWorkspace();
-  const bot = bots.find((candidate) => candidate.id === resolvedBotId);
-  const [name, setName] = useState(bot?.name ?? "");
-  const [description, setDescription] = useState(bot?.description ?? "");
+  const resolvedAgentId = Array.isArray(agentId) ? agentId[0] : agentId;
+  const { agents, updateAgent } = useMobileWorkspace();
+  const agent = agents.find((candidate) => candidate.id === resolvedAgentId);
+  const [name, setName] = useState(agent?.name ?? "");
+  const [description, setDescription] = useState(agent?.description ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const valid = Boolean(bot && name.trim() && description.trim());
+  const valid = Boolean(agent && name.trim() && description.trim());
 
   async function submit(): Promise<void> {
-    if (!bot || !valid || saving) return;
+    if (!agent || !valid || saving) return;
     setSaving(true);
     setError(null);
     try {
-      await updateBot({ botId: bot.id, name: name.trim(), description: description.trim() });
+      await updateAgent({ agentId: agent.id, name: name.trim(), description: description.trim() });
       router.back();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "OpenBot could not update this bot.");
+      setError(cause instanceof Error ? cause.message : "OpenBot could not update this agent.");
       setSaving(false);
     }
   }
@@ -39,10 +39,10 @@ export function EditBotScreen() {
       keyboardDismissMode="interactive"
       keyboardShouldPersistTaps="handled"
     >
-      {bot ? (
+      {agent ? (
         <>
           <View className="gap-1">
-            <Typography.Heading type="h4">Edit {bot.name}</Typography.Heading>
+            <Typography.Heading type="h4">Edit {agent.name}</Typography.Heading>
             <Typography.Paragraph className="text-text-secondary">
               Changes are saved on the desktop server and sent live to connected devices.
             </Typography.Paragraph>
@@ -67,7 +67,7 @@ export function EditBotScreen() {
         </>
       ) : (
         <Typography.Paragraph align="center" className="text-text-secondary">
-          This bot is no longer available on the selected server.
+          This agent is no longer available on the selected server.
         </Typography.Paragraph>
       )}
     </SheetScrollView>

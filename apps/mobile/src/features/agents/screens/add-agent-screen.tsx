@@ -8,8 +8,8 @@ import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspac
 import { SheetFormField } from "@/shared/components/sheet-form-field";
 import { SheetScrollView } from "@/shared/components/sheet-scroll-view";
 
-export function AddBotScreen() {
-  const { createBot } = useMobileWorkspace();
+export function AddAgentScreen() {
+  const { createAgent } = useMobileWorkspace();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [initialMessage, setInitialMessage] = useState("");
@@ -22,7 +22,7 @@ export function AddBotScreen() {
     setSaving(true);
     setError(null);
     try {
-      await createBot({
+      await createAgent({
         name: name.trim(),
         description: description.trim(),
         initialMessage: initialMessage.trim(),
@@ -31,7 +31,7 @@ export function AddBotScreen() {
       });
       router.back();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "OpenBot could not create this bot.");
+      setError(cause instanceof Error ? cause.message : "OpenBot could not create this agent.");
       setSaving(false);
     }
   }

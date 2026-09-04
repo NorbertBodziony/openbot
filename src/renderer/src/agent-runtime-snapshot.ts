@@ -1,7 +1,7 @@
 import type { AgentApproval, AgentEvent, AgentRuntimeSnapshot } from "@openbot/contracts/ipc";
 import { cleanAgentMessageText } from "./agent-message-text";
 import { promptRequestKey } from "./conversation-keys";
-import type { BotMessage } from "./data";
+import type { AgentMessage } from "./data";
 
 type PromptEvent = Extract<AgentEvent, { type: "prompt" }>;
 type BrowserTakeoverEvent = Extract<AgentEvent, { type: "browser-takeover-requested" }>;
@@ -32,12 +32,12 @@ export function reconcileAttentionPrompts(
   for (const prompt of snapshot.pendingPrompts) {
     // A prompt whose answer is already on its way to main would otherwise come
     // back the moment a snapshot crosses the answer in flight.
-    if (promptRequestKey(prompt.turnId, prompt.requestId) !== submittedRequests[prompt.botId]) {
-      next[prompt.botId] = { type: "prompt", ...prompt };
+    if (promptRequestKey(prompt.turnId, prompt.requestId) !== submittedRequests[prompt.agentId]) {
+      next[prompt.agentId] = { type: "prompt", ...prompt };
     }
   }
   for (const request of snapshot.pendingBrowserTakeovers) {
-    next[request.botId] = { type: "browser-takeover-requested", request };
+    next[request.agentId] = { type: "browser-takeover-requested", request };
   }
   return next;
 }
@@ -66,13 +66,13 @@ export function seededAttentionPrompts(
 ): PendingAttentionPrompts {
   if (!seed) return {};
   const next: PendingAttentionPrompts = {};
-  for (const [botId, entry] of Object.entries(seed)) {
+  for (const [agentId, entry] of Object.entries(seed)) {
     if (!entry) continue;
     if (entry.type === "prompt") {
       const key = promptRequestKey(entry.turnId, entry.requestId);
-      if (key === presentedResolutions[botId] || key === submittedRequests[botId]) continue;
+      if (key === presentedResolutions[agentId] || key === submittedRequests[agentId]) continue;
     }
-    next[botId] = entry;
+    next[agentId] = entry;
   }
   return next;
 }
@@ -83,7 +83,7 @@ export function reconcileAttentionApprovals(
 ): Record<string, AgentApproval | undefined> {
   return {
     ...(snapshot.attentionComplete ? {} : current),
-    ...Object.fromEntries(snapshot.pendingApprovals.map((approval) => [approval.botId, approval])),
+    ...Object.fromEntries(snapshot.pendingApprovals.map((approval) => [approval.agentId, approval])),
   };
 }
 
@@ -93,18 +93,18 @@ export function reconcileAttentionApprovals(
  * snapshot's copy, which is capped at `AGENT_RUNTIME_TEXT_LIMIT`.
  */
 export function appendLatestRuntimeMessages(
-  current: Record<string, BotMessage[]>,
+  current: Record<string, AgentMessage[]>,
   latestMessages: AgentRuntimeSnapshot["latestMessages"],
-): Record<string, BotMessage[]> {
+): Record<string, AgentMessage[]> {
   const next = { ...current };
   for (const message of latestMessages) {
-    const messages = next[message.botId] ?? [];
+    const messages = next[message.agentId] ?? [];
     if (messages.some((candidate) => candidate.id === message.id)) continue;
-    next[message.botId] = [
+    next[message.agentId] = [
       ...messages,
       {
         id: message.id,
-        author: "bot",
+        author: "agent",
         body: cleanAgentMessageText(message.text),
         time: message.createdAt,
         createdAt: message.createdAt,

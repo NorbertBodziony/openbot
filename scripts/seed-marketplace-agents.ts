@@ -3,14 +3,14 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { BotAvatarHue, MarketplaceAgentRoutine, MarketplaceAgentSkill } from "@openbot/contracts/ipc";
+import type { AvatarHue, MarketplaceAgentRoutine, MarketplaceAgentSkill } from "@openbot/contracts/ipc";
 
 interface SeedAgent {
   slug: string;
   name: string;
   title: string;
   description: string;
-  avatarHue: BotAvatarHue;
+  avatarHue: AvatarHue;
   installs: number;
   featured: boolean;
   skills: MarketplaceAgentSkill[];

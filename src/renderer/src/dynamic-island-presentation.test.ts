@@ -5,14 +5,14 @@ import {
   isDynamicIslandPresentation,
 } from "@openbot/contracts/ipc";
 import { describe, expect, it } from "vitest";
-import type { BotProfile } from "./data";
+import type { AgentProfile } from "./data";
 import {
   createDynamicIslandPresentation,
   type DynamicIslandPresentationInput,
   selectDynamicIslandPresentation,
 } from "./dynamic-island-presentation";
 
-const bot: BotProfile = {
+const agent: AgentProfile = {
   id: "chief",
   name: "Chief",
   title: "Coordinator",
@@ -29,8 +29,8 @@ const bot: BotProfile = {
   preview: "Ready",
 };
 
-const research: BotProfile = {
-  ...bot,
+const research: AgentProfile = {
+  ...agent,
   id: "research",
   name: "Research",
   threadId: "thread-2",
@@ -41,7 +41,7 @@ const research: BotProfile = {
 function state(): DynamicIslandPresentationInput {
   return {
     serverId: "local",
-    bots: [bot],
+    agents: [agent],
     activeTurns: {},
     queues: {},
     unreadReplies: {},
@@ -55,11 +55,11 @@ function state(): DynamicIslandPresentationInput {
 describe("createDynamicIslandPresentation", () => {
   it("selects the complete production priority order", () => {
     const identity = {
-      id: bot.id,
-      name: bot.name,
-      avatarSeed: bot.avatarSeed,
-      avatarHue: bot.avatarHue,
-      avatarUrl: bot.avatarUrl,
+      id: agent.id,
+      name: agent.name,
+      avatarSeed: agent.avatarSeed,
+      avatarHue: agent.avatarHue,
+      avatarUrl: agent.avatarUrl,
     };
     const candidates: DynamicIslandPresentation[] = [
       { serverId: "idle", mode: "idle" },
@@ -67,18 +67,18 @@ describe("createDynamicIslandPresentation", () => {
         serverId: "message",
         mode: "message",
         unreadCount: 1,
-        message: { bot: identity, messageId: "message-1", text: "Ready", createdAt: "now" },
+        message: { agent: identity, messageId: "message-1", text: "Ready", createdAt: "now" },
       },
-      { serverId: "working", mode: "working", working: [{ bot: identity, task: "Running checks" }] },
+      { serverId: "working", mode: "working", working: [{ agent: identity, task: "Running checks" }] },
       {
         serverId: "failed",
         mode: "failed",
-        item: { turnId: "turn-failed", bot: identity, title: "Failed", detail: "The task failed." },
+        item: { turnId: "turn-failed", agent: identity, title: "Failed", detail: "The task failed." },
       },
       {
         serverId: "takeover",
         mode: "takeover",
-        item: { requestId: "takeover-1", bot: identity, title: "Take over", detail: "Complete the step." },
+        item: { requestId: "takeover-1", agent: identity, title: "Take over", detail: "Complete the step." },
       },
       {
         serverId: "approval",
@@ -86,7 +86,7 @@ describe("createDynamicIslandPresentation", () => {
         remainingCount: 0,
         item: {
           requestId: "approval-1",
-          bot: identity,
+          agent: identity,
           title: "Approve access",
           detail: "Review access.",
           truncated: false,
@@ -106,7 +106,7 @@ describe("createDynamicIslandPresentation", () => {
         remainingCount: 0,
         item: {
           requestId: "question-1",
-          bot: identity,
+          agent: identity,
           title: "Choose",
           detail: "Which option?",
           questions: [{ id: "choice", header: "Choose", question: "Which option?", isSecret: false, options: null }],
@@ -130,7 +130,7 @@ describe("createDynamicIslandPresentation", () => {
   it("keeps long live data inside the validated overlay contract", () => {
     const input = state();
     input.unreadReplies.chief = 1;
-    input.liveMessages.chief = [{ id: "long-message", author: "bot", body: "m".repeat(2_000), time: "" }];
+    input.liveMessages.chief = [{ id: "long-message", author: "agent", body: "m".repeat(2_000), time: "" }];
 
     const message = createDynamicIslandPresentation(input);
     expect(isDynamicIslandPresentation(message)).toBe(true);
@@ -139,7 +139,7 @@ describe("createDynamicIslandPresentation", () => {
     input.liveMessages = {};
     input.pendingApprovals.chief = {
       requestId: "long-approval",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-1",
       turnId: "turn-1",
       kind: "command",
@@ -156,7 +156,7 @@ describe("createDynamicIslandPresentation", () => {
     input.pendingPrompts.chief = {
       type: "prompt",
       requestId: "long-question",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-1",
       turnId: "turn-1",
       questions: [
@@ -172,7 +172,7 @@ describe("createDynamicIslandPresentation", () => {
     input.pendingPrompts.chief = {
       type: "prompt",
       requestId: "normalized-question",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-1",
       turnId: "turn-1",
       questions: Array.from({ length: INPUT_LIMITS.promptQuestions + 4 }, (_, index) => ({
@@ -203,13 +203,13 @@ describe("createDynamicIslandPresentation", () => {
     expect(firstQuestion?.options?.[0]).toEqual({ label: "Option 1", description: "Option 1" });
   });
 
-  it("excludes bots with notifications disabled from presentations and aggregate counts", () => {
+  it("excludes agents with notifications disabled from presentations and aggregate counts", () => {
     const input = state();
-    input.bots = [{ ...bot, notifications: false }, research];
+    input.agents = [{ ...agent, notifications: false }, research];
     input.pendingPrompts.chief = {
       type: "prompt",
       requestId: "hidden-question",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-1",
       turnId: "turn-1",
       questions: [{ id: "hidden", header: "Hidden", question: "Hidden?", isSecret: false, options: null }],
@@ -217,7 +217,7 @@ describe("createDynamicIslandPresentation", () => {
     input.pendingPrompts.research = {
       type: "prompt",
       requestId: "visible-question",
-      botId: "research",
+      agentId: "research",
       threadId: "thread-2",
       turnId: "turn-2",
       questions: [{ id: "visible", header: "Visible", question: "Visible?", isSecret: false, options: null }],
@@ -230,26 +230,26 @@ describe("createDynamicIslandPresentation", () => {
     input.activeTurns.chief = "hidden-turn";
     input.unreadReplies = { chief: 5, research: 1 };
     input.liveMessages = {
-      chief: [{ id: "hidden-message", author: "bot", body: "Hidden", time: "2026-08-29T10:00:00Z" }],
-      research: [{ id: "visible-message", author: "bot", body: "Visible", time: "2026-08-29T09:00:00Z" }],
+      chief: [{ id: "hidden-message", author: "agent", body: "Hidden", time: "2026-08-29T10:00:00Z" }],
+      research: [{ id: "visible-message", author: "agent", body: "Visible", time: "2026-08-29T09:00:00Z" }],
     };
 
     expect(createDynamicIslandPresentation(input)).toMatchObject({
       mode: "message",
       unreadCount: 1,
-      message: { messageId: "visible-message", bot: { id: "research" } },
+      message: { messageId: "visible-message", agent: { id: "research" } },
     });
   });
 
-  it("selects the newest unread reply across bots", () => {
+  it("selects the newest unread reply across agents", () => {
     const input = state();
-    input.bots = [bot, research];
+    input.agents = [agent, research];
     input.unreadReplies = { chief: 1, research: 1 };
     input.liveMessages = {
       chief: [
         {
           id: "older",
-          author: "bot",
+          author: "agent",
           body: "Older",
           time: "10:00 AM",
           createdAt: "2026-08-29T10:00:00Z",
@@ -258,7 +258,7 @@ describe("createDynamicIslandPresentation", () => {
       research: [
         {
           id: "newer",
-          author: "bot",
+          author: "agent",
           body: "Newer",
           time: "11:00 AM",
           createdAt: "2026-08-29T11:00:00Z",
@@ -269,14 +269,14 @@ describe("createDynamicIslandPresentation", () => {
     expect(createDynamicIslandPresentation(input)).toMatchObject({
       mode: "message",
       unreadCount: 2,
-      message: { messageId: "newer", bot: { id: "research" } },
+      message: { messageId: "newer", agent: { id: "research" } },
     });
   });
 
   it("selects the newest unread preview before conversations are loaded", () => {
     const input = state();
-    input.bots = [
-      { ...bot, preview: "Older preview", updatedAt: "2026-08-29T10:00:00Z" },
+    input.agents = [
+      { ...agent, preview: "Older preview", updatedAt: "2026-08-29T10:00:00Z" },
       { ...research, preview: "Newer preview", updatedAt: "2026-08-29T11:00:00Z" },
     ];
     input.unreadReplies = { chief: 1, research: 1 };
@@ -284,7 +284,7 @@ describe("createDynamicIslandPresentation", () => {
 
     expect(createDynamicIslandPresentation(input)).toMatchObject({
       mode: "message",
-      message: { messageId: "newer-preview", bot: { id: "research" } },
+      message: { messageId: "newer-preview", agent: { id: "research" } },
     });
   });
 
@@ -294,7 +294,7 @@ describe("createDynamicIslandPresentation", () => {
     input.pendingPrompts.chief = {
       type: "prompt",
       requestId: "prompt-1",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-1",
       turnId: "turn-1",
       questions: [{ id: "q1", header: "Choose a source", question: "Which source?", isSecret: false, options: null }],
@@ -322,7 +322,7 @@ describe("createDynamicIslandPresentation", () => {
     input.pendingPrompts.chief = {
       type: "prompt",
       requestId: "prompt-technical-values",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-1",
       turnId: "turn-1",
       questions: [
@@ -355,7 +355,7 @@ describe("createDynamicIslandPresentation", () => {
     const input = state();
     const approval: AgentApproval = {
       requestId: "approval-1",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-1",
       turnId: "turn-1",
       kind: "command",
@@ -382,12 +382,12 @@ describe("createDynamicIslandPresentation", () => {
 
   it("maps a browser takeover presentation", () => {
     const input = state();
-    input.bots = [research];
+    input.agents = [research];
     input.pendingPrompts.research = {
       type: "browser-takeover-requested",
       request: {
         requestId: "takeover-1",
-        botId: "research",
+        agentId: "research",
         threadId: "thread-2",
         turnId: "turn-2",
         tabId: "tab-login",
@@ -399,7 +399,7 @@ describe("createDynamicIslandPresentation", () => {
     if (takeover.mode !== "takeover") throw new Error("Expected a takeover presentation.");
     expect(takeover.item).toMatchObject({
       requestId: "takeover-1",
-      bot: { id: "research" },
+      agent: { id: "research" },
       title: "Browser step needs you",
       detail: "Complete the sign-in, verification, or consent in the browser.",
     });
@@ -409,12 +409,12 @@ describe("createDynamicIslandPresentation", () => {
     const input = state();
     input.failedTurns.chief = "turn-failed";
     input.queues.chief = {
-      botId: "chief",
+      agentId: "chief",
       deliveries: [
         {
           id: "delivery-failed",
           messageId: "message-failed",
-          recipientBotId: "chief",
+          recipientAgentId: "chief",
           sender: { kind: "user" },
           text: "Collect the sources",
           attachments: [],

@@ -59,7 +59,7 @@ function isBrowserTabValue(value: unknown): value is BrowserTab {
     isString(value.url) &&
     isBoolean(value.loading) &&
     (value.ownerThreadId === null || isString(value.ownerThreadId)) &&
-    (value.ownerBotId === null || isString(value.ownerBotId))
+    (value.ownerAgentId === null || isString(value.ownerAgentId))
   );
 }
 

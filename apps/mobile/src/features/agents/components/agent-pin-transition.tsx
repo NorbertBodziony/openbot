@@ -1,4 +1,4 @@
-import type { BotAvatarHue } from "@openbot/contracts/ipc";
+import type { AvatarHue } from "@openbot/contracts/ipc";
 import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import {
@@ -15,11 +15,11 @@ import { Alert, View } from "react-native";
 import { Easing, ReduceMotion, useSharedValue, withTiming } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 
-import { BotPinTransitionOverlay } from "@/features/agents/components/agent-pin-transition-overlay";
-import { MAX_PINNED_BOTS, useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
+import { AgentPinTransitionOverlay } from "@/features/agents/components/agent-pin-transition-overlay";
+import { MAX_PINNED_AGENTS, useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { isIOS } from "@/shared/lib/platform";
 
-export type BotAvatarLocation = "chat" | "pinned" | "row" | "search";
+export type AgentAvatarLocation = "chat" | "pinned" | "row" | "search";
 
 interface AvatarRect {
   height: number;
@@ -28,38 +28,38 @@ interface AvatarRect {
   y: number;
 }
 
-export interface BotPinTransitionState {
-  botId: string;
-  avatarHue: BotAvatarHue | null;
+export interface AgentPinTransitionState {
+  agentId: string;
+  avatarHue: AvatarHue | null;
   avatarSeed: string;
   from: AvatarRect;
-  source: BotAvatarLocation;
-  target: BotAvatarLocation;
+  source: AgentAvatarLocation;
+  target: AgentAvatarLocation;
   to?: AvatarRect;
 }
 
-interface BotPinTransitionContextValue {
-  leaveBotChatAnimated: (botId: string) => void;
-  registerAvatar: (botId: string, location: BotAvatarLocation, node: View | null) => void;
-  notifyAvatarLayout: (botId: string, location: BotAvatarLocation) => void;
-  startBotNavigationAnimated: (botId: string, source: BotAvatarLocation) => void;
-  toggleBotPinAnimated: (botId: string) => void;
-  transition: BotPinTransitionState | null;
+interface AgentPinTransitionContextValue {
+  leaveAgentChatAnimated: (agentId: string) => void;
+  registerAvatar: (agentId: string, location: AgentAvatarLocation, node: View | null) => void;
+  notifyAvatarLayout: (agentId: string, location: AgentAvatarLocation) => void;
+  startAgentNavigationAnimated: (agentId: string, source: AgentAvatarLocation) => void;
+  toggleAgentPinAnimated: (agentId: string) => void;
+  transition: AgentPinTransitionState | null;
 }
 
-const BotPinTransitionContext = createContext<BotPinTransitionContextValue | null>(null);
+const AgentPinTransitionContext = createContext<AgentPinTransitionContextValue | null>(null);
 const EASE_IN_OUT = Easing.bezier(0.77, 0, 0.175, 1);
 const TRANSITION_DURATION = 320;
 
-export function BotPinTransitionProvider({ children }: PropsWithChildren) {
-  const { bots, pinnedBotIds, toggleBotPin } = useMobileWorkspace();
+export function AgentPinTransitionProvider({ children }: PropsWithChildren) {
+  const { agents, pinnedAgentIds, toggleAgentPin } = useMobileWorkspace();
   const containerRef = useRef<View>(null);
-  const avatarRefs = useRef(new Map<string, Partial<Record<BotAvatarLocation, View>>>()).current;
-  const avatarRects = useRef(new Map<string, Partial<Record<BotAvatarLocation, AvatarRect>>>()).current;
-  const transitionRef = useRef<BotPinTransitionState | null>(null);
+  const avatarRefs = useRef(new Map<string, Partial<Record<AgentAvatarLocation, View>>>()).current;
+  const avatarRects = useRef(new Map<string, Partial<Record<AgentAvatarLocation, AvatarRect>>>()).current;
+  const transitionRef = useRef<AgentPinTransitionState | null>(null);
   const animationStartedRef = useRef(false);
   const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [transition, setTransition] = useState<BotPinTransitionState | null>(null);
+  const [transition, setTransition] = useState<AgentPinTransitionState | null>(null);
   const progress = useSharedValue(0);
 
   const finishTransition = useCallback(() => {
@@ -71,7 +71,7 @@ export function BotPinTransitionProvider({ children }: PropsWithChildren) {
   }, []);
 
   const startMovement = useCallback(
-    (nextTransition: BotPinTransitionState) => {
+    (nextTransition: AgentPinTransitionState) => {
       if (animationStartedRef.current) return;
       animationStartedRef.current = true;
       transitionRef.current = nextTransition;
@@ -96,20 +96,20 @@ export function BotPinTransitionProvider({ children }: PropsWithChildren) {
   );
 
   const measureAvatar = useCallback(
-    (botId: string, location: BotAvatarLocation) => {
-      const node = avatarRefs.get(botId)?.[location];
+    (agentId: string, location: AgentAvatarLocation) => {
+      const node = avatarRefs.get(agentId)?.[location];
       const container = containerRef.current;
       if (!node || !container) return;
 
       container.measureInWindow((containerX, containerY) => {
         node.measureInWindow((x, y, width, height) => {
           const rect = { x: x - containerX, y: y - containerY, width, height };
-          const rects = avatarRects.get(botId) ?? {};
+          const rects = avatarRects.get(agentId) ?? {};
           rects[location] = rect;
-          avatarRects.set(botId, rects);
+          avatarRects.set(agentId, rects);
 
           const latest = transitionRef.current;
-          if (!latest || latest.botId !== botId || latest.target !== location || latest.to) return;
+          if (!latest || latest.agentId !== agentId || latest.target !== location || latest.to) return;
 
           const nextTransition = {
             ...latest,
@@ -123,37 +123,37 @@ export function BotPinTransitionProvider({ children }: PropsWithChildren) {
   );
 
   const registerAvatar = useCallback(
-    (botId: string, location: BotAvatarLocation, node: View | null) => {
-      const refs = avatarRefs.get(botId) ?? {};
+    (agentId: string, location: AgentAvatarLocation, node: View | null) => {
+      const refs = avatarRefs.get(agentId) ?? {};
       if (node) {
         refs[location] = node;
-        avatarRefs.set(botId, refs);
-        requestAnimationFrame(() => measureAvatar(botId, location));
+        avatarRefs.set(agentId, refs);
+        requestAnimationFrame(() => measureAvatar(agentId, location));
       } else {
         delete refs[location];
-        if (Object.keys(refs).length === 0) avatarRefs.delete(botId);
+        if (Object.keys(refs).length === 0) avatarRefs.delete(agentId);
       }
     },
     [avatarRefs, measureAvatar],
   );
 
   const notifyAvatarLayout = useCallback(
-    (botId: string, location: BotAvatarLocation) => {
-      requestAnimationFrame(() => measureAvatar(botId, location));
+    (agentId: string, location: AgentAvatarLocation) => {
+      requestAnimationFrame(() => measureAvatar(agentId, location));
     },
     [measureAvatar],
   );
 
-  const startBotNavigationAnimated = useCallback(
-    (botId: string, source: BotAvatarLocation) => {
-      const bot = bots.find((item) => item.id === botId);
-      const from = avatarRects.get(botId)?.[source];
-      if (!bot || !from || transitionRef.current) return;
+  const startAgentNavigationAnimated = useCallback(
+    (agentId: string, source: AgentAvatarLocation) => {
+      const agent = agents.find((item) => item.id === agentId);
+      const from = avatarRects.get(agentId)?.[source];
+      if (!agent || !from || transitionRef.current) return;
 
-      const nextTransition: BotPinTransitionState = {
-        botId,
-        avatarHue: bot.avatarHue,
-        avatarSeed: bot.avatarSeed,
+      const nextTransition: AgentPinTransitionState = {
+        agentId,
+        avatarHue: agent.avatarHue,
+        avatarSeed: agent.avatarSeed,
         from,
         source,
         target: "chat",
@@ -163,29 +163,29 @@ export function BotPinTransitionProvider({ children }: PropsWithChildren) {
       progress.set(0);
       fallbackTimerRef.current = setTimeout(finishTransition, 1200);
     },
-    [avatarRects, bots, finishTransition, progress],
+    [avatarRects, agents, finishTransition, progress],
   );
 
-  const leaveBotChatAnimated = useCallback(
-    (botId: string) => {
+  const leaveAgentChatAnimated = useCallback(
+    (agentId: string) => {
       const navigateBack = () => {
         if (router.canGoBack()) router.back();
         else router.replace("/connected");
       };
-      const bot = bots.find((item) => item.id === botId);
-      const from = avatarRects.get(botId)?.chat;
+      const agent = agents.find((item) => item.id === agentId);
+      const from = avatarRects.get(agentId)?.chat;
 
-      if (!bot || !from || transitionRef.current) {
+      if (!agent || !from || transitionRef.current) {
         navigateBack();
         return;
       }
 
-      const target: BotAvatarLocation = pinnedBotIds.includes(botId) ? "pinned" : "row";
-      const to = avatarRects.get(botId)?.[target];
-      const nextTransition: BotPinTransitionState = {
-        botId,
-        avatarHue: bot.avatarHue,
-        avatarSeed: bot.avatarSeed,
+      const target: AgentAvatarLocation = pinnedAgentIds.includes(agentId) ? "pinned" : "row";
+      const to = avatarRects.get(agentId)?.[target];
+      const nextTransition: AgentPinTransitionState = {
+        agentId,
+        avatarHue: agent.avatarHue,
+        avatarSeed: agent.avatarSeed,
         from,
         source: "chat",
         target,
@@ -202,31 +202,31 @@ export function BotPinTransitionProvider({ children }: PropsWithChildren) {
         if (to) startMovement(nextTransition);
       });
     },
-    [avatarRects, bots, finishTransition, pinnedBotIds, progress, startMovement],
+    [avatarRects, agents, finishTransition, pinnedAgentIds, progress, startMovement],
   );
 
-  const toggleBotPinAnimated = useCallback(
-    (botId: string) => {
-      const bot = bots.find((item) => item.id === botId);
-      if (!bot || transitionRef.current) return;
+  const toggleAgentPinAnimated = useCallback(
+    (agentId: string) => {
+      const agent = agents.find((item) => item.id === agentId);
+      if (!agent || transitionRef.current) return;
 
-      const isPinned = pinnedBotIds.includes(botId);
-      const pinnedOnServer = pinnedBotIds.filter((id) =>
-        bots.some((item) => item.id === id && item.serverId === bot.serverId),
+      const isPinned = pinnedAgentIds.includes(agentId);
+      const pinnedOnServer = pinnedAgentIds.filter((id) =>
+        agents.some((item) => item.id === id && item.serverId === agent.serverId),
       );
-      if (!isPinned && pinnedOnServer.length >= MAX_PINNED_BOTS) {
+      if (!isPinned && pinnedOnServer.length >= MAX_PINNED_AGENTS) {
         if (isIOS) void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-        Alert.alert("Pin limit reached", `You can pin up to ${MAX_PINNED_BOTS} agents on a server.`);
+        Alert.alert("Pin limit reached", `You can pin up to ${MAX_PINNED_AGENTS} agents on a server.`);
         return;
       }
 
-      const source: BotAvatarLocation = isPinned ? "pinned" : "row";
-      const target: BotAvatarLocation = isPinned ? "row" : "pinned";
-      const sourceNode = avatarRefs.get(botId)?.[source];
+      const source: AgentAvatarLocation = isPinned ? "pinned" : "row";
+      const target: AgentAvatarLocation = isPinned ? "row" : "pinned";
+      const sourceNode = avatarRefs.get(agentId)?.[source];
       const container = containerRef.current;
 
       const commitWithoutMovement = () => {
-        toggleBotPin(botId);
+        toggleAgentPin(agentId);
         if (isIOS) void Haptics.selectionAsync();
       };
 
@@ -237,10 +237,10 @@ export function BotPinTransitionProvider({ children }: PropsWithChildren) {
 
       container.measureInWindow((containerX, containerY) => {
         sourceNode.measureInWindow((x, y, width, height) => {
-          const nextTransition: BotPinTransitionState = {
-            botId,
-            avatarHue: bot.avatarHue,
-            avatarSeed: bot.avatarSeed,
+          const nextTransition: AgentPinTransitionState = {
+            agentId,
+            avatarHue: agent.avatarHue,
+            avatarSeed: agent.avatarSeed,
             from: { x: x - containerX, y: y - containerY, width, height },
             source,
             target,
@@ -250,10 +250,10 @@ export function BotPinTransitionProvider({ children }: PropsWithChildren) {
           progress.set(0);
 
           requestAnimationFrame(() => {
-            const result = toggleBotPin(botId);
+            const result = toggleAgentPin(agentId);
             if (result === "limit") {
               finishTransition();
-              Alert.alert("Pin limit reached", `You can pin up to ${MAX_PINNED_BOTS} agents on a server.`);
+              Alert.alert("Pin limit reached", `You can pin up to ${MAX_PINNED_AGENTS} agents on a server.`);
               return;
             }
             if (isIOS) void Haptics.selectionAsync();
@@ -262,7 +262,7 @@ export function BotPinTransitionProvider({ children }: PropsWithChildren) {
         });
       });
     },
-    [avatarRefs, bots, finishTransition, pinnedBotIds, progress, toggleBotPin],
+    [avatarRefs, agents, finishTransition, pinnedAgentIds, progress, toggleAgentPin],
   );
 
   useEffect(
@@ -272,57 +272,57 @@ export function BotPinTransitionProvider({ children }: PropsWithChildren) {
     [],
   );
 
-  const contextValue = useMemo<BotPinTransitionContextValue>(
+  const contextValue = useMemo<AgentPinTransitionContextValue>(
     () => ({
-      leaveBotChatAnimated,
+      leaveAgentChatAnimated,
       registerAvatar,
       notifyAvatarLayout,
-      startBotNavigationAnimated,
-      toggleBotPinAnimated,
+      startAgentNavigationAnimated,
+      toggleAgentPinAnimated,
       transition,
     }),
     [
-      leaveBotChatAnimated,
+      leaveAgentChatAnimated,
       notifyAvatarLayout,
       registerAvatar,
-      startBotNavigationAnimated,
-      toggleBotPinAnimated,
+      startAgentNavigationAnimated,
+      toggleAgentPinAnimated,
       transition,
     ],
   );
 
   return (
-    <BotPinTransitionContext.Provider value={contextValue}>
+    <AgentPinTransitionContext.Provider value={contextValue}>
       <View ref={containerRef} collapsable={false} style={{ flex: 1 }}>
         {children}
-        <BotPinTransitionOverlay progress={progress} transition={transition} />
+        <AgentPinTransitionOverlay progress={progress} transition={transition} />
       </View>
-    </BotPinTransitionContext.Provider>
+    </AgentPinTransitionContext.Provider>
   );
 }
 
-export function useBotPinTransition(): BotPinTransitionContextValue {
-  const context = useContext(BotPinTransitionContext);
-  const { toggleBotPin } = useMobileWorkspace();
+export function useAgentPinTransition(): AgentPinTransitionContextValue {
+  const context = useContext(AgentPinTransitionContext);
+  const { toggleAgentPin } = useMobileWorkspace();
 
   return useMemo(
     () =>
       context ?? {
-        leaveBotChatAnimated: () => {
+        leaveAgentChatAnimated: () => {
           if (router.canGoBack()) router.back();
           else router.replace("/connected");
         },
         notifyAvatarLayout: () => undefined,
         registerAvatar: () => undefined,
-        startBotNavigationAnimated: () => undefined,
-        toggleBotPinAnimated: (botId: string) => {
-          const result = toggleBotPin(botId);
+        startAgentNavigationAnimated: () => undefined,
+        toggleAgentPinAnimated: (agentId: string) => {
+          const result = toggleAgentPin(agentId);
           if (result === "limit") {
-            Alert.alert("Pin limit reached", `You can pin up to ${MAX_PINNED_BOTS} agents on a server.`);
+            Alert.alert("Pin limit reached", `You can pin up to ${MAX_PINNED_AGENTS} agents on a server.`);
           }
         },
         transition: null,
       },
-    [context, toggleBotPin],
+    [context, toggleAgentPin],
   );
 }

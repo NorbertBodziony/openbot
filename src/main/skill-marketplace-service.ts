@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import type {
-  BotSummary,
+  AgentSummary,
   InstalledSkill,
   InstallSkillInput,
   MarketplaceAgentSkill,
@@ -50,8 +50,8 @@ export class SkillMarketplaceService {
 
   constructor(
     private readonly auth: CentralAuthManager,
-    private readonly listBots: () => BotSummary[],
-    private readonly refreshBotRuntime: (botId: string) => Promise<void> = async () => undefined,
+    private readonly listAgents: () => AgentSummary[],
+    private readonly refreshAgentRuntime: (agentId: string) => Promise<void> = async () => undefined,
   ) {}
 
   async list(query: MarketplaceSkillQuery = {}): Promise<MarketplaceSkillPage> {
@@ -116,9 +116,9 @@ export class SkillMarketplaceService {
     return { ...submission, iconUrl: this.absoluteUrl(submission.iconUrl) };
   }
 
-  async listInstalled(botId: string): Promise<InstalledSkill[]> {
-    const bot = this.requireBot(botId);
-    const lock = await readLock(bot.workspacePath);
+  async listInstalled(agentId: string): Promise<InstalledSkill[]> {
+    const agent = this.requireAgent(agentId);
+    const lock = await readLock(agent.workspacePath);
     const installed: InstalledSkill[] = [];
     for (const entry of Object.values(lock.skills)) {
       let availableVersion = entry.version;
@@ -127,7 +127,7 @@ export class SkillMarketplaceService {
       } catch {
         /* Keep local state usable offline. */
       }
-      const state = await installedState(bot.workspacePath, entry);
+      const state = await installedState(agent.workspacePath, entry);
       installed.push({
         skillId: entry.skillId,
         slug: entry.slug,
@@ -140,9 +140,9 @@ export class SkillMarketplaceService {
     return installed.sort((a, b) => a.name.localeCompare(b.name));
   }
 
-  async listInstalledForChatTags(botId: string): Promise<InstalledSkill[]> {
-    const bot = this.requireBot(botId);
-    const lock = await readLock(bot.workspacePath);
+  async listInstalledForChatTags(agentId: string): Promise<InstalledSkill[]> {
+    const agent = this.requireAgent(agentId);
+    const lock = await readLock(agent.workspacePath);
     const installed: InstalledSkill[] = [];
     for (const entry of Object.values(lock.skills)) {
       installed.push({
@@ -151,26 +151,26 @@ export class SkillMarketplaceService {
         name: entry.name,
         installedVersion: entry.version,
         availableVersion: entry.version,
-        state: await installedState(bot.workspacePath, entry),
+        state: await installedState(agent.workspacePath, entry),
       });
     }
     return installed.sort((a, b) => a.name.localeCompare(b.name));
   }
 
   async install(input: InstallSkillInput): Promise<InstalledSkill> {
-    const bot = this.requireBot(input.botId);
+    const agent = this.requireAgent(input.agentId);
     const detail = await this.get(input.skillId);
     const bundle = await this.auth.downloadAuthorized(`/v1/skills/${encodeURIComponent(input.skillId)}/content`);
-    return this.installResolved(bot, detail, bundle, input.replaceModified);
+    return this.installResolved(agent, detail, bundle, input.replaceModified);
   }
 
   async installVersion(input: {
-    botId: string;
+    agentId: string;
     skillId: string;
     versionId: string;
     replaceModified?: boolean;
   }): Promise<InstalledSkill> {
-    const bot = this.requireBot(input.botId);
+    const agent = this.requireAgent(input.agentId);
     const detail = await this.auth.requestAuthorized(
       `/v1/skills/${encodeURIComponent(input.skillId)}/versions/${encodeURIComponent(input.versionId)}`,
       { method: "GET" },
@@ -179,15 +179,15 @@ export class SkillMarketplaceService {
     const bundle = await this.auth.downloadAuthorized(
       `/v1/skills/${encodeURIComponent(input.skillId)}/versions/${encodeURIComponent(input.versionId)}/content`,
     );
-    return this.installResolved(bot, detail, bundle, input.replaceModified);
+    return this.installResolved(agent, detail, bundle, input.replaceModified);
   }
 
-  async listPublishable(botId: string): Promise<MarketplaceAgentSkill[]> {
-    const bot = this.requireBot(botId);
-    const lock = await readLock(bot.workspacePath);
+  async listPublishable(agentId: string): Promise<MarketplaceAgentSkill[]> {
+    const agent = this.requireAgent(agentId);
+    const lock = await readLock(agent.workspacePath);
     const result: MarketplaceAgentSkill[] = [];
     for (const entry of Object.values(lock.skills)) {
-      const state = await installedState(bot.workspacePath, entry);
+      const state = await installedState(agent.workspacePath, entry);
       if (state !== "installed") throw new Error(`${entry.name} has local changes or needs repair before publishing.`);
       let versionId = entry.versionId;
       if (!versionId) {
@@ -210,7 +210,7 @@ export class SkillMarketplaceService {
   }
 
   private async installResolved(
-    bot: BotSummary,
+    agent: AgentSummary,
     detail: MarketplaceSkillDetail,
     bundle: Uint8Array,
     replaceModified = false,
@@ -220,21 +220,21 @@ export class SkillMarketplaceService {
     const archive = inspectArchive(bundle);
     if (archive.slug !== detail.slug) throw new Error("The downloaded skill metadata does not match the catalog.");
     const files = normalizedFiles(bundle);
-    const lock = await readLock(bot.workspacePath);
+    const lock = await readLock(agent.workspacePath);
     const existing = lock.skills[detail.id];
     if (existing) {
-      const state = await installedState(bot.workspacePath, existing);
+      const state = await installedState(agent.workspacePath, existing);
       if (state === "modified" && !replaceModified)
         throw new Error("This skill has local changes. Confirm replacement to continue.");
     }
-    for (const target of targetDirectories(bot.workspacePath, detail.slug)) {
+    for (const target of targetDirectories(agent.workspacePath, detail.slug)) {
       const owner = Object.values(lock.skills).find(
         (entry) => target.endsWith(`/${entry.slug}`) || target.endsWith(`\\${entry.slug}`),
       );
       if (!owner && (await pathExists(target))) throw new Error(`An unmanaged skill already exists at ${target}.`);
     }
     const receiptId = existing?.receiptId ?? randomUUID();
-    await replaceTargets(bot.workspacePath, detail.slug, files);
+    await replaceTargets(agent.workspacePath, detail.slug, files);
     const entry: LockEntry = {
       skillId: detail.id,
       versionId: detail.versionId,
@@ -246,13 +246,13 @@ export class SkillMarketplaceService {
       files: Object.fromEntries(Object.entries(files).map(([name, bytes]) => [name, sha256(bytes)])),
     };
     lock.skills[detail.id] = entry;
-    await writeLock(bot.workspacePath, lock);
+    await writeLock(agent.workspacePath, lock);
     await this.auth.requestAuthorized(
       `/v1/skills/${encodeURIComponent(detail.id)}/install`,
       { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ receiptId }) },
       decodeInstalledReceipt,
     );
-    await this.refreshBotRuntime(bot.id);
+    await this.refreshAgentRuntime(agent.id);
     return {
       skillId: detail.id,
       slug: detail.slug,
@@ -264,24 +264,24 @@ export class SkillMarketplaceService {
   }
 
   async uninstall(input: UninstallSkillInput): Promise<void> {
-    const bot = this.requireBot(input.botId);
-    const lock = await readLock(bot.workspacePath);
+    const agent = this.requireAgent(input.agentId);
+    const lock = await readLock(agent.workspacePath);
     const entry = lock.skills[input.skillId];
     if (!entry) return;
-    if ((await installedState(bot.workspacePath, entry)) === "modified" && !input.removeModified) {
+    if ((await installedState(agent.workspacePath, entry)) === "modified" && !input.removeModified) {
       throw new Error("This skill has local changes. Confirm removal to delete them.");
     }
-    for (const target of targetDirectories(bot.workspacePath, entry.slug))
+    for (const target of targetDirectories(agent.workspacePath, entry.slug))
       await rm(target, { recursive: true, force: true });
     delete lock.skills[input.skillId];
-    await writeLock(bot.workspacePath, lock);
-    await this.refreshBotRuntime(input.botId);
+    await writeLock(agent.workspacePath, lock);
+    await this.refreshAgentRuntime(input.agentId);
   }
 
-  private requireBot(botId: string): BotSummary {
-    const bot = this.listBots().find((candidate) => candidate.id === botId);
-    if (!bot) throw new Error("Choose a local agent first.");
-    return bot;
+  private requireAgent(agentId: string): AgentSummary {
+    const agent = this.listAgents().find((candidate) => candidate.id === agentId);
+    if (!agent) throw new Error("Choose a local agent first.");
+    return agent;
   }
 
   private absoluteUrl(value: string | null): string | null {

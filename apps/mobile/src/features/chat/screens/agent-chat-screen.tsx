@@ -7,22 +7,22 @@ import { Pressable, View } from "react-native";
 import { MobileChatView } from "@/features/chat/components/chat-view";
 import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 
-export function BotChatScreen() {
+export function AgentChatScreen() {
   usePreventZoomTransitionDismissal();
 
   const { avatarTransition, agentId } = useLocalSearchParams<{ avatarTransition?: string; agentId: string }>();
-  const { bots } = useMobileWorkspace();
+  const { agents } = useMobileWorkspace();
   const foreground = useThemeColor("foreground");
-  const resolvedBotId = Array.isArray(agentId) ? agentId[0] : agentId;
+  const resolvedAgentId = Array.isArray(agentId) ? agentId[0] : agentId;
   const resolvedAvatarTransition = Array.isArray(avatarTransition) ? avatarTransition[0] : avatarTransition;
   const animateAvatarOnExit = resolvedAvatarTransition === "search";
-  const bot = bots.find((candidate) => candidate.id === resolvedBotId);
+  const agent = agents.find((candidate) => candidate.id === resolvedAgentId);
 
-  if (bot) {
+  if (agent) {
     return (
       <>
         <Stack.Screen options={{ animation: animateAvatarOnExit ? "fade" : "slide_from_right" }} />
-        <MobileChatView animateAvatarOnExit={animateAvatarOnExit} bot={bot} />
+        <MobileChatView animateAvatarOnExit={animateAvatarOnExit} agent={agent} />
       </>
     );
   }

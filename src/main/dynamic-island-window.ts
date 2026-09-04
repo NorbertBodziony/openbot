@@ -345,7 +345,7 @@ function notchSizeChanged(
 function criticalActionKey(
   action: Extract<DynamicIslandAction, { type: "answer-prompt" | "respond-approval" }>,
 ): string {
-  return [action.type, action.serverId, action.botId, String(action.requestId)].join("\u0000");
+  return [action.type, action.serverId, action.agentId, String(action.requestId)].join("\u0000");
 }
 
 export function dynamicIslandWindowBounds(display: Pick<Display, "bounds">): Rectangle {

@@ -313,7 +313,7 @@ function legacyDatabase(path: string): DatabaseSync {
 
 function snapshot(messages: ConversationSnapshot["messages"]): ConversationSnapshot {
   return {
-    botId: "chief",
+    agentId: "chief",
     threadId: "thread-chief",
     activeTurnId: null,
     revision: messages.length,

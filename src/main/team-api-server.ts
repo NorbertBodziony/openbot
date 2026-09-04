@@ -11,7 +11,7 @@ import {
   type ConversationPageAnchor,
   type ConversationSnapshot,
   type ConversationWithReadState,
-  type CreateBotInput,
+  type CreateAgentInput,
   type CreateTeamInviteInput,
   type DirectConversationPage,
   type DirectConversationPageAnchor,
@@ -20,7 +20,7 @@ import {
   type DirectMessageRealtimeEvent,
   type DirectThreadSummary,
   type DirectTypingRealtimeEvent,
-  type DuplicateBotResult,
+  type DuplicateAgentResult,
   HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX,
   type InstalledSkill,
   type InviteSummary,
@@ -39,7 +39,7 @@ import {
   type TeamMemberSummary,
   type TeamPresenceSnapshot,
   type TeamRealtimeEvent,
-  type UpdateBotInput,
+  type UpdateAgentInput,
   type UpdateQueuedMessageInput,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
@@ -52,7 +52,6 @@ import {
   type TeamCurrentCapability,
 } from "@openbot/contracts/team-protocol/current";
 import {
-  decodeTeamProtocolV1ClientEvent,
   TEAM_APP_VERSION_HEADER,
   TEAM_CAPABILITIES_HEADER,
   TEAM_PROTOCOL_V1,
@@ -62,6 +61,7 @@ import {
   type TeamProtocolSupportV1,
 } from "@openbot/contracts/team-protocol/v1";
 import {
+  decodeTeamProtocolV1CurrentClientEvent,
   decodeTeamProtocolV1CurrentHttpRequest,
   encodeTeamProtocolV1CurrentEvent,
   encodeTeamProtocolV1CurrentHttpResponse,
@@ -108,14 +108,14 @@ type TeamApiAgentMethods = Pick<
   | "getRuntimeSnapshot"
   | "getUsage"
   | "listModels"
-  | "listBots"
+  | "listAgents"
   | "listConversationReads"
-  | "createBot"
-  | "committedBotDuplication"
-  | "duplicateBot"
-  | "commitBotDuplication"
-  | "updateBot"
-  | "deleteBot"
+  | "createAgent"
+  | "committedAgentDuplication"
+  | "duplicateAgent"
+  | "commitAgentDuplication"
+  | "updateAgent"
+  | "deleteAgent"
   | "listMemories"
   | "createMemory"
   | "updateMemory"
@@ -196,7 +196,7 @@ interface TeamApiOptions {
   appVersion?: string;
   store: TeamStore;
   agents: TeamApiAgents;
-  skills?: { listInstalledForChatTags: (botId: string) => Promise<InstalledSkill[]> };
+  skills?: { listInstalledForChatTags: (agentId: string) => Promise<InstalledSkill[]> };
   sidebarLayout?: TeamApiSidebarLayout;
   mailbox: TeamApiMailbox;
   browser: TeamApiBrowser;
@@ -218,7 +218,7 @@ interface EventClientState {
   memberId: string;
   capabilities: Set<string>;
   includeConversationEvents: boolean;
-  typingBotId: string | null;
+  typingAgentId: string | null;
   typingTimer: ReturnType<typeof setTimeout> | null;
   directTypingRecipientId: string | null;
   directTypingTimer: ReturnType<typeof setTimeout> | null;
@@ -250,7 +250,7 @@ export class TeamApiServer {
     ServerResponse,
     { method: string; path: string; protocol: number; capabilities: Set<string> }
   >();
-  readonly #duplicateRequests = new Map<string, { sourceBotId: string; result: Promise<DuplicateBotResult> }>();
+  readonly #duplicateRequests = new Map<string, { sourceAgentId: string; result: Promise<DuplicateAgentResult> }>();
   readonly #webSockets = new webSockets.WebSocketServer({
     noServer: true,
     maxPayload: EVENT_PAYLOAD_LIMIT,
@@ -270,7 +270,7 @@ export class TeamApiServer {
   #heartbeat: ReturnType<typeof setInterval> | null = null;
   #agentListener: ((event: AgentEvent) => void) | null = null;
   #sidebarLayoutListener: ((layout: SidebarLayoutSnapshot) => void) | null = null;
-  #localTypingBotId: string | null = null;
+  #localTypingAgentId: string | null = null;
   #nextRateLimitSweepAt = 0;
 
   constructor(options: TeamApiOptions) {
@@ -371,7 +371,7 @@ export class TeamApiServer {
       client.close(1001, "Server stopped");
     }
     this.#eventClients.clear();
-    this.#localTypingBotId = null;
+    this.#localTypingAgentId = null;
     try {
       await this.#options.remoteScreen?.stop();
     } finally {
@@ -400,9 +400,9 @@ export class TeamApiServer {
         return {
           ...member,
           online: memberConnections.length > 0 || (member.id === owner?.id && this.#server !== null),
-          typingBotId:
-            (member.id === owner?.id ? this.#localTypingBotId : null) ??
-            memberConnections.find((connection) => connection.typingBotId)?.typingBotId ??
+          typingAgentId:
+            (member.id === owner?.id ? this.#localTypingAgentId : null) ??
+            memberConnections.find((connection) => connection.typingAgentId)?.typingAgentId ??
             null,
         };
       }),
@@ -410,10 +410,10 @@ export class TeamApiServer {
     };
   }
 
-  setLocalTyping(botId: string | null, typing: boolean): void {
-    const next = typing && this.#server ? botId : null;
-    if (next === this.#localTypingBotId) return;
-    this.#localTypingBotId = next;
+  setLocalTyping(agentId: string | null, typing: boolean): void {
+    const next = typing && this.#server ? agentId : null;
+    if (next === this.#localTypingAgentId) return;
+    this.#localTypingAgentId = next;
     this.#publishPresence();
   }
 
@@ -686,7 +686,7 @@ export class TeamApiServer {
           200,
           this.#options.agents.searchConversationMessages(
             query,
-            url.searchParams.get("botId") ?? undefined,
+            url.searchParams.get("agentId") ?? undefined,
             url.searchParams.get("cursor") ?? undefined,
             pageLimit(url),
           ),
@@ -752,7 +752,7 @@ export class TeamApiServer {
           await this.#options.browser.open(
             stringField(body, "url", false, INPUT_LIMITS.browserUrl),
             nullableString(body, "ownerThreadId"),
-            nullableString(body, "ownerBotId"),
+            nullableString(body, "ownerAgentId"),
             focus,
           ),
         );
@@ -847,15 +847,15 @@ export class TeamApiServer {
         return;
       }
       if (method === "GET" && url.pathname === TEAM_API_ROUTES.workspaceFiles) {
-        const botId = url.searchParams.get("botId");
+        const agentId = url.searchParams.get("agentId");
         const workspacePath = url.searchParams.get("path");
-        if (!botId || botId.length > INPUT_LIMITS.identifier) {
+        if (!agentId || agentId.length > INPUT_LIMITS.identifier) {
           throw new HttpError(400, "A valid agent id is required.");
         }
         if (!workspacePath || workspacePath.length > INPUT_LIMITS.path) {
           throw new HttpError(400, "A valid workspace file path is required.");
         }
-        const workspaceFile = await this.#options.agents.resolveWorkspaceFile(botId, workspacePath);
+        const workspaceFile = await this.#options.agents.resolveWorkspaceFile(agentId, workspacePath);
         if (workspaceFile.size > ATTACHMENT_LIMITS.fileBytes) {
           throw new HttpError(413, "The workspace file exceeds the 100 MB limit.");
         }
@@ -945,7 +945,7 @@ export class TeamApiServer {
         const action = parseSidebarLayoutAction(await readJson(request));
         const layout = await this.#options.sidebarLayout.mutate(
           action,
-          new Set(this.#options.agents.listBots().map((bot) => bot.id)),
+          new Set(this.#options.agents.listAgents().map((agent) => agent.id)),
         );
         return this.#json(response, 200, layout);
       }
@@ -956,7 +956,7 @@ export class TeamApiServer {
         return this.#json(response, 200, await this.#options.agents.listModels());
       }
       if (method === "GET" && url.pathname === TEAM_API_ROUTES.agents.all) {
-        return this.#json(response, 200, this.#options.agents.listBots());
+        return this.#json(response, 200, this.#options.agents.listAgents());
       }
       if (method === "GET" && url.pathname === TEAM_API_ROUTES.agents.conversationReads) {
         return this.#json(
@@ -967,36 +967,36 @@ export class TeamApiServer {
       }
       if (method === "POST" && url.pathname === TEAM_API_ROUTES.agents.all) {
         const body = await readJson(request);
-        return this.#json(response, 201, await this.#options.agents.createBot(botCreate(body)));
+        return this.#json(response, 201, await this.#options.agents.createAgent(agentCreate(body)));
       }
 
       const agentMatch = url.pathname.match(/^\/v1\/agents\/([^/]+)(?:\/(.*))?$/);
       if (agentMatch) {
-        const botId = pathIdentifier(agentMatch[1], "botId");
+        const agentId = pathIdentifier(agentMatch[1], "agentId");
         const action = agentMatch[2] ?? "";
         if (method === "GET" && action === "usage") {
-          return this.#json(response, 200, await this.#options.agents.getUsage(botId));
+          return this.#json(response, 200, await this.#options.agents.getUsage(agentId));
         }
         if (method === "GET" && action === "skills") {
-          return this.#json(response, 200, (await this.#options.skills?.listInstalledForChatTags(botId)) ?? []);
+          return this.#json(response, 200, (await this.#options.skills?.listInstalledForChatTags(agentId)) ?? []);
         }
         if (method === "PATCH" && !action) {
           const body = await readJson(request);
-          return this.#json(response, 200, await this.#options.agents.updateBot(botUpdate(body, botId)));
+          return this.#json(response, 200, await this.#options.agents.updateAgent(agentUpdate(body, agentId)));
         }
         if (method === "POST" && action === "duplicate") {
           const body = await readJson(request);
-          return this.#json(response, 201, await this.#duplicateAgent(botId, stringField(body, "operationId")));
+          return this.#json(response, 201, await this.#duplicateAgent(agentId, stringField(body, "operationId")));
         }
         if (method === "DELETE" && !action) {
           if (member.role === "member") throw new HttpError(403, "Members cannot delete agents.");
-          await this.#options.agents.deleteBot(botId);
-          await this.#options.sidebarLayout.removeAgent(botId);
+          await this.#options.agents.deleteAgent(agentId);
+          await this.#options.sidebarLayout.removeAgent(agentId);
           return this.#empty(response, 204);
         }
         if (action === "memories") {
           if (method === "GET") {
-            return this.#json(response, 200, this.#options.agents.listMemories(botId));
+            return this.#json(response, 200, this.#options.agents.listMemories(agentId));
           }
           if (method === "POST") {
             const body = await readJson(request);
@@ -1004,13 +1004,13 @@ export class TeamApiServer {
               response,
               201,
               this.#options.agents.createMemory({
-                botId,
+                agentId,
                 text: stringField(body, "text", false, INPUT_LIMITS.agentMemoryText),
               }),
             );
           }
           if (method === "DELETE") {
-            this.#options.agents.clearMemories(botId);
+            this.#options.agents.clearMemories(agentId);
             return this.#empty(response, 204);
           }
         }
@@ -1023,27 +1023,27 @@ export class TeamApiServer {
               response,
               200,
               this.#options.agents.updateMemory({
-                botId,
+                agentId,
                 memoryId,
                 text: stringField(body, "text", false, INPUT_LIMITS.agentMemoryText),
               }),
             );
           }
           if (method === "DELETE") {
-            this.#options.agents.deleteMemory({ botId, memoryId });
+            this.#options.agents.deleteMemory({ agentId, memoryId });
             return this.#empty(response, 204);
           }
         }
         if (action === "routines") {
           if (method === "GET") {
-            return this.#json(response, 200, this.#options.agents.listRoutines(botId));
+            return this.#json(response, 200, this.#options.agents.listRoutines(agentId));
           }
           if (method === "POST") {
             const body = await readJson(request);
             return this.#json(
               response,
               201,
-              this.#options.agents.createRoutine(parseCreateRoutine({ ...body, botId })),
+              this.#options.agents.createRoutine(parseCreateRoutine({ ...body, agentId })),
             );
           }
         }
@@ -1056,15 +1056,15 @@ export class TeamApiServer {
             return this.#json(
               response,
               200,
-              this.#options.agents.updateRoutine(parseUpdateRoutine({ ...body, botId, routineId })),
+              this.#options.agents.updateRoutine(parseUpdateRoutine({ ...body, agentId, routineId })),
             );
           }
           if (method === "DELETE" && !routineAction) {
-            await this.#options.agents.deleteRoutine({ botId, routineId });
+            await this.#options.agents.deleteRoutine({ agentId, routineId });
             return this.#empty(response, 204);
           }
           if (method === "POST" && routineAction === "test") {
-            return this.#json(response, 201, await this.#options.agents.testRoutine({ botId, routineId }));
+            return this.#json(response, 201, await this.#options.agents.testRoutine({ agentId, routineId }));
           }
           if (method === "GET" && routineAction === "runs") {
             const rawLimit = url.searchParams.get("limit");
@@ -1072,7 +1072,7 @@ export class TeamApiServer {
             return this.#json(
               response,
               200,
-              this.#options.agents.listRoutineRuns(parseListRoutineRuns({ botId, routineId, limit })),
+              this.#options.agents.listRoutineRuns(parseListRoutineRuns({ agentId, routineId, limit })),
             );
           }
         }
@@ -1083,13 +1083,13 @@ export class TeamApiServer {
               throw new HttpError(415, "Choose a PNG, JPEG, or WebP image.");
             }
             const bytes = await readBinary(request, AVATAR_IMAGE_LIMITS.storedBytes);
-            return this.#json(response, 200, await this.#options.agents.setAvatar(botId, { mimeType, bytes }));
+            return this.#json(response, 200, await this.#options.agents.setAvatar(agentId, { mimeType, bytes }));
           }
           if (method === "DELETE") {
-            return this.#json(response, 200, await this.#options.agents.setAvatar(botId, null));
+            return this.#json(response, 200, await this.#options.agents.setAvatar(agentId, null));
           }
           if (method === "GET") {
-            const avatar = this.#options.agents.resolveAvatar(botId);
+            const avatar = this.#options.agents.resolveAvatar(agentId);
             if (!avatar || avatar.version !== url.searchParams.get("v")) {
               throw new HttpError(404, "Agent avatar not found.");
             }
@@ -1105,12 +1105,12 @@ export class TeamApiServer {
           }
         }
         if (method === "GET" && action === "conversation") {
-          const conversation = await this.#options.agents.readConversationFor(botId, member.id);
+          const conversation = await this.#options.agents.readConversationFor(agentId, member.id);
           return this.#json(response, 200, conversationForCapabilities(conversation, clientCapabilities));
         }
         if (method === "GET" && action === "conversation-page") {
           const page = await this.#options.agents.readConversationPageFor(
-            botId,
+            agentId,
             member.id,
             pageAnchor(url),
             pageLimit(url),
@@ -1123,7 +1123,7 @@ export class TeamApiServer {
             throw new HttpError(400, "This client does not support marking conversations unread.");
           }
           await readJson(request);
-          return this.#json(response, 200, await this.#options.agents.markConversationUnread(botId, member.id));
+          return this.#json(response, 200, await this.#options.agents.markConversationUnread(agentId, member.id));
         }
         if (method === "POST" && action === "conversation/read") {
           const body = await readJson(request);
@@ -1131,7 +1131,7 @@ export class TeamApiServer {
             response,
             200,
             await this.#options.agents.markConversationRead(
-              botId,
+              agentId,
               member.id,
               nullableString(body, "throughMessageId"),
               markerExclusionsForCapabilities(clientCapabilities),
@@ -1144,7 +1144,7 @@ export class TeamApiServer {
             response,
             202,
             await this.#options.agents.sendMessage({
-              botId,
+              agentId,
               text: stringField(body, "text", true, INPUT_LIMITS.messageText),
               attachmentDraftIds: stringArray(body, "attachmentDraftIds"),
               replyToMessageId: nullableString(body, "replyToMessageId"),
@@ -1152,11 +1152,11 @@ export class TeamApiServer {
           );
         }
         if (method === "GET" && action === "queue") {
-          return this.#json(response, 200, this.#options.agents.listQueue(botId));
+          return this.#json(response, 200, this.#options.agents.listQueue(agentId));
         }
         if (method === "POST" && action === "failures/acknowledge") {
           const body = await readJson(request);
-          this.#options.agents.acknowledgeFailedTurn(botId, stringField(body, "turnId"));
+          this.#options.agents.acknowledgeFailedTurn(agentId, stringField(body, "turnId"));
           return this.#empty(response, 204);
         }
         if (method === "POST" && action === "reactions") {
@@ -1164,7 +1164,7 @@ export class TeamApiServer {
           const emoji = body.emoji;
           if (emoji !== null && !isMessageReaction(emoji)) throw new HttpError(400, "Invalid emoji.");
           await this.#options.agents.setMessageReaction({
-            botId,
+            agentId,
             messageId: stringField(body, "messageId"),
             emoji,
           });
@@ -1172,13 +1172,13 @@ export class TeamApiServer {
         }
         if (method === "POST" && action === "queue/cancel") {
           const body = await readJson(request);
-          await this.#options.agents.cancelQueuedMessage(botId, stringField(body, "deliveryId"));
+          await this.#options.agents.cancelQueuedMessage(agentId, stringField(body, "deliveryId"));
           return this.#empty(response, 204);
         }
         if (method === "POST" && action === "queue/steer") {
           const body = await readJson(request);
           await this.#options.agents.steerQueuedMessage({
-            botId,
+            agentId,
             deliveryId: stringField(body, "deliveryId"),
             expectedTurnId: stringField(body, "expectedTurnId"),
           } satisfies SteerQueuedMessageInput);
@@ -1187,7 +1187,7 @@ export class TeamApiServer {
         if (method === "POST" && action === "queue/update") {
           const body = await readJson(request);
           await this.#options.agents.updateQueuedMessage({
-            botId,
+            agentId,
             deliveryId: stringField(body, "deliveryId"),
             text: stringField(body, "text", true, INPUT_LIMITS.messageText),
             keepAttachmentIds: stringArray(body, "keepAttachmentIds"),
@@ -1198,14 +1198,14 @@ export class TeamApiServer {
         if (method === "POST" && action === "queue/reorder") {
           const body = await readJson(request);
           await this.#options.agents.reorderQueue({
-            botId,
+            agentId,
             deliveryIds: stringArray(body, "deliveryIds", INPUT_LIMITS.messageRecipients),
           } satisfies ReorderQueueInput);
           return this.#empty(response, 204);
         }
         if (method === "POST" && action === "interrupt") {
           const body = await readJson(request);
-          await this.#options.agents.interrupt(botId, stringField(body, "turnId"));
+          await this.#options.agents.interrupt(agentId, stringField(body, "turnId"));
           return this.#empty(response, 204);
         }
       }
@@ -1292,14 +1292,14 @@ export class TeamApiServer {
         conversationInvalidation ??=
           encodeTeamProtocolV1CurrentEvent({
             type: "conversation-invalidated",
-            botId: event.snapshot.botId,
+            agentId: event.snapshot.agentId,
             revision: event.snapshot.revision,
           }) ?? undefined;
         if (!conversationInvalidation) continue;
         outgoing = conversationInvalidation;
       } else if (event.type === "queue-changed" && supportsRuntimeSnapshots) {
         queueInvalidation ??=
-          encodeTeamProtocolV1CurrentEvent({ type: "queue-invalidated", botId: event.snapshot.botId }) ?? undefined;
+          encodeTeamProtocolV1CurrentEvent({ type: "queue-invalidated", agentId: event.snapshot.agentId }) ?? undefined;
         if (!queueInvalidation) continue;
         outgoing = queueInvalidation;
       } else if (
@@ -1371,7 +1371,7 @@ export class TeamApiServer {
             ),
       ),
       includeConversationEvents: !supportsSnapshotTransport,
-      typingBotId: null,
+      typingAgentId: null,
       typingTimer: null,
       directTypingRecipientId: null,
       directTypingTimer: null,
@@ -1399,7 +1399,7 @@ export class TeamApiServer {
             ? Buffer.concat(data).toString("utf8")
             : Buffer.from(data).toString("utf8");
         if (text.length > EVENT_PAYLOAD_LIMIT) throw new Error("Event payload is too large.");
-        const event = decodeTeamProtocolV1ClientEvent(JSON.parse(text));
+        const event = decodeTeamProtocolV1CurrentClientEvent(JSON.parse(text));
         if (event.type === "runtime-snapshot-request" && connection.capabilities.has("agent-runtime-snapshots")) {
           this.#sendRuntimeSnapshot(client, connection, true);
           return;
@@ -1431,11 +1431,11 @@ export class TeamApiServer {
         }
         if (event.type !== "team-typing") throw new Error("Unsupported team event.");
         const typing = event.typing;
-        const botId = event.botId;
-        if (typing && (!botId || botId.length > INPUT_LIMITS.identifier)) {
+        const agentId = event.agentId;
+        if (typing && (!agentId || agentId.length > INPUT_LIMITS.identifier)) {
           throw new Error("A valid agent is required for typing state.");
         }
-        this.#setClientTyping(connection, typing ? botId : null);
+        this.#setClientTyping(connection, typing ? agentId : null);
       } catch {
         client.close(1003, "Invalid team event payload");
       }
@@ -1495,15 +1495,15 @@ export class TeamApiServer {
     }
   }
 
-  #setClientTyping(connection: EventClientState, botId: string | null): void {
-    const changed = connection.typingBotId !== botId;
-    connection.typingBotId = botId;
+  #setClientTyping(connection: EventClientState, agentId: string | null): void {
+    const changed = connection.typingAgentId !== agentId;
+    connection.typingAgentId = agentId;
     if (connection.typingTimer) clearTimeout(connection.typingTimer);
-    connection.typingTimer = botId
+    connection.typingTimer = agentId
       ? setTimeout(() => {
           connection.typingTimer = null;
-          if (!connection.typingBotId) return;
-          connection.typingBotId = null;
+          if (!connection.typingAgentId) return;
+          connection.typingAgentId = null;
           this.#publishPresence();
         }, TYPING_TIMEOUT_MS)
       : null;
@@ -1602,37 +1602,37 @@ export class TeamApiServer {
     return this.#options.chat;
   }
 
-  #duplicateAgent(sourceBotId: string, operationId: string): Promise<DuplicateBotResult> {
-    const committed = this.#options.agents.committedBotDuplication(operationId, sourceBotId);
+  #duplicateAgent(sourceAgentId: string, operationId: string): Promise<DuplicateAgentResult> {
+    const committed = this.#options.agents.committedAgentDuplication(operationId, sourceAgentId);
     if (committed) {
-      return Promise.resolve({ bot: committed.bot, layout: this.#options.sidebarLayout.getSnapshot() });
+      return Promise.resolve({ agent: committed.agent, layout: this.#options.sidebarLayout.getSnapshot() });
     }
     const pending = this.#duplicateRequests.get(operationId);
     if (pending) {
-      if (pending.sourceBotId !== sourceBotId) {
+      if (pending.sourceAgentId !== sourceAgentId) {
         return Promise.reject(new Error("This agent duplication operation belongs to another source agent."));
       }
       return pending.result;
     }
-    const result = this.#performAgentDuplication(sourceBotId, operationId).finally(() => {
+    const result = this.#performAgentDuplication(sourceAgentId, operationId).finally(() => {
       this.#duplicateRequests.delete(operationId);
     });
-    this.#duplicateRequests.set(operationId, { sourceBotId, result });
+    this.#duplicateRequests.set(operationId, { sourceAgentId, result });
     return result;
   }
 
-  async #performAgentDuplication(sourceBotId: string, operationId: string): Promise<DuplicateBotResult> {
-    const bot = await this.#options.agents.duplicateBot(sourceBotId, operationId);
+  async #performAgentDuplication(sourceAgentId: string, operationId: string): Promise<DuplicateAgentResult> {
+    const agent = await this.#options.agents.duplicateAgent(sourceAgentId, operationId);
     try {
-      const layout = await this.#options.sidebarLayout.placeDuplicateAfter(sourceBotId, bot.id, [
-        ...this.#options.agents.listBots().map((candidate) => candidate.id),
-        bot.id,
+      const layout = await this.#options.sidebarLayout.placeDuplicateAfter(sourceAgentId, agent.id, [
+        ...this.#options.agents.listAgents().map((candidate) => candidate.id),
+        agent.id,
       ]);
-      return await this.#options.agents.commitBotDuplication(bot.id, layout);
+      return await this.#options.agents.commitAgentDuplication(agent.id, layout);
     } catch (error) {
       const rollbackResults = await Promise.allSettled([
-        this.#options.agents.deleteBot(bot.id),
-        this.#options.sidebarLayout.removeAgent(bot.id),
+        this.#options.agents.deleteAgent(agent.id),
+        this.#options.sidebarLayout.removeAgent(agent.id),
       ]);
       const rollbackErrors = rollbackResults.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
       if (rollbackErrors.length > 0) {
@@ -2029,9 +2029,9 @@ function browserTakeoverDecision(value: unknown): RespondToBrowserTakeoverInput[
   throw new HttpError(400, "browser takeover decision is invalid.");
 }
 
-function botUpdate(value: DynamicRecord, botId: string): UpdateBotInput {
+function agentUpdate(value: DynamicRecord, agentId: string): UpdateAgentInput {
   if (value.role !== undefined) throw new HttpError(400, "role is invalid.");
-  const result: UpdateBotInput = { botId };
+  const result: UpdateAgentInput = { agentId };
   const textFields = {
     name: INPUT_LIMITS.agentName,
     title: INPUT_LIMITS.agentTitle,
@@ -2082,7 +2082,7 @@ function botUpdate(value: DynamicRecord, botId: string): UpdateBotInput {
   return result;
 }
 
-function botCreate(value: DynamicRecord): CreateBotInput {
+function agentCreate(value: DynamicRecord): CreateAgentInput {
   const avatarHue = value.avatarHue;
   if (!isAvatarSeed(value.avatarSeed)) throw new HttpError(400, "avatarSeed is invalid.");
   if (avatarHue !== null && !isAvatarHue(avatarHue)) throw new HttpError(400, "avatarHue is invalid.");

@@ -2,8 +2,8 @@ import { readFile } from "node:fs/promises";
 import type {
   AgentPublicationPreview,
   AgentSubmission,
+  AgentSummary,
   AvatarImageInput,
-  BotSummary,
   InstallMarketplaceAgentInput,
   InstallMarketplaceAgentResult,
   MarketplaceAgentDetail,
@@ -25,34 +25,34 @@ interface AgentMarketplaceAuth {
 }
 
 interface AgentMarketplaceAgents {
-  listBots(): BotSummary[];
-  listRoutines(botId: string): Array<{
+  listAgents(): AgentSummary[];
+  listRoutines(agentId: string): Array<{
     id: string;
     name: string;
     instruction: string;
     active: boolean;
     trigger: { schedule: RoutineSchedule };
   }>;
-  resolveAvatar(botId: string): { path: string; mimeType: AvatarImageInput["mimeType"] } | null;
-  createBotProfile(input: {
+  resolveAvatar(agentId: string): { path: string; mimeType: AvatarImageInput["mimeType"] } | null;
+  createAgentProfile(input: {
     name: string;
     title?: string;
     description: string;
     avatarSeed: string;
     avatarHue: MarketplaceAgentDetail["avatarHue"];
-  }): Promise<BotSummary>;
-  updateBot(input: {
-    botId: string;
+  }): Promise<AgentSummary>;
+  updateAgent(input: {
+    agentId: string;
     name: string;
     title: string;
     description: string;
     avatarSeed: string;
     avatarHue: MarketplaceAgentDetail["avatarHue"];
-  }): Promise<BotSummary>;
-  setAvatar(botId: string, image: AvatarImageInput | null): Promise<BotSummary>;
+  }): Promise<AgentSummary>;
+  setAvatar(agentId: string, image: AvatarImageInput | null): Promise<AgentSummary>;
   createRoutine(
     input: {
-      botId: string;
+      agentId: string;
       name: string;
       instruction: string;
       active: boolean;
@@ -62,17 +62,17 @@ interface AgentMarketplaceAgents {
     options?: { recordConversationEvent?: boolean },
   ): { id: string };
   deleteRoutine(
-    input: { botId: string; routineId: string },
+    input: { agentId: string; routineId: string },
     options?: { recordConversationEvent?: boolean },
   ): Promise<void>;
-  setMarketplaceSource(botId: string, source: NonNullable<BotSummary["marketplaceSource"]>): BotSummary;
-  deleteBot(botId: string): Promise<void>;
+  setMarketplaceSource(agentId: string, source: NonNullable<AgentSummary["marketplaceSource"]>): AgentSummary;
+  deleteAgent(agentId: string): Promise<void>;
 }
 
 interface AgentMarketplaceSkills {
-  listPublishable(botId: string): Promise<MarketplaceAgentSkill[]>;
-  installVersion(input: { botId: string; skillId: string; versionId: string }): Promise<unknown>;
-  uninstall(input: { botId: string; skillId: string }): Promise<void>;
+  listPublishable(agentId: string): Promise<MarketplaceAgentSkill[]>;
+  installVersion(input: { agentId: string; skillId: string; versionId: string }): Promise<unknown>;
+  uninstall(input: { agentId: string; skillId: string }): Promise<void>;
 }
 
 export class AgentMarketplaceService {
@@ -115,24 +115,24 @@ export class AgentMarketplaceService {
     return values.map((value) => this.withAbsoluteAvatar(value));
   }
 
-  async preview(botId: string): Promise<AgentPublicationPreview> {
-    const bot = this.agents.listBots().find((candidate) => candidate.id === botId);
-    if (!bot) throw new Error("Choose a local agent first.");
-    const skills = await this.skills.listPublishable(botId);
-    const routines = this.agents.listRoutines(botId).map(({ name, instruction, active, trigger }) => ({
+  async preview(agentId: string): Promise<AgentPublicationPreview> {
+    const agent = this.agents.listAgents().find((candidate) => candidate.id === agentId);
+    if (!agent) throw new Error("Choose a local agent first.");
+    const skills = await this.skills.listPublishable(agentId);
+    const routines = this.agents.listRoutines(agentId).map(({ name, instruction, active, trigger }) => ({
       name,
       instruction,
       active,
       schedule: trigger.schedule,
     }));
     return {
-      agentId: botId,
-      name: bot.name,
-      title: bot.title,
-      description: bot.description,
-      avatarSeed: bot.avatarSeed,
-      avatarHue: bot.avatarHue,
-      avatarUrl: bot.avatarUrl,
+      agentId: agentId,
+      name: agent.name,
+      title: agent.title,
+      description: agent.description,
+      avatarSeed: agent.avatarSeed,
+      avatarHue: agent.avatarHue,
+      avatarUrl: agent.avatarUrl,
       skills,
       routines,
     };
@@ -162,7 +162,7 @@ export class AgentMarketplaceService {
     if (!validTimezone(input.timezone)) throw new Error("The local timezone is invalid.");
     const detail = await this.get(input.listingId);
     const existing = input.agentId
-      ? this.agents.listBots().find((candidate) => candidate.id === input.agentId)
+      ? this.agents.listAgents().find((candidate) => candidate.id === input.agentId)
       : undefined;
     if (input.agentId && !existing) throw new Error("The installed agent no longer exists.");
     if (existing?.marketplaceSource?.listingId !== detail.id) {
@@ -177,9 +177,9 @@ export class AgentMarketplaceService {
       if (!mimeType) throw new Error("The marketplace agent avatar is invalid.");
       avatar = { mimeType, bytes };
     }
-    let bot =
+    let agent =
       existing ??
-      (await this.agents.createBotProfile({
+      (await this.agents.createAgentProfile({
         name: detail.name,
         title: detail.title,
         description: detail.description,
@@ -189,12 +189,12 @@ export class AgentMarketplaceService {
     const createdRoutineIds: string[] = [];
     try {
       for (const skill of detail.skills) {
-        await this.skills.installVersion({ botId: bot.id, skillId: skill.skillId, versionId: skill.versionId });
+        await this.skills.installVersion({ agentId: agent.id, skillId: skill.skillId, versionId: skill.versionId });
       }
       for (const routine of detail.routines) {
         const created = this.agents.createRoutine(
           {
-            botId: bot.id,
+            agentId: agent.id,
             name: routine.name,
             instruction: routine.instruction,
             active: routine.active,
@@ -206,8 +206,8 @@ export class AgentMarketplaceService {
         createdRoutineIds.push(created.id);
       }
       if (existing) {
-        bot = await this.agents.updateBot({
-          botId: bot.id,
+        agent = await this.agents.updateAgent({
+          agentId: agent.id,
           name: detail.name,
           title: detail.title,
           description: detail.description,
@@ -215,12 +215,12 @@ export class AgentMarketplaceService {
           avatarHue: detail.avatarHue,
         });
       }
-      bot = await this.agents.setAvatar(bot.id, avatar);
+      agent = await this.agents.setAvatar(agent.id, avatar);
       const nextSkillIds = new Set(detail.skills.map((skill) => skill.skillId));
       for (const skillId of existing?.marketplaceSource?.skillIds ?? []) {
-        if (!nextSkillIds.has(skillId)) await this.skills.uninstall({ botId: bot.id, skillId });
+        if (!nextSkillIds.has(skillId)) await this.skills.uninstall({ agentId: agent.id, skillId });
       }
-      bot = this.agents.setMarketplaceSource(bot.id, {
+      agent = this.agents.setMarketplaceSource(agent.id, {
         listingId: detail.id,
         versionId: detail.versionId,
         version: detail.version,
@@ -229,7 +229,7 @@ export class AgentMarketplaceService {
       });
       for (const routineId of existing?.marketplaceSource?.routineIds ?? []) {
         await this.agents
-          .deleteRoutine({ botId: bot.id, routineId }, { recordConversationEvent: false })
+          .deleteRoutine({ agentId: agent.id, routineId }, { recordConversationEvent: false })
           .catch(() => undefined);
       }
     } catch (error) {
@@ -237,12 +237,12 @@ export class AgentMarketplaceService {
         await Promise.all(
           createdRoutineIds.map((routineId) =>
             this.agents
-              .deleteRoutine({ botId: bot.id, routineId }, { recordConversationEvent: false })
+              .deleteRoutine({ agentId: agent.id, routineId }, { recordConversationEvent: false })
               .catch(() => undefined),
           ),
         );
       } else {
-        await this.agents.deleteBot(bot.id).catch(() => undefined);
+        await this.agents.deleteAgent(agent.id).catch(() => undefined);
       }
       throw error;
     }
@@ -257,7 +257,7 @@ export class AgentMarketplaceService {
         decodeInstallReceipt,
       );
     }
-    return { agent: bot };
+    return { agent: agent };
   }
 
   private withAbsoluteAvatar<T extends { avatarUrl: string | null }>(value: T): T {
@@ -354,7 +354,7 @@ function decodeInstallReceipt(value: unknown): { installed: true } {
 
 /**
  * The published snapshot and the submission the account Worker returns still spell the two ids the way
- * the deployed Worker does: `botId` for the local agent inside a snapshot, `agentId` for the
+ * the deployed Worker does: `agentId` for the local agent inside a snapshot, `agentId` for the
  * marketplace listing. A Worker deploy can land either side of a desktop release, so the two
  * converters here are the only place the desktop's `agentId`/`listingId` vocabulary meets that wire.
  */

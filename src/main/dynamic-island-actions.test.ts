@@ -11,7 +11,7 @@ describe("performDynamicIslandCriticalAction", () => {
       {
         type: "answer-prompt",
         serverId: "local",
-        botId: "chief",
+        agentId: "chief",
         requestId: "prompt-local",
         answers: { source: ["Official data"] },
       },
@@ -35,7 +35,7 @@ describe("performDynamicIslandCriticalAction", () => {
       {
         type: "answer-prompt",
         serverId: "server-eu",
-        botId: "research",
+        agentId: "research",
         requestId: "prompt-1",
         answers: { source: ["Official data"] },
       },
@@ -60,7 +60,7 @@ describe("performDynamicIslandCriticalAction", () => {
       {
         type: "respond-approval",
         serverId: "local",
-        botId: "chief",
+        agentId: "chief",
         requestId: "approval-local",
         decision: "accept",
       },
@@ -72,7 +72,7 @@ describe("performDynamicIslandCriticalAction", () => {
       {
         type: "respond-approval",
         serverId: "server-eu",
-        botId: "research",
+        agentId: "research",
         requestId: "approval-remote",
         decision: "decline",
       },

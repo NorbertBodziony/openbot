@@ -1,42 +1,42 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import type { BotAvatarHue } from "@openbot/contracts/ipc";
+import type { AvatarHue } from "@openbot/contracts/ipc";
 import { createSignal, For, onSettled, Show } from "solid-js";
 import { AVATAR_HUE_OPTIONS, avatarCandidateSeeds, avatarHeadColor, avatarHueSwatch } from "../bloub-avatar";
 import { AgentAvatar } from "./AgentAvatar";
 import { Button, Field, Input, Textarea } from "./ui";
 
-export interface FirstBotDraft {
+export interface FirstAgentDraft {
   name: string;
   purpose: string;
   avatarSeed: string;
-  avatarHue: BotAvatarHue | null;
+  avatarHue: AvatarHue | null;
   suggestionId: string | null;
 }
 
-export interface FirstBotSuggestion {
+export interface FirstAgentSuggestion {
   id: string;
   name: string;
   description: string;
   purpose: string;
   avatarSeed: string;
-  avatarHue: BotAvatarHue;
+  avatarHue: AvatarHue;
   animationCycleOffset: number;
   animationOffset: number;
 }
 
-export interface FirstBotSetupProps {
-  value: FirstBotDraft;
-  suggestions: FirstBotSuggestion[];
+export interface FirstAgentSetupProps {
+  value: FirstAgentDraft;
+  suggestions: FirstAgentSuggestion[];
   mode?: "first" | "additional";
   submitting?: boolean;
   error?: string | null;
-  onChange: (value: FirstBotDraft) => void;
-  onSubmit: (value: FirstBotDraft) => void | Promise<void>;
+  onChange: (value: FirstAgentDraft) => void;
+  onSubmit: (value: FirstAgentDraft) => void | Promise<void>;
   onCancel?: () => void;
 }
 
-export const FIRST_BOT_AVATAR_SEEDS = avatarCandidateSeeds("first-bot", "first-bot", 0);
-const FIRST_BOT_HUE_OPTIONS = AVATAR_HUE_OPTIONS.filter((option) => option.hue !== 100 && option.hue !== 280);
+export const FIRST_AGENT_AVATAR_SEEDS = avatarCandidateSeeds("first-bot", "first-bot", 0);
+const FIRST_AGENT_HUE_OPTIONS = AVATAR_HUE_OPTIONS.filter((option) => option.hue !== 100 && option.hue !== 280);
 
 const SUGGESTION_MOMENTUM_FRICTION = 0.88;
 const SUGGESTION_MOMENTUM_MINIMUM = 0.01;
@@ -44,29 +44,29 @@ const SUGGESTION_MOMENTUM_MAXIMUM = 1.75;
 const SUGGESTION_DRAG_THRESHOLD = 8;
 const MOTION_FRAME_DURATION = 1000 / 60;
 
-export const DEFAULT_FIRST_BOT_DRAFT: FirstBotDraft = {
+export const DEFAULT_FIRST_AGENT_DRAFT: FirstAgentDraft = {
   name: "New agent",
   purpose: "",
-  avatarSeed: FIRST_BOT_AVATAR_SEEDS[0] ?? "first-bot",
+  avatarSeed: FIRST_AGENT_AVATAR_SEEDS[0] ?? "first-bot",
   avatarHue: null,
   suggestionId: null,
 };
 
-export function createFirstBotDraft(random: () => number = Math.random): FirstBotDraft {
-  const index = Math.min(FIRST_BOT_AVATAR_SEEDS.length - 1, Math.floor(random() * FIRST_BOT_AVATAR_SEEDS.length));
+export function createFirstAgentDraft(random: () => number = Math.random): FirstAgentDraft {
+  const index = Math.min(FIRST_AGENT_AVATAR_SEEDS.length - 1, Math.floor(random() * FIRST_AGENT_AVATAR_SEEDS.length));
   return {
-    ...DEFAULT_FIRST_BOT_DRAFT,
-    avatarSeed: FIRST_BOT_AVATAR_SEEDS[index] ?? DEFAULT_FIRST_BOT_DRAFT.avatarSeed,
+    ...DEFAULT_FIRST_AGENT_DRAFT,
+    avatarSeed: FIRST_AGENT_AVATAR_SEEDS[index] ?? DEFAULT_FIRST_AGENT_DRAFT.avatarSeed,
   };
 }
 
-export const FIRST_BOT_SUGGESTIONS: FirstBotSuggestion[] = [
+export const FIRST_AGENT_SUGGESTIONS: FirstAgentSuggestion[] = [
   {
     id: "inbox-helper",
     name: "Inbox Helper",
     description: "Drafts replies and keeps follow-ups from slipping.",
     purpose: "Draft clear email replies in my voice, summarize long threads, and keep track of follow-ups.",
-    avatarSeed: FIRST_BOT_AVATAR_SEEDS[1] ?? "first-bot:inbox",
+    avatarSeed: FIRST_AGENT_AVATAR_SEEDS[1] ?? "first-bot:inbox",
     avatarHue: 320,
     animationCycleOffset: 0,
     animationOffset: 0.15,
@@ -76,7 +76,7 @@ export const FIRST_BOT_SUGGESTIONS: FirstBotSuggestion[] = [
     name: "Trip Planner",
     description: "Compares options and builds practical itineraries.",
     purpose: "Compare travel options and turn my rough ideas into practical, day-by-day itineraries.",
-    avatarSeed: FIRST_BOT_AVATAR_SEEDS[2] ?? "first-bot:travel",
+    avatarSeed: FIRST_AGENT_AVATAR_SEEDS[2] ?? "first-bot:travel",
     avatarHue: 215,
     animationCycleOffset: 2,
     animationOffset: 0.65,
@@ -86,7 +86,7 @@ export const FIRST_BOT_SUGGESTIONS: FirstBotSuggestion[] = [
     name: "Personal Organizer",
     description: "Turns notes, errands, and tasks into a simple plan.",
     purpose: "Organize my notes, errands, and loose tasks into clear priorities and simple next steps.",
-    avatarSeed: FIRST_BOT_AVATAR_SEEDS[3] ?? "first-bot:organizer",
+    avatarSeed: FIRST_AGENT_AVATAR_SEEDS[3] ?? "first-bot:organizer",
     avatarHue: 55,
     animationCycleOffset: 4,
     animationOffset: 1.2,
@@ -96,7 +96,7 @@ export const FIRST_BOT_SUGGESTIONS: FirstBotSuggestion[] = [
     name: "Shopping Scout",
     description: "Compares products, prices, and reviews before I buy.",
     purpose: "Compare products, prices, and reviews so I can make practical buying decisions with less research.",
-    avatarSeed: FIRST_BOT_AVATAR_SEEDS[4] ?? "first-bot:shopping",
+    avatarSeed: FIRST_AGENT_AVATAR_SEEDS[4] ?? "first-bot:shopping",
     avatarHue: 150,
     animationCycleOffset: 6,
     animationOffset: 1.8,
@@ -106,7 +106,7 @@ export const FIRST_BOT_SUGGESTIONS: FirstBotSuggestion[] = [
     name: "Writing Partner",
     description: "Drafts messages and documents in a natural voice.",
     purpose: "Help me draft and improve messages and documents while keeping the writing clear and natural.",
-    avatarSeed: FIRST_BOT_AVATAR_SEEDS[5] ?? "first-bot:writing",
+    avatarSeed: FIRST_AGENT_AVATAR_SEEDS[5] ?? "first-bot:writing",
     avatarHue: 30,
     animationCycleOffset: 8,
     animationOffset: 2.45,
@@ -116,14 +116,14 @@ export const FIRST_BOT_SUGGESTIONS: FirstBotSuggestion[] = [
     name: "Learning Coach",
     description: "Explains difficult topics and builds study plans.",
     purpose: "Explain difficult topics clearly and build study plans that match my pace and goals.",
-    avatarSeed: FIRST_BOT_AVATAR_SEEDS[6] ?? "first-bot:learning",
+    avatarSeed: FIRST_AGENT_AVATAR_SEEDS[6] ?? "first-bot:learning",
     avatarHue: 245,
     animationCycleOffset: 10,
     animationOffset: 3.15,
   },
 ];
 
-function matchesSuggestion(draft: FirstBotDraft, suggestion: FirstBotSuggestion): boolean {
+function matchesSuggestion(draft: FirstAgentDraft, suggestion: FirstAgentSuggestion): boolean {
   return (
     draft.name === suggestion.name &&
     draft.purpose === suggestion.purpose &&
@@ -132,7 +132,7 @@ function matchesSuggestion(draft: FirstBotDraft, suggestion: FirstBotSuggestion)
   );
 }
 
-export function FirstBotSetup(props: FirstBotSetupProps) {
+export function FirstAgentSetup(props: FirstAgentSetupProps) {
   let suggestionList: HTMLUListElement | undefined;
   let activeSuggestionPointer: number | null = null;
   let suggestionDragStartX = 0;
@@ -257,7 +257,7 @@ export function FirstBotSetup(props: FirstBotSetupProps) {
     }, 0);
   }
 
-  function updateDraft(updates: Partial<FirstBotDraft>): void {
+  function updateDraft(updates: Partial<FirstAgentDraft>): void {
     if (props.submitting) return;
     const next = { ...props.value, ...updates };
     const selected = props.suggestions.find((suggestion) => suggestion.id === next.suggestionId);
@@ -267,7 +267,7 @@ export function FirstBotSetup(props: FirstBotSetupProps) {
     });
   }
 
-  function selectSuggestion(suggestion: FirstBotSuggestion): void {
+  function selectSuggestion(suggestion: FirstAgentSuggestion): void {
     if (props.submitting) return;
     props.onChange({
       name: suggestion.name,
@@ -345,7 +345,7 @@ export function FirstBotSetup(props: FirstBotSetupProps) {
                   style={{ background: avatarHeadColor(props.value.avatarSeed, null) }}
                 />
               </Button>
-              <For each={FIRST_BOT_HUE_OPTIONS}>
+              <For each={FIRST_AGENT_HUE_OPTIONS}>
                 {(option) => (
                   <Button
                     variant="ghost"
@@ -366,7 +366,7 @@ export function FirstBotSetup(props: FirstBotSetupProps) {
           <fieldset class="first-bot-avatar-fieldset first-bot-face-fieldset" disabled={props.submitting}>
             <legend class="sr-only">Agent face</legend>
             <div class="first-bot-face-options">
-              <For each={FIRST_BOT_AVATAR_SEEDS}>
+              <For each={FIRST_AGENT_AVATAR_SEEDS}>
                 {(seed, index) => (
                   <Button
                     variant="ghost"

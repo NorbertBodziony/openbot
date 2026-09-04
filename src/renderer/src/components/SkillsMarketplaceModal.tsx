@@ -1,8 +1,8 @@
 import type {
   AgentPublicationPreview,
   AgentSubmission,
+  AgentSummary,
   AvatarImageInput,
-  BotSummary,
   InstalledSkill,
   MarketplaceAgentDetail,
   MarketplaceAgentSummary,
@@ -40,10 +40,10 @@ import {
 
 interface SkillsMarketplaceModalProps {
   open: boolean;
-  bots: Array<Pick<BotSummary, "id" | "name" | "marketplaceSource">>;
-  activeBotId: string;
+  agents: Array<Pick<AgentSummary, "id" | "name" | "marketplaceSource">>;
+  activeAgentId: string;
   onOpenChange: (open: boolean) => void;
-  onAgentInstalled?: (bot: BotSummary) => void | Promise<void>;
+  onAgentInstalled?: (agent: AgentSummary) => void | Promise<void>;
 }
 
 type Tab = "discover" | "installed" | "mine";
@@ -78,7 +78,7 @@ interface SkillsBrowse {
   kind: MarketplaceKind;
   query: string;
   tab: Tab;
-  targetBotId: string;
+  targetAgentId: string;
 }
 
 /** The publish form. Meaningful only while `preview` holds a chosen package, and cleared with it. */
@@ -102,7 +102,7 @@ interface SkillsMarketplace {
 
 export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
   const [market, setMarket] = createStore<SkillsMarketplace>({
-    browse: { category: null, kind: "skills", query: "", tab: "discover", targetBotId: "" },
+    browse: { category: null, kind: "skills", query: "", tab: "discover", targetAgentId: "" },
     detail: { kind: "none" },
     installed: [],
     publication: { category: "other", icon: null, iconPreviewUrl: null, preview: null, skillId: undefined },
@@ -119,7 +119,7 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
   let searchInitialized = false;
 
   const installedById = createMemo(() => new Map(market.installed.map((item) => [item.skillId, item])));
-  const targetBot = createMemo(() => props.bots.find((bot) => bot.id === market.browse.targetBotId) ?? null);
+  const targetAgent = createMemo(() => props.agents.find((agent) => agent.id === market.browse.targetAgentId) ?? null);
   // The arms of the detail union, so the JSX narrows here once instead of at every read.
   const detailOpen = () => market.detail.kind !== "none";
   const detailLoading = () => market.detail.kind === "loading";
@@ -134,7 +134,7 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
         return;
       }
       setMarket((state) => {
-        state.browse.targetBotId = state.browse.targetBotId || props.activeBotId || props.bots[0]?.id || "";
+        state.browse.targetAgentId = state.browse.targetAgentId || props.activeAgentId || props.agents[0]?.id || "";
       });
       void loadSkills();
     },
@@ -154,9 +154,9 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
   );
 
   createEffect(
-    () => [props.open, market.browse.targetBotId] as const,
-    ([open, botId]) => {
-      if (open && botId) void loadInstalled(botId);
+    () => [props.open, market.browse.targetAgentId] as const,
+    ([open, agentId]) => {
+      if (open && agentId) void loadInstalled(agentId);
       else {
         setMarket((state) => {
           state.installed = [];
@@ -217,14 +217,14 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
     setLoading(false);
   }
 
-  async function loadInstalled(botId = market.browse.targetBotId) {
-    if (!botId) {
+  async function loadInstalled(agentId = market.browse.targetAgentId) {
+    if (!agentId) {
       setMarket((state) => {
         state.installed = [];
       });
       return;
     }
-    const values = await run(() => window.openbot.skills.listInstalled(botId));
+    const values = await run(() => window.openbot.skills.listInstalled(agentId));
     if (values) {
       setMarket((state) => {
         state.installed = values;
@@ -354,21 +354,21 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
     replaceModified = false,
     action: "install" | "update" = "install",
   ) {
-    const botId = market.browse.targetBotId;
-    if (!botId) {
+    const agentId = market.browse.targetAgentId;
+    if (!agentId) {
       setError("Switch to Local and create an agent before installing skills.");
       return;
     }
     const analytics = desktopAnalytics.scope();
     setBusy(skill.id);
-    const result = await run(() => window.openbot.skills.install({ botId, skillId: skill.id, replaceModified }));
+    const result = await run(() => window.openbot.skills.install({ agentId, skillId: skill.id, replaceModified }));
     analytics.track("marketplace_action", {
       entity: "skill",
       action,
       result: result ? "succeeded" : "failed",
       ...(result ? {} : { failure_code: action === "update" ? "update_failed" : "install_failed" }),
     });
-    if (result) await loadInstalled(botId);
+    if (result) await loadInstalled(agentId);
     setBusy(null);
   }
 
@@ -398,7 +398,7 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
     setBusy(item.skillId);
     const removed = await run(async () => {
       await window.openbot.skills.uninstall({
-        botId: market.browse.targetBotId,
+        agentId: market.browse.targetAgentId,
         skillId: item.skillId,
         ...(modified ? { removeModified: true } : {}),
       });
@@ -583,11 +583,11 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
                         <p>Give your agents focused capabilities for repeatable work.</p>
                       </div>
                       <AgentSelect
-                        bots={props.bots}
-                        value={market.browse.targetBotId}
-                        onChange={(botId) =>
+                        agents={props.agents}
+                        value={market.browse.targetAgentId}
+                        onChange={(agentId) =>
                           setMarket((state) => {
-                            state.browse.targetBotId = botId;
+                            state.browse.targetAgentId = agentId;
                           })
                         }
                       />
@@ -674,17 +674,17 @@ export function SkillsMarketplaceModal(props: SkillsMarketplaceModalProps) {
                         <p>Manage marketplace-owned skills for one local agent.</p>
                       </div>
                       <AgentSelect
-                        bots={props.bots}
-                        value={market.browse.targetBotId}
-                        onChange={(botId) =>
+                        agents={props.agents}
+                        value={market.browse.targetAgentId}
+                        onChange={(agentId) =>
                           setMarket((state) => {
-                            state.browse.targetBotId = botId;
+                            state.browse.targetAgentId = agentId;
                           })
                         }
                       />
                     </div>
                     <Show
-                      when={targetBot()}
+                      when={targetAgent()}
                       fallback={
                         <div class="skills-marketplace-state">
                           Switch to Local and choose an agent to manage skills.
@@ -970,7 +970,7 @@ description: Turn merged work into clear, consistent release notes.
               </Show>
               <Show when={market.browse.kind === "agents"}>
                 <AgentMarketplacePanel
-                  bots={props.bots}
+                  agents={props.agents}
                   view={market.browse.tab}
                   refreshVersion={agentRefreshVersion()}
                   addVersion={agentAddVersion()}
@@ -995,31 +995,34 @@ interface AgentsMarketplace {
     /** The marketplace listing a new version is for, or `undefined` for a first submission. */
     listingId: string | undefined;
     preview: AgentPublicationPreview | null;
-    sourceBotId: string;
+    sourceAgentId: string;
   };
   query: string;
   submissions: AgentSubmission[];
 }
 
 function AgentMarketplacePanel(props: {
-  bots: Array<Pick<BotSummary, "id" | "name" | "marketplaceSource">>;
+  agents: Array<Pick<AgentSummary, "id" | "name" | "marketplaceSource">>;
   view: Tab;
   refreshVersion: number;
   addVersion: number;
-  onInstalled?: (bot: BotSummary) => void | Promise<void>;
+  onInstalled?: (agent: AgentSummary) => void | Promise<void>;
   onEnterDetail: () => void;
   onLeaveDetail: () => void;
 }) {
   const [market, setMarket] = createStore<AgentsMarketplace>({
     agents: [],
     detail: null,
-    publication: { listingId: undefined, preview: null, sourceBotId: props.bots[0]?.id ?? "" },
+    publication: { listingId: undefined, preview: null, sourceAgentId: props.agents[0]?.id ?? "" },
     query: "",
     submissions: [],
   });
   const { panel, run, setBusy, setError, setLoading } = createAsyncPanel(marketplaceErrorMessage);
   const installedAgents = createMemo(
-    () => new Map(props.bots.flatMap((bot) => (bot.marketplaceSource ? [[bot.marketplaceSource.listingId, bot]] : []))),
+    () =>
+      new Map(
+        props.agents.flatMap((agent) => (agent.marketplaceSource ? [[agent.marketplaceSource.listingId, agent]] : [])),
+      ),
   );
   let searchTimer: number | undefined;
   let initialized = false;
@@ -1175,8 +1178,8 @@ function AgentMarketplacePanel(props: {
   }
 
   async function preparePublication(listingId?: string) {
-    const botId = market.publication.sourceBotId || props.bots[0]?.id;
-    if (!botId) {
+    const agentId = market.publication.sourceAgentId || props.agents[0]?.id;
+    if (!agentId) {
       setError("Switch to Local and choose an agent to publish.");
       return;
     }
@@ -1184,7 +1187,7 @@ function AgentMarketplacePanel(props: {
       state.publication.listingId = listingId;
     });
     setBusy("publish");
-    const value = await run(() => window.openbot.marketplaceAgents.preview(botId));
+    const value = await run(() => window.openbot.marketplaceAgents.preview(agentId));
     if (value) {
       setMarket((state) => {
         state.publication.preview = value;
@@ -1349,20 +1352,23 @@ function AgentMarketplacePanel(props: {
             <p>Agents available in your local sidebar.</p>
           </div>
         </div>
-        <Show when={props.bots.length} fallback={<div class="skills-marketplace-state">No agents installed yet.</div>}>
+        <Show
+          when={props.agents.length}
+          fallback={<div class="skills-marketplace-state">No agents installed yet.</div>}
+        >
           <section class="skills-marketplace-category-section">
             <div class="skills-marketplace-section-title">
               <h2>Local agents</h2>
-              <span>{props.bots.length} installed</span>
+              <span>{props.agents.length} installed</span>
             </div>
             <div class="skills-marketplace-grid agent-marketplace-grid">
-              <For each={props.bots}>
-                {(bot) => (
+              <For each={props.agents}>
+                {(agent) => (
                   <article class="skills-marketplace-card agent-marketplace-card">
-                    <AgentAvatar seed={bot.id} hue={null} motion="hover" />
+                    <AgentAvatar seed={agent.id} hue={null} motion="hover" />
                     <div class="skills-marketplace-card-copy">
                       <div>
-                        <h3>{bot.name}</h3>
+                        <h3>{agent.name}</h3>
                         <span>Installed</span>
                       </div>
                       <p>Available in Local</p>
@@ -1385,17 +1391,17 @@ function AgentMarketplacePanel(props: {
             <span class="skills-agent-select-control">
               <NativeSelect
                 aria-label="Agent to publish"
-                value={market.publication.sourceBotId}
+                value={market.publication.sourceAgentId}
                 onChange={(event) => {
-                  const botId = event.currentTarget.value;
+                  const agentId = event.currentTarget.value;
                   setMarket((state) => {
-                    state.publication.sourceBotId = botId;
+                    state.publication.sourceAgentId = agentId;
                   });
                 }}
-                disabled={!props.bots.length}
+                disabled={!props.agents.length}
               >
-                <Show when={props.bots.length} fallback={<option value="">No local agents</option>}>
-                  <For each={props.bots}>{(bot) => <option value={bot.id}>{bot.name}</option>}</For>
+                <Show when={props.agents.length} fallback={<option value="">No local agents</option>}>
+                  <For each={props.agents}>{(agent) => <option value={agent.id}>{agent.name}</option>}</For>
                 </Show>
               </NativeSelect>
               <ChevronDown aria-hidden="true" />
@@ -1816,7 +1822,7 @@ function marketplaceErrorMessage(cause: unknown): string {
 }
 
 function AgentSelect(props: {
-  bots: Array<{ id: string; name: string }>;
+  agents: Array<{ id: string; name: string }>;
   value: string;
   onChange: (value: string) => void;
 }) {
@@ -1827,10 +1833,10 @@ function AgentSelect(props: {
         <NativeSelect
           value={props.value}
           onChange={(event) => props.onChange(event.currentTarget.value)}
-          disabled={!props.bots.length}
+          disabled={!props.agents.length}
         >
-          <Show when={props.bots.length} fallback={<option value="">No local agents</option>}>
-            <For each={props.bots}>{(bot) => <option value={bot.id}>{bot.name}</option>}</For>
+          <Show when={props.agents.length} fallback={<option value="">No local agents</option>}>
+            <For each={props.agents}>{(agent) => <option value={agent.id}>{agent.name}</option>}</For>
           </Show>
         </NativeSelect>
         <ChevronDown aria-hidden="true" />

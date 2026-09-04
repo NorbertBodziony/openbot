@@ -34,8 +34,8 @@ describe.sequential("ContextCompaction: pressure, threshold and failure", () => 
     service.on("event", (event) => events.push(event));
     await service.initialize();
 
-    await service.sendMessage({ botId: "chief", text: "First large task" });
-    await service.sendMessage({ botId: "chief", text: "Run after compaction" });
+    await service.sendMessage({ agentId: "chief", text: "First large task" });
+    await service.sendMessage({ agentId: "chief", text: "Run after compaction" });
     await waitFor(async () => {
       const messages = await protocolMessages(logPath);
       return messages.filter((message) => message.method === "turn/start").length === 2;
@@ -55,7 +55,7 @@ describe.sequential("ContextCompaction: pressure, threshold and failure", () => 
     const { store, mailbox } = stores(root);
     service = new AgentService(store, mailbox, fakeBrowser());
     await service.initialize();
-    await service.sendMessage({ botId: "chief", text: "Normal task" });
+    await service.sendMessage({ agentId: "chief", text: "Normal task" });
     await waitFor(() => service?.listQueue("chief").deliveries[0]?.status === "completed");
 
     expect((await protocolMessages(logPath)).some((message) => message.method === "thread/compact/start")).toBe(false);
@@ -71,8 +71,8 @@ describe.sequential("ContextCompaction: pressure, threshold and failure", () => 
     service.on("event", (event) => events.push(event));
     await service.initialize();
 
-    await service.sendMessage({ botId: "chief", text: "First task" });
-    await service.sendMessage({ botId: "chief", text: "Must still run" });
+    await service.sendMessage({ agentId: "chief", text: "First task" });
+    await service.sendMessage({ agentId: "chief", text: "Must still run" });
     await waitFor(async () => {
       const messages = await protocolMessages(logPath);
       return messages.filter((message) => message.method === "turn/start").length === 2;

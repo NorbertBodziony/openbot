@@ -153,7 +153,7 @@ export function parseSubmitSkill(input: unknown): SubmitSkillInput {
 export function parseInstallSkill(input: unknown): InstallSkillInput {
   if (!isObject(input)) throw new Error("Invalid skill installation.");
   return {
-    botId: requireString(input.botId, "botId"),
+    agentId: requireString(input.agentId, "agentId"),
     skillId: requireString(input.skillId, "skillId"),
     ...(input.replaceModified === true ? { replaceModified: true } : {}),
   };
@@ -162,7 +162,7 @@ export function parseInstallSkill(input: unknown): InstallSkillInput {
 export function parseUninstallSkill(input: unknown): UninstallSkillInput {
   if (!isObject(input)) throw new Error("Invalid skill removal.");
   return {
-    botId: requireString(input.botId, "botId"),
+    agentId: requireString(input.agentId, "agentId"),
     skillId: requireString(input.skillId, "skillId"),
     ...(input.removeModified === true ? { removeModified: true } : {}),
   };

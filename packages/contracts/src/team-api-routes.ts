@@ -9,7 +9,7 @@
 //
 // These are path *builders*, not a matcher, and every entry is exactly what the host compares
 // `url.pathname` against - queries stay at the call site that knows the parameters. The host does not
-// compare full paths for the parametric routes: it regex-matches `/v1/agents/:botId` and switches on
+// compare full paths for the parametric routes: it regex-matches `/v1/agents/:agentId` and switches on
 // an action sub-segment, so a shared matcher would mean rewriting its 404 and 405 semantics. Static
 // entries are for both halves; the host's regex branches stay literal.
 //
@@ -121,30 +121,30 @@ export const TEAM_API_ROUTES = {
   },
   agent: {
     // PATCH updates, DELETE removes.
-    one: (botId: string) => `/v1/agents/${segment(botId)}`,
-    usage: (botId: string) => `/v1/agents/${segment(botId)}/usage`,
-    skills: (botId: string) => `/v1/agents/${segment(botId)}/skills`,
-    duplicate: (botId: string) => `/v1/agents/${segment(botId)}/duplicate`,
-    avatar: (botId: string) => `/v1/agents/${segment(botId)}/avatar`,
-    conversation: (botId: string) => `/v1/agents/${segment(botId)}/conversation`,
-    conversationPage: (botId: string) => `/v1/agents/${segment(botId)}/conversation-page`,
-    conversationRead: (botId: string) => `/v1/agents/${segment(botId)}/conversation/read`,
-    messages: (botId: string) => `/v1/agents/${segment(botId)}/messages`,
-    reactions: (botId: string) => `/v1/agents/${segment(botId)}/reactions`,
-    interrupt: (botId: string) => `/v1/agents/${segment(botId)}/interrupt`,
-    failuresAcknowledge: (botId: string) => `/v1/agents/${segment(botId)}/failures/acknowledge`,
-    queue: (botId: string) => `/v1/agents/${segment(botId)}/queue`,
-    queueCancel: (botId: string) => `/v1/agents/${segment(botId)}/queue/cancel`,
-    queueSteer: (botId: string) => `/v1/agents/${segment(botId)}/queue/steer`,
-    queueUpdate: (botId: string) => `/v1/agents/${segment(botId)}/queue/update`,
-    queueReorder: (botId: string) => `/v1/agents/${segment(botId)}/queue/reorder`,
-    memories: (botId: string) => `/v1/agents/${segment(botId)}/memories`,
-    memory: (botId: string, memoryId: string) => `/v1/agents/${segment(botId)}/memories/${segment(memoryId)}`,
-    routines: (botId: string) => `/v1/agents/${segment(botId)}/routines`,
-    routine: (botId: string, routineId: string) => `/v1/agents/${segment(botId)}/routines/${segment(routineId)}`,
-    routineTest: (botId: string, routineId: string) =>
-      `/v1/agents/${segment(botId)}/routines/${segment(routineId)}/test`,
-    routineRuns: (botId: string, routineId: string) =>
-      `/v1/agents/${segment(botId)}/routines/${segment(routineId)}/runs`,
+    one: (agentId: string) => `/v1/agents/${segment(agentId)}`,
+    usage: (agentId: string) => `/v1/agents/${segment(agentId)}/usage`,
+    skills: (agentId: string) => `/v1/agents/${segment(agentId)}/skills`,
+    duplicate: (agentId: string) => `/v1/agents/${segment(agentId)}/duplicate`,
+    avatar: (agentId: string) => `/v1/agents/${segment(agentId)}/avatar`,
+    conversation: (agentId: string) => `/v1/agents/${segment(agentId)}/conversation`,
+    conversationPage: (agentId: string) => `/v1/agents/${segment(agentId)}/conversation-page`,
+    conversationRead: (agentId: string) => `/v1/agents/${segment(agentId)}/conversation/read`,
+    messages: (agentId: string) => `/v1/agents/${segment(agentId)}/messages`,
+    reactions: (agentId: string) => `/v1/agents/${segment(agentId)}/reactions`,
+    interrupt: (agentId: string) => `/v1/agents/${segment(agentId)}/interrupt`,
+    failuresAcknowledge: (agentId: string) => `/v1/agents/${segment(agentId)}/failures/acknowledge`,
+    queue: (agentId: string) => `/v1/agents/${segment(agentId)}/queue`,
+    queueCancel: (agentId: string) => `/v1/agents/${segment(agentId)}/queue/cancel`,
+    queueSteer: (agentId: string) => `/v1/agents/${segment(agentId)}/queue/steer`,
+    queueUpdate: (agentId: string) => `/v1/agents/${segment(agentId)}/queue/update`,
+    queueReorder: (agentId: string) => `/v1/agents/${segment(agentId)}/queue/reorder`,
+    memories: (agentId: string) => `/v1/agents/${segment(agentId)}/memories`,
+    memory: (agentId: string, memoryId: string) => `/v1/agents/${segment(agentId)}/memories/${segment(memoryId)}`,
+    routines: (agentId: string) => `/v1/agents/${segment(agentId)}/routines`,
+    routine: (agentId: string, routineId: string) => `/v1/agents/${segment(agentId)}/routines/${segment(routineId)}`,
+    routineTest: (agentId: string, routineId: string) =>
+      `/v1/agents/${segment(agentId)}/routines/${segment(routineId)}/test`,
+    routineRuns: (agentId: string, routineId: string) =>
+      `/v1/agents/${segment(agentId)}/routines/${segment(routineId)}/runs`,
   },
 } as const;

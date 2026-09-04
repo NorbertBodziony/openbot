@@ -22,10 +22,10 @@ import {
   type AgentModelId,
   type AgentProviderId,
   type AgentReasoningEffort,
+  type AgentSummary,
   type AvatarImageInput,
-  type BotSummary,
-  type CreateBotInput,
-  type DuplicateBotResult,
+  type CreateAgentInput,
+  type DuplicateAgentResult,
   isAgentModel,
   isAvatarHue,
   isAvatarSeed,
@@ -33,32 +33,32 @@ import {
   isSidebarLayoutSnapshot,
   providerForLegacyModel,
   type SidebarLayoutSnapshot,
-  type UpdateBotInput,
+  type UpdateAgentInput,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isNumber, isOneOf, isString } from "@openbot/contracts/runtime-values";
 import { isUuidV4 } from "@openbot/contracts/validation";
 import { OpenBotDatabase, type ProviderSession, stableThreadId } from "./openbot-database";
 import { isRecord } from "./protocol";
 
-type StoredBot = BotSummary;
-type PersistedStoredBot = Omit<StoredBot, "avatarUrl" | "provider"> & {
+type StoredAgent = AgentSummary;
+type PersistedStoredAgent = Omit<StoredAgent, "avatarUrl" | "provider"> & {
   avatarUrl?: string | null;
   provider?: AgentProviderId;
 };
-type StoredBotBase = Omit<PersistedStoredBot, "avatarSeed" | "avatarHue"> & DynamicRecord;
+type StoredAgentBase = Omit<PersistedStoredAgent, "avatarSeed" | "avatarHue"> & DynamicRecord;
 
-interface BotDuplicationMarker {
+interface AgentDuplicationMarker {
   operationId: string;
-  sourceBotId: string;
+  sourceAgentId: string;
 }
 
 interface StoredState {
   version: 2;
   examplesInitialized: boolean;
-  bots: StoredBot[];
+  agents: StoredAgent[];
 }
 
-type LegacyStoredBot = Omit<PersistedStoredBot, "avatarSeed" | "avatarHue"> & {
+type LegacyStoredAgent = Omit<PersistedStoredAgent, "avatarSeed" | "avatarHue"> & {
   avatarShape: string;
   avatarColor: string;
 };
@@ -90,25 +90,25 @@ export const DEFAULT_REASONING_EFFORT: AgentReasoningEffort = "medium";
 // every existing install, and is what stops the legacy import running a second time. None of the
 // three follows the bot-to-agent rename.
 const LEGACY_AGENTS_STATE_FILE = "bots.json";
-const LEGACY_AGENTS_STATE_KEY = "bots";
+const LEGACY_AGENTS_STATE_KEY = "agents";
 const LEGACY_AGENTS_IMPORT_COMMAND_ID = "legacy-import:bots:v1";
 
-export class BotStore {
+export class AgentStore {
   readonly #statePath: string;
-  readonly #botsRoot: string;
+  readonly #agentsRoot: string;
   readonly #sharedRoot: string;
   readonly #downloadsRoot: string;
   readonly #avatarsRoot: string;
   readonly #duplicationsRoot: string;
   readonly #database: OpenBotDatabase;
-  #state: StoredState = { version: 2, examplesInitialized: false, bots: [] };
+  #state: StoredState = { version: 2, examplesInitialized: false, agents: [] };
   #avatarUpdateQueue: Promise<void> = Promise.resolve();
   #creationQueue: Promise<void> = Promise.resolve();
 
   constructor(userDataPath: string, homePath: string, database = new OpenBotDatabase(userDataPath)) {
     const openbotRoot = join(homePath, "OpenBot");
     this.#statePath = join(userDataPath, LEGACY_AGENTS_STATE_FILE);
-    this.#botsRoot = join(openbotRoot, "Bots");
+    this.#agentsRoot = join(openbotRoot, "Agents");
     this.#sharedRoot = join(openbotRoot, "Shared");
     this.#downloadsRoot = join(openbotRoot, "Downloads");
     this.#avatarsRoot = join(userDataPath, "avatars", "agents");
@@ -130,7 +130,7 @@ export class BotStore {
 
   async initialize(): Promise<void> {
     await Promise.all([
-      mkdir(this.#botsRoot, { recursive: true, mode: 0o700 }),
+      mkdir(this.#agentsRoot, { recursive: true, mode: 0o700 }),
       mkdir(this.#sharedRoot, { recursive: true, mode: 0o700 }),
       mkdir(this.#downloadsRoot, { recursive: true, mode: 0o700 }),
       mkdir(this.#avatarsRoot, { recursive: true, mode: 0o700 }),
@@ -141,49 +141,49 @@ export class BotStore {
     await this.#database.initialize();
     const persisted = this.#database.listAgents();
     if (persisted.length > 0 || this.#database.hasAggregateEvents("agents", "agents")) {
-      if (!persisted.every(isStoredBot)) {
+      if (!persisted.every(isStoredAgent)) {
         throw new Error("Stored agent profiles use the old role field; update the data before starting OpenBot.");
       }
       this.#state = {
         version: 2,
         examplesInitialized: true,
-        bots: persisted.map(normalizeStoredBot),
+        agents: persisted.map(normalizeStoredAgent),
       };
     } else {
       const legacy = await this.#readState();
       await this.#database.backupLegacyFile(this.#statePath);
-      const sessions: Array<{ bot: StoredBot; externalSessionId: string }> = [];
-      legacy.bots = legacy.bots.map((bot) => {
-        if (!bot.threadId) return bot;
-        sessions.push({ bot, externalSessionId: bot.threadId });
-        return { ...bot, threadId: stableThreadId(bot.id) };
+      const sessions: Array<{ agent: StoredAgent; externalSessionId: string }> = [];
+      legacy.agents = legacy.agents.map((agent) => {
+        if (!agent.threadId) return agent;
+        sessions.push({ agent, externalSessionId: agent.threadId });
+        return { ...agent, threadId: stableThreadId(agent.id) };
       });
       legacy.examplesInitialized = true;
       this.#state = legacy;
-      this.#database.replaceAgents(LEGACY_AGENTS_IMPORT_COMMAND_ID, legacy.bots, "agents.legacy-imported");
-      for (const { bot, externalSessionId } of sessions) {
+      this.#database.replaceAgents(LEGACY_AGENTS_IMPORT_COMMAND_ID, legacy.agents, "agents.legacy-imported");
+      for (const { agent, externalSessionId } of sessions) {
         this.#database.bindProviderSession({
-          threadId: stableThreadId(bot.id),
-          provider: bot.provider,
+          threadId: stableThreadId(agent.id),
+          provider: agent.provider,
           externalSessionId,
-          model: bot.model,
-          effort: bot.reasoningEffort,
+          model: agent.model,
+          effort: agent.reasoningEffort,
         });
       }
     }
     await this.#recoverPendingDuplications();
   }
 
-  list(): BotSummary[] {
-    return this.#state.bots.map((bot) => ({ ...bot }));
+  list(): AgentSummary[] {
+    return this.#state.agents.map((agent) => ({ ...agent }));
   }
 
-  createBot(input: Omit<CreateBotInput, "initialMessage">): Promise<BotSummary> {
-    return this.#enqueueCreation(() => this.#createBot(input));
+  createAgent(input: Omit<CreateAgentInput, "initialMessage">): Promise<AgentSummary> {
+    return this.#enqueueCreation(() => this.#createAgent(input));
   }
 
-  async #createBot(input: Omit<CreateBotInput, "initialMessage">): Promise<BotSummary> {
-    if (this.#state.bots.length >= INPUT_LIMITS.agents) {
+  async #createAgent(input: Omit<CreateAgentInput, "initialMessage">): Promise<AgentSummary> {
+    if (this.#state.agents.length >= INPUT_LIMITS.agents) {
       throw new Error(`A host can have up to ${INPUT_LIMITS.agents} agents.`);
     }
     const name = requiredText(input.name, "Agent name", INPUT_LIMITS.agentName);
@@ -194,20 +194,20 @@ export class BotStore {
     record.avatarSeed = input.avatarSeed;
     record.avatarHue = input.avatarHue;
     await mkdir(record.workspacePath, { recursive: true, mode: 0o700 });
-    this.#state.bots.unshift(record);
+    this.#state.agents.unshift(record);
     try {
       this.#persist("agent.created");
     } catch (error) {
-      this.#state.bots = this.#state.bots.filter((candidate) => candidate.id !== record.id);
+      this.#state.agents = this.#state.agents.filter((candidate) => candidate.id !== record.id);
       await rm(record.workspacePath, { recursive: true, force: true });
       throw error;
     }
     return { ...record };
   }
 
-  duplicateBot(sourceId: string, operationId: string = randomUUID()): Promise<BotSummary> {
+  duplicateAgent(sourceId: string, operationId: string = randomUUID()): Promise<AgentSummary> {
     if (!isUuidV4(operationId)) throw new Error("Invalid agent duplication operation id.");
-    return this.#enqueueCreation(() => this.#duplicateBot(sourceId, operationId));
+    return this.#enqueueCreation(() => this.#duplicateAgent(sourceId, operationId));
   }
 
   #enqueueCreation<T>(create: () => Promise<T>): Promise<T> {
@@ -219,14 +219,14 @@ export class BotStore {
     return operation;
   }
 
-  async #duplicateBot(sourceId: string, operationId: string): Promise<BotSummary> {
+  async #duplicateAgent(sourceId: string, operationId: string): Promise<AgentSummary> {
     if (this.#database.commandResult(duplicationCommandId(operationId)) !== undefined) {
       throw new Error("This agent duplication operation is already committed.");
     }
-    if (this.#state.bots.length >= INPUT_LIMITS.agents) {
+    if (this.#state.agents.length >= INPUT_LIMITS.agents) {
       throw new Error(`A host can have up to ${INPUT_LIMITS.agents} agents.`);
     }
-    const source = this.#requireBot(sourceId);
+    const source = this.#requireAgent(sourceId);
     const sourceProfileSignature = duplicationProfileSignature(source);
     const sourceWorkspaceManifest = await workspaceMetadataFingerprint(source.workspacePath);
     const sourceAvatar = this.resolveAvatar(source.id);
@@ -234,7 +234,7 @@ export class BotStore {
     const id = `bot-${randomUUID()}`;
     const record = this.#createRecord(
       id,
-      duplicateBotName(source.name, this.#state.bots),
+      duplicateAgentName(source.name, this.#state.agents),
       source.title,
       source.description,
     );
@@ -251,7 +251,7 @@ export class BotStore {
     const duplicationMarker = this.#duplicationMarkerPath(record.id);
     let stagedAvatarPath: string | null = null;
     try {
-      await writeFile(duplicationMarker, `${JSON.stringify({ operationId, sourceBotId: sourceId })}\n`, {
+      await writeFile(duplicationMarker, `${JSON.stringify({ operationId, sourceAgentId: sourceId })}\n`, {
         encoding: "utf8",
         mode: 0o600,
         flag: "wx",
@@ -279,17 +279,17 @@ export class BotStore {
         throw new Error("The agent changed while it was being duplicated. Try again.");
       }
       await rewriteInternalWorkspaceSymlinks(source.workspacePath, stagedWorkspace, record.workspacePath);
-      if (this.#state.bots.length >= INPUT_LIMITS.agents) {
+      if (this.#state.agents.length >= INPUT_LIMITS.agents) {
         throw new Error(`A host can have up to ${INPUT_LIMITS.agents} agents.`);
       }
-      record.name = duplicateBotName(source.name, this.#state.bots);
+      record.name = duplicateAgentName(source.name, this.#state.agents);
       await rename(stagedWorkspace, record.workspacePath);
       if (sourceAvatar) await rename(stagedAvatarDirectory, avatarDirectory);
-      this.#state.bots.unshift(record);
+      this.#state.agents.unshift(record);
       try {
         this.#persist("agent.duplicated");
       } catch (error) {
-        this.#state.bots = this.#state.bots.filter((candidate) => candidate.id !== record.id);
+        this.#state.agents = this.#state.agents.filter((candidate) => candidate.id !== record.id);
         throw error;
       }
       return { ...record };
@@ -305,42 +305,42 @@ export class BotStore {
     }
   }
 
-  committedBotDuplication(operationId: string, sourceBotId: string): DuplicateBotResult | null {
+  committedAgentDuplication(operationId: string, sourceAgentId: string): DuplicateAgentResult | null {
     if (!isUuidV4(operationId)) throw new Error("Invalid agent duplication operation id.");
     const value = this.#database.commandResult(duplicationCommandId(operationId));
     if (value === undefined) return null;
     const result = isRecord(value) ? value.result : null;
-    const resultBot = isRecord(result) ? result.bot : null;
+    const resultAgent = isRecord(result) ? result.agent : null;
     const resultLayout = isRecord(result) ? result.layout : null;
     if (
       !isRecord(value) ||
-      value.sourceBotId !== sourceBotId ||
+      value.sourceAgentId !== sourceAgentId ||
       !isRecord(result) ||
-      !isStoredBot(resultBot) ||
+      !isStoredAgent(resultAgent) ||
       !isSidebarLayoutSnapshot(resultLayout)
     ) {
       throw new Error("The agent duplication receipt is invalid.");
     }
-    const bot = this.#state.bots.find((candidate) => candidate.id === resultBot.id);
-    if (!bot) throw new Error("The duplicated agent no longer exists.");
+    const agent = this.#state.agents.find((candidate) => candidate.id === resultAgent.id);
+    if (!agent) throw new Error("The duplicated agent no longer exists.");
     return {
-      bot: { ...bot },
+      agent: { ...agent },
       layout: structuredClone(resultLayout),
     };
   }
 
-  async commitBotDuplication(
+  async commitAgentDuplication(
     id: string,
     operationId: string,
-    sourceBotId: string,
+    sourceAgentId: string,
     layout: SidebarLayoutSnapshot,
-  ): Promise<DuplicateBotResult> {
-    const bot = this.#requireBot(id);
+  ): Promise<DuplicateAgentResult> {
+    const agent = this.#requireAgent(id);
     const marker = await this.#readDuplicationMarker(id);
-    if (!marker || marker.operationId !== operationId || marker.sourceBotId !== sourceBotId) {
+    if (!marker || marker.operationId !== operationId || marker.sourceAgentId !== sourceAgentId) {
       throw new Error("This agent duplication marker is invalid.");
     }
-    const result = { bot: { ...bot }, layout: structuredClone(layout) };
+    const result = { agent: { ...agent }, layout: structuredClone(layout) };
     const receipt = this.#database.dispatch(
       duplicationCommandId(operationId),
       [
@@ -348,60 +348,60 @@ export class BotStore {
           aggregateType: "agent-duplications",
           aggregateId: id,
           eventType: "agent-duplication.committed",
-          payload: { sourceBotId, duplicateBotId: id },
+          payload: { sourceAgentId, duplicateAgentId: id },
         },
       ],
-      () => ({ sourceBotId, result }),
+      () => ({ sourceAgentId, result }),
     );
     await rm(this.#duplicationMarkerPath(id), { force: true }).catch(() => undefined);
     if (
       !isRecord(receipt) ||
       !isRecord(receipt.result) ||
-      !isStoredBot(receipt.result.bot) ||
+      !isStoredAgent(receipt.result.agent) ||
       !isSidebarLayoutSnapshot(receipt.result.layout)
     ) {
       throw new Error("The agent duplication receipt is invalid.");
     }
     return {
-      bot: { ...normalizeStoredBot(receipt.result.bot) },
+      agent: { ...normalizeStoredAgent(receipt.result.agent) },
       layout: structuredClone(receipt.result.layout),
     };
   }
 
-  async updateBot(input: UpdateBotInput): Promise<BotSummary> {
-    const bot = this.#requireBot(input.botId);
+  async updateAgent(input: UpdateAgentInput): Promise<AgentSummary> {
+    const agent = this.#requireAgent(input.agentId);
     if (input.name !== undefined) {
-      bot.name = requiredText(input.name, "Agent name", INPUT_LIMITS.agentName);
+      agent.name = requiredText(input.name, "Agent name", INPUT_LIMITS.agentName);
     }
     if (input.title !== undefined) {
-      bot.title = limitedText(input.title, "Agent title", INPUT_LIMITS.agentTitle);
+      agent.title = limitedText(input.title, "Agent title", INPUT_LIMITS.agentTitle);
     }
     if (input.description !== undefined) {
-      bot.description = limitedText(input.description, "Agent description", INPUT_LIMITS.agentDescription);
+      agent.description = limitedText(input.description, "Agent description", INPUT_LIMITS.agentDescription);
     }
-    if (input.notifications !== undefined) bot.notifications = input.notifications;
-    if (input.provider !== undefined) bot.provider = input.provider;
+    if (input.notifications !== undefined) agent.notifications = input.notifications;
+    if (input.provider !== undefined) agent.provider = input.provider;
     if (input.model !== undefined) {
-      bot.model = input.model;
+      agent.model = input.model;
     }
-    if (input.reasoningEffort !== undefined) bot.reasoningEffort = input.reasoningEffort;
-    if (input.avatarSeed !== undefined) bot.avatarSeed = input.avatarSeed;
-    if (input.avatarHue !== undefined) bot.avatarHue = input.avatarHue;
-    bot.updatedAt = new Date().toISOString();
+    if (input.reasoningEffort !== undefined) agent.reasoningEffort = input.reasoningEffort;
+    if (input.avatarSeed !== undefined) agent.avatarSeed = input.avatarSeed;
+    if (input.avatarHue !== undefined) agent.avatarHue = input.avatarHue;
+    agent.updatedAt = new Date().toISOString();
     this.#persist("agent.updated");
-    return { ...bot };
+    return { ...agent };
   }
 
-  setMarketplaceSource(botId: string, source: NonNullable<BotSummary["marketplaceSource"]>): BotSummary {
-    const bot = this.#requireBot(botId);
-    bot.marketplaceSource = structuredClone(source);
-    bot.updatedAt = new Date().toISOString();
+  setMarketplaceSource(agentId: string, source: NonNullable<AgentSummary["marketplaceSource"]>): AgentSummary {
+    const agent = this.#requireAgent(agentId);
+    agent.marketplaceSource = structuredClone(source);
+    agent.updatedAt = new Date().toISOString();
     this.#persist("agent.marketplace-source-updated");
-    return { ...bot, marketplaceSource: structuredClone(source) };
+    return { ...agent, marketplaceSource: structuredClone(source) };
   }
 
-  async setAvatar(botId: string, image: AvatarImageInput | null): Promise<BotSummary> {
-    const operation = this.#avatarUpdateQueue.then(() => this.#setAvatar(botId, image));
+  async setAvatar(agentId: string, image: AvatarImageInput | null): Promise<AgentSummary> {
+    const operation = this.#avatarUpdateQueue.then(() => this.#setAvatar(agentId, image));
     this.#avatarUpdateQueue = operation.then(
       () => undefined,
       () => undefined,
@@ -409,79 +409,79 @@ export class BotStore {
     return operation;
   }
 
-  async #setAvatar(botId: string, image: AvatarImageInput | null): Promise<BotSummary> {
-    const bot = this.#requireBot(botId);
-    const previous = this.resolveAvatar(botId);
-    const previousAvatarUrl = bot.avatarUrl;
-    const previousUpdatedAt = bot.updatedAt;
+  async #setAvatar(agentId: string, image: AvatarImageInput | null): Promise<AgentSummary> {
+    const agent = this.#requireAgent(agentId);
+    const previous = this.resolveAvatar(agentId);
+    const previousAvatarUrl = agent.avatarUrl;
+    const previousUpdatedAt = agent.updatedAt;
     if (image === null) {
-      bot.avatarUrl = null;
-      bot.updatedAt = new Date().toISOString();
+      agent.avatarUrl = null;
+      agent.updatedAt = new Date().toISOString();
       try {
         this.#persist("agent.avatar-removed");
       } catch (error) {
-        bot.avatarUrl = previousAvatarUrl;
-        bot.updatedAt = previousUpdatedAt;
+        agent.avatarUrl = previousAvatarUrl;
+        agent.updatedAt = previousUpdatedAt;
         throw error;
       }
       if (previous) await rm(previous.path, { force: true }).catch(() => undefined);
-      return { ...bot };
+      return { ...agent };
     }
     if (!isValidAvatarImage(image.mimeType, image.bytes)) {
       throw new Error("Choose a valid PNG, JPEG, or WebP image up to 512 KB.");
     }
     const version = randomUUID();
     const extension = avatarFileExtension(image.mimeType);
-    const directory = join(this.#avatarsRoot, bot.id);
+    const directory = join(this.#avatarsRoot, agent.id);
     const target = join(directory, `${version}.${extension}`);
     const temporary = `${target}.tmp`;
     await mkdir(directory, { recursive: true, mode: 0o700 });
     await writeFile(temporary, image.bytes, { mode: 0o600 });
     await rename(temporary, target);
-    bot.avatarUrl = agentAvatarUrl(bot.id, version, image.mimeType);
-    bot.updatedAt = new Date().toISOString();
+    agent.avatarUrl = agentAvatarUrl(agent.id, version, image.mimeType);
+    agent.updatedAt = new Date().toISOString();
     try {
       this.#persist("agent.avatar-updated");
     } catch (error) {
-      bot.avatarUrl = previousAvatarUrl;
-      bot.updatedAt = previousUpdatedAt;
+      agent.avatarUrl = previousAvatarUrl;
+      agent.updatedAt = previousUpdatedAt;
       await rm(target, { force: true });
       throw error;
     }
     if (previous) await rm(previous.path, { force: true }).catch(() => undefined);
-    return { ...bot };
+    return { ...agent };
   }
 
-  resolveAvatar(botId: string): { path: string; mimeType: AvatarImageInput["mimeType"]; version: string } | null {
-    const bot = this.#requireBot(botId);
-    if (!bot.avatarUrl) return null;
-    const parsed = parseAgentAvatarUrl(bot.avatarUrl, bot.id);
+  resolveAvatar(agentId: string): { path: string; mimeType: AvatarImageInput["mimeType"]; version: string } | null {
+    const agent = this.#requireAgent(agentId);
+    if (!agent.avatarUrl) return null;
+    const parsed = parseAgentAvatarUrl(agent.avatarUrl, agent.id);
     if (!parsed) return null;
     const extension = avatarFileExtension(parsed.mimeType);
     return {
-      path: join(this.#avatarsRoot, bot.id, `${parsed.version}.${extension}`),
+      path: join(this.#avatarsRoot, agent.id, `${parsed.version}.${extension}`),
       mimeType: parsed.mimeType,
       version: parsed.version,
     };
   }
 
-  async deleteBot(id: string): Promise<BotSummary> {
-    const bot = this.#requireBot(id);
-    this.#state.bots = this.#state.bots.filter((candidate) => candidate.id !== id);
-    this.#database.hardDeleteAgent(`agents:hard-delete:${randomUUID()}`, id, bot.threadId, this.#state.bots);
+  async deleteAgent(id: string): Promise<AgentSummary> {
+    const agent = this.#requireAgent(id);
+    this.#state.agents = this.#state.agents.filter((candidate) => candidate.id !== id);
+    this.#database.hardDeleteAgent(`agents:hard-delete:${randomUUID()}`, id, agent.threadId, this.#state.agents);
     await Promise.all([
       rm(join(this.#avatarsRoot, id), { recursive: true, force: true }),
       rm(`${join(this.#avatarsRoot, id)}.openbot-stage`, { recursive: true, force: true }),
-      rm(join(this.#botsRoot, id), { recursive: true, force: true }),
-      rm(`${join(this.#botsRoot, id)}.openbot-stage`, { recursive: true, force: true }),
+      rm(join(this.#agentsRoot, id), { recursive: true, force: true }),
+      rm(`${join(this.#agentsRoot, id)}.openbot-stage`, { recursive: true, force: true }),
       rm(this.#duplicationMarkerPath(id), { force: true }),
     ]);
-    return { ...bot };
+    return { ...agent };
   }
 
-  async getOrCreate(id: string, name?: string, title?: string): Promise<BotSummary> {
-    validateBotId(id);
-    const existing = this.#state.bots.find((bot) => bot.id === id);
+  async getOrCreate(id: string, name?: string, title?: string): Promise<AgentSummary> {
+    validateAgentId(id);
+    const existing = this.#state.agents.find((agent) => agent.id === id);
     if (existing) {
       await mkdir(existing.workspacePath, { recursive: true, mode: 0o700 });
       return { ...existing };
@@ -489,19 +489,19 @@ export class BotStore {
     return this.#enqueueCreation(() => this.#getOrCreate(id, name, title));
   }
 
-  async #getOrCreate(id: string, name?: string, title?: string): Promise<BotSummary> {
-    validateBotId(id);
-    const existing = this.#state.bots.find((bot) => bot.id === id);
+  async #getOrCreate(id: string, name?: string, title?: string): Promise<AgentSummary> {
+    validateAgentId(id);
+    const existing = this.#state.agents.find((agent) => agent.id === id);
     if (existing) {
       await mkdir(existing.workspacePath, { recursive: true, mode: 0o700 });
       return { ...existing };
     }
-    if (this.#state.bots.length >= INPUT_LIMITS.agents) {
+    if (this.#state.agents.length >= INPUT_LIMITS.agents) {
       throw new Error(`A host can have up to ${INPUT_LIMITS.agents} agents.`);
     }
 
     const record = this.#createRecord(id, name ?? titleFromId(id), title ?? "Local teammate");
-    this.#state.bots.push(record);
+    this.#state.agents.push(record);
     await mkdir(record.workspacePath, { recursive: true, mode: 0o700 });
     this.#persist("agent.created");
     return { ...record };
@@ -512,23 +512,28 @@ export class BotStore {
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.endsWith(".pending")) continue;
       const id = entry.name.slice(0, -".pending".length);
-      if (!isGeneratedBotId(id)) continue;
-      const bot = this.#state.bots.find((candidate) => candidate.id === id);
+      if (!isGeneratedAgentId(id)) continue;
+      const agent = this.#state.agents.find((candidate) => candidate.id === id);
       const marker = await this.#readDuplicationMarker(id);
-      if (bot && marker) {
-        const committed = this.committedBotDuplication(marker.operationId, marker.sourceBotId);
-        if (committed?.bot.id === id) {
+      if (agent && marker) {
+        const committed = this.committedAgentDuplication(marker.operationId, marker.sourceAgentId);
+        if (committed?.agent.id === id) {
           await rm(join(this.#duplicationsRoot, entry.name), { force: true });
           continue;
         }
       }
-      if (bot) {
-        this.#state.bots = this.#state.bots.filter((candidate) => candidate.id !== id);
-        this.#database.hardDeleteAgent(`agents:duplicate-recovery:${randomUUID()}`, id, bot.threadId, this.#state.bots);
+      if (agent) {
+        this.#state.agents = this.#state.agents.filter((candidate) => candidate.id !== id);
+        this.#database.hardDeleteAgent(
+          `agents:duplicate-recovery:${randomUUID()}`,
+          id,
+          agent.threadId,
+          this.#state.agents,
+        );
       }
       await Promise.all([
-        rm(join(this.#botsRoot, id), { recursive: true, force: true }),
-        rm(`${join(this.#botsRoot, id)}.openbot-stage`, { recursive: true, force: true }),
+        rm(join(this.#agentsRoot, id), { recursive: true, force: true }),
+        rm(`${join(this.#agentsRoot, id)}.openbot-stage`, { recursive: true, force: true }),
         rm(join(this.#avatarsRoot, id), { recursive: true, force: true }),
         rm(`${join(this.#avatarsRoot, id)}.openbot-stage`, { recursive: true, force: true }),
         rm(join(this.#duplicationsRoot, entry.name), { force: true }),
@@ -540,19 +545,19 @@ export class BotStore {
     return join(this.#duplicationsRoot, `${id}.pending`);
   }
 
-  async #readDuplicationMarker(id: string): Promise<BotDuplicationMarker | null> {
+  async #readDuplicationMarker(id: string): Promise<AgentDuplicationMarker | null> {
     try {
       const value = JSON.parse(await readFile(this.#duplicationMarkerPath(id), "utf8"));
       if (
         !isRecord(value) ||
         !isString(value.operationId) ||
         !isUuidV4(value.operationId) ||
-        !isString(value.sourceBotId) ||
-        !value.sourceBotId
+        !isString(value.sourceAgentId) ||
+        !value.sourceAgentId
       ) {
         return null;
       }
-      return { operationId: value.operationId, sourceBotId: value.sourceBotId };
+      return { operationId: value.operationId, sourceAgentId: value.sourceAgentId };
     } catch {
       return null;
     }
@@ -563,42 +568,42 @@ export class BotStore {
   }
 
   ensureThreadIdNow(id: string): string {
-    const bot = this.#requireBot(id);
-    if (bot.threadId) return bot.threadId;
-    bot.threadId = `openbot-thread-${randomUUID()}`;
-    bot.updatedAt = new Date().toISOString();
+    const agent = this.#requireAgent(id);
+    if (agent.threadId) return agent.threadId;
+    agent.threadId = `openbot-thread-${randomUUID()}`;
+    agent.updatedAt = new Date().toISOString();
     this.#persist("thread.created");
-    return bot.threadId;
+    return agent.threadId;
   }
 
   restoreThreadIdentity(id: string, threadId: string | null, updatedAt: string | null): void {
-    const bot = this.#requireBot(id);
-    bot.threadId = threadId;
-    bot.updatedAt = updatedAt;
+    const agent = this.#requireAgent(id);
+    agent.threadId = threadId;
+    agent.updatedAt = updatedAt;
   }
 
   activeProviderSession(id: string): ProviderSession | null {
-    const bot = this.#requireBot(id);
-    if (!bot.threadId) return null;
-    return this.#database.activeProviderSession(bot.threadId, bot.provider);
+    const agent = this.#requireAgent(id);
+    if (!agent.threadId) return null;
+    return this.#database.activeProviderSession(agent.threadId, agent.provider);
   }
 
   bindProviderSession(id: string, externalSessionId: string): ProviderSession {
-    const bot = this.#requireBot(id);
-    if (!bot.threadId) throw new Error(`Agent ${id} does not have an OpenBot thread.`);
+    const agent = this.#requireAgent(id);
+    if (!agent.threadId) throw new Error(`Agent ${id} does not have an OpenBot thread.`);
     return this.#database.bindProviderSession({
-      threadId: bot.threadId,
-      provider: bot.provider,
+      threadId: agent.threadId,
+      provider: agent.provider,
       externalSessionId,
-      model: bot.model,
-      effort: bot.reasoningEffort,
+      model: agent.model,
+      effort: agent.reasoningEffort,
     });
   }
 
   async updatePreview(id: string, preview: string): Promise<void> {
-    const bot = this.#requireBot(id);
-    bot.preview = preview.slice(0, 180);
-    bot.updatedAt = new Date().toISOString();
+    const agent = this.#requireAgent(id);
+    agent.preview = preview.slice(0, 180);
+    agent.updatedAt = new Date().toISOString();
     this.#persist("agent.preview-updated");
   }
 
@@ -609,36 +614,36 @@ export class BotStore {
       if (!isRecord(parsed) || !isBoolean(parsed.examplesInitialized) || !Array.isArray(stored)) {
         throw new Error("Agent state is corrupt or from a newer OpenBot version; refusing to overwrite it.");
       }
-      if (stored.some((bot) => isRecord(bot) && "role" in bot)) {
+      if (stored.some((agent) => isRecord(agent) && "role" in agent)) {
         throw new Error("Stored agent profiles use the old role field; update the data before starting OpenBot.");
       }
 
-      let bots: StoredBot[];
-      if (parsed.version === 1 && stored.every(isLegacyStoredBot)) {
-        bots = stored.map(migrateLegacyBot);
-      } else if (parsed.version === 2 && stored.every(isStoredBot)) {
-        bots = stored.map(normalizeStoredBot);
+      let agents: StoredAgent[];
+      if (parsed.version === 1 && stored.every(isLegacyStoredAgent)) {
+        agents = stored.map(migrateLegacyAgent);
+      } else if (parsed.version === 2 && stored.every(isStoredAgent)) {
+        agents = stored.map(normalizeStoredAgent);
       } else {
         throw new Error("Agent state is corrupt or from a newer OpenBot version; refusing to overwrite it.");
       }
-      if (new Set(bots.map((bot) => bot.id)).size !== bots.length) {
+      if (new Set(agents.map((agent) => agent.id)).size !== agents.length) {
         throw new Error("Agent state contains duplicate agent ids; refusing to overwrite it.");
       }
-      return { version: 2, examplesInitialized: parsed.examplesInitialized, bots };
+      return { version: 2, examplesInitialized: parsed.examplesInitialized, agents };
     } catch (error) {
       if (isRecord(error) && error.code === "ENOENT") {
-        return { version: 2, examplesInitialized: false, bots: [] };
+        return { version: 2, examplesInitialized: false, agents: [] };
       }
       throw error;
     }
   }
 
   #persist(eventType: string): void {
-    this.#database.replaceAgents(`agents:${eventType}:${randomUUID()}`, this.#state.bots, eventType);
+    this.#database.replaceAgents(`agents:${eventType}:${randomUUID()}`, this.#state.agents, eventType);
   }
 
-  #createRecord(id: string, name: string, title: string, description = ""): StoredBot {
-    validateBotId(id);
+  #createRecord(id: string, name: string, title: string, description = ""): StoredAgent {
+    validateAgentId(id);
     return {
       id,
       name,
@@ -649,7 +654,7 @@ export class BotStore {
       model: DEFAULT_AGENT_MODEL,
       reasoningEffort: DEFAULT_REASONING_EFFORT,
       threadId: null,
-      workspacePath: join(this.#botsRoot, id),
+      workspacePath: join(this.#agentsRoot, id),
       preview: "No messages yet",
       updatedAt: null,
       avatarSeed: id,
@@ -658,10 +663,10 @@ export class BotStore {
     };
   }
 
-  #requireBot(id: string): StoredBot {
-    const bot = this.#state.bots.find((candidate) => candidate.id === id);
-    if (!bot) throw new Error(`Unknown agent: ${id}`);
-    return bot;
+  #requireAgent(id: string): StoredAgent {
+    const agent = this.#state.agents.find((candidate) => candidate.id === id);
+    if (!agent) throw new Error(`Unknown agent: ${id}`);
+    return agent;
   }
 }
 
@@ -678,10 +683,10 @@ function limitedText(value: string, label: string, maxLength: number): string {
   return trimmed;
 }
 
-function duplicateBotName(sourceName: string, bots: readonly StoredBot[]): string {
+function duplicateAgentName(sourceName: string, agents: readonly StoredAgent[]): string {
   const match = /^(.*?)(?: copy(?: (\d+))?)$/iu.exec(sourceName);
   const base = match?.[1]?.trim() || sourceName.trim();
-  const existing = new Set(bots.map((bot) => bot.name.toLocaleLowerCase()));
+  const existing = new Set(agents.map((agent) => agent.name.toLocaleLowerCase()));
   for (let index = 1; index <= INPUT_LIMITS.agents + 1; index += 1) {
     const suffix = index === 1 ? " copy" : ` copy ${index}`;
     const candidate = `${base.slice(0, Math.max(1, INPUT_LIMITS.agentName - suffix.length)).trimEnd()}${suffix}`;
@@ -697,10 +702,10 @@ function duplicateBotName(sourceName: string, bots: readonly StoredBot[]): strin
  * duplicate takes none of the three — it gets a fresh thread and its own empty preview. Signing them
  * aborted duplications that were never incoherent, and copying a large workspace takes long enough
  * for an incoming message to land inside the window. Everything else is signed by omission, so a new
- * `BotSummary` field is guarded until someone decides otherwise here.
+ * `AgentSummary` field is guarded until someone decides otherwise here.
  */
-export function duplicationProfileSignature(bot: BotSummary): string {
-  const { preview, updatedAt, threadId, ...copied } = bot;
+export function duplicationProfileSignature(agent: AgentSummary): string {
+  const { preview, updatedAt, threadId, ...copied } = agent;
   return JSON.stringify(copied);
 }
 
@@ -787,17 +792,17 @@ async function updateHashFromFile(hash: ReturnType<typeof createHash>, path: str
   for await (const chunk of createReadStream(path)) hash.update(chunk);
 }
 
-function validateBotId(id: string): void {
-  if (!isValidBotId(id)) {
+function validateAgentId(id: string): void {
+  if (!isValidAgentId(id)) {
     throw new Error("Invalid agent id.");
   }
 }
 
-function isValidBotId(id: string): boolean {
+function isValidAgentId(id: string): boolean {
   return /^[a-z0-9][a-z0-9-]{0,63}$/.test(id) && basename(id) === id;
 }
 
-function isGeneratedBotId(id: string): boolean {
+function isGeneratedAgentId(id: string): boolean {
   return id.startsWith("bot-") && isUuidV4(id.slice("bot-".length));
 }
 
@@ -808,11 +813,11 @@ function titleFromId(id: string): string {
     .join(" ");
 }
 
-function isStoredBotBase(value: unknown): value is StoredBotBase {
+function isStoredAgentBase(value: unknown): value is StoredAgentBase {
   return (
     isRecord(value) &&
     isString(value.id) &&
-    isValidBotId(value.id) &&
+    isValidAgentId(value.id) &&
     isString(value.name) &&
     isString(value.title) &&
     isString(value.description) &&
@@ -826,8 +831,8 @@ function isStoredBotBase(value: unknown): value is StoredBotBase {
   );
 }
 
-function isStoredBot(value: unknown): value is PersistedStoredBot {
-  if (!isRecord(value) || !isStoredBotBase(value)) return false;
+function isStoredAgent(value: unknown): value is PersistedStoredAgent {
+  if (!isRecord(value) || !isStoredAgentBase(value)) return false;
   const record = value;
   return (
     (record.provider === undefined || isOneOf(AGENT_PROVIDERS, record.provider)) &&
@@ -840,7 +845,7 @@ function isStoredBot(value: unknown): value is PersistedStoredBot {
 function isMarketplaceSource(value: unknown): boolean {
   if (value === undefined) return true;
   // Agents installed before the marketplace listing id was renamed spell it `agentId`, which now
-  // means the local agent everywhere else. Both spellings are accepted here; `normalizeStoredBot`
+  // means the local agent everywhere else. Both spellings are accepted here; `normalizeStoredAgent`
   // writes only the new one back.
   return (
     isRecord(value) &&
@@ -856,8 +861,8 @@ function isMarketplaceSource(value: unknown): boolean {
   );
 }
 
-function isLegacyStoredBot(value: unknown): value is LegacyStoredBot {
-  if (!isRecord(value) || !isStoredBotBase(value)) return false;
+function isLegacyStoredAgent(value: unknown): value is LegacyStoredAgent {
+  if (!isRecord(value) || !isStoredAgentBase(value)) return false;
   const record = value;
   return (
     isString(record.avatarShape) &&
@@ -867,34 +872,34 @@ function isLegacyStoredBot(value: unknown): value is LegacyStoredBot {
   );
 }
 
-function migrateLegacyBot(bot: LegacyStoredBot): StoredBot {
+function migrateLegacyAgent(agent: LegacyStoredAgent): StoredAgent {
   return {
-    id: bot.id,
-    name: bot.name,
-    title: bot.title,
-    description: bot.description,
-    notifications: bot.notifications,
-    provider: providerForLegacyModel(bot.model),
-    model: bot.model,
-    reasoningEffort: bot.reasoningEffort,
-    threadId: bot.threadId,
-    workspacePath: bot.workspacePath,
-    preview: bot.preview,
-    updatedAt: bot.updatedAt,
-    avatarSeed: bot.id,
+    id: agent.id,
+    name: agent.name,
+    title: agent.title,
+    description: agent.description,
+    notifications: agent.notifications,
+    provider: providerForLegacyModel(agent.model),
+    model: agent.model,
+    reasoningEffort: agent.reasoningEffort,
+    threadId: agent.threadId,
+    workspacePath: agent.workspacePath,
+    preview: agent.preview,
+    updatedAt: agent.updatedAt,
+    avatarSeed: agent.id,
     avatarHue: null,
     avatarUrl: null,
   };
 }
 
-function normalizeStoredBot(bot: PersistedStoredBot): StoredBot {
+function normalizeStoredAgent(agent: PersistedStoredAgent): StoredAgent {
   return {
-    ...bot,
-    provider: bot.provider ?? providerForLegacyModel(bot.model),
-    avatarUrl: isString(bot.avatarUrl) && parseAgentAvatarUrl(bot.avatarUrl, bot.id) ? bot.avatarUrl : null,
-    ...(bot.marketplaceSource === undefined
+    ...agent,
+    provider: agent.provider ?? providerForLegacyModel(agent.model),
+    avatarUrl: isString(agent.avatarUrl) && parseAgentAvatarUrl(agent.avatarUrl, agent.id) ? agent.avatarUrl : null,
+    ...(agent.marketplaceSource === undefined
       ? {}
-      : { marketplaceSource: normalizeMarketplaceSource(bot.marketplaceSource) }),
+      : { marketplaceSource: normalizeMarketplaceSource(agent.marketplaceSource) }),
   };
 }
 
@@ -903,7 +908,7 @@ function normalizeStoredBot(bot: PersistedStoredBot): StoredBot {
  * the local agent everywhere else. `isMarketplaceSource` accepts either spelling; this writes only
  * the new one back, so a stored agent converts the first time it is read.
  */
-function normalizeMarketplaceSource(value: unknown): NonNullable<StoredBot["marketplaceSource"]> {
+function normalizeMarketplaceSource(value: unknown): NonNullable<StoredAgent["marketplaceSource"]> {
   if (!isRecord(value)) throw new Error("The stored marketplace source is invalid.");
   const listingId = isString(value.listingId) ? value.listingId : value.agentId;
   if (!isString(listingId) || !isString(value.versionId) || !isNumber(value.version)) {
@@ -923,8 +928,8 @@ function stringList(value: unknown): string[] {
   return [...value];
 }
 
-function agentAvatarUrl(botId: string, version: string, mimeType: string): string {
-  const url = new URL(`openbot-avatar://agent/${encodeURIComponent(botId)}`);
+function agentAvatarUrl(agentId: string, version: string, mimeType: string): string {
+  const url = new URL(`openbot-avatar://agent/${encodeURIComponent(agentId)}`);
   url.searchParams.set("v", version);
   url.searchParams.set("type", mimeType);
   return url.toString();
@@ -932,17 +937,17 @@ function agentAvatarUrl(botId: string, version: string, mimeType: string): strin
 
 function parseAgentAvatarUrl(
   value: string,
-  expectedBotId: string,
+  expectedAgentId: string,
 ): { version: string; mimeType: AvatarImageInput["mimeType"] } | null {
   try {
     const url = new URL(value);
-    const botId = decodeURIComponent(url.pathname.split("/").filter(Boolean)[0] ?? "");
+    const agentId = decodeURIComponent(url.pathname.split("/").filter(Boolean)[0] ?? "");
     const version = url.searchParams.get("v") ?? "";
     const mimeType = url.searchParams.get("type") ?? "";
     if (
       url.protocol !== "openbot-avatar:" ||
       url.hostname !== "agent" ||
-      botId !== expectedBotId ||
+      agentId !== expectedAgentId ||
       !isUuidV4(version) ||
       !isAvatarMimeType(mimeType)
     ) {

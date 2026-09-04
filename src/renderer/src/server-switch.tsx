@@ -15,7 +15,7 @@ import { createSimpleContext } from "./simple-context";
  *   a switch. It used to sit in `browser-tabs.tsx`, where it happened to survive
  *   because nothing was ever torn down; under a keyed scope it would be cleared
  *   by the very unmount it exists to cover.
- * - `pendingBotSelection` carries "select this agent once you are on that
+ * - `pendingAgentSelection` carries "select this agent once you are on that
  *   server" across the remount, for an agent opened from the marketplace.
  * - `pendingIslandAction` does the same for a Dynamic Island action, which
  *   arrives for *any* server and so may have to switch before it can act. The
@@ -36,13 +36,13 @@ const ServerSwitch = createSimpleContext({
   name: "Server switch",
   init: () => {
     const [browserVisibilitySuspended, setBrowserVisibilitySuspended] = createSignal(false);
-    const [pendingBotSelection, setPendingBotSelection] = createSignal<string | null>(null);
+    const [pendingAgentSelection, setPendingAgentSelection] = createSignal<string | null>(null);
     const [pendingIslandAction, setPendingIslandAction] = createSignal<ServerScopedIslandAction | null>(null);
     return {
       browserVisibilitySuspended,
       setBrowserVisibilitySuspended,
-      pendingBotSelection,
-      setPendingBotSelection,
+      pendingAgentSelection,
+      setPendingAgentSelection,
       pendingIslandAction,
       setPendingIslandAction,
     };

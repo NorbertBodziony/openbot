@@ -3,8 +3,8 @@ import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-lib
 import { expect, it, vi } from "vitest";
 import { App } from "./App";
 import {
+  AGENTS,
   attachment,
-  BOTS,
   confirmOnboardingModel,
   emitAgentEvent,
   emitDynamicIslandAction,
@@ -30,11 +30,11 @@ describe("OpenBot connected desktop shell", () => {
         resolveServers = resolve;
       }),
     );
-    vi.mocked(window.openbot.agent.listBots).mockResolvedValueOnce([{ ...BOTS[0], name: "Remote Chief" }]);
+    vi.mocked(window.openbot.agent.listAgents).mockResolvedValueOnce([{ ...AGENTS[0], name: "Remote Chief" }]);
 
     render(() => <App />);
     await waitFor(() => expect(window.openbot.servers.list).toHaveBeenCalledOnce());
-    expect(window.openbot.agent.listBots).not.toHaveBeenCalled();
+    expect(window.openbot.agent.listAgents).not.toHaveBeenCalled();
 
     resolveServers?.([
       {
@@ -90,7 +90,7 @@ describe("OpenBot connected desktop shell", () => {
     render(() => <App />);
 
     expect(await screen.findByRole("heading", { name: "Update OpenBot on Studio Mac" })).toBeInTheDocument();
-    expect(window.openbot.agent.listBots).not.toHaveBeenCalled();
+    expect(window.openbot.agent.listAgents).not.toHaveBeenCalled();
     await fireEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(window.openbot.servers.retryConnection).toHaveBeenCalledWith("remote-1"));
   });
@@ -242,14 +242,14 @@ describe("OpenBot connected desktop shell", () => {
 
     render(() => <App />);
     await waitFor(() => expect(emitScopedAgentEvent).toBeTypeOf("function"));
-    emitScopedAgentEvent?.({ serverId: "remote-1", event: { type: "bots-changed", bots: BOTS } });
+    emitScopedAgentEvent?.({ serverId: "remote-1", event: { type: "agents-changed", agents: AGENTS } });
     emitScopedAgentEvent?.({
       serverId: "remote-1",
       event: {
         type: "approval",
         approval: {
           requestId: "approval-remote",
-          botId: "chief",
+          agentId: "chief",
           threadId: "thread-chief",
           turnId: "turn-remote",
           kind: "permissions",
@@ -273,7 +273,7 @@ describe("OpenBot connected desktop shell", () => {
     emitDynamicIslandAction?.({
       type: "review-attention",
       serverId: "remote-1",
-      botId: "chief",
+      agentId: "chief",
       requestId: "approval-remote",
     });
     await waitFor(() => expect(window.openbot.servers.select).toHaveBeenCalledWith("remote-1"));
@@ -297,7 +297,7 @@ describe("OpenBot connected desktop shell", () => {
     emitDynamicIslandAction?.({
       type: "respond-approval",
       serverId: "remote-1",
-      botId: "chief",
+      agentId: "chief",
       requestId: "approval-remote",
       decision: "accept",
     });
@@ -336,14 +336,14 @@ describe("OpenBot connected desktop shell", () => {
 
     render(() => <App />);
     await waitFor(() => expect(emitScopedAgentEvent).toBeTypeOf("function"));
-    emitScopedAgentEvent?.({ serverId: remote.id, event: { type: "bots-changed", bots: BOTS } });
+    emitScopedAgentEvent?.({ serverId: remote.id, event: { type: "agents-changed", agents: AGENTS } });
     emitScopedAgentEvent?.({
       serverId: remote.id,
       event: {
         type: "approval",
         approval: {
           requestId: "stale-approval",
-          botId: "chief",
+          agentId: "chief",
           threadId: "thread-chief",
           turnId: "turn-remote",
           kind: "permissions",
@@ -398,7 +398,7 @@ describe("OpenBot connected desktop shell", () => {
     const snapshot = (messageId: string, text: string) => ({
       type: "runtime-snapshot" as const,
       snapshot: {
-        bots: [
+        agents: [
           {
             id: "chief",
             name: "Chief",
@@ -412,7 +412,7 @@ describe("OpenBot connected desktop shell", () => {
         ],
         activeTurns: [],
         work: [],
-        latestMessages: [{ botId: "chief", id: messageId, text, createdAt: "2026-08-29T10:00:00.000Z" }],
+        latestMessages: [{ agentId: "chief", id: messageId, text, createdAt: "2026-08-29T10:00:00.000Z" }],
         attentionComplete: true,
         pendingPrompts: [],
         pendingApprovals: [],
@@ -454,7 +454,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "queue-changed",
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         deliveries: [
           queuedDelivery("delivery-running", "Keep the full queue", null, {
             status: "running",
@@ -466,7 +466,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "prompt",
       requestId: "prompt-authoritative",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-chief",
       turnId: "turn-running",
       questions: [
@@ -486,8 +486,8 @@ describe("OpenBot connected desktop shell", () => {
     const runtimeSnapshot: AgentEvent = {
       type: "runtime-snapshot",
       snapshot: {
-        bots: [],
-        activeTurns: [{ botId: "chief", threadId: "thread-chief", turnId: "turn-running" }],
+        agents: [],
+        activeTurns: [{ agentId: "chief", threadId: "thread-chief", turnId: "turn-running" }],
         work: [],
         latestMessages: [],
         attentionComplete: false,
@@ -520,7 +520,7 @@ describe("OpenBot connected desktop shell", () => {
     const conversation = (revision: number, activeTurnId: string | null, messages: ConversationMessage[]) => ({
       type: "conversation" as const,
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-chief",
         activeTurnId,
         revision,
@@ -541,7 +541,7 @@ describe("OpenBot connected desktop shell", () => {
 
     emitAgentEvent?.({
       type: "turn-progress",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-chief",
       turnId: "turn-live-status",
       detail: "Searching for current information…",
@@ -568,7 +568,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.(conversation(2, "turn-live-status", [userMessage, firstCommentary]));
     emitAgentEvent?.({
       type: "conversation-delta",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-chief",
       turnId: "turn-live-status",
       messageId: firstCommentary.id,
@@ -606,7 +606,7 @@ describe("OpenBot connected desktop shell", () => {
 
     emitAgentEvent?.({
       type: "turn-progress",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-chief",
       turnId: "turn-live-status",
       detail: "Reviewing the verification results…",
@@ -617,7 +617,7 @@ describe("OpenBot connected desktop shell", () => {
 
     emitAgentEvent?.({
       type: "turn-completed",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-chief",
       turnId: "turn-live-status",
       status: "completed",
@@ -641,7 +641,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "conversation",
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-chief",
         activeTurnId: turnId,
         revision: 1,
@@ -679,7 +679,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "runtime-snapshot",
       snapshot: {
-        bots: [],
+        agents: [],
         activeTurns: [],
         work: [],
         latestMessages: [],
@@ -688,7 +688,7 @@ describe("OpenBot connected desktop shell", () => {
         pendingApprovals: [
           {
             requestId: "approval-runtime",
-            botId: "chief",
+            agentId: "chief",
             threadId: "thread-chief",
             turnId: "turn-runtime",
             kind: "command",
@@ -716,7 +716,7 @@ describe("OpenBot connected desktop shell", () => {
       type: "agent-input-resolved",
       kind: "approval",
       requestId: "approval-runtime",
-      botId: "chief",
+      agentId: "chief",
     });
     await waitFor(() =>
       expect(vi.mocked(window.openbot.dynamicIsland.publishPresentation).mock.calls.at(-1)?.[0]).toMatchObject({
@@ -909,7 +909,7 @@ describe("OpenBot connected desktop shell", () => {
 
     const pendingPrompt = {
       requestId: "prompt-across-servers",
-      botId: "chief",
+      agentId: "chief",
       threadId: "thread-chief",
       turnId: "turn-across-servers",
       questions: [{ id: "account", header: "Account", question: "Which account?", isSecret: false, options: null }],
@@ -946,7 +946,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "runtime-snapshot",
       snapshot: {
-        bots: [],
+        agents: [],
         activeTurns: [],
         work: [],
         latestMessages: [],
@@ -962,7 +962,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "conversation",
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-chief",
         activeTurnId: null,
         revision: 30,
@@ -989,8 +989,8 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.input(name, { target: { value: "Coordinator" } });
     await fireEvent.blur(name);
     await waitFor(() =>
-      expect(window.openbot.agent.updateBot).toHaveBeenCalledWith({
-        botId: "chief",
+      expect(window.openbot.agent.updateAgent).toHaveBeenCalledWith({
+        agentId: "chief",
         name: "Coordinator",
       }),
     );
@@ -999,7 +999,7 @@ describe("OpenBot connected desktop shell", () => {
     emitAgentEvent?.({
       type: "conversation",
       snapshot: {
-        botId: "chief",
+        agentId: "chief",
         threadId: null,
         activeTurnId: null,
         revision: 1,
@@ -1038,7 +1038,7 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.pointerUp(screen.getByRole("menuitem", { name: "Duplicate agent" }), { button: 0 });
 
-    await waitFor(() => expect(window.openbot.agent.duplicateBot).toHaveBeenCalledWith("sales-outbound"));
+    await waitFor(() => expect(window.openbot.agent.duplicateAgent).toHaveBeenCalledWith("sales-outbound"));
     expect(await screen.findByRole("heading", { name: "Sales Outbound copy" })).toBeInTheDocument();
     await waitFor(() => expect(window.openbot.agent.readConversation).toHaveBeenCalledWith("sales-outbound-copy"));
     expect(
@@ -1049,7 +1049,7 @@ describe("OpenBot connected desktop shell", () => {
   });
 
   it("keeps the current selection and shows an error when duplication fails", async () => {
-    vi.mocked(window.openbot.agent.duplicateBot).mockRejectedValueOnce(new Error("The agent is busy."));
+    vi.mocked(window.openbot.agent.duplicateAgent).mockRejectedValueOnce(new Error("The agent is busy."));
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     await fireEvent.contextMenu(screen.getByRole("button", { name: /Sales Outbound/ }), {
@@ -1063,7 +1063,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.getByRole("heading", { name: "Chief" })).toBeInTheDocument();
   });
 
-  it("confirms and persistently deletes a bot from its context menu", async () => {
+  it("confirms and persistently deletes a agent from its context menu", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
     const sales = screen.getByRole("button", { name: /Sales Outbound/ });
@@ -1074,7 +1074,7 @@ describe("OpenBot connected desktop shell", () => {
       "This removes the agent and its OpenBot conversation from the app. Its queue, memories, routines, and workspace are deleted. History stored separately by the connected CLI provider is not deleted.",
     );
     await fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-    await waitFor(() => expect(window.openbot.agent.deleteBot).toHaveBeenCalledWith("sales-outbound"));
+    await waitFor(() => expect(window.openbot.agent.deleteAgent).toHaveBeenCalledWith("sales-outbound"));
     await waitFor(() => expect(screen.queryByRole("button", { name: /Sales Outbound/ })).not.toBeInTheDocument());
   });
 

@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentRuntimeSnapshot, BotSummary } from "@openbot/contracts/ipc";
+import type { AgentEvent, AgentRuntimeSnapshot, AgentSummary } from "@openbot/contracts/ipc";
 import { describe, expect, it } from "vitest";
 import { DynamicIslandCoordinator } from "./dynamic-island-coordinator";
 import type { DynamicIslandPresentationInput } from "./dynamic-island-presentation";
@@ -6,15 +6,15 @@ import type { DynamicIslandPresentationInput } from "./dynamic-island-presentati
 describe("DynamicIslandCoordinator", () => {
   it("retains progress for the active turn and clears it when the turn completes", () => {
     const coordinator = new DynamicIslandCoordinator();
-    seedBots(coordinator, "remote", [bot("research", "Research")]);
+    seedAgents(coordinator, "remote", [agent("research", "Research")]);
     coordinator.applyEvent(
-      scoped("remote", { type: "turn-started", botId: "research", threadId: "thread-1", turnId: "turn-1" }),
+      scoped("remote", { type: "turn-started", agentId: "research", threadId: "thread-1", turnId: "turn-1" }),
       "local",
     );
     coordinator.applyEvent(
       scoped("remote", {
         type: "turn-progress",
-        botId: "research",
+        agentId: "research",
         threadId: "thread-1",
         turnId: "turn-1",
         detail: "Checking the release…",
@@ -29,7 +29,7 @@ describe("DynamicIslandCoordinator", () => {
     coordinator.applyEvent(
       scoped("remote", {
         type: "turn-completed",
-        botId: "research",
+        agentId: "research",
         threadId: "thread-1",
         turnId: "turn-1",
         status: "completed",
@@ -41,9 +41,9 @@ describe("DynamicIslandCoordinator", () => {
 
   it("selects the highest-priority notification across hosts and applies remote resolutions", () => {
     const coordinator = new DynamicIslandCoordinator();
-    seedBots(coordinator, "local", [bot("chief", "Chief")]);
-    seedBots(coordinator, "remote-a", [bot("research", "Research")]);
-    seedBots(coordinator, "remote-b", [bot("sales", "Sales")]);
+    seedAgents(coordinator, "local", [agent("chief", "Chief")]);
+    seedAgents(coordinator, "remote-a", [agent("research", "Research")]);
+    seedAgents(coordinator, "remote-b", [agent("sales", "Sales")]);
     coordinator.applyEvent(scoped("remote-a", prompt("research", "question-1")), "local");
     coordinator.applyEvent(scoped("remote-b", approval("sales", "approval-1")), "local");
 
@@ -59,7 +59,7 @@ describe("DynamicIslandCoordinator", () => {
         type: "agent-input-resolved",
         kind: "prompt",
         requestId: "question-1",
-        botId: "research",
+        agentId: "research",
       }),
       "local",
     );
@@ -75,16 +75,16 @@ describe("DynamicIslandCoordinator", () => {
         type: "agent-input-resolved",
         kind: "approval",
         requestId: "approval-1",
-        botId: "sales",
+        agentId: "sales",
       }),
       "local",
     );
     expect(coordinator.presentation(["local", "remote-a", "remote-b"]).mode).toBe("idle");
   });
 
-  it("keeps simultaneous requests from different bots and advances after each answer", () => {
+  it("keeps simultaneous requests from different agents and advances after each answer", () => {
     const coordinator = new DynamicIslandCoordinator();
-    seedBots(coordinator, "local", [bot("chief", "Chief"), bot("research", "Research")]);
+    seedAgents(coordinator, "local", [agent("chief", "Chief"), agent("research", "Research")]);
     coordinator.applyEvent(scoped("local", prompt("chief", "question-chief")), "local");
     coordinator.applyEvent(scoped("local", prompt("research", "question-research")), "local");
 
@@ -97,7 +97,7 @@ describe("DynamicIslandCoordinator", () => {
     coordinator.resolveAction({
       type: "answer-prompt",
       serverId: "local",
-      botId: "chief",
+      agentId: "chief",
       requestId: "question-chief",
       answers: { source: ["Official data"] },
     });
@@ -111,11 +111,11 @@ describe("DynamicIslandCoordinator", () => {
 
   it("removes only the matching failure after it is opened", () => {
     const coordinator = new DynamicIslandCoordinator();
-    seedBots(coordinator, "local", [bot("chief", "Chief")]);
+    seedAgents(coordinator, "local", [agent("chief", "Chief")]);
     coordinator.applyEvent(
       scoped("local", {
         type: "turn-completed",
-        botId: "chief",
+        agentId: "chief",
         threadId: "thread-chief",
         turnId: "turn-failed",
         status: "failed",
@@ -126,7 +126,7 @@ describe("DynamicIslandCoordinator", () => {
     coordinator.resolveAction({
       type: "open-failure",
       serverId: "local",
-      botId: "chief",
+      agentId: "chief",
       turnId: "another-turn",
     });
     expect(coordinator.presentation(["local"]).mode).toBe("failed");
@@ -134,7 +134,7 @@ describe("DynamicIslandCoordinator", () => {
     coordinator.resolveAction({
       type: "open-failure",
       serverId: "local",
-      botId: "chief",
+      agentId: "chief",
       turnId: "turn-failed",
     });
     expect(coordinator.presentation(["local"]).mode).toBe("idle");
@@ -142,10 +142,10 @@ describe("DynamicIslandCoordinator", () => {
 
   it("tracks working and unread updates from an inactive host", () => {
     const coordinator = new DynamicIslandCoordinator();
-    seedBots(coordinator, "remote", [bot("research", "Research")]);
+    seedAgents(coordinator, "remote", [agent("research", "Research")]);
     coordinator.applyEvent(scoped("remote", conversation("research", 0, [])), "local");
     coordinator.applyEvent(
-      scoped("remote", { type: "turn-started", botId: "research", threadId: "thread-1", turnId: "turn-1" }),
+      scoped("remote", { type: "turn-started", agentId: "research", threadId: "thread-1", turnId: "turn-1" }),
       "local",
     );
     expect(coordinator.presentation(["remote"]).mode).toBe("working");
@@ -160,7 +160,7 @@ describe("DynamicIslandCoordinator", () => {
     coordinator.applyEvent(
       scoped("remote", {
         type: "conversation-delta",
-        botId: "research",
+        agentId: "research",
         threadId: "thread-1",
         turnId: "turn-1",
         messageId: "message-1",
@@ -173,7 +173,7 @@ describe("DynamicIslandCoordinator", () => {
     coordinator.applyEvent(
       scoped("remote", {
         type: "turn-completed",
-        botId: "research",
+        agentId: "research",
         threadId: "thread-1",
         turnId: "turn-1",
         status: "completed",
@@ -191,7 +191,7 @@ describe("DynamicIslandCoordinator", () => {
 
   it("removes a citation marker split across Dynamic Island deltas", () => {
     const coordinator = new DynamicIslandCoordinator();
-    seedBots(coordinator, "remote", [bot("research", "Research")]);
+    seedAgents(coordinator, "remote", [agent("research", "Research")]);
     coordinator.applyEvent(scoped("remote", conversation("research", 0, [])), "local");
     coordinator.applyEvent(
       scoped(
@@ -205,7 +205,7 @@ describe("DynamicIslandCoordinator", () => {
     coordinator.applyEvent(
       scoped("remote", {
         type: "conversation-delta",
-        botId: "research",
+        agentId: "research",
         threadId: "thread-1",
         turnId: "turn-1",
         messageId: "message-1",
@@ -223,7 +223,7 @@ describe("DynamicIslandCoordinator", () => {
     coordinator.applyEvent(
       scoped("remote", {
         type: "conversation-delta",
-        botId: "research",
+        agentId: "research",
         threadId: "thread-1",
         turnId: "turn-1",
         messageId: "message-1",
@@ -241,7 +241,7 @@ describe("DynamicIslandCoordinator", () => {
 
   it("does not count or display non-reply items from a full conversation", () => {
     const coordinator = new DynamicIslandCoordinator();
-    seedBots(coordinator, "remote", [bot("research", "Research")]);
+    seedAgents(coordinator, "remote", [agent("research", "Research")]);
     coordinator.applyEvent(scoped("remote", conversation("research", 0, [])), "local");
     coordinator.applyEvent(
       scoped(
@@ -275,12 +275,12 @@ describe("DynamicIslandCoordinator", () => {
 
   it("waits for a full conversation before classifying a new delta message", () => {
     const coordinator = new DynamicIslandCoordinator();
-    seedBots(coordinator, "remote", [bot("research", "Research")]);
+    seedAgents(coordinator, "remote", [agent("research", "Research")]);
     coordinator.applyEvent(scoped("remote", conversation("research", 0, [])), "local");
     coordinator.applyEvent(
       scoped("remote", {
         type: "conversation-delta",
-        botId: "research",
+        agentId: "research",
         threadId: "thread-research",
         turnId: "turn-research",
         messageId: "commentary",
@@ -311,7 +311,7 @@ describe("DynamicIslandCoordinator", () => {
 
   it("seeds an inactive host snapshot without counting historical replies as new", () => {
     const coordinator = new DynamicIslandCoordinator();
-    seedBots(coordinator, "remote", [bot("research", "Research")]);
+    seedAgents(coordinator, "remote", [agent("research", "Research")]);
     const historical = conversation("research", 1, [
       { id: "historical", text: "Historical reply", createdAt: "2026-08-29T09:00:00.000Z" },
     ]);
@@ -349,7 +349,7 @@ describe("DynamicIslandCoordinator", () => {
 
   it("counts a buffered live legacy snapshot after the same baseline", () => {
     const coordinator = new DynamicIslandCoordinator();
-    seedBots(coordinator, "remote", [bot("research", "Research")]);
+    seedAgents(coordinator, "remote", [agent("research", "Research")]);
     const reply = conversation("research", 1, [
       { id: "live-reply", text: "Fresh reply", createdAt: "2026-08-29T10:00:00.000Z" },
     ]);
@@ -366,7 +366,7 @@ describe("DynamicIslandCoordinator", () => {
 
   it("counts a buffered live legacy reply when its baseline could not be loaded", () => {
     const coordinator = new DynamicIslandCoordinator();
-    seedBots(coordinator, "remote", [bot("research", "Research")]);
+    seedAgents(coordinator, "remote", [agent("research", "Research")]);
     const reply = conversation("research", 1, [
       { id: "live-reply", text: "Fresh reply", createdAt: "2026-08-29T10:00:00.000Z" },
     ]);
@@ -382,9 +382,9 @@ describe("DynamicIslandCoordinator", () => {
 
   it("counts only replies after the runtime snapshot message when full history arrives", () => {
     const coordinator = new DynamicIslandCoordinator();
-    const remoteBot = bot("research", "Research");
+    const remoteAgent = agent("research", "Research");
     coordinator.applyEvent(
-      scoped("remote", runtimeSnapshot({ bots: [remoteBot], latestMessages: [runtimeMessage("anchor")] })),
+      scoped("remote", runtimeSnapshot({ agents: [remoteAgent], latestMessages: [runtimeMessage("anchor")] })),
       "local",
     );
 
@@ -409,12 +409,12 @@ describe("DynamicIslandCoordinator", () => {
 
   it("keeps working ahead of an unread message across hosts", () => {
     const coordinator = new DynamicIslandCoordinator();
-    seedBots(coordinator, "remote-working", [bot("builder", "Builder")]);
-    seedBots(coordinator, "remote-message", [bot("research", "Research")]);
+    seedAgents(coordinator, "remote-working", [agent("builder", "Builder")]);
+    seedAgents(coordinator, "remote-message", [agent("research", "Research")]);
     coordinator.applyEvent(
       scoped("remote-working", {
         type: "turn-started",
-        botId: "builder",
+        agentId: "builder",
         threadId: "thread-builder",
         turnId: "turn-builder",
       }),
@@ -423,7 +423,7 @@ describe("DynamicIslandCoordinator", () => {
     coordinator.applyEvent(
       scoped("remote-message", {
         type: "conversation-delta",
-        botId: "research",
+        agentId: "research",
         threadId: "thread-research",
         turnId: "turn-research",
         messageId: "message-research",
@@ -436,7 +436,7 @@ describe("DynamicIslandCoordinator", () => {
     coordinator.applyEvent(
       scoped("remote-message", {
         type: "turn-completed",
-        botId: "research",
+        agentId: "research",
         threadId: "thread-research",
         turnId: "turn-research",
         status: "completed",
@@ -452,9 +452,9 @@ describe("DynamicIslandCoordinator", () => {
 
   it("replaces the active server snapshot without deleting pending state from another host", () => {
     const coordinator = new DynamicIslandCoordinator();
-    seedBots(coordinator, "remote", [bot("research", "Research")]);
+    seedAgents(coordinator, "remote", [agent("research", "Research")]);
     coordinator.applyEvent(scoped("remote", prompt("research", "remote-question")), "local");
-    coordinator.replaceServer(emptyInput("local", [bot("chief", "Chief")]));
+    coordinator.replaceServer(emptyInput("local", [agent("chief", "Chief")]));
 
     expect(coordinator.presentation(["local", "remote"])).toMatchObject({
       serverId: "remote",
@@ -465,14 +465,14 @@ describe("DynamicIslandCoordinator", () => {
 
   it("counts failures hidden behind a takeover on another host", () => {
     const coordinator = new DynamicIslandCoordinator();
-    seedBots(coordinator, "takeover", [bot("browser", "Browser"), bot("failed", "Failed")]);
-    seedBots(coordinator, "question", [bot("research", "Research")]);
+    seedAgents(coordinator, "takeover", [agent("browser", "Browser"), agent("failed", "Failed")]);
+    seedAgents(coordinator, "question", [agent("research", "Research")]);
     coordinator.applyEvent(
       scoped("takeover", {
         type: "browser-takeover-requested",
         request: {
           requestId: "takeover-1",
-          botId: "browser",
+          agentId: "browser",
           threadId: "thread-browser",
           turnId: "turn-browser",
           tabId: "tab-1",
@@ -483,7 +483,7 @@ describe("DynamicIslandCoordinator", () => {
     coordinator.applyEvent(
       scoped("takeover", {
         type: "turn-completed",
-        botId: "failed",
+        agentId: "failed",
         threadId: "thread-failed",
         turnId: "turn-failed",
         status: "failed",
@@ -500,13 +500,13 @@ describe("DynamicIslandCoordinator", () => {
 
   it("atomically repairs stale remote state after reconnect", () => {
     const coordinator = new DynamicIslandCoordinator();
-    const remoteBot = bot("research", "Research");
-    seedBots(coordinator, "remote", [remoteBot]);
+    const remoteAgent = agent("research", "Research");
+    seedAgents(coordinator, "remote", [remoteAgent]);
     coordinator.applyEvent(scoped("remote", prompt("research", "stale-question")), "local");
     coordinator.applyEvent(
       scoped("remote", {
         type: "turn-started",
-        botId: "research",
+        agentId: "research",
         threadId: "thread-research",
         turnId: "stale-turn",
       }),
@@ -517,7 +517,7 @@ describe("DynamicIslandCoordinator", () => {
       scoped(
         "remote",
         runtimeSnapshot({
-          bots: [remoteBot],
+          agents: [remoteAgent],
           latestMessages: [runtimeMessage("historical")],
           attentionComplete: false,
         }),
@@ -533,12 +533,12 @@ describe("DynamicIslandCoordinator", () => {
       scoped(
         "remote",
         runtimeSnapshot({
-          bots: [remoteBot],
-          activeTurns: [{ botId: "research", threadId: "thread-research", turnId: "turn-current" }],
+          agents: [remoteAgent],
+          activeTurns: [{ agentId: "research", threadId: "thread-research", turnId: "turn-current" }],
           work: [
             {
               id: "delivery-current",
-              botId: "research",
+              agentId: "research",
               turnId: "turn-current",
               status: "running",
               text: "Review sources",
@@ -556,7 +556,7 @@ describe("DynamicIslandCoordinator", () => {
     });
 
     coordinator.applyEvent(
-      scoped("remote", runtimeSnapshot({ bots: [remoteBot], latestMessages: [runtimeMessage("missed-reply")] })),
+      scoped("remote", runtimeSnapshot({ agents: [remoteAgent], latestMessages: [runtimeMessage("missed-reply")] })),
       "local",
     );
     expect(coordinator.presentation(["remote"])).toMatchObject({
@@ -568,13 +568,13 @@ describe("DynamicIslandCoordinator", () => {
 
   it("shows a completed reply after reconnecting during its turn", () => {
     const coordinator = new DynamicIslandCoordinator();
-    const remoteBot = bot("research", "Research");
+    const remoteAgent = agent("research", "Research");
     coordinator.applyEvent(
       scoped(
         "remote",
         runtimeSnapshot({
-          bots: [remoteBot],
-          activeTurns: [{ botId: "research", threadId: "thread-research", turnId: "turn-current" }],
+          agents: [remoteAgent],
+          activeTurns: [{ agentId: "research", threadId: "thread-research", turnId: "turn-current" }],
           latestMessages: [runtimeMessage("reply-previous")],
         }),
       ),
@@ -583,7 +583,7 @@ describe("DynamicIslandCoordinator", () => {
     coordinator.applyEvent(
       scoped("remote", {
         type: "conversation-delta",
-        botId: "research",
+        agentId: "research",
         threadId: "thread-research",
         turnId: "turn-current",
         messageId: "reply-current",
@@ -596,7 +596,7 @@ describe("DynamicIslandCoordinator", () => {
     coordinator.applyEvent(
       scoped("remote", {
         type: "turn-completed",
-        botId: "research",
+        agentId: "research",
         threadId: "thread-research",
         turnId: "turn-current",
         status: "completed",
@@ -604,7 +604,7 @@ describe("DynamicIslandCoordinator", () => {
       "local",
     );
     coordinator.applyEvent(
-      scoped("remote", runtimeSnapshot({ bots: [remoteBot], latestMessages: [runtimeMessage("reply-current")] })),
+      scoped("remote", runtimeSnapshot({ agents: [remoteAgent], latestMessages: [runtimeMessage("reply-current")] })),
       "local",
     );
 
@@ -616,21 +616,21 @@ describe("DynamicIslandCoordinator", () => {
   });
 });
 
-function seedBots(coordinator: DynamicIslandCoordinator, serverId: string, bots: BotSummary[]): void {
-  coordinator.applyEvent(scoped(serverId, { type: "bots-changed", bots }), serverId);
+function seedAgents(coordinator: DynamicIslandCoordinator, serverId: string, agents: AgentSummary[]): void {
+  coordinator.applyEvent(scoped(serverId, { type: "agents-changed", agents }), serverId);
 }
 
 function scoped(serverId: string, event: AgentEvent) {
   return { serverId, event };
 }
 
-function prompt(botId: string, requestId: string): Extract<AgentEvent, { type: "prompt" }> {
+function prompt(agentId: string, requestId: string): Extract<AgentEvent, { type: "prompt" }> {
   return {
     type: "prompt",
     requestId,
-    botId,
-    threadId: `thread-${botId}`,
-    turnId: `turn-${botId}`,
+    agentId,
+    threadId: `thread-${agentId}`,
+    turnId: `turn-${agentId}`,
     questions: [
       {
         id: "source",
@@ -643,14 +643,14 @@ function prompt(botId: string, requestId: string): Extract<AgentEvent, { type: "
   };
 }
 
-function approval(botId: string, requestId: string): Extract<AgentEvent, { type: "approval" }> {
+function approval(agentId: string, requestId: string): Extract<AgentEvent, { type: "approval" }> {
   return {
     type: "approval",
     approval: {
       requestId,
-      botId,
-      threadId: `thread-${botId}`,
-      turnId: `turn-${botId}`,
+      agentId,
+      threadId: `thread-${agentId}`,
+      turnId: `turn-${agentId}`,
       kind: "permissions",
       command: null,
       cwd: null,
@@ -662,15 +662,15 @@ function approval(botId: string, requestId: string): Extract<AgentEvent, { type:
 }
 
 function conversation(
-  botId: string,
+  agentId: string,
   revision: number,
   messages: Array<{ id: string; text: string; createdAt: string; itemType?: string }>,
 ): Extract<AgentEvent, { type: "conversation" }> {
   return {
     type: "conversation",
     snapshot: {
-      botId,
-      threadId: `thread-${botId}`,
+      agentId,
+      threadId: `thread-${agentId}`,
       activeTurnId: null,
       revision,
       messages: messages.map((message) => ({
@@ -682,10 +682,10 @@ function conversation(
   };
 }
 
-function emptyInput(serverId: string, bots: BotSummary[]): DynamicIslandPresentationInput {
+function emptyInput(serverId: string, agents: AgentSummary[]): DynamicIslandPresentationInput {
   return {
     serverId,
-    bots,
+    agents,
     activeTurns: {},
     queues: {},
     unreadReplies: {},
@@ -702,7 +702,7 @@ function runtimeSnapshot(
   return {
     type: "runtime-snapshot",
     snapshot: {
-      bots: [],
+      agents: [],
       activeTurns: [],
       work: [],
       latestMessages: [],
@@ -717,10 +717,10 @@ function runtimeSnapshot(
 }
 
 function runtimeMessage(id: string): AgentRuntimeSnapshot["latestMessages"][number] {
-  return { botId: "research", id, text: id, createdAt: "2026-08-29T10:00:00.000Z" };
+  return { agentId: "research", id, text: id, createdAt: "2026-08-29T10:00:00.000Z" };
 }
 
-function bot(id: string, name: string): BotSummary {
+function agent(id: string, name: string): AgentSummary {
   return {
     id,
     name,

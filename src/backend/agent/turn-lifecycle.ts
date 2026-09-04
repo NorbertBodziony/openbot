@@ -1,13 +1,13 @@
 import type {
   AgentEvent,
-  BotSummary,
+  AgentSummary,
   BrowserControlState,
   BrowserTab,
   ConversationSnapshot,
 } from "@openbot/contracts/ipc";
 import { isString } from "@openbot/contracts/runtime-values";
 import type { AgentClient } from "../agent-client";
-import type { BotStore } from "../agent-store";
+import type { AgentStore } from "../agent-store";
 import { newAssistantMessage, normalizeCompletionStatus } from "../conversation-snapshots";
 import type { DeliveryContext, MailboxStore } from "../mailbox-store";
 import {
@@ -41,14 +41,14 @@ export interface AgentBrowserHost {
 
 export interface TurnHooks {
   emit(event: AgentEvent): void;
-  emitError(code: string, error: unknown, botId?: string): void;
+  emitError(code: string, error: unknown, agentId?: string): void;
   emitRuntimeSnapshot(): void;
-  scheduleDrain(botId: string): void;
-  listBots(): BotSummary[];
+  scheduleDrain(agentId: string): void;
+  listAgents(): AgentSummary[];
 }
 
 export interface TurnLifecycleOptions {
-  store: BotStore;
+  store: AgentStore;
   mailbox: MailboxStore;
   mailboxSync: MailboxSync;
   conversation: ConversationRuntime;
@@ -72,7 +72,7 @@ export interface TurnLifecycleOptions {
  * arms context compaction or schedules the next drain via hooks.
  */
 export class TurnLifecycle {
-  readonly #store: BotStore;
+  readonly #store: AgentStore;
   readonly #mailbox: MailboxStore;
   readonly #mailboxSync: MailboxSync;
   readonly #conversation: ConversationRuntime;
@@ -107,17 +107,17 @@ export class TurnLifecycle {
     return this.#failedTurns;
   }
 
-  forgetBot(botId: string): void {
-    this.#failedTurns.delete(botId);
+  forgetAgent(agentId: string): void {
+    this.#failedTurns.delete(agentId);
   }
 
   trackItem(itemId: string, turnId: string): void {
     this.#itemTurns.set(itemId, turnId);
   }
 
-  acknowledgeFailedTurn(botId: string, turnId: string): void {
-    if (this.#failedTurns.get(botId) !== turnId) return;
-    this.#failedTurns.delete(botId);
+  acknowledgeFailedTurn(agentId: string, turnId: string): void {
+    if (this.#failedTurns.get(agentId) !== turnId) return;
+    this.#failedTurns.delete(agentId);
     this.#hooks.emitRuntimeSnapshot();
   }
 
@@ -129,7 +129,7 @@ export class TurnLifecycle {
   handleNotification(notification: AppServerNotification, source: AgentClient): void {
     const params = notification.params;
     const threadId = getString(params, "threadId");
-    const botId = threadId ? this.#conversation.botForThread(threadId) : undefined;
+    const agentId = threadId ? this.#conversation.agentForThread(threadId) : undefined;
 
     switch (notification.method) {
       case "account/login/completed": {
@@ -137,30 +137,30 @@ export class TurnLifecycle {
         return;
       }
       case "turn/started": {
-        if (!threadId || !botId) return;
+        if (!threadId || !agentId) return;
         const turn = getRecord(params, "turn");
         const turnId = getString(turn, "id");
         if (!turnId) return;
-        if (this.#compaction.claimTurn(botId, threadId, turnId)) return;
-        const publicThreadId = this.#conversation.publicThreadId(botId, threadId);
-        const snapshot = this.#conversation.ensureSnapshot(botId, publicThreadId);
+        if (this.#compaction.claimTurn(agentId, threadId, turnId)) return;
+        const publicThreadId = this.#conversation.publicThreadId(agentId, threadId);
+        const snapshot = this.#conversation.ensureSnapshot(agentId, publicThreadId);
         snapshot.activeTurnId = turnId;
-        this.#failedTurns.delete(botId);
-        const origin = this.#mailbox.startingDeliveryForBot(botId)?.delivery.sender.kind ?? "unknown";
-        const association = this.#associateStartedTurn(botId, turnId, snapshot);
+        this.#failedTurns.delete(agentId);
+        const origin = this.#mailbox.startingDeliveryForAgent(agentId)?.delivery.sender.kind ?? "unknown";
+        const association = this.#associateStartedTurn(agentId, turnId, snapshot);
         this.#turnAssociations.set(turnId, association);
         void association.finally(() => {
           if (this.#turnAssociations.get(turnId) === association) {
             this.#turnAssociations.delete(turnId);
           }
         });
-        this.#hooks.emit({ type: "turn-started", botId, threadId: publicThreadId, turnId, origin });
+        this.#hooks.emit({ type: "turn-started", agentId, threadId: publicThreadId, turnId, origin });
         this.#conversation.emitConversation(snapshot, "turn.started", { turnId });
         return;
       }
       case "item/started":
       case "item/completed": {
-        if (!threadId || !botId) return;
+        if (!threadId || !agentId) return;
         const turnId = getString(params, "turnId");
         const item = getRecord(params, "item");
         if (!turnId || !item) return;
@@ -177,18 +177,18 @@ export class TurnLifecycle {
         }
         const threadItem = toThreadItem(item);
         if (!threadItem) return;
-        this.#applyItem(botId, threadId, turnId, threadItem, notification.method === "item/completed");
+        this.#applyItem(agentId, threadId, turnId, threadItem, notification.method === "item/completed");
         return;
       }
       case "item/agentMessage/delta": {
-        if (!threadId || !botId) return;
+        if (!threadId || !agentId) return;
         const turnId = getString(params, "turnId");
         const itemId = getString(params, "itemId");
         const delta = getString(params, "delta");
         if (!turnId || !itemId || delta === null) return;
         this.#itemTurns.set(itemId, turnId);
-        const publicThreadId = this.#conversation.publicThreadId(botId, threadId);
-        const snapshot = this.#conversation.ensureSnapshot(botId, publicThreadId);
+        const publicThreadId = this.#conversation.publicThreadId(agentId, threadId);
+        const snapshot = this.#conversation.ensureSnapshot(agentId, publicThreadId);
         let message = snapshot.messages.find((candidate) => candidate.id === itemId);
         if (!message) {
           message = newAssistantMessage(itemId, turnId);
@@ -197,7 +197,7 @@ export class TurnLifecycle {
         message.text += delta;
         message.status = "streaming";
         this.#deltas.buffer({
-          botId,
+          agentId,
           externalThreadId: threadId,
           publicThreadId,
           turnId,
@@ -208,23 +208,23 @@ export class TurnLifecycle {
         return;
       }
       case "turn/completed": {
-        if (!threadId || !botId) return;
+        if (!threadId || !agentId) return;
         const turn = getRecord(params, "turn");
         const turnId = getString(turn, "id");
         if (!turnId) return;
         const status = getString(turn, "status") ?? "completed";
         this.#attention.clearForTurn(threadId, turnId);
         if (this.#compaction.isCompactionTurn(threadId, turnId)) {
-          this.#compaction.finish(botId, threadId, status);
+          this.#compaction.finish(agentId, threadId, status);
           return;
         }
-        void this.#completeTurn(botId, threadId, turnId, status).catch((error) => {
-          this.#hooks.emitError("turn_completion_failed", error, botId);
+        void this.#completeTurn(agentId, threadId, turnId, status).catch((error) => {
+          this.#hooks.emitError("turn_completion_failed", error, agentId);
         });
         return;
       }
       case "thread/tokenUsage/updated": {
-        if (!threadId || !botId) return;
+        if (!threadId || !agentId) return;
         this.#compaction.updateBudget(threadId, params);
         return;
       }
@@ -247,28 +247,28 @@ export class TurnLifecycle {
       case "warning": {
         const message = getString(params, "message") ?? notification.method;
         if (notification.method === "warning" && isNonActionableCodexWarning(message)) return;
-        this.#hooks.emitError(`agent_${notification.method}`, message, botId);
+        this.#hooks.emitError(`agent_${notification.method}`, message, agentId);
       }
     }
   }
 
-  async #completeTurn(botId: string, threadId: string, turnId: string, status: string): Promise<void> {
+  async #completeTurn(agentId: string, threadId: string, turnId: string, status: string): Promise<void> {
     this.#deltas.flushTurn(turnId);
     await this.#images.waitForOperations(threadId, turnId);
     await this.#turnAssociations.get(turnId)?.catch(() => undefined);
     this.#memories.finishTurn(turnId, status);
-    const shouldCompact = this.#compaction.reserve(botId, threadId);
-    this.#browser.endControl(this.#conversation.publicThreadId(botId, threadId), turnId);
-    const snapshot = this.#conversation.ensureSnapshot(botId, threadId);
+    const shouldCompact = this.#compaction.reserve(agentId, threadId);
+    this.#browser.endControl(this.#conversation.publicThreadId(agentId, threadId), turnId);
+    const snapshot = this.#conversation.ensureSnapshot(agentId, threadId);
     snapshot.activeTurnId = null;
-    if (status === "failed") this.#failedTurns.set(botId, turnId);
-    else this.#failedTurns.delete(botId);
+    if (status === "failed") this.#failedTurns.set(agentId, turnId);
+    else this.#failedTurns.delete(agentId);
     for (const message of snapshot.messages) {
       if (this.#itemTurns.get(message.id) !== turnId || message.status !== "streaming") continue;
       message.status = normalizeCompletionStatus(status);
       markIncompleteImageGeneration(message, message.status);
     }
-    const deliveries = this.#mailbox.findDeliveriesByTurn(botId, turnId);
+    const deliveries = this.#mailbox.findDeliveriesByTurn(agentId, turnId);
     const latestAssistant = [...snapshot.messages]
       .reverse()
       .find(
@@ -285,86 +285,86 @@ export class TurnLifecycle {
         await this.#mailbox.markTerminal(delivery.delivery.id, terminal);
         this.#mailboxSync.syncDeliveryMessage(snapshot, delivery.delivery.id);
       }
-      const relayDelivery = deliveries.find((delivery) => delivery.delivery.sender.kind === "bot");
+      const relayDelivery = deliveries.find((delivery) => delivery.delivery.sender.kind === "agent");
       if (terminal === "completed" && latestAssistant && relayDelivery) {
-        await this.#relayAgentResult(botId, turnId, relayDelivery, latestAssistant.text);
+        await this.#relayAgentResult(agentId, turnId, relayDelivery, latestAssistant.text);
       }
     }
     if (latestAssistant) {
-      await this.#store.updatePreview(botId, latestAssistant.text);
-      this.#hooks.emit({ type: "bots-changed", bots: this.#hooks.listBots() });
+      await this.#store.updatePreview(agentId, latestAssistant.text);
+      this.#hooks.emit({ type: "agents-changed", agents: this.#hooks.listAgents() });
     }
     this.#conversation.emitConversation(snapshot, "turn.completed", { turnId, status });
     if (deliveries.length > 0) {
       try {
-        this.#mailboxSync.emitQueue(botId);
+        this.#mailboxSync.emitQueue(agentId);
       } catch (error) {
-        this.#hooks.emitError("delivery_reconciliation_pending", error, botId);
-        this.#mailboxSync.retryDeliveryReconciliation(botId);
+        this.#hooks.emitError("delivery_reconciliation_pending", error, agentId);
+        this.#mailboxSync.retryDeliveryReconciliation(agentId);
       }
     }
     this.#hooks.emit({
       type: "turn-completed",
-      botId,
-      threadId: this.#conversation.publicThreadId(botId, threadId),
+      agentId,
+      threadId: this.#conversation.publicThreadId(agentId, threadId),
       turnId,
       status,
       origin: deliveries[0]?.delivery.sender.kind ?? "unknown",
     });
-    if (shouldCompact) await this.#compaction.request(botId, threadId);
-    else this.#hooks.scheduleDrain(botId);
+    if (shouldCompact) await this.#compaction.request(agentId, threadId);
+    else this.#hooks.scheduleDrain(agentId);
   }
 
-  async #associateStartedTurn(botId: string, turnId: string, snapshot: ConversationSnapshot): Promise<void> {
-    const delivery = this.#mailbox.startingDeliveryForBot(botId);
+  async #associateStartedTurn(agentId: string, turnId: string, snapshot: ConversationSnapshot): Promise<void> {
+    const delivery = this.#mailbox.startingDeliveryForAgent(agentId);
     if (!delivery) return;
     try {
       await this.#mailbox.markRunning(delivery.delivery.id, turnId);
       this.#mailboxSync.syncDeliveryMessage(snapshot, delivery.delivery.id);
-      this.#mailboxSync.emitQueue(botId);
+      this.#mailboxSync.emitQueue(agentId);
     } catch (error) {
-      this.#hooks.emitError("delivery_turn_association_failed", error, botId);
+      this.#hooks.emitError("delivery_turn_association_failed", error, agentId);
     }
   }
 
-  async #relayAgentResult(botId: string, turnId: string, delivery: DeliveryContext, text: string): Promise<void> {
-    if (delivery.delivery.sender.kind !== "bot") return;
+  async #relayAgentResult(agentId: string, turnId: string, delivery: DeliveryContext, text: string): Promise<void> {
+    if (delivery.delivery.sender.kind !== "agent") return;
     const messageId = delivery.delivery.messageId;
-    const originBotId = this.#mailbox.chainOriginBotId(messageId);
-    const recipientBotId = delivery.delivery.sender.botId;
+    const originAgentId = this.#mailbox.chainOriginAgentId(messageId);
+    const recipientAgentId = delivery.delivery.sender.agentId;
     if (
-      !originBotId ||
-      originBotId === botId ||
-      this.#mailbox.hasReplyFrom(botId, messageId) ||
-      this.#mailbox.hasBotMessageFromTurnTo(botId, turnId, recipientBotId)
+      !originAgentId ||
+      originAgentId === agentId ||
+      this.#mailbox.hasReplyFrom(agentId, messageId) ||
+      this.#mailbox.hasAgentMessageFromTurnTo(agentId, turnId, recipientAgentId)
     )
       return;
 
     await this.#mailbox.enqueue({
-      sender: { kind: "bot", botId },
-      recipientBotIds: [recipientBotId],
+      sender: { kind: "agent", agentId },
+      recipientAgentIds: [recipientAgentId],
       text,
       replyToMessageId: messageId,
       idempotencyKey: `auto-result:${turnId}:${messageId}`,
     });
-    const senderSnapshot = this.#conversation.snapshot(botId);
+    const senderSnapshot = this.#conversation.snapshot(agentId);
     if (senderSnapshot) {
       this.#mailboxSync.syncMailboxMessages(senderSnapshot);
       this.#conversation.emitConversation(senderSnapshot);
     }
-    this.#mailboxSync.emitQueue(recipientBotId);
-    this.#hooks.scheduleDrain(recipientBotId);
+    this.#mailboxSync.emitQueue(recipientAgentId);
+    this.#hooks.scheduleDrain(recipientAgentId);
   }
 
-  #applyItem(botId: string, threadId: string, turnId: string, item: ThreadItem, completed: boolean): void {
-    if (this.#images.handleItem(botId, threadId, turnId, item, completed)) return;
+  #applyItem(agentId: string, threadId: string, turnId: string, item: ThreadItem, completed: boolean): void {
+    if (this.#images.handleItem(agentId, threadId, turnId, item, completed)) return;
     const toolProgress = toolProgressText(item, completed);
     if (toolProgress) {
-      this.#emitTurnProgress(botId, this.#conversation.publicThreadId(botId, threadId), turnId, toolProgress);
+      this.#emitTurnProgress(agentId, this.#conversation.publicThreadId(agentId, threadId), turnId, toolProgress);
       return;
     }
     if (item.type !== "agentMessage" || !isString(item.id)) return;
-    const snapshot = this.#conversation.ensureSnapshot(botId, threadId);
+    const snapshot = this.#conversation.ensureSnapshot(agentId, threadId);
     let message = snapshot.messages.find((candidate) => candidate.id === item.id);
     if (!message) {
       message = newAssistantMessage(item.id, turnId);
@@ -377,10 +377,10 @@ export class TurnLifecycle {
     this.#conversation.emitConversation(snapshot);
   }
 
-  #emitTurnProgress(botId: string, threadId: string, turnId: string, text: string): void {
+  #emitTurnProgress(agentId: string, threadId: string, turnId: string, text: string): void {
     this.#hooks.emit({
       type: "turn-progress",
-      botId,
+      agentId,
       threadId,
       turnId,
       detail: text,

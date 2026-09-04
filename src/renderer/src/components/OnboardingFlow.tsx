@@ -3,7 +3,7 @@ import type {
   AgentProviderState,
   AgentStatus,
   AppSetupState,
-  BotAvatarHue,
+  AvatarHue,
   DesktopPlatform,
   ProviderRuntimeStatus,
 } from "@openbot/contracts/ipc";
@@ -38,11 +38,11 @@ const PROVIDERS: Array<{ id: AgentProviderId; name: string; description: string 
   { id: "grok", name: "Grok", description: "Included with OpenBot" },
 ];
 
-const ONBOARDING_AVATAR_HUES: readonly BotAvatarHue[] = [0, 30, 55, 100, 150, 185, 215, 245, 280, 320];
+const ONBOARDING_AVATAR_HUES: readonly AvatarHue[] = [0, 30, 55, 100, 150, 185, 215, 245, 280, 320];
 
 type OnboardingAvatarVariant = {
   seed: string;
-  hue: BotAvatarHue;
+  hue: AvatarHue;
   cycleOffset: number;
   animationOffset: number;
 };

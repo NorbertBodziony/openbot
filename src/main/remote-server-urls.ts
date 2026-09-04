@@ -45,9 +45,9 @@ export function remoteAttachmentPreviewUrl(serverId: string, attachmentId: strin
   return `openbot-remote-attachment://${encodeURIComponent(serverId)}/${encodeURIComponent(attachmentId)}`;
 }
 
-export function remoteAgentAvatarUrl(serverId: string, botId: string, sourceUrl: string): string {
+export function remoteAgentAvatarUrl(serverId: string, agentId: string, sourceUrl: string): string {
   const source = new URL(sourceUrl);
-  const target = new URL(`openbot-remote-avatar://${encodeURIComponent(serverId)}/${encodeURIComponent(botId)}`);
+  const target = new URL(`openbot-remote-avatar://${encodeURIComponent(serverId)}/${encodeURIComponent(agentId)}`);
   target.search = source.search;
   return target.toString();
 }
