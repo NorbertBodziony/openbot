@@ -34,7 +34,6 @@ interface TextPresentation {
   style: TextStyle;
   codeColor: ColorValue;
   animateTail: boolean;
-  selectable: boolean;
 }
 
 function webLink(href: string): string | null {
@@ -63,7 +62,7 @@ function CodeSpan({ text, presentation }: { text: string; presentation: TextPres
       className={`max-w-full self-start rounded-xl bg-control px-1 ${presentation.type === "body-sm" ? "py-px" : "py-0.5"}`}
     >
       <Typography.Code
-        selectable={presentation.selectable}
+        selectable
         className={presentation.type === "body-sm" ? "bg-transparent p-0 text-xs leading-4" : "bg-transparent p-0"}
         style={{ ...presentation.style, color: presentation.codeColor }}
       >
@@ -158,7 +157,7 @@ function ListParagraph({ tokens, presentation }: { tokens: Token[]; presentation
             return (
               <Typography
                 key={offset}
-                selectable={presentation.selectable}
+                selectable
                 className="max-w-full"
                 type={presentation.type}
                 style={presentation.style}
@@ -199,12 +198,7 @@ function MarkdownBlocks({
             return <ListParagraph key={offset} tokens={token.tokens} presentation={presentation} />;
           }
           return (
-            <Typography
-              key={offset}
-              selectable={presentation.selectable}
-              type={presentation.type}
-              style={presentation.style}
-            >
+            <Typography key={offset} selectable type={presentation.type} style={presentation.style}>
               {token.tokens ? inline(token.tokens, presentation) : token.text}
             </Typography>
           );
@@ -214,7 +208,7 @@ function MarkdownBlocks({
           return (
             <Typography.Heading
               key={offset}
-              selectable={presentation.selectable}
+              selectable
               type={heading.type === "h4" ? "h4" : "h5"}
               style={presentation.style}
             >
@@ -232,7 +226,7 @@ function MarkdownBlocks({
               contentContainerStyle={{ padding: 10 }}
             >
               <Typography.Code
-                selectable={presentation.selectable}
+                selectable
                 className="bg-transparent p-0"
                 style={{ ...presentation.style, color: presentation.codeColor }}
               >
@@ -287,7 +281,7 @@ function MarkdownBlocks({
                       {sourceEntries(row, (cell) => cell.text).map(({ value: cell, offset: cellOffset }) => (
                         <View key={cellOffset} className="w-44 px-2 py-2">
                           <Typography
-                            selectable={presentation.selectable}
+                            selectable
                             type={presentation.type}
                             style={{
                               ...presentation.style,
@@ -311,12 +305,7 @@ function MarkdownBlocks({
         }
         if (token.type === "hr") return <View key={offset} className="h-px bg-separator" />;
         return (
-          <Typography
-            key={offset}
-            selectable={presentation.selectable}
-            type={presentation.type}
-            style={presentation.style}
-          >
+          <Typography key={offset} selectable type={presentation.type} style={presentation.style}>
             {token.raw}
           </Typography>
         );
@@ -332,7 +321,6 @@ export const ChatMarkdown = memo(function ChatMarkdown({
   streaming = false,
   animateInitial = false,
   animationEnabled = true,
-  selectable = true,
 }: {
   body: string;
   color: ColorValue | undefined;
@@ -340,7 +328,6 @@ export const ChatMarkdown = memo(function ChatMarkdown({
   streaming?: boolean;
   animateInitial?: boolean;
   animationEnabled?: boolean;
-  selectable?: boolean;
 }) {
   const display = useStreamingText(body, streaming, animateInitial, animationEnabled);
   const tokens = useMemo(() => marked.lexer(display.body, { gfm: true, breaks: true }), [display.body]);
@@ -353,7 +340,6 @@ export const ChatMarkdown = memo(function ChatMarkdown({
         style: { color: color ?? codeColor },
         codeColor,
         animateTail: display.animateTail,
-        selectable,
       }}
     />
   );

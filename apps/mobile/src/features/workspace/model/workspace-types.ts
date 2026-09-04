@@ -61,7 +61,7 @@ export interface MobileWorkspaceContextValue {
   deleteBot: (botId: string) => Promise<void>;
   duplicateBot: (botId: string) => Promise<void>;
   loadConversation: (botId: string) => Promise<ConversationSnapshot>;
-  sendMessage: (botId: string, text: string, replyToMessageId?: string | null) => Promise<void>;
+  sendMessage: (botId: string, text: string) => Promise<void>;
   hideBot: (botId: string) => void;
   unhideBot: (botId: string) => void;
   markBotRead: (botId: string, throughMessageId?: string) => void;

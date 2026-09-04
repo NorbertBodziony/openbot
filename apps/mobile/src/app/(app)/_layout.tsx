@@ -34,18 +34,6 @@ function AuthenticatedStack() {
         }}
       />
       <Stack.Screen
-        name="select-message-text"
-        options={{
-          presentation: "formSheet",
-          sheetAllowedDetents: [1],
-          sheetGrabberVisible: true,
-          headerTransparent: false,
-          contentStyle: { backgroundColor: background },
-          headerStyle: { backgroundColor: background },
-          title: "Select text",
-        }}
-      />
-      <Stack.Screen
         name="add-bot"
         options={{
           contentStyle: { backgroundColor: background },

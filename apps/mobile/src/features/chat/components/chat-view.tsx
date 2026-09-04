@@ -4,9 +4,7 @@ import { router, useIsFocused } from "expo-router";
 import { useThemeColor } from "heroui-native/hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Alert,
   AppState,
-  Keyboard,
   KeyboardAvoidingView,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
@@ -21,7 +19,7 @@ import { useBotPinTransition } from "@/features/bots/components/bot-pin-transiti
 import { ChatComposer } from "@/features/chat/components/chat-composer";
 import { ChatHeader } from "@/features/chat/components/chat-header";
 import { ChatMessageList } from "@/features/chat/components/chat-message-list";
-import { type ChatTextMessage, projectChatMessages } from "@/features/chat/model/chat-messages";
+import { projectChatMessages } from "@/features/chat/model/chat-messages";
 import { ConnectionStatus } from "@/features/workspace/components/connection-status";
 import { useBotActivity } from "@/features/workspace/components/use-bot-activity";
 import type { MobileBot } from "@/features/workspace/context/mobile-workspace-context";
@@ -58,14 +56,7 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
     "accent-foreground",
     "background",
   ]);
-  const [composerDraft, setComposerDraft] = useState<{ text: string; reply: ChatTextMessage | null }>({
-    text: "",
-    reply: null,
-  });
-  const draft = composerDraft.text;
-  const [sending, setSending] = useState(false);
-  const sendingRef = useRef(false);
-  const [focusRequest, setFocusRequest] = useState(0);
+  const [draft, setDraft] = useState("");
   const [showStarter, setShowStarter] = useState(true);
   const [historyLoadFailed, setHistoryLoadFailed] = useState(false);
   const historyRequestRef = useRef(0);
@@ -96,7 +87,6 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
   useEffect(() => {
     setAtLatest(false);
     initialScrollBotIdRef.current = bot.id;
-    setComposerDraft({ text: "", reply: null });
   }, [bot.id]);
 
   const fetchHistory = useCallback(() => {
@@ -146,26 +136,14 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
   );
 
   function sendMessage(value = draft): void {
-    if (!serverOnline || sendingRef.current) return;
+    if (!serverOnline) return;
     const body = value.trim();
     if (!body) return;
 
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const submitted = composerDraft;
-    sendingRef.current = true;
-    setSending(true);
+    setDraft("");
     setShowStarter(false);
-    void sendTeamMessage(bot.id, body, submitted.reply?.id)
-      .then(() => setComposerDraft((current) => (current === submitted ? { text: "", reply: null } : current)))
-      .catch(() => {
-        // Keep both the text and its reply target available for retry.
-        setComposerDraft((current) => (current === submitted ? { ...current, text: body } : current));
-        Alert.alert("Couldn’t send message", "Your draft has been kept. Please try again.");
-      })
-      .finally(() => {
-        sendingRef.current = false;
-        setSending(false);
-      });
+    void sendTeamMessage(bot.id, body).catch(() => setDraft((current) => current || body));
     requestAnimationFrame(() => scrollViewRef.current?.scrollToEnd({ animated: true }));
   }
 
@@ -214,15 +192,6 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
             onDismissStarter={() => setShowStarter(false)}
             onSelectStarter={sendMessage}
             onRetryHistory={fetchHistory}
-            onReply={(message) => {
-              if (!serverOnline) return;
-              setComposerDraft((current) => ({ ...current, reply: message }));
-              setFocusRequest((current) => current + 1);
-            }}
-            onSelectText={(message) => {
-              Keyboard.dismiss();
-              router.push({ pathname: "/select-message-text", params: { botId: bot.id, messageId: message.id } });
-            }}
           />
           <View
             className="absolute inset-x-0 bottom-0"
@@ -236,17 +205,13 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
               botName={bot.name}
               bottomInset={insets.bottom}
               disabled={!serverOnline}
-              sending={sending}
-              reply={composerDraft.reply}
-              focusRequest={focusRequest}
               draft={draft}
               fallbackBackground={fieldBackground}
               foreground={foreground}
               liquidGlassAvailable={liquidGlassAvailable}
               muted={muted}
               raised={raised}
-              onChangeDraft={(text) => setComposerDraft((current) => ({ ...current, text }))}
-              onCancelReply={() => setComposerDraft((current) => ({ ...current, reply: null }))}
+              onChangeDraft={setDraft}
               onSend={() => sendMessage()}
             />
           </View>
