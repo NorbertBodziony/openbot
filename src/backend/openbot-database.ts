@@ -37,104 +37,9 @@ import {
   HostedSiteEventLog,
   type PendingHostedSiteTerminalEvent,
 } from "./database/hosted-site-event-log";
-
-export interface ProviderSession {
-  id: string;
-  threadId: string;
-  provider: AgentProviderId;
-  externalSessionId: string;
-  model: string;
-  effort: string;
-  state: "active" | "inactive" | "failed";
-  createdAt: string;
-  updatedAt: string;
-  resumeCursor: string | null;
-}
-
-export interface StoredThreadSummary {
-  id: string;
-  threadId: string;
-  throughMessageId: string | null;
-  text: string;
-  estimatedTokens: number;
-  createdAt: string;
-}
-
-interface SessionRow {
-  id: string;
-  thread_id: string;
-  provider: AgentProviderId;
-  external_session_id: string;
-  model: string;
-  effort: string;
-  state: ProviderSession["state"];
-  created_at: string;
-  updated_at: string;
-  resume_cursor: string | null;
-}
-
-interface MailboxProjectionAttachment {
-  id: string;
-  name: string;
-  path: string;
-}
-
-interface MailboxProjectionMessage {
-  id: string;
-  sender: {
-    kind: string;
-    botId?: string;
-    routineId?: string;
-    runId?: string;
-    routineName?: string;
-    scheduledFor?: string;
-  };
-  text: string;
-  replyToMessageId: string | null;
-  createdAt: string;
-  attachments: MailboxProjectionAttachment[];
-}
-
-interface MailboxProjectionDelivery {
-  id: string;
-  messageId: string;
-  recipientBotId: string;
-  status: string;
-  turnId: string | null;
-  error: string | null;
-  createdAt: string;
-}
-
-interface MailboxProjectionDraft extends MailboxProjectionAttachment {
-  createdAt: string;
-}
-
-interface MailboxProjectionGeneratedAttachment extends MailboxProjectionAttachment {
-  size: number;
-  kind: string;
-  mimeType: string;
-  previewKind: string;
-  previewUrl: string | null;
-  sha256: string;
-}
-
-interface MailboxProjectionReaction {
-  botId: string;
-  messageId: string;
-  emoji: string;
-  actor: { kind: "user" } | { kind: "bot"; botId: string };
-  updatedAt: string;
-}
-
-interface MailboxProjectionState {
-  messages: MailboxProjectionMessage[];
-  deliveries: MailboxProjectionDelivery[];
-  drafts: MailboxProjectionDraft[];
-  generatedAttachments: MailboxProjectionGeneratedAttachment[];
-  pausedBotIds: string[];
-  idempotency: Record<string, string>;
-  reactions: MailboxProjectionReaction[];
-}
+import { MailboxProjection, type MailboxProjectionState } from "./database/mailbox-projection";
+import { type ProviderSession, ProviderSessions } from "./database/provider-sessions";
+import { type StoredThreadSummary, ThreadSummaries } from "./database/thread-summaries";
 
 // Declared in this module before the split and part of the frozen public surface, so it stays
 // reachable from here rather than only from the controller that owns it now. Structural `Pick<...>`
@@ -144,6 +49,8 @@ export type {
   ActiveHostedSiteConversationEvent,
   PendingHostedSiteTerminalEvent,
 } from "./database/hosted-site-event-log";
+export type { ProviderSession } from "./database/provider-sessions";
+export type { StoredThreadSummary } from "./database/thread-summaries";
 
 /**
  * The local OpenBot event log and its read projections.
@@ -154,10 +61,16 @@ export type {
 export class OpenBotDatabase {
   readonly #core: DatabaseCore;
   readonly #hostedSiteEvents: HostedSiteEventLog;
+  readonly #mailbox: MailboxProjection;
+  readonly #sessions: ProviderSessions;
+  readonly #summaries: ThreadSummaries;
 
   constructor(readonly userDataPath: string) {
     this.#core = new DatabaseCore({ userDataPath });
     this.#hostedSiteEvents = new HostedSiteEventLog({ core: this.#core });
+    this.#mailbox = new MailboxProjection({ core: this.#core });
+    this.#sessions = new ProviderSessions({ core: this.#core });
+    this.#summaries = new ThreadSummaries({ core: this.#core });
   }
 
   get path(): string {
@@ -1006,32 +919,11 @@ export class OpenBotDatabase {
   }
 
   activeProviderSession(threadId: string, provider: AgentProviderId): ProviderSession | null {
-    const row = decodeSessionRow(
-      this.connection
-        .prepare(
-          `SELECT id, thread_id, provider, external_session_id, model, effort, state,
-                  created_at, updated_at, resume_cursor
-           FROM projection_provider_sessions
-           WHERE thread_id = ? AND provider = ? AND state = 'active'
-           ORDER BY created_at DESC, last_event_sequence DESC LIMIT 1`,
-        )
-        .get(threadId, provider),
-    );
-    return row ? toProviderSession(row) : null;
+    return this.#sessions.activeProviderSession(threadId, provider);
   }
 
   listProviderSessions(threadId: string): ProviderSession[] {
-    return databaseRows(
-      this.connection
-        .prepare(
-          `SELECT id, thread_id, provider, external_session_id, model, effort, state,
-                  created_at, updated_at, resume_cursor
-           FROM projection_provider_sessions
-           WHERE thread_id = ?
-           ORDER BY created_at, last_event_sequence`,
-        )
-        .all(threadId),
-    ).map((row) => toProviderSession(requiredSessionRow(row)));
+    return this.#sessions.listProviderSessions(threadId);
   }
 
   bindProviderSession(input: {
@@ -1042,100 +934,15 @@ export class OpenBotDatabase {
     effort: string;
     resumeCursor?: string | null;
   }): ProviderSession {
-    const now = new Date().toISOString();
-    const session: ProviderSession = {
-      id: randomUUID(),
-      threadId: input.threadId,
-      provider: input.provider,
-      externalSessionId: input.externalSessionId,
-      model: input.model,
-      effort: input.effort,
-      state: "active",
-      createdAt: now,
-      updatedAt: now,
-      resumeCursor: input.resumeCursor ?? input.externalSessionId,
-    };
-    return this.dispatch(
-      `provider-session:bind:${input.threadId}:${input.provider}:${input.externalSessionId}`,
-      [
-        {
-          aggregateType: "thread",
-          aggregateId: input.threadId,
-          eventType: "provider-session.bound",
-          payload: session,
-        },
-      ],
-      (db, sequences) => {
-        db.prepare(
-          `UPDATE projection_provider_sessions SET state = 'inactive', updated_at = ?
-           WHERE thread_id = ? AND state = 'active'`,
-        ).run(now, input.threadId);
-        db.prepare(`
-          INSERT INTO projection_provider_sessions (
-            id, thread_id, provider, external_session_id, model, effort, state,
-            created_at, updated_at, resume_cursor, last_event_sequence
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          session.id,
-          session.threadId,
-          session.provider,
-          session.externalSessionId,
-          session.model,
-          session.effort,
-          session.state,
-          session.createdAt,
-          session.updatedAt,
-          session.resumeCursor,
-          sequences[0],
-        );
-        return session;
-      },
-    );
+    return this.#sessions.bindProviderSession(input);
   }
 
   deactivateProviderSessions(threadId: string): void {
-    const active = this.listProviderSessions(threadId).filter((session) => session.state === "active");
-    if (active.length === 0) return;
-    this.dispatch(
-      `provider-session:deactivate:${threadId}:${randomUUID()}`,
-      [
-        {
-          aggregateType: "thread",
-          aggregateId: threadId,
-          eventType: "provider-session.deactivated",
-          payload: { sessionIds: active.map((session) => session.id) },
-        },
-      ],
-      (db, sequences) => {
-        db.prepare(
-          `UPDATE projection_provider_sessions
-           SET state = 'inactive', updated_at = ?, last_event_sequence = ?
-           WHERE thread_id = ? AND state = 'active'`,
-        ).run(new Date().toISOString(), sequences[0], threadId);
-        return null;
-      },
-    );
+    this.#sessions.deactivateProviderSessions(threadId);
   }
 
   updateProviderSessionConfig(sessionId: string, threadId: string, model: string, effort: string): void {
-    this.dispatch(
-      `provider-session:config:${sessionId}:${model}:${effort}`,
-      [
-        {
-          aggregateType: "thread",
-          aggregateId: threadId,
-          eventType: "provider-session.config-updated",
-          payload: { sessionId, model, effort },
-        },
-      ],
-      (db, sequences) => {
-        db.prepare(
-          `UPDATE projection_provider_sessions
-           SET model = ?, effort = ?, updated_at = ?, last_event_sequence = ? WHERE id = ?`,
-        ).run(model, effort, new Date().toISOString(), sequences[0], sessionId);
-        return null;
-      },
-    );
+    this.#sessions.updateProviderSessionConfig(sessionId, threadId, model, effort);
   }
 
   saveThreadSummary(
@@ -1144,54 +951,11 @@ export class OpenBotDatabase {
     text: string,
     estimatedTokens: number,
   ): StoredThreadSummary {
-    const summary: StoredThreadSummary = {
-      id: randomUUID(),
-      threadId,
-      throughMessageId,
-      text,
-      estimatedTokens,
-      createdAt: new Date().toISOString(),
-    };
-    return this.dispatch(
-      `thread-summary:${summary.id}`,
-      [
-        {
-          aggregateType: "thread",
-          aggregateId: threadId,
-          eventType: "thread.summary-created",
-          payload: summary,
-        },
-      ],
-      (db, sequences) => {
-        db.prepare(`
-          INSERT INTO projection_thread_summaries
-            (summary_id, thread_id, through_message_id, summary_text, estimated_tokens, created_at, last_event_sequence)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(summary.id, threadId, throughMessageId, text, estimatedTokens, summary.createdAt, sequences[0]);
-        return summary;
-      },
-    );
+    return this.#summaries.saveThreadSummary(threadId, throughMessageId, text, estimatedTokens);
   }
 
   latestThreadSummary(threadId: string): StoredThreadSummary | null {
-    const row = decodeSummaryRow(
-      this.connection
-        .prepare(
-          `SELECT summary_id, thread_id, through_message_id, summary_text, estimated_tokens, created_at
-           FROM projection_thread_summaries WHERE thread_id = ? ORDER BY created_at DESC LIMIT 1`,
-        )
-        .get(threadId),
-    );
-    return row
-      ? {
-          id: row.summary_id,
-          threadId: row.thread_id,
-          throughMessageId: row.through_message_id,
-          text: row.summary_text,
-          estimatedTokens: row.estimated_tokens,
-          createdAt: row.created_at,
-        }
-      : null;
+    return this.#summaries.latestThreadSummary(threadId);
   }
 
   rebuildThreadProjection(threadId: string): ConversationSnapshot {
@@ -1421,211 +1185,25 @@ export class OpenBotDatabase {
     state: MailboxProjectionState,
     eventType: string,
     fileDeletions: string[] = [],
-    _rebaseHistory = false,
+    rebaseHistory = false,
   ): void {
-    this.dispatch(
-      commandId,
-      [
-        {
-          aggregateType: "mailbox",
-          aggregateId: "mailbox",
-          eventType,
-          payload: state,
-        },
-      ],
-      (db, sequences) => {
-        const sequence = sequences[0] ?? 0;
-        db.prepare(
-          `DELETE FROM orchestration_events
-           WHERE aggregate_type = 'mailbox' AND aggregate_id = 'mailbox' AND sequence < ?`,
-        ).run(sequence);
-        deleteOrphanReceipts(db);
-        const value = state;
-        db.exec("DELETE FROM projection_deliveries");
-        db.exec("DELETE FROM projection_mailbox_messages");
-        db.exec("DELETE FROM projection_queue_state");
-        db.exec("DELETE FROM projection_reactions");
-        db.exec("DELETE FROM projection_attachments WHERE owner_kind IN ('mailbox-message', 'draft', 'generated')");
-        const messageInsert = db.prepare(`
-          INSERT INTO projection_mailbox_messages
-            (message_id, sender_kind, sender_agent_id, text, reply_to_message_id, created_at, message_json, last_event_sequence)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-        const attachmentInsert = db.prepare(`
-          INSERT INTO projection_attachments
-            (attachment_id, owner_kind, owner_id, name, path, metadata_json, created_at, last_event_sequence)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-        for (const message of value.messages) {
-          const sender = message.sender;
-          messageInsert.run(
-            String(message.id),
-            sender.kind,
-            sender.botId ?? null,
-            String(message.text),
-            isString(message.replyToMessageId) ? message.replyToMessageId : null,
-            String(message.createdAt),
-            JSON.stringify(message),
-            sequence,
-          );
-          for (const attachment of message.attachments) {
-            attachmentInsert.run(
-              String(attachment.id),
-              "mailbox-message",
-              String(message.id),
-              String(attachment.name),
-              String(attachment.path),
-              JSON.stringify(attachment),
-              String(message.createdAt),
-              sequence,
-            );
-          }
-        }
-        const deliveryInsert = db.prepare(`
-          INSERT INTO projection_deliveries
-            (delivery_id, message_id, recipient_agent_id, status, turn_id, error, created_at, delivery_json, last_event_sequence)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-        for (const delivery of value.deliveries) {
-          deliveryInsert.run(
-            String(delivery.id),
-            String(delivery.messageId),
-            String(delivery.recipientBotId),
-            String(delivery.status),
-            isString(delivery.turnId) ? delivery.turnId : null,
-            isString(delivery.error) ? delivery.error : null,
-            String(delivery.createdAt),
-            JSON.stringify(delivery),
-            sequence,
-          );
-        }
-        const queueInsert = db.prepare(`
-          INSERT INTO projection_queue_state
-            (agent_id, paused, metadata_json, last_event_sequence) VALUES (?, ?, ?, ?)
-        `);
-        queueInsert.run("__mailbox__", 0, JSON.stringify({ idempotency: value.idempotency }), sequence);
-        for (const botId of value.pausedBotIds) queueInsert.run(botId, 1, "{}", sequence);
-        const reactionInsert = db.prepare(`
-          INSERT INTO projection_reactions
-            (agent_id, message_id, emoji, actor_kind, actor_bot_id, updated_at, last_event_sequence)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `);
-        for (const reaction of value.reactions) {
-          reactionInsert.run(
-            String(reaction.botId),
-            String(reaction.messageId),
-            String(reaction.emoji),
-            reaction.actor.kind,
-            reaction.actor.kind === "bot" ? reaction.actor.botId : "",
-            String(reaction.updatedAt),
-            sequence,
-          );
-        }
-        for (const draft of value.drafts) {
-          attachmentInsert.run(
-            String(draft.id),
-            "draft",
-            String(draft.id),
-            String(draft.name),
-            String(draft.path),
-            JSON.stringify(draft),
-            String(draft.createdAt),
-            sequence,
-          );
-        }
-        for (const attachment of value.generatedAttachments) {
-          attachmentInsert.run(
-            String(attachment.id),
-            "generated",
-            String(attachment.id),
-            String(attachment.name),
-            String(attachment.path),
-            JSON.stringify(attachment),
-            new Date().toISOString(),
-            sequence,
-          );
-        }
-        const outboxInsert = db.prepare(`
-          INSERT OR IGNORE INTO file_deletion_outbox
-            (id, path, reason, created_at, attempts, last_error)
-          VALUES (?, ?, ?, ?, 0, NULL)
-        `);
-        for (const path of fileDeletions) {
-          outboxInsert.run(randomUUID(), path, eventType, new Date().toISOString());
-        }
-        return null;
-      },
-    );
+    this.#mailbox.replaceMailboxState(commandId, state, eventType, fileDeletions, rebaseHistory);
   }
 
   pendingFileDeletions(): Array<{ id: string; path: string }> {
-    return databaseRows(
-      this.connection.prepare("SELECT id, path FROM file_deletion_outbox ORDER BY created_at").all(),
-    ).map((row) => ({
-      id: requiredStringColumn(row, "id"),
-      path: requiredStringColumn(row, "path"),
-    }));
+    return this.#mailbox.pendingFileDeletions();
   }
 
   completeFileDeletion(id: string): void {
-    this.connection.prepare("DELETE FROM file_deletion_outbox WHERE id = ?").run(id);
+    this.#mailbox.completeFileDeletion(id);
   }
 
   failFileDeletion(id: string, error: string): void {
-    this.connection
-      .prepare(
-        `UPDATE file_deletion_outbox
-         SET attempts = attempts + 1, last_error = ? WHERE id = ?`,
-      )
-      .run(error.slice(0, 2_000), id);
+    this.#mailbox.failFileDeletion(id, error);
   }
 
   readMailboxState(): unknown | null {
-    const db = this.connection;
-    const marker = databaseRow(
-      db.prepare("SELECT metadata_json FROM projection_queue_state WHERE agent_id = '__mailbox__'").get(),
-    );
-    if (!marker) return null;
-    const metadata = parseMailboxMetadata(requiredStringColumn(marker, "metadata_json"));
-    const messages = databaseRows(
-      db.prepare("SELECT message_json FROM projection_mailbox_messages ORDER BY created_at, message_id").all(),
-    ).map((row) => JSON.parse(requiredStringColumn(row, "message_json")));
-    const deliveries = databaseRows(
-      db.prepare("SELECT delivery_json FROM projection_deliveries ORDER BY created_at, delivery_id").all(),
-    ).map((row) => JSON.parse(requiredStringColumn(row, "delivery_json")));
-    const drafts = databaseRows(
-      db.prepare("SELECT metadata_json FROM projection_attachments WHERE owner_kind = 'draft'").all(),
-    ).map((row) => JSON.parse(requiredStringColumn(row, "metadata_json")));
-    const generatedAttachments = databaseRows(
-      db.prepare("SELECT metadata_json FROM projection_attachments WHERE owner_kind = 'generated'").all(),
-    ).map((row) => JSON.parse(requiredStringColumn(row, "metadata_json")));
-    const pausedBotIds = databaseRows(
-      db.prepare("SELECT agent_id FROM projection_queue_state WHERE paused = 1").all(),
-    ).map((row) => requiredStringColumn(row, "agent_id"));
-    const reactions = databaseRows(
-      db
-        .prepare("SELECT agent_id, message_id, emoji, actor_kind, actor_bot_id, updated_at FROM projection_reactions")
-        .all(),
-    ).map((row) => ({
-      botId: requiredStringColumn(row, "agent_id"),
-      messageId: requiredStringColumn(row, "message_id"),
-      emoji: requiredStringColumn(row, "emoji"),
-      actor:
-        requiredStringColumn(row, "actor_kind") === "bot"
-          ? { kind: "bot" as const, botId: requiredStringColumn(row, "actor_bot_id") }
-          : { kind: "user" as const },
-      updatedAt: requiredStringColumn(row, "updated_at"),
-    }));
-    return {
-      version: 3,
-      messages,
-      deliveries,
-      drafts,
-      generatedAttachments,
-      pausedBotIds,
-      idempotency: metadata.idempotency ?? {},
-      reactions,
-    };
+    return this.#mailbox.readMailboxState();
   }
 
   #ensureThreadProjection(db: DatabaseSync, agent: BotSummary, sequence: number): void {
@@ -1648,21 +1226,6 @@ export class OpenBotDatabase {
       sequence,
     );
   }
-}
-
-function toProviderSession(row: SessionRow): ProviderSession {
-  return {
-    id: row.id,
-    threadId: row.thread_id,
-    provider: row.provider,
-    externalSessionId: row.external_session_id,
-    model: row.model,
-    effort: row.effort,
-    state: row.state,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    resumeCursor: row.resume_cursor,
-  };
 }
 
 interface ConversationPageCursor {
@@ -1752,70 +1315,6 @@ function decodeSearchCursor(value: string): number {
 
 function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (character) => `\\${character}`);
-}
-
-function decodeSessionRow(value: unknown): SessionRow | null {
-  const row = databaseRow(value);
-  if (!row) return null;
-  const provider = requiredStringColumn(row, "provider");
-  const state = requiredStringColumn(row, "state");
-  if (!isAgentProvider(provider)) throw new Error("Invalid provider column.");
-  if (state !== "active" && state !== "inactive" && state !== "failed") {
-    throw new Error("Invalid provider session state column.");
-  }
-  return {
-    id: requiredStringColumn(row, "id"),
-    thread_id: requiredStringColumn(row, "thread_id"),
-    provider,
-    external_session_id: requiredStringColumn(row, "external_session_id"),
-    model: requiredStringColumn(row, "model"),
-    effort: requiredStringColumn(row, "effort"),
-    state,
-    created_at: requiredStringColumn(row, "created_at"),
-    updated_at: requiredStringColumn(row, "updated_at"),
-    resume_cursor: optionalStringColumn(row, "resume_cursor"),
-  };
-}
-
-function requiredSessionRow(value: DynamicRecord): SessionRow {
-  const row = decodeSessionRow(value);
-  if (!row) throw new Error("Invalid provider session row.");
-  return row;
-}
-
-function decodeSummaryRow(value: unknown): {
-  summary_id: string;
-  thread_id: string;
-  through_message_id: string | null;
-  summary_text: string;
-  estimated_tokens: number;
-  created_at: string;
-} | null {
-  const row = databaseRow(value);
-  if (!row) return null;
-  return {
-    summary_id: requiredStringColumn(row, "summary_id"),
-    thread_id: requiredStringColumn(row, "thread_id"),
-    through_message_id: optionalStringColumn(row, "through_message_id"),
-    summary_text: requiredStringColumn(row, "summary_text"),
-    estimated_tokens: requiredNumberColumn(row, "estimated_tokens"),
-    created_at: requiredStringColumn(row, "created_at"),
-  };
-}
-
-function parseMailboxMetadata(value: string): { idempotency?: Record<string, string> } {
-  const parsed = JSON.parse(value);
-  if (!isDynamicRecord(parsed)) throw new Error("Invalid mailbox metadata.");
-  const idempotency = parsed.idempotency;
-  if (idempotency === undefined) return {};
-  if (!isDynamicRecord(idempotency)) throw new Error("Invalid mailbox idempotency metadata.");
-  const entries = Object.entries(idempotency);
-  const values: Record<string, string> = {};
-  for (const [key, entry] of entries) {
-    if (!isString(entry)) throw new Error("Invalid mailbox idempotency entry.");
-    values[key] = entry;
-  }
-  return { idempotency: values };
 }
 
 function providerSessionValue(value: DynamicRecord | null): ProviderSession | null {
