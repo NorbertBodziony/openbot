@@ -108,8 +108,10 @@ export function ConnectedScreen() {
       {listReady ? (
         <FlatList
           className="flex-1 bg-background"
-          contentContainerClassName="grow pb-safe-offset-8 pt-3"
-          contentInsetAdjustmentBehavior="automatic"
+          alwaysBounceVertical={false}
+          contentContainerClassName={activeBots.length > 0 ? "pb-safe-offset-8 pt-3" : "grow pb-safe-offset-8 pt-3"}
+          // Keep the native header inset even when short content cannot scroll or bounce.
+          contentInsetAdjustmentBehavior="always"
           data={unpinnedBots}
           keyExtractor={(bot) => bot.id}
           renderItem={({ item, index }) => (

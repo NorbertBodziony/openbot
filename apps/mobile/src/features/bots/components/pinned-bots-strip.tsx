@@ -35,6 +35,7 @@ export function PinnedBotsStrip({ bots }: { bots: MobileBot[] }) {
         <Animated.View exiting={PINNED_EXIT} style={{ width: "100%" }}>
           <ScrollView
             horizontal
+            alwaysBounceHorizontal={false}
             contentContainerStyle={{
               alignItems: "flex-start",
               flexGrow: 1,
