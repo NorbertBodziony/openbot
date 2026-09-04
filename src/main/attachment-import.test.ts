@@ -224,6 +224,23 @@ describe("EML attachment imports", () => {
     await expect(importEmail(email)).rejects.toThrow("duplicate MIME boundary");
   });
 
+  it("rejects whitespace inside an unquoted MIME boundary", async () => {
+    const parts = Array.from({ length: 65 }, (_, index) =>
+      ["--open bot", "Content-Type: text/plain", "", String(index)].join("\r\n"),
+    );
+    const email = ENCODER.encode(
+      [
+        "Subject: Invalid boundary",
+        "Content-Type: multipart/mixed; boundary=open bot",
+        "",
+        ...parts,
+        "--open bot--",
+      ].join("\r\n"),
+    );
+
+    await expect(importEmail(email)).rejects.toThrow("invalid unquoted MIME boundary");
+  });
+
   it("rejects a nested multipart that reuses an active boundary", async () => {
     const email = ENCODER.encode(
       [

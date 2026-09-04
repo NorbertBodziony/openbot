@@ -201,9 +201,15 @@ function addEmailBoundary(name: string, headers: EmailHeaders, boundaries: Set<s
   if ((headers.contentType.match(/(?:^|;)\s*boundary\s*=/giu) ?? []).length > 1) {
     throw new Error(`${name} uses duplicate MIME boundary parameters, which are not supported. Export it again.`);
   }
-  const match = /(?:^|;)\s*boundary\s*=\s*(?:"((?:\\.|[^"])*)"|([^;\s]+))/iu.exec(headers.contentType);
-  const boundary = (match?.[1] ?? match?.[2])?.replace(/\\(.)/gu, "$1");
-  if (!boundary) return;
+  if (!/(?:^|;)\s*boundary\s*=/iu.test(headers.contentType)) return;
+  const match = /(?:^|;)\s*boundary\s*=\s*(?:"((?:\\.|[^"])*)"\s*(?:;|$)|([^;]*)(?:;|$))/iu.exec(headers.contentType);
+  const quoted = match?.[1];
+  const unquoted = match?.[2]?.trim();
+  if (!match || (quoted === undefined && !/^[!#$%&'*+\-.0-9A-Z^_`a-z{|}~]+$/u.test(unquoted ?? ""))) {
+    throw new Error(`${name} uses an invalid unquoted MIME boundary. Export it again.`);
+  }
+  const boundary = (quoted ?? unquoted)?.replace(/\\(.)/gu, "$1");
+  if (!boundary) throw new Error(`${name} uses an empty MIME boundary. Export it again.`);
   if (boundaries.has(boundary)) {
     throw new Error(`${name} reuses an active MIME boundary, which is not supported. Export it again.`);
   }
