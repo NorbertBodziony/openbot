@@ -1,9 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createRequire } from "node:module";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { isAvatarMimeType } from "@openbot/contracts/avatar-images";
-import { ATTACHMENT_LIMITS, AVATAR_IMAGE_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import { AVATAR_IMAGE_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
   AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT,
   type AgentEvent,
@@ -24,7 +24,7 @@ import {
   type TeamRealtimeEvent,
   type UpdateQueuedMessageInput,
 } from "@openbot/contracts/ipc";
-import { isBoolean, isString } from "@openbot/contracts/runtime-values";
+import { isString } from "@openbot/contracts/runtime-values";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import {
   isTeamCurrentCapability,
@@ -75,7 +75,6 @@ import {
   nullableString,
   pageAnchor,
   pageLimit,
-  parseBrowserBounds,
   pathIdentifier,
   promptAnswers,
   promptRequestId,
@@ -86,7 +85,9 @@ import {
   stringArray,
   stringField,
 } from "./team-api/request-helpers";
+import { routeBrowser } from "./team-api/route-browser";
 import { routeDirect } from "./team-api/route-direct";
+import { routeFiles } from "./team-api/route-files";
 import { routeRemoteScreen } from "./team-api/route-remote-screen";
 import { routeTeam } from "./team-api/route-team";
 import { TeamStoreError } from "./team-store";
@@ -494,6 +495,8 @@ export class TeamApiServer {
       if ((await this.#routeTeam(context)) === "handled") return;
       if ((await this.#routeRemoteScreen(context)) === "handled") return;
       if ((await this.#routeDirect(context)) === "handled") return;
+      if ((await this.#routeBrowser(context)) === "handled") return;
+      if ((await this.#routeFiles(context)) === "handled") return;
 
       if (method === "GET" && url.pathname === TEAM_API_ROUTES.messages.search) {
         const query = url.searchParams.get("q") ?? "";
@@ -510,139 +513,6 @@ export class TeamApiServer {
             pageLimit(url),
           ),
         );
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.browser.tabs) {
-        return this.#json(response, 200, this.#options.browser.listTabs());
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.browser.control) {
-        return this.#json(response, 200, this.#options.browser.getControlState());
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.browser.open) {
-        const body = await readJson(request);
-        const focus = body.focus ?? false;
-        if (!isBoolean(focus)) throw new HttpError(400, "focus must be a boolean.");
-        return this.#json(
-          response,
-          201,
-          await this.#options.browser.open(
-            stringField(body, "url", false, INPUT_LIMITS.browserUrl),
-            nullableString(body, "ownerThreadId"),
-            nullableString(body, "ownerBotId"),
-            focus,
-          ),
-        );
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.browser.activate) {
-        const body = await readJson(request);
-        await this.#options.browser.activate(stringField(body, "tabId"));
-        return this.#empty(response, 204);
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.browser.navigate) {
-        const body = await readJson(request);
-        const direction = stringField(body, "direction");
-        if (direction !== "back" && direction !== "forward") {
-          throw new HttpError(400, "Invalid browser navigation direction.");
-        }
-        await this.#options.browser.navigate(stringField(body, "tabId"), direction);
-        return this.#empty(response, 204);
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.browser.reload) {
-        const body = await readJson(request);
-        await this.#options.browser.reload(stringField(body, "tabId"));
-        return this.#empty(response, 204);
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.browser.close) {
-        const body = await readJson(request);
-        await this.#options.browser.close(stringField(body, "tabId"));
-        return this.#empty(response, 204);
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.browser.preview) {
-        const body = await readJson(request);
-        return this.#json(response, 200, await this.#options.browser.capturePreview(stringField(body, "tabId")));
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.browser.visible) {
-        const body = await readJson(request);
-        if (!isBoolean(body.visible)) throw new HttpError(400, "visible is required.");
-        await this.#options.browser.setVisible({
-          visible: body.visible,
-          bounds: body.bounds === undefined ? undefined : parseBrowserBounds(body.bounds),
-        });
-        return this.#empty(response, 204);
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.attachments) {
-        const name = url.searchParams.get("name")?.trim();
-        const mimeType = url.searchParams.get("mime") ?? "application/octet-stream";
-        if (!name || basename(name) !== name || name.length > INPUT_LIMITS.attachmentName) {
-          throw new HttpError(400, "A safe attachment name is required.");
-        }
-        if (mimeType.length > INPUT_LIMITS.mimeType) {
-          throw new HttpError(400, "The attachment MIME type is too long.");
-        }
-        const bytes = await readBinary(request, ATTACHMENT_LIMITS.fileBytes);
-        const attachments = await this.#options.agents.prepareImportedAttachments([], [{ name, mimeType, bytes }]);
-        return this.#json(response, 201, attachments[0]);
-      }
-      const attachmentMatch = url.pathname.match(/^\/v1\/attachments\/([^/]+)$/);
-      if (attachmentMatch) {
-        const attachmentId = pathIdentifier(attachmentMatch[1], "attachmentId");
-        if (method === "DELETE") {
-          await this.#options.agents.discardDraftAttachment(attachmentId);
-          return this.#empty(response, 204);
-        }
-        if (method === "GET") {
-          const attachment = await this.#options.mailbox.resolveAttachment(attachmentId);
-          if (!attachment) throw new HttpError(404, "Attachment not found.");
-          const bytes = await readFile(attachment.path);
-          response.writeHead(200, {
-            "Content-Type": attachment.mimeType || "application/octet-stream",
-            "Content-Length": String(bytes.length),
-            "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(basename(attachment.path))}`,
-          });
-          response.end(bytes);
-          return;
-        }
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.sharedFiles) {
-        const sharedPath = url.searchParams.get("path");
-        if (!sharedPath || sharedPath.length > INPUT_LIMITS.path) {
-          throw new HttpError(400, "A valid shared file path is required.");
-        }
-        const sharedFile = await this.#options.agents.resolveSharedFile(sharedPath);
-        if (sharedFile.size > ATTACHMENT_LIMITS.fileBytes) {
-          throw new HttpError(413, "The shared file exceeds the 100 MB limit.");
-        }
-        const bytes = await readFile(sharedFile.path);
-        response.writeHead(200, {
-          "Content-Type": "application/octet-stream",
-          "Content-Length": String(bytes.length),
-          "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(sharedFile.name)}`,
-          "X-Content-Type-Options": "nosniff",
-        });
-        response.end(bytes);
-        return;
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.workspaceFiles) {
-        const botId = url.searchParams.get("botId");
-        const workspacePath = url.searchParams.get("path");
-        if (!botId || botId.length > INPUT_LIMITS.identifier) {
-          throw new HttpError(400, "A valid agent id is required.");
-        }
-        if (!workspacePath || workspacePath.length > INPUT_LIMITS.path) {
-          throw new HttpError(400, "A valid workspace file path is required.");
-        }
-        const workspaceFile = await this.#options.agents.resolveWorkspaceFile(botId, workspacePath);
-        if (workspaceFile.size > ATTACHMENT_LIMITS.fileBytes) {
-          throw new HttpError(413, "The workspace file exceeds the 100 MB limit.");
-        }
-        const bytes = await readFile(workspaceFile.path);
-        response.writeHead(200, {
-          "Content-Type": "application/octet-stream",
-          "Content-Length": String(bytes.length),
-          "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(workspaceFile.name)}`,
-          "X-Content-Type-Options": "nosniff",
-        });
-        response.end(bytes);
-        return;
       }
       if (method === "GET" && url.pathname === TEAM_API_ROUTES.agents.status) {
         return this.#json(response, 200, this.#options.agents.getStatus());
@@ -987,6 +857,14 @@ export class TeamApiServer {
       markDirectRead: (memberId, otherMemberId, throughSequence) =>
         this.markDirectRead(memberId, otherMemberId, throughSequence),
     });
+  }
+
+  #routeBrowser(context: TeamApiRequestContext): Promise<RouteOutcome> {
+    return routeBrowser(context, { browser: this.#options.browser });
+  }
+
+  #routeFiles(context: TeamApiRequestContext): Promise<RouteOutcome> {
+    return routeFiles(context, { agents: this.#options.agents, mailbox: this.#options.mailbox });
   }
 
   #checkRate(request: IncomingMessage, username: string): void {
