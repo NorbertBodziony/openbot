@@ -1,7 +1,7 @@
 import { useIsFocused } from "expo-router";
 import { Button, Typography } from "heroui-native";
 import { X } from "lucide-react-native";
-import { forwardRef, useRef } from "react";
+import { forwardRef, useMemo, useRef } from "react";
 import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
@@ -13,8 +13,9 @@ import {
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { BloubAvatar, getBloubAvatarColor } from "@/features/bots/components/bloub-avatar";
 import { ChatMarkdown } from "@/features/chat/components/chat-markdown";
+import { ChatMessageRow } from "@/features/chat/components/chat-message-row";
 import { ChatThinking } from "@/features/chat/components/chat-thinking";
-import type { ChatMessage } from "@/features/chat/model/chat-messages";
+import type { ChatMessage, ChatTextMessage } from "@/features/chat/model/chat-messages";
 import { useBotActivity } from "@/features/workspace/components/use-bot-activity";
 import { useConnectionAppearance } from "@/features/workspace/components/use-connection-appearance";
 import type { MobileBot } from "@/features/workspace/context/mobile-workspace-context";
@@ -44,6 +45,8 @@ interface ChatMessageListProps {
   onDismissStarter: () => void;
   onSelectStarter: (value: string) => void;
   onRetryHistory: () => void;
+  onReply: (message: ChatTextMessage) => void;
+  onSelectText: (message: ChatTextMessage) => void;
 }
 
 export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(function ChatMessageList(
@@ -65,11 +68,17 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
     onDismissStarter,
     onSelectStarter,
     onRetryHistory,
+    onReply,
+    onSelectText,
   },
   ref,
 ) {
   const isFocused = useIsFocused();
   const animateMessages = isFocused && canSend && appActive;
+  const textById = useMemo(
+    () => new Map(messages.flatMap((message) => (message.kind === "message" ? [[message.id, message.body]] : []))),
+    [messages],
+  );
   const initialMessages = useRef<{ botId: string; ids: Set<string>; live: boolean } | null>(null);
   if (
     historyState === "ready" &&
@@ -157,19 +166,41 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
             working={Boolean(activity && activity.turnId === message.turnId)}
           />
         ) : (
-          <Animated.View
+          <ChatMessageRow
             key={message.id}
-            className={`max-w-[88%] rounded-[30px] px-4 py-3 ${message.author === "user" ? "self-end" : "self-start bg-control/60"}`}
-            style={[{ borderCurve: "circular" }, message.author === "user" ? userBubbleStyle : undefined]}
+            message={message}
+            canReply={canSend && isFocused}
+            onReply={onReply}
+            onSelectText={onSelectText}
           >
-            <ChatMarkdown
-              body={message.body}
-              color={message.author === "user" ? "#0a0a0c" : foreground}
-              streaming={message.author === "bot" && message.streaming}
-              animateInitial={message.author === "bot" && !initialMessages.current?.ids.has(message.id)}
-              animationEnabled={animateMessages}
-            />
-          </Animated.View>
+            <Animated.View
+              className={`rounded-[30px] px-4 py-3 ${message.author === "bot" ? "bg-control/60" : ""}`}
+              style={[{ borderCurve: "circular" }, message.author === "user" ? userBubbleStyle : undefined]}
+            >
+              {message.replyToMessageId ? (
+                <View
+                  className="mb-2 border-l-2 pl-2 opacity-70"
+                  style={{ borderLeftColor: message.author === "user" ? "#0a0a0c" : muted }}
+                >
+                  <Typography
+                    type="body-xs"
+                    numberOfLines={2}
+                    style={{ color: message.author === "user" ? "#0a0a0c" : foreground }}
+                  >
+                    {textById.get(message.replyToMessageId) ?? "Original message unavailable"}
+                  </Typography>
+                </View>
+              ) : null}
+              <ChatMarkdown
+                selectable={false}
+                body={message.body}
+                color={message.author === "user" ? "#0a0a0c" : foreground}
+                streaming={message.author === "bot" && message.streaming}
+                animateInitial={message.author === "bot" && !initialMessages.current?.ids.has(message.id)}
+                animationEnabled={animateMessages}
+              />
+            </Animated.View>
+          </ChatMessageRow>
         ),
       )}
 

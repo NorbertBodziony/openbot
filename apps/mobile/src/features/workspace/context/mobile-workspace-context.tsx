@@ -495,11 +495,11 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         });
       },
       loadConversation,
-      sendMessage: async (botId, text) => {
+      sendMessage: async (botId, text, replyToMessageId = null) => {
         await request("POST", `/v1/agents/${encodeURIComponent(botId)}/messages`, ignoreResponse, {
           text,
           attachmentDraftIds: [],
-          replyToMessageId: null,
+          replyToMessageId,
         });
       },
       hideBot: (botId) => {
@@ -699,6 +699,7 @@ function decodeConversationMessage(value: unknown): ConversationMessage {
     status: value.status,
     ...(isString(value.turnId) ? { turnId: value.turnId } : {}),
     ...(isString(value.itemType) ? { itemType: value.itemType } : {}),
+    ...(isString(value.replyToMessageId) ? { replyToMessageId: value.replyToMessageId } : {}),
     ...(isConversationSource(value.source) ? { source: value.source } : {}),
   };
 }
