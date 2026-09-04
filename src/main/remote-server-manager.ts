@@ -1126,7 +1126,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     mimeType: string;
   }> {
     const server = this.#requireServer(serverId);
-    const response = await this.#fetch(server, `${server.apiUrl}${TEAM_API_ROUTES.attachment(attachmentId)}`);
+    const response = await this.#fetch(server, new URL(TEAM_API_ROUTES.attachment(attachmentId), server.apiUrl));
     const disposition = response.headers.get("content-disposition") ?? "";
     const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
     return {
