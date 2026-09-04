@@ -4132,6 +4132,14 @@ button.chat-action-target:active,
   font-weight: 550;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
+}
+
+/* The shimmer says "still working", so it stops once the image has arrived or
+   failed. Left unscoped it also ran on "Image generation failed" and on plain
+   attached images, and it animates `background-position` under
+   `background-clip: text` - a main-thread text repaint per frame that no
+   compositor can take - once per image message, for the life of the thread. */
+.image-generation:not(.image-generation-ready, .image-generation-failed) .image-generation-label {
   animation: image-generation-shine 2.25s cubic-bezier(0.25, 0.1, 0.25, 1) infinite;
 }
 
@@ -5964,6 +5972,8 @@ button.chat-action-target:active,
   .image-generation-canvas,
   .image-generation-preview,
   .image-generation-label,
+  /* Matches the scoped shimmer above, which outranks the bare class on its own. */
+  .image-generation:not(.image-generation-ready, .image-generation-failed) .image-generation-label,
   .agent-activity-label,
   .thinking-label,
   .thinking-step {

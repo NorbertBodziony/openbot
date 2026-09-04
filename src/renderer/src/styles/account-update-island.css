@@ -61,6 +61,17 @@
     filter var(--panel-open-dur) var(--panel-ease);
 }
 
+/* The island only enters the DOM once there is an update to announce, so it is
+   already `data-open="true"` on its first frame and the closed rule above never
+   applies. This gives that first frame something to slide in from. */
+@starting-style {
+  .account-update-island.t-panel-slide[data-open="true"] {
+    transform: translateY(var(--panel-translate-y));
+    opacity: 0;
+    filter: blur(var(--panel-blur));
+  }
+}
+
 .account-update-island__copy {
   min-width: 0;
 }

@@ -1,7 +1,16 @@
 import type { UpdateStatus } from "@openbot/contracts/ipc";
 import { isUpdateActivePhase, isUpdateBusyPhase } from "@openbot/contracts/ipc";
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { rendererDuration } from "./conversation/activity-timing";
 import { Button, Download, RefreshCw, Spinner } from "./ui";
+
+// `--panel-close-dur` is a calc() on the island itself, so it cannot be read off
+// the document root the way `rendererDuration` reads a token. Sum the two tokens
+// it is built from; keep this in step with `--panel-close-dur` in
+// account-update-island.css.
+function islandCloseDuration(): number {
+  return rendererDuration("--openbot-duration-slow", 200) + rendererDuration("--openbot-duration-normal", 160);
+}
 
 interface AccountUpdateIslandProps {
   updateStatus: UpdateStatus;
@@ -92,6 +101,30 @@ export function AccountUpdateIsland(props: AccountUpdateIslandProps) {
     },
   );
 
+  // Closed, the island is `opacity: 0` but still a composited layer carrying a
+  // 12px backdrop-filter and a spinner on an infinite `ui-spin`. That rotation
+  // invalidates the backdrop every frame, so an island nobody can see measured
+  // ~10% of a core, forever. Keep it out of the DOM instead, held only for as
+  // long as the slide-out needs it.
+  const [present, setPresent] = createSignal(false);
+  createEffect(
+    () => open(),
+    (isOpen) => {
+      if (isOpen) {
+        setPresent(true);
+        return;
+      }
+      if (!present()) return;
+      const closeDuration = islandCloseDuration();
+      if (closeDuration === 0) {
+        setPresent(false);
+        return;
+      }
+      const timer = window.setTimeout(() => setPresent(false), closeDuration);
+      return () => window.clearTimeout(timer);
+    },
+  );
+
   async function runUpdateAction(): Promise<void> {
     if (!open() || busy()) return;
     setActionPending(true);
@@ -103,78 +136,80 @@ export function AccountUpdateIsland(props: AccountUpdateIslandProps) {
   }
 
   return (
-    <div
-      class="account-update-island t-panel-slide"
-      data-open={open() ? "true" : "false"}
-      data-phase={phase()}
-      aria-hidden={open() ? undefined : "true"}
-      inert={open() ? undefined : true}
-    >
+    <Show when={present()}>
       <div
-        class="account-update-island__copy t-update-text-swap"
-        data-state={failed() ? "error" : ready() ? "ready" : "available"}
-        role="status"
-        aria-live="polite"
+        class="account-update-island t-panel-slide"
+        data-open={open() ? "true" : "false"}
+        data-phase={phase()}
+        aria-hidden={open() ? undefined : "true"}
+        inert={open() ? undefined : true}
       >
-        <strong data-text="available" aria-hidden={ready() || failed() ? "true" : undefined}>
-          New update available
-        </strong>
-        <strong data-text="ready" aria-hidden={ready() && !failed() ? undefined : "true"}>
-          Update ready
-        </strong>
-        <strong data-text="error" aria-hidden={failed() ? undefined : "true"} title={errorMessage()}>
-          {errorMessage()}
-        </strong>
-      </div>
-      <div class="account-update-island__action-shell" data-downloading={busy() ? "true" : "false"}>
-        <Button
-          type="button"
-          size="xs"
-          class="account-update-island__action"
-          aria-label={accessibleActionLabel()}
-          aria-busy={busy() ? "true" : undefined}
-          disabled={!open() || busy()}
-          onClick={() => void runUpdateAction()}
+        <div
+          class="account-update-island__copy t-update-text-swap"
+          data-state={failed() ? "error" : ready() ? "ready" : "available"}
+          role="status"
+          aria-live="polite"
         >
-          <span class="account-update-island__action-content">
-            <span class="account-update-island__icon t-icon-swap" data-state={busy() ? "b" : "a"}>
-              <span class="t-icon" data-icon="a" aria-hidden="true">
-                <Show when={failed() || ready()} fallback={<Download />}>
-                  <RefreshCw />
-                </Show>
+          <strong data-text="available" aria-hidden={ready() || failed() ? "true" : undefined}>
+            New update available
+          </strong>
+          <strong data-text="ready" aria-hidden={ready() && !failed() ? undefined : "true"}>
+            Update ready
+          </strong>
+          <strong data-text="error" aria-hidden={failed() ? undefined : "true"} title={errorMessage()}>
+            {errorMessage()}
+          </strong>
+        </div>
+        <div class="account-update-island__action-shell" data-downloading={busy() ? "true" : "false"}>
+          <Button
+            type="button"
+            size="xs"
+            class="account-update-island__action"
+            aria-label={accessibleActionLabel()}
+            aria-busy={busy() ? "true" : undefined}
+            disabled={!open() || busy()}
+            onClick={() => void runUpdateAction()}
+          >
+            <span class="account-update-island__action-content">
+              <span class="account-update-island__icon t-icon-swap" data-state={busy() ? "b" : "a"}>
+                <span class="t-icon" data-icon="a" aria-hidden="true">
+                  <Show when={failed() || ready()} fallback={<Download />}>
+                    <RefreshCw />
+                  </Show>
+                </span>
+                <span class="t-icon" data-icon="b" aria-hidden="true">
+                  <Spinner size="sm" />
+                </span>
               </span>
-              <span class="t-icon" data-icon="b" aria-hidden="true">
-                <Spinner size="sm" />
+              <span
+                class="account-update-island__action-label t-update-text-swap"
+                data-state={busy() ? "progress" : "action"}
+                aria-hidden="true"
+              >
+                <span data-text="action">{actionLabel()}</span>
+                <span data-text="progress">
+                  <Show
+                    when={downloading() && progress() !== null}
+                    fallback={<span class="account-update-island__busy-label">{busyLabel()}</span>}
+                  >
+                    <UpdateProgressValue active={busy()} value={progress() ?? 0} />
+                  </Show>
+                </span>
               </span>
             </span>
+          </Button>
+          <Show when={downloading() && progress() !== null}>
             <span
-              class="account-update-island__action-label t-update-text-swap"
-              data-state={busy() ? "progress" : "action"}
-              aria-hidden="true"
-            >
-              <span data-text="action">{actionLabel()}</span>
-              <span data-text="progress">
-                <Show
-                  when={downloading() && progress() !== null}
-                  fallback={<span class="account-update-island__busy-label">{busyLabel()}</span>}
-                >
-                  <UpdateProgressValue active={busy()} value={progress() ?? 0} />
-                </Show>
-              </span>
-            </span>
-          </span>
-        </Button>
-        <Show when={downloading() && progress() !== null}>
-          <span
-            class="sr-only"
-            role="progressbar"
-            aria-valuenow={progress() ?? 0}
-            aria-valuemin="0"
-            aria-valuemax="100"
-            aria-label="Update download progress"
-          />
-        </Show>
+              class="sr-only"
+              role="progressbar"
+              aria-valuenow={progress() ?? 0}
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-label="Update download progress"
+            />
+          </Show>
+        </div>
       </div>
-    </div>
+    </Show>
   );
 }
