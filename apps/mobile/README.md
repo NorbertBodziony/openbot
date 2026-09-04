@@ -66,6 +66,12 @@ can resume sooner while the authenticated WebRTC connection is still healthy, wi
 Chat links use a local link icon, with a smaller icon in thought-process text. Rendering links
 or Markdown images does not contact their destinations; they open only on tap.
 
+The Bloub loading overlay first renders a single idle pose. After commit, the animation provider
+prepares one shared 30 fps sequence in idle batches of at most four frames. Hidden loaders and
+reduced-motion mode do not start that work. Exit geometry is prepared the same way while holding
+the current pose, then settles to idle before scaling down; unfinished preparation is cancelled
+when no longer needed.
+
 Structured question forms appear inline in mobile chat, including when reopening downloaded history.
 They support option selection, multiple questions, skipping and cancellation. Custom answers are typed
 in the main chat composer and sent to the current form question, rather than posted as chat messages. Responses

@@ -1,4 +1,3 @@
-import { BotEngine, type BotFrame, COLOR_BY_ID, SHAPE_BY_ID, STATE_BY_ID } from "@norbert_bodziony/bloub";
 import { useThemeColor } from "heroui-native/hooks";
 import {
   createContext,
@@ -30,27 +29,24 @@ import Animated, {
 import Svg, { Circle, Path } from "react-native-svg";
 import { scheduleOnRN } from "react-native-worklets";
 
+import {
+  CYCLE_SECONDS,
+  FPS,
+  IDLE_MORPH_SECONDS,
+  LOADER_COLOR,
+  type LoaderFrame,
+  prepareLoaderFrames,
+  prepareReturnToIdleFrames,
+  REST_FRAME,
+} from "@/shared/lib/bloub-loader-frames";
+
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
-const FPS = 60;
-const IDLE_SECONDS = 1.2;
-const THINKING_SECONDS = 1.7;
-const WIDE_SECONDS = 1;
-const CYCLE_SECONDS = IDLE_SECONDS + THINKING_SECONDS + WIDE_SECONDS;
 const EASE_OUT = Easing.bezier(0.23, 1, 0.32, 1);
 const LOADER_SPRING = { duration: 240, dampingRatio: 0.75, overshootClamping: true, reduceMotion: ReduceMotion.System };
-function loaderAppearance() {
-  const color = COLOR_BY_ID.get("rose")?.hex;
-  const radii = SHAPE_BY_ID.get("squircle")?.radii;
-  const idleMorph = STATE_BY_ID.get("idle")?.morph;
-  if (!color || !radii || idleMorph === undefined) throw new Error("Bloub loader appearance is unavailable.");
-  return { color, radii, idleMorph };
-}
-
-const { color: LOADER_COLOR, radii: LOADER_RADII, idleMorph: IDLE_MORPH_SECONDS } = loaderAppearance();
-
 interface BloubAnimationContextValue {
   frameIndex: DerivedValue<number>;
+  frames: LoaderFrame[] | null;
   retainPlayback: () => () => void;
 }
 
@@ -58,8 +54,11 @@ const BloubAnimationContext = createContext<BloubAnimationContextValue | null>(n
 
 export function BloubAnimationProvider({ children }: PropsWithChildren) {
   const [activeLoaders, setActiveLoaders] = useState(0);
+  const [frames, setFrames] = useState<LoaderFrame[] | null>(null);
   const reducedMotion = useReducedMotion();
-  const elapsed = useSharedValue(0);
+  // Start after the loop's wide → idle seam so REST_FRAME doesn't jump to wide
+  // eyes when preparation completes. Later loops still include the whole seam.
+  const elapsed = useSharedValue(IDLE_MORPH_SECONDS * 1000);
   const frameIndex = useDerivedValue(() => Math.floor((elapsed.get() / 1000) * FPS));
   const playback = useFrameCallback(({ timeSincePreviousFrame }) => {
     elapsed.set((elapsed.get() + (timeSincePreviousFrame ?? 0)) % (CYCLE_SECONDS * 1000));
@@ -69,68 +68,26 @@ export function BloubAnimationProvider({ children }: PropsWithChildren) {
     return () => setActiveLoaders((count) => count - 1);
   }, []);
 
+  const shouldPrepare = activeLoaders > 0 && !reducedMotion && frames === null;
+  useEffect(() => {
+    // The root loader stays mounted, even while hidden. First commit REST_FRAME;
+    // prepare one shared sequence only when an animated loader is actually active.
+    if (shouldPrepare) return prepareLoaderFrames(setFrames);
+  }, [shouldPrepare]);
+
   useEffect(() => {
     const updatePlayback = () =>
-      playback.setActive(activeLoaders > 0 && !reducedMotion && AppState.currentState === "active");
+      playback.setActive(frames !== null && activeLoaders > 0 && !reducedMotion && AppState.currentState === "active");
     updatePlayback();
     const subscription = AppState.addEventListener("change", updatePlayback);
     return () => {
       subscription.remove();
       playback.setActive(false);
     };
-  }, [activeLoaders, playback, reducedMotion]);
+  }, [activeLoaders, frames, playback, reducedMotion]);
 
-  const value = useMemo(() => ({ frameIndex, retainPlayback }), [frameIndex, retainPlayback]);
+  const value = useMemo(() => ({ frameIndex, frames, retainPlayback }), [frameIndex, frames, retainPlayback]);
   return <BloubAnimationContext.Provider value={value}>{children}</BloubAnimationContext.Provider>;
-}
-
-function nativeFrame(frame: BotFrame) {
-  return {
-    body: { d: frame.bodyPath, opacity: frame.bodyAlpha },
-    eyes: frame.eyes.map((eye) => ({
-      d: eye.d,
-      opacity: eye.alpha,
-      matrix: eye.matrix.slice(7, -1).split(",").map(Number),
-    })),
-    dots: frame.dots.map((dot) => ({ cx: dot.x, cy: dot.y, r: dot.r, opacity: dot.opacity })),
-  };
-}
-
-type LoaderFrame = ReturnType<typeof nativeFrame>;
-const REST_FRAME = nativeFrame(new BotEngine(100, "idle", LOADER_RADII).sample(0));
-let cachedFrames: LoaderFrame[] | undefined;
-
-function loaderEngine(seconds = 0): BotEngine {
-  const engine = new BotEngine(100, "wide", LOADER_RADII);
-  // Include the wide → idle morph at the loop seam, rather than jumping to a reset pose.
-  engine.reset("wide", -WIDE_SECONDS);
-  engine.setState("idle", 0);
-  if (seconds >= IDLE_SECONDS) engine.setState("thinking", IDLE_SECONDS);
-  if (seconds >= IDLE_SECONDS + THINKING_SECONDS) engine.setState("wide", IDLE_SECONDS + THINKING_SECONDS);
-  return engine;
-}
-
-function loaderFrames(): LoaderFrame[] {
-  if (cachedFrames) return cachedFrames;
-  const engine = loaderEngine();
-  cachedFrames = Array.from({ length: Math.round(CYCLE_SECONDS * FPS) }, (_, index) => {
-    if (index === Math.round(IDLE_SECONDS * FPS)) engine.setState("thinking", IDLE_SECONDS);
-    if (index === Math.round((IDLE_SECONDS + THINKING_SECONDS) * FPS)) {
-      engine.setState("wide", IDLE_SECONDS + THINKING_SECONDS);
-    }
-    return nativeFrame(engine.sample(index / FPS));
-  });
-  return cachedFrames;
-}
-
-function returnToIdleFrames(sourceFrameIndex: number): LoaderFrame[] {
-  const seconds = sourceFrameIndex / FPS;
-  const engine = loaderEngine(seconds);
-  // Reconstruct the current pose, including any unfinished morph, before asking Bloub to settle.
-  engine.setState("idle", seconds);
-  return Array.from({ length: Math.ceil(IDLE_MORPH_SECONDS * FPS) + 1 }, (_, index) =>
-    nativeFrame(engine.sample(seconds + index / FPS)),
-  );
 }
 
 function LoaderEye({ frame, index, fill }: { frame: DerivedValue<LoaderFrame>; index: number; fill: string }) {
@@ -156,11 +113,9 @@ export function BloubLoader({
 }) {
   const animation = useContext(BloubAnimationContext);
   if (!animation) throw new Error("BloubLoader requires BloubAnimationProvider.");
-  const { frameIndex, retainPlayback } = animation;
+  const { frameIndex, frames, retainPlayback } = animation;
   const background = useThemeColor("background");
   const reducedMotion = useReducedMotion();
-  // Bloub isn't a worklet. Sample its geometry once, then play those frames on the UI thread.
-  const frames = useMemo(loaderFrames, []);
   const idleFrames = useSharedValue<LoaderFrame[] | null>(null);
   const idleFrameIndex = useSharedValue(0);
   const scale = useSharedValue(1);
@@ -175,13 +130,14 @@ export function BloubLoader({
   const frame = useDerivedValue(() => {
     if (reducedMotion) return REST_FRAME;
     const settling = idleFrames.get();
-    return (settling ? settling[Math.floor(idleFrameIndex.get())] : frames[frameIndex.get()]) ?? REST_FRAME;
+    return (settling ? settling[Math.floor(idleFrameIndex.get())] : frames?.[frameIndex.get()]) ?? REST_FRAME;
   });
   const bodyProps = useAnimatedProps(() => frame.get().body);
   const loaderStyle = useAnimatedStyle(() => ({ opacity: opacity.get(), transform: [{ scale: scale.get() }] }));
 
   useLayoutEffect(() => {
     const revision = ++exitRevision.current;
+    let cancelPreparation: (() => void) | undefined;
     if (reducedMotion) {
       scale.set(1);
       opacity.set(
@@ -194,39 +150,50 @@ export function BloubLoader({
       opacity.set(1);
       scale.set(withSpring(1, LOADER_SPRING));
     } else {
-      const settling = returnToIdleFrames(frameIndex.get());
-      idleFrames.set(settling);
-      idleFrameIndex.set(0);
-      idleFrameIndex.set(
-        withTiming(
-          settling.length - 1,
-          {
-            duration: IDLE_MORPH_SECONDS * 1000,
-            easing: Easing.linear,
-            reduceMotion: ReduceMotion.System,
-          },
-          (finished) => {
-            if (finished) {
-              scale.set(
-                withSequence(
-                  withTiming(1.08, { duration: 80, easing: EASE_OUT }),
-                  withSpring(0, LOADER_SPRING, (exitFinished) => {
-                    if (exitFinished) scheduleOnRN(finishExit, revision);
-                  }),
-                ),
-              );
-            }
-          },
-        ),
-      );
+      const scaleDown = () => {
+        "worklet";
+        scale.set(
+          withSequence(
+            withTiming(1.08, { duration: 80, easing: EASE_OUT }),
+            withSpring(0, LOADER_SPRING, (finished) => {
+              if (finished) scheduleOnRN(finishExit, revision);
+            }),
+          ),
+        );
+      };
+      if (!frames) {
+        // Loading finished before preparation: REST_FRAME is already idle.
+        idleFrames.set([REST_FRAME]);
+        idleFrameIndex.set(0);
+        scaleDown();
+      } else {
+        const sourceIndex = frameIndex.get();
+        // Hold the displayed pose while preparing its settling sequence off the
+        // commit path. Otherwise the loop advances and the exit starts with a jump.
+        idleFrames.set([frames[sourceIndex] ?? REST_FRAME]);
+        idleFrameIndex.set(0);
+        cancelPreparation = prepareReturnToIdleFrames(sourceIndex, (settling) => {
+          idleFrames.set(settling);
+          idleFrameIndex.set(
+            withTiming(
+              settling.length - 1,
+              { duration: IDLE_MORPH_SECONDS * 1000, easing: Easing.linear, reduceMotion: ReduceMotion.System },
+              (finished) => {
+                if (finished) scaleDown();
+              },
+            ),
+          );
+        });
+      }
     }
     return () => {
       exitRevision.current += 1;
+      cancelPreparation?.();
       cancelAnimation(idleFrameIndex);
       cancelAnimation(scale);
       cancelAnimation(opacity);
     };
-  }, [finishExit, frameIndex, idleFrameIndex, idleFrames, opacity, reducedMotion, scale, visible]);
+  }, [finishExit, frameIndex, frames, idleFrameIndex, idleFrames, opacity, reducedMotion, scale, visible]);
   useEffect(() => {
     if (active) return retainPlayback();
   }, [active, retainPlayback]);
