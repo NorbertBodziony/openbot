@@ -8,7 +8,6 @@ import type {
   AccountUsage,
   AgentApproval,
   AgentApprovalKind,
-  AgentApprovalPermissions,
   AgentEvent,
   AgentModelOption,
   AgentPromptQuestion,
@@ -37,13 +36,8 @@ import type {
   DeleteRoutineInput,
   DraftAttachment,
   DuplicateBotResult,
-  HostedSiteConversationEventAction,
-  HostedSiteConversationEventDetails,
-  HostedSiteConversationEventStatus,
-  HostedSiteSummary,
   ImageGenerationInfo,
   ListRoutineRunsInput,
-  PublishHostedSiteInput,
   QueuedMessageReceipt,
   QueueSnapshot,
   ReorderQueueInput,
@@ -67,8 +61,6 @@ import type {
 import {
   AGENT_RUNTIME_ATTENTION_LIMIT,
   AGENT_RUNTIME_TEXT_LIMIT,
-  hostedSiteConversationEventItemType,
-  hostedSiteConversationEventText,
   isMessageReaction,
   routineConversationEventItemType,
   routineRunConversationEventItemType,
@@ -90,14 +82,12 @@ import {
 } from "./agent/delivery-content";
 import { developerInstructions } from "./agent/developer-instructions";
 import {
-  type HostedSiteMutationTool,
-  hostedSiteAction,
-  hostedSiteEventCommandId,
-  hostedSiteEventDetails,
-  hostedSiteEventMessageId,
-  hostedSiteTool,
-  isHostedSiteMutationTool,
-} from "./agent/hosted-site-events";
+  type AgentHostedSites,
+  HOSTED_SITE_APPROVAL_METHOD,
+  HostedSiteCoordinator,
+  type HostedSiteMutationContext,
+} from "./agent/hosted-site-coordinator";
+import { type HostedSiteMutationTool, isHostedSiteMutationTool } from "./agent/hosted-site-events";
 import {
   decodeGeneratedImage,
   generatedImageName,
@@ -122,12 +112,12 @@ import {
 import { type AgentClientFactory, ProviderRuntime } from "./agent/provider-runtime";
 import {
   localTimezone,
+  type OpenBotToolResponse,
   openBotToolResult,
   routineToolArguments,
   routineToolBotId,
   routineToolSchedule,
   routineToolString,
-  siteToolString,
 } from "./agent/routine-tools";
 import { compactRuntimeApproval, compactRuntimeQuestion, fitRuntimeSnapshot } from "./agent/runtime-snapshot";
 import {
@@ -156,7 +146,6 @@ import {
   sortConversationMessages,
 } from "./conversation-snapshots";
 import type { DeliveryContext, GeneratedAttachmentSource, MailboxStore } from "./mailbox-store";
-import type { PendingHostedSiteTerminalEvent } from "./openbot-database";
 import { OPENBOT_DYNAMIC_TOOLS } from "./openbot-tools";
 import {
   type AppServerNotification,
@@ -196,16 +185,6 @@ interface AgentBrowserHost {
   handleDynamicTool(params: DynamicToolCallParams): Promise<DynamicToolResult>;
 }
 
-interface AgentHostedSites {
-  list(): Promise<HostedSiteSummary[]>;
-  publish(input: PublishHostedSiteInput, allowedRoots: readonly string[]): Promise<HostedSiteSummary>;
-  replace(
-    input: PublishHostedSiteInput & { siteId: string },
-    allowedRoots: readonly string[],
-  ): Promise<HostedSiteSummary>;
-  delete(siteId: string): Promise<void>;
-}
-
 interface PendingPrompt {
   client: AgentClient;
   id: RequestId;
@@ -233,25 +212,6 @@ interface PendingBrowserTakeover {
   resolve: (result: DynamicToolResult) => void;
 }
 
-interface HostedSiteApprovalDetails {
-  reason: string;
-  permissions: AgentApprovalPermissions;
-  eventDetails: HostedSiteConversationEventDetails;
-}
-
-interface HostedSiteMutationContext {
-  botId: string;
-  operationId: string;
-  action: HostedSiteConversationEventAction;
-  params: DynamicToolCallParams;
-  eventDetails: HostedSiteConversationEventDetails;
-}
-
-interface HostedSiteMutationResult {
-  response: OpenBotToolResponse;
-  eventDetails: HostedSiteConversationEventDetails;
-}
-
 interface ThreadContextBudget {
   usedTokens: number;
   contextWindow: number;
@@ -277,17 +237,10 @@ interface ImageGenerationOperation {
   promise: Promise<void> | null;
 }
 
-interface OpenBotToolResponse {
-  success: boolean;
-  contentItems: Array<{ type: "inputText"; text: string }>;
-}
-
 export interface RoutineMutationOptions {
   recordConversationEvent?: boolean;
   turnId?: string;
 }
-
-const HOSTED_SITE_APPROVAL_METHOD = "openbot/hosted-site-mutation";
 
 type PendingMemoryMutation =
   | {
@@ -320,7 +273,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #routines: AgentRoutineStore;
   readonly #providers: ProviderRuntime;
   readonly #prepareBotWorkspace: (bot: BotSummary) => Promise<void>;
-  readonly #hostedSites: AgentHostedSites | null;
+  readonly #hostedSites: HostedSiteCoordinator;
   readonly #conversation: ConversationRuntime;
   readonly #pendingPrompts = new Map<RequestId, PendingPrompt>();
   readonly #pendingApprovals = new Map<RequestId, PendingApproval>();
@@ -345,13 +298,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #pendingDuplicateReleases = new Map<string, () => void>();
   readonly #pendingDeltas = new Map<string, PendingDelta>();
   readonly #pendingMemoryMutations = new Map<string, PendingMemoryMutation[]>();
-  readonly #pendingHostedSiteTerminalEvents = new Map<string, PendingHostedSiteTerminalEvent>();
-  readonly #pendingHostedSiteTerminalDeliveries = new Map<string, () => void>();
   readonly #responseAttachmentCommands = new Map<string, Promise<OpenBotToolResponse>>();
   readonly #memoryEpochs = new Map<string, number>();
   #duplicationCommitQueue: Promise<void> = Promise.resolve();
   #routineTimer: NodeJS.Timeout | null = null;
-  #hostedSiteTerminalRetryTimer: NodeJS.Timeout | null = null;
   #initialized = false;
   #stopping = false;
 
@@ -376,12 +326,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#memories = new AgentMemoryStore(store.database);
     this.#routines = new AgentRoutineStore(store.database);
     this.#prepareBotWorkspace = prepareBotWorkspace;
-    this.#hostedSites = hostedSites;
     this.#conversation = new ConversationRuntime(
       store,
       (event) => this.#emit(event),
       () => this.listBots(),
     );
+    this.#hostedSites = new HostedSiteCoordinator({
+      store,
+      conversation: this.#conversation,
+      hostedSites,
+      emitError: (code, error, botId) => this.#emitError(code, error, botId),
+      isStopping: () => this.#stopping,
+    });
     this.#providers = new ProviderRuntime({
       conversation: this.#conversation,
       hooks: {
@@ -997,15 +953,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#failedTurns.delete(bot.id);
     this.#drainingBots.delete(bot.id);
     this.#scheduledDrains.delete(bot.id);
-    for (const [key, event] of this.#pendingHostedSiteTerminalEvents) {
-      if (event.botId !== bot.id) continue;
-      this.#pendingHostedSiteTerminalEvents.delete(key);
-      this.#pendingHostedSiteTerminalDeliveries.delete(key);
-    }
-    if (this.#pendingHostedSiteTerminalEvents.size === 0 && this.#hostedSiteTerminalRetryTimer) {
-      clearTimeout(this.#hostedSiteTerminalRetryTimer);
-      this.#hostedSiteTerminalRetryTimer = null;
-    }
+    this.#hostedSites.forgetBot(bot.id);
     if (bot.threadId) {
       for (const session of providerSessions) {
         this.#conversation.unbindThread(session.externalSessionId);
@@ -1023,8 +971,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await this.#store.initialize();
     await this.#mailbox.initialize();
     this.#recoverPersistedTurns();
-    this.#restorePendingHostedSiteTerminalEvents();
-    this.#reconcileHostedSiteEventsAfterRestart();
+    this.#hostedSites.restore();
     this.#routines.skipMissed(new Date());
     this.#initialized = true;
     await this.#providers.start();
@@ -1066,10 +1013,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#initialized = false;
     if (this.#routineTimer) clearTimeout(this.#routineTimer);
     this.#routineTimer = null;
-    if (this.#hostedSiteTerminalRetryTimer) clearTimeout(this.#hostedSiteTerminalRetryTimer);
-    this.#hostedSiteTerminalRetryTimer = null;
-    this.#pendingHostedSiteTerminalEvents.clear();
-    this.#pendingHostedSiteTerminalDeliveries.clear();
+    this.#hostedSites.dispose();
     this.#clearCompactionRuntime();
     for (const pending of this.#pendingDeltas.values()) {
       if (pending.timer) clearTimeout(pending.timer);
@@ -1365,51 +1309,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
     if (pending.hostedSiteMutation) {
       this.#pendingApprovals.delete(input.requestId);
-      const mutation = pending.hostedSiteMutation;
-      if (input.decision === "decline") {
-        this.#recordHostedSiteTerminalEvent(mutation, "cancelled", mutation.eventDetails, () => {
-          pending.client.respondError(pending.id, {
-            code: -32001,
-            message: "The user declined this hosted site change.",
-          });
-        });
-      } else {
-        try {
-          this.#recordHostedSiteEvent(mutation, "running", mutation.eventDetails);
-        } catch (error) {
-          try {
-            pending.client.respondError(pending.id, {
-              code: -32603,
-              message: "The hosted site change could not be recorded.",
-            });
-          } catch (responseError) {
-            this.#emitError("server_response_failed", responseError, pending.approval.botId);
-          }
-          this.#emitError("hosted_site_marker_persistence_failed", error, pending.approval.botId);
-          this.#emit({
-            type: "agent-input-resolved",
-            kind: "approval",
-            requestId: input.requestId,
-            botId: pending.approval.botId,
-          });
-          this.#emitRuntimeSnapshot();
-          return;
-        }
-        let result: HostedSiteMutationResult | null = null;
-        try {
-          result = await this.#executeHostedSiteMutation(mutation);
-        } catch (error) {
-          this.#recordHostedSiteTerminalEvent(mutation, "failed", mutation.eventDetails, () => {
-            pending.client.respondError(pending.id, { code: -32603, message: String(error) });
-          });
-          this.#emitError("server_request_failed", error, pending.approval.botId);
-        }
-        if (result) {
-          this.#recordHostedSiteTerminalEvent(mutation, "succeeded", result.eventDetails, () => {
-            pending.client.respond(pending.id, result.response);
-          });
-        }
-      }
+      await this.#hostedSites.resolveApproval(
+        pending.hostedSiteMutation,
+        { client: pending.client, id: pending.id, botId: pending.approval.botId },
+        input.decision,
+      );
     } else if (pending.approval.kind === "permissions") {
       const permissions = getRecord(pending.params, "permissions") ?? {};
       pending.client.respond(pending.id, {
@@ -1628,7 +1532,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!senderBotId) throw new Error("The sending OpenBot agent is unknown.");
 
     if (params.tool === "list_sites") {
-      return openBotToolResult({ sites: await this.#requireHostedSites().list(), limit: 10 });
+      return openBotToolResult({ sites: await this.#hostedSites.listSites(), limit: 10 });
     }
 
     if (isHostedSiteMutationTool(params.tool)) throw new Error("Hosted site changes require user approval.");
@@ -1947,11 +1851,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       success: true,
       contentItems: [{ type: "inputText", text: JSON.stringify(receipt) }],
     };
-  }
-
-  #requireHostedSites(): AgentHostedSites {
-    if (!this.#hostedSites) throw new Error("OpenBot site hosting is unavailable.");
-    return this.#hostedSites;
   }
 
   async #attachFilesToResponse(
@@ -3147,123 +3046,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     params: DynamicToolCallParams,
     tool: HostedSiteMutationTool,
   ): Promise<void> {
-    const threadId = params.threadId;
-    const turnId = params.turnId;
-    const botId = this.#conversation.botForThread(threadId);
-    if (!turnId || !botId) {
-      client.respondError(request.id, {
-        code: -32602,
-        message: "OpenBot could not identify this hosted site request.",
-      });
-      return;
-    }
-    const details = await this.#hostedSiteApprovalDetails(params, tool);
-    const mutation: HostedSiteMutationContext = {
-      botId,
-      operationId: randomUUID(),
-      action: hostedSiteAction(tool),
-      params,
-      eventDetails: details.eventDetails,
-    };
-    const approval: AgentApproval = {
-      requestId: request.id,
-      botId,
-      threadId: this.#conversation.publicThreadId(botId, threadId),
-      turnId,
-      kind: "permissions",
-      command: null,
-      cwd: null,
-      reason: details.reason,
-      grantRoot: null,
-      permissions: details.permissions,
-    };
+    const prepared = await this.#hostedSites.prepareApproval(client, request, params, tool);
+    if (!prepared) return;
     this.#pendingApprovals.set(request.id, {
       client,
       id: request.id,
       method: HOSTED_SITE_APPROVAL_METHOD,
       params,
-      approval,
-      hostedSiteMutation: mutation,
+      approval: prepared.approval,
+      hostedSiteMutation: prepared.mutation,
     });
-    this.#markRoutineNeedsAttention(turnId);
-    this.#emit({ type: "approval", approval });
-  }
-
-  async #hostedSiteApprovalDetails(
-    params: DynamicToolCallParams,
-    tool: HostedSiteMutationTool,
-  ): Promise<HostedSiteApprovalDetails> {
-    const args = params.arguments;
-    if (!isRecord(args)) throw new Error("Hosted site arguments are required.");
-    if (tool === "delete_site") {
-      const siteId = siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier);
-      const site = await this.#ownedHostedSite(siteId);
-      return {
-        reason: `Delete ${site.hostname} from openbot.site.`,
-        permissions: { fileSystem: { read: [], write: [] }, network: true },
-        eventDetails: hostedSiteEventDetails(site, siteId),
-      };
-    }
-
-    const sourcePath = siteToolString(args.sourcePath, "sourcePath", INPUT_LIMITS.path);
-    const title = siteToolString(args.title, "title", 120);
-    siteToolString(args.description, "description", 500);
-    if (args.spaFallback !== undefined && !isBoolean(args.spaFallback)) {
-      throw new Error("spaFallback must be a boolean.");
-    }
-    const permissions = { fileSystem: { read: [sourcePath], write: [] }, network: true };
-    if (tool === "publish_site") {
-      return {
-        reason: `Publish ${JSON.stringify(title)} as a public site on openbot.site.`,
-        permissions,
-        eventDetails: { siteId: null, title, hostname: null, url: null },
-      };
-    }
-    const siteId = siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier);
-    const site = await this.#ownedHostedSite(siteId);
-    return {
-      reason: `Replace ${site.hostname} with ${JSON.stringify(title)}.`,
-      permissions,
-      eventDetails: { ...hostedSiteEventDetails(site, siteId), title },
-    };
-  }
-
-  async #ownedHostedSite(siteId: string): Promise<HostedSiteSummary> {
-    const sites = await this.#requireHostedSites().list();
-    for (const site of sites) if (site.id === siteId) return site;
-    throw new Error("The hosted site was not found.");
-  }
-
-  async #executeHostedSiteMutation(context: HostedSiteMutationContext): Promise<HostedSiteMutationResult> {
-    const { params } = context;
-    const args = params.arguments;
-    if (!isRecord(args)) throw new Error("Hosted site arguments are required.");
-    if (context.action === "delete") {
-      const siteId = siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier);
-      await this.#requireHostedSites().delete(siteId);
-      return { response: openBotToolResult({ deleted: true, siteId }), eventDetails: context.eventDetails };
-    }
-
-    const sourcePath = siteToolString(args.sourcePath, "sourcePath", INPUT_LIMITS.path);
-    const title = siteToolString(args.title, "title", 120);
-    const description = siteToolString(args.description, "description", 500);
-    if (args.spaFallback !== undefined && !isBoolean(args.spaFallback)) {
-      throw new Error("spaFallback must be a boolean.");
-    }
-    const bot = this.#conversation.requireKnownBot(context.botId);
-    const input = {
-      sourcePath,
-      title,
-      description,
-      ...(isBoolean(args.spaFallback) ? { spaFallback: args.spaFallback } : {}),
-    };
-    const roots = [bot.workspacePath, this.#store.sharedRoot];
-    const siteId =
-      context.action === "publish" ? undefined : siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier);
-    const site = siteId
-      ? await this.#requireHostedSites().replace({ ...input, siteId }, roots)
-      : await this.#requireHostedSites().publish(input, roots);
-    return { response: openBotToolResult(site), eventDetails: hostedSiteEventDetails(site, siteId) };
+    this.#markRoutineNeedsAttention(prepared.approval.turnId);
+    this.#emit({ type: "approval", approval: prepared.approval });
   }
 
   #surfaceLegacyApproval(client: AgentClient, request: AppServerRequest): void {
@@ -3860,202 +3654,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   #routineStateChanged(botId: string): void {
     this.#emit({ type: "routines-changed", botId });
-  }
-
-  #recordHostedSiteEvent(
-    context: HostedSiteMutationContext,
-    status: HostedSiteConversationEventStatus,
-    details: HostedSiteConversationEventDetails,
-    createdAt = new Date().toISOString(),
-  ): void {
-    let failure: unknown;
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        this.#appendHostedSiteEvent(context, status, details, createdAt);
-        return;
-      } catch (error) {
-        failure = error;
-      }
-    }
-    throw failure;
-  }
-
-  #tryRecordHostedSiteEvent(
-    context: HostedSiteMutationContext,
-    status: HostedSiteConversationEventStatus,
-    details: HostedSiteConversationEventDetails,
-    createdAt?: string,
-  ): boolean {
-    try {
-      this.#recordHostedSiteEvent(context, status, details, createdAt);
-      return true;
-    } catch (error) {
-      this.#emitError("hosted_site_marker_persistence_failed", error, context.botId);
-      return false;
-    }
-  }
-
-  #recordHostedSiteTerminalEvent(
-    context: HostedSiteMutationContext,
-    status: Exclude<HostedSiteConversationEventStatus, "running">,
-    details: HostedSiteConversationEventDetails,
-    deliver?: () => void,
-  ): void {
-    const event: PendingHostedSiteTerminalEvent = {
-      botId: context.botId,
-      threadId: this.#store.ensureThreadIdNow(context.botId),
-      turnId: context.params.turnId,
-      operationId: context.operationId,
-      action: context.action,
-      status,
-      details,
-      markerCommandId: hostedSiteEventCommandId(context.botId, context.operationId, status),
-      createdAt: new Date().toISOString(),
-    };
-    hostedSiteConversationEventItemType(event.action, event.status, event.operationId);
-    hostedSiteConversationEventText(event.details);
-    this.#pendingHostedSiteTerminalEvents.set(event.markerCommandId, event);
-    if (deliver) this.#pendingHostedSiteTerminalDeliveries.set(event.markerCommandId, deliver);
-    this.#flushPendingHostedSiteTerminalEvents();
-  }
-
-  #restorePendingHostedSiteTerminalEvents(): void {
-    for (const event of this.#store.database.pendingHostedSiteTerminalEvents()) {
-      this.#pendingHostedSiteTerminalEvents.set(event.markerCommandId, event);
-    }
-    this.#flushPendingHostedSiteTerminalEvents();
-  }
-
-  #flushPendingHostedSiteTerminalEvents(): void {
-    for (const [key, event] of this.#pendingHostedSiteTerminalEvents) {
-      let durable = false;
-      try {
-        this.#store.database.recordPendingHostedSiteTerminalEvent(event);
-        durable = true;
-      } catch (error) {
-        this.#emitError("hosted_site_marker_persistence_failed", error, event.botId);
-      }
-      const context: HostedSiteMutationContext = {
-        botId: event.botId,
-        operationId: event.operationId,
-        action: event.action,
-        params: {
-          threadId: event.threadId,
-          turnId: event.turnId,
-          callId: event.operationId,
-          namespace: "openbot",
-          tool: hostedSiteTool(event.action),
-          arguments: {},
-        },
-        eventDetails: event.details,
-      };
-      if (this.#tryRecordHostedSiteEvent(context, event.status, event.details, event.createdAt)) {
-        this.#pendingHostedSiteTerminalEvents.delete(key);
-        durable = true;
-      }
-      if (durable) {
-        const deliver = this.#pendingHostedSiteTerminalDeliveries.get(key);
-        this.#pendingHostedSiteTerminalDeliveries.delete(key);
-        if (deliver) {
-          try {
-            deliver();
-          } catch (error) {
-            this.#emitError("server_response_failed", error, event.botId);
-          }
-        }
-      }
-    }
-    if (this.#pendingHostedSiteTerminalEvents.size > 0) this.#scheduleHostedSiteTerminalRetry();
-  }
-
-  #scheduleHostedSiteTerminalRetry(): void {
-    if (this.#hostedSiteTerminalRetryTimer || this.#stopping) return;
-    this.#hostedSiteTerminalRetryTimer = setTimeout(() => {
-      this.#hostedSiteTerminalRetryTimer = null;
-      this.#flushPendingHostedSiteTerminalEvents();
-    }, 1_000);
-    this.#hostedSiteTerminalRetryTimer.unref?.();
-  }
-
-  #appendHostedSiteEvent(
-    context: HostedSiteMutationContext,
-    status: HostedSiteConversationEventStatus,
-    details: HostedSiteConversationEventDetails,
-    createdAt: string,
-  ): void {
-    const database = this.#store.database;
-    this.#conversation.withConversationTransaction(context.botId, ({ threadId, snapshot: current }) => {
-      const messageId = hostedSiteEventMessageId(context.operationId, status);
-      if (!current.messages.some((message) => message.id === messageId)) {
-        const message: ConversationMessage = {
-          id: messageId,
-          turnId: context.params.turnId,
-          author: "system",
-          source: "system",
-          text: hostedSiteConversationEventText(details),
-          createdAt,
-          status: "completed",
-          itemType: hostedSiteConversationEventItemType(context.action, status, context.operationId),
-        };
-        current.messages.push(message);
-        sortConversationMessages(current.messages);
-        current.revision = database.appendConversationMessage({
-          botId: context.botId,
-          threadId,
-          activeTurnId: current.activeTurnId,
-          message,
-          eventType: `hosted-site.${context.action}-${status}`,
-          commandId: hostedSiteEventCommandId(context.botId, context.operationId, status),
-          detail: { action: context.action, status, operationId: context.operationId, siteId: details.siteId },
-        });
-      }
-      if (status === "running") {
-        database.recordActiveHostedSiteConversationEvent({
-          botId: context.botId,
-          threadId,
-          turnId: context.params.turnId,
-          createdAt,
-          event: { action: context.action, status, operationId: context.operationId, ...details },
-        });
-      } else {
-        database.deleteActiveHostedSiteConversationEvent(context.botId, context.operationId);
-        database.deletePendingHostedSiteTerminalEvent(context.botId, context.operationId, status);
-      }
-      // The idempotency guard above means this can legitimately append nothing and still publish.
-      return { result: undefined, snapshot: current };
-    });
-  }
-
-  #reconcileHostedSiteEventsAfterRestart(): void {
-    for (const { botId, threadId, turnId, event } of this.#store.database.activeHostedSiteConversationEvents()) {
-      if (
-        [...this.#pendingHostedSiteTerminalEvents.values()].some(
-          (pending) => pending.botId === botId && pending.operationId === event.operationId,
-        )
-      ) {
-        continue;
-      }
-      const context: HostedSiteMutationContext = {
-        botId,
-        operationId: event.operationId,
-        action: event.action,
-        params: {
-          threadId,
-          turnId: turnId ?? `hosted-site-${event.operationId}`,
-          callId: event.operationId,
-          namespace: "openbot",
-          tool: hostedSiteTool(event.action),
-          arguments: {},
-        },
-        eventDetails: {
-          siteId: event.siteId,
-          title: event.title,
-          hostname: event.hostname,
-          url: event.url,
-        },
-      };
-      this.#recordHostedSiteTerminalEvent(context, "interrupted", context.eventDetails);
-    }
   }
 
   #transitionRoutineRunWithConversation(
