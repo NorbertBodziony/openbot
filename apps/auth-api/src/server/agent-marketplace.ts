@@ -352,11 +352,14 @@ export class AgentMarketplace {
 
 function validateSnapshot(value: unknown): AgentPublicationPreview {
   if (!isDynamicRecord(value)) throw new AgentMarketplaceError(400, "invalid_agent", "Invalid agent snapshot.");
+  // Desktop builds before the bot-to-agent rename send `botId`; newer ones send `agentId`. A Worker
+  // deploy can land either side of a desktop release, so both spellings stay readable.
+  const publishedAgentId = value.agentId ?? value.botId;
   const name = text(value.name, "name", INPUT_LIMITS.agentName, true);
   const title = text(value.title, "title", INPUT_LIMITS.agentTitle, false);
   const description = text(value.description, "description", INPUT_LIMITS.agentDescription, true);
   if (
-    !isString(value.botId) ||
+    !isString(publishedAgentId) ||
     !isAvatarSeed(value.avatarSeed) ||
     (value.avatarHue !== null && !isAvatarHue(value.avatarHue))
   )
@@ -370,7 +373,7 @@ function validateSnapshot(value: unknown): AgentPublicationPreview {
   )
     throw new AgentMarketplaceError(400, "invalid_agent", "Invalid agent routines.");
   return {
-    botId: value.botId,
+    botId: publishedAgentId,
     name,
     title,
     description,
