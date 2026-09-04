@@ -143,6 +143,7 @@ export class HostService extends EventEmitter<HostEvents> {
   #status: HostStatus;
   #runtimeGeneration = 0;
   #startOperation: Promise<HostStatus> | null = null;
+  #webRtcOnline = false;
   /** `undefined` until the account service first reports, so the first report always binds. */
   #boundAccountId: string | null | undefined = undefined;
   #legacyCredentialRemoved = false;
@@ -338,6 +339,11 @@ export class HostService extends EventEmitter<HostEvents> {
     }
   }
 
+  getMobileConnectHost(): { hostId: string; fingerprint: string } | null {
+    const identity = this.#options.store.getIdentity();
+    return identity ? { hostId: identity.serverId, fingerprint: identity.fingerprint } : null;
+  }
+
   async configure(input: ConfigureHostInput): Promise<HostStatus> {
     const account = this.#options.getSignedInUser();
     const identity = await this.#options.store.configureWithAccount(input.serverName, account, input.logo);
@@ -457,7 +463,7 @@ export class HostService extends EventEmitter<HostEvents> {
 
   async #startRuntimeOperation(): Promise<HostStatus> {
     if (!this.#options.store.configured) throw new Error("Name this OpenBot before publishing it.");
-    if (this.#status.phase === "online" || this.#status.phase === "starting") {
+    if ((this.#status.phase === "online" && this.#webRtcOnline) || this.#status.phase === "starting") {
       return this.getStatus();
     }
     if (this.#status.phase === "stopping") return this.getStatus();
@@ -497,6 +503,7 @@ export class HostService extends EventEmitter<HostEvents> {
         ticket: bootstrap.ticket,
         localApiPort: apiPort,
       });
+      this.#webRtcOnline = true;
       if (await this.#cancelSupersededStart(generation)) return this.getStatus();
       this.#setStatus({
         apiUrl: bootstrap.signalUrl,
@@ -889,6 +896,7 @@ export class HostService extends EventEmitter<HostEvents> {
   }
 
   async #stopRuntime(): Promise<void> {
+    this.#webRtcOnline = false;
     try {
       await this.#webrtcGateway?.stop();
     } finally {

@@ -25,6 +25,23 @@ const duplicatePath = "/v1/agents/bot-source/duplicate";
 const scopedUsagePath = "/v1/agents/bot-source/usage";
 
 describe("Team protocol v3", () => {
+  it("adds explicit mark-unread without changing the frozen read operation", () => {
+    const path = "/v1/agents/bot-source/conversation/unread";
+    const state = { unreadCount: 2, firstUnreadMessageId: "first-reply", throughMessageId: null };
+    expect(TEAM_CURRENT_CAPABILITIES).toContain("conversation-unread");
+    expect(TEAM_PROTOCOL_V3_CAPABILITIES).not.toContain("conversation-unread");
+    expect(encodeTeamProtocolV3WebRtcHttpRequest("POST", path, {})).toEqual({});
+    expect(decodeTeamProtocolV3CurrentHttpRequest("POST", path, {})).toEqual({});
+    expect(JSON.parse(encodeTeamProtocolV3CurrentHttpResponse("POST", path, 200, state))).toEqual(state);
+    expect(decodeTeamProtocolV3WebRtcHttpResponse("POST", path, 200, state)).toEqual(state);
+    expect(() => encodeTeamProtocolV3WebRtcHttpRequest("POST", path, { memberId: "another-member" })).toThrow(
+      "Invalid conversation-unread request.",
+    );
+    expect(() => decodeTeamProtocolV1HttpRequest("POST", path, {})).toThrow();
+    expect(decodeTeamProtocolV1HttpRequest("POST", path.replace("unread", "read"), { throughMessageId: null })).toEqual(
+      { throughMessageId: null },
+    );
+  });
   it("keeps the duplicate request and response fixtures valid in both adapter directions", () => {
     expect(decodeTeamProtocolV3CurrentHttpRequest("POST", duplicatePath, requestFixture)).toEqual(requestFixture);
     expect(JSON.parse(encodeTeamProtocolV3CurrentHttpRequest("POST", duplicatePath, requestFixture))).toEqual(

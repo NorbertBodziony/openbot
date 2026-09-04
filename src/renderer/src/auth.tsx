@@ -249,6 +249,8 @@ const Auth = createSimpleContext({
       createMobileConnect,
       listMobileConnectedDevices,
       revokeMobileConnectedDevice,
+      listAccountSessions: () => window.openbot.auth.listAccountSessions(),
+      revokeAccountSession: (sessionId: string) => window.openbot.auth.revokeAccountSession(sessionId),
     };
   },
 });

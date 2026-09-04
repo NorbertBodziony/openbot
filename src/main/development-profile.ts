@@ -14,8 +14,12 @@ export function developmentUserDataName(profile: DevelopmentProfile, instanceId:
   return instanceId ? `${base} ${instanceId}` : base;
 }
 
-export function shouldAutoStartHost(input: { configured: boolean; enabledOnLaunch: boolean }): boolean {
-  return input.configured && input.enabledOnLaunch;
+export function shouldAutoStartHost(input: {
+  configured: boolean;
+  enabledOnLaunch: boolean;
+  remoteRole?: "host" | "client" | null;
+}): boolean {
+  return input.remoteRole !== "client" && input.configured && input.enabledOnLaunch;
 }
 
 export function shouldShowDevelopmentWindow(input: {

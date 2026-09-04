@@ -185,6 +185,7 @@
     "@openbot/brand": "workspace:*",
     "@openbot/contracts": "workspace:*",
     "@openbot/logging": "workspace:*",
+    "@openbot/team-client": "workspace:*",
     "@openpanel/web": "catalog:",
     "@solidjs/signals": "catalog:",
     "@solidjs/web": "catalog:",

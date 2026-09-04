@@ -1,34 +1,28 @@
-import { BotEngine, COLOR_BY_ID, EXPRESSIONS, SHAPES, type ShapeId } from "@norbert_bodziony/bloub";
-import { useThemeColor } from "heroui-native/hooks";
+import { BotEngine, COLOR_BY_ID, EXPRESSION_BY_ID, SHAPE_BY_ID } from "@norbert_bodziony/bloub";
+import { bloubAvatarProfile } from "@openbot/brand/bloub-avatar";
+import type { BotAvatarHue } from "@openbot/contracts/ipc";
 import { useMemo } from "react";
 import Svg, { Defs, Mask, Path, Rect } from "react-native-svg";
 
 interface BloubAvatarProps {
+  hue: BotAvatarHue | null;
   seed: string;
   size?: number;
 }
 
-type SupportedSilhouetteId = Exclude<ShapeId, "goutte">;
+const AVATAR_PAPER = "#f9f9f9";
 
-const AUTOMATIC_COLORS = ["rouge", "orange", "ambre", "vert", "turquoise", "bleu", "violet", "rose"] as const;
-const SUPPORTED_SILHOUETTES = SHAPES.filter(
-  (silhouette): silhouette is (typeof SHAPES)[number] & { id: SupportedSilhouetteId } => silhouette.id !== "goutte",
-);
-
-export function BloubAvatar({ seed, size = 54 }: BloubAvatarProps) {
-  const background = useThemeColor("background");
+export function BloubAvatar({ hue, seed, size = 54 }: BloubAvatarProps) {
   const avatar = useMemo(() => {
-    const silhouette = requiredItem(
-      SUPPORTED_SILHOUETTES,
-      stableIndex(`${seed}:silhouette`, SUPPORTED_SILHOUETTES.length),
-    );
-    const expression = requiredItem(EXPRESSIONS, stableIndex(`${seed}:expression`, EXPRESSIONS.length));
-    const color = getBloubAvatarColor(seed);
-    const frozenAt = stableIndex(`${seed}:pose`, 180) / 100;
-    const frame = new BotEngine(100, "idle", silhouette.radii, expression).sample(frozenAt);
+    const profile = bloubAvatarProfile(seed, hue);
+    const silhouette = SHAPE_BY_ID.get(profile.shape);
+    const expression = EXPRESSION_BY_ID.get(profile.expression);
+    const color = COLOR_BY_ID.get(profile.color)?.hex;
+    if (!silhouette || !expression || !color) throw new Error("Bloub avatar profile is invalid.");
+    const frame = new BotEngine(100, "idle", silhouette.radii, expression).sample(0);
 
     return { color, frame, maskId: `bloub-${stableHash(seed).toString(16)}` };
-  }, [seed]);
+  }, [hue, seed]);
 
   return (
     <Svg
@@ -53,19 +47,15 @@ export function BloubAvatar({ seed, size = 54 }: BloubAvatarProps) {
           ))}
         </Mask>
       </Defs>
-      <Path d={avatar.frame.bodyPath} fill={String(background)} opacity={avatar.frame.bodyAlpha} />
+      <Path d={avatar.frame.bodyPath} fill={AVATAR_PAPER} opacity={avatar.frame.bodyAlpha} />
       <Rect fill={avatar.color} height={316} mask={`url(#${avatar.maskId})`} width={316} x={-158} y={-158} />
     </Svg>
   );
 }
 
-export function getBloubAvatarColor(seed: string): string {
-  const colorId = requiredItem(AUTOMATIC_COLORS, stableIndex(`${seed}:color`, AUTOMATIC_COLORS.length));
-  return COLOR_BY_ID.get(colorId)?.hex ?? "#8b5cf6";
-}
-
-function stableIndex(value: string, length: number): number {
-  return stableHash(value) % length;
+export function getBloubAvatarColor(seed: string, hue: BotAvatarHue | null): string {
+  const profile = bloubAvatarProfile(seed, hue);
+  return COLOR_BY_ID.get(profile.color)?.hex ?? "#8b5cf6";
 }
 
 function stableHash(value: string): number {
@@ -75,10 +65,4 @@ function stableHash(value: string): number {
     hash = Math.imul(hash, 0x01000193);
   }
   return hash >>> 0;
-}
-
-function requiredItem<T>(items: readonly T[], index: number): T {
-  const item = items[index];
-  if (item === undefined) throw new Error("Bloub avatar options are empty.");
-  return item;
 }

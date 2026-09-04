@@ -32,6 +32,7 @@ interface AuthenticatedPeer {
   peer: "host" | "client";
   connectionId: string | null;
   resumed: boolean;
+  multiplex: boolean;
 }
 
 interface ActiveConnection {
@@ -192,7 +193,7 @@ export class SignalService {
     }
     if (peer.peer === "host") {
       const replacement = this.#firstHost(peer.claims.hostId);
-      if (replacement) void this.#restoreWaitingClient(replacement);
+      if (replacement) void this.#restoreWaitingClients(replacement);
     }
     this.#metrics.activePeerConnections = this.#connections.size;
     this.#metrics.activeSockets = this.#sockets.size;
@@ -203,6 +204,12 @@ export class SignalService {
     if (authEpoch <= current) return;
     this.#revokedEpochs.set(hostId, authEpoch);
     this.#tokens.revokeHost?.(hostId, authEpoch);
+    for (const connection of [...this.#connections.values()]) {
+      const host = this.#peers.get(connection.host.id);
+      if (connection.hostId === hostId && host && host.claims.authEpoch < authEpoch) {
+        this.#dropConnection(connection.id, connection.client.id);
+      }
+    }
     for (const peer of [...this.#peers.values()]) {
       if (peer.claims.hostId !== hostId || peer.claims.authEpoch >= authEpoch) continue;
       if (peer.connectionId) this.#dropConnection(peer.connectionId, peer.socket.id);
@@ -270,6 +277,7 @@ export class SignalService {
       peer: message.peer,
       connectionId: null,
       resumed: !usedInitialTicket,
+      multiplex: message.peer === "host" && message.multiplex === true,
     };
     this.#peers.set(socket.id, peer);
     this.#schedulePeerExpiration(peer);
@@ -287,7 +295,7 @@ export class SignalService {
         resumeToken,
         iceServers: this.#tokens.iceServers(claims),
       });
-      await this.#restoreWaitingClient(peer);
+      await this.#restoreWaitingClients(peer);
       return;
     }
     const host = this.#firstHost(claims.hostId);
@@ -297,10 +305,17 @@ export class SignalService {
       this.#fail(socket, "host_unavailable", "The host is offline.", 1013);
       return;
     }
-    const existing = this.#connectionForHost(claims.hostId);
-    if (existing && existing.sessionId !== claims.sessionId) {
+    // A desktop serves multiple devices. Only a reconnect of the SAME logical
+    // session replaces a socket; other sessions must retain their connections.
+    const existing = this.#connectionForSession(claims.hostId, claims.sessionId);
+    if (
+      !host.multiplex &&
+      [...this.#connections.values()].some(
+        (connection) => connection.hostId === claims.hostId && connection !== existing,
+      )
+    ) {
       this.#peers.delete(socket.id);
-      this.#metrics.activeSockets = this.#sockets.size;
+      this.#clearPeerExpiration(socket.id);
       this.#fail(socket, "host_busy", "The host already has an active remote session.", 1013);
       return;
     }
@@ -343,45 +358,55 @@ export class SignalService {
     return null;
   }
 
-  #connectionForHost(hostId: string): ActiveConnection | null {
-    for (const connection of this.#connections.values()) if (connection.hostId === hostId) return connection;
+  #connectionForSession(hostId: string, sessionId: string): ActiveConnection | null {
+    for (const connection of this.#connections.values()) {
+      if (connection.hostId === hostId && connection.sessionId === sessionId) return connection;
+    }
     return null;
   }
 
-  async #restoreWaitingClient(host: AuthenticatedPeer): Promise<void> {
-    const client = [...this.#peers.values()].find(
+  async #restoreWaitingClients(host: AuthenticatedPeer): Promise<void> {
+    const clients = [...this.#peers.values()].filter(
       (peer) => peer.peer === "client" && peer.claims.hostId === host.claims.hostId && peer.connectionId === null,
     );
-    if (!client) return;
-    const connectionId = randomIdentifier();
-    client.connectionId = connectionId;
-    host.connectionId = connectionId;
-    this.#connections.set(connectionId, {
-      id: connectionId,
-      hostId: host.claims.hostId,
-      sessionId: client.claims.sessionId,
-      client: client.socket,
-      host: host.socket,
-    });
-    this.#metrics.activePeerConnections = this.#connections.size;
-    this.#send(client.socket, {
-      type: "ready",
-      version: 1,
-      connectionId,
-      resumeToken: await this.#tokens.issueResumeToken(client.claims),
-      iceServers: this.#tokens.iceServers(client.claims),
-    });
-    this.#send(host.socket, {
-      type: "peer-ready",
-      version: 1,
-      connectionId,
-      sessionId: client.claims.sessionId,
-      userId: client.claims.userId,
-      membershipId: client.claims.membershipId,
-      role: memberRole(client.claims.role),
-      sessionExpiresAt: client.claims.sessionExpiresAt,
-      resumed: host.resumed || client.resumed,
-    });
+    for (const client of clients) {
+      if (
+        !host.multiplex &&
+        [...this.#connections.values()].some((connection) => connection.hostId === host.claims.hostId)
+      )
+        return;
+      const resumeToken = await this.#tokens.issueResumeToken(client.claims);
+      if (this.#peers.get(host.socket.id) !== host) return;
+      if (this.#peers.get(client.socket.id) !== client || client.connectionId !== null) continue;
+      const connectionId = randomIdentifier();
+      client.connectionId = connectionId;
+      this.#connections.set(connectionId, {
+        id: connectionId,
+        hostId: host.claims.hostId,
+        sessionId: client.claims.sessionId,
+        client: client.socket,
+        host: host.socket,
+      });
+      this.#metrics.activePeerConnections = this.#connections.size;
+      this.#send(client.socket, {
+        type: "ready",
+        version: 1,
+        connectionId,
+        resumeToken,
+        iceServers: this.#tokens.iceServers(client.claims),
+      });
+      this.#send(host.socket, {
+        type: "peer-ready",
+        version: 1,
+        connectionId,
+        sessionId: client.claims.sessionId,
+        userId: client.claims.userId,
+        membershipId: client.claims.membershipId,
+        role: memberRole(client.claims.role),
+        sessionExpiresAt: client.claims.sessionExpiresAt,
+        resumed: host.resumed || client.resumed,
+      });
+    }
   }
 
   #replaceClientSignal(connection: ActiveConnection): void {

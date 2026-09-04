@@ -11,6 +11,7 @@ import { SheetScrollView } from "@/shared/components/sheet-scroll-view";
 export function SettingsScreen() {
   const { session, signOut } = useMobileSession();
   const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
   const dangerSoftForeground = useThemeColor("danger-soft-foreground");
 
   if (!session) return null;
@@ -20,8 +21,11 @@ export function SettingsScreen() {
   async function submitSignOut(): Promise<void> {
     if (signingOut) return;
     setSigningOut(true);
+    setSignOutError(null);
     try {
       await signOut();
+    } catch {
+      setSignOutError("Could not confirm sign-out. Check your connection and try again.");
     } finally {
       setSigningOut(false);
     }
@@ -50,6 +54,11 @@ export function SettingsScreen() {
         </View>
       </View>
 
+      {signOutError ? (
+        <Typography.Paragraph className="text-danger" accessibilityRole="alert">
+          {signOutError}
+        </Typography.Paragraph>
+      ) : null}
       <Button variant="danger-soft" size="lg" isDisabled={signingOut} onPress={() => void submitSignOut()}>
         {signingOut ? (
           <Spinner size="sm" color={String(dangerSoftForeground)} />

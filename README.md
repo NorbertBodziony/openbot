@@ -134,7 +134,7 @@ Use `bun run dev:seed --dry-run` to inspect the target and fixture counts withou
 
 | Command | Purpose |
 | --- | --- |
-| `bun run dev` | Start the local Auth API and Electron client with renderer HMR on its app profile. |
+| `bun run dev` | Start the local Auth API, Signal service, and Electron client with renderer HMR on its app profile. |
 | `bun run preview` | Preview the built Electron client with the green preview icon. |
 | `bun run dev:api` | Start the TanStack Start API and its local D1 database on `127.0.0.1:3100`. |
 | `bun run api:start` | Build and preview the Cloudflare Worker locally. |
@@ -144,8 +144,8 @@ Use `bun run dev:seed --dry-run` to inspect the target and fixture counts withou
 | `bun run remote:up` | Build and start the self-hosted Signal, coturn, and ACME stack. |
 | `bun run remote:check` | Check the Remote API and both Docker Compose configurations. |
 | `bun run remote:update` | Update Signal, then drain and update the single coturn instance. |
-| `bun run dev:all` | Start the API and the single local Electron instance. |
-| `bun run dev:test-client` | Start the API, the local instance, and an isolated second client for team testing. |
+| `bun run dev:all` | Start the Auth API, Signal service, and single local Electron instance. |
+| `bun run dev:test-client` | Start the Auth API, Signal service, local instance, and an isolated second client for team testing. |
 | `bun run dev:seed` | Replace only the app development profile with deterministic showcase data. |
 | `bun run dev:reset` | Delete the local app, test-client, and legacy host development state. |
 | `bun run dev:automation` | Drive the running dev app over CDP: `snapshot`, `screenshot`, `click`/`type` by accessible role (mutations need `--allow-mutations`). |
@@ -170,6 +170,10 @@ sandboxed Electron page connects it to invited clients through WebRTC. Signal ca
 setup messages. Team data uses direct DataChannels when possible and the project coturn service when
 direct ICE fails. Cloudflare stores accounts, configuration, memberships, invitations, logical session
 records, and public assets. It does not carry chats, files, commands, or remote desktop media.
+
+The development runner advertises both Mobile Connect and its Signal service on the preferred private
+LAN interface. Restart the runner after changing networks so newly generated QR codes contain the
+current address.
 
 For manual team testing, `bun run dev:test-client` starts a complete two-client harness. The second
 client uses the isolated `OpenBot Dev Test Client` profile and renderer port 5174. `dev:reset` also
@@ -239,7 +243,9 @@ provider session identifiers stay private and are used only to resume provider r
 
 The Electron renderer is never exposed as a public website. It communicates with local CLI processes
 over stdio. When the owner publishes OpenBot, its authenticated Team API stays on localhost. WebRTC
-protocol v2 carries RPC, events, and binary files to the remote client. The account flow connects to
+protocol v3 carries RPC, events, and binary files to desktop and mobile clients. Expo Go hosts the
+mobile `RTCPeerConnection` in a hidden Expo DOM component, so mobile uses the same encrypted transport
+without a custom native development build. The account flow connects to
 the configured HTTPS Cloudflare API. The client stores only an encrypted OpenBot session token. One-time codes expire after
 10 minutes and are stored only as hashes. A daily maintenance task removes expired or consumed
 authentication records from D1. The embedded browser uses a separate sandboxed Electron session and

@@ -22,7 +22,7 @@ export interface RemoteApiConfig {
 
 export function readRemoteApiConfig(environment: Record<string, string | undefined> = process.env): RemoteApiConfig {
   const tlsDisabled = environment.REMOTE_TLS_DISABLED === "true";
-  const ticketJwks = optional(environment.REMOTE_TICKET_PUBLIC_KEYS);
+  const ticketJwks = optional(environment.REMOTE_TICKET_PUBLIC_KEYS ?? environment.REMOTE_TICKET_PUBLIC_JWKS);
   const ticketJwksUrl = optional(environment.REMOTE_TICKET_JWKS_URL);
   if (!ticketJwks && !ticketJwksUrl)
     throw new Error("REMOTE_TICKET_PUBLIC_KEYS or REMOTE_TICKET_JWKS_URL is required.");

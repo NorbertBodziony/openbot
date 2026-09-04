@@ -37,10 +37,7 @@ import { useTurns } from "./turns";
  * with no `AppView` at all, and that is how they drive the app: emit an event,
  * assert the state it produced.
  *
- * The switch is exhaustive on purpose. `conversation-invalidated` returns
- * without doing anything, and that empty case is the record that the event was
- * considered - `tsc` is what would otherwise let a new event type through in
- * silence.
+ * Conversation invalidations also cover read cursors changed on another device.
  */
 export function AgentEventBridge() {
   const platform = usePlatform();
@@ -51,6 +48,7 @@ export function AgentEventBridge() {
   const {
     setLiveMessages,
     conversationReads,
+    applyConversationReads,
     rawAgentMessageBodies,
     agentChatsToRetryRead,
     scheduleConversation,
@@ -77,6 +75,7 @@ export function AgentEventBridge() {
   } = useTurns();
   const { setBrowserControlState, applyBrowserChange } = useBrowserTabs();
   const { setSidebarLayout } = useSidebar();
+  let readRefresh = 0;
 
   function handleAgentEvent(event: AgentEvent) {
     switch (event.type) {
@@ -121,6 +120,16 @@ export function AgentEventBridge() {
         }
         return;
       case "conversation-invalidated":
+        {
+          const request = ++readRefresh;
+          const serverId = activeServerId();
+          void window.openbot.agent
+            .listConversationReads()
+            .then((reads) => {
+              if (request === readRefresh && serverId === activeServerId()) applyConversationReads(reads);
+            })
+            .catch(() => undefined);
+        }
         return;
       case "conversation-delta":
         applyConversationDelta(event);
@@ -267,6 +276,7 @@ export function AgentEventBridge() {
       flush(() => handleAgentEvent(event));
     });
     return () => {
+      readRefresh += 1;
       unsubscribe();
       completedTurnByBot.clear();
     };

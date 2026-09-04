@@ -163,6 +163,8 @@ function SettingsModalStory(props: {
           onUpdateAccountAvatar={updateAccountAvatar}
           onCreateMobileConnect={createMobileConnect}
           onListMobileConnectedDevices={async () => mobileDevices()}
+          onListAccountSessions={mock.api.auth.listAccountSessions}
+          onRevokeAccountSession={mock.api.auth.revokeAccountSession}
           onRevokeMobileConnectedDevice={async (sessionId) => {
             setMobileDevices((current) => current.filter((device) => device.sessionId !== sessionId));
           }}

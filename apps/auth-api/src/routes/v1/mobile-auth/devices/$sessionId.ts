@@ -8,7 +8,9 @@ export const Route = createFileRoute("/v1/mobile-auth/devices/$sessionId")({
         try {
           const token = bearerToken(request);
           if (!token) return apiError(401, "unauthorized", "Sign in is required.");
-          await requestAuthService().revokeMobileAuthDevice(token, params.sessionId);
+          if (new URL(request.url).searchParams.get("includeDesktop") === "true") {
+            await requestAuthService().revokeAccountSession(token, params.sessionId);
+          } else await requestAuthService().revokeMobileAuthDevice(token, params.sessionId);
           return new Response(null, { status: 204 });
         } catch (error) {
           return authErrorResponse(error);
