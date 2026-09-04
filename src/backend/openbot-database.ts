@@ -8,14 +8,10 @@ import type {
   ConversationPageAnchor,
   ConversationSearchPage,
   ConversationSnapshot,
-  HostedSiteConversationEvent,
-  HostedSiteConversationEventAction,
-  HostedSiteConversationEventDetails,
   HostedSiteConversationEventStatus,
 } from "@openbot/contracts/ipc";
 import {
   HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX,
-  hostedSiteConversationEvent,
   isAgentProvider,
   isConversationMessage,
   providerForLegacyModel,
@@ -36,6 +32,11 @@ import {
   requiredNumberColumn,
   requiredStringColumn,
 } from "./database/database-rows";
+import {
+  type ActiveHostedSiteConversationEvent,
+  HostedSiteEventLog,
+  type PendingHostedSiteTerminalEvent,
+} from "./database/hosted-site-event-log";
 
 export interface ProviderSession {
   id: string;
@@ -57,26 +58,6 @@ export interface StoredThreadSummary {
   text: string;
   estimatedTokens: number;
   createdAt: string;
-}
-
-export interface PendingHostedSiteTerminalEvent {
-  botId: string;
-  threadId: string;
-  turnId: string;
-  operationId: string;
-  action: HostedSiteConversationEventAction;
-  status: Exclude<HostedSiteConversationEventStatus, "running">;
-  details: HostedSiteConversationEventDetails;
-  markerCommandId: string;
-  createdAt: string;
-}
-
-export interface ActiveHostedSiteConversationEvent {
-  botId: string;
-  threadId: string;
-  turnId: string;
-  createdAt: string;
-  event: HostedSiteConversationEvent & { status: "running" };
 }
 
 interface SessionRow {
@@ -159,6 +140,10 @@ interface MailboxProjectionState {
 // reachable from here rather than only from the controller that owns it now. Structural `Pick<...>`
 // types over this class do not cover exported types.
 export type { OrchestrationEventInput } from "./database/database-core";
+export type {
+  ActiveHostedSiteConversationEvent,
+  PendingHostedSiteTerminalEvent,
+} from "./database/hosted-site-event-log";
 
 /**
  * The local OpenBot event log and its read projections.
@@ -168,9 +153,11 @@ export type { OrchestrationEventInput } from "./database/database-core";
  */
 export class OpenBotDatabase {
   readonly #core: DatabaseCore;
+  readonly #hostedSiteEvents: HostedSiteEventLog;
 
   constructor(readonly userDataPath: string) {
     this.#core = new DatabaseCore({ userDataPath });
+    this.#hostedSiteEvents = new HostedSiteEventLog({ core: this.#core });
   }
 
   get path(): string {
@@ -210,42 +197,11 @@ export class OpenBotDatabase {
   }
 
   recordPendingHostedSiteTerminalEvent(event: PendingHostedSiteTerminalEvent): void {
-    validatePendingHostedSiteTerminalEvent(event);
-    this.dispatch(
-      `hosted-site-terminal-pending:${event.botId}:${event.operationId}:${event.status}`,
-      [
-        {
-          aggregateType: "hosted-site-terminal",
-          aggregateId: event.botId,
-          eventType: "hosted-site.terminal-pending",
-          occurredAt: event.createdAt,
-          payload: event,
-        },
-      ],
-      () => null,
-    );
+    this.#hostedSiteEvents.recordPendingHostedSiteTerminalEvent(event);
   }
 
   pendingHostedSiteTerminalEvents(): PendingHostedSiteTerminalEvent[] {
-    const pending: PendingHostedSiteTerminalEvent[] = [];
-    for (const row of databaseRows(
-      this.connection
-        .prepare(
-          `SELECT pending.payload_json
-           FROM orchestration_events pending
-           LEFT JOIN orchestration_command_receipts marker
-             ON marker.command_id = json_extract(pending.payload_json, '$.markerCommandId')
-           WHERE pending.aggregate_type = 'hosted-site-terminal'
-             AND pending.event_type = 'hosted-site.terminal-pending'
-             AND marker.command_id IS NULL
-           ORDER BY pending.sequence`,
-        )
-        .all(),
-    )) {
-      const event = pendingHostedSiteTerminalEventValue(JSON.parse(requiredStringColumn(row, "payload_json")));
-      if (event) pending.push(event);
-    }
-    return pending;
+    return this.#hostedSiteEvents.pendingHostedSiteTerminalEvents();
   }
 
   deletePendingHostedSiteTerminalEvent(
@@ -253,46 +209,19 @@ export class OpenBotDatabase {
     operationId: string,
     status: Exclude<HostedSiteConversationEventStatus, "running">,
   ): void {
-    const commandId = `hosted-site-terminal-pending:${botId}:${operationId}:${status}`;
-    this.#core.deleteEventsAndReceipt(commandId);
+    this.#hostedSiteEvents.deletePendingHostedSiteTerminalEvent(botId, operationId, status);
   }
 
   recordActiveHostedSiteConversationEvent(event: ActiveHostedSiteConversationEvent): void {
-    validateActiveHostedSiteConversationEvent(event);
-    this.dispatch(
-      `hosted-site-active:${event.botId}:${event.event.operationId}`,
-      [
-        {
-          aggregateType: "hosted-site-operation",
-          aggregateId: event.botId,
-          eventType: "hosted-site.active",
-          occurredAt: event.createdAt,
-          payload: event,
-        },
-      ],
-      () => null,
-    );
+    this.#hostedSiteEvents.recordActiveHostedSiteConversationEvent(event);
   }
 
   deleteActiveHostedSiteConversationEvent(botId: string, operationId: string): void {
-    this.#core.deleteEventsAndReceipt(`hosted-site-active:${botId}:${operationId}`);
+    this.#hostedSiteEvents.deleteActiveHostedSiteConversationEvent(botId, operationId);
   }
 
   activeHostedSiteConversationEvents(): ActiveHostedSiteConversationEvent[] {
-    const active: ActiveHostedSiteConversationEvent[] = [];
-    for (const row of databaseRows(
-      this.connection
-        .prepare(
-          `SELECT payload_json FROM orchestration_events
-           WHERE aggregate_type = 'hosted-site-operation' AND event_type = 'hosted-site.active'
-           ORDER BY sequence`,
-        )
-        .all(),
-    )) {
-      const event = activeHostedSiteConversationEventValue(JSON.parse(requiredStringColumn(row, "payload_json")));
-      if (event) active.push(event);
-    }
-    return active;
+    return this.#hostedSiteEvents.activeHostedSiteConversationEvents();
   }
 
   listAgents(): BotSummary[] {
@@ -2016,109 +1945,6 @@ function pruneConversationSnapshots(db: DatabaseSync, threadId: string, retained
        AND json_type(payload_json, '$.snapshot') = 'object'`,
   ).run(threadId, retainedSequence);
   deleteOrphanReceipts(db);
-}
-
-function validatePendingHostedSiteTerminalEvent(event: PendingHostedSiteTerminalEvent): void {
-  if (!pendingHostedSiteTerminalEventValue(event)) {
-    throw new Error("The pending hosted site terminal event is invalid.");
-  }
-}
-
-function validateActiveHostedSiteConversationEvent(event: ActiveHostedSiteConversationEvent): void {
-  if (!activeHostedSiteConversationEventValue(event)) {
-    throw new Error("The active hosted site event is invalid.");
-  }
-}
-
-function activeHostedSiteConversationEventValue(value: unknown): ActiveHostedSiteConversationEvent | null {
-  if (
-    !isDynamicRecord(value) ||
-    !isString(value.botId) ||
-    !value.botId ||
-    !isString(value.threadId) ||
-    !value.threadId ||
-    !isString(value.turnId) ||
-    !value.turnId ||
-    !isString(value.createdAt) ||
-    !isDynamicRecord(value.event) ||
-    (value.event.action !== "publish" && value.event.action !== "replace" && value.event.action !== "delete") ||
-    value.event.status !== "running" ||
-    !isString(value.event.operationId)
-  ) {
-    return null;
-  }
-  const marker = hostedSiteConversationEvent({
-    id: `hosted-site-event:${value.event.operationId}:running`,
-    author: "system",
-    source: "system",
-    text: JSON.stringify({
-      siteId: value.event.siteId,
-      title: value.event.title,
-      hostname: value.event.hostname,
-      url: value.event.url,
-    }),
-    createdAt: value.createdAt,
-    status: "completed",
-    itemType: `hosted-site-event:${value.event.action}:running:${value.event.operationId}`,
-  });
-  if (marker?.status !== "running") return null;
-  return {
-    botId: value.botId,
-    threadId: value.threadId,
-    turnId: value.turnId,
-    createdAt: value.createdAt,
-    event: { ...marker, status: "running" },
-  };
-}
-
-function pendingHostedSiteTerminalEventValue(value: unknown): PendingHostedSiteTerminalEvent | null {
-  if (
-    !isDynamicRecord(value) ||
-    !isString(value.botId) ||
-    !value.botId ||
-    !isString(value.threadId) ||
-    !value.threadId ||
-    !isString(value.turnId) ||
-    !value.turnId ||
-    !isString(value.operationId) ||
-    (value.action !== "publish" && value.action !== "replace" && value.action !== "delete") ||
-    (value.status !== "succeeded" &&
-      value.status !== "failed" &&
-      value.status !== "interrupted" &&
-      value.status !== "cancelled") ||
-    !isDynamicRecord(value.details) ||
-    !isString(value.markerCommandId) ||
-    !isString(value.createdAt)
-  ) {
-    return null;
-  }
-  const marker = hostedSiteConversationEvent({
-    id: value.markerCommandId,
-    author: "system",
-    source: "system",
-    text: JSON.stringify(value.details),
-    createdAt: value.createdAt,
-    status: "completed",
-    itemType: `hosted-site-event:${value.action}:${value.status}:${value.operationId}`,
-  });
-  if (!marker || marker.status === "running") return null;
-  if (value.markerCommandId !== `hosted-site-event:${value.botId}:${value.operationId}:${value.status}`) return null;
-  return {
-    botId: value.botId,
-    threadId: value.threadId,
-    turnId: value.turnId,
-    operationId: marker.operationId,
-    action: marker.action,
-    status: marker.status,
-    details: {
-      siteId: marker.siteId,
-      title: marker.title,
-      hostname: marker.hostname,
-      url: marker.url,
-    },
-    markerCommandId: value.markerCommandId,
-    createdAt: value.createdAt,
-  };
 }
 
 export function providerForStoredModel(model: BotSummary["model"]): AgentProviderId {
