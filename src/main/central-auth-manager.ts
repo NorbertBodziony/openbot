@@ -143,6 +143,9 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   #state: CentralAuthState = { status: "loading" };
   #sessionToken: string | null = null;
   readonly #teamHostTokens = new Map<string, string>();
+  #sessionWriteChain: Promise<void> = Promise.resolve();
+  /** The account the stored host credentials were issued to, or none while signed out. */
+  #sessionAccountId: string | null = null;
   #remoteTicketJwks: Promise<z.infer<typeof remoteTicketJwksSchema>> | null = null;
   #initializationPromise: Promise<CentralAuthState> | null = null;
   #emailCodeRequest: EmailCodeRequest | null = null;
@@ -253,6 +256,7 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     ownerMembershipId: string;
     devicePublicKey?: string | null;
   }): Promise<RegisteredRemoteHost> {
+    const sessionToken = this.#sessionToken;
     const storedMachineToken = this.#teamHostTokens.get(input.hostId.toLowerCase());
     const result = await this.#authorizedRequest(
       "/v2/remote/hosts/register",
@@ -267,6 +271,12 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
       },
       decodeRegisteredRemoteHost,
     );
+    if (this.#sessionToken !== sessionToken) {
+      // The credential belongs to the account that asked for it. Writing it now would file
+      // it under whichever session is stored next, so the caller is told the registration
+      // no longer applies instead.
+      throw new Error("The signed-in account changed while this server was being registered.");
+    }
     if (result.machineToken) this.#teamHostTokens.set(input.hostId.toLowerCase(), result.machineToken);
     await this.#writeStoredSession();
     return result;
@@ -642,6 +652,11 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
         },
         decodeSessionResponse,
       );
+      // Signing in as somebody else without signing out first. The host credentials belong
+      // to the account that was issued them, and must not be filed under this session.
+      if (this.#sessionAccountId !== null && this.#sessionAccountId !== session.user.id) {
+        this.#teamHostTokens.clear();
+      }
       this.#sessionToken = session.sessionToken;
       await this.#writeStoredSession();
       return this.#setState({
@@ -791,7 +806,17 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     };
   }
 
-  async #writeStoredSession(): Promise<void> {
+  #writeStoredSession(): Promise<void> {
+    // Serialized: two writes racing inside their filesystem awaits would let the earlier
+    // one rename its snapshot over the later one, restoring a session the user has left.
+    this.#sessionWriteChain = this.#sessionWriteChain.then(
+      () => this.#writeStoredSessionNow(),
+      () => this.#writeStoredSessionNow(),
+    );
+    return this.#sessionWriteChain;
+  }
+
+  async #writeStoredSessionNow(): Promise<void> {
     if (!this.#sessionToken) return;
     if (!this.#options.canPersist()) {
       await rm(this.#options.storagePath, { force: true });
@@ -818,8 +843,15 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
 
   async #clearStoredSession(): Promise<void> {
     this.#sessionToken = null;
+    this.#sessionAccountId = null;
     this.#teamHostTokens.clear();
-    await rm(this.#options.storagePath, { force: true });
+    // Through the same chain as the writes, so a write already in flight cannot put the
+    // file back after it is removed.
+    this.#sessionWriteChain = this.#sessionWriteChain.then(
+      () => rm(this.#options.storagePath, { force: true }),
+      () => rm(this.#options.storagePath, { force: true }),
+    );
+    await this.#sessionWriteChain;
   }
 
   #restoreStoredSession(value: string): void {
@@ -844,6 +876,9 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
   }
 
   #setState(state: CentralAuthState): CentralAuthState {
+    // Held apart from the state, which passes through `code_sent` on the way to another
+    // account: this is whose credentials the store is holding, until they are cleared.
+    if (state.status === "signed_in") this.#sessionAccountId = state.user.id;
     this.#state = state;
     const copy = this.getState();
     this.emit("changed", copy);

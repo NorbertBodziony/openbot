@@ -742,6 +742,124 @@ describe("CentralAuthManager", () => {
     expect(requests.at(-1)?.method).toBe("DELETE");
   });
 
+  it("does not file a host credential under the account that signed in while it was issued", async () => {
+    const root = await createRoot();
+    const storagePath = join(root, "session.bin");
+    let releaseRegistration: () => void = () => undefined;
+    const registrationHeld = new Promise<void>((resolve) => {
+      releaseRegistration = resolve;
+    });
+    let registrationStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      registrationStarted = resolve;
+    });
+    let verifications = 0;
+    const manager = new CentralAuthManager({
+      apiUrl: "https://api.openbot.run",
+      storagePath,
+      encrypt: (value) => Buffer.from(value),
+      decrypt: (value) => value.toString(),
+      fetch: vi.fn(async (input: string | URL | Request) => {
+        const url = new URL(input.toString());
+        if (url.pathname.endsWith("/start")) {
+          return Response.json({ challengeId: "challenge-1", expiresAt: 10_000 });
+        }
+        if (url.pathname.endsWith("/verify")) {
+          verifications += 1;
+          return Response.json({
+            sessionToken: verifications === 1 ? "session-one" : "session-two",
+            user: {
+              id: `user-${verifications}`,
+              email: `person${verifications}@example.com`,
+              name: null,
+              avatarUrl: null,
+            },
+          });
+        }
+        registrationStarted();
+        await registrationHeld;
+        return Response.json({
+          hostId: "8f1c1f2e-1d9a-4a1a-9d1e-2f7c6b5a4d3c",
+          name: "Studio Mac",
+          membershipId: "member-1",
+          authEpoch: 1,
+          machineToken: "machine-token-for-the-first-account-0001",
+        });
+      }),
+    });
+    await manager.requestEmailCode("person1@example.com");
+    await manager.verifyEmailCode("challenge-1", "ABCD-EFGH");
+
+    const pending = manager.registerRemoteHost({
+      hostId: "8f1c1f2e-1d9a-4a1a-9d1e-2f7c6b5a4d3c",
+      name: "Studio Mac",
+      ownerMembershipId: "member-1",
+    });
+    // Attach the rejection handler before the switch, so settling it raises no unhandled error.
+    const settled = pending.catch(() => undefined);
+    await started;
+    await manager.requestEmailCode("person2@example.com");
+    await manager.verifyEmailCode("challenge-1", "ABCD-EFGH");
+    releaseRegistration();
+    await settled;
+
+    await expect(pending).rejects.toThrow("signed-in account changed");
+    const stored = await readFile(storagePath, "utf8");
+    expect(Buffer.from(stored, "base64").toString()).not.toContain("machine-token-for-the-first-account");
+  });
+
+  it("does not keep one account's host credential beside the next account's session", async () => {
+    const root = await createRoot();
+    const storagePath = join(root, "session.bin");
+    let verifications = 0;
+    const manager = new CentralAuthManager({
+      apiUrl: "https://api.openbot.run",
+      storagePath,
+      encrypt: (value) => Buffer.from(value),
+      decrypt: (value) => value.toString(),
+      fetch: vi.fn(async (input: string | URL | Request) => {
+        const url = new URL(input.toString());
+        if (url.pathname.endsWith("/start")) {
+          return Response.json({ challengeId: "challenge-1", expiresAt: 10_000 });
+        }
+        if (url.pathname.endsWith("/verify")) {
+          verifications += 1;
+          return Response.json({
+            sessionToken: verifications === 1 ? "session-one" : "session-two",
+            user: {
+              id: `user-${verifications}`,
+              email: `person${verifications}@example.com`,
+              name: null,
+              avatarUrl: null,
+            },
+          });
+        }
+        return Response.json({
+          hostId: "8f1c1f2e-1d9a-4a1a-9d1e-2f7c6b5a4d3c",
+          name: "Studio Mac",
+          membershipId: "member-1",
+          authEpoch: 1,
+          machineToken: "machine-token-for-the-first-account-0001",
+        });
+      }),
+    });
+    await manager.requestEmailCode("person1@example.com");
+    await manager.verifyEmailCode("challenge-1", "ABCD-EFGH");
+    await manager.registerRemoteHost({
+      hostId: "8f1c1f2e-1d9a-4a1a-9d1e-2f7c6b5a4d3c",
+      name: "Studio Mac",
+      ownerMembershipId: "member-1",
+    });
+
+    // Signing in as somebody else without signing out first.
+    await manager.requestEmailCode("person2@example.com");
+    await manager.verifyEmailCode("challenge-1", "ABCD-EFGH");
+
+    const stored = Buffer.from(await readFile(storagePath, "utf8"), "base64").toString();
+    expect(stored).toContain("session-two");
+    expect(stored).not.toContain("machine-token-for-the-first-account");
+  });
+
   it("updates the signed-in account name", async () => {
     const root = await createRoot();
     const requests: Request[] = [];

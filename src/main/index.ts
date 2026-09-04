@@ -181,6 +181,8 @@ let remoteDesktopManager: RemoteDesktopManager | null = null;
 let remoteServerManager: RemoteServerManager | null = null;
 let centralAuthManager: CentralAuthManager | null = null;
 let activeRemotePrincipalId: string | null = null;
+/** Counts account transitions, so queued work for a superseded one is dropped rather than applied. */
+let centralAuthGeneration = 0;
 let activeAnalyticsPrincipalId: string | null = null;
 let remoteAccountSync = Promise.resolve();
 let hostAnalytics: HostAnalytics | null = null;
@@ -214,6 +216,8 @@ if (!app.isPackaged) {
 const BROWSER_STATE_FILE = "openbot-browser-state-v1.json";
 const SIDEBAR_LAYOUT_FILE = "openbot-sidebar-layout-v1.json";
 const TEAM_FILE = "openbot-team-server-v1.json";
+/** One host per account. The v1 file above stays as the last build without accounts left it. */
+const TEAM_FILE_V2 = "openbot-team-server-v2.json";
 const REMOTE_SERVERS_FILE = "openbot-remote-servers-v1.json";
 const CENTRAL_AUTH_FILE = "openbot-central-auth-v1.bin";
 const LEGACY_REMOTE_DESKTOP_CREDENTIAL_FILE = "openbot-remote-desktop-credential-v1.json";
@@ -747,24 +751,64 @@ function forwardCentralAuth(state: CentralAuthState): void {
     if (activeAnalyticsPrincipalId) hostAnalytics?.clear();
     activeAnalyticsPrincipalId = null;
   }
+  // The renderer is told about the new account at the end of this function, before the
+  // queued work below can finish, so the host stops answering for the previous account now.
+  // The file is left alone until `applySignedInAccount` records the switch.
+  hostService?.unbindChangedAccount(state.status === "signed_in" ? state.user : null);
+  const generation = ++centralAuthGeneration;
   remoteAccountSync = remoteAccountSync
     .then(async () => {
+      // Sign-outs and sign-ins can queue up behind one slow teardown. Only the account the
+      // renderer was last told about may be activated; an earlier one would put a host the
+      // user has already left back within reach.
+      if (generation !== centralAuthGeneration) return;
       const nextPrincipalId = state.status === "signed_in" ? state.user.id : null;
       if (activeRemotePrincipalId && activeRemotePrincipalId !== nextPrincipalId) {
-        await remoteServerManager?.disconnectRemoteSessions();
+        // Best-effort, like every other network step here: a bridge disconnect that
+        // rejects must not stop the local host from leaving the previous account.
+        try {
+          await remoteServerManager?.disconnectRemoteSessions();
+        } catch (error) {
+          console.error("Unable to disconnect the previous account's remote sessions:", error);
+        }
       }
+      // Rechecked after the disconnect: another account can be announced while it awaits,
+      // and activating this one now would put its host back within the newer account's reach.
+      if (generation !== centralAuthGeneration) return;
       activeRemotePrincipalId = nextPrincipalId;
       if (state.status !== "signed_in") {
-        if (state.status === "signed_out") await hostService?.stop(false);
+        if (state.status === "signed_out") {
+          // Stopping is best-effort; unbinding the host is not, so a failed teardown
+          // must not leave the signed-out account's host bound.
+          try {
+            await hostService?.stop(false);
+          } catch (error) {
+            console.error("Unable to stop the host while signing out:", error);
+          }
+          await hostService?.applySignedInAccount(null);
+        }
         return;
       }
-      await remoteServerManager?.syncRemoteHosts();
       const host = hostService;
-      if (!host) return;
-      await host.syncSignedInAccount(state.user);
-      hostAnalytics?.flushPending();
-      const status = host.getStatus();
-      if (shouldAutoStartHost({ ...status, remoteRole: developmentRemoteRole })) await host.start();
+      // The local host is rebound before the joined-server list is synchronized, and the
+      // network failure is contained: this account must not end up signed in while the
+      // previous account's host is still selected and possibly online.
+      if (host) {
+        await host.applySignedInAccount(state.user);
+        if (generation !== centralAuthGeneration) {
+          // Another account was announced while this one was being activated. Its own queued
+          // callback binds it; until then no host answers for either.
+          host.unbindChangedAccount(null);
+          return;
+        }
+        hostAnalytics?.flushPending();
+      }
+      try {
+        await remoteServerManager?.syncRemoteHosts();
+      } catch (error) {
+        console.error("Unable to synchronize the joined servers:", error);
+      }
+      if (host && shouldAutoStartHost({ ...host.getStatus(), remoteRole: developmentRemoteRole })) await host.start();
     })
     .catch((error) => {
       console.error("Unable to synchronize the signed-in account:", error);
@@ -968,7 +1012,10 @@ if (!hasSingleInstanceLock) {
       );
       const agentMarketplace = new AgentMarketplaceService(centralAuthManager, service, skillMarketplace);
       configureAttachmentProtocol(mailboxStore, service);
-      const teamStore = new TeamStore(join(app.getPath("userData"), TEAM_FILE));
+      const teamStore = new TeamStore(
+        join(app.getPath("userData"), TEAM_FILE_V2),
+        join(app.getPath("userData"), TEAM_FILE),
+      );
       await teamStore.initialize();
       if (developmentRemoteRole) {
         const email =
@@ -976,6 +1023,7 @@ if (!hasSingleInstanceLock) {
             ? (teamStore.getOwnerEmail() ?? "openbot-dev-host@example.com")
             : "openbot-dev-client@example.com";
         const user = await ensureDevelopmentAccount(centralAuthManager, email);
+        await teamStore.activateAccount(user);
         if (developmentRemoteRole === "host" && !teamStore.configured) {
           await teamStore.configureWithAccount("OpenBot Local Dev Host", user);
         }
@@ -1088,7 +1136,14 @@ if (!hasSingleInstanceLock) {
       });
       const signedInState = centralAuthManager.getState();
       if (signedInState.status === "signed_in") {
-        await hostService.syncSignedInAccount(signedInState.user);
+        await hostService.applySignedInAccount(signedInState.user);
+      } else if (signedInState.status === "signed_out") {
+        // Sign-out can settle before this service exists, leaving `forwardCentralAuth`
+        // nothing to deactivate. Unbinding here is what stops a persisted
+        // `activeAccountId` from keeping the last account's host configured - and
+        // unconfigurable - while nobody is signed in. A still-loading or failed account
+        // service keeps its host, and the event listener settles it.
+        await hostService.applySignedInAccount(null);
       }
       const analyticsPlatform = process.platform;
       if (analyticsPlatform !== "darwin" && analyticsPlatform !== "win32" && analyticsPlatform !== "linux") {
