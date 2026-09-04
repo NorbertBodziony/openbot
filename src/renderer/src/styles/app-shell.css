@@ -2098,6 +2098,7 @@ textarea {
 }
 
 .bot-list[data-sidebar-dragging="agent"] .sidebar-agent-item {
+  transition: none;
   will-change: transform;
 }
 

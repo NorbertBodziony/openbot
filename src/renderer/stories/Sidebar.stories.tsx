@@ -508,6 +508,36 @@ export const DragStress: Story = {
     await expect(canvasElement.querySelectorAll("[data-pinned-key]")).toHaveLength(6);
     await expect(canvasElement.querySelectorAll("[data-section-id]").length).toBeGreaterThanOrEqual(7);
     await expect(canvasElement.querySelectorAll("[data-agent-id]").length).toBeGreaterThanOrEqual(24);
+    const source = canvasElement.querySelector<HTMLElement>("[data-agent-id]");
+    const list = canvasElement.querySelector<HTMLElement>(".bot-list");
+    const DataTransferConstructor = canvasElement.ownerDocument.defaultView?.DataTransfer;
+    if (!source || !list || !DataTransferConstructor) throw new Error("Agent drag stress fixture is unavailable.");
+    const section = source.closest<HTMLElement>("[data-section-id]");
+    const target = section?.querySelector<HTMLElement>(
+      `[data-agent-id]:not([data-agent-id="${source.dataset.agentId}"])`,
+    );
+    if (!target) throw new Error("Agent drag stress target is unavailable.");
+    const bounds = source.getBoundingClientRect();
+    const targetBounds = target.getBoundingClientRect();
+    const dataTransfer = new DataTransferConstructor();
+
+    fireEvent.dragStart(source, {
+      clientX: bounds.left + 24,
+      clientY: bounds.top + 24,
+      dataTransfer,
+    });
+    fireEvent.dragOver(target, {
+      clientX: targetBounds.left + 24,
+      clientY: targetBounds.top + 24,
+      dataTransfer,
+    });
+
+    await expect(list).toHaveAttribute("data-sidebar-dragging", "agent");
+    for (const row of canvasElement.querySelectorAll<HTMLElement>("[data-agent-id]")) {
+      await expect(getComputedStyle(row).transitionDuration).toBe("0s");
+    }
+
+    fireEvent.dragEnd(source, { dataTransfer });
   },
 };
 
