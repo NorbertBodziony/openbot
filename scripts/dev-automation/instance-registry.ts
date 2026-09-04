@@ -6,6 +6,7 @@
 // debugging port. `dev:automation` reads it to drive the app of the worktree it
 // was started from instead of whichever instance won the race for 9333.
 
+import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   closeSync,
@@ -155,12 +156,72 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+// `startedAt` is `Date.now()` taken right after `spawn`, so the process behind
+// an honest record always started at or before it. `ps` reports whole seconds,
+// which can only round downwards, and the grace covers a clock the developer
+// nudged between the two readings.
+const PROCESS_START_GRACE_MS = 2_000;
+
+// Signal 0 proves only that *something* holds that pid. A dev instance killed
+// with SIGKILL leaves its record behind, pids get recycled, and an unrelated
+// process inheriting 4242 would keep that record - and its
+// `remoteDebuggingPort` - looking like this worktree's live app, which is the
+// one match `click` and `type` accept. Comparing when the process actually
+// started separates them: a recycled pid always started after the record was
+// written.
+export function isRecordedProcess(record: DevInstanceRecord, processStartedAt: number | null): boolean {
+  // Unverifiable, so this cannot be the fail-closed check on its own: `ps` is
+  // absent on Windows and can be denied. `dropReusedDebuggingPorts` below is
+  // what still refuses a stale claim when the start time is unknown.
+  if (processStartedAt === null) return true;
+  return processStartedAt <= record.startedAt + PROCESS_START_GRACE_MS;
+}
+
+// Wall-clock start of a live process, or null when it cannot be read. `lstart`
+// is a full local timestamp on both macOS and Linux; `ps` on Windows is not
+// this program at all, so it is not asked.
+function readProcessStartedAt(pid: number): number | null {
+  if (process.platform === "win32") return null;
+  try {
+    const reported = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], {
+      encoding: "utf8",
+      timeout: 2_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    const parsed = Date.parse(reported);
+    return Number.isNaN(parsed) ? null : parsed;
+  } catch {
+    return null;
+  }
+}
+
+function isDevInstanceLive(record: DevInstanceRecord): boolean {
+  if (!isProcessAlive(record.pid)) return false;
+  return isRecordedProcess(record, readProcessStartedAt(record.pid));
+}
+
+// One debugging port can be bound by one process, so two live records claiming
+// the same one means the older claim no longer holds it - its instance died
+// and left the record behind while its pid was recycled, or the file was
+// planted. CDP carries no profile identity, so nothing at connect time could
+// tell the two apart; the older claim is dropped instead of being offered as a
+// named instance a mutation may drive. The file stays: the instance that owns
+// it republishes on its next start.
+export function dropReusedDebuggingPorts(records: DevInstanceRecord[]): DevInstanceRecord[] {
+  const newestByPort = new Map<number, DevInstanceRecord>();
+  for (const record of records) {
+    const held = newestByPort.get(record.remoteDebuggingPort);
+    if (!held || held.startedAt < record.startedAt) newestByPort.set(record.remoteDebuggingPort, record);
+  }
+  return records.filter((record) => newestByPort.get(record.remoteDebuggingPort) === record);
+}
+
 // A dev instance killed with SIGKILL never removes its own record, so reading
 // prunes: a record whose process is gone is deleted rather than reported, which
 // keeps a stale port from being offered after another instance reuses it.
 export function readDevInstanceRecords(
   directory = devInstanceRegistryDirectory(),
-  isAlive: (pid: number) => boolean = isProcessAlive,
+  isAlive: (record: DevInstanceRecord) => boolean = isDevInstanceLive,
 ): DevInstanceRecord[] {
   if (!existsSync(directory)) return [];
   // The same gate as the writer, for the same reason and it has to be here
@@ -185,13 +246,13 @@ export function readDevInstanceRecords(
     } catch {
       record = null;
     }
-    if (record && isAlive(record.pid)) {
+    if (record && isAlive(record)) {
       records.push(record);
       continue;
     }
     rmSync(path, { force: true });
   }
-  return records.sort((left, right) => left.remoteDebuggingPort - right.remoteDebuggingPort);
+  return dropReusedDebuggingPorts(records).sort((left, right) => left.remoteDebuggingPort - right.remoteDebuggingPort);
 }
 
 export interface DevInstanceQuery {

@@ -279,8 +279,12 @@ export async function connectToDevApp(
     );
   }
   logger.info(`driving ${describeTarget(page.url())}`);
+  // The full text, not a slice of it: the logger redacts first and truncates
+  // after, so cutting here can hand it half of a token - a prefix short enough
+  // that no redaction rule recognizes the shape, and long enough to be the
+  // secret.
   page.on("console", (message) => {
-    logger.debug(`renderer console [${message.type()}]`, message.text().slice(0, 500));
+    logger.debug(`renderer console [${message.type()}]`, message.text());
   });
   page.on("pageerror", (error) => {
     logger.warn("renderer pageerror", error instanceof Error ? error.message : String(error));

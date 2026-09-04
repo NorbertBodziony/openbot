@@ -9,6 +9,8 @@ import { createDevInstanceRecord, type DevelopmentServiceSpec } from "../dev-ser
 import {
   assertOwnerOnlyDirectory,
   type DevInstanceRecord,
+  dropReusedDebuggingPorts,
+  isRecordedProcess,
   parseDevInstanceRecord,
   readDevInstanceRecords,
   removeDevInstanceRecord,
@@ -134,7 +136,7 @@ describe("readDevInstanceRecords", () => {
     const dead = record({ pid: 2_222, remoteDebuggingPort: 9_335, rendererPort: 5_174, instanceId: "5174" });
     writeDevInstanceRecord(alive, directory);
     writeDevInstanceRecord(dead, directory);
-    expect(readDevInstanceRecords(directory, (pid) => pid === 1_111)).toEqual([alive]);
+    expect(readDevInstanceRecords(directory, (candidate) => candidate.pid === 1_111)).toEqual([alive]);
     expect(readdirSync(directory)).toEqual(["app-1111.json"]);
   });
 
@@ -142,6 +144,41 @@ describe("readDevInstanceRecords", () => {
     writeFileSync(join(directory, "app-9.json"), "{ not json", "utf8");
     writeFileSync(join(directory, "app-10.json"), JSON.stringify({ service: "app" }), "utf8");
     expect(readDevInstanceRecords(directory, () => true)).toEqual([]);
+  });
+
+  it("keeps only the newest claim on a debugging port, so a mutation cannot be aimed at a stale one", () => {
+    // Both processes answer, but one port has one owner: the older record is
+    // an instance that died and left its pid to be recycled, and driving it
+    // would type into whichever profile now holds 9333.
+    const stale = record({ pid: 1_111, startedAt: 1_000 });
+    const current = record({ pid: 2_222, startedAt: 2_000, profile: "OpenBot Dev 19333", instanceId: "19333" });
+    writeDevInstanceRecord(stale, directory);
+    writeDevInstanceRecord(current, directory);
+    expect(readDevInstanceRecords(directory, () => true)).toEqual([current]);
+  });
+});
+
+describe("isRecordedProcess", () => {
+  it("rejects a pid that was recycled after the record was published", () => {
+    // `startedAt` is taken right after spawn, so a process that started a
+    // minute later is a different one wearing the same pid.
+    expect(isRecordedProcess(record({ startedAt: 100_000 }), 160_000)).toBe(false);
+  });
+
+  it("accepts the process the record was written for, and one whose start cannot be read", () => {
+    expect(isRecordedProcess(record({ startedAt: 100_000 }), 99_000)).toBe(true);
+    // `ps` rounds down to the second and the clock can drift between the two
+    // readings, so a start marginally later than the record still matches.
+    expect(isRecordedProcess(record({ startedAt: 100_000 }), 101_000)).toBe(true);
+    expect(isRecordedProcess(record({ startedAt: 100_000 }), null)).toBe(true);
+  });
+});
+
+describe("dropReusedDebuggingPorts", () => {
+  it("leaves instances on ports of their own alone", () => {
+    const here = record({ pid: 1_111 });
+    const sibling = record({ pid: 2_222, remoteDebuggingPort: 9_335, projectRoot: "/worktrees/two" });
+    expect(dropReusedDebuggingPorts([here, sibling])).toEqual([here, sibling]);
   });
 });
 
