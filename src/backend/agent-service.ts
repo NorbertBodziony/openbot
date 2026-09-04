@@ -1,4 +1,3 @@
-import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { constants } from "node:fs";
@@ -7,14 +6,8 @@ import { basename, isAbsolute } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
   AccountUsage,
-  AgentApproval,
-  AgentApprovalKind,
-  AgentApprovalPermissions,
   AgentEvent,
   AgentModelOption,
-  AgentPromptQuestion,
-  AgentPromptResolution,
-  AgentProviderStatus,
   AgentRuntimeSnapshot,
   AgentStatus,
   AttachmentDataInput,
@@ -24,8 +17,6 @@ import type {
   BotSummary,
   BrowserControlState,
   BrowserTab,
-  BrowserTakeoverRequest,
-  ConversationMessage,
   ConversationPage,
   ConversationPageAnchor,
   ConversationReadState,
@@ -39,13 +30,8 @@ import type {
   DeleteRoutineInput,
   DraftAttachment,
   DuplicateBotResult,
-  HostedSiteConversationEventAction,
-  HostedSiteConversationEventDetails,
-  HostedSiteConversationEventStatus,
-  HostedSiteSummary,
   ImageGenerationInfo,
   ListRoutineRunsInput,
-  PublishHostedSiteInput,
   QueuedMessageReceipt,
   QueueSnapshot,
   ReorderQueueInput,
@@ -53,9 +39,7 @@ import type {
   RespondToBrowserTakeoverInput,
   RespondToPromptInput,
   Routine,
-  RoutineConversationEventAction,
   RoutineRun,
-  RoutineRunConversationEventStatus,
   SendMessageInput,
   SetMessageReactionInput,
   SidebarLayoutSnapshot,
@@ -66,18 +50,12 @@ import type {
   UpdateQueuedMessageInput,
   UpdateRoutineInput,
 } from "@openbot/contracts/ipc";
-import {
-  AGENT_RUNTIME_ATTENTION_LIMIT,
-  AGENT_RUNTIME_TEXT_LIMIT,
-  hostedSiteConversationEventItemType,
-  hostedSiteConversationEventText,
-  isMessageReaction,
-  isReasoningEffort,
-  routineConversationEventItemType,
-  routineRunConversationEventItemType,
-} from "@openbot/contracts/ipc";
-import { isBoolean, isString } from "@openbot/contracts/runtime-values";
-import { finiteNumberOrNull, normalizeAccountUsage } from "./agent/account-usage";
+import { AGENT_RUNTIME_TEXT_LIMIT, isMessageReaction } from "@openbot/contracts/ipc";
+import { isString } from "@openbot/contracts/runtime-values";
+import { AgentMemories } from "./agent/agent-memories";
+import { AttentionRegistry } from "./agent/attention-registry";
+import { ContextCompaction } from "./agent/context-compaction";
+import { ConversationRuntime } from "./agent/conversation-runtime";
 import {
   agentNamesById,
   conversationContentSignature,
@@ -87,19 +65,12 @@ import {
   lastUserPrompt,
   renderHandoffMessage,
   responseAttachmentMessageId,
-  routineStatusForDelivery,
   summarizeOldMessages,
 } from "./agent/delivery-content";
 import { developerInstructions } from "./agent/developer-instructions";
-import {
-  type HostedSiteMutationTool,
-  hostedSiteAction,
-  hostedSiteEventCommandId,
-  hostedSiteEventDetails,
-  hostedSiteEventMessageId,
-  hostedSiteTool,
-  isHostedSiteMutationTool,
-} from "./agent/hosted-site-events";
+import { DuplicationGate } from "./agent/duplication-gate";
+import { type AgentHostedSites, HostedSiteCoordinator } from "./agent/hosted-site-coordinator";
+import { isHostedSiteMutationTool } from "./agent/hosted-site-events";
 import {
   decodeGeneratedImage,
   generatedImageName,
@@ -108,37 +79,11 @@ import {
   isImageGenerationItem,
   markIncompleteImageGeneration,
 } from "./agent/image-generation";
+import { type AgentClientFactory, ProviderRuntime } from "./agent/provider-runtime";
+import { type RoutineMutationOptions, RoutineScheduler } from "./agent/routine-scheduler";
+import { type OpenBotToolResponse, openBotToolResult } from "./agent/routine-tools";
+import { fitRuntimeSnapshot } from "./agent/runtime-snapshot";
 import {
-  approvalPermissions,
-  browserTakeoverError,
-  browserTakeoverResult,
-  commandText,
-  dynamicPromptResult,
-  mcpElicitationQuestion,
-  mcpElicitationResult,
-  promptQuestions,
-  promptResolution,
-  questionPromptText,
-  validPromptQuestions,
-} from "./agent/prompts";
-import {
-  providerFailureStatus,
-  setProviderStatus,
-  updateProviderStatus,
-  waitForSuccessfulProcess,
-} from "./agent/provider-status";
-import {
-  localTimezone,
-  openBotToolResult,
-  routineToolArguments,
-  routineToolBotId,
-  routineToolSchedule,
-  routineToolString,
-  siteToolString,
-} from "./agent/routine-tools";
-import { compactRuntimeApproval, compactRuntimeQuestion, fitRuntimeSnapshot } from "./agent/runtime-snapshot";
-import {
-  cleanModelName,
   isArchivedThreadError,
   isDynamicToolCall,
   isMissingProviderSessionError,
@@ -150,19 +95,8 @@ import {
   toThreadItem,
 } from "./agent/thread-items";
 import type { AgentClient, AgentProvider } from "./agent-client";
-import { AgentMemoryStore } from "./agent-memory-store";
-import { AgentRoutineStore } from "./agent-routine-store";
-import { CodexAppServerClient } from "./app-server-client";
 import type { BotStore } from "./bot-store";
 import { BROWSER_DYNAMIC_TOOLS, OPENBOT_BROWSER_NAMESPACE } from "./browser-host";
-import {
-  type AgentCliInfo,
-  CodexCliError,
-  type CodexCliInfo,
-  resolveClaudeCli,
-  resolveCodexCli,
-  resolveGrokCli,
-} from "./cli";
 import { type ConversationMarkerExclusions, ConversationReadStore } from "./conversation-read-store";
 import {
   mergeConversationSnapshots,
@@ -173,34 +107,29 @@ import {
   sortConversationMessages,
 } from "./conversation-snapshots";
 import type { DeliveryContext, GeneratedAttachmentSource, MailboxStore } from "./mailbox-store";
-import type { PendingHostedSiteTerminalEvent } from "./openbot-database";
 import { OPENBOT_DYNAMIC_TOOLS } from "./openbot-tools";
 import {
-  type AccountLoginCompletedResult,
-  type AccountReadResult,
   type AppServerNotification,
   type AppServerRequest,
   type DynamicToolCallParams,
   type DynamicToolResult,
   decodeAccountLoginCompletedResult,
-  decodeAccountLoginStartResult,
-  decodeAccountRateLimitsReadResult,
-  decodeAccountReadResult,
-  decodeModelListResponse,
   decodeRecordResponse,
   decodeThreadResponse,
   decodeTurnResponse,
-  getArray,
   getRecord,
   getString,
   isRecord,
-  type RequestId,
   type ResponseDecoder,
   type ThreadItem,
 } from "./protocol";
-import { BUILT_IN_PROVIDER_DRIVERS, requireProviderDriver } from "./provider-drivers";
-import { nextRoutineOccurrence } from "./routine-schedule";
 import { isWithin, sharedPathFromInput, workspacePathFromInput } from "./workspace-paths";
+
+// Both types were declared in this module before the split and are part of the frozen public
+// surface, so they keep being reachable from here rather than only from the controller that owns
+// them now. `Pick<AgentService, ...>` in team-api-server.ts does not cover exported types.
+export type { AgentClientFactory } from "./agent/provider-runtime";
+export type { RoutineMutationOptions } from "./agent/routine-scheduler";
 
 interface AgentServiceEvents {
   event: [event: AgentEvent];
@@ -221,71 +150,6 @@ interface AgentBrowserHost {
   handleDynamicTool(params: DynamicToolCallParams): Promise<DynamicToolResult>;
 }
 
-interface AgentHostedSites {
-  list(): Promise<HostedSiteSummary[]>;
-  publish(input: PublishHostedSiteInput, allowedRoots: readonly string[]): Promise<HostedSiteSummary>;
-  replace(
-    input: PublishHostedSiteInput & { siteId: string },
-    allowedRoots: readonly string[],
-  ): Promise<HostedSiteSummary>;
-  delete(siteId: string): Promise<void>;
-}
-
-interface PendingPrompt {
-  client: AgentClient;
-  id: RequestId;
-  responseKind: "dynamic-tool" | "mcp-elicitation" | "user-input";
-  params: unknown;
-  botId: string;
-  publicThreadId: string;
-  turnId: string;
-  messageId: string;
-  questions: AgentPromptQuestion[];
-}
-
-interface PendingApproval {
-  client: AgentClient;
-  id: RequestId;
-  method: string;
-  params: unknown;
-  approval: AgentApproval;
-  hostedSiteMutation?: HostedSiteMutationContext;
-}
-
-interface PendingBrowserTakeover {
-  params: DynamicToolCallParams;
-  request: BrowserTakeoverRequest;
-  resolve: (result: DynamicToolResult) => void;
-}
-
-interface HostedSiteApprovalDetails {
-  reason: string;
-  permissions: AgentApprovalPermissions;
-  eventDetails: HostedSiteConversationEventDetails;
-}
-
-interface HostedSiteMutationContext {
-  botId: string;
-  operationId: string;
-  action: HostedSiteConversationEventAction;
-  params: DynamicToolCallParams;
-  eventDetails: HostedSiteConversationEventDetails;
-}
-
-interface HostedSiteMutationResult {
-  response: OpenBotToolResponse;
-  eventDetails: HostedSiteConversationEventDetails;
-}
-
-interface ThreadContextBudget {
-  usedTokens: number;
-  contextWindow: number;
-  pending: boolean;
-  phase: "idle" | "requested" | "running";
-  compactionTurnId: string | null;
-  lastCompactedTokens: number | null;
-}
-
 interface PendingDelta {
   botId: string;
   externalThreadId: string;
@@ -302,153 +166,18 @@ interface ImageGenerationOperation {
   promise: Promise<void> | null;
 }
 
-interface OpenBotToolResponse {
-  success: boolean;
-  contentItems: Array<{ type: "inputText"; text: string }>;
-}
-
-export interface RoutineMutationOptions {
-  recordConversationEvent?: boolean;
-  turnId?: string;
-}
-
-const HOSTED_SITE_APPROVAL_METHOD = "openbot/hosted-site-mutation";
-
-interface PendingCodexLogin {
-  client: AgentClient;
-  cli: CodexCliInfo;
-  loginId: string;
-  timer: NodeJS.Timeout;
-  completing: boolean;
-}
-
-interface PendingClaudeLogin {
-  child: ChildProcess;
-  cli: AgentCliInfo;
-  task: Promise<void> | null;
-}
-
-type PendingMemoryMutation =
-  | {
-      callId: string;
-      type: "remember";
-      botId: string;
-      epoch: number;
-      memoryId?: string;
-      text: string;
-      sourceTurnId: string;
-      expectedUpdatedAt?: string | null;
-    }
-  | {
-      callId: string;
-      type: "forget";
-      botId: string;
-      epoch: number;
-      memoryId: string;
-      expectedUpdatedAt: string;
-    };
-
-const CONTEXT_COMPACTION_THRESHOLD = 0.8;
-const CONTEXT_COMPACTION_TIMEOUT_MS = 120_000;
-const CODEX_LOGIN_TIMEOUT_MS = 10 * 60_000;
-const CLAUDE_LOGIN_TIMEOUT_MS = 10 * 60_000;
-const GROK_LOGIN_TIMEOUT_MS = 10 * 60_000;
-
-const INITIAL_STATUS: AgentStatus = {
-  phase: "idle",
-  cliVersion: null,
-  auth: { kind: "unknown" },
-  providers: [
-    { id: "codex", state: "not-started", version: null, message: null },
-    { id: "claude", state: "not-started", version: null, message: null },
-    { id: "grok", state: "not-started", version: null, message: null },
-  ],
-  capabilities: {
-    chat: "unavailable",
-    browser: "ready",
-    computerUse: "unavailable",
-  },
-  message: null,
-  fullAccess: true,
-};
-
-const FALLBACK_MODELS: AgentModelOption[] = [
-  {
-    provider: "codex",
-    id: "gpt-5.6-luna",
-    name: "Luna",
-    description: "Fast and efficient for everyday agent work.",
-    defaultReasoningEffort: "medium",
-    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
-  },
-  {
-    provider: "codex",
-    id: "gpt-5.6-terra",
-    name: "Terra",
-    description: "Balanced speed and capability for involved tasks.",
-    defaultReasoningEffort: "medium",
-    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
-  },
-  {
-    provider: "codex",
-    id: "gpt-5.6-sol",
-    name: "Sol",
-    description: "Most capable for complex, long-running work.",
-    defaultReasoningEffort: "medium",
-    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
-  },
-  {
-    provider: "claude",
-    id: "claude-fable-5",
-    name: "Claude Fable 5",
-    description: "Fast Claude model for everyday agent work.",
-    defaultReasoningEffort: "high",
-    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
-  },
-  {
-    provider: "claude",
-    id: "claude-opus-5",
-    name: "Claude Opus 5",
-    description: "Most capable Claude model for complex work.",
-    defaultReasoningEffort: "high",
-    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
-  },
-  {
-    provider: "claude",
-    id: "claude-sonnet-5",
-    name: "Claude Sonnet 5",
-    description: "Balanced Claude model for general agent work.",
-    defaultReasoningEffort: "high",
-    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
-  },
-];
-
-const CURATED_CODEX_MODEL_IDS = new Set(
-  FALLBACK_MODELS.filter((model) => model.provider === "codex").map((model) => model.id),
-);
-
-export type AgentClientFactory = (provider: AgentProvider, cli: AgentCliInfo) => AgentClient;
-
 export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #store: BotStore;
   readonly #mailbox: MailboxStore;
   readonly #browser: AgentBrowserHost;
   readonly #conversationReads: ConversationReadStore;
-  readonly #memories: AgentMemoryStore;
-  readonly #routines: AgentRoutineStore;
-  readonly #requestTimeoutMs: number;
-  readonly #clientFactory: AgentClientFactory | null;
-  readonly #bundledCodexExecutable: string | null | undefined;
-  readonly #bundledClaudeExecutable: string | null | undefined;
-  readonly #bundledGrokExecutable: string | null | undefined;
+  readonly #memories: AgentMemories;
+  readonly #routines: RoutineScheduler;
+  readonly #providers: ProviderRuntime;
   readonly #prepareBotWorkspace: (bot: BotSummary) => Promise<void>;
-  readonly #hostedSites: AgentHostedSites | null;
-  readonly #snapshots = new Map<string, ConversationSnapshot>();
-  readonly #threadToBot = new Map<string, string>();
-  readonly #loadedThreads = new Map<string, AgentClient>();
-  readonly #pendingPrompts = new Map<RequestId, PendingPrompt>();
-  readonly #pendingApprovals = new Map<RequestId, PendingApproval>();
-  readonly #pendingBrowserTakeovers = new Map<RequestId, PendingBrowserTakeover>();
+  readonly #hostedSites: HostedSiteCoordinator;
+  readonly #conversation: ConversationRuntime;
+  readonly #attention: AttentionRegistry;
   readonly #failedTurns = new Map<string, string>();
   readonly #itemTurns = new Map<string, string>();
   readonly #imageGenerationOperations = new Map<string, ImageGenerationOperation>();
@@ -457,43 +186,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #drainingBots = new Set<string>();
   readonly #scheduledDrains = new Set<string>();
   readonly #drainTasks = new Map<string, Promise<void>>();
-  readonly #routineDeletionBots = new Set<string>();
-  readonly #lastConversationSignatures = new Map<string, string>();
-  readonly #contextBudgets = new Map<string, ThreadContextBudget>();
-  readonly #compactingBots = new Set<string>();
-  readonly #compactionTimers = new Map<string, NodeJS.Timeout>();
+  readonly #compaction: ContextCompaction;
   readonly #pendingHandoffs = new Map<string, string>();
   readonly #pendingRuntimeRefreshes = new Set<string>();
-  readonly #duplicatingBots = new Set<string>();
-  readonly #pendingDuplicateBots = new Set<string>();
-  readonly #pendingDuplicateOperations = new Map<string, { operationId: string; sourceBotId: string }>();
-  readonly #pendingDuplicateReleases = new Map<string, () => void>();
+  readonly #duplication: DuplicationGate;
   readonly #pendingDeltas = new Map<string, PendingDelta>();
-  readonly #pendingMemoryMutations = new Map<string, PendingMemoryMutation[]>();
-  readonly #pendingHostedSiteTerminalEvents = new Map<string, PendingHostedSiteTerminalEvent>();
-  readonly #pendingHostedSiteTerminalDeliveries = new Map<string, () => void>();
   readonly #responseAttachmentCommands = new Map<string, Promise<OpenBotToolResponse>>();
-  readonly #memoryEpochs = new Map<string, number>();
-  #duplicationCommitQueue: Promise<void> = Promise.resolve();
-  #routineTimer: NodeJS.Timeout | null = null;
-  #hostedSiteTerminalRetryTimer: NodeJS.Timeout | null = null;
-  #status: AgentStatus = structuredClone(INITIAL_STATUS);
-  readonly #clients = new Map<AgentProvider, AgentClient>();
-  readonly #cli = new Map<AgentProvider, AgentCliInfo>();
-  readonly #accounts = new Map<AgentProvider, AccountReadResult["account"]>();
-  readonly #providerStarts = new Map<AgentProvider, Promise<void>>();
-  readonly #providerConnectionCommands = new Map<AgentProvider, Promise<void>>();
-  #providerRefresh: Promise<AgentStatus> | null = null;
-  #codexLogin: PendingCodexLogin | null = null;
-  #claudeLogin: PendingClaudeLogin | null = null;
-  #grokLogin: PendingClaudeLogin | null = null;
-  #providerActivation = Promise.resolve();
-  #preferredProvider: AgentProvider;
   #initialized = false;
   #stopping = false;
-  #restartAttempts = 0;
-  #restartTimer: NodeJS.Timeout | null = null;
-  #models = structuredClone(FALLBACK_MODELS);
 
   constructor(
     store: BotStore,
@@ -513,22 +213,103 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#mailbox = mailbox;
     this.#browser = browser;
     this.#conversationReads = new ConversationReadStore(store.database);
-    this.#memories = new AgentMemoryStore(store.database);
-    this.#routines = new AgentRoutineStore(store.database);
-    this.#requestTimeoutMs = requestTimeoutMs;
-    this.#clientFactory = clientFactory;
-    this.#bundledCodexExecutable = bundledCodexExecutable;
-    this.#bundledClaudeExecutable = bundledClaudeExecutable;
-    this.#bundledGrokExecutable = bundledGrokExecutable;
     this.#prepareBotWorkspace = prepareBotWorkspace;
-    this.#hostedSites = hostedSites;
-    this.#preferredProvider = preferredProvider;
+    this.#conversation = new ConversationRuntime(
+      store,
+      (event) => this.#emit(event),
+      () => this.listBots(),
+    );
+    this.#memories = new AgentMemories({
+      store,
+      conversation: this.#conversation,
+      emit: (event) => this.#emit(event),
+      emitError: (code, error, botId) => this.#emitError(code, error, botId),
+    });
+    this.#routines = new RoutineScheduler({
+      store,
+      mailbox,
+      conversation: this.#conversation,
+      hooks: {
+        emit: (event) => this.#emit(event),
+        emitError: (code, error, botId) => this.#emitError(code, error, botId),
+        emitQueue: (botId) => this.#emitQueue(botId),
+        scheduleDrain: (botId) => this.#scheduleDrain(botId),
+        interrupt: (botId, turnId) => this.interrupt(botId, turnId),
+        awaitDrain: (botId) => this.#drainTasks.get(botId),
+        syncMailboxMessages: (snapshot) => this.#syncMailboxMessages(snapshot),
+        listBots: () => this.listBots(),
+        pendingDuplicateBots: () => this.#duplication.pendingBots(),
+        isRunning: () => this.#initialized && !this.#stopping,
+      },
+    });
+    this.#hostedSites = new HostedSiteCoordinator({
+      store,
+      conversation: this.#conversation,
+      hostedSites,
+      emitError: (code, error, botId) => this.#emitError(code, error, botId),
+      isStopping: () => this.#stopping,
+    });
+    this.#providers = new ProviderRuntime({
+      conversation: this.#conversation,
+      hooks: {
+        bindClient: (client) => {
+          client.on("notification", (notification) => this.#handleNotification(notification, client));
+          client.on("request", (request) => void this.#handleServerRequest(client, request));
+        },
+        onProvidersReady: async () => {
+          await this.#reconcileUnresolvedDeliveries();
+          void this.#backfillProviderHistory();
+          for (const bot of this.#store.list()) this.#scheduleDrain(bot.id);
+        },
+        onProviderLost: (client) => {
+          this.#compaction.dispose();
+          this.#attention.clearPrompts(client);
+          this.#attention.clearBrowserTakeovers();
+          this.#attention.clearApprovals();
+          this.#browser.clearControls();
+        },
+        isStopping: () => this.#stopping,
+      },
+      emit: (event) => this.#emit(event),
+      emitError: (code, error, botId) => this.#emitError(code, error, botId),
+      requestTimeoutMs,
+      preferredProvider,
+      clientFactory,
+      bundledCodexExecutable,
+      bundledClaudeExecutable,
+      bundledGrokExecutable,
+    });
+    this.#compaction = new ContextCompaction({
+      store,
+      providers: this.#providers,
+      emitError: (code, error, botId) => this.#emitError(code, error, botId),
+      scheduleDrain: (botId) => this.#scheduleDrain(botId),
+    });
+    this.#attention = new AttentionRegistry({
+      conversation: this.#conversation,
+      browser: this.#browser,
+      hostedSites: this.#hostedSites,
+      routines: this.#routines,
+      emit: (event) => this.#emit(event),
+      emitError: (code, error, botId) => this.#emitError(code, error, botId),
+      emitRuntimeSnapshot: () => this.#emitRuntimeSnapshot(),
+    });
+    this.#duplication = new DuplicationGate({
+      store,
+      mailbox,
+      conversation: this.#conversation,
+      memories: this.#memories,
+      routines: this.#routines,
+      hooks: {
+        emit: (event) => this.#emit(event),
+        listBots: () => this.listBots(),
+        deleteBotData: (bot) => this.#deleteBotData(bot),
+        hasAttentionFor: (botId) => this.#attention.hasAttentionFor(botId),
+        scheduleDrain: (botId) => this.#scheduleDrain(botId),
+      },
+    });
     this.#browser.onChanged((tabs, activeTabId) => {
-      for (const [requestId, pending] of this.#pendingBrowserTakeovers) {
-        if (!tabs.some((tab) => tab.id === pending.request.tabId)) {
-          this.#resolveBrowserTakeover(requestId, pending, "cancel");
-        }
-      }
+      this.#attention.cancelTakeoversForMissingTabs(tabs);
       this.#emit({ type: "browser-changed", tabs, activeTabId });
     });
     this.#browser.onControlChanged((state) => {
@@ -537,22 +318,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   getStatus(): AgentStatus {
-    return structuredClone(this.#status);
+    return this.#providers.status();
   }
 
   async getUsage(botId?: string): Promise<AccountUsage> {
-    if (!botId) {
-      const client = this.#clients.get("codex");
-      return client ? this.#refreshUsage(client) : { limits: [] };
-    }
+    if (!botId) return this.#providers.usage();
     const bot = this.listBots().find((candidate) => candidate.id === botId);
     if (!bot) throw new Error("Agent not found.");
-    const client = this.#clients.get(bot.provider);
-    return client ? this.#refreshUsage(client, bot.model, false) : { limits: [] };
+    return this.#providers.usage({ provider: bot.provider, model: bot.model });
   }
 
   listBots(): BotSummary[] {
-    return this.#store.list().filter((bot) => !this.#pendingDuplicateBots.has(bot.id));
+    return this.#duplication.visibleBots(this.#store.list());
   }
 
   getRuntimeSnapshot(): AgentRuntimeSnapshot {
@@ -570,7 +347,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const activeTurns: AgentRuntimeSnapshot["activeTurns"] = [];
     const latestMessages: AgentRuntimeSnapshot["latestMessages"] = [];
     for (const bot of bots) {
-      const live = this.#snapshots.get(bot.id);
+      const live = this.#conversation.snapshot(bot.id);
       const liveLatest = [...(live?.messages ?? [])]
         .reverse()
         .find(
@@ -598,25 +375,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         });
       }
     }
-    const attentionComplete =
-      this.#pendingPrompts.size + this.#pendingApprovals.size + this.#pendingBrowserTakeovers.size <=
-      AGENT_RUNTIME_ATTENTION_LIMIT;
-    let remainingAttention = AGENT_RUNTIME_ATTENTION_LIMIT;
-    const pendingPrompts = [...this.#pendingPrompts.values()].slice(0, remainingAttention).map((pending) => ({
-      requestId: pending.id,
-      botId: pending.botId,
-      threadId: pending.publicThreadId,
-      turnId: pending.turnId,
-      questions: pending.questions.map(compactRuntimeQuestion),
-    }));
-    remainingAttention -= pendingPrompts.length;
-    const pendingApprovals = [...this.#pendingApprovals.values()]
-      .slice(0, remainingAttention)
-      .map((pending) => compactRuntimeApproval(pending.approval));
-    remainingAttention -= pendingApprovals.length;
-    const pendingBrowserTakeovers = [...this.#pendingBrowserTakeovers.values()]
-      .slice(0, remainingAttention)
-      .map((pending) => structuredClone(pending.request));
     return fitRuntimeSnapshot({
       bots: runtimeBots,
       activeTurns,
@@ -625,168 +383,57 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.#failedTurns,
       ),
       latestMessages,
-      attentionComplete,
-      pendingPrompts,
-      pendingApprovals,
-      pendingBrowserTakeovers,
+      ...this.#attention.runtimeAttention(),
       failedTurns: [...this.#failedTurns].map(([botId, turnId]) => ({ botId, turnId })),
     });
   }
 
   listMemories(botId: string): BotMemory[] {
-    this.#requireKnownBot(botId);
     return this.#memories.list(botId);
   }
 
   createMemory(input: CreateBotMemoryInput): BotMemory {
-    this.#requireKnownBot(input.botId);
-    const memory = this.#memories.createManual(input.botId, input.text);
-    this.#memoryStateChanged(input.botId);
-    return memory;
+    return this.#memories.create(input);
   }
 
   updateMemory(input: UpdateBotMemoryInput): BotMemory {
-    this.#requireKnownBot(input.botId);
-    const memory = this.#memories.updateManual(input.botId, input.memoryId, input.text);
-    this.#memoryStateChanged(input.botId);
-    return memory;
+    return this.#memories.update(input);
   }
 
   deleteMemory(input: DeleteBotMemoryInput): void {
-    this.#requireKnownBot(input.botId);
-    if (!this.#memories.delete(input.botId, input.memoryId)) {
-      throw new Error("This memory no longer exists.");
-    }
-    this.#memoryStateChanged(input.botId);
+    this.#memories.delete(input);
   }
 
   clearMemories(botId: string): void {
-    this.#requireKnownBot(botId);
-    this.#memoryEpochs.set(botId, this.#memoryEpoch(botId) + 1);
-    if (this.#memories.clear(botId) > 0) this.#memoryStateChanged(botId);
+    this.#memories.clear(botId);
   }
 
   listRoutines(botId: string): Routine[] {
-    this.#requireKnownBot(botId);
     return this.#routines.list(botId);
   }
 
   createRoutine(input: CreateRoutineInput, options: RoutineMutationOptions = {}): Routine {
-    this.#requireKnownBot(input.botId);
-    const routine =
-      options.recordConversationEvent === false
-        ? this.#routines.create(input)
-        : this.#mutateRoutineWithConversation(
-            input.botId,
-            "created",
-            () => this.#routines.create(input),
-            (created) => created,
-            options.turnId,
-          );
-    this.#routineStateChanged(input.botId);
-    this.#armRoutineTimer();
-    return routine;
+    return this.#routines.create(input, options);
   }
 
   updateRoutine(input: UpdateRoutineInput, options: RoutineMutationOptions = {}): Routine {
-    this.#requireKnownBot(input.botId);
-    const routine =
-      options.recordConversationEvent === false
-        ? this.#routines.update(input)
-        : this.#mutateRoutineWithConversation(
-            input.botId,
-            "updated",
-            () => this.#routines.update(input),
-            (updated) => updated,
-            options.turnId,
-          );
-    this.#routineStateChanged(input.botId);
-    this.#armRoutineTimer();
-    return routine;
+    return this.#routines.update(input, options);
   }
 
-  async deleteRoutine(input: DeleteRoutineInput, options: RoutineMutationOptions = {}): Promise<void> {
-    this.#requireKnownBot(input.botId);
-    const routine = this.#routines.get(input.botId, input.routineId);
-    if (!routine) throw new Error("This routine no longer exists.");
-    if (this.#routineDeletionBots.has(input.botId)) {
-      throw new Error("Another routine deletion is already in progress for this agent.");
-    }
-    this.#routineDeletionBots.add(input.botId);
-    try {
-      const activeRuns = await this.#interruptRoutineRunsBeforeDeletion(
-        input.botId,
-        this.#routines.activeRuns(input.botId, input.routineId),
-      );
-      if (options.recordConversationEvent === false) {
-        const database = this.#store.database;
-        const ownsTransaction = !database.connection.isTransaction;
-        if (ownsTransaction) database.connection.exec("BEGIN IMMEDIATE");
-        try {
-          for (const run of activeRuns) {
-            if (run.status === "queued" && run.deliveryId) {
-              if (this.#mailbox.getDelivery(run.deliveryId)?.delivery.status === "queued") {
-                this.#mailbox.cancelNow(input.botId, run.deliveryId);
-              }
-            }
-            this.#routines.updateRunStatus(run.id, "cancelled");
-          }
-          this.#routines.delete(input.botId, input.routineId);
-          if (ownsTransaction) database.connection.exec("COMMIT");
-        } catch (error) {
-          if (ownsTransaction && database.connection.isTransaction) database.connection.exec("ROLLBACK");
-          this.#mailbox.restorePersistedState();
-          throw error;
-        }
-      } else {
-        this.#mutateRoutineWithConversation(
-          input.botId,
-          "deleted",
-          () => this.#routines.delete(input.botId, input.routineId),
-          () => routine,
-          options.turnId,
-          {
-            beforeMutate: (snapshot) => {
-              for (const run of activeRuns) {
-                if (run.status === "queued" && run.deliveryId) {
-                  if (this.#mailbox.getDelivery(run.deliveryId)?.delivery.status === "queued") {
-                    this.#mailbox.cancelNow(input.botId, run.deliveryId);
-                  }
-                }
-                this.#appendRoutineRunTransition(snapshot, run, "cancelled");
-              }
-            },
-            onRollback: () => this.#mailbox.restorePersistedState(),
-          },
-        );
-      }
-      this.#emitQueue(input.botId);
-      this.#routineStateChanged(input.botId);
-      this.#armRoutineTimer();
-    } finally {
-      this.#routineDeletionBots.delete(input.botId);
-      if (this.#mailbox.nextQueued(input.botId)) this.#scheduleDrain(input.botId);
-    }
+  deleteRoutine(input: DeleteRoutineInput, options: RoutineMutationOptions = {}): Promise<void> {
+    return this.#routines.delete(input, options);
   }
 
-  async testRoutine(input: TestRoutineInput): Promise<RoutineRun> {
-    this.#requireKnownBot(input.botId);
-    const routine = this.#routines.get(input.botId, input.routineId);
-    if (!routine) throw new Error("This routine no longer exists.");
-    const run = this.#routines.createRun(routine, null, "manual", new Date().toISOString());
-    await this.#enqueueRoutineRun(run);
-    this.#routineStateChanged(input.botId);
-    return this.#routines.listRuns(input.botId, input.routineId, 1)[0] ?? run;
+  testRoutine(input: TestRoutineInput): Promise<RoutineRun> {
+    return this.#routines.test(input);
   }
 
   listRoutineRuns(input: ListRoutineRunsInput): RoutineRun[] {
-    this.#requireKnownBot(input.botId);
-    if (!this.#routines.get(input.botId, input.routineId)) throw new Error("This routine no longer exists.");
-    return this.#routines.listRuns(input.botId, input.routineId, input.limit);
+    return this.#routines.listRuns(input);
   }
 
   listModels(): AgentModelOption[] {
-    return structuredClone(this.#models);
+    return this.#providers.listModels();
   }
 
   async createBot(input: CreateBotInput): Promise<BotSummary> {
@@ -796,20 +443,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     let bot = await this.#store.createBot(input);
     try {
       await this.#prepareBotWorkspace(bot);
-      if (this.#preferredProvider !== bot.provider) {
+      const preferredProvider = this.#providers.preferredProvider();
+      if (preferredProvider !== bot.provider) {
+        const models = this.#providers.listModels();
         const preferredDefault =
-          this.#preferredProvider === "codex"
-            ? "gpt-5.6-luna"
-            : this.#preferredProvider === "claude"
-              ? "claude-opus-5"
-              : null;
+          preferredProvider === "codex" ? "gpt-5.6-luna" : preferredProvider === "claude" ? "claude-opus-5" : null;
         const preferredModel =
-          this.#models.find((model) => model.provider === this.#preferredProvider && model.id === preferredDefault) ??
-          this.#models.find((model) => model.provider === this.#preferredProvider);
-        if (!preferredModel) throw new Error(`${providerLabel(this.#preferredProvider)} has no available model.`);
+          models.find((model) => model.provider === preferredProvider && model.id === preferredDefault) ??
+          models.find((model) => model.provider === preferredProvider);
+        if (!preferredModel) throw new Error(`${providerLabel(preferredProvider)} has no available model.`);
         bot = await this.#store.updateBot({
           botId: bot.id,
-          provider: this.#preferredProvider,
+          provider: preferredProvider,
           model: preferredModel.id,
           reasoningEffort: preferredModel.defaultReasoningEffort,
         });
@@ -851,84 +496,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return this.#store.committedBotDuplication(operationId, sourceBotId);
   }
 
-  async duplicateBot(sourceBotId: string, operationId: string = randomUUID()): Promise<BotSummary> {
-    const releaseDuplication = await this.#acquireDuplicationCommitLock();
-    let releaseOnExit = true;
-    let duplicate: BotSummary | null = null;
-    try {
-      const source = this.#requireKnownBot(sourceBotId);
-      if (this.#duplicatingBots.has(sourceBotId)) throw new Error("This agent is already being duplicated.");
-      this.#assertBotIdleForDuplication(sourceBotId);
-      const sourceSignature = this.#duplicationSourceSignature(sourceBotId);
-      this.#duplicatingBots.add(sourceBotId);
-      duplicate = await this.#store.duplicateBot(sourceBotId, operationId);
-      this.#pendingDuplicateBots.add(duplicate.id);
-      this.#pendingDuplicateOperations.set(duplicate.id, { operationId, sourceBotId });
-      this.#assertDuplicationSourceUnchanged(sourceBotId, sourceSignature);
-      this.#memories.duplicate(sourceBotId, duplicate.id);
-      const routines = this.#routines.duplicate(sourceBotId, duplicate.id, new Date());
-      this.#assertDuplicationSourceUnchanged(sourceBotId, sourceSignature);
-      if (source.marketplaceSource) {
-        duplicate = this.#store.setMarketplaceSource(duplicate.id, {
-          ...structuredClone(source.marketplaceSource),
-          routineIds: source.marketplaceSource.routineIds.flatMap((routineId) => {
-            const copied = routines.get(routineId);
-            return copied ? [copied.id] : [];
-          }),
-        });
-      }
-      this.#assertDuplicationSourceUnchanged(sourceBotId, sourceSignature);
-      const completedDuplicate = duplicate;
-      this.#pendingDuplicateReleases.set(completedDuplicate.id, releaseDuplication);
-      releaseOnExit = false;
-      return this.#store.list().find((candidate) => candidate.id === completedDuplicate.id) ?? completedDuplicate;
-    } catch (error) {
-      if (!duplicate) throw error;
-      let rollbackError: unknown;
-      try {
-        await this.#deleteBotData(duplicate);
-        this.#pendingDuplicateBots.delete(duplicate.id);
-        this.#pendingDuplicateOperations.delete(duplicate.id);
-      } catch (caught) {
-        rollbackError = caught;
-      }
-      this.#armRoutineTimer();
-      if (rollbackError) {
-        throw new AggregateError(
-          [error, rollbackError],
-          "Agent duplication failed and the incomplete copy could not be removed.",
-        );
-      }
-      throw error;
-    } finally {
-      this.#duplicatingBots.delete(sourceBotId);
-      if (releaseOnExit) releaseDuplication();
-    }
+  duplicateBot(sourceBotId: string, operationId: string = randomUUID()): Promise<BotSummary> {
+    return this.#duplication.duplicate(sourceBotId, operationId);
   }
 
-  async commitBotDuplication(botId: string, layout: SidebarLayoutSnapshot): Promise<DuplicateBotResult> {
-    if (!this.#pendingDuplicateBots.has(botId)) throw new Error("This agent duplication is not pending.");
-    const operation = this.#pendingDuplicateOperations.get(botId);
-    if (!operation) throw new Error("This agent duplication operation is unavailable.");
-    const releaseDuplication = this.#pendingDuplicateReleases.get(botId);
-    try {
-      const result = await this.#store.commitBotDuplication(
-        botId,
-        operation.operationId,
-        operation.sourceBotId,
-        layout,
-      );
-      this.#pendingDuplicateBots.delete(botId);
-      this.#pendingDuplicateOperations.delete(botId);
-      this.#emit({ type: "bots-changed", bots: this.listBots() });
-      if (this.#memories.list(result.bot.id).length > 0) this.#memoryStateChanged(result.bot.id);
-      if (this.#routines.list(result.bot.id).length > 0) this.#routineStateChanged(result.bot.id);
-      this.#armRoutineTimer();
-      return result;
-    } finally {
-      this.#pendingDuplicateReleases.delete(botId);
-      releaseDuplication?.();
-    }
+  commitBotDuplication(botId: string, layout: SidebarLayoutSnapshot): Promise<DuplicateBotResult> {
+    return this.#duplication.commit(botId, layout);
   }
 
   setMarketplaceSource(botId: string, source: NonNullable<BotSummary["marketplaceSource"]>): BotSummary {
@@ -938,10 +511,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async updateBot(input: UpdateBotInput): Promise<BotSummary> {
-    this.#requireKnownBot(input.botId);
+    this.#conversation.requireKnownBot(input.botId);
     const previous = this.#store.list().find((bot) => bot.id === input.botId);
     const requestedModel = input.model
-      ? this.#models.find((model) => model.id === input.model && (!input.provider || model.provider === input.provider))
+      ? this.#providers
+          .listModels()
+          .find((model) => model.id === input.model && (!input.provider || model.provider === input.provider))
       : undefined;
     if (input.model && !requestedModel) throw new Error("The selected agent model is unavailable.");
     const requestedProvider = input.provider ?? requestedModel?.provider ?? previous?.provider;
@@ -956,7 +531,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         .listQueue(input.botId)
         .deliveries.some((delivery) => ["queued", "starting", "running"].includes(delivery.status));
       const activeTurn =
-        this.#snapshots.get(input.botId)?.activeTurnId ??
+        this.#conversation.snapshot(input.botId)?.activeTurnId ??
         (previous.threadId ? this.#store.database.readConversation(input.botId, previous.threadId).activeTurnId : null);
       if (hasPendingWork || activeTurn) {
         throw new Error("Wait for the active turn and queue to finish before changing provider.");
@@ -986,7 +561,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     if (profileChanged && activeSession) {
       // Re-resume before the next turn so App Server receives the updated standing instructions.
-      this.#loadedThreads.delete(activeSession.externalSessionId);
+      this.#conversation.unloadThread(activeSession.externalSessionId);
     }
     this.#emit({ type: "bots-changed", bots: this.listBots() });
     return bot;
@@ -1041,63 +616,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const hasPendingWork = this.#mailbox
       .listQueue(botId)
       .deliveries.some((delivery) => ["queued", "starting", "running"].includes(delivery.status));
-    if (hasPendingWork || this.#snapshots.get(botId)?.activeTurnId) {
+    if (hasPendingWork || this.#conversation.snapshot(botId)?.activeTurnId) {
       throw new Error("Stop the agent and cancel its queued messages before deleting it.");
     }
 
-    const wasPendingDuplicate = this.#pendingDuplicateBots.has(botId);
-    const releaseDuplication = this.#pendingDuplicateReleases.get(botId);
+    const { wasPending, release } = this.#duplication.releaseForDelete(botId);
     try {
       await this.#deleteBotData(bot);
     } finally {
-      if (wasPendingDuplicate) {
-        this.#pendingDuplicateReleases.delete(botId);
-        releaseDuplication?.();
-      }
+      release();
     }
-    this.#pendingDuplicateBots.delete(botId);
-    this.#pendingDuplicateOperations.delete(botId);
-    if (!wasPendingDuplicate) this.#emit({ type: "bots-changed", bots: this.listBots() });
-    this.#armRoutineTimer();
-  }
-
-  #assertBotIdleForDuplication(botId: string): void {
-    const hasPendingWork = this.#mailbox
-      .listQueue(botId)
-      .deliveries.some((delivery) => ["queued", "starting", "running"].includes(delivery.status));
-    const hasAttention =
-      [...this.#pendingPrompts.values()].some((pending) => pending.botId === botId) ||
-      [...this.#pendingApprovals.values()].some((pending) => pending.approval.botId === botId) ||
-      [...this.#pendingBrowserTakeovers.values()].some((pending) => pending.request.botId === botId);
-    if (hasPendingWork || hasAttention || this.#snapshots.get(botId)?.activeTurnId) {
-      throw new Error("Wait for the agent to finish and clear its queue before duplicating it.");
-    }
-  }
-
-  async #acquireDuplicationCommitLock(): Promise<() => void> {
-    const previous = this.#duplicationCommitQueue;
-    let release = (): void => undefined;
-    const current = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    this.#duplicationCommitQueue = previous.then(() => current);
-    await previous;
-    return release;
-  }
-
-  #duplicationSourceSignature(botId: string): string {
-    return JSON.stringify({
-      bot: this.#requireKnownBot(botId),
-      memories: this.#memories.list(botId),
-      routines: this.#routines.list(botId),
-    });
-  }
-
-  #assertDuplicationSourceUnchanged(botId: string, signature: string): void {
-    this.#assertBotIdleForDuplication(botId);
-    if (this.#duplicationSourceSignature(botId) !== signature) {
-      throw new Error("The agent changed while it was being duplicated. Try again.");
-    }
+    this.#duplication.forget(botId);
+    if (!wasPending) this.#emit({ type: "bots-changed", bots: this.listBots() });
+    this.#routines.arm();
   }
 
   async #deleteBotData(bot: BotSummary): Promise<void> {
@@ -1113,29 +644,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     } catch (error) {
       errors.push(error);
     }
-    this.#snapshots.delete(bot.id);
+    this.#conversation.forgetBot(bot.id);
     this.#failedTurns.delete(bot.id);
-    this.#lastConversationSignatures.delete(bot.id);
     this.#drainingBots.delete(bot.id);
     this.#scheduledDrains.delete(bot.id);
-    for (const [key, event] of this.#pendingHostedSiteTerminalEvents) {
-      if (event.botId !== bot.id) continue;
-      this.#pendingHostedSiteTerminalEvents.delete(key);
-      this.#pendingHostedSiteTerminalDeliveries.delete(key);
-    }
-    if (this.#pendingHostedSiteTerminalEvents.size === 0 && this.#hostedSiteTerminalRetryTimer) {
-      clearTimeout(this.#hostedSiteTerminalRetryTimer);
-      this.#hostedSiteTerminalRetryTimer = null;
-    }
+    this.#hostedSites.forgetBot(bot.id);
     if (bot.threadId) {
       for (const session of providerSessions) {
-        this.#threadToBot.delete(session.externalSessionId);
-        this.#loadedThreads.delete(session.externalSessionId);
-        this.#contextBudgets.delete(session.externalSessionId);
-        this.#clearCompactionTimer(session.externalSessionId);
+        this.#conversation.unbindThread(session.externalSessionId);
+        this.#conversation.unloadThread(session.externalSessionId);
+        this.#compaction.forgetThread(session.externalSessionId);
       }
     }
-    this.#compactingBots.delete(bot.id);
+    this.#compaction.forgetBot(bot.id);
     if (errors.length > 0) throw new AggregateError(errors, "The Bot data could not be removed completely.");
   }
 
@@ -1144,148 +665,62 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await this.#store.initialize();
     await this.#mailbox.initialize();
     this.#recoverPersistedTurns();
-    this.#restorePendingHostedSiteTerminalEvents();
-    this.#reconcileHostedSiteEventsAfterRestart();
+    this.#hostedSites.restore();
     this.#routines.skipMissed(new Date());
     this.#initialized = true;
-    await this.#connect(
-      "starting",
-      BUILT_IN_PROVIDER_DRIVERS.map((driver) => driver.id),
-    );
+    await this.#providers.start();
     for (const bot of this.#store.list()) this.#emitQueue(bot.id);
-    await this.#resumePendingRoutineRuns();
-    this.#armRoutineTimer();
+    await this.#routines.resumePendingRuns();
+    this.#routines.arm();
   }
 
-  async setPreferredProvider(provider: AgentProvider): Promise<void> {
-    this.#preferredProvider = provider;
-    if (!this.#initialized) return;
-    await this.ensureProvider(provider).catch(() => undefined);
-    const account = this.#accounts.get(provider);
-    if (!this.#clients.has(provider) || !account) return;
-    this.#setStatus({
-      cliVersion: this.#cli.get(provider)?.version ?? null,
-      auth: requireProviderDriver(provider).authState(account),
-    });
+  setPreferredProvider(provider: AgentProvider): Promise<void> {
+    return this.#providers.setPreferredProvider(provider, this.#initialized);
   }
 
-  async ensureProvider(provider: AgentProvider): Promise<void> {
-    if (this.#clients.has(provider)) return;
-    let start = this.#providerStarts.get(provider);
-    if (!start) {
-      start = this.#connect("starting", [provider]).finally(() => {
-        this.#providerStarts.delete(provider);
-      });
-      this.#providerStarts.set(provider, start);
-    }
-    await start;
-    if (this.#clients.has(provider)) return;
-    const status = this.#status.providers?.find((candidate) => candidate.id === provider);
-    throw new Error(status?.message ?? `${providerLabel(provider)} CLI is not ready or signed in.`);
+  ensureProvider(provider: AgentProvider): Promise<void> {
+    return this.#providers.ensureProvider(provider);
   }
 
   refreshProviders(): Promise<AgentStatus> {
-    if (this.#providerRefresh) return this.#providerRefresh;
-    if (this.#status.phase === "starting" || this.#status.phase === "restarting") {
-      return Promise.resolve(this.getStatus());
-    }
-
-    const refresh = this.#refreshProviders().finally(() => {
-      if (this.#providerRefresh === refresh) this.#providerRefresh = null;
-    });
-    this.#providerRefresh = refresh;
-    return refresh;
+    return this.#providers.refreshProviders();
   }
 
-  async refreshProvider(provider: AgentProvider): Promise<AgentStatus> {
-    if (this.#clients.has(provider)) return this.getStatus();
-    let start = this.#providerStarts.get(provider);
-    if (!start) {
-      start = this.#connect("starting", [provider], {
-        preserveCheckErrors: true,
-        refreshRuntimeInBackground: true,
-      }).finally(() => {
-        this.#providerStarts.delete(provider);
-      });
-      this.#providerStarts.set(provider, start);
-    }
-    await start;
-    return this.getStatus();
+  refreshProvider(provider: AgentProvider): Promise<AgentStatus> {
+    return this.#providers.refreshProvider(provider);
   }
 
-  async connectChatGPT(openExternal: (url: string) => Promise<void>): Promise<AgentStatus> {
-    const start = this.#providerStarts.get("codex");
-    if (start) await start;
-    if (start && this.#clients.has("codex") && this.#accounts.has("codex")) return this.getStatus();
-    if (this.#providerRefresh || (!start && ["starting", "restarting"].includes(this.#status.phase))) {
-      return Promise.resolve(this.getStatus());
-    }
-    return this.#runProviderConnectionCommand("codex", async () => {
-      await this.#cancelCodexLogin(null);
-      return this.#startCodexLogin(openExternal);
-    });
+  connectChatGPT(openExternal: (url: string) => Promise<void>): Promise<AgentStatus> {
+    return this.#providers.connectChatGPT(openExternal);
   }
 
-  async connectClaude(): Promise<AgentStatus> {
-    const start = this.#providerStarts.get("claude");
-    if (start) await start;
-    if (start && this.#clients.has("claude") && this.#accounts.has("claude")) return this.getStatus();
-    if (this.#providerRefresh || (!start && ["starting", "restarting"].includes(this.#status.phase))) {
-      return Promise.resolve(this.getStatus());
-    }
-    return this.#runProviderConnectionCommand("claude", async () => {
-      await this.#cancelClaudeLogin(null);
-      return this.#startClaudeLogin();
-    });
+  connectClaude(): Promise<AgentStatus> {
+    return this.#providers.connectClaude();
   }
 
-  async connectGrok(): Promise<AgentStatus> {
-    const start = this.#providerStarts.get("grok");
-    if (start) await start;
-    if (start && this.#clients.has("grok") && this.#accounts.has("grok")) return this.getStatus();
-    if (this.#providerRefresh || (!start && ["starting", "restarting"].includes(this.#status.phase))) {
-      return Promise.resolve(this.getStatus());
-    }
-    return this.#runProviderConnectionCommand("grok", async () => {
-      await this.#cancelGrokLogin(null);
-      return this.#startGrokLogin();
-    });
+  connectGrok(): Promise<AgentStatus> {
+    return this.#providers.connectGrok();
   }
 
   async stop(): Promise<void> {
     this.#stopping = true;
     this.#initialized = false;
-    if (this.#restartTimer) clearTimeout(this.#restartTimer);
-    this.#restartTimer = null;
-    if (this.#routineTimer) clearTimeout(this.#routineTimer);
-    this.#routineTimer = null;
-    if (this.#hostedSiteTerminalRetryTimer) clearTimeout(this.#hostedSiteTerminalRetryTimer);
-    this.#hostedSiteTerminalRetryTimer = null;
-    this.#pendingHostedSiteTerminalEvents.clear();
-    this.#pendingHostedSiteTerminalDeliveries.clear();
-    this.#clearCompactionRuntime();
+    this.#routines.dispose();
+    this.#hostedSites.dispose();
+    this.#compaction.dispose();
     for (const pending of this.#pendingDeltas.values()) {
       if (pending.timer) clearTimeout(pending.timer);
     }
     this.#pendingDeltas.clear();
     this.#pendingHandoffs.clear();
-    this.#pendingMemoryMutations.clear();
+    this.#memories.clearPending();
     this.#pendingRuntimeRefreshes.clear();
-    this.#clearPendingPrompts();
-    this.#clearPendingBrowserTakeovers();
-    this.#pendingApprovals.clear();
+    this.#attention.clearPrompts();
+    this.#attention.clearBrowserTakeovers();
+    this.#attention.clearApprovals();
     this.#failedTurns.clear();
-    const pendingLogin = this.#codexLogin;
-    this.#codexLogin = null;
-    const claudeLogin = this.#claudeLogin;
-    this.#claudeLogin = null;
-    const grokLogin = this.#grokLogin;
-    this.#grokLogin = null;
-    this.#providerConnectionCommands.clear();
-    if (claudeLogin?.child.exitCode === null) claudeLogin.child.kill("SIGTERM");
-    if (grokLogin?.child.exitCode === null) grokLogin.child.kill("SIGTERM");
-    if (pendingLogin) clearTimeout(pendingLogin.timer);
-    for (const [botId, snapshot] of this.#snapshots) {
+    const clients = this.#providers.dispose();
+    for (const [botId, snapshot] of this.#conversation.activeSnapshots()) {
       if (!snapshot.activeTurnId) continue;
       const session = this.#store.activeProviderSession(botId);
       if (session) this.#interruptImageGenerations(botId, session.externalSessionId, snapshot.activeTurnId);
@@ -1293,8 +728,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#turnAssociations.clear();
     this.#scheduledDrains.clear();
     this.#browser.clearControls();
-    const clients = [...this.#clients.values(), ...(pendingLogin ? [pendingLogin.client] : [])];
-    this.#clients.clear();
     await Promise.all(clients.map((client) => client.stop().catch(() => undefined)));
     await Promise.allSettled([...this.#drainTasks.values()]);
     await Promise.allSettled(
@@ -1306,16 +739,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await Promise.allSettled([...this.#responseAttachmentCommands.values()]);
     this.#responseAttachmentCommands.clear();
     this.#interruptedTurns.clear();
-    this.#setStatus({ phase: "stopped", message: null });
+    this.#providers.markStopped();
   }
 
   async readConversation(botId: string): Promise<ConversationSnapshot> {
     const bot = await this.#store.getOrCreate(botId);
     const persisted = this.#store.database.readConversation(botId, bot.threadId);
-    const live = this.#snapshots.get(botId);
+    const live = this.#conversation.snapshot(botId);
     const snapshot = live?.activeTurnId ? mergeConversationSnapshots(persisted, live) : persisted;
     this.#syncMailboxMessages(snapshot);
-    this.#snapshots.set(botId, snapshot);
+    this.#conversation.setSnapshot(botId, snapshot);
     return structuredClone(snapshot);
   }
 
@@ -1403,10 +836,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       input.keepAttachmentIds,
       input.attachmentDraftIds,
     );
-    const snapshot = this.#snapshots.get(input.botId);
+    const snapshot = this.#conversation.snapshot(input.botId);
     if (snapshot) this.#syncMailboxMessages(snapshot);
     this.#emitQueue(input.botId);
-    if (snapshot) this.#emitConversation(snapshot, "queue.message-updated");
+    if (snapshot) this.#conversation.emitConversation(snapshot, "queue.message-updated");
   }
 
   async reorderQueue(input: ReorderQueueInput): Promise<void> {
@@ -1416,9 +849,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async steerQueuedMessage(input: SteerQueuedMessageInput): Promise<void> {
     const bot = await this.#store.getOrCreate(input.botId);
-    const client = this.#requireReadyClient(providerForBot(bot));
+    const client = this.#providers.requireReadyClient(providerForBot(bot));
     const session = this.#store.activeProviderSession(bot.id);
-    const snapshot = this.#ensureSnapshot(bot.id, bot.threadId);
+    const snapshot = this.#conversation.ensureSnapshot(bot.id, bot.threadId);
     if (!session || !snapshot.activeTurnId || snapshot.activeTurnId !== input.expectedTurnId) {
       throw new Error("The active turn changed before this message could be steered.");
     }
@@ -1444,7 +877,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await this.#mailbox.markRunning(input.deliveryId, turnId);
       this.#syncMailboxMessages(snapshot);
       this.#emitQueue(bot.id);
-      this.#emitConversation(snapshot, "queue.message-steered", { deliveryId: input.deliveryId });
+      this.#conversation.emitConversation(snapshot, "queue.message-steered", { deliveryId: input.deliveryId });
     } catch (error) {
       await this.#mailbox.restoreQueued(input.deliveryId);
       this.#emitQueue(bot.id);
@@ -1453,7 +886,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async sendMessage(input: SendMessageInput): Promise<QueuedMessageReceipt> {
-    if (this.#pendingDuplicateBots.has(input.botId)) throw new Error(`Unknown bot: ${input.botId}`);
+    if (this.#duplication.isPending(input.botId)) throw new Error(`Unknown bot: ${input.botId}`);
     const bot = await this.#store.getOrCreate(input.botId);
     await this.ensureProvider(providerForBot(bot));
     const receipt = await this.#mailbox.enqueue({
@@ -1465,7 +898,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     });
     const delivery = this.#mailbox.getDelivery(receipt.deliveries[0].id);
     if (!delivery) throw new Error("Unable to create queued message.");
-    const snapshot = this.#ensureSnapshot(bot.id, bot.threadId);
+    const snapshot = this.#conversation.ensureSnapshot(bot.id, bot.threadId);
     this.#syncMailboxMessages(snapshot);
     await this.#store.updatePreview(
       bot.id,
@@ -1476,7 +909,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ) || delivery.delivery.attachments.map((item) => item.name).join(", "),
     );
     this.#emit({ type: "bots-changed", bots: this.listBots() });
-    this.#emitConversation(snapshot);
+    this.#conversation.emitConversation(snapshot);
     this.#emitQueue(bot.id);
     this.#scheduleDrain(bot.id);
     return receipt;
@@ -1484,22 +917,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async setMessageReaction(input: SetMessageReactionInput): Promise<void> {
     const bot = await this.#store.getOrCreate(input.botId);
-    const snapshot = this.#ensureSnapshot(bot.id, bot.threadId);
+    const snapshot = this.#conversation.ensureSnapshot(bot.id, bot.threadId);
     if (!snapshot.messages.some((message) => message.id === input.messageId)) {
       await this.readConversation(bot.id);
     }
-    const current = this.#ensureSnapshot(bot.id, bot.threadId);
+    const current = this.#conversation.ensureSnapshot(bot.id, bot.threadId);
     if (!current.messages.some((message) => message.id === input.messageId)) {
       throw new Error("The message is no longer available.");
     }
     await this.#mailbox.setReaction(bot.id, input.messageId, { kind: "user" }, input.emoji);
     this.#syncMailboxMessages(current);
-    this.#emitConversation(current);
+    this.#conversation.emitConversation(current);
   }
 
   async interrupt(botId: string, turnId: string): Promise<void> {
     const bot = await this.#store.getOrCreate(botId);
-    const client = this.#requireReadyClient(providerForBot(bot));
+    const client = this.#providers.requireReadyClient(providerForBot(bot));
     const session = this.#store.activeProviderSession(botId);
     if (!session) return;
     this.#interruptImageGenerations(botId, session.externalSessionId, turnId);
@@ -1507,12 +940,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async interruptAll(): Promise<void> {
-    if (this.#status.phase !== "ready") return;
+    if (!this.#providers.isReady()) return;
     const requests: Promise<unknown>[] = [];
-    for (const [botId, snapshot] of this.#snapshots) {
+    for (const [botId, snapshot] of this.#conversation.activeSnapshots()) {
       if (!snapshot.threadId || !snapshot.activeTurnId) continue;
       const bot = this.#store.list().find((candidate) => candidate.id === botId);
-      const client = bot ? this.#clientForBot(bot) : null;
+      const client = bot ? this.#providers.clientForBot(bot) : null;
       const session = bot ? this.#store.activeProviderSession(bot.id) : null;
       if (!client || !session) continue;
       this.#interruptImageGenerations(botId, session.externalSessionId, snapshot.activeTurnId);
@@ -1533,879 +966,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async respondToPrompt(input: RespondToPromptInput): Promise<void> {
-    const pending = this.#pendingPrompts.get(input.requestId);
-    if (!pending) throw new Error("This prompt is no longer active.");
-    const questionIds = new Set(pending.questions.map((question) => question.id));
-    if (Object.keys(input.answers).some((id) => !questionIds.has(id))) {
-      throw new Error("A prompt answer does not match an active question.");
-    }
-    this.#markRoutineRunningForTurn(getString(pending.params, "turnId"));
-
-    const result =
-      pending.responseKind === "dynamic-tool"
-        ? dynamicPromptResult(input.answers)
-        : pending.responseKind === "mcp-elicitation"
-          ? mcpElicitationResult(pending.params, input.answers)
-          : {
-              answers: Object.fromEntries(
-                Object.entries(input.answers).map(([id, values]) => [id, { answers: values }]),
-              ),
-            };
-    pending.client.respond(pending.id, result);
-    this.#pendingPrompts.delete(input.requestId);
-    this.#emit({ type: "agent-input-resolved", kind: "prompt", requestId: input.requestId, botId: pending.botId });
-    try {
-      this.#resolvePersistedPrompt(pending, promptResolution(pending.questions, input.answers));
-    } catch (error) {
-      this.#emitError("prompt_persistence_failed", error, pending.botId);
-    }
-    this.#emitRuntimeSnapshot();
+    await this.#attention.respondToPrompt(input);
   }
 
   async respondToApproval(input: RespondToApprovalInput): Promise<void> {
-    const pending = this.#pendingApprovals.get(input.requestId);
-    if (!pending) throw new Error("This approval is no longer active.");
-    this.#markRoutineRunningForTurn(getString(pending.params, "turnId"));
-
-    if (pending.hostedSiteMutation) {
-      this.#pendingApprovals.delete(input.requestId);
-      const mutation = pending.hostedSiteMutation;
-      if (input.decision === "decline") {
-        this.#recordHostedSiteTerminalEvent(mutation, "cancelled", mutation.eventDetails, () => {
-          pending.client.respondError(pending.id, {
-            code: -32001,
-            message: "The user declined this hosted site change.",
-          });
-        });
-      } else {
-        try {
-          this.#recordHostedSiteEvent(mutation, "running", mutation.eventDetails);
-        } catch (error) {
-          try {
-            pending.client.respondError(pending.id, {
-              code: -32603,
-              message: "The hosted site change could not be recorded.",
-            });
-          } catch (responseError) {
-            this.#emitError("server_response_failed", responseError, pending.approval.botId);
-          }
-          this.#emitError("hosted_site_marker_persistence_failed", error, pending.approval.botId);
-          this.#emit({
-            type: "agent-input-resolved",
-            kind: "approval",
-            requestId: input.requestId,
-            botId: pending.approval.botId,
-          });
-          this.#emitRuntimeSnapshot();
-          return;
-        }
-        let result: HostedSiteMutationResult | null = null;
-        try {
-          result = await this.#executeHostedSiteMutation(mutation);
-        } catch (error) {
-          this.#recordHostedSiteTerminalEvent(mutation, "failed", mutation.eventDetails, () => {
-            pending.client.respondError(pending.id, { code: -32603, message: String(error) });
-          });
-          this.#emitError("server_request_failed", error, pending.approval.botId);
-        }
-        if (result) {
-          this.#recordHostedSiteTerminalEvent(mutation, "succeeded", result.eventDetails, () => {
-            pending.client.respond(pending.id, result.response);
-          });
-        }
-      }
-    } else if (pending.approval.kind === "permissions") {
-      const permissions = getRecord(pending.params, "permissions") ?? {};
-      pending.client.respond(pending.id, {
-        permissions: input.decision === "accept" ? permissions : {},
-        scope: "turn",
-      });
-    } else if (pending.method === "applyPatchApproval" || pending.method === "execCommandApproval") {
-      pending.client.respond(pending.id, {
-        decision:
-          input.decision === "accept" ? "approved" : { denied: { rejection: "The user declined this action." } },
-      });
-    } else {
-      pending.client.respond(pending.id, { decision: input.decision });
-    }
-    this.#pendingApprovals.delete(input.requestId);
-    this.#emit({
-      type: "agent-input-resolved",
-      kind: "approval",
-      requestId: input.requestId,
-      botId: pending.approval.botId,
-    });
-    this.#emitRuntimeSnapshot();
+    await this.#attention.respondToApproval(input);
   }
 
   async respondToBrowserTakeover(input: RespondToBrowserTakeoverInput): Promise<void> {
-    const pending = this.#pendingBrowserTakeovers.get(input.requestId);
-    if (!pending) throw new Error("This browser takeover is no longer active.");
-    this.#markRoutineRunningForTurn(pending.request.turnId);
-    this.#resolveBrowserTakeover(input.requestId, pending, input.decision);
-  }
-
-  async #runProviderConnectionCommand(
-    provider: AgentProvider,
-    command: () => Promise<AgentStatus>,
-  ): Promise<AgentStatus> {
-    const previous = this.#providerConnectionCommands.get(provider) ?? Promise.resolve();
-    let result = this.getStatus();
-    const current = previous
-      .catch(() => undefined)
-      .then(async () => {
-        result = await command();
-      });
-    this.#providerConnectionCommands.set(provider, current);
-    try {
-      await current;
-      return result;
-    } finally {
-      if (this.#providerConnectionCommands.get(provider) === current) {
-        this.#providerConnectionCommands.delete(provider);
-      }
-    }
-  }
-
-  async #refreshProviders(): Promise<AgentStatus> {
-    await Promise.all([
-      this.#runProviderConnectionCommand("codex", () => this.#settleCodexLoginForRefresh()),
-      this.#runProviderConnectionCommand("claude", async () => {
-        await this.#cancelClaudeLogin(null);
-        return this.getStatus();
-      }),
-      this.#runProviderConnectionCommand("grok", async () => {
-        await this.#cancelGrokLogin(null);
-        return this.getStatus();
-      }),
-    ]);
-
-    const activeClients = [...this.#clients];
-    if (activeClients.length > 0) {
-      let providers = this.#status.providers;
-      for (const [provider] of activeClients) {
-        providers = updateProviderStatus(providers, provider, {
-          state: "checking",
-          version: this.#cli.get(provider)?.version ?? null,
-          message: null,
-          email: this.#accounts.get(provider)?.email ?? null,
-          checkError: null,
-        });
-      }
-      this.#setStatus({ providers });
-    }
-
-    await Promise.all(
-      activeClients.map(async ([provider, client]) => {
-        try {
-          const account = await client.request("account/read", { refreshToken: true }, decodeAccountReadResult, 5_000);
-          if (account.account) {
-            requireProviderDriver(provider).validateAccount(account.account);
-            this.#accounts.set(provider, account.account);
-            this.#setStatus({
-              providers: updateProviderStatus(this.#status.providers, provider, {
-                state: "available",
-                version: this.#cli.get(provider)?.version ?? null,
-                message: null,
-                email: account.account.email ?? null,
-                checkError: null,
-              }),
-            });
-            return;
-          }
-          this.#clients.delete(provider);
-          this.#cli.delete(provider);
-          this.#accounts.delete(provider);
-          await client.stop().catch(() => undefined);
-        } catch {
-          // Keep a working client when an explicit account refresh is temporarily unavailable.
-          const label = provider === "codex" ? "ChatGPT" : providerLabel(provider);
-          this.#setStatus({
-            providers: updateProviderStatus(this.#status.providers, provider, {
-              state: "available",
-              version: this.#cli.get(provider)?.version ?? null,
-              message: null,
-              email: this.#accounts.get(provider)?.email ?? null,
-              checkError: `Could not verify ${label}. Keeping the existing connection.`,
-            }),
-          });
-        }
-      }),
-    );
-
-    await this.#connect(
-      "starting",
-      BUILT_IN_PROVIDER_DRIVERS.map((driver) => driver.id),
-      { preserveCheckErrors: true, refreshRuntimeInBackground: true },
-    );
-    return this.getStatus();
-  }
-
-  async #settleCodexLoginForRefresh(): Promise<AgentStatus> {
-    const pending = this.#codexLogin;
-    if (!pending) {
-      this.#clearProviderConnectionState("codex");
-      return this.getStatus();
-    }
-    this.#codexLogin = null;
-    clearTimeout(pending.timer);
-    try {
-      const account = await pending.client.request("account/read", { refreshToken: true }, decodeAccountReadResult);
-      if (account.account?.type === "chatgpt") {
-        await this.#activateProviderClient("codex", pending.client, pending.cli, account.account);
-        return this.getStatus();
-      }
-    } catch {
-      // Fall through to cancellation and a fresh provider probe.
-    }
-    await pending.client
-      .request("account/login/cancel", { loginId: pending.loginId }, decodeRecordResponse)
-      .catch(() => undefined);
-    await pending.client.stop().catch(() => undefined);
-    this.#clearProviderConnectionState("codex");
-    return this.getStatus();
-  }
-
-  async #createAuthenticatedProviderClient(
-    provider: AgentProvider,
-    cli: AgentCliInfo,
-  ): Promise<{ client: AgentClient; account: NonNullable<AccountReadResult["account"]> }> {
-    const driver = requireProviderDriver(provider);
-    const client = this.#clientFactory
-      ? this.#clientFactory(provider, cli)
-      : driver.createClient(cli, this.#requestTimeoutMs);
-    this.#bindClient(client);
-    client.start();
-    try {
-      await client.request(
-        "initialize",
-        {
-          clientInfo: { name: "openbot", title: "OpenBot", version: "0.1.0" },
-          capabilities: { experimentalApi: true, mcpServerOpenaiFormElicitation: true },
-        },
-        decodeRecordResponse,
-      );
-      client.notify("initialized");
-      const account = await client.request("account/read", { refreshToken: true }, decodeAccountReadResult);
-      if (!account.account) throw new Error(`${providerLabel(provider)} did not return an authenticated account.`);
-      driver.validateAccount(account.account);
-      return { client, account: account.account };
-    } catch (error) {
-      await client.stop().catch(() => undefined);
-      throw error;
-    }
-  }
-
-  async #activateProviderClient(
-    provider: AgentProvider,
-    client: AgentClient,
-    cli: AgentCliInfo,
-    account: NonNullable<AccountReadResult["account"]>,
-    isCurrent?: () => boolean,
-  ): Promise<void> {
-    const activation = this.#providerActivation
-      .catch(() => undefined)
-      .then(async () => {
-        if (isCurrent && !isCurrent()) {
-          await client.stop().catch(() => undefined);
-          return;
-        }
-        const previousClient = this.#clients.get(provider);
-        const previousCli = this.#cli.get(provider);
-        const previousAccount = this.#accounts.get(provider);
-        this.#clients.set(provider, client);
-        this.#cli.set(provider, cli);
-        this.#accounts.set(provider, account);
-        try {
-          await this.#refreshModelCatalog();
-          if (isCurrent && !isCurrent()) {
-            if (previousClient) this.#clients.set(provider, previousClient);
-            else this.#clients.delete(provider);
-            if (previousCli) this.#cli.set(provider, previousCli);
-            else this.#cli.delete(provider);
-            if (previousAccount) this.#accounts.set(provider, previousAccount);
-            else this.#accounts.delete(provider);
-            if (client !== previousClient) await client.stop().catch(() => undefined);
-            return;
-          }
-          const primaryProvider = this.#clients.has(this.#preferredProvider)
-            ? this.#preferredProvider
-            : this.#clients.has("codex")
-              ? "codex"
-              : provider;
-          const primaryAccount = this.#accounts.get(primaryProvider);
-          const codexClient = this.#clients.get("codex");
-          const computerUse = codexClient ? await this.#probeComputerUse(codexClient) : "unavailable";
-          this.#loadedThreads.clear();
-          this.#setStatus({
-            phase: "ready",
-            cliVersion: this.#cli.get(primaryProvider)?.version ?? null,
-            auth: requireProviderDriver(primaryProvider).authState(primaryAccount ?? null),
-            providers: updateProviderStatus(this.#status.providers, provider, {
-              state: "available",
-              version: cli.version,
-              message: null,
-              email: account.email ?? null,
-            }),
-            capabilities: { chat: "ready", browser: "ready", computerUse },
-            message: null,
-          });
-        } catch (error) {
-          if (previousClient) this.#clients.set(provider, previousClient);
-          else this.#clients.delete(provider);
-          if (previousCli) this.#cli.set(provider, previousCli);
-          else this.#cli.delete(provider);
-          if (previousAccount) this.#accounts.set(provider, previousAccount);
-          else this.#accounts.delete(provider);
-          if (client !== previousClient) await client.stop().catch(() => undefined);
-          throw error;
-        }
-
-        if (previousClient && previousClient !== client) await previousClient.stop().catch(() => undefined);
-        if (provider === "codex") void this.#refreshUsage(client).catch(() => undefined);
-        await this.#reconcileUnresolvedDeliveries();
-        void this.#backfillProviderHistory();
-        for (const bot of this.#store.list()) this.#scheduleDrain(bot.id);
-      });
-    this.#providerActivation = activation.catch(() => undefined);
-    await activation;
-  }
-
-  #setProviderConnectionState(provider: AgentProvider, connectionState: "connecting"): void {
-    const current = this.#status.providers?.find((candidate) => candidate.id === provider);
-    this.#setStatus({
-      providers: updateProviderStatus(this.#status.providers, provider, {
-        state: this.#clients.has(provider) ? "available" : (current?.state ?? "checking"),
-        version: this.#cli.get(provider)?.version ?? current?.version ?? null,
-        message: null,
-        email: this.#accounts.get(provider)?.email ?? current?.email ?? null,
-        connectionState,
-      }),
-    });
-  }
-
-  #clearProviderConnectionState(provider: AgentProvider): void {
-    const current = this.#status.providers?.find((candidate) => candidate.id === provider);
-    if (!current?.connectionState) return;
-    this.#setStatus({
-      providers: updateProviderStatus(this.#status.providers, provider, {
-        state: this.#clients.has(provider) ? "available" : current.state,
-        version: this.#cli.get(provider)?.version ?? current.version,
-        message: null,
-        email: this.#accounts.get(provider)?.email ?? current.email ?? null,
-      }),
-    });
-  }
-
-  #setProviderConnectionFailure(provider: AgentProvider, error: unknown, version?: string | null): void {
-    const hasActiveClient = this.#clients.has(provider);
-    const fallbackMessage = `OpenBot could not connect ${providerLabel(provider)}. Try again.`;
-    const rawMessage = error instanceof Error ? error.message : String(error);
-    const message = /^(ChatGPT connection|OpenBot)/u.test(rawMessage) ? rawMessage : fallbackMessage;
-    const status = hasActiveClient
-      ? {
-          state: "available" as const,
-          version: this.#cli.get(provider)?.version ?? version ?? null,
-          message,
-          email: this.#accounts.get(provider)?.email ?? null,
-        }
-      : error instanceof CodexCliError
-        ? providerFailureStatus(provider, error, version)
-        : {
-            state: "sign-in-required" as const,
-            version: version ?? null,
-            message,
-            email: null,
-          };
-    const hasProvider = this.#clients.size > 0;
-    this.#setStatus({
-      phase: hasProvider ? "ready" : "blocked",
-      providers: updateProviderStatus(this.#status.providers, provider, status),
-      capabilities: { ...this.#status.capabilities, chat: hasProvider ? "ready" : "unavailable" },
-      message: hasProvider ? null : message,
-    });
-  }
-
-  async #startClaudeLogin(): Promise<AgentStatus> {
-    let cli: AgentCliInfo | null = null;
-    this.#setProviderConnectionState("claude", "connecting");
-
-    try {
-      cli = await resolveClaudeCli({ bundledExecutable: this.#bundledClaudeExecutable });
-      const child = spawn(cli.executable, ["auth", "login", "--claudeai"], {
-        cwd: process.cwd(),
-        env: {
-          ...process.env,
-          ...(cli.source === "managed" ? { DISABLE_AUTOUPDATER: "1" } : {}),
-        },
-        stdio: "ignore",
-        shell: false,
-        windowsHide: process.platform === "win32",
-      });
-      const pending: PendingClaudeLogin = { child, cli, task: null };
-      this.#claudeLogin = pending;
-      pending.task = waitForSuccessfulProcess(child, CLAUDE_LOGIN_TIMEOUT_MS)
-        .then(() => this.#completeClaudeLogin(pending))
-        .catch((error) => this.#failClaudeLogin(pending, error));
-      return this.getStatus();
-    } catch (error) {
-      this.#setProviderConnectionFailure("claude", error, cli?.version);
-      throw error;
-    }
-  }
-
-  async #completeClaudeLogin(pending: PendingClaudeLogin): Promise<void> {
-    if (this.#claudeLogin !== pending) return;
-    try {
-      const candidate = await this.#createAuthenticatedProviderClient("claude", pending.cli);
-      if (this.#claudeLogin !== pending) {
-        await candidate.client.stop().catch(() => undefined);
-        return;
-      }
-      await this.#activateProviderClient(
-        "claude",
-        candidate.client,
-        pending.cli,
-        candidate.account,
-        () => this.#claudeLogin === pending,
-      );
-      if (this.#claudeLogin === pending) this.#claudeLogin = null;
-    } catch (error) {
-      await this.#failClaudeLogin(pending, error);
-    }
-  }
-
-  async #failClaudeLogin(pending: PendingClaudeLogin, error: unknown): Promise<void> {
-    if (this.#claudeLogin !== pending) return;
-    this.#claudeLogin = null;
-    if (pending.child.exitCode === null) pending.child.kill("SIGTERM");
-    this.#setProviderConnectionFailure("claude", error, pending.cli.version);
-  }
-
-  async #cancelClaudeLogin(message: string | null): Promise<void> {
-    const pending = this.#claudeLogin;
-    if (!pending) return;
-    this.#claudeLogin = null;
-    if (pending.child.exitCode === null) pending.child.kill("SIGTERM");
-    await pending.task?.catch(() => undefined);
-    if (message) this.#setProviderConnectionFailure("claude", new Error(message), pending.cli.version);
-    else this.#clearProviderConnectionState("claude");
-  }
-
-  async #startGrokLogin(): Promise<AgentStatus> {
-    let cli: AgentCliInfo | null = null;
-    this.#setProviderConnectionState("grok", "connecting");
-
-    try {
-      cli = await resolveGrokCli({ bundledExecutable: this.#bundledGrokExecutable });
-      const child = spawn(cli.executable, ["--no-auto-update", "login"], {
-        cwd: process.cwd(),
-        env: { ...process.env, GROK_OAUTH2_REFERRER: "openbot" },
-        stdio: "ignore",
-        shell: false,
-        windowsHide: process.platform === "win32",
-      });
-      const pending: PendingClaudeLogin = { child, cli, task: null };
-      this.#grokLogin = pending;
-      pending.task = waitForSuccessfulProcess(child, GROK_LOGIN_TIMEOUT_MS)
-        .then(() => this.#completeGrokLogin(pending))
-        .catch((error) => this.#failGrokLogin(pending, error));
-      return this.getStatus();
-    } catch (error) {
-      this.#setProviderConnectionFailure("grok", error, cli?.version);
-      throw error;
-    }
-  }
-
-  async #completeGrokLogin(pending: PendingClaudeLogin): Promise<void> {
-    if (this.#grokLogin !== pending) return;
-    try {
-      const candidate = await this.#createAuthenticatedProviderClient("grok", pending.cli);
-      if (this.#grokLogin !== pending) {
-        await candidate.client.stop().catch(() => undefined);
-        return;
-      }
-      await this.#activateProviderClient(
-        "grok",
-        candidate.client,
-        pending.cli,
-        candidate.account,
-        () => this.#grokLogin === pending,
-      );
-      if (this.#grokLogin === pending) this.#grokLogin = null;
-    } catch (error) {
-      await this.#failGrokLogin(pending, error);
-    }
-  }
-
-  async #failGrokLogin(pending: PendingClaudeLogin, error: unknown): Promise<void> {
-    if (this.#grokLogin !== pending) return;
-    this.#grokLogin = null;
-    if (pending.child.exitCode === null) pending.child.kill("SIGTERM");
-    this.#setProviderConnectionFailure("grok", error, pending.cli.version);
-  }
-
-  async #cancelGrokLogin(message: string | null): Promise<void> {
-    const pending = this.#grokLogin;
-    if (!pending) return;
-    this.#grokLogin = null;
-    if (pending.child.exitCode === null) pending.child.kill("SIGTERM");
-    await pending.task?.catch(() => undefined);
-    if (message) this.#setProviderConnectionFailure("grok", new Error(message), pending.cli.version);
-    else this.#clearProviderConnectionState("grok");
-  }
-
-  async #startCodexLogin(openExternal: (url: string) => Promise<void>): Promise<AgentStatus> {
-    let client: AgentClient | null = null;
-    let cli: CodexCliInfo | null = null;
-    this.#setProviderConnectionState("codex", "connecting");
-
-    try {
-      cli = await resolveCodexCli({ bundledExecutable: this.#bundledCodexExecutable });
-      client = this.#clientFactory
-        ? this.#clientFactory("codex", cli)
-        : new CodexAppServerClient(cli.executable, this.#requestTimeoutMs);
-      this.#bindClient(client);
-      client.start();
-      await client.request(
-        "initialize",
-        {
-          clientInfo: { name: "openbot", title: "OpenBot", version: "0.1.0" },
-          capabilities: { experimentalApi: true, mcpServerOpenaiFormElicitation: true },
-        },
-        decodeRecordResponse,
-      );
-      client.notify("initialized");
-
-      if (!this.#clients.has("codex")) {
-        const existingAccount = await client.request("account/read", { refreshToken: false }, decodeAccountReadResult);
-        if (existingAccount.account?.type === "chatgpt") {
-          await this.#activateProviderClient("codex", client, cli, existingAccount.account);
-          return this.getStatus();
-        }
-      }
-
-      const login = await client.request(
-        "account/login/start",
-        {
-          type: "chatgpt",
-          appBrand: "chatgpt",
-          codexStreamlinedLogin: true,
-          useHostedLoginSuccessPage: true,
-        },
-        decodeAccountLoginStartResult,
-      );
-      let pending: PendingCodexLogin;
-      const timer = setTimeout(() => {
-        void this.#cancelCodexLogin("ChatGPT connection timed out. Try again.", pending);
-      }, CODEX_LOGIN_TIMEOUT_MS);
-      timer.unref?.();
-      pending = { client, cli, loginId: login.loginId, timer, completing: false };
-      this.#codexLogin = pending;
-      client.once("exit", () => {
-        if (this.#codexLogin?.client === client) {
-          void this.#failCodexLogin(this.#codexLogin, "ChatGPT connection stopped. Try again.");
-        }
-      });
-      try {
-        await openExternal(login.authUrl);
-      } catch {
-        await this.#cancelCodexLogin("OpenBot could not open the ChatGPT connection page.");
-        throw new Error("OpenBot could not open the ChatGPT connection page.");
-      }
-      return this.getStatus();
-    } catch (error) {
-      if (client && this.#codexLogin?.client !== client && this.#clients.get("codex") !== client) {
-        await client.stop().catch(() => undefined);
-      }
-      const status = this.#status.providers?.find((provider) => provider.id === "codex");
-      if (!this.#codexLogin && status?.connectionState === "connecting") {
-        this.#setProviderConnectionFailure("codex", error, cli?.version);
-      }
-      throw error;
-    }
-  }
-
-  async #completeCodexLogin(completion: AccountLoginCompletedResult, source: AgentClient): Promise<void> {
-    const pending = this.#codexLogin;
-    if (!pending || pending.completing) return;
-    if (pending.client !== source) return;
-    if (completion.loginId !== null && completion.loginId !== pending.loginId) return;
-    pending.completing = true;
-    clearTimeout(pending.timer);
-
-    if (!completion.success) {
-      await this.#failCodexLogin(pending, "ChatGPT connection was not completed. Try again.");
-      return;
-    }
-
-    try {
-      const account = await pending.client.request("account/read", { refreshToken: true }, decodeAccountReadResult);
-      if (account.account?.type !== "chatgpt") {
-        throw new Error("ChatGPT did not return an authenticated account.");
-      }
-      if (this.#codexLogin !== pending) return;
-      await this.#activateProviderClient(
-        "codex",
-        pending.client,
-        pending.cli,
-        account.account,
-        () => this.#codexLogin === pending,
-      );
-      if (this.#codexLogin === pending) this.#codexLogin = null;
-    } catch {
-      await this.#failCodexLogin(pending, "OpenBot could not verify the ChatGPT connection. Try again.");
-    }
-  }
-
-  async #cancelCodexLogin(message: string | null, expected?: PendingCodexLogin): Promise<void> {
-    const pending = this.#codexLogin;
-    if (!pending || (expected && pending !== expected)) return;
-    this.#codexLogin = null;
-    clearTimeout(pending.timer);
-    await pending.client
-      .request("account/login/cancel", { loginId: pending.loginId }, decodeRecordResponse)
-      .catch(() => undefined);
-    await pending.client.stop().catch(() => undefined);
-    if (message) this.#setProviderConnectionFailure("codex", new Error(message), pending.cli.version);
-    else this.#clearProviderConnectionState("codex");
-  }
-
-  async #failCodexLogin(pending: PendingCodexLogin, message: string): Promise<void> {
-    if (this.#codexLogin !== pending) return;
-    clearTimeout(pending.timer);
-    this.#codexLogin = null;
-    await pending.client.stop().catch(() => undefined);
-    this.#setProviderConnectionFailure("codex", new Error(message), pending.cli.version);
-  }
-
-  async #connect(
-    phase: "starting" | "restarting",
-    requestedProviders: readonly AgentProvider[],
-    options: { preserveCheckErrors?: boolean; refreshRuntimeInBackground?: boolean } = {},
-  ): Promise<void> {
-    const hadClients = this.#clients.size > 0;
-    const providerStatuses: AgentProviderStatus[] = structuredClone(
-      this.#status.providers ?? INITIAL_STATUS.providers ?? [],
-    );
-    for (const provider of requestedProviders) {
-      const current = this.#status.providers?.find((candidate) => candidate.id === provider);
-      setProviderStatus(providerStatuses, provider, {
-        state: this.#clients.has(provider) ? "available" : "checking",
-        version: this.#cli.get(provider)?.version ?? null,
-        message: null,
-        email: this.#accounts.get(provider)?.email ?? null,
-        checkError: options.preserveCheckErrors ? (current?.checkError ?? null) : null,
-      });
-    }
-    this.#setStatus(
-      hadClients
-        ? { providers: providerStatuses }
-        : {
-            phase,
-            auth: { kind: "unknown" },
-            providers: providerStatuses,
-            capabilities: { ...this.#status.capabilities, chat: "unavailable" },
-            message: phase === "starting" ? "Starting local agent CLI…" : "Restarting local agent CLI…",
-          },
-    );
-
-    const results = await Promise.all(
-      requestedProviders.map(async (provider): Promise<string | null> => {
-        if (this.#clients.has(provider)) return null;
-        const driver = requireProviderDriver(provider);
-        let client: AgentClient | null = null;
-        let cli: AgentCliInfo | null = null;
-        try {
-          cli =
-            provider === "codex"
-              ? await resolveCodexCli({ bundledExecutable: this.#bundledCodexExecutable })
-              : provider === "claude"
-                ? await resolveClaudeCli({ bundledExecutable: this.#bundledClaudeExecutable })
-                : await resolveGrokCli({ bundledExecutable: this.#bundledGrokExecutable });
-          client = this.#clientFactory
-            ? this.#clientFactory(provider, cli)
-            : driver.createClient(cli, this.#requestTimeoutMs);
-          this.#bindClient(client);
-          client.start();
-          await client.request(
-            "initialize",
-            {
-              clientInfo: { name: "openbot", title: "OpenBot", version: "0.1.0" },
-              capabilities: { experimentalApi: true, mcpServerOpenaiFormElicitation: true },
-            },
-            decodeRecordResponse,
-          );
-          client.notify("initialized");
-          const account = await client.request("account/read", { refreshToken: false }, decodeAccountReadResult, 5_000);
-          if (!account.account) {
-            const message = provider === "codex" ? "Connect ChatGPT to continue." : driver.signInMessage;
-            await client.stop().catch(() => undefined);
-            this.#setStatus({
-              providers: updateProviderStatus(this.#status.providers, provider, {
-                state: "sign-in-required",
-                version: cli.version,
-                message,
-                email: null,
-              }),
-            });
-            return message;
-          }
-          driver.validateAccount(account.account);
-          this.#cli.set(provider, cli);
-          this.#clients.set(provider, client);
-          this.#accounts.set(provider, account.account);
-          this.#setStatus({
-            providers: updateProviderStatus(this.#status.providers, provider, {
-              state: "available",
-              version: cli.version,
-              message: null,
-              email: account.account.email ?? null,
-            }),
-          });
-          return null;
-        } catch (error) {
-          if (client) await client.stop().catch(() => undefined);
-          const message = error instanceof Error ? error.message : String(error);
-          this.#setStatus({
-            providers: updateProviderStatus(
-              this.#status.providers,
-              provider,
-              providerFailureStatus(provider, error, cli?.version),
-            ),
-          });
-          if (!(error instanceof CodexCliError)) this.#emitError(`${provider}_start_failed`, error);
-          return message;
-        }
-      }),
-    );
-    const failures = results.filter((message): message is string => message !== null);
-    const finalProviderStatuses = structuredClone(this.#status.providers ?? providerStatuses);
-
-    if (this.#clients.size === 0) {
-      this.#setStatus({
-        phase: "blocked",
-        cliVersion: null,
-        auth: { kind: "unknown" },
-        providers: finalProviderStatuses,
-        capabilities: { ...this.#status.capabilities, chat: "unavailable" },
-        message: failures.join(" "),
-      });
-      return;
-    }
-
-    const primaryProvider = this.#clients.has(this.#preferredProvider)
-      ? this.#preferredProvider
-      : this.#clients.has("codex")
-        ? "codex"
-        : this.#clients.keys().next().value;
-    if (!primaryProvider) throw new Error("No agent provider is ready.");
-    const primaryAccount = this.#accounts.get(primaryProvider);
-    this.#restartAttempts = 0;
-    this.#setStatus({
-      phase: "ready",
-      cliVersion: this.#cli.get(primaryProvider)?.version ?? null,
-      auth: requireProviderDriver(primaryProvider).authState(primaryAccount ?? null),
-      providers: finalProviderStatuses,
-      capabilities: {
-        chat: "ready",
-        browser: "ready",
-        computerUse: this.#clients.has("codex") ? this.#status.capabilities.computerUse : "unavailable",
-      },
-      message: null,
-    });
-    const refreshRuntime = async (): Promise<void> => {
-      const codexClient = this.#clients.get("codex");
-      const [, computerUse] = await Promise.all([
-        this.#refreshModelCatalog(),
-        codexClient ? this.#probeComputerUse(codexClient) : Promise.resolve("unavailable" as const),
-      ]);
-      if (codexClient === this.#clients.get("codex")) {
-        this.#setStatus({
-          capabilities: { ...this.#status.capabilities, computerUse },
-        });
-      }
-      if (codexClient) void this.#refreshUsage(codexClient).catch(() => undefined);
-      await this.#reconcileUnresolvedDeliveries();
-      void this.#backfillProviderHistory();
-      for (const bot of this.#store.list()) this.#scheduleDrain(bot.id);
-    };
-    if (options.refreshRuntimeInBackground) {
-      void refreshRuntime().catch((error) => this.#emitError("provider_metadata_refresh_failed", error));
-      return;
-    }
-    await refreshRuntime();
-  }
-
-  #bindClient(client: AgentClient): void {
-    client.on("notification", (notification) => this.#handleNotification(notification, client));
-    client.on("request", (request) => void this.#handleServerRequest(client, request));
-    client.on("diagnostic", (message) => {
-      if (/error|failed|warning/i.test(message)) {
-        this.#emitError(`${client.provider}_diagnostic`, message);
-      }
-    });
-    client.once("exit", (error) => this.#handleExit(client, error));
-  }
-
-  #handleExit(client: AgentClient, error: Error): void {
-    if (this.#clients.get(client.provider) !== client || this.#stopping) return;
-    this.#clients.delete(client.provider);
-    void client.stop().catch(() => undefined);
-    this.#loadedThreads.clear();
-    this.#clearCompactionRuntime();
-    this.#clearPendingPrompts(client);
-    this.#clearPendingBrowserTakeovers();
-    this.#pendingApprovals.clear();
-    this.#browser.clearControls();
-    this.#emitError(`${client.provider}_exited`, error);
-    const providers = updateProviderStatus(this.#status.providers, client.provider, {
-      state: "error",
-      version: this.#cli.get(client.provider)?.version ?? null,
-      message: error.message,
-    });
-    const anotherProviderIsReady = this.#clients.size > 0;
-
-    if (this.#restartAttempts >= 3) {
-      this.#setStatus(
-        anotherProviderIsReady
-          ? {
-              phase: "ready",
-              providers,
-              capabilities: { ...this.#status.capabilities, chat: "ready" },
-              message: null,
-            }
-          : {
-              phase: "blocked",
-              providers,
-              capabilities: { ...this.#status.capabilities, chat: "unavailable" },
-              message: `${providerLabel(client.provider)} stopped repeatedly. Restart OpenBot after checking the CLI.`,
-            },
-      );
-      return;
-    }
-
-    const delayMs = 500 * 2 ** this.#restartAttempts;
-    this.#restartAttempts += 1;
-    this.#setStatus(
-      anotherProviderIsReady
-        ? {
-            phase: "ready",
-            providers,
-            capabilities: { ...this.#status.capabilities, chat: "ready" },
-            message: null,
-          }
-        : {
-            phase: "restarting",
-            providers,
-            capabilities: { ...this.#status.capabilities, chat: "unavailable" },
-            message: `${providerLabel(client.provider)} stopped. Retrying (${this.#restartAttempts}/3)…`,
-          },
-    );
-    this.#restartTimer = setTimeout(() => {
-      this.#restartTimer = null;
-      void this.#connect("restarting", [client.provider]);
-    }, delayMs);
+    await this.#attention.respondToBrowserTakeover(input);
   }
 
   async #ensureThread(bot: BotSummary, client: AgentClient): Promise<string> {
@@ -2413,7 +982,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const currentBot = this.#store.list().find((candidate) => candidate.id === bot.id) ?? bot;
     const session = this.#store.activeProviderSession(bot.id);
     if (session) {
-      if (this.#loadedThreads.get(session.externalSessionId) !== client) {
+      if (this.#conversation.loadedClientFor(session.externalSessionId) !== client) {
         try {
           await this.#resumeThread(currentBot, client, session.externalSessionId);
         } catch (error) {
@@ -2424,7 +993,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           return replacementThreadId;
         }
       }
-      this.#threadToBot.set(session.externalSessionId, bot.id);
+      this.#conversation.bindThread(session.externalSessionId, bot.id);
       return session.externalSessionId;
     }
 
@@ -2441,7 +1010,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         runtimeWorkspaceRoots: [bot.workspacePath, this.#store.sharedRoot],
         approvalPolicy: "on-request",
         sandbox: "danger-full-access",
-        developerInstructions: developerInstructions(bot, this.#store.sharedRoot, this.#memories.list(bot.id)),
+        developerInstructions: developerInstructions(bot, this.#store.sharedRoot, this.#memories.listFor(bot.id)),
         ephemeral: false,
         serviceName: "openbot",
         dynamicTools: [...BROWSER_DYNAMIC_TOOLS, OPENBOT_DYNAMIC_TOOLS],
@@ -2450,9 +1019,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     );
     const externalThreadId = response.thread.id;
     this.#store.bindProviderSession(bot.id, externalThreadId);
-    this.#threadToBot.set(externalThreadId, bot.id);
-    this.#loadedThreads.set(externalThreadId, client);
-    this.#ensureSnapshot(bot.id, publicThreadId);
+    this.#conversation.bindThread(externalThreadId, bot.id);
+    this.#conversation.markThreadLoaded(externalThreadId, client);
+    this.#conversation.ensureSnapshot(bot.id, publicThreadId);
     const handoff = this.#buildProviderHandoff(bot.id, publicThreadId);
     if (handoff) this.#pendingHandoffs.set(externalThreadId, handoff);
     return externalThreadId;
@@ -2467,7 +1036,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       runtimeWorkspaceRoots: [bot.workspacePath, this.#store.sharedRoot],
       approvalPolicy: "on-request",
       sandbox: "danger-full-access",
-      developerInstructions: developerInstructions(bot, this.#store.sharedRoot, this.#memories.list(bot.id)),
+      developerInstructions: developerInstructions(bot, this.#store.sharedRoot, this.#memories.listFor(bot.id)),
       dynamicTools: [...BROWSER_DYNAMIC_TOOLS, OPENBOT_DYNAMIC_TOOLS],
     };
 
@@ -2478,17 +1047,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await client.request("thread/unarchive", { threadId: externalThreadId }, decodeRecordResponse);
       await client.request("thread/resume", params, decodeRecordResponse);
     }
-    this.#loadedThreads.set(externalThreadId, client);
+    this.#conversation.markThreadLoaded(externalThreadId, client);
   }
 
   #retireProviderSession(bot: BotSummary, externalThreadId: string): void {
     const session = this.#store.activeProviderSession(bot.id);
     if (session?.externalSessionId !== externalThreadId || !bot.threadId) return;
     this.#store.database.deactivateProviderSessions(bot.threadId);
-    this.#threadToBot.delete(externalThreadId);
-    this.#loadedThreads.delete(externalThreadId);
-    this.#contextBudgets.delete(externalThreadId);
-    this.#clearCompactionTimer(externalThreadId);
+    this.#conversation.unbindThread(externalThreadId);
+    this.#conversation.unloadThread(externalThreadId);
+    this.#compaction.forgetThread(externalThreadId);
     this.#pendingHandoffs.delete(externalThreadId);
   }
 
@@ -2518,32 +1086,32 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     try {
       switch (request.method) {
         case "item/commandExecution/requestApproval":
-          this.#surfaceApproval(client, request, "command");
+          this.#attention.surfaceApproval(client, request, "command");
           return;
         case "item/fileChange/requestApproval":
-          this.#surfaceApproval(client, request, "file-change");
+          this.#attention.surfaceApproval(client, request, "file-change");
           return;
         case "item/permissions/requestApproval":
-          this.#surfaceApproval(client, request, "permissions");
+          this.#attention.surfaceApproval(client, request, "permissions");
           return;
         case "applyPatchApproval":
         case "execCommandApproval":
-          this.#surfaceLegacyApproval(client, request);
+          this.#attention.surfaceLegacyApproval(client, request);
           return;
         case "item/tool/call": {
           if (!isDynamicToolCall(request.params)) throw new Error("Invalid dynamic tool request.");
           if (request.params.namespace === OPENBOT_BROWSER_NAMESPACE) {
-            const botId = this.#threadToBot.get(request.params.threadId);
+            const botId = this.#conversation.botForThread(request.params.threadId);
             if (!botId) throw new Error("The browsing OpenBot agent is unknown.");
             if (request.params.tool === "request_takeover") {
-              client.respond(request.id, await this.#surfaceBrowserTakeover(request));
+              client.respond(request.id, await this.#attention.surfaceBrowserTakeover(request));
               return;
             }
             client.respond(
               request.id,
               await this.#browser.handleDynamicTool({
                 ...request.params,
-                threadId: this.#publicThreadId(botId, request.params.threadId),
+                threadId: this.#conversation.publicThreadId(botId, request.params.threadId),
                 ownerBotId: botId,
               }),
             );
@@ -2551,11 +1119,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           }
           if (request.params.namespace === "openbot") {
             if (request.params.tool === "ask_user") {
-              this.#surfaceDynamicPrompt(client, request);
+              this.#attention.surfaceDynamicPrompt(client, request);
               return;
             }
             if (isHostedSiteMutationTool(request.params.tool)) {
-              await this.#surfaceHostedSiteApproval(client, request, request.params, request.params.tool);
+              await this.#attention.surfaceHostedSiteApproval(client, request, request.params, request.params.tool);
               return;
             }
             client.respond(request.id, await this.#handleOpenBotTool(request.params));
@@ -2564,10 +1132,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           throw new Error(`Unsupported dynamic tool namespace: ${request.params.namespace}`);
         }
         case "item/tool/requestUserInput":
-          this.#surfacePrompt(client, request);
+          this.#attention.surfacePrompt(client, request);
           return;
         case "mcpServer/elicitation/request":
-          this.#surfaceMcpElicitation(client, request);
+          this.#attention.surfaceMcpElicitation(client, request);
           return;
         case "currentTime/read":
           client.respond(request.id, { currentTimeAt: Math.floor(Date.now() / 1_000) });
@@ -2591,11 +1159,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async #handleOpenBotTool(params: DynamicToolCallParams): Promise<OpenBotToolResponse> {
-    const senderBotId = this.#threadToBot.get(params.threadId);
+    const senderBotId = this.#conversation.botForThread(params.threadId);
     if (!senderBotId) throw new Error("The sending OpenBot agent is unknown.");
 
     if (params.tool === "list_sites") {
-      return openBotToolResult({ sites: await this.#requireHostedSites().list(), limit: 10 });
+      return openBotToolResult({ sites: await this.#hostedSites.listSites(), limit: 10 });
     }
 
     if (isHostedSiteMutationTool(params.tool)) throw new Error("Hosted site changes require user approval.");
@@ -2634,7 +1202,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           name: bot.name,
           title: bot.title,
           description: bot.description,
-          status: this.#snapshots.get(bot.id)?.activeTurnId
+          status: this.#conversation.snapshot(bot.id)?.activeTurnId
             ? "working"
             : queue.deliveries.some((delivery) => delivery.status === "queued")
               ? "queued"
@@ -2679,175 +1247,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       };
     }
 
-    if (params.tool === "list_routines") {
-      const args = routineToolArguments(params.arguments, ["botId"]);
-      const botId = routineToolBotId(args, senderBotId);
-      return openBotToolResult({ routines: this.listRoutines(botId) });
-    }
+    const routineResult = await this.#routines.handleTool(params, senderBotId);
+    if (routineResult) return routineResult;
 
-    if (params.tool === "create_routine") {
-      const args = routineToolArguments(params.arguments, [
-        "botId",
-        "name",
-        "instruction",
-        "schedule",
-        "active",
-        "timezone",
-      ]);
-      const botId = routineToolBotId(args, senderBotId);
-      const active = args.active === undefined ? true : args.active;
-      if (!isBoolean(active)) throw new Error("active must be a boolean.");
-      const timezone =
-        args.timezone === undefined
-          ? localTimezone()
-          : routineToolString(args.timezone, "timezone", 128, "A routine timezone is required.");
-      const routine = this.createRoutine(
-        {
-          botId,
-          name: routineToolString(args.name, "name", INPUT_LIMITS.routineName, "A routine name is required."),
-          instruction: routineToolString(
-            args.instruction,
-            "instruction",
-            INPUT_LIMITS.routineInstruction,
-            "A routine instruction is required.",
-          ),
-          active,
-          timezone,
-          schedule: routineToolSchedule(args.schedule),
-        },
-        { turnId: botId === senderBotId ? params.turnId : undefined },
-      );
-      return openBotToolResult(routine);
-    }
-
-    if (params.tool === "update_routine") {
-      const args = routineToolArguments(params.arguments, [
-        "botId",
-        "routineId",
-        "name",
-        "instruction",
-        "schedule",
-        "active",
-      ]);
-      const input: UpdateRoutineInput = {
-        botId: routineToolBotId(args, senderBotId),
-        routineId: routineToolString(args.routineId, "routineId", INPUT_LIMITS.identifier, "routineId is required."),
-      };
-      let hasUpdate = false;
-      if (args.name !== undefined) {
-        input.name = routineToolString(args.name, "name", INPUT_LIMITS.routineName, "A routine name is required.");
-        hasUpdate = true;
-      }
-      if (args.instruction !== undefined) {
-        input.instruction = routineToolString(
-          args.instruction,
-          "instruction",
-          INPUT_LIMITS.routineInstruction,
-          "A routine instruction is required.",
-        );
-        hasUpdate = true;
-      }
-      if (args.active !== undefined) {
-        if (!isBoolean(args.active)) throw new Error("active must be a boolean.");
-        input.active = args.active;
-        hasUpdate = true;
-      }
-      if (args.schedule !== undefined) {
-        input.schedule = routineToolSchedule(args.schedule);
-        hasUpdate = true;
-      }
-      if (!hasUpdate) throw new Error("At least one routine update is required.");
-      return openBotToolResult(
-        this.updateRoutine(input, { turnId: input.botId === senderBotId ? params.turnId : undefined }),
-      );
-    }
-
-    if (params.tool === "delete_routine") {
-      const args = routineToolArguments(params.arguments, ["botId", "routineId"]);
-      const botId = routineToolBotId(args, senderBotId);
-      const routineId = routineToolString(
-        args.routineId,
-        "routineId",
-        INPUT_LIMITS.identifier,
-        "routineId is required.",
-      );
-      await this.deleteRoutine({ botId, routineId }, { turnId: botId === senderBotId ? params.turnId : undefined });
-      return openBotToolResult({ deleted: true, botId, routineId });
-    }
-
-    if (params.tool === "test_routine") {
-      const args = routineToolArguments(params.arguments, ["botId", "routineId"]);
-      const botId = routineToolBotId(args, senderBotId);
-      const routineId = routineToolString(
-        args.routineId,
-        "routineId",
-        INPUT_LIMITS.identifier,
-        "routineId is required.",
-      );
-      return openBotToolResult(await this.testRoutine({ botId, routineId }));
-    }
-
-    if (params.tool === "remember") {
-      const args = params.arguments;
-      if (!isRecord(args) || !isString(args.text)) throw new Error("Memory text is required.");
-      const text = args.text.trim();
-      if (!text) throw new Error("Memory text is required.");
-      if (text.length > INPUT_LIMITS.agentMemoryText) throw new Error("Memory text is too long.");
-      const memoryId = args.memoryId;
-      if (
-        memoryId !== undefined &&
-        (!isString(memoryId) || memoryId.length === 0 || memoryId.length > INPUT_LIMITS.identifier)
-      ) {
-        throw new Error("memoryId is invalid.");
-      }
-      const current = memoryId ? this.#memories.get(senderBotId, memoryId) : null;
-      if (memoryId && !current) throw new Error("This memory does not belong to the current agent.");
-      this.#stageMemoryMutation(params.turnId, {
-        callId: params.callId,
-        type: "remember",
-        botId: senderBotId,
-        epoch: this.#memoryEpoch(senderBotId),
-        ...(memoryId ? { memoryId } : {}),
-        text,
-        sourceTurnId: params.turnId,
-        ...(memoryId ? { expectedUpdatedAt: current?.updatedAt ?? null } : {}),
-      });
-      return {
-        success: true,
-        contentItems: [
-          {
-            type: "inputText",
-            text: JSON.stringify({ status: "staged", memoryId: memoryId ?? null }),
-          },
-        ],
-      };
-    }
-
-    if (params.tool === "forget_memory") {
-      const args = params.arguments;
-      if (
-        !isRecord(args) ||
-        !isString(args.memoryId) ||
-        args.memoryId.length === 0 ||
-        args.memoryId.length > INPUT_LIMITS.identifier
-      ) {
-        throw new Error("memoryId is required.");
-      }
-      const current = this.#memories.get(senderBotId, args.memoryId);
-      if (!current) throw new Error("This memory does not belong to the current agent.");
-      this.#stageMemoryMutation(params.turnId, {
-        callId: params.callId,
-        type: "forget",
-        botId: senderBotId,
-        epoch: this.#memoryEpoch(senderBotId),
-        memoryId: current.id,
-        expectedUpdatedAt: current.updatedAt,
-      });
-      return {
-        success: true,
-        contentItems: [{ type: "inputText", text: JSON.stringify({ status: "staged", memoryId: current.id }) }],
-      };
-    }
+    const memoryResult = this.#memories.handleTool(params, senderBotId);
+    if (memoryResult) return memoryResult;
 
     if (params.tool === "react_to_user_message") {
       const args = params.arguments;
@@ -2864,9 +1268,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         { kind: "bot", botId: senderBotId },
         args.emoji,
       );
-      const snapshot = this.#ensureSnapshot(senderBotId, params.threadId);
+      const snapshot = this.#conversation.ensureSnapshot(senderBotId, params.threadId);
       this.#syncMailboxMessages(snapshot);
-      this.#emitConversation(snapshot);
+      this.#conversation.emitConversation(snapshot);
       return openBotToolResult({ status: "reacted", messageId: delivery.delivery.id, emoji: args.emoji });
     }
 
@@ -2907,18 +1311,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.#emitQueue(recipient);
       this.#scheduleDrain(recipient);
     }
-    const snapshot = this.#ensureSnapshot(senderBotId, params.threadId);
+    const snapshot = this.#conversation.ensureSnapshot(senderBotId, params.threadId);
     this.#syncMailboxMessages(snapshot);
-    this.#emitConversation(snapshot);
+    this.#conversation.emitConversation(snapshot);
     return {
       success: true,
       contentItems: [{ type: "inputText", text: JSON.stringify(receipt) }],
     };
-  }
-
-  #requireHostedSites(): AgentHostedSites {
-    if (!this.#hostedSites) throw new Error("OpenBot site hosting is unavailable.");
-    return this.#hostedSites;
   }
 
   async #attachFilesToResponse(
@@ -2927,8 +1326,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     paths: string[],
     messageId: string,
   ): Promise<OpenBotToolResponse> {
-    const publicThreadId = this.#publicThreadId(senderBotId, params.threadId);
-    const snapshot = this.#ensureSnapshot(senderBotId, publicThreadId);
+    const publicThreadId = this.#conversation.publicThreadId(senderBotId, params.threadId);
+    const snapshot = this.#conversation.ensureSnapshot(senderBotId, publicThreadId);
     const existing = snapshot.messages.find((message) => message.id === messageId);
     if (existing) {
       return openBotToolResult({
@@ -2977,7 +1376,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         attachments.map((attachment) => attachment.id),
       );
       snapshot.revision = persisted.revision;
-      this.#lastConversationSignatures.set(snapshot.botId, conversationContentSignature(snapshot));
+      this.#conversation.rememberConversationSignature(snapshot);
     } catch (error) {
       const messageIndex = snapshot.messages.findIndex((candidate) => candidate.id === messageId);
       if (messageIndex >= 0) snapshot.messages.splice(messageIndex, 1);
@@ -3016,7 +1415,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async #openAgentAttachmentSource(botId: string, inputPath: string): Promise<GeneratedAttachmentSource> {
-    const bot = this.#requireKnownBot(botId);
+    const bot = this.#conversation.requireKnownBot(botId);
     const value = inputPath.trim();
     const [workspaceRoot, sharedRoot] = await Promise.all([
       realpath(bot.workspacePath),
@@ -3064,46 +1463,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     throw new Error("Attachment files must exist inside this agent's workspace or the OpenBot shared directory.");
   }
 
-  #stageMemoryMutation(turnId: string, mutation: PendingMemoryMutation): void {
-    const pending = this.#pendingMemoryMutations.get(turnId) ?? [];
-    if (!pending.some((candidate) => candidate.callId === mutation.callId)) pending.push(mutation);
-    this.#pendingMemoryMutations.set(turnId, pending);
-  }
-
-  #finishMemoryMutations(turnId: string, status: string): void {
-    const pending = this.#pendingMemoryMutations.get(turnId) ?? [];
-    this.#pendingMemoryMutations.delete(turnId);
-    if (status !== "completed" || pending.length === 0) return;
-
-    const affectedBots = new Set<string>();
-    for (const mutation of pending) {
-      if (mutation.epoch !== this.#memoryEpoch(mutation.botId)) continue;
-      const before = JSON.stringify(this.#memories.list(mutation.botId));
-      try {
-        if (mutation.type === "remember") this.#memories.saveAutomatic(mutation);
-        else this.#memories.delete(mutation.botId, mutation.memoryId, mutation.expectedUpdatedAt);
-      } catch (error) {
-        this.#emitError("memory_commit_failed", error, mutation.botId);
-        continue;
-      }
-      if (JSON.stringify(this.#memories.list(mutation.botId)) !== before) affectedBots.add(mutation.botId);
-    }
-    for (const botId of affectedBots) this.#memoryStateChanged(botId);
-  }
-
-  #memoryEpoch(botId: string): number {
-    return this.#memoryEpochs.get(botId) ?? 0;
+  /**
+   * The mute registry: every controller that can hold a bot back owns one clause, and the core only
+   * composes them. `#drainBot` repeats the guard because a drain scheduled a microtask ago may have
+   * been muted since.
+   */
+  #mayDrain(botId: string): boolean {
+    return this.#duplication.mayDrain(botId) && this.#compaction.mayDrain(botId) && this.#routines.mayDrain(botId);
   }
 
   #scheduleDrain(botId: string): void {
     if (
       this.#stopping ||
-      this.#status.phase !== "ready" ||
-      this.#pendingDuplicateBots.has(botId) ||
-      this.#routineDeletionBots.has(botId) ||
+      !this.#providers.isReady() ||
       this.#drainingBots.has(botId) ||
       this.#scheduledDrains.has(botId) ||
-      this.#compactingBots.has(botId)
+      !this.#mayDrain(botId)
     ) {
       return;
     }
@@ -3119,25 +1494,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async #drainBot(botId: string): Promise<void> {
-    if (
-      this.#stopping ||
-      this.#pendingDuplicateBots.has(botId) ||
-      this.#routineDeletionBots.has(botId) ||
-      this.#drainingBots.has(botId) ||
-      this.#compactingBots.has(botId) ||
-      this.#status.phase !== "ready"
-    )
-      return;
+    if (this.#stopping || this.#drainingBots.has(botId) || !this.#mayDrain(botId) || !this.#providers.isReady()) return;
     this.#drainingBots.add(botId);
     try {
-      const snapshot = this.#snapshots.get(botId);
+      const snapshot = this.#conversation.snapshot(botId);
       if (snapshot?.activeTurnId) return;
       const context = this.#mailbox.nextQueued(botId);
       if (!context) return;
       const bot = this.#store.list().find((candidate) => candidate.id === botId);
       const session = bot ? this.#store.activeProviderSession(botId) : null;
-      if (session && this.#reserveContextCompaction(botId, session.externalSessionId)) {
-        await this.#requestContextCompaction(botId, session.externalSessionId);
+      if (session && this.#compaction.reserve(botId, session.externalSessionId)) {
+        await this.#compaction.request(botId, session.externalSessionId);
         return;
       }
       await this.#startDelivery(context);
@@ -3157,9 +1524,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const bot = await this.#store.getOrCreate(delivery.recipientBotId);
       this.#applyPendingRuntimeRefresh(bot);
       await this.ensureProvider(providerForBot(bot));
-      const client = this.#requireReadyClient(providerForBot(bot));
+      const client = this.#providers.requireReadyClient(providerForBot(bot));
       let threadId = await this.#ensureThread(bot, client);
-      const snapshot = this.#ensureSnapshot(bot.id, threadId);
+      const snapshot = this.#conversation.ensureSnapshot(bot.id, threadId);
       if (snapshot.activeTurnId) {
         await this.#mailbox.markTerminal(delivery.id, "failed", "The recipient already has an active turn.");
         this.#emitQueue(bot.id);
@@ -3264,7 +1631,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           status: "completed",
         });
       }
-      this.#emitConversation(snapshot);
+      this.#conversation.emitConversation(snapshot);
 
       const startTurn = (providerThreadId: string) =>
         this.#requestWithArchivedThreadRecovery(
@@ -3290,8 +1657,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       } catch (error) {
         if (!isMissingProviderSessionError(error, client.provider)) throw error;
         const unavailableThreadId = threadId;
-        if (this.#loadedThreads.get(unavailableThreadId) === client) {
-          this.#loadedThreads.delete(unavailableThreadId);
+        if (this.#conversation.loadedClientFor(unavailableThreadId) === client) {
+          this.#conversation.unloadThread(unavailableThreadId);
         }
         threadId = await this.#ensureThread(bot, client);
         response = await startTurn(threadId);
@@ -3307,7 +1674,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       snapshot.activeTurnId = response.turn.id;
       this.#syncDeliveryMessage(snapshot, delivery.id);
       this.#emitQueue(bot.id);
-      this.#emitConversation(this.#snapshots.get(bot.id) ?? snapshot);
+      this.#conversation.emitConversation(this.#conversation.snapshot(bot.id) ?? snapshot);
     } catch (error) {
       const currentDelivery = this.#mailbox.getDelivery(delivery.id)?.delivery;
       if (confirmedTurnId && currentDelivery?.status === "running" && currentDelivery.turnId === confirmedTurnId) {
@@ -3330,68 +1697,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  async #refreshModelCatalog(): Promise<void> {
-    const discovered = (
-      await Promise.all(
-        [...this.#clients.values()].map(async (client): Promise<AgentModelOption[]> => {
-          try {
-            const response = await client.request(
-              "model/list",
-              { limit: 100, includeHidden: false },
-              decodeModelListResponse,
-              5_000,
-            );
-            const serverModels = new Map(
-              response.data
-                .filter((item): item is typeof item & { model: string } => !item.hidden && isString(item.model))
-                .map((item) => [item.model, item] as const),
-            );
-            const models: AgentModelOption[] = [];
-            for (const server of serverModels.values()) {
-              if (!server.model) continue;
-              if (client.provider === "codex" && !CURATED_CODEX_MODEL_IDS.has(server.model)) continue;
-              const fallback = FALLBACK_MODELS.find(
-                (candidate) => candidate.provider === client.provider && candidate.id === server.model,
-              );
-              const efforts = (server?.supportedReasoningEfforts ?? [])
-                .map((item) => item.reasoningEffort)
-                .filter(isReasoningEffort);
-              models.push({
-                provider: client.provider,
-                id: server.model,
-                name: cleanModelName(server.displayName, fallback?.name ?? server.model),
-                description:
-                  fallback?.description ?? `${providerLabel(client.provider)} model discovered from the local CLI.`,
-                defaultReasoningEffort: isReasoningEffort(server?.defaultReasoningEffort)
-                  ? server.defaultReasoningEffort
-                  : (fallback?.defaultReasoningEffort ?? "medium"),
-                supportedReasoningEfforts: efforts.length
-                  ? efforts
-                  : (fallback?.supportedReasoningEfforts ?? ["medium"]),
-              });
-            }
-            return models;
-          } catch {
-            return client.provider === "grok"
-              ? []
-              : FALLBACK_MODELS.filter((model) => model.provider === client.provider);
-          }
-        }),
-      )
-    ).flat();
-    const discoveredById = new Map(discovered.map((model) => [`${model.provider}:${model.id}`, model]));
-    const staticModels = FALLBACK_MODELS.map(
-      (fallback) => discoveredById.get(`${fallback.provider}:${fallback.id}`) ?? fallback,
-    );
-    this.#models = [
-      ...staticModels,
-      ...discovered.filter(
-        (model) =>
-          !FALLBACK_MODELS.some((fallback) => fallback.provider === model.provider && fallback.id === model.id),
-      ),
-    ];
-  }
-
   async #reconcileUnresolvedDeliveries(): Promise<void> {
     for (const context of this.#mailbox.unresolvedDeliveries()) {
       const { delivery } = context;
@@ -3399,7 +1704,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       let reason = "OpenBot restarted before this delivery reached a confirmed terminal state.";
       try {
         const bot = this.#store.list().find((candidate) => candidate.id === delivery.recipientBotId);
-        const client = bot ? this.#clientForBot(bot) : null;
+        const client = bot ? this.#providers.clientForBot(bot) : null;
         const session = bot ? this.#store.activeProviderSession(bot.id) : null;
         if (session && client) {
           const response = await client.request(
@@ -3469,7 +1774,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       if (!changed) continue;
       const persisted = this.#store.database.persistConversation(snapshot, "turn.interrupted-by-restart", { turnId });
-      this.#snapshots.set(bot.id, persisted);
+      this.#conversation.setSnapshot(bot.id, persisted);
     }
   }
 
@@ -3477,7 +1782,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     for (const bot of this.#store.list()) {
       if (!bot.threadId) continue;
       const session = this.#store.activeProviderSession(bot.id);
-      const client = this.#clientForBot(bot);
+      const client = this.#providers.clientForBot(bot);
       if (!session || !client) continue;
       try {
         const response = await client.request(
@@ -3493,16 +1798,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const merged = mergeProviderHistory(current, imported);
         this.#syncMailboxMessages(merged);
         if (conversationContentSignature(merged) === conversationContentSignature(current)) {
-          const live = this.#snapshots.get(bot.id);
-          if (!live?.activeTurnId) this.#snapshots.set(bot.id, current);
+          const live = this.#conversation.snapshot(bot.id);
+          if (!live?.activeTurnId) this.#conversation.setSnapshot(bot.id, current);
           continue;
         }
         const persisted = this.#store.database.persistConversation(merged, "provider-history.backfilled", {
           provider: session.provider,
           externalSessionId: session.externalSessionId,
         });
-        const live = this.#snapshots.get(bot.id);
-        if (!live?.activeTurnId) this.#snapshots.set(bot.id, persisted);
+        const live = this.#conversation.snapshot(bot.id);
+        if (!live?.activeTurnId) this.#conversation.setSnapshot(bot.id, persisted);
       } catch (error) {
         this.#emitError("provider_history_backfill_pending", error, bot.id);
       }
@@ -3548,7 +1853,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#store.database.persistConversation(persisted, "conversation.mailbox-reconciled", {
       messageCount: persisted.messages.length,
     });
-    const live = this.#snapshots.get(bot.id);
+    const live = this.#conversation.snapshot(bot.id);
     if (live) this.#syncMailboxMessages(live);
   }
 
@@ -3556,26 +1861,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const queue = this.#mailbox.listQueue(botId);
     let routinesChanged = false;
     for (const delivery of queue.deliveries) {
-      if (delivery.sender.kind !== "routine") continue;
-      const run = this.#routines.runForDelivery(delivery.id);
-      if (!run) continue;
-      const status = routineStatusForDelivery(delivery.status);
-      if (run.status === "needs-attention" && ["starting", "running"].includes(delivery.status)) continue;
-      if (run.status === status && run.error === delivery.error) continue;
-      if (status === "queued") this.#routines.updateRunStatus(run.id, status, delivery.error);
-      else this.#transitionRoutineRunWithConversation(run, status, delivery.error);
-      routinesChanged = true;
+      if (this.#routines.reconcileDelivery(delivery)) routinesChanged = true;
     }
     this.#emit({ type: "queue-changed", snapshot: queue });
-    if (routinesChanged) this.#routineStateChanged(botId);
+    if (routinesChanged) this.#routines.stateChanged(botId);
     const affectedBots = new Set([botId, ...this.#mailbox.senderBotIdsForRecipient(botId)]);
     for (const affectedBotId of affectedBots) {
-      const snapshot = this.#snapshots.get(affectedBotId);
+      const snapshot = this.#conversation.snapshot(affectedBotId);
       if (!snapshot) continue;
       const previousSignature = conversationContentSignature(snapshot);
       this.#syncMailboxMessages(snapshot);
-      if (conversationContentSignature(snapshot) !== previousSignature) this.#emitConversation(snapshot);
-      else if (!this.#lastConversationSignatures.has(affectedBotId)) this.#publishConversation(snapshot);
+      if (conversationContentSignature(snapshot) !== previousSignature) this.#conversation.emitConversation(snapshot);
+      else if (!this.#conversation.hasPublishedConversation(affectedBotId))
+        this.#conversation.publishConversation(snapshot);
     }
   }
 
@@ -3583,8 +1881,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     queueMicrotask(() => {
       try {
         this.#emitQueue(botId);
-        const snapshot = this.#snapshots.get(botId);
-        if (snapshot) this.#emitConversation(snapshot);
+        const snapshot = this.#conversation.snapshot(botId);
+        if (snapshot) this.#conversation.emitConversation(snapshot);
       } catch (error) {
         this.#emitError("delivery_reconciliation_pending", error, botId);
       }
@@ -3594,21 +1892,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   #handleNotification(notification: AppServerNotification, source: AgentClient): void {
     const params = notification.params;
     const threadId = getString(params, "threadId");
-    const botId = threadId ? this.#threadToBot.get(threadId) : undefined;
+    const botId = threadId ? this.#conversation.botForThread(threadId) : undefined;
 
     switch (notification.method) {
       case "account/login/completed": {
-        try {
-          const completion = decodeAccountLoginCompletedResult(params);
-          void this.#runProviderConnectionCommand("codex", async () => {
-            await this.#completeCodexLogin(completion, source);
-            return this.getStatus();
-          });
-        } catch {
-          const pending = this.#codexLogin;
-          if (pending)
-            void this.#failCodexLogin(pending, "OpenBot could not verify the ChatGPT connection. Try again.");
-        }
+        this.#providers.completeCodexLogin(params, source, decodeAccountLoginCompletedResult);
         return;
       }
       case "turn/started": {
@@ -3616,14 +1904,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const turn = getRecord(params, "turn");
         const turnId = getString(turn, "id");
         if (!turnId) return;
-        const contextBudget = this.#contextBudgets.get(threadId);
-        if (contextBudget?.phase === "requested" && this.#compactingBots.has(botId)) {
-          contextBudget.phase = "running";
-          contextBudget.compactionTurnId = turnId;
-          return;
-        }
-        const publicThreadId = this.#publicThreadId(botId, threadId);
-        const snapshot = this.#ensureSnapshot(botId, publicThreadId);
+        if (this.#compaction.claimTurn(botId, threadId, turnId)) return;
+        const publicThreadId = this.#conversation.publicThreadId(botId, threadId);
+        const snapshot = this.#conversation.ensureSnapshot(botId, publicThreadId);
         snapshot.activeTurnId = turnId;
         this.#failedTurns.delete(botId);
         const origin = this.#mailbox.startingDeliveryForBot(botId)?.delivery.sender.kind ?? "unknown";
@@ -3635,7 +1918,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           }
         });
         this.#emit({ type: "turn-started", botId, threadId: publicThreadId, turnId, origin });
-        this.#emitConversation(snapshot, "turn.started", { turnId });
+        this.#conversation.emitConversation(snapshot, "turn.started", { turnId });
         return;
       }
       case "item/started":
@@ -3648,7 +1931,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         if (itemId) this.#itemTurns.set(itemId, turnId);
         if (item.type === "contextCompaction") {
           if (notification.method === "item/completed") {
-            this.#markContextCompacted(threadId);
+            this.#compaction.markCompacted(threadId);
           }
           return;
         }
@@ -3667,8 +1950,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const delta = getString(params, "delta");
         if (!turnId || !itemId || delta === null) return;
         this.#itemTurns.set(itemId, turnId);
-        const publicThreadId = this.#publicThreadId(botId, threadId);
-        const snapshot = this.#ensureSnapshot(botId, publicThreadId);
+        const publicThreadId = this.#conversation.publicThreadId(botId, threadId);
+        const snapshot = this.#conversation.ensureSnapshot(botId, publicThreadId);
         let message = snapshot.messages.find((candidate) => candidate.id === itemId);
         if (!message) {
           message = newAssistantMessage(itemId, turnId);
@@ -3694,9 +1977,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const turnId = getString(turn, "id");
         if (!turnId) return;
         const status = getString(turn, "status") ?? "completed";
-        this.#clearPendingRequestsForTurn(threadId, turnId);
-        if (this.#contextBudgets.get(threadId)?.compactionTurnId === turnId) {
-          this.#finishContextCompaction(botId, threadId, status);
+        this.#attention.clearForTurn(threadId, turnId);
+        if (this.#compaction.isCompactionTurn(threadId, turnId)) {
+          this.#compaction.finish(botId, threadId, status);
           return;
         }
         void this.#completeTurn(botId, threadId, turnId, status).catch((error) => {
@@ -3706,27 +1989,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       case "thread/tokenUsage/updated": {
         if (!threadId || !botId) return;
-        this.#updateContextBudget(threadId, params);
+        this.#compaction.updateBudget(threadId, params);
         return;
       }
       case "thread/archived": {
-        if (threadId && this.#loadedThreads.get(threadId) === source) this.#loadedThreads.delete(threadId);
+        if (threadId && this.#conversation.loadedClientFor(threadId) === source)
+          this.#conversation.unloadThread(threadId);
         return;
       }
       case "mcpServer/startupStatus/updated": {
         if (getString(params, "name") !== "computer-use") return;
         const status = getString(params, "status");
-        this.#setStatus({
-          capabilities: {
-            ...this.#status.capabilities,
-            computerUse: status === "ready" ? "ready" : "setup-required",
-          },
-        });
+        this.#providers.setComputerUseCapability(status === "ready" ? "ready" : "setup-required");
         return;
       }
       case "account/rateLimits/updated": {
-        const client = this.#clients.get("codex");
-        if (client) void this.#refreshUsage(client).catch(() => undefined);
+        this.#providers.refreshCodexUsage();
         return;
       }
       case "error":
@@ -3742,10 +2020,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#flushTurnDeltas(turnId);
     await this.#waitForImageGenerationOperations(threadId, turnId);
     await this.#turnAssociations.get(turnId)?.catch(() => undefined);
-    this.#finishMemoryMutations(turnId, status);
-    const shouldCompact = this.#reserveContextCompaction(botId, threadId);
-    this.#browser.endControl(this.#publicThreadId(botId, threadId), turnId);
-    const snapshot = this.#ensureSnapshot(botId, threadId);
+    this.#memories.finishTurn(turnId, status);
+    const shouldCompact = this.#compaction.reserve(botId, threadId);
+    this.#browser.endControl(this.#conversation.publicThreadId(botId, threadId), turnId);
+    const snapshot = this.#conversation.ensureSnapshot(botId, threadId);
     snapshot.activeTurnId = null;
     if (status === "failed") this.#failedTurns.set(botId, turnId);
     else this.#failedTurns.delete(botId);
@@ -3780,7 +2058,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await this.#store.updatePreview(botId, latestAssistant.text);
       this.#emit({ type: "bots-changed", bots: this.listBots() });
     }
-    this.#emitConversation(snapshot, "turn.completed", { turnId, status });
+    this.#conversation.emitConversation(snapshot, "turn.completed", { turnId, status });
     if (deliveries.length > 0) {
       try {
         this.#emitQueue(botId);
@@ -3792,12 +2070,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#emit({
       type: "turn-completed",
       botId,
-      threadId: this.#publicThreadId(botId, threadId),
+      threadId: this.#conversation.publicThreadId(botId, threadId),
       turnId,
       status,
       origin: deliveries[0]?.delivery.sender.kind ?? "unknown",
     });
-    if (shouldCompact) await this.#requestContextCompaction(botId, threadId);
+    if (shouldCompact) await this.#compaction.request(botId, threadId);
     else this.#scheduleDrain(botId);
   }
 
@@ -3811,123 +2089,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     } catch (error) {
       this.#emitError("delivery_turn_association_failed", error, botId);
     }
-  }
-
-  #updateContextBudget(threadId: string, params: unknown): void {
-    const usage = getRecord(params, "tokenUsage");
-    const last = getRecord(usage, "last");
-    const usedTokens = finiteNumberOrNull(last?.totalTokens);
-    const contextWindow = finiteNumberOrNull(usage?.modelContextWindow);
-    if (usedTokens === null || contextWindow === null || contextWindow <= 0) return;
-
-    const budget = this.#contextBudgets.get(threadId) ?? {
-      usedTokens,
-      contextWindow,
-      pending: false,
-      phase: "idle" as const,
-      compactionTurnId: null,
-      lastCompactedTokens: null,
-    };
-    budget.usedTokens = usedTokens;
-    budget.contextWindow = contextWindow;
-    this.#contextBudgets.set(threadId, budget);
-
-    const pressured = usedTokens / contextWindow >= CONTEXT_COMPACTION_THRESHOLD;
-    if (!pressured) {
-      budget.pending = false;
-      budget.lastCompactedTokens = null;
-      return;
-    }
-    if (budget.phase !== "idle") return;
-
-    const minimumGrowth = Math.max(1_024, Math.floor(contextWindow * 0.05));
-    if (budget.lastCompactedTokens !== null && usedTokens < budget.lastCompactedTokens + minimumGrowth) {
-      return;
-    }
-    budget.pending = true;
-  }
-
-  #reserveContextCompaction(botId: string, threadId: string): boolean {
-    const budget = this.#contextBudgets.get(threadId);
-    if (!budget?.pending || budget.phase !== "idle" || this.#compactingBots.has(botId)) {
-      return false;
-    }
-    budget.phase = "requested";
-    this.#compactingBots.add(botId);
-    return true;
-  }
-
-  async #requestContextCompaction(botId: string, threadId: string): Promise<void> {
-    const budget = this.#contextBudgets.get(threadId);
-    const bot = this.#store.list().find((candidate) => candidate.id === botId);
-    const client = bot ? this.#clientForBot(bot) : null;
-    if (budget?.phase !== "requested" || !client || this.#status.phase !== "ready") {
-      this.#releaseContextCompaction(botId, threadId);
-      return;
-    }
-
-    this.#clearCompactionTimer(threadId);
-    const timer = setTimeout(() => {
-      this.#emitError(
-        "context_compaction_timeout",
-        "Codex context compaction timed out; queued work will continue.",
-        botId,
-      );
-      this.#releaseContextCompaction(botId, threadId);
-      this.#scheduleDrain(botId);
-    }, CONTEXT_COMPACTION_TIMEOUT_MS);
-    timer.unref?.();
-    this.#compactionTimers.set(threadId, timer);
-
-    try {
-      await client.request("thread/compact/start", { threadId }, decodeRecordResponse);
-    } catch (error) {
-      budget.lastCompactedTokens = budget.usedTokens;
-      this.#emitError("context_compaction_failed", error, botId);
-      this.#releaseContextCompaction(botId, threadId);
-      this.#scheduleDrain(botId);
-    }
-  }
-
-  #markContextCompacted(threadId: string): void {
-    const budget = this.#contextBudgets.get(threadId);
-    if (!budget) return;
-    budget.pending = false;
-    budget.lastCompactedTokens = budget.usedTokens;
-  }
-
-  #finishContextCompaction(botId: string, threadId: string, status: string): void {
-    const budget = this.#contextBudgets.get(threadId);
-    if (budget && status !== "completed") {
-      budget.lastCompactedTokens = budget.usedTokens;
-      this.#emitError("context_compaction_failed", `Codex context compaction ended with status ${status}.`, botId);
-    }
-    this.#releaseContextCompaction(botId, threadId);
-    this.#scheduleDrain(botId);
-  }
-
-  #releaseContextCompaction(botId: string, threadId: string): void {
-    this.#clearCompactionTimer(threadId);
-    const budget = this.#contextBudgets.get(threadId);
-    if (budget) {
-      budget.pending = false;
-      budget.phase = "idle";
-      budget.compactionTurnId = null;
-    }
-    this.#compactingBots.delete(botId);
-  }
-
-  #clearCompactionTimer(threadId: string): void {
-    const timer = this.#compactionTimers.get(threadId);
-    if (timer) clearTimeout(timer);
-    this.#compactionTimers.delete(threadId);
-  }
-
-  #clearCompactionRuntime(): void {
-    for (const timer of this.#compactionTimers.values()) clearTimeout(timer);
-    this.#compactionTimers.clear();
-    this.#compactingBots.clear();
-    this.#contextBudgets.clear();
   }
 
   async #relayAgentResult(botId: string, turnId: string, delivery: DeliveryContext, text: string): Promise<void> {
@@ -3950,10 +2111,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       replyToMessageId: messageId,
       idempotencyKey: `auto-result:${turnId}:${messageId}`,
     });
-    const senderSnapshot = this.#snapshots.get(botId);
+    const senderSnapshot = this.#conversation.snapshot(botId);
     if (senderSnapshot) {
       this.#syncMailboxMessages(senderSnapshot);
-      this.#emitConversation(senderSnapshot);
+      this.#conversation.emitConversation(senderSnapshot);
     }
     this.#emitQueue(recipientBotId);
     this.#scheduleDrain(recipientBotId);
@@ -3966,7 +2127,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!key.startsWith(`${threadId}:${turnId}:`)) continue;
       operation.interrupted = true;
     }
-    const snapshot = this.#ensureSnapshot(botId, threadId);
+    const snapshot = this.#conversation.ensureSnapshot(botId, threadId);
     for (const message of snapshot.messages) {
       if (
         message.turnId !== turnId ||
@@ -3981,7 +2142,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (message.imageGeneration) message.imageGeneration.error ??= "Image generation was interrupted.";
       changed = true;
     }
-    if (changed) this.#emitConversation(snapshot, "image-generation.interrupted", { turnId });
+    if (changed) this.#conversation.emitConversation(snapshot, "image-generation.interrupted", { turnId });
   }
 
   #applyItem(botId: string, threadId: string, turnId: string, item: ThreadItem, completed: boolean): void {
@@ -3998,11 +2159,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const toolProgress = toolProgressText(item, completed);
     if (toolProgress) {
-      this.#emitTurnProgress(botId, this.#publicThreadId(botId, threadId), turnId, toolProgress);
+      this.#emitTurnProgress(botId, this.#conversation.publicThreadId(botId, threadId), turnId, toolProgress);
       return;
     }
     if (item.type !== "agentMessage" || !isString(item.id)) return;
-    const snapshot = this.#ensureSnapshot(botId, threadId);
+    const snapshot = this.#conversation.ensureSnapshot(botId, threadId);
     let message = snapshot.messages.find((candidate) => candidate.id === item.id);
     if (!message) {
       message = newAssistantMessage(item.id, turnId);
@@ -4012,7 +2173,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (isString(item.phase)) message.itemType = item.phase;
     message.status = completed ? "completed" : "streaming";
     this.#itemTurns.set(item.id, turnId);
-    this.#emitConversation(snapshot);
+    this.#conversation.emitConversation(snapshot);
   }
 
   #emitTurnProgress(botId: string, threadId: string, turnId: string, text: string): void {
@@ -4034,7 +2195,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     operation: ImageGenerationOperation,
   ): Promise<void> {
     if (!isString(item.id)) return;
-    const snapshot = this.#ensureSnapshot(botId, threadId);
+    const snapshot = this.#conversation.ensureSnapshot(botId, threadId);
     let message = snapshot.messages.find((candidate) => candidate.id === item.id);
     if (!message) {
       message = newAssistantMessage(item.id, turnId);
@@ -4064,7 +2225,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     } satisfies ImageGenerationInfo;
     message.status = operation.interrupted ? "interrupted" : completed ? "completed" : "streaming";
     this.#itemTurns.set(item.id, turnId);
-    this.#emitConversation(snapshot);
+    this.#conversation.emitConversation(snapshot);
 
     if (!completed || operation.interrupted) {
       if (operation.interrupted) message.imageGeneration.error ??= "Image generation was interrupted.";
@@ -4073,7 +2234,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (providerStatus === "failed" || failure) {
       message.status = "failed";
       message.imageGeneration.error = failure ?? "Image generation failed.";
-      this.#emitConversation(snapshot);
+      this.#conversation.emitConversation(snapshot);
       return;
     }
 
@@ -4111,30 +2272,30 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         throw new Error("Image generation did not return an image.");
       }
       if (operation.interrupted) {
-        const interruptedSnapshot = this.#ensureSnapshot(botId, threadId);
+        const interruptedSnapshot = this.#conversation.ensureSnapshot(botId, threadId);
         const interruptedMessage = interruptedSnapshot.messages.find((candidate) => candidate.id === item.id);
         if (interruptedMessage?.imageGeneration) {
           interruptedMessage.status = "interrupted";
           interruptedMessage.imageGeneration.error ??= "Image generation was interrupted.";
-          this.#emitConversation(interruptedSnapshot);
+          this.#conversation.emitConversation(interruptedSnapshot);
         }
         return;
       }
-      const latestSnapshot = this.#ensureSnapshot(botId, threadId);
+      const latestSnapshot = this.#conversation.ensureSnapshot(botId, threadId);
       const latestMessage = latestSnapshot.messages.find((candidate) => candidate.id === item.id);
       if (!latestMessage?.imageGeneration) return;
       latestMessage.attachments = [attachment];
       latestMessage.status = "completed";
       delete latestMessage.imageGeneration.error;
-      this.#emitConversation(latestSnapshot);
+      this.#conversation.emitConversation(latestSnapshot);
       return;
     } catch (error) {
-      const latestSnapshot = this.#ensureSnapshot(botId, threadId);
+      const latestSnapshot = this.#conversation.ensureSnapshot(botId, threadId);
       const latestMessage = latestSnapshot.messages.find((candidate) => candidate.id === item.id);
       if (!latestMessage?.imageGeneration) return;
       latestMessage.status = "failed";
       latestMessage.imageGeneration.error = error instanceof Error ? error.message : String(error);
-      this.#emitConversation(latestSnapshot);
+      this.#conversation.emitConversation(latestSnapshot);
     }
   }
 
@@ -4152,486 +2313,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#interruptedTurns.delete(`${threadId}:${turnId}`);
   }
 
-  #surfaceApproval(client: AgentClient, request: AppServerRequest, kind: AgentApprovalKind): void {
-    const threadId = getString(request.params, "threadId");
-    const turnId = getString(request.params, "turnId") ?? (kind === "file-change" ? String(request.id) : null);
-    const botId = threadId ? this.#threadToBot.get(threadId) : undefined;
-    if (!threadId || !turnId || !botId) {
-      this.#respondToMalformedApproval(client, request);
-      return;
-    }
-
-    const approval: AgentApproval = {
-      requestId: request.id,
-      botId,
-      threadId: this.#publicThreadId(botId, threadId),
-      turnId,
-      kind,
-      command: commandText(request.params),
-      cwd: getString(request.params, "cwd"),
-      reason: getString(request.params, "reason"),
-      grantRoot: getString(request.params, "grantRoot"),
-      permissions: kind === "permissions" ? approvalPermissions(request.params) : null,
-    };
-    this.#pendingApprovals.set(request.id, {
-      client,
-      id: request.id,
-      method: request.method,
-      params: request.params,
-      approval,
-    });
-    this.#markRoutineNeedsAttention(turnId);
-    this.#emit({ type: "approval", approval });
-  }
-
-  async #surfaceHostedSiteApproval(
-    client: AgentClient,
-    request: AppServerRequest,
-    params: DynamicToolCallParams,
-    tool: HostedSiteMutationTool,
-  ): Promise<void> {
-    const threadId = params.threadId;
-    const turnId = params.turnId;
-    const botId = this.#threadToBot.get(threadId);
-    if (!turnId || !botId) {
-      client.respondError(request.id, {
-        code: -32602,
-        message: "OpenBot could not identify this hosted site request.",
-      });
-      return;
-    }
-    const details = await this.#hostedSiteApprovalDetails(params, tool);
-    const mutation: HostedSiteMutationContext = {
-      botId,
-      operationId: randomUUID(),
-      action: hostedSiteAction(tool),
-      params,
-      eventDetails: details.eventDetails,
-    };
-    const approval: AgentApproval = {
-      requestId: request.id,
-      botId,
-      threadId: this.#publicThreadId(botId, threadId),
-      turnId,
-      kind: "permissions",
-      command: null,
-      cwd: null,
-      reason: details.reason,
-      grantRoot: null,
-      permissions: details.permissions,
-    };
-    this.#pendingApprovals.set(request.id, {
-      client,
-      id: request.id,
-      method: HOSTED_SITE_APPROVAL_METHOD,
-      params,
-      approval,
-      hostedSiteMutation: mutation,
-    });
-    this.#markRoutineNeedsAttention(turnId);
-    this.#emit({ type: "approval", approval });
-  }
-
-  async #hostedSiteApprovalDetails(
-    params: DynamicToolCallParams,
-    tool: HostedSiteMutationTool,
-  ): Promise<HostedSiteApprovalDetails> {
-    const args = params.arguments;
-    if (!isRecord(args)) throw new Error("Hosted site arguments are required.");
-    if (tool === "delete_site") {
-      const siteId = siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier);
-      const site = await this.#ownedHostedSite(siteId);
-      return {
-        reason: `Delete ${site.hostname} from openbot.site.`,
-        permissions: { fileSystem: { read: [], write: [] }, network: true },
-        eventDetails: hostedSiteEventDetails(site, siteId),
-      };
-    }
-
-    const sourcePath = siteToolString(args.sourcePath, "sourcePath", INPUT_LIMITS.path);
-    const title = siteToolString(args.title, "title", 120);
-    siteToolString(args.description, "description", 500);
-    if (args.spaFallback !== undefined && !isBoolean(args.spaFallback)) {
-      throw new Error("spaFallback must be a boolean.");
-    }
-    const permissions = { fileSystem: { read: [sourcePath], write: [] }, network: true };
-    if (tool === "publish_site") {
-      return {
-        reason: `Publish ${JSON.stringify(title)} as a public site on openbot.site.`,
-        permissions,
-        eventDetails: { siteId: null, title, hostname: null, url: null },
-      };
-    }
-    const siteId = siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier);
-    const site = await this.#ownedHostedSite(siteId);
-    return {
-      reason: `Replace ${site.hostname} with ${JSON.stringify(title)}.`,
-      permissions,
-      eventDetails: { ...hostedSiteEventDetails(site, siteId), title },
-    };
-  }
-
-  async #ownedHostedSite(siteId: string): Promise<HostedSiteSummary> {
-    const sites = await this.#requireHostedSites().list();
-    for (const site of sites) if (site.id === siteId) return site;
-    throw new Error("The hosted site was not found.");
-  }
-
-  async #executeHostedSiteMutation(context: HostedSiteMutationContext): Promise<HostedSiteMutationResult> {
-    const { params } = context;
-    const args = params.arguments;
-    if (!isRecord(args)) throw new Error("Hosted site arguments are required.");
-    if (context.action === "delete") {
-      const siteId = siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier);
-      await this.#requireHostedSites().delete(siteId);
-      return { response: openBotToolResult({ deleted: true, siteId }), eventDetails: context.eventDetails };
-    }
-
-    const sourcePath = siteToolString(args.sourcePath, "sourcePath", INPUT_LIMITS.path);
-    const title = siteToolString(args.title, "title", 120);
-    const description = siteToolString(args.description, "description", 500);
-    if (args.spaFallback !== undefined && !isBoolean(args.spaFallback)) {
-      throw new Error("spaFallback must be a boolean.");
-    }
-    const bot = this.#requireKnownBot(context.botId);
-    const input = {
-      sourcePath,
-      title,
-      description,
-      ...(isBoolean(args.spaFallback) ? { spaFallback: args.spaFallback } : {}),
-    };
-    const roots = [bot.workspacePath, this.#store.sharedRoot];
-    const siteId =
-      context.action === "publish" ? undefined : siteToolString(args.siteId, "siteId", INPUT_LIMITS.identifier);
-    const site = siteId
-      ? await this.#requireHostedSites().replace({ ...input, siteId }, roots)
-      : await this.#requireHostedSites().publish(input, roots);
-    return { response: openBotToolResult(site), eventDetails: hostedSiteEventDetails(site, siteId) };
-  }
-
-  #surfaceLegacyApproval(client: AgentClient, request: AppServerRequest): void {
-    const threadId = getString(request.params, "conversationId");
-    const botId = threadId ? this.#threadToBot.get(threadId) : undefined;
-    if (!threadId || !botId) {
-      this.#respondToMalformedApproval(client, request);
-      return;
-    }
-
-    const kind: AgentApprovalKind = request.method === "execCommandApproval" ? "command" : "file-change";
-    const approval: AgentApproval = {
-      requestId: request.id,
-      botId,
-      threadId: this.#publicThreadId(botId, threadId),
-      turnId: getString(request.params, "turnId") ?? String(request.id),
-      kind,
-      command: commandText(request.params),
-      cwd: getString(request.params, "cwd"),
-      reason: getString(request.params, "reason"),
-      grantRoot: getString(request.params, "grantRoot"),
-      permissions: null,
-    };
-    this.#pendingApprovals.set(request.id, {
-      client,
-      id: request.id,
-      method: request.method,
-      params: request.params,
-      approval,
-    });
-    this.#markRoutineNeedsAttention(approval.turnId);
-    this.#emit({ type: "approval", approval });
-  }
-
-  #respondToMalformedApproval(client: AgentClient, request: AppServerRequest): void {
-    if (request.method === "item/permissions/requestApproval") {
-      client.respond(request.id, { permissions: {}, scope: "turn" });
-      return;
-    }
-    if (request.method === "applyPatchApproval" || request.method === "execCommandApproval") {
-      client.respond(request.id, {
-        decision: { denied: { rejection: "OpenBot could not identify this approval." } },
-      });
-      return;
-    }
-    client.respond(request.id, { decision: "decline" });
-  }
-
-  #clearPendingRequestsForTurn(threadId: string, turnId: string): void {
-    for (const [requestId, pending] of this.#pendingPrompts) {
-      const pendingThreadId = getString(pending.params, "threadId");
-      const pendingTurnId = getString(pending.params, "turnId");
-      if (pendingThreadId === threadId && pendingTurnId === turnId) {
-        this.#resolvePersistedPrompt(pending, { status: "expired" });
-        this.#pendingPrompts.delete(requestId);
-      }
-    }
-    for (const [requestId, pending] of this.#pendingApprovals) {
-      const pendingThreadId = getString(pending.params, "threadId") ?? getString(pending.params, "conversationId");
-      const pendingTurnId = getString(pending.params, "turnId");
-      if (pendingThreadId === threadId && (!pendingTurnId || pendingTurnId === turnId)) {
-        this.#pendingApprovals.delete(requestId);
-      }
-    }
-    for (const [requestId, pending] of this.#pendingBrowserTakeovers) {
-      if (pending.params.threadId === threadId && pending.params.turnId === turnId) {
-        this.#resolveBrowserTakeover(requestId, pending, "cancel");
-      }
-    }
-  }
-
-  #clearPendingPrompts(client?: AgentClient): void {
-    for (const [requestId, pending] of this.#pendingPrompts) {
-      if (client && pending.client !== client) continue;
-      this.#resolvePersistedPrompt(pending, { status: "expired" });
-      this.#pendingPrompts.delete(requestId);
-    }
-  }
-
-  #clearPendingBrowserTakeovers(): void {
-    for (const [requestId, pending] of this.#pendingBrowserTakeovers) {
-      this.#resolveBrowserTakeover(requestId, pending, "cancel");
-    }
-  }
-
-  #resolveBrowserTakeover(
-    requestId: RequestId,
-    pending: PendingBrowserTakeover,
-    decision: RespondToBrowserTakeoverInput["decision"],
-  ): void {
-    this.#pendingBrowserTakeovers.delete(requestId);
-    this.#emit({
-      type: "browser-takeover-resolved",
-      requestId: pending.request.requestId,
-      botId: pending.request.botId,
-    });
-    this.#emitRuntimeSnapshot();
-    pending.resolve(browserTakeoverResult(decision));
-  }
-
-  #surfaceBrowserTakeover(request: AppServerRequest): Promise<DynamicToolResult> {
-    if (!isDynamicToolCall(request.params)) return Promise.resolve(browserTakeoverError());
-    const params = request.params;
-    const { threadId, turnId } = params;
-    const botId = this.#threadToBot.get(threadId);
-    const args = getRecord(params, "arguments");
-    const tabId = getString(args, "tabId");
-    const publicThreadId = botId ? this.#publicThreadId(botId, threadId) : null;
-    const tab = tabId ? this.#browser.listTabs().find((candidate) => candidate.id === tabId) : undefined;
-    if (
-      !botId ||
-      !turnId ||
-      !tabId ||
-      !publicThreadId ||
-      !tab ||
-      tab.ownerThreadId !== publicThreadId ||
-      tab.ownerBotId !== botId
-    ) {
-      return Promise.resolve(browserTakeoverError());
-    }
-
-    const takeover: BrowserTakeoverRequest = {
-      requestId: request.id,
-      botId,
-      threadId: publicThreadId,
-      turnId,
-      tabId,
-    };
-    return new Promise((resolve) => {
-      this.#pendingBrowserTakeovers.set(request.id, {
-        params,
-        request: takeover,
-        resolve,
-      });
-      this.#markRoutineNeedsAttention(turnId);
-      this.#emit({ type: "browser-takeover-requested", request: takeover });
-    });
-  }
-
-  #surfaceDynamicPrompt(client: AgentClient, request: AppServerRequest): void {
-    const threadId = getString(request.params, "threadId");
-    const turnId = getString(request.params, "turnId");
-    const botId = threadId ? this.#threadToBot.get(threadId) : undefined;
-    const publicThreadId = threadId && botId ? this.#publicThreadId(botId, threadId) : null;
-    const args = getRecord(request.params, "arguments");
-    const questions = promptQuestions(args);
-    if (!threadId || !turnId || !botId || !publicThreadId || !validPromptQuestions(questions)) {
-      client.respond(request.id, {
-        success: false,
-        contentItems: [
-          {
-            type: "inputText",
-            text: "OpenBot could not create a user question.",
-          },
-        ],
-      });
-      return;
-    }
-
-    const messageId = this.#persistQuestionPrompt(botId, publicThreadId, turnId, request.id, questions);
-    this.#pendingPrompts.set(request.id, {
-      client,
-      id: request.id,
-      responseKind: "dynamic-tool",
-      params: request.params,
-      botId,
-      publicThreadId,
-      turnId,
-      messageId,
-      questions,
-    });
-    this.#markRoutineNeedsAttention(turnId);
-    this.#emit({
-      type: "prompt",
-      requestId: request.id,
-      botId,
-      threadId: publicThreadId,
-      turnId,
-      questions,
-    });
-  }
-
-  #surfacePrompt(client: AgentClient, request: AppServerRequest): void {
-    const threadId = getString(request.params, "threadId");
-    const turnId = getString(request.params, "turnId");
-    const botId = threadId ? this.#threadToBot.get(threadId) : undefined;
-    if (!threadId || !turnId || !botId) {
-      client.respond(request.id, { answers: {} });
-      return;
-    }
-
-    const questions = promptQuestions(request.params);
-    if (!validPromptQuestions(questions)) {
-      client.respond(request.id, { answers: {} });
-      return;
-    }
-    const publicThreadId = this.#publicThreadId(botId, threadId);
-    const messageId = this.#persistQuestionPrompt(botId, publicThreadId, turnId, request.id, questions);
-    this.#pendingPrompts.set(request.id, {
-      client,
-      id: request.id,
-      responseKind: "user-input",
-      params: request.params,
-      botId,
-      publicThreadId,
-      turnId,
-      messageId,
-      questions,
-    });
-    this.#markRoutineNeedsAttention(turnId);
-    this.#emit({
-      type: "prompt",
-      requestId: request.id,
-      botId,
-      threadId: publicThreadId,
-      turnId,
-      questions,
-    });
-  }
-
-  #surfaceMcpElicitation(client: AgentClient, request: AppServerRequest): void {
-    const threadId = getString(request.params, "threadId");
-    const turnId = getString(request.params, "turnId");
-    const botId = threadId ? this.#threadToBot.get(threadId) : undefined;
-    const publicThreadId = threadId && botId ? this.#publicThreadId(botId, threadId) : null;
-    const question = mcpElicitationQuestion(request.params);
-    if (!threadId || !turnId || !botId || !publicThreadId || !question) {
-      client.respond(request.id, { action: "decline", content: null, _meta: null });
-      this.#emitError(
-        "mcp_safety_handoff",
-        "A local plugin requested an unsupported security hand-off, so OpenBot declined it.",
-        botId,
-      );
-      return;
-    }
-
-    const questions = [question];
-    const messageId = this.#persistQuestionPrompt(botId, publicThreadId, turnId, request.id, questions);
-    this.#pendingPrompts.set(request.id, {
-      client,
-      id: request.id,
-      responseKind: "mcp-elicitation",
-      params: request.params,
-      botId,
-      publicThreadId,
-      turnId,
-      messageId,
-      questions,
-    });
-    this.#markRoutineNeedsAttention(turnId);
-    this.#emit({
-      type: "prompt",
-      requestId: request.id,
-      botId,
-      threadId: publicThreadId,
-      turnId,
-      questions,
-    });
-  }
-
-  #persistQuestionPrompt(
-    botId: string,
-    publicThreadId: string,
-    turnId: string,
-    requestId: RequestId,
-    questions: AgentPromptQuestion[],
-  ): string {
-    const snapshot = this.#ensureSnapshot(botId, publicThreadId);
-    const messageId = `question-prompt:${turnId}:${String(requestId)}`;
-    const existing = snapshot.messages.find((message) => message.id === messageId);
-    if (!existing) {
-      snapshot.messages.push({
-        id: messageId,
-        turnId,
-        author: "assistant",
-        source: "assistant",
-        text: questionPromptText(questions, null),
-        createdAt: new Date().toISOString(),
-        status: "completed",
-        itemType: "question_prompt",
-        questionPrompt: {
-          requestId,
-          questions: structuredClone(questions),
-          resolution: null,
-        },
-      });
-      this.#emitConversation(snapshot, "prompt.requested", { turnId, requestId });
-    }
-    return messageId;
-  }
-
-  #resolvePersistedPrompt(pending: PendingPrompt, resolution: AgentPromptResolution): void {
-    const snapshot = this.#ensureSnapshot(pending.botId, pending.publicThreadId);
-    const message = snapshot.messages.find((candidate) => candidate.id === pending.messageId);
-    if (!message?.questionPrompt || message.questionPrompt.resolution !== null) return;
-    message.questionPrompt.resolution = structuredClone(resolution);
-    message.text = questionPromptText(message.questionPrompt.questions, resolution);
-    this.#emitConversation(snapshot, "prompt.resolved", {
-      turnId: pending.turnId,
-      requestId: pending.id,
-      status: resolution.status,
-    });
-  }
-
-  async #probeComputerUse(client: AgentClient): Promise<"ready" | "setup-required" | "unavailable"> {
-    try {
-      const result = await client.request("plugin/list", { cwds: [] }, decodeRecordResponse, 5_000);
-      for (const marketplace of getArray(result, "marketplaces")) {
-        for (const plugin of getArray(marketplace, "plugins")) {
-          if (!isRecord(plugin)) continue;
-          if (
-            (plugin.id === "computer-use@openai-bundled" || plugin.name === "computer-use") &&
-            plugin.installed === true &&
-            plugin.enabled === true
-          ) {
-            return "ready";
-          }
-        }
-      }
-      return "unavailable";
-    } catch {
-      return "unavailable";
-    }
-  }
-
   #applyPendingRuntimeRefresh(bot: BotSummary): void {
     if (!this.#pendingRuntimeRefreshes.has(bot.id)) return;
     const session = this.#store.activeProviderSession(bot.id);
@@ -4640,33 +2321,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return;
     }
     const activeTurnId =
-      this.#snapshots.get(bot.id)?.activeTurnId ??
+      this.#conversation.snapshot(bot.id)?.activeTurnId ??
       this.#store.database.readConversation(bot.id, bot.threadId).activeTurnId;
     if (activeTurnId) return;
     this.#store.database.deactivateProviderSessions(bot.threadId);
-    this.#threadToBot.delete(session.externalSessionId);
-    this.#loadedThreads.delete(session.externalSessionId);
-    this.#contextBudgets.delete(session.externalSessionId);
-    this.#clearCompactionTimer(session.externalSessionId);
+    this.#conversation.unbindThread(session.externalSessionId);
+    this.#conversation.unloadThread(session.externalSessionId);
+    this.#compaction.forgetThread(session.externalSessionId);
     this.#pendingHandoffs.delete(session.externalSessionId);
     this.#pendingRuntimeRefreshes.delete(bot.id);
-  }
-
-  #ensureSnapshot(botId: string, threadId: string | null): ConversationSnapshot {
-    let snapshot = this.#snapshots.get(botId);
-    if (!snapshot) {
-      const bot = this.#store.list().find((candidate) => candidate.id === botId);
-      const publicThreadId = bot?.threadId ?? threadId;
-      snapshot = this.#store.database.readConversation(botId, publicThreadId);
-      this.#snapshots.set(botId, snapshot);
-    } else if (threadId && !snapshot.threadId) {
-      snapshot.threadId = threadId;
-    }
-    return snapshot;
-  }
-
-  #publicThreadId(botId: string, fallback: string): string {
-    return this.#store.list().find((candidate) => candidate.id === botId)?.threadId ?? fallback;
   }
 
   #bufferDelta(delta: PendingDelta): void {
@@ -4687,7 +2350,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!pending) return;
     this.#pendingDeltas.delete(key);
     if (pending.timer) clearTimeout(pending.timer);
-    const snapshot = this.#ensureSnapshot(pending.botId, pending.publicThreadId);
+    const snapshot = this.#conversation.ensureSnapshot(pending.botId, pending.publicThreadId);
     const persisted = this.#store.database.persistConversation(snapshot, "response.delta-flushed", {
       turnId: pending.turnId,
       messageId: pending.messageId,
@@ -4771,573 +2434,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       newest.join("\n\n"),
       "--- end previous transcript ---",
     ].join("\n");
-  }
-
-  async #enqueueRoutineRun(run: RoutineRun): Promise<void> {
-    const bot = await this.#store.getOrCreate(run.botId);
-    try {
-      const receipt = await this.#mailbox.enqueue({
-        sender: {
-          kind: "routine",
-          routineId: run.routineId,
-          runId: run.id,
-          routineName: run.routineName,
-          scheduledFor: run.scheduledFor,
-        },
-        recipientBotIds: [bot.id],
-        text: run.instruction,
-        draftIds: [],
-        replyToMessageId: null,
-        idempotencyKey: run.triggerId ? `routine:${run.triggerId}:${run.scheduledFor}` : `routine:manual:${run.id}`,
-      });
-      const deliveryId = receipt.deliveries[0]?.id;
-      if (!deliveryId) throw new Error("Unable to create the routine delivery.");
-      this.#routines.attachDelivery(run.id, deliveryId);
-      const snapshot = this.#ensureSnapshot(bot.id, bot.threadId);
-      this.#syncMailboxMessages(snapshot);
-      await this.#store.updatePreview(bot.id, run.instruction);
-      this.#emit({ type: "bots-changed", bots: this.listBots() });
-      this.#emitConversation(snapshot, "routine.run-queued", { routineId: run.routineId, runId: run.id });
-      this.#emitQueue(bot.id);
-      this.#scheduleDrain(bot.id);
-    } catch (error) {
-      this.#transitionRoutineRunWithConversation(run, "failed", error instanceof Error ? error.message : String(error));
-      this.#routineStateChanged(run.botId);
-      throw error;
-    }
-  }
-
-  async #resumePendingRoutineRuns(): Promise<void> {
-    for (const run of this.#routines.pendingRuns()) {
-      await this.#enqueueRoutineRun(run).catch((error) => {
-        this.#emitError("routine_delivery_recovery_failed", error, run.botId);
-      });
-    }
-  }
-
-  #armRoutineTimer(): void {
-    if (this.#routineTimer) clearTimeout(this.#routineTimer);
-    this.#routineTimer = null;
-    if (!this.#initialized || this.#stopping) return;
-    const nextDueAt = this.#routines.nextDueAt(this.#pendingDuplicateBots);
-    if (!nextDueAt) return;
-    const delay = Math.max(0, Math.min(new Date(nextDueAt).getTime() - Date.now(), 2_147_000_000));
-    this.#routineTimer = setTimeout(() => {
-      this.#routineTimer = null;
-      void this.#processDueRoutines();
-    }, delay);
-    this.#routineTimer.unref?.();
-  }
-
-  async #processDueRoutines(now = new Date()): Promise<void> {
-    const changedBots = new Set<string>();
-    try {
-      for (const due of this.#routines.due(now, this.#pendingDuplicateBots)) {
-        let scheduledFor = new Date(due.nextRunAt);
-        let nextRunAt = nextRoutineOccurrence(due.schedule, due.routine.timezone, scheduledFor);
-        while (nextRunAt.getTime() <= now.getTime()) {
-          scheduledFor = nextRunAt;
-          nextRunAt = nextRoutineOccurrence(due.schedule, due.routine.timezone, scheduledFor);
-        }
-        const run = this.#routines.createRun(due.routine, due.triggerId, "scheduled", scheduledFor.toISOString());
-        this.#routines.advanceTrigger(due.routine.id, due.triggerId, nextRunAt.toISOString());
-        changedBots.add(due.routine.botId);
-        if (!run.deliveryId) {
-          await this.#enqueueRoutineRun(run).catch((error) => {
-            this.#emitError("routine_delivery_failed", error, due.routine.botId);
-          });
-        }
-      }
-    } catch (error) {
-      this.#emitError("routine_scheduler_failed", error);
-    } finally {
-      for (const botId of changedBots) this.#routineStateChanged(botId);
-      this.#armRoutineTimer();
-    }
-  }
-
-  #markRoutineNeedsAttention(turnId: string | null): void {
-    if (!turnId) return;
-    const delivery = this.#mailbox.findDeliveryByTurn(turnId);
-    if (delivery?.delivery.sender.kind !== "routine") return;
-    const run = this.#routines.runForDelivery(delivery.delivery.id);
-    if (!run || run.status === "needs-attention") return;
-    this.#transitionRoutineInteractionWithReconciliation(run, "needs-attention");
-  }
-
-  async #interruptRoutineRunsBeforeDeletion(botId: string, runs: RoutineRun[]): Promise<RoutineRun[]> {
-    const startingRun = runs.find((run) => {
-      if (!run.deliveryId) return false;
-      const delivery = this.#mailbox.getDelivery(run.deliveryId)?.delivery;
-      return delivery?.status === "starting" && !delivery.turnId;
-    });
-    if (startingRun) await this.#drainTasks.get(botId);
-
-    const cancellableRuns: RoutineRun[] = [];
-    const activeTurnIds = new Set<string>();
-    for (const run of runs) {
-      if (!run.deliveryId) {
-        cancellableRuns.push(run);
-        continue;
-      }
-      const delivery = this.#mailbox.getDelivery(run.deliveryId)?.delivery;
-      if (!delivery) continue;
-      if (delivery.status === "queued") {
-        cancellableRuns.push(run);
-        continue;
-      }
-      if (delivery.status !== "starting" && delivery.status !== "running") continue;
-      if (!delivery.turnId) {
-        throw new Error("This routine run is still starting. Try again after its turn starts.");
-      }
-      cancellableRuns.push(run);
-      activeTurnIds.add(delivery.turnId);
-    }
-    if (activeTurnIds.size === 0) return cancellableRuns;
-    if (!this.#store.activeProviderSession(botId)) {
-      throw new Error("OpenBot cannot interrupt the active routine run because its provider session is unavailable.");
-    }
-    for (const turnId of activeTurnIds) await this.interrupt(botId, turnId);
-    return cancellableRuns;
-  }
-
-  #markRoutineRunningForTurn(turnId: string | null): void {
-    if (!turnId) return;
-    const delivery = this.#mailbox.findDeliveryByTurn(turnId);
-    if (delivery?.delivery.sender.kind !== "routine") return;
-    const run = this.#routines.runForDelivery(delivery.delivery.id);
-    if (run?.status !== "needs-attention") return;
-    this.#transitionRoutineInteractionWithReconciliation(run, "running");
-  }
-
-  #transitionRoutineInteractionWithReconciliation(run: RoutineRun, status: "needs-attention" | "running"): void {
-    try {
-      this.#transitionRoutineRunWithConversation(run, status);
-      this.#routineStateChanged(run.botId);
-    } catch (error) {
-      this.#emitError("delivery_reconciliation_pending", error, run.botId);
-      queueMicrotask(() => {
-        if (!run.deliveryId) return;
-        const current = this.#routines.runForDelivery(run.deliveryId);
-        if (!current || current.status === status) return;
-        if (status === "running" && current.status !== "needs-attention") return;
-        if (status === "needs-attention" && current.status !== "running") return;
-        try {
-          this.#transitionRoutineRunWithConversation(current, status);
-          this.#routineStateChanged(current.botId);
-        } catch (retryError) {
-          this.#emitError("delivery_reconciliation_pending", retryError, current.botId);
-        }
-      });
-    }
-  }
-
-  #clientForBot(bot: BotSummary): AgentClient | null {
-    return this.#clients.get(providerForBot(bot)) ?? null;
-  }
-
-  #requireKnownBot(botId: string): BotSummary {
-    const bot = this.listBots().find((candidate) => candidate.id === botId);
-    if (!bot) throw new Error(`Unknown bot: ${botId}`);
-    return bot;
-  }
-
-  #memoryStateChanged(botId: string): void {
-    const bot = this.#requireKnownBot(botId);
-    const session = this.#store.activeProviderSession(bot.id);
-    if (session) this.#loadedThreads.delete(session.externalSessionId);
-    this.#emit({ type: "memories-changed", botId });
-  }
-
-  #routineStateChanged(botId: string): void {
-    this.#emit({ type: "routines-changed", botId });
-  }
-
-  #recordHostedSiteEvent(
-    context: HostedSiteMutationContext,
-    status: HostedSiteConversationEventStatus,
-    details: HostedSiteConversationEventDetails,
-    createdAt = new Date().toISOString(),
-  ): void {
-    let failure: unknown;
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        this.#appendHostedSiteEvent(context, status, details, createdAt);
-        return;
-      } catch (error) {
-        failure = error;
-      }
-    }
-    throw failure;
-  }
-
-  #tryRecordHostedSiteEvent(
-    context: HostedSiteMutationContext,
-    status: HostedSiteConversationEventStatus,
-    details: HostedSiteConversationEventDetails,
-    createdAt?: string,
-  ): boolean {
-    try {
-      this.#recordHostedSiteEvent(context, status, details, createdAt);
-      return true;
-    } catch (error) {
-      this.#emitError("hosted_site_marker_persistence_failed", error, context.botId);
-      return false;
-    }
-  }
-
-  #recordHostedSiteTerminalEvent(
-    context: HostedSiteMutationContext,
-    status: Exclude<HostedSiteConversationEventStatus, "running">,
-    details: HostedSiteConversationEventDetails,
-    deliver?: () => void,
-  ): void {
-    const event: PendingHostedSiteTerminalEvent = {
-      botId: context.botId,
-      threadId: this.#store.ensureThreadIdNow(context.botId),
-      turnId: context.params.turnId,
-      operationId: context.operationId,
-      action: context.action,
-      status,
-      details,
-      markerCommandId: hostedSiteEventCommandId(context.botId, context.operationId, status),
-      createdAt: new Date().toISOString(),
-    };
-    hostedSiteConversationEventItemType(event.action, event.status, event.operationId);
-    hostedSiteConversationEventText(event.details);
-    this.#pendingHostedSiteTerminalEvents.set(event.markerCommandId, event);
-    if (deliver) this.#pendingHostedSiteTerminalDeliveries.set(event.markerCommandId, deliver);
-    this.#flushPendingHostedSiteTerminalEvents();
-  }
-
-  #restorePendingHostedSiteTerminalEvents(): void {
-    for (const event of this.#store.database.pendingHostedSiteTerminalEvents()) {
-      this.#pendingHostedSiteTerminalEvents.set(event.markerCommandId, event);
-    }
-    this.#flushPendingHostedSiteTerminalEvents();
-  }
-
-  #flushPendingHostedSiteTerminalEvents(): void {
-    for (const [key, event] of this.#pendingHostedSiteTerminalEvents) {
-      let durable = false;
-      try {
-        this.#store.database.recordPendingHostedSiteTerminalEvent(event);
-        durable = true;
-      } catch (error) {
-        this.#emitError("hosted_site_marker_persistence_failed", error, event.botId);
-      }
-      const context: HostedSiteMutationContext = {
-        botId: event.botId,
-        operationId: event.operationId,
-        action: event.action,
-        params: {
-          threadId: event.threadId,
-          turnId: event.turnId,
-          callId: event.operationId,
-          namespace: "openbot",
-          tool: hostedSiteTool(event.action),
-          arguments: {},
-        },
-        eventDetails: event.details,
-      };
-      if (this.#tryRecordHostedSiteEvent(context, event.status, event.details, event.createdAt)) {
-        this.#pendingHostedSiteTerminalEvents.delete(key);
-        durable = true;
-      }
-      if (durable) {
-        const deliver = this.#pendingHostedSiteTerminalDeliveries.get(key);
-        this.#pendingHostedSiteTerminalDeliveries.delete(key);
-        if (deliver) {
-          try {
-            deliver();
-          } catch (error) {
-            this.#emitError("server_response_failed", error, event.botId);
-          }
-        }
-      }
-    }
-    if (this.#pendingHostedSiteTerminalEvents.size > 0) this.#scheduleHostedSiteTerminalRetry();
-  }
-
-  #scheduleHostedSiteTerminalRetry(): void {
-    if (this.#hostedSiteTerminalRetryTimer || this.#stopping) return;
-    this.#hostedSiteTerminalRetryTimer = setTimeout(() => {
-      this.#hostedSiteTerminalRetryTimer = null;
-      this.#flushPendingHostedSiteTerminalEvents();
-    }, 1_000);
-    this.#hostedSiteTerminalRetryTimer.unref?.();
-  }
-
-  #appendHostedSiteEvent(
-    context: HostedSiteMutationContext,
-    status: HostedSiteConversationEventStatus,
-    details: HostedSiteConversationEventDetails,
-    createdAt: string,
-  ): void {
-    const previousBot = this.#requireKnownBot(context.botId);
-    const previousSnapshot = this.#snapshots.get(context.botId);
-    const previousSnapshotState = previousSnapshot ? structuredClone(previousSnapshot) : undefined;
-    const database = this.#store.database;
-    const ownsTransaction = !database.connection.isTransaction;
-    if (ownsTransaction) database.connection.exec("BEGIN IMMEDIATE");
-    try {
-      const threadId = this.#store.ensureThreadIdNow(context.botId);
-      const messageId = hostedSiteEventMessageId(context.operationId, status);
-      const current = structuredClone(this.#ensureSnapshot(context.botId, threadId));
-      current.threadId = threadId;
-      if (!current.messages.some((message) => message.id === messageId)) {
-        const message: ConversationMessage = {
-          id: messageId,
-          turnId: context.params.turnId,
-          author: "system",
-          source: "system",
-          text: hostedSiteConversationEventText(details),
-          createdAt,
-          status: "completed",
-          itemType: hostedSiteConversationEventItemType(context.action, status, context.operationId),
-        };
-        current.messages.push(message);
-        sortConversationMessages(current.messages);
-        current.revision = database.appendConversationMessage({
-          botId: context.botId,
-          threadId,
-          activeTurnId: current.activeTurnId,
-          message,
-          eventType: `hosted-site.${context.action}-${status}`,
-          commandId: hostedSiteEventCommandId(context.botId, context.operationId, status),
-          detail: { action: context.action, status, operationId: context.operationId, siteId: details.siteId },
-        });
-      }
-      if (status === "running") {
-        database.recordActiveHostedSiteConversationEvent({
-          botId: context.botId,
-          threadId,
-          turnId: context.params.turnId,
-          createdAt,
-          event: { action: context.action, status, operationId: context.operationId, ...details },
-        });
-      } else {
-        database.deleteActiveHostedSiteConversationEvent(context.botId, context.operationId);
-        database.deletePendingHostedSiteTerminalEvent(context.botId, context.operationId, status);
-      }
-      if (ownsTransaction) database.connection.exec("COMMIT");
-      this.#snapshots.set(context.botId, current);
-      this.#publishConversation(current);
-    } catch (error) {
-      if (ownsTransaction && database.connection.isTransaction) database.connection.exec("ROLLBACK");
-      if (previousBot.threadId === null) {
-        this.#store.restoreThreadIdentity(context.botId, previousBot.threadId, previousBot.updatedAt);
-      }
-      if (previousSnapshotState) this.#snapshots.set(context.botId, previousSnapshotState);
-      else this.#snapshots.delete(context.botId);
-      throw error;
-    }
-  }
-
-  #reconcileHostedSiteEventsAfterRestart(): void {
-    for (const { botId, threadId, turnId, event } of this.#store.database.activeHostedSiteConversationEvents()) {
-      if (
-        [...this.#pendingHostedSiteTerminalEvents.values()].some(
-          (pending) => pending.botId === botId && pending.operationId === event.operationId,
-        )
-      ) {
-        continue;
-      }
-      const context: HostedSiteMutationContext = {
-        botId,
-        operationId: event.operationId,
-        action: event.action,
-        params: {
-          threadId,
-          turnId: turnId ?? `hosted-site-${event.operationId}`,
-          callId: event.operationId,
-          namespace: "openbot",
-          tool: hostedSiteTool(event.action),
-          arguments: {},
-        },
-        eventDetails: {
-          siteId: event.siteId,
-          title: event.title,
-          hostname: event.hostname,
-          url: event.url,
-        },
-      };
-      this.#recordHostedSiteTerminalEvent(context, "interrupted", context.eventDetails);
-    }
-  }
-
-  #transitionRoutineRunWithConversation(
-    run: RoutineRun,
-    status: RoutineRunConversationEventStatus,
-    error: string | null = null,
-  ): RoutineRun {
-    if (run.status === status && run.error === error) return run;
-    const previousBot = this.#requireKnownBot(run.botId);
-    const previousSnapshot = this.#snapshots.get(run.botId);
-    const previousSnapshotState = previousSnapshot ? structuredClone(previousSnapshot) : undefined;
-    const database = this.#store.database;
-    const ownsTransaction = !database.connection.isTransaction;
-    if (ownsTransaction) database.connection.exec("BEGIN IMMEDIATE");
-    let updated: RoutineRun;
-    let persisted: ConversationSnapshot;
-    try {
-      const threadId = this.#store.ensureThreadIdNow(run.botId);
-      const nextSnapshot = structuredClone(this.#ensureSnapshot(run.botId, threadId));
-      nextSnapshot.threadId = threadId;
-      const transition = this.#appendRoutineRunTransition(nextSnapshot, run, status, error);
-      updated = transition.run;
-      sortConversationMessages(nextSnapshot.messages);
-      nextSnapshot.revision = database.appendConversationMessage({
-        botId: run.botId,
-        threadId,
-        activeTurnId: nextSnapshot.activeTurnId,
-        message: transition.message,
-        eventType: `routine.run-${status}`,
-        detail: { routineId: run.routineId, runId: run.id, status },
-      });
-      persisted = nextSnapshot;
-      if (ownsTransaction) database.connection.exec("COMMIT");
-    } catch (caught) {
-      if (ownsTransaction && database.connection.isTransaction) database.connection.exec("ROLLBACK");
-      if (previousBot.threadId === null) {
-        this.#store.restoreThreadIdentity(run.botId, previousBot.threadId, previousBot.updatedAt);
-      }
-      if (previousSnapshotState) this.#snapshots.set(run.botId, previousSnapshotState);
-      else this.#snapshots.delete(run.botId);
-      throw caught;
-    }
-    this.#snapshots.set(run.botId, persisted);
-    this.#publishConversation(persisted);
-    return updated;
-  }
-
-  #appendRoutineRunTransition(
-    snapshot: ConversationSnapshot,
-    run: RoutineRun,
-    status: RoutineRunConversationEventStatus,
-    error: string | null = null,
-  ): { run: RoutineRun; message: ConversationMessage } {
-    const updated = this.#routines.updateRunStatus(run.id, status, error);
-    const message: ConversationMessage = {
-      id: randomUUID(),
-      author: "system",
-      source: "system",
-      text: run.routineName,
-      createdAt: updated.updatedAt,
-      status: "completed",
-      itemType: routineRunConversationEventItemType(status, run.routineId, run.id),
-    };
-    snapshot.messages.push(message);
-    return { run: updated, message };
-  }
-
-  #mutateRoutineWithConversation<T>(
-    botId: string,
-    action: RoutineConversationEventAction,
-    mutate: () => T,
-    eventRoutine: (result: T) => Pick<Routine, "id" | "name">,
-    turnId?: string,
-    transactionHooks?: { beforeMutate?: (snapshot: ConversationSnapshot) => void; onRollback?: () => void },
-  ): T {
-    const previousBot = this.#requireKnownBot(botId);
-    const previousSnapshot = this.#snapshots.get(botId);
-    const previousSnapshotState = previousSnapshot ? structuredClone(previousSnapshot) : undefined;
-    const database = this.#store.database;
-    const ownsTransaction = !database.connection.isTransaction;
-    if (ownsTransaction) database.connection.exec("BEGIN IMMEDIATE");
-    let result: T;
-    let persisted: ConversationSnapshot;
-    try {
-      const threadId = this.#store.ensureThreadIdNow(botId);
-      const nextSnapshot = structuredClone(this.#ensureSnapshot(botId, threadId));
-      nextSnapshot.threadId = threadId;
-      transactionHooks?.beforeMutate?.(nextSnapshot);
-      result = mutate();
-      const routine = eventRoutine(result);
-      const createdAt = new Date().toISOString();
-      const message: ConversationMessage = {
-        id: randomUUID(),
-        ...(turnId ? { turnId } : {}),
-        author: "system",
-        source: "system",
-        text: routine.name,
-        createdAt,
-        status: "completed",
-        itemType: routineConversationEventItemType(action, routine.id),
-      };
-      nextSnapshot.messages.push(message);
-      sortConversationMessages(nextSnapshot.messages);
-      persisted = database.persistConversation(nextSnapshot, `routine.${action}`, {
-        action,
-        routineId: routine.id,
-        routineName: routine.name,
-        messageId: message.id,
-      });
-      if (ownsTransaction) database.connection.exec("COMMIT");
-    } catch (error) {
-      if (ownsTransaction && database.connection.isTransaction) database.connection.exec("ROLLBACK");
-      transactionHooks?.onRollback?.();
-      if (previousBot.threadId === null) {
-        this.#store.restoreThreadIdentity(botId, previousBot.threadId, previousBot.updatedAt);
-      }
-      if (previousSnapshotState) this.#snapshots.set(botId, previousSnapshotState);
-      else this.#snapshots.delete(botId);
-      throw error;
-    }
-    this.#snapshots.set(botId, persisted);
-    this.#publishConversation(persisted);
-    return result;
-  }
-
-  #requireReadyClient(provider: AgentProvider): AgentClient {
-    const client = this.#clients.get(provider);
-    if (!client || this.#status.phase !== "ready") {
-      throw new Error(this.#status.message ?? `${providerLabel(provider)} CLI is not ready or signed in.`);
-    }
-    return client;
-  }
-
-  async #refreshUsage(client: AgentClient, model?: string, emit = true): Promise<AccountUsage> {
-    const rateLimits = await client.request(
-      "account/rateLimits/read",
-      client.provider === "codex" ? undefined : { model },
-      decodeAccountRateLimitsReadResult,
-    );
-    const usage = normalizeAccountUsage(rateLimits, client.provider === "codex" ? model : undefined);
-    if (emit) this.#emit({ type: "usage-changed", usage: structuredClone(usage) });
-    return structuredClone(usage);
-  }
-
-  #setStatus(patch: Partial<AgentStatus>): void {
-    this.#status = {
-      ...this.#status,
-      ...patch,
-      capabilities: patch.capabilities ?? this.#status.capabilities,
-    };
-    this.#emit({ type: "status", status: this.getStatus() });
-  }
-
-  #emitConversation(
-    snapshot: ConversationSnapshot,
-    eventType = "conversation.snapshot-updated",
-    detail: unknown = {
-      activeTurnId: snapshot.activeTurnId,
-      messageCount: snapshot.messages.length,
-    },
-  ): void {
-    sortConversationMessages(snapshot.messages);
-    const signature = conversationContentSignature(snapshot);
-    if (this.#lastConversationSignatures.get(snapshot.botId) === signature) return;
-    if (snapshot.threadId) {
-      const persisted = this.#store.database.persistConversation(snapshot, eventType, detail);
-      snapshot.revision = persisted.revision;
-    }
-    this.#publishConversation(snapshot);
-  }
-
-  #publishConversation(snapshot: ConversationSnapshot): void {
-    this.#lastConversationSignatures.set(snapshot.botId, conversationContentSignature(snapshot));
-    this.#emit({ type: "conversation", snapshot: structuredClone(snapshot) });
   }
 
   #emitError(code: string, error: unknown, botId?: string): void {
