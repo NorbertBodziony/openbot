@@ -164,10 +164,11 @@ async function importFiles(files: File[]): Promise<void> {
   }
 }
 
-// A `FromMain` decoder has a same-shaped `FromHost` twin in `remote-server-manager.ts` and is
-// deliberately not the same function: this side is checking what the main process sent the renderer,
-// which is a trusted sender, while that side is checking a remote team server, which is not. The
-// suffix is there so a later reader does not merge them onto whichever is looser.
+// A `FromMain` decoder has a same-shaped `FromHost` twin in `src/main/remote-host-decoding.ts` and
+// its four wire-area siblings, and is deliberately not the same function: this side is checking what
+// the main process sent the renderer, which is a trusted sender, while that side is checking a remote
+// team server, which is not. The suffix is there so a later reader does not merge them onto whichever
+// is looser.
 function decodeBrowserPreviewFromMain(value: unknown): BrowserPreview {
   const preview = decodeRecord(value, "browser preview");
   const dataUrl = requiredString(preview, "dataUrl");

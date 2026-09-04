@@ -11,10 +11,10 @@ export interface DynamicIslandActionAgent {
 
 export interface DynamicIslandRemoteAgent {
   request(
-    path: string,
-    init: { method: "POST"; body: unknown },
     serverId: string,
+    path: string,
     decoder: (value: unknown) => void,
+    init: { method: "POST"; body: unknown },
   ): Promise<void>;
 }
 
@@ -29,7 +29,7 @@ export async function performDynamicIslandCriticalAction(
     await routeToServer<void>(action.serverId, {
       local: () => local.respondToPrompt(input),
       remote: (serverId) =>
-        remote.request(TEAM_API_ROUTES.respond.prompt, { method: "POST", body: input }, serverId, decodeVoid),
+        remote.request(serverId, TEAM_API_ROUTES.respond.prompt, decodeVoid, { method: "POST", body: input }),
     });
     return;
   }
@@ -37,6 +37,6 @@ export async function performDynamicIslandCriticalAction(
   await routeToServer<void>(action.serverId, {
     local: () => local.respondToApproval(input),
     remote: (serverId) =>
-      remote.request(TEAM_API_ROUTES.respond.approval, { method: "POST", body: input }, serverId, decodeVoid),
+      remote.request(serverId, TEAM_API_ROUTES.respond.approval, decodeVoid, { method: "POST", body: input }),
   });
 }

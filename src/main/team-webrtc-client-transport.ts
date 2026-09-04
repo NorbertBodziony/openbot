@@ -264,11 +264,19 @@ export class TeamWebRtcClientTransport extends EventEmitter<TeamWebRtcClientTran
       fileRecord && isString(fileRecord.transferId)
         ? await this.#files.consume(hostId, fileRecord.transferId)
         : undefined;
-    return {
-      status: envelope.status,
-      body: file ? null : decodeTeamProtocolV3WebRtcHttpResponse(method, path, envelope.status, envelope.body),
-      ...(file ? { file } : {}),
-    };
+    // The envelope check above catches a frame that is not shaped like a response. This catches a
+    // well-formed frame whose *body* the released V3 adapter refuses, which is the same kind of
+    // failure and has to carry the same code: a plain error here reads to the caller as an ordinary
+    // request failure, so the host stays healthy and reconnectable while talking nonsense.
+    let body: ReturnType<typeof decodeTeamProtocolV3WebRtcHttpResponse> = null;
+    if (!file) {
+      try {
+        body = decodeTeamProtocolV3WebRtcHttpResponse(method, path, envelope.status, envelope.body);
+      } catch {
+        throw new TeamWebRtcRequestError(502, "protocol_error", "The host returned an invalid response body.");
+      }
+    }
+    return { status: envelope.status, body, ...(file ? { file } : {}) };
   }
 
   async disconnect(hostId: string): Promise<void> {
