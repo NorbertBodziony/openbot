@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   TEAM_AGENT_ACTIVITY_CAPABILITY,
   TEAM_CURRENT_CAPABILITIES,
+  TEAM_EML_ATTACHMENTS_CAPABILITY,
   TEAM_MODEL_SCOPED_USAGE_CAPABILITY,
 } from "./current";
 import requestFixture from "./fixtures/v3/client-http-request.json";
@@ -78,6 +79,9 @@ describe("Team protocol v3", () => {
     expect(TEAM_PROTOCOL_V1_CAPABILITIES).not.toContain(TEAM_MODEL_SCOPED_USAGE_CAPABILITY);
     expect(TEAM_PROTOCOL_V3_CAPABILITIES).not.toContain(TEAM_MODEL_SCOPED_USAGE_CAPABILITY);
     expect(TEAM_CURRENT_CAPABILITIES).toContain(TEAM_MODEL_SCOPED_USAGE_CAPABILITY);
+    expect(TEAM_PROTOCOL_V1_CAPABILITIES).not.toContain(TEAM_EML_ATTACHMENTS_CAPABILITY);
+    expect(TEAM_PROTOCOL_V3_CAPABILITIES).not.toContain(TEAM_EML_ATTACHMENTS_CAPABILITY);
+    expect(TEAM_CURRENT_CAPABILITIES).toContain(TEAM_EML_ATTACHMENTS_CAPABILITY);
   });
 
   it("adds model-scoped usage only to the current adapter", () => {
