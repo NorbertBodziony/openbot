@@ -18,7 +18,6 @@ import type { ChatMessage } from "@/features/chat/model/chat-messages";
 import { useBotActivity } from "@/features/workspace/components/use-bot-activity";
 import { useConnectionAppearance } from "@/features/workspace/components/use-connection-appearance";
 import type { MobileBot } from "@/features/workspace/context/mobile-workspace-context";
-import { BloubLoader } from "@/shared/components/bloub-loader";
 
 const STARTER_OPTIONS = [
   { id: "plan", label: "Plan the next steps", detail: "Turn a goal into a clear plan" },
@@ -125,12 +124,12 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
       showsVerticalScrollIndicator={false}
     >
       {historyState === "connecting" || historyState === "loading" ? (
-        <View className="flex-1 items-center justify-center">
-          <BloubLoader
-            active={isFocused}
-            label={historyState === "connecting" ? "Connecting to server" : "Loading chat history"}
-          />
-        </View>
+        <View
+          className="flex-1"
+          accessible
+          accessibilityLabel={historyState === "connecting" ? "Connecting to server" : "Loading chat history"}
+          accessibilityState={{ busy: true }}
+        />
       ) : historyState !== "ready" ? (
         <View className="flex-1 items-center justify-center gap-2">
           <Typography.Paragraph align="center" className="text-text-secondary">
