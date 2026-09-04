@@ -134,11 +134,8 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
       {messages.map((message) => (
         <Animated.View
           key={message.id}
-          className={`max-w-[88%] rounded-[22px] px-4 py-3 ${message.author === "user" ? "self-end" : "self-start"}`}
-          style={[
-            { borderCurve: "continuous" },
-            message.author === "user" ? userBubbleStyle : { backgroundColor: fieldBackground },
-          ]}
+          className={`max-w-[88%] rounded-[30px] px-4 py-3 ${message.author === "user" ? "self-end" : "self-start bg-control/60"}`}
+          style={[{ borderCurve: "circular" }, message.author === "user" ? userBubbleStyle : undefined]}
         >
           <Typography.Paragraph selectable style={{ color: message.author === "user" ? "#0a0a0c" : foreground }}>
             {message.body}
