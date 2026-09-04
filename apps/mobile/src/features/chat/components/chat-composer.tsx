@@ -18,7 +18,7 @@ interface ChatComposerProps {
   muted: ViewStyle["backgroundColor"];
   raised: ViewStyle["backgroundColor"];
   onChangeDraft: (value: string) => void;
-  onSend: () => void;
+  onSend: (text: string) => void;
 }
 
 export function ChatComposer({
@@ -38,10 +38,25 @@ export function ChatComposer({
 }: ChatComposerProps) {
   const hasDraft = Boolean(draft.trim());
   const inputRef = useRef<TextInput>(null);
+  const sendAfterEditingRef = useRef(false);
 
   useEffect(() => {
-    if (disabled) inputRef.current?.blur();
+    if (disabled) {
+      sendAfterEditingRef.current = false;
+      inputRef.current?.blur();
+    }
   }, [disabled]);
+
+  function requestSend(): void {
+    if (disabled || sendAfterEditingRef.current) return;
+    if (inputRef.current?.isFocused()) {
+      // Ending native editing commits pending autocorrection before sending.
+      sendAfterEditingRef.current = true;
+      inputRef.current.blur();
+    } else {
+      onSend(draft);
+    }
+  }
 
   return (
     <View
@@ -85,11 +100,19 @@ export function ChatComposer({
           placeholder={`Ask ${botName}`}
           placeholderTextColor={muted}
           returnKeyType="send"
+          submitBehavior="blurAndSubmit"
           selectionColor={foreground}
           style={{ fontSize: 16, height: 48, paddingBottom: 0, paddingTop: 0 }}
           value={draft}
           onChangeText={onChangeDraft}
-          onSubmitEditing={onSend}
+          onSubmitEditing={() => {
+            if (!disabled) sendAfterEditingRef.current = true;
+          }}
+          onEndEditing={({ nativeEvent: { text } }) => {
+            if (!sendAfterEditingRef.current) return;
+            sendAfterEditingRef.current = false;
+            if (!disabled) onSend(text);
+          }}
         />
         <Pressable
           accessibilityLabel={hasDraft ? "Send message" : "Start voice message"}
@@ -100,7 +123,7 @@ export function ChatComposer({
           style={{ backgroundColor: hasDraft ? action : raised }}
           onPress={() =>
             hasDraft
-              ? onSend()
+              ? requestSend()
               : Alert.alert("Voice messages", "Voice input will be connected with the conversation API.")
           }
         >

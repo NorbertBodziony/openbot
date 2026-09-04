@@ -135,7 +135,7 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
     [handleLeaveConversation],
   );
 
-  function sendMessage(value = draft): void {
+  function sendMessage(value: string): void {
     if (!serverOnline) return;
     const body = value.trim();
     if (!body) return;
@@ -212,7 +212,7 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
               muted={muted}
               raised={raised}
               onChangeDraft={setDraft}
-              onSend={() => sendMessage()}
+              onSend={sendMessage}
             />
           </View>
         </View>
