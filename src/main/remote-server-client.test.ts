@@ -402,3 +402,34 @@ describe("WebRTC request decoding", () => {
     expect(connections.statusFor("host")).toMatchObject({ state: "error", issue: { code: "protocol_error" } });
   });
 });
+
+describe("HTTPS request decoding", () => {
+  // The HTTPS arm has a third way to fail: a 200 whose body is not JSON at all. It used to leave
+  // `requestJson` as a raw `SyntaxError`, which only the classifier recognised -- so a caller
+  // checking for a protocol failure by class, like the probe, treated it as an ordinary rejection
+  // and the host stayed healthy.
+  it("records an unreadable success body, which arrives as a parse error rather than a decode one", async () => {
+    const server = storedHttpsServer("host");
+    stubTeamFetch({
+      compatibility: { capabilities: ["remote-desktop"] },
+      routes: {
+        [TEAM_API_ROUTES.remoteScreen.capabilities]: () =>
+          new Response("{", { status: 200, headers: { "content-type": "application/json" } }),
+      },
+    });
+    const connections = new RemoteServerConnections({
+      appVersion: null,
+      onChanged: () => undefined,
+      onReconnectSuspended: () => undefined,
+    });
+    const client = new RemoteServerClient({
+      appVersion: "0.4.0",
+      servers: { require: () => server, token: () => "token" },
+      connections,
+      transport: null,
+    });
+
+    await expect(client.probeRemoteDesktop(server)).rejects.toThrow("invalid data");
+    expect(connections.statusFor("host")).toMatchObject({ state: "error", issue: { code: "protocol_error" } });
+  });
+});

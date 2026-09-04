@@ -87,7 +87,13 @@ export async function requestJson<T>(
     try {
       value = await response.json();
     } catch (error) {
-      if (response.ok) throw error;
+      // A body the host said was JSON and is not is the same failure as one that decodes to the
+      // wrong shape, so it leaves here as the same error. Raw, it was a `SyntaxError` that only
+      // `classifyRemoteConnectionError` recognised -- every caller checking for a protocol failure
+      // by class, the desktop probe among them, let it through as an ordinary rejection.
+      if (response.ok) {
+        throw new RemoteProtocolError("protocol_error", "The host returned invalid data.", null, { cause: error });
+      }
     }
   }
   if (value !== undefined) {

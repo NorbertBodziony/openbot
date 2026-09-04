@@ -473,16 +473,6 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       // first, a host answering the capabilities route with something no build can read had its
       // protocol failure wiped by the restart that followed it, and the sign-in ended online. Last
       // writer wins, so the probe has to be the last writer.
-      // The stream restarts before the probe, not after. `restart(id, true)` lifts the suspension a
-      // previous failure left, and opening the socket clears the recorded issue -- so with the probe
-      // first, a host answering the capabilities route with something no build can read had its
-      // protocol failure wiped by the restart that followed it, and the sign-in ended online. Last
-      // writer wins, so the probe has to be the last writer.
-      // The stream restarts before the probe, not after. `restart(id, true)` lifts the suspension a
-      // previous failure left, and opening the socket clears the recorded issue -- so with the probe
-      // first, a host answering the capabilities route with something no build can read had its
-      // protocol failure wiped by the restart that followed it, and the sign-in ended online. Last
-      // writer wins, so the probe has to be the last writer.
       this.#events.restart(server.id, true);
       // The probe authenticates with the session token this sign-in just replaced, so it has to run
       // against the stored server rather than the one `login` was handed. It is also the one step
