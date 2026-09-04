@@ -63,7 +63,7 @@ describe.sequential("GrokAgentClient", () => {
     ).resolves.toEqual({ rateLimits: null, rateLimitsByLimitId: null });
   });
 
-  it("reads a unified weekly billing period without an included-credit percentage", async () => {
+  it("reports unavailable usage for a unified weekly billing period without quota values", async () => {
     process.env.OPENBOT_FAKE_GROK_MODE = "unified-billing";
     client = new GrokAgentClient({ executable, version: "1.0.13" }, 5_000);
     client.start();
@@ -71,11 +71,18 @@ describe.sequential("GrokAgentClient", () => {
 
     await expect(
       client.request("account/rateLimits/read", { model: "grok-4.5" }, decodeAccountRateLimitsReadResult),
-    ).resolves.toMatchObject({
-      rateLimits: {
-        secondary: { usedPercent: 0, windowDurationMins: 10_080, resetsAt: 1_788_825_600 },
-      },
-    });
+    ).resolves.toEqual({ rateLimits: null, rateLimitsByLimitId: null });
+  });
+
+  it("times out a billing request that stops responding", async () => {
+    process.env.OPENBOT_FAKE_GROK_MODE = "hung-billing";
+    client = new GrokAgentClient({ executable, version: "1.0.13" }, 1_000);
+    client.start();
+    await client.request("initialize", {}, decodeRecordResponse);
+
+    await expect(
+      client.request("account/rateLimits/read", { model: "grok-4.5" }, decodeAccountRateLimitsReadResult),
+    ).rejects.toThrow("Grok request timed out: account/rateLimits/read");
   });
 
   it("discovers ACP models, configures a session, streams, steers, asks, approves, cancels, and resumes", async () => {
@@ -529,6 +536,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   }
   if (message.method === "_x.ai/billing") {
     log({ method: message.method });
+    if (mode === "hung-billing") return;
     write({
       id: message.id,
       result: {

@@ -103,6 +103,18 @@ describe("ClaudeAgentClient", () => {
     await client.stop();
   });
 
+  it("times out usage discovery and closes its query", async () => {
+    const query = new TestQuery(new TestQueue<TestStreamMessage>(), [], new Promise<unknown>(() => undefined));
+    const client = new ClaudeAgentClient({ executable: "/bin/true", version: "2.1.246" }, () => query, undefined, 10);
+    client.start();
+
+    await expect(
+      client.request("account/rateLimits/read", { model: "claude-sonnet-4-6" }, decodeAccountRateLimitsReadResult),
+    ).rejects.toThrow("Claude request timed out: account/rateLimits/read");
+    expect(query.closed).toBe(true);
+    await client.stop();
+  });
+
   it("restores one stable reasoning item for a multi-phase turn", async () => {
     const turnId = "8bf58506-96a8-4d96-837c-3ab807b79d1f";
     const history: SessionMessage[] = [

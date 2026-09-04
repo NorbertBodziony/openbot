@@ -114,6 +114,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
   readonly #cli: ClaudeCliInfo;
   readonly #createQuery: QueryFactory;
   readonly #readSessionMessages: SessionHistoryReader;
+  readonly #requestTimeoutMs: number;
   readonly #threads = new Map<string, ThreadRuntime>();
   readonly #pendingServerRequests = new Map<RequestId, PendingServerRequest>();
   readonly #modelEffortCapabilities = new Map<string, ClaudeEffortCapability>();
@@ -124,11 +125,13 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     cli: ClaudeCliInfo,
     createQuery: QueryFactory = query,
     readSessionMessages: SessionHistoryReader = getSessionMessages,
+    requestTimeoutMs = 30_000,
   ) {
     super();
     this.#cli = cli;
     this.#createQuery = createQuery;
     this.#readSessionMessages = readSessionMessages;
+    this.#requestTimeoutMs = requestTimeoutMs;
   }
 
   get running(): boolean {
@@ -153,8 +156,8 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     this.#pendingServerRequests.clear();
   }
 
-  request<T>(method: string, params: unknown, decoder: ResponseDecoder<T>, _timeoutMs?: number): Promise<T>;
-  async request<T>(method: string, params: unknown, decoder: ResponseDecoder<T>, _timeoutMs?: number): Promise<T> {
+  request<T>(method: string, params: unknown, decoder: ResponseDecoder<T>, timeoutMs?: number): Promise<T>;
+  async request<T>(method: string, params: unknown, decoder: ResponseDecoder<T>, timeoutMs?: number): Promise<T> {
     if (!this.#running) throw new Error("Claude Agent SDK is not running.");
 
     switch (method) {
@@ -163,9 +166,9 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
       case "account/read":
         return decoder(await this.#readAccount());
       case "account/rateLimits/read":
-        return decoder(await this.#readUsage(getString(params, "model")));
+        return decoder(await this.#readUsage(getString(params, "model"), timeoutMs ?? this.#requestTimeoutMs));
       case "model/list":
-        return decoder({ data: await this.#listModels(_timeoutMs) });
+        return decoder({ data: await this.#listModels(timeoutMs) });
       case "plugin/list":
         return decoder({ marketplaces: [] });
       case "thread/start": {
@@ -297,7 +300,7 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
     }
   }
 
-  async #readUsage(model: string | null): Promise<AccountRateLimitsReadResult> {
+  async #readUsage(model: string | null, timeoutMs: number): Promise<AccountRateLimitsReadResult> {
     const input = new AsyncMessageQueue();
     const claudeQuery = this.#createQuery({
       prompt: input,
@@ -309,11 +312,23 @@ export class ClaudeAgentClient extends EventEmitter<ClientEvents> {
         env: { ...claudeEnvironment(this.#cli), CLAUDE_AGENT_SDK_CLIENT_APP: "openbot/0.1.0" },
       },
     });
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       const readUsage = claudeQuery.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET;
       if (!readUsage) return { rateLimits: null, rateLimitsByLimitId: null };
-      return claudeRateLimits(await readUsage.call(claudeQuery), model);
+      const usage = await Promise.race([
+        readUsage.call(claudeQuery),
+        new Promise<unknown>((_, reject) => {
+          timeout = setTimeout(() => {
+            input.close();
+            claudeQuery.close();
+            reject(new Error("Claude request timed out: account/rateLimits/read"));
+          }, timeoutMs);
+        }),
+      ]);
+      return claudeRateLimits(usage, model);
     } finally {
+      if (timeout) clearTimeout(timeout);
       input.close();
       claudeQuery.close();
     }

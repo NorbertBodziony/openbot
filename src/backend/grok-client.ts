@@ -165,7 +165,7 @@ export class GrokAgentClient extends EventEmitter<ClientEvents> {
     });
   }
 
-  async request<T>(method: string, params: unknown, decoder: ResponseDecoder<T>, _timeoutMs?: number): Promise<T> {
+  async request<T>(method: string, params: unknown, decoder: ResponseDecoder<T>, timeoutMs?: number): Promise<T> {
     if (!this.running) throw new Error("Grok ACP client is not running.");
     switch (method) {
       case "initialize":
@@ -179,7 +179,15 @@ export class GrokAgentClient extends EventEmitter<ClientEvents> {
       case "account/rateLimits/read":
         await this.#ensureInitialized();
         if (!this.#signedIn) return decoder({ rateLimits: null, rateLimitsByLimitId: null });
-        return decoder(grokRateLimits(await this.#requireConnection().extMethod("_x.ai/billing", {})));
+        return decoder(
+          grokRateLimits(
+            await withTimeout(
+              this.#requireConnection().extMethod("_x.ai/billing", {}),
+              timeoutMs ?? this.#requestTimeoutMs,
+              "Grok request timed out: account/rateLimits/read",
+            ),
+          ),
+        );
       case "model/list":
         return decoder({
           data: this.#models.map((model) => ({
@@ -875,14 +883,14 @@ function grokCreditUsagePercent(config: DynamicRecord): number | null {
       : null;
   }
   const limit = grokCentValue(config, "monthlyLimit");
-  const used = grokCentValue(config, "used") ?? 0;
-  return limit && limit > 0 ? Math.max(0, Math.min(100, (used / limit) * 100)) : 0;
+  const used = grokCentValue(config, "used");
+  if (limit === null || limit <= 0 || used === null) return null;
+  return Math.max(0, Math.min(100, (used / limit) * 100));
 }
 
 function grokCentValue(config: DynamicRecord, key: string): number | null {
   const cent = getRecord(config, key);
   if (!cent) return null;
-  if (cent.val === undefined) return 0;
   return isNumber(cent.val) && Number.isFinite(cent.val) ? cent.val : null;
 }
 
