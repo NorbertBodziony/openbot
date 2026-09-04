@@ -17,11 +17,12 @@ import {
   type SessionConfigOption,
   type SessionNotification,
 } from "@agentclientprotocol/sdk";
-import { type DynamicRecord, isBoolean, isString } from "@openbot/contracts/runtime-values";
+import { type DynamicRecord, isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
 import type { AgentProvider } from "./agent-client";
 import type { GrokCliInfo } from "./cli";
 import { type DynamicToolNamespace, LocalMcpBridge, type LocalMcpSession } from "./local-mcp-bridge";
 import {
+  type AccountRateLimitsReadResult,
   type AppServerNotification,
   type AppServerRequest,
   type DynamicToolResult,
@@ -164,7 +165,7 @@ export class GrokAgentClient extends EventEmitter<ClientEvents> {
     });
   }
 
-  async request<T>(method: string, params: unknown, decoder: ResponseDecoder<T>, _timeoutMs?: number): Promise<T> {
+  async request<T>(method: string, params: unknown, decoder: ResponseDecoder<T>, timeoutMs?: number): Promise<T> {
     if (!this.running) throw new Error("Grok ACP client is not running.");
     switch (method) {
       case "initialize":
@@ -176,7 +177,17 @@ export class GrokAgentClient extends EventEmitter<ClientEvents> {
           requiresOpenaiAuth: false,
         });
       case "account/rateLimits/read":
-        return decoder({ rateLimits: null, rateLimitsByLimitId: null });
+        await this.#ensureInitialized();
+        if (!this.#signedIn) return decoder({ rateLimits: null, rateLimitsByLimitId: null });
+        return decoder(
+          grokRateLimits(
+            await withTimeout(
+              this.#requireConnection().extMethod("_x.ai/billing", {}),
+              timeoutMs ?? this.#requestTimeoutMs,
+              "Grok request timed out: account/rateLimits/read",
+            ),
+          ),
+        );
       case "model/list":
         return decoder({
           data: this.#models.map((model) => ({
@@ -837,6 +848,54 @@ function imageMimeType(path: string): "image/jpeg" | "image/webp" | "image/png" 
   if (/\.jpe?g$/i.test(path)) return "image/jpeg";
   if (/\.webp$/i.test(path)) return "image/webp";
   return "image/png";
+}
+
+function grokRateLimits(value: unknown): AccountRateLimitsReadResult {
+  const config = getRecord(value, "config");
+  const period = getRecord(config, "currentPeriod");
+  if (!config || !period) return { rateLimits: null, rateLimitsByLimitId: null };
+  const usedPercent = grokCreditUsagePercent(config);
+  if (usedPercent === null) return { rateLimits: null, rateLimitsByLimitId: null };
+  const start = Date.parse(getString(period, "start") ?? "");
+  const end = Date.parse(getString(period, "end") ?? "");
+  const durationMins = Number.isFinite(start) && Number.isFinite(end) ? (end - start) / 60_000 : Number.NaN;
+  const periodType = getString(period, "type") ?? getString(period, "periodType");
+  const weekly = periodType ? periodType.toLowerCase().includes("weekly") : nearWeeklyDuration(durationMins);
+  if (!weekly) return { rateLimits: null, rateLimitsByLimitId: null };
+  return {
+    rateLimits: {
+      limitId: "grok",
+      primary: null,
+      secondary: {
+        usedPercent,
+        windowDurationMins: Number.isFinite(durationMins) ? durationMins : 10_080,
+        resetsAt: Number.isFinite(end) ? end / 1_000 : null,
+      },
+    },
+    rateLimitsByLimitId: null,
+  };
+}
+
+function grokCreditUsagePercent(config: DynamicRecord): number | null {
+  if (config.creditUsagePercent !== undefined) {
+    return isNumber(config.creditUsagePercent) && Number.isFinite(config.creditUsagePercent)
+      ? Math.max(0, Math.min(100, config.creditUsagePercent))
+      : null;
+  }
+  const limit = grokCentValue(config, "monthlyLimit");
+  const used = grokCentValue(config, "used");
+  if (limit === null || limit <= 0 || used === null) return null;
+  return Math.max(0, Math.min(100, (used / limit) * 100));
+}
+
+function grokCentValue(config: DynamicRecord, key: string): number | null {
+  const cent = getRecord(config, key);
+  if (!cent) return null;
+  return isNumber(cent.val) && Number.isFinite(cent.val) ? cent.val : null;
+}
+
+function nearWeeklyDuration(durationMins: number): boolean {
+  return Number.isFinite(durationMins) && Math.abs(durationMins - 10_080) <= 10_080 * 0.05;
 }
 
 function requiredString(value: unknown, key: string): string {

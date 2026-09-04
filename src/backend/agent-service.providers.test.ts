@@ -10,6 +10,7 @@ import type { AgentProvider } from "./agent-client";
 import { AgentService } from "./agent-service";
 import {
   CREATE_BOT_INPUT,
+  createFakeClaude,
   FakeAgentClient,
   fakeBrowser,
   firstInputText,
@@ -387,6 +388,63 @@ describe.sequential("AgentService: providers", () => {
       expect(params.runtimeWorkspaceRoots).toEqual([params.cwd, store.sharedRoot]);
     }
     expect((await store.getOrCreate("chief")).threadId).not.toBe((await store.getOrCreate("sales-outbound")).threadId);
+  });
+
+  it("reads usage for the selected agent provider and prefers its model-specific bucket", async () => {
+    process.env.OPENBOT_CLAUDE_PATH = await createFakeClaude(root);
+    const clients = new Map<AgentProvider, FakeAgentClient>();
+    const { store, mailbox } = stores(root);
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
+      const client = new FakeAgentClient(provider);
+      clients.set(provider, client);
+      return client;
+    });
+    await service.initialize();
+    await store.getOrCreate("chief");
+    await service.updateBot({ botId: "chief", provider: "codex", model: "gpt-5.6-luna" });
+    const codex = clients.get("codex");
+    if (!codex) throw new Error("Codex test client was not created.");
+    codex.accountRateLimits = {
+      rateLimits: {
+        limitId: "codex",
+        secondary: { usedPercent: 40, windowDurationMins: 10_080, resetsAt: 1_787_040_000 },
+      },
+      rateLimitsByLimitId: {
+        luna: {
+          limitId: "luna",
+          limitName: "gpt-5.6-luna",
+          secondary: { usedPercent: 70, windowDurationMins: 10_080, resetsAt: 1_787_040_000 },
+        },
+      },
+    };
+
+    await expect(service.getUsage("chief")).resolves.toMatchObject({
+      limits: [{ id: "luna", secondary: { usedPercent: 70 } }],
+    });
+
+    await service.updateBot({ botId: "chief", provider: "codex", model: "gpt-5.6-sol" });
+    await expect(service.getUsage("chief")).resolves.toMatchObject({
+      limits: [{ id: "codex", secondary: { usedPercent: 40 } }],
+    });
+
+    await service.updateBot({ botId: "chief", provider: "claude", model: "claude-sonnet-5" });
+    const claude = clients.get("claude");
+    if (!claude) throw new Error("Claude test client was not created.");
+    claude.accountRateLimits = {
+      rateLimits: {
+        limitId: "claude",
+        secondary: { usedPercent: 55, windowDurationMins: 10_080, resetsAt: 1_787_040_000 },
+      },
+      rateLimitsByLimitId: null,
+    };
+
+    await expect(service.getUsage("chief")).resolves.toMatchObject({
+      limits: [{ id: "claude", secondary: { usedPercent: 55 } }],
+    });
+    expect(claude.requests).toContainEqual({
+      method: "account/rateLimits/read",
+      params: { model: "claude-sonnet-5" },
+    });
   });
 
   it("maps provider browser tool calls to the stable OpenBot thread", async () => {

@@ -320,8 +320,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return this.#providers.status();
   }
 
-  getUsage(): Promise<AccountUsage> {
-    return this.#providers.usage();
+  async getUsage(botId?: string): Promise<AccountUsage> {
+    if (!botId) return this.#providers.usage();
+    const bot = this.listBots().find((candidate) => candidate.id === botId);
+    if (!bot) throw new Error("Agent not found.");
+    return this.#providers.usage({ provider: bot.provider, model: bot.model });
   }
 
   listBots(): BotSummary[] {

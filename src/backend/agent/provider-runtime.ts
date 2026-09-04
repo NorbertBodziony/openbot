@@ -238,9 +238,18 @@ export class ProviderRuntime implements ProviderPort {
     return this.#preferredProvider;
   }
 
-  async usage(): Promise<AccountUsage> {
-    const client = this.#clients.get("codex");
-    return client ? this.#refreshUsage(client) : { limits: [] };
+  /**
+   * Without a scope this is the account-wide reading the dock polls, and it broadcasts.
+   * Scoped to one agent it answers for that agent's own model and stays quiet: the reply goes to
+   * the caller that asked, so it must not overwrite the account-wide figure every other view shows.
+   */
+  async usage(scope?: { provider: AgentProvider; model: string }): Promise<AccountUsage> {
+    if (!scope) {
+      const client = this.#clients.get("codex");
+      return client ? this.#refreshUsage(client) : { limits: [] };
+    }
+    const client = this.#clients.get(scope.provider);
+    return client ? this.#refreshUsage(client, scope.model, false) : { limits: [] };
   }
 
   async start(): Promise<void> {
@@ -1249,10 +1258,14 @@ export class ProviderRuntime implements ProviderPort {
     }
   }
 
-  async #refreshUsage(client: AgentClient): Promise<AccountUsage> {
-    const rateLimits = await client.request("account/rateLimits/read", undefined, decodeAccountRateLimitsReadResult);
-    const usage = normalizeAccountUsage(rateLimits);
-    this.#emit({ type: "usage-changed", usage: structuredClone(usage) });
+  async #refreshUsage(client: AgentClient, model?: string, emit = true): Promise<AccountUsage> {
+    const rateLimits = await client.request(
+      "account/rateLimits/read",
+      client.provider === "codex" ? undefined : { model },
+      decodeAccountRateLimitsReadResult,
+    );
+    const usage = normalizeAccountUsage(rateLimits, client.provider === "codex" ? model : undefined);
+    if (emit) this.#emit({ type: "usage-changed", usage: structuredClone(usage) });
     return structuredClone(usage);
   }
 
