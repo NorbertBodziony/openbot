@@ -1,53 +1,10 @@
 @import "@fontsource-variable/inter";
 @import "@fontsource-variable/inter/wght-italic.css";
 @import "tailwindcss";
+@import "@openbot/brand/tokens.css";
 
 :root {
   color-scheme: dark;
-  --openbot-bg-canvas: #070707;
-  --openbot-bg-sidebar: #111111;
-  --openbot-bg-surface: #262626;
-  --openbot-bg-control-hover: #313131;
-  --openbot-border: rgba(255, 255, 255, 0.08);
-  --openbot-border-strong: rgba(255, 255, 255, 0.14);
-  --openbot-text-primary: #f2f2f2;
-  --openbot-text-on-light: #141414;
-  --openbot-text-secondary: rgba(255, 255, 255, 0.72);
-  --openbot-text-muted: rgba(255, 255, 255, 0.48);
-  --openbot-text-dim: rgba(255, 255, 255, 0.32);
-  --openbot-surface-light: #f0f0f0;
-  --openbot-logo-production: #d6adf2;
-  --openbot-logo-eye: #040007;
-  --openbot-logo-dev: #e3b866;
-  --openbot-logo-preview: #61c985;
-  --openbot-download-card-ink: #141414;
-  --openbot-download-card-muted: rgba(20, 20, 20, 0.68);
-  --openbot-download-card-chip: rgba(20, 20, 20, 0.1);
-  --openbot-download-card-border: rgba(20, 20, 20, 0.16);
-  --openbot-download-card-focus: rgba(242, 242, 242, 0.86);
-  --openbot-provider-codex: var(--openbot-text-primary);
-  --openbot-provider-claude: #d97757;
-  --openbot-provider-grok: var(--openbot-text-primary);
-  --openbot-focus: rgba(214, 173, 242, 0.34);
-  --openbot-hero-grid-line: rgba(214, 173, 242, 0.09);
-  --openbot-glass-surface: rgba(255, 255, 255, 0.07);
-  --openbot-glass-surface-hover: rgba(255, 255, 255, 0.11);
-  --openbot-glass-border: rgba(255, 255, 255, 0.18);
-  --openbot-glass-highlight: rgba(255, 255, 255, 0.12);
-  --openbot-glass-shadow: rgba(0, 0, 0, 0.28);
-  --openbot-mask-solid: #000000;
-  --openbot-transparent: rgba(0, 0, 0, 0);
-  --openbot-font-sans: "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --openbot-font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
-  --openbot-text-hero: clamp(3rem, 8vw, 6.5rem);
-  --openbot-radius-md: 8px;
-  --openbot-radius-lg: 12px;
-  --openbot-radius-pill: 999px;
-  --openbot-radius-logo: 20%;
-  --openbot-duration-fast: 120ms;
-  --openbot-duration-normal: 160ms;
-  --openbot-duration-entry: 240ms;
-  --openbot-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --stagger-dur: 500ms;
   --stagger-distance: 12px;
   --stagger-stagger: 40ms;
@@ -256,7 +213,7 @@ a {
 
 .landing-brand:focus-visible {
   outline: 0;
-  box-shadow: 0 0 0 3px var(--openbot-focus);
+  box-shadow: 0 0 0 3px var(--openbot-focus-tint);
 }
 
 .landing-brand-logo {
@@ -325,7 +282,8 @@ a {
   overflow: hidden;
   padding: 96px 24px 48px;
   background:
-    radial-gradient(circle at 50% 42%, var(--openbot-focus), var(--openbot-transparent) 38%), var(--openbot-bg-canvas);
+    radial-gradient(circle at 50% 42%, var(--openbot-focus-tint), var(--openbot-transparent) 38%),
+    var(--openbot-bg-canvas);
 }
 
 .join-page-brand {
@@ -365,7 +323,7 @@ a {
   height: 7px;
   border-radius: var(--openbot-radius-pill);
   background: var(--openbot-logo-production);
-  box-shadow: 0 0 0 6px var(--openbot-focus);
+  box-shadow: 0 0 0 6px var(--openbot-focus-tint);
 }
 
 .join-card-logo {
@@ -482,7 +440,7 @@ a {
 
 .landing-button:focus-visible {
   outline: 0;
-  box-shadow: 0 0 0 3px var(--openbot-focus);
+  box-shadow: 0 0 0 3px var(--openbot-focus-tint);
 }
 
 .landing-button:active {
@@ -802,7 +760,7 @@ a {
   position: absolute;
   z-index: -1;
   inset: -42px -24px -30px;
-  background: radial-gradient(ellipse at 50% 48%, var(--openbot-focus), var(--openbot-transparent) 68%);
+  background: radial-gradient(ellipse at 50% 48%, var(--openbot-focus-tint), var(--openbot-transparent) 68%);
   content: "";
   filter: blur(22px);
   opacity: 0.82;
@@ -1058,7 +1016,7 @@ a {
 .landing-footer-column a:focus-visible,
 .landing-footer-meta a:focus-visible {
   outline: 0;
-  box-shadow: 0 0 0 3px var(--openbot-focus);
+  box-shadow: 0 0 0 3px var(--openbot-focus-tint);
 }
 
 .landing-footer-logo {
@@ -1288,7 +1246,7 @@ a {
 }
 
 [data-enter] {
-  animation: landing-enter var(--openbot-duration-entry) var(--openbot-ease-out) both;
+  animation: landing-enter var(--openbot-duration-overlay) var(--openbot-ease-out) both;
 }
 
 [data-enter="header"] {

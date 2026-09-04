@@ -288,7 +288,6 @@
   border-radius: var(--openbot-radius-xl);
   background: var(--openbot-bg-sidebar);
   box-shadow: var(--openbot-shadow-raised);
-  padding: var(--openbot-space-5);
 }
 
 .chat-primitives-stage-narrow {
@@ -429,10 +428,6 @@
 .question-prompt-chat-thread {
   width: min(760px, 100%);
   margin: 0 auto;
-}
-
-.question-prompt-chat-question {
-  margin-top: var(--openbot-space-5);
 }
 
 .question-prompt-chat-question > .ui-message-content {

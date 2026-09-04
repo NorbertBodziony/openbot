@@ -19,7 +19,7 @@ Feature’y importują wyłącznie z `components/ui`. Bezpośrednie importy z Ko
 
 Kolory muszą pochodzić z semantycznych zmiennych `--openbot-*`. Rozmiary tekstu, promienie i czasy animacji korzystają z tokenów. Hover stosujemy tylko w `@media (hover: hover) and (pointer: fine)`, pressable controls używają `scale(0.97)`, a animacje mieszczą się poniżej 300 ms i respektują `prefers-reduced-motion`.
 
-`bun run check:ui` blokuje natywne buttony i switche, ręczne dialogi/menu/taby/listboxy, bezpośrednie importy Kobalte/Lucide poza warstwą UI oraz literały kolorów i nietokenizowane rozmiary tekstu, promienie i czasy przejść. Kontrola obejmuje arkusze CSS oraz deklaracje inline w TSX. Sprawdza również, czy złożone namespace’y nie wracają do bezpośrednich aliasów Kobalte. Wszystkie budżety migracyjne wynoszą zero.
+`bun run check:ui` blokuje natywne buttony i switche, ręczne dialogi/menu/taby/listboxy, bezpośrednie importy Kobalte/Lucide poza warstwą UI oraz literały kolorów i nietokenizowane rozmiary tekstu, promienie i czasy przejść. Kontrola obejmuje wszystkie arkusze CSS renderera oraz deklaracje inline w TSX; jedynym miejscem, gdzie literał koloru jest dozwolony, jest wspólna paleta `packages/brand/src/tokens.css`. Sprawdza również, czy złożone namespace’y nie wracają do bezpośrednich aliasów Kobalte. Wszystkie budżety migracyjne wynoszą zero.
 
 ## Weryfikacja
 

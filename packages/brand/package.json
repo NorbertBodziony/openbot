@@ -6,7 +6,9 @@
   "exports": {
     ".": "./src/index.ts",
     "./bloub-avatar": "./src/bloub-avatar.ts",
-    "./logo.css": "./src/logo.css"
+    "./logo.css": "./src/logo.css",
+    "./tokens.css": "./src/tokens.css",
+    "./tokens-native.css": "./src/tokens-native.css"
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
