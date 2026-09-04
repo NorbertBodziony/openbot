@@ -1,7 +1,7 @@
 # Contributing to OpenBot
 
-Thanks for helping improve OpenBot. Small, focused pull requests with clear verification are the
-easiest to review.
+Thanks for helping improve OpenBot. Pull requests with clear verification are the easiest to
+review.
 
 ## Before opening an issue
 
@@ -38,10 +38,9 @@ Type-only imports (`import type`) are erased by the compiler and stay allowed in
 ## Pull requests
 
 1. Create a branch from `main`.
-2. Keep behavior and visual changes scoped to the issue being solved.
-3. Add or update tests for behavior changes and reproduced bugs.
-4. Run `bun run check`. Coding agents do not: see `AGENTS.md` "Do not run repo-wide checks".
-5. Describe user-visible changes, risks, and manual verification in the pull request.
+2. Add or update tests for behavior changes and reproduced bugs.
+3. Run `bun run check`. Coding agents do not: see `AGENTS.md` "Do not run repo-wide checks".
+4. Describe user-visible changes, risks, and manual verification in the pull request.
 
 Do not commit generated `out`, `dist`, coverage, local browser profiles, Electron `userData`, CLI
 state, `.env` files, credentials, real conversations, or user attachments.

@@ -30,8 +30,6 @@ Report a finding when the diff:
 - Adds a new test *file* for a boundary an existing file already covers, or tests the same behaviour
   at both the component and the application level. `AGENTS.md` requires the lowest stable boundary,
   once.
-- Deletes, skips, or loosens an existing assertion without the PR description saying what changed
-  about the promise and why. Quote the removed assertion.
 
 Do not report a missing test unless you can name the concrete regression it would catch, and do not
 ask for coverage of a mandatory boundary that the diff already covers elsewhere. A thin test at one

@@ -14,6 +14,11 @@ export function agentMessageKey(botId: string, messageId: string): string {
   return `${botId}\0${messageId}`;
 }
 
+/** Identifies one composer draft, which is an agent *on a server*. */
+export function composerDraftKey(target: { botId: string; serverId: string }): string {
+  return target.serverId === "local" ? target.botId : `${target.serverId}:${target.botId}`;
+}
+
 /** Drops every cached body belonging to one agent. */
 export function deleteAgentMessageBodies(messages: Map<string, string>, botId: string): void {
   const prefix = `${botId}\0`;
