@@ -9,9 +9,9 @@ import {
   decodeBrowserPreviewFromHost,
   decodeBrowserTab,
   decodeBrowserTabs,
-  decodeVoid,
-  type RemoteServerManager,
-} from "../remote-server-manager";
+} from "../remote-device-decoding";
+import { decodeVoid } from "../remote-host-decoding";
+import type { RemoteServerManager } from "../remote-server-manager";
 import { handleTrusted } from "../trusted-ipc";
 import { parseBrowserBounds, parseBrowserNavigate, parseBrowserOpen, parseVisibility } from "./browser-inputs";
 import { routeToServer } from "./route-to-server";
@@ -32,88 +32,77 @@ export function registerBrowserIpcHandlers({
     routeToServer(remoteServers.activeServerId, {
       local: () => browser.open(parsed.url, parsed.ownerThreadId ?? null, parsed.ownerBotId ?? null, parsed.focus),
       remote: (serverId) =>
-        remoteServers.request(
-          TEAM_API_ROUTES.browser.open,
-          { method: "POST", body: parsed },
-          serverId,
-          decodeBrowserTab,
-        ),
+        remoteServers.request(serverId, TEAM_API_ROUTES.browser.open, decodeBrowserTab, {
+          method: "POST",
+          body: parsed,
+        }),
     }),
   );
   handleTrusted(IPC_CHANNELS.browserActivate, stringPayload("tabId"), (tabId) =>
     routeToServer(remoteServers.activeServerId, {
       local: () => browser.activate(tabId),
       remote: (serverId) =>
-        remoteServers.request(
-          TEAM_API_ROUTES.browser.activate,
-          { method: "POST", body: { tabId } },
-          serverId,
-          decodeVoid,
-        ),
+        remoteServers.request(serverId, TEAM_API_ROUTES.browser.activate, decodeVoid, {
+          method: "POST",
+          body: { tabId },
+        }),
     }),
   );
   handleTrusted(IPC_CHANNELS.browserNavigate, parseBrowserNavigate, (parsed) =>
     routeToServer(remoteServers.activeServerId, {
       local: () => browser.navigate(parsed.tabId, parsed.direction),
       remote: (serverId) =>
-        remoteServers.request(TEAM_API_ROUTES.browser.navigate, { method: "POST", body: parsed }, serverId, decodeVoid),
+        remoteServers.request(serverId, TEAM_API_ROUTES.browser.navigate, decodeVoid, { method: "POST", body: parsed }),
     }),
   );
   handleTrusted(IPC_CHANNELS.browserReload, stringPayload("tabId"), (tabId) =>
     routeToServer(remoteServers.activeServerId, {
       local: () => browser.reload(tabId),
       remote: (serverId) =>
-        remoteServers.request(
-          TEAM_API_ROUTES.browser.reload,
-          { method: "POST", body: { tabId } },
-          serverId,
-          decodeVoid,
-        ),
+        remoteServers.request(serverId, TEAM_API_ROUTES.browser.reload, decodeVoid, {
+          method: "POST",
+          body: { tabId },
+        }),
     }),
   );
   handleTrusted(IPC_CHANNELS.browserClose, stringPayload("tabId"), (tabId) =>
     routeToServer(remoteServers.activeServerId, {
       local: () => browser.close(tabId),
       remote: (serverId) =>
-        remoteServers.request(TEAM_API_ROUTES.browser.close, { method: "POST", body: { tabId } }, serverId, decodeVoid),
+        remoteServers.request(serverId, TEAM_API_ROUTES.browser.close, decodeVoid, { method: "POST", body: { tabId } }),
     }),
   );
   handleTrusted(IPC_CHANNELS.browserListTabs, () =>
     routeToServer(remoteServers.activeServerId, {
       local: () => browser.listTabs(),
-      remote: (serverId) => remoteServers.request(TEAM_API_ROUTES.browser.tabs, {}, serverId, decodeBrowserTabs),
+      remote: (serverId) => remoteServers.request(serverId, TEAM_API_ROUTES.browser.tabs, decodeBrowserTabs),
     }),
   );
   handleTrusted(IPC_CHANNELS.browserGetDisplayState, (): BrowserDisplayState => browser.getDisplayState());
   handleTrusted(IPC_CHANNELS.browserGetControlState, () =>
     routeToServer(remoteServers.activeServerId, {
       local: () => browser.getControlState(),
-      remote: (serverId) =>
-        remoteServers.request(TEAM_API_ROUTES.browser.control, {}, serverId, decodeBrowserControlState),
+      remote: (serverId) => remoteServers.request(serverId, TEAM_API_ROUTES.browser.control, decodeBrowserControlState),
     }),
   );
   handleTrusted(IPC_CHANNELS.browserCapturePreview, stringPayload("tabId"), (tabId) =>
     routeToServer(remoteServers.activeServerId, {
       local: () => browser.capturePreview(tabId),
       remote: (serverId) =>
-        remoteServers.request(
-          TEAM_API_ROUTES.browser.preview,
-          { method: "POST", body: { tabId } },
-          serverId,
-          decodeBrowserPreviewFromHost,
-        ),
+        remoteServers.request(serverId, TEAM_API_ROUTES.browser.preview, decodeBrowserPreviewFromHost, {
+          method: "POST",
+          body: { tabId },
+        }),
     }),
   );
   handleTrusted(IPC_CHANNELS.browserSetVisible, parseVisibility, (parsed) =>
     routeToServer<void>(remoteServers.activeServerId, {
       local: () => browser.setVisible(parsed),
       remote: async (serverId) => {
-        await remoteServers.request(
-          TEAM_API_ROUTES.browser.visible,
-          { method: "POST", body: parsed },
-          serverId,
-          decodeVoid,
-        );
+        await remoteServers.request(serverId, TEAM_API_ROUTES.browser.visible, decodeVoid, {
+          method: "POST",
+          body: parsed,
+        });
       },
     }),
   );

@@ -4,7 +4,9 @@ import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { IPC_CHANNELS } from "@openbot/contracts/ipc";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import type { AgentService } from "../../backend/agent-service";
-import { decodeBotMemories, decodeBotMemory, decodeVoid, type RemoteServerManager } from "../remote-server-manager";
+import { decodeBotMemories, decodeBotMemory } from "../remote-agent-decoding";
+import { decodeVoid } from "../remote-host-decoding";
+import type { RemoteServerManager } from "../remote-server-manager";
 import { handleTrusted } from "../trusted-ipc";
 import { parseAgentRequest, parseCreateBotMemory, parseDeleteBotMemory, parseUpdateBotMemory } from "./agent-inputs";
 import { routeToServer } from "./route-to-server";
@@ -20,8 +22,7 @@ export function registerMemoryIpcHandlers({ service, remoteServers }: MemoryIpcD
     const botId = requireString(scoped.payload, "botId", INPUT_LIMITS.identifier);
     return routeToServer(scoped.serverId, {
       local: () => service.listMemories(botId),
-      remote: (serverId) =>
-        remoteServers.request(TEAM_API_ROUTES.agent.memories(botId), {}, serverId, decodeBotMemories),
+      remote: (serverId) => remoteServers.request(serverId, TEAM_API_ROUTES.agent.memories(botId), decodeBotMemories),
     });
   });
   handleTrusted(IPC_CHANNELS.agentCreateMemory, parseAgentRequest, (scoped) => {
@@ -29,12 +30,10 @@ export function registerMemoryIpcHandlers({ service, remoteServers }: MemoryIpcD
     return routeToServer(scoped.serverId, {
       local: () => service.createMemory(parsed),
       remote: (serverId) =>
-        remoteServers.request(
-          TEAM_API_ROUTES.agent.memories(parsed.botId),
-          { method: "POST", body: { text: parsed.text } },
-          serverId,
-          decodeBotMemory,
-        ),
+        remoteServers.request(serverId, TEAM_API_ROUTES.agent.memories(parsed.botId), decodeBotMemory, {
+          method: "POST",
+          body: { text: parsed.text },
+        }),
     });
   });
   handleTrusted(IPC_CHANNELS.agentUpdateMemory, parseAgentRequest, (scoped) => {
@@ -42,12 +41,10 @@ export function registerMemoryIpcHandlers({ service, remoteServers }: MemoryIpcD
     return routeToServer(scoped.serverId, {
       local: () => service.updateMemory(parsed),
       remote: (serverId) =>
-        remoteServers.request(
-          TEAM_API_ROUTES.agent.memory(parsed.botId, parsed.memoryId),
-          { method: "PATCH", body: { text: parsed.text } },
-          serverId,
-          decodeBotMemory,
-        ),
+        remoteServers.request(serverId, TEAM_API_ROUTES.agent.memory(parsed.botId, parsed.memoryId), decodeBotMemory, {
+          method: "PATCH",
+          body: { text: parsed.text },
+        }),
     });
   });
   handleTrusted(IPC_CHANNELS.agentDeleteMemory, parseAgentRequest, (scoped) => {
@@ -55,12 +52,9 @@ export function registerMemoryIpcHandlers({ service, remoteServers }: MemoryIpcD
     return routeToServer(scoped.serverId, {
       local: () => service.deleteMemory(parsed),
       remote: (serverId) =>
-        remoteServers.request(
-          TEAM_API_ROUTES.agent.memory(parsed.botId, parsed.memoryId),
-          { method: "DELETE" },
-          serverId,
-          decodeVoid,
-        ),
+        remoteServers.request(serverId, TEAM_API_ROUTES.agent.memory(parsed.botId, parsed.memoryId), decodeVoid, {
+          method: "DELETE",
+        }),
     });
   });
   handleTrusted(IPC_CHANNELS.agentClearMemories, parseAgentRequest, (scoped) => {
@@ -68,7 +62,7 @@ export function registerMemoryIpcHandlers({ service, remoteServers }: MemoryIpcD
     return routeToServer(scoped.serverId, {
       local: () => service.clearMemories(botId),
       remote: (serverId) =>
-        remoteServers.request(TEAM_API_ROUTES.agent.memories(botId), { method: "DELETE" }, serverId, decodeVoid),
+        remoteServers.request(serverId, TEAM_API_ROUTES.agent.memories(botId), decodeVoid, { method: "DELETE" }),
     });
   });
 }

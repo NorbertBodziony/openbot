@@ -4,14 +4,9 @@ import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { IPC_CHANNELS } from "@openbot/contracts/ipc";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import type { AgentService } from "../../backend/agent-service";
-import {
-  decodeRoutine,
-  decodeRoutineRun,
-  decodeRoutineRuns,
-  decodeRoutines,
-  decodeVoid,
-  type RemoteServerManager,
-} from "../remote-server-manager";
+import { decodeRoutine, decodeRoutineRun, decodeRoutineRuns, decodeRoutines } from "../remote-agent-decoding";
+import { decodeVoid } from "../remote-host-decoding";
+import type { RemoteServerManager } from "../remote-server-manager";
 import { handleTrusted } from "../trusted-ipc";
 import {
   parseAgentRequest,
@@ -34,7 +29,7 @@ export function registerRoutineIpcHandlers({ service, remoteServers }: RoutineIp
     const botId = requireString(scoped.payload, "botId", INPUT_LIMITS.identifier);
     return routeToServer(scoped.serverId, {
       local: () => service.listRoutines(botId),
-      remote: (serverId) => remoteServers.request(TEAM_API_ROUTES.agent.routines(botId), {}, serverId, decodeRoutines),
+      remote: (serverId) => remoteServers.request(serverId, TEAM_API_ROUTES.agent.routines(botId), decodeRoutines),
     });
   });
   handleTrusted(IPC_CHANNELS.agentCreateRoutine, parseAgentRequest, (scoped) => {
@@ -42,12 +37,10 @@ export function registerRoutineIpcHandlers({ service, remoteServers }: RoutineIp
     return routeToServer(scoped.serverId, {
       local: () => service.createRoutine(parsed),
       remote: (serverId) =>
-        remoteServers.request(
-          TEAM_API_ROUTES.agent.routines(parsed.botId),
-          { method: "POST", body: parsed },
-          serverId,
-          decodeRoutine,
-        ),
+        remoteServers.request(serverId, TEAM_API_ROUTES.agent.routines(parsed.botId), decodeRoutine, {
+          method: "POST",
+          body: parsed,
+        }),
     });
   });
   handleTrusted(IPC_CHANNELS.agentUpdateRoutine, parseAgentRequest, (scoped) => {
@@ -55,12 +48,10 @@ export function registerRoutineIpcHandlers({ service, remoteServers }: RoutineIp
     return routeToServer(scoped.serverId, {
       local: () => service.updateRoutine(parsed),
       remote: (serverId) =>
-        remoteServers.request(
-          TEAM_API_ROUTES.agent.routine(parsed.botId, parsed.routineId),
-          { method: "PATCH", body: parsed },
-          serverId,
-          decodeRoutine,
-        ),
+        remoteServers.request(serverId, TEAM_API_ROUTES.agent.routine(parsed.botId, parsed.routineId), decodeRoutine, {
+          method: "PATCH",
+          body: parsed,
+        }),
     });
   });
   handleTrusted(IPC_CHANNELS.agentDeleteRoutine, parseAgentRequest, (scoped) => {
@@ -68,12 +59,9 @@ export function registerRoutineIpcHandlers({ service, remoteServers }: RoutineIp
     return routeToServer(scoped.serverId, {
       local: () => service.deleteRoutine(parsed),
       remote: (serverId) =>
-        remoteServers.request(
-          TEAM_API_ROUTES.agent.routine(parsed.botId, parsed.routineId),
-          { method: "DELETE" },
-          serverId,
-          decodeVoid,
-        ),
+        remoteServers.request(serverId, TEAM_API_ROUTES.agent.routine(parsed.botId, parsed.routineId), decodeVoid, {
+          method: "DELETE",
+        }),
     });
   });
   handleTrusted(IPC_CHANNELS.agentTestRoutine, parseAgentRequest, (scoped) => {
@@ -82,10 +70,10 @@ export function registerRoutineIpcHandlers({ service, remoteServers }: RoutineIp
       local: () => service.testRoutine(parsed),
       remote: (serverId) =>
         remoteServers.request(
-          TEAM_API_ROUTES.agent.routineTest(parsed.botId, parsed.routineId),
-          { method: "POST" },
           serverId,
+          TEAM_API_ROUTES.agent.routineTest(parsed.botId, parsed.routineId),
           decodeRoutineRun,
+          { method: "POST" },
         ),
     });
   });
@@ -95,9 +83,8 @@ export function registerRoutineIpcHandlers({ service, remoteServers }: RoutineIp
       local: () => service.listRoutineRuns(parsed),
       remote: (serverId) =>
         remoteServers.request(
-          `${TEAM_API_ROUTES.agent.routineRuns(parsed.botId, parsed.routineId)}?limit=${parsed.limit}`,
-          {},
           serverId,
+          `${TEAM_API_ROUTES.agent.routineRuns(parsed.botId, parsed.routineId)}?limit=${parsed.limit}`,
           decodeRoutineRuns,
         ),
     });
