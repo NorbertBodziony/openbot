@@ -87,7 +87,11 @@ describe("remote server store", () => {
     });
   });
 
-  it("drops a preserved entry once a real server takes its id", async () => {
+  it("keeps a preserved entry when reconciliation recreates its id, and drops it when the user rejoins", async () => {
+    // A WebRTC host whose entry this build cannot read is absent from `servers`, so the next host
+    // directory sync offers it as new and `replaceServers` mints a fresh entry with the same id. The
+    // preserved one holds the pinned key and fingerprint; nothing about a directory advertisement
+    // earns the right to delete them.
     const broken = { ...storedServer("beta"), role: "overlord" };
     const path = await storePath({
       version: 3,
@@ -98,11 +102,38 @@ describe("remote server store", () => {
     const store = newStore(path);
     await store.load();
 
-    await store.adopt(storedServer("beta", { name: "Rejoined" }));
+    await store.replaceServers([storedServer("beta", { name: "Advertised" })]);
+    expect(JSON.parse(await readFile(path, "utf8")).servers).toEqual([
+      expect.objectContaining({ id: "beta", name: "Advertised" }),
+      broken,
+    ]);
 
-    // Joining the server replaces the broken entry. Keeping both would leave the file holding two
-    // servers with one id, and every later read picking whichever it happened to see first.
-    const written = JSON.parse(await readFile(path, "utf8"));
-    expect(written.servers).toEqual([expect.objectContaining({ id: "beta", name: "Rejoined" })]);
+    // Joining verifies the host's identity, so this entry does supersede the old one.
+    await store.adopt(storedServer("beta", { name: "Rejoined" }));
+    expect(JSON.parse(await readFile(path, "utf8")).servers).toEqual([
+      expect.objectContaining({ id: "beta", name: "Rejoined" }),
+    ]);
+  });
+
+  it("keeps naming the active server it could not read until the user picks another", async () => {
+    const broken = { ...storedServer("beta"), role: "overlord" };
+    const path = await storePath({
+      version: 3,
+      activeServerId: "beta",
+      servers: [storedServer("alpha"), broken],
+      hiddenHostIds: [],
+    });
+    const store = newStore(path);
+    await store.load();
+
+    // This build runs on the local server, because it cannot use the entry the user was on. An
+    // unrelated write must not turn that into the user's stored choice.
+    expect(store.activeServerId).toBe(LOCAL_SERVER_ID);
+    await store.persist();
+    expect(JSON.parse(await readFile(path, "utf8")).activeServerId).toBe("beta");
+
+    store.setActiveServerId("alpha");
+    await store.persist();
+    expect(JSON.parse(await readFile(path, "utf8")).activeServerId).toBe("alpha");
   });
 });

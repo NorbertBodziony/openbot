@@ -18,23 +18,10 @@ function storedServer(overrides: Partial<StoredRemoteServer> & { id: string }): 
 }
 
 describe("stored remote servers", () => {
-  it("keeps every joined server when one entry cannot be read, and the entry itself", () => {
-    const corrupt = { id: "corrupt", encryptedToken: "dG9rZW4=" };
-    const stored = readStoredRemoteServers({
-      version: 3,
-      activeServerId: "beta",
-      servers: [storedServer({ id: "alpha" }), corrupt, storedServer({ id: "beta" })],
-      hiddenHostIds: [],
-    });
-
-    expect(stored?.servers.map((server) => server.id)).toEqual(["alpha", "beta"]);
-    expect(stored?.activeServerId).toBe("beta");
-    // Unusable by this build, and still nobody's to delete: a build that understands it has to find
-    // it here after this one has written the file.
-    expect(stored?.unreadableServers).toEqual([corrupt]);
-  });
-
-  it("selects the local server when the active one was dropped", () => {
+  // What the store does with an unreadable entry once it is on disk is `remote-server-store.test.ts`.
+  // This is the half only the reader decides: which server the app runs on when it cannot read the
+  // one the user was on.
+  it("runs on the local server when the active one cannot be read, without forgetting which it was", () => {
     const stored = readStoredRemoteServers({
       version: 3,
       activeServerId: "corrupt",
@@ -44,6 +31,19 @@ describe("stored remote servers", () => {
 
     expect(stored?.activeServerId).toBe(LOCAL_SERVER_ID);
     expect(stored?.servers.map((server) => server.id)).toEqual(["alpha"]);
+    expect(stored?.unreadableActiveServerId).toBe("corrupt");
+  });
+
+  it("forgets an active id that named no entry at all", () => {
+    const stored = readStoredRemoteServers({
+      version: 3,
+      activeServerId: "gone",
+      servers: [storedServer({ id: "alpha" })],
+      hiddenHostIds: [],
+    });
+
+    expect(stored?.activeServerId).toBe(LOCAL_SERVER_ID);
+    expect(stored?.unreadableActiveServerId).toBeNull();
   });
 
   it("upgrades a version 1 or version 2 file without losing servers", () => {

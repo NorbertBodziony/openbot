@@ -132,6 +132,9 @@ export class RemoteServerStore implements RemoteServerDirectory {
 
   // The one mutation that does not write. See the file header.
   setActiveServerId(serverId: string): number {
+    // The user picking a server is the only thing that supersedes a selection this build could not
+    // read. Until then the file keeps naming it, so a build that can read it finds them still there.
+    this.#state.unreadableActiveServerId = null;
     this.#state.activeServerId = serverId;
     this.#activeServerRevision += 1;
     return this.#activeServerRevision;
@@ -139,7 +142,12 @@ export class RemoteServerStore implements RemoteServerDirectory {
 
   // Adds a server the user just joined or signed in to, replacing any earlier entry with the same
   // id, and selects it -- the two halves of "the user is now on this server", written once.
+  //
+  // This is also the one path allowed to retire an entry the reader could not decode. Joining or
+  // signing in verified the host's identity, so the new entry supersedes the old; a reconciliation
+  // that happens to mint the same id did not, and `replaceServers` deliberately leaves it alone.
   async adopt(server: StoredRemoteServer): Promise<void> {
+    this.#forgetUnreadable(server.id);
     this.#state.servers = [...this.#state.servers.filter((candidate) => candidate.id !== server.id), server];
     this.setActiveServerId(server.id);
     await this.persist();
@@ -158,9 +166,17 @@ export class RemoteServerStore implements RemoteServerDirectory {
 
   async remove(serverId: string, options: { hideHost?: boolean } = {}): Promise<void> {
     if (options.hideHost && !this.#state.hiddenHostIds.includes(serverId)) this.#state.hiddenHostIds.push(serverId);
+    // The user asked for this server to be gone. That reaches an entry this build could not read as
+    // well -- leaving it would put the server back the next time a build that understands it runs.
+    this.#forgetUnreadable(serverId);
     this.#state.servers = this.#state.servers.filter((server) => server.id !== serverId);
     if (this.#state.activeServerId === serverId) this.setActiveServerId(LOCAL_SERVER_ID);
     await this.persist();
+  }
+
+  #forgetUnreadable(serverId: string): void {
+    this.#state.unreadableServers = this.#state.unreadableServers.filter((entry) => entry.id !== serverId);
+    if (this.#state.unreadableActiveServerId === serverId) this.#state.unreadableActiveServerId = null;
   }
 
   async unhideHost(hostId: string): Promise<void> {

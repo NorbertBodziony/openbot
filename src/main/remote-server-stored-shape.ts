@@ -10,7 +10,13 @@
 // arrived with. Dropping one would be the same data loss one step later: a server with an intact
 // token and a single field this build does not recognise -- written by a newer build, or by a hand
 // edit -- would vanish on the next write, and the build that understands it would never see it
-// again. This build refuses to *use* such an entry. It does not get to delete it.
+// again. This build refuses to *use* such an entry. It does not get to delete it, and neither does
+// anything downstream of a *reconciliation*: only the user removing the server, or joining one with
+// the same id, retires a preserved entry. `RemoteServerStore` owns both of those and nothing else.
+//
+// The same applies to the selection. If the active server is a preserved entry, this build cannot
+// select it, so it runs on the local server -- but the id stays in the file, so the build that can
+// read the entry still finds the user on it.
 //
 // Versions 1 and 2 differ from 3 only in fields this reader already treats as optional, so an upgrade
 // is a re-tag. A version this build does not know is refused outright: it was written by a newer
@@ -43,11 +49,22 @@ export interface StoredRemoteServers {
   // puts them back in `servers`, because a key of its own would be invisible to the older build that
   // is the whole reason for keeping them.
   unreadableServers: DynamicRecord[];
+  // The selection this build had to fall back from, for the same reason and by the same trick: it is
+  // written as `activeServerId` while `activeServerId` above -- the one the app runs on -- stays
+  // local. Null once the user picks a server themselves, which is the only thing that supersedes it.
+  unreadableActiveServerId: string | null;
 }
 
 // A function, not a shared constant: the caller owns the result and writes through it.
 export function emptyStoredRemoteServers(): StoredRemoteServers {
-  return { version: 3, activeServerId: LOCAL_SERVER_ID, servers: [], hiddenHostIds: [], unreadableServers: [] };
+  return {
+    version: 3,
+    activeServerId: LOCAL_SERVER_ID,
+    servers: [],
+    hiddenHostIds: [],
+    unreadableServers: [],
+    unreadableActiveServerId: null,
+  };
 }
 
 // One unreadable entry costs the user the use of that entry, not the file and not the entry. Returning
@@ -69,29 +86,36 @@ export function readStoredRemoteServers(value: unknown): StoredRemoteServers | n
     ? value.hiddenHostIds.filter((hostId): hostId is string => isString(hostId))
     : [];
   // The active server may be one of the entries just dropped. The local server is always selectable,
-  // so it is the one fallback that cannot itself be missing.
-  const activeServerId =
-    value.activeServerId === LOCAL_SERVER_ID || servers.some((server) => server.id === value.activeServerId)
-      ? value.activeServerId
-      : LOCAL_SERVER_ID;
-  return { version: 3, activeServerId, servers, hiddenHostIds, unreadableServers };
+  // so it is the one fallback that cannot itself be missing. A fallback that stepped off a preserved
+  // entry is remembered rather than overwritten; one that stepped off a dangling id is not, because
+  // there is nothing left in the file for it to name.
+  const selectable =
+    value.activeServerId === LOCAL_SERVER_ID || servers.some((server) => server.id === value.activeServerId);
+  const preservedActive = unreadableServers.some((entry) => entry.id === value.activeServerId);
+  return {
+    version: 3,
+    activeServerId: selectable ? value.activeServerId : LOCAL_SERVER_ID,
+    servers,
+    hiddenHostIds,
+    unreadableServers,
+    unreadableActiveServerId: !selectable && preservedActive ? value.activeServerId : null,
+  };
 }
 
-// The on-disk object. Unreadable entries rejoin `servers` at the end, minus any whose `id` a real
-// server has since taken -- joining a server the user had a broken entry for replaces it, and two
-// entries sharing an id would leave the file disagreeing with itself forever.
+// The on-disk object. Unreadable entries rejoin `servers` at the end, all of them: this function
+// cannot tell a user who rejoined the server from `replaceServers` recreating the id off a directory
+// advertisement, and dropping the entry in the second case would destroy a pinned key and
+// fingerprint that nothing else holds. `RemoteServerStore` retires them where the intent is known.
 export function serializeStoredRemoteServers(state: StoredRemoteServers): {
   version: 3;
   activeServerId: string;
   servers: (StoredRemoteServer | DynamicRecord)[];
   hiddenHostIds: string[];
 } {
-  const claimed = new Set(state.servers.map((server) => server.id));
-  const preserved = state.unreadableServers.filter((entry) => !(isString(entry.id) && claimed.has(entry.id)));
   return {
     version: state.version,
-    activeServerId: state.activeServerId,
-    servers: [...state.servers, ...preserved],
+    activeServerId: state.unreadableActiveServerId ?? state.activeServerId,
+    servers: [...state.servers, ...state.unreadableServers],
     hiddenHostIds: state.hiddenHostIds,
   };
 }
