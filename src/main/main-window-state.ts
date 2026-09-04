@@ -8,6 +8,34 @@ interface WindowSize {
   height: number;
 }
 
+interface MainWindowPresentationTarget {
+  isMinimized(): boolean;
+  restore(): void;
+  show(): void;
+  focus(): void;
+}
+
+export async function ensureMacApplicationPresence(
+  platform: NodeJS.Platform,
+  setActivationPolicy: (policy: "regular") => void,
+  showDock: () => Promise<void>,
+): Promise<void> {
+  if (platform !== "darwin") return;
+  setActivationPolicy("regular");
+  await showDock();
+}
+
+export function presentMainWindow(
+  window: MainWindowPresentationTarget,
+  platform: NodeJS.Platform,
+  showApplication: () => void,
+): void {
+  if (platform === "darwin") showApplication();
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+}
+
 export async function readMainWindowBounds(path: string): Promise<Rectangle | null> {
   try {
     const parsed = JSON.parse(await readFile(path, "utf8"));
