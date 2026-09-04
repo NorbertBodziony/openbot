@@ -9,11 +9,20 @@ import Animated, {
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
+import { scheduleOnRN } from "react-native-worklets";
 
 const EASE_OUT = Easing.bezier(0.23, 1, 0.32, 1);
 
-/** Retain the outgoing content so the native header can finish its exit animation. */
-export function ConnectionStatusReveal<T>({ value, children }: { value: T | null; children: (value: T) => ReactNode }) {
+/** Retain outgoing content until its exit animation finishes. */
+export function ConnectionStatusReveal<T>({
+  value,
+  children,
+  collapseOnHide = false,
+}: {
+  value: T | null;
+  children: (value: T) => ReactNode;
+  collapseOnHide?: boolean;
+}) {
   const [retained, setRetained] = useState(value);
   const target = useRef<View | null>(null);
   const reduceMotion = useReducedMotion();
@@ -25,14 +34,27 @@ export function ConnectionStatusReveal<T>({ value, children }: { value: T | null
   }, [value]);
 
   useEffect(() => {
+    let cancelled = false;
+    const clearRetained = () => {
+      if (!cancelled) setRetained(null);
+    };
     progress.set(
-      withTiming(visible ? 1 : 0, {
-        duration: visible ? 240 : 180,
-        easing: EASE_OUT,
-        reduceMotion: ReduceMotion.System,
-      }),
+      withTiming(
+        visible ? 1 : 0,
+        {
+          duration: visible ? 240 : 180,
+          easing: EASE_OUT,
+          reduceMotion: ReduceMotion.System,
+        },
+        (finished) => {
+          if (finished && !visible && collapseOnHide) scheduleOnRN(clearRetained);
+        },
+      ),
     );
-  }, [progress, visible]);
+    return () => {
+      cancelled = true;
+    };
+  }, [collapseOnHide, progress, visible]);
 
   const contentStyle = useAnimatedStyle(() => ({
     opacity: progress.get(),
@@ -42,6 +64,7 @@ export function ConnectionStatusReveal<T>({ value, children }: { value: T | null
     opacity: reduceMotion ? 0 : 1 - progress.get(),
   }));
   const displayed = value ?? retained;
+  if (displayed === null) return null;
 
   return (
     <Animated.View
@@ -50,7 +73,7 @@ export function ConnectionStatusReveal<T>({ value, children }: { value: T | null
       importantForAccessibility={visible ? "auto" : "no-hide-descendants"}
       style={contentStyle}
     >
-      <BlurTargetView ref={target}>{displayed !== null ? children(displayed) : null}</BlurTargetView>
+      <BlurTargetView ref={target}>{children(displayed)}</BlurTargetView>
       {!reduceMotion ? (
         <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, blurStyle]}>
           <BlurView

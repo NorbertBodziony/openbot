@@ -33,7 +33,9 @@ Expo Go without a development build.
 Remote connection recovery makes up to five attempts, waiting 10 seconds after each failure. After
 five failures it waits two minutes before starting a new series. The bot list shows `Reconnecting`
 beside the server-list button in the header, with a smaller attempt counter and retry countdown below.
-The status disappears once connected. Chat keeps its inline connection message. Countdown ticks are local UI
+The status disappears once connected. Chat shows a compact, centered `Reconnecting · x/5 · m:ss`
+above the composer, with the same animated digits and no banner. It follows the keyboard and disappears
+after reconnecting. Countdown ticks are local UI
 updates, not requests. Backgrounding suspends retries; returning respects any remaining wait and
 starts at most one attempt if its deadline has passed. A successful connection resets the counter. Dead
 WebRTC peers are discarded and authenticated again. Recovery reloads cached conversations as well
