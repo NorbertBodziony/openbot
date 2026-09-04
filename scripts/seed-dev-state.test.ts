@@ -152,7 +152,10 @@ describe("development state seed", () => {
       );
     }
 
-    const team = new TeamStore(join(profilePath, "openbot-team-server-v1.json"));
+    const team = new TeamStore(
+      join(profilePath, "openbot-team-server-v2.json"),
+      join(profilePath, "openbot-team-server-v1.json"),
+    );
     await team.initialize();
     const members = team.listMembers();
     const owner = members.find((member) => member.role === "owner");

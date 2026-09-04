@@ -366,12 +366,18 @@ export class TeamApiServer {
     }
     this.#eventClients.clear();
     this.#localTypingBotId = null;
-    await this.#options.remoteScreen?.stop();
-    const server = this.#server;
-    this.#server = null;
-    this.#port = null;
-    if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
-    this.#publishPresence();
+    try {
+      await this.#options.remoteScreen?.stop();
+    } finally {
+      // The heartbeat and the event listeners are already gone. Leaving the socket open
+      // would let the next `start()` hand back its port unchanged, so the previous account
+      // keeps a listener that no longer checks a revoked session or delivers an event.
+      const server = this.#server;
+      this.#server = null;
+      this.#port = null;
+      if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+      this.#publishPresence();
+    }
   }
 
   getPresence(): TeamPresenceSnapshot {
