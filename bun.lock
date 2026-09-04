@@ -233,6 +233,7 @@
   "patchedDependencies": {
     "@kobalte/core@2.0.0-alpha.0": "patches/@kobalte%2Fcore@2.0.0-alpha.0.patch",
     "solid-sonner@0.3.2": "patches/solid-sonner@0.3.2.patch",
+    "expo-router@57.0.17": "patches/expo-router@57.0.17.patch",
     "lucide-solid@1.33.0": "patches/lucide-solid@1.33.0.patch",
     "dmg-builder@26.15.7": "patches/dmg-builder@26.15.7.patch",
   },

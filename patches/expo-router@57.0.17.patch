@@ -1,0 +1,12 @@
+diff --git a/build/link/zoom/usePreventZoomTransitionDismissal.ios.js b/build/link/zoom/usePreventZoomTransitionDismissal.ios.js
+index 24cbeeaf58d3f5236d691a2db59219a57481651c..1130f9a8eda9182e653ed53537a589d6fa9f27e7 100644
+--- a/build/link/zoom/usePreventZoomTransitionDismissal.ios.js
++++ b/build/link/zoom/usePreventZoomTransitionDismissal.ios.js
+@@ -71,6 +71,7 @@ function usePreventZoomTransitionDismissal(options) {
+         options?.unstable_dismissalBoundsRect?.maxX,
+         options?.unstable_dismissalBoundsRect?.minY,
+         options?.unstable_dismissalBoundsRect?.maxY,
++        context.hasEnabler,
+         context.setDismissalBoundsRect,
+         gestureEnabled,
+         navigation,

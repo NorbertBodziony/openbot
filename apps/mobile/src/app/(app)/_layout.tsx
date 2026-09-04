@@ -29,7 +29,7 @@ function AuthenticatedStack() {
           animation: "slide_from_right",
           contentStyle: { backgroundColor: background },
           fullScreenGestureEnabled: false,
-          gestureEnabled: false,
+          gestureEnabled: true,
           headerShown: false,
         }}
       />

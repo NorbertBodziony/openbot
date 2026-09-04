@@ -137,6 +137,7 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
   const edgeBackGesture = useMemo(
     () =>
       Gesture.Pan()
+        .enabled(!isIOS)
         .hitSlop({ left: 0, width: CHAT_BACK_EDGE_WIDTH })
         .activeOffsetX(12)
         .failOffsetX(-8)
