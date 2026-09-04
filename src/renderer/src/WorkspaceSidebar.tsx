@@ -100,7 +100,7 @@ export function WorkspaceSidebar(props: { peopleEnabled: boolean }) {
       emptyAction={
         botList().length === 0
           ? {
-              label: "Create your first Bot",
+              label: "Create your first agent",
               avatarSeed: botSetupDraft().avatarSeed,
               avatarHue: botSetupDraft().avatarHue,
               onSelect: openBotSetup,

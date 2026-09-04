@@ -618,7 +618,7 @@ export class BotStore {
         throw new Error("Agent state is corrupt or from a newer OpenBot version; refusing to overwrite it.");
       }
       if (new Set(bots.map((bot) => bot.id)).size !== bots.length) {
-        throw new Error("Agent state contains duplicate bot ids; refusing to overwrite it.");
+        throw new Error("Agent state contains duplicate agent ids; refusing to overwrite it.");
       }
       return { version: 2, examplesInitialized: parsed.examplesInitialized, bots };
     } catch (error) {
@@ -656,7 +656,7 @@ export class BotStore {
 
   #requireBot(id: string): StoredBot {
     const bot = this.#state.bots.find((candidate) => candidate.id === id);
-    if (!bot) throw new Error(`Unknown bot: ${id}`);
+    if (!bot) throw new Error(`Unknown agent: ${id}`);
     return bot;
   }
 }
@@ -785,7 +785,7 @@ async function updateHashFromFile(hash: ReturnType<typeof createHash>, path: str
 
 function validateBotId(id: string): void {
   if (!isValidBotId(id)) {
-    throw new Error("Invalid bot id.");
+    throw new Error("Invalid agent id.");
   }
 }
 

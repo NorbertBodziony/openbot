@@ -217,14 +217,14 @@ export function GlobalSearch(props: GlobalSearchProps) {
               <Tabs.List aria-label="Filter results">
                 <Tabs.Trigger value="all">All</Tabs.Trigger>
                 <Tabs.Trigger value="messages">Messages</Tabs.Trigger>
-                <Tabs.Trigger value="bots">Bots</Tabs.Trigger>
+                <Tabs.Trigger value="bots">Agents</Tabs.Trigger>
               </Tabs.List>
             </Tabs.Root>
 
             <Combobox.Content class="global-search-results">
               <Combobox.Listbox aria-label="Results" />
               <Show when={results().length === 0}>
-                <div class="global-search-empty">No matching messages or bots</div>
+                <div class="global-search-empty">No matching messages or agents</div>
               </Show>
             </Combobox.Content>
           </Combobox.Root>

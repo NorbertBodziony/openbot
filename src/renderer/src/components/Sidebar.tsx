@@ -1822,7 +1822,7 @@ export function Sidebar(props: SidebarProps) {
   return (
     <aside
       id="bot-sidebar"
-      aria-label="Bot navigation"
+      aria-label="Agent navigation"
       class={["sidebar panel-edge", { "sidebar-compact": props.compact }]}
     >
       <div class="window-drag sidebar-topbar">
@@ -1862,7 +1862,7 @@ export function Sidebar(props: SidebarProps) {
             type="button"
             class="sidebar-icon-button sidebar-new-button no-drag"
             onClick={props.onCreateBot}
-            aria-label="Create new Bot"
+            aria-label="Create new agent"
             aria-hidden={props.compact ? "true" : undefined}
             tabindex={props.compact ? -1 : 0}
           >

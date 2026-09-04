@@ -248,7 +248,7 @@ describe.sequential("RoutineScheduler: routine mutations, runs and tools", () =>
     const threadId = store.activeProviderSession("chief")?.externalSessionId;
     if (!client || !threadId) throw new Error("The routine validation test thread did not start.");
 
-    await expectOpenBotToolError(client, threadId, "list_routines", { botId: "missing" }, "Unknown bot");
+    await expectOpenBotToolError(client, threadId, "list_routines", { botId: "missing" }, "Unknown agent");
     await expectOpenBotToolError(
       client,
       threadId,

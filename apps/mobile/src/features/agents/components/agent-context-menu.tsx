@@ -27,7 +27,7 @@ export function useBotContextMenu(bot: MobileBot) {
       }
     } catch (error) {
       Alert.alert(
-        action === "delete" ? "Could not delete bot" : "Could not duplicate bot",
+        action === "delete" ? "Could not delete agent" : "Could not duplicate agent",
         error instanceof Error ? error.message : "The server could not complete this action. Please try again.",
       );
     } finally {
@@ -44,7 +44,7 @@ export function useBotContextMenu(bot: MobileBot) {
   };
 
   const handleDelete = () => {
-    Alert.alert(`Delete ${bot.name}?`, "This removes the bot from this server.", [
+    Alert.alert(`Delete ${bot.name}?`, "This removes the agent from this server.", [
       { text: "Cancel", style: "cancel" },
       {
         text: "Delete",

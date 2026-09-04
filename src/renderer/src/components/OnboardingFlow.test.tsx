@@ -76,7 +76,7 @@ describe("OnboardingFlow", () => {
     expect(await view.findByText("System Settings opened")).toBeInTheDocument();
 
     await fireEvent.click(view.getByRole("button", { name: "Next" }));
-    expect(await view.findByRole("heading", { name: "Give each bot a job" })).toBeInTheDocument();
+    expect(await view.findByRole("heading", { name: "Give each agent a job" })).toBeInTheDocument();
   });
 
   it("keeps onboarding open when saving setup fails", async () => {
@@ -89,7 +89,7 @@ describe("OnboardingFlow", () => {
     await fireEvent.click(view.getByRole("button", { name: "Open OpenBot" }));
 
     expect(await view.findByRole("alert")).toHaveTextContent("Setup failed.");
-    expect(view.getByRole("heading", { name: "Give each bot a job" })).toBeInTheDocument();
+    expect(view.getByRole("heading", { name: "Give each agent a job" })).toBeInTheDocument();
     expect(onSave).toHaveBeenCalledWith("codex");
   });
 

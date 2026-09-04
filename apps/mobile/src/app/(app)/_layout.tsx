@@ -41,7 +41,7 @@ function AuthenticatedStack() {
           presentation: "formSheet",
           sheetAllowedDetents: "fitToContents",
           sheetGrabberVisible: true,
-          title: "Add bot",
+          title: "Add agent",
         }}
       />
       <Stack.Screen
@@ -53,7 +53,7 @@ function AuthenticatedStack() {
           presentation: "formSheet",
           sheetAllowedDetents: "fitToContents",
           sheetGrabberVisible: true,
-          title: "Edit bot",
+          title: "Edit agent",
         }}
       />
       <Stack.Screen

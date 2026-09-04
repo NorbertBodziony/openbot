@@ -48,7 +48,7 @@ export class ContextCompaction {
     this.#scheduleDrain = options.scheduleDrain;
   }
 
-  /** One clause of the drain guard the queue engine composes. False means "hold this bot's queue". */
+  /** One clause of the drain guard the queue engine composes. False means "hold this agent's queue". */
   mayDrain(botId: string): boolean {
     return !this.#compactingBots.has(botId);
   }

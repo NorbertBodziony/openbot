@@ -45,7 +45,7 @@ export function AddBotScreen() {
       keyboardShouldPersistTaps="handled"
     >
       <View className="gap-1">
-        <Typography.Heading type="h4">Create a bot</Typography.Heading>
+        <Typography.Heading type="h4">Create an agent</Typography.Heading>
         <Typography.Paragraph className="text-text-secondary">
           It will be created on the selected OpenBot server and appear on every connected device.
         </Typography.Paragraph>
@@ -63,14 +63,14 @@ export function AddBotScreen() {
       <SheetFormField
         label="Role"
         maxLength={240}
-        placeholder="What should this bot be good at?"
+        placeholder="What should this agent be good at?"
         value={description}
         onChangeText={setDescription}
       />
       <SheetFormField
         label="First task"
         maxLength={4_000}
-        placeholder="Tell the bot what to work on first"
+        placeholder="Tell the agent what to work on first"
         value={initialMessage}
         onChangeText={setInitialMessage}
       />
@@ -82,7 +82,7 @@ export function AddBotScreen() {
       ) : null}
 
       <Button size="lg" isDisabled={!valid || saving} onPress={() => void submit()}>
-        <Button.Label className="font-sans font-semibold">{saving ? "Creating…" : "Create bot"}</Button.Label>
+        <Button.Label className="font-sans font-semibold">{saving ? "Creating…" : "Create agent"}</Button.Label>
       </Button>
     </SheetScrollView>
   );

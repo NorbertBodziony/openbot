@@ -317,12 +317,12 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
                   />
                 </div>
                 <h1 id="onboarding-title">Meet OpenBot</h1>
-                <p class="onboarding-description">A team of Bots that works with you.</p>
+                <p class="onboarding-description">A team that works with you.</p>
 
                 <section class="composer onboarding-composer" data-compact aria-label="Example task handoff">
                   <div class="composer-input-label">
                     <div class="composer-editor-root">
-                      <span class="composer-editor-placeholder">Hand off any task to your team of Bots</span>
+                      <span class="composer-editor-placeholder">Hand off any task to your team</span>
                     </div>
                   </div>
                   <div class="composer-toolbar">
@@ -362,7 +362,7 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
                         ? "Download, connect, and select a provider to continue."
                         : showsProviderSetup()
                           ? "Connect and select a provider to continue. Use Refresh after external account changes."
-                          : "You can change this for each bot later."
+                          : "You can change this for each agent later."
                     }
                     allowUnavailableSelection
                     focusFirst
@@ -469,10 +469,10 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
 
             <Match when={step() === "jobs"}>
               <section class="onboarding-panel onboarding-panel-jobs" aria-labelledby="onboarding-title">
-                <h1 id="onboarding-title">Give each bot a job</h1>
-                <p class="onboarding-description">Start with focused Bots, then build the team around your work.</p>
+                <h1 id="onboarding-title">Give each agent a job</h1>
+                <p class="onboarding-description">Start with focused agents, then build the team around your work.</p>
 
-                <section class="onboarding-job-orbit" aria-label="Example bot jobs">
+                <section class="onboarding-job-orbit" aria-label="Example agent jobs">
                   <article class="onboarding-job-card onboarding-job-card-top">
                     <AgentAvatar
                       seed={avatarVariants.inbox.seed}

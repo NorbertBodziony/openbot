@@ -212,7 +212,7 @@ describe.sequential("AgentService: providers", () => {
     });
     await expect(service.resolveWorkspaceFile(bot.id, outside)).rejects.toThrow("inside the agent workspace");
     await expect(service.resolveWorkspaceFile(bot.id, link)).rejects.toThrow("inside the agent workspace");
-    await expect(service.resolveWorkspaceFile("missing", page)).rejects.toThrow("Unknown bot");
+    await expect(service.resolveWorkspaceFile("missing", page)).rejects.toThrow("Unknown agent");
   });
 
   it("does not surface the skills context-budget notice as an agent error", async () => {

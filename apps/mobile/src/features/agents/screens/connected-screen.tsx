@@ -78,7 +78,7 @@ export function ConnectedScreen() {
   const unpinnedBots = activeBots.filter((bot) => !pinnedBotIds.includes(bot.id));
   const optionsActions = useMemo<MenuAction[]>(
     () => [
-      { id: "add-bot", title: "Add bot" },
+      { id: "add-agent", title: "Add agent" },
       ...(hiddenBots.length > 0 ? [{ id: "hidden-chats", title: "Hidden chats" }] : []),
     ],
     [hiddenBots.length],
@@ -145,14 +145,14 @@ export function ConnectedScreen() {
                 <Bot color={mutedColor} size={30} strokeWidth={1.6} />
               </View>
               <View className="items-center gap-1.5">
-                <Typography.Heading type="h4">No bots on this server</Typography.Heading>
+                <Typography.Heading type="h4">No agents on this server</Typography.Heading>
                 <Typography.Paragraph align="center" className="text-text-secondary">
                   Add a bot to start working from your phone.
                 </Typography.Paragraph>
               </View>
               <Button size="md" variant="secondary" onPress={() => router.push("/add-agent")}>
                 <Plus color={iconColor} size={18} strokeWidth={2} />
-                <Button.Label>Add bot</Button.Label>
+                <Button.Label>Add agent</Button.Label>
               </Button>
             </View>
           ) : null
@@ -172,14 +172,14 @@ export function ConnectedScreen() {
             ? () => (
                 <View className="flex-row items-center gap-1">
                   {IS_BOT_SEARCH_ENABLED ? (
-                    <HeaderIconButton accessibilityLabel="Search bots" onPress={() => router.push("/search-agents")}>
+                    <HeaderIconButton accessibilityLabel="Search agents" onPress={() => router.push("/search-agents")}>
                       <Search color={iconColor} size={22} strokeWidth={1.9} />
                     </HeaderIconButton>
                   ) : null}
                   <MenuView
                     actions={optionsActions}
                     onPressAction={(event) => {
-                      if (event.nativeEvent.event === "add-bot") router.push("/add-agent");
+                      if (event.nativeEvent.event === "add-agent") router.push("/add-agent");
                       if (event.nativeEvent.event === "hidden-chats") router.push("/hidden-chats");
                     }}
                     style={{ height: 44, width: 44 }}
@@ -212,7 +212,7 @@ export function ConnectedScreen() {
             ) : null}
             <Stack.Toolbar.Menu icon="ellipsis">
               <Stack.Toolbar.MenuAction icon="plus.circle" onPress={() => router.push("/add-agent")}>
-                Add bot
+                Add agent
               </Stack.Toolbar.MenuAction>
               {hiddenBots.length > 0 ? (
                 <Stack.Toolbar.MenuAction icon="eye.slash" onPress={() => router.push("/hidden-chats")}>

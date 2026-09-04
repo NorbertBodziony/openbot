@@ -490,7 +490,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (rollbackError) {
         throw new AggregateError(
           [error, rollbackError],
-          "Bot setup failed and the incomplete Bot could not be removed.",
+          "Agent setup failed and the incomplete agent could not be removed.",
         );
       }
       throw error;
@@ -613,7 +613,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async resolveWorkspaceFile(botId: string, inputPath: string): Promise<ResolvedSharedFile> {
     const bot = this.#store.list().find((candidate) => candidate.id === botId);
-    if (!bot) throw new Error(`Unknown bot: ${botId}`);
+    if (!bot) throw new Error(`Unknown agent: ${botId}`);
     const workspaceRoot = await realpath(bot.workspacePath);
     const candidatePath = workspacePathFromInput(bot.workspacePath, bot.id, inputPath);
     const resolvedPath = await realpath(candidatePath);
@@ -627,7 +627,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async deleteBot(botId: string): Promise<void> {
     const bot = this.#store.list().find((candidate) => candidate.id === botId);
-    if (!bot) throw new Error(`Unknown bot: ${botId}`);
+    if (!bot) throw new Error(`Unknown agent: ${botId}`);
     const hasPendingWork = this.#mailbox
       .listQueue(botId)
       .deliveries.some((delivery) => ["queued", "starting", "running"].includes(delivery.status));
@@ -671,7 +671,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
     }
     this.#compaction.forgetBot(bot.id);
-    if (errors.length > 0) throw new AggregateError(errors, "The Bot data could not be removed completely.");
+    if (errors.length > 0) throw new AggregateError(errors, "The agent data could not be removed completely.");
   }
 
   async initialize(): Promise<void> {
@@ -902,7 +902,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async sendMessage(input: SendMessageInput): Promise<QueuedMessageReceipt> {
-    if (this.#duplication.isPending(input.botId)) throw new Error(`Unknown bot: ${input.botId}`);
+    if (this.#duplication.isPending(input.botId)) throw new Error(`Unknown agent: ${input.botId}`);
     const bot = await this.#store.getOrCreate(input.botId);
     await this.ensureProvider(providerForBot(bot));
     const receipt = await this.#mailbox.enqueue({

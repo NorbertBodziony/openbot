@@ -458,12 +458,12 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("dialog", { name: "Providers & permissions" })).not.toBeInTheDocument();
   });
 
-  it("opens the required first-Bot setup for a new user", async () => {
+  it("opens the required first-agent setup for a new user", async () => {
     vi.mocked(window.openbot.agent.listBots).mockResolvedValueOnce([]);
     render(() => <App />);
 
-    expect(await screen.findByRole("heading", { name: "Create your first Bot" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Create Bot" })).toBeDisabled();
+    expect(await screen.findByRole("heading", { name: "Create your first agent" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create agent" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
     expect(window.openbot.agent.createBot).not.toHaveBeenCalled();
   });

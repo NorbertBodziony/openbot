@@ -205,7 +205,7 @@ function collectAttention(
         item: {
           requestId: event.requestId,
           bot: botIdentity(bot),
-          title: truncate(question?.header || "Question from your bot", 180),
+          title: truncate(question?.header || "Question from your agent", 180),
           detail: truncateNullable(question?.question),
           questions,
         },
@@ -252,7 +252,7 @@ function truncate(value: string, length: number): string {
 function normalizeQuestions(questions: PromptEvent["questions"]): DynamicIslandQuestionItem[] {
   return questions.slice(0, INPUT_LIMITS.promptQuestions).map((question, questionIndex) => ({
     id: normalizeTechnical(question.id, `question-${questionIndex + 1}`, INPUT_LIMITS.identifier),
-    header: normalizeRequired(question.header, "Question from your bot", INPUT_LIMITS.promptHeader),
+    header: normalizeRequired(question.header, "Question from your agent", INPUT_LIMITS.promptHeader),
     question: normalizeRequired(
       question.question,
       "Open OpenBot to answer this question.",

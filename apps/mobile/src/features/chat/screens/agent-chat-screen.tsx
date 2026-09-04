@@ -30,10 +30,10 @@ export function BotChatScreen() {
   return (
     <View className="flex-1 items-center justify-center gap-5 bg-background px-8">
       <Typography.Heading type="h4" align="center">
-        Bot unavailable
+        Agent unavailable
       </Typography.Heading>
       <Typography.Paragraph align="center" className="text-text-secondary">
-        This bot is no longer available on the selected server.
+        This agent is no longer available on the selected server.
       </Typography.Paragraph>
       <Pressable
         accessibilityRole="button"

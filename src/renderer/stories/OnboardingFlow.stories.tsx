@@ -35,7 +35,7 @@ const noProvidersConnectedAgentStatus: AgentStatus = {
     },
   ],
   capabilities: { ...STORY_AGENT_STATUS.capabilities, chat: "unavailable" },
-  message: "Connect ChatGPT or Claude to create a local Bot.",
+  message: "Connect ChatGPT or Claude to create a local agent.",
 };
 
 const checkingProvidersAgentStatus: AgentStatus = {

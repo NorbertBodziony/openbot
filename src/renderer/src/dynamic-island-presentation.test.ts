@@ -196,7 +196,7 @@ describe("createDynamicIslandPresentation", () => {
     const firstQuestion = presentation.item.questions[0];
     expect(firstQuestion).toMatchObject({
       id: "question-1",
-      header: "Question from your bot",
+      header: "Question from your agent",
       question: "Open OpenBot to answer this question.",
     });
     expect(firstQuestion?.options).toHaveLength(INPUT_LIMITS.promptOptions);

@@ -682,7 +682,7 @@ function decodeBot(value: unknown): RemoteBot {
     !isString(value.avatarSeed) ||
     (value.avatarHue !== null && !isAvatarHue(value.avatarHue))
   ) {
-    throw new Error("The server returned an invalid bot.");
+    throw new Error("The server returned an invalid agent.");
   }
   return {
     id: value.id,
@@ -697,7 +697,7 @@ function decodeBot(value: unknown): RemoteBot {
 }
 
 function decodeBotSummaries(value: unknown): RemoteBot[] {
-  if (!Array.isArray(value)) throw new Error("The server returned an invalid bot list.");
+  if (!Array.isArray(value)) throw new Error("The server returned an invalid agent list.");
   return value.map(decodeBot);
 }
 

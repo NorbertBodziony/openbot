@@ -5,7 +5,7 @@ import { FIRST_BOT_SUGGESTIONS, FirstBotSetup } from "./components/FirstAgentSet
 /**
  * The create-a-Bot form, which takes over the conversation pane instead of
  * opening over it. `mode` is derived from the Bot list rather than passed in
- * because the first Bot and the fifth are the same command with different copy.
+ * because the first agent and the fifth are the same command with different copy.
  */
 export function WorkspaceBotSetup() {
   const { botList, botSetupDraft, setBotSetupDraft, botSetupError, creatingAgent, cancelBotSetup } = useAgents();

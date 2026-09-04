@@ -59,7 +59,7 @@ const meta = {
     viewport: {
       options: {
         firstBotSmall: {
-          name: "First Bot — 700 × 720",
+          name: "First agent — 700 × 720",
           styles: { width: "700px", height: "720px" },
         },
       },
@@ -73,18 +73,18 @@ type Story = StoryObj<typeof meta>;
 
 export const Default: Story = {
   play: async ({ canvas, canvasElement }) => {
-    const createButton = canvas.getByRole("button", { name: "Create Bot" });
+    const createButton = canvas.getByRole("button", { name: "Create agent" });
     await expect(canvas.getAllByRole("listitem")).toHaveLength(6);
     await expect(createButton).toBeDisabled();
-    await expect(canvas.getByRole("textbox", { name: "Name" })).toHaveValue("New Bot");
-    await expect(canvas.getByRole("textbox", { name: "What should this Bot help with?" })).toHaveValue("");
-    await expect(canvas.getAllByRole("button", { name: /Bot color$/ })).toHaveLength(9);
-    await expect(canvas.queryByRole("button", { name: "Lime Bot color" })).not.toBeInTheDocument();
-    await expect(canvas.queryByRole("button", { name: "Violet Bot color" })).not.toBeInTheDocument();
+    await expect(canvas.getByRole("textbox", { name: "Name" })).toHaveValue("New agent");
+    await expect(canvas.getByRole("textbox", { name: "What should this agent help with?" })).toHaveValue("");
+    await expect(canvas.getAllByRole("button", { name: /agent color$/ })).toHaveLength(9);
+    await expect(canvas.queryByRole("button", { name: "Lime agent color" })).not.toBeInTheDocument();
+    await expect(canvas.queryByRole("button", { name: "Violet agent color" })).not.toBeInTheDocument();
 
     const suggestionViewport = canvasElement.querySelector<HTMLElement>(".first-bot-suggestion-viewport");
     const suggestionList = canvasElement.querySelector<HTMLElement>(".first-bot-suggestion-list");
-    if (!suggestionViewport || !suggestionList) throw new Error("The Bot suggestion scroller is missing.");
+    if (!suggestionViewport || !suggestionList) throw new Error("The agent suggestion scroller is missing.");
     await expect(getComputedStyle(suggestionList).scrollSnapType).toBe("none");
     await expect(suggestionViewport).toHaveClass("can-scroll-forward");
     await expect(suggestionViewport).not.toHaveClass("can-scroll-back");
@@ -112,7 +112,7 @@ export const Default: Story = {
 
 export const Interactions: Story = {
   play: async ({ args: storyArgs, canvas, canvasElement, userEvent }) => {
-    const createButton = canvas.getByRole("button", { name: "Create Bot" });
+    const createButton = canvas.getByRole("button", { name: "Create agent" });
 
     const tripPlanner = canvas.getByRole("button", {
       name: "Trip Planner. Compares options and builds practical itineraries.",
@@ -122,7 +122,7 @@ export const Interactions: Story = {
     const suggestion = FIRST_BOT_SUGGESTIONS[1];
     if (!suggestion) throw new Error("The Trip Planner suggestion is missing.");
     await expect(canvas.getByRole("textbox", { name: "Name" })).toHaveValue(suggestion.name);
-    await expect(canvas.getByRole("textbox", { name: "What should this Bot help with?" })).toHaveValue(
+    await expect(canvas.getByRole("textbox", { name: "What should this agent help with?" })).toHaveValue(
       suggestion.purpose,
     );
     await expect(tripPlanner).toHaveAttribute("aria-pressed", "true");
@@ -133,7 +133,7 @@ export const Interactions: Story = {
     await expect(liveAvatar).toHaveAttribute("data-avatar-seed", suggestion.avatarSeed);
     await expect(headerAvatar).toHaveAttribute("data-avatar-seed", suggestion.avatarSeed);
 
-    await userEvent.click(canvas.getByRole("button", { name: "Create Bot" }));
+    await userEvent.click(canvas.getByRole("button", { name: "Create agent" }));
     await expect(storyArgs.onSubmit).toHaveBeenCalledWith(draftFromSuggestion(suggestion));
 
     const nameInput = canvas.getByRole("textbox", { name: "Name" });
@@ -144,10 +144,10 @@ export const Interactions: Story = {
       expect.objectContaining({ name: "Weekend Planner", suggestionId: null }),
     );
 
-    await userEvent.click(canvas.getByRole("button", { name: "Blue Bot color" }));
-    await userEvent.click(canvas.getByRole("button", { name: "Bot face 2" }));
-    await expect(canvas.getByRole("button", { name: "Blue Bot color" })).toHaveAttribute("aria-pressed", "true");
-    await expect(canvas.getByRole("button", { name: "Bot face 2" })).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(canvas.getByRole("button", { name: "Blue agent color" }));
+    await userEvent.click(canvas.getByRole("button", { name: "Agent face 2" }));
+    await expect(canvas.getByRole("button", { name: "Blue agent color" })).toHaveAttribute("aria-pressed", "true");
+    await expect(canvas.getByRole("button", { name: "Agent face 2" })).toHaveAttribute("aria-pressed", "true");
   },
 };
 
@@ -167,10 +167,10 @@ export const Submitting: Story = {
     onCancel: fn(),
   },
   play: async ({ canvas }) => {
-    await expect(canvas.getByRole("button", { name: "Creating Bot…" })).toBeDisabled();
+    await expect(canvas.getByRole("button", { name: "Creating agent…" })).toBeDisabled();
     await expect(canvas.getByRole("button", { name: "Cancel" })).toBeDisabled();
     await expect(canvas.getByRole("textbox", { name: "Name" })).toBeDisabled();
-    await expect(canvas.getByRole("textbox", { name: "What should this Bot help with?" })).toBeDisabled();
+    await expect(canvas.getByRole("textbox", { name: "What should this agent help with?" })).toBeDisabled();
     await expect(canvas.getByRole("button", { name: /^Inbox Helper\./ })).toBeDisabled();
   },
 };
@@ -179,12 +179,12 @@ export const SmallWindow: Story = {
   parameters: { viewport: { defaultViewport: "firstBotSmall" } },
   play: async ({ canvas, canvasElement }) => {
     const suggestionList = canvasElement.querySelector<HTMLElement>(".first-bot-suggestion-list");
-    if (!suggestionList) throw new Error("The Bot suggestion list is missing.");
+    if (!suggestionList) throw new Error("The agent suggestion list is missing.");
     await expect(suggestionList.scrollWidth).toBeGreaterThan(suggestionList.clientWidth);
 
-    const selectedFace = canvas.getByRole("button", { name: "Bot face 1" });
+    const selectedFace = canvas.getByRole("button", { name: "Agent face 1" });
     const faceBody = selectedFace.querySelector<SVGRectElement>("svg rect");
-    if (!faceBody) throw new Error("The selected Bot face body is missing.");
+    if (!faceBody) throw new Error("The selected agent face body is missing.");
     const buttonBounds = selectedFace.getBoundingClientRect();
     const bodyBounds = faceBody.getBoundingClientRect();
     await expect(

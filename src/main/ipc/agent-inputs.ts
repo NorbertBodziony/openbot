@@ -122,7 +122,7 @@ export function parseSidebarLayoutAction(value: unknown): SidebarLayoutAction {
 }
 
 export function parseCreateBot(value: unknown): CreateBotInput {
-  if (!isObject(value)) throw new Error("Invalid bot creation request.");
+  if (!isObject(value)) throw new Error("Invalid agent creation request.");
   const avatarHue = value.avatarHue;
   if (!isAvatarSeed(value.avatarSeed)) throw new Error("Invalid avatar seed.");
   if (avatarHue !== null && !isAvatarHue(avatarHue)) throw new Error("Invalid avatar hue.");
@@ -314,7 +314,7 @@ export function parseMarkConversationRead(value: unknown): MarkConversationReadI
 }
 
 export function parseUpdateBot(value: unknown): UpdateBotInput {
-  if (!isObject(value)) throw new Error("Invalid bot update request.");
+  if (!isObject(value)) throw new Error("Invalid agent update request.");
   if (value.role !== undefined) throw new Error("Invalid role.");
   const result: UpdateBotInput = { botId: requireString(value.botId, "botId") };
   const limits = {

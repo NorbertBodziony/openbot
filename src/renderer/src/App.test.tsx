@@ -307,22 +307,22 @@ describe("OpenBot connected desktop shell", () => {
     );
   });
 
-  it("creates a Bot from a suggestion with one complete backend input", async () => {
+  it("creates an agent from a suggestion with one complete backend input", async () => {
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
 
-    await fireEvent.click(screen.getByRole("button", { name: "Create new Bot" }));
-    expect(await screen.findByRole("heading", { name: "Create a new Bot" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Create new agent" }));
+    expect(await screen.findByRole("heading", { name: "Create a new agent" })).toBeInTheDocument();
     expect(window.openbot.agent.createBot).not.toHaveBeenCalled();
     await fireEvent.click(screen.getByRole("button", { name: /^Trip Planner\./ }));
 
     const name = screen.getByRole("textbox", { name: "Name" });
-    const purpose = screen.getByRole("textbox", { name: "What should this Bot help with?" });
+    const purpose = screen.getByRole("textbox", { name: "What should this agent help with?" });
     expect(name).toHaveValue("Trip Planner");
     expect(purpose).toHaveValue(
       "Compare travel options and turn my rough ideas into practical, day-by-day itineraries.",
     );
-    await fireEvent.click(screen.getByRole("button", { name: "Create Bot" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
 
     await waitFor(() => expect(window.openbot.agent.createBot).toHaveBeenCalledOnce());
     const draft = {
@@ -340,7 +340,7 @@ describe("OpenBot connected desktop shell", () => {
     expect(await screen.findByRole("heading", { name: "Trip Planner" })).toBeInTheDocument();
   });
 
-  it("opens and cancels Bot creation from a private conversation", async () => {
+  it("opens and cancels agent creation from a private conversation", async () => {
     render(() => <App peopleEnabled />);
     await screen.findByRole("heading", { name: "Chief" });
     emitPresence?.({
@@ -354,9 +354,9 @@ describe("OpenBot connected desktop shell", () => {
     await fireEvent.click(await screen.findByRole("button", { name: /Alice/ }));
     expect(await screen.findByRole("main", { name: "Direct conversation with Alice" })).toBeInTheDocument();
 
-    await fireEvent.click(screen.getByRole("button", { name: "Create new Bot" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Create new agent" }));
 
-    expect(await screen.findByRole("heading", { name: "Create a new Bot" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Create a new agent" })).toBeInTheDocument();
     expect(window.openbot.agent.createBot).not.toHaveBeenCalled();
     expect(window.openbot.servers.setDirectTyping).toHaveBeenCalledWith({
       memberId: "member-alice",
@@ -469,7 +469,7 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.click(screen.getByRole("tab", { name: "Messages" }));
     await fireEvent.input(input, { target: { value: "sources-hidden-id" } });
-    await screen.findByText("No matching messages or bots");
+    await screen.findByText("No matching messages or agents");
     await fireEvent.input(input, { target: { value: "research" } });
     const messageResult = await screen.findByRole("option", { name: /Ask @Research to use Sources \(skill\)\./ });
     expect(messageResult).not.toHaveTextContent("research-hidden-id");
@@ -486,7 +486,7 @@ describe("OpenBot connected desktop shell", () => {
     });
 
     await fireEvent.keyDown(window, { key: "k", metaKey: true });
-    await fireEvent.click(screen.getByRole("tab", { name: "Bots" }));
+    await fireEvent.click(screen.getByRole("tab", { name: "Agents" }));
     const botSearch = screen.getByRole("combobox", { name: "Search OpenBot" });
     await fireEvent.input(botSearch, { target: { value: "chief" } });
     await fireEvent.click(await screen.findByRole("option", { name: /Chief/ }));
@@ -531,7 +531,7 @@ describe("OpenBot connected desktop shell", () => {
 
     await fireEvent.click(screen.getByRole("button", { name: "Expand sidebar and search chats" }));
 
-    expect(screen.getByRole("complementary", { name: "Bot navigation" })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Agent navigation" })).toBeInTheDocument();
     expect(screen.getByRole("separator", { name: "Resize left sidebar" })).toHaveAttribute("aria-valuenow", "280");
     expect(window.localStorage.getItem("openbot:left-panel-collapsed")).toBe("false");
     expect(screen.getByRole("button", { name: "Open Marketplace" })).toBeInTheDocument();

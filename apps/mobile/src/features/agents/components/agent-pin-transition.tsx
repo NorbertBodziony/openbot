@@ -216,7 +216,7 @@ export function BotPinTransitionProvider({ children }: PropsWithChildren) {
       );
       if (!isPinned && pinnedOnServer.length >= MAX_PINNED_BOTS) {
         if (isIOS) void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-        Alert.alert("Pin limit reached", `You can pin up to ${MAX_PINNED_BOTS} bots on a server.`);
+        Alert.alert("Pin limit reached", `You can pin up to ${MAX_PINNED_BOTS} agents on a server.`);
         return;
       }
 
@@ -253,7 +253,7 @@ export function BotPinTransitionProvider({ children }: PropsWithChildren) {
             const result = toggleBotPin(botId);
             if (result === "limit") {
               finishTransition();
-              Alert.alert("Pin limit reached", `You can pin up to ${MAX_PINNED_BOTS} bots on a server.`);
+              Alert.alert("Pin limit reached", `You can pin up to ${MAX_PINNED_BOTS} agents on a server.`);
               return;
             }
             if (isIOS) void Haptics.selectionAsync();
@@ -318,7 +318,7 @@ export function useBotPinTransition(): BotPinTransitionContextValue {
         toggleBotPinAnimated: (botId: string) => {
           const result = toggleBotPin(botId);
           if (result === "limit") {
-            Alert.alert("Pin limit reached", `You can pin up to ${MAX_PINNED_BOTS} bots on a server.`);
+            Alert.alert("Pin limit reached", `You can pin up to ${MAX_PINNED_BOTS} agents on a server.`);
           }
         },
         transition: null,

@@ -460,7 +460,7 @@ describe("BotStore", () => {
     const store = new BotStore(join(root, "data"), join(root, "home"));
     await store.initialize();
 
-    await expect(store.getOrCreate("../outside")).rejects.toThrow("Invalid bot id");
+    await expect(store.getOrCreate("../outside")).rejects.toThrow("Invalid agent id");
   });
 
   it("fails closed instead of overwriting agent state from a newer version", async () => {

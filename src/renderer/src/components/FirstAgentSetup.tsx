@@ -45,7 +45,7 @@ const SUGGESTION_DRAG_THRESHOLD = 8;
 const MOTION_FRAME_DURATION = 1000 / 60;
 
 export const DEFAULT_FIRST_BOT_DRAFT: FirstBotDraft = {
-  name: "New Bot",
+  name: "New agent",
   purpose: "",
   avatarSeed: FIRST_BOT_AVATAR_SEEDS[0] ?? "first-bot",
   avatarHue: null,
@@ -147,7 +147,7 @@ export function FirstBotSetup(props: FirstBotSetupProps) {
   const [canScrollSuggestionsForward, setCanScrollSuggestionsForward] = createSignal(false);
   const [draggingSuggestions, setDraggingSuggestions] = createSignal(false);
   const canSubmit = () => Boolean(props.value.name.trim() && props.value.purpose.trim()) && !props.submitting;
-  const displayName = () => props.value.name.trim() || "New Bot";
+  const displayName = () => props.value.name.trim() || "New agent";
 
   function updateSuggestionFades(): void {
     if (!suggestionList) return;
@@ -312,7 +312,7 @@ export function FirstBotSetup(props: FirstBotSetupProps) {
           }}
         >
           <h2 id="first-bot-setup-title" class="sr-only">
-            {props.mode === "additional" ? "Create a new Bot" : "Create your first Bot"}
+            {props.mode === "additional" ? "Create a new agent" : "Create your first agent"}
           </h2>
 
           <div
@@ -329,14 +329,14 @@ export function FirstBotSetup(props: FirstBotSetupProps) {
           </div>
 
           <fieldset class="first-bot-avatar-fieldset first-bot-color-fieldset" disabled={props.submitting}>
-            <legend class="sr-only">Bot color</legend>
+            <legend class="sr-only">Agent color</legend>
             <div class="first-bot-color-options">
               <Button
                 variant="ghost"
                 type="button"
                 size="sm"
                 class="first-bot-color-choice"
-                aria-label="Automatic Bot color"
+                aria-label="Automatic agent color"
                 aria-pressed={props.value.avatarHue === null ? "true" : "false"}
                 onClick={() => updateDraft({ avatarHue: null })}
               >
@@ -352,7 +352,7 @@ export function FirstBotSetup(props: FirstBotSetupProps) {
                     type="button"
                     size="sm"
                     class="first-bot-color-choice"
-                    aria-label={`${option.label} Bot color`}
+                    aria-label={`${option.label} agent color`}
                     aria-pressed={props.value.avatarHue === option.hue ? "true" : "false"}
                     onClick={() => updateDraft({ avatarHue: option.hue })}
                   >
@@ -364,7 +364,7 @@ export function FirstBotSetup(props: FirstBotSetupProps) {
           </fieldset>
 
           <fieldset class="first-bot-avatar-fieldset first-bot-face-fieldset" disabled={props.submitting}>
-            <legend class="sr-only">Bot face</legend>
+            <legend class="sr-only">Agent face</legend>
             <div class="first-bot-face-options">
               <For each={FIRST_BOT_AVATAR_SEEDS}>
                 {(seed, index) => (
@@ -373,7 +373,7 @@ export function FirstBotSetup(props: FirstBotSetupProps) {
                     type="button"
                     size="sm"
                     class="first-bot-face-choice"
-                    aria-label={`Bot face ${index() + 1}`}
+                    aria-label={`Agent face ${index() + 1}`}
                     aria-pressed={props.value.avatarSeed === seed ? "true" : "false"}
                     onClick={() => updateDraft({ avatarSeed: seed })}
                   >
@@ -399,7 +399,7 @@ export function FirstBotSetup(props: FirstBotSetupProps) {
                 onValueChange={(name) => updateDraft({ name })}
               />
             </Field>
-            <Field label="What should this Bot help with?" required>
+            <Field label="What should this agent help with?" required>
               <Textarea
                 value={props.value.purpose}
                 rows={2}
@@ -427,9 +427,9 @@ export function FirstBotSetup(props: FirstBotSetupProps) {
               class="first-bot-submit"
               disabled={!canSubmit()}
               loading={props.submitting}
-              loadingLabel="Creating Bot…"
+              loadingLabel="Creating agent…"
             >
-              Create Bot
+              Create agent
             </Button>
           </div>
         </form>

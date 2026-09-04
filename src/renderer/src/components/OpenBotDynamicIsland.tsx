@@ -875,7 +875,7 @@ function TakeoverContent(props: {
       contentKey={`${props.item.requestId}:${props.item.detail ?? ""}`}
       name={props.item.bot.name}
       status="needs you"
-      description={props.item.detail ?? "Complete the browser step so the bot can continue."}
+      description={props.item.detail ?? "Complete the browser step so the agent can continue."}
       action={
         <Button
           size="sm"

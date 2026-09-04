@@ -31,7 +31,7 @@ export interface DuplicationGateOptions {
  *
  * A duplicate is created in the database before the user has confirmed where it goes, so for that
  * window it is a real row that must not behave like a real agent: it is hidden from `listBots`, it
- * never drains its queue, its routines never fire, and `Unknown bot` is the honest answer for it.
+ * never drains its queue, its routines never fire, and `Unknown agent` is the honest answer for it.
  * Every path out of that window — commit, delete, or a failed copy — has to clear the same four
  * maps, which is why they live in one class rather than beside the code that happens to set them.
  *

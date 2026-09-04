@@ -94,7 +94,7 @@ const AgentActions = createSimpleContext({
         analytics.track("agent_action", { action: "create", result: "succeeded", ...(properties ?? {}) });
       } catch (error) {
         analytics.track("agent_action", { action: "create", result: "failed", failure_code: "create_failed" });
-        setBotSetupError(error instanceof Error ? error.message : "The Bot could not be created.");
+        setBotSetupError(error instanceof Error ? error.message : "The agent could not be created.");
       } finally {
         setCreatingAgent(false);
       }

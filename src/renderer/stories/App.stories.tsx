@@ -256,11 +256,11 @@ export const EmptyWorkspace: Story = {
     await expect(canvas.queryByRole("button", { name: "OpenBot team server" })).not.toBeInTheDocument();
     await expect(canvas.getAllByRole("listitem")).toHaveLength(6);
 
-    const createButton = canvas.getByRole("button", { name: "Create Bot" });
+    const createButton = canvas.getByRole("button", { name: "Create agent" });
     await expect(createButton).toBeDisabled();
     const nameInput = canvas.getByRole("textbox", { name: "Name" });
-    const purposeInput = canvas.getByRole("textbox", { name: "What should this Bot help with?" });
-    await expect(nameInput).toHaveValue("New Bot");
+    const purposeInput = canvas.getByRole("textbox", { name: "What should this agent help with?" });
+    await expect(nameInput).toHaveValue("New agent");
     await expect(purposeInput).toHaveValue("");
   },
 };
@@ -355,8 +355,8 @@ export const Onboarding: Story = {
 
     await userEvent.click(canvas.getByRole("button", { name: "Next" }));
     await userEvent.click(canvas.getByRole("button", { name: "Next" }));
-    await expect(canvas.findByRole("heading", { name: "Give each bot a job" })).resolves.toBeInTheDocument();
-    await expect(canvas.getByRole("region", { name: "Example bot jobs" })).toBeInTheDocument();
+    await expect(canvas.findByRole("heading", { name: "Give each agent a job" })).resolves.toBeInTheDocument();
+    await expect(canvas.getByRole("region", { name: "Example agent jobs" })).toBeInTheDocument();
 
     await userEvent.click(canvas.getByRole("button", { name: "Open OpenBot" }));
     await expect(canvas.findByRole("heading", { name: "Chief" })).resolves.toBeInTheDocument();

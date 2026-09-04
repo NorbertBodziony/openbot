@@ -87,10 +87,10 @@ describe.sequential("DuplicationGate: copying an agent and the pending window", 
 
     expect(service.listBots().some((bot) => bot.id === duplicate.id)).toBe(false);
     await expect(service.sendMessage({ botId: duplicate.id, text: "Do not start yet." })).rejects.toThrow(
-      `Unknown bot: ${duplicate.id}`,
+      `Unknown agent: ${duplicate.id}`,
     );
     await expect(service.updateBot({ botId: duplicate.id, title: "Hidden copy" })).rejects.toThrow(
-      `Unknown bot: ${duplicate.id}`,
+      `Unknown agent: ${duplicate.id}`,
     );
     expect(service.listQueue(duplicate.id).deliveries).toEqual([]);
     expect(events).toEqual([]);

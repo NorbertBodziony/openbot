@@ -266,7 +266,7 @@ export class ConversationRuntime {
 
   requireKnownBot(botId: string): BotSummary {
     const bot = this.#listBots().find((candidate) => candidate.id === botId);
-    if (!bot) throw new Error(`Unknown bot: ${botId}`);
+    if (!bot) throw new Error(`Unknown agent: ${botId}`);
     return bot;
   }
 }

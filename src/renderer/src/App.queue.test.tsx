@@ -753,25 +753,25 @@ describe("OpenBot connected desktop shell", () => {
     expect(screen.queryByRole("group", { name: /Next work/ })).not.toBeInTheDocument();
   });
 
-  it("keeps the complete Bot draft when creation fails", async () => {
+  it("keeps the complete agent draft when creation fails", async () => {
     vi.mocked(window.openbot.agent.createBot).mockRejectedValueOnce(
       new Error("The first message could not be queued."),
     );
     render(() => <App />);
     await screen.findByRole("heading", { name: "Chief" });
-    await fireEvent.click(screen.getByRole("button", { name: "Create new Bot" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Create new agent" }));
     await fireEvent.click(await screen.findByRole("button", { name: /^Writing Partner\./ }));
     const name = screen.getByRole("textbox", { name: "Name" });
-    const purpose = screen.getByRole("textbox", { name: "What should this Bot help with?" });
+    const purpose = screen.getByRole("textbox", { name: "What should this agent help with?" });
     await fireEvent.input(name, { target: { value: "My Writing Partner" } });
-    await fireEvent.click(screen.getByRole("button", { name: "Create Bot" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Create agent" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("The first message could not be queued.");
     expect(name).toHaveValue("My Writing Partner");
     expect(purpose).toHaveValue(
       "Help me draft and improve messages and documents while keeping the writing clear and natural.",
     );
-    expect(screen.getByRole("heading", { name: "Create a new Bot" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Create a new agent" })).toBeInTheDocument();
   });
 
   it("answers model prompts from a separate card while composer remains a queue", async () => {
