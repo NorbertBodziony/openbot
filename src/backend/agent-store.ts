@@ -11,6 +11,7 @@ import {
   realpath,
   rename,
   rm,
+  rmdir,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -37,8 +38,10 @@ import {
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isBoolean, isNumber, isOneOf, isString } from "@openbot/contracts/runtime-values";
 import { isUuidV4 } from "@openbot/contracts/validation";
+import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import { OpenBotDatabase, type ProviderSession, stableThreadId } from "./openbot-database";
 import { isRecord } from "./protocol";
+import { legacyAgentId } from "./workspace-paths";
 
 type StoredAgent = AgentSummary;
 type PersistedStoredAgent = Omit<StoredAgent, "avatarUrl" | "provider"> & {
@@ -93,9 +96,12 @@ const LEGACY_AGENTS_STATE_FILE = "bots.json";
 const LEGACY_AGENTS_STATE_KEY = "agents";
 const LEGACY_AGENTS_IMPORT_COMMAND_ID = "legacy-import:bots:v1";
 
+const logger = createOpenBotLogger("agent-store");
+
 export class AgentStore {
   readonly #statePath: string;
   readonly #agentsRoot: string;
+  readonly #legacyAgentsRoot: string;
   readonly #sharedRoot: string;
   readonly #downloadsRoot: string;
   readonly #avatarsRoot: string;
@@ -109,6 +115,7 @@ export class AgentStore {
     const openbotRoot = join(homePath, "OpenBot");
     this.#statePath = join(userDataPath, LEGACY_AGENTS_STATE_FILE);
     this.#agentsRoot = join(openbotRoot, "Agents");
+    this.#legacyAgentsRoot = join(openbotRoot, "Bots");
     this.#sharedRoot = join(openbotRoot, "Shared");
     this.#downloadsRoot = join(openbotRoot, "Downloads");
     this.#avatarsRoot = join(userDataPath, "avatars", "agents");
@@ -171,6 +178,7 @@ export class AgentStore {
         });
       }
     }
+    await this.#reconcileWorkspaceDirectories();
     await this.#recoverPendingDuplications();
   }
 
@@ -190,7 +198,7 @@ export class AgentStore {
     const description = requiredText(input.description, "Agent description", INPUT_LIMITS.agentDescription);
     if (!isAvatarSeed(input.avatarSeed)) throw new Error("Invalid avatar seed.");
     if (input.avatarHue !== null && !isAvatarHue(input.avatarHue)) throw new Error("Invalid avatar hue.");
-    const record = this.#createRecord(`bot-${randomUUID()}`, name, "", description);
+    const record = this.#createRecord(`agent-${randomUUID()}`, name, "", description);
     record.avatarSeed = input.avatarSeed;
     record.avatarHue = input.avatarHue;
     await mkdir(record.workspacePath, { recursive: true, mode: 0o700 });
@@ -231,7 +239,7 @@ export class AgentStore {
     const sourceWorkspaceManifest = await workspaceMetadataFingerprint(source.workspacePath);
     const sourceAvatar = this.resolveAvatar(source.id);
     const sourceAvatarSignature = sourceAvatar ? await fileFingerprint(sourceAvatar.path) : null;
-    const id = `bot-${randomUUID()}`;
+    const id = `agent-${randomUUID()}`;
     const record = this.#createRecord(
       id,
       duplicateAgentName(source.name, this.#state.agents),
@@ -474,6 +482,10 @@ export class AgentStore {
       rm(`${join(this.#avatarsRoot, id)}.openbot-stage`, { recursive: true, force: true }),
       rm(join(this.#agentsRoot, id), { recursive: true, force: true }),
       rm(`${join(this.#agentsRoot, id)}.openbot-stage`, { recursive: true, force: true }),
+      // The stored path is not always the derived one: a cross-device workspace root legitimately leaves
+      // a workspace outside `#agentsRoot`, and deleting only the derived path would leave that agent's
+      // files behind after the user deleted the agent.
+      rm(agent.workspacePath, { recursive: true, force: true }),
       rm(this.#duplicationMarkerPath(id), { force: true }),
     ]);
     return { ...agent };
@@ -505,6 +517,63 @@ export class AgentStore {
     await mkdir(record.workspacePath, { recursive: true, mode: 0o700 });
     this.#persist("agent.created");
     return { ...record };
+  }
+
+  /**
+   * The file half of migration v13: `~/OpenBot/Bots/bot-<uuid>` becomes `~/OpenBot/Agents/agent-<uuid>`.
+   * It cannot run inside that migration, because `runMigration` rolls its transaction back on a throw and
+   * a directory that has already moved cannot be rolled back.
+   *
+   * Resumable rather than atomic. On one volume `rename` is a single syscall, so no workspace is ever
+   * half-moved, and what an interrupted run already did is read from whether the target directory exists
+   * -- never from a marker file, which can disagree with the disk. Failing here never stops the app: v13
+   * already wrote an absolute path for every agent, and that path is correct whether or not the files
+   * moved.
+   */
+  async #reconcileWorkspaceDirectories(): Promise<void> {
+    let relocated = false;
+    for (const agent of this.#state.agents) {
+      const legacyPath = join(this.#legacyAgentsRoot, legacyAgentId(agent.id));
+      if (legacyPath === agent.workspacePath) continue;
+      if ((await directoryExists(agent.workspacePath)) || !(await directoryExists(legacyPath))) continue;
+      try {
+        await rename(legacyPath, agent.workspacePath);
+      } catch (error) {
+        if (!isRecord(error) || error.code !== "EXDEV") throw error;
+        // `~/OpenBot/Bots` is a link onto another volume, so this move would be a copy -- and a copy of a
+        // workspace interrupted halfway is lost data. The workspace stays where it is and its stored path
+        // keeps pointing at it. An out-of-date directory name is cosmetic; nothing reads it.
+        agent.workspacePath = legacyPath;
+        relocated = true;
+      }
+    }
+    if (relocated) this.#persist("agent.workspace-relocated");
+    await this.#removeLegacyWorkspaceRoot();
+  }
+
+  async #removeLegacyWorkspaceRoot(): Promise<void> {
+    let entries: string[];
+    try {
+      entries = await readdir(this.#legacyAgentsRoot);
+    } catch (error) {
+      if (isRecord(error) && error.code === "ENOENT") return;
+      throw error;
+    }
+    // Unfinished copies from a duplication that crashed. Nothing committed ever points at one, so they
+    // are deleted rather than moved.
+    await Promise.all(
+      entries
+        .filter((entry) => entry.endsWith(".openbot-stage"))
+        .map((entry) => rm(join(this.#legacyAgentsRoot, entry), { recursive: true, force: true })),
+    );
+    if (!entries.every((entry) => entry.endsWith(".openbot-stage"))) return;
+    try {
+      await rmdir(this.#legacyAgentsRoot);
+    } catch (error) {
+      // Something arrived between the listing and the removal, or the root is not ours to delete. An
+      // empty directory left behind costs nothing.
+      logger.warn("Could not remove the legacy workspace root.", toLogValue(error));
+    }
   }
 
   async #recoverPendingDuplications(): Promise<void> {
@@ -802,8 +871,24 @@ function isValidAgentId(id: string): boolean {
   return /^[a-z0-9][a-z0-9-]{0,63}$/.test(id) && basename(id) === id;
 }
 
+/**
+ * The gate that lets a crashed duplication's leftovers be cleaned up, so it has to recognize an id this
+ * build would never mint. A database restored from the user's own file copy never ran migration v13 and
+ * still spells its agents `bot-<uuid>`; narrowing this to `agent-` would strand that install's orphan on
+ * disk forever.
+ */
 function isGeneratedAgentId(id: string): boolean {
-  return id.startsWith("bot-") && isUuidV4(id.slice("bot-".length));
+  const prefix = id.startsWith("agent-") ? "agent-" : id.startsWith("bot-") ? "bot-" : null;
+  return prefix !== null && isUuidV4(id.slice(prefix.length));
+}
+
+async function directoryExists(path: string): Promise<boolean> {
+  try {
+    return (await lstat(path)).isDirectory();
+  } catch (error) {
+    if (isRecord(error) && error.code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 function titleFromId(id: string): string {

@@ -4,7 +4,7 @@ import { isAbsolute } from "node:path";
 import type { AgentEvent, ConversationSnapshot } from "@openbot/contracts/ipc";
 import { sortConversationMessages } from "../conversation-snapshots";
 import type { GeneratedAttachmentSource, MailboxStore } from "../mailbox-store";
-import { isWithin, sharedPathFromInput, workspacePathFromInput } from "../workspace-paths";
+import { isWithin, rebaseLegacyWorkspacePath, sharedPathFromInput, workspacePathFromInput } from "../workspace-paths";
 import type { ConversationRuntime } from "./conversation-runtime";
 import { type OpenBotToolResponse, openBotToolResult } from "./routine-tools";
 
@@ -172,8 +172,11 @@ export class AttachmentGateway {
     const sharedReference = ["~/OpenBot/Shared/", "OpenBot/Shared/", "Shared/"].some((prefix) =>
       normalized.startsWith(prefix),
     );
+    // An absolute path may be one the provider's own transcript still names under this agent's pre-rename
+    // workspace root. The rebased twin is just another candidate, so it goes through the same containment
+    // and symlink checks below as the original.
     const candidates = isAbsolute(value)
-      ? [value]
+      ? [value, rebaseLegacyWorkspacePath(agent.workspacePath, agent.id, value)].filter((path) => path !== null)
       : sharedReference
         ? [sharedPathFromInput(this.#sharedRoot, value)]
         : [workspacePathFromInput(agent.workspacePath, agent.id, value), sharedPathFromInput(this.#sharedRoot, value)];

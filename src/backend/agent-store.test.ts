@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readdir, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
@@ -57,6 +57,39 @@ describe("AgentStore", () => {
     expect(sales.workspacePath).toBe(join(home, "OpenBot", "Agents", "sales-outbound"));
     expect(store.sharedRoot).toBe(join(home, "OpenBot", "Shared"));
     expect(chief.workspacePath).not.toBe(sales.workspacePath);
+  });
+
+  it("moves a workspace left behind in the pre-rename directory without overwriting the new one", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-"));
+    temporaryRoots.push(root);
+    const userData = join(root, "user-data");
+    const home = join(root, "home");
+    const store = new AgentStore(userData, home);
+    await store.initialize();
+    const agent = await store.createAgent(AGENT_PROFILE_INPUT);
+    await writeFile(join(agent.workspacePath, "notes.md"), "kept");
+
+    // The disk a pre-rename build left behind: the workspace under `OpenBot/Bots/bot-<uuid>`, beside an
+    // unfinished copy from a duplication that crashed. Migration v13 has already pointed the stored path
+    // at `OpenBot/Agents/agent-<uuid>`, which is why the files have to follow it.
+    const legacyRoot = join(home, "OpenBot", "Bots");
+    const legacyWorkspace = join(legacyRoot, `bot-${agent.id.slice("agent-".length)}`);
+    await mkdir(legacyRoot, { recursive: true });
+    await rename(agent.workspacePath, legacyWorkspace);
+    await mkdir(`${legacyWorkspace}.openbot-stage`, { recursive: true });
+
+    await new AgentStore(userData, home).initialize();
+
+    expect(await readFile(join(agent.workspacePath, "notes.md"), "utf8")).toBe("kept");
+    await expect(readdir(legacyRoot)).rejects.toMatchObject({ code: "ENOENT" });
+
+    // A run interrupted after the move can leave a stale directory back at the old name. The stored path
+    // is what the database and every open conversation point at, so the leftover never lands on top of it.
+    await mkdir(legacyWorkspace, { recursive: true });
+    await writeFile(join(legacyWorkspace, "notes.md"), "stale");
+    await new AgentStore(userData, home).initialize();
+
+    expect(await readFile(join(agent.workspacePath, "notes.md"), "utf8")).toBe("kept");
   });
 
   it("persists stable OpenBot thread ids in SQLite", async () => {

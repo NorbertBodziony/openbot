@@ -81,7 +81,7 @@ import { type ConversationMarkerExclusions, ConversationReadStore } from "./conv
 import { mergeConversationSnapshots } from "./conversation-snapshots";
 import type { MailboxStore } from "./mailbox-store";
 import { type AppServerRequest, type DynamicToolCallParams, decodeRecordResponse, isRecord } from "./protocol";
-import { isWithin, sharedPathFromInput, workspacePathFromInput } from "./workspace-paths";
+import { isWithin, rebaseLegacyWorkspacePath, sharedPathFromInput, workspacePathFromInput } from "./workspace-paths";
 
 const logger = createOpenBotLogger("agent-service");
 
@@ -620,7 +620,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!agent) throw new Error(`Unknown agent: ${agentId}`);
     const workspaceRoot = await realpath(agent.workspacePath);
     const candidatePath = workspacePathFromInput(agent.workspacePath, agent.id, inputPath);
-    const resolvedPath = await realpath(candidatePath);
+    const resolvedPath = await realpath(candidatePath).catch(async (error: unknown) => {
+      // The file may be one the provider's own transcript still names under this agent's pre-rename
+      // workspace root. The containment check below is unchanged and runs on whatever comes back.
+      const rebased =
+        isRecord(error) && error.code === "ENOENT"
+          ? rebaseLegacyWorkspacePath(agent.workspacePath, agent.id, candidatePath)
+          : null;
+      if (rebased === null) throw error;
+      return await realpath(rebased);
+    });
     if (!isWithin(workspaceRoot, resolvedPath)) {
       throw new Error("Workspace file must be inside the agent workspace.");
     }
