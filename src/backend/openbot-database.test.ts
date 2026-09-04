@@ -1130,6 +1130,74 @@ describe("OpenBotDatabase", () => {
     ).not.toThrow();
     migrated.close();
   });
+
+  it("erases an agent's history without leaving a receipt whose events are gone", async () => {
+    const database = await createDatabase();
+    const bot = testBot();
+    const createdAt = "2026-08-18T10:00:01.000Z";
+    database.replaceAgents("agents:seed", [bot], "agents.replaced");
+    database.dispatch(
+      "agent-memory:seed",
+      [{ aggregateType: "agent-memory", aggregateId: "memory-1", eventType: "agent-memory.created", payload: {} }],
+      (db, sequences) => {
+        db.prepare(
+          `INSERT INTO projection_agent_memories
+             (memory_id, agent_id, text, normalized_text, origin, source_turn_id,
+              created_at, updated_at, last_event_sequence)
+           VALUES ('memory-1', ?, 'remembers', 'remembers', 'manual', NULL, ?, ?, ?)`,
+        ).run(bot.id, createdAt, createdAt, sequences[0] ?? 0);
+        return null;
+      },
+    );
+    database.dispatch(
+      "agent-routine:seed",
+      [{ aggregateType: "agent-routine", aggregateId: "routine-1", eventType: "agent-routine.created", payload: {} }],
+      (db, sequences) => {
+        db.prepare(
+          `INSERT INTO projection_agent_routines
+             (routine_id, agent_id, name, instruction, active, timezone,
+              created_at, updated_at, last_event_sequence)
+           VALUES ('routine-1', ?, 'Standup', 'Report status', 1, 'UTC', ?, ?, ?)`,
+        ).run(bot.id, createdAt, createdAt, sequences[0] ?? 0);
+        return null;
+      },
+    );
+    database.recordPendingHostedSiteTerminalEvent({
+      botId: bot.id,
+      threadId: "openbot-thread-chief",
+      turnId: "turn-1",
+      operationId: "operation-1",
+      action: "publish",
+      status: "succeeded",
+      details: { siteId: "site-1", title: "Site", hostname: null, url: null },
+      markerCommandId: `hosted-site-event:${bot.id}:operation-1:succeeded`,
+      createdAt,
+    });
+
+    database.hardDeleteAgent("agents:delete", bot.id, bot.threadId, []);
+
+    expect(database.listAgents()).toEqual([]);
+    expect(database.connection.prepare("SELECT COUNT(*) AS count FROM projection_agent_memories").get()).toMatchObject({
+      count: 0,
+    });
+    expect(database.connection.prepare("SELECT COUNT(*) AS count FROM projection_agent_routines").get()).toMatchObject({
+      count: 0,
+    });
+    expect(database.pendingHostedSiteTerminalEvents()).toEqual([]);
+    // An orphan receipt makes `dispatch` replay its stale result for a command that never ran.
+    expect(
+      database.connection
+        .prepare(
+          `SELECT command_id FROM orchestration_command_receipts receipt
+           WHERE NOT EXISTS (
+             SELECT 1 FROM orchestration_events
+             WHERE orchestration_events.command_id = receipt.command_id
+           )`,
+        )
+        .all(),
+    ).toEqual([]);
+    database.close();
+  });
 });
 
 function downgradeReactionsToV7(database: DatabaseSync): void {
