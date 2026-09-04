@@ -44,15 +44,10 @@ describe("performDynamicIslandCriticalAction", () => {
       decodeVoid,
     );
 
-    expect(remote.request).toHaveBeenCalledWith(
-      "/v1/prompts/respond",
-      {
-        method: "POST",
-        body: { requestId: "prompt-1", answers: { source: ["Official data"] } },
-      },
-      "server-eu",
-      decodeVoid,
-    );
+    expect(remote.request).toHaveBeenCalledWith("server-eu", "/v1/prompts/respond", decodeVoid, {
+      method: "POST",
+      body: { requestId: "prompt-1", answers: { source: ["Official data"] } },
+    });
     expect(local.respondToPrompt).not.toHaveBeenCalled();
   });
 
@@ -87,12 +82,10 @@ describe("performDynamicIslandCriticalAction", () => {
     );
 
     expect(local.respondToApproval).toHaveBeenCalledWith({ requestId: "approval-local", decision: "accept" });
-    expect(remote.request).toHaveBeenCalledWith(
-      "/v1/approvals/respond",
-      { method: "POST", body: { requestId: "approval-remote", decision: "decline" } },
-      "server-eu",
-      decodeVoid,
-    );
+    expect(remote.request).toHaveBeenCalledWith("server-eu", "/v1/approvals/respond", decodeVoid, {
+      method: "POST",
+      body: { requestId: "approval-remote", decision: "decline" },
+    });
   });
 });
 

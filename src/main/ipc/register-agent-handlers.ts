@@ -72,27 +72,25 @@ export function registerAgentIpcHandlers({
   handleTrusted(IPC_CHANNELS.agentGetStatus, parseAgentRequest, (parsed) => {
     return routeToServer(parsed.serverId, {
       local: () => service.getStatus(),
-      remote: (serverId) =>
-        remoteServers.request(TEAM_API_ROUTES.agents.status, {}, serverId, decodeAgentStatusFromHost),
+      remote: (serverId) => remoteServers.request(serverId, TEAM_API_ROUTES.agents.status, decodeAgentStatusFromHost),
     });
   });
   handleTrusted(IPC_CHANNELS.agentGetUsage, parseAgentRequest, (parsed) => {
     return routeToServer(parsed.serverId, {
       local: () => service.getUsage(),
-      remote: (serverId) =>
-        remoteServers.request(TEAM_API_ROUTES.agents.usage, {}, serverId, decodeAccountUsageFromHost),
+      remote: (serverId) => remoteServers.request(serverId, TEAM_API_ROUTES.agents.usage, decodeAccountUsageFromHost),
     });
   });
   handleTrusted(IPC_CHANNELS.agentListModels, parseAgentRequest, (parsed) => {
     return routeToServer(parsed.serverId, {
       local: () => service.listModels(),
-      remote: (serverId) => remoteServers.request(TEAM_API_ROUTES.agents.models, {}, serverId, decodeAgentModelOptions),
+      remote: (serverId) => remoteServers.request(serverId, TEAM_API_ROUTES.agents.models, decodeAgentModelOptions),
     });
   });
   handleTrusted(IPC_CHANNELS.agentListBots, parseAgentRequest, (parsed) => {
     return routeToServer(parsed.serverId, {
       local: () => service.listBots(),
-      remote: (serverId) => remoteServers.request(TEAM_API_ROUTES.agents.all, {}, serverId, decodeBotSummaries),
+      remote: (serverId) => remoteServers.request(serverId, TEAM_API_ROUTES.agents.all, decodeBotSummaries),
     });
   });
   handleTrusted(IPC_CHANNELS.agentListInstalledSkills, parseAgentRequest, (scoped) => {
@@ -105,7 +103,7 @@ export function registerAgentIpcHandlers({
           .list()
           .find((server) => server.id === serverId)
           ?.compatibility?.capabilities.includes("installed-skills")
-          ? remoteServers.request(TEAM_API_ROUTES.agent.skills(botId), {}, serverId, decodeInstalledSkillsFromHost)
+          ? remoteServers.request(serverId, TEAM_API_ROUTES.agent.skills(botId), decodeInstalledSkillsFromHost)
           : Promise.resolve([]),
     });
   });
@@ -113,7 +111,7 @@ export function registerAgentIpcHandlers({
     return routeToServer(parsed.serverId, {
       local: () => sidebarLayout.getSnapshot(),
       remote: (serverId) =>
-        remoteServers.request(TEAM_API_ROUTES.sidebarLayout.state, {}, serverId, decodeSidebarLayoutSnapshot),
+        remoteServers.request(serverId, TEAM_API_ROUTES.sidebarLayout.state, decodeSidebarLayoutSnapshot),
     });
   });
   handleTrusted(IPC_CHANNELS.agentMutateSidebarLayout, parseAgentRequest, (scoped): Promise<SidebarLayoutSnapshot> => {
@@ -121,12 +119,10 @@ export function registerAgentIpcHandlers({
     return routeToServer(scoped.serverId, {
       local: () => sidebarLayout.mutate(action, new Set(service.listBots().map((bot) => bot.id))),
       remote: (serverId) =>
-        remoteServers.request(
-          TEAM_API_ROUTES.sidebarLayout.actions,
-          { method: "POST", body: action },
-          serverId,
-          decodeSidebarLayoutSnapshot,
-        ),
+        remoteServers.request(serverId, TEAM_API_ROUTES.sidebarLayout.actions, decodeSidebarLayoutSnapshot, {
+          method: "POST",
+          body: action,
+        }),
     });
   });
   handleTrusted(IPC_CHANNELS.agentCreateBot, parseAgentRequest, (scoped) => {
@@ -134,7 +130,7 @@ export function registerAgentIpcHandlers({
     return routeToServer(scoped.serverId, {
       local: () => service.createBot(parsed),
       remote: (serverId) =>
-        remoteServers.request(TEAM_API_ROUTES.agents.all, { method: "POST", body: parsed }, serverId, decodeBotSummary),
+        remoteServers.request(serverId, TEAM_API_ROUTES.agents.all, decodeBotSummary, { method: "POST", body: parsed }),
     });
   });
   handleTrusted(IPC_CHANNELS.agentDuplicateBot, parseAgentRequest, (scoped): Promise<DuplicateBotResult> => {
@@ -201,12 +197,10 @@ export function registerAgentIpcHandlers({
     return routeToServer(scoped.serverId, {
       local: () => service.setMessageReaction(parsed),
       remote: (serverId) =>
-        remoteServers.request(
-          TEAM_API_ROUTES.agent.reactions(parsed.botId),
-          { method: "POST", body: parsed },
-          serverId,
-          decodeVoid,
-        ),
+        remoteServers.request(serverId, TEAM_API_ROUTES.agent.reactions(parsed.botId), decodeVoid, {
+          method: "POST",
+          body: parsed,
+        }),
     });
   });
   handleTrusted(IPC_CHANNELS.agentListQueue, parseAgentRequest, (scoped) => {
@@ -217,12 +211,10 @@ export function registerAgentIpcHandlers({
     return routeToServer(scoped.serverId, {
       local: () => service.acknowledgeFailedTurn(parsed.botId, parsed.turnId),
       remote: (serverId) =>
-        remoteServers.request(
-          TEAM_API_ROUTES.agent.failuresAcknowledge(parsed.botId),
-          { method: "POST", body: { turnId: parsed.turnId } },
-          serverId,
-          decodeVoid,
-        ),
+        remoteServers.request(serverId, TEAM_API_ROUTES.agent.failuresAcknowledge(parsed.botId), decodeVoid, {
+          method: "POST",
+          body: { turnId: parsed.turnId },
+        }),
     });
   });
   handleTrusted(IPC_CHANNELS.agentCancelQueuedMessage, parseAgentRequest, (scoped) => {
@@ -230,12 +222,10 @@ export function registerAgentIpcHandlers({
     return routeToServer(scoped.serverId, {
       local: () => service.cancelQueuedMessage(parsed.botId, parsed.deliveryId),
       remote: (serverId) =>
-        remoteServers.request(
-          TEAM_API_ROUTES.agent.queueCancel(parsed.botId),
-          { method: "POST", body: { deliveryId: parsed.deliveryId } },
-          serverId,
-          decodeVoid,
-        ),
+        remoteServers.request(serverId, TEAM_API_ROUTES.agent.queueCancel(parsed.botId), decodeVoid, {
+          method: "POST",
+          body: { deliveryId: parsed.deliveryId },
+        }),
     });
   });
   handleTrusted(IPC_CHANNELS.agentSteerQueuedMessage, parseAgentRequest, (scoped) => {
@@ -243,12 +233,10 @@ export function registerAgentIpcHandlers({
     return routeToServer(scoped.serverId, {
       local: () => service.steerQueuedMessage(parsed),
       remote: (serverId) =>
-        remoteServers.request(
-          TEAM_API_ROUTES.agent.queueSteer(parsed.botId),
-          { method: "POST", body: { deliveryId: parsed.deliveryId, expectedTurnId: parsed.expectedTurnId } },
-          serverId,
-          decodeVoid,
-        ),
+        remoteServers.request(serverId, TEAM_API_ROUTES.agent.queueSteer(parsed.botId), decodeVoid, {
+          method: "POST",
+          body: { deliveryId: parsed.deliveryId, expectedTurnId: parsed.expectedTurnId },
+        }),
     });
   });
   handleTrusted(IPC_CHANNELS.agentUpdateQueuedMessage, parseAgentRequest, (scoped) => {
@@ -256,20 +244,15 @@ export function registerAgentIpcHandlers({
     return routeToServer(scoped.serverId, {
       local: () => service.updateQueuedMessage(parsed),
       remote: (serverId) =>
-        remoteServers.request(
-          TEAM_API_ROUTES.agent.queueUpdate(parsed.botId),
-          {
-            method: "POST",
-            body: {
-              deliveryId: parsed.deliveryId,
-              text: parsed.text,
-              keepAttachmentIds: parsed.keepAttachmentIds,
-              attachmentDraftIds: parsed.attachmentDraftIds,
-            },
+        remoteServers.request(serverId, TEAM_API_ROUTES.agent.queueUpdate(parsed.botId), decodeVoid, {
+          method: "POST",
+          body: {
+            deliveryId: parsed.deliveryId,
+            text: parsed.text,
+            keepAttachmentIds: parsed.keepAttachmentIds,
+            attachmentDraftIds: parsed.attachmentDraftIds,
           },
-          serverId,
-          decodeVoid,
-        ),
+        }),
     });
   });
   handleTrusted(IPC_CHANNELS.agentReorderQueue, parseAgentRequest, (scoped) => {
@@ -277,12 +260,10 @@ export function registerAgentIpcHandlers({
     return routeToServer(scoped.serverId, {
       local: () => service.reorderQueue(parsed),
       remote: (serverId) =>
-        remoteServers.request(
-          TEAM_API_ROUTES.agent.queueReorder(parsed.botId),
-          { method: "POST", body: { deliveryIds: parsed.deliveryIds } },
-          serverId,
-          decodeVoid,
-        ),
+        remoteServers.request(serverId, TEAM_API_ROUTES.agent.queueReorder(parsed.botId), decodeVoid, {
+          method: "POST",
+          body: { deliveryIds: parsed.deliveryIds },
+        }),
     });
   });
   handleTrusted(IPC_CHANNELS.agentInterrupt, parseAgentRequest, (scoped) => {
@@ -290,12 +271,10 @@ export function registerAgentIpcHandlers({
     return routeToServer(scoped.serverId, {
       local: () => service.interrupt(parsed.botId, parsed.turnId),
       remote: (serverId) =>
-        remoteServers.request(
-          TEAM_API_ROUTES.agent.interrupt(parsed.botId),
-          { method: "POST", body: { turnId: parsed.turnId } },
-          serverId,
-          decodeVoid,
-        ),
+        remoteServers.request(serverId, TEAM_API_ROUTES.agent.interrupt(parsed.botId), decodeVoid, {
+          method: "POST",
+          body: { turnId: parsed.turnId },
+        }),
     });
   });
   handleTrusted(IPC_CHANNELS.agentRespondToPrompt, parseAgentRequest, (scoped) => {
@@ -303,7 +282,7 @@ export function registerAgentIpcHandlers({
     return routeToServer(scoped.serverId, {
       local: () => service.respondToPrompt(parsed),
       remote: (serverId) =>
-        remoteServers.request(TEAM_API_ROUTES.respond.prompt, { method: "POST", body: parsed }, serverId, decodeVoid),
+        remoteServers.request(serverId, TEAM_API_ROUTES.respond.prompt, decodeVoid, { method: "POST", body: parsed }),
     });
   });
   handleTrusted(IPC_CHANNELS.agentRespondToApproval, parseAgentRequest, (scoped) => {
@@ -311,7 +290,7 @@ export function registerAgentIpcHandlers({
     return routeToServer(scoped.serverId, {
       local: () => service.respondToApproval(parsed),
       remote: (serverId) =>
-        remoteServers.request(TEAM_API_ROUTES.respond.approval, { method: "POST", body: parsed }, serverId, decodeVoid),
+        remoteServers.request(serverId, TEAM_API_ROUTES.respond.approval, decodeVoid, { method: "POST", body: parsed }),
     });
   });
   handleTrusted(IPC_CHANNELS.agentRespondToBrowserTakeover, parseAgentRequest, (scoped) => {
@@ -319,12 +298,10 @@ export function registerAgentIpcHandlers({
     return routeToServer(scoped.serverId, {
       local: () => service.respondToBrowserTakeover(parsed),
       remote: (serverId) =>
-        remoteServers.request(
-          TEAM_API_ROUTES.respond.browserTakeover,
-          { method: "POST", body: parsed },
-          serverId,
-          decodeVoid,
-        ),
+        remoteServers.request(serverId, TEAM_API_ROUTES.respond.browserTakeover, decodeVoid, {
+          method: "POST",
+          body: parsed,
+        }),
     });
   });
 }
@@ -338,12 +315,10 @@ function routeUpdateBot(
   return routeToServer(serverId, {
     local: () => service.updateBot(input),
     remote: (target) =>
-      remoteServers.request(
-        TEAM_API_ROUTES.agent.one(input.botId),
-        { method: "PATCH", body: input },
-        target,
-        decodeBotSummary,
-      ),
+      remoteServers.request(target, TEAM_API_ROUTES.agent.one(input.botId), decodeBotSummary, {
+        method: "PATCH",
+        body: input,
+      }),
   });
 }
 
@@ -360,7 +335,7 @@ function routeDeleteBot(
       await sidebarLayout.removeAgent(botId);
     },
     remote: async (target) => {
-      await remoteServers.request(TEAM_API_ROUTES.agent.one(botId), { method: "DELETE" }, target, decodeVoid);
+      await remoteServers.request(target, TEAM_API_ROUTES.agent.one(botId), decodeVoid, { method: "DELETE" });
     },
   });
 }
@@ -421,18 +396,16 @@ function routeSendMessage(
   return routeToServer(serverId, {
     local: () => service.sendMessage(input),
     remote: (target) =>
-      remoteServers.request(
-        TEAM_API_ROUTES.agent.messages(input.botId),
-        { method: "POST", body: input },
-        target,
-        decodeQueuedMessageReceipt,
-      ),
+      remoteServers.request(target, TEAM_API_ROUTES.agent.messages(input.botId), decodeQueuedMessageReceipt, {
+        method: "POST",
+        body: input,
+      }),
   });
 }
 
 function routeListQueue(service: AgentService, remoteServers: RemoteServerManager, serverId: string, botId: string) {
   return routeToServer(serverId, {
     local: () => service.listQueue(botId),
-    remote: (target) => remoteServers.request(TEAM_API_ROUTES.agent.queue(botId), {}, target, decodeQueueSnapshot),
+    remote: (target) => remoteServers.request(target, TEAM_API_ROUTES.agent.queue(botId), decodeQueueSnapshot),
   });
 }

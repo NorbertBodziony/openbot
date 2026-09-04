@@ -70,7 +70,7 @@ import {
 } from "./remote-conversation-decoding";
 import { decodeRemoteDesktopSession } from "./remote-device-decoding";
 import { decodeVoid, type ResponseDecoder } from "./remote-host-decoding";
-import { RemoteServerClient } from "./remote-server-client";
+import { type RemoteRequestInit, RemoteServerClient } from "./remote-server-client";
 import { RemoteServerConnections } from "./remote-server-connections";
 import { RemoteProtocolError, RemoteRequestError } from "./remote-server-errors";
 import { reconcileWebRtcHosts } from "./remote-server-host-directory";
@@ -536,13 +536,15 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#presence.delete(serverId);
   }
 
+  // The server comes first because every caller knows which one it means, and the decoder sits next
+  // to the path it decodes. `init` is last and optional, so a plain GET reads as three arguments.
   async request<T>(
+    serverId: string,
     path: string,
-    init: { method?: string; body?: unknown; timeoutMs?: number } = {},
-    serverId = this.#store.activeServerId,
     decoder: ResponseDecoder<T>,
+    init: RemoteRequestInit = {},
   ): Promise<T> {
-    return this.#client.request(path, init, serverId, decoder);
+    return this.#client.request(serverId, path, decoder, init);
   }
 
   async duplicateBot(botId: string, serverId = this.#store.activeServerId): Promise<DuplicateBotResult> {
@@ -551,10 +553,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#duplicateOperationIds.set(key, operationId);
     try {
       const result = await this.request(
-        TEAM_API_ROUTES.agent.duplicate(botId),
-        { method: "POST", body: { operationId }, timeoutMs: REMOTE_DUPLICATION_TIMEOUT_MS },
         serverId,
+        TEAM_API_ROUTES.agent.duplicate(botId),
         decodeDuplicateBotResultFromHost,
+        { method: "POST", body: { operationId }, timeoutMs: REMOTE_DUPLICATION_TIMEOUT_MS },
       );
       this.#duplicateOperationIds.delete(key);
       return result;
@@ -567,11 +569,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   listAgentConversationReads(serverId = this.#store.activeServerId): Promise<Record<string, ConversationReadState>> {
-    return this.request(TEAM_API_ROUTES.agents.conversationReads, {}, serverId, decodeConversationReadStates);
+    return this.request(serverId, TEAM_API_ROUTES.agents.conversationReads, decodeConversationReadStates);
   }
 
   readAgentConversation(botId: string, serverId = this.#store.activeServerId): Promise<ConversationWithReadState> {
-    return this.request(TEAM_API_ROUTES.agent.conversation(botId), {}, serverId, decodeConversationWithReadState);
+    return this.request(serverId, TEAM_API_ROUTES.agent.conversation(botId), decodeConversationWithReadState);
   }
 
   readAgentConversationPage(
@@ -581,9 +583,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     serverId = this.#store.activeServerId,
   ): Promise<ConversationPage> {
     return this.request(
-      `${TEAM_API_ROUTES.agent.conversationPage(botId)}${pageQuery(anchor, limit)}`,
-      {},
       serverId,
+      `${TEAM_API_ROUTES.agent.conversationPage(botId)}${pageQuery(anchor, limit)}`,
       decodeConversationPageFromHost,
     );
   }
@@ -599,9 +600,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     if (botId) parameters.set("botId", botId);
     if (cursor) parameters.set("cursor", cursor);
     return this.request(
-      `${TEAM_API_ROUTES.messages.search}?${parameters.toString()}`,
-      {},
       serverId,
+      `${TEAM_API_ROUTES.messages.search}?${parameters.toString()}`,
       decodeConversationSearchPageFromHost,
     );
   }
@@ -610,12 +610,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     input: MarkConversationReadInput,
     serverId = this.#store.activeServerId,
   ): Promise<ConversationReadState> {
-    return this.request(
-      TEAM_API_ROUTES.agent.conversationRead(input.botId),
-      { method: "POST", body: { throughMessageId: input.throughMessageId } },
-      serverId,
-      decodeConversationReadState,
-    );
+    return this.request(serverId, TEAM_API_ROUTES.agent.conversationRead(input.botId), decodeConversationReadState, {
+      method: "POST",
+      body: { throughMessageId: input.throughMessageId },
+    });
   }
 
   getPresence(serverId = this.#store.activeServerId): TeamPresenceSnapshot {
@@ -626,7 +624,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   async getPresenceFor(serverId: string): Promise<TeamPresenceSnapshot> {
     try {
-      const snapshot = await this.request(TEAM_API_ROUTES.team.presence, {}, serverId, decodeTeamPresenceSnapshot);
+      const snapshot = await this.request(serverId, TEAM_API_ROUTES.team.presence, decodeTeamPresenceSnapshot);
       this.#presence.set(serverId, snapshot);
       return structuredClone(snapshot);
     } catch (error) {
@@ -670,7 +668,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         })),
       );
     }
-    return this.request(TEAM_API_ROUTES.team.members, {}, serverId, decodeTeamMembers);
+    return this.request(serverId, TEAM_API_ROUTES.team.members, decodeTeamMembers);
   }
 
   updateMember(serverId: string, input: UpdateTeamMemberInput): Promise<TeamMemberSummary> {
@@ -689,19 +687,17 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         return updated;
       })();
     }
-    return this.request(
-      TEAM_API_ROUTES.team.member(input.memberId),
-      { method: "PATCH", body: { role: input.role, disabled: input.disabled } },
-      serverId,
-      decodeTeamMember,
-    );
+    return this.request(serverId, TEAM_API_ROUTES.team.member(input.memberId), decodeTeamMember, {
+      method: "PATCH",
+      body: { role: input.role, disabled: input.disabled },
+    });
   }
 
   removeMember(serverId: string, memberId: string): Promise<void> {
     const server = this.#store.require(serverId);
     if (server.transport === "webrtc-v2" && this.#webrtcTransport)
       return this.#webrtcTransport.removeMember(serverId, memberId);
-    return this.request(TEAM_API_ROUTES.team.member(memberId), { method: "DELETE" }, serverId, decodeVoid);
+    return this.request(serverId, TEAM_API_ROUTES.team.member(memberId), decodeVoid, { method: "DELETE" });
   }
 
   listInvites(serverId: string): Promise<TeamInviteSummary[]> {
@@ -719,13 +715,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           })),
       );
     }
-    return this.request(TEAM_API_ROUTES.team.invites, {}, serverId, decodeTeamInvites);
+    return this.request(serverId, TEAM_API_ROUTES.team.invites, decodeTeamInvites);
   }
 
   revokeInvite(serverId: string, inviteId: string): Promise<void> {
     const server = this.#store.require(serverId);
     if (server.transport === "webrtc-v2" && this.#webrtcTransport) return this.#webrtcTransport.revokeInvite(inviteId);
-    return this.request(TEAM_API_ROUTES.team.invite(inviteId), { method: "DELETE" }, serverId, decodeVoid);
+    return this.request(serverId, TEAM_API_ROUTES.team.invite(inviteId), decodeVoid, { method: "DELETE" });
   }
 
   async createInvite(serverId: string, input: { role: "admin" | "member"; email?: string }): Promise<InviteSummary> {
@@ -763,7 +759,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       }
       return result;
     }
-    return this.request(TEAM_API_ROUTES.team.invites, { method: "POST", body: input }, serverId, decodeInviteSummary);
+    return this.request(serverId, TEAM_API_ROUTES.team.invites, decodeInviteSummary, { method: "POST", body: input });
   }
 
   setTyping(input: SetTeamTypingInput, serverId = this.#store.activeServerId): void {
@@ -778,11 +774,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   listDirectThreads(serverId = this.#store.activeServerId): Promise<DirectThreadSummary[]> {
-    return this.request(TEAM_API_ROUTES.direct.threads, {}, serverId, decodeDirectThreadSummaries);
+    return this.request(serverId, TEAM_API_ROUTES.direct.threads, decodeDirectThreadSummaries);
   }
 
   readDirectConversation(memberId: string, serverId = this.#store.activeServerId): Promise<DirectConversationSnapshot> {
-    return this.request(TEAM_API_ROUTES.direct.conversation(memberId), {}, serverId, decodeDirectConversationSnapshot);
+    return this.request(serverId, TEAM_API_ROUTES.direct.conversation(memberId), decodeDirectConversationSnapshot);
   }
 
   readDirectConversationPage(
@@ -792,20 +788,17 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     serverId = this.#store.activeServerId,
   ): Promise<DirectConversationPage> {
     return this.request(
-      `${TEAM_API_ROUTES.direct.conversationPage(memberId)}${pageQuery(anchor, limit)}`,
-      {},
       serverId,
+      `${TEAM_API_ROUTES.direct.conversationPage(memberId)}${pageQuery(anchor, limit)}`,
       decodeDirectConversationPage,
     );
   }
 
   sendDirectMessage(input: SendDirectMessageInput, serverId = this.#store.activeServerId): Promise<DirectMessage> {
-    return this.request(
-      TEAM_API_ROUTES.direct.messages,
-      { method: "POST", body: input },
-      serverId,
-      decodeDirectMessage,
-    );
+    return this.request(serverId, TEAM_API_ROUTES.direct.messages, decodeDirectMessage, {
+      method: "POST",
+      body: input,
+    });
   }
 
   markDirectRead(
@@ -813,10 +806,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     serverId = this.#store.activeServerId,
   ): Promise<DirectConversationReadState> {
     return this.request(
-      TEAM_API_ROUTES.direct.conversationRead(input.memberId),
-      { method: "POST", body: { throughSequence: input.throughSequence } },
       serverId,
+      TEAM_API_ROUTES.direct.conversationRead(input.memberId),
       decodeDirectConversationReadState,
+      { method: "POST", body: { throughSequence: input.throughSequence } },
     );
   }
 
@@ -838,12 +831,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async createRemoteDesktopSession(serverId: string): Promise<RemoteDesktopSession> {
-    const session = await this.request(
-      TEAM_API_ROUTES.remoteScreen.sessions,
-      { method: "POST", body: {} },
-      serverId,
-      decodeRemoteDesktopSession,
-    );
+    const session = await this.request(serverId, TEAM_API_ROUTES.remoteScreen.sessions, decodeRemoteDesktopSession, {
+      method: "POST",
+      body: {},
+    });
     if (this.#store.require(serverId).transport !== "webrtc-v2") return session;
     if (!this.#remoteViewerProxy) throw new Error("The local remote viewer proxy is unavailable.");
     return {
@@ -859,16 +850,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   closeRemoteDesktopSession(serverId: string, sessionId: string): Promise<void> {
-    return this.request(TEAM_API_ROUTES.remoteScreen.session(sessionId), { method: "DELETE" }, serverId, decodeVoid);
+    return this.request(serverId, TEAM_API_ROUTES.remoteScreen.session(sessionId), decodeVoid, { method: "DELETE" });
   }
 
   selectRemoteDesktopDisplay(serverId: string, displayId: string): Promise<void> {
-    return this.request(
-      TEAM_API_ROUTES.remoteScreen.display,
-      { method: "PUT", body: { displayId } },
-      serverId,
-      decodeVoid,
-    );
+    return this.request(serverId, TEAM_API_ROUTES.remoteScreen.display, decodeVoid, {
+      method: "PUT",
+      body: { displayId },
+    });
   }
 
   async uploadAttachment(
@@ -1343,7 +1332,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   async #refreshAgentStateFallback(serverId: string): Promise<void> {
     const generation = this.#advanceEventGeneration(serverId);
-    const bots = await this.request(TEAM_API_ROUTES.agents.all, {}, serverId, decodeBotSummaries);
+    const bots = await this.request(serverId, TEAM_API_ROUTES.agents.all, decodeBotSummaries);
     if (this.#eventGenerations.get(serverId) !== generation) return;
     this.emit("agent", serverId, { type: "bots-changed", bots });
     await Promise.all(
@@ -1351,7 +1340,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         try {
           const [page, queue] = await Promise.all([
             this.readAgentConversationPage(bot.id, { type: "latest" }, 1, serverId),
-            this.request(TEAM_API_ROUTES.agent.queue(bot.id), {}, serverId, decodeQueueSnapshot),
+            this.request(serverId, TEAM_API_ROUTES.agent.queue(bot.id), decodeQueueSnapshot),
           ]);
           if (this.#eventGenerations.get(serverId) !== generation) return;
           const { pageInfo: _, references: __, readState: ___, ...snapshot } = page;
@@ -1421,7 +1410,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         request.dirty = false;
         let snapshot: QueueSnapshot;
         try {
-          snapshot = await this.request(TEAM_API_ROUTES.agent.queue(botId), {}, serverId, decodeQueueSnapshot);
+          snapshot = await this.request(serverId, TEAM_API_ROUTES.agent.queue(botId), decodeQueueSnapshot);
         } catch {
           if (request.dirty) continue;
           return;

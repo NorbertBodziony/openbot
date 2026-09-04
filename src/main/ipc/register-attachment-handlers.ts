@@ -74,7 +74,7 @@ export function registerAttachmentIpcHandlers({
     return routeToServer(scoped.serverId, {
       local: () => service.discardDraftAttachment(attachmentId),
       remote: (serverId) =>
-        remoteServers.request(TEAM_API_ROUTES.attachment(attachmentId), { method: "DELETE" }, serverId, decodeVoid),
+        remoteServers.request(serverId, TEAM_API_ROUTES.attachment(attachmentId), decodeVoid, { method: "DELETE" }),
     });
   });
   handleTrusted(IPC_CHANNELS.agentOpenAttachment, parseAgentRequest, (scoped) => {

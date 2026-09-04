@@ -1376,7 +1376,7 @@ describe("Team API compatibility negotiation", () => {
         issue: { code: "client_update_required" },
         compatibility: { negotiatedProtocol: null, hostProtocol: protocol },
       });
-      await expect(manager.request("/v1/agents", {}, "compatibility-range", (value) => value)).rejects.toThrow();
+      await expect(manager.request("compatibility-range", "/v1/agents", (value) => value)).rejects.toThrow();
       expect(fetchMock).toHaveBeenCalledTimes(1);
     } finally {
       manager.stop();
@@ -1440,22 +1440,17 @@ describe("Team API compatibility negotiation", () => {
     try {
       await manager.initialize();
       await expect(
-        manager.request("/v1/agents/status", {}, "compatibility-headers", (value) => value),
+        manager.request("compatibility-headers", "/v1/agents/status", (value) => value),
       ).resolves.toMatchObject({ phase: "ready" });
       await expect(
-        manager.request(
-          "/v1/agents/chief/messages",
-          {
-            method: "POST",
-            body: {
-              text: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
-              attachmentDraftIds: [],
-              replyToMessageId: null,
-            },
+        manager.request("compatibility-headers", "/v1/agents/chief/messages", (value) => value, {
+          method: "POST",
+          body: {
+            text: "Ask @[Research](agent:research) to use @[Sources](skill:sources).",
+            attachmentDraftIds: [],
+            replyToMessageId: null,
           },
-          "compatibility-headers",
-          (value) => value,
-        ),
+        }),
       ).resolves.toMatchObject({ messageId: "message-1" });
       expect(manager.list().find((server) => server.id === "compatibility-headers")?.compatibility).toMatchObject({
         localAppVersion: "0.4.0",
@@ -1559,7 +1554,7 @@ describe("Team API compatibility negotiation", () => {
 
     try {
       await manager.initialize();
-      await expect(manager.request("/v1/admin", {}, "compatibility-permission", (value) => value)).rejects.toThrow(
+      await expect(manager.request("compatibility-permission", "/v1/admin", (value) => value)).rejects.toThrow(
         "Administrator access is required.",
       );
       expect(manager.list().find((server) => server.id === "compatibility-permission")).toMatchObject({
@@ -1669,7 +1664,7 @@ describe("Team API compatibility negotiation", () => {
       await vi.waitFor(() =>
         expect(manager.list().find((server) => server.id === "http-protocol-events")?.state).toBe("online"),
       );
-      await expect(manager.request("/v1/agents", {}, "http-protocol-events", (value) => value)).rejects.toThrow(
+      await expect(manager.request("http-protocol-events", "/v1/agents", (value) => value)).rejects.toThrow(
         "could not safely use",
       );
       expect(sockets[0]?.close).toHaveBeenCalledWith(1000, "Client stopped");

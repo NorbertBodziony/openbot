@@ -122,10 +122,10 @@ export class RemoteServerClient {
 
   /** One decoded Team API call. Every failure is reported to the registry before it is rethrown. */
   async request<T>(
-    path: string,
-    init: RemoteRequestInit = {},
     serverId: string,
+    path: string,
     decoder: ResponseDecoder<T>,
+    init: RemoteRequestInit = {},
   ): Promise<T> {
     const server = this.#servers.require(serverId);
     try {
