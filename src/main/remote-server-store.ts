@@ -32,6 +32,14 @@ export interface TokenCipher {
 
 export type StoredRemoteServerView = Readonly<StoredRemoteServer>;
 
+// Which server is selected -- both halves of it. `unreadableActiveServerId` is the id the file keeps
+// naming while this build runs somewhere else, so a caller putting a failed selection back has to
+// put that back too, and cannot do it by remembering an id.
+export interface ActiveSelection {
+  readonly activeServerId: string;
+  readonly unreadableActiveServerId: string | null;
+}
+
 // The fields a running app is allowed to change on a server it already has. `id`, `apiUrl`,
 // `fingerprint`, `publicKey` and `transport` are deliberately absent: those identify the host, and
 // changing one silently would repoint a pinned identity at a different machine.
@@ -98,6 +106,14 @@ export class RemoteServerStore implements RemoteServerDirectory {
     return this.#activeServerRevision;
   }
 
+  // Taken before a selection, restored with `restoreSelection` when its write fails.
+  get selection(): ActiveSelection {
+    return {
+      activeServerId: this.#state.activeServerId,
+      unreadableActiveServerId: this.#state.unreadableActiveServerId,
+    };
+  }
+
   get servers(): readonly StoredRemoteServerView[] {
     return this.#state.servers;
   }
@@ -140,6 +156,26 @@ export class RemoteServerStore implements RemoteServerDirectory {
     return this.#activeServerRevision;
   }
 
+  // Puts back a selection whose write failed, both halves of it. Bumps the revision like any other
+  // selection, so a rollback that lost a race to a newer one is still detectable.
+  restoreSelection(selection: ActiveSelection): number {
+    this.#state.activeServerId = selection.activeServerId;
+    this.#state.unreadableActiveServerId = selection.unreadableActiveServerId;
+    this.#activeServerRevision += 1;
+    return this.#activeServerRevision;
+  }
+
+  // A join or sign-in that verified the host's identity supersedes an entry this build could not
+  // read, so this is the WebRTC join path's half of what `adopt` does for the HTTPS one -- that path
+  // writes its own entry, this one gets it from `replaceServers` and only has to retire the old.
+  // Reconciliation must not call it: an id recreated from a directory advertisement proves nothing
+  // about the machine holding the pinned key.
+  async retireUnreadable(serverId: string): Promise<void> {
+    if (!this.#state.unreadableServers.some((preserved) => preserved.entry.id === serverId)) return;
+    this.#forgetUnreadable(serverId);
+    await this.persist();
+  }
+
   // Adds a server the user just joined or signed in to, replacing any earlier entry with the same
   // id, and selects it -- the two halves of "the user is now on this server", written once.
   //
@@ -175,7 +211,9 @@ export class RemoteServerStore implements RemoteServerDirectory {
   }
 
   #forgetUnreadable(serverId: string): void {
-    this.#state.unreadableServers = this.#state.unreadableServers.filter((entry) => entry.id !== serverId);
+    this.#state.unreadableServers = this.#state.unreadableServers.filter(
+      (preserved) => preserved.entry.id !== serverId,
+    );
     if (this.#state.unreadableActiveServerId === serverId) this.#state.unreadableActiveServerId = null;
   }
 

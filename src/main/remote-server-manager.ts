@@ -275,14 +275,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       if (serverId !== LOCAL_SERVER_ID && !this.#store.has(serverId)) {
         throw new Error("Remote server not found.");
       }
-      const previousServerId = this.#store.activeServerId;
+      const previousSelection = this.#store.selection;
       const selectionRevision = this.#store.setActiveServerId(serverId);
       this.#events.syncScopes();
       try {
         await this.#store.persist();
       } catch (error) {
         if (this.#store.activeServerRevision === selectionRevision) {
-          this.#store.setActiveServerId(previousServerId);
+          this.#store.restoreSelection(previousSelection);
           this.#events.syncScopes();
         }
         throw error;
@@ -321,6 +321,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       if (!synchronized || synchronized.fingerprint !== invite.fingerprint) {
         throw new Error("The invitation host identity changed while it was accepted.");
       }
+      // The identity checked out, so an entry for this host that this build could not read is now
+      // superseded. `#syncWebRtcHosts` above deliberately kept it -- reconciliation is not a join.
+      await this.#store.retireUnreadable(accepted.hostId);
       this.#store.setActiveServerId(accepted.hostId);
       this.#connections.setState(accepted.hostId, "connecting");
       await this.#store.persist();

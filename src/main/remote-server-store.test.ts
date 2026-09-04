@@ -79,10 +79,12 @@ describe("remote server store", () => {
     store.setActiveServerId(LOCAL_SERVER_ID);
     await store.persist();
 
+    // In its own slot, not appended: `servers` order is the sidebar order the user arranged, and an
+    // unrelated write must not reshuffle a list this build cannot even display.
     expect(JSON.parse(await readFile(path, "utf8"))).toMatchObject({
       version: 3,
       activeServerId: LOCAL_SERVER_ID,
-      servers: [{ id: "alpha" }, { id: "beta" }, broken],
+      servers: [{ id: "alpha" }, broken, { id: "beta" }],
       hiddenHostIds: ["host-1"],
     });
   });
@@ -104,12 +106,26 @@ describe("remote server store", () => {
 
     await store.replaceServers([storedServer("beta", { name: "Advertised" })]);
     expect(JSON.parse(await readFile(path, "utf8")).servers).toEqual([
-      expect.objectContaining({ id: "beta", name: "Advertised" }),
       broken,
+      expect.objectContaining({ id: "beta", name: "Advertised" }),
     ]);
 
-    // Joining verifies the host's identity, so this entry does supersede the old one.
+    // Joining verifies the host's identity, so it does supersede the old entry. The WebRTC join
+    // path gets its entry from `replaceServers` rather than `adopt`, and says so separately.
+    await store.retireUnreadable("beta");
+    expect(JSON.parse(await readFile(path, "utf8")).servers).toEqual([
+      expect.objectContaining({ id: "beta", name: "Advertised" }),
+    ]);
+  });
+
+  it("retires a preserved entry when the user rejoins over it", async () => {
+    const broken = { ...storedServer("beta"), role: "overlord" };
+    const path = await storePath({ version: 3, activeServerId: LOCAL_SERVER_ID, servers: [broken], hiddenHostIds: [] });
+    const store = newStore(path);
+    await store.load();
+
     await store.adopt(storedServer("beta", { name: "Rejoined" }));
+
     expect(JSON.parse(await readFile(path, "utf8")).servers).toEqual([
       expect.objectContaining({ id: "beta", name: "Rejoined" }),
     ]);
@@ -135,5 +151,28 @@ describe("remote server store", () => {
     store.setActiveServerId("alpha");
     await store.persist();
     expect(JSON.parse(await readFile(path, "utf8")).activeServerId).toBe("alpha");
+  });
+
+  it("puts back both halves of a selection whose write failed", async () => {
+    const broken = { ...storedServer("beta"), role: "overlord" };
+    const path = await storePath({
+      version: 3,
+      activeServerId: "beta",
+      servers: [storedServer("alpha"), broken],
+      hiddenHostIds: [],
+    });
+    const store = newStore(path);
+    await store.load();
+
+    // What `RemoteServerManager.select` does when its write throws. Restoring the id alone would
+    // leave the preserved selection cleared, and the next unrelated write would make the local
+    // fallback the user's stored choice -- the failure this rollback exists to prevent.
+    const selection = store.selection;
+    store.setActiveServerId("alpha");
+    store.restoreSelection(selection);
+    await store.persist();
+
+    expect(store.activeServerId).toBe(LOCAL_SERVER_ID);
+    expect(JSON.parse(await readFile(path, "utf8")).activeServerId).toBe("beta");
   });
 });
