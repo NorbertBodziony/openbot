@@ -1773,6 +1773,9 @@ textarea {
 .search-field:focus-within {
   border-color: var(--openbot-text-dim);
   background: var(--openbot-bg-surface);
+}
+
+.search-field:has(input:focus-visible) {
   box-shadow: var(--openbot-focus-ring);
 }
 
