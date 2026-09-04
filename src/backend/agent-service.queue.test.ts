@@ -472,6 +472,8 @@ describe.sequential("AgentService: queue", () => {
       clients.set(provider, client);
       return client;
     });
+    const events: AgentEvent[] = [];
+    service.on("event", (event) => events.push(event));
     await service.initialize();
 
     await service.sendMessage({ botId: "chief", text: "Question 1" });
@@ -493,8 +495,30 @@ describe.sequential("AgentService: queue", () => {
       expect(turnMessages[index]?.author).toBe("user");
       expect(turnMessages[index + 1]?.author).toBe("assistant");
       expect(turnMessages[index + 1]?.turnId).toBe(turnMessages[index]?.turnId);
+      expect(turnMessages[index]?.delivery).toMatchObject({ status: "completed" });
     }
     expect(clients.get("codex")?.requests.filter((request) => request.method === "turn/start")).toHaveLength(4);
+
+    // MailboxSync.emitQueue tells the renderer about every queue transition.
+    const queueEvents = events.filter((event) => event.type === "queue-changed");
+    expect(queueEvents.length).toBeGreaterThan(0);
+    const lastQueue = queueEvents.at(-1);
+    expect(lastQueue?.type).toBe("queue-changed");
+    if (lastQueue?.type === "queue-changed") {
+      expect(lastQueue.snapshot.deliveries).toHaveLength(4);
+      expect(lastQueue.snapshot.deliveries.every((delivery) => delivery.status === "completed")).toBe(true);
+    }
+
+    // A finished turn is never published with a stale delivery: completeTurn
+    // stamps the terminal status before anything renders the snapshot, so any
+    // publication with no active turn shows terminal deliveries.
+    for (const event of events) {
+      if (event.type !== "conversation" || event.snapshot.activeTurnId !== null) continue;
+      for (const message of event.snapshot.messages) {
+        if (message.author !== "user" || !message.turnId) continue;
+        expect(message.delivery?.status).toBe("completed");
+      }
+    }
   });
 
   it("queues FIFO instead of steering and continues draining after an interrupt", async () => {
