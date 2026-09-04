@@ -48,6 +48,13 @@
     --openbot-scroll-edge-overlay: rgba(245, 245, 247, 0.46);
     --openbot-shadow-card: 0 1px 2px rgba(20, 20, 20, 0.05);
     --openbot-shadow-overlay: 0 12px 32px rgba(20, 20, 20, 0.12);
+
+    /* Not a colour, and identical in both themes. uniwind only ever learns a
+     * variable from a @variant block, so a token @theme inline reaches through
+     * var() has to be declared here or the utility resolves to nothing on native.
+     * These two back tracking-openbot-tight and tracking-openbot-wide. */
+    --openbot-tracking-tight: -0.02em;
+    --openbot-tracking-wide: 0.02em;
   }
 
   @variant dark {
@@ -80,5 +87,7 @@
     --openbot-scroll-edge-overlay: rgba(0, 0, 0, 0.72);
     --openbot-shadow-card: 0 0 0 transparent;
     --openbot-shadow-overlay: 0 12px 32px rgba(0, 0, 0, 0.48);
+    --openbot-tracking-tight: -0.02em;
+    --openbot-tracking-wide: 0.02em;
   }
 }
