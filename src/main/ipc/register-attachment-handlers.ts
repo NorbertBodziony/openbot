@@ -17,7 +17,8 @@ import { app, type BrowserWindow, dialog, type OpenDialogOptions, shell } from "
 import type { AgentService } from "../../backend/agent-service";
 import type { MailboxStore } from "../../backend/mailbox-store";
 import { filePreviewFromBytes, localFilePreview, mimeTypeForName } from "../file-preview";
-import { decodeVoid, type RemoteServerManager } from "../remote-server-manager";
+import { decodeVoid } from "../remote-host-decoding";
+import type { RemoteServerManager } from "../remote-server-manager";
 import { handleTrusted } from "../trusted-ipc";
 import {
   parseAgentRequest,

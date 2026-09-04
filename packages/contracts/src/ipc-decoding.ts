@@ -1,7 +1,7 @@
 // The throwing field readers both untrusted-input boundaries need.
 //
-// `src/preload/index.ts` decodes what the main process sends the renderer; `remote-server-manager.ts`
-// decodes what a remote team server sends this machine. They had a hand-written copy each of the same
+// `src/preload/index.ts` decodes what the main process sends the renderer; the
+// `src/main/remote-*-decoding.ts` family decodes what a remote team server sends this machine. They had a hand-written copy each of the same
 // five readers, with identical logic and identical messages, and each was the kind of function whose
 // second copy drifts silently.
 //

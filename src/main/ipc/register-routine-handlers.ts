@@ -4,14 +4,9 @@ import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { IPC_CHANNELS } from "@openbot/contracts/ipc";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import type { AgentService } from "../../backend/agent-service";
-import {
-  decodeRoutine,
-  decodeRoutineRun,
-  decodeRoutineRuns,
-  decodeRoutines,
-  decodeVoid,
-  type RemoteServerManager,
-} from "../remote-server-manager";
+import { decodeRoutine, decodeRoutineRun, decodeRoutineRuns, decodeRoutines } from "../remote-agent-decoding";
+import { decodeVoid } from "../remote-host-decoding";
+import type { RemoteServerManager } from "../remote-server-manager";
 import { handleTrusted } from "../trusted-ipc";
 import {
   parseAgentRequest,

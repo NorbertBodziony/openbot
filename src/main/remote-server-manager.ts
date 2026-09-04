@@ -116,37 +116,6 @@ import {
   TeamWebRtcRequestError,
 } from "./team-webrtc-client-transport";
 
-export { isValidRemoteApiUrl } from "@openbot/contracts/invite-links";
-// Re-exported so this commit moves code without moving any import. The next commit repoints the six
-// importers at the modules above and deletes this block.
-export {
-  decodeAccountUsageFromHost,
-  decodeAgentModelOptions,
-  decodeAgentStatusFromHost,
-  decodeBotMemories,
-  decodeBotMemory,
-  decodeBotSummaries,
-  decodeBotSummary,
-  decodeDuplicateBotResultFromHost,
-  decodeInstalledSkillsFromHost,
-  decodeQueuedMessageReceipt,
-  decodeQueueSnapshot,
-  decodeRoutine,
-  decodeRoutineRun,
-  decodeRoutineRuns,
-  decodeRoutines,
-  decodeSidebarLayoutSnapshot,
-} from "./remote-agent-decoding";
-export { decodeConversationReadState, decodeConversationReadStates } from "./remote-conversation-decoding";
-export {
-  decodeBrowserControlState,
-  decodeBrowserPreviewFromHost,
-  decodeBrowserTab,
-  decodeBrowserTabs,
-} from "./remote-device-decoding";
-export { decodeVoid } from "./remote-host-decoding";
-export { remoteAgentAvatarUrl, remoteAttachmentPreviewUrl, remoteServerLogoUrl } from "./remote-server-urls";
-
 interface StoredRemoteServer {
   id: string;
   name: string;

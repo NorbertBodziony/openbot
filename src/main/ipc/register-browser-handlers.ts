@@ -9,9 +9,9 @@ import {
   decodeBrowserPreviewFromHost,
   decodeBrowserTab,
   decodeBrowserTabs,
-  decodeVoid,
-  type RemoteServerManager,
-} from "../remote-server-manager";
+} from "../remote-device-decoding";
+import { decodeVoid } from "../remote-host-decoding";
+import type { RemoteServerManager } from "../remote-server-manager";
 import { handleTrusted } from "../trusted-ipc";
 import { parseBrowserBounds, parseBrowserNavigate, parseBrowserOpen, parseVisibility } from "./browser-inputs";
 import { routeToServer } from "./route-to-server";

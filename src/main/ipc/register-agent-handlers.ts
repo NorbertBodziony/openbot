@@ -25,9 +25,9 @@ import {
   decodeQueuedMessageReceipt,
   decodeQueueSnapshot,
   decodeSidebarLayoutSnapshot,
-  decodeVoid,
-  type RemoteServerManager,
-} from "../remote-server-manager";
+} from "../remote-agent-decoding";
+import { decodeVoid } from "../remote-host-decoding";
+import type { RemoteServerManager } from "../remote-server-manager";
 import type { SkillMarketplaceService } from "../skill-marketplace-service";
 import { handleTrusted } from "../trusted-ipc";
 import {

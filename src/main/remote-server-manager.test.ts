@@ -4,19 +4,15 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseInviteUrl } from "@openbot/contracts/invite-links";
+import { isValidRemoteApiUrl, parseInviteUrl } from "@openbot/contracts/invite-links";
 import { isDynamicRecord, isString } from "@openbot/contracts/runtime-values";
 import { TEAM_CURRENT_CAPABILITIES } from "@openbot/contracts/team-protocol/current";
 import { TEAM_CAPABILITIES_HEADER } from "@openbot/contracts/team-protocol/v1";
 import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  decodeBrowserPreviewFromHost,
-  decodeBrowserTab,
-  isValidRemoteApiUrl,
-  RemoteServerManager,
-  remoteAttachmentPreviewUrl,
-} from "./remote-server-manager";
+import { decodeBrowserPreviewFromHost, decodeBrowserTab } from "./remote-device-decoding";
+import { RemoteServerManager } from "./remote-server-manager";
+import { remoteAttachmentPreviewUrl } from "./remote-server-urls";
 import { fingerprint } from "./team-store";
 import { TeamWebRtcBridge } from "./team-webrtc-bridge";
 import { TeamWebRtcClientTransport, TeamWebRtcRequestError } from "./team-webrtc-client-transport";
