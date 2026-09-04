@@ -101,7 +101,7 @@ export function BotListRow({
   rightInset = 20,
 }: BotListRowProps) {
   const [background, accent, accentForeground] = useThemeColor(["background", "accent", "accent-foreground"]);
-  const { markBotRead, unreadBotIds } = useMobileWorkspace();
+  const { unreadBotIds } = useMobileWorkspace();
   const { startBotNavigationAnimated, toggleBotPinAnimated, transition } = useBotPinTransition();
   const pendingPinRef = useRef(false);
   const botContextMenu = useBotContextMenu(bot);
@@ -109,12 +109,11 @@ export function BotListRow({
   const isUnpinTarget = transition?.botId === bot.id && transition.target === "row";
   const avatar = (
     <BotPinAvatar botId={bot.id} location={avatarLocation} size={54}>
-      <BloubAvatar seed={bot.avatarSeed} size={54} />
+      <BloubAvatar hue={bot.avatarHue} seed={bot.avatarSeed} size={54} />
     </BotPinAvatar>
   );
 
   const handleOpen = () => {
-    markBotRead(bot.id);
     if (dismissToChat) startBotNavigationAnimated(bot.id, avatarLocation);
     if (isIOS) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
   };

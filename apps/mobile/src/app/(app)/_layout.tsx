@@ -46,6 +46,18 @@ function AuthenticatedStack() {
         }}
       />
       <Stack.Screen
+        name="edit-bot/[botId]"
+        options={{
+          contentStyle: { backgroundColor: background },
+          headerStyle: { backgroundColor: background },
+          headerTransparent: false,
+          presentation: "formSheet",
+          sheetAllowedDetents: "fitToContents",
+          sheetGrabberVisible: true,
+          title: "Edit bot",
+        }}
+      />
+      <Stack.Screen
         name="add-server"
         options={{
           contentStyle: { backgroundColor: background },

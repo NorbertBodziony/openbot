@@ -1,5 +1,5 @@
 import type { AgentProviderId, AvatarImageInput } from "./ipc-conversation";
-import type { MobileConnectedDevice, MobileConnectTicket } from "./mobile-connect";
+import type { AccountSession, MobileConnectedDevice, MobileConnectTicket } from "./mobile-connect";
 
 export type DesktopPlatform = "darwin" | "win32" | "linux";
 export type AppVariant = "production" | "dev" | "preview";
@@ -142,6 +142,8 @@ export interface CentralAuthDesktopApi {
   updateAvatar: (image: AvatarImageInput | null) => Promise<CentralAuthState>;
   createMobileConnect: () => Promise<MobileConnectTicket>;
   listMobileConnectedDevices: () => Promise<MobileConnectedDevice[]>;
+  listAccountSessions: () => Promise<AccountSession[]>;
+  revokeAccountSession: (sessionId: string) => Promise<void>;
   revokeMobileConnectedDevice: (sessionId: string) => Promise<void>;
   logout: () => Promise<CentralAuthState>;
   onEvent: (listener: (state: CentralAuthState) => void) => () => void;

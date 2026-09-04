@@ -6,7 +6,7 @@ React Native app built with Expo SDK 57, Expo Router, TypeScript 7, Biome, and B
 
 - Node.js 24 or newer (the repository pins 24 in `.nvmrc`)
 - Bun 1.3 or newer
-- Expo Go for basic device testing, or an EAS development build for the full native environment
+- Expo Go for device testing, including the WebRTC server connection
 
 ## Development
 
@@ -17,6 +17,36 @@ bun run mobile
 bun run mobile:ios
 bun run mobile:android
 ```
+
+For an Expo Go device outside the computer's trusted local network context, start Metro with a secure
+tunnel:
+
+```bash
+bun run mobile -- --tunnel
+```
+
+The native UI does not depend on a native WebRTC module. A hidden Expo DOM component owns the browser
+`RTCPeerConnection` and its authenticated DataChannels, then forwards validated commands and live
+events to React Native. This keeps the production transport identical while remaining testable in
+Expo Go without a development build.
+
+Remote connection recovery makes up to five attempts, waiting 10 seconds after each failure. After
+five failures it waits two minutes before starting a new series. The bot list and chat show
+`Reconnecting x/5` and a countdown until the next attempt or series. Countdown ticks are local UI
+updates, not requests. Backgrounding suspends retries; returning respects any remaining wait and
+starts at most one attempt if its deadline has passed. A successful connection resets the counter. Dead
+WebRTC peers are discarded and authenticated again. Recovery reloads cached conversations as well
+as agents and unread counts, including after an event-buffer reset. An interruption of Signal alone
+can resume sooner while the authenticated WebRTC connection is still healthy, without a new ticket.
+
+Invitations pin the desktop public key before acceptance. Pins are stored in the device Keychain /
+Keystore, scoped to the account service and user, and checked on later directory refreshes. Joining
+installs the validated host immediately; a subsequent directory-refresh failure does not undo a
+successful join or require reusing the one-use invitation.
+
+After Mobile Connect has enabled publishing, restarting the development desktop restores its
+WebRTC host as well as its local HTTP API. A local-only `online` status is not enough for mobile
+connections. The separate development test client never auto-publishes.
 
 ## Source structure
 
@@ -35,7 +65,7 @@ src/
     search/             search model, controls, results, and screen
     servers/            server drawer and joining a server
     settings/           account settings screen
-    workspace/          workspace state, domain types, and prototype fixtures
+    workspace/          remote directory, WebRTC transport, live events, and workspace state
   shared/
     components/         UI used by more than one feature
     lib/                platform and infrastructure helpers

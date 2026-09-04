@@ -61,6 +61,8 @@ export const IPC_CHANNELS = {
   authUpdateAvatar: "auth:update-avatar",
   authCreateMobileConnect: "auth:create-mobile-connect",
   authListMobileConnectedDevices: "auth:list-mobile-connected-devices",
+  authListAccountSessions: "auth:list-account-sessions",
+  authRevokeAccountSession: "auth:revoke-account-session",
   authRevokeMobileConnectedDevice: "auth:revoke-mobile-connected-device",
   authLogout: "auth:logout",
   authEvent: "auth:event",

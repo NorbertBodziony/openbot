@@ -130,6 +130,7 @@ type TeamApiAgentMethods = Pick<
   | "readConversationPageFor"
   | "searchConversationMessages"
   | "markConversationRead"
+  | "markConversationUnread"
   | "prepareImportedAttachments"
   | "discardDraftAttachment"
   | "resolveSharedFile"
@@ -1112,6 +1113,13 @@ export class TeamApiServer {
             markerExclusionsForCapabilities(clientCapabilities),
           );
           return this.#json(response, 200, page);
+        }
+        if (method === "POST" && action === "conversation/unread") {
+          if (requestProtocol(request) !== TEAM_PROTOCOL_V3 || !clientCapabilities.has("conversation-unread")) {
+            throw new HttpError(400, "This client does not support marking conversations unread.");
+          }
+          await readJson(request);
+          return this.#json(response, 200, await this.#options.agents.markConversationUnread(botId, member.id));
         }
         if (method === "POST" && action === "conversation/read") {
           const body = await readJson(request);

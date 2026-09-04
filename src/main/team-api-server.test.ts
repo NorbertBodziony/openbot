@@ -112,6 +112,7 @@ function createAgents(overrides: Partial<TestAgents> = {}, events = new EventEmi
     readConversationPageFor: unimplemented,
     searchConversationMessages: unimplemented,
     markConversationRead: unimplemented,
+    markConversationUnread: unimplemented,
     prepareImportedAttachments: unimplemented,
     discardDraftAttachment: unimplemented,
     resolveSharedFile: unimplemented,
@@ -1963,11 +1964,17 @@ describe("TeamApiServer administration", () => {
         throughMessageId: options.excludeHostedSiteEvents ? "message-1" : "hosted-site-event-1",
       },
     }));
+    const markConversationUnread = vi.fn(async (_botId: string, _memberId: string) => ({
+      unreadCount: 1,
+      firstUnreadMessageId: "message-1",
+      throughMessageId: null,
+    }));
     const agents = createAgents({
       listBots: () => localBots,
       getUsage,
       createBot,
       listConversationReads,
+      markConversationUnread,
       readConversationFor: async (botId: string, _memberId: string) => ({
         ...localConversation,
         botId,
@@ -2128,6 +2135,37 @@ describe("TeamApiServer administration", () => {
         firstUnreadMessageId: null,
         throughMessageId: "hosted-site-event-1",
       });
+      await expect(
+        jsonRequest(base, "/v1/agents/chief/conversation/unread", {
+          token: login.sessionToken,
+          protocol: TEAM_PROTOCOL_V3,
+          capabilities: [...TEAM_CURRENT_CAPABILITIES],
+          body: {},
+        }),
+      ).resolves.toEqual({ unreadCount: 1, firstUnreadMessageId: "message-1", throughMessageId: null });
+      expect(markConversationUnread).toHaveBeenCalledWith("chief", store.authenticate(login.sessionToken)?.id);
+      const unsupported = await fetch(`${base}/v1/agents/chief/conversation/unread`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${login.sessionToken}`,
+          "Content-Type": "application/json",
+          [TEAM_PROTOCOL_VERSION_HEADER]: "3",
+        },
+        body: "{}",
+      });
+      expect(unsupported.status).toBe(400);
+      const forgedReader = await fetch(`${base}/v1/agents/chief/conversation/unread`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${login.sessionToken}`,
+          "Content-Type": "application/json",
+          [TEAM_PROTOCOL_VERSION_HEADER]: "3",
+          [TEAM_CAPABILITIES_HEADER]: TEAM_CURRENT_CAPABILITIES.join(","),
+        },
+        body: JSON.stringify({ memberId: "other-reader" }),
+      });
+      expect(forgedReader.status).toBe(400);
+      expect(markConversationUnread).toHaveBeenCalledTimes(1);
     } finally {
       await api.stop();
     }

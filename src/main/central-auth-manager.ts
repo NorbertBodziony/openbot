@@ -10,7 +10,11 @@ import type {
   MobileConnectedDevice,
   MobileConnectTicket,
 } from "@openbot/contracts/ipc";
-import { createMobileConnectUrl } from "@openbot/contracts/mobile-connect";
+import {
+  createMobileConnectUrl,
+  isMobileConnectDevelopmentHost,
+  type MobileConnectHostBinding,
+} from "@openbot/contracts/mobile-connect";
 import { type DynamicRecord, isBoolean, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
 import { createLocalJWKSet, jwtVerify } from "jose";
 import { z } from "zod";
@@ -210,13 +214,21 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
     return result.ticket;
   }
 
-  async createMobileConnect(): Promise<MobileConnectTicket> {
-    const result = await this.#authorizedRequest("/v1/mobile-auth/ticket", { method: "POST" }, decodeTicketResponse);
+  async createMobileConnect(host: MobileConnectHostBinding): Promise<MobileConnectTicket> {
+    const result = await this.#authorizedRequest(
+      "/v1/mobile-auth/ticket",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ host }),
+      },
+      decodeTicketResponse,
+    );
     if (!result.ticket || !Number.isFinite(result.expiresAt) || result.expiresAt <= Date.now()) {
       throw new Error("The account service returned an invalid Mobile Connect ticket.");
     }
     return {
-      qrData: createMobileConnectUrl({ apiUrl: this.#options.mobileConnectApiUrl, ticket: result.ticket }),
+      qrData: createMobileConnectUrl({ apiUrl: this.#options.mobileConnectApiUrl, ticket: result.ticket, host }),
       expiresAt: result.expiresAt,
     };
   }
@@ -228,6 +240,37 @@ export class CentralAuthManager extends EventEmitter<CentralAuthEvents> {
       decodeMobileConnectedDevices,
     );
     return result.devices;
+  }
+
+  async listAccountSessions() {
+    const result = await this.#authorizedRequest(
+      "/v1/mobile-auth/devices?includeDesktop=true",
+      { method: "GET" },
+      (value) =>
+        z
+          .object({
+            sessions: z.array(
+              z.object({
+                sessionId: z.string().uuid(),
+                name: z.string(),
+                kind: z.enum(["desktop", "mobile"]),
+                current: z.boolean(),
+                connectedAt: z.number().finite(),
+                lastActiveAt: z.number().finite(),
+              }),
+            ),
+          })
+          .parse(value),
+    );
+    return result.sessions;
+  }
+
+  async revokeAccountSession(sessionId: string): Promise<void> {
+    await this.#authorizedRequest(
+      `/v1/mobile-auth/devices/${encodeURIComponent(sessionId)}?includeDesktop=true`,
+      { method: "DELETE" },
+      () => undefined,
+    );
   }
 
   async revokeMobileConnectedDevice(sessionId: string): Promise<void> {
@@ -1069,8 +1112,7 @@ function decodeRemoteConnectionBootstrap(value: unknown): RemoteConnectionBootst
   if (!isNumber(record.expiresAt)) throw new Error("Invalid remote ticket expiration.");
   const signalUrl = requiredString(record, "signalUrl");
   const signal = new URL(signalUrl);
-  const loopback = signal.hostname === "127.0.0.1" || signal.hostname === "localhost";
-  if (signal.protocol !== "wss:" && !(signal.protocol === "ws:" && loopback))
+  if (signal.protocol !== "wss:" && !(signal.protocol === "ws:" && isMobileConnectDevelopmentHost(signal.hostname)))
     throw new Error("Invalid Remote Signal URL.");
   return { ticket: requiredString(record, "ticket"), expiresAt: record.expiresAt, signalUrl };
 }
