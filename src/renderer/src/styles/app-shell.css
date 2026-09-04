@@ -1823,13 +1823,33 @@ textarea {
   transition: margin-top var(--panel-resize-duration, var(--openbot-duration-overlay)) cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-.sidebar-section {
-  --sidebar-section-drag-y: 0px;
+/**
+ * The one drag offset transport. Every row that a drag pushes out of the way - a section, an agent,
+ * a person, a pinned tile - writes this pair inline and translates by it, so there is one name to
+ * grep and one computation behind it.
+ *
+ * The reset below is not cosmetic. Custom properties inherit, and agent and person rows sit inside
+ * a section that can be shifting itself; without a declaration of their own they would inherit its
+ * offset and move twice. Each row's inline style still wins over this reset.
+ */
+.sidebar-section,
+.sidebar-agent-item,
+.sidebar-person-item,
+.sidebar-pinned-item {
+  --sidebar-drag-x: 0px;
+  --sidebar-drag-y: 0px;
+}
 
+/** Only the rows actually in motion get a layer; the shifting class is toggled per offset. */
+.sidebar-drag-shifting {
+  will-change: transform;
+}
+
+.sidebar-section {
   position: relative;
   border-radius: var(--openbot-radius-md);
   opacity: 1;
-  transform: translate3d(0, var(--sidebar-section-drag-y), 0);
+  transform: translate3d(var(--sidebar-drag-x), var(--sidebar-drag-y), 0);
   transition-property: background-color, box-shadow, opacity, transform;
   transition-duration: var(--openbot-duration-fast);
   transition-timing-function: ease-out;
@@ -1868,8 +1888,7 @@ textarea {
   transition: none;
 }
 
-.sidebar-section-dragging,
-.sidebar-section-shifting {
+.sidebar-section-dragging {
   will-change: transform;
 }
 
@@ -2083,7 +2102,7 @@ textarea {
 
 .sidebar-agent-item {
   position: relative;
-  transform: translate3d(0, var(--sidebar-agent-drag-y, 0px), 0);
+  transform: translate3d(var(--sidebar-drag-x), var(--sidebar-drag-y), 0);
   transition: transform var(--openbot-duration-fast) var(--openbot-ease-out);
 }
 
@@ -2091,7 +2110,6 @@ textarea {
   margin-top: 4px;
 }
 
-.sidebar-agent-item-shifting,
 .sidebar-agent-item-dragging {
   will-change: transform;
 }
@@ -2125,7 +2143,7 @@ textarea {
 
 .sidebar-person-item {
   position: relative;
-  transform: translate3d(0, var(--sidebar-person-drag-y, 0px), 0);
+  transform: translate3d(var(--sidebar-drag-x), var(--sidebar-drag-y), 0);
   transition: transform var(--openbot-duration-fast) var(--openbot-ease-out);
 }
 
@@ -2133,7 +2151,6 @@ textarea {
   margin-top: 4px;
 }
 
-.sidebar-person-item-shifting,
 .sidebar-person-item-dragging {
   will-change: transform;
 }
@@ -2231,14 +2248,11 @@ textarea {
 }
 
 .sidebar-pinned-item {
-  --sidebar-pinned-drag-x: 0px;
-  --sidebar-pinned-drag-y: 0px;
-
   position: relative;
   width: 72px;
   flex: 0 0 72px;
   opacity: 1;
-  transform: translate3d(var(--sidebar-pinned-drag-x), var(--sidebar-pinned-drag-y), 0);
+  transform: translate3d(var(--sidebar-drag-x), var(--sidebar-drag-y), 0);
   transition: transform var(--openbot-duration-normal) var(--openbot-ease-out);
 }
 
