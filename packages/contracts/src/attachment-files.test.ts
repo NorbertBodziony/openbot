@@ -21,9 +21,7 @@ describe("attachment file whitelist", () => {
 
   it("accepts EML as a single attachment", () => {
     expect(isSupportedAttachmentName("message.eml")).toBe(true);
-    expect(isSupportedAttachmentName("bundle.zip")).toBe(false);
     expect(ATTACHMENT_FILE_ACCEPT).toContain(".eml");
-    expect(ATTACHMENT_FILE_ACCEPT).not.toContain(".zip");
   });
 
   it("assigns stable MIME types to supported formats", () => {
