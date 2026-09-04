@@ -28,7 +28,6 @@ import type {
   LoginServerInput,
   MarkConversationReadInput,
   MarkDirectReadInput,
-  QueueSnapshot,
   RemoteDesktopSession,
   SendDirectMessageInput,
   ServerSummary,
@@ -49,13 +48,7 @@ import {
   decodeTeamProtocolV1CurrentEvent,
   decodeTeamProtocolV1CurrentHttpResponse,
 } from "@openbot/contracts/team-protocol/v1-adapter";
-import {
-  decodeBotSummaries,
-  decodeBotSummary,
-  decodeDraftAttachment,
-  decodeDuplicateBotResultFromHost,
-  decodeQueueSnapshot,
-} from "./remote-agent-decoding";
+import { decodeBotSummary, decodeDraftAttachment, decodeDuplicateBotResultFromHost } from "./remote-agent-decoding";
 import {
   decodeConversationPageFromHost,
   decodeConversationReadState,
@@ -73,6 +66,7 @@ import { decodeVoid, type ResponseDecoder } from "./remote-host-decoding";
 import { type RemoteRequestInit, RemoteServerClient } from "./remote-server-client";
 import { RemoteServerConnections } from "./remote-server-connections";
 import { RemoteProtocolError, RemoteRequestError } from "./remote-server-errors";
+import { RemoteEventRefresh } from "./remote-server-event-refresh";
 import { reconcileWebRtcHosts } from "./remote-server-host-directory";
 import { requestJson } from "./remote-server-http";
 import { RemoteServerStore, type StoredRemoteServerView, type TokenCipher } from "./remote-server-store";
@@ -145,6 +139,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #store: RemoteServerStore;
   readonly #connections: RemoteServerConnections;
   readonly #client: RemoteServerClient;
+  readonly #refresh: RemoteEventRefresh;
   readonly #centralAccount: CentralAccountSession;
   readonly #allowLocalDevelopmentInvites: boolean;
   readonly #appVersion: string | null;
@@ -153,11 +148,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   #eventReconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
   #eventReconnectAttempts = new Map<string, number>();
   #webrtcConnectionAttempts = new Set<string>();
-  #conversationRefreshRequests = new Map<string, { revision: number }>();
-  #queueRefreshRequests = new Map<string, { dirty: boolean }>();
   #duplicateOperationIds = new Map<string, string>();
   #eventAuthenticationPaused = new Set<string>();
-  #eventGenerations = new Map<string, number>();
   #eventsEnabled = false;
   readonly #webrtcTransport: TeamWebRtcClientTransport | null;
   readonly #getLocalHostId: () => string | null;
@@ -190,6 +182,12 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       servers: this.#store,
       connections: this.#connections,
       transport: this.#webrtcTransport,
+    });
+    this.#refresh = new RemoteEventRefresh({
+      request: (serverId, path, decoder, init) => this.#client.request(serverId, path, decoder, init),
+      hasServer: (serverId) => this.#store.has(serverId),
+      emit: (serverId, event, bufferedLive) =>
+        bufferedLive ? this.emit("agent", serverId, event, true) : this.emit("agent", serverId, event),
     });
     this.#remoteViewerProxy = this.#webrtcTransport
       ? new RemoteViewerProxy({
@@ -275,7 +273,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       if (this.#supportsRuntimeSnapshots(server.id, socket)) {
         socket.send(encodeTeamProtocolV1ClientEvent({ type: "runtime-snapshot-request" }));
       } else {
-        void this.#refreshAgentStateFallback(server.id).catch(() => undefined);
+        void this.#refresh.refreshAgentState(server.id).catch(() => undefined);
       }
     }
   }
@@ -523,13 +521,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#eventReconnectTimers.delete(serverId);
     this.#eventReconnectAttempts.delete(serverId);
     this.#eventAuthenticationPaused.delete(serverId);
-    this.#eventGenerations.delete(serverId);
-    for (const key of this.#conversationRefreshRequests.keys()) {
-      if (key.startsWith(`${serverId}\0`)) this.#conversationRefreshRequests.delete(key);
-    }
-    for (const key of this.#queueRefreshRequests.keys()) {
-      if (key.startsWith(`${serverId}\0`)) this.#queueRefreshRequests.delete(key);
-    }
+    this.#refresh.forget(serverId);
     this.#connections.forget(serverId);
     this.#client.forget(serverId);
     this.#eventSockets.delete(serverId);
@@ -998,9 +990,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#eventReconnectAttempts.clear();
     this.#webrtcConnectionAttempts.clear();
     this.#eventAuthenticationPaused.clear();
-    this.#eventGenerations.clear();
-    this.#conversationRefreshRequests.clear();
-    this.#queueRefreshRequests.clear();
+    this.#refresh.clear();
     this.#client.clear();
     await this.#remoteViewerProxy?.stop().catch(() => undefined);
     await this.#webrtcTransport?.stop().catch(() => undefined);
@@ -1044,7 +1034,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this.emit("presence", serverId, structuredClone(event.snapshot));
     } else if (event.type === "team-direct-message") this.emit("directMessage", serverId, event);
     else if (event.type === "team-direct-typing") this.emit("directTyping", serverId, event);
-    else this.#forwardAgentEvent(serverId, event);
+    else this.#refresh.forward(serverId, event);
   }
 
   // What a suspended reconnect costs the event stream. The registry decides that a failure is not
@@ -1098,11 +1088,12 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
             if (this.#supportsRuntimeSnapshots(serverId, socket)) {
               agentEventsReady = true;
             } else {
-              void this.#refreshAgentStateFallback(serverId)
+              void this.#refresh
+                .refreshAgentState(serverId)
                 .then(() => {
                   if (this.#eventSockets.get(serverId) !== socket) return;
                   agentEventsReady = true;
-                  for (const event of bufferedAgentEvents) this.#forwardAgentEvent(serverId, event, true);
+                  for (const event of bufferedAgentEvents) this.#refresh.forward(serverId, event, true);
                   bufferedAgentEvents.length = 0;
                 })
                 .catch(() => socket.close(1011, "Initial agent state is unavailable"));
@@ -1161,7 +1152,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
                 }
                 bufferedAgentEvents.push(event);
               } else {
-                this.#forwardAgentEvent(serverId, event);
+                this.#refresh.forward(serverId, event);
               }
             }
           } catch {
@@ -1328,105 +1319,6 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     return this.#appVersion
       ? this.#supportsCapability(serverId, "agent-runtime-snapshots")
       : socket.protocol === REMOTE_EVENT_SNAPSHOT_PROTOCOL;
-  }
-
-  async #refreshAgentStateFallback(serverId: string): Promise<void> {
-    const generation = this.#advanceEventGeneration(serverId);
-    const bots = await this.request(serverId, TEAM_API_ROUTES.agents.all, decodeBotSummaries);
-    if (this.#eventGenerations.get(serverId) !== generation) return;
-    this.emit("agent", serverId, { type: "bots-changed", bots });
-    await Promise.all(
-      bots.map(async (bot) => {
-        try {
-          const [page, queue] = await Promise.all([
-            this.readAgentConversationPage(bot.id, { type: "latest" }, 1, serverId),
-            this.request(serverId, TEAM_API_ROUTES.agent.queue(bot.id), decodeQueueSnapshot),
-          ]);
-          if (this.#eventGenerations.get(serverId) !== generation) return;
-          const { pageInfo: _, references: __, readState: ___, ...snapshot } = page;
-          this.emit("agent", serverId, { type: "conversation", snapshot });
-          this.emit("agent", serverId, { type: "queue-changed", snapshot: queue });
-        } catch {
-          // A failed bot refresh must not discard the server or other bots.
-        }
-      }),
-    );
-  }
-
-  #forwardAgentEvent(serverId: string, event: AgentEvent, bufferedLive = false): void {
-    this.#advanceEventGeneration(serverId);
-    if (event.type === "conversation-invalidated") {
-      void this.#refreshConversationPage(serverId, event.botId, event.revision);
-    } else if (event.type === "queue-invalidated") {
-      void this.#refreshQueue(serverId, event.botId);
-    } else {
-      const remoteEvent = addRemotePreviewUrls(event, serverId);
-      if (bufferedLive) this.emit("agent", serverId, remoteEvent, true);
-      else this.emit("agent", serverId, remoteEvent);
-    }
-  }
-
-  async #refreshConversationPage(serverId: string, botId: string, revision: number): Promise<void> {
-    const key = `${serverId}\0${botId}`;
-    const pending = this.#conversationRefreshRequests.get(key);
-    if (pending) {
-      pending.revision = Math.max(pending.revision, revision);
-      return;
-    }
-    const request = { revision };
-    this.#conversationRefreshRequests.set(key, request);
-    try {
-      while (this.#store.has(serverId)) {
-        const requestedRevision = request.revision;
-        let page: ConversationPage;
-        try {
-          page = await this.readAgentConversationPage(botId, { type: "latest" }, 50, serverId);
-        } catch {
-          if (request.revision !== requestedRevision) continue;
-          return;
-        }
-        if (page.revision >= request.revision) {
-          this.emit("agent", serverId, { type: "conversation-page", page });
-          return;
-        }
-        if (request.revision === requestedRevision) return;
-      }
-    } finally {
-      if (this.#conversationRefreshRequests.get(key) === request) this.#conversationRefreshRequests.delete(key);
-    }
-  }
-
-  async #refreshQueue(serverId: string, botId: string): Promise<void> {
-    const key = `${serverId}\0${botId}`;
-    const pending = this.#queueRefreshRequests.get(key);
-    if (pending) {
-      pending.dirty = true;
-      return;
-    }
-    const request = { dirty: false };
-    this.#queueRefreshRequests.set(key, request);
-    try {
-      do {
-        request.dirty = false;
-        let snapshot: QueueSnapshot;
-        try {
-          snapshot = await this.request(serverId, TEAM_API_ROUTES.agent.queue(botId), decodeQueueSnapshot);
-        } catch {
-          if (request.dirty) continue;
-          return;
-        }
-        if (!this.#store.has(serverId)) return;
-        this.emit("agent", serverId, { type: "queue-changed", snapshot });
-      } while (request.dirty);
-    } finally {
-      if (this.#queueRefreshRequests.get(key) === request) this.#queueRefreshRequests.delete(key);
-    }
-  }
-
-  #advanceEventGeneration(serverId: string): number {
-    const generation = (this.#eventGenerations.get(serverId) ?? 0) + 1;
-    this.#eventGenerations.set(serverId, generation);
-    return generation;
   }
 
   #emitChanged(): void {

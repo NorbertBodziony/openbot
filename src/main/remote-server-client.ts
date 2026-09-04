@@ -103,6 +103,14 @@ export interface RemoteRequestInit {
   timeoutMs?: number;
 }
 
+/** `RemoteServerClient.request` as a plain function, for callers that need nothing else from it. */
+export type RemoteRequestFn = <T>(
+  serverId: string,
+  path: string,
+  decoder: ResponseDecoder<T>,
+  init?: RemoteRequestInit,
+) => Promise<T>;
+
 export class RemoteServerClient {
   readonly #appVersion: string | null;
   readonly #servers: RemoteServerLookup;
