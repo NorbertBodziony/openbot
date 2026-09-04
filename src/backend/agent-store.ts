@@ -82,6 +82,14 @@ export const DEFAULT_AGENT_MODEL: AgentModelId = "gpt-5.6-luna";
 export const DEFAULT_AGENT_PROVIDER: AgentProviderId = "codex";
 export const DEFAULT_REASONING_EFFORT: AgentReasoningEffort = "medium";
 
+// These two strings are history, not vocabulary. The first is the file a release before the move to
+// SQLite wrote its state into, and is only ever read: renaming it means that file is never found and the
+// data of anyone who has not yet run the importing release is lost. The second is a `command_id` already
+// stamped into `orchestration_command_receipts` on every existing install, and is what stops the legacy
+// import running a second time. Neither follows the bot-to-agent rename.
+const LEGACY_AGENTS_STATE_FILE = "bots.json";
+const LEGACY_AGENTS_IMPORT_COMMAND_ID = "legacy-import:bots:v1";
+
 export class BotStore {
   readonly #statePath: string;
   readonly #botsRoot: string;
@@ -96,7 +104,7 @@ export class BotStore {
 
   constructor(userDataPath: string, homePath: string, database = new OpenBotDatabase(userDataPath)) {
     const openbotRoot = join(homePath, "OpenBot");
-    this.#statePath = join(userDataPath, "bots.json");
+    this.#statePath = join(userDataPath, LEGACY_AGENTS_STATE_FILE);
     this.#botsRoot = join(openbotRoot, "Bots");
     this.#sharedRoot = join(openbotRoot, "Shared");
     this.#downloadsRoot = join(openbotRoot, "Downloads");
@@ -149,7 +157,7 @@ export class BotStore {
       });
       legacy.examplesInitialized = true;
       this.#state = legacy;
-      this.#database.replaceAgents("legacy-import:bots:v1", legacy.bots, "agents.legacy-imported");
+      this.#database.replaceAgents(LEGACY_AGENTS_IMPORT_COMMAND_ID, legacy.bots, "agents.legacy-imported");
       for (const { bot, externalSessionId } of sessions) {
         this.#database.bindProviderSession({
           threadId: stableThreadId(bot.id),
