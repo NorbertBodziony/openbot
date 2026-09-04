@@ -613,15 +613,16 @@ const dragOffsetLayout: SidebarLayoutSnapshot = {
   agentOrder: dragOffsetBots.map((bot) => bot.id),
 };
 
-/** Every drag transport writes one of these, and the shift is the only thing a user sees. */
-const PINNED_OFFSET_VARIABLES = ["--sidebar-pinned-drag-x", "--sidebar-pinned-drag-y"] as const;
-const AGENT_OFFSET_VARIABLES = ["--sidebar-agent-drag-y"] as const;
-const PERSON_OFFSET_VARIABLES = ["--sidebar-person-drag-y"] as const;
-const SECTION_OFFSET_VARIABLES = ["--sidebar-section-drag-y"] as const;
+/**
+ * The one pair every region writes, and the shift is the only thing a user sees. Reading both for
+ * every region is also the check that a row never inherits its section's offset: the axis a region
+ * does not use has to stay at the reset `0px`, or the sum picks up a shift that is not its own.
+ */
+const DRAG_OFFSET_VARIABLES = ["--sidebar-drag-x", "--sidebar-drag-y"] as const;
 
-function totalDragOffset(element: HTMLElement, variableNames: readonly string[]): number {
+function totalDragOffset(element: HTMLElement): number {
   const styles = getComputedStyle(element);
-  return variableNames.reduce(
+  return DRAG_OFFSET_VARIABLES.reduce(
     (total, name) => total + Math.abs(Number.parseFloat(styles.getPropertyValue(name)) || 0),
     0,
   );
@@ -652,7 +653,6 @@ async function expectDragShift(
   source: HTMLElement,
   target: HTMLElement,
   shifted: HTMLElement,
-  variableNames: readonly string[],
 ): Promise<void> {
   const DataTransferConstructor = canvasElement.ownerDocument.defaultView?.DataTransfer;
   if (!DataTransferConstructor) throw new Error("DataTransfer is unavailable.");
@@ -660,15 +660,15 @@ async function expectDragShift(
   if (!list) throw new Error("Sidebar list is missing.");
   const dataTransfer = new DataTransferConstructor();
 
-  await expect(totalDragOffset(shifted, variableNames)).toBe(0);
+  await expect(totalDragOffset(shifted)).toBe(0);
   fireEvent.dragStart(source, { ...dragAimPoint(source, list), dataTransfer });
   try {
     fireEvent.dragOver(target, { ...dragAimPoint(target, list), dataTransfer });
-    await waitFor(() => expect(totalDragOffset(shifted, variableNames)).toBeGreaterThan(0));
+    await waitFor(() => expect(totalDragOffset(shifted)).toBeGreaterThan(0));
   } finally {
     fireEvent.dragEnd(source, { dataTransfer });
   }
-  await waitFor(() => expect(totalDragOffset(shifted, variableNames)).toBe(0));
+  await waitFor(() => expect(totalDragOffset(shifted)).toBe(0));
 }
 
 function dragRows(root: HTMLElement, selector: string, what: string): HTMLElement[] {
@@ -685,21 +685,21 @@ export const DragOffsets: Story = {
     // hovered. Aiming further down the list makes the neighbouring section win the drop resolver's
     // nearest-centre hit test, and the agent never gets a target at all.
     const pinned = dragRows(canvasElement, "[data-pinned-key]", "pinned");
-    await expectDragShift(canvasElement, pinned[0], pinned[1], pinned[1], PINNED_OFFSET_VARIABLES);
+    await expectDragShift(canvasElement, pinned[0], pinned[1], pinned[1]);
 
     const people = dragRows(canvasElement, "[data-person-id]", "person");
-    await expectDragShift(canvasElement, people[0], people[1], people[1], PERSON_OFFSET_VARIABLES);
+    await expectDragShift(canvasElement, people[0], people[1], people[1]);
 
     // An agent only shifts for a source in its own section, so both rows come from one section.
     const sections = dragRows(canvasElement, "[data-section-id]", "section");
     const populated = sections.find((section) => section.querySelectorAll("[data-agent-id]").length >= 2);
     if (!populated) throw new Error("No section holds two agents.");
     const agents = dragRows(populated, "[data-agent-id]", "agent");
-    await expectDragShift(canvasElement, agents[0], agents[1], agents[1], AGENT_OFFSET_VARIABLES);
+    await expectDragShift(canvasElement, agents[0], agents[1], agents[1]);
 
     const handle = sections[0].querySelector<HTMLElement>(".sidebar-section-drag-handle");
     if (!handle) throw new Error("Section drag handle is missing.");
-    await expectDragShift(canvasElement, handle, sections[1], sections[1], SECTION_OFFSET_VARIABLES);
+    await expectDragShift(canvasElement, handle, sections[1], sections[1]);
   },
 };
 

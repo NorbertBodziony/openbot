@@ -29,7 +29,7 @@ export function SidebarPeopleSection(sectionProps: { sectionId: string }) {
     <Show when={props.showPeople !== false && filteredPeople().length > 0}>
       <section
         class={["sidebar-chat-group sidebar-section", sectionDragClasses(sectionId())]}
-        style={`--sidebar-section-drag-y: ${dragOffset(sectionId()).y}px;`}
+        style={`--sidebar-drag-y: ${dragOffset(sectionId()).y}px;`}
         aria-label="People"
         data-section-id={sectionId()}
         onFocusIn={() => props.onPreloadDirectConversation?.()}
@@ -49,8 +49,8 @@ export function SidebarPeopleSection(sectionProps: { sectionId: string }) {
                 return (
                   /* biome-ignore lint/a11y/noStaticElementInteractions: Native drag belongs to the wrapper around the accessible button. */
                   <div
-                    class={["sidebar-person-item", { "sidebar-person-item-shifting": dragOffset(member.id).y !== 0 }]}
-                    style={`--sidebar-person-drag-y: ${dragOffset(member.id).y}px;`}
+                    class={["sidebar-person-item", { "sidebar-drag-shifting": dragOffset(member.id).y !== 0 }]}
+                    style={`--sidebar-drag-y: ${dragOffset(member.id).y}px;`}
                     data-person-id={member.id}
                     draggable={props.compact ? "false" : "true"}
                     onDragStart={(event: DragEvent & { currentTarget: HTMLElement }) =>

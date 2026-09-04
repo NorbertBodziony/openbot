@@ -28,10 +28,10 @@ export function SidebarAgentRow(rowProps: { bot: BotProfile }) {
         "sidebar-agent-item",
         {
           "sidebar-agent-item-dragging": draggedAgentId() === rowProps.bot.id,
-          "sidebar-agent-item-shifting": dragOffset(rowProps.bot.id).y !== 0,
+          "sidebar-drag-shifting": dragOffset(rowProps.bot.id).y !== 0,
         },
       ]}
-      style={`--sidebar-agent-drag-y: ${dragOffset(rowProps.bot.id).y}px;`}
+      style={`--sidebar-drag-y: ${dragOffset(rowProps.bot.id).y}px;`}
       data-agent-id={rowProps.bot.id}
       draggable={!layoutMutable() || props.compact ? "false" : "true"}
       onDragStart={(event: DragEvent & { currentTarget: HTMLElement }) => startAgentDragging(event, rowProps.bot)}

@@ -27,7 +27,7 @@ export function SidebarAgentSection(sectionProps: { sectionId: string }) {
     <Show when={name() && (bots().length > 0 || (customSectionById().has(sectionId()) && !normalizedQuery()))}>
       <section
         class={["sidebar-chat-group sidebar-section", sectionDragClasses(sectionId())]}
-        style={`--sidebar-section-drag-y: ${dragOffset(sectionId()).y}px;`}
+        style={`--sidebar-drag-y: ${dragOffset(sectionId()).y}px;`}
         aria-label={name()}
         data-section-id={sectionId()}
       >

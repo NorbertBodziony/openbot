@@ -1,5 +1,5 @@
 /**
- * The pinned strip above the sections. It stays mounted while `drag.emptyPinnedDropVisible` is on
+ * The pinned strip above the sections. It stays mounted while `emptyPinnedDropVisible()` is on
  * even with nothing pinned, because that empty row is the drop target that lets a first agent be
  * pinned at all.
  */
@@ -14,7 +14,7 @@ import { useSidebarScope } from "./sidebar-scope";
 
 export function SidebarPinnedGroup() {
   const {
-    drag,
+    emptyPinnedDropVisible,
     dragOffset,
     dragOverPinnedKey,
     draggedPinnedKey,
@@ -27,20 +27,20 @@ export function SidebarPinnedGroup() {
     stopSidebarDragging,
   } = useSidebarScope();
   return (
-    <Show when={resolvedPinnedItems().length > 0 || drag.emptyPinnedDropVisible}>
+    <Show when={resolvedPinnedItems().length > 0 || emptyPinnedDropVisible()}>
       <section
         class={[
           "sidebar-chat-group sidebar-pinned-group",
           {
             "sidebar-pinned-group-agent-drop-target": pinnedDropActive(),
-            "sidebar-pinned-group-empty-target": drag.emptyPinnedDropVisible,
+            "sidebar-pinned-group-empty-target": emptyPinnedDropVisible(),
           },
         ]}
         aria-label="Pinned chats"
         onTransitionEnd={handlePinnedTransitionEnd}
       >
         <ul class="sidebar-pinned-list" data-dragging={draggedPinnedKey() ? "" : undefined}>
-          <Show when={drag.emptyPinnedDropVisible}>
+          <Show when={emptyPinnedDropVisible()}>
             <li class="sidebar-pinned-empty-drop">Drag here to pin</li>
           </Show>
           <For each={resolvedPinnedItems()}>
@@ -57,7 +57,7 @@ export function SidebarPinnedGroup() {
                       "sidebar-pinned-item-drag-over": dragOverPinnedKey() === key(),
                     },
                   ]}
-                  style={`--sidebar-pinned-drag-x: ${dragOffset(key()).x}px; --sidebar-pinned-drag-y: ${dragOffset(key()).y}px;`}
+                  style={`--sidebar-drag-x: ${dragOffset(key()).x}px; --sidebar-drag-y: ${dragOffset(key()).y}px;`}
                   data-pinned-key={key()}
                   draggable="true"
                   onDragStart={(event) => {
