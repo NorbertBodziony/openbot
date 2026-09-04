@@ -26,6 +26,13 @@ function segment(value: string): string {
   return encodeURIComponent(value);
 }
 
+// The remote-screen namespace, exposed on the group below as `prefix` because it is rewritten as a
+// *string inside a served body*, not built as a path: `remote-viewer-proxy.ts` prefixes every
+// occurrence in the viewer's HTML and JavaScript with its own server-scoped base, so a rename here
+// that the proxy did not follow would leave those assets pointing outside the proxy and 404. The
+// group's entries are built from it so there is one source, not a fifth copy.
+const REMOTE_SCREEN = "/v1/remote-screen";
+
 export const TEAM_API_ROUTES = {
   compatibility: "/v1/compatibility",
   identity: "/v1/identity",
@@ -84,15 +91,16 @@ export const TEAM_API_ROUTES = {
     visible: "/v1/browser/visible",
   },
   remoteScreen: {
-    capabilities: "/v1/remote-screen/capabilities",
-    sessions: "/v1/remote-screen/sessions",
-    session: (sessionId: string) => `/v1/remote-screen/sessions/${segment(sessionId)}`,
-    display: "/v1/remote-screen/display",
+    prefix: REMOTE_SCREEN,
+    capabilities: `${REMOTE_SCREEN}/capabilities`,
+    sessions: `${REMOTE_SCREEN}/sessions`,
+    session: (sessionId: string) => `${REMOTE_SCREEN}/sessions/${segment(sessionId)}`,
+    display: `${REMOTE_SCREEN}/display`,
     // Served by `remote-screen-gateway.ts`, which the Team API router delegates the whole
     // `sessions/:id/{viewer,authorize,viewer-state,moonlight}` family to. It is here because the
     // client and the gateway's own `viewerUrl` both build it, and it answers 404 for a session that
     // does not exist - so it is not part of the route round-trip case.
-    viewer: (sessionId: string) => `/v1/remote-screen/sessions/${segment(sessionId)}/viewer`,
+    viewer: (sessionId: string) => `${REMOTE_SCREEN}/sessions/${segment(sessionId)}/viewer`,
   },
   sidebarLayout: {
     state: "/v1/sidebar-layout",

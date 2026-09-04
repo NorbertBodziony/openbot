@@ -443,7 +443,9 @@ const ROUTE_METHODS: Record<string, string> = {
 
 // Two entries this router deliberately never answers: the WebSocket upgrade path, and the viewer
 // family `remote-screen-gateway.ts` owns, which answers 404 for a session that does not exist.
-const ROUTES_NOT_SERVED_OVER_HTTP = new Set(["remoteDesktopUpgrade", "remoteScreen.viewer"]);
+// `remoteScreen.prefix` is a namespace, not an endpoint: nothing is served at it, and it exists so
+// `remote-viewer-proxy.ts` rewrites the same string the group's routes are built from.
+const ROUTES_NOT_SERVED_OVER_HTTP = new Set(["remoteDesktopUpgrade", "remoteScreen.viewer", "remoteScreen.prefix"]);
 
 // Reaching the router is only half of what a route needs. `#json` encodes every JSON body through
 // the negotiated protocol's frozen adapter, and protocol v3 delegates all but agent duplication to
