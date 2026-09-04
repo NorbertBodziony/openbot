@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { createServer, type Server, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createRequire } from "node:module";
 import { basename, dirname, join } from "node:path";
 import { isAvatarMimeType } from "@openbot/contracts/avatar-images";
@@ -60,6 +60,7 @@ import {
 import { RemoteScreenError } from "./remote-screen-gateway";
 import type { TeamApiOptions, TeamApiSidebarLayout } from "./team-api/dependencies";
 import { HttpError } from "./team-api/http-error";
+import type { RouteOutcome, TeamApiRequestContext } from "./team-api/request-context";
 import {
   approvalDecision,
   bearerToken,
@@ -376,7 +377,7 @@ export class TeamApiServer {
     this.#publishDirectTyping(senderMemberId, recipientMemberId, typing);
   }
 
-  async #handle(request: import("node:http").IncomingMessage, response: ServerResponse) {
+  async #handle(request: IncomingMessage, response: ServerResponse) {
     const method = request.method ?? "GET";
     // The route is recorded before the target is parsed, because `#json` cannot answer without it and
     // this is the first thing below that can throw. Node's HTTP parser accepts request targets the
@@ -483,10 +484,11 @@ export class TeamApiServer {
 
       const token = bearerToken(request.headers.authorization);
       const authenticated = token ? this.#options.store.authenticateSession(token) : null;
-      const member = authenticated?.member ?? null;
-      if (!member || !token || !authenticated) {
+      if (!authenticated || !token) {
         return this.#json(response, 401, { error: "Authentication required." });
       }
+      const context = this.#requestContext(request, response, url, token, authenticated);
+      const member = context.member;
 
       if (method === "POST" && url.pathname === TEAM_API_ROUTES.auth.logout) {
         await this.#options.store.logout(token);
@@ -1151,7 +1153,7 @@ export class TeamApiServer {
     }
   }
 
-  #checkRate(request: import("node:http").IncomingMessage, username: string): void {
+  #checkRate(request: IncomingMessage, username: string): void {
     const key = `${request.socket.remoteAddress ?? "local"}:${username.toLowerCase()}`;
     const now = this.#now();
     this.#pruneRateLimits(now, this.#rateLimits.size >= this.#rateLimitCapacity);
@@ -1559,7 +1561,7 @@ export class TeamApiServer {
     return recipient;
   }
 
-  #json(response: ServerResponse, status: number, value: object | null): void {
+  #json(response: ServerResponse, status: number, value: object | null): RouteOutcome {
     const route = this.#responseRoutes.get(response);
     if (!route) throw new Error("Team API response route is unavailable.");
     const options = { preserveSemanticTags: supportsTeamSemanticTags(route.capabilities) };
@@ -1574,6 +1576,7 @@ export class TeamApiServer {
         : encodeTeamProtocolV1CurrentHttpResponse(route.method, route.path, status, value, options);
     response.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
     response.end(`${body}\n`);
+    return "handled";
   }
 
   #protocolSupport(): TeamProtocolSupportV1 {
@@ -1584,7 +1587,7 @@ export class TeamApiServer {
     };
   }
 
-  #protocolIssue(request: import("node:http").IncomingMessage): TeamProtocolIssue | null {
+  #protocolIssue(request: IncomingMessage): TeamProtocolIssue | null {
     if (!this.#options.appVersion) return null;
     const rawProtocol = firstHeaderValue(request.headers[TEAM_PROTOCOL_VERSION_HEADER.toLowerCase()]);
     const clientAppVersion = firstHeaderValue(request.headers[TEAM_APP_VERSION_HEADER.toLowerCase()]);
@@ -1627,9 +1630,35 @@ export class TeamApiServer {
     };
   }
 
-  #empty(response: ServerResponse, status: number): void {
+  #empty(response: ServerResponse, status: number): RouteOutcome {
     response.writeHead(status);
     response.end();
+    return "handled";
+  }
+
+  // The context is assembled here rather than in `request-context.ts` because `json` and `empty`
+  // have to close over the per-response route record, which only this class holds.
+  #requestContext(
+    request: IncomingMessage,
+    response: ServerResponse,
+    url: URL,
+    token: string,
+    authenticated: { member: TeamMemberSummary; sessionId: string; sessionExpiresAt: string },
+  ): TeamApiRequestContext {
+    return {
+      request,
+      response,
+      method: request.method ?? "GET",
+      url,
+      protocol: requestProtocol(request),
+      capabilities: requestCapabilities(request),
+      member: authenticated.member,
+      token,
+      sessionId: authenticated.sessionId,
+      sessionExpiresAt: authenticated.sessionExpiresAt,
+      json: (status, value) => this.#json(response, status, value),
+      empty: (status) => this.#empty(response, status),
+    };
   }
 }
 
