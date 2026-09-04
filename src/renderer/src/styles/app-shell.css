@@ -2098,6 +2098,7 @@ textarea {
 }
 
 .bot-list[data-sidebar-dragging="agent"] .sidebar-agent-item {
+  transition: none;
   will-change: transform;
 }
 
@@ -2155,26 +2156,12 @@ textarea {
 }
 
 .sidebar-pinned-group.sidebar-pinned-group-empty-target {
-  --sidebar-empty-pin-enter-duration: calc(var(--openbot-duration-normal) + var(--openbot-duration-fast));
-
   display: grid;
   z-index: 4;
   width: 100%;
   grid-template-rows: 1fr;
   padding: 0;
   opacity: 1;
-  transform: translateY(0) scale(1);
-  transform-origin: top center;
-  transition:
-    grid-template-rows var(--sidebar-empty-pin-enter-duration) var(--openbot-ease-out),
-    opacity var(--sidebar-empty-pin-enter-duration) ease-out,
-    transform var(--sidebar-empty-pin-enter-duration) var(--openbot-ease-out);
-
-  @starting-style {
-    grid-template-rows: 0fr;
-    opacity: 0;
-    transform: translateY(-6px) scale(0.98);
-  }
 }
 
 .sidebar-pinned-group-empty-target .sidebar-pinned-list {
