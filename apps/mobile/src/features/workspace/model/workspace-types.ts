@@ -1,5 +1,6 @@
 import type { BotAvatarHue, ConversationSnapshot, CreateBotInput, UpdateBotInput } from "@openbot/contracts/ipc";
 import type { RemoteRecoveryStatus } from "@openbot/team-client";
+import type { MobileBotActivities } from "./bot-activity";
 
 export type MobileServerKind = "local" | "remote";
 export type MobileServerState = "connecting" | "online" | "offline";
@@ -50,6 +51,7 @@ export interface MobileWorkspaceContextValue {
   pinnedBotIds: string[];
   unreadBotIds: string[];
   conversations: Record<string, ConversationSnapshot>;
+  activityByServer: Record<string, MobileBotActivities>;
   selectServer: (serverId: string) => void;
   leaveServer: (serverId: string) => Promise<void>;
   refreshServers: () => Promise<void>;

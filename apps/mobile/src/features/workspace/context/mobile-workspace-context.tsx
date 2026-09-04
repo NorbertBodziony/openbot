@@ -39,6 +39,7 @@ import {
   RemoteTeamTransport,
   type RemoteTeamTransportRef,
 } from "@/features/workspace/components/remote-team-transport";
+import { type MobileBotActivities, reduceBotActivity } from "@/features/workspace/model/bot-activity";
 import { trustedHostKeys } from "@/features/workspace/model/trusted-host-keys";
 import {
   MAX_PINNED_BOTS,
@@ -114,6 +115,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   const [activeServerId, setActiveServerId] = useState<string | null>(session.host?.hostId ?? null);
   const activeServerPublicKey = servers.find((server) => server.id === activeServerId)?.publicKey;
   const [conversations, setConversations] = useState<Record<string, ConversationSnapshot>>({});
+  const [activityByServer, setActivityByServer] = useState<Record<string, MobileBotActivities>>({});
   const conversationsRef = useRef(conversations);
   conversationsRef.current = conversations;
   const [hiddenBotIds, setHiddenBotIds] = useState<string[]>([]);
@@ -189,6 +191,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
   const loadServer = useCallback(
     async (server: MobileServer) => {
       const currentGeneration = ++loadGeneration.current;
+      setActivityByServer((current) => ({ ...current, [server.id]: {} }));
       const client = transport.current;
       if (!client) throw new Error("The mobile transport is not ready.");
       await client.connect(server.id, server.publicKey);
@@ -300,6 +303,16 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
     (serverId: string, event: AgentEvent | TeamRealtimeEvent) => {
       if (removedServers.current.has(serverId)) return;
       if (
+        event.type !== "conversation" ||
+        event.snapshot.revision >= (conversationsRef.current[event.snapshot.botId]?.revision ?? 0)
+      ) {
+        setActivityByServer((current) => {
+          const previous = current[serverId] ?? {};
+          const next = reduceBotActivity(previous, event);
+          return next === previous ? current : { ...current, [serverId]: next };
+        });
+      }
+      if (
         event.type === "conversation" ||
         event.type === "conversation-invalidated" ||
         event.type === "turn-completed"
@@ -401,6 +414,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
       pinnedBotIds,
       unreadBotIds,
       conversations,
+      activityByServer,
       selectServer: setActiveServerId,
       leaveServer: async (serverId) => {
         const server = serversRef.current.find((candidate) => candidate.id === serverId);
@@ -418,6 +432,11 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
         }
         setServers((current) => current.filter((candidate) => candidate.id !== serverId));
         setBots((current) => current.filter((bot) => bot.serverId !== serverId));
+        setActivityByServer((current) => {
+          const next = { ...current };
+          delete next[serverId];
+          return next;
+        });
         setConversations((current) =>
           Object.fromEntries(Object.entries(current).filter(([id]) => !removedIds.has(id))),
         );
@@ -509,6 +528,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
     };
   }, [
     activeServerId,
+    activityByServer,
     bots,
     conversations,
     directory,
@@ -678,6 +698,7 @@ function decodeConversationMessage(value: unknown): ConversationMessage {
     createdAt: value.createdAt,
     status: value.status,
     ...(isString(value.turnId) ? { turnId: value.turnId } : {}),
+    ...(isString(value.itemType) ? { itemType: value.itemType } : {}),
     ...(isConversationSource(value.source) ? { source: value.source } : {}),
   };
 }

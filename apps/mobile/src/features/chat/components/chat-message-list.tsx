@@ -11,17 +11,14 @@ import {
   type ViewStyle,
 } from "react-native";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
-
-import { getBloubAvatarColor } from "@/features/bots/components/bloub-avatar";
+import { BloubAvatar, getBloubAvatarColor } from "@/features/bots/components/bloub-avatar";
+import { ChatMarkdown } from "@/features/chat/components/chat-markdown";
+import { ChatThinking } from "@/features/chat/components/chat-thinking";
+import type { ChatMessage } from "@/features/chat/model/chat-messages";
+import { useBotActivity } from "@/features/workspace/components/use-bot-activity";
 import { useConnectionAppearance } from "@/features/workspace/components/use-connection-appearance";
 import type { MobileBot } from "@/features/workspace/context/mobile-workspace-context";
 import { BloubLoader } from "@/shared/components/bloub-loader";
-
-export interface ChatMessage {
-  id: string;
-  author: "bot" | "user";
-  body: string;
-}
 
 const STARTER_OPTIONS = [
   { id: "plan", label: "Plan the next steps", detail: "Turn a goal into a clear plan" },
@@ -70,6 +67,13 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
   ref,
 ) {
   const isFocused = useIsFocused();
+  const activity = useBotActivity(bot.id);
+  const activityLabel =
+    activity?.phase === "waiting"
+      ? "Waiting for your input on desktop"
+      : activity?.phase === "responding"
+        ? "Responding…"
+        : activity?.detail || "Thinking…";
   const userBubbleColor = getBloubAvatarColor(bot.avatarSeed, bot.avatarHue);
   const appearance = useConnectionAppearance(!canSend);
   const red = Number.parseInt(userBubbleColor.slice(1, 3), 16);
@@ -131,17 +135,38 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
         </View>
       ) : null}
 
-      {messages.map((message) => (
-        <Animated.View
-          key={message.id}
-          className={`max-w-[88%] rounded-[30px] px-4 py-3 ${message.author === "user" ? "self-end" : "self-start bg-control/60"}`}
-          style={[{ borderCurve: "circular" }, message.author === "user" ? userBubbleStyle : undefined]}
+      {messages.map((message) =>
+        message.kind === "thinking" ? (
+          <ChatThinking
+            key={message.id}
+            steps={message.steps}
+            working={Boolean(activity && activity.turnId === message.turnId)}
+          />
+        ) : (
+          <Animated.View
+            key={message.id}
+            className={`max-w-[88%] rounded-[30px] px-4 py-3 ${message.author === "user" ? "self-end" : "self-start bg-control/60"}`}
+            style={[{ borderCurve: "circular" }, message.author === "user" ? userBubbleStyle : undefined]}
+          >
+            <ChatMarkdown body={message.body} color={message.author === "user" ? "#0a0a0c" : foreground} />
+          </Animated.View>
+        ),
+      )}
+
+      {activity ? (
+        <View
+          className="flex-row items-center gap-2 px-1 py-2"
+          accessible
+          accessibilityLiveRegion="polite"
+          accessibilityRole="text"
+          accessibilityLabel={`${bot.name}: ${activityLabel}`}
         >
-          <Typography.Paragraph selectable style={{ color: message.author === "user" ? "#0a0a0c" : foreground }}>
-            {message.body}
+          <BloubAvatar botId={bot.id} hue={bot.avatarHue} seed={bot.avatarSeed} size={36} />
+          <Typography.Paragraph type="body-sm" className="flex-1 text-text-secondary">
+            {activityLabel}
           </Typography.Paragraph>
-        </Animated.View>
-      ))}
+        </View>
+      ) : null}
 
       {showStarter ? (
         <View

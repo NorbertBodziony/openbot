@@ -18,8 +18,10 @@ import { scheduleOnRN } from "react-native-worklets";
 import { useBotPinTransition } from "@/features/bots/components/bot-pin-transition";
 import { ChatComposer } from "@/features/chat/components/chat-composer";
 import { ChatHeader } from "@/features/chat/components/chat-header";
-import { type ChatMessage, ChatMessageList } from "@/features/chat/components/chat-message-list";
+import { ChatMessageList } from "@/features/chat/components/chat-message-list";
+import { projectChatMessages } from "@/features/chat/model/chat-messages";
 import { ConnectionStatus } from "@/features/workspace/components/connection-status";
+import { useBotActivity } from "@/features/workspace/components/use-bot-activity";
 import type { MobileBot } from "@/features/workspace/context/mobile-workspace-context";
 import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { isIOS } from "@/shared/lib/platform";
@@ -60,17 +62,8 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
   const historyRequestRef = useRef(0);
   const { conversations, loadConversation, markBotRead, servers, sendMessage: sendTeamMessage } = useMobileWorkspace();
   const conversation = conversations[bot.id];
-  const messages = useMemo<ChatMessage[]>(
-    () =>
-      (conversation?.messages ?? [])
-        .filter((message) => message.text.trim().length > 0 && message.author !== "system")
-        .map((message) => ({
-          id: message.id,
-          author: message.author === "user" ? "user" : "bot",
-          body: message.text,
-        })),
-    [conversation],
-  );
+  const activity = useBotActivity(bot.id);
+  const messages = useMemo(() => projectChatMessages(conversation?.messages ?? []), [conversation]);
   const liquidGlassAvailable = isLiquidGlassAvailable();
   const latestMessage = conversation?.messages.findLast(
     (message) => message.author !== "system" && message.text.trim().length > 0,
@@ -191,7 +184,7 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
             messages={messages}
             muted={muted}
             raised={raised}
-            showStarter={showStarter && serverOnline && conversation?.messages.length === 0}
+            showStarter={showStarter && serverOnline && !activity && conversation?.messages.length === 0}
             topInset={insets.top}
             onContentSizeChange={handleContentSizeChange}
             onScroll={handleScroll}
