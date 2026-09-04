@@ -2,6 +2,7 @@
 include:
   - "src/backend/openbot-database-schema.ts"
   - "src/backend/openbot-database.ts"
+  - "src/backend/database/**"
   - "apps/auth-api/migrations/**"
   - "packages/contracts/**"
 ---
@@ -10,8 +11,9 @@ include:
 
 These files carry data the repository cannot re-derive: the user's SQLite database
 (`src/backend/openbot-database-schema.ts` holds every released schema and migration,
-`openbot-database.ts` is the boundary), the account service's D1 database, and every wire protocol
-already in the field. Findings here are P0 or P1 by default.
+`openbot-database.ts` and the controllers under `src/backend/database/` are the boundary), the
+account service's D1 database, and every wire protocol already in the field. Findings here are P0 or
+P1 by default.
 
 Report a finding when the diff:
 

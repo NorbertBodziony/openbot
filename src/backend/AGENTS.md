@@ -1,8 +1,8 @@
 # `src/backend`
 
-The stores, the SQLite database, the provider clients and `agent-service.ts`. The user's SQLite is
-the source of truth here, not a cache of something remote — which is what makes the first section
-below non-negotiable.
+The stores, the SQLite database (`openbot-database.ts` and the controllers under `database/`), the
+provider clients and `agent-service.ts`. The user's SQLite is the source of truth here, not a cache
+of something remote — which is what makes the first section below non-negotiable.
 
 ## Database migrations
 
@@ -63,5 +63,25 @@ wrong.
 
 ## Size
 
-`agent-service.ts` is the largest hand-written file in the repository by a wide margin. Do not add a
-new concern to it; extract one when a change gives you the excuse.
+`mailbox-store.ts` is the largest file in this directory, at about 1,700 lines.
+
+The two that used to be larger are both worth copying. `agent-service.ts` was split into eight
+controllers; `openbot-database.ts` was split into nine under `database/`, leaving a ~300-line facade
+that had to keep its class name, instance identity, constructor signature and public surface because
+callers reach past it into `connection` and `dispatch`. The shape in both: one class per file,
+kebab-case, `<Name>Options` + `<Name>`, `readonly #` fields, a constructor that only assigns, and a
+doc comment saying what the class **owns** and that it never imports the facade. No barrel file.
+
+Two rules those controllers depend on and a reader cannot infer. They hold the core object and read
+`.connection` at each use — a cached handle survives `initialize()` and then silently addresses a
+closed database after `close()`. And a projection controller does not open a transaction of its own.
+Four places do, and each is load-bearing: `dispatch` and `deleteEventsAndReceipt` open one only if
+they find none open, which is what lets a projector nest another dispatch inside the caller's, and
+`ThreadReplay.rebuildThreadProjection` and the facade's `persistConversationAndMailbox` open one
+unconditionally, which is what makes the dispatch inside each of them skip its own. Open an
+unconditional one anywhere else and a caller already in a transaction gets a nested `BEGIN` that
+SQLite rejects; remove one of these four and the replay or the mailbox write silently stops being
+atomic.
+
+Do not add a new concern to the biggest file you can see; extract one when a change gives you the
+excuse.
