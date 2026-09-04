@@ -56,10 +56,10 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
   ]);
   const [draft, setDraft] = useState("");
   const [showStarter, setShowStarter] = useState(true);
+  const [historyLoadFailed, setHistoryLoadFailed] = useState(false);
+  const historyRequestRef = useRef(0);
   const { conversations, loadConversation, markBotRead, servers, sendMessage: sendTeamMessage } = useMobileWorkspace();
   const conversation = conversations[bot.id];
-  const conversationRef = useRef(conversation);
-  conversationRef.current = conversation;
   const messages = useMemo<ChatMessage[]>(
     () =>
       (conversation?.messages ?? [])
@@ -91,21 +91,25 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
   }, [isFocused, appActive, atLatest, serverOnline, readBoundary, readBoundaryStatus, bot.id, markBotRead]);
 
   useEffect(() => {
-    let active = true;
-    const revisionBeforeLoad = conversationRef.current?.revision ?? null;
     setAtLatest(false);
     initialScrollBotIdRef.current = bot.id;
-    void loadConversation(bot.id)
-      .then((snapshot) => {
-        if (active && (revisionBeforeLoad === null || snapshot.revision > revisionBeforeLoad)) {
-          initialScrollBotIdRef.current = bot.id;
-        }
-      })
-      .catch(() => undefined);
+  }, [bot.id]);
+
+  const fetchHistory = useCallback(() => {
+    if (!serverOnline) return;
+    const requestId = ++historyRequestRef.current;
+    setHistoryLoadFailed(false);
+    void loadConversation(bot.id).catch(() => {
+      if (historyRequestRef.current === requestId) setHistoryLoadFailed(true);
+    });
+  }, [bot.id, loadConversation, serverOnline]);
+
+  useEffect(() => {
+    fetchHistory();
     return () => {
-      active = false;
+      historyRequestRef.current += 1;
     };
-  }, [bot.id, loadConversation]);
+  }, [fetchHistory]);
 
   const handleContentSizeChange = useCallback(() => {
     if (!conversation || (initialScrollBotIdRef.current !== bot.id && !atLatest)) return;
@@ -170,17 +174,19 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
             bot={bot}
             bottomInset={composerHeight}
             canSend={serverOnline}
+            historyState={conversation ? "ready" : !serverOnline ? "waiting" : historyLoadFailed ? "error" : "loading"}
             fieldBackground={fieldBackground}
             foreground={foreground}
             messages={messages}
             muted={muted}
             raised={raised}
-            showStarter={showStarter && messages.length === 0}
+            showStarter={showStarter && serverOnline && conversation?.messages.length === 0}
             topInset={insets.top}
             onContentSizeChange={handleContentSizeChange}
             onScroll={handleScroll}
             onDismissStarter={() => setShowStarter(false)}
             onSelectStarter={sendMessage}
+            onRetryHistory={fetchHistory}
           />
           <View
             className="absolute inset-x-0 bottom-0"

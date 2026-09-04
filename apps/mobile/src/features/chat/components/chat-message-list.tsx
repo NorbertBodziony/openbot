@@ -1,4 +1,4 @@
-import { Typography } from "heroui-native";
+import { Button, Typography } from "heroui-native";
 import { X } from "lucide-react-native";
 import { forwardRef } from "react";
 import {
@@ -33,6 +33,7 @@ interface ChatMessageListProps {
   canSend: boolean;
   fieldBackground: ViewStyle["backgroundColor"];
   foreground: ViewStyle["backgroundColor"];
+  historyState: "ready" | "waiting" | "loading" | "error";
   messages: ChatMessage[];
   muted: ViewStyle["backgroundColor"];
   raised: ViewStyle["backgroundColor"];
@@ -42,6 +43,7 @@ interface ChatMessageListProps {
   onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   onDismissStarter: () => void;
   onSelectStarter: (value: string) => void;
+  onRetryHistory: () => void;
 }
 
 export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(function ChatMessageList(
@@ -51,6 +53,7 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
     canSend,
     fieldBackground,
     foreground,
+    historyState,
     messages,
     muted,
     raised,
@@ -60,6 +63,7 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
     onScroll,
     onDismissStarter,
     onSelectStarter,
+    onRetryHistory,
   },
   ref,
 ) {
@@ -99,9 +103,27 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
       scrollEventThrottle={16}
       showsVerticalScrollIndicator={false}
     >
-      <Typography.Paragraph type="body-xs" align="center" className="pb-1 text-text-dim">
-        Today
-      </Typography.Paragraph>
+      {historyState !== "ready" ? (
+        <View className="flex-1 items-center justify-center gap-2">
+          <Typography.Paragraph align="center" className="text-text-secondary">
+            {historyState === "waiting"
+              ? "Waiting for connection"
+              : historyState === "error"
+                ? "Could not load chat history"
+                : "Loading chat history…"}
+          </Typography.Paragraph>
+          {historyState === "waiting" ? (
+            <Typography.Paragraph type="body-xs" align="center" className="text-text-dim">
+              Your chat history will load when the server reconnects.
+            </Typography.Paragraph>
+          ) : null}
+          {historyState === "error" ? (
+            <Button variant="tertiary" onPress={onRetryHistory}>
+              <Button.Label>Try again</Button.Label>
+            </Button>
+          ) : null}
+        </View>
+      ) : null}
 
       {messages.map((message) => (
         <Animated.View
