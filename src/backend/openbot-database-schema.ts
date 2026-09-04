@@ -274,9 +274,43 @@ const BASELINE_V8_SCHEMA_SQL = `
   );
 `;
 
-// v9 through v11 change runtime state but not the schema, so the fresh schema still matches the v8 baseline.
-// Keep this separate once a later migration changes tables or indexes.
-const LATEST_SCHEMA_SQL = BASELINE_V8_SCHEMA_SQL;
+// v12 rewrites `projection_reactions`, so the fresh schema is no longer the v8 baseline. It is derived
+// from that baseline by substituting the one table that changed rather than by copying all of it, so a
+// table added to the baseline still reaches new installs from a single declaration.
+// `openbot-database-schema-parity.test.ts` proves the result matches what the migrations produce.
+const BASELINE_REACTIONS_TABLE_SQL = `  CREATE TABLE IF NOT EXISTS projection_reactions (
+    agent_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    emoji TEXT NOT NULL,
+    actor_kind TEXT NOT NULL CHECK(actor_kind IN ('user', 'bot')),
+    actor_bot_id TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_event_sequence INTEGER NOT NULL,
+    PRIMARY KEY(agent_id, message_id, actor_kind, actor_bot_id)
+  );`;
+
+const V12_REACTIONS_TABLE_SQL = `  CREATE TABLE IF NOT EXISTS projection_reactions (
+    agent_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    emoji TEXT NOT NULL,
+    actor_kind TEXT NOT NULL CHECK(actor_kind IN ('user', 'agent')),
+    actor_agent_id TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_event_sequence INTEGER NOT NULL,
+    PRIMARY KEY(agent_id, message_id, actor_kind, actor_agent_id)
+  );`;
+
+const LATEST_SCHEMA_SQL = substituteOnce(BASELINE_V8_SCHEMA_SQL, BASELINE_REACTIONS_TABLE_SQL, V12_REACTIONS_TABLE_SQL);
+
+// Silence here would ship new installs a table the migrations never produce, so an edit to the baseline
+// that moves this declaration out from under the substitution has to be loud.
+function substituteOnce(source: string, search: string, replacement: string): string {
+  const index = source.indexOf(search);
+  if (index === -1 || source.indexOf(search, index + search.length) !== -1) {
+    throw new Error("The latest OpenBot schema could not be derived from the v8 baseline.");
+  }
+  return `${source.slice(0, index)}${replacement}${source.slice(index + search.length)}`;
+}
 
 export interface OpenBotMigrationOptions {
   appliedAt?: string;
@@ -309,6 +343,20 @@ const MIGRATIONS: readonly OpenBotMigration[] = [
   },
   {
     version: 11,
+    up: refreshProviderSessionsForDynamicTools,
+  },
+  {
+    version: 12,
+    up: migrateReactionsForAgentActors,
+  },
+  {
+    version: 13,
+    disableForeignKeys: true,
+    vacuumAfterCommit: true,
+    up: rewriteGeneratedAgentIds,
+  },
+  {
+    version: 14,
     up: refreshProviderSessionsForDynamicTools,
   },
 ];
@@ -557,6 +605,137 @@ function migrateProviderSessionsForGrok(db: DatabaseSync): void {
     CREATE INDEX provider_sessions_thread
       ON projection_provider_sessions(thread_id, provider, state);
   `);
+}
+
+// The actor column is part of the primary key, so the table is rebuilt rather than altered. There are no
+// indexes and no foreign keys in either direction, so foreign keys stay on: switching them off here could
+// only hide a real violation raised by the same transaction.
+function migrateReactionsForAgentActors(db: DatabaseSync): void {
+  const columns = db.prepare("PRAGMA table_info(projection_reactions)").all();
+  if (columns.some((column) => isDynamicRecord(column) && column.name === "actor_agent_id")) return;
+
+  db.exec(`
+    CREATE TABLE projection_reactions_v12 (
+      agent_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      emoji TEXT NOT NULL,
+      actor_kind TEXT NOT NULL CHECK(actor_kind IN ('user', 'agent')),
+      actor_agent_id TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_event_sequence INTEGER NOT NULL,
+      PRIMARY KEY(agent_id, message_id, actor_kind, actor_agent_id)
+    );
+    INSERT INTO projection_reactions_v12 (
+      agent_id, message_id, emoji, actor_kind, actor_agent_id, updated_at, last_event_sequence
+    )
+    SELECT
+      agent_id, message_id, emoji,
+      CASE actor_kind WHEN 'bot' THEN 'agent' ELSE actor_kind END,
+      actor_bot_id, updated_at, last_event_sequence
+    FROM projection_reactions;
+    DROP TABLE projection_reactions;
+    ALTER TABLE projection_reactions_v12 RENAME TO projection_reactions;
+  `);
+}
+
+interface AgentIdRename {
+  readonly oldId: string;
+  readonly newId: string;
+  readonly workspacePath: string | null;
+}
+
+interface TextColumnStatement {
+  readonly table: string;
+  readonly column: string;
+  readonly substitute: ReturnType<DatabaseSync["prepare"]>;
+}
+
+// Every persisted `bot-<uuid>` becomes `agent-<uuid>`, in id columns, in derived thread ids, in
+// orchestration command and aggregate ids, and inside stored JSON and message text - a historical message
+// quoting an id or a workspace path is meant to point at where that agent lives now.
+//
+// Only id *values* are rewritten. Key spellings stay exactly as the release that wrote them spelled them,
+// because `orchestration_events` is replayed to rebuild every projection: a key renamed in a projection
+// blob would be undone by the next replay, and a key renamed in the event log would rewrite history that a
+// database restored from the user's own file copy still carries either way. Readers accept both spellings
+// instead, which is the only thing that also covers that restored database.
+function rewriteGeneratedAgentIds(db: DatabaseSync): void {
+  const renames = readAgentIdRenames(db);
+  if (renames.length === 0) return;
+
+  const statements = textColumnStatements(db);
+  for (const root of legacyWorkspaceRoots(renames)) substitute(statements, root.from, root.to);
+  for (const rename of renames) substitute(statements, rename.oldId, rename.newId);
+}
+
+function readAgentIdRenames(db: DatabaseSync): readonly AgentIdRename[] {
+  const rows = db
+    .prepare(
+      `SELECT agent_id, json_extract(agent_json, '$.workspacePath') AS workspace_path
+       FROM projection_agents
+       WHERE agent_id LIKE 'bot-%'`,
+    )
+    .all();
+  const renames: AgentIdRename[] = [];
+  for (const row of rows) {
+    if (!isDynamicRecord(row) || !isString(row.agent_id)) continue;
+    renames.push({
+      oldId: row.agent_id,
+      newId: `agent-${row.agent_id.slice("bot-".length)}`,
+      workspacePath: isString(row.workspace_path) ? row.workspace_path : null,
+    });
+  }
+  return renames;
+}
+
+// The workspace root moves from `OpenBot/Bots` to `OpenBot/Agents`; the id in the leaf is rewritten by the
+// id substitution that follows. The root is only ever substituted with its full absolute prefix attached,
+// derived from a path this database actually stored, so a user whose own checkout sits at
+// `~/Projects/OpenBot/Bots` does not get their files silently repointed.
+function legacyWorkspaceRoots(renames: readonly AgentIdRename[]): readonly { from: string; to: string }[] {
+  const roots = new Map<string, { from: string; to: string }>();
+  for (const rename of renames) {
+    const suffix = `/OpenBot/Bots/${rename.oldId}`;
+    if (rename.workspacePath === null || !rename.workspacePath.endsWith(suffix)) continue;
+    const from = `${rename.workspacePath.slice(0, -suffix.length)}/OpenBot/Bots/`;
+    roots.set(from, { from, to: `${from.slice(0, -"Bots/".length)}Agents/` });
+  }
+  return [...roots.values()];
+}
+
+function textColumnStatements(db: DatabaseSync): readonly TextColumnStatement[] {
+  const statements: TextColumnStatement[] = [];
+  for (const table of db
+    .prepare(
+      `SELECT name FROM sqlite_master
+       WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != 'schema_migrations'`,
+    )
+    .all()) {
+    if (!isDynamicRecord(table) || !isString(table.name)) continue;
+    for (const column of db.prepare(`PRAGMA table_info(${quoteSqlIdentifier(table.name)})`).all()) {
+      if (!isDynamicRecord(column) || !isString(column.name) || !isString(column.type)) continue;
+      if (column.type.toUpperCase() !== "TEXT") continue;
+      statements.push({
+        table: table.name,
+        column: column.name,
+        substitute: db.prepare(
+          `UPDATE ${quoteSqlIdentifier(table.name)}
+           SET ${quoteSqlIdentifier(column.name)} = replace(${quoteSqlIdentifier(column.name)}, ?, ?)
+           WHERE ${quoteSqlIdentifier(column.name)} LIKE ? ESCAPE '\\'`,
+        ),
+      });
+    }
+  }
+  return statements;
+}
+
+function substitute(statements: readonly TextColumnStatement[], search: string, replacement: string): void {
+  const pattern = `%${search.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")}%`;
+  for (const statement of statements) statement.substitute.run(search, replacement, pattern);
+}
+
+function quoteSqlIdentifier(identifier: string): string {
+  return `"${identifier.replaceAll('"', '""')}"`;
 }
 
 interface SnapshotEventRow {

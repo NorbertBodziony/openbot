@@ -311,9 +311,13 @@ function summaryValue(value: DynamicRecord | null): StoredThreadSummary | null {
 }
 
 function conversationSnapshotValue(value: DynamicRecord | null): ConversationSnapshot | null {
+  // Snapshots written before the bot-to-agent rename spell the id `botId`, and a database restored from
+  // the user's own file copy still carries them however far the migrations have run. Rejecting one here
+  // makes `rebuildThreadProjection` throw and the conversation unrecoverable, so both spellings are read.
+  const agentId = value?.agentId ?? value?.botId;
   if (
     !value ||
-    !isString(value.botId) ||
+    !isString(agentId) ||
     (!isString(value.threadId) && value.threadId !== null) ||
     (!isString(value.activeTurnId) && value.activeTurnId !== null) ||
     !isNumber(value.revision) ||
@@ -324,7 +328,7 @@ function conversationSnapshotValue(value: DynamicRecord | null): ConversationSna
   const messages = value.messages.filter(isConversationMessage);
   if (messages.length !== value.messages.length) return null;
   return {
-    botId: value.botId,
+    botId: agentId,
     threadId: value.threadId,
     activeTurnId: value.activeTurnId,
     revision: value.revision,

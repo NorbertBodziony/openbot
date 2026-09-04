@@ -150,10 +150,13 @@ function validateActiveHostedSiteConversationEvent(event: ActiveHostedSiteConver
 }
 
 function activeHostedSiteConversationEventValue(value: unknown): ActiveHostedSiteConversationEvent | null {
+  // Events written before the bot-to-agent rename spell the id `botId`; a rejected event is a publication
+  // that never reports back in the conversation, so both spellings are read. See `thread-replay.ts`.
+  const agentId = isDynamicRecord(value) ? (value.agentId ?? value.botId) : null;
   if (
     !isDynamicRecord(value) ||
-    !isString(value.botId) ||
-    !value.botId ||
+    !isString(agentId) ||
+    !agentId ||
     !isString(value.threadId) ||
     !value.threadId ||
     !isString(value.turnId) ||
@@ -182,7 +185,7 @@ function activeHostedSiteConversationEventValue(value: unknown): ActiveHostedSit
   });
   if (marker?.status !== "running") return null;
   return {
-    botId: value.botId,
+    botId: agentId,
     threadId: value.threadId,
     turnId: value.turnId,
     createdAt: value.createdAt,
@@ -191,10 +194,12 @@ function activeHostedSiteConversationEventValue(value: unknown): ActiveHostedSit
 }
 
 function pendingHostedSiteTerminalEventValue(value: unknown): PendingHostedSiteTerminalEvent | null {
+  // Both spellings, for the same reason as the active event above.
+  const agentId = isDynamicRecord(value) ? (value.agentId ?? value.botId) : null;
   if (
     !isDynamicRecord(value) ||
-    !isString(value.botId) ||
-    !value.botId ||
+    !isString(agentId) ||
+    !agentId ||
     !isString(value.threadId) ||
     !value.threadId ||
     !isString(value.turnId) ||
@@ -221,9 +226,9 @@ function pendingHostedSiteTerminalEventValue(value: unknown): PendingHostedSiteT
     itemType: `hosted-site-event:${value.action}:${value.status}:${value.operationId}`,
   });
   if (!marker || marker.status === "running") return null;
-  if (value.markerCommandId !== `hosted-site-event:${value.botId}:${value.operationId}:${value.status}`) return null;
+  if (value.markerCommandId !== `hosted-site-event:${agentId}:${value.operationId}:${value.status}`) return null;
   return {
-    botId: value.botId,
+    botId: agentId,
     threadId: value.threadId,
     turnId: value.turnId,
     operationId: marker.operationId,

@@ -178,7 +178,7 @@ export class MailboxProjection {
         for (const botId of value.pausedBotIds) queueInsert.run(botId, 1, "{}", sequence);
         const reactionInsert = db.prepare(`
           INSERT INTO projection_reactions
-            (agent_id, message_id, emoji, actor_kind, actor_bot_id, updated_at, last_event_sequence)
+            (agent_id, message_id, emoji, actor_kind, actor_agent_id, updated_at, last_event_sequence)
           VALUES (?, ?, ?, ?, ?, ?, ?)
         `);
         for (const reaction of value.reactions) {
@@ -186,7 +186,7 @@ export class MailboxProjection {
             String(reaction.botId),
             String(reaction.messageId),
             String(reaction.emoji),
-            reaction.actor.kind,
+            reaction.actor.kind === "bot" ? "agent" : reaction.actor.kind,
             reaction.actor.kind === "bot" ? reaction.actor.botId : "",
             String(reaction.updatedAt),
             sequence,
@@ -275,15 +275,15 @@ export class MailboxProjection {
     ).map((row) => requiredStringColumn(row, "agent_id"));
     const reactions = databaseRows(
       db
-        .prepare("SELECT agent_id, message_id, emoji, actor_kind, actor_bot_id, updated_at FROM projection_reactions")
+        .prepare("SELECT agent_id, message_id, emoji, actor_kind, actor_agent_id, updated_at FROM projection_reactions")
         .all(),
     ).map((row) => ({
       botId: requiredStringColumn(row, "agent_id"),
       messageId: requiredStringColumn(row, "message_id"),
       emoji: requiredStringColumn(row, "emoji"),
       actor:
-        requiredStringColumn(row, "actor_kind") === "bot"
-          ? { kind: "bot" as const, botId: requiredStringColumn(row, "actor_bot_id") }
+        requiredStringColumn(row, "actor_kind") === "agent"
+          ? { kind: "bot" as const, botId: requiredStringColumn(row, "actor_agent_id") }
           : { kind: "user" as const },
       updatedAt: requiredStringColumn(row, "updated_at"),
     }));

@@ -69,6 +69,9 @@ describe("OpenBotDatabase", () => {
       { version: 9 },
       { version: 10 },
       { version: 11 },
+      { version: 12 },
+      { version: 13 },
+      { version: 14 },
     ]);
     database.close();
   });
@@ -740,7 +743,7 @@ describe("OpenBotDatabase", () => {
 
     const legacy = new DatabaseSync(database.path);
     legacy.exec("PRAGMA journal_mode = WAL");
-    legacy.prepare("DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11)").run();
+    legacy.prepare("DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11, 12, 13, 14)").run();
     legacy
       .prepare("INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (3, ?)")
       .run("2026-08-20T10:00:00.000Z");
@@ -816,7 +819,7 @@ describe("OpenBotDatabase", () => {
       DROP TABLE projection_routine_triggers;
       DROP TABLE projection_agent_routines;
       DROP TABLE projection_agent_memories;
-      DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11);
+      DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11, 12, 13, 14);
       INSERT OR IGNORE INTO schema_migrations(version, applied_at)
         VALUES (4, '2026-08-20T10:00:00.000Z');
     `);
@@ -845,6 +848,9 @@ describe("OpenBotDatabase", () => {
       { version: 9 },
       { version: 10 },
       { version: 11 },
+      { version: 12 },
+      { version: 13 },
+      { version: 14 },
     ]);
     migrated.close();
   });
@@ -865,16 +871,16 @@ describe("OpenBotDatabase", () => {
     expect(
       migrated.connection
         .prepare(
-          "SELECT actor_kind, actor_bot_id FROM projection_reactions WHERE agent_id = 'chief' AND message_id = 'message-1'",
+          "SELECT actor_kind, actor_agent_id FROM projection_reactions WHERE agent_id = 'chief' AND message_id = 'message-1'",
         )
         .get(),
-    ).toEqual({ actor_kind: "user", actor_bot_id: "" });
+    ).toEqual({ actor_kind: "user", actor_agent_id: "" });
     expect(() =>
       migrated.connection
         .prepare(
           `INSERT INTO projection_reactions (
-             agent_id, message_id, emoji, actor_kind, actor_bot_id, updated_at, last_event_sequence
-           ) VALUES ('chief', 'message-1', '🎉', 'bot', 'chief', '2026-08-20T10:01:00.000Z', 2)`,
+             agent_id, message_id, emoji, actor_kind, actor_agent_id, updated_at, last_event_sequence
+           ) VALUES ('chief', 'message-1', '🎉', 'agent', 'chief', '2026-08-20T10:01:00.000Z', 2)`,
         )
         .run(),
     ).not.toThrow();
@@ -912,6 +918,9 @@ describe("OpenBotDatabase", () => {
       { version: 9 },
       { version: 10 },
       { version: 11 },
+      { version: 12 },
+      { version: 13 },
+      { version: 14 },
     ]);
     retried.close();
   });
@@ -934,7 +943,7 @@ describe("OpenBotDatabase", () => {
     database.close();
 
     const legacy = new DatabaseSync(database.path);
-    legacy.prepare("DELETE FROM schema_migrations WHERE version IN (10, 11)").run();
+    legacy.prepare("DELETE FROM schema_migrations WHERE version >= 10").run();
     legacy.close();
 
     const migrated = new OpenBotDatabase(root);
@@ -964,7 +973,7 @@ describe("OpenBotDatabase", () => {
     database.close();
 
     const legacy = new DatabaseSync(database.path);
-    legacy.prepare("DELETE FROM schema_migrations WHERE version = 11").run();
+    legacy.prepare("DELETE FROM schema_migrations WHERE version >= 11").run();
     legacy.close();
 
     const migrated = new OpenBotDatabase(root);
@@ -998,7 +1007,7 @@ describe("OpenBotDatabase", () => {
 
     const legacy = new DatabaseSync(database.path);
     legacy.exec(`
-      DELETE FROM schema_migrations WHERE version = 11;
+      DELETE FROM schema_migrations WHERE version >= 11;
       CREATE TRIGGER reject_session_refresh
       BEFORE UPDATE OF state ON projection_provider_sessions
       BEGIN
@@ -1028,6 +1037,97 @@ describe("OpenBotDatabase", () => {
     retried.close();
   });
 
+  it("keeps an agent's reaction attributed to that agent across the actor column rename", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-db-reactions-v12-"));
+    roots.push(root);
+    const database = new OpenBotDatabase(root);
+    await database.initialize();
+    database.close();
+
+    const legacy = new DatabaseSync(database.path);
+    downgradeToV11(legacy);
+    legacy.exec(`
+      INSERT INTO projection_reactions (
+        agent_id, message_id, emoji, actor_kind, actor_bot_id, updated_at, last_event_sequence
+      ) VALUES
+        ('chief', 'message-1', '👍', 'bot', 'helper', '2026-08-20T10:00:00.000Z', 1),
+        ('chief', 'message-1', '🎉', 'user', '', '2026-08-20T10:00:01.000Z', 2);
+    `);
+    legacy.close();
+
+    const migrated = new OpenBotDatabase(root);
+    await migrated.initialize();
+    expect(
+      migrated.connection
+        .prepare("SELECT emoji, actor_kind, actor_agent_id FROM projection_reactions ORDER BY last_event_sequence")
+        .all(),
+    ).toEqual([
+      { emoji: "👍", actor_kind: "agent", actor_agent_id: "helper" },
+      { emoji: "🎉", actor_kind: "user", actor_agent_id: "" },
+    ]);
+    migrated.close();
+  });
+
+  it("rewrites agent ids without losing a thread, its messages, or its hosted-site history", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-db-ids-v13-"));
+    roots.push(root);
+    const database = new OpenBotDatabase(root);
+    await database.initialize();
+    database.close();
+
+    const legacyId = "bot-2f1c9a44-1d2e-4a7b-9c30-5e6f7a8b9c0d";
+    const agentId = "agent-2f1c9a44-1d2e-4a7b-9c30-5e6f7a8b9c0d";
+    const legacyWorkspace = `/Users/dev/OpenBot/Bots/${legacyId}`;
+    const workspace = `/Users/dev/OpenBot/Agents/${agentId}`;
+    const legacy = new DatabaseSync(database.path);
+    downgradeToV11(legacy);
+    seedLegacyAgent(legacy, legacyId, legacyWorkspace);
+    legacy.close();
+
+    const migrated = new OpenBotDatabase(root);
+    await migrated.initialize();
+
+    expect(migrated.connection.prepare("SELECT agent_id, thread_id FROM projection_agents").get()).toEqual({
+      agent_id: agentId,
+      thread_id: `openbot-thread-${agentId}`,
+    });
+    expect(
+      migrated.connection
+        .prepare("SELECT json_extract(agent_json, '$.workspacePath') AS path FROM projection_agents")
+        .get(),
+    ).toEqual({ path: workspace });
+    expect(migrated.connection.prepare("SELECT thread_id, message_id FROM projection_thread_messages").get()).toEqual({
+      thread_id: `openbot-thread-${agentId}`,
+      message_id: "message-1",
+    });
+    // A message that quoted the old workspace path points at where that workspace lives now.
+    expect(
+      migrated.connection
+        .prepare("SELECT json_extract(message_json, '$.text') AS text FROM projection_thread_messages")
+        .get(),
+    ).toEqual({ text: `Wrote ${workspace}/index.html` });
+    // `aggregate_id` carries no foreign key, so a row missed here would be silently lost history, and the
+    // marker command id is compared against a string rebuilt from the agent id, so both have to move.
+    expect(
+      migrated.connection
+        .prepare(
+          "SELECT aggregate_id, command_id FROM orchestration_events WHERE event_type = 'hosted-site.terminal-pending'",
+        )
+        .get(),
+    ).toEqual({
+      aggregate_id: agentId,
+      command_id: `hosted-site-terminal-pending:${agentId}:operation-1:succeeded`,
+    });
+    expect(migrated.pendingHostedSiteTerminalEvents()).toEqual([
+      expect.objectContaining({
+        botId: agentId,
+        markerCommandId: `hosted-site-event:${agentId}:operation-1:succeeded`,
+      }),
+    ]);
+    expect(migrated.connection.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    migrated.close();
+  });
+
   it("rejects a database created by a newer application", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-db-newer-"));
     roots.push(root);
@@ -1036,7 +1136,7 @@ describe("OpenBotDatabase", () => {
     database.close();
 
     const newer = new DatabaseSync(database.path);
-    newer.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (12, ?)").run("2026-08-20T10:00:00.000Z");
+    newer.prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (15, ?)").run("2026-08-20T10:00:00.000Z");
     newer.close();
 
     const downgradedApp = new OpenBotDatabase(root);
@@ -1105,7 +1205,7 @@ describe("OpenBotDatabase", () => {
       ALTER TABLE projection_provider_sessions_v6 RENAME TO projection_provider_sessions;
       CREATE INDEX provider_sessions_thread
         ON projection_provider_sessions(thread_id, provider, state);
-      DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11);
+      DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11, 12, 13, 14);
       INSERT OR IGNORE INTO schema_migrations(version, applied_at)
         VALUES (6, '2026-08-20T10:00:00.000Z');
       PRAGMA foreign_keys = ON;
@@ -1200,6 +1300,80 @@ describe("OpenBotDatabase", () => {
   });
 });
 
+// Rebuilds the pre-v12 `projection_reactions` shape so v12, v13 and v14 run again over a fixture that
+// looks the way a shipped release left it, rather than over a database that already carries their result.
+function downgradeToV11(database: DatabaseSync): void {
+  database.exec(`
+    CREATE TABLE projection_reactions_v11 (
+      agent_id TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      emoji TEXT NOT NULL,
+      actor_kind TEXT NOT NULL CHECK(actor_kind IN ('user', 'bot')),
+      actor_bot_id TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_event_sequence INTEGER NOT NULL,
+      PRIMARY KEY(agent_id, message_id, actor_kind, actor_bot_id)
+    );
+    DROP TABLE projection_reactions;
+    ALTER TABLE projection_reactions_v11 RENAME TO projection_reactions;
+    DELETE FROM schema_migrations WHERE version >= 12;
+  `);
+}
+
+// One agent whose id, thread, message text and hosted-site history all still spell the id `bot-<uuid>`.
+function seedLegacyAgent(database: DatabaseSync, legacyId: string, workspacePath: string): void {
+  const threadId = `openbot-thread-${legacyId}`;
+  const agentJson = JSON.stringify({ id: legacyId, name: "Chief", threadId, workspacePath });
+  const messageJson = JSON.stringify({
+    id: "message-1",
+    author: "agent",
+    text: `Wrote ${workspacePath}/index.html`,
+    createdAt: "2026-09-01T12:00:00.000Z",
+  });
+  const pendingJson = JSON.stringify({
+    botId: legacyId,
+    threadId,
+    turnId: "turn-1",
+    operationId: "operation-1",
+    action: "publish",
+    status: "succeeded",
+    details: {
+      siteId: "site-1",
+      title: "Launch page",
+      hostname: "launch-page-23456789ab.openbot.site",
+      url: "https://launch-page-23456789ab.openbot.site",
+    },
+    markerCommandId: `hosted-site-event:${legacyId}:operation-1:succeeded`,
+    createdAt: "2026-09-01T12:00:00.000Z",
+  });
+
+  const insert = database.prepare(
+    `INSERT INTO projection_threads (thread_id, agent_id, title, active_turn_id, created_at, updated_at, last_event_sequence)
+     VALUES (?, ?, 'Chief', NULL, '2026-09-01T12:00:00.000Z', '2026-09-01T12:00:00.000Z', 1)`,
+  );
+  insert.run(threadId, legacyId);
+  database
+    .prepare(
+      `INSERT INTO projection_agents (agent_id, thread_id, model, updated_at, sort_order, agent_json, last_event_sequence)
+       VALUES (?, ?, 'gpt-5.6-luna', '2026-09-01T12:00:00.000Z', 0, ?, 1)`,
+    )
+    .run(legacyId, threadId, agentJson);
+  database
+    .prepare(
+      `INSERT INTO projection_thread_messages
+         (thread_id, message_id, turn_id, author, status, item_type, created_at, ordinal, message_json, last_event_sequence)
+       VALUES (?, 'message-1', NULL, 'agent', 'completed', NULL, '2026-09-01T12:00:00.000Z', 0, ?, 1)`,
+    )
+    .run(threadId, messageJson);
+  database
+    .prepare(
+      `INSERT INTO orchestration_events
+         (event_id, command_id, aggregate_type, aggregate_id, event_type, occurred_at, payload_json)
+       VALUES ('event-1', ?, 'hosted-site-terminal', ?, 'hosted-site.terminal-pending', '2026-09-01T12:00:00.000Z', ?)`,
+    )
+    .run(`hosted-site-terminal-pending:${legacyId}:operation-1:succeeded`, legacyId, pendingJson);
+}
+
 function downgradeReactionsToV7(database: DatabaseSync): void {
   database.exec(`
     CREATE TABLE projection_reactions_v7 (
@@ -1215,7 +1389,7 @@ function downgradeReactionsToV7(database: DatabaseSync): void {
     );
     DROP TABLE projection_reactions;
     ALTER TABLE projection_reactions_v7 RENAME TO projection_reactions;
-    DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11);
+    DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11, 12, 13, 14);
     INSERT OR IGNORE INTO schema_migrations(version, applied_at)
       VALUES (7, '2026-08-20T10:00:00.000Z');
   `);
