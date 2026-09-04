@@ -78,9 +78,10 @@ closed database after `close()`. And a projection controller does not open a tra
 Four places do, and each is load-bearing: `dispatch` and `deleteEventsAndReceipt` open one only if
 they find none open, which is what lets a projector nest another dispatch inside the caller's, and
 `ThreadReplay.rebuildThreadProjection` and the facade's `persistConversationAndMailbox` open one
-unconditionally, which is what makes the dispatch inside each of them skip its own. Adding a fourth
-gets a nested `BEGIN` that SQLite rejects; removing one of these four silently drops the atomicity
-the replay and the mailbox write depend on.
+unconditionally, which is what makes the dispatch inside each of them skip its own. Open an
+unconditional one anywhere else and a caller already in a transaction gets a nested `BEGIN` that
+SQLite rejects; remove one of these four and the replay or the mailbox write silently stops being
+atomic.
 
 Do not add a new concern to the biggest file you can see; extract one when a change gives you the
 excuse.
