@@ -1,5 +1,6 @@
+import { lstatSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { dirname, resolve, sep } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
 import { dummyLogger, type Logger, redactText } from "@openbot/logging";
 import type { Page } from "playwright-core";
 import { describeTarget } from "./page-url";
@@ -190,7 +191,51 @@ export function resolveScreenshotPath(root: string, requested: string | null, no
     throw new Error(`--out must stay inside ${base}. Screenshots never write outside the build directory.`);
   }
   if (!target.endsWith(".png")) throw new Error("--out must name a .png file.");
+  assertNoSymlinkOnPath(base, target);
   return target;
+}
+
+// The containment check above is lexical, and `page.screenshot` follows links:
+// a symlink at the destination, or on any directory below the build root,
+// would let a read-only command overwrite a file outside it without
+// `--allow-mutations`. Components that do not exist yet are the normal case
+// and are fine - `mkdir` will create real directories for them.
+function assertNoSymlinkOnPath(base: string, target: string): void {
+  const steps = relative(base, target).split(sep);
+  let current = base;
+  for (const step of [".", ...steps]) {
+    current = step === "." ? base : resolve(current, step);
+    let link = false;
+    try {
+      link = lstatSync(current).isSymbolicLink();
+    } catch {
+      // Nothing there yet, so nothing can redirect the write.
+      return;
+    }
+    if (link) {
+      throw new Error(
+        `${current} is a symbolic link, so writing through it would leave ${base}. ` +
+          "Screenshots never follow a link out of the build directory.",
+      );
+    }
+  }
+}
+
+// The absolute path carries the home directory, which is a checkout location
+// the developer chose - the same reason `instances` redacts `projectRoot`. A
+// path relative to the worktree drops that prefix and is still what an agent
+// needs to open the file. If what is left would be redacted, the caller could
+// not reopen it, so say so instead of handing back an unusable path.
+export function reportableScreenshotPath(out: string, workspace: string): string {
+  const reportable = relative(workspace, out);
+  const redacted = redactText(reportable);
+  if (redacted !== reportable) {
+    throw new Error(
+      `--out=${reportable} would be redacted on the way out, so the saved file could not be reopened. ` +
+        "Pick a name without a credential or an address in it.",
+    );
+  }
+  return reportable;
 }
 
 export async function screenshotTo(page: Page, outPath: string, logger: Logger = dummyLogger): Promise<string> {

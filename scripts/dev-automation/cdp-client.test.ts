@@ -1,5 +1,9 @@
 // Guardrails that keep automation on the intended dev instance: the wrong
 // port must fail before any click or keystroke can reach another app.
+
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   assertMutationAllowed,
@@ -10,7 +14,7 @@ import {
   resolveAutomationPort,
 } from "./cdp-client";
 import { describeTarget, findMainPages, isMainAppUrl } from "./page-url";
-import { parseWaitTarget, resolveScreenshotPath } from "./tools";
+import { parseWaitTarget, reportableScreenshotPath, resolveScreenshotPath } from "./tools";
 
 describe("isOpenBotBrowser", () => {
   it("accepts the Electron user agent", () => {
@@ -182,5 +186,39 @@ describe("parseWaitTarget", () => {
     expect(() => parseWaitTarget("button")).toThrow("<role>,<name>");
     expect(() => parseWaitTarget("button,   ")).toThrow("accessible name");
     expect(() => parseWaitTarget("buton,Send")).toThrow('Unknown role "buton"');
+  });
+});
+
+describe("resolveScreenshotPath containment", () => {
+  it("refuses a destination reached through a symbolic link", () => {
+    const root = mkdtempSync(join(tmpdir(), "openbot-shot-root-"));
+    const outside = mkdtempSync(join(tmpdir(), "openbot-shot-outside-"));
+    // Lexically inside the build directory, but the write would land in
+    // `outside` - which is how a read-only command could overwrite tracked
+    // code without --allow-mutations.
+    symlinkSync(outside, join(root, "escape"));
+    expect(() => resolveScreenshotPath(root, "escape/shot.png", 0)).toThrow("symbolic link");
+    symlinkSync(join(outside, "target.png"), join(root, "direct.png"));
+    expect(() => resolveScreenshotPath(root, "direct.png", 0)).toThrow("symbolic link");
+    expect(resolveScreenshotPath(root, "real/shot.png", 0)).toBe(join(root, "real", "shot.png"));
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+});
+
+describe("reportableScreenshotPath", () => {
+  it("drops the absolute prefix the developer's home directory carries", () => {
+    expect(
+      reportableScreenshotPath(
+        "/Users/jan@example.com/work/tree/.openbot-build/shot.png",
+        "/Users/jan@example.com/work/tree",
+      ),
+    ).toBe(".openbot-build/shot.png");
+  });
+
+  it("refuses a name it would have to redact, instead of returning one that cannot be reopened", () => {
+    expect(() => reportableScreenshotPath("/tree/.openbot-build/token=abcdef123456.png", "/tree")).toThrow(
+      "would be redacted",
+    );
   });
 });

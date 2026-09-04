@@ -22,6 +22,7 @@ import {
   clickByRole,
   parseAutomationRole,
   parseWaitTarget,
+  reportableScreenshotPath,
   resolveScreenshotPath,
   screenshotTo,
   snapshotPage,
@@ -255,7 +256,7 @@ async function main(): Promise<void> {
       await settle();
       const out = resolveScreenshotPath(SCREENSHOT_ROOT, flagValue("--out"), Date.now());
       await screenshotTo(session.page, out, logger);
-      process.stdout.write(`${JSON.stringify({ screenshot: out })}\n`);
+      process.stdout.write(`${JSON.stringify({ screenshot: reportableScreenshotPath(out, process.cwd()) })}\n`);
     }
   } finally {
     await session.close();

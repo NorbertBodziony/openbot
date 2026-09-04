@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createDevInstanceRecord, type DevelopmentServiceSpec } from "../dev-services";
 import {
+  assertOwnerOnlyDirectory,
   type DevInstanceRecord,
   parseDevInstanceRecord,
   readDevInstanceRecords,
@@ -186,5 +187,34 @@ describe("writeDevInstanceRecord permissions", () => {
     expect(statSync(directory).mode & 0o777).toBe(0o700);
     expect(statSync(join(directory, "app-4242.json")).mode & 0o777).toBe(0o600);
     rmSync(directory, { recursive: true, force: true });
+  });
+});
+
+describe("assertOwnerOnlyDirectory", () => {
+  // A registry another account controls lets it forge a record naming this
+  // worktree, a live pid and a CDP port of its choosing - and a mutation
+  // command would treat that port as the named instance it may drive. Both
+  // branches decide against publishing, which is why they are checked here
+  // rather than through the filesystem: a second uid cannot be arranged in a
+  // unit test, and a directory this user owns is repaired by `chmod` instead.
+  it("refuses a directory owned by another account", () => {
+    expect(() =>
+      assertOwnerOnlyDirectory("/tmp/registry", { uid: 999, mode: 0o40700, symbolicLink: false }, 501),
+    ).toThrow("not owned by this user");
+  });
+
+  it("refuses a directory other accounts can reach and a symlinked one", () => {
+    expect(() =>
+      assertOwnerOnlyDirectory("/tmp/registry", { uid: 501, mode: 0o40777, symbolicLink: false }, 501),
+    ).toThrow("accessible to other accounts");
+    expect(() =>
+      assertOwnerOnlyDirectory("/tmp/registry", { uid: 501, mode: 0o40700, symbolicLink: true }, 501),
+    ).toThrow("not owned by this user");
+  });
+
+  it("accepts the owner-only directory dev publishes into", () => {
+    expect(() =>
+      assertOwnerOnlyDirectory("/tmp/registry", { uid: 501, mode: 0o40700, symbolicLink: false }, 501),
+    ).not.toThrow();
   });
 });

@@ -10,6 +10,7 @@ import {
   chmodSync,
   closeSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -82,8 +83,14 @@ export function writeDevInstanceRecord(record: DevInstanceRecord, directory = de
   try {
     chmodSync(directory, 0o700);
   } catch {
-    // Not ours to tighten. The open below decides whether we can publish.
+    // Not ours to tighten - verified below, which is what fails closed.
   }
+  const stats = lstatSync(directory);
+  assertOwnerOnlyDirectory(directory, {
+    uid: stats.uid,
+    mode: stats.mode,
+    symbolicLink: stats.isSymbolicLink(),
+  });
   const target = recordPath(directory, record);
   const staging = `${target}.${process.pid}.tmp`;
   // Unlink first, then create exclusively: `wx` refuses to follow a
@@ -98,6 +105,37 @@ export function writeDevInstanceRecord(record: DevInstanceRecord, directory = de
     closeSync(handle);
   }
   renameSync(staging, target);
+}
+
+// Publishing into a directory somebody else controls is worse than not
+// publishing at all: they could replace a record with a forged one naming this
+// worktree, a live pid and a CDP port of their choosing, and a mutation command
+// would treat that port as the named instance it is allowed to drive. So this
+// fails closed rather than trusting that `chmod` worked.
+export interface DirectoryOwnership {
+  uid: number;
+  mode: number;
+  symbolicLink: boolean;
+}
+
+export function assertOwnerOnlyDirectory(
+  directory: string,
+  stats: DirectoryOwnership,
+  owner = process.getuid?.(),
+): void {
+  if (stats.symbolicLink || (owner !== undefined && stats.uid !== owner)) {
+    throw new Error(
+      `${directory} is not owned by this user, so dev instances will not be published there. ` +
+        "Remove it and start `bun run dev` again.",
+    );
+  }
+  if ((stats.mode & 0o077) !== 0) {
+    throw new Error(
+      `${directory} is accessible to other accounts (mode ${(stats.mode & 0o777).toString(8)}). ` +
+        "Remove it and start `bun run dev` again: a registry another account can write lets it choose " +
+        "which app an automation command drives.",
+    );
+  }
 }
 
 export function removeDevInstanceRecord(
