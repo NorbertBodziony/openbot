@@ -2,6 +2,7 @@
 
 import { EventEmitter } from "node:events";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
@@ -562,6 +563,148 @@ describe("TeamApiServer routing", () => {
       }
 
       expect(unrouted).toEqual([]);
+    } finally {
+      await api.stop();
+    }
+  });
+});
+
+// The status contract this router answers with, pinned before its 760-line `#handle` was split into
+// per-domain modules. The route round-trip case above looks like the safety net for that move and is
+// not one: it holds a single method per route name and fails only on the literal body
+// `"Route not found."`, so a 200 that becomes a 401, a 400 that becomes a 404, or a wrong-method
+// branch that starts answering 405 all stay green there. Those are exactly the properties a
+// dispatcher rewrite puts at risk, and this table is where they are written down.
+//
+// Every row is a status and, where the router names a reason, the message the caller reads. The
+// authenticated rows go through one signed-in server so a 401 here means the route, not the setup.
+describe("TeamApiServer status contract", () => {
+  // Status plus the message the caller reads, as one comparable line, so a failing row names the
+  // request that regressed instead of reporting a bare number.
+  async function answer(base: string, method: string, path: string, token?: string): Promise<string> {
+    const response = await fetch(`${base}${path}`, {
+      method,
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    const body = await response.json();
+    const error = isDynamicRecord(body) && isString(body.error) ? body.error : "";
+    return `${method} ${path} ${response.status} ${error}`;
+  }
+
+  async function statusFixture(slug: string, options: Partial<TeamApiOptions> = {}) {
+    const root = await mkdtemp(join(tmpdir(), `openbot-team-api-${slug}-`));
+    roots.push(root);
+    const store = new TeamStore(join(root, "team.json"));
+    await store.initialize();
+    await store.configure("Studio Mac", "owner", "correct horse battery");
+    const api = new TeamApiServer({
+      store,
+      agents: createAgents({ listBots: () => [] }),
+      mailbox: createMailbox(),
+      browser: createBrowser(),
+      logger: createOpenBotLogger("test", () => undefined),
+      ...options,
+    });
+    const port = await api.start();
+    return { api, store, base: `http://127.0.0.1:${port}` };
+  }
+
+  // A path the router matches with a regex, reached with a method that branch does not name, falls
+  // out of the chain and lands on the one 404. There is no 405 anywhere in this server, and adding
+  // one would change the meaning of a released wire protocol.
+  it("answers 404 for a matched path reached with an unhandled method", async () => {
+    const { api, base } = await statusFixture("wrong-method");
+    try {
+      const token = (
+        await jsonRequest<{ sessionToken: string }>(base, TEAM_API_ROUTES.auth.login, {
+          body: { username: "owner", password: "correct horse battery" },
+        })
+      ).sessionToken;
+      const cases = [
+        ["PUT", TEAM_API_ROUTES.attachment("a")],
+        ["POST", TEAM_API_ROUTES.direct.conversation("m")],
+        ["PUT", TEAM_API_ROUTES.team.member("m")],
+        ["GET", TEAM_API_ROUTES.team.invite("i")],
+        ["GET", TEAM_API_ROUTES.team.session("s")],
+        ["PUT", TEAM_API_ROUTES.agent.memories("a")],
+        ["DELETE", TEAM_API_ROUTES.agent.routines("a")],
+        ["POST", TEAM_API_ROUTES.agent.avatar("a")],
+      ] as const;
+      const answers: string[] = [];
+      for (const [method, path] of cases) answers.push(await answer(base, method, path, token));
+      expect(answers).toEqual(cases.map(([method, path]) => `${method} ${path} 404 Route not found.`));
+    } finally {
+      await api.stop();
+    }
+  });
+
+  // The per-agent block decodes its identifiers above the switch that dispatches on the action, so a
+  // malformed id is a 400 even when no action would have matched. Moving either decode below its
+  // switch turns that into the 404 the row above expects, which is why the two are asserted apart.
+  it("answers 400 for a malformed path identifier before any action matches", async () => {
+    const { api, base } = await statusFixture("bad-identifier");
+    try {
+      const token = (
+        await jsonRequest<{ sessionToken: string }>(base, TEAM_API_ROUTES.auth.login, {
+          body: { username: "owner", password: "correct horse battery" },
+        })
+      ).sessionToken;
+      const cases = [
+        ["GET", "/v1/agents/%ZZ/bogus", "botId is invalid."],
+        ["PUT", "/v1/agents/a/memories/%ZZ", "memoryId is invalid."],
+        ["PATCH", "/v1/agents/a/routines/%ZZ", "routineId is invalid."],
+      ] as const;
+      const answers: string[] = [];
+      for (const [method, path] of cases) answers.push(await answer(base, method, path, token));
+      expect(answers).toEqual(cases.map(([method, path, message]) => `${method} ${path} 400 ${message}`));
+    } finally {
+      await api.stop();
+    }
+  });
+
+  // The bearer check does not consult the path, so an unknown route without a token is 401 rather
+  // than 404. A dispatcher that runs its route modules first and answers 404 when none match would
+  // leak the existence of every path it does serve.
+  it("answers 401 rather than 404 for an unknown path without a token", async () => {
+    const { api, base } = await statusFixture("unauthenticated");
+    try {
+      const response = await fetch(`${base}/v1/nope`);
+      expect(response.status).toBe(401);
+      expect(await response.json()).toEqual({ error: "Authentication required." });
+    } finally {
+      await api.stop();
+    }
+  });
+
+  // Three gates in a fixed order: `compatibility` answers before the protocol gate, and the protocol
+  // gate answers before the bearer check. A client too old to send the protocol headers has to be
+  // able to read the endpoint that tells it to update, so `compatibility` below the gate would be an
+  // unbreakable 426 loop.
+  it("answers compatibility ahead of the protocol gate, and the protocol gate ahead of the bearer check", async () => {
+    const { api, base } = await statusFixture("gate-order", { appVersion: "0.4.0" });
+    try {
+      const compatibility = await fetch(`${base}${TEAM_API_ROUTES.compatibility}`);
+      expect(compatibility.status).toBe(200);
+
+      const gated = await fetch(`${base}${TEAM_API_ROUTES.me}`);
+      expect(gated.status).toBe(426);
+      expect(await gated.json()).toMatchObject({ code: "client_update_required" });
+    } finally {
+      await api.stop();
+    }
+  });
+
+  // Node's HTTP parser accepts request targets the WHATWG URL parser rejects, so the prologue records
+  // the response's route before it parses the URL. Recording it after left the throw with no entry to
+  // read, and because `#handle` is invoked as a discarded promise that surfaced as an unhandled
+  // rejection over a socket that was never ended - a hung request rather than an answer.
+  it("answers a request target the URL parser rejects instead of hanging", async () => {
+    const { api, base } = await statusFixture("unparsable-target");
+    try {
+      const response = await fetch(`${base}/`, { headers: { Authorization: "Bearer x" } });
+      expect(response.status).toBe(401);
+      const raw = await rawRequest(base, "GET //[ HTTP/1.1");
+      expect(raw).toMatch(/^HTTP\/1\.1 \d{3} /);
     } finally {
       await api.stop();
     }
@@ -2458,6 +2601,21 @@ function nextJsonEvents(websocket: WebSocket, count: number): Promise<TestRealti
     websocket.addEventListener("error", () => reject(new Error("WebSocket event failed.")), {
       once: true,
     });
+  });
+}
+
+// Writes a request line `fetch` would refuse to send, so a target Node accepts and the WHATWG URL
+// parser rejects can reach the router at all. Returns the status line.
+async function rawRequest(base: string, requestLine: string): Promise<string> {
+  const { port } = new URL(base);
+  const socket = connect({ host: "127.0.0.1", port: Number(port) });
+  return await new Promise<string>((resolve, reject) => {
+    socket.on("error", reject);
+    socket.once("data", (chunk: Buffer) => {
+      socket.destroy();
+      resolve(chunk.toString("utf8").split("\r\n", 1)[0] ?? "");
+    });
+    socket.on("connect", () => socket.write(`${requestLine}\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`));
   });
 }
 

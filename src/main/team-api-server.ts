@@ -487,11 +487,24 @@ export class TeamApiServer {
   }
 
   async #handle(request: import("node:http").IncomingMessage, response: ServerResponse) {
+    const method = request.method ?? "GET";
+    // The route is recorded before the target is parsed, because `#json` cannot answer without it and
+    // this is the first thing below that can throw. Node's HTTP parser accepts request targets the
+    // WHATWG URL parser rejects - `GET //[ HTTP/1.1` arrives as `//[` - and with the record written
+    // afterwards that throw reached the catch below, made `#json` throw "route is unavailable", and
+    // surfaced as an unhandled rejection over a socket nothing ever ended. `url.pathname` replaces
+    // the raw target once there is one; only the failing path reads the raw value, and the frozen
+    // adapters classify it as the unknown route it is.
+    this.#responseRoutes.set(response, {
+      method,
+      path: request.url ?? "/",
+      protocol: requestProtocol(request),
+      capabilities: requestCapabilities(request),
+    });
     try {
       response.setHeader("Cache-Control", "no-store");
       response.setHeader("X-Content-Type-Options", "nosniff");
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
-      const method = request.method ?? "GET";
       const clientCapabilities = requestCapabilities(request);
       this.#responseRoutes.set(response, {
         method,
