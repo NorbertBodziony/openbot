@@ -1,8 +1,7 @@
-import * as Haptics from "expo-haptics";
 import { Link } from "expo-router";
 import { Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
-import { Pressable, ScrollView, View } from "react-native";
+import { ScrollView, View } from "react-native";
 import Animated, {
   CurvedTransition,
   Easing,
@@ -11,12 +10,11 @@ import Animated, {
   LinearTransition,
   ReduceMotion,
 } from "react-native-reanimated";
-
 import { BloubAvatar } from "@/features/bots/components/bloub-avatar";
 import { useBotContextMenu } from "@/features/bots/components/bot-context-menu";
 import { BotPinAvatar } from "@/features/bots/components/bot-pin-avatar";
+import { ChatLinkPressable } from "@/features/bots/components/chat-link-pressable";
 import { type MobileBot, useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
-import { isIOS } from "@/shared/lib/platform";
 
 const EASE_OUT = Easing.bezier(0.23, 1, 0.32, 1);
 const EASE_IN_OUT = Easing.bezier(0.77, 0, 0.175, 1);
@@ -62,15 +60,11 @@ function PinnedBotItem({ bot }: { bot: MobileBot }) {
   const botContextMenu = useBotContextMenu(bot);
   const isUnread = unreadBotIds.includes(bot.id);
 
-  const handleOpen = () => {
-    if (isIOS) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
-  };
-
   return (
     <Animated.View entering={PINNED_ENTER} exiting={PINNED_EXIT} layout={PINNED_ITEM_LAYOUT}>
-      <Link href={{ pathname: "/chat/[botId]", params: { botId: bot.id } }} asChild onPress={handleOpen}>
+      <Link href={{ pathname: "/chat/[botId]", params: { botId: bot.id } }} asChild>
         <Link.Trigger>
-          <Pressable
+          <ChatLinkPressable
             accessibilityLabel={`Open pinned chat with ${bot.name}`}
             accessibilityRole="button"
             className="w-20 items-center gap-2"
@@ -95,7 +89,7 @@ function PinnedBotItem({ bot }: { bot: MobileBot }) {
             >
               {bot.name}
             </Typography.Paragraph>
-          </Pressable>
+          </ChatLinkPressable>
         </Link.Trigger>
         {botContextMenu}
       </Link>

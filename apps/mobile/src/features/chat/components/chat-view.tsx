@@ -14,7 +14,7 @@ import { ChatComposer } from "@/features/chat/components/chat-composer";
 import { ChatHeader } from "@/features/chat/components/chat-header";
 import { ChatMessageList } from "@/features/chat/components/chat-message-list";
 import { useQuestionPrompt } from "@/features/chat/components/use-question-prompt";
-import { projectChatMessages } from "@/features/chat/model/chat-messages";
+import { latestReadableMessage, projectChatMessages } from "@/features/chat/model/chat-messages";
 import { ConnectionStatus } from "@/features/workspace/components/connection-status";
 import { useBotActivity } from "@/features/workspace/components/use-bot-activity";
 import type { MobileBot } from "@/features/workspace/context/mobile-workspace-context";
@@ -70,9 +70,7 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
   const activity = useBotActivity(bot.id);
   const messages = useMemo(() => projectChatMessages(conversation?.messages ?? []), [conversation]);
   const liquidGlassAvailable = isLiquidGlassAvailable();
-  const latestMessage = conversation?.messages.findLast(
-    (message) => message.author !== "system" && message.text.trim().length > 0,
-  );
+  const latestMessage = latestReadableMessage(conversation?.messages ?? []);
   const readBoundary = latestMessage?.id;
   const readBoundaryStatus = latestMessage?.status;
   const server = servers.find((server) => server.id === bot.serverId);

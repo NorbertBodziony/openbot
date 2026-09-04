@@ -15,10 +15,17 @@ bounds when its enabler registers after the chat mounts. This keeps the avatar-t
 interactive from the left edge without enabling dismissal from the middle of the chat.
 The same patch keeps navigation queue snapshots immutable so React observes every navigation
 action, including the first tap when reopening a chat after going back.
+If a row or pinned avatar is tapped during the native return transition, the app retains that
+tap until the list is focused and `transitionEnd` fires. It then invokes the original Link
+handler once, preserving its AppleZoom source without a fixed delay.
+Focus is read from the route's live `isFocused()` state; nested navigators do not always emit
+an initial `focus` event, so a first tap must not depend on receiving one.
 
 Keyboard Controller 1.21.9 is included in SDK 57 Expo Go. Custom development clients and
 standalone apps must be rebuilt after adding this native dependency; a JavaScript reload alone
-cannot add it to an existing binary.
+cannot add it to an existing binary. All channels use the fingerprint runtime policy, so these
+updates cannot target older app-version `1.0.0` binaries without Keyboard Controller. Build and
+distribute a binary with the new fingerprint before publishing compatible OTA updates.
 
 Run commands from the repository root:
 
@@ -56,9 +63,8 @@ WebRTC peers are discarded and authenticated again. Recovery reloads cached conv
 as agents and unread counts, including after an event-buffer reset. An interruption of Signal alone
 can resume sooner while the authenticated WebRTC connection is still healthy, without a new ticket.
 
-Chat web links show the site's `/favicon.ico`, cached on the phone, with a local link icon while
-loading or when unavailable. Compact thought-process text uses a smaller icon. Markdown images
-still open only on tap; website icon requests are described in `PRIVACY.md`.
+Chat links use a local link icon, with a smaller icon in thought-process text. Rendering links
+or Markdown images does not contact their destinations; they open only on tap.
 
 Structured question forms appear inline in mobile chat, including when reopening downloaded history.
 They support option selection, multiple questions, skipping and cancellation. Custom answers are typed

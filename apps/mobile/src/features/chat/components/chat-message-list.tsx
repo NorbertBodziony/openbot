@@ -1,7 +1,7 @@
 import { useIsFocused } from "expo-router";
 import { Button, Typography } from "heroui-native";
 import { X } from "lucide-react-native";
-import { type ComponentRef, forwardRef, useRef } from "react";
+import { type ComponentRef, forwardRef } from "react";
 import { Pressable, View, type ViewStyle } from "react-native";
 import { KeyboardChatScrollView } from "react-native-keyboard-controller";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
@@ -73,17 +73,6 @@ export const ChatMessageList = forwardRef<ChatScrollViewRef, ChatMessageListProp
 ) {
   const isFocused = useIsFocused();
   const animateMessages = isFocused && canSend && appActive;
-  const initialMessages = useRef<{ botId: string; ids: Set<string>; live: boolean } | null>(null);
-  if (
-    historyState === "ready" &&
-    (initialMessages.current?.botId !== bot.id || !animateMessages || !initialMessages.current?.live)
-  ) {
-    initialMessages.current = {
-      botId: bot.id,
-      ids: new Set(messages.map((message) => message.id)),
-      live: animateMessages,
-    };
-  }
   const activity = useBotActivity(bot.id);
   const activityLabel =
     activity?.phase === "waiting"
@@ -183,7 +172,6 @@ export const ChatMessageList = forwardRef<ChatScrollViewRef, ChatMessageListProp
               body={message.body}
               color={message.author === "user" ? "#0a0a0c" : foreground}
               streaming={message.author === "bot" && message.streaming}
-              animateInitial={message.author === "bot" && !initialMessages.current?.ids.has(message.id)}
               animationEnabled={animateMessages}
             />
           </Animated.View>

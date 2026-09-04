@@ -124,7 +124,7 @@ function inline(tokens: Token[], parentPresentation: TextPresentation): ReactNod
         >
           {tokenIs(token, "link") ? (
             <>
-              <ChatLinkIcon url={url} color={presentation.style.color} compact={presentation.type === "body-sm"} />
+              <ChatLinkIcon color={presentation.style.color} compact={presentation.type === "body-sm"} />
               {"\u00a0"}
             </>
           ) : null}
@@ -326,17 +326,15 @@ export const ChatMarkdown = memo(function ChatMarkdown({
   color,
   compact = false,
   streaming = false,
-  animateInitial = false,
   animationEnabled = true,
 }: {
   body: string;
   color: ColorValue | undefined;
   compact?: boolean;
   streaming?: boolean;
-  animateInitial?: boolean;
   animationEnabled?: boolean;
 }) {
-  const display = useStreamingText(body, streaming, animateInitial, animationEnabled);
+  const display = useStreamingText(body, streaming, animationEnabled);
   const tokens = useMemo(() => marked.lexer(display.body, { gfm: true, breaks: true }), [display.body]);
   const codeColor = useThemeColor("foreground");
   return (

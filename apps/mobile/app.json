@@ -83,7 +83,7 @@
     },
     "owner": "openbot",
     "runtimeVersion": {
-      "policy": "appVersion"
+      "policy": "fingerprint"
     },
     "updates": {
       "url": "https://u.expo.dev/eeec730f-c8f4-42c0-a750-64df8af14940"

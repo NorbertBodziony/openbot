@@ -4,7 +4,8 @@ import type { BotAvatarHue } from "@openbot/contracts/ipc";
 import { useId } from "react";
 import Animated, { type DerivedValue, useAnimatedProps } from "react-native-reanimated";
 import Svg, { Circle, Defs, FeColorMatrix, Filter, G, Mask, Path, Rect } from "react-native-svg";
-import { type BloubActivityFrame, useBloubActivityFrame } from "@/features/bots/components/use-bloub-activity-frame";
+import { useBloubActivityFrame } from "@/features/bots/components/use-bloub-activity-frame";
+import type { BloubActivityFrame } from "@/features/bots/model/bloub-activity";
 import { useBotActivity } from "@/features/workspace/components/use-bot-activity";
 
 import { useConnectionAppearance } from "@/features/workspace/components/use-connection-appearance";
@@ -41,7 +42,7 @@ export function BloubAvatar({ botId, hue, seed, size = 54 }: BloubAvatarProps) {
   const colorProps = useAnimatedProps(() => ({ values: [appearance.get().saturation] }));
   const appearanceProps = useAnimatedProps(() => ({ opacity: appearance.get().opacity }));
   const activity = useBotActivity(botId);
-  const frame = useBloubActivityFrame(seed, hue, !disconnected && Boolean(activity && activity.phase !== "waiting"));
+  const frame = useBloubActivityFrame(seed, !disconnected && Boolean(activity && activity.phase !== "waiting"));
   const bodyProps = useAnimatedProps(() => frame.get().body);
   const maskId = `bloub-${useId().replaceAll(":", "")}`;
   const color = getBloubAvatarColor(seed, hue);

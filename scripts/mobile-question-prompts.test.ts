@@ -1,6 +1,6 @@
 import type { AgentPromptQuestion, ConversationSnapshot } from "@openbot/contracts/ipc";
 import { describe, expect, it } from "vitest";
-import { projectChatMessages } from "../apps/mobile/src/features/chat/model/chat-messages";
+import { latestReadableMessage, projectChatMessages } from "../apps/mobile/src/features/chat/model/chat-messages";
 import {
   answeredPromptResolution,
   nextUnansweredQuestion,
@@ -66,6 +66,17 @@ describe("mobile question forms", () => {
     const snapshot = conversation();
     snapshot.messages[0].text = "";
     expect(projectChatMessages(decodeConversation(snapshot).messages)[0]?.kind).toBe("question");
+  });
+
+  it("advances the read boundary to a visible prompt with no fallback text", () => {
+    const snapshot = conversation();
+    snapshot.messages[0].text = "";
+    const prompt = snapshot.messages[0];
+    snapshot.messages.unshift({ ...prompt, id: "earlier", text: "Hello", questionPrompt: undefined });
+    snapshot.messages.push({ ...prompt, id: "empty", questionPrompt: undefined });
+    const boundary = latestReadableMessage(decodeConversation(snapshot).messages);
+    expect(boundary?.id).toBe("prompt-message");
+    expect(boundary?.status).toBe("completed");
   });
 
   it("preserves an answer sent from another device when history refreshes", () => {

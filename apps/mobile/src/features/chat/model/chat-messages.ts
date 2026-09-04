@@ -35,3 +35,9 @@ export function projectChatMessages(messages: ConversationMessage[]): ChatMessag
   }
   return result;
 }
+
+export function latestReadableMessage(messages: ConversationMessage[]) {
+  return messages.findLast(
+    (message) => Boolean(message.questionPrompt) || (message.author !== "system" && message.text.trim().length > 0),
+  );
+}

@@ -1,6 +1,5 @@
 import MaskedView from "@react-native-masked-view/masked-view";
 import { BlurView } from "expo-blur";
-import * as Haptics from "expo-haptics";
 import { Link } from "expo-router";
 import { Typography } from "heroui-native";
 import { useThemeColor } from "heroui-native/hooks";
@@ -19,13 +18,12 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
-
 import { BloubAvatar } from "@/features/bots/components/bloub-avatar";
 import { useBotContextMenu } from "@/features/bots/components/bot-context-menu";
 import { BotPinAvatar } from "@/features/bots/components/bot-pin-avatar";
 import { type BotAvatarLocation, useBotPinTransition } from "@/features/bots/components/bot-pin-transition";
+import { ChatLinkPressable } from "@/features/bots/components/chat-link-pressable";
 import { type MobileBot, useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
-import { isIOS } from "@/shared/lib/platform";
 
 const AnimatedRect = Animated.createAnimatedComponent(Rect);
 const EASE_OUT = Easing.bezier(0.23, 1, 0.32, 1);
@@ -115,12 +113,15 @@ export function BotListRow({
 
   const handleOpen = () => {
     if (dismissToChat) startBotNavigationAnimated(bot.id, avatarLocation);
-    if (isIOS) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Soft);
   };
 
   const linkTrigger = (
     <Link.Trigger>
-      <Pressable accessibilityLabel={`Open chat with ${bot.name}`} accessibilityRole="button" className="w-full">
+      <ChatLinkPressable
+        accessibilityLabel={`Open chat with ${bot.name}`}
+        accessibilityRole="button"
+        className="w-full"
+      >
         {({ pressed }) => (
           <View
             className="min-h-20 w-full flex-row items-center gap-3 py-3"
@@ -150,7 +151,7 @@ export function BotListRow({
             </BotRowTextReveal>
           </View>
         )}
-      </Pressable>
+      </ChatLinkPressable>
     </Link.Trigger>
   );
 
