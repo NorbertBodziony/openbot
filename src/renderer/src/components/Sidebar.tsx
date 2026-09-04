@@ -276,7 +276,11 @@ function SidebarAgentIndicator(props: { state: SidebarAgentState }) {
 function SidebarPinnedAvatar(props: { item: ResolvedPinnedItem; agentState: () => SidebarAgentState | undefined }) {
   return (
     <span class="bot-row-avatar sidebar-pinned-avatar">
-      <AgentAvatar bot={props.item.bot} motion={props.agentState()?.kind === "working" ? "working" : "idle"} />
+      {/* A resting agent holds its pose. `"idle"` morphed for as long as the sidebar was on
+          screen, which is all day, and bought nothing: the shape is 24 px and nobody is
+          looking at it while they work in the pane next to it. `"hover"` brings it back the
+          moment a pointer arrives, and real work still animates on its own. */}
+      <AgentAvatar bot={props.item.bot} motion={props.agentState()?.kind === "working" ? "working" : "hover"} />
       <Show when={props.agentState()}>{(state) => <SidebarAgentIndicator state={state()} />}</Show>
     </span>
   );
@@ -1786,7 +1790,7 @@ export function Sidebar(props: SidebarProps) {
             }}
           >
             <span class="bot-row-avatar">
-              <AgentAvatar bot={bot} motion={working() ? "working" : "idle"} />
+              <AgentAvatar bot={bot} motion={working() ? "working" : "hover"} />
               <Show when={props.agentStates[bot.id]}>{(state) => <SidebarAgentIndicator state={state()} />}</Show>
             </span>
             <span class="bot-row-copy">
@@ -1942,7 +1946,7 @@ export function Sidebar(props: SidebarProps) {
                       onClick={action().onSelect}
                     >
                       <span class="bot-row-avatar">
-                        <AgentAvatar seed={action().avatarSeed} hue={action().avatarHue} motion="idle" />
+                        <AgentAvatar seed={action().avatarSeed} hue={action().avatarHue} motion="hover" />
                       </span>
                       <span class="bot-row-copy">
                         <span class="bot-row-heading">
@@ -2119,7 +2123,7 @@ export function Sidebar(props: SidebarProps) {
                                       }}
                                     >
                                       <span class="bot-row-avatar">
-                                        <TeamPersonAvatar member={member} />
+                                        <TeamPersonAvatar member={member} motion="hover" />
                                         <Show when={(thread()?.unreadCount ?? 0) > 0}>
                                           <Badge
                                             class="person-unread-badge"
