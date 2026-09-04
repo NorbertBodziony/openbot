@@ -82,21 +82,21 @@ export const Default: Story = {
     await expect(canvas.queryByRole("button", { name: "Lime agent color" })).not.toBeInTheDocument();
     await expect(canvas.queryByRole("button", { name: "Violet agent color" })).not.toBeInTheDocument();
 
-    const suggestionViewport = canvasElement.querySelector<HTMLElement>(".first-bot-suggestion-viewport");
-    const suggestionList = canvasElement.querySelector<HTMLElement>(".first-bot-suggestion-list");
+    const suggestionViewport = canvasElement.querySelector<HTMLElement>(".first-agent-suggestion-viewport");
+    const suggestionList = canvasElement.querySelector<HTMLElement>(".first-agent-suggestion-list");
     if (!suggestionViewport || !suggestionList) throw new Error("The agent suggestion scroller is missing.");
     await expect(getComputedStyle(suggestionList).scrollSnapType).toBe("none");
     await expect(suggestionViewport).toHaveClass("can-scroll-forward");
     await expect(suggestionViewport).not.toHaveClass("can-scroll-back");
     const suggestionAvatars = Array.from(
-      canvasElement.querySelectorAll<HTMLElement>(".first-bot-suggestion-card .bot-avatar-motion-always"),
+      canvasElement.querySelectorAll<HTMLElement>(".first-agent-suggestion-card .agent-avatar-motion-always"),
     );
     await expect(suggestionAvatars).toHaveLength(6);
-    const suggestionCards = Array.from(canvasElement.querySelectorAll<HTMLElement>(".first-bot-suggestion-card"));
+    const suggestionCards = Array.from(canvasElement.querySelectorAll<HTMLElement>(".first-agent-suggestion-card"));
     await expect(new Set(suggestionCards.map((card) => card.dataset.animationCycleOffset)).size).toBe(6);
     await expect(new Set(suggestionCards.map((card) => card.dataset.animationOffset)).size).toBe(6);
-    await expect(canvasElement.querySelector(".first-bot-live-avatar .bot-avatar-motion-idle")).toBeInTheDocument();
-    await expect(canvasElement.querySelector(".first-bot-live-avatar")).toHaveAttribute(
+    await expect(canvasElement.querySelector(".first-agent-live-avatar .agent-avatar-motion-idle")).toBeInTheDocument();
+    await expect(canvasElement.querySelector(".first-agent-live-avatar")).toHaveAttribute(
       "data-avatar-seed",
       DEFAULT_FIRST_AGENT_DRAFT.avatarSeed,
     );
@@ -128,8 +128,8 @@ export const Interactions: Story = {
     await expect(tripPlanner).toHaveAttribute("aria-pressed", "true");
     await expect(createButton).toBeEnabled();
 
-    const liveAvatar = canvasElement.querySelector<HTMLElement>(".first-bot-live-avatar");
-    const headerAvatar = canvasElement.querySelector<HTMLElement>(".first-bot-header-identity");
+    const liveAvatar = canvasElement.querySelector<HTMLElement>(".first-agent-live-avatar");
+    const headerAvatar = canvasElement.querySelector<HTMLElement>(".first-agent-header-identity");
     await expect(liveAvatar).toHaveAttribute("data-avatar-seed", suggestion.avatarSeed);
     await expect(headerAvatar).toHaveAttribute("data-avatar-seed", suggestion.avatarSeed);
 
@@ -178,7 +178,7 @@ export const Submitting: Story = {
 export const SmallWindow: Story = {
   parameters: { viewport: { defaultViewport: "firstAgentSmall" } },
   play: async ({ canvas, canvasElement }) => {
-    const suggestionList = canvasElement.querySelector<HTMLElement>(".first-bot-suggestion-list");
+    const suggestionList = canvasElement.querySelector<HTMLElement>(".first-agent-suggestion-list");
     if (!suggestionList) throw new Error("The agent suggestion list is missing.");
     await expect(suggestionList.scrollWidth).toBeGreaterThan(suggestionList.clientWidth);
 

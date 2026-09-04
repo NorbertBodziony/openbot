@@ -256,9 +256,9 @@ function sidebarAgentStateLabel(state: SidebarAgentState): string {
 function SidebarAgentIndicator(props: { state: SidebarAgentState }) {
   const unreadCount = () => (props.state.kind === "unread" ? props.state.count : 0);
   return (
-    <span class={`bot-row-agent-status bot-row-agent-status-${props.state.kind}`} aria-hidden="true">
+    <span class={`agent-row-agent-status agent-row-agent-status-${props.state.kind}`} aria-hidden="true">
       <Show when={props.state.kind === "working"}>
-        <TypingDots class="bot-row-thinking-dots" />
+        <TypingDots class="agent-row-thinking-dots" />
       </Show>
       <Show when={props.state.kind === "responded"}>
         <svg viewBox="0 0 12 12">
@@ -275,7 +275,7 @@ function SidebarAgentIndicator(props: { state: SidebarAgentState }) {
 
 function SidebarPinnedAvatar(props: { item: ResolvedPinnedItem; agentState: () => SidebarAgentState | undefined }) {
   return (
-    <span class="bot-row-avatar sidebar-pinned-avatar">
+    <span class="agent-row-avatar sidebar-pinned-avatar">
       {/* A resting agent holds its pose. `"idle"` morphed for as long as the sidebar was on
           screen, which is all day, and bought nothing: the shape is 24 px and nobody is
           looking at it while they work in the pane next to it. `"hover"` brings it back the
@@ -288,25 +288,25 @@ function SidebarPinnedAvatar(props: { item: ResolvedPinnedItem; agentState: () =
 
 function createSidebarAgentDragCard(source: HTMLElement): HTMLElement {
   const card = document.createElement("div");
-  card.className = "bot-row sidebar-pinned-row sidebar-agent-drag-card";
+  card.className = "agent-row sidebar-pinned-row sidebar-agent-drag-card";
 
-  const sourceAvatar = source.querySelector(".bot-row-avatar")?.cloneNode(true);
+  const sourceAvatar = source.querySelector(".agent-row-avatar")?.cloneNode(true);
   if (sourceAvatar instanceof HTMLElement) {
     sourceAvatar.classList.add("sidebar-pinned-avatar");
     card.append(sourceAvatar);
   }
 
   const copy = document.createElement("span");
-  copy.className = "bot-row-copy sidebar-pinned-copy";
+  copy.className = "agent-row-copy sidebar-pinned-copy";
   const name = document.createElement("strong");
   name.className = "sidebar-pinned-name";
   name.textContent =
     source
-      .querySelector(".sidebar-pinned-name, .bot-row-title strong, .bot-row-heading > strong")
+      .querySelector(".sidebar-pinned-name, .agent-row-title strong, .agent-row-heading > strong")
       ?.textContent?.trim() ?? "Chat";
   copy.append(name);
 
-  const titleText = source.querySelector(".sidebar-pinned-title, .bot-role-badge")?.textContent?.trim();
+  const titleText = source.querySelector(".sidebar-pinned-title, .agent-role-badge")?.textContent?.trim();
   if (titleText) {
     const title = document.createElement("span");
     title.className = "z-badge z-badge-variant-secondary sidebar-pinned-title";
@@ -351,7 +351,7 @@ export function SidebarToggleIcon() {
 
 function EditIcon() {
   return (
-    <svg aria-hidden="true" viewBox="0 0 20 20" class="bot-context-icon size-4 fill-none stroke-current">
+    <svg aria-hidden="true" viewBox="0 0 20 20" class="agent-context-icon size-4 fill-none stroke-current">
       <path d="m12.6 4.2 3.2 3.2-8.7 8.7-3.8.6.6-3.8 8.7-8.7Z" stroke-width="1.4" />
       <path d="m10.9 5.9 3.2 3.2" stroke-width="1.4" />
     </svg>
@@ -363,7 +363,7 @@ function DeleteIcon() {
     <svg
       aria-hidden="true"
       viewBox="0 0 20 20"
-      class="bot-context-icon bot-context-danger-icon size-4 fill-none stroke-current"
+      class="agent-context-icon agent-context-danger-icon size-4 fill-none stroke-current"
     >
       <path
         d="M4.5 6.2h11M8 3.8h4M6.2 6.2l.7 9.3h6.2l.7-9.3M8.4 8.7v4.5M11.6 8.7v4.5"
@@ -1544,27 +1544,27 @@ export function Sidebar(props: SidebarProps) {
     };
     return (
       <ContextMenu.Portal>
-        <ContextMenu.Content class="bot-context-menu" aria-label="Agent actions">
+        <ContextMenu.Content class="agent-context-menu" aria-label="Agent actions">
           <ContextMenu.Item
             disabled={pinLimitReached}
             title={pinLimitReached ? `Maximum ${MAX_SIDEBAR_PINNED_ITEMS} pinned chats` : undefined}
             onSelect={() => (pinned ? props.onUnpin(ref) : props.onPin(ref))}
           >
-            <Show when={pinned} fallback={<Pin class="bot-context-icon size-4" aria-hidden="true" />}>
-              <PinOff class="bot-context-icon size-4" aria-hidden="true" />
+            <Show when={pinned} fallback={<Pin class="agent-context-icon size-4" aria-hidden="true" />}>
+              <PinOff class="agent-context-icon size-4" aria-hidden="true" />
             </Show>
             <span>{pinned ? "Unpin" : "Pin"}</span>
           </ContextMenu.Item>
           <Show when={layoutMutable()}>
             <ContextMenu.Sub>
               <ContextMenu.SubTrigger>
-                <FolderInput class="bot-context-icon size-4" aria-hidden="true" />
+                <FolderInput class="agent-context-icon size-4" aria-hidden="true" />
                 <span>Move to</span>
-                <ChevronRight class="bot-context-submenu-chevron size-4" aria-hidden="true" />
+                <ChevronRight class="agent-context-submenu-chevron size-4" aria-hidden="true" />
               </ContextMenu.SubTrigger>
               <ContextMenu.Portal>
                 <ContextMenu.SubContent
-                  class="ui-action-menu bot-context-menu bot-context-submenu"
+                  class="ui-action-menu agent-context-menu agent-context-submenu"
                   aria-label="Move to"
                 >
                   <For each={props.layout.sections}>
@@ -1572,9 +1572,9 @@ export function Sidebar(props: SidebarProps) {
                       <ContextMenu.Item onSelect={() => assign(section.id)}>
                         <Show
                           when={assignedSectionId() === section.id}
-                          fallback={<Folder class="bot-context-icon size-4" aria-hidden="true" />}
+                          fallback={<Folder class="agent-context-icon size-4" aria-hidden="true" />}
                         >
-                          <Check class="bot-context-icon size-4" aria-hidden="true" />
+                          <Check class="agent-context-icon size-4" aria-hidden="true" />
                         </Show>
                         <span>{section.name}</span>
                       </ContextMenu.Item>
@@ -1583,15 +1583,15 @@ export function Sidebar(props: SidebarProps) {
                   <ContextMenu.Item onSelect={() => assign(null)}>
                     <Show
                       when={assignedSectionId() === null}
-                      fallback={<Folder class="bot-context-icon size-4" aria-hidden="true" />}
+                      fallback={<Folder class="agent-context-icon size-4" aria-hidden="true" />}
                     >
-                      <Check class="bot-context-icon size-4" aria-hidden="true" />
+                      <Check class="agent-context-icon size-4" aria-hidden="true" />
                     </Show>
                     <span>Unassigned</span>
                   </ContextMenu.Item>
                   <ContextMenu.Separator />
                   <ContextMenu.Item onSelect={() => startCreateSection(agent.id)}>
-                    <FolderPlus class="bot-context-icon size-4" aria-hidden="true" />
+                    <FolderPlus class="agent-context-icon size-4" aria-hidden="true" />
                     <span>New section</span>
                   </ContextMenu.Item>
                 </ContextMenu.SubContent>
@@ -1607,13 +1607,13 @@ export function Sidebar(props: SidebarProps) {
               disabled={props.duplicatingAgentIds?.has(agent.id)}
               onSelect={() => void props.onDuplicateAgent?.(agent.id).catch(() => undefined)}
             >
-              <Copy class="bot-context-icon size-4" aria-hidden="true" />
+              <Copy class="agent-context-icon size-4" aria-hidden="true" />
               <span>{props.duplicatingAgentIds?.has(agent.id) ? "Duplicating…" : "Duplicate agent"}</span>
             </ContextMenu.Item>
           </Show>
           <ContextMenu.Separator />
           <ContextMenu.Item
-            class="ui-action-menu-danger bot-context-danger"
+            class="ui-action-menu-danger agent-context-danger"
             onSelect={() => openDelete("agent", agent.id)}
           >
             <DeleteIcon />
@@ -1630,31 +1630,31 @@ export function Sidebar(props: SidebarProps) {
     return (
       <Show when={layoutMutable()}>
         <ContextMenu.Portal>
-          <ContextMenu.Content class="bot-context-menu" aria-label="Section actions">
+          <ContextMenu.Content class="agent-context-menu" aria-label="Section actions">
             <Show when={custom()}>
               <ContextMenu.Item onSelect={() => startRenameSection(sectionId)}>
-                <Pencil class="bot-context-icon size-4" aria-hidden="true" />
+                <Pencil class="agent-context-icon size-4" aria-hidden="true" />
                 <span>Rename</span>
               </ContextMenu.Item>
             </Show>
             <ContextMenu.Item disabled={position() <= 0} onSelect={() => moveSection(sectionId, "up")}>
-              <ArrowUp class="bot-context-icon size-4" aria-hidden="true" />
+              <ArrowUp class="agent-context-icon size-4" aria-hidden="true" />
               <span>Move up</span>
             </ContextMenu.Item>
             <ContextMenu.Item
               disabled={position() < 0 || position() >= visibleSectionIds().length - 1}
               onSelect={() => moveSection(sectionId, "down")}
             >
-              <ArrowDown class="bot-context-icon size-4" aria-hidden="true" />
+              <ArrowDown class="agent-context-icon size-4" aria-hidden="true" />
               <span>Move down</span>
             </ContextMenu.Item>
             <Show when={custom()}>
               <ContextMenu.Separator />
               <ContextMenu.Item
-                class="ui-action-menu-danger bot-context-danger"
+                class="ui-action-menu-danger agent-context-danger"
                 onSelect={() => openDelete("section", sectionId)}
               >
-                <Trash2 class="bot-context-icon bot-context-danger-icon size-4" aria-hidden="true" />
+                <Trash2 class="agent-context-icon agent-context-danger-icon size-4" aria-hidden="true" />
                 <span>Delete</span>
               </ContextMenu.Item>
             </Show>
@@ -1777,9 +1777,9 @@ export function Sidebar(props: SidebarProps) {
             type="button"
             class={[
               buttonVariants({ variant: "ghost" }),
-              "bot-row agent-row",
+              "agent-row agent-row",
               {
-                "bot-row-active": props.activeAgentId === agent.id,
+                "agent-row-active": props.activeAgentId === agent.id,
                 "sidebar-agent-row-dragging": draggedAgentId() === agent.id,
               },
             ]}
@@ -1789,25 +1789,25 @@ export function Sidebar(props: SidebarProps) {
               if (!sidebarClickIsSuppressed(event)) props.onSelectAgent(agent.id);
             }}
           >
-            <span class="bot-row-avatar">
+            <span class="agent-row-avatar">
               <AgentAvatar agent={agent} motion={working() ? "working" : "hover"} />
               <Show when={props.agentStates[agent.id]}>{(state) => <SidebarAgentIndicator state={state()} />}</Show>
             </span>
-            <span class="bot-row-copy">
-              <span class="bot-row-heading">
-                <span class="bot-row-title">
+            <span class="agent-row-copy">
+              <span class="agent-row-heading">
+                <span class="agent-row-title">
                   <strong>{agent.name}</strong>
                   <Show when={title()}>
                     {(label) => (
-                      <Badge class="bot-role-badge" size="sm" title={label()}>
+                      <Badge class="agent-role-badge" size="sm" title={label()}>
                         <span>{label()}</span>
                       </Badge>
                     )}
                   </Show>
                 </span>
-                <span class="bot-row-time">{agent.time}</span>
+                <span class="agent-row-time">{agent.time}</span>
               </span>
-              <span class="bot-row-preview">{agent.preview}</span>
+              <span class="agent-row-preview">{agent.preview}</span>
             </span>
             <Show when={props.agentStates[agent.id]}>
               {(state) => <span class="sr-only">{sidebarAgentStateLabel(state())}</span>}
@@ -1821,7 +1821,7 @@ export function Sidebar(props: SidebarProps) {
 
   return (
     <aside
-      id="bot-sidebar"
+      id="agent-sidebar"
       aria-label="Agent navigation"
       class={["sidebar panel-edge", { "sidebar-compact": props.compact }]}
     >
@@ -1849,7 +1849,7 @@ export function Sidebar(props: SidebarProps) {
             ]}
             onClick={() => (props.compact ? props.onExpand() : props.onOpenMarketplace())}
             aria-label={props.compact ? "Expand sidebar" : "Open Marketplace"}
-            aria-controls={props.compact ? "bot-sidebar" : undefined}
+            aria-controls={props.compact ? "agent-sidebar" : undefined}
             aria-expanded={props.compact ? "false" : undefined}
             title={props.compact ? "Expand sidebar" : "Marketplace"}
           >
@@ -1905,7 +1905,7 @@ export function Sidebar(props: SidebarProps) {
           scrollFades.bind(element);
         }}
         aria-label="Chat list"
-        class={["bot-list", scrollFades.classes()]}
+        class={["agent-list", scrollFades.classes()]}
         data-sidebar-dragging={draggingKind()}
         onDragOver={updateSidebarNativeDrag}
         onDragLeave={(event) => {
@@ -1916,7 +1916,7 @@ export function Sidebar(props: SidebarProps) {
         onDrop={dropSidebarNativeDrag}
         onScroll={scrollFades.measure}
       >
-        <div class="bot-list-content">
+        <div class="agent-list-content">
           <Show
             when={
               resolvedPinnedItems().length > 0 ||
@@ -1934,29 +1934,29 @@ export function Sidebar(props: SidebarProps) {
                 }
               >
                 {(action) => (
-                  <div class="sidebar-first-bot-state">
+                  <div class="sidebar-first-agent-state">
                     <Button
                       variant="ghost"
                       type="button"
-                      class="bot-row bot-row-active sidebar-first-bot-action"
+                      class="agent-row agent-row-active sidebar-first-agent-action"
                       aria-label={action().label}
                       aria-pressed="true"
                       data-avatar-seed={action().avatarSeed}
                       data-avatar-hue={action().avatarHue ?? "automatic"}
                       onClick={action().onSelect}
                     >
-                      <span class="bot-row-avatar">
+                      <span class="agent-row-avatar">
                         <AgentAvatar seed={action().avatarSeed} hue={action().avatarHue} motion="hover" />
                       </span>
-                      <span class="bot-row-copy">
-                        <span class="bot-row-heading">
-                          <span class="bot-row-title">
+                      <span class="agent-row-copy">
+                        <span class="agent-row-heading">
+                          <span class="agent-row-title">
                             <strong>{action().label}</strong>
                           </span>
                         </span>
                       </span>
                     </Button>
-                    <p class="sidebar-first-bot-empty">No chats yet</p>
+                    <p class="sidebar-first-agent-empty">No chats yet</p>
                   </div>
                 )}
               </Show>
@@ -2026,16 +2026,16 @@ export function Sidebar(props: SidebarProps) {
                               type="button"
                               class={[
                                 buttonVariants({ variant: "ghost" }),
-                                "bot-row sidebar-pinned-row",
+                                "agent-row sidebar-pinned-row",
                                 "agent-row",
-                                { "bot-row-active": props.activeAgentId === item.agent.id },
+                                { "agent-row-active": props.activeAgentId === item.agent.id },
                               ]}
                               aria-label={`${item.agent.name}, pinned agent`}
                               aria-pressed={props.activeAgentId === item.agent.id ? "true" : "false"}
                               onClick={() => props.onSelectAgent(item.agent.id)}
                             >
                               <SidebarPinnedAvatar item={item} agentState={() => props.agentStates[item.agent.id]} />
-                              <span class="bot-row-copy sidebar-pinned-copy">
+                              <span class="agent-row-copy sidebar-pinned-copy">
                                 <strong class="sidebar-pinned-name" title={name()}>
                                   {name()}
                                 </strong>
@@ -2100,8 +2100,8 @@ export function Sidebar(props: SidebarProps) {
                                       variant="ghost"
                                       type="button"
                                       class={[
-                                        "bot-row person-row",
-                                        { "bot-row-active": props.activeDirectMemberId === member.id },
+                                        "agent-row person-row",
+                                        { "agent-row-active": props.activeDirectMemberId === member.id },
                                       ]}
                                       aria-label={`${teamMemberName(member)}. ${thread()?.lastMessage.text ?? (member.online ? "Online now" : "Offline")}`}
                                       aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
@@ -2122,7 +2122,7 @@ export function Sidebar(props: SidebarProps) {
                                         }
                                       }}
                                     >
-                                      <span class="bot-row-avatar">
+                                      <span class="agent-row-avatar">
                                         <TeamPersonAvatar member={member} motion="hover" />
                                         <Show when={(thread()?.unreadCount ?? 0) > 0}>
                                           <Badge
@@ -2135,12 +2135,12 @@ export function Sidebar(props: SidebarProps) {
                                           </Badge>
                                         </Show>
                                       </span>
-                                      <span class="bot-row-copy">
-                                        <span class="bot-row-heading">
+                                      <span class="agent-row-copy">
+                                        <span class="agent-row-heading">
                                           <strong>{teamMemberName(member)}</strong>
                                           <span>{thread() ? sidebarMessageTime(thread()?.updatedAt ?? "") : ""}</span>
                                         </span>
-                                        <span class="bot-row-preview">
+                                        <span class="agent-row-preview">
                                           {thread()?.lastMessage.text ?? (member.online ? "Online now" : "Offline")}
                                         </span>
                                       </span>
@@ -2204,9 +2204,9 @@ export function Sidebar(props: SidebarProps) {
           <ContextMenu.Root modal={false}>
             <ContextMenu.Trigger class="sidebar-list-context-trigger" aria-label="Sidebar free area" />
             <ContextMenu.Portal>
-              <ContextMenu.Content class="bot-context-menu" aria-label="Sidebar actions">
+              <ContextMenu.Content class="agent-context-menu" aria-label="Sidebar actions">
                 <ContextMenu.Item onSelect={() => startCreateSection()}>
-                  <FolderPlus class="bot-context-icon size-4" aria-hidden="true" />
+                  <FolderPlus class="agent-context-icon size-4" aria-hidden="true" />
                   <span>New section</span>
                 </ContextMenu.Item>
               </ContextMenu.Content>
@@ -2224,8 +2224,8 @@ export function Sidebar(props: SidebarProps) {
         <Show when={deleteTarget()}>
           {(agent) => (
             <AlertDialog.Portal>
-              <AlertDialog.Overlay class="bot-delete-backdrop">
-                <AlertDialog.Content class="bot-delete-dialog">
+              <AlertDialog.Overlay class="agent-delete-backdrop">
+                <AlertDialog.Content class="agent-delete-dialog">
                   <AgentAvatar
                     agent={agent()}
                     style={{
@@ -2239,15 +2239,15 @@ export function Sidebar(props: SidebarProps) {
                     This removes the agent and its OpenBot conversation from the app. Its queue, memories, routines, and
                     workspace are deleted. History stored separately by the connected CLI provider is not deleted.
                   </AlertDialog.Description>
-                  <Show when={deleteError()}>{(message) => <p class="bot-delete-error">{message()}</p>}</Show>
-                  <div class="bot-delete-actions">
+                  <Show when={deleteError()}>{(message) => <p class="agent-delete-error">{message()}</p>}</Show>
+                  <div class="agent-delete-actions">
                     <Button variant="outline" type="button" disabled={deleting()} onClick={closeDelete}>
                       Cancel
                     </Button>
                     <Button
                       variant="destructive"
                       type="button"
-                      class="bot-delete-confirm"
+                      class="agent-delete-confirm"
                       disabled={deleting()}
                       onClick={() => void confirmDelete()}
                     >
@@ -2270,8 +2270,8 @@ export function Sidebar(props: SidebarProps) {
         <Show when={sectionDeleteTarget()}>
           {(section) => (
             <AlertDialog.Portal>
-              <AlertDialog.Overlay class="bot-delete-backdrop">
-                <AlertDialog.Content class="bot-delete-dialog sidebar-section-delete-dialog">
+              <AlertDialog.Overlay class="agent-delete-backdrop">
+                <AlertDialog.Content class="agent-delete-dialog sidebar-section-delete-dialog">
                   <span class="sidebar-section-delete-icon" aria-hidden="true">
                     <Trash2 class="size-5" />
                   </span>
@@ -2279,15 +2279,15 @@ export function Sidebar(props: SidebarProps) {
                   <AlertDialog.Description>
                     Agents in this section will move to Unassigned. No agents will be deleted.
                   </AlertDialog.Description>
-                  <Show when={deleteError()}>{(message) => <p class="bot-delete-error">{message()}</p>}</Show>
-                  <div class="bot-delete-actions">
+                  <Show when={deleteError()}>{(message) => <p class="agent-delete-error">{message()}</p>}</Show>
+                  <div class="agent-delete-actions">
                     <Button variant="outline" type="button" disabled={deleting()} onClick={closeDelete}>
                       Cancel
                     </Button>
                     <Button
                       variant="destructive"
                       type="button"
-                      class="bot-delete-confirm"
+                      class="agent-delete-confirm"
                       disabled={deleting()}
                       onClick={() => void confirmSectionDelete()}
                     >

@@ -159,7 +159,7 @@ function PrototypeMessage(props: {
   return (
     <Message
       align={own() ? "end" : "start"}
-      class={["chat-prototype-message", "message-entry", own() ? "message-entry-user" : "message-entry-bot"]}
+      class={["chat-prototype-message", "message-entry", own() ? "message-entry-user" : "message-entry-agent"]}
       data-author={own() ? "user" : "assistant"}
       aria-label={`${own() ? "You" : "Assistant"} at ${props.message.time}`}
     >

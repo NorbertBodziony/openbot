@@ -47,7 +47,7 @@ export function AgentAvatar(props: AgentAvatarProps) {
       setImageFailed(false);
     },
   );
-  const className = () => `bot-avatar bot-avatar-motion-${motion()} ${props.class ?? ""}`;
+  const className = () => `agent-avatar agent-avatar-motion-${motion()} ${props.class ?? ""}`;
   return (
     <Show
       when={url() && !imageFailed()}
@@ -65,7 +65,7 @@ export function AgentAvatar(props: AgentAvatarProps) {
         />
       }
     >
-      <span class={`${className()} bot-avatar-custom`} style={props.style} aria-hidden="true">
+      <span class={`${className()} agent-avatar-custom`} style={props.style} aria-hidden="true">
         <img src={url() ?? ""} alt="" draggable={false} onError={() => setImageFailed(true)} />
       </span>
     </Show>
@@ -145,7 +145,7 @@ function GeneratedAvatar(props: {
   return (
     <span
       ref={element}
-      class={`${props.class} bot-avatar-bloub`}
+      class={`${props.class} agent-avatar-bloub`}
       style={props.style}
       data-animation-state={props.animationState}
       aria-hidden="true"

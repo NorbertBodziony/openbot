@@ -216,10 +216,8 @@ describe("Sidebar pinned chats", () => {
         toJSON: () => ({}),
       });
     }
-    const list = view.container.querySelector<HTMLElement>(".sidebar-pinned-list");
-    const root = view.container.querySelector<HTMLElement>(".bot-list");
+    const root = screen.getByRole("navigation", { name: "Chat list" });
     const pinned = screen.getByRole("region", { name: "Pinned chats" });
-    if (!list || !root) throw new Error("Pinned list is missing.");
     vi.spyOn(root, "getBoundingClientRect").mockReturnValue({
       top: 0,
       bottom: 600,
@@ -259,8 +257,8 @@ describe("Sidebar people", () => {
     const peopleItems = Array.from(view.container.querySelectorAll<HTMLElement>("[data-person-id]"));
     const sourceItem = peopleItems[0];
     const targetItem = peopleItems[1];
-    const list = view.container.querySelector<HTMLElement>(".bot-list");
-    if (!sourceItem || !targetItem || !list) throw new Error("Sidebar person drag targets are missing.");
+    const list = screen.getByRole("navigation", { name: "Chat list" });
+    if (!sourceItem || !targetItem) throw new Error("Sidebar person drag targets are missing.");
     const source = within(sourceItem).getByRole("button");
     const peopleSection = screen.getByRole("button", { name: "People" }).closest<HTMLElement>("section");
     const initialIds = peopleItems.map((item) => item.dataset.personId ?? "");
@@ -292,9 +290,9 @@ describe("Sidebar people", () => {
     const view = render(() => <Sidebar {...props} />);
     const peopleItems = Array.from(view.container.querySelectorAll<HTMLElement>("[data-person-id]"));
     const sourceItem = peopleItems[0];
-    const list = view.container.querySelector<HTMLElement>(".bot-list");
+    const list = screen.getByRole("navigation", { name: "Chat list" });
     const pinned = screen.getByRole("region", { name: "Pinned chats" });
-    if (!sourceItem || !list) throw new Error("Sidebar person drag source is missing.");
+    if (!sourceItem) throw new Error("Sidebar person drag source is missing.");
     const source = within(sourceItem).getByRole("button");
     for (const [index, item] of peopleItems.entries()) {
       vi.spyOn(item, "getBoundingClientRect").mockReturnValue(rect(12, 120 + index * 58, 256, 54));
@@ -411,12 +409,12 @@ describe("Sidebar sections", () => {
 
   it("assigns agents to sections with bounded vertical drag and drop", async () => {
     const props = sidebarProps();
-    const view = render(() => <Sidebar {...props} layout={sectionLayout()} />);
+    render(() => <Sidebar {...props} layout={sectionLayout()} />);
     const research = screen.getByRole("button", { name: /Research/ });
     const researchItem = research.closest<HTMLElement>("[data-agent-id]");
     const unassigned = screen.getByRole("button", { name: "Unassigned" }).closest<HTMLElement>("section");
-    const list = view.container.querySelector<HTMLElement>(".bot-list");
-    if (!researchItem || !unassigned || !list) throw new Error("Sidebar drag targets are missing.");
+    const list = screen.getByRole("navigation", { name: "Chat list" });
+    if (!researchItem || !unassigned) throw new Error("Sidebar drag targets are missing.");
     vi.spyOn(researchItem, "getBoundingClientRect").mockReturnValue(rect(12, 80, 256, 54));
     vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 600));
     vi.spyOn(unassigned, "getBoundingClientRect").mockReturnValue(rect(12, 300, 256, 100));
@@ -448,8 +446,8 @@ describe("Sidebar sections", () => {
     const view = render(() => <Sidebar {...props} layout={sectionLayout()} />);
     const pinnedItem = view.container.querySelector<HTMLElement>(".sidebar-pinned-item");
     const demoSection = screen.getByRole("button", { name: "Demo" }).closest<HTMLElement>("section");
-    const list = view.container.querySelector<HTMLElement>(".bot-list");
-    if (!pinnedItem || !demoSection || !list) throw new Error("Pinned drag targets are missing.");
+    const list = screen.getByRole("navigation", { name: "Chat list" });
+    if (!pinnedItem || !demoSection) throw new Error("Pinned drag targets are missing.");
     vi.spyOn(pinnedItem, "getBoundingClientRect").mockReturnValue(rect(16, 20, 72, 94));
     vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 600));
     vi.spyOn(demoSection, "getBoundingClientRect").mockReturnValue(rect(12, 200, 256, 100));
@@ -473,7 +471,7 @@ describe("Sidebar sections", () => {
     const props = sidebarProps([{ kind: "agent", id: "chief" }]);
     const view = render(() => <Sidebar {...props} layout={multiSectionLayout()} />);
     const pinnedItem = view.container.querySelector<HTMLElement>(".sidebar-pinned-item");
-    const list = view.container.querySelector<HTMLElement>(".bot-list");
+    const list = screen.getByRole("navigation", { name: "Chat list" });
     const people = screen.getByRole("button", { name: "People" }).closest<HTMLElement>("section");
     const demo = screen.getByRole("button", { name: "Demo" }).closest<HTMLElement>("section");
     const product = screen.getByRole("button", { name: "Product" }).closest<HTMLElement>("section");
@@ -526,10 +524,10 @@ describe("Sidebar sections", () => {
     props.onMutateLayout.mockRejectedValueOnce(new Error("Section move failed"));
     const view = render(() => <Sidebar {...props} layout={multiSectionLayout()} />);
     const pinnedItem = view.container.querySelector<HTMLElement>(".sidebar-pinned-item");
-    const list = view.container.querySelector<HTMLElement>(".bot-list");
+    const list = screen.getByRole("navigation", { name: "Chat list" });
     const product = screen.getByRole("button", { name: "Product" }).closest<HTMLElement>("section");
     const pinned = screen.getByRole("region", { name: "Pinned chats" });
-    if (!pinnedItem || !list || !product) throw new Error("Pinned failure targets are missing.");
+    if (!pinnedItem || !product) throw new Error("Pinned failure targets are missing.");
     vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 700));
     vi.spyOn(pinned, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 100));
     vi.spyOn(product, "getBoundingClientRect").mockReturnValue(rect(12, 400, 256, 90));
@@ -553,12 +551,12 @@ describe("Sidebar sections", () => {
     const props = sidebarProps();
     const layout = sectionLayout();
     const layoutWithHiddenGap = { ...layout, order: [demoId, emptyId, "people", "unassigned"] };
-    const view = render(() => <Sidebar {...props} layout={layoutWithHiddenGap} />);
+    render(() => <Sidebar {...props} layout={layoutWithHiddenGap} />);
     const demo = screen.getByRole("button", { name: "Demo" });
     const demoSection = demo.closest<HTMLElement>("section");
     const emptySection = screen.getByRole("button", { name: "Empty" }).closest<HTMLElement>("section");
-    const list = view.container.querySelector<HTMLElement>(".bot-list");
-    if (!demoSection || !emptySection || !list) throw new Error("Sidebar section drag targets are missing.");
+    const list = screen.getByRole("navigation", { name: "Chat list" });
+    if (!demoSection || !emptySection) throw new Error("Sidebar section drag targets are missing.");
     vi.spyOn(demo, "getBoundingClientRect").mockReturnValue(rect(12, 80, 256, 32));
     vi.spyOn(demoSection, "getBoundingClientRect").mockReturnValue(rect(12, 80, 256, 86));
     vi.spyOn(list, "getBoundingClientRect").mockReturnValue(rect(0, 0, 280, 600));
@@ -589,14 +587,14 @@ describe("Sidebar sections", () => {
 
   it("reorders agents inside one section with live row movement", async () => {
     const props = sidebarProps();
-    const view = render(() => <Sidebar {...props} layout={sectionLayout()} />);
+    render(() => <Sidebar {...props} layout={sectionLayout()} />);
     const chief = screen.getByRole("button", { name: /Chief/ });
     const research = screen.getByRole("button", { name: /Research/ });
     const chiefItem = chief.closest<HTMLElement>("[data-agent-id]");
     const researchItem = research.closest<HTMLElement>("[data-agent-id]");
     const demoSection = screen.getByRole("button", { name: "Demo" }).closest<HTMLElement>("section");
-    const list = view.container.querySelector<HTMLElement>(".bot-list");
-    if (!list || !chiefItem || !researchItem || !demoSection) throw new Error("Sidebar list is missing.");
+    const list = screen.getByRole("navigation", { name: "Chat list" });
+    if (!chiefItem || !researchItem || !demoSection) throw new Error("Sidebar list is missing.");
     vi.spyOn(chief, "getBoundingClientRect").mockReturnValue(rect(12, 120, 256, 54));
     vi.spyOn(research, "getBoundingClientRect").mockReturnValue(rect(12, 174, 256, 54));
     vi.spyOn(chiefItem, "getBoundingClientRect").mockReturnValue(rect(12, 120, 256, 54));

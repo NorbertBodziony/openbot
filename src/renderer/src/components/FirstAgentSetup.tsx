@@ -279,10 +279,10 @@ export function FirstAgentSetup(props: FirstAgentSetupProps) {
   }
 
   return (
-    <main class="conversation-panel first-bot-setup-panel" aria-labelledby="first-bot-setup-title">
-      <header class="window-drag first-bot-setup-header">
+    <main class="conversation-panel first-agent-setup-panel" aria-labelledby="first-agent-setup-title">
+      <header class="window-drag first-agent-setup-header">
         <div
-          class="first-bot-header-identity"
+          class="first-agent-header-identity"
           data-avatar-seed={props.value.avatarSeed}
           data-avatar-hue={props.value.avatarHue ?? "automatic"}
         >
@@ -294,7 +294,7 @@ export function FirstAgentSetup(props: FirstAgentSetupProps) {
             type="button"
             variant="ghost"
             size="sm"
-            class="first-bot-cancel no-drag"
+            class="first-agent-cancel no-drag"
             disabled={props.submitting}
             onClick={() => props.onCancel?.()}
           >
@@ -303,20 +303,20 @@ export function FirstAgentSetup(props: FirstAgentSetupProps) {
         </Show>
       </header>
 
-      <div class="first-bot-setup-content">
+      <div class="first-agent-setup-content">
         <form
-          class="first-bot-editor"
+          class="first-agent-editor"
           onSubmit={(event) => {
             event.preventDefault();
             if (canSubmit()) void props.onSubmit(props.value);
           }}
         >
-          <h2 id="first-bot-setup-title" class="sr-only">
+          <h2 id="first-agent-setup-title" class="sr-only">
             {props.mode === "additional" ? "Create a new agent" : "Create your first agent"}
           </h2>
 
           <div
-            class="first-bot-live-avatar"
+            class="first-agent-live-avatar"
             data-avatar-seed={props.value.avatarSeed}
             data-avatar-hue={props.value.avatarHue ?? "automatic"}
           >
@@ -328,20 +328,20 @@ export function FirstAgentSetup(props: FirstAgentSetupProps) {
             />
           </div>
 
-          <fieldset class="first-bot-avatar-fieldset first-bot-color-fieldset" disabled={props.submitting}>
+          <fieldset class="first-agent-avatar-fieldset first-agent-color-fieldset" disabled={props.submitting}>
             <legend class="sr-only">Agent color</legend>
-            <div class="first-bot-color-options">
+            <div class="first-agent-color-options">
               <Button
                 variant="ghost"
                 type="button"
                 size="sm"
-                class="first-bot-color-choice"
+                class="first-agent-color-choice"
                 aria-label="Automatic agent color"
                 aria-pressed={props.value.avatarHue === null ? "true" : "false"}
                 onClick={() => updateDraft({ avatarHue: null })}
               >
                 <span
-                  class="first-bot-color-swatch"
+                  class="first-agent-color-swatch"
                   style={{ background: avatarHeadColor(props.value.avatarSeed, null) }}
                 />
               </Button>
@@ -351,28 +351,28 @@ export function FirstAgentSetup(props: FirstAgentSetupProps) {
                     variant="ghost"
                     type="button"
                     size="sm"
-                    class="first-bot-color-choice"
+                    class="first-agent-color-choice"
                     aria-label={`${option.label} agent color`}
                     aria-pressed={props.value.avatarHue === option.hue ? "true" : "false"}
                     onClick={() => updateDraft({ avatarHue: option.hue })}
                   >
-                    <span class="first-bot-color-swatch" style={{ background: avatarHueSwatch(option.hue) }} />
+                    <span class="first-agent-color-swatch" style={{ background: avatarHueSwatch(option.hue) }} />
                   </Button>
                 )}
               </For>
             </div>
           </fieldset>
 
-          <fieldset class="first-bot-avatar-fieldset first-bot-face-fieldset" disabled={props.submitting}>
+          <fieldset class="first-agent-avatar-fieldset first-agent-face-fieldset" disabled={props.submitting}>
             <legend class="sr-only">Agent face</legend>
-            <div class="first-bot-face-options">
+            <div class="first-agent-face-options">
               <For each={FIRST_AGENT_AVATAR_SEEDS}>
                 {(seed, index) => (
                   <Button
                     variant="ghost"
                     type="button"
                     size="sm"
-                    class="first-bot-face-choice"
+                    class="first-agent-face-choice"
                     aria-label={`Agent face ${index() + 1}`}
                     aria-pressed={props.value.avatarSeed === seed ? "true" : "false"}
                     onClick={() => updateDraft({ avatarSeed: seed })}
@@ -389,7 +389,7 @@ export function FirstAgentSetup(props: FirstAgentSetupProps) {
             </div>
           </fieldset>
 
-          <div class="first-bot-fields">
+          <div class="first-agent-fields">
             <Field label="Name" required>
               <Input
                 value={props.value.name}
@@ -413,18 +413,18 @@ export function FirstAgentSetup(props: FirstAgentSetupProps) {
 
           <Show when={props.error}>
             {(error) => (
-              <p class="first-bot-error" role="alert">
+              <p class="first-agent-error" role="alert">
                 {error()}
               </p>
             )}
           </Show>
 
-          <div class="first-bot-submit-actions">
+          <div class="first-agent-submit-actions">
             <Button
               type="submit"
               variant="default"
               size="default"
-              class="first-bot-submit"
+              class="first-agent-submit"
               disabled={!canSubmit()}
               loading={props.submitting}
               loadingLabel="Creating agent…"
@@ -434,14 +434,14 @@ export function FirstAgentSetup(props: FirstAgentSetupProps) {
           </div>
         </form>
 
-        <section class="first-bot-suggestions" aria-labelledby="first-bot-suggestions-title">
-          <h2 id="first-bot-suggestions-title">Suggestions</h2>
+        <section class="first-agent-suggestions" aria-labelledby="first-agent-suggestions-title">
+          <h2 id="first-agent-suggestions-title">Suggestions</h2>
           <div
-            class={`first-bot-suggestion-viewport${canScrollSuggestionsBack() ? " can-scroll-back" : ""}${canScrollSuggestionsForward() ? " can-scroll-forward" : ""}${draggingSuggestions() ? " is-dragging" : ""}`}
+            class={`first-agent-suggestion-viewport${canScrollSuggestionsBack() ? " can-scroll-back" : ""}${canScrollSuggestionsForward() ? " can-scroll-forward" : ""}${draggingSuggestions() ? " is-dragging" : ""}`}
           >
             <ul
               ref={suggestionList}
-              class="first-bot-suggestion-list"
+              class="first-agent-suggestion-list"
               onScroll={updateSuggestionFades}
               onPointerDown={startSuggestionDrag}
               onPointerMove={moveSuggestionDrag}
@@ -450,11 +450,11 @@ export function FirstAgentSetup(props: FirstAgentSetupProps) {
             >
               <For each={props.suggestions}>
                 {(suggestion) => (
-                  <li class="first-bot-suggestion-item">
+                  <li class="first-agent-suggestion-item">
                     <Button
                       variant="ghost"
                       type="button"
-                      class="first-bot-suggestion-card"
+                      class="first-agent-suggestion-card"
                       data-animation-cycle-offset={suggestion.animationCycleOffset}
                       data-animation-offset={suggestion.animationOffset}
                       aria-label={`${suggestion.name}. ${suggestion.description}`}

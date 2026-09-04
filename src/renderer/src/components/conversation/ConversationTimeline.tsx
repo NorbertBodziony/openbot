@@ -338,7 +338,7 @@ export function ConversationTimeline() {
                                   {
                                     "message-entry-animated": animateEntrance,
                                     "message-entry-user": message()?.author === "you",
-                                    "message-entry-bot": message()?.author === "agent",
+                                    "message-entry-agent": message()?.author === "agent",
                                   },
                                 ]}
                               >

@@ -458,7 +458,7 @@ export function OnboardingFlow(props: OnboardingFlowProps) {
                       hue={avatarVariants.computer.hue}
                       motion="idle"
                       animationOffset={avatarVariants.computer.animationOffset}
-                      class="onboarding-computer-avatar-bot"
+                      class="onboarding-computer-avatar-agent"
                     />
                   </div>
                 </div>

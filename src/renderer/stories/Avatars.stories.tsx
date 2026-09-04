@@ -43,7 +43,7 @@ export const SizesAndStates: AgentStory = {
             <div class="flex items-end gap-5">
               {AVATAR_SIZES.map((size) => (
                 <div class="grid justify-items-center gap-2">
-                  <span class="bot-avatar bot-avatar-bloub" style={{ width: `${size}px`, height: `${size}px` }}>
+                  <span class="agent-avatar agent-avatar-bloub" style={{ width: `${size}px`, height: `${size}px` }}>
                     <BloubBot
                       size={100}
                       shape={profile.shape}

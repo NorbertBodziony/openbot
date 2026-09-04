@@ -369,11 +369,11 @@ export const AgentTiles: Story = {
   decorators: [(Story) => <div style={{ width: "280px", height: "100vh" }}>{Story()}</div>],
   play: async ({ canvas }) => {
     const tile = canvas.getByRole("button", { name: /Chief, CEO/ });
-    const avatar = tile.querySelector<HTMLElement>(".bot-row-avatar");
-    const title = tile.querySelector<HTMLElement>(".bot-row-title strong");
-    const badge = tile.querySelector<HTMLElement>(".bot-role-badge");
-    const preview = tile.querySelector<HTMLElement>(".bot-row-preview");
-    const time = tile.querySelector<HTMLElement>(".bot-row-time");
+    const avatar = tile.querySelector<HTMLElement>(".agent-row-avatar");
+    const title = tile.querySelector<HTMLElement>(".agent-row-title strong");
+    const badge = tile.querySelector<HTMLElement>(".agent-role-badge");
+    const preview = tile.querySelector<HTMLElement>(".agent-row-preview");
+    const time = tile.querySelector<HTMLElement>(".agent-row-time");
     if (!avatar || !title || !badge || !preview || !time) throw new Error("Agent tile anatomy is incomplete.");
     await expect(tile.getBoundingClientRect().height).toBe(54);
     await expect(avatar.getBoundingClientRect().width).toBe(36);

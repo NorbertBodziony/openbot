@@ -48,8 +48,8 @@
     border-bottom: 1px solid var(--openbot-border);
   }
 
-  .openbot-playground-root .bot-list,
-  .openbot-playground-root .sidebar-compact .bot-list {
+  .openbot-playground-root .agent-list,
+  .openbot-playground-root .sidebar-compact .agent-list {
     display: flex;
     overflow-x: auto;
     overflow-y: hidden;
@@ -81,11 +81,11 @@
     padding: 6px;
   }
 
-  .openbot-playground-root .sidebar-compact .bot-row-avatar {
+  .openbot-playground-root .sidebar-compact .agent-row-avatar {
     transform: none;
   }
 
-  .openbot-playground-root .bot-row-copy {
+  .openbot-playground-root .agent-row-copy {
     display: none;
   }
 
