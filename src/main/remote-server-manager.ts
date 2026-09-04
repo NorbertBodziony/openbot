@@ -1,6 +1,5 @@
 import { randomBytes, randomUUID, verify } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { isValidAvatarImage } from "@openbot/contracts/avatar-images";
 import { createInviteUrl, parseInviteUrl } from "@openbot/contracts/invite-links";
 import type {
@@ -92,12 +91,8 @@ import { decodeRemoteDesktopCapabilities, decodeRemoteDesktopSession } from "./r
 import { decodeVoid, type ResponseDecoder } from "./remote-host-decoding";
 import { RemoteProtocolError, RemoteRequestError } from "./remote-server-errors";
 import { remoteFetch, requestJson, throwRemoteResponseError, webRtcRequestBody } from "./remote-server-http";
-import {
-  emptyStoredRemoteServers,
-  readStoredRemoteServers,
-  type StoredRemoteServer,
-  type StoredRemoteServers,
-} from "./remote-server-stored-shape";
+import { RemoteServerStore, type StoredRemoteServerView, type TokenCipher } from "./remote-server-store";
+import type { StoredRemoteServer } from "./remote-server-stored-shape";
 import { addRemotePreviewUrls, isLocalDevelopmentApi, pageQuery, remoteServerLogoUrl } from "./remote-server-urls";
 import {
   decodeIdentityProof,
@@ -123,11 +118,6 @@ interface RemoteServerEvents {
   presence: [serverId: string, snapshot: TeamPresenceSnapshot];
   directMessage: [serverId: string, event: DirectMessageRealtimeEvent];
   directTyping: [serverId: string, event: DirectTypingRealtimeEvent];
-}
-
-interface TokenCipher {
-  encrypt: (value: string) => Buffer;
-  decrypt: (value: Buffer) => string;
 }
 
 interface CentralAccountSession {
@@ -170,12 +160,10 @@ const REMOTE_EVENT_SNAPSHOT_PROTOCOL = "openbot-events-v2";
 const LOCAL_TEAM_PROTOCOL = { minimum: TEAM_PROTOCOL_V1, maximum: TEAM_PROTOCOL_V3 } as const;
 
 export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
-  readonly #path: string;
-  readonly #cipher: TokenCipher;
+  readonly #store: RemoteServerStore;
   readonly #centralAccount: CentralAccountSession;
   readonly #allowLocalDevelopmentInvites: boolean;
   readonly #appVersion: string | null;
-  #state: StoredRemoteServers = emptyStoredRemoteServers();
   #states = new Map<string, ServerSummary["state"]>();
   #compatibility = new Map<string, ServerCompatibility>();
   #issues = new Map<string, ServerConnectionIssue>();
@@ -196,8 +184,6 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #getLocalHostId: () => string | null;
   readonly #remoteViewerProxy: RemoteViewerProxy | null;
   #presence = new Map<string, TeamPresenceSnapshot>();
-  #writeChain = Promise.resolve();
-  #activeServerRevision = 0;
   #selectChain = Promise.resolve();
 
   constructor(
@@ -207,8 +193,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     options: RemoteServerManagerOptions = {},
   ) {
     super();
-    this.#path = path;
-    this.#cipher = cipher;
+    this.#store = new RemoteServerStore({ path, cipher });
     this.#centralAccount = centralAccount;
     this.#allowLocalDevelopmentInvites = options.allowLocalDevelopmentInvites ?? false;
     this.#appVersion = options.appVersion ?? null;
@@ -231,13 +216,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this.#connectionSequences.set(serverId, (this.#connectionSequences.get(serverId) ?? 0) + 1);
       this.#emitChanged();
       void this.#refreshWebRtcCompatibility(serverId).catch(() => undefined);
-      const server = this.#state.servers.find((candidate) => candidate.id === serverId);
+      const server = this.#store.find(serverId);
       if (server) {
-        void this.#refreshRemoteDesktop(server)
-          .catch(() => {
-            server.remoteDesktopAvailable = false;
-          })
-          .then(() => this.#persist())
+        void this.#probeRemoteDesktop(server)
+          .catch(() => false)
+          .then((remoteDesktopAvailable) => this.#store.update(serverId, { remoteDesktopAvailable }))
           .then(() => this.#emitChanged())
           .catch(() => undefined);
       }
@@ -270,20 +253,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async initialize(): Promise<void> {
-    let contents: string | null = null;
-    try {
-      contents = await readFile(this.#path, "utf8");
-    } catch (error) {
-      // A file that is not there is a first run. Anything else -- a permission error, a truncated
-      // read -- must reach the caller: continuing would replace the file with an empty list.
-      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-    }
-    if (contents !== null) {
-      const stored = readStoredRemoteServers(JSON.parse(contents));
-      if (stored) this.#state = stored;
-    }
+    await this.#store.load();
     if (this.#webrtcTransport) await this.#syncWebRtcHosts().catch(() => undefined);
-    for (const server of this.#state.servers) {
+    for (const server of this.#store.servers) {
       this.#states.set(server.id, "offline");
       if (server.transport === "webrtc-v2") this.#compatibility.set(server.id, this.#checkingCompatibility());
     }
@@ -300,11 +272,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         remoteDesktopAvailable: false,
         logoUrl: null,
         role: null,
-        active: this.#state.activeServerId === LOCAL_SERVER_ID,
+        active: this.#store.activeServerId === LOCAL_SERVER_ID,
         compatibility: null,
         issue: null,
       },
-      ...this.#state.servers.map((server) => ({
+      ...this.#store.servers.map((server) => ({
         id: server.id,
         name: server.name,
         kind: "remote" as const,
@@ -313,7 +285,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         remoteDesktopAvailable: server.remoteDesktopAvailable ?? false,
         logoUrl: server.logoVersion ? remoteServerLogoUrl(server.id, server.logoVersion) : null,
         role: server.role,
-        active: this.#state.activeServerId === server.id,
+        active: this.#store.activeServerId === server.id,
         compatibility: this.#compatibility.get(server.id) ?? this.#checkingCompatibility(),
         issue: this.#issues.get(server.id) ?? null,
         connectionSequence: this.#connectionSequences.get(server.id) ?? 0,
@@ -323,23 +295,23 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   async syncRemoteHosts(): Promise<ServerSummary[]> {
     await this.#syncWebRtcHosts();
-    for (const server of this.#state.servers) this.#states.set(server.id, this.#states.get(server.id) ?? "offline");
+    for (const server of this.#store.servers) this.#states.set(server.id, this.#states.get(server.id) ?? "offline");
     if (this.#eventsEnabled) this.startEventConnections();
     this.#emitChanged();
     return this.list();
   }
 
   get activeServerId(): string {
-    return this.#state.activeServerId;
+    return this.#store.activeServerId;
   }
 
   startEventConnections(): void {
     this.#eventsEnabled = true;
-    for (const server of this.#state.servers) this.#ensureEventConnection(server.id);
+    for (const server of this.#store.servers) this.#ensureEventConnection(server.id);
   }
 
   refreshRuntimeSnapshots(): void {
-    for (const server of this.#state.servers) {
+    for (const server of this.#store.servers) {
       if (server.transport === "webrtc-v2") {
         void this.#webrtcTransport?.requestRuntimeSnapshot(server.id).catch(() => undefined);
         continue;
@@ -359,17 +331,17 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   select(serverId: string): Promise<ServerSummary[]> {
     const operation = this.#selectChain.then(async () => {
-      if (serverId !== LOCAL_SERVER_ID && !this.#state.servers.some((server) => server.id === serverId)) {
+      if (serverId !== LOCAL_SERVER_ID && !this.#store.has(serverId)) {
         throw new Error("Remote server not found.");
       }
-      const previousServerId = this.#state.activeServerId;
-      const selectionRevision = this.#setActiveServerId(serverId);
+      const previousServerId = this.#store.activeServerId;
+      const selectionRevision = this.#store.setActiveServerId(serverId);
       this.#syncEventScopes();
       try {
-        await this.#persist();
+        await this.#store.persist();
       } catch (error) {
-        if (this.#activeServerRevision === selectionRevision) {
-          this.#setActiveServerId(previousServerId);
+        if (this.#store.activeServerRevision === selectionRevision) {
+          this.#store.setActiveServerId(previousServerId);
           this.#syncEventScopes();
         }
         throw error;
@@ -386,25 +358,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async reorder(serverIds: string[]): Promise<ServerSummary[]> {
-    if (serverIds.length !== this.#state.servers.length) {
-      throw new Error("The server order is incomplete.");
-    }
-    const serversById = new Map(this.#state.servers.map((server) => [server.id, server]));
-    if (new Set(serverIds).size !== serverIds.length) {
-      throw new Error("The server order contains an unknown server.");
-    }
-    const reordered: StoredRemoteServer[] = [];
-    for (const serverId of serverIds) {
-      const server = serversById.get(serverId);
-      if (!server) throw new Error("The server order contains an unknown server.");
-      reordered.push(server);
-    }
-    if (serverIds.every((serverId, index) => this.#state.servers[index]?.id === serverId)) {
-      return this.list();
-    }
-    this.#state.servers = reordered;
-    await this.#persist();
-    this.#emitChanged();
+    if (await this.#store.reorder(serverIds)) this.#emitChanged();
     return this.list();
   }
 
@@ -420,15 +374,15 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       }
       const accepted = await this.#webrtcTransport.acceptInvite(invite.token);
       if (accepted.hostId !== invite.serverId) throw new Error("The account service accepted a different host.");
-      this.#state.hiddenHostIds = this.#state.hiddenHostIds.filter((hostId) => hostId !== accepted.hostId);
+      await this.#store.unhideHost(accepted.hostId);
       await this.#syncWebRtcHosts();
-      const synchronized = this.#state.servers.find((server) => server.id === accepted.hostId);
+      const synchronized = this.#store.find(accepted.hostId);
       if (!synchronized || synchronized.fingerprint !== invite.fingerprint) {
         throw new Error("The invitation host identity changed while it was accepted.");
       }
-      this.#setActiveServerId(accepted.hostId);
+      this.#store.setActiveServerId(accepted.hostId);
       this.#states.set(accepted.hostId, "connecting");
-      await this.#persist();
+      await this.#store.persist();
       await this.#webrtcTransport.connect(accepted.hostId);
       this.#emitChanged();
       return requiredServerSummary(this.list(), accepted.hostId);
@@ -450,19 +404,19 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       fingerprint: invite.fingerprint,
       publicKey: verifiedIdentity.publicKey,
       username: this.#centralAccount.getEmail().trim().toLowerCase(),
-      encryptedToken: this.#cipher.encrypt(result.sessionToken).toString("base64"),
+      encryptedToken: this.#store.sealToken(result.sessionToken),
       remoteDesktopAvailable: false,
       logoVersion: verifiedIdentity.logoVersion,
       role: result.member.role,
     };
-    this.#state.servers = [...this.#state.servers.filter((server) => server.id !== stored.id), stored];
     this.#compatibility.set(stored.id, verifiedIdentity.compatibility);
     this.#issues.delete(stored.id);
-    this.#setActiveServerId(stored.id);
-    this.#syncEventScopes();
     this.#states.set(stored.id, "online");
-    await this.#refreshRemoteDesktop(stored);
-    await this.#persist();
+    // Probed before the server is stored, not after: a probe that fails outright now leaves the list
+    // as it was, instead of an entry that is in memory but was never written.
+    stored.remoteDesktopAvailable = await this.#probeRemoteDesktop(stored);
+    await this.#store.adopt(stored);
+    this.#syncEventScopes();
     this.#emitChanged();
     this.#restartEventConnection(stored.id, true);
     return requiredServerSummary(this.list(), stored.id);
@@ -480,19 +434,19 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       fingerprint: input.fingerprint,
       publicKey: input.publicKey,
       username: input.username,
-      encryptedToken: this.#cipher.encrypt(input.sessionToken).toString("base64"),
+      encryptedToken: this.#store.sealToken(input.sessionToken),
       remoteDesktopAvailable: false,
       logoVersion: verifiedIdentity.logoVersion,
       role: "member",
     };
-    this.#state.servers = [...this.#state.servers.filter((server) => server.id !== stored.id), stored];
     this.#compatibility.set(stored.id, verifiedIdentity.compatibility);
     this.#issues.delete(stored.id);
-    this.#setActiveServerId(stored.id);
-    this.#syncEventScopes();
     this.#states.set(stored.id, "online");
-    await this.#refreshRemoteDesktop(stored);
-    await this.#persist();
+    // Probed before the server is stored, not after: a probe that fails outright now leaves the list
+    // as it was, instead of an entry that is in memory but was never written.
+    stored.remoteDesktopAvailable = await this.#probeRemoteDesktop(stored);
+    await this.#store.adopt(stored);
+    this.#syncEventScopes();
     this.#emitChanged();
     this.#restartEventConnection(stored.id, true);
     return requiredServerSummary(this.list(), stored.id);
@@ -532,7 +486,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async login(input: LoginServerInput): Promise<ServerSummary> {
-    const server = this.#requireServer(input.serverId);
+    const server = this.#store.require(input.serverId);
     this.#states.set(server.id, "connecting");
     this.#emitChanged();
     try {
@@ -545,14 +499,19 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       });
       this.#compatibility.set(server.id, identity.compatibility);
       this.#issues.delete(server.id);
-      server.username = this.#centralAccount.getEmail().trim().toLowerCase();
-      server.role = result.member.role;
-      server.encryptedToken = this.#cipher.encrypt(result.sessionToken).toString("base64");
-      server.name = identity.serverName;
-      server.logoVersion = identity.logoVersion;
+      const signedIn = await this.#store.update(server.id, {
+        username: this.#centralAccount.getEmail().trim().toLowerCase(),
+        role: result.member.role,
+        encryptedToken: this.#store.sealToken(result.sessionToken),
+        name: identity.serverName,
+        logoVersion: identity.logoVersion,
+      });
       this.#states.set(server.id, "online");
-      await this.#refreshRemoteDesktop(server);
-      await this.#persist();
+      // The probe authenticates with the session token this sign-in just replaced, so it has to run
+      // against the stored server rather than the one `login` was handed.
+      if (signedIn) {
+        await this.#store.update(server.id, { remoteDesktopAvailable: await this.#probeRemoteDesktop(signedIn) });
+      }
       this.#restartEventConnection(server.id, true);
     } catch (error) {
       this.#applyConnectionError(server.id, error, "error");
@@ -563,7 +522,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async retryConnection(serverId: string): Promise<ServerSummary> {
-    const server = this.#requireServer(serverId);
+    const server = this.#store.require(serverId);
     const blockedState = this.#issues.has(serverId) ? (this.#states.get(serverId) ?? "error") : "error";
     try {
       if (server.transport === "webrtc-v2") {
@@ -586,20 +545,18 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   async remove(serverId: string): Promise<void> {
     if (serverId === LOCAL_SERVER_ID) throw new Error("The local server cannot be removed.");
-    const server = this.#state.servers.find((candidate) => candidate.id === serverId);
+    const server = this.#store.find(serverId);
+    // An owner cannot leave their own host, so the account service keeps listing it. Hiding it is
+    // what makes the removal survive the next directory sync.
+    let hideHost = false;
     if (server?.transport === "webrtc-v2") {
       if (!this.#webrtcTransport) throw new Error("The WebRTC transport is unavailable.");
-      if (server.role === "owner") {
-        if (!this.#state.hiddenHostIds.includes(serverId)) this.#state.hiddenHostIds.push(serverId);
-      } else {
-        await this.#webrtcTransport.leaveHost(serverId);
-      }
+      if (server.role === "owner") hideHost = true;
+      else await this.#webrtcTransport.leaveHost(serverId);
       await this.#webrtcTransport.disconnect(serverId).catch(() => undefined);
     }
     this.#clearServerConnectionState(serverId);
-    this.#state.servers = this.#state.servers.filter((server) => server.id !== serverId);
-    if (this.#state.activeServerId === serverId) this.#setActiveServerId(LOCAL_SERVER_ID);
-    await this.#persist();
+    await this.#store.remove(serverId, { hideHost });
     this.#emitChanged();
   }
 
@@ -630,10 +587,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   async request<T>(
     path: string,
     init: { method?: string; body?: unknown; timeoutMs?: number } = {},
-    serverId = this.#state.activeServerId,
+    serverId = this.#store.activeServerId,
     decoder: ResponseDecoder<T>,
   ): Promise<T> {
-    const server = this.#requireServer(serverId);
+    const server = this.#store.require(serverId);
     try {
       if (server.transport === "webrtc-v2") {
         if (!this.#webrtcTransport) throw new Error("The WebRTC transport is unavailable.");
@@ -653,7 +610,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       const compatibility = await this.#ensureCompatibility(server);
       const value = await requestJson(server.apiUrl, path, decoder, {
         ...init,
-        token: this.#token(server),
+        token: this.#store.token(server),
         timeoutMs: init.timeoutMs,
         ...this.#requestProtocol(compatibility),
       });
@@ -664,7 +621,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     }
   }
 
-  async duplicateBot(botId: string, serverId = this.#state.activeServerId): Promise<DuplicateBotResult> {
+  async duplicateBot(botId: string, serverId = this.#store.activeServerId): Promise<DuplicateBotResult> {
     const key = `${serverId}\0${botId}`;
     const operationId = this.#duplicateOperationIds.get(key) ?? randomUUID();
     this.#duplicateOperationIds.set(key, operationId);
@@ -685,11 +642,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     }
   }
 
-  listAgentConversationReads(serverId = this.#state.activeServerId): Promise<Record<string, ConversationReadState>> {
+  listAgentConversationReads(serverId = this.#store.activeServerId): Promise<Record<string, ConversationReadState>> {
     return this.request(TEAM_API_ROUTES.agents.conversationReads, {}, serverId, decodeConversationReadStates);
   }
 
-  readAgentConversation(botId: string, serverId = this.#state.activeServerId): Promise<ConversationWithReadState> {
+  readAgentConversation(botId: string, serverId = this.#store.activeServerId): Promise<ConversationWithReadState> {
     return this.request(TEAM_API_ROUTES.agent.conversation(botId), {}, serverId, decodeConversationWithReadState);
   }
 
@@ -697,7 +654,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     botId: string,
     anchor: ConversationPageAnchor = { type: "latest" },
     limit = 50,
-    serverId = this.#state.activeServerId,
+    serverId = this.#store.activeServerId,
   ): Promise<ConversationPage> {
     return this.request(
       `${TEAM_API_ROUTES.agent.conversationPage(botId)}${pageQuery(anchor, limit)}`,
@@ -712,7 +669,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     botId?: string,
     cursor?: string,
     limit = 100,
-    serverId = this.#state.activeServerId,
+    serverId = this.#store.activeServerId,
   ): Promise<ConversationSearchPage> {
     const parameters = new URLSearchParams({ q: query, limit: String(limit) });
     if (botId) parameters.set("botId", botId);
@@ -727,7 +684,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   markAgentConversationRead(
     input: MarkConversationReadInput,
-    serverId = this.#state.activeServerId,
+    serverId = this.#store.activeServerId,
   ): Promise<ConversationReadState> {
     return this.request(
       TEAM_API_ROUTES.agent.conversationRead(input.botId),
@@ -737,7 +694,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     );
   }
 
-  getPresence(serverId = this.#state.activeServerId): TeamPresenceSnapshot {
+  getPresence(serverId = this.#store.activeServerId): TeamPresenceSnapshot {
     const cached = this.#presence.get(serverId);
     if (cached) return structuredClone(cached);
     return { serverId, members: [], updatedAt: new Date().toISOString() };
@@ -756,7 +713,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async refreshIdentity(serverId: string): Promise<ServerSummary> {
-    const server = this.#requireServer(serverId);
+    const server = this.#store.require(serverId);
     if (server.transport === "webrtc-v2" && this.#webrtcTransport) {
       await this.#syncWebRtcHosts();
       this.#compatibility.delete(serverId);
@@ -768,15 +725,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const identity = await this.#verifyIdentity(server.apiUrl, server.id, server.fingerprint);
     this.#compatibility.set(server.id, identity.compatibility);
     this.#issues.delete(server.id);
-    server.name = identity.serverName;
-    server.logoVersion = identity.logoVersion;
-    await this.#persist();
+    await this.#store.update(server.id, { name: identity.serverName, logoVersion: identity.logoVersion });
     this.#emitChanged();
     return requiredServerSummary(this.list(), server.id);
   }
 
   listMembers(serverId: string): Promise<TeamMemberSummary[]> {
-    const server = this.#requireServer(serverId);
+    const server = this.#store.require(serverId);
     if (server.transport === "webrtc-v2" && this.#webrtcTransport) {
       return this.#webrtcTransport.listMembers(serverId).then((members) =>
         members.map((member) => ({
@@ -795,7 +750,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   updateMember(serverId: string, input: UpdateTeamMemberInput): Promise<TeamMemberSummary> {
-    const server = this.#requireServer(serverId);
+    const server = this.#store.require(serverId);
     if (server.transport === "webrtc-v2" && this.#webrtcTransport) {
       const transport = this.#webrtcTransport;
       return (async () => {
@@ -819,14 +774,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   removeMember(serverId: string, memberId: string): Promise<void> {
-    const server = this.#requireServer(serverId);
+    const server = this.#store.require(serverId);
     if (server.transport === "webrtc-v2" && this.#webrtcTransport)
       return this.#webrtcTransport.removeMember(serverId, memberId);
     return this.request(TEAM_API_ROUTES.team.member(memberId), { method: "DELETE" }, serverId, decodeVoid);
   }
 
   listInvites(serverId: string): Promise<TeamInviteSummary[]> {
-    const server = this.#requireServer(serverId);
+    const server = this.#store.require(serverId);
     if (server.transport === "webrtc-v2" && this.#webrtcTransport) {
       return this.#webrtcTransport.listInvites(serverId).then((invites) =>
         invites
@@ -844,13 +799,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   revokeInvite(serverId: string, inviteId: string): Promise<void> {
-    const server = this.#requireServer(serverId);
+    const server = this.#store.require(serverId);
     if (server.transport === "webrtc-v2" && this.#webrtcTransport) return this.#webrtcTransport.revokeInvite(inviteId);
     return this.request(TEAM_API_ROUTES.team.invite(inviteId), { method: "DELETE" }, serverId, decodeVoid);
   }
 
   async createInvite(serverId: string, input: { role: "admin" | "member"; email?: string }): Promise<InviteSummary> {
-    const server = this.#requireServer(serverId);
+    const server = this.#store.require(serverId);
     if (server.transport === "webrtc-v2" && this.#webrtcTransport) {
       const transport = this.#webrtcTransport;
       if (!server.fingerprint) throw new Error("The host must connect once before it can create invitations.");
@@ -887,8 +842,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     return this.request(TEAM_API_ROUTES.team.invites, { method: "POST", body: input }, serverId, decodeInviteSummary);
   }
 
-  setTyping(input: SetTeamTypingInput, serverId = this.#state.activeServerId): void {
-    const server = this.#state.servers.find((candidate) => candidate.id === serverId);
+  setTyping(input: SetTeamTypingInput, serverId = this.#store.activeServerId): void {
+    const server = this.#store.find(serverId);
     if (server?.transport === "webrtc-v2") {
       void this.#webrtcTransport?.setTyping(serverId, input.botId, input.typing).catch(() => undefined);
       return;
@@ -898,11 +853,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     socket.send(encodeTeamProtocolV1ClientEvent({ type: "team-typing", ...input }));
   }
 
-  listDirectThreads(serverId = this.#state.activeServerId): Promise<DirectThreadSummary[]> {
+  listDirectThreads(serverId = this.#store.activeServerId): Promise<DirectThreadSummary[]> {
     return this.request(TEAM_API_ROUTES.direct.threads, {}, serverId, decodeDirectThreadSummaries);
   }
 
-  readDirectConversation(memberId: string, serverId = this.#state.activeServerId): Promise<DirectConversationSnapshot> {
+  readDirectConversation(memberId: string, serverId = this.#store.activeServerId): Promise<DirectConversationSnapshot> {
     return this.request(TEAM_API_ROUTES.direct.conversation(memberId), {}, serverId, decodeDirectConversationSnapshot);
   }
 
@@ -910,7 +865,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     memberId: string,
     anchor: DirectConversationPageAnchor = { type: "latest" },
     limit = 50,
-    serverId = this.#state.activeServerId,
+    serverId = this.#store.activeServerId,
   ): Promise<DirectConversationPage> {
     return this.request(
       `${TEAM_API_ROUTES.direct.conversationPage(memberId)}${pageQuery(anchor, limit)}`,
@@ -920,7 +875,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     );
   }
 
-  sendDirectMessage(input: SendDirectMessageInput, serverId = this.#state.activeServerId): Promise<DirectMessage> {
+  sendDirectMessage(input: SendDirectMessageInput, serverId = this.#store.activeServerId): Promise<DirectMessage> {
     return this.request(
       TEAM_API_ROUTES.direct.messages,
       { method: "POST", body: input },
@@ -931,7 +886,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   markDirectRead(
     input: MarkDirectReadInput,
-    serverId = this.#state.activeServerId,
+    serverId = this.#store.activeServerId,
   ): Promise<DirectConversationReadState> {
     return this.request(
       TEAM_API_ROUTES.direct.conversationRead(input.memberId),
@@ -941,8 +896,8 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     );
   }
 
-  setDirectTyping(input: DirectTypingInput, serverId = this.#state.activeServerId): void {
-    const server = this.#state.servers.find((candidate) => candidate.id === serverId);
+  setDirectTyping(input: DirectTypingInput, serverId = this.#store.activeServerId): void {
+    const server = this.#store.find(serverId);
     if (server?.transport === "webrtc-v2") {
       void this.#webrtcTransport?.setDirectTyping(serverId, input.memberId, input.typing).catch(() => undefined);
       return;
@@ -965,7 +920,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       serverId,
       decodeRemoteDesktopSession,
     );
-    if (this.#requireServer(serverId).transport !== "webrtc-v2") return session;
+    if (this.#store.require(serverId).transport !== "webrtc-v2") return session;
     if (!this.#remoteViewerProxy) throw new Error("The local remote viewer proxy is unavailable.");
     return {
       ...session,
@@ -974,7 +929,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async fetchRemoteViewerResource(serverId: string, path: string, init: RequestInit): Promise<Response> {
-    const server = this.#requireServer(serverId);
+    const server = this.#store.require(serverId);
     if (server.transport !== "webrtc-v2") throw new Error("The remote viewer transport is invalid.");
     return this.#fetch(server, new URL(path, server.apiUrl), init, false);
   }
@@ -996,9 +951,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     name: string,
     mimeType: string,
     bytes: Uint8Array,
-    serverId = this.#state.activeServerId,
+    serverId = this.#store.activeServerId,
   ): Promise<DraftAttachment> {
-    const server = this.#requireServer(serverId);
+    const server = this.#store.require(serverId);
     const url = new URL(TEAM_API_ROUTES.attachments, server.apiUrl);
     url.searchParams.set("name", name);
     url.searchParams.set("mime", mimeType || "application/octet-stream");
@@ -1016,9 +971,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   async setAgentAvatar(
     botId: string,
     image: AvatarImageInput | null,
-    serverId = this.#state.activeServerId,
+    serverId = this.#store.activeServerId,
   ): Promise<BotSummary> {
-    const server = this.#requireServer(serverId);
+    const server = this.#store.require(serverId);
     const url = new URL(TEAM_API_ROUTES.agent.avatar(botId), server.apiUrl);
     const headers = new Headers();
     if (image) headers.set("Content-Type", image.mimeType);
@@ -1038,10 +993,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   async downloadAgentAvatar(
     botId: string,
-    serverId = this.#state.activeServerId,
+    serverId = this.#store.activeServerId,
     version?: string,
   ): Promise<{ bytes: Uint8Array; mimeType: string }> {
-    const server = this.#requireServer(serverId);
+    const server = this.#store.require(serverId);
     const url = new URL(TEAM_API_ROUTES.agent.avatar(botId), server.apiUrl);
     if (version) url.searchParams.set("v", version);
     const response = await this.#fetch(server, url);
@@ -1052,7 +1007,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async downloadServerLogo(serverId: string, version: string): Promise<{ bytes: Uint8Array; mimeType: string }> {
-    const server = this.#requireServer(serverId);
+    const server = this.#store.require(serverId);
     if (server.logoVersion !== version) throw new Error("Server logo version is not current.");
     if (server.transport === "webrtc-v2" && this.#webrtcTransport) {
       const logo = await this.#webrtcTransport.downloadHostLogo(serverId, version);
@@ -1070,13 +1025,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   async downloadAttachment(
     attachmentId: string,
-    serverId = this.#state.activeServerId,
+    serverId = this.#store.activeServerId,
   ): Promise<{
     bytes: Uint8Array;
     name: string;
     mimeType: string;
   }> {
-    const server = this.#requireServer(serverId);
+    const server = this.#store.require(serverId);
     const response = await this.#fetch(server, new URL(TEAM_API_ROUTES.attachment(attachmentId), server.apiUrl));
     const disposition = response.headers.get("content-disposition") ?? "";
     const encodedName = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
@@ -1089,9 +1044,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   async downloadSharedFile(
     sharedPath: string,
-    serverId = this.#state.activeServerId,
+    serverId = this.#store.activeServerId,
   ): Promise<{ bytes: Uint8Array; name: string }> {
-    const server = this.#requireServer(serverId);
+    const server = this.#store.require(serverId);
     const url = new URL(TEAM_API_ROUTES.sharedFiles, server.apiUrl);
     url.searchParams.set("path", sharedPath);
     const response = await this.#fetch(server, url);
@@ -1106,9 +1061,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   async downloadWorkspaceFile(
     botId: string,
     workspacePath: string,
-    serverId = this.#state.activeServerId,
+    serverId = this.#store.activeServerId,
   ): Promise<{ bytes: Uint8Array; name: string }> {
-    const server = this.#requireServer(serverId);
+    const server = this.#store.require(serverId);
     const url = new URL(TEAM_API_ROUTES.workspaceFiles, server.apiUrl);
     url.searchParams.set("botId", botId);
     url.searchParams.set("path", workspacePath);
@@ -1141,7 +1096,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   async disconnectRemoteSessions(): Promise<void> {
     if (!this.#webrtcTransport) return;
     await Promise.all(
-      this.#state.servers
+      this.#store.servers
         .filter((server) => server.transport === "webrtc-v2")
         .map((server) => this.#webrtcTransport?.disconnect(server.id)),
     );
@@ -1151,9 +1106,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     if (!this.#webrtcTransport) return;
     const hosts = await this.#webrtcTransport.listHosts();
     const synchronizedServers = hosts
-      .filter((host) => host.hostId !== this.#getLocalHostId() && !this.#state.hiddenHostIds.includes(host.hostId))
+      .filter((host) => host.hostId !== this.#getLocalHostId() && !this.#store.isHiddenHost(host.hostId))
       .map<StoredRemoteServer>((host) => {
-        const existing = this.#state.servers.find((server) => server.id === host.hostId);
+        const existing = this.#store.find(host.hostId);
         const advertisedFingerprint = host.devicePublicKey ? fingerprint(host.devicePublicKey) : "";
         const pinnedFingerprint = existing?.transport === "webrtc-v2" ? existing.fingerprint : "";
         const publicKey =
@@ -1179,7 +1134,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       });
     const synchronizedById = new Map(synchronizedServers.map((server) => [server.id, server]));
     const retainedIds = new Set<string>();
-    const servers = this.#state.servers.flatMap((server) => {
+    const servers = this.#store.servers.flatMap((server) => {
       if (server.transport !== "webrtc-v2") return this.#allowLocalDevelopmentInvites ? [server] : [];
       const synchronized = synchronizedById.get(server.id);
       if (!synchronized) return [];
@@ -1192,21 +1147,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       servers.push(server);
     }
     const currentHostIds = new Set(servers.map((server) => server.id));
-    const removedHostIds = this.#state.servers
+    const removedHostIds = this.#store.servers
       .filter((server) => server.transport === "webrtc-v2" && !currentHostIds.has(server.id))
       .map((server) => server.id);
     for (const serverId of removedHostIds) {
       await this.#webrtcTransport.disconnect(serverId).catch(() => undefined);
       this.#clearServerConnectionState(serverId);
     }
-    this.#state.servers = servers;
-    if (
-      this.#state.activeServerId !== LOCAL_SERVER_ID &&
-      !this.#state.servers.some((server) => server.id === this.#state.activeServerId)
-    ) {
-      this.#setActiveServerId(LOCAL_SERVER_ID);
-    }
-    await this.#persist();
+    await this.#store.replaceServers(servers);
   }
 
   #webrtcCompatibility(host: TeamProtocolSupportV1): ServerCompatibility {
@@ -1238,12 +1186,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   #handleWebRtcEvent(serverId: string, event: AgentEvent | TeamRealtimeEvent): void {
     if (event.type === "team-identity") {
-      const server = this.#state.servers.find((candidate) => candidate.id === serverId);
-      if (server) {
-        server.name = event.serverName;
-        server.logoVersion = event.logoVersion;
-        void this.#persist().then(() => this.#emitChanged());
-      }
+      void this.#store
+        .update(serverId, { name: event.serverName, logoVersion: event.logoVersion })
+        .then(() => this.#emitChanged());
     } else if (event.type === "team-presence") {
       this.#presence.set(serverId, event.snapshot);
       this.emit("presence", serverId, structuredClone(event.snapshot));
@@ -1278,7 +1223,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async #fetch(
-    server: StoredRemoteServer,
+    server: StoredRemoteServerView,
     input: string | URL,
     init: RequestInit = {},
     affectsConnection = true,
@@ -1318,7 +1263,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       }
       const compatibility = await this.#ensureCompatibility(server);
       const headers = new Headers(init.headers);
-      headers.set("Authorization", `Bearer ${this.#token(server)}`);
+      headers.set("Authorization", `Bearer ${this.#store.token(server)}`);
       headers.set(TEAM_PROTOCOL_VERSION_HEADER, String(compatibility.negotiatedProtocol));
       if (this.#appVersion) {
         headers.set(TEAM_APP_VERSION_HEADER, this.#appVersion);
@@ -1335,7 +1280,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     }
   }
 
-  async #ensureCompatibility(server: StoredRemoteServer, refresh = false): Promise<ServerCompatibility> {
+  async #ensureCompatibility(server: StoredRemoteServerView, refresh = false): Promise<ServerCompatibility> {
     const current = this.#compatibility.get(server.id);
     const issue = this.#issues.get(server.id);
     if (
@@ -1517,13 +1462,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     };
   }
 
-  async #refreshRemoteDesktop(server: StoredRemoteServer): Promise<void> {
+  async #probeRemoteDesktop(server: StoredRemoteServerView): Promise<boolean> {
     try {
       const compatibility = await this.#ensureCompatibility(server);
-      if (!compatibility.capabilities.includes("remote-desktop")) {
-        server.remoteDesktopAvailable = false;
-        return;
-      }
+      if (!compatibility.capabilities.includes("remote-desktop")) return false;
       let capabilities: RemoteDesktopCapabilities;
       if (server.transport === "webrtc-v2") {
         if (!this.#webrtcTransport) throw new Error("The WebRTC transport is unavailable.");
@@ -1538,24 +1480,21 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           TEAM_API_ROUTES.remoteScreen.capabilities,
           decodeRemoteDesktopCapabilities,
           {
-            token: this.#token(server),
+            token: this.#store.token(server),
             ...this.#requestProtocol(compatibility),
           },
         );
       }
-      server.remoteDesktopAvailable = capabilities.ready;
+      return capabilities.ready;
     } catch (error) {
-      if (error instanceof RemoteRequestError && [404, 426, 503].includes(error.status)) {
-        server.remoteDesktopAvailable = false;
-        return;
-      }
+      if (error instanceof RemoteRequestError && [404, 426, 503].includes(error.status)) return false;
       throw error;
     }
   }
 
   async #connectEvents(serverId: string): Promise<void> {
     if (!this.#eventsEnabled || this.#eventControllers.has(serverId)) return;
-    const server = this.#requireServer(serverId);
+    const server = this.#store.require(serverId);
     if (server.transport === "webrtc-v2") return;
     const controller = new AbortController();
     this.#eventControllers.set(serverId, controller);
@@ -1565,19 +1504,15 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     let protocolFailed = false;
     try {
       const compatibility = await this.#ensureCompatibility(server, true);
-      if (
-        controller.signal.aborted ||
-        !this.#eventsEnabled ||
-        !this.#state.servers.some((candidate) => candidate.id === serverId)
-      ) {
+      if (controller.signal.aborted || !this.#eventsEnabled || !this.#store.has(serverId)) {
         if (this.#eventControllers.get(serverId) === controller) this.#eventControllers.delete(serverId);
         return;
       }
       const eventsUrl = new URL(TEAM_API_ROUTES.events, server.apiUrl);
       eventsUrl.protocol = eventsUrl.protocol === "https:" ? "wss:" : "ws:";
       const socketProtocols = this.#appVersion
-        ? [TEAM_PROTOCOL_V1_WEBSOCKET, `openbot-token.${this.#token(server)}`]
-        : [REMOTE_EVENT_SNAPSHOT_PROTOCOL, REMOTE_EVENT_PROTOCOL, `openbot-token.${this.#token(server)}`];
+        ? [TEAM_PROTOCOL_V1_WEBSOCKET, `openbot-token.${this.#store.token(server)}`]
+        : [REMOTE_EVENT_SNAPSHOT_PROTOCOL, REMOTE_EVENT_PROTOCOL, `openbot-token.${this.#store.token(server)}`];
       const socket = new WebSocket(eventsUrl, socketProtocols);
       let agentEventsReady = false;
       const bufferedAgentEvents: AgentEvent[] = [];
@@ -1646,9 +1581,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
             }
             const event = decoded.event;
             if (event.type === "team-identity") {
-              server.name = event.serverName;
-              server.logoVersion = event.logoVersion;
-              void this.#persist().then(() => this.#emitChanged());
+              void this.#store
+                .update(serverId, { name: event.serverName, logoVersion: event.logoVersion })
+                .then(() => this.#emitChanged());
             } else if (event.type === "team-presence") {
               this.#presence.set(serverId, event.snapshot);
               this.emit("presence", serverId, structuredClone(event.snapshot));
@@ -1745,14 +1680,14 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     socket.send(
       encodeTeamProtocolV1ClientEvent({
         type: "agent-event-scope",
-        includeConversations: this.#state.activeServerId === serverId,
+        includeConversations: this.#store.activeServerId === serverId,
         ...(this.#appVersion ? { capabilities: TEAM_CURRENT_CAPABILITIES } : {}),
       }),
     );
   }
 
   #ensureEventConnection(serverId: string): void {
-    const server = this.#state.servers.find((candidate) => candidate.id === serverId);
+    const server = this.#store.find(serverId);
     if (server?.transport === "webrtc-v2") {
       if (
         !this.#eventsEnabled ||
@@ -1795,7 +1730,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   #scheduleEventReconnect(serverId: string): void {
     if (!this.#eventsEnabled || this.#eventReconnectTimers.has(serverId)) return;
-    if (!this.#state.servers.some((server) => server.id === serverId)) return;
+    if (!this.#store.has(serverId)) return;
     if (this.#eventAuthenticationPaused.has(serverId)) return;
     const attempt = (this.#eventReconnectAttempts.get(serverId) ?? 0) + 1;
     this.#eventReconnectAttempts.set(serverId, attempt);
@@ -1815,11 +1750,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     this.#eventReconnectTimers.set(serverId, timer);
   }
 
-  async #hasRejectedEventCredentials(server: StoredRemoteServer): Promise<boolean> {
+  async #hasRejectedEventCredentials(server: StoredRemoteServerView): Promise<boolean> {
     try {
       const compatibility = await this.#ensureCompatibility(server);
       await requestJson(server.apiUrl, TEAM_API_ROUTES.me, (value) => decodeRecord(value, "team member"), {
-        token: this.#token(server),
+        token: this.#store.token(server),
         ...this.#requestProtocol(compatibility),
       });
       return false;
@@ -1884,7 +1819,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const request = { revision };
     this.#conversationRefreshRequests.set(key, request);
     try {
-      while (this.#state.servers.some((server) => server.id === serverId)) {
+      while (this.#store.has(serverId)) {
         const requestedRevision = request.revision;
         let page: ConversationPage;
         try {
@@ -1923,7 +1858,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           if (request.dirty) continue;
           return;
         }
-        if (!this.#state.servers.some((server) => server.id === serverId)) return;
+        if (!this.#store.has(serverId)) return;
         this.emit("agent", serverId, { type: "queue-changed", snapshot });
       } while (request.dirty);
     } finally {
@@ -1935,40 +1870,6 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     const generation = (this.#eventGenerations.get(serverId) ?? 0) + 1;
     this.#eventGenerations.set(serverId, generation);
     return generation;
-  }
-
-  #token(server: StoredRemoteServer): string {
-    return this.#cipher.decrypt(Buffer.from(server.encryptedToken, "base64"));
-  }
-
-  #requireServer(serverId: string): StoredRemoteServer {
-    const server = this.#state.servers.find((candidate) => candidate.id === serverId);
-    if (!server) throw new Error("Remote server not found.");
-    return server;
-  }
-
-  async #persist(): Promise<void> {
-    const snapshot = structuredClone(this.#state);
-    const operation = this.#writeChain.then(async () => {
-      const temporary = `${this.#path}.${randomUUID()}.tmp`;
-      try {
-        await writeFile(temporary, `${JSON.stringify(snapshot)}\n`, {
-          encoding: "utf8",
-          mode: 0o600,
-        });
-        await rename(temporary, this.#path);
-      } finally {
-        await rm(temporary, { force: true });
-      }
-    });
-    this.#writeChain = operation.catch(() => undefined);
-    await operation;
-  }
-
-  #setActiveServerId(serverId: string): number {
-    this.#state.activeServerId = serverId;
-    this.#activeServerRevision += 1;
-    return this.#activeServerRevision;
   }
 
   #emitChanged(): void {
