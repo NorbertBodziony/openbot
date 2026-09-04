@@ -4,10 +4,14 @@
 // Fragments are read from the base commit, never from the working tree, for the same reason the
 // workflow reads the base prompt that way: a pull request must not be able to rewrite the
 // instructions used to review it.
+//
+// Nothing here may import a workspace package. The workflow copies this file to `$RUNNER_TEMP` and
+// runs it with `--no-install`, so an import outside `node:` cannot resolve and the composer dies
+// before it produces a prompt - which fails the review of every open pull request, not just the one
+// that added the import. Resolving it by running the copy inside the checkout instead would hand a
+// pull request the ability to edit the package the composer imports, and so to run its own code
+// inside the trusted step. The stdlib is the price of that guarantee.
 import { execFileSync } from "node:child_process";
-import { createOpenBotLogger } from "@openbot/logging";
-
-const logger = createOpenBotLogger("compose-review-prompt");
 
 const FRAGMENT_DIRECTORY = ".github/review";
 
@@ -111,7 +115,7 @@ function readChangedFiles(argv: string[], baseSha: string, headSha: string): str
 if (import.meta.main) {
   const [baseSha, headSha] = process.argv.slice(2);
   if (!baseSha || !headSha) {
-    logger.error("usage: bun scripts/compose-review-prompt.ts <base-sha> <head-sha> [--files-from <file>]");
+    process.stderr.write("usage: bun scripts/compose-review-prompt.ts <base-sha> <head-sha> [--files-from <file>]\n");
     process.exit(2);
   }
   process.stdout.write(composeFragments(baseSha, readChangedFiles(process.argv, baseSha, headSha)));

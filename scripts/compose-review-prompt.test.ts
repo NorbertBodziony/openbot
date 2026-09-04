@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -70,5 +70,18 @@ describe("compose-review-prompt", () => {
 
     expect(selectFragments([fragment], ["src/renderer/src/App.test.tsx"])).toHaveLength(1);
     expect(selectFragments([fragment], ["src/renderer/src/App.tsx"])).toHaveLength(0);
+  });
+
+  // The workflow copies this file to `$RUNNER_TEMP` and runs it with `--no-install`, so that a pull
+  // request cannot rewrite the instructions used to review it. A workspace import cannot resolve
+  // from there, and the composer then dies before it writes a prompt - which fails the review of
+  // every open pull request, not only the one that added the import. That happened once, so the
+  // constraint is checked here rather than discovered on the next pull request.
+  it("imports nothing that a copy outside the checkout could not resolve", () => {
+    const source = readFileSync(join(originalDirectory, "scripts/compose-review-prompt.ts"), "utf8");
+    const specifiers = [...source.matchAll(/^import[^"']*["']([^"']+)["']/gmu)].map((match) => match[1]);
+
+    expect(specifiers).not.toHaveLength(0);
+    expect(specifiers.filter((specifier) => !specifier?.startsWith("node:"))).toEqual([]);
   });
 });
