@@ -148,6 +148,7 @@ describe("dynamic island window geometry", () => {
       loadWindow: async () => undefined,
       getDisplays: () => displays,
       getMainWindow: () => null,
+      presentMainWindow: () => undefined,
       performHaptic: () => undefined,
       performCriticalAction: async () => undefined,
     });
@@ -197,6 +198,7 @@ describe("dynamic island window geometry", () => {
       loadWindow,
       getDisplays: () => displays,
       getMainWindow: () => null,
+      presentMainWindow: () => undefined,
       performHaptic: () => undefined,
       performCriticalAction: async () => undefined,
     });
@@ -238,6 +240,7 @@ describe("dynamic island window geometry", () => {
       loadWindow: async () => undefined,
       getDisplays: () => displays,
       getMainWindow: () => null,
+      presentMainWindow: () => undefined,
       performHaptic: () => undefined,
       performCriticalAction: async () => undefined,
     });
@@ -276,6 +279,7 @@ describe("dynamic island window geometry", () => {
       },
       getDisplays: () => [display({ id: 1 }), display({ id: 2, internal: false })],
       getMainWindow: () => null,
+      presentMainWindow: () => undefined,
       performHaptic: () => undefined,
       performCriticalAction: async () => undefined,
     });
@@ -315,6 +319,7 @@ describe("dynamic island window geometry", () => {
       },
       getDisplays: () => [display({ id: 1, internal: true }), display({ id: 2, internal: false })],
       getMainWindow: () => null,
+      presentMainWindow: () => undefined,
       performHaptic: () => undefined,
       performCriticalAction: async () => undefined,
     });
@@ -347,6 +352,7 @@ describe("dynamic island window geometry", () => {
       loadWindow: async () => undefined,
       getDisplays: () => [],
       getMainWindow: () => null,
+      presentMainWindow: () => undefined,
       performHaptic: () => undefined,
       performCriticalAction: async () => undefined,
     });
@@ -382,6 +388,7 @@ describe("dynamic island window geometry", () => {
       loadWindow: async () => undefined,
       getDisplays: () => [display({ id: 1 }), display({ id: 2, internal: false })],
       getMainWindow: () => null,
+      presentMainWindow: () => undefined,
       performHaptic,
       performCriticalAction: async () => undefined,
     });
@@ -418,6 +425,7 @@ describe("dynamic island window geometry", () => {
       loadWindow: async () => undefined,
       getDisplays: () => [display({ id: 1 }), display({ id: 2, internal: false })],
       getMainWindow: () => null,
+      presentMainWindow: () => undefined,
       performHaptic: () => undefined,
       performCriticalAction: async () => undefined,
     });
@@ -440,6 +448,7 @@ describe("dynamic island window geometry", () => {
       loadWindow: async () => undefined,
       getDisplays: () => [display({})],
       getMainWindow: () => null,
+      presentMainWindow: () => undefined,
       performHaptic: () => undefined,
       performCriticalAction: async () => undefined,
     });
@@ -452,6 +461,7 @@ describe("dynamic island window geometry", () => {
     // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
     const ensureMainWindow = vi.fn(async () => mainWindow as unknown as BrowserWindow);
     const performCriticalAction = vi.fn(async () => undefined);
+    const presentMainWindow = vi.fn();
     const controller = new DynamicIslandWindowController({
       platform: "darwin",
       preferencePath: "/tmp/dynamic-island-preference.json",
@@ -461,6 +471,7 @@ describe("dynamic island window geometry", () => {
       loadWindow: async () => undefined,
       getDisplays: () => [],
       getMainWindow: () => null,
+      presentMainWindow,
       ensureMainWindow,
       performHaptic: () => undefined,
       performCriticalAction,
@@ -478,6 +489,7 @@ describe("dynamic island window geometry", () => {
 
     expect(performCriticalAction).toHaveBeenCalledWith(action);
     expect(ensureMainWindow).toHaveBeenCalledOnce();
+    expect(presentMainWindow).not.toHaveBeenCalled();
     expect(mainWindow.webContents.send).toHaveBeenCalledWith("dynamic-island:action", action);
     expect(mainWindow.show).not.toHaveBeenCalled();
     expect(mainWindow.focus).not.toHaveBeenCalled();
@@ -502,6 +514,7 @@ describe("dynamic island window geometry", () => {
       getDisplays: () => [],
       // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
       getMainWindow: () => mainWindow as unknown as BrowserWindow,
+      presentMainWindow: () => undefined,
       performHaptic: () => undefined,
       performCriticalAction,
     });
@@ -539,6 +552,7 @@ describe("dynamic island window geometry", () => {
       getDisplays: () => [],
       // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
       getMainWindow: () => mainWindow as unknown as BrowserWindow,
+      presentMainWindow: () => undefined,
       performHaptic: () => undefined,
       performCriticalAction,
     });
@@ -569,6 +583,7 @@ describe("dynamic island window geometry", () => {
       getDisplays: () => [],
       // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
       getMainWindow: () => mainWindow as unknown as BrowserWindow,
+      presentMainWindow: () => undefined,
       performHaptic: () => undefined,
       performCriticalAction: async () => {
         throw new Error("The request is no longer active.");
@@ -590,6 +605,7 @@ describe("dynamic island window geometry", () => {
 
   it("keeps a navigation action retryable while the main renderer reloads", async () => {
     const mainWindow = new FakeWindow(75, { x: 0, y: 0, width: 1200, height: 800 });
+    const presentMainWindow = vi.fn();
     const controller = new DynamicIslandWindowController({
       platform: "darwin",
       preferencePath: "/tmp/dynamic-island-preference.json",
@@ -600,6 +616,7 @@ describe("dynamic island window geometry", () => {
       getDisplays: () => [],
       // biome-ignore lint/nursery/noUnsafeTypeAssertion: the test double implements the controller's BrowserWindow surface.
       getMainWindow: () => mainWindow as unknown as BrowserWindow,
+      presentMainWindow,
       performHaptic: () => undefined,
       performCriticalAction: async () => undefined,
     });
@@ -616,6 +633,8 @@ describe("dynamic island window geometry", () => {
 
     mainWindow.webContents.isLoadingMainFrame.mockReturnValue(false);
     await expect(controller.performAction(action)).resolves.toBeUndefined();
+    expect(presentMainWindow).toHaveBeenCalledTimes(2);
+    expect(presentMainWindow).toHaveBeenCalledWith(mainWindow);
     expect(mainWindow.webContents.send).toHaveBeenCalledWith(IPC_CHANNELS.dynamicIslandAction, action);
   });
 

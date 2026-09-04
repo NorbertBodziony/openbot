@@ -3,13 +3,52 @@
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { readMainWindowBounds, resolveMainWindowBounds, writeMainWindowBounds } from "./main-window-state";
+import { describe, expect, it, vi } from "vitest";
+import {
+  presentMainWindow,
+  readMainWindowBounds,
+  resolveMainWindowBounds,
+  writeMainWindowBounds,
+} from "./main-window-state";
 
 const primary = { x: 0, y: 0, width: 1440, height: 900 };
 const secondary = { x: 1440, y: 0, width: 1920, height: 1080 };
 
 describe("main window state", () => {
+  it("unhides the macOS application and restores a minimized main window", () => {
+    const showApplication = vi.fn();
+    const window = {
+      isMinimized: vi.fn(() => true),
+      restore: vi.fn(),
+      show: vi.fn(),
+      focus: vi.fn(),
+    };
+
+    presentMainWindow(window, "darwin", showApplication);
+
+    expect(showApplication).toHaveBeenCalledOnce();
+    expect(window.restore).toHaveBeenCalledOnce();
+    expect(window.show).toHaveBeenCalledOnce();
+    expect(window.focus).toHaveBeenCalledOnce();
+  });
+
+  it("does not use the macOS application API or restore an ordinary window", () => {
+    const showApplication = vi.fn();
+    const window = {
+      isMinimized: vi.fn(() => false),
+      restore: vi.fn(),
+      show: vi.fn(),
+      focus: vi.fn(),
+    };
+
+    presentMainWindow(window, "win32", showApplication);
+
+    expect(showApplication).not.toHaveBeenCalled();
+    expect(window.restore).not.toHaveBeenCalled();
+    expect(window.show).toHaveBeenCalledOnce();
+    expect(window.focus).toHaveBeenCalledOnce();
+  });
+
   it("restores the last visible bounds", () => {
     expect(
       resolveMainWindowBounds(

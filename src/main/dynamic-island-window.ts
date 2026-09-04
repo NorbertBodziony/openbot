@@ -32,6 +32,7 @@ export interface DynamicIslandWindowControllerOptions {
   getDisplays: () => Display[];
   getMainWindow: () => BrowserWindow | null;
   ensureMainWindow?: () => Promise<BrowserWindow>;
+  presentMainWindow: (window: BrowserWindow) => void;
   performHaptic: () => void;
   performCriticalAction: (
     action: Extract<DynamicIslandAction, { type: "answer-prompt" | "respond-approval" }>,
@@ -130,9 +131,7 @@ export class DynamicIslandWindowController {
       return;
     }
     const window = await this.#ensureMainWindow();
-    if (window.isMinimized()) window.restore();
-    window.show();
-    window.focus();
+    this.#options.presentMainWindow(window);
     if (action.type !== "open-app" && !sendToRenderer(window, IPC_CHANNELS.dynamicIslandAction, action)) {
       throw new Error("The OpenBot window is temporarily unavailable.");
     }

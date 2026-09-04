@@ -8,6 +8,24 @@ interface WindowSize {
   height: number;
 }
 
+interface MainWindowPresentationTarget {
+  isMinimized(): boolean;
+  restore(): void;
+  show(): void;
+  focus(): void;
+}
+
+export function presentMainWindow(
+  window: MainWindowPresentationTarget,
+  platform: NodeJS.Platform,
+  showApplication: () => void,
+): void {
+  if (platform === "darwin") showApplication();
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+}
+
 export async function readMainWindowBounds(path: string): Promise<Rectangle | null> {
   try {
     const parsed = JSON.parse(await readFile(path, "utf8"));
