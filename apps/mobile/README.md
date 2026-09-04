@@ -13,6 +13,8 @@ React Native app built with Expo SDK 57, Expo Router, TypeScript 7, Biome, and B
 Expo Router 57.0.17 is patched in `patches/expo-router@57.0.17.patch` to apply zoom dismissal
 bounds when its enabler registers after the chat mounts. This keeps the avatar-to-header zoom
 interactive from the left edge without enabling dismissal from the middle of the chat.
+The same patch keeps navigation queue snapshots immutable so React observes every navigation
+action, including the first tap when reopening a chat after going back.
 
 Keyboard Controller 1.21.9 is included in SDK 57 Expo Go. Custom development clients and
 standalone apps must be rebuilt after adding this native dependency; a JavaScript reload alone
