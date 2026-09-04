@@ -440,7 +440,9 @@ describe("MailboxStore", () => {
   });
 
   it("accepts whitelisted context files and rejects unsupported binaries", async () => {
-    const paths = ["brief.pdf", "notes.txt", "README.md", "requirements.docx"].map((name) => join(root, name));
+    const paths = ["brief.pdf", "notes.txt", "README.md", "requirements.docx", "message.eml"].map((name) =>
+      join(root, name),
+    );
     await Promise.all(paths.map((path) => writeFile(path, "fixture")));
 
     await expect(store.prepareAttachments(paths)).resolves.toMatchObject([
@@ -452,6 +454,7 @@ describe("MailboxStore", () => {
         mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         previewKind: "none",
       },
+      { name: "message.eml", mimeType: "message/rfc822", previewKind: "none" },
     ]);
 
     const archive = join(root, "bundle.zip");

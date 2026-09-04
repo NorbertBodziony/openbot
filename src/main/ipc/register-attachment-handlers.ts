@@ -6,13 +6,15 @@ import { chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import {
   ATTACHMENT_FILE_EXTENSIONS,
+  attachmentFileExtension,
   IMAGE_ATTACHMENT_EXTENSIONS,
   isSupportedAttachmentName,
   SUPPORTED_ATTACHMENT_DESCRIPTION,
 } from "@openbot/contracts/attachment-files";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
-import { type FilePreview, type ImportAttachmentsInput, IPC_CHANNELS } from "@openbot/contracts/ipc";
+import { type FilePreview, type ImportAttachmentsInput, IPC_CHANNELS, LOCAL_SERVER_ID } from "@openbot/contracts/ipc";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
+import { TEAM_EML_ATTACHMENTS_CAPABILITY } from "@openbot/contracts/team-protocol/current";
 import { app, type BrowserWindow, dialog, type OpenDialogOptions, shell } from "electron";
 import type { AgentService } from "../../backend/agent-service";
 import type { MailboxStore } from "../../backend/mailbox-store";
@@ -48,12 +50,19 @@ export function registerAttachmentIpcHandlers({
     const mainWindow = getMainWindow();
     const { serverId, payload } = parsed;
     const { filter } = parseChooseAttachments(payload);
+    const supportsEml =
+      serverId === LOCAL_SERVER_ID || remoteServers.supportsCapability(serverId, TEAM_EML_ATTACHMENTS_CAPABILITY);
     const options: OpenDialogOptions = {
       properties: ["openFile", "multiSelections"],
       filters:
         filter === "images"
           ? [{ name: "Images", extensions: [...IMAGE_ATTACHMENT_EXTENSIONS] }]
-          : [{ name: "Supported files", extensions: [...ATTACHMENT_FILE_EXTENSIONS] }],
+          : [
+              {
+                name: "Supported files",
+                extensions: ATTACHMENT_FILE_EXTENSIONS.filter((extension) => supportsEml || extension !== "eml"),
+              },
+            ],
     };
     const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
     if (result.canceled) return [];
@@ -214,6 +223,11 @@ async function uploadRemotePaths(remoteServers: RemoteServerManager, serverId: s
   if (paths.length > INPUT_LIMITS.attachments) {
     throw new Error(`Choose at most ${INPUT_LIMITS.attachments} files.`);
   }
+  assertRemoteEmlSupport(
+    remoteServers,
+    serverId,
+    paths.map((path) => basename(path)),
+  );
   for (const path of paths) assertSupportedAttachmentName(basename(path));
   const files = await Promise.all(
     paths.map(async (path) => ({
@@ -241,6 +255,10 @@ async function uploadRemoteImports(
   if (input.paths.length + input.data.length > INPUT_LIMITS.attachments) {
     throw new Error(`Choose at most ${INPUT_LIMITS.attachments} files.`);
   }
+  assertRemoteEmlSupport(remoteServers, serverId, [
+    ...input.paths.map((path) => basename(path)),
+    ...input.data.map((item) => basename(item.name)),
+  ]);
   const pathFiles = await Promise.all(
     input.paths.map(async (path) => ({
       name: basename(path),
@@ -266,6 +284,12 @@ async function uploadRemoteImports(
   return Promise.all(
     files.map((file) => remoteServers.uploadAttachment(file.name, file.mimeType, file.bytes, serverId)),
   );
+}
+
+function assertRemoteEmlSupport(remoteServers: RemoteServerManager, serverId: string, names: readonly string[]): void {
+  if (!names.some((name) => attachmentFileExtension(name) === "eml")) return;
+  if (remoteServers.supportsCapability(serverId, TEAM_EML_ATTACHMENTS_CAPABILITY)) return;
+  throw new Error("This server does not support EML attachments. Update OpenBot on the host and retry.");
 }
 
 function assertSupportedAttachmentName(name: string): void {
