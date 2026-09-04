@@ -69,7 +69,9 @@ which of these your change touched.**
 2. **The shared dev stack.** Several agents work in worktrees on this machine at once, sharing one
    profile and one set of default ports, so a second `bun run dev` fights the first and can leave a
    half-written profile behind. Reuse the running instance, or get an isolated one with
-   `developmentUserDataName(profile, instanceId)` in `src/main/development-profile.ts`.
+   `developmentUserDataName(profile, instanceId)` in `src/main/development-profile.ts`. Drive the
+   running instance for e2e smoke checks with `bun run dev:automation` (`snapshot`/`screenshot`
+   read-only; `click`/`type` need `--allow-mutations`) instead of launching Electron yourself.
 3. **Killing processes by pattern.** `pkill -f electron` or `pkill -f bun` kills other sessions' work
    mid-write. Target a PID you started, or ask.
 
