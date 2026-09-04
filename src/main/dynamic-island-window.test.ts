@@ -194,8 +194,13 @@ describe("dynamic island window geometry", () => {
     expect(windows[0]?.destroy).toHaveBeenCalledOnce();
     expect(windows[1]?.setBounds).toHaveBeenCalledWith({ x: 1793, y: 20, width: 614, height: 380 }, false);
 
+    // The window is the only thing clipping the island, so it keeps the tall bounds until the
+    // renderer's collapse animation has landed - otherwise the lower half is cut off at once.
     controller.setInteractive(43, false);
-    expect(windows[1]?.setBounds).toHaveBeenCalledWith({ x: 1793, y: 20, width: 614, height: 50 }, false);
+    expect(windows[1]?.setBounds).not.toHaveBeenCalledWith({ x: 1793, y: 20, width: 614, height: 50 }, false);
+    await vi.waitFor(() =>
+      expect(windows[1]?.setBounds).toHaveBeenCalledWith({ x: 1793, y: 20, width: 614, height: 50 }, false),
+    );
   });
 
   it("publishes updated geometry without reloading an existing overlay", async () => {
