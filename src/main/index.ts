@@ -53,6 +53,7 @@ import {
   developmentUserDataName,
   readDevelopmentInstanceId,
   readDevelopmentProfile,
+  readDevelopmentRemoteDebuggingPort,
   shouldAutoStartHost,
   shouldShowDevelopmentWindow,
 } from "./development-profile";
@@ -117,8 +118,11 @@ const developmentTestClientEnabled = !app.isPackaged && process.env.OPENBOT_DEV_
 const developmentInviteLinkOptions = {
   allowLocalDevelopmentApiUrl: developmentRemoteRole !== null,
 };
-if (!app.isPackaged && /^\d{4,5}$/u.test(process.env.OPENBOT_DEV_REMOTE_DEBUGGING_PORT ?? "")) {
-  app.commandLine.appendSwitch("remote-debugging-port", process.env.OPENBOT_DEV_REMOTE_DEBUGGING_PORT);
+const developmentRemoteDebuggingPort = !app.isPackaged
+  ? readDevelopmentRemoteDebuggingPort(process.env.OPENBOT_DEV_REMOTE_DEBUGGING_PORT)
+  : null;
+if (developmentRemoteDebuggingPort) {
+  app.commandLine.appendSwitch("remote-debugging-port", developmentRemoteDebuggingPort);
   app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
 }
 if (commandLineUserDataDirectory) {

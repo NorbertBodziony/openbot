@@ -1,7 +1,7 @@
 // Guardrails that keep automation on the intended dev instance: the wrong
 // port must fail before any click or keystroke can reach another app.
 import { describe, expect, it } from "vitest";
-import { isOpenBotBrowser, pickMainPage, resolveAutomationPort } from "./cdp-client";
+import { assertMutationAllowed, isOpenBotBrowser, pickMainPage, resolveAutomationPort } from "./cdp-client";
 
 describe("isOpenBotBrowser", () => {
   it("accepts the Electron user agent", () => {
@@ -42,5 +42,23 @@ describe("resolveAutomationPort", () => {
   it("marks flag and environment ports as explicit", () => {
     expect(resolveAutomationPort("9334", undefined)).toEqual({ port: 9334, explicit: true });
     expect(resolveAutomationPort(undefined, "9335")).toEqual({ port: 9335, explicit: true });
+  });
+});
+
+describe("assertMutationAllowed", () => {
+  it("refuses a mutation without the opt-in flag", () => {
+    expect(() => assertMutationAllowed({ command: "click", allowMutations: false, portExplicit: true })).toThrow(
+      /--allow-mutations/u,
+    );
+  });
+
+  it("refuses a mutation that does not name the instance it drives", () => {
+    expect(() => assertMutationAllowed({ command: "type", allowMutations: true, portExplicit: false })).toThrow(
+      /--port=/u,
+    );
+  });
+
+  it("allows a mutation that opts in and names its port", () => {
+    expect(() => assertMutationAllowed({ command: "click", allowMutations: true, portExplicit: true })).not.toThrow();
   });
 });

@@ -3,18 +3,23 @@
 // copies openbot.db: it drives the instance you already have open.
 import { join } from "node:path";
 import { createOpenBotLogger } from "@openbot/logging";
-import { connectToDevApp, resolveAutomationPort } from "./cdp-client";
+import { assertMutationAllowed, connectToDevApp, resolveAutomationPort } from "./cdp-client";
 import { clickByRole, parseAutomationRole, screenshotTo, snapshotPage, typeByRole } from "./tools";
 
 // Diagnostics go to stderr so stdout carries only the final JSON document,
 // which stays parseable for the calling agent.
-const logger = createOpenBotLogger("dev-automation", (line) => process.stderr.write(`${line}\n`));
+// `debug` so the renderer console and page errors this tool subscribes to are
+// visible; the default `info` threshold would drop them.
+const logger = createOpenBotLogger("dev-automation", (line) => process.stderr.write(`${line}\n`), "debug");
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const SCREENSHOT_ROOT = join(process.cwd(), ".openbot-build", "dev-automation");
 
+// `null` means the flag is absent, `""` means it was passed empty. The two
+// differ for `--text=`, which legitimately clears a field.
 function flagValue(name: string): string | null {
-  return process.argv.find((argument) => argument.startsWith(`${name}=`))?.slice(name.length + 1) || null;
+  const passed = process.argv.find((argument) => argument.startsWith(`${name}=`));
+  return passed === undefined ? null : passed.slice(name.length + 1);
 }
 
 function hasFlag(name: string): boolean {
@@ -23,7 +28,13 @@ function hasFlag(name: string): boolean {
 
 function requireFlagValue(name: string): string {
   const value = flagValue(name);
-  if (!value) throw new Error(`Missing required ${name}=<value>.`);
+  if (value === null || value === "") throw new Error(`Missing required ${name}=<value>.`);
+  return value;
+}
+
+function requireTextFlag(): string {
+  const value = flagValue("--text");
+  if (value === null) throw new Error("Missing required --text=<value>.");
   return value;
 }
 
@@ -37,21 +48,6 @@ function readTimeout(): number {
   return timeout;
 }
 
-function requireMutations(command: string, portExplicit: boolean): void {
-  if (!hasFlag("--allow-mutations")) {
-    throw new Error(
-      `${command} changes the live dev app. Re-run with --allow-mutations. ` +
-        "Snapshots and screenshots stay available without it.",
-    );
-  }
-  if (!portExplicit) {
-    throw new Error(
-      `${command} changes the live dev app, and CDP cannot tell OpenBot profiles apart. ` +
-        "Re-run with --port=<OPENBOT_DEV_REMOTE_DEBUGGING_PORT> naming the instance you mean to drive.",
-    );
-  }
-}
-
 async function main(): Promise<void> {
   const command = process.argv[2];
   if (command !== "snapshot" && command !== "click" && command !== "type" && command !== "screenshot") {
@@ -61,10 +57,16 @@ async function main(): Promise<void> {
     flagValue("--port") ?? undefined,
     process.env.OPENBOT_DEV_REMOTE_DEBUGGING_PORT,
   );
-  if (command === "click" || command === "type") requireMutations(command, resolved.explicit);
+  if (command === "click" || command === "type") {
+    assertMutationAllowed({
+      command,
+      allowMutations: hasFlag("--allow-mutations"),
+      portExplicit: resolved.explicit,
+    });
+  }
   const role = command === "click" || command === "type" ? parseAutomationRole(requireFlagValue("--role")) : null;
   const name = command === "click" || command === "type" ? requireFlagValue("--name") : null;
-  const text = command === "type" ? requireFlagValue("--text") : null;
+  const text = command === "type" ? requireTextFlag() : null;
   const port = resolved.port;
   const timeoutMs = readTimeout();
   const session = await connectToDevApp(port, logger);
@@ -84,6 +86,7 @@ async function main(): Promise<void> {
       process.stdout.write(`${JSON.stringify(snapshot, null, 2)}\n`);
     } else if (command === "screenshot") {
       const out = flagValue("--out") ?? join(SCREENSHOT_ROOT, `screenshot-${Date.now()}.png`);
+      if (out === "") throw new Error("--out=<path> cannot be empty.");
       await screenshotTo(session.page, out, logger);
       process.stdout.write(`${JSON.stringify({ screenshot: out })}\n`);
     }

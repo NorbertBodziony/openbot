@@ -7,6 +7,13 @@ import type { Logger } from "@openbot/logging";
 import { type Browser, chromium, type Page } from "playwright-core";
 
 export const DEFAULT_DEV_AUTOMATION_PORT = 9_333;
+export const MIN_DEV_AUTOMATION_PORT = 1_024;
+export const MAX_DEV_AUTOMATION_PORT = 65_535;
+
+// Thrown when the port answers but the browser behind it is not OpenBot.
+// A class instead of a message prefix: the reconnect hint below must not
+// swallow this one, and matching on wording breaks the moment it is reworded.
+export class ForeignBrowserError extends Error {}
 
 export interface ResolvedAutomationPort {
   port: number;
@@ -26,10 +33,36 @@ export function resolveAutomationPort(
     return { port: DEFAULT_DEV_AUTOMATION_PORT, explicit: false };
   }
   const port = Number(source);
-  if (!Number.isInteger(port) || port < 1_024 || port > 65_535) {
-    throw new Error("OPENBOT_DEV_REMOTE_DEBUGGING_PORT must be an integer from 1024 to 65535.");
+  if (!Number.isInteger(port) || port < MIN_DEV_AUTOMATION_PORT || port > MAX_DEV_AUTOMATION_PORT) {
+    throw new Error(
+      `OPENBOT_DEV_REMOTE_DEBUGGING_PORT must be an integer from ${MIN_DEV_AUTOMATION_PORT} to ${MAX_DEV_AUTOMATION_PORT}.`,
+    );
   }
   return { port, explicit: true };
+}
+
+export interface MutationGate {
+  command: string;
+  allowMutations: boolean;
+  portExplicit: boolean;
+}
+
+// The whole safety story of `click` and `type`: they need an opt-in, and they
+// need the caller to name the instance, because CDP exposes no per-profile
+// identity and another agent's dev app may be listening on the default port.
+export function assertMutationAllowed(gate: MutationGate): void {
+  if (!gate.allowMutations) {
+    throw new Error(
+      `${gate.command} changes the live dev app. Re-run with --allow-mutations. ` +
+        "Snapshots and screenshots stay available without it.",
+    );
+  }
+  if (!gate.portExplicit) {
+    throw new Error(
+      `${gate.command} changes the live dev app, and CDP cannot tell OpenBot profiles apart. ` +
+        "Re-run with --port=<OPENBOT_DEV_REMOTE_DEBUGGING_PORT> naming the instance you mean to drive.",
+    );
+  }
 }
 
 export interface AutomationSession {
@@ -59,7 +92,7 @@ async function describeBrowser(port: number): Promise<{ targets: string; userAge
   const info = await version.json();
   const userAgent = isDynamicRecord(info) && isString(info["User-Agent"]) ? info["User-Agent"] : "";
   if (!isOpenBotBrowser(userAgent)) {
-    throw new Error(
+    throw new ForeignBrowserError(
       `Port ${port} does not belong to OpenBot (User-Agent: ${userAgent || "unknown"}). ` +
         "Pass --port=<OPENBOT_DEV_REMOTE_DEBUGGING_PORT> of the instance you mean to drive.",
     );
@@ -85,7 +118,7 @@ export async function connectToDevApp(port: number, logger: Logger): Promise<Aut
   try {
     targets = (await describeBrowser(port)).targets;
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith(`Port ${port} does not belong to OpenBot`)) throw error;
+    if (error instanceof ForeignBrowserError) throw error;
     throw new Error(
       `No dev app answers on 127.0.0.1:${port}. Reuse the running instance (` +
         "`bun run dev`) instead of starting a second one; " +
@@ -109,6 +142,9 @@ export async function connectToDevApp(port: number, logger: Logger): Promise<Aut
   return {
     browser,
     page,
+    // Closing a browser obtained through `connectOverCDP` closes the WebSocket
+    // transport only - Playwright never sends `Browser.close` on this path - so
+    // the dev app keeps running after every command.
     close: () => browser.close(),
   };
 }

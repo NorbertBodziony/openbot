@@ -344,17 +344,8 @@ export function migrateOpenBotDatabase(db: DatabaseSync, options: OpenBotMigrati
         db.exec("VACUUM");
         db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
       } catch (error) {
-        if (options.warn) {
-          options.warn(
-            `OpenBot database migration to version ${migration.version} succeeded, but VACUUM failed.`,
-            error,
-          );
-        } else {
-          logger.warn(
-            `OpenBot database migration to version ${migration.version} succeeded, but VACUUM failed.`,
-            toLogValue(error),
-          );
-        }
+        const warn = options.warn ?? ((message: string, cause: unknown) => logger.warn(message, toLogValue(cause)));
+        warn(`OpenBot database migration to version ${migration.version} succeeded, but VACUUM failed.`, error);
       }
     }
   }

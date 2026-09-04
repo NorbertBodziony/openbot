@@ -63,7 +63,7 @@ renderer ──► @openbot/contracts ◄── preload ◄── main ──►
 6. Do not add a second linter or formatter. Biome and its repository-owned anti-slop plugins are the
    only repository lint and format tools.
 7. Put renderer state in a domain context module at the root of `src/renderer/src`, and place it by
-lifetime: state that belongs to one team server goes inside the keyed scope in
+   lifetime: state that belongs to one team server goes inside the keyed scope in
    `app-providers.tsx`, everything else above it. A server switch discards and rebuilds that scope,
    so it is the only per-server teardown there is - a signal on the wrong side of that boundary
    either survives a switch it should not or dies in one it should not, and no list of setters can
@@ -78,8 +78,11 @@ lifetime: state that belongs to one team server goes inside the keyed scope in
    renders, and passes a value down as a prop when two of them would otherwise derive it twice. A
    component that assembles another one's props is how the god controller grew back last time.
 9. Do not add temporary compatibility paths without a removal condition and a test for that condition. Released Team API protocol adapters are permanent by default and follow the policy below.
-10. Log through `@openbot/logging` (`ts-log` Logger), never bare `console.*`: every line is timestamped,
-    prefixed and secret-redacted. Machine-readable stdout (piped JSON, tags, harness URLs) uses
+10. Log through `@openbot/logging` (`ts-log` Logger), never bare `console.*` - Biome's `noConsole`
+    enforces this in `src`, `scripts` and `packages`. Every line is timestamped, prefixed and
+    secret-redacted, and redaction covers a serialized payload passed as one string, not only a
+    structured param. `info` and above is written by default; `OPENBOT_LOG_LEVEL` lowers the
+    threshold. Machine-readable stdout (piped JSON, tags, harness URLs) uses
     `process.stdout.write` with a `// Machine-readable:` comment instead. Dev automation
     (`scripts/dev-automation`, `bun run dev:automation`) drives the already-running dev app over its
     remote-debugging CDP port and never launches a second instance, seeds, or resets the dev profile.

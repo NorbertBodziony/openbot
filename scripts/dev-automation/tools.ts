@@ -5,93 +5,12 @@ import type { Page } from "playwright-core";
 
 const MAX_SNAPSHOT_LENGTH = 20_000;
 
-// The role union mirrors Playwright's getByRole signature, so an invalid role
-// fails in the CLI parser with a readable message instead of deep in Playwright.
-export type AutomationRole =
-  | "alert"
-  | "alertdialog"
-  | "application"
-  | "article"
-  | "banner"
-  | "blockquote"
-  | "button"
-  | "caption"
-  | "cell"
-  | "checkbox"
-  | "code"
-  | "columnheader"
-  | "combobox"
-  | "complementary"
-  | "contentinfo"
-  | "definition"
-  | "deletion"
-  | "dialog"
-  | "directory"
-  | "document"
-  | "emphasis"
-  | "feed"
-  | "figure"
-  | "form"
-  | "generic"
-  | "grid"
-  | "gridcell"
-  | "group"
-  | "heading"
-  | "img"
-  | "insertion"
-  | "link"
-  | "list"
-  | "listbox"
-  | "listitem"
-  | "log"
-  | "main"
-  | "marquee"
-  | "math"
-  | "meter"
-  | "menu"
-  | "menubar"
-  | "menuitem"
-  | "menuitemcheckbox"
-  | "menuitemradio"
-  | "navigation"
-  | "none"
-  | "note"
-  | "option"
-  | "paragraph"
-  | "presentation"
-  | "progressbar"
-  | "radio"
-  | "radiogroup"
-  | "region"
-  | "row"
-  | "rowgroup"
-  | "rowheader"
-  | "scrollbar"
-  | "search"
-  | "searchbox"
-  | "separator"
-  | "slider"
-  | "spinbutton"
-  | "status"
-  | "strong"
-  | "subscript"
-  | "superscript"
-  | "switch"
-  | "tab"
-  | "table"
-  | "tablist"
-  | "tabpanel"
-  | "term"
-  | "textbox"
-  | "time"
-  | "timer"
-  | "toolbar"
-  | "tooltip"
-  | "tree"
-  | "treegrid"
-  | "treeitem";
+// The runtime list is the only copy; the type comes from Playwright, so a
+// misspelled or removed role fails to compile instead of failing deep
+// inside a locator call.
+export type AutomationRole = Parameters<Page["getByRole"]>[0];
 
-const AUTOMATION_ROLES: AutomationRole[] = [
+const AUTOMATION_ROLES: readonly AutomationRole[] = [
   "alert",
   "alertdialog",
   "application",
@@ -215,10 +134,6 @@ export async function typeByRole(
   const control = page.getByRole(role, { name });
   await control.fill(text, { timeout: timeoutMs });
   if (submit) await control.press("Enter", { timeout: timeoutMs });
-}
-
-export async function waitForRole(page: Page, role: AutomationRole, name: string, timeoutMs: number): Promise<void> {
-  await page.getByRole(role, { name }).waitFor({ timeout: timeoutMs });
 }
 
 export async function screenshotTo(page: Page, outPath: string, logger: Logger = dummyLogger): Promise<string> {

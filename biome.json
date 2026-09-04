@@ -100,6 +100,16 @@
       }
     },
     {
+      "includes": ["src/**/*.ts", "src/**/*.tsx", "scripts/**/*.ts", "packages/**/*.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "error"
+          }
+        }
+      }
+    },
+    {
       "includes": ["**/*.test.ts", "**/*.test.tsx"],
       "plugins": [
         "./tools/biome/anti-slop/rules/no-class-assertions.grit",
