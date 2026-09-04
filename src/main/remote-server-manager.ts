@@ -68,14 +68,8 @@ import {
 import {
   decodeTeamProtocolV1CurrentEvent,
   decodeTeamProtocolV1CurrentHttpResponse,
-  encodeTeamProtocolV1CurrentHttpRequest,
 } from "@openbot/contracts/team-protocol/v1-adapter";
-import { decodeTeamProtocolV2Json, type TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
 import { TEAM_PROTOCOL_V3, TEAM_PROTOCOL_V3_CAPABILITIES } from "@openbot/contracts/team-protocol/v3";
-import {
-  decodeTeamProtocolV3CurrentHttpResponse,
-  encodeTeamProtocolV3CurrentHttpRequest,
-} from "@openbot/contracts/team-protocol/v3-adapter";
 import {
   decodeBotSummaries,
   decodeBotSummary,
@@ -97,6 +91,8 @@ import {
 } from "./remote-conversation-decoding";
 import { decodeRemoteDesktopCapabilities, decodeRemoteDesktopSession } from "./remote-device-decoding";
 import { decodeVoid, type ResponseDecoder } from "./remote-host-decoding";
+import { RemoteProtocolError, RemoteRequestError } from "./remote-server-errors";
+import { remoteFetch, requestJson, throwRemoteResponseError, webRtcRequestBody } from "./remote-server-http";
 import { addRemotePreviewUrls, isLocalDevelopmentApi, pageQuery, remoteServerLogoUrl } from "./remote-server-urls";
 import {
   decodeIdentityProof,
@@ -178,7 +174,6 @@ export interface DevelopmentRemoteServerConnection {
   sessionToken: string;
 }
 
-const REMOTE_REQUEST_TIMEOUT_MS = 15_000;
 export const REMOTE_DUPLICATION_TIMEOUT_MS = TEAM_WEBRTC_REMOTE_REQUEST_TIMEOUT_MILLISECONDS;
 const REMOTE_EVENT_RECONNECT_BASE_MS = 1_000;
 const REMOTE_EVENT_RECONNECT_MAX_MS = 60_000;
@@ -189,30 +184,6 @@ const REMOTE_EVENT_INITIAL_BUFFER_LIMIT = 1_000;
 const REMOTE_EVENT_PROTOCOL = "openbot-events";
 const REMOTE_EVENT_SNAPSHOT_PROTOCOL = "openbot-events-v2";
 const LOCAL_TEAM_PROTOCOL = { minimum: TEAM_PROTOCOL_V1, maximum: TEAM_PROTOCOL_V3 } as const;
-
-class RemoteRequestError extends Error {
-  readonly status: number;
-  readonly code: string | null;
-
-  constructor(status: number, message: string, code: string | null = null) {
-    super(message);
-    this.name = "RemoteRequestError";
-    this.status = status;
-    this.code = code;
-  }
-}
-
-class RemoteProtocolError extends Error {
-  constructor(
-    readonly code: "client_update_required" | "host_update_required" | "protocol_error",
-    message: string,
-    readonly support: TeamProtocolSupportV1 | null = null,
-    options?: ErrorOptions,
-  ) {
-    super(message, options);
-    this.name = "RemoteProtocolError";
-  }
-}
 
 export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #path: string;
@@ -1366,35 +1337,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       }
       const response = await remoteFetch(input, { ...init, headers });
       if (!response.ok) {
-        const method = init.method ?? "GET";
-        const path = new URL(input).pathname;
-        let body: unknown;
-        try {
-          body = await response.clone().json();
-        } catch (error) {
-          if (response.headers.get("content-type")?.toLowerCase().includes("json")) {
-            throw new RemoteProtocolError(
-              "protocol_error",
-              "The host returned data that this app could not safely use.",
-              null,
-              { cause: error },
-            );
-          }
-          throw new RemoteRequestError(response.status, `Remote server request failed (${response.status}).`);
-        }
-        try {
-          const value = decodeTeamProtocolV1CurrentHttpResponse(method, path, response.status, body);
-          if (!isDynamicRecord(value) || !isString(value.error)) throw new Error("Invalid error envelope.");
-          throw new RemoteRequestError(response.status, value.error, isString(value.code) ? value.code : null);
-        } catch (error) {
-          if (error instanceof RemoteRequestError) throw error;
-          throw new RemoteProtocolError(
-            "protocol_error",
-            "The host returned data that this app could not safely use.",
-            null,
-            { cause: error },
-          );
-        }
+        await throwRemoteResponseError(response, init.method ?? "GET", new URL(input).pathname);
       }
       return response;
     } catch (error) {
@@ -2060,92 +2003,6 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 }
 
-async function requestJson<T>(
-  apiUrl: string,
-  path: string,
-  decoder: ResponseDecoder<T>,
-  options: {
-    method?: string;
-    body?: unknown;
-    token?: string;
-    protocol?: number;
-    appVersion?: string;
-    capabilities?: readonly TeamCurrentCapability[];
-    preserveSemanticTags?: boolean;
-    timeoutMs?: number;
-  } = {},
-): Promise<T> {
-  const method = options.method ?? (options.body === undefined ? "GET" : "POST");
-  const response = await remoteFetch(
-    new URL(path, apiUrl),
-    {
-      method,
-      headers: {
-        Accept: "application/json",
-        ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
-        ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
-        ...(options.protocol ? { [TEAM_PROTOCOL_VERSION_HEADER]: String(options.protocol) } : {}),
-        ...(options.appVersion ? { [TEAM_APP_VERSION_HEADER]: options.appVersion } : {}),
-        ...(options.capabilities ? { [TEAM_CAPABILITIES_HEADER]: options.capabilities.join(",") } : {}),
-      },
-      body:
-        options.body === undefined
-          ? undefined
-          : options.protocol === TEAM_PROTOCOL_V3
-            ? encodeTeamProtocolV3CurrentHttpRequest(method, path, options.body, {
-                preserveSemanticTags: options.preserveSemanticTags,
-              })
-            : encodeTeamProtocolV1CurrentHttpRequest(method, path, options.body, {
-                preserveSemanticTags: options.preserveSemanticTags,
-              }),
-    },
-    options.timeoutMs,
-  );
-  let value: unknown;
-  if (response.status !== 204) {
-    try {
-      value = await response.json();
-    } catch (error) {
-      if (response.ok) throw error;
-    }
-  }
-  if (value !== undefined) {
-    try {
-      value =
-        options.protocol === TEAM_PROTOCOL_V3
-          ? decodeTeamProtocolV3CurrentHttpResponse(method, path, response.status, value)
-          : decodeTeamProtocolV1CurrentHttpResponse(method, path, response.status, value);
-    } catch (error) {
-      throw new RemoteProtocolError(
-        "protocol_error",
-        "The host returned data that this app could not safely use.",
-        null,
-        { cause: error },
-      );
-    }
-  }
-  if (!response.ok) {
-    const message =
-      isDynamicRecord(value) && isString(value.error)
-        ? value.error
-        : `Remote server request failed (${response.status}).`;
-    const code = isDynamicRecord(value) && isString(value.code) ? value.code : null;
-    throw new RemoteRequestError(response.status, message, code);
-  }
-  try {
-    return decoder(value);
-  } catch (error) {
-    throw new RemoteProtocolError(
-      "protocol_error",
-      "The host returned data that this app could not safely use.",
-      null,
-      {
-        cause: error,
-      },
-    );
-  }
-}
-
 function requiredServerSummary(servers: ServerSummary[], serverId: string): ServerSummary {
   const server = servers.find((candidate) => candidate.id === serverId);
   if (!server) throw new Error("Remote server summary is missing.");
@@ -2197,31 +2054,4 @@ function readStoredRemoteServer(value: unknown): StoredRemoteServer | null {
     role: value.role,
     ...(value.transport === undefined ? {} : { transport: value.transport }),
   };
-}
-
-function remoteFetch(
-  input: string | URL,
-  init: RequestInit = {},
-  timeoutMs = REMOTE_REQUEST_TIMEOUT_MS,
-): Promise<Response> {
-  return fetch(input, { ...init, signal: AbortSignal.timeout(timeoutMs) });
-}
-
-function webRtcRequestBody(
-  body: RequestInit["body"],
-  contentType: string | undefined,
-): RequestInit["body"] | TeamProtocolV2Json {
-  const mimeType = contentType?.split(";", 1)[0]?.trim().toLowerCase();
-  if (!body || (mimeType !== "application/json" && !mimeType?.endsWith("+json"))) return body;
-  let text: string;
-  if (isString(body)) text = body;
-  else if (body instanceof ArrayBuffer) text = new TextDecoder().decode(body);
-  else if (ArrayBuffer.isView(body)) {
-    text = new TextDecoder().decode(new Uint8Array(body.buffer, body.byteOffset, body.byteLength));
-  } else return body;
-  try {
-    return decodeTeamProtocolV2Json(JSON.parse(text));
-  } catch {
-    return body;
-  }
 }
