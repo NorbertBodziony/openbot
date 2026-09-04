@@ -218,7 +218,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       }
     });
     this.#webrtcTransport?.on("disconnected", (serverId) => {
-      this.#connections.setState(serverId, "offline");
+      // A host the app has stopped reconnecting to is not merely offline. The recorded failure is
+      // the reason it will not come back, and this disconnect is that failure's own tail -- the one
+      // `#suspendServer` asked for. Writing "offline" over an "incompatible" would leave the issue
+      // sitting behind an ordinary word for it, which is why the HTTPS arm guards the same way.
+      if (!this.#events.isReconnectSuspended(serverId)) this.#connections.setState(serverId, "offline");
       this.#presence.markOffline(serverId);
       this.#emitChanged();
       this.#events.scheduleReconnect(serverId);

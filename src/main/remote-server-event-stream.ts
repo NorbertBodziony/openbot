@@ -195,6 +195,14 @@ export class RemoteEventStream {
 
   // What a suspended reconnect costs the event stream. The registry decides that a failure is not
   // worth retrying; this is the only place that knows there is a socket to tear down for it.
+  // Whether this server's retries are suspended. The manager asks before it records a WebRTC
+  // disconnect as a plain "offline": the HTTPS arm has the same guard inline (`!protocolFailed`
+  // above the `setState` in `#connect`), and the two must agree or the same failure reads as two
+  // different things depending on which transport carried it.
+  isReconnectSuspended(serverId: string): boolean {
+    return this.#authenticationPaused.has(serverId);
+  }
+
   suspendReconnect(serverId: string): void {
     this.#authenticationPaused.add(serverId);
     this.#controllers.get(serverId)?.abort();

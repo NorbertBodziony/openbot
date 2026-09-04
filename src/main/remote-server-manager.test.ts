@@ -705,7 +705,11 @@ describe("remote connection failures", () => {
     ).rejects.toThrow("could not safely use");
 
     await vi.waitFor(() => expect(disconnect).toHaveBeenCalledWith(hostId));
-    expect(fixture.server(hostId)).toMatchObject({ issue: { code: "protocol_error" } });
+
+    // The disconnect the app asked for comes back as an event, and it must not be read as the host
+    // merely going away: the failure that caused it is what the user has to see.
+    transport.emit("disconnected", hostId);
+    expect(fixture.server(hostId)).toMatchObject({ state: "error", issue: { code: "protocol_error" } });
   });
 });
 
