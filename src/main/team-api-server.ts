@@ -1,9 +1,7 @@
-import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { isAvatarMimeType } from "@openbot/contracts/avatar-images";
-import { AVATAR_IMAGE_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
+import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import {
   AGENT_RUNTIME_SNAPSHOT_BYTES_LIMIT,
   type AgentEvent,
@@ -15,14 +13,10 @@ import {
   type DirectThreadSummary,
   type DirectTypingRealtimeEvent,
   type DuplicateBotResult,
-  isMessageReaction,
-  type ReorderQueueInput,
   type SidebarLayoutSnapshot,
-  type SteerQueuedMessageInput,
   type TeamMemberSummary,
   type TeamPresenceSnapshot,
   type TeamRealtimeEvent,
-  type UpdateQueuedMessageInput,
 } from "@openbot/contracts/ipc";
 import { isString } from "@openbot/contracts/runtime-values";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
@@ -51,40 +45,21 @@ import { encodeTeamProtocolV3CurrentHttpResponse } from "@openbot/contracts/team
 import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import type * as Ws from "ws";
 import type { TeamChatStore } from "../backend/team-chat-store";
-import {
-  parseCreateRoutine,
-  parseListRoutineRuns,
-  parseSidebarLayoutAction,
-  parseUpdateRoutine,
-} from "./ipc/agent-inputs";
 import { RemoteScreenError } from "./remote-screen-gateway";
 import type { TeamApiOptions, TeamApiSidebarLayout } from "./team-api/dependencies";
 import { HttpError } from "./team-api/http-error";
 import type { RouteOutcome, TeamApiRequestContext } from "./team-api/request-context";
 import {
-  approvalDecision,
   bearerToken,
-  botCreate,
-  botUpdate,
-  browserTakeoverDecision,
-  conversationForCapabilities,
   conversationSnapshotForCapabilities,
   firstHeaderValue,
   JSON_LIMIT,
-  markerExclusionsForCapabilities,
-  nullableString,
-  pageAnchor,
-  pageLimit,
-  pathIdentifier,
-  promptAnswers,
-  promptRequestId,
-  readBinary,
   readJson,
   requestCapabilities,
   requestProtocol,
-  stringArray,
   stringField,
 } from "./team-api/request-helpers";
+import { routeAgents } from "./team-api/route-agents";
 import { routeBrowser } from "./team-api/route-browser";
 import { routeDirect } from "./team-api/route-direct";
 import { routeFiles } from "./team-api/route-files";
@@ -490,329 +465,13 @@ export class TeamApiServer {
         return this.#json(response, 401, { error: "Authentication required." });
       }
       const context = this.#requestContext(request, response, url, token, authenticated);
-      const member = context.member;
 
       if ((await this.#routeTeam(context)) === "handled") return;
       if ((await this.#routeRemoteScreen(context)) === "handled") return;
       if ((await this.#routeDirect(context)) === "handled") return;
       if ((await this.#routeBrowser(context)) === "handled") return;
       if ((await this.#routeFiles(context)) === "handled") return;
-
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.messages.search) {
-        const query = url.searchParams.get("q") ?? "";
-        if (!query.trim() || query.length > INPUT_LIMITS.messageText) {
-          throw new HttpError(400, "A valid search query is required.");
-        }
-        return this.#json(
-          response,
-          200,
-          this.#options.agents.searchConversationMessages(
-            query,
-            url.searchParams.get("botId") ?? undefined,
-            url.searchParams.get("cursor") ?? undefined,
-            pageLimit(url),
-          ),
-        );
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.agents.status) {
-        return this.#json(response, 200, this.#options.agents.getStatus());
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.sidebarLayout.state) {
-        return this.#json(response, 200, this.#options.sidebarLayout.getSnapshot());
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.sidebarLayout.actions) {
-        const action = parseSidebarLayoutAction(await readJson(request));
-        const layout = await this.#options.sidebarLayout.mutate(
-          action,
-          new Set(this.#options.agents.listBots().map((bot) => bot.id)),
-        );
-        return this.#json(response, 200, layout);
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.agents.usage) {
-        return this.#json(response, 200, await this.#options.agents.getUsage());
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.agents.models) {
-        return this.#json(response, 200, await this.#options.agents.listModels());
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.agents.all) {
-        return this.#json(response, 200, this.#options.agents.listBots());
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.agents.conversationReads) {
-        return this.#json(
-          response,
-          200,
-          this.#options.agents.listConversationReads(member.id, markerExclusionsForCapabilities(clientCapabilities)),
-        );
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.agents.all) {
-        const body = await readJson(request);
-        return this.#json(response, 201, await this.#options.agents.createBot(botCreate(body)));
-      }
-
-      const agentMatch = url.pathname.match(/^\/v1\/agents\/([^/]+)(?:\/(.*))?$/);
-      if (agentMatch) {
-        const botId = pathIdentifier(agentMatch[1], "botId");
-        const action = agentMatch[2] ?? "";
-        if (method === "GET" && action === "usage") {
-          return this.#json(response, 200, await this.#options.agents.getUsage(botId));
-        }
-        if (method === "GET" && action === "skills") {
-          return this.#json(response, 200, (await this.#options.skills?.listInstalledForChatTags(botId)) ?? []);
-        }
-        if (method === "PATCH" && !action) {
-          const body = await readJson(request);
-          return this.#json(response, 200, await this.#options.agents.updateBot(botUpdate(body, botId)));
-        }
-        if (method === "POST" && action === "duplicate") {
-          const body = await readJson(request);
-          return this.#json(response, 201, await this.#duplicateAgent(botId, stringField(body, "operationId")));
-        }
-        if (method === "DELETE" && !action) {
-          if (member.role === "member") throw new HttpError(403, "Members cannot delete agents.");
-          await this.#options.agents.deleteBot(botId);
-          await this.#options.sidebarLayout.removeAgent(botId);
-          return this.#empty(response, 204);
-        }
-        if (action === "memories") {
-          if (method === "GET") {
-            return this.#json(response, 200, this.#options.agents.listMemories(botId));
-          }
-          if (method === "POST") {
-            const body = await readJson(request);
-            return this.#json(
-              response,
-              201,
-              this.#options.agents.createMemory({
-                botId,
-                text: stringField(body, "text", false, INPUT_LIMITS.agentMemoryText),
-              }),
-            );
-          }
-          if (method === "DELETE") {
-            this.#options.agents.clearMemories(botId);
-            return this.#empty(response, 204);
-          }
-        }
-        const memoryMatch = action.match(/^memories\/([^/]+)$/);
-        if (memoryMatch) {
-          const memoryId = pathIdentifier(memoryMatch[1], "memoryId");
-          if (method === "PATCH") {
-            const body = await readJson(request);
-            return this.#json(
-              response,
-              200,
-              this.#options.agents.updateMemory({
-                botId,
-                memoryId,
-                text: stringField(body, "text", false, INPUT_LIMITS.agentMemoryText),
-              }),
-            );
-          }
-          if (method === "DELETE") {
-            this.#options.agents.deleteMemory({ botId, memoryId });
-            return this.#empty(response, 204);
-          }
-        }
-        if (action === "routines") {
-          if (method === "GET") {
-            return this.#json(response, 200, this.#options.agents.listRoutines(botId));
-          }
-          if (method === "POST") {
-            const body = await readJson(request);
-            return this.#json(
-              response,
-              201,
-              this.#options.agents.createRoutine(parseCreateRoutine({ ...body, botId })),
-            );
-          }
-        }
-        const routineMatch = action.match(/^routines\/([^/]+)(?:\/(test|runs))?$/);
-        if (routineMatch) {
-          const routineId = pathIdentifier(routineMatch[1], "routineId");
-          const routineAction = routineMatch[2] ?? "";
-          if (method === "PATCH" && !routineAction) {
-            const body = await readJson(request);
-            return this.#json(
-              response,
-              200,
-              this.#options.agents.updateRoutine(parseUpdateRoutine({ ...body, botId, routineId })),
-            );
-          }
-          if (method === "DELETE" && !routineAction) {
-            await this.#options.agents.deleteRoutine({ botId, routineId });
-            return this.#empty(response, 204);
-          }
-          if (method === "POST" && routineAction === "test") {
-            return this.#json(response, 201, await this.#options.agents.testRoutine({ botId, routineId }));
-          }
-          if (method === "GET" && routineAction === "runs") {
-            const rawLimit = url.searchParams.get("limit");
-            const limit = rawLimit === null ? 50 : Number(rawLimit);
-            return this.#json(
-              response,
-              200,
-              this.#options.agents.listRoutineRuns(parseListRoutineRuns({ botId, routineId, limit })),
-            );
-          }
-        }
-        if (action === "avatar") {
-          if (method === "PUT") {
-            const mimeType = request.headers["content-type"]?.split(";", 1)[0]?.trim() ?? "";
-            if (!isAvatarMimeType(mimeType)) {
-              throw new HttpError(415, "Choose a PNG, JPEG, or WebP image.");
-            }
-            const bytes = await readBinary(request, AVATAR_IMAGE_LIMITS.storedBytes);
-            return this.#json(response, 200, await this.#options.agents.setAvatar(botId, { mimeType, bytes }));
-          }
-          if (method === "DELETE") {
-            return this.#json(response, 200, await this.#options.agents.setAvatar(botId, null));
-          }
-          if (method === "GET") {
-            const avatar = this.#options.agents.resolveAvatar(botId);
-            if (!avatar || avatar.version !== url.searchParams.get("v")) {
-              throw new HttpError(404, "Agent avatar not found.");
-            }
-            const bytes = await readFile(avatar.path);
-            response.writeHead(200, {
-              "Content-Type": avatar.mimeType,
-              "Content-Length": String(bytes.length),
-              "Cache-Control": "private, max-age=31536000, immutable",
-              "X-Content-Type-Options": "nosniff",
-            });
-            response.end(bytes);
-            return;
-          }
-        }
-        if (method === "GET" && action === "conversation") {
-          const conversation = await this.#options.agents.readConversationFor(botId, member.id);
-          return this.#json(response, 200, conversationForCapabilities(conversation, clientCapabilities));
-        }
-        if (method === "GET" && action === "conversation-page") {
-          const page = await this.#options.agents.readConversationPageFor(
-            botId,
-            member.id,
-            pageAnchor(url),
-            pageLimit(url),
-            markerExclusionsForCapabilities(clientCapabilities),
-          );
-          return this.#json(response, 200, page);
-        }
-        if (method === "POST" && action === "conversation/unread") {
-          if (requestProtocol(request) !== TEAM_PROTOCOL_V3 || !clientCapabilities.has("conversation-unread")) {
-            throw new HttpError(400, "This client does not support marking conversations unread.");
-          }
-          await readJson(request);
-          return this.#json(response, 200, await this.#options.agents.markConversationUnread(botId, member.id));
-        }
-        if (method === "POST" && action === "conversation/read") {
-          const body = await readJson(request);
-          return this.#json(
-            response,
-            200,
-            await this.#options.agents.markConversationRead(
-              botId,
-              member.id,
-              nullableString(body, "throughMessageId"),
-              markerExclusionsForCapabilities(clientCapabilities),
-            ),
-          );
-        }
-        if (method === "POST" && action === "messages") {
-          const body = await readJson(request);
-          return this.#json(
-            response,
-            202,
-            await this.#options.agents.sendMessage({
-              botId,
-              text: stringField(body, "text", true, INPUT_LIMITS.messageText),
-              attachmentDraftIds: stringArray(body, "attachmentDraftIds"),
-              replyToMessageId: nullableString(body, "replyToMessageId"),
-            }),
-          );
-        }
-        if (method === "GET" && action === "queue") {
-          return this.#json(response, 200, this.#options.agents.listQueue(botId));
-        }
-        if (method === "POST" && action === "failures/acknowledge") {
-          const body = await readJson(request);
-          this.#options.agents.acknowledgeFailedTurn(botId, stringField(body, "turnId"));
-          return this.#empty(response, 204);
-        }
-        if (method === "POST" && action === "reactions") {
-          const body = await readJson(request);
-          const emoji = body.emoji;
-          if (emoji !== null && !isMessageReaction(emoji)) throw new HttpError(400, "Invalid emoji.");
-          await this.#options.agents.setMessageReaction({
-            botId,
-            messageId: stringField(body, "messageId"),
-            emoji,
-          });
-          return this.#empty(response, 204);
-        }
-        if (method === "POST" && action === "queue/cancel") {
-          const body = await readJson(request);
-          await this.#options.agents.cancelQueuedMessage(botId, stringField(body, "deliveryId"));
-          return this.#empty(response, 204);
-        }
-        if (method === "POST" && action === "queue/steer") {
-          const body = await readJson(request);
-          await this.#options.agents.steerQueuedMessage({
-            botId,
-            deliveryId: stringField(body, "deliveryId"),
-            expectedTurnId: stringField(body, "expectedTurnId"),
-          } satisfies SteerQueuedMessageInput);
-          return this.#empty(response, 204);
-        }
-        if (method === "POST" && action === "queue/update") {
-          const body = await readJson(request);
-          await this.#options.agents.updateQueuedMessage({
-            botId,
-            deliveryId: stringField(body, "deliveryId"),
-            text: stringField(body, "text", true, INPUT_LIMITS.messageText),
-            keepAttachmentIds: stringArray(body, "keepAttachmentIds"),
-            attachmentDraftIds: stringArray(body, "attachmentDraftIds"),
-          } satisfies UpdateQueuedMessageInput);
-          return this.#empty(response, 204);
-        }
-        if (method === "POST" && action === "queue/reorder") {
-          const body = await readJson(request);
-          await this.#options.agents.reorderQueue({
-            botId,
-            deliveryIds: stringArray(body, "deliveryIds", INPUT_LIMITS.messageRecipients),
-          } satisfies ReorderQueueInput);
-          return this.#empty(response, 204);
-        }
-        if (method === "POST" && action === "interrupt") {
-          const body = await readJson(request);
-          await this.#options.agents.interrupt(botId, stringField(body, "turnId"));
-          return this.#empty(response, 204);
-        }
-      }
-
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.respond.prompt) {
-        const body = await readJson(request);
-        await this.#options.agents.respondToPrompt({
-          requestId: promptRequestId(body.requestId),
-          answers: promptAnswers(body.answers),
-        });
-        return this.#empty(response, 204);
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.respond.approval) {
-        const body = await readJson(request);
-        await this.#options.agents.respondToApproval({
-          requestId: promptRequestId(body.requestId),
-          decision: approvalDecision(body.decision),
-        });
-        return this.#empty(response, 204);
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.respond.browserTakeover) {
-        const body = await readJson(request);
-        await this.#options.agents.respondToBrowserTakeover({
-          requestId: promptRequestId(body.requestId),
-          decision: browserTakeoverDecision(body.decision),
-        });
-        return this.#empty(response, 204);
-      }
+      if ((await this.#routeAgents(context)) === "handled") return;
 
       return this.#json(response, 404, { error: "Route not found." });
     } catch (error) {
@@ -865,6 +524,15 @@ export class TeamApiServer {
 
   #routeFiles(context: TeamApiRequestContext): Promise<RouteOutcome> {
     return routeFiles(context, { agents: this.#options.agents, mailbox: this.#options.mailbox });
+  }
+
+  #routeAgents(context: TeamApiRequestContext): Promise<RouteOutcome> {
+    return routeAgents(context, {
+      agents: this.#options.agents,
+      skills: this.#options.skills,
+      sidebarLayout: this.#options.sidebarLayout,
+      duplicateAgent: (botId, operationId) => this.#duplicateAgent(botId, operationId),
+    });
   }
 
   #checkRate(request: IncomingMessage, username: string): void {

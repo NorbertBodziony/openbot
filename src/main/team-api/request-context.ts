@@ -37,3 +37,15 @@ export interface TeamApiRequestContext {
   readonly json: (status: number, value: object | null) => RouteOutcome;
   readonly empty: (status: number) => RouteOutcome;
 }
+
+// The agent one request is about, parsed once by `route-agents.ts` and passed down.
+//
+// `botId` is decoded above the action switch, exactly where the original chain decoded it, so a
+// malformed identifier answers 400 rather than falling through to the router's 404. Every
+// agent-scoped module must read the identifier from here rather than re-deriving it, because a
+// second `pathIdentifier` call placed below a method check would move that 400 to a 404 for one
+// method and leave it alone for the rest.
+export interface AgentRouteTarget {
+  readonly botId: string;
+  readonly action: string;
+}
