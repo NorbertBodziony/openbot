@@ -11,16 +11,17 @@ import {
   type SidebarLayoutSnapshot,
   type UpdateBotInput,
 } from "@openbot/contracts/ipc";
+import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import type { AgentService } from "../../backend/agent-service";
 import type { SidebarLayoutStore } from "../../backend/sidebar-layout-store";
 import type { HostService } from "../host-service";
 import {
-  decodeAccountUsage,
+  decodeAccountUsageFromHost,
   decodeAgentModelOptions,
-  decodeAgentStatus,
+  decodeAgentStatusFromHost,
   decodeBotSummaries,
   decodeBotSummary,
-  decodeInstalledSkills,
+  decodeInstalledSkillsFromHost,
   decodeQueuedMessageReceipt,
   decodeQueueSnapshot,
   decodeSidebarLayoutSnapshot,
@@ -51,6 +52,7 @@ import {
   parseUpdateBot,
   parseUpdateQueuedMessage,
 } from "./agent-inputs";
+import { routeToServer } from "./route-to-server";
 import { requireString } from "./validation";
 
 export interface AgentIpcDependencies {
@@ -69,71 +71,75 @@ export function registerAgentIpcHandlers({
   skills,
 }: AgentIpcDependencies): void {
   handleTrusted(IPC_CHANNELS.agentGetStatus, parseAgentRequest, (parsed) => {
-    const { serverId } = parsed;
-    return serverId === "local"
-      ? service.getStatus()
-      : remoteServers.request("/v1/agents/status", {}, serverId, decodeAgentStatus);
+    return routeToServer(parsed.serverId, {
+      local: () => service.getStatus(),
+      remote: (serverId) =>
+        remoteServers.request(TEAM_API_ROUTES.agents.status, {}, serverId, decodeAgentStatusFromHost),
+    });
   });
   handleTrusted(IPC_CHANNELS.agentGetUsage, parseAgentRequest, (parsed) => {
-    const { serverId, payload } = parsed;
-    const botId = parseAgentId(payload);
-    if (serverId === "local") return service.getUsage(botId);
-    if (!remoteServers.supportsCapability(serverId, "model-scoped-usage")) return { limits: [] };
-    return remoteServers.request(`/v1/agents/${encodeURIComponent(botId)}/usage`, {}, serverId, decodeAccountUsage);
+    const botId = parseAgentId(parsed.payload);
+    return routeToServer(parsed.serverId, {
+      local: () => service.getUsage(botId),
+      remote: (serverId) =>
+        remoteServers.supportsCapability(serverId, "model-scoped-usage")
+          ? remoteServers.request(TEAM_API_ROUTES.agent.usage(botId), {}, serverId, decodeAccountUsageFromHost)
+          : { limits: [] },
+    });
   });
   handleTrusted(IPC_CHANNELS.agentListModels, parseAgentRequest, (parsed) => {
-    const { serverId } = parsed;
-    return serverId === "local"
-      ? service.listModels()
-      : remoteServers.request("/v1/agents/models", {}, serverId, decodeAgentModelOptions);
+    return routeToServer(parsed.serverId, {
+      local: () => service.listModels(),
+      remote: (serverId) => remoteServers.request(TEAM_API_ROUTES.agents.models, {}, serverId, decodeAgentModelOptions),
+    });
   });
   handleTrusted(IPC_CHANNELS.agentListBots, parseAgentRequest, (parsed) => {
-    const { serverId } = parsed;
-    return serverId === "local"
-      ? service.listBots()
-      : remoteServers.request("/v1/agents", {}, serverId, decodeBotSummaries);
+    return routeToServer(parsed.serverId, {
+      local: () => service.listBots(),
+      remote: (serverId) => remoteServers.request(TEAM_API_ROUTES.agents.all, {}, serverId, decodeBotSummaries),
+    });
   });
   handleTrusted(IPC_CHANNELS.agentListInstalledSkills, parseAgentRequest, (scoped) => {
     const botId = requireString(scoped.payload, "botId", INPUT_LIMITS.identifier);
-    return scoped.serverId === "local"
-      ? skills.listInstalledForChatTags(botId)
-      : remoteServers
-            .list()
-            .find((server) => server.id === scoped.serverId)
-            ?.compatibility?.capabilities.includes("installed-skills")
-        ? remoteServers.request(
-            `/v1/agents/${encodeURIComponent(botId)}/skills`,
-            {},
-            scoped.serverId,
-            decodeInstalledSkills,
-          )
-        : Promise.resolve([]);
+    return routeToServer(scoped.serverId, {
+      local: () => skills.listInstalledForChatTags(botId),
+      // A server too old to know the endpoint would answer 404, so ask its advertised capabilities first.
+      remote: (serverId) =>
+        remoteServers
+          .list()
+          .find((server) => server.id === serverId)
+          ?.compatibility?.capabilities.includes("installed-skills")
+          ? remoteServers.request(TEAM_API_ROUTES.agent.skills(botId), {}, serverId, decodeInstalledSkillsFromHost)
+          : Promise.resolve([]),
+    });
   });
-  handleTrusted(
-    IPC_CHANNELS.agentGetSidebarLayout,
-    parseAgentRequest,
-    ({ serverId }): Promise<SidebarLayoutSnapshot> => {
-      return serverId === "local"
-        ? Promise.resolve(sidebarLayout.getSnapshot())
-        : remoteServers.request("/v1/sidebar-layout", {}, serverId, decodeSidebarLayoutSnapshot);
-    },
-  );
+  handleTrusted(IPC_CHANNELS.agentGetSidebarLayout, parseAgentRequest, (parsed): Promise<SidebarLayoutSnapshot> => {
+    return routeToServer(parsed.serverId, {
+      local: () => sidebarLayout.getSnapshot(),
+      remote: (serverId) =>
+        remoteServers.request(TEAM_API_ROUTES.sidebarLayout.state, {}, serverId, decodeSidebarLayoutSnapshot),
+    });
+  });
   handleTrusted(IPC_CHANNELS.agentMutateSidebarLayout, parseAgentRequest, (scoped): Promise<SidebarLayoutSnapshot> => {
     const action = parseSidebarLayoutAction(scoped.payload);
-    return scoped.serverId === "local"
-      ? sidebarLayout.mutate(action, new Set(service.listBots().map((bot) => bot.id)))
-      : remoteServers.request(
-          "/v1/sidebar-layout/actions",
+    return routeToServer(scoped.serverId, {
+      local: () => sidebarLayout.mutate(action, new Set(service.listBots().map((bot) => bot.id))),
+      remote: (serverId) =>
+        remoteServers.request(
+          TEAM_API_ROUTES.sidebarLayout.actions,
           { method: "POST", body: action },
-          scoped.serverId,
+          serverId,
           decodeSidebarLayoutSnapshot,
-        );
+        ),
+    });
   });
-  handleTrusted(IPC_CHANNELS.agentCreateBot, parseAgentRequest, ({ serverId, payload }) => {
-    const parsed = parseCreateBot(payload);
-    return serverId === "local"
-      ? service.createBot(parsed)
-      : remoteServers.request("/v1/agents", { method: "POST", body: parsed }, serverId, decodeBotSummary);
+  handleTrusted(IPC_CHANNELS.agentCreateBot, parseAgentRequest, (scoped) => {
+    const parsed = parseCreateBot(scoped.payload);
+    return routeToServer(scoped.serverId, {
+      local: () => service.createBot(parsed),
+      remote: (serverId) =>
+        remoteServers.request(TEAM_API_ROUTES.agents.all, { method: "POST", body: parsed }, serverId, decodeBotSummary),
+    });
   });
   handleTrusted(IPC_CHANNELS.agentDuplicateBot, parseAgentRequest, (scoped): Promise<DuplicateBotResult> => {
     const botId = requireString(scoped.payload, "botId", INPUT_LIMITS.identifier);
@@ -144,9 +150,10 @@ export function registerAgentIpcHandlers({
   });
   handleTrusted(IPC_CHANNELS.agentSetAvatar, parseAgentRequest, (scoped) => {
     const parsed = parseSetAgentAvatar(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.setAvatar(parsed.botId, parsed.image)
-      : remoteServers.setAgentAvatar(parsed.botId, parsed.image, scoped.serverId);
+    return routeToServer(scoped.serverId, {
+      local: () => service.setAvatar(parsed.botId, parsed.image),
+      remote: (serverId) => remoteServers.setAgentAvatar(parsed.botId, parsed.image, serverId),
+    });
   });
   handleTrusted(IPC_CHANNELS.agentDeleteBot, parseAgentRequest, (scoped) => {
     const botId = requireString(scoped.payload, "botId");
@@ -157,99 +164,104 @@ export function registerAgentIpcHandlers({
   });
   handleTrusted(IPC_CHANNELS.agentReadConversationPage, parseAgentRequest, (scoped) => {
     const parsed = parseReadConversationPage(scoped.payload);
-    return scoped.serverId === "local"
-      ? host.readAgentConversationPage(parsed.botId, parsed.anchor, parsed.limit)
-      : remoteServers.readAgentConversationPage(parsed.botId, parsed.anchor, parsed.limit, scoped.serverId);
+    return routeToServer(scoped.serverId, {
+      local: () => host.readAgentConversationPage(parsed.botId, parsed.anchor, parsed.limit),
+      remote: (serverId) =>
+        remoteServers.readAgentConversationPage(parsed.botId, parsed.anchor, parsed.limit, serverId),
+    });
   });
   handleTrusted(IPC_CHANNELS.agentSearchConversationMessages, parseAgentRequest, (scoped) => {
     const parsed = parseSearchConversationMessages(scoped.payload);
-    return scoped.serverId === "local"
-      ? host.searchAgentConversationMessages(parsed.query, parsed.botId, parsed.cursor, parsed.limit)
-      : remoteServers.searchAgentConversationMessages(
+    return routeToServer(scoped.serverId, {
+      local: () => host.searchAgentConversationMessages(parsed.query, parsed.botId, parsed.cursor, parsed.limit),
+      remote: (serverId) =>
+        remoteServers.searchAgentConversationMessages(
           parsed.query,
           parsed.botId,
           parsed.cursor,
           parsed.limit,
-          scoped.serverId,
-        );
+          serverId,
+        ),
+    });
   });
   handleTrusted(IPC_CHANNELS.agentListConversationReads, parseAgentRequest, (parsed) => {
-    const { serverId } = parsed;
-    return serverId === "local"
-      ? host.listAgentConversationReads()
-      : remoteServers.listAgentConversationReads(serverId);
+    return routeToServer(parsed.serverId, {
+      local: () => host.listAgentConversationReads(),
+      remote: (serverId) => remoteServers.listAgentConversationReads(serverId),
+    });
   });
   handleTrusted(IPC_CHANNELS.agentMarkConversationRead, parseAgentRequest, (scoped) => {
     const parsed = parseMarkConversationRead(scoped.payload);
-    return scoped.serverId === "local"
-      ? host.markAgentConversationRead(parsed)
-      : remoteServers.markAgentConversationRead(parsed, scoped.serverId);
+    return routeToServer(scoped.serverId, {
+      local: () => host.markAgentConversationRead(parsed),
+      remote: (serverId) => remoteServers.markAgentConversationRead(parsed, serverId),
+    });
   });
   handleTrusted(IPC_CHANNELS.agentSendMessage, parseAgentRequest, (scoped) => {
     return routeSendMessage(service, remoteServers, scoped.serverId, parseSendMessage(scoped.payload));
   });
   handleTrusted(IPC_CHANNELS.agentSetMessageReaction, parseAgentRequest, (scoped) => {
     const parsed = parseMessageReaction(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.setMessageReaction(parsed)
-      : remoteServers.request(
-          `/v1/agents/${encodeURIComponent(parsed.botId)}/reactions`,
-          {
-            method: "POST",
-            body: parsed,
-          },
-          scoped.serverId,
+    return routeToServer(scoped.serverId, {
+      local: () => service.setMessageReaction(parsed),
+      remote: (serverId) =>
+        remoteServers.request(
+          TEAM_API_ROUTES.agent.reactions(parsed.botId),
+          { method: "POST", body: parsed },
+          serverId,
           decodeVoid,
-        );
+        ),
+    });
   });
   handleTrusted(IPC_CHANNELS.agentListQueue, parseAgentRequest, (scoped) => {
     return routeListQueue(service, remoteServers, scoped.serverId, requireString(scoped.payload, "botId"));
   });
   handleTrusted(IPC_CHANNELS.agentAcknowledgeFailedTurn, parseAgentRequest, (scoped) => {
     const parsed = parseAcknowledgeFailedTurn(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.acknowledgeFailedTurn(parsed.botId, parsed.turnId)
-      : remoteServers.request(
-          `/v1/agents/${encodeURIComponent(parsed.botId)}/failures/acknowledge`,
+    return routeToServer(scoped.serverId, {
+      local: () => service.acknowledgeFailedTurn(parsed.botId, parsed.turnId),
+      remote: (serverId) =>
+        remoteServers.request(
+          TEAM_API_ROUTES.agent.failuresAcknowledge(parsed.botId),
           { method: "POST", body: { turnId: parsed.turnId } },
-          scoped.serverId,
+          serverId,
           decodeVoid,
-        );
+        ),
+    });
   });
   handleTrusted(IPC_CHANNELS.agentCancelQueuedMessage, parseAgentRequest, (scoped) => {
     const parsed = parseCancelQueuedMessage(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.cancelQueuedMessage(parsed.botId, parsed.deliveryId)
-      : remoteServers.request(
-          `/v1/agents/${encodeURIComponent(parsed.botId)}/queue/cancel`,
-          {
-            method: "POST",
-            body: { deliveryId: parsed.deliveryId },
-          },
-          scoped.serverId,
+    return routeToServer(scoped.serverId, {
+      local: () => service.cancelQueuedMessage(parsed.botId, parsed.deliveryId),
+      remote: (serverId) =>
+        remoteServers.request(
+          TEAM_API_ROUTES.agent.queueCancel(parsed.botId),
+          { method: "POST", body: { deliveryId: parsed.deliveryId } },
+          serverId,
           decodeVoid,
-        );
+        ),
+    });
   });
   handleTrusted(IPC_CHANNELS.agentSteerQueuedMessage, parseAgentRequest, (scoped) => {
     const parsed = parseSteerQueuedMessage(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.steerQueuedMessage(parsed)
-      : remoteServers.request(
-          `/v1/agents/${encodeURIComponent(parsed.botId)}/queue/steer`,
-          {
-            method: "POST",
-            body: { deliveryId: parsed.deliveryId, expectedTurnId: parsed.expectedTurnId },
-          },
-          scoped.serverId,
+    return routeToServer(scoped.serverId, {
+      local: () => service.steerQueuedMessage(parsed),
+      remote: (serverId) =>
+        remoteServers.request(
+          TEAM_API_ROUTES.agent.queueSteer(parsed.botId),
+          { method: "POST", body: { deliveryId: parsed.deliveryId, expectedTurnId: parsed.expectedTurnId } },
+          serverId,
           decodeVoid,
-        );
+        ),
+    });
   });
   handleTrusted(IPC_CHANNELS.agentUpdateQueuedMessage, parseAgentRequest, (scoped) => {
     const parsed = parseUpdateQueuedMessage(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.updateQueuedMessage(parsed)
-      : remoteServers.request(
-          `/v1/agents/${encodeURIComponent(parsed.botId)}/queue/update`,
+    return routeToServer(scoped.serverId, {
+      local: () => service.updateQueuedMessage(parsed),
+      remote: (serverId) =>
+        remoteServers.request(
+          TEAM_API_ROUTES.agent.queueUpdate(parsed.botId),
           {
             method: "POST",
             body: {
@@ -259,57 +271,65 @@ export function registerAgentIpcHandlers({
               attachmentDraftIds: parsed.attachmentDraftIds,
             },
           },
-          scoped.serverId,
+          serverId,
           decodeVoid,
-        );
+        ),
+    });
   });
   handleTrusted(IPC_CHANNELS.agentReorderQueue, parseAgentRequest, (scoped) => {
     const parsed = parseReorderQueue(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.reorderQueue(parsed)
-      : remoteServers.request(
-          `/v1/agents/${encodeURIComponent(parsed.botId)}/queue/reorder`,
+    return routeToServer(scoped.serverId, {
+      local: () => service.reorderQueue(parsed),
+      remote: (serverId) =>
+        remoteServers.request(
+          TEAM_API_ROUTES.agent.queueReorder(parsed.botId),
           { method: "POST", body: { deliveryIds: parsed.deliveryIds } },
-          scoped.serverId,
+          serverId,
           decodeVoid,
-        );
+        ),
+    });
   });
   handleTrusted(IPC_CHANNELS.agentInterrupt, parseAgentRequest, (scoped) => {
     const parsed = parseInterrupt(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.interrupt(parsed.botId, parsed.turnId)
-      : remoteServers.request(
-          `/v1/agents/${encodeURIComponent(parsed.botId)}/interrupt`,
-          {
-            method: "POST",
-            body: { turnId: parsed.turnId },
-          },
-          scoped.serverId,
+    return routeToServer(scoped.serverId, {
+      local: () => service.interrupt(parsed.botId, parsed.turnId),
+      remote: (serverId) =>
+        remoteServers.request(
+          TEAM_API_ROUTES.agent.interrupt(parsed.botId),
+          { method: "POST", body: { turnId: parsed.turnId } },
+          serverId,
           decodeVoid,
-        );
+        ),
+    });
   });
   handleTrusted(IPC_CHANNELS.agentRespondToPrompt, parseAgentRequest, (scoped) => {
     const parsed = parsePromptResponse(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.respondToPrompt(parsed)
-      : remoteServers.request("/v1/prompts/respond", { method: "POST", body: parsed }, scoped.serverId, decodeVoid);
+    return routeToServer(scoped.serverId, {
+      local: () => service.respondToPrompt(parsed),
+      remote: (serverId) =>
+        remoteServers.request(TEAM_API_ROUTES.respond.prompt, { method: "POST", body: parsed }, serverId, decodeVoid),
+    });
   });
   handleTrusted(IPC_CHANNELS.agentRespondToApproval, parseAgentRequest, (scoped) => {
     const parsed = parseApprovalResponse(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.respondToApproval(parsed)
-      : remoteServers.request("/v1/approvals/respond", { method: "POST", body: parsed }, scoped.serverId, decodeVoid);
+    return routeToServer(scoped.serverId, {
+      local: () => service.respondToApproval(parsed),
+      remote: (serverId) =>
+        remoteServers.request(TEAM_API_ROUTES.respond.approval, { method: "POST", body: parsed }, serverId, decodeVoid),
+    });
   });
   handleTrusted(IPC_CHANNELS.agentRespondToBrowserTakeover, parseAgentRequest, (scoped) => {
     const parsed = parseBrowserTakeoverResponse(scoped.payload);
-    return scoped.serverId === "local"
-      ? service.respondToBrowserTakeover(parsed)
-      : remoteServers.request(
-          "/v1/browser-takeovers/respond",
+    return routeToServer(scoped.serverId, {
+      local: () => service.respondToBrowserTakeover(parsed),
+      remote: (serverId) =>
+        remoteServers.request(
+          TEAM_API_ROUTES.respond.browserTakeover,
           { method: "POST", body: parsed },
-          scoped.serverId,
+          serverId,
           decodeVoid,
-        );
+        ),
+    });
   });
 }
 
@@ -319,44 +339,56 @@ function routeUpdateBot(
   serverId: string,
   input: UpdateBotInput,
 ) {
-  return serverId === "local"
-    ? service.updateBot(input)
-    : remoteServers.request(
-        `/v1/agents/${encodeURIComponent(input.botId)}`,
-        {
-          method: "PATCH",
-          body: input,
-        },
-        serverId,
+  return routeToServer(serverId, {
+    local: () => service.updateBot(input),
+    remote: (target) =>
+      remoteServers.request(
+        TEAM_API_ROUTES.agent.one(input.botId),
+        { method: "PATCH", body: input },
+        target,
         decodeBotSummary,
-      );
+      ),
+  });
 }
 
-async function routeDeleteBot(
+function routeDeleteBot(
   service: AgentService,
   sidebarLayout: SidebarLayoutStore,
   remoteServers: RemoteServerManager,
   serverId: string,
   botId: string,
 ): Promise<void> {
-  if (serverId === "local") {
-    await service.deleteBot(botId);
-    await sidebarLayout.removeAgent(botId);
-    return;
-  }
-  await remoteServers.request(`/v1/agents/${encodeURIComponent(botId)}`, { method: "DELETE" }, serverId, decodeVoid);
+  return routeToServer<void>(serverId, {
+    local: async () => {
+      await service.deleteBot(botId);
+      await sidebarLayout.removeAgent(botId);
+    },
+    remote: async (target) => {
+      await remoteServers.request(TEAM_API_ROUTES.agent.one(botId), { method: "DELETE" }, target, decodeVoid);
+    },
+  });
 }
 
-async function routeDuplicateBot(
+function routeDuplicateBot(
   service: AgentService,
   sidebarLayout: SidebarLayoutStore,
   remoteServers: RemoteServerManager,
   serverId: string,
   botId: string,
 ): Promise<DuplicateBotResult> {
-  if (serverId !== "local") {
-    return remoteServers.duplicateBot(botId, serverId);
-  }
+  return routeToServer(serverId, {
+    local: () => duplicateBotLocally(service, sidebarLayout, botId),
+    remote: (target) => remoteServers.duplicateBot(botId, target),
+  });
+}
+
+// The local copy is a two-store transaction: the agent, then its place in the sidebar. If placing it
+// fails the half-made copy has to go, or the user is left with an agent they never asked for.
+async function duplicateBotLocally(
+  service: AgentService,
+  sidebarLayout: SidebarLayoutStore,
+  botId: string,
+): Promise<DuplicateBotResult> {
   const bot = await service.duplicateBot(botId);
   try {
     const layout = await sidebarLayout.placeDuplicateAfter(botId, bot.id, [
@@ -378,9 +410,10 @@ async function routeDuplicateBot(
 }
 
 function routeReadConversation(host: HostService, remoteServers: RemoteServerManager, serverId: string, botId: string) {
-  return serverId === "local"
-    ? host.readAgentConversation(botId)
-    : remoteServers.readAgentConversation(botId, serverId);
+  return routeToServer(serverId, {
+    local: () => host.readAgentConversation(botId),
+    remote: (target) => remoteServers.readAgentConversation(botId, target),
+  });
 }
 
 function routeSendMessage(
@@ -389,21 +422,21 @@ function routeSendMessage(
   serverId: string,
   input: SendMessageInput,
 ) {
-  return serverId === "local"
-    ? service.sendMessage(input)
-    : remoteServers.request(
-        `/v1/agents/${encodeURIComponent(input.botId)}/messages`,
-        {
-          method: "POST",
-          body: input,
-        },
-        serverId,
+  return routeToServer(serverId, {
+    local: () => service.sendMessage(input),
+    remote: (target) =>
+      remoteServers.request(
+        TEAM_API_ROUTES.agent.messages(input.botId),
+        { method: "POST", body: input },
+        target,
         decodeQueuedMessageReceipt,
-      );
+      ),
+  });
 }
 
 function routeListQueue(service: AgentService, remoteServers: RemoteServerManager, serverId: string, botId: string) {
-  return serverId === "local"
-    ? service.listQueue(botId)
-    : remoteServers.request(`/v1/agents/${encodeURIComponent(botId)}/queue`, {}, serverId, decodeQueueSnapshot);
+  return routeToServer(serverId, {
+    local: () => service.listQueue(botId),
+    remote: (target) => remoteServers.request(TEAM_API_ROUTES.agent.queue(botId), {}, target, decodeQueueSnapshot),
+  });
 }

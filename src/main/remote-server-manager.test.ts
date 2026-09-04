@@ -11,7 +11,7 @@ import { TEAM_CAPABILITIES_HEADER } from "@openbot/contracts/team-protocol/v1";
 import type { TeamProtocolV2Json } from "@openbot/contracts/team-protocol/v2";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  decodeBrowserPreview,
+  decodeBrowserPreviewFromHost,
   decodeBrowserTab,
   isValidRemoteApiUrl,
   RemoteServerManager,
@@ -43,14 +43,14 @@ describe("remote browser responses", () => {
 
   it("accepts only bounded JPEG browser previews", () => {
     expect(
-      decodeBrowserPreview({
+      decodeBrowserPreviewFromHost({
         dataUrl: "data:image/jpeg;base64,YWJj",
         width: 960,
         height: 600,
       }),
     ).toMatchObject({ width: 960, height: 600 });
     expect(() =>
-      decodeBrowserPreview({
+      decodeBrowserPreviewFromHost({
         dataUrl: "data:image/png;base64,YWJj",
         width: 960,
         height: 600,
