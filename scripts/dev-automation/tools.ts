@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
-import { dummyLogger, type Logger } from "@openbot/logging";
+import { dummyLogger, type Logger, redactText } from "@openbot/logging";
 import type { Page } from "playwright-core";
 import { describeTarget } from "./page-url";
 
@@ -110,13 +110,18 @@ export interface AutomationSnapshot {
 }
 
 export async function snapshotPage(page: Page, logger: Logger = dummyLogger): Promise<AutomationSnapshot> {
-  const yaml = await page.ariaSnapshot({ depth: 30 });
+  // Redacted before truncation, so a secret cannot survive in the part that is
+  // kept. The document leaves this process on stdout and lands in an agent
+  // transcript, which is the same kind of path as a log line: a page showing
+  // an API token exports it otherwise. `screenshot` is where you look when the
+  // literal value is the thing under test.
+  const yaml = redactText(await page.ariaSnapshot({ depth: 30 }));
   const snapshot: AutomationSnapshot = {
     // The sanitized location, not `page.url()`: the snapshot is a document an
     // agent prints and pastes, and a query string on the app route can carry
     // an OAuth code the redactor would not recognize.
     url: describeTarget(page.url()),
-    title: await page.title(),
+    title: redactText(await page.title()),
     accessibility: yaml.length > MAX_SNAPSHOT_LENGTH ? `${yaml.slice(0, MAX_SNAPSHOT_LENGTH)}…` : yaml,
   };
   logger.info(`snapshot ${snapshot.url}`, snapshot.title);

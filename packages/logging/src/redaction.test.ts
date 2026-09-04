@@ -13,6 +13,23 @@ describe("redactText", () => {
     expect(redactText("key xai-abcdefgh1234 leaked")).toBe("key [redacted] leaked");
   });
 
+  it("leaves an ordinary word that starts like a provider prefix alone", () => {
+    expect(redactText("marketplace agent risk-register failed to install")).toBe(
+      "marketplace agent risk-register failed to install",
+    );
+  });
+
+  it("redacts a bare JSON key in a payload too malformed to reparse", () => {
+    expect(redactText('{"key":"pk_live_abcdefgh1234","truncated')).toBe('{"key":"[redacted]","truncated');
+  });
+
+  it("redacts a serialized payload no matter how long it is", () => {
+    const padding = "x".repeat(200_000);
+    expect(redactText(JSON.stringify({ key: "pk_live_abcdefgh1234", padding }))).toBe(
+      JSON.stringify({ key: "[redacted]", padding }),
+    );
+  });
+
   it("redacts credential assignments and emails", () => {
     expect(redactText("password=hunter2 ok")).toBe("password=[redacted] ok");
     expect(redactText("contact jan@example.com please")).toBe("contact [redacted-email] please");

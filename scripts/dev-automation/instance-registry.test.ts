@@ -121,6 +121,9 @@ describe("readDevInstanceRecords", () => {
   it("round-trips a published instance and drops it again on shutdown", () => {
     writeDevInstanceRecord(record(), directory);
     expect(readDevInstanceRecords(directory, () => true)).toEqual([record()]);
+    // The staging file the atomic write goes through must not survive it: a
+    // leftover would be read on the next start as a second instance.
+    expect(readdirSync(directory)).toEqual(["app-4242.json"]);
     removeDevInstanceRecord(record(), directory);
     expect(readDevInstanceRecords(directory, () => true)).toEqual([]);
   });

@@ -17,7 +17,10 @@ const LOG_LEVELS: LogLevel[] = ["trace", "debug", "info", "warn", "error", "sile
 // string and for object keys. Prefix and suffix let `machineToken`,
 // `refresh_token` and `X-Api-Key` all match; bare `key` is handled separately
 // because `monkey` and `keyboard` are not secrets.
-const SECRET_LABEL = `[A-Za-z0-9_.-]*(?:password|passwd|passphrase|secret|token|credential|authorization|cookie|api[_-]?key|private[_-]?key|signing[_-]?key)[A-Za-z0-9_.-]*`;
+// The affix runs are bounded rather than open: with `*` on both sides, every
+// position in a long payload retried the whole keyword list, and redacting a
+// 200 KB body took tens of seconds. No real label approaches 64 characters.
+const SECRET_LABEL = `[A-Za-z0-9_.-]{0,64}(?:password|passwd|passphrase|secret|token|credential|authorization|cookie|api[_-]?key|private[_-]?key|signing[_-]?key)[A-Za-z0-9_.-]{0,64}`;
 
 // `Authorization: Basic <base64>` and `Bearer <token>` carry the secret after
 // a scheme word, so the assignment rule below cannot see it: its value stops
@@ -31,14 +34,23 @@ const CREDENTIAL_ASSIGNMENT = new RegExp(
   String.raw`(["']?(?:${SECRET_LABEL})["']?(?:\s*[=:]+\s*|\s+))(\[redacted\]|"[^"]*"|'[^']*'|[^\s,;)}\]]+)`,
   "giu",
 );
-const KNOWN_SECRET_PREFIXES = /(?:sk-ant|sk-|xai-|ghp_|gho_|github_pat_|AKIA)[A-Za-z0-9._-]{8,}/g;
-const EMAIL = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/giu;
+// The prefix has to start a token: without the boundary, `sk-` matched inside
+// ordinary words and `risk-register` came out as `ri[redacted]`, erasing the
+// part of a diagnostic that names what failed.
+const KNOWN_SECRET_PREFIXES = /(?<![A-Za-z0-9_-])(?:sk-ant|sk-|xai-|ghp_|gho_|github_pat_|AKIA)[A-Za-z0-9._-]{8,}/g;
+// Bounded for the same reason as the label above, and more sharply: with `+`
+// on the local part, every character of a long payload consumed the rest of
+// the run looking for an `@` and then backtracked over all of it.
+const EMAIL = /[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,255}\.[A-Z]{2,24}/giu;
 const SECRET_KEY = new RegExp(`^(?:${SECRET_LABEL}|keys?)$`, "iu");
 
+// `key` and `keys` are too common in prose to redact on their own, but as a
+// quoted JSON label they are a key-value pair like any other. This is the
+// fallback for a payload too malformed to reparse, where `SECRET_KEY` - which
+// does accept a bare `key` - never gets to see it.
+const JSON_BARE_KEY = /("keys?"\s*:\s*)(\[redacted\]|"[^"]*"|'[^']*'|[^\s,;)}\]]+)/giu;
+
 const MAX_PARAM_LENGTH = 2_000;
-// Above this a string is logged as text rather than reparsed as JSON: the
-// parse is a redaction aid, not a formatter, and it is not worth the scan.
-const MAX_JSON_REPARSE_LENGTH = 100_000;
 
 export function redactText(value: string): string {
   const reparsed = redactSerializedJson(value);
@@ -46,6 +58,7 @@ export function redactText(value: string): string {
   return value
     .replace(AUTH_SCHEME_SECRET, "[redacted]")
     .replace(CREDENTIAL_ASSIGNMENT, redactAssignedValue)
+    .replace(JSON_BARE_KEY, redactAssignedValue)
     .replace(KNOWN_SECRET_PREFIXES, "[redacted]")
     .replace(EMAIL, "[redacted-email]");
 }
@@ -61,7 +74,9 @@ function redactAssignedValue(_match: string, label: string, value: string): stri
 // param, so `{"apiKey":"…"}` cannot pass as prose.
 function redactSerializedJson(value: string): string | null {
   const trimmed = value.trim();
-  if (trimmed.length > MAX_JSON_REPARSE_LENGTH) return null;
+  // No size cap: a long payload is exactly where a secret hides, and the
+  // truncation that follows keeps only the first characters - which would be
+  // the unredacted ones.
   if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null;
   let parsed: unknown;
   try {

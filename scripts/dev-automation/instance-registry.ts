@@ -6,7 +6,7 @@
 // debugging port. `dev:automation` reads it to drive the app of the worktree it
 // was started from instead of whichever instance won the race for 9333.
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { isDynamicRecord, isNumber, isOneOf, isString } from "@openbot/contracts/runtime-values";
@@ -56,9 +56,17 @@ function isPort(value: unknown): value is number {
   return isNumber(value) && Number.isInteger(value) && value >= 1_024 && value <= 65_535;
 }
 
+// Written through a sibling and renamed into place. A plain write truncates
+// first, and a reader that hits that window sees an unparseable file and
+// deletes it as corrupt - which would leave a dev instance that just started
+// undiscoverable until it restarts. `rename` within one directory is atomic,
+// so a reader sees either the old record or the whole new one.
 export function writeDevInstanceRecord(record: DevInstanceRecord, directory = devInstanceRegistryDirectory()): void {
   mkdirSync(directory, { recursive: true });
-  writeFileSync(recordPath(directory, record), `${JSON.stringify(record, null, 2)}\n`, "utf8");
+  const target = recordPath(directory, record);
+  const staging = `${target}.${process.pid}.tmp`;
+  writeFileSync(staging, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+  renameSync(staging, target);
 }
 
 export function removeDevInstanceRecord(
