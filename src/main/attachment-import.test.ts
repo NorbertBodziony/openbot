@@ -187,6 +187,26 @@ describe("EML attachment imports", () => {
     await expect(importEmail(email)).rejects.toThrow("nested .eml");
   });
 
+  it("rejects multipart digests before parsing implicit nested messages", async () => {
+    const email = ENCODER.encode(
+      [
+        "Subject: Digest",
+        "Content-Type: multipart/digest; boundary=digest",
+        "",
+        "--digest",
+        "Content-Disposition: inline",
+        "",
+        "Subject: Nested message",
+        "Content-Type: text/plain",
+        "",
+        "Nested body",
+        "--digest--",
+      ].join("\r\n"),
+    );
+
+    await expect(importEmail(email)).rejects.toThrow("multipart/digest");
+  });
+
   it("rejects duplicate MIME boundaries before parsing", async () => {
     const email = ENCODER.encode(
       [

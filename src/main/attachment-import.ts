@@ -211,8 +211,12 @@ function addEmailBoundary(name: string, headers: EmailHeaders, boundaries: Set<s
 }
 
 function assertSupportedEmailPart(name: string, headers: EmailHeaders): void {
-  if (emailContentType(headers) === "message/rfc822") {
+  const contentType = emailContentType(headers);
+  if (contentType === "message/rfc822") {
     throw new Error(`${name} contains a nested .eml message, which is not supported. Attach it separately.`);
+  }
+  if (contentType === "multipart/digest") {
+    throw new Error(`${name} contains a multipart/digest with implicit nested messages, which is not supported.`);
   }
 }
 
