@@ -14,12 +14,12 @@ import {
 
 describe("development service runner", () => {
   it("runs the normal API and app in a stable order", () => {
-    expect(servicesForTarget("all")).toEqual(["api", "app"]);
-    expect(servicesForTarget("app")).toEqual(["api", "app"]);
+    expect(servicesForTarget("all")).toEqual(["api", "remote", "app"]);
+    expect(servicesForTarget("app")).toEqual(["api", "remote", "app"]);
   });
 
   it("starts a complete isolated two-client harness on demand", () => {
-    expect(servicesForTarget("test-client")).toEqual(["api", "app", "test-client"]);
+    expect(servicesForTarget("test-client")).toEqual(["api", "remote", "app", "test-client"]);
     expect(servicesForTarget("api")).toEqual(["api"]);
   });
 
@@ -32,6 +32,14 @@ describe("development service runner", () => {
     const spec = createDevelopmentServiceSpec("api", {});
     expect(spec.executable).toBe(process.execPath);
     expect(spec.args).toEqual(["run", "--cwd", `${projectRoot}/apps/auth-api`, "dev"]);
+  });
+
+  it("builds the local Signal command with the Auth API development keys", () => {
+    const spec = createDevelopmentServiceSpec("remote", { REMOTE_SIGNAL_PORT: "3101" });
+
+    expect(spec.args).toContain(`${projectRoot}/apps/auth-api/.env.dev`);
+    expect(spec.args).toContain(`${projectRoot}/remote/api`);
+    expect(spec.env.REMOTE_SIGNAL_PORT).toBe("3101");
   });
 
   it("isolates the app and test-client profiles, ports, and outputs", () => {
@@ -85,11 +93,18 @@ describe("development service runner", () => {
     expect(selectMobileConnectLanAddress(interfaces)).toBe("192.168.1.143");
     const environment = { OPENBOT_API_PORT: "3100", OPENBOT_AUTH_API_URL: "http://127.0.0.1:3100" };
 
-    configureMobileConnectDevelopmentNetwork(["api", "app"], environment, interfaces);
+    configureMobileConnectDevelopmentNetwork(["api", "remote", "app"], environment, interfaces);
 
     expect(environment).toMatchObject({
       OPENBOT_API_HOST: "0.0.0.0",
       OPENBOT_MOBILE_AUTH_API_URL: "http://192.168.1.143:3100",
+      REMOTE_AUTH_WEBHOOK_URL: "http://127.0.0.1:3101/internal/auth-events",
+      REMOTE_CONTROL_PLANE_URL: "http://127.0.0.1:3100",
+      REMOTE_SIGNAL_HOST: "0.0.0.0",
+      REMOTE_SIGNAL_PORT: "3101",
+      REMOTE_SIGNAL_URL: "ws://192.168.1.143:3101/v1/signal",
+      REMOTE_TLS_DISABLED: "true",
+      TURN_HOST: "192.168.1.143",
     });
   });
 

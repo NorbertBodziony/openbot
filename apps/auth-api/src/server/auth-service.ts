@@ -1,3 +1,4 @@
+import type { MobileConnectHostBinding } from "@openbot/contracts/mobile-connect";
 import {
   isUuidV4,
   normalizeEmailAddress,
@@ -8,6 +9,7 @@ import {
 } from "@openbot/contracts/validation";
 
 import { randomToken, sha256 } from "./crypto";
+import { PERSISTENT_SESSION_EXPIRES_AT } from "./session-policy";
 import { EMAIL_CODE_DELIVERY_BUDGET_MS } from "./smtp-email-delivery";
 import type {
   AuthRepository,
@@ -17,11 +19,11 @@ import type {
   EmailVerificationResult,
   MobileAuthDevice,
   MobileAuthDeviceIdentity,
+  MobileAuthSessionResult,
 } from "./types";
 
 const CHALLENGE_TTL_MS = 10 * 60_000;
 const RESEND_COOLDOWN_MS = 60_000;
-const SESSION_TTL_MS = 30 * 24 * 60 * 60_000;
 const TEAM_TICKET_TTL_MS = 2 * 60_000;
 const MOBILE_CONNECT_SERVER_ID = "00000000-0000-4000-8000-000000000002";
 const RATE_WINDOW_MS = 15 * 60_000;
@@ -32,6 +34,7 @@ interface AuthServiceOptions {
   delivery: EmailCodeDelivery | null;
   exposeDevelopmentCode?: boolean;
   now?: () => number;
+  flushSessionRevocations?: () => Promise<void>;
 }
 
 export interface EmailSignInStart {
@@ -46,12 +49,14 @@ export class AuthService {
   readonly #delivery: EmailCodeDelivery | null;
   readonly #exposeDevelopmentCode: boolean;
   readonly #now: () => number;
+  readonly #flushSessionRevocations: () => Promise<void>;
 
   constructor(options: AuthServiceOptions) {
     this.#repository = options.repository;
     this.#delivery = options.delivery;
     this.#exposeDevelopmentCode = options.exposeDevelopmentCode ?? false;
     this.#now = options.now ?? Date.now;
+    this.#flushSessionRevocations = options.flushSessionRevocations ?? (async () => undefined);
   }
 
   get configured(): boolean {
@@ -195,7 +200,7 @@ export class AuthService {
       session: {
         id: crypto.randomUUID(),
         token: randomToken(),
-        expiresAt: now + SESSION_TTL_MS,
+        expiresAt: PERSISTENT_SESSION_EXPIRES_AT,
       },
     });
     return verificationResult(result);
@@ -286,7 +291,11 @@ export class AuthService {
     });
   }
 
-  async issueMobileAuthTicket(sessionToken: string, sourceIp: string): Promise<{ ticket: string; expiresAt: number }> {
+  async issueMobileAuthTicket(
+    sessionToken: string,
+    sourceIp: string,
+    host?: MobileConnectHostBinding,
+  ): Promise<{ ticket: string; expiresAt: number }> {
     const user = await this.authenticateDesktopSession(sessionToken);
     if (!user) throw new AuthServiceError(401, "unauthorized", "The session is invalid.");
     const now = this.#now();
@@ -295,6 +304,7 @@ export class AuthService {
     const ticket = randomToken();
     const expiresAt = now + TEAM_TICKET_TTL_MS;
     await this.#repository.replaceMobileAuthTicket({
+      host,
       ticketHash: await sha256(ticket),
       userId: user.id,
       serverId: MOBILE_CONNECT_SERVER_ID,
@@ -308,22 +318,24 @@ export class AuthService {
     ticket: string,
     deviceInput: MobileAuthDeviceIdentity,
     sourceIp: string,
-  ): Promise<{ sessionToken: string; user: AuthUser } | null> {
+  ): Promise<MobileAuthSessionResult | null> {
     if (!ticket || ticket.length > 128) return null;
     const device = normalizeMobileDevice(deviceInput);
     const now = this.#now();
     await this.#enforceRateLimit(`mobile-ticket-redeem:ip:${normalizeSourceIp(sourceIp)}`, 60, now);
-    return this.#repository.redeemMobileAuthTicket({
+    const redeemed = await this.#repository.redeemMobileAuthTicket({
       ticketHash: await sha256(ticket),
       serverId: MOBILE_CONNECT_SERVER_ID,
       now,
       session: {
         id: crypto.randomUUID(),
         token: randomToken(),
-        expiresAt: now + SESSION_TTL_MS,
+        expiresAt: PERSISTENT_SESSION_EXPIRES_AT,
       },
       device,
     });
+    await this.#flushSessionRevocations();
+    return redeemed;
   }
 
   async listMobileAuthDevices(sessionToken: string): Promise<MobileAuthDevice[]> {
@@ -343,15 +355,32 @@ export class AuthService {
     const user = await this.authenticate(sessionToken);
     if (!user) throw new AuthServiceError(401, "unauthorized", "The session is invalid.");
     await this.#repository.revokeMobileAuthDevice(user.id, sessionId, this.#now());
+    await this.#flushSessionRevocations();
   }
 
-  logout(sessionToken: string): Promise<void> {
-    return this.#repository.revokeSession(sessionToken, this.#now());
+  async listAccountSessions(sessionToken: string) {
+    const user = await this.authenticate(sessionToken);
+    if (!user) throw new AuthServiceError(401, "unauthorized", "The session is invalid.");
+    return this.#repository.listAccountSessions(user.id, sessionToken, this.#now());
+  }
+
+  async revokeAccountSession(sessionToken: string, sessionId: string): Promise<void> {
+    if (!isUuidV4(sessionId)) throw new AuthServiceError(400, "invalid_session", "The session ID is invalid.");
+    const user = await this.authenticate(sessionToken);
+    if (!user) throw new AuthServiceError(401, "unauthorized", "The session is invalid.");
+    await this.#repository.revokeAccountSession(user.id, sessionId, this.#now());
+    await this.#flushSessionRevocations();
+  }
+
+  async logout(sessionToken: string): Promise<void> {
+    await this.#repository.revokeSession(sessionToken, this.#now());
+    await this.#flushSessionRevocations();
   }
 
   async logoutMobileSession(sessionToken: string): Promise<void> {
     const revoked = await this.#repository.revokeMobileSession(sessionToken, this.#now());
     if (!revoked) throw new AuthServiceError(401, "unauthorized", "The mobile session is invalid.");
+    await this.#flushSessionRevocations();
   }
 
   async #enforceRateLimit(key: string, limit: number, now: number): Promise<void> {

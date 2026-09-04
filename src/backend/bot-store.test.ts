@@ -386,6 +386,46 @@ describe("BotStore", () => {
     await expect(readFile(join(source.workspacePath, "note.txt"), "utf8")).resolves.toBe("keep\n");
   });
 
+  it("duplicates an agent whose preview moves while its workspace is being copied", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-duplicate-preview-"));
+    temporaryRoots.push(root);
+    const store = new BotStore(join(root, "user-data"), join(root, "home"));
+    await store.initialize();
+    const source = await store.getOrCreate("chief", "Research", "Research lead");
+    await writeFile(join(source.workspacePath, "note.txt"), "keep\n");
+    const resolveAvatar = store.resolveAvatar.bind(store);
+    vi.spyOn(store, "resolveAvatar").mockImplementationOnce((botId) => {
+      // A message landing mid-copy moves `preview`, `updatedAt` and `threadId`. Copying a real
+      // workspace takes seconds, so this window is wide enough to hit in ordinary use.
+      void store.updatePreview(source.id, "Where are we on the sources?");
+      return resolveAvatar(botId);
+    });
+
+    const duplicate = await store.duplicateBot(source.id);
+
+    expect(duplicate).toMatchObject({ name: "Research copy", preview: "No messages yet", threadId: null });
+    await expect(readFile(join(duplicate.workspacePath, "note.txt"), "utf8")).resolves.toBe("keep\n");
+  });
+
+  it("removes the copy when a duplicated profile field changes while the workspace is being copied", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openbot-store-duplicate-profile-"));
+    temporaryRoots.push(root);
+    const home = join(root, "home");
+    const store = new BotStore(join(root, "user-data"), home);
+    await store.initialize();
+    const source = await store.getOrCreate("chief", "Research", "Research lead");
+    const resolveAvatar = store.resolveAvatar.bind(store);
+    vi.spyOn(store, "resolveAvatar").mockImplementationOnce((botId) => {
+      void store.updateBot({ botId: source.id, description: "Finds primary sources." });
+      return resolveAvatar(botId);
+    });
+
+    await expect(store.duplicateBot(source.id)).rejects.toThrow("changed while it was being duplicated");
+
+    expect(store.list().map((bot) => bot.id)).toEqual([source.id]);
+    expect(await readdir(join(home, "OpenBot", "Bots"))).toEqual([source.id]);
+  });
+
   it("rejects duplication after the host reaches its agent limit", async () => {
     const root = await mkdtemp(join(tmpdir(), "openbot-store-duplicate-limit-"));
     temporaryRoots.push(root);

@@ -131,6 +131,14 @@ describe("OpenBot connected desktop shell", () => {
         remoteDesktopAvailable: true,
         role: "owner",
         active: true,
+        compatibility: {
+          localAppVersion: "1.0.0",
+          hostAppVersion: "1.0.0",
+          localProtocol: { minimum: 1, maximum: 3 },
+          hostProtocol: { minimum: 1, maximum: 3 },
+          negotiatedProtocol: 3,
+          capabilities: ["model-scoped-usage"],
+        },
       },
     ]);
 

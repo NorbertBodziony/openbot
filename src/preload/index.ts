@@ -48,6 +48,7 @@ import {
   isRoutineSchedule,
   isSidebarLayoutSnapshot,
   isSkillCategory,
+  LOCAL_SERVER_ID,
   type MarketplaceAgentDetail,
   type MarketplaceAgentPage,
   type MarketplaceAgentSummary,
@@ -57,8 +58,6 @@ import {
   type ProviderRuntimeSnapshot,
   type QueuedMessageReceipt,
   type QueueSnapshot,
-  type Routine,
-  type RoutineRun,
   type ScopedAgentEvent,
   type ScopedDirectMessageEvent,
   type ScopedDirectTypingEvent,
@@ -69,18 +68,21 @@ import {
   type UpdateStatus,
 } from "@openbot/contracts/ipc";
 import {
-  type DynamicRecord,
-  isBoolean,
-  isDynamicRecord,
-  isNumber,
-  isOneOf,
-  isString,
-} from "@openbot/contracts/runtime-values";
+  decodeRecord,
+  emptyDecoder,
+  guardedDecoder,
+  guardedListDecoder,
+  nullableString,
+  requiredBoolean,
+  requiredNumber,
+  requiredString,
+} from "@openbot/contracts/ipc-decoding";
+import { isBoolean, isDynamicRecord, isNumber, isOneOf, isString } from "@openbot/contracts/runtime-values";
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { clipboardFiles } from "./clipboard-files";
 
 const attachmentImportListeners = new Set<(event: AttachmentImportEvent) => void>();
-let selectedServerId = "local";
+let selectedServerId: string = LOCAL_SERVER_ID;
 
 function invokeAgent<TResult>(
   channel: string,
@@ -119,7 +121,7 @@ function decodeComputerUseMacSetupState(value: unknown): ComputerUseMacSetupStat
 }
 
 function rememberActiveServer<T extends { id: string; active: boolean }[]>(servers: T): T {
-  selectedServerId = servers.find((server) => server.active)?.id ?? "local";
+  selectedServerId = servers.find((server) => server.active)?.id ?? LOCAL_SERVER_ID;
   return servers;
 }
 
@@ -162,13 +164,12 @@ async function importFiles(files: File[]): Promise<void> {
   }
 }
 
-function record(value: unknown, label: string): DynamicRecord {
-  if (!isDynamicRecord(value)) throw new Error(`Invalid ${label}.`);
-  return value;
-}
-
-function decodeBrowserPreview(value: unknown): BrowserPreview {
-  const preview = record(value, "browser preview");
+// A `FromMain` decoder has a same-shaped `FromHost` twin in `remote-server-manager.ts` and is
+// deliberately not the same function: this side is checking what the main process sent the renderer,
+// which is a trusted sender, while that side is checking a remote team server, which is not. The
+// suffix is there so a later reader does not merge them onto whichever is looser.
+function decodeBrowserPreviewFromMain(value: unknown): BrowserPreview {
+  const preview = decodeRecord(value, "browser preview");
   const dataUrl = requiredString(preview, "dataUrl");
   const width = requiredNumber(preview, "width");
   const height = requiredNumber(preview, "height");
@@ -187,13 +188,10 @@ function decodeBrowserPreview(value: unknown): BrowserPreview {
   return { dataUrl, width, height };
 }
 
-function decodeVoid(value: unknown): undefined {
-  if (value !== undefined && value !== null) throw new Error("IPC returned unexpected data.");
-  return undefined;
-}
+const decodeVoid = emptyDecoder("IPC returned unexpected data.");
 
 function decodeHostedSite(value: unknown): HostedSiteSummary {
-  const site = record(value, "hosted site");
+  const site = decodeRecord(value, "hosted site");
   if (
     !isString(site.id) ||
     !isString(site.hostname) ||
@@ -260,28 +258,13 @@ function decodeDynamicIslandAction(value: unknown): DynamicIslandAction {
   throw new Error("Invalid Dynamic Island action.");
 }
 
-function decodeRoutine(value: unknown): Routine {
-  if (!isRoutine(value)) throw new Error("Invalid routine response.");
-  return value;
-}
-
-function decodeRoutines(value: unknown): Routine[] {
-  if (!Array.isArray(value) || !value.every(isRoutine)) throw new Error("Invalid routine list response.");
-  return value;
-}
-
-function decodeRoutineRun(value: unknown): RoutineRun {
-  if (!isRoutineRun(value)) throw new Error("Invalid routine run response.");
-  return value;
-}
-
-function decodeRoutineRuns(value: unknown): RoutineRun[] {
-  if (!Array.isArray(value) || !value.every(isRoutineRun)) throw new Error("Invalid routine history response.");
-  return value;
-}
+const decodeRoutine = guardedDecoder(isRoutine, "routine response");
+const decodeRoutines = guardedListDecoder(isRoutine, "routine list response");
+const decodeRoutineRun = guardedDecoder(isRoutineRun, "routine run response");
+const decodeRoutineRuns = guardedListDecoder(isRoutineRun, "routine history response");
 
 function decodeFilePreview(value: unknown): FilePreview {
-  const preview = record(value, "file preview");
+  const preview = decodeRecord(value, "file preview");
   if (
     !isString(preview.name) ||
     !isNumber(preview.size) ||
@@ -304,7 +287,7 @@ function decodeFilePreview(value: unknown): FilePreview {
   };
 }
 
-function decodeAgentStatus(value: unknown): AgentStatus {
+function decodeAgentStatusFromMain(value: unknown): AgentStatus {
   if (!isAgentStatus(value)) throw new Error("Invalid agent status response.");
   return value;
 }
@@ -337,7 +320,7 @@ function decodeProviderRuntimeSnapshot(value: unknown): ProviderRuntimeSnapshot 
   return { revision: value.revision, providers: { codex, claude, grok } };
 }
 
-function decodeAccountUsage(value: unknown): AccountUsage {
+function decodeAccountUsageFromMain(value: unknown): AccountUsage {
   if (!isAccountUsage(value)) throw new Error("Invalid agent usage response.");
   return value;
 }
@@ -376,8 +359,8 @@ function decodeSidebarLayout(value: unknown): SidebarLayoutSnapshot {
   return value;
 }
 
-function decodeDuplicateBotResult(value: unknown): DuplicateBotResult {
-  const item = record(value, "agent duplication");
+function decodeDuplicateBotResultFromMain(value: unknown): DuplicateBotResult {
+  const item = decodeRecord(value, "agent duplication");
   return { bot: decodeBot(item.bot), layout: decodeSidebarLayout(item.layout) };
 }
 
@@ -386,49 +369,44 @@ function decodeConversation(value: unknown): ConversationWithReadState {
   return value;
 }
 
-function decodeConversationPage(value: unknown): ConversationPage {
+function decodeConversationPageFromMain(value: unknown): ConversationPage {
   if (!isDynamicRecord(value) || !isString(value.botId) || !Array.isArray(value.messages)) {
     throw new Error("Invalid conversation page response.");
   }
-  const pageInfo = record(value.pageInfo, "conversation page info");
+  const pageInfo = decodeRecord(value.pageInfo, "conversation page info");
   return {
     botId: value.botId,
-    threadId: requiredNullableString(value, "threadId"),
-    activeTurnId: requiredNullableString(value, "activeTurnId"),
+    threadId: nullableString(value, "threadId"),
+    activeTurnId: nullableString(value, "activeTurnId"),
     revision: requiredNumber(value, "revision"),
     messages: decodeConversationMessages(value.messages),
-    references: decodeConversationReferences(value.references),
+    references: decodeConversationReferencesFromMain(value.references),
     pageInfo: {
       hasOlder: requiredBoolean(pageInfo, "hasOlder"),
-      olderCursor: requiredNullableString(pageInfo, "olderCursor"),
+      olderCursor: nullableString(pageInfo, "olderCursor"),
     },
     ...(value.readState === undefined ? {} : { readState: decodeReadState(value.readState) }),
   };
 }
 
-function decodeConversationSearchPage(value: unknown): ConversationSearchPage {
-  const item = record(value, "conversation search page");
+function decodeConversationSearchPageFromMain(value: unknown): ConversationSearchPage {
+  const item = decodeRecord(value, "conversation search page");
   if (!Array.isArray(item.results)) throw new Error("Invalid conversation search results.");
   return {
     results: item.results.map((value) => {
-      const result = record(value, "conversation search result");
+      const result = decodeRecord(value, "conversation search result");
       if (!isConversationMessage(result.message)) throw new Error("Invalid conversation search message.");
       return { botId: requiredString(result, "botId"), message: result.message };
     }),
     total: requiredNumber(item, "total"),
-    nextCursor: requiredNullableString(item, "nextCursor"),
+    nextCursor: nullableString(item, "nextCursor"),
   };
 }
 
-function decodeConversationMessages(value: unknown): ConversationMessage[] {
-  if (!Array.isArray(value) || !value.every(isConversationMessage)) {
-    throw new Error("Invalid conversation messages.");
-  }
-  return value;
-}
+const decodeConversationMessages = guardedListDecoder(isConversationMessage, "conversation messages");
 
-function decodeConversationReferences(value: unknown): Record<string, ConversationMessage> {
-  const references = record(value, "conversation references");
+function decodeConversationReferencesFromMain(value: unknown): Record<string, ConversationMessage> {
+  const references = decodeRecord(value, "conversation references");
   const decoded: Record<string, ConversationMessage> = {};
   for (const [messageId, message] of Object.entries(references)) {
     if (!isConversationMessage(message)) throw new Error("Invalid conversation reference.");
@@ -443,7 +421,7 @@ function decodeReadState(value: unknown): ConversationReadState {
 }
 
 function decodeReadStates(value: unknown): Record<string, ConversationReadState> {
-  const item = record(value, "conversation reads");
+  const item = decodeRecord(value, "conversation reads");
   return Object.fromEntries(Object.entries(item).map(([botId, state]) => [botId, decodeReadState(state)]));
 }
 
@@ -468,30 +446,8 @@ function decodeQueue(value: unknown): QueueSnapshot {
   return value;
 }
 
-function requiredNumber(value: DynamicRecord, field: string): number {
-  if (!isNumber(value[field])) throw new Error(`Invalid ${field}.`);
-  return value[field];
-}
-
-function requiredString(value: DynamicRecord, field: string): string {
-  const fieldValue = value[field];
-  if (!isString(fieldValue)) throw new Error(`Invalid ${field}.`);
-  return fieldValue;
-}
-
-function requiredBoolean(value: DynamicRecord, field: string): boolean {
-  if (!isBoolean(value[field])) throw new Error(`Invalid ${field}.`);
-  return value[field];
-}
-
-function requiredNullableString(value: DynamicRecord, field: string): string | null {
-  const item = value[field];
-  if (item !== null && !isString(item)) throw new Error(`Invalid ${field}.`);
-  return item;
-}
-
 function decodeSkillSummary(value: unknown) {
-  const item = record(value, "marketplace skill");
+  const item = decodeRecord(value, "marketplace skill");
   if (!isSkillCategory(item.category)) throw new Error("Invalid skill category.");
   return {
     id: requiredString(item, "id"),
@@ -503,19 +459,19 @@ function decodeSkillSummary(value: unknown) {
     version: requiredNumber(item, "version"),
     installs: requiredNumber(item, "installs"),
     featured: requiredBoolean(item, "featured"),
-    iconUrl: requiredNullableString(item, "iconUrl"),
+    iconUrl: nullableString(item, "iconUrl"),
     updatedAt: requiredString(item, "updatedAt"),
   };
 }
 
 function decodeSkillPage(value: unknown): MarketplaceSkillPage {
-  const page = record(value, "marketplace page");
+  const page = decodeRecord(value, "marketplace page");
   if (!Array.isArray(page.skills)) throw new Error("Invalid marketplace skills.");
-  return { skills: page.skills.map(decodeSkillSummary), nextCursor: requiredNullableString(page, "nextCursor") };
+  return { skills: page.skills.map(decodeSkillSummary), nextCursor: nullableString(page, "nextCursor") };
 }
 
 function decodeSkillDetail(value: unknown): MarketplaceSkillDetail {
-  const item = record(value, "skill detail");
+  const item = decodeRecord(value, "skill detail");
   const summary = decodeSkillSummary(item);
   if (!Array.isArray(item.files) || !item.files.every(isString)) throw new Error("Invalid skill files.");
   return {
@@ -528,7 +484,7 @@ function decodeSkillDetail(value: unknown): MarketplaceSkillDetail {
 }
 
 function decodeSubmission(value: unknown): SkillSubmission {
-  const item = record(value, "skill submission");
+  const item = decodeRecord(value, "skill submission");
   const status = item.status;
   if (!isSkillCategory(item.category) || !isOneOf(["pending", "approved", "rejected"], status)) {
     throw new Error("Invalid skill submission state.");
@@ -542,8 +498,8 @@ function decodeSubmission(value: unknown): SkillSubmission {
     category: item.category,
     version: requiredNumber(item, "version"),
     status,
-    rejectionNote: requiredNullableString(item, "rejectionNote"),
-    iconUrl: requiredNullableString(item, "iconUrl"),
+    rejectionNote: nullableString(item, "rejectionNote"),
+    iconUrl: nullableString(item, "iconUrl"),
     createdAt: requiredString(item, "createdAt"),
   };
 }
@@ -555,7 +511,7 @@ function decodeSubmissions(value: unknown): SkillSubmission[] {
 
 function decodeSkillPreview(value: unknown): SkillPackagePreview | null {
   if (value === null) return null;
-  const item = record(value, "skill package preview");
+  const item = decodeRecord(value, "skill package preview");
   if (!Array.isArray(item.files) || !item.files.every(isString)) throw new Error("Invalid skill package files.");
   return {
     draftId: requiredString(item, "draftId"),
@@ -568,7 +524,7 @@ function decodeSkillPreview(value: unknown): SkillPackagePreview | null {
 }
 
 function decodeInstalledSkill(value: unknown): InstalledSkill {
-  const item = record(value, "installed skill");
+  const item = decodeRecord(value, "installed skill");
   const state = item.state;
   if (!isOneOf(["installed", "update-available", "modified", "needs-repair"], state)) {
     throw new Error("Invalid installed skill state.");
@@ -583,13 +539,13 @@ function decodeInstalledSkill(value: unknown): InstalledSkill {
   };
 }
 
-function decodeInstalledSkills(value: unknown): InstalledSkill[] {
+function decodeInstalledSkillsFromMain(value: unknown): InstalledSkill[] {
   if (!Array.isArray(value)) throw new Error("Invalid installed skills.");
   return value.map(decodeInstalledSkill);
 }
 
 function decodeMarketplaceAgentSummary(value: unknown): MarketplaceAgentSummary {
-  const item = record(value, "marketplace agent");
+  const item = decodeRecord(value, "marketplace agent");
   if (!isAvatarSeed(item.avatarSeed) || (item.avatarHue !== null && !isAvatarHue(item.avatarHue)))
     throw new Error("Invalid marketplace agent avatar.");
   return {
@@ -603,7 +559,7 @@ function decodeMarketplaceAgentSummary(value: unknown): MarketplaceAgentSummary 
     featured: requiredBoolean(item, "featured"),
     avatarSeed: item.avatarSeed,
     avatarHue: item.avatarHue,
-    avatarUrl: requiredNullableString(item, "avatarUrl"),
+    avatarUrl: nullableString(item, "avatarUrl"),
     skillCount: requiredNumber(item, "skillCount"),
     routineCount: requiredNumber(item, "routineCount"),
     activeRoutineCount: requiredNumber(item, "activeRoutineCount"),
@@ -612,16 +568,16 @@ function decodeMarketplaceAgentSummary(value: unknown): MarketplaceAgentSummary 
 }
 
 function decodeMarketplaceAgentPage(value: unknown): MarketplaceAgentPage {
-  const page = record(value, "marketplace agent page");
+  const page = decodeRecord(value, "marketplace agent page");
   if (!Array.isArray(page.agents)) throw new Error("Invalid marketplace agents.");
   return {
     agents: page.agents.map(decodeMarketplaceAgentSummary),
-    nextCursor: requiredNullableString(page, "nextCursor"),
+    nextCursor: nullableString(page, "nextCursor"),
   };
 }
 
 function decodeMarketplaceAgentDetail(value: unknown): MarketplaceAgentDetail {
-  const item = record(value, "marketplace agent detail");
+  const item = decodeRecord(value, "marketplace agent detail");
   const summary = decodeMarketplaceAgentSummary(item);
   if (
     !Array.isArray(item.skills) ||
@@ -647,7 +603,7 @@ function decodeMarketplaceAgentDetail(value: unknown): MarketplaceAgentDetail {
 }
 
 function decodeAgentSubmission(value: unknown): AgentSubmission {
-  const item = record(value, "agent submission");
+  const item = decodeRecord(value, "agent submission");
   if (
     !isOneOf(["pending", "approved", "rejected"], item.status) ||
     !isAvatarSeed(item.avatarSeed) ||
@@ -662,10 +618,10 @@ function decodeAgentSubmission(value: unknown): AgentSubmission {
     description: requiredString(item, "description"),
     version: requiredNumber(item, "version"),
     status: item.status,
-    rejectionNote: requiredNullableString(item, "rejectionNote"),
+    rejectionNote: nullableString(item, "rejectionNote"),
     avatarSeed: item.avatarSeed,
     avatarHue: item.avatarHue,
-    avatarUrl: requiredNullableString(item, "avatarUrl"),
+    avatarUrl: nullableString(item, "avatarUrl"),
     skillCount: requiredNumber(item, "skillCount"),
     routineCount: requiredNumber(item, "routineCount"),
     activeRoutineCount: requiredNumber(item, "activeRoutineCount"),
@@ -679,7 +635,7 @@ function decodeAgentSubmissions(value: unknown): AgentSubmission[] {
 }
 
 function decodeAgentPublicationPreview(value: unknown): AgentPublicationPreview {
-  const item = record(value, "agent publication preview");
+  const item = decodeRecord(value, "agent publication preview");
   const detail = decodeMarketplaceAgentDetail({
     ...item,
     id: item.botId,
@@ -828,6 +784,8 @@ const openbotApi: OpenBotDesktopApi = {
     updateAvatar: (image) => ipcRenderer.invoke(IPC_CHANNELS.authUpdateAvatar, image),
     createMobileConnect: () => ipcRenderer.invoke(IPC_CHANNELS.authCreateMobileConnect),
     listMobileConnectedDevices: () => ipcRenderer.invoke(IPC_CHANNELS.authListMobileConnectedDevices),
+    listAccountSessions: () => ipcRenderer.invoke(IPC_CHANNELS.authListAccountSessions),
+    revokeAccountSession: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.authRevokeAccountSession, sessionId),
     revokeMobileConnectedDevice: (sessionId) =>
       ipcRenderer.invoke(IPC_CHANNELS.authRevokeMobileConnectedDevice, sessionId),
     logout: () => ipcRenderer.invoke(IPC_CHANNELS.authLogout),
@@ -843,7 +801,8 @@ const openbotApi: OpenBotDesktopApi = {
     listMine: () => ipcRenderer.invoke(IPC_CHANNELS.skillsListMine).then(decodeSubmissions),
     choosePackage: () => ipcRenderer.invoke(IPC_CHANNELS.skillsChoosePackage).then(decodeSkillPreview),
     submit: (input) => ipcRenderer.invoke(IPC_CHANNELS.skillsSubmit, input).then(decodeSubmission),
-    listInstalled: (botId) => ipcRenderer.invoke(IPC_CHANNELS.skillsListInstalled, botId).then(decodeInstalledSkills),
+    listInstalled: (botId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.skillsListInstalled, botId).then(decodeInstalledSkillsFromMain),
     install: (input) => ipcRenderer.invoke(IPC_CHANNELS.skillsInstall, input).then(decodeInstalledSkill),
     uninstall: (input) => ipcRenderer.invoke(IPC_CHANNELS.skillsUninstall, input).then(decodeVoid),
   },
@@ -864,20 +823,21 @@ const openbotApi: OpenBotDesktopApi = {
     submit: (input) => ipcRenderer.invoke(IPC_CHANNELS.marketplaceAgentsSubmit, input).then(decodeAgentSubmission),
     install: (input) =>
       ipcRenderer.invoke(IPC_CHANNELS.marketplaceAgentsInstall, input).then((value) => {
-        const item = record(value, "agent installation");
+        const item = decodeRecord(value, "agent installation");
         return { bot: decodeBot(item.bot) };
       }),
   },
   agent: {
-    getStatus: () => invokeAgent(IPC_CHANNELS.agentGetStatus, null, decodeAgentStatus),
-    getUsage: () => invokeAgent(IPC_CHANNELS.agentGetUsage, null, decodeAccountUsage),
+    getStatus: () => invokeAgent(IPC_CHANNELS.agentGetStatus, null, decodeAgentStatusFromMain),
+    getUsage: (botId) => invokeAgent(IPC_CHANNELS.agentGetUsage, botId, decodeAccountUsageFromMain),
     listModels: () => invokeAgent(IPC_CHANNELS.agentListModels, null, decodeAgentModels),
     listBots: () => invokeAgent(IPC_CHANNELS.agentListBots, null, decodeBots),
-    listInstalledSkills: (botId) => invokeAgent(IPC_CHANNELS.agentListInstalledSkills, botId, decodeInstalledSkills),
+    listInstalledSkills: (botId) =>
+      invokeAgent(IPC_CHANNELS.agentListInstalledSkills, botId, decodeInstalledSkillsFromMain),
     getSidebarLayout: () => invokeAgent(IPC_CHANNELS.agentGetSidebarLayout, null, decodeSidebarLayout),
     mutateSidebarLayout: (action) => invokeAgent(IPC_CHANNELS.agentMutateSidebarLayout, action, decodeSidebarLayout),
     createBot: (input) => invokeAgent(IPC_CHANNELS.agentCreateBot, input, decodeBot),
-    duplicateBot: (botId) => invokeAgent(IPC_CHANNELS.agentDuplicateBot, botId, decodeDuplicateBotResult),
+    duplicateBot: (botId) => invokeAgent(IPC_CHANNELS.agentDuplicateBot, botId, decodeDuplicateBotResultFromMain),
     updateBot: (input) => invokeAgent(IPC_CHANNELS.agentUpdateBot, input, decodeBot),
     setAvatar: (input) => invokeAgent(IPC_CHANNELS.agentSetAvatar, input, decodeBot),
     deleteBot: (botId) => invokeAgent(IPC_CHANNELS.agentDeleteBot, botId, decodeVoid),
@@ -894,9 +854,9 @@ const openbotApi: OpenBotDesktopApi = {
     listRoutineRuns: (input) => invokeAgent(IPC_CHANNELS.agentListRoutineRuns, input, decodeRoutineRuns),
     readConversation: (botId) => invokeAgent(IPC_CHANNELS.agentReadConversation, botId, decodeConversation),
     readConversationPage: (input, serverId = selectedServerId) =>
-      invokeAgentForServer(serverId, IPC_CHANNELS.agentReadConversationPage, input, decodeConversationPage),
+      invokeAgentForServer(serverId, IPC_CHANNELS.agentReadConversationPage, input, decodeConversationPageFromMain),
     searchConversationMessages: (input) =>
-      invokeAgent(IPC_CHANNELS.agentSearchConversationMessages, input, decodeConversationSearchPage),
+      invokeAgent(IPC_CHANNELS.agentSearchConversationMessages, input, decodeConversationSearchPageFromMain),
     listConversationReads: () => invokeAgent(IPC_CHANNELS.agentListConversationReads, null, decodeReadStates),
     markConversationRead: (input, serverId = selectedServerId) =>
       invokeAgentForServer(serverId, IPC_CHANNELS.agentMarkConversationRead, input, decodeReadState),
@@ -948,7 +908,8 @@ const openbotApi: OpenBotDesktopApi = {
     listTabs: () => ipcRenderer.invoke(IPC_CHANNELS.browserListTabs),
     getDisplayState: () => ipcRenderer.invoke(IPC_CHANNELS.browserGetDisplayState),
     getControlState: () => ipcRenderer.invoke(IPC_CHANNELS.browserGetControlState),
-    capturePreview: (tabId) => ipcRenderer.invoke(IPC_CHANNELS.browserCapturePreview, tabId).then(decodeBrowserPreview),
+    capturePreview: (tabId) =>
+      ipcRenderer.invoke(IPC_CHANNELS.browserCapturePreview, tabId).then(decodeBrowserPreviewFromMain),
     setVisible: (input) => ipcRenderer.invoke(IPC_CHANNELS.browserSetVisible, input),
     onDisplayState: (listener) => {
       const handler = (_event: Electron.IpcRendererEvent, state: Parameters<typeof listener>[0]) => listener(state);

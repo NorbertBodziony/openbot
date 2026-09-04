@@ -1,9 +1,10 @@
-import { type HostStatus, IPC_CHANNELS, type ServerSummary } from "@openbot/contracts/ipc";
+import { type HostStatus, IPC_CHANNELS, LOCAL_SERVER_ID, type ServerSummary } from "@openbot/contracts/ipc";
 import type { HostService } from "../host-service";
 import type { RemoteDesktopManager } from "../remote-desktop-manager";
 import type { RemoteServerManager } from "../remote-server-manager";
 import { handleTrusted } from "../trusted-ipc";
 import { parseAgentRequest } from "./agent-inputs";
+import { routeToServer } from "./route-to-server";
 import {
   parseCreateTeamInvite,
   parseDirectTyping,
@@ -51,10 +52,16 @@ export function registerTeamIpcHandlers({
   );
   handleTrusted(IPC_CHANNELS.serversRemove, stringPayload("serverId"), (serverId) => remoteServers.remove(serverId));
   handleTrusted(IPC_CHANNELS.serversGetPresence, () =>
-    remoteServers.activeServerId === "local" ? host.getPresence() : remoteServers.getPresence(),
+    routeToServer(remoteServers.activeServerId, {
+      local: () => host.getPresence(),
+      remote: () => remoteServers.getPresence(),
+    }),
   );
   handleTrusted(IPC_CHANNELS.serversGetPresenceFor, stringPayload("serverId"), (serverId) =>
-    serverId === "local" ? host.getPresence() : remoteServers.getPresenceFor(serverId),
+    routeToServer(serverId, {
+      local: () => host.getPresence(),
+      remote: (target) => remoteServers.getPresenceFor(target),
+    }),
   );
   handleTrusted(IPC_CHANNELS.serversRefreshIdentity, stringPayload("serverId"), (serverId) =>
     remoteServers.refreshIdentity(serverId),
@@ -77,33 +84,48 @@ export function registerTeamIpcHandlers({
   handleTrusted(IPC_CHANNELS.serversCreateInvite, parseAgentRequest, (request) =>
     remoteServers.createInvite(request.serverId, parseCreateTeamInvite(request.payload)),
   );
-  handleTrusted(IPC_CHANNELS.serversSetTyping, parseSetTeamTyping, (parsed) => {
-    if (remoteServers.activeServerId === "local") host.setTyping(parsed);
-    else remoteServers.setTyping(parsed);
-  });
+  handleTrusted(IPC_CHANNELS.serversSetTyping, parseSetTeamTyping, (parsed) =>
+    routeToServer<void>(remoteServers.activeServerId, {
+      local: () => host.setTyping(parsed),
+      remote: () => remoteServers.setTyping(parsed),
+    }),
+  );
   handleTrusted(IPC_CHANNELS.serversListDirectThreads, () =>
-    remoteServers.activeServerId === "local" ? host.listDirectThreads() : remoteServers.listDirectThreads(),
+    routeToServer(remoteServers.activeServerId, {
+      local: () => host.listDirectThreads(),
+      remote: () => remoteServers.listDirectThreads(),
+    }),
   );
   handleTrusted(IPC_CHANNELS.serversReadDirectConversation, stringPayload("memberId"), (memberId) =>
-    remoteServers.activeServerId === "local"
-      ? host.readDirectConversation(memberId)
-      : remoteServers.readDirectConversation(memberId),
+    routeToServer(remoteServers.activeServerId, {
+      local: () => host.readDirectConversation(memberId),
+      remote: () => remoteServers.readDirectConversation(memberId),
+    }),
   );
   handleTrusted(IPC_CHANNELS.serversReadDirectConversationPage, parseReadDirectConversationPage, (parsed) =>
-    remoteServers.activeServerId === "local"
-      ? host.readDirectConversationPage(parsed.memberId, parsed.anchor, parsed.limit)
-      : remoteServers.readDirectConversationPage(parsed.memberId, parsed.anchor, parsed.limit),
+    routeToServer(remoteServers.activeServerId, {
+      local: () => host.readDirectConversationPage(parsed.memberId, parsed.anchor, parsed.limit),
+      remote: () => remoteServers.readDirectConversationPage(parsed.memberId, parsed.anchor, parsed.limit),
+    }),
   );
   handleTrusted(IPC_CHANNELS.serversSendDirectMessage, parseSendDirectMessage, (parsed) =>
-    remoteServers.activeServerId === "local" ? host.sendDirectMessage(parsed) : remoteServers.sendDirectMessage(parsed),
+    routeToServer(remoteServers.activeServerId, {
+      local: () => host.sendDirectMessage(parsed),
+      remote: () => remoteServers.sendDirectMessage(parsed),
+    }),
   );
   handleTrusted(IPC_CHANNELS.serversMarkDirectRead, parseMarkDirectRead, (parsed) =>
-    remoteServers.activeServerId === "local" ? host.markDirectRead(parsed) : remoteServers.markDirectRead(parsed),
+    routeToServer(remoteServers.activeServerId, {
+      local: () => host.markDirectRead(parsed),
+      remote: () => remoteServers.markDirectRead(parsed),
+    }),
   );
-  handleTrusted(IPC_CHANNELS.serversSetDirectTyping, parseDirectTyping, (parsed) => {
-    if (remoteServers.activeServerId === "local") host.setDirectTyping(parsed);
-    else remoteServers.setDirectTyping(parsed);
-  });
+  handleTrusted(IPC_CHANNELS.serversSetDirectTyping, parseDirectTyping, (parsed) =>
+    routeToServer<void>(remoteServers.activeServerId, {
+      local: () => host.setDirectTyping(parsed),
+      remote: () => remoteServers.setDirectTyping(parsed),
+    }),
+  );
 
   handleTrusted(IPC_CHANNELS.hostGetStatus, () => host.getStatus());
   handleTrusted(IPC_CHANNELS.hostConfigure, parseHostConfig, (config) => host.configure(config));
@@ -136,7 +158,7 @@ export function registerTeamIpcHandlers({
 
 export function withLocalHostSummary(servers: ServerSummary[], status: HostStatus): ServerSummary[] {
   return servers.map((server) =>
-    server.id === "local"
+    server.id === LOCAL_SERVER_ID
       ? {
           ...server,
           name: status.serverName ?? "Local",

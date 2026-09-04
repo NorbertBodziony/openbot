@@ -174,14 +174,72 @@ describe("SignalService", () => {
     expect(service.metrics().activePeerConnections).toBe(1);
   });
 
-  it("rejects a second logical client session while the host is in use", async () => {
+  it("keeps phones on the same account isolated across reconnect, revocation and host recovery", async () => {
     const service = new SignalService(fakeTokens(), 8);
-    await hello(service, socket("host"), "host-ticket", "host");
-    await hello(service, socket("first-client"), "client-ticket", "client");
+    const host = socket("host");
+    await hello(service, host, "host-ticket", "host");
+    const first = socket("first-client");
+    await hello(service, first, "client-ticket", "client");
     const second = socket("second-client");
     await hello(service, second, "second-client-ticket", "client");
+    expect(first.closed).toBe(false);
+    expect(second.closed).toBe(false);
+    expect(service.metrics().activePeerConnections).toBe(2);
+    const secondId = JSON.parse(second.messages.at(-1) ?? "{}").connectionId;
+    expect(secondId).toEqual(expect.any(String));
+    await service.receive(
+      host,
+      JSON.stringify({ type: "offer", version: 1, channel: "team", connectionId: secondId, sdp: "second-only" }),
+    );
+    expect(second.messages.at(-1)).toContain("second-only");
+    expect(first.messages.some((message) => message.includes("second-only"))).toBe(false);
+    await service.receive(
+      first,
+      JSON.stringify({ type: "offer", version: 1, channel: "team", connectionId: secondId, sdp: "cross-device" }),
+    );
+    expect(first.messages.at(-1)).toContain('"code":"permission_denied"');
+
+    service.disconnect(first);
+    const resumed = socket("resumed-client");
+    await hello(service, resumed, "resume-client", "client");
+    expect(service.metrics().activePeerConnections).toBe(2);
+    expect(second.closed).toBe(false);
+    service.disconnect(host);
+    const recoveredHost = socket("recovered-host");
+    await hello(service, recoveredHost, "resume-host", "host");
+    expect(service.metrics().activePeerConnections).toBe(2);
+    expect(recoveredHost.messages.filter((message) => message.includes('"type":"peer-ready"'))).toHaveLength(2);
+
+    service.revokeSession("client-session");
+    expect(resumed.closed).toBe(true);
+    expect(second.closed).toBe(false);
+    expect(service.metrics().activePeerConnections).toBe(1);
+    const remainingId = JSON.parse(second.messages.at(-1) ?? "{}").connectionId;
+    await service.receive(
+      recoveredHost,
+      JSON.stringify({
+        type: "answer",
+        version: 1,
+        channel: "team",
+        connectionId: remainingId,
+        sdp: "still-connected",
+      }),
+    );
+    expect(second.messages.at(-1)).toContain("still-connected");
+  });
+
+  it("does not send a second phone to an older desktop without multiplex support", async () => {
+    const service = new SignalService(fakeTokens(), 8);
+    const host = socket("legacy-host");
+    service.connect(host);
+    await service.receive(host, JSON.stringify({ type: "hello", version: 1, peer: "host", token: "host-ticket" }));
+    const first = socket("first");
+    await hello(service, first, "client-ticket", "client");
+    const second = socket("second");
+    await hello(service, second, "second-client-ticket", "client");
     expect(second.messages.at(-1)).toContain('"code":"host_busy"');
-    expect(second.closed).toBe(true);
+    expect(first.closed).toBe(false);
+    expect(service.metrics().activePeerConnections).toBe(1);
   });
 
   it("limits unauthenticated sockets and revokes one logical session", async () => {
@@ -273,5 +331,8 @@ function socket(id: string, ip = `192.0.2.${id.length}`): TestSignalSocket {
 
 async function hello(service: SignalService, target: SignalSocket, token: string, peer: "host" | "client") {
   service.connect(target);
-  await service.receive(target, JSON.stringify({ type: "hello", version: 1, peer, token }));
+  await service.receive(
+    target,
+    JSON.stringify({ type: "hello", version: 1, peer, token, ...(peer === "host" ? { multiplex: true } : {}) }),
+  );
 }

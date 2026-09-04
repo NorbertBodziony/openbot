@@ -23,20 +23,26 @@ describe("development profile", () => {
     expect(developmentUserDataName("app", "5174")).toBe("OpenBot Dev 5174");
   });
 
-  it("republishes only when the configured instance was public on the previous launch", () => {
+  it.each([undefined, null, "host"] as const)("restores published hosting after restart for role %s", (remoteRole) => {
     expect(
       shouldAutoStartHost({
         configured: true,
         enabledOnLaunch: true,
+        remoteRole,
       }),
     ).toBe(true);
     expect(
       shouldAutoStartHost({
         configured: true,
         enabledOnLaunch: false,
+        remoteRole,
       }),
     ).toBe(false);
-    expect(shouldAutoStartHost({ configured: false, enabledOnLaunch: true })).toBe(false);
+    expect(shouldAutoStartHost({ configured: false, enabledOnLaunch: true, remoteRole })).toBe(false);
+  });
+
+  it("does not publish the development test client even with a saved hosting preference", () => {
+    expect(shouldAutoStartHost({ configured: true, enabledOnLaunch: true, remoteRole: "client" })).toBe(false);
   });
 
   it("hides the host window only in the two-client development harness", () => {

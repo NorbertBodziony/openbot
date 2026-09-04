@@ -8,6 +8,7 @@ import {
   type BrowserDisplayState,
   type CentralAuthState,
   IPC_CHANNELS,
+  LOCAL_SERVER_ID,
   type MacPermissionId,
   type VoiceModelStatus,
 } from "@openbot/contracts/ipc";
@@ -75,7 +76,13 @@ import { registerTeamIpcHandlers, withLocalHostSummary } from "./ipc/register-te
 import { registerUpdateIpcHandlers } from "./ipc/register-update-handlers";
 import { registerVoiceIpcHandlers } from "./ipc/register-voice-handlers";
 import { MacHapticFeedback } from "./mac-haptic-feedback";
-import { readMainWindowBounds, resolveMainWindowBounds, writeMainWindowBounds } from "./main-window-state";
+import {
+  ensureMacApplicationPresence,
+  presentMainWindow,
+  readMainWindowBounds,
+  resolveMainWindowBounds,
+  writeMainWindowBounds,
+} from "./main-window-state";
 import { ManagedSkillService } from "./managed-skill-service";
 import { ProviderRuntimeManager } from "./provider-runtime-manager";
 import { RemoteDesktopManager } from "./remote-desktop-manager";
@@ -224,7 +231,7 @@ const LEGACY_REMOTE_DESKTOP_CREDENTIAL_FILE = "openbot-remote-desktop-credential
 const REMOTE_DESKTOP_RUNTIME_SECRET_FILE = "openbot-remote-desktop-runtime-v1.json";
 
 function configureContentSecurityPolicy(): void {
-  const policy = buildContentSecurityPolicy(app.isPackaged);
+  const policy = buildContentSecurityPolicy(app.isPackaged, process.env.REMOTE_SIGNAL_URL);
 
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     if (details.resourceType !== "mainFrame" || !isTrustedRendererUrl(details.url)) {
@@ -309,7 +316,7 @@ function registerIpcHandlers({
   registerComputerUseIpcHandlers({ computerUseMacSetup });
   registerProviderIpcHandlers({ service, providerRuntimes });
   registerVoiceIpcHandlers({ voice });
-  registerAccountIpcHandlers({ centralAuth });
+  registerAccountIpcHandlers({ centralAuth, host });
   registerSkillIpcHandlers({ skills, getMainWindow });
   registerHostedSiteIpcHandlers({ hostedSites, getMainWindow });
   registerMarketplaceAgentIpcHandlers({ marketplaceAgents });
@@ -447,7 +454,7 @@ function createWindow(): BrowserWindow {
     }
     const tabId = browserHost?.activeTabId;
     if (
-      remoteServerManager?.activeServerId !== "local" ||
+      remoteServerManager?.activeServerId !== LOCAL_SERVER_ID ||
       !browserHost?.visible ||
       !tabId ||
       !isCloseBrowserTabShortcut(input)
@@ -512,6 +519,9 @@ function createDynamicIslandWindow(bounds: Rectangle, _display: Display): Browse
     show: false,
     transparent: true,
     frame: false,
+    alwaysOnTop: true,
+    focusable: false,
+    hiddenInMissionControl: true,
     resizable: false,
     movable: false,
     minimizable: false,
@@ -604,6 +614,10 @@ async function ensureMainWindow(): Promise<BrowserWindow> {
   return mainWindowLoad;
 }
 
+function showMainWindow(window: BrowserWindow): void {
+  presentMainWindow(window, process.platform, () => app.show());
+}
+
 function loadDynamicIslandRenderer(window: BrowserWindow, display: Display): Promise<void> {
   const displayMode = display.internal ? "notch" : "island";
   const developmentUrl = process.env.ELECTRON_RENDERER_URL;
@@ -658,7 +672,7 @@ function configureApplicationMenu(service: AgentService, updater: UpdateService)
 }
 
 function forwardAgentEvent(serverId: string, event: AgentEvent, bufferedLive = false): void {
-  if (serverId === "local") hostAnalytics?.handleAgentEvent(event);
+  if (serverId === LOCAL_SERVER_ID) hostAnalytics?.handleAgentEvent(event);
   if (!mainWindow || mainWindow.isDestroyed()) return;
   sendToRenderer(
     mainWindow,
@@ -672,9 +686,7 @@ function forwardAgentEvent(serverId: string, event: AgentEvent, bufferedLive = f
   const notification = new Notification(content);
   notification.on("click", () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
+    showMainWindow(mainWindow);
   });
   notification.show();
 }
@@ -808,7 +820,7 @@ function forwardCentralAuth(state: CentralAuthState): void {
       } catch (error) {
         console.error("Unable to synchronize the joined servers:", error);
       }
-      if (host && shouldAutoStartHost(host.getStatus())) await host.start();
+      if (host && shouldAutoStartHost({ ...host.getStatus(), remoteRole: developmentRemoteRole })) await host.start();
     })
     .catch((error) => {
       console.error("Unable to synchronize the signed-in account:", error);
@@ -825,8 +837,7 @@ function acceptInviteUrl(value: string): void {
   }
   pendingInviteUrl = value;
   if (mainWindow && !mainWindow.isDestroyed() && inviteReceiverReady) {
-    mainWindow.show();
-    mainWindow.focus();
+    showMainWindow(mainWindow);
     if (sendToRenderer(mainWindow, IPC_CHANNELS.serversInvite, value)) pendingInviteUrl = null;
   }
 }
@@ -876,14 +887,17 @@ if (!hasSingleInstanceLock) {
     const deepLink = findInviteUrl(argv);
     if (deepLink) acceptOpenbotUrl(deepLink);
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
+    showMainWindow(mainWindow);
   });
 
   void app
     .whenReady()
     .then(async () => {
+      await ensureMacApplicationPresence(
+        process.platform,
+        (policy) => app.setActivationPolicy(policy),
+        () => app.dock?.show() ?? Promise.resolve(),
+      );
       if (process.platform === "darwin") app.setAsDefaultProtocolClient("openbot");
       if (process.platform === "darwin") app.dock?.setIcon(appIconPath);
       configureContentSecurityPolicy();
@@ -914,6 +928,7 @@ if (!hasSingleInstanceLock) {
         getDisplays: () => screen.getAllDisplays(),
         getMainWindow: () => mainWindow,
         ensureMainWindow,
+        presentMainWindow: showMainWindow,
         performHaptic: () => macHapticFeedback.performAlignment(),
         performCriticalAction: async (action) => {
           if (!agentService || !remoteServerManager) throw new Error("OpenBot is not ready.");
@@ -1350,10 +1365,10 @@ if (!hasSingleInstanceLock) {
       powerMonitor.on("resume", reconcileDynamicIsland);
       const teamIdentity = teamStore.getIdentity();
       if (
-        !developmentRemoteRole &&
         shouldAutoStartHost({
           configured: Boolean(teamIdentity),
           enabledOnLaunch: teamIdentity?.enabledOnLaunch ?? false,
+          remoteRole: developmentRemoteRole,
         })
       ) {
         void centralAuthInitialization
@@ -1366,11 +1381,11 @@ if (!hasSingleInstanceLock) {
 
       app.on("activate", () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.show();
+          showMainWindow(mainWindow);
           return;
         }
         void ensureMainWindow()
-          .then((window) => window.show())
+          .then(showMainWindow)
           .catch((error) => console.error("Unable to open the main window:", error));
       });
     })
@@ -1587,7 +1602,7 @@ function configureServerLogoProtocols(teamStore: TeamStore): void {
     try {
       const url = new URL(request.url);
       const logo = teamStore.resolveLogo();
-      if (url.hostname !== "local" || !logo || logo.version !== url.searchParams.get("v")) {
+      if (url.hostname !== LOCAL_SERVER_ID || !logo || logo.version !== url.searchParams.get("v")) {
         return new Response("Not found", { status: 404 });
       }
       return new Response(await readFile(logo.path), {

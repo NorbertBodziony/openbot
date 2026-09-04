@@ -2,18 +2,39 @@ import type { AccountUsage, AccountUsageLimit, AccountUsageWindow } from "@openb
 import { isNumber } from "@openbot/contracts/runtime-values";
 import type { AccountRateLimitResult, AccountRateLimitsReadResult } from "../protocol";
 
-export function normalizeAccountUsage(rateLimits: AccountRateLimitsReadResult | null): AccountUsage {
+export function normalizeAccountUsage(rateLimits: AccountRateLimitsReadResult | null, model?: string): AccountUsage {
   const entries = rateLimits?.rateLimitsByLimitId
     ? Object.entries(rateLimits.rateLimitsByLimitId).filter((entry): entry is [string, AccountRateLimitResult] =>
         Boolean(entry[1]),
       )
     : [];
-  if (entries.length === 0 && rateLimits?.rateLimits) {
-    entries.push([rateLimits.rateLimits.limitId ?? "codex", rateLimits.rateLimits]);
-  }
-  const limits = entries.map(([id, limit]) => normalizeAccountLimit(id, limit));
+  const fallback: [string, AccountRateLimitResult] | null = rateLimits?.rateLimits
+    ? [rateLimits.rateLimits.limitId ?? "codex", rateLimits.rateLimits]
+    : null;
+  const selectedEntries = model
+    ? selectModelRateLimits(entries, model, fallback)
+    : entries.length > 0
+      ? entries
+      : fallback
+        ? [fallback]
+        : [];
+  const limits = selectedEntries.map(([id, limit]) => normalizeAccountLimit(id, limit));
 
   return { limits };
+}
+
+function selectModelRateLimits(
+  entries: Array<[string, AccountRateLimitResult]>,
+  model: string,
+  fallback: [string, AccountRateLimitResult] | null,
+): Array<[string, AccountRateLimitResult]> {
+  const normalizedModel = model.trim().toLowerCase();
+  const modelSpecific = entries.filter(([, limit]) =>
+    [limit.limitName, limit.normalModelSlug].some((candidate) => candidate?.trim().toLowerCase() === normalizedModel),
+  );
+  if (modelSpecific.length > 0) return modelSpecific;
+  if (fallback) return [fallback];
+  return entries.filter(([id, limit]) => id === "codex" || limit.limitId === "codex");
 }
 
 export function normalizeAccountLimit(id: string, limit: AccountRateLimitResult): AccountUsageLimit {
