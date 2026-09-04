@@ -36,7 +36,11 @@ export function ChatComposer({
   const hasDraft = Boolean(draft.trim());
 
   return (
-    <View className="flex-row items-end gap-2 px-4 pt-2" style={{ paddingBottom: Math.max(bottomInset, 10) }}>
+    <View
+      className="flex-row items-end gap-2 px-4 pt-2"
+      pointerEvents="box-none"
+      style={{ paddingBottom: Math.max(bottomInset, 10) }}
+    >
       <ChatGlassIconButton
         accessibilityLabel="Add attachment"
         fallbackBackground={fallbackBackground}

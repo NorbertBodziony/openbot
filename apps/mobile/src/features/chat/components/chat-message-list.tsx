@@ -27,6 +27,7 @@ const STARTER_OPTIONS = [
 
 interface ChatMessageListProps {
   bot: MobileBot;
+  bottomInset: number;
   fieldBackground: ViewStyle["backgroundColor"];
   foreground: ViewStyle["backgroundColor"];
   messages: ChatMessage[];
@@ -43,6 +44,7 @@ interface ChatMessageListProps {
 export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(function ChatMessageList(
   {
     bot,
+    bottomInset,
     fieldBackground,
     foreground,
     messages,
@@ -67,7 +69,7 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
         flexGrow: 1,
         gap: 10,
         justifyContent: "flex-end",
-        paddingBottom: 20,
+        paddingBottom: bottomInset + 20,
         paddingHorizontal: 16,
         paddingTop: topInset + 84,
       }}
@@ -75,6 +77,7 @@ export const ChatMessageList = forwardRef<ScrollView, ChatMessageListProps>(func
       keyboardDismissMode="interactive"
       keyboardShouldPersistTaps="handled"
       onContentSizeChange={onContentSizeChange}
+      onLayout={onContentSizeChange}
       onScroll={onScroll}
       scrollEventThrottle={16}
       showsVerticalScrollIndicator={false}

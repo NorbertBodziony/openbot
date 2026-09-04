@@ -34,7 +34,9 @@ Remote connection recovery makes up to five attempts, waiting 10 seconds after e
 five failures it waits two minutes before starting a new series. The bot list shows `Reconnecting`
 beside the server-list button in the header, with a smaller attempt counter and retry countdown below.
 The status disappears once connected. Chat shows a compact, centered `Reconnecting · x/5 · m:ss`
-above the composer, with the same animated digits and no banner. It follows the keyboard and disappears
+above the composer, with the same animated digits and no banner. The composer and status float over
+the message list on a transparent layer; bottom spacing keeps the last message clear of the controls.
+The status follows the keyboard and disappears
 after reconnecting. Countdown ticks are local UI
 updates, not requests. Backgrounding suspends retries; returning respects any remaining wait and
 starts at most one attempt if its deadline has passed. A successful connection resets the counter. Dead

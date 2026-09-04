@@ -9,6 +9,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   type ScrollView,
+  View,
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -39,6 +40,7 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
   const isFocused = useIsFocused();
   const [appActive, setAppActive] = useState(AppState.currentState === "active");
   const [atLatest, setAtLatest] = useState(false);
+  const [composerHeight, setComposerHeight] = useState(0);
   const insets = useSafeAreaInsets();
   const { leaveBotChatAnimated } = useBotPinTransition();
   const scrollViewRef = useRef<ScrollView>(null);
@@ -153,44 +155,53 @@ export function MobileChatView({ animateAvatarOnExit = false, bot }: MobileChatV
         className="flex-1"
         style={{ backgroundColor: background }}
       >
-        <ChatHeader
-          bot={bot}
-          fallbackBackground={fieldBackground}
-          foreground={foreground}
-          liquidGlassAvailable={liquidGlassAvailable}
-          topInset={insets.top}
-          onBack={handleLeaveConversation}
-        />
-        <ChatMessageList
-          ref={scrollViewRef}
-          bot={bot}
-          fieldBackground={fieldBackground}
-          foreground={foreground}
-          messages={messages}
-          muted={muted}
-          raised={raised}
-          showStarter={showStarter && messages.length === 0}
-          topInset={insets.top}
-          onContentSizeChange={handleContentSizeChange}
-          onScroll={handleScroll}
-          onDismissStarter={() => setShowStarter(false)}
-          onSelectStarter={sendMessage}
-        />
-        <ConnectionStatus server={servers.find((server) => server.id === bot.serverId)} />
-        <ChatComposer
-          action={action}
-          actionForeground={actionForeground}
-          botName={bot.name}
-          bottomInset={insets.bottom}
-          draft={draft}
-          fallbackBackground={fieldBackground}
-          foreground={foreground}
-          liquidGlassAvailable={liquidGlassAvailable}
-          muted={muted}
-          raised={raised}
-          onChangeDraft={setDraft}
-          onSend={() => sendMessage()}
-        />
+        <View className="flex-1">
+          <ChatHeader
+            bot={bot}
+            fallbackBackground={fieldBackground}
+            foreground={foreground}
+            liquidGlassAvailable={liquidGlassAvailable}
+            topInset={insets.top}
+            onBack={handleLeaveConversation}
+          />
+          <ChatMessageList
+            ref={scrollViewRef}
+            bot={bot}
+            bottomInset={composerHeight}
+            fieldBackground={fieldBackground}
+            foreground={foreground}
+            messages={messages}
+            muted={muted}
+            raised={raised}
+            showStarter={showStarter && messages.length === 0}
+            topInset={insets.top}
+            onContentSizeChange={handleContentSizeChange}
+            onScroll={handleScroll}
+            onDismissStarter={() => setShowStarter(false)}
+            onSelectStarter={sendMessage}
+          />
+          <View
+            className="absolute inset-x-0 bottom-0"
+            pointerEvents="box-none"
+            onLayout={({ nativeEvent: { layout } }) => setComposerHeight(layout.height)}
+          >
+            <ConnectionStatus server={servers.find((server) => server.id === bot.serverId)} />
+            <ChatComposer
+              action={action}
+              actionForeground={actionForeground}
+              botName={bot.name}
+              bottomInset={insets.bottom}
+              draft={draft}
+              fallbackBackground={fieldBackground}
+              foreground={foreground}
+              liquidGlassAvailable={liquidGlassAvailable}
+              muted={muted}
+              raised={raised}
+              onChangeDraft={setDraft}
+              onSend={() => sendMessage()}
+            />
+          </View>
+        </View>
       </KeyboardAvoidingView>
     </GestureDetector>
   );
