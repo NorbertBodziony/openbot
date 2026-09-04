@@ -10,7 +10,7 @@
 // what keeps the one source of truth from decaying back into three.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { extname, join, resolve } from "node:path";
+import { dirname, extname, join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const repositoryRoot = resolve(import.meta.dirname, "..");
@@ -67,16 +67,16 @@ const sharedTokens = readRootTokens(SHARED_TOKENS);
 
 describe("design tokens", () => {
   it("declares every token in the shared palette and nowhere else", () => {
-    const redeclared: string[] = [];
+    const redeclared = new Set<string>();
     for (const surface of SURFACES) {
       for (const file of stylesheetsOf(surface)) {
         for (const name of readRootTokens(file).keys()) {
-          if (!(name in SURFACE_OVERRIDES)) redeclared.push(`${file}: ${name}`);
+          if (!(name in SURFACE_OVERRIDES)) redeclared.add(`${file}: ${name}`);
         }
       }
     }
 
-    expect(redeclared).toEqual([]);
+    expect([...redeclared].sort()).toEqual([]);
   });
 
   // The failure this replaces is silent: a var() naming a token the surface never
@@ -90,7 +90,12 @@ describe("design tokens", () => {
         for (const name of readDeclaredTokens(file)) declared.add(name);
       }
 
-      for (const [name, where] of readReferencedTokens(surface.sources)) {
+      const scanned = new Set<string>(stylesheetsOf(surface));
+      for (const source of surface.sources) {
+        for (const path of filesUnder(source)) if (extname(path) !== ".css") scanned.add(path);
+      }
+
+      for (const [name, where] of readReferencedTokens([...scanned])) {
         if (!declared.has(name)) unresolved.push(`${surface.name} ${where}: ${name}`);
       }
     }
@@ -168,16 +173,48 @@ function readRootTokens(path: string): Map<string, string> {
   return tokens;
 }
 
-// Every stylesheet a surface loads, not just the entry point it names. Checking
-// only the entry would leave the guarantee open at the likeliest place to break
-// it: a partial under styles/ opening its own :root block is a second declaration
-// site, and nothing about the import graph makes that visible.
+// Every stylesheet a surface actually loads: the entry, everything it @imports
+// transitively, every stylesheet under its own directories, and any CSS a
+// component pulls in from TypeScript. Listing files by directory alone was not
+// enough - packages/brand/src/logo.css lives outside all three surfaces yet is
+// loaded by two of them and reads eight palette tokens, so a name dropped from
+// the palette would have broken the logo with every assertion here still green.
+// The two palette files themselves are excluded: declaring tokens is their job.
 function stylesheetsOf(surface: (typeof SURFACES)[number]): readonly string[] {
-  const paths = new Set<string>([surface.entry]);
+  const loaded = new Set<string>();
+  follow(surface.entry, loaded);
   for (const source of surface.sources) {
-    for (const path of filesUnder(source)) if (extname(path) === ".css") paths.add(path);
+    for (const path of filesUnder(source)) {
+      if (extname(path) === ".css") follow(path, loaded);
+      else for (const imported of stylesheetImports(path)) follow(imported, loaded);
+    }
   }
-  return [...paths];
+
+  loaded.delete(SHARED_TOKENS);
+  loaded.delete(NATIVE_TOKENS);
+  return [...loaded];
+}
+
+function follow(path: string, loaded: Set<string>): void {
+  if (loaded.has(path)) return;
+  loaded.add(path);
+  for (const imported of stylesheetImports(path)) follow(imported, loaded);
+}
+
+// The repository-local stylesheets a file pulls in, by @import in CSS or by a
+// side-effect import in TypeScript. A bare specifier we do not publish - the
+// Tailwind, uniwind, HeroUI and font packages - is somebody else's stylesheet.
+function stylesheetImports(path: string): readonly string[] {
+  const imports: string[] = [];
+  for (const match of read(path).matchAll(/import\s+"([^"]+)"/gu)) {
+    const specifier = match[1];
+    if (specifier.startsWith(".")) imports.push(join(dirname(path), specifier));
+    else {
+      const packaged = /^@openbot\/brand\/(.+\.css)$/u.exec(specifier);
+      if (packaged) imports.push(`packages/brand/src/${packaged[1]}`);
+    }
+  }
+  return imports;
 }
 
 // The text of a line, cut at every brace, with the braces kept as their own parts.
@@ -206,14 +243,11 @@ function readDeclaredTokens(path: string): readonly string[] {
 
 // var(--openbot-x) in CSS and JSX, plus uniwind's useCSSVariable("--openbot-x"),
 // which is how mobile reads a token outside a class name.
-function readReferencedTokens(sources: readonly string[]): readonly (readonly [string, string])[] {
+function readReferencedTokens(paths: readonly string[]): readonly (readonly [string, string])[] {
   const references: (readonly [string, string])[] = [];
-  for (const source of sources) {
-    for (const path of filesUnder(source)) {
-      if (path === SHARED_TOKENS) continue;
-      for (const match of read(path).matchAll(/(?:var\(|useCSSVariable\(")\s*(--openbot-[a-z0-9-]+)/gu)) {
-        references.push([match[1], path]);
-      }
+  for (const path of paths) {
+    for (const match of read(path).matchAll(/(?:var\(|useCSSVariable\(")\s*(--openbot-[a-z0-9-]+)/gu)) {
+      references.push([match[1], path]);
     }
   }
   return references;
