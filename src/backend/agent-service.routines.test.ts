@@ -462,6 +462,14 @@ describe.sequential("AgentService: routines", () => {
       "inside this agent's workspace or the OpenBot shared directory",
       turnId,
     );
+    await expectOpenBotToolError(
+      client,
+      threadId,
+      "attach_files_to_response",
+      { paths: [screenshotPath, screenshotPath] },
+      "Duplicate attachment paths are not allowed.",
+      turnId,
+    );
 
     const publishedPath = join(store.sharedRoot, "published-screenshot.png");
     await writeFile(publishedPath, screenshot);
