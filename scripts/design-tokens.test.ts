@@ -18,6 +18,13 @@ const repositoryRoot = resolve(import.meta.dirname, "..");
 const SHARED_TOKENS = "packages/brand/src/tokens.css";
 const NATIVE_TOKENS = "packages/brand/src/tokens-native.css";
 
+// How each palette is spelled at an import site. Everything else here asserts what
+// the shared file contains; this is what ties a surface to it.
+const IMPORT_OF: Readonly<Record<string, string>> = {
+  [SHARED_TOKENS]: '@import "@openbot/brand/tokens.css";',
+  [NATIVE_TOKENS]: '@import "@openbot/brand/tokens-native.css";',
+};
+
 // Where a surface is allowed to look for a token: the shared palette, plus files
 // that legitimately bind one in a narrower scope. Anything a surface references
 // and none of these declares is a token that resolves to nothing at runtime.
@@ -27,27 +34,33 @@ const SURFACES = [
     // styles.css imports every partial under styles/, and Storybook renders the
     // same components against the same palette.
     sources: ["src/renderer/src", "src/renderer/stories", ".storybook"],
-    rootDeclarations: ["src/renderer/src/styles.css"],
+    entry: "src/renderer/src/styles.css",
+    imports: [SHARED_TOKENS],
     scopedDeclarations: ["src/renderer/src/styles/settings-modal.css"],
   },
   {
     name: "public web",
     sources: ["apps/auth-api/src"],
-    rootDeclarations: ["apps/auth-api/src/styles.css"],
+    entry: "apps/auth-api/src/styles.css",
+    imports: [SHARED_TOKENS],
     // The /app-preview route imports the renderer's stylesheet wholesale.
     scopedDeclarations: ["src/renderer/src/styles/settings-modal.css"],
   },
   {
     name: "mobile",
     sources: ["apps/mobile/src", "apps/mobile/global.css"],
-    rootDeclarations: ["apps/mobile/global.css"],
+    entry: "apps/mobile/global.css",
+    imports: [SHARED_TOKENS, NATIVE_TOKENS],
     scopedDeclarations: [NATIVE_TOKENS],
   },
 ] as const;
 
-// A surface may redeclare a shared token only with the reason written down. The
-// point of the escape hatch is that the reason travels with the name, so the next
-// person can tell a deliberate override from a copy someone forgot to delete.
+// A surface may declare a root --openbot-* of its own only with the reason written
+// down. The escape hatch is keyed by name so the reason travels with it, and the
+// next person can tell a deliberate override from a copy someone forgot to delete.
+// Scoping the rule to names already in the shared palette would not do: a
+// surface-only name is a second declaration site just the same, and the surface
+// that owns it is the one place nobody else looks.
 const SURFACE_OVERRIDES: Readonly<Record<string, string>> = {};
 
 const sharedTokens = readRootTokens(SHARED_TOKENS);
@@ -58,7 +71,7 @@ describe("design tokens", () => {
     for (const surface of SURFACES) {
       for (const file of stylesheetsOf(surface)) {
         for (const name of readRootTokens(file).keys()) {
-          if (sharedTokens.has(name) && !(name in SURFACE_OVERRIDES)) redeclared.push(`${file}: ${name}`);
+          if (!(name in SURFACE_OVERRIDES)) redeclared.push(`${file}: ${name}`);
         }
       }
     }
@@ -73,7 +86,7 @@ describe("design tokens", () => {
     const unresolved: string[] = [];
     for (const surface of SURFACES) {
       const declared = new Set(sharedTokens.keys());
-      for (const file of [...surface.rootDeclarations, ...surface.scopedDeclarations]) {
+      for (const file of [surface.entry, ...surface.scopedDeclarations]) {
         for (const name of readDeclaredTokens(file)) declared.add(name);
       }
 
@@ -83,6 +96,22 @@ describe("design tokens", () => {
     }
 
     expect(unresolved.sort()).toEqual([]);
+  });
+
+  // Everything above assumes the surface can see the shared palette, and an
+  // @import is the entirety of what makes that true. Delete one and every other
+  // assertion here stays green while that surface renders with no palette at all -
+  // the exact silent half-change this file exists to stop.
+  it("imports the shared palette into every surface", () => {
+    const missing: string[] = [];
+    for (const surface of SURFACES) {
+      const entry = read(surface.entry);
+      for (const palette of surface.imports) {
+        if (!entry.includes(IMPORT_OF[palette])) missing.push(`${surface.entry}: ${IMPORT_OF[palette]}`);
+      }
+    }
+
+    expect(missing).toEqual([]);
   });
 
   // uniwind hard-codes its theme list to ['light', 'dark'] and reads a theme's
@@ -144,7 +173,7 @@ function readRootTokens(path: string): Map<string, string> {
 // it: a partial under styles/ opening its own :root block is a second declaration
 // site, and nothing about the import graph makes that visible.
 function stylesheetsOf(surface: (typeof SURFACES)[number]): readonly string[] {
-  const paths = new Set<string>(surface.rootDeclarations);
+  const paths = new Set<string>([surface.entry]);
   for (const source of surface.sources) {
     for (const path of filesUnder(source)) if (extname(path) === ".css") paths.add(path);
   }

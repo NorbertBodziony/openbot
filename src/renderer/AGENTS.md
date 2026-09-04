@@ -52,9 +52,10 @@ SolidJS conventions, tokens, typography, spacing, icons and accessibility requir
 
 Use `lucide-solid` icons, and reuse a suitable one before adding an inline SVG or a local icon
 component — document the exception next to any custom icon. The `:root` properties in
-`src/renderer/src/styles.css` are the palette: use the closest semantic `--openbot-*` token,
-including opacity variants, instead of a colour literal, and add a token only for a new semantic
-role. Keep compatibility aliases that are in use, and isolate fixed integration, generated-asset,
+`packages/brand/src/tokens.css` are the palette, shared with the web and mobile apps: use the
+closest semantic `--openbot-*` token, including opacity variants, instead of a colour literal, and
+add a token only for a new semantic role — there, not in a renderer stylesheet, which
+`scripts/design-tokens.test.ts` rejects. Keep compatibility aliases that are in use, and isolate fixed integration, generated-asset,
 SVG and platform colours at their boundaries.
 
 ## Waiting in a renderer test

@@ -1,6 +1,6 @@
 # OpenBot UI foundation
 
-OpenBot jest dark-first i korzysta z kompaktowej skali kontrolek: 24 px dla elementów pomocniczych, 28 px dla toolbarów, 32 px jako standard oraz 36 px dla ważnych akcji. Paleta i wszystkie globalne tokeny pozostają w `src/renderer/src/styles.css`. Reset i role bazowe są w `styles/base.css`, prymitywy w `styles/primitives.css`, a reguły ekranów w arkuszach feature'ów. Żaden z tych plików nie definiuje własnej palety.
+OpenBot jest dark-first i korzysta z kompaktowej skali kontrolek: 24 px dla elementów pomocniczych, 28 px dla toolbarów, 32 px jako standard oraz 36 px dla ważnych akcji. Paleta i wszystkie globalne tokeny `--openbot-*` mieszkają w `packages/brand/src/tokens.css` — jednym pliku, który importują też web i mobile; `src/renderer/src/styles.css` tylko go importuje i dokłada zmienne animacji renderera. Reset i role bazowe są w `styles/base.css`, prymitywy w `styles/primitives.css`, a reguły ekranów w arkuszach feature'ów. Żaden z tych plików nie definiuje własnej palety.
 
 ## Publiczne API
 
