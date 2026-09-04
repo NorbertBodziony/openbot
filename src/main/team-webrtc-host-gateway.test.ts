@@ -6,7 +6,10 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isString } from "@openbot/contracts/runtime-values";
-import { TEAM_AGENT_ACTIVITY_CAPABILITY } from "@openbot/contracts/team-protocol/current";
+import {
+  TEAM_AGENT_ACTIVITY_CAPABILITY,
+  TEAM_MODEL_SCOPED_USAGE_CAPABILITY,
+} from "@openbot/contracts/team-protocol/current";
 import { decodeTeamProtocolV1ClientEvent } from "@openbot/contracts/team-protocol/v1";
 import {
   decodeTeamProtocolV2AuthFrame,
@@ -79,9 +82,23 @@ describe("TeamWebRtcHostGateway", () => {
     const eventScopes: Array<
       Extract<ReturnType<typeof decodeTeamProtocolV1ClientEvent>, { type: "agent-event-scope" }>
     > = [];
-    const localServer = createServer((_request, response) => {
+    const localRequests: Array<{ path: string; protocol: string }> = [];
+    const scopedUsage = {
+      limits: [
+        {
+          id: "claude",
+          primary: null,
+          secondary: { usedPercent: 37, windowDurationMins: 10_080, resetsAt: 1_788_825_600 },
+        },
+      ],
+    };
+    const localServer = createServer((request, response) => {
+      localRequests.push({
+        path: request.url ?? "",
+        protocol: String(request.headers["openbot-protocol-version"] ?? ""),
+      });
       response.writeHead(200, { "content-type": "application/json" });
-      response.end("{}");
+      response.end(JSON.stringify(request.url === "/v1/agents/research/usage" ? scopedUsage : {}));
     });
     const eventsServer = new WebSocketServer({ server: localServer });
     eventsServer.on("connection", (socket) => {
@@ -237,6 +254,38 @@ describe("TeamWebRtcHostGateway", () => {
     );
     await vi.waitFor(() => expect(eventScopes).toHaveLength(2));
     expect(eventScopes[1]?.capabilities).toContain(TEAM_AGENT_ACTIVITY_CAPABILITY);
+    bridge.emit(
+      "data",
+      "host-1",
+      "rpc",
+      encodeTeamProtocolV2Frame({
+        version: 2,
+        type: "request",
+        requestId: "scoped-usage-request",
+        operation: "http.request",
+        payload: {
+          method: "GET",
+          path: "/v1/agents/research/usage",
+          body: {},
+          capabilities: [TEAM_MODEL_SCOPED_USAGE_CAPABILITY],
+        },
+      }),
+    );
+    await vi.waitFor(() => expect(localRequests).toContainEqual({ path: "/v1/agents/research/usage", protocol: "3" }));
+    await vi.waitFor(() => {
+      const response = bridge.sent.find((message) => {
+        if (message.channel !== "rpc" || !isString(message.data)) return false;
+        try {
+          const frame = decodeTeamProtocolV2RpcFrame(message.data);
+          return frame.type === "response" && frame.requestId === "scoped-usage-request";
+        } catch {
+          return false;
+        }
+      });
+      if (!response || !isString(response.data)) throw new Error("Missing scoped usage response.");
+      const frame = decodeTeamProtocolV2RpcFrame(response.data);
+      expect(frame).toMatchObject({ type: "response", result: { status: 200, body: scopedUsage } });
+    });
     let resolveFetch!: (response: Response) => void;
     const fetchRequest = vi
       .spyOn(globalThis, "fetch")

@@ -32,6 +32,7 @@ import type { SkillMarketplaceService } from "../skill-marketplace-service";
 import { handleTrusted } from "../trusted-ipc";
 import {
   parseAcknowledgeFailedTurn,
+  parseAgentId,
   parseAgentRequest,
   parseApprovalResponse,
   parseBrowserTakeoverResponse,
@@ -77,10 +78,13 @@ export function registerAgentIpcHandlers({
     });
   });
   handleTrusted(IPC_CHANNELS.agentGetUsage, parseAgentRequest, (parsed) => {
+    const botId = parseAgentId(parsed.payload);
     return routeToServer(parsed.serverId, {
-      local: () => service.getUsage(),
+      local: () => service.getUsage(botId),
       remote: (serverId) =>
-        remoteServers.request(TEAM_API_ROUTES.agents.usage, {}, serverId, decodeAccountUsageFromHost),
+        remoteServers.supportsCapability(serverId, "model-scoped-usage")
+          ? remoteServers.request(TEAM_API_ROUTES.agent.usage(botId), {}, serverId, decodeAccountUsageFromHost)
+          : { limits: [] },
     });
   });
   handleTrusted(IPC_CHANNELS.agentListModels, parseAgentRequest, (parsed) => {
