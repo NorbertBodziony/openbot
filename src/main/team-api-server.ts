@@ -24,7 +24,7 @@ import {
   type TeamRealtimeEvent,
   type UpdateQueuedMessageInput,
 } from "@openbot/contracts/ipc";
-import { isBoolean, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { isBoolean, isString } from "@openbot/contracts/runtime-values";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import {
   isTeamCurrentCapability,
@@ -79,15 +79,16 @@ import {
   pathIdentifier,
   promptAnswers,
   promptRequestId,
-  publicHttpBaseUrl,
   readBinary,
   readJson,
   requestCapabilities,
   requestProtocol,
-  requireAdmin,
   stringArray,
   stringField,
 } from "./team-api/request-helpers";
+import { routeDirect } from "./team-api/route-direct";
+import { routeRemoteScreen } from "./team-api/route-remote-screen";
+import { routeTeam } from "./team-api/route-team";
 import { TeamStoreError } from "./team-store";
 
 const EVENT_PAYLOAD_LIMIT = 256 * 1_024;
@@ -490,97 +491,10 @@ export class TeamApiServer {
       const context = this.#requestContext(request, response, url, token, authenticated);
       const member = context.member;
 
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.auth.logout) {
-        await this.#options.store.logout(token);
-        await this.#options.remoteScreen?.revokeTeamSession(authenticated.sessionId);
-        this.refreshPresence();
-        return this.#empty(response, 204);
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.auth.password) {
-        const body = await readJson(request);
-        await this.#options.store.changePassword(
-          member.id,
-          stringField(body, "currentPassword", false, 256),
-          stringField(body, "newPassword", false, 256),
-        );
-        await this.#options.remoteScreen?.revokeMember(member.id);
-        this.refreshPresence();
-        return this.#empty(response, 204);
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.me) {
-        return this.#json(response, 200, member);
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.team.presence) {
-        return this.#json(response, 200, this.getPresence());
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.team.logo) {
-        const logo = this.#options.store.resolveLogo();
-        if (!logo || (url.searchParams.get("v") && url.searchParams.get("v") !== logo.version)) {
-          return this.#json(response, 404, { error: "Server logo not found." });
-        }
-        const bytes = await readFile(logo.path);
-        response.writeHead(200, {
-          "Content-Type": logo.mimeType,
-          "Content-Length": String(bytes.length),
-          "Cache-Control": "private, max-age=31536000, immutable",
-          "X-Content-Type-Options": "nosniff",
-        });
-        response.end(bytes);
-        return;
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.events) {
-        return this.#json(response, 426, { error: "Use WebSocket for remote events." });
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.remoteScreen.capabilities) {
-        if (!this.#options.remoteScreen)
-          throw new RemoteScreenError(503, "host_unavailable", "Remote control is unavailable.");
-        return this.#json(response, 200, this.#options.remoteScreen.capabilities());
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.remoteScreen.sessions) {
-        const identity = this.#options.store.getIdentity();
-        if (!identity || !this.#options.remoteScreen) {
-          throw new RemoteScreenError(503, "host_unavailable", "Remote control is unavailable.");
-        }
-        return this.#json(
-          response,
-          201,
-          await this.#options.remoteScreen.createSession({
-            serverId: identity.serverId,
-            memberId: member.id,
-            teamSessionId: authenticated.sessionId,
-            teamSessionExpiresAt: authenticated.sessionExpiresAt,
-            publicHttpBaseUrl: publicHttpBaseUrl(request),
-          }),
-        );
-      }
-      if (method === "PUT" && url.pathname === TEAM_API_ROUTES.remoteScreen.display) {
-        if (!this.#options.remoteScreen) {
-          throw new RemoteScreenError(503, "host_unavailable", "Remote control is unavailable.");
-        }
-        const body = await readJson(request);
-        await this.#options.remoteScreen.selectDisplay(stringField(body, "displayId"));
-        return this.#empty(response, 204);
-      }
-      const remoteScreenSessionMatch = url.pathname.match(/^\/v1\/remote-screen\/sessions\/([^/]+)$/);
-      if (method === "DELETE" && remoteScreenSessionMatch) {
-        if (!this.#options.remoteScreen) {
-          throw new RemoteScreenError(503, "host_unavailable", "Remote control is unavailable.");
-        }
-        const sessionId = pathIdentifier(remoteScreenSessionMatch[1], "sessionId");
-        if (!(await this.#options.remoteScreen.closeMemberSession(sessionId, member.id))) {
-          throw new RemoteScreenError(404, "session_expired", "Remote control session not found.");
-        }
-        return this.#empty(response, 204);
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.host.remoteMac) {
-        return this.#json(response, 426, { error: "Update required.", code: "protocol_mismatch" });
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.host.remoteDesktopAccess) {
-        return this.#json(response, 426, { error: "Update required.", code: "protocol_mismatch" });
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.direct.threads) {
-        return this.#json(response, 200, this.listDirectThreads(member.id));
-      }
+      if ((await this.#routeTeam(context)) === "handled") return;
+      if ((await this.#routeRemoteScreen(context)) === "handled") return;
+      if ((await this.#routeDirect(context)) === "handled") return;
+
       if (method === "GET" && url.pathname === TEAM_API_ROUTES.messages.search) {
         const query = url.searchParams.get("q") ?? "";
         if (!query.trim() || query.length > INPUT_LIMITS.messageText) {
@@ -593,50 +507,6 @@ export class TeamApiServer {
             query,
             url.searchParams.get("botId") ?? undefined,
             url.searchParams.get("cursor") ?? undefined,
-            pageLimit(url),
-          ),
-        );
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.direct.messages) {
-        const body = await readJson(request);
-        return this.#json(
-          response,
-          201,
-          this.sendDirectMessage(member.id, {
-            memberId: stringField(body, "memberId", false, INPUT_LIMITS.identifier),
-            text: stringField(body, "text", false, INPUT_LIMITS.directMessageText),
-            clientMessageId: stringField(body, "clientMessageId", false, INPUT_LIMITS.identifier),
-          }),
-        );
-      }
-      const directConversationMatch = url.pathname.match(/^\/v1\/direct\/conversations\/([^/]+)(?:\/(read|page))?$/);
-      if (method === "GET" && directConversationMatch && !directConversationMatch[2]) {
-        return this.#json(
-          response,
-          200,
-          this.readDirectConversation(member.id, pathIdentifier(directConversationMatch[1], "memberId")),
-        );
-      }
-      if (method === "POST" && directConversationMatch?.[2] === "read") {
-        const body = await readJson(request);
-        const throughSequence = body.throughSequence;
-        if (!isNumber(throughSequence) || !Number.isSafeInteger(throughSequence)) {
-          throw new HttpError(400, "Invalid direct-message read boundary.");
-        }
-        return this.#json(
-          response,
-          200,
-          this.markDirectRead(member.id, pathIdentifier(directConversationMatch[1], "memberId"), throughSequence),
-        );
-      }
-      if (method === "GET" && directConversationMatch?.[2] === "page") {
-        return this.#json(
-          response,
-          200,
-          this.readDirectConversationPage(
-            member.id,
-            pathIdentifier(directConversationMatch[1], "memberId"),
-            pageAnchor(url),
             pageLimit(url),
           ),
         );
@@ -774,72 +644,6 @@ export class TeamApiServer {
         response.end(bytes);
         return;
       }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.team.members) {
-        requireAdmin(member);
-        return this.#json(response, 200, this.#options.store.listMembers());
-      }
-      const memberMatch = url.pathname.match(/^\/v1\/team\/members\/([^/]+)$/);
-      if (method === "PATCH" && memberMatch) {
-        requireAdmin(member);
-        const body = await readJson(request);
-        const role = body.role;
-        const disabled = body.disabled;
-        if (role !== undefined && role !== "admin" && role !== "member") {
-          throw new HttpError(400, "Invalid role.");
-        }
-        if (disabled !== undefined && !isBoolean(disabled)) {
-          throw new HttpError(400, "disabled must be a boolean.");
-        }
-        const updated = await this.#options.store.updateMember(pathIdentifier(memberMatch[1], "memberId"), {
-          ...(role ? { role } : {}),
-          ...(disabled === undefined ? {} : { disabled }),
-        });
-        if (updated.disabled) await this.#options.remoteScreen?.revokeMember(updated.id);
-        this.refreshPresence();
-        return this.#json(response, 200, updated);
-      }
-      if (method === "DELETE" && memberMatch) {
-        requireAdmin(member);
-        const removedMemberId = pathIdentifier(memberMatch[1], "memberId");
-        await this.#options.store.removeMember(removedMemberId);
-        await this.#options.remoteScreen?.revokeMember(removedMemberId);
-        this.refreshPresence();
-        return this.#empty(response, 204);
-      }
-      if (method === "POST" && url.pathname === TEAM_API_ROUTES.team.invites) {
-        requireAdmin(member);
-        const body = await readJson(request);
-        const role = stringField(body, "role");
-        if (role !== "admin" && role !== "member") throw new HttpError(400, "Invalid role.");
-        const email = nullableString(body, "email", INPUT_LIMITS.email) ?? undefined;
-        if (!this.#options.createInvite) throw new HttpError(503, "Invitation service is unavailable.");
-        return this.#json(response, 201, await this.#options.createInvite({ role, ...(email ? { email } : {}) }));
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.team.invites) {
-        requireAdmin(member);
-        return this.#json(response, 200, this.#options.store.listInvites());
-      }
-      const inviteMatch = url.pathname.match(/^\/v1\/team\/invites\/([^/]+)$/);
-      if (method === "DELETE" && inviteMatch) {
-        requireAdmin(member);
-        await this.#options.store.revokeInvite(pathIdentifier(inviteMatch[1], "inviteId"));
-        return this.#empty(response, 204);
-      }
-      if (method === "GET" && url.pathname === TEAM_API_ROUTES.team.sessions) {
-        requireAdmin(member);
-        return this.#json(response, 200, this.#options.store.listSessions());
-      }
-      const sessionMatch = url.pathname.match(/^\/v1\/team\/sessions\/([^/]+)$/);
-      if (method === "DELETE" && sessionMatch) {
-        requireAdmin(member);
-        const revokedSessionId = pathIdentifier(sessionMatch[1], "sessionId");
-        await this.#options.store.revokeSession(revokedSessionId);
-        await this.#options.onSessionRevoked?.(revokedSessionId);
-        await this.#options.remoteScreen?.revokeTeamSession(revokedSessionId);
-        this.refreshPresence();
-        return this.#empty(response, 204);
-      }
-
       if (method === "GET" && url.pathname === TEAM_API_ROUTES.agents.status) {
         return this.#json(response, 200, this.#options.agents.getStatus());
       }
@@ -1151,6 +955,38 @@ export class TeamApiServer {
       if (!expected) (this.#options.logger ?? logger).error("Team API request failed:", toLogValue(error));
       return this.#json(response, status, { error: message, ...(code ? { code } : {}) });
     }
+  }
+
+  // One method per module, so the dispatcher above reads as a list of domains and the wiring of
+  // each narrow `*RouteDependencies` sits next to nothing else.
+  #routeTeam(context: TeamApiRequestContext): Promise<RouteOutcome> {
+    return routeTeam(context, {
+      store: this.#options.store,
+      remoteScreen: this.#options.remoteScreen,
+      createInvite: this.#options.createInvite,
+      onSessionRevoked: this.#options.onSessionRevoked,
+      getPresence: () => this.getPresence(),
+      refreshPresence: () => this.refreshPresence(),
+    });
+  }
+
+  #routeRemoteScreen(context: TeamApiRequestContext): Promise<RouteOutcome> {
+    return routeRemoteScreen(context, {
+      store: this.#options.store,
+      remoteScreen: this.#options.remoteScreen,
+    });
+  }
+
+  #routeDirect(context: TeamApiRequestContext): Promise<RouteOutcome> {
+    return routeDirect(context, {
+      listDirectThreads: (memberId) => this.listDirectThreads(memberId),
+      readDirectConversation: (memberId, otherMemberId) => this.readDirectConversation(memberId, otherMemberId),
+      readDirectConversationPage: (memberId, otherMemberId, anchor, limit) =>
+        this.readDirectConversationPage(memberId, otherMemberId, anchor, limit),
+      sendDirectMessage: (senderMemberId, input) => this.sendDirectMessage(senderMemberId, input),
+      markDirectRead: (memberId, otherMemberId, throughSequence) =>
+        this.markDirectRead(memberId, otherMemberId, throughSequence),
+    });
   }
 
   #checkRate(request: IncomingMessage, username: string): void {
