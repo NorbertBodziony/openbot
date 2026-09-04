@@ -540,9 +540,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return structuredClone(this.#status);
   }
 
-  async getUsage(): Promise<AccountUsage> {
-    const client = this.#clients.get("codex");
-    return client ? this.#refreshUsage(client) : { limits: [] };
+  async getUsage(botId?: string): Promise<AccountUsage> {
+    if (!botId) {
+      const client = this.#clients.get("codex");
+      return client ? this.#refreshUsage(client) : { limits: [] };
+    }
+    const bot = this.listBots().find((candidate) => candidate.id === botId);
+    if (!bot) throw new Error("Agent not found.");
+    const client = this.#clients.get(bot.provider);
+    return client ? this.#refreshUsage(client, bot.model, false) : { limits: [] };
   }
 
   listBots(): BotSummary[] {
@@ -5291,10 +5297,14 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return client;
   }
 
-  async #refreshUsage(client: AgentClient): Promise<AccountUsage> {
-    const rateLimits = await client.request("account/rateLimits/read", undefined, decodeAccountRateLimitsReadResult);
-    const usage = normalizeAccountUsage(rateLimits);
-    this.#emit({ type: "usage-changed", usage: structuredClone(usage) });
+  async #refreshUsage(client: AgentClient, model?: string, emit = true): Promise<AccountUsage> {
+    const rateLimits = await client.request(
+      "account/rateLimits/read",
+      client.provider === "codex" ? undefined : { model },
+      decodeAccountRateLimitsReadResult,
+    );
+    const usage = normalizeAccountUsage(rateLimits, client.provider === "codex" ? model : undefined);
+    if (emit) this.#emit({ type: "usage-changed", usage: structuredClone(usage) });
     return structuredClone(usage);
   }
 

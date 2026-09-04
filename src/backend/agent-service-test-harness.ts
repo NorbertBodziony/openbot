@@ -95,6 +95,7 @@ export class FakeAgentClient extends EventEmitter implements AgentClient {
   #threadCounter = 0;
   running = false;
   responseError: Error | null = null;
+  accountRateLimits: unknown = { rateLimits: null, rateLimitsByLimitId: null };
 
   constructor(
     readonly provider: AgentProvider,
@@ -138,7 +139,7 @@ export class FakeAgentClient extends EventEmitter implements AgentClient {
     }
     if (method === "account/login/cancel") result = { status: "cancelled" };
     if (method === "account/rateLimits/read") {
-      result = { rateLimits: null, rateLimitsByLimitId: null };
+      result = this.accountRateLimits;
     }
     if (method === "model/list") {
       result = {

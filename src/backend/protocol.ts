@@ -82,6 +82,8 @@ export interface AccountRateLimitWindowResult {
 
 export interface AccountRateLimitResult {
   limitId?: string | null;
+  limitName?: string | null;
+  normalModelSlug?: string | null;
   primary?: AccountRateLimitWindowResult | null;
   secondary?: AccountRateLimitWindowResult | null;
 }
@@ -278,6 +280,8 @@ function decodeRateLimit(value: unknown): AccountRateLimitResult | null | undefi
   const record = requiredRecord(value, "rate limit");
   return {
     limitId: optionalString(record, "limitId"),
+    limitName: optionalString(record, "limitName"),
+    normalModelSlug: optionalString(record, "normalModelSlug"),
     primary: decodeRateLimitWindow(record.primary),
     secondary: decodeRateLimitWindow(record.secondary),
   };

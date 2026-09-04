@@ -40,6 +40,7 @@ import type {
 } from "@openbot/contracts/ipc";
 import { LOCAL_SERVER_ID } from "@openbot/contracts/ipc";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
+import type { TeamCurrentCapability } from "@openbot/contracts/team-protocol/current";
 import { decodeTeamProtocolV1CurrentHttpResponse } from "@openbot/contracts/team-protocol/v1-adapter";
 import { decodeBotSummary, decodeDraftAttachment, decodeDuplicateBotResultFromHost } from "./remote-agent-decoding";
 import {
@@ -252,6 +253,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   get activeServerId(): string {
     return this.#store.activeServerId;
+  }
+
+  // What the host on the other end negotiated it can do. An IPC handler asks before calling a route
+  // an older host does not serve, so this answers false until compatibility is known rather than
+  // waiting for it -- a capability nobody has confirmed is one you cannot use yet.
+  supportsCapability(serverId: string, capability: TeamCurrentCapability): boolean {
+    return this.#connections.compatibilityFor(serverId)?.capabilities.includes(capability) ?? false;
   }
 
   startEventConnections(): void {
