@@ -52,11 +52,16 @@ export async function connectToDevApp(port: number, logger: Logger): Promise<Aut
   }
   logger.info(`CDP targets on :${port}`, targets || "(no pages yet)");
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
-  const page = browser.contexts().flatMap((context) => context.pages())[0];
+  const pages = browser.contexts().flatMap((context) => context.pages());
+  // The dev app opens helper surfaces (Dynamic Island popups) beside the main
+  // window, in no guaranteed order. Prefer the bare app URL; the popups carry
+  // a `surface=` query param.
+  const page = pages.find((candidate) => !candidate.url().includes("surface=")) ?? pages[0];
   if (!page) {
     await browser.close();
     throw new Error(`Connected over CDP but found no open window on :${port}. Focus the dev app and retry.`);
   }
+  logger.info(`driving ${page.url()}`);
   page.on("console", (message) => {
     logger.debug(`renderer console [${message.type()}]`, message.text().slice(0, 500));
   });
