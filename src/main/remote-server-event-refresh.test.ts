@@ -76,20 +76,30 @@ function harness() {
 }
 
 describe("RemoteEventRefresh", () => {
-  it("answers a burst of invalidations for one agent with a single refetch", async () => {
-    const { refresh, paths, replies, emitted, nextEmit } = harness();
+  it("holds a burst to one fetch in flight, then refetches once for what arrived during it", async () => {
+    const { refresh, paths, replies, emitted, nextRequest, nextEmit } = harness();
 
     refresh.forward("server", invalidated("research", 7));
     refresh.forward("server", invalidated("research", 7));
     refresh.forward("server", invalidated("research", 7));
     expect(paths).toHaveLength(1);
+
+    // Repeating a revision is not repeating an announcement. A read on another device moves the
+    // page's unread counts without moving its content revision, so the answer to the first fetch is
+    // already stale -- and comparing revisions alone cannot tell that from nothing having happened.
+    const refetched = nextRequest();
+    replies[0]?.resolve(conversationPage(7));
+    await refetched;
+
+    expect(emitted).toEqual([]);
+    expect(paths).toHaveLength(2);
 
     const shown = nextEmit();
-    replies[0]?.resolve(conversationPage(7));
+    replies[1]?.resolve(conversationPage(7));
     await shown;
 
-    expect(paths).toHaveLength(1);
-    expect(emitted.map((entry) => entry.event.type)).toEqual(["conversation-page"]);
+    expect(paths).toHaveLength(2);
+    expect(emitted.map((entry) => entry.event)).toEqual([{ type: "conversation-page", page: conversationPage(7) }]);
   });
 
   it("fetches again when a newer revision is announced while the first fetch is in flight", async () => {

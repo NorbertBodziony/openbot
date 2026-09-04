@@ -66,7 +66,8 @@ The service stores:
   times, and optional consumption time;
 - remote host records with the owner, name, optional logo, device public key, and authorization epoch;
 - remote memberships and invitations with roles, states, hashed invitation tokens, and lifecycle times;
-- logical remote session records with the account, host, start, end, and expiration times;
+- logical remote session records with the account, host, originating account-session hash, start,
+  end, and expiration times;
 - the current account avatar file and its content type when the user uploads an avatar.
 - optional host logo files and their content types when the owner uploads a logo.
 
@@ -83,7 +84,7 @@ the avatar without an account session.
 Cloudflare runs a maintenance task once each day. The task removes:
 
 - sign-in challenges after they expire or are consumed;
-- account sessions after they expire or are revoked;
+- account sessions after they are revoked (older already-expired sessions are also removed);
 - team authentication tickets after they expire or are consumed;
 - rate-limit records after their 15-minute window ends.
 
@@ -92,7 +93,15 @@ maintenance run can keep them until a later successful run. The task logs only a
 counts. It does not log account IDs, email addresses, IP addresses, tokens, or ticket values.
 
 Replacing or deleting an account avatar or host logo removes the previous R2 object on a best-effort
-basis. An abandoned logical remote session expires without a heartbeat.
+basis. Account/device sessions and logical remote sessions deliberately have no time-based expiration.
+Logout or device revocation ends access; removing a team membership ends access to that team.
+Revoking an account/device credential disconnects its active remote sessions, without disconnecting
+other authorized devices. Older remote sessions without a device binding are disconnected account-wide
+on revocation. Short-lived QR codes and connection tickets still expire.
+Settings → Profile → Account sessions lets you list and disconnect other desktop or mobile sign-ins.
+Only device/session labels, IDs, sign-in times and last-activity times are returned, never credentials.
+Mobile hidden and pinned chat preferences are stored on the phone, separately per account and server.
+Conversation read/unread changes are stored on the desktop host and shared with your other connected devices.
 
 ## Email delivery and infrastructure providers
 

@@ -23,8 +23,12 @@ import type { RemoteRequestFn } from "./remote-server-client";
 import { addRemotePreviewUrls, pageQuery } from "./remote-server-urls";
 
 // One in-flight conversation refetch, and the newest revision asked for while it was running.
+// `sequence` counts announcements that did not move the revision: a read on another device changes
+// the page's unread counts without changing its content revision, so the revision alone cannot tell
+// "nothing has happened" from "something happened that this page still has to be refetched for".
 interface ConversationRefresh {
   revision: number;
+  sequence: number;
 }
 
 // One in-flight queue refetch. The queue has no revision, so "changed again" is all there is to say.
@@ -121,22 +125,27 @@ export class RemoteEventRefresh {
     const key = `${serverId}\0${botId}`;
     const pending = this.#conversations.get(key);
     if (pending) {
+      if (pending.revision === revision) pending.sequence += 1;
       pending.revision = Math.max(pending.revision, revision);
       return;
     }
-    const request = { revision };
+    const request = { revision, sequence: 0 };
     this.#conversations.set(key, request);
     try {
       while (this.#hasServer(serverId)) {
         const requestedRevision = request.revision;
+        const requestedSequence = request.sequence;
         let page: ConversationPage;
         try {
           page = await this.#conversationPage(serverId, botId, INVALIDATED_CONVERSATION_LIMIT);
         } catch {
-          // A newer revision arrived while this failed, so the retry is for that one, not this one.
-          if (request.revision !== requestedRevision) continue;
+          // Something arrived while this failed, so the retry is for that one, not this one.
+          if (request.sequence !== requestedSequence || request.revision !== requestedRevision) continue;
           return;
         }
+        // A read cursor can change without changing the conversation's revision, so the page in hand
+        // is already stale even though its revision is current.
+        if (request.sequence !== requestedSequence) continue;
         // The host can answer with a page older than the revision it announced. Loop only if
         // something asked again in the meantime; otherwise the announcement was the stale one.
         if (page.revision >= request.revision) {

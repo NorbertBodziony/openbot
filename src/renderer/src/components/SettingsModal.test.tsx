@@ -1,4 +1,5 @@
 import type {
+  AccountSession,
   AvatarImageInput,
   CentralAuthUser,
   HostedSitesDesktopApi,
@@ -30,6 +31,45 @@ const idleUpdateStatus: UpdateStatus = {
 };
 
 describe("SettingsModal", () => {
+  it("disconnects another desktop from the account session list and preserves the current device", async () => {
+    const current: AccountSession = {
+      sessionId: "current",
+      name: "Current desktop",
+      kind: "desktop",
+      current: true,
+      connectedAt: 1,
+      lastActiveAt: 2,
+    };
+    const other: AccountSession = { ...current, sessionId: "other", name: "Other desktop", current: false };
+    let sessions = [current, other];
+    const revoke = vi.fn(async (sessionId: string) => {
+      sessions = sessions.filter((session) => session.sessionId !== sessionId);
+    });
+    render(() => (
+      <SettingsModal
+        open
+        onOpenChange={() => {}}
+        value={DEFAULT_GENERAL_SETTINGS}
+        onValueChange={() => {}}
+        appInfo={null}
+        updateStatus={idleUpdateStatus}
+        onUpdateAction={async () => {}}
+        account={account}
+        onUpdateAccountName={async () => {}}
+        onUpdateAccountAvatar={async () => {}}
+        onListAccountSessions={async () => sessions}
+        onRevokeAccountSession={revoke}
+      />
+    ));
+    await fireEvent.click(await screen.findByRole("tab", { name: "Profile" }));
+    await fireEvent.click(await screen.findByRole("button", { name: /^Disconnect Other desktop session/ }));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /^Disconnect Other desktop session/ })).not.toBeInTheDocument(),
+    );
+    expect(revoke).toHaveBeenCalledWith("other");
+    expect(screen.queryByRole("button", { name: /^Disconnect Current desktop session/ })).not.toBeInTheDocument();
+    expect(sessions).toEqual([current]);
+  });
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();

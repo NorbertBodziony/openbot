@@ -785,6 +785,8 @@ const openbotApi: OpenBotDesktopApi = {
     updateAvatar: (image) => ipcRenderer.invoke(IPC_CHANNELS.authUpdateAvatar, image),
     createMobileConnect: () => ipcRenderer.invoke(IPC_CHANNELS.authCreateMobileConnect),
     listMobileConnectedDevices: () => ipcRenderer.invoke(IPC_CHANNELS.authListMobileConnectedDevices),
+    listAccountSessions: () => ipcRenderer.invoke(IPC_CHANNELS.authListAccountSessions),
+    revokeAccountSession: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.authRevokeAccountSession, sessionId),
     revokeMobileConnectedDevice: (sessionId) =>
       ipcRenderer.invoke(IPC_CHANNELS.authRevokeMobileConnectedDevice, sessionId),
     logout: () => ipcRenderer.invoke(IPC_CHANNELS.authLogout),

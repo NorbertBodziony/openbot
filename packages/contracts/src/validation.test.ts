@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   hasUnsafeAccountNameCharacters,
   isOpenBotTeamApiHostname,
@@ -30,6 +30,19 @@ describe("shared boundary validation", () => {
     expect(validateProfileName("🤖".repeat(20)).error).toBeNull();
     expect(validateProfileName("🤖".repeat(21)).error).toBe("too-long");
     expect(validateProfileName("\u200d\u200d\u200d").error).toBe("unsafe");
+  });
+
+  it("loads without Intl.Segmenter and retains basic profile validation", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(Intl, "Segmenter");
+    Object.defineProperty(Intl, "Segmenter", { configurable: true, value: undefined });
+    vi.resetModules();
+    try {
+      const validation = await import("./validation");
+      expect(validation.validateProfileName("Open Bot")).toEqual({ name: "Open Bot", error: null });
+    } finally {
+      if (descriptor) Object.defineProperty(Intl, "Segmenter", descriptor);
+      vi.resetModules();
+    }
   });
 
   it("normalizes valid email addresses", () => {

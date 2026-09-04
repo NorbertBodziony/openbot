@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { BotSummary, ConversationReadState, ConversationSnapshot } from "@openbot/contracts/ipc";
 import {
   HOSTED_SITE_EVENT_ITEM_TYPE_PREFIX,
@@ -106,6 +107,13 @@ export class ConversationReadStore {
     const nextThroughMessageId = storedIndex > requestedIndex ? (stored ?? null) : (throughMessageId ?? null);
     this.#saveCursor(snapshot.threadId, memberId, nextThroughMessageId, "marked");
     return this.#withSupportedCursor(snapshot.threadId, stateFromSnapshot(snapshot, nextThroughMessageId), options);
+  }
+
+  markUnread(memberId: string, snapshot: ConversationSnapshot): ConversationReadState {
+    if (!snapshot.threadId) return emptyReadState();
+    // Explicit user action only. Ordinary read acknowledgements remain monotonic.
+    this.#saveCursor(snapshot.threadId, memberId, null, "marked");
+    return stateFromSnapshot(snapshot, null);
   }
 
   #withSupportedCursor(
@@ -245,9 +253,12 @@ export class ConversationReadStore {
     throughMessageId: string | null,
     event: "initialized" | "marked",
   ): void {
+    if (this.#storedCursor(threadId, memberId) === throughMessageId) return;
     const updatedAt = new Date().toISOString();
     this.database.dispatch(
-      `thread-read:${event}:${threadId}:${memberId}:${throughMessageId ?? "empty"}`,
+      // A cursor can be visited again after an explicit mark-unread. Do not reuse
+      // an old command receipt and silently skip the next read/unread transition.
+      `thread-read:${event}:${threadId}:${memberId}:${randomUUID()}`,
       [
         {
           aggregateType: "thread-read",
