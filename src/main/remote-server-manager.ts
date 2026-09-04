@@ -39,15 +39,8 @@ import type {
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
 import { LOCAL_SERVER_ID } from "@openbot/contracts/ipc";
-import { decodeRecord } from "@openbot/contracts/ipc-decoding";
-import { isString } from "@openbot/contracts/runtime-values";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
-import { TEAM_CURRENT_CAPABILITIES, type TeamCurrentCapability } from "@openbot/contracts/team-protocol/current";
-import { encodeTeamProtocolV1ClientEvent, TEAM_PROTOCOL_V1_WEBSOCKET } from "@openbot/contracts/team-protocol/v1";
-import {
-  decodeTeamProtocolV1CurrentEvent,
-  decodeTeamProtocolV1CurrentHttpResponse,
-} from "@openbot/contracts/team-protocol/v1-adapter";
+import { decodeTeamProtocolV1CurrentHttpResponse } from "@openbot/contracts/team-protocol/v1-adapter";
 import { decodeBotSummary, decodeDraftAttachment, decodeDuplicateBotResultFromHost } from "./remote-agent-decoding";
 import {
   decodeConversationPageFromHost,
@@ -65,11 +58,12 @@ import { decodeRemoteDesktopSession } from "./remote-device-decoding";
 import { decodeVoid, type ResponseDecoder } from "./remote-host-decoding";
 import { type RemoteRequestInit, RemoteServerClient } from "./remote-server-client";
 import { RemoteServerConnections } from "./remote-server-connections";
-import { RemoteProtocolError, RemoteRequestError } from "./remote-server-errors";
+import { RemoteRequestError } from "./remote-server-errors";
 import { RemoteEventRefresh } from "./remote-server-event-refresh";
+import { RemoteEventStream } from "./remote-server-event-stream";
 import { reconcileWebRtcHosts } from "./remote-server-host-directory";
 import { requestJson } from "./remote-server-http";
-import { RemoteServerStore, type StoredRemoteServerView, type TokenCipher } from "./remote-server-store";
+import { RemoteServerStore, type TokenCipher } from "./remote-server-store";
 import type { StoredRemoteServer } from "./remote-server-stored-shape";
 import { remoteServerSummaries } from "./remote-server-summaries";
 import { addRemotePreviewUrls, isLocalDevelopmentApi, pageQuery } from "./remote-server-urls";
@@ -126,31 +120,16 @@ export interface DevelopmentRemoteServerConnection {
 }
 
 export const REMOTE_DUPLICATION_TIMEOUT_MS = TEAM_WEBRTC_REMOTE_REQUEST_TIMEOUT_MILLISECONDS;
-const REMOTE_EVENT_RECONNECT_BASE_MS = 1_000;
-const REMOTE_EVENT_RECONNECT_MAX_MS = 60_000;
-const REMOTE_EVENT_RECONNECT_JITTER = 0.2;
-const REMOTE_EVENT_HEALTHY_MS = 30_000;
-const REMOTE_EVENT_PAYLOAD_LIMIT = 1024 * 1024;
-const REMOTE_EVENT_INITIAL_BUFFER_LIMIT = 1_000;
-const REMOTE_EVENT_PROTOCOL = "openbot-events";
-const REMOTE_EVENT_SNAPSHOT_PROTOCOL = "openbot-events-v2";
-
 export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #store: RemoteServerStore;
   readonly #connections: RemoteServerConnections;
   readonly #client: RemoteServerClient;
   readonly #refresh: RemoteEventRefresh;
+  readonly #events: RemoteEventStream;
   readonly #centralAccount: CentralAccountSession;
   readonly #allowLocalDevelopmentInvites: boolean;
   readonly #appVersion: string | null;
-  #eventControllers = new Map<string, AbortController>();
-  #eventSockets = new Map<string, WebSocket>();
-  #eventReconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  #eventReconnectAttempts = new Map<string, number>();
-  #webrtcConnectionAttempts = new Set<string>();
   #duplicateOperationIds = new Map<string, string>();
-  #eventAuthenticationPaused = new Set<string>();
-  #eventsEnabled = false;
   readonly #webrtcTransport: TeamWebRtcClientTransport | null;
   readonly #getLocalHostId: () => string | null;
   readonly #remoteViewerProxy: RemoteViewerProxy | null;
@@ -171,7 +150,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       onChanged: () => this.#emitChanged(),
       // The registry never names the event stream. It reports that reconnecting is pointless and the
       // manager decides what that costs -- which is what keeps the socket out of the error path.
-      onReconnectSuspended: (serverId) => this.#suspendEventReconnect(serverId),
+      onReconnectSuspended: (serverId) => this.#events.suspendReconnect(serverId),
     });
     this.#centralAccount = centralAccount;
     this.#allowLocalDevelopmentInvites = options.allowLocalDevelopmentInvites ?? false;
@@ -189,6 +168,22 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       emit: (serverId, event, bufferedLive) =>
         bufferedLive ? this.emit("agent", serverId, event, true) : this.emit("agent", serverId, event),
     });
+    this.#events = new RemoteEventStream({
+      appVersion: this.#appVersion,
+      servers: this.#store,
+      client: this.#client,
+      connections: this.#connections,
+      agents: this.#refresh,
+      transport: this.#webrtcTransport,
+      // The stream reports facts and this is where they become state: an identity is written, a
+      // presence snapshot is cached, and the rest are forwarded to the renderer.
+      onServerIdentity: (serverId, identity) => this.#applyServerIdentity(serverId, identity),
+      onPresence: (serverId, snapshot) => this.#cachePresence(serverId, snapshot),
+      onDirectMessage: (serverId, event) => this.emit("directMessage", serverId, event),
+      onDirectTyping: (serverId, event) => this.emit("directTyping", serverId, event),
+      onOffline: (serverId) => this.#setPresenceOffline(serverId),
+      onChanged: () => this.#emitChanged(),
+    });
     this.#remoteViewerProxy = this.#webrtcTransport
       ? new RemoteViewerProxy({
           transport: this.#webrtcTransport,
@@ -196,10 +191,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
         })
       : null;
     this.#webrtcTransport?.on("connected", (serverId) => {
-      const reconnectTimer = this.#eventReconnectTimers.get(serverId);
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      this.#eventReconnectTimers.delete(serverId);
-      this.#eventReconnectAttempts.delete(serverId);
+      this.#events.clearReconnectBackoff(serverId);
       this.#connections.markConnected(serverId);
       this.#emitChanged();
       void this.#client
@@ -220,11 +212,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       this.#connections.setState(serverId, "offline");
       this.#setPresenceOffline(serverId);
       this.#emitChanged();
-      this.#scheduleEventReconnect(serverId);
+      this.#events.scheduleReconnect(serverId);
     });
     this.#webrtcTransport?.on("event", (serverId, event) => this.#handleWebRtcEvent(serverId, event));
     this.#webrtcTransport?.on("error", (serverId, code, message) => {
-      if (!this.#connections.reportTransportError(serverId, code, message)) this.#scheduleEventReconnect(serverId);
+      if (!this.#connections.reportTransportError(serverId, code, message)) this.#events.scheduleReconnect(serverId);
     });
   }
 
@@ -245,7 +237,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   async syncRemoteHosts(): Promise<ServerSummary[]> {
     await this.#syncWebRtcHosts();
-    if (this.#eventsEnabled) this.startEventConnections();
+    if (this.#events.enabled) this.startEventConnections();
     this.#emitChanged();
     return this.list();
   }
@@ -255,27 +247,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   startEventConnections(): void {
-    this.#eventsEnabled = true;
-    for (const server of this.#store.servers) this.#ensureEventConnection(server.id);
+    this.#events.start();
   }
 
   refreshRuntimeSnapshots(): void {
-    for (const server of this.#store.servers) {
-      if (server.transport === "webrtc-v2") {
-        void this.#webrtcTransport?.requestRuntimeSnapshot(server.id).catch(() => undefined);
-        continue;
-      }
-      const socket = this.#eventSockets.get(server.id);
-      if (socket?.readyState !== WebSocket.OPEN) {
-        this.#ensureEventConnection(server.id);
-        continue;
-      }
-      if (this.#supportsRuntimeSnapshots(server.id, socket)) {
-        socket.send(encodeTeamProtocolV1ClientEvent({ type: "runtime-snapshot-request" }));
-      } else {
-        void this.#refresh.refreshAgentState(server.id).catch(() => undefined);
-      }
-    }
+    this.#events.refreshRuntimeSnapshots();
   }
 
   select(serverId: string): Promise<ServerSummary[]> {
@@ -285,13 +261,13 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       }
       const previousServerId = this.#store.activeServerId;
       const selectionRevision = this.#store.setActiveServerId(serverId);
-      this.#syncEventScopes();
+      this.#events.syncScopes();
       try {
         await this.#store.persist();
       } catch (error) {
         if (this.#store.activeServerRevision === selectionRevision) {
           this.#store.setActiveServerId(previousServerId);
-          this.#syncEventScopes();
+          this.#events.syncScopes();
         }
         throw error;
       }
@@ -365,9 +341,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     // as it was, instead of an entry that is in memory but was never written.
     stored.remoteDesktopAvailable = await this.#client.probeRemoteDesktop(stored);
     await this.#store.adopt(stored);
-    this.#syncEventScopes();
+    this.#events.syncScopes();
     this.#emitChanged();
-    this.#restartEventConnection(stored.id, true);
+    this.#events.restart(stored.id, true);
     return requiredServerSummary(this.list(), stored.id);
   }
 
@@ -395,9 +371,9 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
     // as it was, instead of an entry that is in memory but was never written.
     stored.remoteDesktopAvailable = await this.#client.probeRemoteDesktop(stored);
     await this.#store.adopt(stored);
-    this.#syncEventScopes();
+    this.#events.syncScopes();
     this.#emitChanged();
-    this.#restartEventConnection(stored.id, true);
+    this.#events.restart(stored.id, true);
     return requiredServerSummary(this.list(), stored.id);
   }
 
@@ -463,7 +439,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
           remoteDesktopAvailable: await this.#client.probeRemoteDesktop(signedIn),
         });
       }
-      this.#restartEventConnection(server.id, true);
+      this.#events.restart(server.id, true);
     } catch (error) {
       this.#connections.reportError(server.id, error, "error");
       throw error;
@@ -488,7 +464,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       await this.#client.ensureCompatibility(server, true);
       this.#connections.setState(serverId, "connecting");
       this.#emitChanged();
-      this.#restartEventConnection(serverId, true);
+      this.#events.restart(serverId, true);
     } catch (error) {
       this.#connections.reportError(serverId, error, blockedState);
       throw error;
@@ -514,17 +490,10 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   #clearServerConnectionState(serverId: string): void {
-    this.#eventControllers.get(serverId)?.abort();
-    this.#eventControllers.delete(serverId);
-    const reconnectTimer = this.#eventReconnectTimers.get(serverId);
-    if (reconnectTimer) clearTimeout(reconnectTimer);
-    this.#eventReconnectTimers.delete(serverId);
-    this.#eventReconnectAttempts.delete(serverId);
-    this.#eventAuthenticationPaused.delete(serverId);
+    this.#events.forget(serverId);
     this.#refresh.forget(serverId);
     this.#connections.forget(serverId);
     this.#client.forget(serverId);
-    this.#eventSockets.delete(serverId);
     this.#presence.delete(serverId);
   }
 
@@ -760,9 +729,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       void this.#webrtcTransport?.setTyping(serverId, input.botId, input.typing).catch(() => undefined);
       return;
     }
-    const socket = this.#eventSockets.get(serverId);
-    if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    socket.send(encodeTeamProtocolV1ClientEvent({ type: "team-typing", ...input }));
+    this.#events.send(serverId, { type: "team-typing", ...input });
   }
 
   listDirectThreads(serverId = this.#store.activeServerId): Promise<DirectThreadSummary[]> {
@@ -811,15 +778,11 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
       void this.#webrtcTransport?.setDirectTyping(serverId, input.memberId, input.typing).catch(() => undefined);
       return;
     }
-    const socket = this.#eventSockets.get(serverId);
-    if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    socket.send(
-      encodeTeamProtocolV1ClientEvent({
-        type: "team-direct-typing",
-        recipientMemberId: input.memberId,
-        typing: input.typing,
-      }),
-    );
+    this.#events.send(serverId, {
+      type: "team-direct-typing",
+      recipientMemberId: input.memberId,
+      typing: input.typing,
+    });
   }
 
   async createRemoteDesktopSession(serverId: string): Promise<RemoteDesktopSession> {
@@ -982,14 +945,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async stop(): Promise<void> {
-    this.#eventsEnabled = false;
-    for (const controller of this.#eventControllers.values()) controller.abort();
-    this.#eventControllers.clear();
-    for (const timer of this.#eventReconnectTimers.values()) clearTimeout(timer);
-    this.#eventReconnectTimers.clear();
-    this.#eventReconnectAttempts.clear();
-    this.#webrtcConnectionAttempts.clear();
-    this.#eventAuthenticationPaused.clear();
+    this.#events.stop();
     this.#refresh.clear();
     this.#client.clear();
     await this.#remoteViewerProxy?.stop().catch(() => undefined);
@@ -1026,299 +982,23 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
 
   #handleWebRtcEvent(serverId: string, event: AgentEvent | TeamRealtimeEvent): void {
     if (event.type === "team-identity") {
-      void this.#store
-        .update(serverId, { name: event.serverName, logoVersion: event.logoVersion })
-        .then(() => this.#emitChanged());
+      this.#applyServerIdentity(serverId, event);
     } else if (event.type === "team-presence") {
-      this.#presence.set(serverId, event.snapshot);
-      this.emit("presence", serverId, structuredClone(event.snapshot));
+      this.#cachePresence(serverId, event.snapshot);
     } else if (event.type === "team-direct-message") this.emit("directMessage", serverId, event);
     else if (event.type === "team-direct-typing") this.emit("directTyping", serverId, event);
     else this.#refresh.forward(serverId, event);
   }
 
-  // What a suspended reconnect costs the event stream. The registry decides that a failure is not
-  // worth retrying; this is the only place that knows there is a socket to tear down for it.
-  #suspendEventReconnect(serverId: string): void {
-    this.#eventAuthenticationPaused.add(serverId);
-    this.#eventControllers.get(serverId)?.abort();
-    this.#eventControllers.delete(serverId);
-    this.#eventSockets.delete(serverId);
+  #applyServerIdentity(serverId: string, identity: { serverName: string; logoVersion: string | null }): void {
+    void this.#store
+      .update(serverId, { name: identity.serverName, logoVersion: identity.logoVersion })
+      .then(() => this.#emitChanged());
   }
 
-  async #connectEvents(serverId: string): Promise<void> {
-    if (!this.#eventsEnabled || this.#eventControllers.has(serverId)) return;
-    const server = this.#store.require(serverId);
-    if (server.transport === "webrtc-v2") return;
-    const controller = new AbortController();
-    this.#eventControllers.set(serverId, controller);
-    let opened = false;
-    let openedAt = 0;
-    let authenticationFailed = false;
-    let protocolFailed = false;
-    try {
-      const compatibility = await this.#client.ensureCompatibility(server, true);
-      if (controller.signal.aborted || !this.#eventsEnabled || !this.#store.has(serverId)) {
-        if (this.#eventControllers.get(serverId) === controller) this.#eventControllers.delete(serverId);
-        return;
-      }
-      const eventsUrl = new URL(TEAM_API_ROUTES.events, server.apiUrl);
-      eventsUrl.protocol = eventsUrl.protocol === "https:" ? "wss:" : "ws:";
-      const socketProtocols = this.#appVersion
-        ? [TEAM_PROTOCOL_V1_WEBSOCKET, `openbot-token.${this.#store.token(server)}`]
-        : [REMOTE_EVENT_SNAPSHOT_PROTOCOL, REMOTE_EVENT_PROTOCOL, `openbot-token.${this.#store.token(server)}`];
-      const socket = new WebSocket(eventsUrl, socketProtocols);
-      let agentEventsReady = false;
-      const bufferedAgentEvents: AgentEvent[] = [];
-      controller.signal.addEventListener("abort", () => socket.close(1000, "Client stopped"), {
-        once: true,
-      });
-      await new Promise<void>((resolve, reject) => {
-        socket.addEventListener(
-          "open",
-          () => {
-            opened = true;
-            openedAt = Date.now();
-            this.#eventSockets.set(serverId, socket);
-            this.#sendEventScope(serverId, socket);
-            this.#connections.markConnected(serverId);
-            this.#connections.setCompatibility(serverId, compatibility);
-            this.#eventAuthenticationPaused.delete(serverId);
-            this.#emitChanged();
-            if (this.#supportsRuntimeSnapshots(serverId, socket)) {
-              agentEventsReady = true;
-            } else {
-              void this.#refresh
-                .refreshAgentState(serverId)
-                .then(() => {
-                  if (this.#eventSockets.get(serverId) !== socket) return;
-                  agentEventsReady = true;
-                  for (const event of bufferedAgentEvents) this.#refresh.forward(serverId, event, true);
-                  bufferedAgentEvents.length = 0;
-                })
-                .catch(() => socket.close(1011, "Initial agent state is unavailable"));
-            }
-          },
-          { once: true },
-        );
-        socket.addEventListener("message", (message) => {
-          if (!isString(message.data)) {
-            protocolFailed = true;
-            this.#connections.reportError(
-              serverId,
-              new RemoteProtocolError("protocol_error", "The host sent a binary event."),
-            );
-            socket.close(1003, "Text event payloads are required");
-            return;
-          }
-          if (Buffer.byteLength(message.data) > REMOTE_EVENT_PAYLOAD_LIMIT) {
-            protocolFailed = true;
-            this.#connections.reportError(
-              serverId,
-              new RemoteProtocolError("protocol_error", "The host event was too large."),
-            );
-            socket.close(1009, "Event payload is too large");
-            return;
-          }
-          try {
-            const decoded = decodeTeamProtocolV1CurrentEvent(JSON.parse(message.data));
-            if (decoded.kind === "unknown") return;
-            if (decoded.kind === "invalid") {
-              protocolFailed = true;
-              this.#connections.reportError(
-                serverId,
-                new RemoteProtocolError("protocol_error", "The host returned an invalid known event."),
-              );
-              socket.close(1003, "Invalid known event payload");
-              return;
-            }
-            const event = decoded.event;
-            if (event.type === "team-identity") {
-              void this.#store
-                .update(serverId, { name: event.serverName, logoVersion: event.logoVersion })
-                .then(() => this.#emitChanged());
-            } else if (event.type === "team-presence") {
-              this.#presence.set(serverId, event.snapshot);
-              this.emit("presence", serverId, structuredClone(event.snapshot));
-            } else if (event.type === "team-direct-message") {
-              this.emit("directMessage", serverId, event);
-            } else if (event.type === "team-direct-typing") {
-              this.emit("directTyping", serverId, event);
-            } else {
-              if (!agentEventsReady) {
-                if (bufferedAgentEvents.length >= REMOTE_EVENT_INITIAL_BUFFER_LIMIT) {
-                  socket.close(1013, "Initial agent event buffer is full");
-                  return;
-                }
-                bufferedAgentEvents.push(event);
-              } else {
-                this.#refresh.forward(serverId, event);
-              }
-            }
-          } catch {
-            protocolFailed = true;
-            this.#connections.reportError(
-              serverId,
-              new RemoteProtocolError("protocol_error", "The host returned invalid JSON."),
-            );
-            socket.close(1003, "Invalid event payload");
-          }
-        });
-        socket.addEventListener(
-          "error",
-          () => {
-            socket.close(1011, "Remote events are unavailable");
-            reject(new Error("Remote events are unavailable."));
-          },
-          { once: true },
-        );
-        socket.addEventListener(
-          "close",
-          () => {
-            if (this.#eventSockets.get(serverId) === socket) {
-              this.#eventSockets.delete(serverId);
-            }
-            resolve();
-          },
-          { once: true },
-        );
-      });
-      if (!controller.signal.aborted && !protocolFailed) {
-        this.#connections.setState(serverId, "offline");
-        this.#setPresenceOffline(serverId);
-        this.#emitChanged();
-      }
-    } catch (error) {
-      if (!controller.signal.aborted) {
-        if (error instanceof RemoteProtocolError) {
-          protocolFailed = true;
-          this.#connections.reportError(serverId, error);
-        } else {
-          authenticationFailed = !opened && (await this.#hasRejectedEventCredentials(server));
-          if (authenticationFailed) {
-            this.#connections.reportError(serverId, new RemoteRequestError(401, "Sign in again."));
-          } else {
-            this.#connections.reportUnreachable(serverId);
-            this.#setPresenceOffline(serverId);
-            this.#emitChanged();
-          }
-        }
-      }
-    }
-    if (this.#eventControllers.get(serverId) === controller) this.#eventControllers.delete(serverId);
-    if (openedAt > 0 && Date.now() - openedAt >= REMOTE_EVENT_HEALTHY_MS) {
-      this.#eventReconnectAttempts.delete(serverId);
-    }
-    if (!controller.signal.aborted && !authenticationFailed && !protocolFailed) this.#scheduleEventReconnect(serverId);
-  }
-
-  #syncEventScopes(): void {
-    for (const [serverId, socket] of this.#eventSockets) this.#sendEventScope(serverId, socket);
-  }
-
-  #sendEventScope(serverId: string, socket: WebSocket): void {
-    if (socket.readyState !== WebSocket.OPEN) return;
-    if (
-      this.#appVersion
-        ? socket.protocol !== TEAM_PROTOCOL_V1_WEBSOCKET
-        : !this.#supportsRuntimeSnapshots(serverId, socket)
-    ) {
-      return;
-    }
-    socket.send(
-      encodeTeamProtocolV1ClientEvent({
-        type: "agent-event-scope",
-        includeConversations: this.#store.activeServerId === serverId,
-        ...(this.#appVersion ? { capabilities: TEAM_CURRENT_CAPABILITIES } : {}),
-      }),
-    );
-  }
-
-  #ensureEventConnection(serverId: string): void {
-    const server = this.#store.find(serverId);
-    if (server?.transport === "webrtc-v2") {
-      if (
-        !this.#eventsEnabled ||
-        this.#eventReconnectTimers.has(serverId) ||
-        this.#eventAuthenticationPaused.has(serverId) ||
-        this.#webrtcConnectionAttempts.has(serverId)
-      )
-        return;
-      this.#webrtcConnectionAttempts.add(serverId);
-      void this.#webrtcTransport
-        ?.connect(serverId)
-        .catch(() => this.#scheduleEventReconnect(serverId))
-        .finally(() => this.#webrtcConnectionAttempts.delete(serverId));
-      return;
-    }
-    if (
-      !server ||
-      !this.#eventsEnabled ||
-      this.#eventControllers.has(serverId) ||
-      this.#eventReconnectTimers.has(serverId) ||
-      this.#eventAuthenticationPaused.has(serverId)
-    ) {
-      return;
-    }
-    void this.#connectEvents(serverId);
-  }
-
-  #restartEventConnection(serverId: string, resetBackoff = false): void {
-    this.#eventControllers.get(serverId)?.abort();
-    this.#eventControllers.delete(serverId);
-    const reconnectTimer = this.#eventReconnectTimers.get(serverId);
-    if (reconnectTimer) clearTimeout(reconnectTimer);
-    this.#eventReconnectTimers.delete(serverId);
-    if (resetBackoff) {
-      this.#eventReconnectAttempts.delete(serverId);
-      this.#eventAuthenticationPaused.delete(serverId);
-    }
-    this.#ensureEventConnection(serverId);
-  }
-
-  #scheduleEventReconnect(serverId: string): void {
-    if (!this.#eventsEnabled || this.#eventReconnectTimers.has(serverId)) return;
-    if (!this.#store.has(serverId)) return;
-    if (this.#eventAuthenticationPaused.has(serverId)) return;
-    const attempt = (this.#eventReconnectAttempts.get(serverId) ?? 0) + 1;
-    this.#eventReconnectAttempts.set(serverId, attempt);
-    const exponentialDelay = Math.min(
-      REMOTE_EVENT_RECONNECT_MAX_MS,
-      REMOTE_EVENT_RECONNECT_BASE_MS * 2 ** (attempt - 1),
-    );
-    const jitter = exponentialDelay * REMOTE_EVENT_RECONNECT_JITTER * (Math.random() * 2 - 1);
-    const delay = Math.min(
-      REMOTE_EVENT_RECONNECT_MAX_MS,
-      Math.max(REMOTE_EVENT_RECONNECT_BASE_MS, Math.round(exponentialDelay + jitter)),
-    );
-    const timer = setTimeout(() => {
-      this.#eventReconnectTimers.delete(serverId);
-      this.#ensureEventConnection(serverId);
-    }, delay);
-    this.#eventReconnectTimers.set(serverId, timer);
-  }
-
-  async #hasRejectedEventCredentials(server: StoredRemoteServerView): Promise<boolean> {
-    try {
-      const compatibility = await this.#client.ensureCompatibility(server);
-      await requestJson(server.apiUrl, TEAM_API_ROUTES.me, (value) => decodeRecord(value, "team member"), {
-        token: this.#store.token(server),
-        ...this.#client.requestProtocol(compatibility),
-      });
-      return false;
-    } catch (error) {
-      return error instanceof RemoteRequestError && (error.status === 401 || error.status === 403);
-    }
-  }
-
-  #supportsCapability(serverId: string, capability: TeamCurrentCapability): boolean {
-    return this.#connections.compatibilityFor(serverId)?.capabilities.includes(capability) ?? false;
-  }
-
-  #supportsRuntimeSnapshots(serverId: string, socket: WebSocket): boolean {
-    return this.#appVersion
-      ? this.#supportsCapability(serverId, "agent-runtime-snapshots")
-      : socket.protocol === REMOTE_EVENT_SNAPSHOT_PROTOCOL;
+  #cachePresence(serverId: string, snapshot: TeamPresenceSnapshot): void {
+    this.#presence.set(serverId, snapshot);
+    this.emit("presence", serverId, structuredClone(snapshot));
   }
 
   #emitChanged(): void {
