@@ -67,8 +67,8 @@ export class RemoteServerStore implements RemoteServerDirectory {
   }
 
   // A missing file is a first run. Anything else -- a permission error, a truncated read, a file that
-  // is not JSON -- reaches the caller, because continuing would leave an empty list that the next
-  // write replaces the user's servers with.
+  // is not JSON, a file this build cannot decode -- reaches the caller, because continuing would leave
+  // an empty list that the next write replaces the user's servers with.
   async load(): Promise<void> {
     let contents: string | null = null;
     try {
@@ -78,7 +78,13 @@ export class RemoteServerStore implements RemoteServerDirectory {
     }
     if (contents === null) return;
     const stored = readStoredRemoteServers(JSON.parse(contents));
-    if (stored) this.#state = stored;
+    // Null means the *file* made no sense -- a `version` from a newer build, or no `servers` array at
+    // all. An unreadable entry is not this: the reader drops it and returns the rest. Keeping the
+    // empty default here would hand a file the newer build still reads to the next `persist()` to
+    // overwrite, which is how a downgrade loses every joined server. The message quotes nothing from
+    // the file; `encryptedToken` is in there.
+    if (!stored) throw new Error("The remote server list is not in a format this version can read.");
+    this.#state = stored;
   }
 
   get activeServerId(): string {
