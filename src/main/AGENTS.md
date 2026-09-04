@@ -68,9 +68,20 @@ this directory already has, in the order to reach for them:
 | A spy will be called, with no event to hold | `await vi.waitFor(() => expect(spy).toHaveBeenCalledOnce())` |
 | A socket or server must be listening | `await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))` — the callback, never a delay |
 | A debounce, retry backoff or poll interval | `vi.useFakeTimers()` and advance it. A real 300 ms wait is a flake on a loaded runner |
+| A remote server reaches a state the renderer would see | `waitForServer(fixture, { state: "online" })` from `remote-server-test-harness.ts`, which fails with the diff against the whole summary rather than "expected undefined" |
+| A remote host receives a request | `deferredRoute()` from the same harness — `await route.arrived` holds until the route is actually called, and `route.resolve(...)` releases it |
 
 A fixed delay is only ever right as *input* — the interval a test configures a service with, an
 artificial provider latency — never as the thing a test waits on.
+
+Before writing a WebSocket or `fetch` fake for anything under `remote-server-*`, use
+`remote-server-test-harness.ts`. It is a plain `.ts` contributing no `it`, in the shape of
+`src/backend/agent-service-test-harness.ts`, and it exists because the suite had grown eight
+hand-rolled socket fakes of which five declared `readonly readyState` — so closing one left it
+reading OPEN and both `readyState !== WebSocket.OPEN` guards in the event stream were unreachable
+from the tests that appeared to cover them. `FakeEventSocket` gets that right once. Its files split
+`foo.ts` / `foo.test.ts`; the `agent-service.*.test.ts` pattern in `src/backend` is not the model
+here, because that one divides the tests of a class that refused to divide.
 
 `electron` cannot be imported outside an Electron process, so a test for anything in here mocks it.
 `trusted-ipc.test.ts` shows the pattern: `vi.hoisted` a registrations `Map`, `vi.mock("electron")`
@@ -81,5 +92,27 @@ not import `electron` in the first place.
 ## Size
 
 `index.ts` is the dispatcher plus window and lifecycle code and should not grow handlers again.
-`remote-server-manager.ts` is the outlier here; splitting it is its own change, but do not add a
-concern to it because it is already the file that has too many.
+
+`remote-server-manager.ts` used to be the outlier at 2828 lines. It is now the composition root of a
+flat `remote-server-*` / `remote-*-decoding` family, and each of those files has exactly one reason
+to change:
+
+| Concern | File |
+| --- | --- |
+| the list of servers on disk, and its schema | `remote-server-store.ts`, `remote-server-stored-shape.ts` |
+| one Team API call: negotiation, framing, decoding | `remote-server-client.ts`, `remote-server-http.ts`, `remote-server-errors.ts` |
+| what a failure means to the user | `remote-server-connection-status.ts`, `remote-server-connections.ts` |
+| the live event channel and its reconnect policy | `remote-server-event-stream.ts`, `remote-server-event-refresh.ts` |
+| members, invitations, presence, host reconciliation | `remote-team-directory.ts`, `remote-server-presence.ts`, `remote-server-host-directory.ts` |
+| what a host is allowed to send | `remote-host-decoding.ts` and its four wire-area siblings |
+
+A new remote concern goes in the file whose one reason it shares, or in a new sibling next to them --
+not in the manager, whose job is to own the IPC surface and wire these together. The manager is where
+they *meet*: the request path never names the event stream and the event stream never names the error
+path, so a callback passed in its constructor is how the two are connected. That indirection is the
+design, not an accident to tidy up.
+
+Three things are deliberately not unified, and each says so in its own file header: the `FromHost`
+decoders and their `FromMain` twins in `src/preload/index.ts` (different trust boundaries), the HTTPS
+V1/V3 and WebRTC V2 wire encodings (released protocols), and the control-plane methods on
+`RemoteTeamDirectory` (a different server from the host).
