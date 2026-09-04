@@ -77,7 +77,13 @@ import { registerTeamIpcHandlers, withLocalHostSummary } from "./ipc/register-te
 import { registerUpdateIpcHandlers } from "./ipc/register-update-handlers";
 import { registerVoiceIpcHandlers } from "./ipc/register-voice-handlers";
 import { MacHapticFeedback } from "./mac-haptic-feedback";
-import { readMainWindowBounds, resolveMainWindowBounds, writeMainWindowBounds } from "./main-window-state";
+import {
+  ensureMacApplicationPresence,
+  presentMainWindow,
+  readMainWindowBounds,
+  resolveMainWindowBounds,
+  writeMainWindowBounds,
+} from "./main-window-state";
 import { ManagedSkillService } from "./managed-skill-service";
 import { ProviderRuntimeManager } from "./provider-runtime-manager";
 import { RemoteDesktopManager } from "./remote-desktop-manager";
@@ -520,6 +526,9 @@ function createDynamicIslandWindow(bounds: Rectangle, _display: Display): Browse
     show: false,
     transparent: true,
     frame: false,
+    alwaysOnTop: true,
+    focusable: false,
+    hiddenInMissionControl: true,
     resizable: false,
     movable: false,
     minimizable: false,
@@ -612,6 +621,10 @@ async function ensureMainWindow(): Promise<BrowserWindow> {
   return mainWindowLoad;
 }
 
+function showMainWindow(window: BrowserWindow): void {
+  presentMainWindow(window, process.platform, () => app.show());
+}
+
 function loadDynamicIslandRenderer(window: BrowserWindow, display: Display): Promise<void> {
   const displayMode = display.internal ? "notch" : "island";
   const developmentUrl = process.env.ELECTRON_RENDERER_URL;
@@ -680,9 +693,7 @@ function forwardAgentEvent(serverId: string, event: AgentEvent, bufferedLive = f
   const notification = new Notification(content);
   notification.on("click", () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
+    showMainWindow(mainWindow);
   });
   notification.show();
 }
@@ -833,8 +844,7 @@ function acceptInviteUrl(value: string): void {
   }
   pendingInviteUrl = value;
   if (mainWindow && !mainWindow.isDestroyed() && inviteReceiverReady) {
-    mainWindow.show();
-    mainWindow.focus();
+    showMainWindow(mainWindow);
     if (sendToRenderer(mainWindow, IPC_CHANNELS.serversInvite, value)) pendingInviteUrl = null;
   }
 }
@@ -884,14 +894,17 @@ if (!hasSingleInstanceLock) {
     const deepLink = findInviteUrl(argv);
     if (deepLink) acceptOpenbotUrl(deepLink);
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
+    showMainWindow(mainWindow);
   });
 
   void app
     .whenReady()
     .then(async () => {
+      await ensureMacApplicationPresence(
+        process.platform,
+        (policy) => app.setActivationPolicy(policy),
+        () => app.dock?.show() ?? Promise.resolve(),
+      );
       if (process.platform === "darwin") app.setAsDefaultProtocolClient("openbot");
       if (process.platform === "darwin") app.dock?.setIcon(appIconPath);
       configureContentSecurityPolicy();
@@ -922,6 +935,7 @@ if (!hasSingleInstanceLock) {
         getDisplays: () => screen.getAllDisplays(),
         getMainWindow: () => mainWindow,
         ensureMainWindow,
+        presentMainWindow: showMainWindow,
         performHaptic: () => macHapticFeedback.performAlignment(),
         performCriticalAction: async (action) => {
           if (!agentService || !remoteServerManager) throw new Error("OpenBot is not ready.");
@@ -1374,11 +1388,11 @@ if (!hasSingleInstanceLock) {
 
       app.on("activate", () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.show();
+          showMainWindow(mainWindow);
           return;
         }
         void ensureMainWindow()
-          .then((window) => window.show())
+          .then(showMainWindow)
           .catch((error) => logger.error("Unable to open the main window:", toLogValue(error)));
       });
     })

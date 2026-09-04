@@ -18,6 +18,7 @@ import { sendToRenderer } from "./renderer-ipc";
 const logger = createOpenBotLogger("dynamic-island-window");
 
 export const DYNAMIC_ISLAND_WINDOW_SIZE = { width: 614, height: 380 } as const;
+const DYNAMIC_ISLAND_COMPACT_WINDOW_HEIGHT = 50;
 
 const MACBOOK_NOTCH_REFERENCE = {
   displayWidth: 1512,
@@ -35,6 +36,7 @@ export interface DynamicIslandWindowControllerOptions {
   getDisplays: () => Display[];
   getMainWindow: () => BrowserWindow | null;
   ensureMainWindow?: () => Promise<BrowserWindow>;
+  presentMainWindow: (window: BrowserWindow) => void;
   performHaptic: () => void;
   performCriticalAction: (
     action: Extract<DynamicIslandAction, { type: "answer-prompt" | "respond-approval" }>,
@@ -46,6 +48,7 @@ export class DynamicIslandWindowController {
   #preference: DynamicIslandPreference = { ...DEFAULT_DYNAMIC_ISLAND_PREFERENCE };
   #presentation = IDLE_DYNAMIC_ISLAND_PRESENTATION;
   readonly #windows = new Map<number, BrowserWindow>();
+  readonly #interactiveDisplays = new Set<number>();
   readonly #criticalActions = new Map<string, Promise<void>>();
   readonly #notchSizes = new Map<number, { width: number; height: number }>();
   #preferenceMutation = Promise.resolve();
@@ -107,12 +110,19 @@ export class DynamicIslandWindowController {
   }
 
   setInteractive(rendererId: number, interactive: boolean): void {
-    const window = [...this.#windows.values()].find(
-      (candidate) => !candidate.isDestroyed() && candidate.webContents.id === rendererId,
+    const entry = [...this.#windows].find(
+      ([, candidate]) => !candidate.isDestroyed() && candidate.webContents.id === rendererId,
     );
-    if (!window) return;
+    if (!entry) return;
+    const [displayId, window] = entry;
+    if (interactive) this.#interactiveDisplays.add(displayId);
+    else this.#interactiveDisplays.delete(displayId);
+    const display = this.#options.getDisplays().find((candidate) => candidate.id === displayId);
+    const bounds = display ? dynamicIslandWindowBounds(display) : undefined;
+    if (interactive && bounds) window.setBounds(dynamicIslandInteractiveWindowBounds(bounds, true), false);
     window.setFocusable(interactive);
     window.setIgnoreMouseEvents(!interactive, { forward: true });
+    if (!interactive && bounds) window.setBounds(dynamicIslandInteractiveWindowBounds(bounds, false), false);
   }
 
   async performAction(action: DynamicIslandAction): Promise<void> {
@@ -133,9 +143,7 @@ export class DynamicIslandWindowController {
       return;
     }
     const window = await this.#ensureMainWindow();
-    if (window.isMinimized()) window.restore();
-    window.show();
-    window.focus();
+    this.#options.presentMainWindow(window);
     if (action.type !== "open-app" && !sendToRenderer(window, IPC_CHANNELS.dynamicIslandAction, action)) {
       throw new Error("The OpenBot window is temporarily unavailable.");
     }
@@ -168,6 +176,7 @@ export class DynamicIslandWindowController {
     for (const [displayId, window] of this.#windows) {
       if (displayIds.has(displayId) && !window.isDestroyed()) continue;
       this.#windows.delete(displayId);
+      this.#interactiveDisplays.delete(displayId);
       this.#notchSizes.delete(displayId);
       if (!window.isDestroyed()) window.destroy();
     }
@@ -178,7 +187,10 @@ export class DynamicIslandWindowController {
       const notchSize = notchSizeForDisplay(display);
       const current = this.#windows.get(display.id);
       if (current && !current.isDestroyed()) {
-        current.setBounds(bounds, false);
+        current.setBounds(
+          dynamicIslandInteractiveWindowBounds(bounds, this.#interactiveDisplays.has(display.id)),
+          false,
+        );
         if (notchSizeChanged(this.#notchSizes.get(display.id), notchSize)) {
           if (sendToRenderer(current, IPC_CHANNELS.dynamicIslandGeometry, notchSize ?? null)) {
             this.#rememberNotchSize(display.id, notchSize);
@@ -196,12 +208,16 @@ export class DynamicIslandWindowController {
   }
 
   private async createDisplayWindow(display: Display, bounds: Rectangle): Promise<void> {
-    const window = this.#options.createWindow(bounds, display);
+    const window = this.#options.createWindow(dynamicIslandInteractiveWindowBounds(bounds, false), display);
+    window.excludedFromShownWindowsMenu = true;
     this.#windows.set(display.id, window);
     window.setHasShadow(false);
     window.setWindowButtonVisibility(false);
     window.setAlwaysOnTop(true, "status");
-    window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    window.setVisibleOnAllWorkspaces(true, {
+      visibleOnFullScreen: true,
+      skipTransformProcessType: true,
+    });
     window.setHiddenInMissionControl(true);
     window.setFocusable(false);
     window.setIgnoreMouseEvents(true, { forward: true });
@@ -223,6 +239,7 @@ export class DynamicIslandWindowController {
     window.on("closed", () => {
       if (this.#windows.get(display.id) === window) {
         this.#windows.delete(display.id);
+        this.#interactiveDisplays.delete(display.id);
         this.#notchSizes.delete(display.id);
       }
     });
@@ -255,6 +272,7 @@ export class DynamicIslandWindowController {
   private destroyWindows(): void {
     const windows = [...this.#windows.values()];
     this.#windows.clear();
+    this.#interactiveDisplays.clear();
     this.#notchSizes.clear();
     for (const window of windows) {
       if (!window.isDestroyed()) window.destroy();
@@ -299,6 +317,10 @@ export function dynamicIslandWindowBounds(display: Pick<Display, "bounds">): Rec
     y: display.bounds.y,
     ...DYNAMIC_ISLAND_WINDOW_SIZE,
   };
+}
+
+function dynamicIslandInteractiveWindowBounds(bounds: Rectangle, interactive: boolean): Rectangle {
+  return interactive ? bounds : { ...bounds, height: DYNAMIC_ISLAND_COMPACT_WINDOW_HEIGHT };
 }
 
 /**
