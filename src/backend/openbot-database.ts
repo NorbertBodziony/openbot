@@ -25,6 +25,19 @@ import {
   ROUTINE_RUN_EVENT_ITEM_TYPE_PREFIX,
 } from "@openbot/contracts/ipc";
 import { type DynamicRecord, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
+import {
+  databaseRow,
+  databaseRows,
+  decodeConversationMessageJson,
+  decodeConversationThreadRow,
+  decodeThreadAgentRow,
+  errorCode,
+  objectValue,
+  optionalStringColumn,
+  requiredEventRow,
+  requiredNumberColumn,
+  requiredStringColumn,
+} from "./database/database-rows";
 import { migrateOpenBotDatabase } from "./openbot-database-schema";
 
 export interface OrchestrationEventInput {
@@ -1925,53 +1938,12 @@ function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (character) => `\\${character}`);
 }
 
-function databaseRow(value: unknown): DynamicRecord | null {
-  return isDynamicRecord(value) ? value : null;
-}
-
-function databaseRows(value: unknown): DynamicRecord[] {
-  if (!Array.isArray(value)) throw new Error("Invalid SQLite result set.");
-  return value.map((row, index) => {
-    if (!isDynamicRecord(row)) throw new Error(`Invalid SQLite row at index ${index}.`);
-    return row;
-  });
-}
-
-function requiredStringColumn(row: DynamicRecord, key: string): string {
-  const value = row[key];
-  if (!isString(value)) throw new Error(`Invalid SQLite column ${key}.`);
-  return value;
-}
-
-function requiredNumberColumn(row: DynamicRecord, key: string): number {
-  const value = row[key];
-  if (!isNumber(value)) throw new Error(`Invalid SQLite column ${key}.`);
-  return value;
-}
-
-function optionalStringColumn(row: DynamicRecord, key: string): string | null {
-  const value = row[key];
-  if (value === null || isString(value)) return value;
-  throw new Error(`Invalid SQLite column ${key}.`);
-}
-
 function decodeReceiptRow(value: unknown): ReceiptRow | null {
   const row = databaseRow(value);
   if (!row) return null;
   return {
     last_sequence: requiredNumberColumn(row, "last_sequence"),
     result_json: requiredStringColumn(row, "result_json"),
-  };
-}
-
-function decodeConversationThreadRow(
-  value: unknown,
-): { active_turn_id: string | null; last_event_sequence: number } | null {
-  const row = databaseRow(value);
-  if (!row) return null;
-  return {
-    active_turn_id: optionalStringColumn(row, "active_turn_id"),
-    last_event_sequence: requiredNumberColumn(row, "last_event_sequence"),
   };
 }
 
@@ -2024,25 +1996,6 @@ function decodeSummaryRow(value: unknown): {
   };
 }
 
-function requiredEventRow(value: DynamicRecord): {
-  sequence: number;
-  event_type: string;
-  occurred_at: string;
-  payload_json: string;
-} {
-  return {
-    sequence: requiredNumberColumn(value, "sequence"),
-    event_type: requiredStringColumn(value, "event_type"),
-    occurred_at: requiredStringColumn(value, "occurred_at"),
-    payload_json: requiredStringColumn(value, "payload_json"),
-  };
-}
-
-function decodeThreadAgentRow(value: unknown): { agent_id: string } | null {
-  const row = databaseRow(value);
-  return row ? { agent_id: requiredStringColumn(row, "agent_id") } : null;
-}
-
 function parseMailboxMetadata(value: string): { idempotency?: Record<string, string> } {
   const parsed = JSON.parse(value);
   if (!isDynamicRecord(parsed)) throw new Error("Invalid mailbox metadata.");
@@ -2056,20 +2009,6 @@ function parseMailboxMetadata(value: string): { idempotency?: Record<string, str
     values[key] = entry;
   }
   return { idempotency: values };
-}
-
-function decodeConversationMessageJson(value: string): ConversationMessage {
-  const parsed = JSON.parse(value);
-  if (!isConversationMessage(parsed)) throw new Error("Invalid conversation message.");
-  return parsed;
-}
-
-function errorCode(value: unknown): string | null {
-  return isDynamicRecord(value) && isString(value.code) ? value.code : null;
-}
-
-function objectValue(value: unknown): DynamicRecord | null {
-  return isDynamicRecord(value) ? value : null;
 }
 
 function providerSessionValue(value: DynamicRecord | null): ProviderSession | null {
