@@ -137,6 +137,7 @@ export function AccountDock(props: AccountDockProps) {
     return `Weekly usage, ${weeklyUsageRemaining()}% left`;
   });
   const usageRefreshActive = createMemo(() => usageLoading() || usageRefreshAcknowledging());
+  const usageRefreshDisabled = createMemo(() => usageRefreshActive() || !props.usageReady || !props.usageTargetKey);
   const weeklyUsageReset = createMemo(() => {
     const resetsAt = weeklyUsage()?.resetsAt;
     if (resetsAt === null || resetsAt === undefined) return null;
@@ -228,7 +229,7 @@ export function AccountDock(props: AccountDockProps) {
   }
 
   function refreshUsageWithFeedback() {
-    if (usageRefreshActive()) return;
+    if (usageRefreshDisabled()) return;
     setUsageRefreshAcknowledging(true);
     if (usageRefreshTimer !== undefined) window.clearTimeout(usageRefreshTimer);
     usageRefreshTimer = window.setTimeout(() => {
@@ -284,7 +285,7 @@ export function AccountDock(props: AccountDockProps) {
               class="account-menu-row"
               aria-label={usageButtonLabel()}
               onClick={refreshUsageWithFeedback}
-              disabled={usageRefreshActive() || props.agentStatus.phase !== "ready"}
+              disabled={usageRefreshDisabled()}
             >
               <Gauge class="account-menu-icon" aria-hidden="true" />
               <span>Weekly usage</span>
@@ -553,7 +554,7 @@ export function AccountDock(props: AccountDockProps) {
                       aria-label={usageRefreshActive() ? "Refreshing" : usageError() ? "Try again" : "Refresh"}
                       title="Refresh usage"
                       onClick={refreshUsageWithFeedback}
-                      disabled={usageRefreshActive() || props.agentStatus.phase !== "ready"}
+                      disabled={usageRefreshDisabled()}
                     >
                       <RefreshCw
                         class={usageRefreshActive() ? "account-menu-icon-spinning" : undefined}

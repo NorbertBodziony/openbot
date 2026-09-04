@@ -78,6 +78,24 @@ describe("OpenBot connected desktop shell", () => {
     await waitFor(() => expect(window.openbot.agent.getUsage).toHaveBeenCalledWith("chief"));
   });
 
+  it("disables usage refresh when the active provider is unavailable", async () => {
+    const status = await window.openbot.agent.getStatus();
+    vi.mocked(window.openbot.agent.getStatus).mockResolvedValue({
+      ...status,
+      providers: status.providers?.map((provider) =>
+        provider.id === "codex" ? { ...provider, state: "sign-in-required" as const } : provider,
+      ),
+    });
+
+    render(() => <App />);
+    const usageButton = await screen.findByRole("button", { name: "Weekly usage unavailable" });
+    await fireEvent.click(usageButton);
+
+    expect(
+      within(screen.getByRole("dialog", { name: "Weekly usage" })).getByRole("button", { name: "Refresh" }),
+    ).toBeDisabled();
+  });
+
   it("reuses usage when switching between Grok agents on the same model", async () => {
     const grokBots: BotSummary[] = BOTS.map((bot) => ({
       ...bot,
