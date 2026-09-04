@@ -87,6 +87,46 @@ schema used for new databases. Never remove or rewrite a migration that may have
 Current remote connections use Team API protocol v3 over three ordered WebRTC DataChannels: `rpc`,
 `events`, and `files`. A sandboxed hidden Chromium page owns each `RTCPeerConnection`. Electron main
 uses a `MessagePort` and transfers binary data as `ArrayBuffer`. Signal carries SDP and ICE only.
+OpenBot Mobile uses the same ticket, authentication transcript, framing, RPC codec, and event stream.
+In Expo Go, an Expo DOM component owns the browser `RTCPeerConnection` inside a hidden WebView and
+passes only serializable, validated commands and events to the native React UI; no native WebRTC
+module or development build is required.
+The native/DOM mailbox carries concurrent commands by ID. Switching or disconnecting cancels
+pending callers immediately; peer generations reject late callbacks from a superseded host.
+The persisted hosting preference is restored on startup in both the normal desktop and the
+development host. Starting the development HTTP API alone does not publish WebRTC; Mobile Connect
+needs the published host. The separate development test-client role never auto-publishes.
+Mobile Connect tickets and QR codes bind the started host ID and SHA-256 public-key fingerprint.
+Mobile verifies that binding at redemption and against the directory, pins the key, and selects
+that host rather than the first account-owned desktop. Legacy unbound QR codes require regeneration.
+Conversation read cursors belong to a team member and are shared across that member's devices.
+Advancing a cursor emits a conversation invalidation without the reader's identity or cursor;
+clients reload their own read state even when the conversation content revision is unchanged.
+Mobile acknowledges rendered replies only in the foreground, focused chat at the latest messages.
+The optional `conversation-unread` capability adds a separate `POST /v1/agents/:id/conversation/unread`
+operation. Ordinary read acknowledgements remain monotonic; explicit unread resets persist in the
+host's SQLite and emit the same invalidation. Older hosts disable only this optional action.
+Mobile hidden/pinned chat preferences are device-local, persisted in SecureStore per account API,
+account ID and host ID; they are not part of the shared sidebar layout or conversation read state.
+Account/device and logical remote sessions deliberately have no time-based expiration; a finite
+maximum Date deadline preserves existing numeric wire contracts. Pairing codes, connection tickets,
+and Signal resume credentials remain short-lived. Each logical remote session is bound to its
+originating account credential. An atomic D1 trigger ends that credential's remote sessions and
+queues disconnects on logout/device revoke; other phones stay connected. Legacy unbound sessions
+are ended account-wide on revocation because their originating credential is unknown.
+Mobile sign-out keeps the encrypted credential and local session until the account API confirms
+revocation. If the DELETE response fails, mobile validates that same token: a 401 confirms it is no
+longer active and completes sign-out immediately. A successful session check or an inconclusive
+network/service error keeps the credential for retry; a late result cannot clear a newer login.
+Hosts opt in with the additive Signal hello `multiplex` flag; legacy desktops keep their one-peer
+limit so a second phone cannot replace an existing client's connection. Signal multiplexes
+connections by logical session, and the hidden desktop renderer owns a separate
+RTC peer for each device. Main keeps authentication, RPC caches, file staging and event streams
+separate per peer. Transport cleanup closes local access without revoking a replacement connection.
+Settings → Profile → Account sessions lists and revokes both desktop and mobile credentials.
+The account API's existing mobile-device routes expose these via `includeDesktop=true`; their
+default mobile-only behavior is unchanged. Responses contain session IDs and activity metadata,
+never tokens or token hashes, and all operations are scoped to the authenticated account.
 Cloudflare issues short ES256 connection tickets and stores the logical session. Signal issues a
 10-minute resume token, so a short Signal update does not end an active WebRTC connection. Signal
 validates a trusted, non-expired resume token locally. After a Signal restart, the first use of a token

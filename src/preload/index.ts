@@ -784,6 +784,8 @@ const openbotApi: OpenBotDesktopApi = {
     updateAvatar: (image) => ipcRenderer.invoke(IPC_CHANNELS.authUpdateAvatar, image),
     createMobileConnect: () => ipcRenderer.invoke(IPC_CHANNELS.authCreateMobileConnect),
     listMobileConnectedDevices: () => ipcRenderer.invoke(IPC_CHANNELS.authListMobileConnectedDevices),
+    listAccountSessions: () => ipcRenderer.invoke(IPC_CHANNELS.authListAccountSessions),
+    revokeAccountSession: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.authRevokeAccountSession, sessionId),
     revokeMobileConnectedDevice: (sessionId) =>
       ipcRenderer.invoke(IPC_CHANNELS.authRevokeMobileConnectedDevice, sessionId),
     logout: () => ipcRenderer.invoke(IPC_CHANNELS.authLogout),
@@ -827,7 +829,7 @@ const openbotApi: OpenBotDesktopApi = {
   },
   agent: {
     getStatus: () => invokeAgent(IPC_CHANNELS.agentGetStatus, null, decodeAgentStatusFromMain),
-    getUsage: () => invokeAgent(IPC_CHANNELS.agentGetUsage, null, decodeAccountUsageFromMain),
+    getUsage: (botId) => invokeAgent(IPC_CHANNELS.agentGetUsage, botId, decodeAccountUsageFromMain),
     listModels: () => invokeAgent(IPC_CHANNELS.agentListModels, null, decodeAgentModels),
     listBots: () => invokeAgent(IPC_CHANNELS.agentListBots, null, decodeBots),
     listInstalledSkills: (botId) =>

@@ -6,7 +6,10 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isString } from "@openbot/contracts/runtime-values";
-import { TEAM_AGENT_ACTIVITY_CAPABILITY } from "@openbot/contracts/team-protocol/current";
+import {
+  TEAM_AGENT_ACTIVITY_CAPABILITY,
+  TEAM_MODEL_SCOPED_USAGE_CAPABILITY,
+} from "@openbot/contracts/team-protocol/current";
 import { decodeTeamProtocolV1ClientEvent } from "@openbot/contracts/team-protocol/v1";
 import {
   decodeTeamProtocolV2AuthFrame,
@@ -35,6 +38,8 @@ class FakeBridge extends TeamWebRtcBridge {
 
   async connect(input: { peerId: string; signalUrl: string; token: string; peer: "host" | "client" }): Promise<void> {
     this.connections.push(input);
+    // A local Signal may be ready before the connect command acknowledges.
+    this.emit("signalReady", input.peerId);
   }
 
   async disconnect(): Promise<void> {}
@@ -53,7 +58,7 @@ class FakeBridge extends TeamWebRtcBridge {
 }
 
 describe("TeamWebRtcHostGateway", () => {
-  it("refreshes an early event subscription when the peer capabilities arrive", async () => {
+  it("isolates devices' RPCs, live subscriptions and revocation while preserving authenticated reconnects", async () => {
     const directory = await mkdtemp(join(tmpdir(), "openbot-webrtc-host-gateway-"));
     directories.push(directory);
     const bridge = new FakeBridge();
@@ -75,13 +80,35 @@ describe("TeamWebRtcHostGateway", () => {
       publicKeyEncoding: { type: "spki", format: "pem" },
       privateKeyEncoding: { type: "pkcs8", format: "pem" },
     });
-    const sessionExpiresAt = Math.floor(Date.now() / 1_000) + 60;
+    // Persistent sessions must not overflow Node's 32-bit setTimeout delay and disconnect immediately.
+    const sessionExpiresAt = 8_640_000_000_000;
     const eventScopes: Array<
       Extract<ReturnType<typeof decodeTeamProtocolV1ClientEvent>, { type: "agent-event-scope" }>
     > = [];
-    const localServer = createServer((_request, response) => {
+    const unreadState = { unreadCount: 1, firstUnreadMessageId: "reply-1", throughMessageId: null };
+    const localRequests: Array<{ path: string; protocol: string }> = [];
+    const scopedUsage = {
+      limits: [
+        {
+          id: "claude",
+          primary: null,
+          secondary: { usedPercent: 37, windowDurationMins: 10_080, resetsAt: 1_788_825_600 },
+        },
+      ],
+    };
+    const localServer = createServer((request, response) => {
+      localRequests.push({
+        path: request.url ?? "",
+        protocol: String(request.headers["openbot-protocol-version"] ?? ""),
+      });
+      if (request.url === "/v1/agents/bot-1/conversation/unread") {
+        const supported = request.headers["openbot-protocol-version"] === "3";
+        response.writeHead(supported ? 200 : 400, { "content-type": "application/json" });
+        response.end(JSON.stringify(supported ? unreadState : { error: "Mark unread requires protocol 3." }));
+        return;
+      }
       response.writeHead(200, { "content-type": "application/json" });
-      response.end("{}");
+      response.end(JSON.stringify(request.url === "/v1/agents/research/usage" ? scopedUsage : {}));
     });
     const eventsServer = new WebSocketServer({ server: localServer });
     eventsServer.on("connection", (socket) => {
@@ -108,8 +135,8 @@ describe("TeamWebRtcHostGateway", () => {
       renewSignal,
       onSignalRecoveryFailure: recoveryFailure,
       closeSession,
-      verifyClientTicket: async () => ({
-        sessionId: "session-1",
+      verifyClientTicket: async (ticket) => ({
+        sessionId: ticket === "second-ticket" ? "session-2" : "session-1",
         hostId: "host-1",
         userId: "member-account",
         membershipId: "membership-1",
@@ -127,17 +154,16 @@ describe("TeamWebRtcHostGateway", () => {
       localApiPort: address.port,
     });
     await vi.waitFor(() => expect(bridge.connections).toHaveLength(1));
-    bridge.emit("signalReady", "host-1");
     await starting;
 
     bridge.emit("error", "host-1", "session_revoked", "credential rotated");
     await vi.waitFor(() => expect(bridge.connections).toHaveLength(2));
-    bridge.emit("signalReady", "host-1");
     await vi.waitFor(() => expect(renewSignal).toHaveBeenCalledWith("host-1"));
 
     expect(bridge.connections[1]).toMatchObject({ peerId: "host-1", token: "fresh", peer: "host" });
     expect(recoveryFailure).not.toHaveBeenCalled();
-    bridge.emit("incoming", "host-1", {
+    bridge.emit("incoming", "peer-1", {
+      hostId: "host-1",
       connectionId: "connection-1",
       sessionId: "session-1",
       userId: "member-account",
@@ -145,7 +171,7 @@ describe("TeamWebRtcHostGateway", () => {
       role: "member",
       sessionExpiresAt,
     });
-    bridge.emit("connected", "host-1", {
+    bridge.emit("connected", "peer-1", {
       localFingerprint: "HOST-FINGERPRINT",
       remoteFingerprint: "CLIENT-FINGERPRINT",
     });
@@ -153,7 +179,7 @@ describe("TeamWebRtcHostGateway", () => {
     const ticket = "client-ticket";
     bridge.emit(
       "data",
-      "host-1",
+      "peer-1",
       "rpc",
       encodeTeamProtocolV2Frame({
         version: 2,
@@ -185,7 +211,7 @@ describe("TeamWebRtcHostGateway", () => {
     if (ready.type !== "auth-ready") throw new Error("Unexpected authentication response.");
     bridge.emit(
       "data",
-      "host-1",
+      "peer-1",
       "rpc",
       encodeTeamProtocolV2Frame({
         version: 2,
@@ -208,7 +234,7 @@ describe("TeamWebRtcHostGateway", () => {
     );
     bridge.emit(
       "data",
-      "host-1",
+      "peer-1",
       "events",
       encodeTeamProtocolV2Frame({
         version: 2,
@@ -220,7 +246,7 @@ describe("TeamWebRtcHostGateway", () => {
     expect(eventScopes[0]?.capabilities).toEqual([]);
     bridge.emit(
       "data",
-      "host-1",
+      "peer-1",
       "rpc",
       encodeTeamProtocolV2Frame({
         version: 2,
@@ -237,6 +263,38 @@ describe("TeamWebRtcHostGateway", () => {
     );
     await vi.waitFor(() => expect(eventScopes).toHaveLength(2));
     expect(eventScopes[1]?.capabilities).toContain(TEAM_AGENT_ACTIVITY_CAPABILITY);
+    bridge.emit(
+      "data",
+      "peer-1",
+      "rpc",
+      encodeTeamProtocolV2Frame({
+        version: 2,
+        type: "request",
+        requestId: "scoped-usage-request",
+        operation: "http.request",
+        payload: {
+          method: "GET",
+          path: "/v1/agents/research/usage",
+          body: {},
+          capabilities: [TEAM_MODEL_SCOPED_USAGE_CAPABILITY],
+        },
+      }),
+    );
+    await vi.waitFor(() => expect(localRequests).toContainEqual({ path: "/v1/agents/research/usage", protocol: "3" }));
+    await vi.waitFor(() => {
+      const response = bridge.sent.find((message) => {
+        if (message.channel !== "rpc" || !isString(message.data)) return false;
+        try {
+          const frame = decodeTeamProtocolV2RpcFrame(message.data);
+          return frame.type === "response" && frame.requestId === "scoped-usage-request";
+        } catch {
+          return false;
+        }
+      });
+      if (!response || !isString(response.data)) throw new Error("Missing scoped usage response.");
+      const frame = decodeTeamProtocolV2RpcFrame(response.data);
+      expect(frame).toMatchObject({ type: "response", result: { status: 200, body: scopedUsage } });
+    });
     let resolveFetch!: (response: Response) => void;
     const fetchRequest = vi
       .spyOn(globalThis, "fetch")
@@ -248,10 +306,10 @@ describe("TeamWebRtcHostGateway", () => {
       operation: "http.request",
       payload: { method: "POST", path: "/v1/browser/visible", body: { visible: true } },
     });
-    bridge.emit("data", "host-1", "rpc", duplicateRequest);
-    bridge.emit("data", "host-1", "rpc", duplicateRequest);
+    bridge.emit("data", "peer-1", "rpc", duplicateRequest);
+    bridge.emit("data", "peer-1", "rpc", duplicateRequest);
     await vi.waitFor(() => expect(fetchRequest).toHaveBeenCalledOnce());
-    resolveFetch(Response.json({ visible: true }));
+    resolveFetch(new Response(null, { status: 204 }));
     await vi.waitFor(() =>
       expect(
         bridge.sent.filter((message) => {
@@ -266,7 +324,34 @@ describe("TeamWebRtcHostGateway", () => {
       ).toHaveLength(2),
     );
     fetchRequest.mockRestore();
-    bridge.emit("incoming", "host-1", {
+    bridge.emit(
+      "data",
+      "peer-1",
+      "rpc",
+      encodeTeamProtocolV2Frame({
+        version: 2,
+        type: "request",
+        requestId: "mark-unread",
+        operation: "http.request",
+        payload: {
+          method: "POST",
+          path: "/v1/agents/bot-1/conversation/unread",
+          body: {},
+          capabilities: [TEAM_AGENT_ACTIVITY_CAPABILITY, "conversation-unread"],
+        },
+      }),
+    );
+    const unreadReply = () =>
+      bridge.sent.find(
+        (message) => message.peerId === "peer-1" && isString(message.data) && message.data.includes('"mark-unread"'),
+      );
+    await vi.waitFor(() => expect(unreadReply()).toBeDefined());
+    expect(decodeTeamProtocolV2RpcFrame(unreadReply()?.data)).toMatchObject({
+      type: "response",
+      result: { status: 200, body: unreadState },
+    });
+    bridge.emit("incoming", "peer-1", {
+      hostId: "host-1",
       connectionId: "connection-2",
       sessionId: "session-1",
       userId: "member-account",
@@ -274,13 +359,74 @@ describe("TeamWebRtcHostGateway", () => {
       role: "member",
       sessionExpiresAt,
     });
-    bridge.emit("connected", "host-1", {
+    bridge.emit("connected", "peer-1", {
       localFingerprint: "HOST-FINGERPRINT",
       remoteFingerprint: "CLIENT-FINGERPRINT",
     });
     expect(closeLocalSession).not.toHaveBeenCalled();
     expect(closeSession).not.toHaveBeenCalled();
-    bridge.emit("incoming", "host-1", {
+
+    await authenticatePhone(bridge, "peer-2", "session-2", "second-ticket", clientKeys);
+    const firstMessagesBeforeSecondRequest = bridge.sent.filter((message) => message.peerId === "peer-1").length;
+    const secondFetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        Response.json({ code: "action_denied", error: "This device's action was denied." }, { status: 403 }),
+      );
+    bridge.emit("data", "peer-2", "rpc", duplicateRequest);
+    await vi.waitFor(() => expect(secondFetch).toHaveBeenCalledOnce());
+    const secondReplies = () =>
+      bridge.sent.filter(
+        (message) =>
+          message.peerId === "peer-2" && isString(message.data) && message.data.includes('"duplicate-request"'),
+      );
+    await vi.waitFor(() => expect(secondReplies()).toHaveLength(1));
+    expect(secondReplies()[0]?.data).toContain('"status":403');
+    expect(bridge.sent.filter((message) => message.peerId === "peer-1")).toHaveLength(firstMessagesBeforeSecondRequest);
+    expect(
+      bridge.sent.filter(
+        (message) => message.peerId === "peer-1" && isString(message.data) && message.data.includes('"status":403'),
+      ),
+    ).toEqual([]);
+    secondFetch.mockRestore();
+    bridge.emit(
+      "data",
+      "peer-2",
+      "events",
+      encodeTeamProtocolV2Frame({ version: 2, type: "event-ack", throughSequence: 0 }),
+    );
+    await vi.waitFor(() => expect(eventsServer.clients.size).toBe(2));
+    for (const client of eventsServer.clients)
+      client.send(JSON.stringify({ type: "queue-invalidated", botId: "bot-1" }));
+    await vi.waitFor(() =>
+      expect(
+        bridge.sent.filter(
+          (message) =>
+            message.channel === "events" && isString(message.data) && message.data.includes("queue-invalidated"),
+        ),
+      ).toHaveLength(2),
+    );
+    expect(
+      new Set(
+        bridge.sent
+          .filter(
+            (message) =>
+              message.channel === "events" && isString(message.data) && message.data.includes("queue-invalidated"),
+          )
+          .map((message) => message.peerId),
+      ),
+    ).toEqual(new Set(["peer-1", "peer-2"]));
+    await gateway.revokeSession("session-2");
+    expect(closeLocalSession).toHaveBeenCalledExactlyOnceWith("session-2");
+    expect(bridge.disconnectedPeers).toEqual(["peer-2"]);
+    const beforeCachedReply = bridge.sent.length;
+    bridge.emit("data", "peer-1", "rpc", duplicateRequest);
+    await vi.waitFor(() => expect(bridge.sent.length).toBeGreaterThan(beforeCachedReply));
+    const lastReply = bridge.sent.at(-1);
+    expect(lastReply?.peerId).toBe("peer-1");
+    expect(lastReply?.data).toContain('"status":204');
+    bridge.emit("incoming", "peer-1", {
+      hostId: "host-1",
       connectionId: "connection-3",
       sessionId: "session-1",
       userId: "member-account",
@@ -288,14 +434,14 @@ describe("TeamWebRtcHostGateway", () => {
       role: "member",
       sessionExpiresAt,
     });
-    bridge.emit("connected", "host-1", {
+    bridge.emit("connected", "peer-1", {
       localFingerprint: "HOST-FINGERPRINT",
       remoteFingerprint: "DIFFERENT-CLIENT-FINGERPRINT",
     });
     expect(closeLocalSession).toHaveBeenCalledWith("session-1");
     expect(closeSession).not.toHaveBeenCalled();
-    bridge.emit("data", "host-1", "rpc", duplicateRequest);
-    await vi.waitFor(() => expect(bridge.disconnectedPeers).toContain("host-1"));
+    bridge.emit("data", "peer-1", "rpc", duplicateRequest);
+    await vi.waitFor(() => expect(bridge.disconnectedPeers).toContain("peer-1"));
     await gateway.stop();
     gateway.dispose();
   });
@@ -320,13 +466,86 @@ describe("TeamWebRtcHostGateway", () => {
       localApiPort: 0,
     });
     await vi.waitFor(() => expect(bridge.connections).toHaveLength(1));
-    bridge.emit("signalReady", "host-1");
     await starting;
-    bridge.emit("data", "host-1", "rpc", "not-json");
+    bridge.emit("incoming", "peer-1", {
+      hostId: "host-1",
+      connectionId: "connection-1",
+      sessionId: "session-1",
+      userId: "member-account",
+      membershipId: "membership-1",
+      role: "member",
+      sessionExpiresAt: 8_640_000_000_000,
+    });
+    bridge.emit("data", "peer-1", "rpc", "not-json");
 
-    await vi.waitFor(() => expect(bridge.disconnectedPeers).toEqual(["host-1"]));
+    await vi.waitFor(() => expect(bridge.disconnectedPeers).toEqual(["peer-1"]));
     expect(bridge.connections).toHaveLength(1);
     await gateway.stop();
     gateway.dispose();
   });
 });
+
+async function authenticatePhone(
+  bridge: FakeBridge,
+  peerId: string,
+  sessionId: string,
+  ticket: string,
+  keys: { publicKey: string; privateKey: string },
+): Promise<void> {
+  bridge.emit("incoming", peerId, {
+    hostId: "host-1",
+    connectionId: `connection-${peerId}`,
+    sessionId,
+    userId: "member-account",
+    membershipId: "membership-1",
+    role: "member",
+    sessionExpiresAt: 8_640_000_000_000,
+  });
+  bridge.emit("connected", peerId, { localFingerprint: "HOST-FINGERPRINT", remoteFingerprint: "CLIENT-FINGERPRINT" });
+  const clientNonce = "d".repeat(43);
+  const transcript = teamProtocolV2AuthenticationTranscript({
+    hostId: "host-1",
+    sessionId,
+    ticket,
+    clientPublicKey: keys.publicKey,
+    clientNonce,
+    clientFingerprint: "CLIENT-FINGERPRINT",
+    hostFingerprint: "HOST-FINGERPRINT",
+  });
+  bridge.emit(
+    "data",
+    peerId,
+    "rpc",
+    encodeTeamProtocolV2Frame({
+      version: 2,
+      type: "auth-init",
+      ticket,
+      clientPublicKey: keys.publicKey,
+      clientNonce,
+      signature: sign(null, Buffer.from(transcript), keys.privateKey).toString("base64url"),
+    }),
+  );
+  await vi.waitFor(() => expect(bridge.sent.some((message) => message.peerId === peerId)).toBe(true));
+  const message = bridge.sent.find((message) => message.peerId === peerId);
+  if (!message) throw new Error("No authentication challenge.");
+  const ready = decodeTeamProtocolV2AuthFrame(message.data);
+  if (ready.type !== "auth-ready") throw new Error("Wrong authentication challenge.");
+  bridge.emit(
+    "data",
+    peerId,
+    "rpc",
+    encodeTeamProtocolV2Frame({
+      version: 2,
+      type: "auth-complete",
+      clientNonce,
+      hostNonce: ready.hostNonce,
+    }),
+  );
+  await vi.waitFor(() =>
+    expect(
+      bridge.sent.some(
+        (message) => message.peerId === peerId && isString(message.data) && message.data.includes('"auth-confirmed"'),
+      ),
+    ).toBe(true),
+  );
+}

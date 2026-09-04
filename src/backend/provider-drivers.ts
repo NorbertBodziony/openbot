@@ -35,7 +35,7 @@ export const BUILT_IN_PROVIDER_DRIVERS: readonly BuiltInProviderDriver[] = [
     label: "Claude",
     signInMessage: "Connect Claude to continue.",
     resolveCli: resolveClaudeCli,
-    createClient: (cli) => new ClaudeAgentClient(cli),
+    createClient: (cli, requestTimeoutMs) => new ClaudeAgentClient(cli, undefined, undefined, requestTimeoutMs),
     authState: (account) => ({ kind: "claude", email: account?.email ?? null }),
     validateAccount: () => undefined,
   },

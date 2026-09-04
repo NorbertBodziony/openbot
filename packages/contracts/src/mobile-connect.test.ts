@@ -1,9 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { createMobileConnectUrl, parseMobileConnectUrl } from "./mobile-connect";
+import { createMobileConnectUrl, parseMobileConnectUrl, validateMobileConnectHostBinding } from "./mobile-connect";
 
 const ticket = "A_secure-one_time-ticket_1234567890abcdef";
 
 describe("Mobile Connect URLs", () => {
+  it("binds pairing to the scanned desktop and rejects a substituted redemption", () => {
+    const host = { hostId: "host-a", fingerprint: "a".repeat(43) };
+    expect(
+      parseMobileConnectUrl(createMobileConnectUrl({ apiUrl: "https://api.openbot.run", ticket, host }))?.host,
+    ).toEqual(host);
+    expect(validateMobileConnectHostBinding(host, host)).toEqual(host);
+    expect(() => validateMobileConnectHostBinding(host, { ...host, hostId: "host-b" })).toThrow("different desktop");
+    expect(() => validateMobileConnectHostBinding(host, { ...host, fingerprint: "b".repeat(43) })).toThrow(
+      "different desktop",
+    );
+    expect(
+      parseMobileConnectUrl(`openbot://mobile-connect?api=https://api.openbot.run&ticket=${ticket}&host=host-a`),
+    ).toBeNull();
+  });
   it("round-trips an HTTPS account API and one-time ticket", () => {
     const url = createMobileConnectUrl({ apiUrl: "https://api.openbot.run", ticket });
 

@@ -228,6 +228,8 @@ function AppSettings(props: AccountProps) {
         onCreateMobileConnect={auth.createMobileConnect}
         onListMobileConnectedDevices={auth.listMobileConnectedDevices}
         onRevokeMobileConnectedDevice={auth.revokeMobileConnectedDevice}
+        onListAccountSessions={auth.listAccountSessions}
+        onRevokeAccountSession={auth.revokeAccountSession}
         agentStatus={agentStatus()}
         providerRuntimeStatuses={localProviderDownloads() ? providerRuntimeStatuses() : undefined}
         onDownloadProvider={localProviderDownloads() ? downloadProviderRuntime : undefined}

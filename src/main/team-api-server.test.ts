@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
+  AccountUsage,
   BotMemory,
   BotSummary,
   CentralAuthUser,
@@ -111,6 +112,7 @@ function createAgents(overrides: Partial<TestAgents> = {}, events = new EventEmi
     readConversationPageFor: unimplemented,
     searchConversationMessages: unimplemented,
     markConversationRead: unimplemented,
+    markConversationUnread: unimplemented,
     prepareImportedAttachments: unimplemented,
     discardDraftAttachment: unimplemented,
     resolveSharedFile: unimplemented,
@@ -418,6 +420,7 @@ const ROUTE_METHODS: Record<string, string> = {
   "agents.models": "GET",
   "agents.conversationReads": "GET",
   "agent.one": "PATCH",
+  "agent.usage": "GET",
   "agent.skills": "GET",
   "agent.duplicate": "POST",
   "agent.avatar": "GET",
@@ -473,9 +476,10 @@ const ROUTES_WITHOUT_A_CLASSIFIED_JSON_BODY = new Set([
   // The v1 codec short-circuits this one ahead of classification, to keep a skill list it has no
   // contract for intact.
   "agent.skills",
-  // Protocol v3 only: its own adapter names this route before delegating the rest to v1. A v1 peer
-  // that calls it anyway is answered 500 rather than a protocol error - see the PR body.
+  // Protocol v3 only: its own adapter names these routes before delegating the rest to v1. A v1 peer
+  // that calls either anyway is answered 500 rather than a protocol error - see the PR body.
   "agent.duplicate",
+  "agent.usage",
 ]);
 
 const ROUTE_SAMPLE_IDS = ["route-sample", "route-sample-other"];
@@ -1923,6 +1927,16 @@ describe("TeamApiServer administration", () => {
       messageId: "message-tagged",
       deliveries: [],
     }));
+    const usage: AccountUsage = {
+      limits: [
+        {
+          id: "codex",
+          primary: null,
+          secondary: { usedPercent: 40, windowDurationMins: 10_080, resetsAt: 1_788_825_600 },
+        },
+      ],
+    };
+    const getUsage = vi.fn(async () => usage);
     const readConversationPageFor = vi.fn(async (...args: unknown[]) => {
       const options = isDynamicRecord(args[4]) ? args[4] : {};
       const messages = localConversation.messages.filter((message) => {
@@ -1950,10 +1964,17 @@ describe("TeamApiServer administration", () => {
         throughMessageId: options.excludeHostedSiteEvents ? "message-1" : "hosted-site-event-1",
       },
     }));
+    const markConversationUnread = vi.fn(async (_botId: string, _memberId: string) => ({
+      unreadCount: 1,
+      firstUnreadMessageId: "message-1",
+      throughMessageId: null,
+    }));
     const agents = createAgents({
       listBots: () => localBots,
+      getUsage,
       createBot,
       listConversationReads,
+      markConversationUnread,
       readConversationFor: async (botId: string, _memberId: string) => ({
         ...localConversation,
         botId,
@@ -2002,6 +2023,14 @@ describe("TeamApiServer administration", () => {
       });
       expect(createBot).toHaveBeenCalledWith(createInput);
       await expect(jsonRequest(base, "/v1/agents", { token: login.sessionToken })).resolves.toEqual(localBots);
+      await expect(
+        jsonRequest(base, "/v1/agents/chief/usage", {
+          token: login.sessionToken,
+          capabilities: [...TEAM_CURRENT_CAPABILITIES],
+          protocol: TEAM_PROTOCOL_V3,
+        }),
+      ).resolves.toEqual(usage);
+      expect(getUsage).toHaveBeenCalledWith("chief");
       await expect(jsonRequest(base, "/v1/agents/chief/conversation", { token: login.sessionToken })).resolves.toEqual({
         ...legacyConversation,
         messages: [legacyConversation.messages[0]],
@@ -2106,6 +2135,37 @@ describe("TeamApiServer administration", () => {
         firstUnreadMessageId: null,
         throughMessageId: "hosted-site-event-1",
       });
+      await expect(
+        jsonRequest(base, "/v1/agents/chief/conversation/unread", {
+          token: login.sessionToken,
+          protocol: TEAM_PROTOCOL_V3,
+          capabilities: [...TEAM_CURRENT_CAPABILITIES],
+          body: {},
+        }),
+      ).resolves.toEqual({ unreadCount: 1, firstUnreadMessageId: "message-1", throughMessageId: null });
+      expect(markConversationUnread).toHaveBeenCalledWith("chief", store.authenticate(login.sessionToken)?.id);
+      const unsupported = await fetch(`${base}/v1/agents/chief/conversation/unread`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${login.sessionToken}`,
+          "Content-Type": "application/json",
+          [TEAM_PROTOCOL_VERSION_HEADER]: "3",
+        },
+        body: "{}",
+      });
+      expect(unsupported.status).toBe(400);
+      const forgedReader = await fetch(`${base}/v1/agents/chief/conversation/unread`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${login.sessionToken}`,
+          "Content-Type": "application/json",
+          [TEAM_PROTOCOL_VERSION_HEADER]: "3",
+          [TEAM_CAPABILITIES_HEADER]: TEAM_CURRENT_CAPABILITIES.join(","),
+        },
+        body: JSON.stringify({ memberId: "other-reader" }),
+      });
+      expect(forgedReader.status).toBe(400);
+      expect(markConversationUnread).toHaveBeenCalledTimes(1);
     } finally {
       await api.stop();
     }

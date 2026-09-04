@@ -1,11 +1,12 @@
 import type { CentralAuthUser } from "@openbot/contracts/ipc";
-import { Loading } from "solid-js";
+import { createEffect, createMemo, Loading } from "solid-js";
 import { useAgents } from "./agents";
 import { useAuth } from "./auth";
 import { StaticAccountDock } from "./components/StaticAccountDock";
 import { useLayout } from "./layout";
 import { AccountDock } from "./lazy-views";
 import { usePlatform } from "./platform";
+import { useServers } from "./servers";
 import { useSettings } from "./settings";
 import { useSetup } from "./setup";
 import { useUpdates } from "./updates";
@@ -22,8 +23,25 @@ export function WorkspaceAccountDock(props: { account: () => CentralAuthUser }) 
   const auth = useAuth();
   const setup = useSetup();
   const updates = useUpdates();
-  const { agentStatus } = useAgents();
+  const { activeBot, agentStatus } = useAgents();
+  const { activeServerId, activeServerSupportsCapability } = useServers();
   const { openAppSettings, setSkillsMarketplaceOpen } = useSettings();
+  const usageReady = createMemo(() => {
+    const bot = activeBot();
+    if (!bot || agentStatus().phase !== "ready") return false;
+    const provider = agentStatus().providers?.find((candidate) => candidate.id === bot.provider);
+    return provider ? provider.state === "available" && provider.connectionState !== "connecting" : true;
+  });
+  const usageTargetKey = createMemo(() => {
+    const bot = activeBot();
+    if (!bot || !usageReady() || !activeServerSupportsCapability("model-scoped-usage")) return null;
+    return JSON.stringify([activeServerId(), bot.provider, bot.model]);
+  });
+
+  createEffect(
+    () => usageTargetKey(),
+    (targetKey) => auth.selectAccountUsageTarget(targetKey),
+  );
 
   return (
     <Loading
@@ -41,10 +59,17 @@ export function WorkspaceAccountDock(props: { account: () => CentralAuthUser }) 
         appInfo={platform.appInfo()}
         agentStatus={agentStatus()}
         accountUsage={auth.accountUsage()}
+        usageTargetKey={usageTargetKey()}
+        usageRefreshRevision={auth.accountUsageRefreshRevision()}
+        usageReady={usageReady()}
         updateStatus={updates.status()}
         compact={layout.leftPanelCompact()}
         withServerRail={platform.serverRailVisible()}
-        onRefreshUsage={auth.refreshAccountUsage}
+        onRefreshUsage={() => {
+          const bot = activeBot();
+          const targetKey = usageTargetKey();
+          return bot && targetKey ? auth.refreshAccountUsage(bot.id, targetKey) : Promise.resolve({ limits: [] });
+        }}
         onUpdateAction={updates.runAction}
         onLogout={platform.landingPreview ? undefined : auth.logoutCentralAccount}
         onOpenExternal={(destination) => window.openbot.openExternal(destination)}

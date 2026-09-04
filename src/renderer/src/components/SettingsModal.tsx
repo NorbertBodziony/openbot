@@ -1,5 +1,6 @@
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import type {
+  AccountSession,
   AgentProviderId,
   AgentStatus,
   AppInfo,
@@ -75,6 +76,8 @@ export interface SettingsModalProps {
   onCreateMobileConnect?: () => Promise<MobileConnectTicket>;
   onListMobileConnectedDevices?: () => Promise<MobileConnectedDevice[]>;
   onRevokeMobileConnectedDevice?: (sessionId: string) => Promise<void>;
+  onListAccountSessions?: () => Promise<AccountSession[]>;
+  onRevokeAccountSession?: (sessionId: string) => Promise<void>;
   processAvatarFile?: (file: File) => Promise<AvatarImageInput>;
   agentStatus?: AgentStatus;
   providerRuntimeStatuses?: Partial<Record<AgentProviderId, ProviderRuntimeStatus>>;
@@ -169,6 +172,7 @@ interface SettingsPanels {
   devices: MobileDeviceList;
   hosting: HostedSitesPanel;
   profile: ProfileNameEdit;
+  sessions: { items: AccountSession[]; loading: boolean; error: string | null; revokingId: string | null };
 }
 
 const linkTargetOptions: GeneralSettingsValue["externalLinkTarget"][] = ["Default browser", "OpenBot"];
@@ -186,6 +190,7 @@ export function SettingsModal(props: SettingsModalProps) {
     devices: { devices: [], error: null, loaded: false, loading: false, revokingSessionId: null },
     hosting: { busy: false, error: null, sites: [] },
     profile: { busy: false, name: "", saveError: null, savedName: "", touched: false },
+    sessions: { items: [], loading: false, error: null, revokingId: null },
   });
   const [activeTab, setActiveTab] = createSignal<SettingsTab>("general");
   const [selectedProvider, setSelectedProvider] = createSignal<AgentProviderId | null>(null);
@@ -198,11 +203,76 @@ export function SettingsModal(props: SettingsModalProps) {
   let hostedSitesReloadRequested = false;
   let hostedSitesLoadPromise: Promise<void> | null = null;
   let mobileDevicesRequestRevision = 0;
+  let accountSessionsRevision = 0;
   let mobileConnectBaselineSessionIds = new Set<string>();
   let mobileConnectSuccessTimer: number | undefined;
   let mobileConnectCleanupTimer: number | undefined;
 
   const accountName = () => props.account.name?.trim() || props.account.email.split("@")[0] || props.account.email;
+
+  async function refreshAccountSessions() {
+    if (!props.onListAccountSessions) return;
+    const revision = ++accountSessionsRevision;
+    setPanels((state) => {
+      state.sessions.loading = true;
+      state.sessions.error = null;
+    });
+    try {
+      const items = await props.onListAccountSessions();
+      if (revision !== accountSessionsRevision) return;
+      setPanels((state) => {
+        state.sessions.items = items;
+      });
+    } catch {
+      if (revision !== accountSessionsRevision) return;
+      setPanels((state) => {
+        state.sessions.error = "Could not load account sessions. Please try again.";
+      });
+    } finally {
+      if (revision === accountSessionsRevision)
+        setPanels((state) => {
+          state.sessions.loading = false;
+        });
+    }
+  }
+
+  async function revokeAccountSession(sessionId: string) {
+    if (!props.onRevokeAccountSession || panels.sessions.revokingId) return;
+    const revision = accountSessionsRevision;
+    setPanels((state) => {
+      state.sessions.revokingId = sessionId;
+      state.sessions.error = null;
+    });
+    try {
+      await props.onRevokeAccountSession(sessionId);
+      if (revision !== accountSessionsRevision) return;
+      await refreshAccountSessions();
+    } catch {
+      if (revision !== accountSessionsRevision) return;
+      setPanels((state) => {
+        state.sessions.error = "Could not disconnect this session. Please try again.";
+      });
+    } finally {
+      setPanels((state) => {
+        if (state.sessions.revokingId === sessionId) state.sessions.revokingId = null;
+      });
+    }
+  }
+
+  createEffect(
+    () => ({ open: props.open, tab: activeTab(), accountId: props.account.id, list: props.onListAccountSessions }),
+    ({ open, tab, list }) => {
+      accountSessionsRevision += 1;
+      setPanels((state) => {
+        state.sessions.items = [];
+        state.sessions.revokingId = null;
+      });
+      if (open && tab === "profile" && list) void refreshAccountSessions();
+      return () => {
+        accountSessionsRevision += 1;
+      };
+    },
+  );
 
   createEffect(
     () => props.account.name,
@@ -1014,6 +1084,58 @@ export function SettingsModal(props: SettingsModalProps) {
               </Item>
             </ItemGroup>
           </SettingsSection>
+          <Show when={props.onListAccountSessions}>
+            <SettingsSection
+              title="Account sessions"
+              description="Sessions stay signed in until you log out or disconnect them. Disconnecting also ends this account's active remote connections."
+            >
+              <Button
+                variant="outline"
+                disabled={panels.sessions.loading || Boolean(panels.sessions.revokingId)}
+                onClick={() => void refreshAccountSessions()}
+              >
+                {panels.sessions.loading ? "Loading sessions…" : "Refresh sessions"}
+              </Button>
+              <Show when={panels.sessions.error}>
+                {(error) => (
+                  <Text role="alert" class="settings-modal-error">
+                    {error()}
+                  </Text>
+                )}
+              </Show>
+              <ItemGroup class="settings-modal-card">
+                <For each={panels.sessions.items}>
+                  {(session) => (
+                    <Item>
+                      <ItemContent>
+                        <ItemTitle>
+                          {session.name}
+                          {session.current ? " · This device" : ""}
+                        </ItemTitle>
+                        <ItemDescription>
+                          {session.kind === "desktop" ? "Desktop" : "Mobile"} · Signed in{" "}
+                          {new Date(session.connectedAt).toLocaleString()} · Last active{" "}
+                          {new Date(session.lastActiveAt).toLocaleString()}
+                        </ItemDescription>
+                      </ItemContent>
+                      <ItemActions>
+                        <Show when={!session.current} fallback={<Badge>This device</Badge>}>
+                          <Button
+                            variant="outline"
+                            aria-label={`Disconnect ${session.name} session from ${new Date(session.connectedAt).toLocaleString()}`}
+                            disabled={Boolean(panels.sessions.revokingId) || !props.onRevokeAccountSession}
+                            onClick={() => void revokeAccountSession(session.sessionId)}
+                          >
+                            {panels.sessions.revokingId === session.sessionId ? "Disconnecting…" : "Disconnect"}
+                          </Button>
+                        </Show>
+                      </ItemActions>
+                    </Item>
+                  )}
+                </For>
+              </ItemGroup>
+            </SettingsSection>
+          </Show>
         </Tabs.Content>
 
         <Tabs.Content value="mobile-connect" class="settings-modal-tab-panel" data-tab="mobile-connect">
