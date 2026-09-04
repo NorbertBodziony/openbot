@@ -12,11 +12,12 @@ import {
 } from "@openbot/contracts/attachment-files";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { type FilePreview, type ImportAttachmentsInput, IPC_CHANNELS } from "@openbot/contracts/ipc";
+import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { app, type BrowserWindow, dialog, type OpenDialogOptions, shell } from "electron";
 import type { AgentService } from "../../backend/agent-service";
 import type { MailboxStore } from "../../backend/mailbox-store";
 import { filePreviewFromBytes, localFilePreview, mimeTypeForName } from "../file-preview";
-import type { RemoteServerManager } from "../remote-server-manager";
+import { decodeVoid, type RemoteServerManager } from "../remote-server-manager";
 import { handleTrusted } from "../trusted-ipc";
 import {
   parseAgentRequest,
@@ -57,7 +58,7 @@ export function registerAttachmentIpcHandlers({
     if (result.canceled) return [];
     return routeToServer(serverId, {
       local: () => service.prepareAttachments(result.filePaths),
-      remote: (target) => uploadRemoteImports(remoteServers, target, { paths: result.filePaths, data: [] }),
+      remote: (target) => uploadRemotePaths(remoteServers, target, result.filePaths),
     });
   });
   handleTrusted(IPC_CHANNELS.agentImportAttachments, parseAgentRequest, (scoped) => {
@@ -71,7 +72,8 @@ export function registerAttachmentIpcHandlers({
     const attachmentId = requireString(scoped.payload, "attachmentId");
     return routeToServer(scoped.serverId, {
       local: () => service.discardDraftAttachment(attachmentId),
-      remote: (serverId) => remoteServers.discardDraftAttachment(attachmentId, serverId),
+      remote: (serverId) =>
+        remoteServers.request(TEAM_API_ROUTES.attachment(attachmentId), { method: "DELETE" }, serverId, decodeVoid),
     });
   });
   handleTrusted(IPC_CHANNELS.agentOpenAttachment, parseAgentRequest, (scoped) => {
@@ -207,6 +209,29 @@ async function chooseSavePath(mainWindow: BrowserWindow | null, suggestedName: s
   return result.canceled ? undefined : result.filePath || undefined;
 }
 
+async function uploadRemotePaths(remoteServers: RemoteServerManager, serverId: string, paths: string[]) {
+  if (paths.length > INPUT_LIMITS.attachments) {
+    throw new Error(`Choose at most ${INPUT_LIMITS.attachments} files.`);
+  }
+  for (const path of paths) assertSupportedAttachmentName(basename(path));
+  const files = await Promise.all(
+    paths.map(async (path) => ({
+      name: basename(path),
+      bytes: new Uint8Array(await readFile(path)),
+    })),
+  );
+  const total = files.reduce((sum, file) => sum + file.bytes.byteLength, 0);
+  if (files.some((file) => file.bytes.byteLength > ATTACHMENT_LIMITS.fileBytes)) {
+    throw new Error("A file exceeds the 100 MB limit.");
+  }
+  if (total > ATTACHMENT_LIMITS.totalBytes) {
+    throw new Error("Attachments exceed the 250 MB total limit.");
+  }
+  return Promise.all(
+    files.map((file) => remoteServers.uploadAttachment(file.name, mimeTypeForName(file.name), file.bytes, serverId)),
+  );
+}
+
 async function uploadRemoteImports(
   remoteServers: RemoteServerManager,
   serverId: string,
@@ -237,7 +262,9 @@ async function uploadRemoteImports(
   if (files.reduce((sum, file) => sum + file.bytes.byteLength, 0) > ATTACHMENT_LIMITS.totalBytes) {
     throw new Error("Attachments exceed the 250 MB total limit.");
   }
-  return remoteServers.uploadAttachments(files, serverId);
+  return Promise.all(
+    files.map((file) => remoteServers.uploadAttachment(file.name, file.mimeType, file.bytes, serverId)),
+  );
 }
 
 function assertSupportedAttachmentName(name: string): void {
