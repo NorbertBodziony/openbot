@@ -1,4 +1,3 @@
-import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { constants } from "node:fs";
@@ -14,7 +13,6 @@ import type {
   AgentModelOption,
   AgentPromptQuestion,
   AgentPromptResolution,
-  AgentProviderStatus,
   AgentRuntimeSnapshot,
   AgentStatus,
   AttachmentDataInput,
@@ -72,12 +70,11 @@ import {
   hostedSiteConversationEventItemType,
   hostedSiteConversationEventText,
   isMessageReaction,
-  isReasoningEffort,
   routineConversationEventItemType,
   routineRunConversationEventItemType,
 } from "@openbot/contracts/ipc";
 import { isBoolean, isString } from "@openbot/contracts/runtime-values";
-import { finiteNumberOrNull, normalizeAccountUsage } from "./agent/account-usage";
+import { finiteNumberOrNull } from "./agent/account-usage";
 import { ConversationRuntime, withDatabaseTransaction } from "./agent/conversation-runtime";
 import {
   agentNamesById,
@@ -122,12 +119,7 @@ import {
   questionPromptText,
   validPromptQuestions,
 } from "./agent/prompts";
-import {
-  providerFailureStatus,
-  setProviderStatus,
-  updateProviderStatus,
-  waitForSuccessfulProcess,
-} from "./agent/provider-status";
+import { type AgentClientFactory, ProviderRuntime } from "./agent/provider-runtime";
 import {
   localTimezone,
   openBotToolResult,
@@ -139,7 +131,6 @@ import {
 } from "./agent/routine-tools";
 import { compactRuntimeApproval, compactRuntimeQuestion, fitRuntimeSnapshot } from "./agent/runtime-snapshot";
 import {
-  cleanModelName,
   isArchivedThreadError,
   isDynamicToolCall,
   isMissingProviderSessionError,
@@ -153,17 +144,8 @@ import {
 import type { AgentClient, AgentProvider } from "./agent-client";
 import { AgentMemoryStore } from "./agent-memory-store";
 import { AgentRoutineStore } from "./agent-routine-store";
-import { CodexAppServerClient } from "./app-server-client";
 import type { BotStore } from "./bot-store";
 import { BROWSER_DYNAMIC_TOOLS, OPENBOT_BROWSER_NAMESPACE } from "./browser-host";
-import {
-  type AgentCliInfo,
-  CodexCliError,
-  type CodexCliInfo,
-  resolveClaudeCli,
-  resolveCodexCli,
-  resolveGrokCli,
-} from "./cli";
 import { type ConversationMarkerExclusions, ConversationReadStore } from "./conversation-read-store";
 import {
   mergeConversationSnapshots,
@@ -177,21 +159,14 @@ import type { DeliveryContext, GeneratedAttachmentSource, MailboxStore } from ".
 import type { PendingHostedSiteTerminalEvent } from "./openbot-database";
 import { OPENBOT_DYNAMIC_TOOLS } from "./openbot-tools";
 import {
-  type AccountLoginCompletedResult,
-  type AccountReadResult,
   type AppServerNotification,
   type AppServerRequest,
   type DynamicToolCallParams,
   type DynamicToolResult,
   decodeAccountLoginCompletedResult,
-  decodeAccountLoginStartResult,
-  decodeAccountRateLimitsReadResult,
-  decodeAccountReadResult,
-  decodeModelListResponse,
   decodeRecordResponse,
   decodeThreadResponse,
   decodeTurnResponse,
-  getArray,
   getRecord,
   getString,
   isRecord,
@@ -199,7 +174,6 @@ import {
   type ResponseDecoder,
   type ThreadItem,
 } from "./protocol";
-import { BUILT_IN_PROVIDER_DRIVERS, requireProviderDriver } from "./provider-drivers";
 import { nextRoutineOccurrence } from "./routine-schedule";
 import { isWithin, sharedPathFromInput, workspacePathFromInput } from "./workspace-paths";
 
@@ -315,20 +289,6 @@ export interface RoutineMutationOptions {
 
 const HOSTED_SITE_APPROVAL_METHOD = "openbot/hosted-site-mutation";
 
-interface PendingCodexLogin {
-  client: AgentClient;
-  cli: CodexCliInfo;
-  loginId: string;
-  timer: NodeJS.Timeout;
-  completing: boolean;
-}
-
-interface PendingClaudeLogin {
-  child: ChildProcess;
-  cli: AgentCliInfo;
-  task: Promise<void> | null;
-}
-
 type PendingMemoryMutation =
   | {
       callId: string;
@@ -351,85 +311,6 @@ type PendingMemoryMutation =
 
 const CONTEXT_COMPACTION_THRESHOLD = 0.8;
 const CONTEXT_COMPACTION_TIMEOUT_MS = 120_000;
-const CODEX_LOGIN_TIMEOUT_MS = 10 * 60_000;
-const CLAUDE_LOGIN_TIMEOUT_MS = 10 * 60_000;
-const GROK_LOGIN_TIMEOUT_MS = 10 * 60_000;
-
-const INITIAL_STATUS: AgentStatus = {
-  phase: "idle",
-  cliVersion: null,
-  auth: { kind: "unknown" },
-  providers: [
-    { id: "codex", state: "not-started", version: null, message: null },
-    { id: "claude", state: "not-started", version: null, message: null },
-    { id: "grok", state: "not-started", version: null, message: null },
-  ],
-  capabilities: {
-    chat: "unavailable",
-    browser: "ready",
-    computerUse: "unavailable",
-  },
-  message: null,
-  fullAccess: true,
-};
-
-const FALLBACK_MODELS: AgentModelOption[] = [
-  {
-    provider: "codex",
-    id: "gpt-5.6-luna",
-    name: "Luna",
-    description: "Fast and efficient for everyday agent work.",
-    defaultReasoningEffort: "medium",
-    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
-  },
-  {
-    provider: "codex",
-    id: "gpt-5.6-terra",
-    name: "Terra",
-    description: "Balanced speed and capability for involved tasks.",
-    defaultReasoningEffort: "medium",
-    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
-  },
-  {
-    provider: "codex",
-    id: "gpt-5.6-sol",
-    name: "Sol",
-    description: "Most capable for complex, long-running work.",
-    defaultReasoningEffort: "medium",
-    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
-  },
-  {
-    provider: "claude",
-    id: "claude-fable-5",
-    name: "Claude Fable 5",
-    description: "Fast Claude model for everyday agent work.",
-    defaultReasoningEffort: "high",
-    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
-  },
-  {
-    provider: "claude",
-    id: "claude-opus-5",
-    name: "Claude Opus 5",
-    description: "Most capable Claude model for complex work.",
-    defaultReasoningEffort: "high",
-    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
-  },
-  {
-    provider: "claude",
-    id: "claude-sonnet-5",
-    name: "Claude Sonnet 5",
-    description: "Balanced Claude model for general agent work.",
-    defaultReasoningEffort: "high",
-    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max"],
-  },
-];
-
-const CURATED_CODEX_MODEL_IDS = new Set(
-  FALLBACK_MODELS.filter((model) => model.provider === "codex").map((model) => model.id),
-);
-
-export type AgentClientFactory = (provider: AgentProvider, cli: AgentCliInfo) => AgentClient;
-
 export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #store: BotStore;
   readonly #mailbox: MailboxStore;
@@ -437,11 +318,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #conversationReads: ConversationReadStore;
   readonly #memories: AgentMemoryStore;
   readonly #routines: AgentRoutineStore;
-  readonly #requestTimeoutMs: number;
-  readonly #clientFactory: AgentClientFactory | null;
-  readonly #bundledCodexExecutable: string | null | undefined;
-  readonly #bundledClaudeExecutable: string | null | undefined;
-  readonly #bundledGrokExecutable: string | null | undefined;
+  readonly #providers: ProviderRuntime;
   readonly #prepareBotWorkspace: (bot: BotSummary) => Promise<void>;
   readonly #hostedSites: AgentHostedSites | null;
   readonly #conversation: ConversationRuntime;
@@ -475,23 +352,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   #duplicationCommitQueue: Promise<void> = Promise.resolve();
   #routineTimer: NodeJS.Timeout | null = null;
   #hostedSiteTerminalRetryTimer: NodeJS.Timeout | null = null;
-  #status: AgentStatus = structuredClone(INITIAL_STATUS);
-  readonly #clients = new Map<AgentProvider, AgentClient>();
-  readonly #cli = new Map<AgentProvider, AgentCliInfo>();
-  readonly #accounts = new Map<AgentProvider, AccountReadResult["account"]>();
-  readonly #providerStarts = new Map<AgentProvider, Promise<void>>();
-  readonly #providerConnectionCommands = new Map<AgentProvider, Promise<void>>();
-  #providerRefresh: Promise<AgentStatus> | null = null;
-  #codexLogin: PendingCodexLogin | null = null;
-  #claudeLogin: PendingClaudeLogin | null = null;
-  #grokLogin: PendingClaudeLogin | null = null;
-  #providerActivation = Promise.resolve();
-  #preferredProvider: AgentProvider;
   #initialized = false;
   #stopping = false;
-  #restartAttempts = 0;
-  #restartTimer: NodeJS.Timeout | null = null;
-  #models = structuredClone(FALLBACK_MODELS);
 
   constructor(
     store: BotStore,
@@ -513,11 +375,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#conversationReads = new ConversationReadStore(store.database);
     this.#memories = new AgentMemoryStore(store.database);
     this.#routines = new AgentRoutineStore(store.database);
-    this.#requestTimeoutMs = requestTimeoutMs;
-    this.#clientFactory = clientFactory;
-    this.#bundledCodexExecutable = bundledCodexExecutable;
-    this.#bundledClaudeExecutable = bundledClaudeExecutable;
-    this.#bundledGrokExecutable = bundledGrokExecutable;
     this.#prepareBotWorkspace = prepareBotWorkspace;
     this.#hostedSites = hostedSites;
     this.#conversation = new ConversationRuntime(
@@ -525,7 +382,36 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       (event) => this.#emit(event),
       () => this.listBots(),
     );
-    this.#preferredProvider = preferredProvider;
+    this.#providers = new ProviderRuntime({
+      conversation: this.#conversation,
+      hooks: {
+        bindClient: (client) => {
+          client.on("notification", (notification) => this.#handleNotification(notification, client));
+          client.on("request", (request) => void this.#handleServerRequest(client, request));
+        },
+        onProvidersReady: async () => {
+          await this.#reconcileUnresolvedDeliveries();
+          void this.#backfillProviderHistory();
+          for (const bot of this.#store.list()) this.#scheduleDrain(bot.id);
+        },
+        onProviderLost: (client) => {
+          this.#clearCompactionRuntime();
+          this.#clearPendingPrompts(client);
+          this.#clearPendingBrowserTakeovers();
+          this.#pendingApprovals.clear();
+          this.#browser.clearControls();
+        },
+        isStopping: () => this.#stopping,
+      },
+      emit: (event) => this.#emit(event),
+      emitError: (code, error, botId) => this.#emitError(code, error, botId),
+      requestTimeoutMs,
+      preferredProvider,
+      clientFactory,
+      bundledCodexExecutable,
+      bundledClaudeExecutable,
+      bundledGrokExecutable,
+    });
     this.#browser.onChanged((tabs, activeTabId) => {
       for (const [requestId, pending] of this.#pendingBrowserTakeovers) {
         if (!tabs.some((tab) => tab.id === pending.request.tabId)) {
@@ -540,12 +426,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   getStatus(): AgentStatus {
-    return structuredClone(this.#status);
+    return this.#providers.status();
   }
 
-  async getUsage(): Promise<AccountUsage> {
-    const client = this.#clients.get("codex");
-    return client ? this.#refreshUsage(client) : { limits: [] };
+  getUsage(): Promise<AccountUsage> {
+    return this.#providers.usage();
   }
 
   listBots(): BotSummary[] {
@@ -781,7 +666,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   listModels(): AgentModelOption[] {
-    return structuredClone(this.#models);
+    return this.#providers.listModels();
   }
 
   async createBot(input: CreateBotInput): Promise<BotSummary> {
@@ -791,20 +676,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     let bot = await this.#store.createBot(input);
     try {
       await this.#prepareBotWorkspace(bot);
-      if (this.#preferredProvider !== bot.provider) {
+      const preferredProvider = this.#providers.preferredProvider();
+      if (preferredProvider !== bot.provider) {
+        const models = this.#providers.listModels();
         const preferredDefault =
-          this.#preferredProvider === "codex"
-            ? "gpt-5.6-luna"
-            : this.#preferredProvider === "claude"
-              ? "claude-opus-5"
-              : null;
+          preferredProvider === "codex" ? "gpt-5.6-luna" : preferredProvider === "claude" ? "claude-opus-5" : null;
         const preferredModel =
-          this.#models.find((model) => model.provider === this.#preferredProvider && model.id === preferredDefault) ??
-          this.#models.find((model) => model.provider === this.#preferredProvider);
-        if (!preferredModel) throw new Error(`${providerLabel(this.#preferredProvider)} has no available model.`);
+          models.find((model) => model.provider === preferredProvider && model.id === preferredDefault) ??
+          models.find((model) => model.provider === preferredProvider);
+        if (!preferredModel) throw new Error(`${providerLabel(preferredProvider)} has no available model.`);
         bot = await this.#store.updateBot({
           botId: bot.id,
-          provider: this.#preferredProvider,
+          provider: preferredProvider,
           model: preferredModel.id,
           reasoningEffort: preferredModel.defaultReasoningEffort,
         });
@@ -936,7 +819,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#conversation.requireKnownBot(input.botId);
     const previous = this.#store.list().find((bot) => bot.id === input.botId);
     const requestedModel = input.model
-      ? this.#models.find((model) => model.id === input.model && (!input.provider || model.provider === input.provider))
+      ? this.#providers
+          .listModels()
+          .find((model) => model.id === input.model && (!input.provider || model.provider === input.provider))
       : undefined;
     if (input.model && !requestedModel) throw new Error("The selected agent model is unavailable.");
     const requestedProvider = input.provider ?? requestedModel?.provider ?? previous?.provider;
@@ -1142,115 +1027,43 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#reconcileHostedSiteEventsAfterRestart();
     this.#routines.skipMissed(new Date());
     this.#initialized = true;
-    await this.#connect(
-      "starting",
-      BUILT_IN_PROVIDER_DRIVERS.map((driver) => driver.id),
-    );
+    await this.#providers.start();
     for (const bot of this.#store.list()) this.#emitQueue(bot.id);
     await this.#resumePendingRoutineRuns();
     this.#armRoutineTimer();
   }
 
-  async setPreferredProvider(provider: AgentProvider): Promise<void> {
-    this.#preferredProvider = provider;
-    if (!this.#initialized) return;
-    await this.ensureProvider(provider).catch(() => undefined);
-    const account = this.#accounts.get(provider);
-    if (!this.#clients.has(provider) || !account) return;
-    this.#setStatus({
-      cliVersion: this.#cli.get(provider)?.version ?? null,
-      auth: requireProviderDriver(provider).authState(account),
-    });
+  setPreferredProvider(provider: AgentProvider): Promise<void> {
+    return this.#providers.setPreferredProvider(provider, this.#initialized);
   }
 
-  async ensureProvider(provider: AgentProvider): Promise<void> {
-    if (this.#clients.has(provider)) return;
-    let start = this.#providerStarts.get(provider);
-    if (!start) {
-      start = this.#connect("starting", [provider]).finally(() => {
-        this.#providerStarts.delete(provider);
-      });
-      this.#providerStarts.set(provider, start);
-    }
-    await start;
-    if (this.#clients.has(provider)) return;
-    const status = this.#status.providers?.find((candidate) => candidate.id === provider);
-    throw new Error(status?.message ?? `${providerLabel(provider)} CLI is not ready or signed in.`);
+  ensureProvider(provider: AgentProvider): Promise<void> {
+    return this.#providers.ensureProvider(provider);
   }
 
   refreshProviders(): Promise<AgentStatus> {
-    if (this.#providerRefresh) return this.#providerRefresh;
-    if (this.#status.phase === "starting" || this.#status.phase === "restarting") {
-      return Promise.resolve(this.getStatus());
-    }
-
-    const refresh = this.#refreshProviders().finally(() => {
-      if (this.#providerRefresh === refresh) this.#providerRefresh = null;
-    });
-    this.#providerRefresh = refresh;
-    return refresh;
+    return this.#providers.refreshProviders();
   }
 
-  async refreshProvider(provider: AgentProvider): Promise<AgentStatus> {
-    if (this.#clients.has(provider)) return this.getStatus();
-    let start = this.#providerStarts.get(provider);
-    if (!start) {
-      start = this.#connect("starting", [provider], {
-        preserveCheckErrors: true,
-        refreshRuntimeInBackground: true,
-      }).finally(() => {
-        this.#providerStarts.delete(provider);
-      });
-      this.#providerStarts.set(provider, start);
-    }
-    await start;
-    return this.getStatus();
+  refreshProvider(provider: AgentProvider): Promise<AgentStatus> {
+    return this.#providers.refreshProvider(provider);
   }
 
-  async connectChatGPT(openExternal: (url: string) => Promise<void>): Promise<AgentStatus> {
-    const start = this.#providerStarts.get("codex");
-    if (start) await start;
-    if (start && this.#clients.has("codex") && this.#accounts.has("codex")) return this.getStatus();
-    if (this.#providerRefresh || (!start && ["starting", "restarting"].includes(this.#status.phase))) {
-      return Promise.resolve(this.getStatus());
-    }
-    return this.#runProviderConnectionCommand("codex", async () => {
-      await this.#cancelCodexLogin(null);
-      return this.#startCodexLogin(openExternal);
-    });
+  connectChatGPT(openExternal: (url: string) => Promise<void>): Promise<AgentStatus> {
+    return this.#providers.connectChatGPT(openExternal);
   }
 
-  async connectClaude(): Promise<AgentStatus> {
-    const start = this.#providerStarts.get("claude");
-    if (start) await start;
-    if (start && this.#clients.has("claude") && this.#accounts.has("claude")) return this.getStatus();
-    if (this.#providerRefresh || (!start && ["starting", "restarting"].includes(this.#status.phase))) {
-      return Promise.resolve(this.getStatus());
-    }
-    return this.#runProviderConnectionCommand("claude", async () => {
-      await this.#cancelClaudeLogin(null);
-      return this.#startClaudeLogin();
-    });
+  connectClaude(): Promise<AgentStatus> {
+    return this.#providers.connectClaude();
   }
 
-  async connectGrok(): Promise<AgentStatus> {
-    const start = this.#providerStarts.get("grok");
-    if (start) await start;
-    if (start && this.#clients.has("grok") && this.#accounts.has("grok")) return this.getStatus();
-    if (this.#providerRefresh || (!start && ["starting", "restarting"].includes(this.#status.phase))) {
-      return Promise.resolve(this.getStatus());
-    }
-    return this.#runProviderConnectionCommand("grok", async () => {
-      await this.#cancelGrokLogin(null);
-      return this.#startGrokLogin();
-    });
+  connectGrok(): Promise<AgentStatus> {
+    return this.#providers.connectGrok();
   }
 
   async stop(): Promise<void> {
     this.#stopping = true;
     this.#initialized = false;
-    if (this.#restartTimer) clearTimeout(this.#restartTimer);
-    this.#restartTimer = null;
     if (this.#routineTimer) clearTimeout(this.#routineTimer);
     this.#routineTimer = null;
     if (this.#hostedSiteTerminalRetryTimer) clearTimeout(this.#hostedSiteTerminalRetryTimer);
@@ -1269,16 +1082,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#clearPendingBrowserTakeovers();
     this.#pendingApprovals.clear();
     this.#failedTurns.clear();
-    const pendingLogin = this.#codexLogin;
-    this.#codexLogin = null;
-    const claudeLogin = this.#claudeLogin;
-    this.#claudeLogin = null;
-    const grokLogin = this.#grokLogin;
-    this.#grokLogin = null;
-    this.#providerConnectionCommands.clear();
-    if (claudeLogin?.child.exitCode === null) claudeLogin.child.kill("SIGTERM");
-    if (grokLogin?.child.exitCode === null) grokLogin.child.kill("SIGTERM");
-    if (pendingLogin) clearTimeout(pendingLogin.timer);
+    const clients = this.#providers.dispose();
     for (const [botId, snapshot] of this.#conversation.activeSnapshots()) {
       if (!snapshot.activeTurnId) continue;
       const session = this.#store.activeProviderSession(botId);
@@ -1287,8 +1091,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#turnAssociations.clear();
     this.#scheduledDrains.clear();
     this.#browser.clearControls();
-    const clients = [...this.#clients.values(), ...(pendingLogin ? [pendingLogin.client] : [])];
-    this.#clients.clear();
     await Promise.all(clients.map((client) => client.stop().catch(() => undefined)));
     await Promise.allSettled([...this.#drainTasks.values()]);
     await Promise.allSettled(
@@ -1300,7 +1102,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await Promise.allSettled([...this.#responseAttachmentCommands.values()]);
     this.#responseAttachmentCommands.clear();
     this.#interruptedTurns.clear();
-    this.#setStatus({ phase: "stopped", message: null });
+    this.#providers.markStopped();
   }
 
   async readConversation(botId: string): Promise<ConversationSnapshot> {
@@ -1410,7 +1212,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async steerQueuedMessage(input: SteerQueuedMessageInput): Promise<void> {
     const bot = await this.#store.getOrCreate(input.botId);
-    const client = this.#requireReadyClient(providerForBot(bot));
+    const client = this.#providers.requireReadyClient(providerForBot(bot));
     const session = this.#store.activeProviderSession(bot.id);
     const snapshot = this.#conversation.ensureSnapshot(bot.id, bot.threadId);
     if (!session || !snapshot.activeTurnId || snapshot.activeTurnId !== input.expectedTurnId) {
@@ -1493,7 +1295,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async interrupt(botId: string, turnId: string): Promise<void> {
     const bot = await this.#store.getOrCreate(botId);
-    const client = this.#requireReadyClient(providerForBot(bot));
+    const client = this.#providers.requireReadyClient(providerForBot(bot));
     const session = this.#store.activeProviderSession(botId);
     if (!session) return;
     this.#interruptImageGenerations(botId, session.externalSessionId, turnId);
@@ -1501,12 +1303,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async interruptAll(): Promise<void> {
-    if (this.#status.phase !== "ready") return;
+    if (!this.#providers.isReady()) return;
     const requests: Promise<unknown>[] = [];
     for (const [botId, snapshot] of this.#conversation.activeSnapshots()) {
       if (!snapshot.threadId || !snapshot.activeTurnId) continue;
       const bot = this.#store.list().find((candidate) => candidate.id === botId);
-      const client = bot ? this.#clientForBot(bot) : null;
+      const client = bot ? this.#providers.clientForBot(bot) : null;
       const session = bot ? this.#store.activeProviderSession(bot.id) : null;
       if (!client || !session) continue;
       this.#interruptImageGenerations(botId, session.externalSessionId, snapshot.activeTurnId);
@@ -1637,769 +1439,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!pending) throw new Error("This browser takeover is no longer active.");
     this.#markRoutineRunningForTurn(pending.request.turnId);
     this.#resolveBrowserTakeover(input.requestId, pending, input.decision);
-  }
-
-  async #runProviderConnectionCommand(
-    provider: AgentProvider,
-    command: () => Promise<AgentStatus>,
-  ): Promise<AgentStatus> {
-    const previous = this.#providerConnectionCommands.get(provider) ?? Promise.resolve();
-    let result = this.getStatus();
-    const current = previous
-      .catch(() => undefined)
-      .then(async () => {
-        result = await command();
-      });
-    this.#providerConnectionCommands.set(provider, current);
-    try {
-      await current;
-      return result;
-    } finally {
-      if (this.#providerConnectionCommands.get(provider) === current) {
-        this.#providerConnectionCommands.delete(provider);
-      }
-    }
-  }
-
-  async #refreshProviders(): Promise<AgentStatus> {
-    await Promise.all([
-      this.#runProviderConnectionCommand("codex", () => this.#settleCodexLoginForRefresh()),
-      this.#runProviderConnectionCommand("claude", async () => {
-        await this.#cancelClaudeLogin(null);
-        return this.getStatus();
-      }),
-      this.#runProviderConnectionCommand("grok", async () => {
-        await this.#cancelGrokLogin(null);
-        return this.getStatus();
-      }),
-    ]);
-
-    const activeClients = [...this.#clients];
-    if (activeClients.length > 0) {
-      let providers = this.#status.providers;
-      for (const [provider] of activeClients) {
-        providers = updateProviderStatus(providers, provider, {
-          state: "checking",
-          version: this.#cli.get(provider)?.version ?? null,
-          message: null,
-          email: this.#accounts.get(provider)?.email ?? null,
-          checkError: null,
-        });
-      }
-      this.#setStatus({ providers });
-    }
-
-    await Promise.all(
-      activeClients.map(async ([provider, client]) => {
-        try {
-          const account = await client.request("account/read", { refreshToken: true }, decodeAccountReadResult, 5_000);
-          if (account.account) {
-            requireProviderDriver(provider).validateAccount(account.account);
-            this.#accounts.set(provider, account.account);
-            this.#setStatus({
-              providers: updateProviderStatus(this.#status.providers, provider, {
-                state: "available",
-                version: this.#cli.get(provider)?.version ?? null,
-                message: null,
-                email: account.account.email ?? null,
-                checkError: null,
-              }),
-            });
-            return;
-          }
-          this.#clients.delete(provider);
-          this.#cli.delete(provider);
-          this.#accounts.delete(provider);
-          await client.stop().catch(() => undefined);
-        } catch {
-          // Keep a working client when an explicit account refresh is temporarily unavailable.
-          const label = provider === "codex" ? "ChatGPT" : providerLabel(provider);
-          this.#setStatus({
-            providers: updateProviderStatus(this.#status.providers, provider, {
-              state: "available",
-              version: this.#cli.get(provider)?.version ?? null,
-              message: null,
-              email: this.#accounts.get(provider)?.email ?? null,
-              checkError: `Could not verify ${label}. Keeping the existing connection.`,
-            }),
-          });
-        }
-      }),
-    );
-
-    await this.#connect(
-      "starting",
-      BUILT_IN_PROVIDER_DRIVERS.map((driver) => driver.id),
-      { preserveCheckErrors: true, refreshRuntimeInBackground: true },
-    );
-    return this.getStatus();
-  }
-
-  async #settleCodexLoginForRefresh(): Promise<AgentStatus> {
-    const pending = this.#codexLogin;
-    if (!pending) {
-      this.#clearProviderConnectionState("codex");
-      return this.getStatus();
-    }
-    this.#codexLogin = null;
-    clearTimeout(pending.timer);
-    try {
-      const account = await pending.client.request("account/read", { refreshToken: true }, decodeAccountReadResult);
-      if (account.account?.type === "chatgpt") {
-        await this.#activateProviderClient("codex", pending.client, pending.cli, account.account);
-        return this.getStatus();
-      }
-    } catch {
-      // Fall through to cancellation and a fresh provider probe.
-    }
-    await pending.client
-      .request("account/login/cancel", { loginId: pending.loginId }, decodeRecordResponse)
-      .catch(() => undefined);
-    await pending.client.stop().catch(() => undefined);
-    this.#clearProviderConnectionState("codex");
-    return this.getStatus();
-  }
-
-  async #createAuthenticatedProviderClient(
-    provider: AgentProvider,
-    cli: AgentCliInfo,
-  ): Promise<{ client: AgentClient; account: NonNullable<AccountReadResult["account"]> }> {
-    const driver = requireProviderDriver(provider);
-    const client = this.#clientFactory
-      ? this.#clientFactory(provider, cli)
-      : driver.createClient(cli, this.#requestTimeoutMs);
-    this.#bindClient(client);
-    client.start();
-    try {
-      await client.request(
-        "initialize",
-        {
-          clientInfo: { name: "openbot", title: "OpenBot", version: "0.1.0" },
-          capabilities: { experimentalApi: true, mcpServerOpenaiFormElicitation: true },
-        },
-        decodeRecordResponse,
-      );
-      client.notify("initialized");
-      const account = await client.request("account/read", { refreshToken: true }, decodeAccountReadResult);
-      if (!account.account) throw new Error(`${providerLabel(provider)} did not return an authenticated account.`);
-      driver.validateAccount(account.account);
-      return { client, account: account.account };
-    } catch (error) {
-      await client.stop().catch(() => undefined);
-      throw error;
-    }
-  }
-
-  async #activateProviderClient(
-    provider: AgentProvider,
-    client: AgentClient,
-    cli: AgentCliInfo,
-    account: NonNullable<AccountReadResult["account"]>,
-    isCurrent?: () => boolean,
-  ): Promise<void> {
-    const activation = this.#providerActivation
-      .catch(() => undefined)
-      .then(async () => {
-        if (isCurrent && !isCurrent()) {
-          await client.stop().catch(() => undefined);
-          return;
-        }
-        const previousClient = this.#clients.get(provider);
-        const previousCli = this.#cli.get(provider);
-        const previousAccount = this.#accounts.get(provider);
-        this.#clients.set(provider, client);
-        this.#cli.set(provider, cli);
-        this.#accounts.set(provider, account);
-        try {
-          await this.#refreshModelCatalog();
-          if (isCurrent && !isCurrent()) {
-            if (previousClient) this.#clients.set(provider, previousClient);
-            else this.#clients.delete(provider);
-            if (previousCli) this.#cli.set(provider, previousCli);
-            else this.#cli.delete(provider);
-            if (previousAccount) this.#accounts.set(provider, previousAccount);
-            else this.#accounts.delete(provider);
-            if (client !== previousClient) await client.stop().catch(() => undefined);
-            return;
-          }
-          const primaryProvider = this.#clients.has(this.#preferredProvider)
-            ? this.#preferredProvider
-            : this.#clients.has("codex")
-              ? "codex"
-              : provider;
-          const primaryAccount = this.#accounts.get(primaryProvider);
-          const codexClient = this.#clients.get("codex");
-          const computerUse = codexClient ? await this.#probeComputerUse(codexClient) : "unavailable";
-          this.#conversation.clearLoadedThreads();
-          this.#setStatus({
-            phase: "ready",
-            cliVersion: this.#cli.get(primaryProvider)?.version ?? null,
-            auth: requireProviderDriver(primaryProvider).authState(primaryAccount ?? null),
-            providers: updateProviderStatus(this.#status.providers, provider, {
-              state: "available",
-              version: cli.version,
-              message: null,
-              email: account.email ?? null,
-            }),
-            capabilities: { chat: "ready", browser: "ready", computerUse },
-            message: null,
-          });
-        } catch (error) {
-          if (previousClient) this.#clients.set(provider, previousClient);
-          else this.#clients.delete(provider);
-          if (previousCli) this.#cli.set(provider, previousCli);
-          else this.#cli.delete(provider);
-          if (previousAccount) this.#accounts.set(provider, previousAccount);
-          else this.#accounts.delete(provider);
-          if (client !== previousClient) await client.stop().catch(() => undefined);
-          throw error;
-        }
-
-        if (previousClient && previousClient !== client) await previousClient.stop().catch(() => undefined);
-        if (provider === "codex") void this.#refreshUsage(client).catch(() => undefined);
-        await this.#reconcileUnresolvedDeliveries();
-        void this.#backfillProviderHistory();
-        for (const bot of this.#store.list()) this.#scheduleDrain(bot.id);
-      });
-    this.#providerActivation = activation.catch(() => undefined);
-    await activation;
-  }
-
-  #setProviderConnectionState(provider: AgentProvider, connectionState: "connecting"): void {
-    const current = this.#status.providers?.find((candidate) => candidate.id === provider);
-    this.#setStatus({
-      providers: updateProviderStatus(this.#status.providers, provider, {
-        state: this.#clients.has(provider) ? "available" : (current?.state ?? "checking"),
-        version: this.#cli.get(provider)?.version ?? current?.version ?? null,
-        message: null,
-        email: this.#accounts.get(provider)?.email ?? current?.email ?? null,
-        connectionState,
-      }),
-    });
-  }
-
-  #clearProviderConnectionState(provider: AgentProvider): void {
-    const current = this.#status.providers?.find((candidate) => candidate.id === provider);
-    if (!current?.connectionState) return;
-    this.#setStatus({
-      providers: updateProviderStatus(this.#status.providers, provider, {
-        state: this.#clients.has(provider) ? "available" : current.state,
-        version: this.#cli.get(provider)?.version ?? current.version,
-        message: null,
-        email: this.#accounts.get(provider)?.email ?? current.email ?? null,
-      }),
-    });
-  }
-
-  #setProviderConnectionFailure(provider: AgentProvider, error: unknown, version?: string | null): void {
-    const hasActiveClient = this.#clients.has(provider);
-    const fallbackMessage = `OpenBot could not connect ${providerLabel(provider)}. Try again.`;
-    const rawMessage = error instanceof Error ? error.message : String(error);
-    const message = /^(ChatGPT connection|OpenBot)/u.test(rawMessage) ? rawMessage : fallbackMessage;
-    const status = hasActiveClient
-      ? {
-          state: "available" as const,
-          version: this.#cli.get(provider)?.version ?? version ?? null,
-          message,
-          email: this.#accounts.get(provider)?.email ?? null,
-        }
-      : error instanceof CodexCliError
-        ? providerFailureStatus(provider, error, version)
-        : {
-            state: "sign-in-required" as const,
-            version: version ?? null,
-            message,
-            email: null,
-          };
-    const hasProvider = this.#clients.size > 0;
-    this.#setStatus({
-      phase: hasProvider ? "ready" : "blocked",
-      providers: updateProviderStatus(this.#status.providers, provider, status),
-      capabilities: { ...this.#status.capabilities, chat: hasProvider ? "ready" : "unavailable" },
-      message: hasProvider ? null : message,
-    });
-  }
-
-  async #startClaudeLogin(): Promise<AgentStatus> {
-    let cli: AgentCliInfo | null = null;
-    this.#setProviderConnectionState("claude", "connecting");
-
-    try {
-      cli = await resolveClaudeCli({ bundledExecutable: this.#bundledClaudeExecutable });
-      const child = spawn(cli.executable, ["auth", "login", "--claudeai"], {
-        cwd: process.cwd(),
-        env: {
-          ...process.env,
-          ...(cli.source === "managed" ? { DISABLE_AUTOUPDATER: "1" } : {}),
-        },
-        stdio: "ignore",
-        shell: false,
-        windowsHide: process.platform === "win32",
-      });
-      const pending: PendingClaudeLogin = { child, cli, task: null };
-      this.#claudeLogin = pending;
-      pending.task = waitForSuccessfulProcess(child, CLAUDE_LOGIN_TIMEOUT_MS)
-        .then(() => this.#completeClaudeLogin(pending))
-        .catch((error) => this.#failClaudeLogin(pending, error));
-      return this.getStatus();
-    } catch (error) {
-      this.#setProviderConnectionFailure("claude", error, cli?.version);
-      throw error;
-    }
-  }
-
-  async #completeClaudeLogin(pending: PendingClaudeLogin): Promise<void> {
-    if (this.#claudeLogin !== pending) return;
-    try {
-      const candidate = await this.#createAuthenticatedProviderClient("claude", pending.cli);
-      if (this.#claudeLogin !== pending) {
-        await candidate.client.stop().catch(() => undefined);
-        return;
-      }
-      await this.#activateProviderClient(
-        "claude",
-        candidate.client,
-        pending.cli,
-        candidate.account,
-        () => this.#claudeLogin === pending,
-      );
-      if (this.#claudeLogin === pending) this.#claudeLogin = null;
-    } catch (error) {
-      await this.#failClaudeLogin(pending, error);
-    }
-  }
-
-  async #failClaudeLogin(pending: PendingClaudeLogin, error: unknown): Promise<void> {
-    if (this.#claudeLogin !== pending) return;
-    this.#claudeLogin = null;
-    if (pending.child.exitCode === null) pending.child.kill("SIGTERM");
-    this.#setProviderConnectionFailure("claude", error, pending.cli.version);
-  }
-
-  async #cancelClaudeLogin(message: string | null): Promise<void> {
-    const pending = this.#claudeLogin;
-    if (!pending) return;
-    this.#claudeLogin = null;
-    if (pending.child.exitCode === null) pending.child.kill("SIGTERM");
-    await pending.task?.catch(() => undefined);
-    if (message) this.#setProviderConnectionFailure("claude", new Error(message), pending.cli.version);
-    else this.#clearProviderConnectionState("claude");
-  }
-
-  async #startGrokLogin(): Promise<AgentStatus> {
-    let cli: AgentCliInfo | null = null;
-    this.#setProviderConnectionState("grok", "connecting");
-
-    try {
-      cli = await resolveGrokCli({ bundledExecutable: this.#bundledGrokExecutable });
-      const child = spawn(cli.executable, ["--no-auto-update", "login"], {
-        cwd: process.cwd(),
-        env: { ...process.env, GROK_OAUTH2_REFERRER: "openbot" },
-        stdio: "ignore",
-        shell: false,
-        windowsHide: process.platform === "win32",
-      });
-      const pending: PendingClaudeLogin = { child, cli, task: null };
-      this.#grokLogin = pending;
-      pending.task = waitForSuccessfulProcess(child, GROK_LOGIN_TIMEOUT_MS)
-        .then(() => this.#completeGrokLogin(pending))
-        .catch((error) => this.#failGrokLogin(pending, error));
-      return this.getStatus();
-    } catch (error) {
-      this.#setProviderConnectionFailure("grok", error, cli?.version);
-      throw error;
-    }
-  }
-
-  async #completeGrokLogin(pending: PendingClaudeLogin): Promise<void> {
-    if (this.#grokLogin !== pending) return;
-    try {
-      const candidate = await this.#createAuthenticatedProviderClient("grok", pending.cli);
-      if (this.#grokLogin !== pending) {
-        await candidate.client.stop().catch(() => undefined);
-        return;
-      }
-      await this.#activateProviderClient(
-        "grok",
-        candidate.client,
-        pending.cli,
-        candidate.account,
-        () => this.#grokLogin === pending,
-      );
-      if (this.#grokLogin === pending) this.#grokLogin = null;
-    } catch (error) {
-      await this.#failGrokLogin(pending, error);
-    }
-  }
-
-  async #failGrokLogin(pending: PendingClaudeLogin, error: unknown): Promise<void> {
-    if (this.#grokLogin !== pending) return;
-    this.#grokLogin = null;
-    if (pending.child.exitCode === null) pending.child.kill("SIGTERM");
-    this.#setProviderConnectionFailure("grok", error, pending.cli.version);
-  }
-
-  async #cancelGrokLogin(message: string | null): Promise<void> {
-    const pending = this.#grokLogin;
-    if (!pending) return;
-    this.#grokLogin = null;
-    if (pending.child.exitCode === null) pending.child.kill("SIGTERM");
-    await pending.task?.catch(() => undefined);
-    if (message) this.#setProviderConnectionFailure("grok", new Error(message), pending.cli.version);
-    else this.#clearProviderConnectionState("grok");
-  }
-
-  async #startCodexLogin(openExternal: (url: string) => Promise<void>): Promise<AgentStatus> {
-    let client: AgentClient | null = null;
-    let cli: CodexCliInfo | null = null;
-    this.#setProviderConnectionState("codex", "connecting");
-
-    try {
-      cli = await resolveCodexCli({ bundledExecutable: this.#bundledCodexExecutable });
-      client = this.#clientFactory
-        ? this.#clientFactory("codex", cli)
-        : new CodexAppServerClient(cli.executable, this.#requestTimeoutMs);
-      this.#bindClient(client);
-      client.start();
-      await client.request(
-        "initialize",
-        {
-          clientInfo: { name: "openbot", title: "OpenBot", version: "0.1.0" },
-          capabilities: { experimentalApi: true, mcpServerOpenaiFormElicitation: true },
-        },
-        decodeRecordResponse,
-      );
-      client.notify("initialized");
-
-      if (!this.#clients.has("codex")) {
-        const existingAccount = await client.request("account/read", { refreshToken: false }, decodeAccountReadResult);
-        if (existingAccount.account?.type === "chatgpt") {
-          await this.#activateProviderClient("codex", client, cli, existingAccount.account);
-          return this.getStatus();
-        }
-      }
-
-      const login = await client.request(
-        "account/login/start",
-        {
-          type: "chatgpt",
-          appBrand: "chatgpt",
-          codexStreamlinedLogin: true,
-          useHostedLoginSuccessPage: true,
-        },
-        decodeAccountLoginStartResult,
-      );
-      let pending: PendingCodexLogin;
-      const timer = setTimeout(() => {
-        void this.#cancelCodexLogin("ChatGPT connection timed out. Try again.", pending);
-      }, CODEX_LOGIN_TIMEOUT_MS);
-      timer.unref?.();
-      pending = { client, cli, loginId: login.loginId, timer, completing: false };
-      this.#codexLogin = pending;
-      client.once("exit", () => {
-        if (this.#codexLogin?.client === client) {
-          void this.#failCodexLogin(this.#codexLogin, "ChatGPT connection stopped. Try again.");
-        }
-      });
-      try {
-        await openExternal(login.authUrl);
-      } catch {
-        await this.#cancelCodexLogin("OpenBot could not open the ChatGPT connection page.");
-        throw new Error("OpenBot could not open the ChatGPT connection page.");
-      }
-      return this.getStatus();
-    } catch (error) {
-      if (client && this.#codexLogin?.client !== client && this.#clients.get("codex") !== client) {
-        await client.stop().catch(() => undefined);
-      }
-      const status = this.#status.providers?.find((provider) => provider.id === "codex");
-      if (!this.#codexLogin && status?.connectionState === "connecting") {
-        this.#setProviderConnectionFailure("codex", error, cli?.version);
-      }
-      throw error;
-    }
-  }
-
-  async #completeCodexLogin(completion: AccountLoginCompletedResult, source: AgentClient): Promise<void> {
-    const pending = this.#codexLogin;
-    if (!pending || pending.completing) return;
-    if (pending.client !== source) return;
-    if (completion.loginId !== null && completion.loginId !== pending.loginId) return;
-    pending.completing = true;
-    clearTimeout(pending.timer);
-
-    if (!completion.success) {
-      await this.#failCodexLogin(pending, "ChatGPT connection was not completed. Try again.");
-      return;
-    }
-
-    try {
-      const account = await pending.client.request("account/read", { refreshToken: true }, decodeAccountReadResult);
-      if (account.account?.type !== "chatgpt") {
-        throw new Error("ChatGPT did not return an authenticated account.");
-      }
-      if (this.#codexLogin !== pending) return;
-      await this.#activateProviderClient(
-        "codex",
-        pending.client,
-        pending.cli,
-        account.account,
-        () => this.#codexLogin === pending,
-      );
-      if (this.#codexLogin === pending) this.#codexLogin = null;
-    } catch {
-      await this.#failCodexLogin(pending, "OpenBot could not verify the ChatGPT connection. Try again.");
-    }
-  }
-
-  async #cancelCodexLogin(message: string | null, expected?: PendingCodexLogin): Promise<void> {
-    const pending = this.#codexLogin;
-    if (!pending || (expected && pending !== expected)) return;
-    this.#codexLogin = null;
-    clearTimeout(pending.timer);
-    await pending.client
-      .request("account/login/cancel", { loginId: pending.loginId }, decodeRecordResponse)
-      .catch(() => undefined);
-    await pending.client.stop().catch(() => undefined);
-    if (message) this.#setProviderConnectionFailure("codex", new Error(message), pending.cli.version);
-    else this.#clearProviderConnectionState("codex");
-  }
-
-  async #failCodexLogin(pending: PendingCodexLogin, message: string): Promise<void> {
-    if (this.#codexLogin !== pending) return;
-    clearTimeout(pending.timer);
-    this.#codexLogin = null;
-    await pending.client.stop().catch(() => undefined);
-    this.#setProviderConnectionFailure("codex", new Error(message), pending.cli.version);
-  }
-
-  async #connect(
-    phase: "starting" | "restarting",
-    requestedProviders: readonly AgentProvider[],
-    options: { preserveCheckErrors?: boolean; refreshRuntimeInBackground?: boolean } = {},
-  ): Promise<void> {
-    const hadClients = this.#clients.size > 0;
-    const providerStatuses: AgentProviderStatus[] = structuredClone(
-      this.#status.providers ?? INITIAL_STATUS.providers ?? [],
-    );
-    for (const provider of requestedProviders) {
-      const current = this.#status.providers?.find((candidate) => candidate.id === provider);
-      setProviderStatus(providerStatuses, provider, {
-        state: this.#clients.has(provider) ? "available" : "checking",
-        version: this.#cli.get(provider)?.version ?? null,
-        message: null,
-        email: this.#accounts.get(provider)?.email ?? null,
-        checkError: options.preserveCheckErrors ? (current?.checkError ?? null) : null,
-      });
-    }
-    this.#setStatus(
-      hadClients
-        ? { providers: providerStatuses }
-        : {
-            phase,
-            auth: { kind: "unknown" },
-            providers: providerStatuses,
-            capabilities: { ...this.#status.capabilities, chat: "unavailable" },
-            message: phase === "starting" ? "Starting local agent CLI…" : "Restarting local agent CLI…",
-          },
-    );
-
-    const results = await Promise.all(
-      requestedProviders.map(async (provider): Promise<string | null> => {
-        if (this.#clients.has(provider)) return null;
-        const driver = requireProviderDriver(provider);
-        let client: AgentClient | null = null;
-        let cli: AgentCliInfo | null = null;
-        try {
-          cli =
-            provider === "codex"
-              ? await resolveCodexCli({ bundledExecutable: this.#bundledCodexExecutable })
-              : provider === "claude"
-                ? await resolveClaudeCli({ bundledExecutable: this.#bundledClaudeExecutable })
-                : await resolveGrokCli({ bundledExecutable: this.#bundledGrokExecutable });
-          client = this.#clientFactory
-            ? this.#clientFactory(provider, cli)
-            : driver.createClient(cli, this.#requestTimeoutMs);
-          this.#bindClient(client);
-          client.start();
-          await client.request(
-            "initialize",
-            {
-              clientInfo: { name: "openbot", title: "OpenBot", version: "0.1.0" },
-              capabilities: { experimentalApi: true, mcpServerOpenaiFormElicitation: true },
-            },
-            decodeRecordResponse,
-          );
-          client.notify("initialized");
-          const account = await client.request("account/read", { refreshToken: false }, decodeAccountReadResult, 5_000);
-          if (!account.account) {
-            const message = provider === "codex" ? "Connect ChatGPT to continue." : driver.signInMessage;
-            await client.stop().catch(() => undefined);
-            this.#setStatus({
-              providers: updateProviderStatus(this.#status.providers, provider, {
-                state: "sign-in-required",
-                version: cli.version,
-                message,
-                email: null,
-              }),
-            });
-            return message;
-          }
-          driver.validateAccount(account.account);
-          this.#cli.set(provider, cli);
-          this.#clients.set(provider, client);
-          this.#accounts.set(provider, account.account);
-          this.#setStatus({
-            providers: updateProviderStatus(this.#status.providers, provider, {
-              state: "available",
-              version: cli.version,
-              message: null,
-              email: account.account.email ?? null,
-            }),
-          });
-          return null;
-        } catch (error) {
-          if (client) await client.stop().catch(() => undefined);
-          const message = error instanceof Error ? error.message : String(error);
-          this.#setStatus({
-            providers: updateProviderStatus(
-              this.#status.providers,
-              provider,
-              providerFailureStatus(provider, error, cli?.version),
-            ),
-          });
-          if (!(error instanceof CodexCliError)) this.#emitError(`${provider}_start_failed`, error);
-          return message;
-        }
-      }),
-    );
-    const failures = results.filter((message): message is string => message !== null);
-    const finalProviderStatuses = structuredClone(this.#status.providers ?? providerStatuses);
-
-    if (this.#clients.size === 0) {
-      this.#setStatus({
-        phase: "blocked",
-        cliVersion: null,
-        auth: { kind: "unknown" },
-        providers: finalProviderStatuses,
-        capabilities: { ...this.#status.capabilities, chat: "unavailable" },
-        message: failures.join(" "),
-      });
-      return;
-    }
-
-    const primaryProvider = this.#clients.has(this.#preferredProvider)
-      ? this.#preferredProvider
-      : this.#clients.has("codex")
-        ? "codex"
-        : this.#clients.keys().next().value;
-    if (!primaryProvider) throw new Error("No agent provider is ready.");
-    const primaryAccount = this.#accounts.get(primaryProvider);
-    this.#restartAttempts = 0;
-    this.#setStatus({
-      phase: "ready",
-      cliVersion: this.#cli.get(primaryProvider)?.version ?? null,
-      auth: requireProviderDriver(primaryProvider).authState(primaryAccount ?? null),
-      providers: finalProviderStatuses,
-      capabilities: {
-        chat: "ready",
-        browser: "ready",
-        computerUse: this.#clients.has("codex") ? this.#status.capabilities.computerUse : "unavailable",
-      },
-      message: null,
-    });
-    const refreshRuntime = async (): Promise<void> => {
-      const codexClient = this.#clients.get("codex");
-      const [, computerUse] = await Promise.all([
-        this.#refreshModelCatalog(),
-        codexClient ? this.#probeComputerUse(codexClient) : Promise.resolve("unavailable" as const),
-      ]);
-      if (codexClient === this.#clients.get("codex")) {
-        this.#setStatus({
-          capabilities: { ...this.#status.capabilities, computerUse },
-        });
-      }
-      if (codexClient) void this.#refreshUsage(codexClient).catch(() => undefined);
-      await this.#reconcileUnresolvedDeliveries();
-      void this.#backfillProviderHistory();
-      for (const bot of this.#store.list()) this.#scheduleDrain(bot.id);
-    };
-    if (options.refreshRuntimeInBackground) {
-      void refreshRuntime().catch((error) => this.#emitError("provider_metadata_refresh_failed", error));
-      return;
-    }
-    await refreshRuntime();
-  }
-
-  #bindClient(client: AgentClient): void {
-    client.on("notification", (notification) => this.#handleNotification(notification, client));
-    client.on("request", (request) => void this.#handleServerRequest(client, request));
-    client.on("diagnostic", (message) => {
-      if (/error|failed|warning/i.test(message)) {
-        this.#emitError(`${client.provider}_diagnostic`, message);
-      }
-    });
-    client.once("exit", (error) => this.#handleExit(client, error));
-  }
-
-  #handleExit(client: AgentClient, error: Error): void {
-    if (this.#clients.get(client.provider) !== client || this.#stopping) return;
-    this.#clients.delete(client.provider);
-    void client.stop().catch(() => undefined);
-    this.#conversation.clearLoadedThreads();
-    this.#clearCompactionRuntime();
-    this.#clearPendingPrompts(client);
-    this.#clearPendingBrowserTakeovers();
-    this.#pendingApprovals.clear();
-    this.#browser.clearControls();
-    this.#emitError(`${client.provider}_exited`, error);
-    const providers = updateProviderStatus(this.#status.providers, client.provider, {
-      state: "error",
-      version: this.#cli.get(client.provider)?.version ?? null,
-      message: error.message,
-    });
-    const anotherProviderIsReady = this.#clients.size > 0;
-
-    if (this.#restartAttempts >= 3) {
-      this.#setStatus(
-        anotherProviderIsReady
-          ? {
-              phase: "ready",
-              providers,
-              capabilities: { ...this.#status.capabilities, chat: "ready" },
-              message: null,
-            }
-          : {
-              phase: "blocked",
-              providers,
-              capabilities: { ...this.#status.capabilities, chat: "unavailable" },
-              message: `${providerLabel(client.provider)} stopped repeatedly. Restart OpenBot after checking the CLI.`,
-            },
-      );
-      return;
-    }
-
-    const delayMs = 500 * 2 ** this.#restartAttempts;
-    this.#restartAttempts += 1;
-    this.#setStatus(
-      anotherProviderIsReady
-        ? {
-            phase: "ready",
-            providers,
-            capabilities: { ...this.#status.capabilities, chat: "ready" },
-            message: null,
-          }
-        : {
-            phase: "restarting",
-            providers,
-            capabilities: { ...this.#status.capabilities, chat: "unavailable" },
-            message: `${providerLabel(client.provider)} stopped. Retrying (${this.#restartAttempts}/3)…`,
-          },
-    );
-    this.#restartTimer = setTimeout(() => {
-      this.#restartTimer = null;
-      void this.#connect("restarting", [client.provider]);
-    }, delayMs);
   }
 
   async #ensureThread(bot: BotSummary, client: AgentClient): Promise<string> {
@@ -3092,7 +2131,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   #scheduleDrain(botId: string): void {
     if (
       this.#stopping ||
-      this.#status.phase !== "ready" ||
+      !this.#providers.isReady() ||
       this.#pendingDuplicateBots.has(botId) ||
       this.#routineDeletionBots.has(botId) ||
       this.#drainingBots.has(botId) ||
@@ -3119,7 +2158,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.#routineDeletionBots.has(botId) ||
       this.#drainingBots.has(botId) ||
       this.#compactingBots.has(botId) ||
-      this.#status.phase !== "ready"
+      !this.#providers.isReady()
     )
       return;
     this.#drainingBots.add(botId);
@@ -3151,7 +2190,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const bot = await this.#store.getOrCreate(delivery.recipientBotId);
       this.#applyPendingRuntimeRefresh(bot);
       await this.ensureProvider(providerForBot(bot));
-      const client = this.#requireReadyClient(providerForBot(bot));
+      const client = this.#providers.requireReadyClient(providerForBot(bot));
       let threadId = await this.#ensureThread(bot, client);
       const snapshot = this.#conversation.ensureSnapshot(bot.id, threadId);
       if (snapshot.activeTurnId) {
@@ -3324,68 +2363,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
   }
 
-  async #refreshModelCatalog(): Promise<void> {
-    const discovered = (
-      await Promise.all(
-        [...this.#clients.values()].map(async (client): Promise<AgentModelOption[]> => {
-          try {
-            const response = await client.request(
-              "model/list",
-              { limit: 100, includeHidden: false },
-              decodeModelListResponse,
-              5_000,
-            );
-            const serverModels = new Map(
-              response.data
-                .filter((item): item is typeof item & { model: string } => !item.hidden && isString(item.model))
-                .map((item) => [item.model, item] as const),
-            );
-            const models: AgentModelOption[] = [];
-            for (const server of serverModels.values()) {
-              if (!server.model) continue;
-              if (client.provider === "codex" && !CURATED_CODEX_MODEL_IDS.has(server.model)) continue;
-              const fallback = FALLBACK_MODELS.find(
-                (candidate) => candidate.provider === client.provider && candidate.id === server.model,
-              );
-              const efforts = (server?.supportedReasoningEfforts ?? [])
-                .map((item) => item.reasoningEffort)
-                .filter(isReasoningEffort);
-              models.push({
-                provider: client.provider,
-                id: server.model,
-                name: cleanModelName(server.displayName, fallback?.name ?? server.model),
-                description:
-                  fallback?.description ?? `${providerLabel(client.provider)} model discovered from the local CLI.`,
-                defaultReasoningEffort: isReasoningEffort(server?.defaultReasoningEffort)
-                  ? server.defaultReasoningEffort
-                  : (fallback?.defaultReasoningEffort ?? "medium"),
-                supportedReasoningEfforts: efforts.length
-                  ? efforts
-                  : (fallback?.supportedReasoningEfforts ?? ["medium"]),
-              });
-            }
-            return models;
-          } catch {
-            return client.provider === "grok"
-              ? []
-              : FALLBACK_MODELS.filter((model) => model.provider === client.provider);
-          }
-        }),
-      )
-    ).flat();
-    const discoveredById = new Map(discovered.map((model) => [`${model.provider}:${model.id}`, model]));
-    const staticModels = FALLBACK_MODELS.map(
-      (fallback) => discoveredById.get(`${fallback.provider}:${fallback.id}`) ?? fallback,
-    );
-    this.#models = [
-      ...staticModels,
-      ...discovered.filter(
-        (model) =>
-          !FALLBACK_MODELS.some((fallback) => fallback.provider === model.provider && fallback.id === model.id),
-      ),
-    ];
-  }
-
   async #reconcileUnresolvedDeliveries(): Promise<void> {
     for (const context of this.#mailbox.unresolvedDeliveries()) {
       const { delivery } = context;
@@ -3393,7 +2370,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       let reason = "OpenBot restarted before this delivery reached a confirmed terminal state.";
       try {
         const bot = this.#store.list().find((candidate) => candidate.id === delivery.recipientBotId);
-        const client = bot ? this.#clientForBot(bot) : null;
+        const client = bot ? this.#providers.clientForBot(bot) : null;
         const session = bot ? this.#store.activeProviderSession(bot.id) : null;
         if (session && client) {
           const response = await client.request(
@@ -3471,7 +2448,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     for (const bot of this.#store.list()) {
       if (!bot.threadId) continue;
       const session = this.#store.activeProviderSession(bot.id);
-      const client = this.#clientForBot(bot);
+      const client = this.#providers.clientForBot(bot);
       if (!session || !client) continue;
       try {
         const response = await client.request(
@@ -3593,17 +2570,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
     switch (notification.method) {
       case "account/login/completed": {
-        try {
-          const completion = decodeAccountLoginCompletedResult(params);
-          void this.#runProviderConnectionCommand("codex", async () => {
-            await this.#completeCodexLogin(completion, source);
-            return this.getStatus();
-          });
-        } catch {
-          const pending = this.#codexLogin;
-          if (pending)
-            void this.#failCodexLogin(pending, "OpenBot could not verify the ChatGPT connection. Try again.");
-        }
+        this.#providers.completeCodexLogin(params, source, decodeAccountLoginCompletedResult);
         return;
       }
       case "turn/started": {
@@ -3712,17 +2679,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       case "mcpServer/startupStatus/updated": {
         if (getString(params, "name") !== "computer-use") return;
         const status = getString(params, "status");
-        this.#setStatus({
-          capabilities: {
-            ...this.#status.capabilities,
-            computerUse: status === "ready" ? "ready" : "setup-required",
-          },
-        });
+        this.#providers.setComputerUseCapability(status === "ready" ? "ready" : "setup-required");
         return;
       }
       case "account/rateLimits/updated": {
-        const client = this.#clients.get("codex");
-        if (client) void this.#refreshUsage(client).catch(() => undefined);
+        this.#providers.refreshCodexUsage();
         return;
       }
       case "error":
@@ -3856,8 +2817,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async #requestContextCompaction(botId: string, threadId: string): Promise<void> {
     const budget = this.#contextBudgets.get(threadId);
     const bot = this.#store.list().find((candidate) => candidate.id === botId);
-    const client = bot ? this.#clientForBot(bot) : null;
-    if (budget?.phase !== "requested" || !client || this.#status.phase !== "ready") {
+    const client = bot ? this.#providers.clientForBot(bot) : null;
+    if (budget?.phase !== "requested" || !client || !this.#providers.isReady()) {
       this.#releaseContextCompaction(botId, threadId);
       return;
     }
@@ -4607,27 +3568,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     });
   }
 
-  async #probeComputerUse(client: AgentClient): Promise<"ready" | "setup-required" | "unavailable"> {
-    try {
-      const result = await client.request("plugin/list", { cwds: [] }, decodeRecordResponse, 5_000);
-      for (const marketplace of getArray(result, "marketplaces")) {
-        for (const plugin of getArray(marketplace, "plugins")) {
-          if (!isRecord(plugin)) continue;
-          if (
-            (plugin.id === "computer-use@openai-bundled" || plugin.name === "computer-use") &&
-            plugin.installed === true &&
-            plugin.enabled === true
-          ) {
-            return "ready";
-          }
-        }
-      }
-      return "unavailable";
-    } catch {
-      return "unavailable";
-    }
-  }
-
   #applyPendingRuntimeRefresh(bot: BotSummary): void {
     if (!this.#pendingRuntimeRefreshes.has(bot.id)) return;
     const session = this.#store.activeProviderSession(bot.id);
@@ -4909,10 +3849,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         }
       });
     }
-  }
-
-  #clientForBot(bot: BotSummary): AgentClient | null {
-    return this.#clients.get(providerForBot(bot)) ?? null;
   }
 
   #memoryStateChanged(botId: string): void {
@@ -5203,30 +4139,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       },
       transactionHooks?.onRollback,
     );
-  }
-
-  #requireReadyClient(provider: AgentProvider): AgentClient {
-    const client = this.#clients.get(provider);
-    if (!client || this.#status.phase !== "ready") {
-      throw new Error(this.#status.message ?? `${providerLabel(provider)} CLI is not ready or signed in.`);
-    }
-    return client;
-  }
-
-  async #refreshUsage(client: AgentClient): Promise<AccountUsage> {
-    const rateLimits = await client.request("account/rateLimits/read", undefined, decodeAccountRateLimitsReadResult);
-    const usage = normalizeAccountUsage(rateLimits);
-    this.#emit({ type: "usage-changed", usage: structuredClone(usage) });
-    return structuredClone(usage);
-  }
-
-  #setStatus(patch: Partial<AgentStatus>): void {
-    this.#status = {
-      ...this.#status,
-      ...patch,
-      capabilities: patch.capabilities ?? this.#status.capabilities,
-    };
-    this.#emit({ type: "status", status: this.getStatus() });
   }
 
   #emitError(code: string, error: unknown, botId?: string): void {
