@@ -1968,12 +1968,6 @@ export function Sidebar(props: SidebarProps) {
                   },
                 ]}
                 aria-label="Pinned chats"
-                onTransitionEnd={(event) => {
-                  if (event.target !== event.currentTarget || event.propertyName !== "grid-template-rows") return;
-                  if (!dragSession) return;
-                  measureSidebarDragTargets();
-                  if (dragPoint) scheduleSidebarDragTarget(dragPoint);
-                }}
               >
                 <ul class="sidebar-pinned-list" data-dragging={draggedPinnedKey() ? "" : undefined}>
                   <Show when={drag.emptyPinnedDropVisible}>

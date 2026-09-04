@@ -534,7 +534,8 @@ export const DragStress: Story = {
 
     await expect(list).toHaveAttribute("data-sidebar-dragging", "agent");
     for (const row of canvasElement.querySelectorAll<HTMLElement>("[data-agent-id]")) {
-      await expect(getComputedStyle(row).transitionDuration).toBe("0s");
+      await expect(getComputedStyle(row).transitionProperty).toBe("transform");
+      await expect(getComputedStyle(row).transitionDuration).not.toBe("0s");
     }
 
     fireEvent.dragEnd(source, { dataTransfer });
@@ -619,7 +620,11 @@ export const EmptyPinDropTarget: Story = {
       clientY: bounds.top + 26,
       dataTransfer,
     });
-    await expect(canvas.getByText("Drag here to pin")).toBeInTheDocument();
+    const emptyTarget = canvas.getByText("Drag here to pin");
+    const pinnedGroup = emptyTarget.closest<HTMLElement>(".sidebar-pinned-group");
+    if (!pinnedGroup) throw new Error("Empty pinned group is unavailable.");
+    await expect(emptyTarget.getBoundingClientRect().height).toBe(104);
+    await expect(getComputedStyle(pinnedGroup).transitionProperty).not.toContain("grid-template-rows");
   },
 };
 
