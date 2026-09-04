@@ -41,12 +41,11 @@ import type {
   TeamMemberSummary,
   TeamPresenceSnapshot,
   TeamRealtimeEvent,
-  TeamRole,
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
 import { LOCAL_SERVER_ID } from "@openbot/contracts/ipc";
 import { decodeRecord } from "@openbot/contracts/ipc-decoding";
-import { isBoolean, isDynamicRecord, isOneOf, isString } from "@openbot/contracts/runtime-values";
+import { isString } from "@openbot/contracts/runtime-values";
 import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import {
   supportsTeamSemanticTags,
@@ -93,6 +92,12 @@ import { decodeRemoteDesktopCapabilities, decodeRemoteDesktopSession } from "./r
 import { decodeVoid, type ResponseDecoder } from "./remote-host-decoding";
 import { RemoteProtocolError, RemoteRequestError } from "./remote-server-errors";
 import { remoteFetch, requestJson, throwRemoteResponseError, webRtcRequestBody } from "./remote-server-http";
+import {
+  emptyStoredRemoteServers,
+  readStoredRemoteServers,
+  type StoredRemoteServer,
+  type StoredRemoteServers,
+} from "./remote-server-stored-shape";
 import { addRemotePreviewUrls, isLocalDevelopmentApi, pageQuery, remoteServerLogoUrl } from "./remote-server-urls";
 import {
   decodeIdentityProof,
@@ -111,27 +116,6 @@ import {
   type TeamWebRtcClientTransport,
   TeamWebRtcRequestError,
 } from "./team-webrtc-client-transport";
-
-interface StoredRemoteServer {
-  id: string;
-  name: string;
-  apiUrl: string;
-  fingerprint: string;
-  publicKey?: string;
-  username: string;
-  encryptedToken: string;
-  remoteDesktopAvailable: boolean;
-  logoVersion?: string | null;
-  role: TeamRole;
-  transport?: "webrtc-v2";
-}
-
-interface StoredRemoteServers {
-  version: 3;
-  activeServerId: string;
-  servers: StoredRemoteServer[];
-  hiddenHostIds: string[];
-}
 
 interface RemoteServerEvents {
   changed: [servers: ServerSummary[]];
@@ -191,7 +175,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   readonly #centralAccount: CentralAccountSession;
   readonly #allowLocalDevelopmentInvites: boolean;
   readonly #appVersion: string | null;
-  #state: StoredRemoteServers = { version: 3, activeServerId: LOCAL_SERVER_ID, servers: [], hiddenHostIds: [] };
+  #state: StoredRemoteServers = emptyStoredRemoteServers();
   #states = new Map<string, ServerSummary["state"]>();
   #compatibility = new Map<string, ServerCompatibility>();
   #issues = new Map<string, ServerConnectionIssue>();
@@ -286,12 +270,17 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   async initialize(): Promise<void> {
+    let contents: string | null = null;
     try {
-      const parsed = JSON.parse(await readFile(this.#path, "utf8"));
-      const stored = readStoredRemoteServers(parsed);
-      if (stored) this.#state = stored;
+      contents = await readFile(this.#path, "utf8");
     } catch (error) {
+      // A file that is not there is a first run. Anything else -- a permission error, a truncated
+      // read -- must reach the caller: continuing would replace the file with an empty list.
       if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    }
+    if (contents !== null) {
+      const stored = readStoredRemoteServers(JSON.parse(contents));
+      if (stored) this.#state = stored;
     }
     if (this.#webrtcTransport) await this.#syncWebRtcHosts().catch(() => undefined);
     for (const server of this.#state.servers) {
@@ -2007,51 +1996,4 @@ function requiredServerSummary(servers: ServerSummary[], serverId: string): Serv
   const server = servers.find((candidate) => candidate.id === serverId);
   if (!server) throw new Error("Remote server summary is missing.");
   return server;
-}
-
-function readStoredRemoteServers(value: unknown): StoredRemoteServers | null {
-  if (!isDynamicRecord(value) || !isString(value.activeServerId) || !Array.isArray(value.servers)) return null;
-  if (value.version !== 1 && value.version !== 2 && value.version !== 3) return null;
-  const servers: StoredRemoteServer[] = [];
-  for (const serverValue of value.servers) {
-    const server = readStoredRemoteServer(serverValue);
-    if (!server) return null;
-    servers.push(server);
-  }
-  const hiddenHostIds = Array.isArray(value.hiddenHostIds)
-    ? value.hiddenHostIds.filter((hostId): hostId is string => isString(hostId))
-    : [];
-  return { version: 3, activeServerId: value.activeServerId, servers, hiddenHostIds };
-}
-
-function readStoredRemoteServer(value: unknown): StoredRemoteServer | null {
-  if (
-    !isDynamicRecord(value) ||
-    !isString(value.id) ||
-    !isString(value.name) ||
-    !isString(value.apiUrl) ||
-    !isString(value.fingerprint) ||
-    !(value.publicKey === undefined || isString(value.publicKey)) ||
-    !isString(value.username) ||
-    !isString(value.encryptedToken) ||
-    !(value.remoteDesktopAvailable === undefined || isBoolean(value.remoteDesktopAvailable)) ||
-    !(value.logoVersion === undefined || value.logoVersion === null || isString(value.logoVersion)) ||
-    !(value.transport === undefined || value.transport === "webrtc-v2") ||
-    !isOneOf(["owner", "admin", "member"] as const, value.role)
-  ) {
-    return null;
-  }
-  return {
-    id: value.id,
-    name: value.name,
-    apiUrl: value.apiUrl,
-    fingerprint: value.fingerprint,
-    ...(value.publicKey === undefined ? {} : { publicKey: value.publicKey }),
-    username: value.username,
-    encryptedToken: value.encryptedToken,
-    remoteDesktopAvailable: value.remoteDesktopAvailable ?? false,
-    ...(value.logoVersion === undefined ? {} : { logoVersion: value.logoVersion }),
-    role: value.role,
-    ...(value.transport === undefined ? {} : { transport: value.transport }),
-  };
 }
