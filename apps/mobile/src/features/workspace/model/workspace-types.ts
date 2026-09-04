@@ -1,4 +1,5 @@
 import type { BotAvatarHue, ConversationSnapshot, CreateBotInput, UpdateBotInput } from "@openbot/contracts/ipc";
+import type { RemoteRecoveryStatus } from "@openbot/team-client";
 
 export type MobileServerKind = "local" | "remote";
 export type MobileServerState = "connecting" | "online" | "offline";
@@ -10,6 +11,7 @@ export interface MobileServer {
   kind: MobileServerKind;
   state: MobileServerState;
   connectionMessage: string | null;
+  recoveryStatus?: RemoteRecoveryStatus;
   address: string | null;
   accent: string;
   publicKey: string;

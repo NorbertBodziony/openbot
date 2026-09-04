@@ -11,7 +11,7 @@ import { BotListRow } from "@/features/bots/components/bot-list-row";
 import { useBotPinTransition } from "@/features/bots/components/bot-pin-transition";
 import { PinnedBotsStrip } from "@/features/bots/components/pinned-bots-strip";
 import { useAppDrawer } from "@/features/servers/components/app-drawer-shell";
-import { ConnectionStatus } from "@/features/workspace/components/connection-status";
+import { ConnectionHeaderStatus } from "@/features/workspace/components/connection-header-status";
 import { type MobileBot, useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { isAndroid, isIOS } from "@/shared/lib/platform";
 
@@ -93,12 +93,7 @@ export function ConnectedScreen() {
         data={unpinnedBots}
         keyExtractor={(bot) => bot.id}
         renderItem={({ item }) => <TransitioningBotRow bot={item} />}
-        ListHeaderComponent={
-          <>
-            <PinnedBotsStrip bots={pinnedBots} />
-            {hasSelectedServer ? <ConnectionStatus server={activeServer} /> : null}
-          </>
-        }
+        ListHeaderComponent={<PinnedBotsStrip bots={pinnedBots} />}
         ListEmptyComponent={
           serverDirectoryState === "loading" && servers.length === 0 ? (
             <View className="flex-1 items-center justify-center gap-4 px-8 py-16">
@@ -139,6 +134,16 @@ export function ConnectedScreen() {
                 <Button.Label>Open servers</Button.Label>
               </Button>
             </View>
+          ) : activeBots.length === 0 && activeServer.state !== "online" ? (
+            <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
+              <WifiOff color={mutedColor} size={28} strokeWidth={1.6} />
+              <View className="items-center gap-1.5">
+                <Typography.Heading type="h4">Waiting for connection</Typography.Heading>
+                <Typography.Paragraph align="center" className="text-text-secondary">
+                  The bot list will load once this server is connected.
+                </Typography.Paragraph>
+              </View>
+            </View>
           ) : activeBots.length === 0 ? (
             <View className="flex-1 items-center justify-center gap-5 px-8 py-16">
               <View className="size-16 items-center justify-center rounded-3xl bg-control">
@@ -163,9 +168,12 @@ export function ConnectedScreen() {
         options={{
           headerLeft: isAndroid
             ? () => (
-                <HeaderIconButton accessibilityLabel="Open servers" onPress={openDrawer}>
-                  <Layers3 color={iconColor} size={22} strokeWidth={1.8} />
-                </HeaderIconButton>
+                <View className="flex-row items-center gap-2">
+                  <HeaderIconButton accessibilityLabel="Open servers" onPress={openDrawer}>
+                    <Layers3 color={iconColor} size={22} strokeWidth={1.8} />
+                  </HeaderIconButton>
+                  <ConnectionHeaderStatus server={hasSelectedServer ? activeServer : undefined} />
+                </View>
               )
             : undefined,
           headerRight: isAndroid
@@ -205,6 +213,9 @@ export function ConnectedScreen() {
         <>
           <Stack.Toolbar placement="left">
             <Stack.Toolbar.Button icon="square.stack.3d.up.fill" onPress={openDrawer} />
+            <Stack.Toolbar.View hidesSharedBackground>
+              <ConnectionHeaderStatus server={hasSelectedServer ? activeServer : undefined} />
+            </Stack.Toolbar.View>
           </Stack.Toolbar>
           <Stack.Toolbar placement="right">
             {IS_BOT_SEARCH_ENABLED ? (

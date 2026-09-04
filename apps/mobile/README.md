@@ -31,13 +31,18 @@ events to React Native. This keeps the production transport identical while rema
 Expo Go without a development build.
 
 Remote connection recovery makes up to five attempts, waiting 10 seconds after each failure. After
-five failures it waits two minutes before starting a new series. The bot list and chat show
-`Reconnecting x/5` and a countdown until the next attempt or series. Countdown ticks are local UI
+five failures it waits two minutes before starting a new series. The bot list shows `Reconnecting`
+beside the server-list button in the header, with a smaller attempt counter and retry countdown below.
+The status disappears once connected. Chat keeps its inline connection message. Countdown ticks are local UI
 updates, not requests. Backgrounding suspends retries; returning respects any remaining wait and
 starts at most one attempt if its deadline has passed. A successful connection resets the counter. Dead
 WebRTC peers are discarded and authenticated again. Recovery reloads cached conversations as well
 as agents and unread counts, including after an event-buffer reset. An interruption of Signal alone
 can resume sooner while the authenticated WebRTC connection is still healthy, without a new ticket.
+
+When no bots have loaded and the selected server is connecting or offline, the bot list shows
+`Waiting for connection`. The empty-server prompt appears only once the server is online; bots
+already loaded remain visible during reconnection.
 
 Invitations pin the desktop public key before acceptance. Pins are stored in the device Keychain /
 Keystore, scoped to the account service and user, and checked on later directory refreshes. Joining

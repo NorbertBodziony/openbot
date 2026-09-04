@@ -121,19 +121,22 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
 
   const installHosts = useCallback((hosts: RemoteTeamHost[]) => {
     setServers((current) => {
-      const states = new Map(current.map((server) => [server.id, server.state]));
-      const messages = new Map(current.map((server) => [server.id, server.connectionMessage]));
-      return hosts.map((host, index) => ({
-        id: host.hostId,
-        name: host.name,
-        kind: host.role === "owner" ? "local" : "remote",
-        state: states.get(host.hostId) ?? "offline",
-        connectionMessage: messages.get(host.hostId) ?? null,
-        address: null,
-        accent: SERVER_ACCENTS[index % SERVER_ACCENTS.length] ?? SERVER_ACCENTS[0],
-        publicKey: current.find((server) => server.id === host.hostId)?.publicKey ?? host.devicePublicKey,
-        membershipId: host.membershipId,
-      }));
+      const previousServers = new Map(current.map((server) => [server.id, server]));
+      return hosts.map((host, index) => {
+        const previous = previousServers.get(host.hostId);
+        return {
+          id: host.hostId,
+          name: host.name,
+          kind: host.role === "owner" ? "local" : "remote",
+          state: previous?.state ?? "offline",
+          connectionMessage: previous?.connectionMessage ?? null,
+          recoveryStatus: previous?.recoveryStatus,
+          address: null,
+          accent: SERVER_ACCENTS[index % SERVER_ACCENTS.length] ?? SERVER_ACCENTS[0],
+          publicKey: previous?.publicKey ?? host.devicePublicKey,
+          membershipId: host.membershipId,
+        };
+      });
     });
     setActiveServerId((current) => (hosts.some((host) => host.hostId === current) ? current : null));
   }, []);
@@ -242,6 +245,7 @@ export function MobileWorkspaceProvider({ children }: PropsWithChildren) {
                   state:
                     status.phase === "online" ? "online" : status.phase === "connecting" ? "connecting" : "offline",
                   connectionMessage: remoteRecoveryMessage(status),
+                  recoveryStatus: status,
                 }
               : candidate,
           ),
