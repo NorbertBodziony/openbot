@@ -5,6 +5,12 @@ import { type AvatarMotion, bloubAvatarProfile, type SupportedAvatarSilhouetteId
 import type { BotProfile } from "../data";
 
 const DEFAULT_CYCLE: Block[] = defaultCycle().blocks;
+// An avatar is 24 to 40 px of morphing blob, and every drawn frame costs a style
+// recalculation, a layout and a paint. Left at the screen's rate, two visible
+// avatars measured 30% of the renderer process and 24% of the GPU process; a cap
+// the eye cannot see on a shape this small gives most of that back. bloub keeps
+// its clock uncapped, so the animation is drawn less often, never delayed.
+const AVATAR_FPS = 30;
 const SIDEBAR_MOTION_HOLD_FACTOR = 1.25;
 const IDLE_CYCLE: Block[] = [slowerBlock("idle")];
 const WORKING_CYCLE: Block[] = [slowerBlock("orbit")];
@@ -129,6 +135,7 @@ function GeneratedAvatar(props: {
       expression={profile().expression}
       cycle={motionCycle()}
       playing={true}
+      fps={AVATAR_FPS}
       elapsed={props.animationOffset}
       ariaLabel=""
       class="bloub-avatar-svg"
