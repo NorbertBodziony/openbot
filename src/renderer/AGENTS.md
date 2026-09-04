@@ -57,6 +57,20 @@ including opacity variants, instead of a colour literal, and add a token only fo
 role. Keep compatibility aliases that are in use, and isolate fixed integration, generated-asset,
 SVG and platform colours at their boundaries.
 
+## What a drawn frame costs
+
+A drawn frame is a style recalculation, a layout and a paint, so a continuous animation is priced by
+how often it draws times how many are on screen — not by how large it is. Left uncapped, one 36 px
+agent avatar drawing at a 75 Hz display's rate measured 22.6 % of the renderer process; the same
+avatar capped at 30 measured 8 to 10 %. Hence `AVATAR_FPS` in `AgentAvatar.tsx`, and hence bloub's
+`autoPause`, which is on by default and stops the loop when nobody can see the bot.
+
+`AgentAvatar` is the only place in the product that animates a `BloubBot`, and it is the funnel that
+keeps this true: the static SVG in `bloub-avatar.tsx` uses `frozenAt` (no loop at all, which is what
+makes it safe to render into a detached node), mobile samples a single frame from `BotEngine`, and
+`packages/brand` carries only profile and catalogue data. A new animated bot placed anywhere else
+needs its own cap, so reuse `AgentAvatar` instead.
+
 ## Waiting in a renderer test
 
 `*.test.tsx` renders JSX in jsdom; `*.dom.test.ts` is the narrow case of needing a DOM without a
