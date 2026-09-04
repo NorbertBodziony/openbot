@@ -78,6 +78,7 @@ import {
 } from "@openbot/contracts/ipc";
 import { isBoolean, isString } from "@openbot/contracts/runtime-values";
 import { finiteNumberOrNull, normalizeAccountUsage } from "./agent/account-usage";
+import { ConversationRuntime, withDatabaseTransaction } from "./agent/conversation-runtime";
 import {
   agentNamesById,
   conversationContentSignature,
@@ -443,9 +444,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #bundledGrokExecutable: string | null | undefined;
   readonly #prepareBotWorkspace: (bot: BotSummary) => Promise<void>;
   readonly #hostedSites: AgentHostedSites | null;
-  readonly #snapshots = new Map<string, ConversationSnapshot>();
-  readonly #threadToBot = new Map<string, string>();
-  readonly #loadedThreads = new Map<string, AgentClient>();
+  readonly #conversation: ConversationRuntime;
   readonly #pendingPrompts = new Map<RequestId, PendingPrompt>();
   readonly #pendingApprovals = new Map<RequestId, PendingApproval>();
   readonly #pendingBrowserTakeovers = new Map<RequestId, PendingBrowserTakeover>();
@@ -458,7 +457,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #scheduledDrains = new Set<string>();
   readonly #drainTasks = new Map<string, Promise<void>>();
   readonly #routineDeletionBots = new Set<string>();
-  readonly #lastConversationSignatures = new Map<string, string>();
   readonly #contextBudgets = new Map<string, ThreadContextBudget>();
   readonly #compactingBots = new Set<string>();
   readonly #compactionTimers = new Map<string, NodeJS.Timeout>();
@@ -522,6 +520,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#bundledGrokExecutable = bundledGrokExecutable;
     this.#prepareBotWorkspace = prepareBotWorkspace;
     this.#hostedSites = hostedSites;
+    this.#conversation = new ConversationRuntime(
+      store,
+      (event) => this.#emit(event),
+      () => this.listBots(),
+    );
     this.#preferredProvider = preferredProvider;
     this.#browser.onChanged((tabs, activeTabId) => {
       for (const [requestId, pending] of this.#pendingBrowserTakeovers) {
@@ -564,7 +567,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const activeTurns: AgentRuntimeSnapshot["activeTurns"] = [];
     const latestMessages: AgentRuntimeSnapshot["latestMessages"] = [];
     for (const bot of bots) {
-      const live = this.#snapshots.get(bot.id);
+      const live = this.#conversation.snapshot(bot.id);
       const liveLatest = [...(live?.messages ?? [])]
         .reverse()
         .find(
@@ -628,26 +631,26 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   listMemories(botId: string): BotMemory[] {
-    this.#requireKnownBot(botId);
+    this.#conversation.requireKnownBot(botId);
     return this.#memories.list(botId);
   }
 
   createMemory(input: CreateBotMemoryInput): BotMemory {
-    this.#requireKnownBot(input.botId);
+    this.#conversation.requireKnownBot(input.botId);
     const memory = this.#memories.createManual(input.botId, input.text);
     this.#memoryStateChanged(input.botId);
     return memory;
   }
 
   updateMemory(input: UpdateBotMemoryInput): BotMemory {
-    this.#requireKnownBot(input.botId);
+    this.#conversation.requireKnownBot(input.botId);
     const memory = this.#memories.updateManual(input.botId, input.memoryId, input.text);
     this.#memoryStateChanged(input.botId);
     return memory;
   }
 
   deleteMemory(input: DeleteBotMemoryInput): void {
-    this.#requireKnownBot(input.botId);
+    this.#conversation.requireKnownBot(input.botId);
     if (!this.#memories.delete(input.botId, input.memoryId)) {
       throw new Error("This memory no longer exists.");
     }
@@ -655,18 +658,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   clearMemories(botId: string): void {
-    this.#requireKnownBot(botId);
+    this.#conversation.requireKnownBot(botId);
     this.#memoryEpochs.set(botId, this.#memoryEpoch(botId) + 1);
     if (this.#memories.clear(botId) > 0) this.#memoryStateChanged(botId);
   }
 
   listRoutines(botId: string): Routine[] {
-    this.#requireKnownBot(botId);
+    this.#conversation.requireKnownBot(botId);
     return this.#routines.list(botId);
   }
 
   createRoutine(input: CreateRoutineInput, options: RoutineMutationOptions = {}): Routine {
-    this.#requireKnownBot(input.botId);
+    this.#conversation.requireKnownBot(input.botId);
     const routine =
       options.recordConversationEvent === false
         ? this.#routines.create(input)
@@ -683,7 +686,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   updateRoutine(input: UpdateRoutineInput, options: RoutineMutationOptions = {}): Routine {
-    this.#requireKnownBot(input.botId);
+    this.#conversation.requireKnownBot(input.botId);
     const routine =
       options.recordConversationEvent === false
         ? this.#routines.update(input)
@@ -700,7 +703,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async deleteRoutine(input: DeleteRoutineInput, options: RoutineMutationOptions = {}): Promise<void> {
-    this.#requireKnownBot(input.botId);
+    this.#conversation.requireKnownBot(input.botId);
     const routine = this.#routines.get(input.botId, input.routineId);
     if (!routine) throw new Error("This routine no longer exists.");
     if (this.#routineDeletionBots.has(input.botId)) {
@@ -713,25 +716,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         this.#routines.activeRuns(input.botId, input.routineId),
       );
       if (options.recordConversationEvent === false) {
-        const database = this.#store.database;
-        const ownsTransaction = !database.connection.isTransaction;
-        if (ownsTransaction) database.connection.exec("BEGIN IMMEDIATE");
-        try {
-          for (const run of activeRuns) {
-            if (run.status === "queued" && run.deliveryId) {
-              if (this.#mailbox.getDelivery(run.deliveryId)?.delivery.status === "queued") {
-                this.#mailbox.cancelNow(input.botId, run.deliveryId);
+        withDatabaseTransaction(
+          this.#store.database,
+          () => {
+            for (const run of activeRuns) {
+              if (run.status === "queued" && run.deliveryId) {
+                if (this.#mailbox.getDelivery(run.deliveryId)?.delivery.status === "queued") {
+                  this.#mailbox.cancelNow(input.botId, run.deliveryId);
+                }
               }
+              this.#routines.updateRunStatus(run.id, "cancelled");
             }
-            this.#routines.updateRunStatus(run.id, "cancelled");
-          }
-          this.#routines.delete(input.botId, input.routineId);
-          if (ownsTransaction) database.connection.exec("COMMIT");
-        } catch (error) {
-          if (ownsTransaction && database.connection.isTransaction) database.connection.exec("ROLLBACK");
-          this.#mailbox.restorePersistedState();
-          throw error;
-        }
+            this.#routines.delete(input.botId, input.routineId);
+          },
+          // Deliberately narrower than the conversation variants: this branch records no
+          // conversation event, so there is no snapshot to restore — only the mailbox.
+          () => this.#mailbox.restorePersistedState(),
+        );
       } else {
         this.#mutateRoutineWithConversation(
           input.botId,
@@ -764,7 +765,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async testRoutine(input: TestRoutineInput): Promise<RoutineRun> {
-    this.#requireKnownBot(input.botId);
+    this.#conversation.requireKnownBot(input.botId);
     const routine = this.#routines.get(input.botId, input.routineId);
     if (!routine) throw new Error("This routine no longer exists.");
     const run = this.#routines.createRun(routine, null, "manual", new Date().toISOString());
@@ -774,7 +775,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   listRoutineRuns(input: ListRoutineRunsInput): RoutineRun[] {
-    this.#requireKnownBot(input.botId);
+    this.#conversation.requireKnownBot(input.botId);
     if (!this.#routines.get(input.botId, input.routineId)) throw new Error("This routine no longer exists.");
     return this.#routines.listRuns(input.botId, input.routineId, input.limit);
   }
@@ -850,7 +851,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     let releaseOnExit = true;
     let duplicate: BotSummary | null = null;
     try {
-      const source = this.#requireKnownBot(sourceBotId);
+      const source = this.#conversation.requireKnownBot(sourceBotId);
       if (this.#duplicatingBots.has(sourceBotId)) throw new Error("This agent is already being duplicated.");
       this.#assertBotIdleForDuplication(sourceBotId);
       const sourceSignature = this.#duplicationSourceSignature(sourceBotId);
@@ -932,7 +933,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async updateBot(input: UpdateBotInput): Promise<BotSummary> {
-    this.#requireKnownBot(input.botId);
+    this.#conversation.requireKnownBot(input.botId);
     const previous = this.#store.list().find((bot) => bot.id === input.botId);
     const requestedModel = input.model
       ? this.#models.find((model) => model.id === input.model && (!input.provider || model.provider === input.provider))
@@ -950,7 +951,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         .listQueue(input.botId)
         .deliveries.some((delivery) => ["queued", "starting", "running"].includes(delivery.status));
       const activeTurn =
-        this.#snapshots.get(input.botId)?.activeTurnId ??
+        this.#conversation.snapshot(input.botId)?.activeTurnId ??
         (previous.threadId ? this.#store.database.readConversation(input.botId, previous.threadId).activeTurnId : null);
       if (hasPendingWork || activeTurn) {
         throw new Error("Wait for the active turn and queue to finish before changing provider.");
@@ -980,7 +981,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     if (profileChanged && activeSession) {
       // Re-resume before the next turn so App Server receives the updated standing instructions.
-      this.#loadedThreads.delete(activeSession.externalSessionId);
+      this.#conversation.unloadThread(activeSession.externalSessionId);
     }
     this.#emit({ type: "bots-changed", bots: this.listBots() });
     return bot;
@@ -1035,7 +1036,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const hasPendingWork = this.#mailbox
       .listQueue(botId)
       .deliveries.some((delivery) => ["queued", "starting", "running"].includes(delivery.status));
-    if (hasPendingWork || this.#snapshots.get(botId)?.activeTurnId) {
+    if (hasPendingWork || this.#conversation.snapshot(botId)?.activeTurnId) {
       throw new Error("Stop the agent and cancel its queued messages before deleting it.");
     }
 
@@ -1063,7 +1064,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       [...this.#pendingPrompts.values()].some((pending) => pending.botId === botId) ||
       [...this.#pendingApprovals.values()].some((pending) => pending.approval.botId === botId) ||
       [...this.#pendingBrowserTakeovers.values()].some((pending) => pending.request.botId === botId);
-    if (hasPendingWork || hasAttention || this.#snapshots.get(botId)?.activeTurnId) {
+    if (hasPendingWork || hasAttention || this.#conversation.snapshot(botId)?.activeTurnId) {
       throw new Error("Wait for the agent to finish and clear its queue before duplicating it.");
     }
   }
@@ -1081,7 +1082,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   #duplicationSourceSignature(botId: string): string {
     return JSON.stringify({
-      bot: this.#requireKnownBot(botId),
+      bot: this.#conversation.requireKnownBot(botId),
       memories: this.#memories.list(botId),
       routines: this.#routines.list(botId),
     });
@@ -1107,9 +1108,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     } catch (error) {
       errors.push(error);
     }
-    this.#snapshots.delete(bot.id);
+    this.#conversation.forgetBot(bot.id);
     this.#failedTurns.delete(bot.id);
-    this.#lastConversationSignatures.delete(bot.id);
     this.#drainingBots.delete(bot.id);
     this.#scheduledDrains.delete(bot.id);
     for (const [key, event] of this.#pendingHostedSiteTerminalEvents) {
@@ -1123,8 +1123,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     if (bot.threadId) {
       for (const session of providerSessions) {
-        this.#threadToBot.delete(session.externalSessionId);
-        this.#loadedThreads.delete(session.externalSessionId);
+        this.#conversation.unbindThread(session.externalSessionId);
+        this.#conversation.unloadThread(session.externalSessionId);
         this.#contextBudgets.delete(session.externalSessionId);
         this.#clearCompactionTimer(session.externalSessionId);
       }
@@ -1279,7 +1279,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (claudeLogin?.child.exitCode === null) claudeLogin.child.kill("SIGTERM");
     if (grokLogin?.child.exitCode === null) grokLogin.child.kill("SIGTERM");
     if (pendingLogin) clearTimeout(pendingLogin.timer);
-    for (const [botId, snapshot] of this.#snapshots) {
+    for (const [botId, snapshot] of this.#conversation.activeSnapshots()) {
       if (!snapshot.activeTurnId) continue;
       const session = this.#store.activeProviderSession(botId);
       if (session) this.#interruptImageGenerations(botId, session.externalSessionId, snapshot.activeTurnId);
@@ -1306,10 +1306,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async readConversation(botId: string): Promise<ConversationSnapshot> {
     const bot = await this.#store.getOrCreate(botId);
     const persisted = this.#store.database.readConversation(botId, bot.threadId);
-    const live = this.#snapshots.get(botId);
+    const live = this.#conversation.snapshot(botId);
     const snapshot = live?.activeTurnId ? mergeConversationSnapshots(persisted, live) : persisted;
     this.#syncMailboxMessages(snapshot);
-    this.#snapshots.set(botId, snapshot);
+    this.#conversation.setSnapshot(botId, snapshot);
     return structuredClone(snapshot);
   }
 
@@ -1397,10 +1397,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       input.keepAttachmentIds,
       input.attachmentDraftIds,
     );
-    const snapshot = this.#snapshots.get(input.botId);
+    const snapshot = this.#conversation.snapshot(input.botId);
     if (snapshot) this.#syncMailboxMessages(snapshot);
     this.#emitQueue(input.botId);
-    if (snapshot) this.#emitConversation(snapshot, "queue.message-updated");
+    if (snapshot) this.#conversation.emitConversation(snapshot, "queue.message-updated");
   }
 
   async reorderQueue(input: ReorderQueueInput): Promise<void> {
@@ -1412,7 +1412,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const bot = await this.#store.getOrCreate(input.botId);
     const client = this.#requireReadyClient(providerForBot(bot));
     const session = this.#store.activeProviderSession(bot.id);
-    const snapshot = this.#ensureSnapshot(bot.id, bot.threadId);
+    const snapshot = this.#conversation.ensureSnapshot(bot.id, bot.threadId);
     if (!session || !snapshot.activeTurnId || snapshot.activeTurnId !== input.expectedTurnId) {
       throw new Error("The active turn changed before this message could be steered.");
     }
@@ -1438,7 +1438,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await this.#mailbox.markRunning(input.deliveryId, turnId);
       this.#syncMailboxMessages(snapshot);
       this.#emitQueue(bot.id);
-      this.#emitConversation(snapshot, "queue.message-steered", { deliveryId: input.deliveryId });
+      this.#conversation.emitConversation(snapshot, "queue.message-steered", { deliveryId: input.deliveryId });
     } catch (error) {
       await this.#mailbox.restoreQueued(input.deliveryId);
       this.#emitQueue(bot.id);
@@ -1459,7 +1459,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     });
     const delivery = this.#mailbox.getDelivery(receipt.deliveries[0].id);
     if (!delivery) throw new Error("Unable to create queued message.");
-    const snapshot = this.#ensureSnapshot(bot.id, bot.threadId);
+    const snapshot = this.#conversation.ensureSnapshot(bot.id, bot.threadId);
     this.#syncMailboxMessages(snapshot);
     await this.#store.updatePreview(
       bot.id,
@@ -1470,7 +1470,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       ) || delivery.delivery.attachments.map((item) => item.name).join(", "),
     );
     this.#emit({ type: "bots-changed", bots: this.listBots() });
-    this.#emitConversation(snapshot);
+    this.#conversation.emitConversation(snapshot);
     this.#emitQueue(bot.id);
     this.#scheduleDrain(bot.id);
     return receipt;
@@ -1478,17 +1478,17 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   async setMessageReaction(input: SetMessageReactionInput): Promise<void> {
     const bot = await this.#store.getOrCreate(input.botId);
-    const snapshot = this.#ensureSnapshot(bot.id, bot.threadId);
+    const snapshot = this.#conversation.ensureSnapshot(bot.id, bot.threadId);
     if (!snapshot.messages.some((message) => message.id === input.messageId)) {
       await this.readConversation(bot.id);
     }
-    const current = this.#ensureSnapshot(bot.id, bot.threadId);
+    const current = this.#conversation.ensureSnapshot(bot.id, bot.threadId);
     if (!current.messages.some((message) => message.id === input.messageId)) {
       throw new Error("The message is no longer available.");
     }
     await this.#mailbox.setReaction(bot.id, input.messageId, { kind: "user" }, input.emoji);
     this.#syncMailboxMessages(current);
-    this.#emitConversation(current);
+    this.#conversation.emitConversation(current);
   }
 
   async interrupt(botId: string, turnId: string): Promise<void> {
@@ -1503,7 +1503,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   async interruptAll(): Promise<void> {
     if (this.#status.phase !== "ready") return;
     const requests: Promise<unknown>[] = [];
-    for (const [botId, snapshot] of this.#snapshots) {
+    for (const [botId, snapshot] of this.#conversation.activeSnapshots()) {
       if (!snapshot.threadId || !snapshot.activeTurnId) continue;
       const bot = this.#store.list().find((candidate) => candidate.id === botId);
       const client = bot ? this.#clientForBot(bot) : null;
@@ -1830,7 +1830,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           const primaryAccount = this.#accounts.get(primaryProvider);
           const codexClient = this.#clients.get("codex");
           const computerUse = codexClient ? await this.#probeComputerUse(codexClient) : "unavailable";
-          this.#loadedThreads.clear();
+          this.#conversation.clearLoadedThreads();
           this.#setStatus({
             phase: "ready",
             cliVersion: this.#cli.get(primaryProvider)?.version ?? null,
@@ -2346,7 +2346,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (this.#clients.get(client.provider) !== client || this.#stopping) return;
     this.#clients.delete(client.provider);
     void client.stop().catch(() => undefined);
-    this.#loadedThreads.clear();
+    this.#conversation.clearLoadedThreads();
     this.#clearCompactionRuntime();
     this.#clearPendingPrompts(client);
     this.#clearPendingBrowserTakeovers();
@@ -2407,7 +2407,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const currentBot = this.#store.list().find((candidate) => candidate.id === bot.id) ?? bot;
     const session = this.#store.activeProviderSession(bot.id);
     if (session) {
-      if (this.#loadedThreads.get(session.externalSessionId) !== client) {
+      if (this.#conversation.loadedClientFor(session.externalSessionId) !== client) {
         try {
           await this.#resumeThread(currentBot, client, session.externalSessionId);
         } catch (error) {
@@ -2418,7 +2418,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           return replacementThreadId;
         }
       }
-      this.#threadToBot.set(session.externalSessionId, bot.id);
+      this.#conversation.bindThread(session.externalSessionId, bot.id);
       return session.externalSessionId;
     }
 
@@ -2444,9 +2444,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     );
     const externalThreadId = response.thread.id;
     this.#store.bindProviderSession(bot.id, externalThreadId);
-    this.#threadToBot.set(externalThreadId, bot.id);
-    this.#loadedThreads.set(externalThreadId, client);
-    this.#ensureSnapshot(bot.id, publicThreadId);
+    this.#conversation.bindThread(externalThreadId, bot.id);
+    this.#conversation.markThreadLoaded(externalThreadId, client);
+    this.#conversation.ensureSnapshot(bot.id, publicThreadId);
     const handoff = this.#buildProviderHandoff(bot.id, publicThreadId);
     if (handoff) this.#pendingHandoffs.set(externalThreadId, handoff);
     return externalThreadId;
@@ -2472,15 +2472,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await client.request("thread/unarchive", { threadId: externalThreadId }, decodeRecordResponse);
       await client.request("thread/resume", params, decodeRecordResponse);
     }
-    this.#loadedThreads.set(externalThreadId, client);
+    this.#conversation.markThreadLoaded(externalThreadId, client);
   }
 
   #retireProviderSession(bot: BotSummary, externalThreadId: string): void {
     const session = this.#store.activeProviderSession(bot.id);
     if (session?.externalSessionId !== externalThreadId || !bot.threadId) return;
     this.#store.database.deactivateProviderSessions(bot.threadId);
-    this.#threadToBot.delete(externalThreadId);
-    this.#loadedThreads.delete(externalThreadId);
+    this.#conversation.unbindThread(externalThreadId);
+    this.#conversation.unloadThread(externalThreadId);
     this.#contextBudgets.delete(externalThreadId);
     this.#clearCompactionTimer(externalThreadId);
     this.#pendingHandoffs.delete(externalThreadId);
@@ -2527,7 +2527,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         case "item/tool/call": {
           if (!isDynamicToolCall(request.params)) throw new Error("Invalid dynamic tool request.");
           if (request.params.namespace === OPENBOT_BROWSER_NAMESPACE) {
-            const botId = this.#threadToBot.get(request.params.threadId);
+            const botId = this.#conversation.botForThread(request.params.threadId);
             if (!botId) throw new Error("The browsing OpenBot agent is unknown.");
             if (request.params.tool === "request_takeover") {
               client.respond(request.id, await this.#surfaceBrowserTakeover(request));
@@ -2537,7 +2537,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
               request.id,
               await this.#browser.handleDynamicTool({
                 ...request.params,
-                threadId: this.#publicThreadId(botId, request.params.threadId),
+                threadId: this.#conversation.publicThreadId(botId, request.params.threadId),
                 ownerBotId: botId,
               }),
             );
@@ -2585,7 +2585,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async #handleOpenBotTool(params: DynamicToolCallParams): Promise<OpenBotToolResponse> {
-    const senderBotId = this.#threadToBot.get(params.threadId);
+    const senderBotId = this.#conversation.botForThread(params.threadId);
     if (!senderBotId) throw new Error("The sending OpenBot agent is unknown.");
 
     if (params.tool === "list_sites") {
@@ -2628,7 +2628,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           name: bot.name,
           title: bot.title,
           description: bot.description,
-          status: this.#snapshots.get(bot.id)?.activeTurnId
+          status: this.#conversation.snapshot(bot.id)?.activeTurnId
             ? "working"
             : queue.deliveries.some((delivery) => delivery.status === "queued")
               ? "queued"
@@ -2858,9 +2858,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         { kind: "bot", botId: senderBotId },
         args.emoji,
       );
-      const snapshot = this.#ensureSnapshot(senderBotId, params.threadId);
+      const snapshot = this.#conversation.ensureSnapshot(senderBotId, params.threadId);
       this.#syncMailboxMessages(snapshot);
-      this.#emitConversation(snapshot);
+      this.#conversation.emitConversation(snapshot);
       return openBotToolResult({ status: "reacted", messageId: delivery.delivery.id, emoji: args.emoji });
     }
 
@@ -2901,9 +2901,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       this.#emitQueue(recipient);
       this.#scheduleDrain(recipient);
     }
-    const snapshot = this.#ensureSnapshot(senderBotId, params.threadId);
+    const snapshot = this.#conversation.ensureSnapshot(senderBotId, params.threadId);
     this.#syncMailboxMessages(snapshot);
-    this.#emitConversation(snapshot);
+    this.#conversation.emitConversation(snapshot);
     return {
       success: true,
       contentItems: [{ type: "inputText", text: JSON.stringify(receipt) }],
@@ -2921,8 +2921,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     paths: string[],
     messageId: string,
   ): Promise<OpenBotToolResponse> {
-    const publicThreadId = this.#publicThreadId(senderBotId, params.threadId);
-    const snapshot = this.#ensureSnapshot(senderBotId, publicThreadId);
+    const publicThreadId = this.#conversation.publicThreadId(senderBotId, params.threadId);
+    const snapshot = this.#conversation.ensureSnapshot(senderBotId, publicThreadId);
     const existing = snapshot.messages.find((message) => message.id === messageId);
     if (existing) {
       return openBotToolResult({
@@ -2971,7 +2971,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         attachments.map((attachment) => attachment.id),
       );
       snapshot.revision = persisted.revision;
-      this.#lastConversationSignatures.set(snapshot.botId, conversationContentSignature(snapshot));
+      this.#conversation.rememberConversationSignature(snapshot);
     } catch (error) {
       const messageIndex = snapshot.messages.findIndex((candidate) => candidate.id === messageId);
       if (messageIndex >= 0) snapshot.messages.splice(messageIndex, 1);
@@ -3010,7 +3010,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async #openAgentAttachmentSource(botId: string, inputPath: string): Promise<GeneratedAttachmentSource> {
-    const bot = this.#requireKnownBot(botId);
+    const bot = this.#conversation.requireKnownBot(botId);
     const value = inputPath.trim();
     const [workspaceRoot, sharedRoot] = await Promise.all([
       realpath(bot.workspacePath),
@@ -3124,7 +3124,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return;
     this.#drainingBots.add(botId);
     try {
-      const snapshot = this.#snapshots.get(botId);
+      const snapshot = this.#conversation.snapshot(botId);
       if (snapshot?.activeTurnId) return;
       const context = this.#mailbox.nextQueued(botId);
       if (!context) return;
@@ -3153,7 +3153,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await this.ensureProvider(providerForBot(bot));
       const client = this.#requireReadyClient(providerForBot(bot));
       let threadId = await this.#ensureThread(bot, client);
-      const snapshot = this.#ensureSnapshot(bot.id, threadId);
+      const snapshot = this.#conversation.ensureSnapshot(bot.id, threadId);
       if (snapshot.activeTurnId) {
         await this.#mailbox.markTerminal(delivery.id, "failed", "The recipient already has an active turn.");
         this.#emitQueue(bot.id);
@@ -3258,7 +3258,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           status: "completed",
         });
       }
-      this.#emitConversation(snapshot);
+      this.#conversation.emitConversation(snapshot);
 
       const startTurn = (providerThreadId: string) =>
         this.#requestWithArchivedThreadRecovery(
@@ -3284,8 +3284,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       } catch (error) {
         if (!isMissingProviderSessionError(error, client.provider)) throw error;
         const unavailableThreadId = threadId;
-        if (this.#loadedThreads.get(unavailableThreadId) === client) {
-          this.#loadedThreads.delete(unavailableThreadId);
+        if (this.#conversation.loadedClientFor(unavailableThreadId) === client) {
+          this.#conversation.unloadThread(unavailableThreadId);
         }
         threadId = await this.#ensureThread(bot, client);
         response = await startTurn(threadId);
@@ -3301,7 +3301,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       snapshot.activeTurnId = response.turn.id;
       this.#syncDeliveryMessage(snapshot, delivery.id);
       this.#emitQueue(bot.id);
-      this.#emitConversation(this.#snapshots.get(bot.id) ?? snapshot);
+      this.#conversation.emitConversation(this.#conversation.snapshot(bot.id) ?? snapshot);
     } catch (error) {
       const currentDelivery = this.#mailbox.getDelivery(delivery.id)?.delivery;
       if (confirmedTurnId && currentDelivery?.status === "running" && currentDelivery.turnId === confirmedTurnId) {
@@ -3463,7 +3463,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       }
       if (!changed) continue;
       const persisted = this.#store.database.persistConversation(snapshot, "turn.interrupted-by-restart", { turnId });
-      this.#snapshots.set(bot.id, persisted);
+      this.#conversation.setSnapshot(bot.id, persisted);
     }
   }
 
@@ -3487,16 +3487,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const merged = mergeProviderHistory(current, imported);
         this.#syncMailboxMessages(merged);
         if (conversationContentSignature(merged) === conversationContentSignature(current)) {
-          const live = this.#snapshots.get(bot.id);
-          if (!live?.activeTurnId) this.#snapshots.set(bot.id, current);
+          const live = this.#conversation.snapshot(bot.id);
+          if (!live?.activeTurnId) this.#conversation.setSnapshot(bot.id, current);
           continue;
         }
         const persisted = this.#store.database.persistConversation(merged, "provider-history.backfilled", {
           provider: session.provider,
           externalSessionId: session.externalSessionId,
         });
-        const live = this.#snapshots.get(bot.id);
-        if (!live?.activeTurnId) this.#snapshots.set(bot.id, persisted);
+        const live = this.#conversation.snapshot(bot.id);
+        if (!live?.activeTurnId) this.#conversation.setSnapshot(bot.id, persisted);
       } catch (error) {
         this.#emitError("provider_history_backfill_pending", error, bot.id);
       }
@@ -3542,7 +3542,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#store.database.persistConversation(persisted, "conversation.mailbox-reconciled", {
       messageCount: persisted.messages.length,
     });
-    const live = this.#snapshots.get(bot.id);
+    const live = this.#conversation.snapshot(bot.id);
     if (live) this.#syncMailboxMessages(live);
   }
 
@@ -3564,12 +3564,13 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (routinesChanged) this.#routineStateChanged(botId);
     const affectedBots = new Set([botId, ...this.#mailbox.senderBotIdsForRecipient(botId)]);
     for (const affectedBotId of affectedBots) {
-      const snapshot = this.#snapshots.get(affectedBotId);
+      const snapshot = this.#conversation.snapshot(affectedBotId);
       if (!snapshot) continue;
       const previousSignature = conversationContentSignature(snapshot);
       this.#syncMailboxMessages(snapshot);
-      if (conversationContentSignature(snapshot) !== previousSignature) this.#emitConversation(snapshot);
-      else if (!this.#lastConversationSignatures.has(affectedBotId)) this.#publishConversation(snapshot);
+      if (conversationContentSignature(snapshot) !== previousSignature) this.#conversation.emitConversation(snapshot);
+      else if (!this.#conversation.hasPublishedConversation(affectedBotId))
+        this.#conversation.publishConversation(snapshot);
     }
   }
 
@@ -3577,8 +3578,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     queueMicrotask(() => {
       try {
         this.#emitQueue(botId);
-        const snapshot = this.#snapshots.get(botId);
-        if (snapshot) this.#emitConversation(snapshot);
+        const snapshot = this.#conversation.snapshot(botId);
+        if (snapshot) this.#conversation.emitConversation(snapshot);
       } catch (error) {
         this.#emitError("delivery_reconciliation_pending", error, botId);
       }
@@ -3588,7 +3589,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   #handleNotification(notification: AppServerNotification, source: AgentClient): void {
     const params = notification.params;
     const threadId = getString(params, "threadId");
-    const botId = threadId ? this.#threadToBot.get(threadId) : undefined;
+    const botId = threadId ? this.#conversation.botForThread(threadId) : undefined;
 
     switch (notification.method) {
       case "account/login/completed": {
@@ -3616,8 +3617,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           contextBudget.compactionTurnId = turnId;
           return;
         }
-        const publicThreadId = this.#publicThreadId(botId, threadId);
-        const snapshot = this.#ensureSnapshot(botId, publicThreadId);
+        const publicThreadId = this.#conversation.publicThreadId(botId, threadId);
+        const snapshot = this.#conversation.ensureSnapshot(botId, publicThreadId);
         snapshot.activeTurnId = turnId;
         this.#failedTurns.delete(botId);
         const origin = this.#mailbox.startingDeliveryForBot(botId)?.delivery.sender.kind ?? "unknown";
@@ -3629,7 +3630,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           }
         });
         this.#emit({ type: "turn-started", botId, threadId: publicThreadId, turnId, origin });
-        this.#emitConversation(snapshot, "turn.started", { turnId });
+        this.#conversation.emitConversation(snapshot, "turn.started", { turnId });
         return;
       }
       case "item/started":
@@ -3661,8 +3662,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         const delta = getString(params, "delta");
         if (!turnId || !itemId || delta === null) return;
         this.#itemTurns.set(itemId, turnId);
-        const publicThreadId = this.#publicThreadId(botId, threadId);
-        const snapshot = this.#ensureSnapshot(botId, publicThreadId);
+        const publicThreadId = this.#conversation.publicThreadId(botId, threadId);
+        const snapshot = this.#conversation.ensureSnapshot(botId, publicThreadId);
         let message = snapshot.messages.find((candidate) => candidate.id === itemId);
         if (!message) {
           message = newAssistantMessage(itemId, turnId);
@@ -3704,7 +3705,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         return;
       }
       case "thread/archived": {
-        if (threadId && this.#loadedThreads.get(threadId) === source) this.#loadedThreads.delete(threadId);
+        if (threadId && this.#conversation.loadedClientFor(threadId) === source)
+          this.#conversation.unloadThread(threadId);
         return;
       }
       case "mcpServer/startupStatus/updated": {
@@ -3738,8 +3740,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     await this.#turnAssociations.get(turnId)?.catch(() => undefined);
     this.#finishMemoryMutations(turnId, status);
     const shouldCompact = this.#reserveContextCompaction(botId, threadId);
-    this.#browser.endControl(this.#publicThreadId(botId, threadId), turnId);
-    const snapshot = this.#ensureSnapshot(botId, threadId);
+    this.#browser.endControl(this.#conversation.publicThreadId(botId, threadId), turnId);
+    const snapshot = this.#conversation.ensureSnapshot(botId, threadId);
     snapshot.activeTurnId = null;
     if (status === "failed") this.#failedTurns.set(botId, turnId);
     else this.#failedTurns.delete(botId);
@@ -3774,7 +3776,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       await this.#store.updatePreview(botId, latestAssistant.text);
       this.#emit({ type: "bots-changed", bots: this.listBots() });
     }
-    this.#emitConversation(snapshot, "turn.completed", { turnId, status });
+    this.#conversation.emitConversation(snapshot, "turn.completed", { turnId, status });
     if (deliveries.length > 0) {
       try {
         this.#emitQueue(botId);
@@ -3786,7 +3788,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#emit({
       type: "turn-completed",
       botId,
-      threadId: this.#publicThreadId(botId, threadId),
+      threadId: this.#conversation.publicThreadId(botId, threadId),
       turnId,
       status,
       origin: deliveries[0]?.delivery.sender.kind ?? "unknown",
@@ -3944,10 +3946,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       replyToMessageId: messageId,
       idempotencyKey: `auto-result:${turnId}:${messageId}`,
     });
-    const senderSnapshot = this.#snapshots.get(botId);
+    const senderSnapshot = this.#conversation.snapshot(botId);
     if (senderSnapshot) {
       this.#syncMailboxMessages(senderSnapshot);
-      this.#emitConversation(senderSnapshot);
+      this.#conversation.emitConversation(senderSnapshot);
     }
     this.#emitQueue(recipientBotId);
     this.#scheduleDrain(recipientBotId);
@@ -3960,7 +3962,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (!key.startsWith(`${threadId}:${turnId}:`)) continue;
       operation.interrupted = true;
     }
-    const snapshot = this.#ensureSnapshot(botId, threadId);
+    const snapshot = this.#conversation.ensureSnapshot(botId, threadId);
     for (const message of snapshot.messages) {
       if (
         message.turnId !== turnId ||
@@ -3975,7 +3977,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       if (message.imageGeneration) message.imageGeneration.error ??= "Image generation was interrupted.";
       changed = true;
     }
-    if (changed) this.#emitConversation(snapshot, "image-generation.interrupted", { turnId });
+    if (changed) this.#conversation.emitConversation(snapshot, "image-generation.interrupted", { turnId });
   }
 
   #applyItem(botId: string, threadId: string, turnId: string, item: ThreadItem, completed: boolean): void {
@@ -3992,11 +3994,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     const toolProgress = toolProgressText(item, completed);
     if (toolProgress) {
-      this.#emitTurnProgress(botId, this.#publicThreadId(botId, threadId), turnId, toolProgress);
+      this.#emitTurnProgress(botId, this.#conversation.publicThreadId(botId, threadId), turnId, toolProgress);
       return;
     }
     if (item.type !== "agentMessage" || !isString(item.id)) return;
-    const snapshot = this.#ensureSnapshot(botId, threadId);
+    const snapshot = this.#conversation.ensureSnapshot(botId, threadId);
     let message = snapshot.messages.find((candidate) => candidate.id === item.id);
     if (!message) {
       message = newAssistantMessage(item.id, turnId);
@@ -4006,7 +4008,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (isString(item.phase)) message.itemType = item.phase;
     message.status = completed ? "completed" : "streaming";
     this.#itemTurns.set(item.id, turnId);
-    this.#emitConversation(snapshot);
+    this.#conversation.emitConversation(snapshot);
   }
 
   #emitTurnProgress(botId: string, threadId: string, turnId: string, text: string): void {
@@ -4028,7 +4030,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     operation: ImageGenerationOperation,
   ): Promise<void> {
     if (!isString(item.id)) return;
-    const snapshot = this.#ensureSnapshot(botId, threadId);
+    const snapshot = this.#conversation.ensureSnapshot(botId, threadId);
     let message = snapshot.messages.find((candidate) => candidate.id === item.id);
     if (!message) {
       message = newAssistantMessage(item.id, turnId);
@@ -4058,7 +4060,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     } satisfies ImageGenerationInfo;
     message.status = operation.interrupted ? "interrupted" : completed ? "completed" : "streaming";
     this.#itemTurns.set(item.id, turnId);
-    this.#emitConversation(snapshot);
+    this.#conversation.emitConversation(snapshot);
 
     if (!completed || operation.interrupted) {
       if (operation.interrupted) message.imageGeneration.error ??= "Image generation was interrupted.";
@@ -4067,7 +4069,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (providerStatus === "failed" || failure) {
       message.status = "failed";
       message.imageGeneration.error = failure ?? "Image generation failed.";
-      this.#emitConversation(snapshot);
+      this.#conversation.emitConversation(snapshot);
       return;
     }
 
@@ -4105,30 +4107,30 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         throw new Error("Image generation did not return an image.");
       }
       if (operation.interrupted) {
-        const interruptedSnapshot = this.#ensureSnapshot(botId, threadId);
+        const interruptedSnapshot = this.#conversation.ensureSnapshot(botId, threadId);
         const interruptedMessage = interruptedSnapshot.messages.find((candidate) => candidate.id === item.id);
         if (interruptedMessage?.imageGeneration) {
           interruptedMessage.status = "interrupted";
           interruptedMessage.imageGeneration.error ??= "Image generation was interrupted.";
-          this.#emitConversation(interruptedSnapshot);
+          this.#conversation.emitConversation(interruptedSnapshot);
         }
         return;
       }
-      const latestSnapshot = this.#ensureSnapshot(botId, threadId);
+      const latestSnapshot = this.#conversation.ensureSnapshot(botId, threadId);
       const latestMessage = latestSnapshot.messages.find((candidate) => candidate.id === item.id);
       if (!latestMessage?.imageGeneration) return;
       latestMessage.attachments = [attachment];
       latestMessage.status = "completed";
       delete latestMessage.imageGeneration.error;
-      this.#emitConversation(latestSnapshot);
+      this.#conversation.emitConversation(latestSnapshot);
       return;
     } catch (error) {
-      const latestSnapshot = this.#ensureSnapshot(botId, threadId);
+      const latestSnapshot = this.#conversation.ensureSnapshot(botId, threadId);
       const latestMessage = latestSnapshot.messages.find((candidate) => candidate.id === item.id);
       if (!latestMessage?.imageGeneration) return;
       latestMessage.status = "failed";
       latestMessage.imageGeneration.error = error instanceof Error ? error.message : String(error);
-      this.#emitConversation(latestSnapshot);
+      this.#conversation.emitConversation(latestSnapshot);
     }
   }
 
@@ -4149,7 +4151,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   #surfaceApproval(client: AgentClient, request: AppServerRequest, kind: AgentApprovalKind): void {
     const threadId = getString(request.params, "threadId");
     const turnId = getString(request.params, "turnId") ?? (kind === "file-change" ? String(request.id) : null);
-    const botId = threadId ? this.#threadToBot.get(threadId) : undefined;
+    const botId = threadId ? this.#conversation.botForThread(threadId) : undefined;
     if (!threadId || !turnId || !botId) {
       this.#respondToMalformedApproval(client, request);
       return;
@@ -4158,7 +4160,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const approval: AgentApproval = {
       requestId: request.id,
       botId,
-      threadId: this.#publicThreadId(botId, threadId),
+      threadId: this.#conversation.publicThreadId(botId, threadId),
       turnId,
       kind,
       command: commandText(request.params),
@@ -4186,7 +4188,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   ): Promise<void> {
     const threadId = params.threadId;
     const turnId = params.turnId;
-    const botId = this.#threadToBot.get(threadId);
+    const botId = this.#conversation.botForThread(threadId);
     if (!turnId || !botId) {
       client.respondError(request.id, {
         code: -32602,
@@ -4205,7 +4207,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const approval: AgentApproval = {
       requestId: request.id,
       botId,
-      threadId: this.#publicThreadId(botId, threadId),
+      threadId: this.#conversation.publicThreadId(botId, threadId),
       turnId,
       kind: "permissions",
       command: null,
@@ -4287,7 +4289,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (args.spaFallback !== undefined && !isBoolean(args.spaFallback)) {
       throw new Error("spaFallback must be a boolean.");
     }
-    const bot = this.#requireKnownBot(context.botId);
+    const bot = this.#conversation.requireKnownBot(context.botId);
     const input = {
       sourcePath,
       title,
@@ -4305,7 +4307,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
 
   #surfaceLegacyApproval(client: AgentClient, request: AppServerRequest): void {
     const threadId = getString(request.params, "conversationId");
-    const botId = threadId ? this.#threadToBot.get(threadId) : undefined;
+    const botId = threadId ? this.#conversation.botForThread(threadId) : undefined;
     if (!threadId || !botId) {
       this.#respondToMalformedApproval(client, request);
       return;
@@ -4315,7 +4317,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const approval: AgentApproval = {
       requestId: request.id,
       botId,
-      threadId: this.#publicThreadId(botId, threadId),
+      threadId: this.#conversation.publicThreadId(botId, threadId),
       turnId: getString(request.params, "turnId") ?? String(request.id),
       kind,
       command: commandText(request.params),
@@ -4405,10 +4407,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!isDynamicToolCall(request.params)) return Promise.resolve(browserTakeoverError());
     const params = request.params;
     const { threadId, turnId } = params;
-    const botId = this.#threadToBot.get(threadId);
+    const botId = this.#conversation.botForThread(threadId);
     const args = getRecord(params, "arguments");
     const tabId = getString(args, "tabId");
-    const publicThreadId = botId ? this.#publicThreadId(botId, threadId) : null;
+    const publicThreadId = botId ? this.#conversation.publicThreadId(botId, threadId) : null;
     const tab = tabId ? this.#browser.listTabs().find((candidate) => candidate.id === tabId) : undefined;
     if (
       !botId ||
@@ -4443,8 +4445,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   #surfaceDynamicPrompt(client: AgentClient, request: AppServerRequest): void {
     const threadId = getString(request.params, "threadId");
     const turnId = getString(request.params, "turnId");
-    const botId = threadId ? this.#threadToBot.get(threadId) : undefined;
-    const publicThreadId = threadId && botId ? this.#publicThreadId(botId, threadId) : null;
+    const botId = threadId ? this.#conversation.botForThread(threadId) : undefined;
+    const publicThreadId = threadId && botId ? this.#conversation.publicThreadId(botId, threadId) : null;
     const args = getRecord(request.params, "arguments");
     const questions = promptQuestions(args);
     if (!threadId || !turnId || !botId || !publicThreadId || !validPromptQuestions(questions)) {
@@ -4486,7 +4488,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   #surfacePrompt(client: AgentClient, request: AppServerRequest): void {
     const threadId = getString(request.params, "threadId");
     const turnId = getString(request.params, "turnId");
-    const botId = threadId ? this.#threadToBot.get(threadId) : undefined;
+    const botId = threadId ? this.#conversation.botForThread(threadId) : undefined;
     if (!threadId || !turnId || !botId) {
       client.respond(request.id, { answers: {} });
       return;
@@ -4497,7 +4499,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       client.respond(request.id, { answers: {} });
       return;
     }
-    const publicThreadId = this.#publicThreadId(botId, threadId);
+    const publicThreadId = this.#conversation.publicThreadId(botId, threadId);
     const messageId = this.#persistQuestionPrompt(botId, publicThreadId, turnId, request.id, questions);
     this.#pendingPrompts.set(request.id, {
       client,
@@ -4524,8 +4526,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   #surfaceMcpElicitation(client: AgentClient, request: AppServerRequest): void {
     const threadId = getString(request.params, "threadId");
     const turnId = getString(request.params, "turnId");
-    const botId = threadId ? this.#threadToBot.get(threadId) : undefined;
-    const publicThreadId = threadId && botId ? this.#publicThreadId(botId, threadId) : null;
+    const botId = threadId ? this.#conversation.botForThread(threadId) : undefined;
+    const publicThreadId = threadId && botId ? this.#conversation.publicThreadId(botId, threadId) : null;
     const question = mcpElicitationQuestion(request.params);
     if (!threadId || !turnId || !botId || !publicThreadId || !question) {
       client.respond(request.id, { action: "decline", content: null, _meta: null });
@@ -4568,7 +4570,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     requestId: RequestId,
     questions: AgentPromptQuestion[],
   ): string {
-    const snapshot = this.#ensureSnapshot(botId, publicThreadId);
+    const snapshot = this.#conversation.ensureSnapshot(botId, publicThreadId);
     const messageId = `question-prompt:${turnId}:${String(requestId)}`;
     const existing = snapshot.messages.find((message) => message.id === messageId);
     if (!existing) {
@@ -4587,18 +4589,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
           resolution: null,
         },
       });
-      this.#emitConversation(snapshot, "prompt.requested", { turnId, requestId });
+      this.#conversation.emitConversation(snapshot, "prompt.requested", { turnId, requestId });
     }
     return messageId;
   }
 
   #resolvePersistedPrompt(pending: PendingPrompt, resolution: AgentPromptResolution): void {
-    const snapshot = this.#ensureSnapshot(pending.botId, pending.publicThreadId);
+    const snapshot = this.#conversation.ensureSnapshot(pending.botId, pending.publicThreadId);
     const message = snapshot.messages.find((candidate) => candidate.id === pending.messageId);
     if (!message?.questionPrompt || message.questionPrompt.resolution !== null) return;
     message.questionPrompt.resolution = structuredClone(resolution);
     message.text = questionPromptText(message.questionPrompt.questions, resolution);
-    this.#emitConversation(snapshot, "prompt.resolved", {
+    this.#conversation.emitConversation(snapshot, "prompt.resolved", {
       turnId: pending.turnId,
       requestId: pending.id,
       status: resolution.status,
@@ -4634,33 +4636,16 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       return;
     }
     const activeTurnId =
-      this.#snapshots.get(bot.id)?.activeTurnId ??
+      this.#conversation.snapshot(bot.id)?.activeTurnId ??
       this.#store.database.readConversation(bot.id, bot.threadId).activeTurnId;
     if (activeTurnId) return;
     this.#store.database.deactivateProviderSessions(bot.threadId);
-    this.#threadToBot.delete(session.externalSessionId);
-    this.#loadedThreads.delete(session.externalSessionId);
+    this.#conversation.unbindThread(session.externalSessionId);
+    this.#conversation.unloadThread(session.externalSessionId);
     this.#contextBudgets.delete(session.externalSessionId);
     this.#clearCompactionTimer(session.externalSessionId);
     this.#pendingHandoffs.delete(session.externalSessionId);
     this.#pendingRuntimeRefreshes.delete(bot.id);
-  }
-
-  #ensureSnapshot(botId: string, threadId: string | null): ConversationSnapshot {
-    let snapshot = this.#snapshots.get(botId);
-    if (!snapshot) {
-      const bot = this.#store.list().find((candidate) => candidate.id === botId);
-      const publicThreadId = bot?.threadId ?? threadId;
-      snapshot = this.#store.database.readConversation(botId, publicThreadId);
-      this.#snapshots.set(botId, snapshot);
-    } else if (threadId && !snapshot.threadId) {
-      snapshot.threadId = threadId;
-    }
-    return snapshot;
-  }
-
-  #publicThreadId(botId: string, fallback: string): string {
-    return this.#store.list().find((candidate) => candidate.id === botId)?.threadId ?? fallback;
   }
 
   #bufferDelta(delta: PendingDelta): void {
@@ -4681,7 +4666,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     if (!pending) return;
     this.#pendingDeltas.delete(key);
     if (pending.timer) clearTimeout(pending.timer);
-    const snapshot = this.#ensureSnapshot(pending.botId, pending.publicThreadId);
+    const snapshot = this.#conversation.ensureSnapshot(pending.botId, pending.publicThreadId);
     const persisted = this.#store.database.persistConversation(snapshot, "response.delta-flushed", {
       turnId: pending.turnId,
       messageId: pending.messageId,
@@ -4787,11 +4772,11 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       const deliveryId = receipt.deliveries[0]?.id;
       if (!deliveryId) throw new Error("Unable to create the routine delivery.");
       this.#routines.attachDelivery(run.id, deliveryId);
-      const snapshot = this.#ensureSnapshot(bot.id, bot.threadId);
+      const snapshot = this.#conversation.ensureSnapshot(bot.id, bot.threadId);
       this.#syncMailboxMessages(snapshot);
       await this.#store.updatePreview(bot.id, run.instruction);
       this.#emit({ type: "bots-changed", bots: this.listBots() });
-      this.#emitConversation(snapshot, "routine.run-queued", { routineId: run.routineId, runId: run.id });
+      this.#conversation.emitConversation(snapshot, "routine.run-queued", { routineId: run.routineId, runId: run.id });
       this.#emitQueue(bot.id);
       this.#scheduleDrain(bot.id);
     } catch (error) {
@@ -4930,16 +4915,10 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return this.#clients.get(providerForBot(bot)) ?? null;
   }
 
-  #requireKnownBot(botId: string): BotSummary {
-    const bot = this.listBots().find((candidate) => candidate.id === botId);
-    if (!bot) throw new Error(`Unknown bot: ${botId}`);
-    return bot;
-  }
-
   #memoryStateChanged(botId: string): void {
-    const bot = this.#requireKnownBot(botId);
+    const bot = this.#conversation.requireKnownBot(botId);
     const session = this.#store.activeProviderSession(bot.id);
-    if (session) this.#loadedThreads.delete(session.externalSessionId);
+    if (session) this.#conversation.unloadThread(session.externalSessionId);
     this.#emit({ type: "memories-changed", botId });
   }
 
@@ -5068,17 +5047,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     details: HostedSiteConversationEventDetails,
     createdAt: string,
   ): void {
-    const previousBot = this.#requireKnownBot(context.botId);
-    const previousSnapshot = this.#snapshots.get(context.botId);
-    const previousSnapshotState = previousSnapshot ? structuredClone(previousSnapshot) : undefined;
     const database = this.#store.database;
-    const ownsTransaction = !database.connection.isTransaction;
-    if (ownsTransaction) database.connection.exec("BEGIN IMMEDIATE");
-    try {
-      const threadId = this.#store.ensureThreadIdNow(context.botId);
+    this.#conversation.withConversationTransaction(context.botId, ({ threadId, snapshot: current }) => {
       const messageId = hostedSiteEventMessageId(context.operationId, status);
-      const current = structuredClone(this.#ensureSnapshot(context.botId, threadId));
-      current.threadId = threadId;
       if (!current.messages.some((message) => message.id === messageId)) {
         const message: ConversationMessage = {
           id: messageId,
@@ -5114,18 +5085,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         database.deleteActiveHostedSiteConversationEvent(context.botId, context.operationId);
         database.deletePendingHostedSiteTerminalEvent(context.botId, context.operationId, status);
       }
-      if (ownsTransaction) database.connection.exec("COMMIT");
-      this.#snapshots.set(context.botId, current);
-      this.#publishConversation(current);
-    } catch (error) {
-      if (ownsTransaction && database.connection.isTransaction) database.connection.exec("ROLLBACK");
-      if (previousBot.threadId === null) {
-        this.#store.restoreThreadIdentity(context.botId, previousBot.threadId, previousBot.updatedAt);
-      }
-      if (previousSnapshotState) this.#snapshots.set(context.botId, previousSnapshotState);
-      else this.#snapshots.delete(context.botId);
-      throw error;
-    }
+      // The idempotency guard above means this can legitimately append nothing and still publish.
+      return { result: undefined, snapshot: current };
+    });
   }
 
   #reconcileHostedSiteEventsAfterRestart(): void {
@@ -5166,20 +5128,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     error: string | null = null,
   ): RoutineRun {
     if (run.status === status && run.error === error) return run;
-    const previousBot = this.#requireKnownBot(run.botId);
-    const previousSnapshot = this.#snapshots.get(run.botId);
-    const previousSnapshotState = previousSnapshot ? structuredClone(previousSnapshot) : undefined;
     const database = this.#store.database;
-    const ownsTransaction = !database.connection.isTransaction;
-    if (ownsTransaction) database.connection.exec("BEGIN IMMEDIATE");
-    let updated: RoutineRun;
-    let persisted: ConversationSnapshot;
-    try {
-      const threadId = this.#store.ensureThreadIdNow(run.botId);
-      const nextSnapshot = structuredClone(this.#ensureSnapshot(run.botId, threadId));
-      nextSnapshot.threadId = threadId;
+    return this.#conversation.withConversationTransaction(run.botId, ({ threadId, snapshot: nextSnapshot }) => {
       const transition = this.#appendRoutineRunTransition(nextSnapshot, run, status, error);
-      updated = transition.run;
       sortConversationMessages(nextSnapshot.messages);
       nextSnapshot.revision = database.appendConversationMessage({
         botId: run.botId,
@@ -5189,20 +5140,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         eventType: `routine.run-${status}`,
         detail: { routineId: run.routineId, runId: run.id, status },
       });
-      persisted = nextSnapshot;
-      if (ownsTransaction) database.connection.exec("COMMIT");
-    } catch (caught) {
-      if (ownsTransaction && database.connection.isTransaction) database.connection.exec("ROLLBACK");
-      if (previousBot.threadId === null) {
-        this.#store.restoreThreadIdentity(run.botId, previousBot.threadId, previousBot.updatedAt);
-      }
-      if (previousSnapshotState) this.#snapshots.set(run.botId, previousSnapshotState);
-      else this.#snapshots.delete(run.botId);
-      throw caught;
-    }
-    this.#snapshots.set(run.botId, persisted);
-    this.#publishConversation(persisted);
-    return updated;
+      return { result: transition.run, snapshot: nextSnapshot };
+    });
   }
 
   #appendRoutineRunTransition(
@@ -5233,54 +5172,37 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     turnId?: string,
     transactionHooks?: { beforeMutate?: (snapshot: ConversationSnapshot) => void; onRollback?: () => void },
   ): T {
-    const previousBot = this.#requireKnownBot(botId);
-    const previousSnapshot = this.#snapshots.get(botId);
-    const previousSnapshotState = previousSnapshot ? structuredClone(previousSnapshot) : undefined;
     const database = this.#store.database;
-    const ownsTransaction = !database.connection.isTransaction;
-    if (ownsTransaction) database.connection.exec("BEGIN IMMEDIATE");
-    let result: T;
-    let persisted: ConversationSnapshot;
-    try {
-      const threadId = this.#store.ensureThreadIdNow(botId);
-      const nextSnapshot = structuredClone(this.#ensureSnapshot(botId, threadId));
-      nextSnapshot.threadId = threadId;
-      transactionHooks?.beforeMutate?.(nextSnapshot);
-      result = mutate();
-      const routine = eventRoutine(result);
-      const createdAt = new Date().toISOString();
-      const message: ConversationMessage = {
-        id: randomUUID(),
-        ...(turnId ? { turnId } : {}),
-        author: "system",
-        source: "system",
-        text: routine.name,
-        createdAt,
-        status: "completed",
-        itemType: routineConversationEventItemType(action, routine.id),
-      };
-      nextSnapshot.messages.push(message);
-      sortConversationMessages(nextSnapshot.messages);
-      persisted = database.persistConversation(nextSnapshot, `routine.${action}`, {
-        action,
-        routineId: routine.id,
-        routineName: routine.name,
-        messageId: message.id,
-      });
-      if (ownsTransaction) database.connection.exec("COMMIT");
-    } catch (error) {
-      if (ownsTransaction && database.connection.isTransaction) database.connection.exec("ROLLBACK");
-      transactionHooks?.onRollback?.();
-      if (previousBot.threadId === null) {
-        this.#store.restoreThreadIdentity(botId, previousBot.threadId, previousBot.updatedAt);
-      }
-      if (previousSnapshotState) this.#snapshots.set(botId, previousSnapshotState);
-      else this.#snapshots.delete(botId);
-      throw error;
-    }
-    this.#snapshots.set(botId, persisted);
-    this.#publishConversation(persisted);
-    return result;
+    return this.#conversation.withConversationTransaction(
+      botId,
+      ({ snapshot: nextSnapshot }) => {
+        transactionHooks?.beforeMutate?.(nextSnapshot);
+        const result = mutate();
+        const routine = eventRoutine(result);
+        const createdAt = new Date().toISOString();
+        const message: ConversationMessage = {
+          id: randomUUID(),
+          ...(turnId ? { turnId } : {}),
+          author: "system",
+          source: "system",
+          text: routine.name,
+          createdAt,
+          status: "completed",
+          itemType: routineConversationEventItemType(action, routine.id),
+        };
+        nextSnapshot.messages.push(message);
+        sortConversationMessages(nextSnapshot.messages);
+        // persistConversation returns a fresh snapshot, so the published one is not `nextSnapshot`.
+        const persisted = database.persistConversation(nextSnapshot, `routine.${action}`, {
+          action,
+          routineId: routine.id,
+          routineName: routine.name,
+          messageId: message.id,
+        });
+        return { result, snapshot: persisted };
+      },
+      transactionHooks?.onRollback,
+    );
   }
 
   #requireReadyClient(provider: AgentProvider): AgentClient {
@@ -5305,29 +5227,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       capabilities: patch.capabilities ?? this.#status.capabilities,
     };
     this.#emit({ type: "status", status: this.getStatus() });
-  }
-
-  #emitConversation(
-    snapshot: ConversationSnapshot,
-    eventType = "conversation.snapshot-updated",
-    detail: unknown = {
-      activeTurnId: snapshot.activeTurnId,
-      messageCount: snapshot.messages.length,
-    },
-  ): void {
-    sortConversationMessages(snapshot.messages);
-    const signature = conversationContentSignature(snapshot);
-    if (this.#lastConversationSignatures.get(snapshot.botId) === signature) return;
-    if (snapshot.threadId) {
-      const persisted = this.#store.database.persistConversation(snapshot, eventType, detail);
-      snapshot.revision = persisted.revision;
-    }
-    this.#publishConversation(snapshot);
-  }
-
-  #publishConversation(snapshot: ConversationSnapshot): void {
-    this.#lastConversationSignatures.set(snapshot.botId, conversationContentSignature(snapshot));
-    this.#emit({ type: "conversation", snapshot: structuredClone(snapshot) });
   }
 
   #emitError(code: string, error: unknown, botId?: string): void {
