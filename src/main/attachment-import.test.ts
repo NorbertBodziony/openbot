@@ -241,6 +241,23 @@ describe("EML attachment imports", () => {
     await expect(importEmail(email)).rejects.toThrow("invalid unquoted MIME boundary");
   });
 
+  it("rejects comments that obscure structural MIME parameters", async () => {
+    const parts = Array.from({ length: 65 }, (_, index) =>
+      ["--openbot", "Content-Type: text/plain", "", String(index)].join("\r\n"),
+    );
+    const email = ENCODER.encode(
+      [
+        "Subject: Obscured boundary",
+        "Content-Type: multipart/mixed; bound(comment)ary=openbot",
+        "",
+        ...parts,
+        "--openbot--",
+      ].join("\r\n"),
+    );
+
+    await expect(importEmail(email)).rejects.toThrow("comments in structural MIME headers");
+  });
+
   it("rejects a nested multipart that reuses an active boundary", async () => {
     const email = ENCODER.encode(
       [

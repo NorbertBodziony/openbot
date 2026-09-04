@@ -217,6 +217,9 @@ function addEmailBoundary(name: string, headers: EmailHeaders, boundaries: Set<s
 }
 
 function assertSupportedEmailPart(name: string, headers: EmailHeaders): void {
+  if (hasUnquotedComment(headers.contentType)) {
+    throw new Error(`${name} uses comments in structural MIME headers, which is not supported.`);
+  }
   const contentType = emailContentType(headers);
   if (contentType === "message/rfc822") {
     throw new Error(`${name} contains a nested .eml message, which is not supported. Attach it separately.`);
@@ -224,6 +227,27 @@ function assertSupportedEmailPart(name: string, headers: EmailHeaders): void {
   if (contentType === "multipart/digest") {
     throw new Error(`${name} contains a multipart/digest with implicit nested messages, which is not supported.`);
   }
+}
+
+function hasUnquotedComment(value: string): boolean {
+  let quoted = false;
+  let escaped = false;
+  for (const character of value) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (character === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (character === '"') {
+      quoted = !quoted;
+      continue;
+    }
+    if (!quoted && character === "(") return true;
+  }
+  return false;
 }
 
 function matchEmailBoundary(

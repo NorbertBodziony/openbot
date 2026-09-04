@@ -12,13 +12,12 @@ import {
 } from "@openbot/contracts/attachment-files";
 import { ATTACHMENT_LIMITS, INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { type FilePreview, type ImportAttachmentsInput, IPC_CHANNELS } from "@openbot/contracts/ipc";
-import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { app, type BrowserWindow, dialog, type OpenDialogOptions, shell } from "electron";
 import type { AgentService } from "../../backend/agent-service";
 import type { MailboxStore } from "../../backend/mailbox-store";
 import { normalizeAttachmentImports } from "../attachment-import";
 import { filePreviewFromBytes, localFilePreview, mimeTypeForName } from "../file-preview";
-import { decodeVoid, type RemoteServerManager } from "../remote-server-manager";
+import type { RemoteServerManager } from "../remote-server-manager";
 import { handleTrusted } from "../trusted-ipc";
 import {
   parseAgentRequest,
@@ -67,8 +66,7 @@ export function registerAttachmentIpcHandlers({
     const attachmentId = requireString(scoped.payload, "attachmentId");
     return routeToServer(scoped.serverId, {
       local: () => service.discardDraftAttachment(attachmentId),
-      remote: (serverId) =>
-        remoteServers.request(TEAM_API_ROUTES.attachment(attachmentId), { method: "DELETE" }, serverId, decodeVoid),
+      remote: (serverId) => remoteServers.discardDraftAttachment(attachmentId, serverId),
     });
   });
   handleTrusted(IPC_CHANNELS.agentOpenAttachment, parseAgentRequest, (scoped) => {

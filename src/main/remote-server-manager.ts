@@ -1063,12 +1063,7 @@ export class RemoteServerManager extends EventEmitter<RemoteServerEvents> {
   }
 
   discardDraftAttachment(attachmentId: string, serverId = this.#state.activeServerId): Promise<void> {
-    return this.request(
-      `/v1/attachments/${encodeURIComponent(attachmentId)}`,
-      { method: "DELETE" },
-      serverId,
-      decodeVoid,
-    );
+    return this.request(TEAM_API_ROUTES.attachment(attachmentId), { method: "DELETE" }, serverId, decodeVoid);
   }
 
   async uploadAttachments(
