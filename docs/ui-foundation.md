@@ -1,6 +1,6 @@
 # OpenBot UI foundation
 
-OpenBot jest dark-first i korzysta z kompaktowej skali kontrolek: 24 px dla elementów pomocniczych, 28 px dla toolbarów, 32 px jako standard oraz 36 px dla ważnych akcji. Paleta i wszystkie globalne tokeny pozostają w `src/renderer/src/styles.css`. Reset i role bazowe są w `styles/base.css`, prymitywy w `styles/primitives.css`, a reguły ekranów w arkuszach feature'ów. Żaden z tych plików nie definiuje własnej palety.
+OpenBot jest dark-first i korzysta z kompaktowej skali kontrolek: 24 px dla elementów pomocniczych, 28 px dla toolbarów, 32 px jako standard oraz 36 px dla ważnych akcji. Paleta i wszystkie globalne tokeny `--openbot-*` mieszkają w `packages/brand/src/tokens.css` — jednym pliku, który importują też web i mobile; `src/renderer/src/styles.css` tylko go importuje i dokłada zmienne animacji renderera. Reset i role bazowe są w `styles/base.css`, prymitywy w `styles/primitives.css`, a reguły ekranów w arkuszach feature'ów. Żaden z tych plików nie definiuje własnej palety.
 
 ## Publiczne API
 
@@ -19,7 +19,7 @@ Feature’y importują wyłącznie z `components/ui`. Bezpośrednie importy z Ko
 
 Kolory muszą pochodzić z semantycznych zmiennych `--openbot-*`. Rozmiary tekstu, promienie i czasy animacji korzystają z tokenów. Hover stosujemy tylko w `@media (hover: hover) and (pointer: fine)`, pressable controls używają `scale(0.97)`, a animacje mieszczą się poniżej 300 ms i respektują `prefers-reduced-motion`.
 
-`bun run check:ui` blokuje natywne buttony i switche, ręczne dialogi/menu/taby/listboxy, bezpośrednie importy Kobalte/Lucide poza warstwą UI oraz literały kolorów i nietokenizowane rozmiary tekstu, promienie i czasy przejść. Kontrola obejmuje arkusze CSS oraz deklaracje inline w TSX. Sprawdza również, czy złożone namespace’y nie wracają do bezpośrednich aliasów Kobalte. Wszystkie budżety migracyjne wynoszą zero.
+`bun run check:ui` blokuje natywne buttony i switche, ręczne dialogi/menu/taby/listboxy, bezpośrednie importy Kobalte/Lucide poza warstwą UI oraz literały kolorów i nietokenizowane rozmiary tekstu, promienie i czasy przejść. Kontrola obejmuje wszystkie arkusze CSS renderera oraz deklaracje inline w TSX; jedynym miejscem, gdzie literał koloru jest dozwolony, jest wspólna paleta `packages/brand/src/tokens.css`. Sprawdza również, czy złożone namespace’y nie wracają do bezpośrednich aliasów Kobalte. Wszystkie budżety migracyjne wynoszą zero.
 
 ## Weryfikacja
 
