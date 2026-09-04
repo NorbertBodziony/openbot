@@ -23,7 +23,7 @@ const DYNAMIC_ISLAND_COMPACT_WINDOW_HEIGHT = 50;
 // then the shell springs back down to the notch. The window is the only thing clipping it, so
 // dropping to the compact height on the same tick guillotines the still-tall island - the lower
 // half disappears at once while the top morphs. Hold the tall window until the shell has landed.
-const DYNAMIC_ISLAND_COLLAPSE_SETTLE_MS = 700;
+export const DYNAMIC_ISLAND_COLLAPSE_SETTLE_MS = 700;
 
 const MACBOOK_NOTCH_REFERENCE = {
   displayWidth: 1512,
@@ -136,7 +136,12 @@ export class DynamicIslandWindowController {
       setTimeout(() => {
         this.#collapseTimers.delete(displayId);
         if (this.#interactiveDisplays.has(displayId) || window.isDestroyed()) return;
-        window.setBounds(dynamicIslandInteractiveWindowBounds(bounds, false), false);
+        // The display can be rearranged while the island animates shut, and reconciliation will
+        // have moved the still-tall window to the new geometry. Ask where the window belongs now
+        // rather than replaying the rectangle captured when the pointer left.
+        const current = this.#options.getDisplays().find((candidate) => candidate.id === displayId);
+        if (!current) return;
+        window.setBounds(dynamicIslandInteractiveWindowBounds(dynamicIslandWindowBounds(current), false), false);
       }, DYNAMIC_ISLAND_COLLAPSE_SETTLE_MS),
     );
   }
