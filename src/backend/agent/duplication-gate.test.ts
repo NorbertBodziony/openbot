@@ -8,10 +8,12 @@ import { AgentRoutineStore } from "../agent-routine-store";
 import { AgentService } from "../agent-service";
 import {
   EMPTY_LAYOUT,
+  FakeAgentClient,
   fakeBrowser,
   startAgentTestFixture,
   stopAgentTestFixture,
   stores,
+  waitFor,
 } from "../agent-service-test-harness";
 
 let root: string;
@@ -218,6 +220,31 @@ describe.sequential("DuplicationGate: copying an agent and the pending window", 
     expect(service.listBots().map((bot) => bot.id)).toEqual(
       expect.arrayContaining(["chief", "research", first.id, second.id]),
     );
+  });
+
+  it("holds the source queue for the length of the copy, then answers what waited", async () => {
+    const { store, mailbox } = stores(root);
+    service = new AgentService(store, mailbox, fakeBrowser(), 30_000, "codex", (provider) => {
+      return new FakeAgentClient(provider);
+    });
+    await service.initialize();
+    const source = await store.getOrCreate("chief");
+    await writeFile(join(source.workspacePath, "research.md"), "source workspace\n");
+    const duplicateInStore = store.duplicateBot.bind(store);
+    vi.spyOn(store, "duplicateBot").mockImplementationOnce(async (botId, operationId) => {
+      const duplicate = await duplicateInStore(botId, operationId);
+      // A message landing while the workspace is still being copied. The source is muted, so
+      // nothing schedules a drain for it and only the mute lifting can start this turn.
+      await service?.sendMessage({ botId: source.id, text: "Anything on the sources?" });
+      expect(service?.listQueue(source.id).deliveries[0]?.status).toBe("queued");
+      return duplicate;
+    });
+
+    const duplicate = await service.duplicateBot(source.id);
+    await service.commitBotDuplication(duplicate.id, EMPTY_LAYOUT);
+
+    await waitFor(() => service?.listQueue(source.id).deliveries[0]?.status === "completed");
+    await expect(readFile(join(duplicate.workspacePath, "research.md"), "utf8")).resolves.toBe("source workspace\n");
   });
 
   it("removes copied data when the source changes during duplication", async () => {

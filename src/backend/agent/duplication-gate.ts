@@ -13,6 +13,8 @@ export interface DuplicationHooks {
   deleteBotData(bot: BotSummary): Promise<void>;
   /** A bot with an outstanding question is not idle, even with an empty queue. */
   hasAttentionFor(botId: string): boolean;
+  /** Re-arms a queue this gate held, so a message that waited out a copy is not stranded. */
+  scheduleDrain(botId: string): void;
 }
 
 export interface DuplicationGateOptions {
@@ -60,9 +62,18 @@ export class DuplicationGate {
     this.#hooks = options.hooks;
   }
 
-  /** The duplication clause in the drain mute registry. */
+  /**
+   * The duplication clause in the drain mute registry. A pending copy never drains at all, and a
+   * source holds its queue for the length of the copy.
+   *
+   * `assertBotIdle` already refuses to start duplicating a busy agent, but it only looks once, and
+   * copying a large workspace runs for seconds afterwards. Without this clause a message arriving
+   * inside that window starts a turn that writes into the tree being copied, and the workspace
+   * fingerprint then rejects the copy — correctly, but the user loses it. Holding the queue answers
+   * the same message a few seconds later and keeps the copy.
+   */
   mayDrain(botId: string): boolean {
-    return !this.#pendingBots.has(botId);
+    return !this.#pendingBots.has(botId) && !this.#duplicatingBots.has(botId);
   }
 
   /** A pending duplicate is not yet an agent: it is hidden, and unknown to anything that looks up. */
@@ -129,6 +140,8 @@ export class DuplicationGate {
       throw error;
     } finally {
       this.#duplicatingBots.delete(sourceBotId);
+      // The mute always lifts here, so whatever queued behind it drains now.
+      this.#hooks.scheduleDrain(sourceBotId);
       if (releaseOnExit) releaseDuplication();
     }
   }
@@ -181,11 +194,26 @@ export class DuplicationGate {
     this.#pendingOperations.delete(botId);
   }
 
+  /** The precondition for starting a copy: nothing is waiting, and nothing is in flight. */
   assertBotIdle(botId: string): void {
-    const hasPendingWork = this.#mailbox
+    const queued = this.#mailbox.listQueue(botId).deliveries.some((delivery) => delivery.status === "queued");
+    if (queued) throw new Error("Wait for the agent to finish and clear its queue before duplicating it.");
+    this.#assertBotQuiet(botId);
+  }
+
+  /**
+   * Nothing the copy could race is in flight.
+   *
+   * A message that arrived *after* the copy started is held queued by `mayDrain` and has changed
+   * nothing a duplicate takes — the copy carries no conversation, and an unstarted delivery has not
+   * touched the workspace. So it is deliberately not counted here: counting it would let any
+   * incoming message destroy a copy that is seconds from finishing.
+   */
+  #assertBotQuiet(botId: string): void {
+    const inFlight = this.#mailbox
       .listQueue(botId)
-      .deliveries.some((delivery) => ["queued", "starting", "running"].includes(delivery.status));
-    if (hasPendingWork || this.#hooks.hasAttentionFor(botId) || this.#conversation.snapshot(botId)?.activeTurnId) {
+      .deliveries.some((delivery) => delivery.status === "starting" || delivery.status === "running");
+    if (inFlight || this.#hooks.hasAttentionFor(botId) || this.#conversation.snapshot(botId)?.activeTurnId) {
       throw new Error("Wait for the agent to finish and clear its queue before duplicating it.");
     }
   }
@@ -214,7 +242,7 @@ export class DuplicationGate {
   }
 
   #assertSourceUnchanged(botId: string, signature: string): void {
-    this.assertBotIdle(botId);
+    this.#assertBotQuiet(botId);
     if (this.#sourceSignature(botId) !== signature) {
       throw new Error("The agent changed while it was being duplicated. Try again.");
     }

@@ -305,6 +305,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         listBots: () => this.listBots(),
         deleteBotData: (bot) => this.#deleteBotData(bot),
         hasAttentionFor: (botId) => this.#attention.hasAttentionFor(botId),
+        scheduleDrain: (botId) => this.#scheduleDrain(botId),
       },
     });
     this.#browser.onChanged((tabs, activeTabId) => {
