@@ -36,17 +36,13 @@ import type {
   UpdateTeamMemberInput,
 } from "@openbot/contracts/ipc";
 import type { AgentService } from "../backend/agent-service";
-import type { BrowserHost } from "../backend/browser-host";
-import type { MailboxStore } from "../backend/mailbox-store";
-import type { SidebarLayoutStore } from "../backend/sidebar-layout-store";
 import type { TeamChatStore } from "../backend/team-chat-store";
 import type { VerifiedRemoteSessionTicket } from "./central-auth-manager";
 import type { RemoteDesktopRuntimePaths } from "./remote-desktop-runtime-artifact";
 import { appendRemoteDiagnosticLog } from "./remote-diagnostics";
 import { RemoteScreenGateway } from "./remote-screen-gateway";
-import type { SkillMarketplaceService } from "./skill-marketplace-service";
 import { TeamApiServer } from "./team-api-server";
-import type { AuthenticatedMember, RemoteDirectoryMember, TeamStore } from "./team-store";
+import type { AuthenticatedMember, RemoteDirectoryMember, TeamIdentity, TeamStore } from "./team-store";
 import type { TeamWebRtcBridge } from "./team-webrtc-bridge";
 import { TeamWebRtcHostGateway } from "./team-webrtc-host-gateway";
 
@@ -59,14 +55,22 @@ interface HostEvents {
   directTyping: [event: DirectTypingRealtimeEvent];
 }
 
+/**
+ * The collaborators this service only forwards to the Team API, typed by the narrow
+ * shapes that server already declares rather than by the concrete stores. Nothing here
+ * changes at the call site - `index.ts` still passes the real services - but it lets an
+ * account switch be tested without standing up a database and a browser host.
+ */
+type ForwardedApiOptions = ConstructorParameters<typeof TeamApiServer>[0];
+
 interface HostServiceOptions {
   appVersion: string;
   store: TeamStore;
-  agents: AgentService;
-  skills: SkillMarketplaceService;
-  sidebarLayout: SidebarLayoutStore;
-  mailbox: MailboxStore;
-  browser: BrowserHost;
+  agents: ForwardedApiOptions["agents"] & Pick<AgentService, "adoptConversationReads">;
+  skills: NonNullable<ForwardedApiOptions["skills"]>;
+  sidebarLayout: NonNullable<ForwardedApiOptions["sidebarLayout"]>;
+  mailbox: ForwardedApiOptions["mailbox"];
+  browser: ForwardedApiOptions["browser"];
   chat?: TeamChatStore;
   allowLocalDevelopmentInvites?: boolean;
   logDirectory?: string;
@@ -136,6 +140,8 @@ export class HostService extends EventEmitter<HostEvents> {
   #status: HostStatus;
   #runtimeGeneration = 0;
   #startOperation: Promise<HostStatus> | null = null;
+  /** `undefined` until the account service first reports, so the first report always binds. */
+  #boundAccountId: string | null | undefined = undefined;
   #legacyCredentialRemoved = false;
 
   constructor(options: HostServiceOptions) {
@@ -144,22 +150,7 @@ export class HostService extends EventEmitter<HostEvents> {
       ...options,
       allowLocalDevelopmentInvites: options.allowLocalDevelopmentInvites ?? false,
     };
-    const identity = options.store.getIdentity();
-    this.#status = {
-      phase: identity ? "idle" : "unconfigured",
-      configured: Boolean(identity),
-      enabledOnLaunch: identity?.enabledOnLaunch ?? false,
-      serverId: identity?.serverId ?? null,
-      serverName: identity?.serverName ?? null,
-      logoUrl: identity?.logoVersion ? serverLogoUrl(identity.logoVersion) : null,
-      apiUrl: null,
-      apiOnline: false,
-      remoteDesktopReady: false,
-      remoteDesktopUnattended: options.unattended ?? false,
-      remoteDesktopActiveSessions: 0,
-      remoteDesktopMaxSessions: 4,
-      message: null,
-    };
+    this.#status = initialHostStatus(options.store.getIdentity(), options.unattended ?? false);
     const logDirectory = options.logDirectory;
     this.#remoteScreen = new RemoteScreenGateway({
       platform: options.platform ?? normalizeRemoteDesktopPlatform(process.platform),
@@ -249,17 +240,119 @@ export class HostService extends EventEmitter<HostEvents> {
     };
   }
 
-  async syncSignedInAccount(user: CentralAuthUser): Promise<void> {
+  /**
+   * Binds the host to the signed-in account, or unbinds it on sign-out. The status is
+   * rebuilt from the newly active identity rather than patched, so a second account can
+   * never inherit the first one's server name, id or launch preference.
+   */
+  /**
+   * The synchronous half of an account change, for callers that announce the new account
+   * before `applySignedInAccount` can finish: it stops this host answering for the previous
+   * one right away. A process that has not applied an account yet is left alone - that is
+   * startup reporting the account the file was already loaded for.
+   */
+  unbindChangedAccount(user: CentralAuthUser | null): void {
+    const nextAccountId = user?.id ?? null;
+    if (this.#boundAccountId === undefined || this.#boundAccountId === nextAccountId) return;
     if (!this.#options.store.configured) return;
-    if (await this.#options.store.syncAccount(user)) this.#api.refreshPresence();
+    // A start still in flight belongs to the account on its way out. Bumping here rather
+    // than waiting for the queued `applySignedInAccount` is what stops it reporting the
+    // previous host online - or its failure as an error - on the new account's status.
+    this.#runtimeGeneration += 1;
+    this.#options.store.unbindActiveHost();
+    this.#status = initialHostStatus(null, this.#options.unattended ?? false);
+    this.emit("changed", this.getStatus());
+  }
+
+  async applySignedInAccount(user: CentralAuthUser | null): Promise<void> {
+    const nextAccountId = user?.id ?? null;
+    // `unbindChangedAccount` may have cleared the store since this account was bound, to
+    // stop it answering for an account that was on its way out. Reporting the same account
+    // again then has to activate it, not take it for the host that is already running.
+    const stillBound = this.#options.store.configured || nextAccountId === null;
+    if (this.#boundAccountId === nextAccountId && stillBound) {
+      // The same account, reported again - a renamed profile or a new avatar. Rebinding
+      // here would stop a host that is happily online.
+      if (user && this.#options.store.configured && (await this.#options.store.syncAccount(user))) {
+        this.#api.refreshPresence();
+      }
+      return;
+    }
+    const previousServerId = this.#status.serverId;
+    if (this.#boundAccountId !== undefined) {
+      this.#runtimeGeneration += 1;
+      // The same three steps as `stop`, and for the same reason: a start still in flight
+      // belongs to the previous account. The bumped generation makes it abort at its next
+      // checkpoint, and draining it here is what stops `start()` from handing the new
+      // account that superseded operation instead of starting its own host. Each step is
+      // attempted on its own, so a gateway that will not come down cannot skip the drain.
+      await this.#attemptTeardown(() => this.#stopRuntime());
+      await this.#attemptTeardown(() => this.#startOperation);
+      await this.#attemptTeardown(() => this.#stopRuntime());
+    }
+    let activated = false;
+    try {
+      if (user && this.#signedInAccountId() !== user.id) {
+        // Another account was announced while the runtime was being torn down. Binding this
+        // one now would hand its host, members and invitations to whoever is signed in
+        // instead - and the switch queued for them is what binds theirs.
+        return;
+      }
+      if (user) await this.#options.store.activateAccount(user);
+      else await this.#options.store.deactivate();
+      activated = true;
+    } finally {
+      // Publish even when activation failed. The previous account is gone either way, and a
+      // status still naming its host would offer the rail a server this process can no
+      // longer answer for - the store has already unbound it.
+      //
+      // A failure leaves the binding unknown rather than recorded, so the next report of the
+      // same account runs activation again instead of short-circuiting into an unconfigured
+      // store the user cannot get out of without restarting.
+      this.#boundAccountId = activated ? nextAccountId : undefined;
+      this.#publishActiveHost(previousServerId);
+    }
+  }
+
+  #publishActiveHost(previousServerId: string | null): void {
+    const identity = this.#options.store.getIdentity();
+    if (identity && identity.serverId === previousServerId) {
+      // The host this process started with, now confirmed as this account's. Keep the
+      // status the constructor already published rather than resetting a live runtime.
+      this.#setStatus({
+        configured: true,
+        serverName: identity.serverName,
+        logoUrl: identity.logoVersion ? serverLogoUrl(identity.logoVersion) : null,
+        enabledOnLaunch: identity.enabledOnLaunch,
+      });
+    } else {
+      this.#status = initialHostStatus(identity, this.#options.unattended ?? false);
+      this.emit("changed", this.getStatus());
+    }
+    if (identity) {
+      this.#api.refreshPresence();
+      this.#api.refreshIdentity();
+    }
   }
 
   async configure(input: ConfigureHostInput): Promise<HostStatus> {
-    const identity = await this.#options.store.configureWithAccount(
-      input.serverName,
-      this.#options.getSignedInUser(),
-      input.logo,
-    );
+    const account = this.#options.getSignedInUser();
+    const identity = await this.#options.store.configureWithAccount(input.serverName, account, input.logo);
+    // Nothing is bound while the first host is being written, so neither the store's
+    // `activeAccountId` nor `unbindChangedAccount` can see a switch announced during the
+    // write. Central authentication has the new account the moment it is announced, which
+    // is what the renderer was told, so that is what this is checked against.
+    if (this.#signedInAccountId() !== account.id) {
+      // The store bound the host as it created it, and refusing the call is not enough on
+      // its own: the members and identity behind it would still answer the new account.
+      this.#options.store.unbindActiveHost();
+      this.#status = initialHostStatus(null, this.#options.unattended ?? false);
+      this.emit("changed", this.getStatus());
+      throw new Error("The signed-in account changed while this server was being created.");
+    }
+    // The store checked the account before it resolved; the switch can still land between
+    // there and here, and publishing then would show A's server to B.
+    if (!this.#isActiveHost(identity.serverId)) return this.getStatus();
     this.#setStatus({
       phase: "idle",
       configured: true,
@@ -271,25 +364,32 @@ export class HostService extends EventEmitter<HostEvents> {
     });
     this.#api.refreshPresence();
     this.#api.refreshIdentity();
+    const ownerMembershipId = this.#requiredOwnerMemberId();
     try {
+      if (!this.#isActiveHost(identity.serverId)) return this.getStatus();
       await this.#options.registerRemoteHost?.({
         hostId: identity.serverId,
         name: identity.serverName,
-        ownerMembershipId: this.#requiredOwnerMemberId(),
+        ownerMembershipId,
         devicePublicKey: identity.publicKey,
       });
-      if (input.logo !== undefined) {
+      if (input.logo !== undefined && this.#isActiveHost(identity.serverId)) {
         await this.#options.updateRemoteHostLogo?.(identity.serverId, input.logo ?? null, identity.logoVersion);
       }
+      if (!this.#isActiveHost(identity.serverId)) return this.getStatus();
       this.#setStatus({
         apiUrl: null,
         message: "Registered this OpenBot for WebRTC access.",
       });
     } catch (error) {
-      this.#setStatus({
-        phase: "error",
-        message: error instanceof Error ? error.message : "Could not reserve the public address.",
-      });
+      // A failure that arrives after another account signed in belongs to the host that is
+      // gone, so it must not overwrite the status the new account is looking at.
+      if (this.#isActiveHost(identity.serverId)) {
+        this.#setStatus({
+          phase: "error",
+          message: error instanceof Error ? error.message : "Could not reserve the public address.",
+        });
+      }
     }
     return this.getStatus();
   }
@@ -297,22 +397,50 @@ export class HostService extends EventEmitter<HostEvents> {
   async updateIdentity(input: UpdateHostIdentityInput): Promise<HostStatus> {
     this.#options.store.assertOwnerAccount(this.#options.getSignedInUser());
     const identity = await this.#options.store.updateIdentity(input);
+    // Before anything is published: the store checked the account before it resolved, and a
+    // switch landing in this gap would show the previous account's name and logo.
+    if (!this.#isActiveHost(identity.serverId)) return this.getStatus();
     this.#setStatus({
       serverName: identity.serverName,
       logoUrl: identity.logoVersion ? serverLogoUrl(identity.logoVersion) : null,
       message: "Server identity updated.",
     });
     this.#api.refreshIdentity();
+    const ownerMembershipId = this.#requiredOwnerMemberId();
     await this.#options.registerRemoteHost?.({
       hostId: identity.serverId,
       name: identity.serverName,
-      ownerMembershipId: this.#requiredOwnerMemberId(),
+      ownerMembershipId,
       devicePublicKey: identity.publicKey,
     });
-    if (input.logo !== undefined) {
+    if (input.logo !== undefined && this.#isActiveHost(identity.serverId)) {
       await this.#options.updateRemoteHostLogo?.(identity.serverId, input.logo ?? null, identity.logoVersion);
     }
     return this.getStatus();
+  }
+
+  /**
+   * Every remote step runs under the signed-in account's authentication, so one that started
+   * for a host the account no longer has would register or upload on the wrong account's
+   * behalf. The store's own guards stop the local half; this stops the network half.
+   */
+  /** The account central authentication has announced, or none while signed out. */
+  #signedInAccountId(): string | null {
+    try {
+      return this.#options.getSignedInUser().id;
+    } catch {
+      return null;
+    }
+  }
+
+  #assertStillActiveHost(serverId: string): void {
+    if (!this.#isActiveHost(serverId)) {
+      throw new Error("The signed-in account changed while this server was being updated.");
+    }
+  }
+
+  #isActiveHost(serverId: string): boolean {
+    return this.#options.store.getIdentity()?.serverId === serverId;
   }
 
   start(): Promise<HostStatus> {
@@ -333,7 +461,7 @@ export class HostService extends EventEmitter<HostEvents> {
     const generation = ++this.#runtimeGeneration;
     const signedInUser = this.#options.getSignedInUser();
     this.#options.store.assertOwnerAccount(signedInUser);
-    await this.syncSignedInAccount(signedInUser);
+    if (await this.#options.store.syncAccount(signedInUser)) this.#api.refreshPresence();
     this.#setStatus({ phase: "starting", message: "Starting the WebRTC host…" });
 
     try {
@@ -352,7 +480,10 @@ export class HostService extends EventEmitter<HostEvents> {
       });
       if (await this.#cancelSupersededStart(generation)) return this.getStatus();
       if (this.#options.listRemoteMembers) {
-        await this.#options.store.syncRemoteDirectory(await this.#options.listRemoteMembers(identity.serverId));
+        await this.#options.store.syncRemoteDirectory(
+          identity.serverId,
+          await this.#options.listRemoteMembers(identity.serverId),
+        );
         if (await this.#cancelSupersededStart(generation)) return this.getStatus();
       }
       const bootstrap = await this.#options.issueRemoteHostTicket(identity.serverId);
@@ -369,7 +500,8 @@ export class HostService extends EventEmitter<HostEvents> {
         apiOnline: true,
         message: "This OpenBot is ready for WebRTC connections.",
       });
-      await this.#options.store.setEnabledOnLaunch(true);
+      if (await this.#cancelSupersededStart(generation)) return this.getStatus();
+      await this.#options.store.setEnabledOnLaunch(identity.serverId, true);
       if (await this.#cancelSupersededStart(generation)) return this.getStatus();
       this.#setStatus({ phase: "online", enabledOnLaunch: true });
     } catch (error) {
@@ -435,13 +567,18 @@ export class HostService extends EventEmitter<HostEvents> {
 
   async stop(persistPreference = true): Promise<HostStatus> {
     if (this.#status.phase === "unconfigured") return this.getStatus();
+    const serverId = this.#options.store.getIdentity()?.serverId;
     this.#runtimeGeneration += 1;
     if (persistPreference) this.#options.store.assertOwnerAccount(this.#options.getSignedInUser());
     this.#setStatus({ phase: "stopping", message: "Making this OpenBot private…" });
     await this.#stopRuntime();
     await this.#startOperation;
     await this.#stopRuntime();
-    if (persistPreference) await this.#options.store.setEnabledOnLaunch(false);
+    // The awaits above can outlive this host. An account switch in between makes both the
+    // preference and the status below the previous account's, and the account that just
+    // became active already has its own status from `applySignedInAccount`.
+    if (this.#options.store.getIdentity()?.serverId !== serverId) return this.getStatus();
+    if (persistPreference && serverId) await this.#options.store.setEnabledOnLaunch(serverId, false);
     this.#setStatus({
       phase: "idle",
       enabledOnLaunch: persistPreference ? false : this.#status.enabledOnLaunch,
@@ -456,7 +593,14 @@ export class HostService extends EventEmitter<HostEvents> {
     const hostId = this.#options.store.getIdentity()?.serverId;
     if (hostId && this.#options.listRemoteMembers) {
       return this.#options.listRemoteMembers(hostId).then(async (members) => {
-        await this.#options.store.syncRemoteDirectory(members);
+        // An account switch while the directory loaded makes this list the previous
+        // account's. Answer with the now-active host's own members rather than failing a
+        // read with the store's cross-account guard.
+        if (!this.#isActiveHost(hostId)) return this.#options.store.listMembers();
+        await this.#options.store.syncRemoteDirectory(hostId, members);
+        // Recording the directory is a write, and the switch can land during it. The names,
+        // addresses and roles below are the previous account's if it did.
+        if (!this.#isActiveHost(hostId)) return this.#options.store.listMembers();
         return members.map((member) => ({
           id: member.membershipId,
           username: member.email,
@@ -537,8 +681,12 @@ export class HostService extends EventEmitter<HostEvents> {
   listInvites(): TeamInviteSummary[] | Promise<TeamInviteSummary[]> {
     const hostId = this.#options.store.getIdentity()?.serverId;
     if (hostId && this.#options.listRemoteInvites) {
-      return this.#options.listRemoteInvites(hostId).then((invites) =>
-        invites
+      return this.#options.listRemoteInvites(hostId).then((invites) => {
+        // As in `listMembers`: a switch while the directory loaded makes these the previous
+        // account's invitations, their email addresses included. Answer with the now-active
+        // host's own rather than handing them to whoever is signed in.
+        if (!this.#isActiveHost(hostId)) return this.#options.store.listInvites();
+        return invites
           .filter((invite) => invite.revokedAt === null)
           .map((invite) => ({
             id: invite.inviteId,
@@ -546,8 +694,8 @@ export class HostService extends EventEmitter<HostEvents> {
             email: invite.email,
             expiresAt: new Date(invite.expiresAt).toISOString(),
             usedAt: invite.usedAt === null ? null : new Date(invite.usedAt).toISOString(),
-          })),
-      );
+          }));
+      });
     }
     return this.#options.store.listInvites();
   }
@@ -568,6 +716,10 @@ export class HostService extends EventEmitter<HostEvents> {
         (member) => member.membershipId === input.memberId,
       );
       if (!current || current.role === "owner") throw new Error("The remote member does not exist.");
+      // The directory read is a round trip, and the account can change during it. Mutating
+      // the previous account's host with the new account's authorization is what this guard
+      // stops; the same check runs again before the result is written back.
+      this.#assertStillActiveHost(hostId);
       if (input.disabled) await this.#options.removeRemoteMember(hostId, input.memberId);
       else
         await this.#options.updateRemoteMember(
@@ -576,10 +728,14 @@ export class HostService extends EventEmitter<HostEvents> {
           input.role ?? current.role,
           input.disabled === false,
         );
+      this.#assertStillActiveHost(hostId);
       const members = await this.#options.listRemoteMembers(hostId);
       const updated = members.find((member) => member.membershipId === input.memberId);
       if (!updated) throw new Error("The remote member does not exist.");
-      await this.#options.store.syncRemoteDirectory(members);
+      await this.#options.store.syncRemoteDirectory(hostId, members);
+      // Recording the directory is a write too, so the switch can land inside it and the
+      // member below would be the previous account's.
+      this.#assertStillActiveHost(hostId);
       return {
         id: updated.membershipId,
         username: updated.email,
@@ -605,7 +761,7 @@ export class HostService extends EventEmitter<HostEvents> {
     if (hostId && this.#options.removeRemoteMember) {
       await this.#options.removeRemoteMember(hostId, memberId);
       if (this.#options.listRemoteMembers) {
-        await this.#options.store.syncRemoteDirectory(await this.#options.listRemoteMembers(hostId));
+        await this.#options.store.syncRemoteDirectory(hostId, await this.#options.listRemoteMembers(hostId));
       }
       return;
     }
@@ -639,6 +795,10 @@ export class HostService extends EventEmitter<HostEvents> {
       this.#options.remoteControlPlaneUrl
     ) {
       const invite = await this.#options.createRemoteInvite(identity.serverId, input);
+      // The invitation belongs to the account that asked for it, so it stays on that host
+      // and shows up in its invite list. What must not happen is emailing it under the new
+      // account's authorization, or handing it back to the renderer the new account sees.
+      this.#assertStillActiveHost(identity.serverId);
       const inviteUrl = createInviteUrl({
         apiUrl: this.#options.remoteControlPlaneUrl,
         serverId: identity.serverId,
@@ -662,10 +822,15 @@ export class HostService extends EventEmitter<HostEvents> {
             role: input.role,
           });
         } catch (error) {
-          await this.#options.revokeRemoteInvite?.(invite.inviteId);
+          // Revoking spends authorization on a host, so it only happens while that host is
+          // still this account's. Otherwise the invitation stays for the account that owns it.
+          if (this.#isActiveHost(identity.serverId)) await this.#options.revokeRemoteInvite?.(invite.inviteId);
           throw error;
         }
       }
+      // Sending is a round trip of its own, and the link must not come back to a renderer
+      // that has meanwhile been told about another account.
+      this.#assertStillActiveHost(identity.serverId);
       return result;
     }
     if (!this.#status.apiUrl) throw new Error("Make this OpenBot public before creating an invite.");
@@ -707,9 +872,28 @@ export class HostService extends EventEmitter<HostEvents> {
     await this.stop(false);
   }
 
+  /**
+   * Isolation cannot depend on a teardown step succeeding: a WebRTC disconnect rejects on a
+   * command error or a timeout, and leaving the previous account's host bound is by far the
+   * worse failure. Reported, and the steps after it still run.
+   */
+  async #attemptTeardown(step: () => PromiseLike<unknown> | null): Promise<void> {
+    try {
+      await step();
+    } catch (error) {
+      console.error("Unable to stop the host runtime while switching accounts:", error);
+    }
+  }
+
   async #stopRuntime(): Promise<void> {
-    await this.#webrtcGateway?.stop();
-    await this.#api.stop();
+    try {
+      await this.#webrtcGateway?.stop();
+    } finally {
+      // A failed gateway teardown must not leave the local API listening: the callers that
+      // swallow that failure go on to rebind the store, and a server still up would serve
+      // the previous account's authenticated requests against the new account's data.
+      await this.#api.stop();
+    }
   }
 
   async #cancelSupersededStart(generation: number): Promise<boolean> {
@@ -757,6 +941,24 @@ export class HostService extends EventEmitter<HostEvents> {
     if (!memberId) throw new Error("The host owner identity is unavailable.");
     return memberId;
   }
+}
+
+function initialHostStatus(identity: TeamIdentity | null, unattended: boolean): HostStatus {
+  return {
+    phase: identity ? "idle" : "unconfigured",
+    configured: Boolean(identity),
+    enabledOnLaunch: identity?.enabledOnLaunch ?? false,
+    serverId: identity?.serverId ?? null,
+    serverName: identity?.serverName ?? null,
+    logoUrl: identity?.logoVersion ? serverLogoUrl(identity.logoVersion) : null,
+    apiUrl: null,
+    apiOnline: false,
+    remoteDesktopReady: false,
+    remoteDesktopUnattended: unattended,
+    remoteDesktopActiveSessions: 0,
+    remoteDesktopMaxSessions: 4,
+    message: null,
+  };
 }
 
 export function serverLogoUrl(version: string): string {
