@@ -5,21 +5,70 @@ import { sortConversationMessages } from "../conversation-snapshots";
 import type { OpenBotDatabase } from "../openbot-database";
 import { conversationContentSignature } from "./delivery-content";
 
+interface TransactionScope {
+  readonly rollback: (() => void)[];
+  readonly commit: (() => void)[];
+}
+
+/** Only the caller that opened the transaction holds a scope, so a nested call finds the owner's. */
+const openTransactions = new WeakMap<OpenBotDatabase, TransactionScope>();
+
 /**
  * Runs `work` inside a SQLite transaction, opening one only when the caller is not already inside
  * another. Nesting is load-bearing: `deleteRoutine` drives a routine mutation whose `beforeMutate`
  * hook appends a run transition in the same transaction, and an approval response can append a
  * hosted-site event inside an outer one. This is the only `BEGIN IMMEDIATE` under `src/backend/agent`.
+ *
+ * `onCommit` exists because a nested caller must not publish in-memory state the owner can still
+ * discard: there is no partial rollback here, so effects that make rows visible to the rest of the
+ * app are queued on the owner and run once, after `COMMIT`. `onRollback` is queued the same way, so
+ * an owner that fails *after* a nested call succeeded still undoes that call's in-memory slice.
  */
-export function withDatabaseTransaction<T>(database: OpenBotDatabase, work: () => T, onRollback?: () => void): T {
-  const ownsTransaction = !database.connection.isTransaction;
-  if (ownsTransaction) database.connection.exec("BEGIN IMMEDIATE");
+export function withDatabaseTransaction<T>(
+  database: OpenBotDatabase,
+  work: () => T,
+  onRollback?: () => void,
+  onCommit?: () => void,
+): T {
+  // `isTransaction`, not the map, decides who opens one: a transaction started anywhere else would
+  // otherwise make this call BEGIN IMMEDIATE inside it, which SQLite rejects.
+  if (database.connection.isTransaction) {
+    const owner = openTransactions.get(database);
+    try {
+      const result = work();
+      if (owner) {
+        if (onRollback) owner.rollback.push(onRollback);
+        if (onCommit) owner.commit.push(onCommit);
+      } else {
+        // An ambient transaction this helper did not open has no queue to defer onto, so the
+        // effects run as they always did.
+        onCommit?.();
+      }
+      return result;
+    } catch (error) {
+      // Our own work failed, so undo our in-memory slice now rather than queueing it: the owner's
+      // ROLLBACK will undo the rows, and a queued restorer would run a second time.
+      onRollback?.();
+      throw error;
+    }
+  }
+  database.connection.exec("BEGIN IMMEDIATE");
+  const scope: TransactionScope = { rollback: [], commit: [] };
+  openTransactions.set(database, scope);
   try {
     const result = work();
-    if (ownsTransaction) database.connection.exec("COMMIT");
+    database.connection.exec("COMMIT");
+    // Cleared before the queued effects run: publishing a conversation can re-enter this function,
+    // which must then open its own transaction instead of joining one that is already committed.
+    openTransactions.delete(database);
+    for (const effect of scope.commit) effect();
+    onCommit?.();
     return result;
   } catch (error) {
-    if (ownsTransaction && database.connection.isTransaction) database.connection.exec("ROLLBACK");
+    if (database.connection.isTransaction) database.connection.exec("ROLLBACK");
+    openTransactions.delete(database);
+    // Innermost first, so each restorer sees the state the one after it has already put back.
+    for (const restore of [...scope.rollback].reverse()) restore();
     onRollback?.();
     throw error;
   }
@@ -166,6 +215,10 @@ export class ConversationRuntime {
    * `restoreThreadIdentity` undoes `ensureThreadIdNow`, whose effect on the store's in-memory bot
    * list happens outside the transaction. The `previousBot.threadId === null` guard means it undoes
    * thread *creation*, never a thread change.
+   *
+   * The snapshot is published once the transaction that owns it commits, which is immediately when
+   * this call opened it and later when it joined one, so no caller can see a conversation built on
+   * rows a surrounding transaction still discards.
    */
   withConversationTransaction<T>(
     botId: string,
@@ -185,19 +238,24 @@ export class ConversationRuntime {
       if (previousSnapshotState) this.#snapshots.set(botId, previousSnapshotState);
       else this.#snapshots.delete(botId);
     };
-    const { result, snapshot } = withDatabaseTransaction(
+    let published: ConversationSnapshot | undefined;
+    return withDatabaseTransaction(
       this.#store.database,
       () => {
         const threadId = this.#store.ensureThreadIdNow(botId);
         const next = structuredClone(this.ensureSnapshot(botId, threadId));
         next.threadId = threadId;
-        return work({ threadId, snapshot: next });
+        const outcome = work({ threadId, snapshot: next });
+        published = outcome.snapshot;
+        return outcome.result;
       },
       restorePreviousState,
+      () => {
+        if (!published) return;
+        this.#snapshots.set(botId, published);
+        this.publishConversation(published);
+      },
     );
-    this.#snapshots.set(botId, snapshot);
-    this.publishConversation(snapshot);
-    return result;
   }
 
   requireKnownBot(botId: string): BotSummary {

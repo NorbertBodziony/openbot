@@ -45,8 +45,18 @@ afterEach(async () => {
 });
 
 describe("conversation transactions", () => {
-  it("joins an open transaction instead of committing inside it", () => {
+  it("lets an outer rollback discard a nested call's rows and its in-memory state together", () => {
     const message = systemMessage("nested");
+    const published: string[] = [];
+    runtime = new ConversationRuntime(
+      store,
+      (event) => {
+        if (event.type === "conversation") published.push(event.snapshot.botId);
+      },
+      () => store.list(),
+    );
+    const threadRowsBefore = threadRowCount();
+
     expect(() =>
       withDatabaseTransaction(store.database, () => {
         runtime.withConversationTransaction(BOT_ID, ({ threadId, snapshot }) => {
@@ -65,10 +75,12 @@ describe("conversation transactions", () => {
       }),
     ).toThrow("the outer transaction failed");
 
-    const bot = store.list().find((candidate) => candidate.id === BOT_ID);
-    expect(bot?.threadId).toBeTruthy();
-    const persisted = store.database.readConversation(BOT_ID, bot?.threadId ?? null);
-    expect(persisted.messages).toEqual([]);
+    // The rows are gone, so nothing may still claim them: not the thread the nested call created,
+    // not the projection the renderer reads, and not a conversation event already on the wire.
+    expect(threadRowCount()).toBe(threadRowsBefore);
+    expect(store.list().find((candidate) => candidate.id === BOT_ID)?.threadId).toBeNull();
+    expect(runtime.ensureSnapshot(BOT_ID, null).messages).toEqual([]);
+    expect(published).toEqual([]);
   });
 
   it("restores the snapshot and the thread identity when the body throws", () => {
