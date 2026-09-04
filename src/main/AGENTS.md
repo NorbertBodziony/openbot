@@ -112,6 +112,38 @@ they *meet*: the request path never names the event stream and the event stream 
 path, so a callback passed in its constructor is how the two are connected. That indirection is the
 design, not an accident to tidy up.
 
+`team-api-server.ts` went the same way, one level down. The class, the WebSocket side and the
+lifecycle stay in it; the routes live in `src/main/team-api/`, one file per domain, each exporting a
+`route*(context, deps)` that answers `"handled"` or `"unmatched"` and declaring its own narrow
+`*RouteDependencies` in the shape `src/main/ipc/` uses:
+
+| Concern | File |
+| --- | --- |
+| the shared vocabulary: the class every route throws, the service types, the parsers, the context | `http-error.ts`, `dependencies.ts`, `request-helpers.ts`, `request-context.ts` |
+| members, invitations, sessions, presence, the account routes behind auth | `route-team.ts` |
+| one domain each | `route-remote-screen.ts`, `route-direct.ts`, `route-browser.ts`, `route-files.ts` |
+| the agent collection and the sole `/v1/agents/:botId` regex, which owns the four below | `route-agents.ts` |
+| one agent sub-resource each | `route-agent-memories.ts`, `route-agent-routines.ts`, `route-agent-conversation.ts`, `route-agent-queue.ts` |
+
+A new endpoint goes in the module for its domain, and nothing else has to be read. Four invariants
+hold the split together, and the wire protocol is frozen (root AGENTS.md, Non-negotiable), so none of
+them is a preference:
+
+- **The gates run in three stages, in order**: the remote-screen delegation, then `compatibility`,
+  then the protocol gate, then a path-independent 401. `compatibility` above the protocol gate is
+  what stops an out-of-date client looping on 426 with no way to read the endpoint telling it to
+  update; the 401 above the routes is why an unknown path without a token is 401 and not 404.
+- **The dispatcher owns the only 404.** A module that does not serve a path *or its method* returns
+  `"unmatched"` and never answers on its own. This is what keeps a wrong method on a known path
+  answering 404 rather than 405, which is what the released clients were built against.
+- **The dispatcher owns the only `catch`.** A local one would cut an unexpected error off from the
+  logger and answer 400 where the truth was a 500.
+- **`HttpError` has one definition**, in `http-error.ts`. The catch classifies by `instanceof`, so a
+  second copy silently turns every 400 into a 500 and no round-trip test sees it.
+
+The last statement of every route module is `return "unmatched"`. There is no `noImplicitReturns`
+here, so a module that falls out of its end returns `undefined` and reads as a silent 404.
+
 Three things are deliberately not unified, and each says so in its own file header: the `FromHost`
 decoders and their `FromMain` twins in `src/preload/index.ts` (different trust boundaries), the HTTPS
 V1/V3 and WebRTC V2 wire encodings (released protocols), and the control-plane methods on

@@ -373,14 +373,22 @@ export class TeamApiServer {
       response.setHeader("Cache-Control", "no-store");
       response.setHeader("X-Content-Type-Options", "nosniff");
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
-      const clientCapabilities = requestCapabilities(request);
       this.#responseRoutes.set(response, {
         method,
         path: url.pathname,
         protocol: requestProtocol(request),
-        capabilities: clientCapabilities,
+        capabilities: requestCapabilities(request),
       });
 
+      // Three gates, in this order, and the order is the whole point of writing them out.
+      //
+      // `compatibility` is above the protocol gate because it is the endpoint that tells an
+      // out-of-date client to update. Behind the gate it would answer 426 as well, and the client
+      // would have no way to read the instruction it was being given: a 426 loop with no exit.
+      //
+      // The remote-screen delegation is above both, because a browser fetching the viewer sends
+      // neither protocol headers nor a bearer token. It is not a route in the table; the gateway
+      // decides for itself which paths are its own.
       if (method === "GET" && url.pathname === TEAM_API_ROUTES.compatibility) {
         return this.#json(response, 200, this.#protocolSupport());
       }
@@ -393,6 +401,10 @@ export class TeamApiServer {
       const protocolIssue = this.#protocolIssue(request);
       if (protocolIssue) return this.#json(response, protocolIssue.status, protocolIssue.body);
 
+      // The six unauthenticated routes stay here rather than moving to a module of their own. They
+      // sit astride the auth gate below, so a module holding them would need a context without a
+      // member while every other module needs one with a member - two shapes of the same type, to
+      // save sixty lines that have not changed in the life of the file.
       if (method === "GET" && url.pathname === TEAM_API_ROUTES.identity) {
         const challenge = url.searchParams.get("challenge");
         return this.#json(
@@ -459,6 +471,8 @@ export class TeamApiServer {
         return this.#json(response, 200, await this.#options.store.loginWithAccount(user));
       }
 
+      // The auth gate does not look at the path. An unknown route without a token is 401, not 404,
+      // and that is deliberate: answering 404 would let anyone map which endpoints this host has.
       const token = bearerToken(request.headers.authorization);
       const authenticated = token ? this.#options.store.authenticateSession(token) : null;
       if (!authenticated || !token) {
@@ -466,6 +480,15 @@ export class TeamApiServer {
       }
       const context = this.#requestContext(request, response, url, token, authenticated);
 
+      // First module that does not say "unmatched" wins, and the dispatcher then does nothing at
+      // all - work after a `writeHead` is an `ERR_HTTP_HEADERS_SENT` thrown into the catch below,
+      // over a response that has already been sent.
+      //
+      // Sequence is safe because the six prefixes are disjoint, so a request that falls out of one
+      // module could not have matched a later one in the single chain this replaced. What that
+      // relies on is each module answering "unmatched" for a method it does not serve rather than
+      // 404 on its own: the 404 below is the only one in the Team API, which is what keeps a wrong
+      // method on a known path answering 404 - never 405 - exactly as the released clients expect.
       if ((await this.#routeTeam(context)) === "handled") return;
       if ((await this.#routeRemoteScreen(context)) === "handled") return;
       if ((await this.#routeDirect(context)) === "handled") return;
@@ -473,8 +496,11 @@ export class TeamApiServer {
       if ((await this.#routeFiles(context)) === "handled") return;
       if ((await this.#routeAgents(context)) === "handled") return;
 
+      // The only 404 in the Team API.
       return this.#json(response, 404, { error: "Route not found." });
     } catch (error) {
+      // The only catch, too. A module with its own would cut an unexpected error off from the
+      // logger below and answer 400 where the failure was a 500 nobody would then ever see.
       const expected =
         error instanceof HttpError || error instanceof RemoteScreenError || error instanceof TeamStoreError;
       const status =
