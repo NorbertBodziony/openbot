@@ -52,6 +52,7 @@ import type {
 } from "@openbot/contracts/ipc";
 import { AGENT_RUNTIME_TEXT_LIMIT, isMessageReaction } from "@openbot/contracts/ipc";
 import { isString } from "@openbot/contracts/runtime-values";
+import { AgentMemories } from "./agent/agent-memories";
 import { AttentionRegistry } from "./agent/attention-registry";
 import { ContextCompaction } from "./agent/context-compaction";
 import { ConversationRuntime } from "./agent/conversation-runtime";
@@ -67,6 +68,7 @@ import {
   summarizeOldMessages,
 } from "./agent/delivery-content";
 import { developerInstructions } from "./agent/developer-instructions";
+import { DuplicationGate } from "./agent/duplication-gate";
 import { type AgentHostedSites, HostedSiteCoordinator } from "./agent/hosted-site-coordinator";
 import { isHostedSiteMutationTool } from "./agent/hosted-site-events";
 import {
@@ -93,7 +95,6 @@ import {
   toThreadItem,
 } from "./agent/thread-items";
 import type { AgentClient, AgentProvider } from "./agent-client";
-import { AgentMemoryStore } from "./agent-memory-store";
 import type { BotStore } from "./bot-store";
 import { BROWSER_DYNAMIC_TOOLS, OPENBOT_BROWSER_NAMESPACE } from "./browser-host";
 import { type ConversationMarkerExclusions, ConversationReadStore } from "./conversation-read-store";
@@ -159,32 +160,12 @@ interface ImageGenerationOperation {
   promise: Promise<void> | null;
 }
 
-type PendingMemoryMutation =
-  | {
-      callId: string;
-      type: "remember";
-      botId: string;
-      epoch: number;
-      memoryId?: string;
-      text: string;
-      sourceTurnId: string;
-      expectedUpdatedAt?: string | null;
-    }
-  | {
-      callId: string;
-      type: "forget";
-      botId: string;
-      epoch: number;
-      memoryId: string;
-      expectedUpdatedAt: string;
-    };
-
 export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #store: BotStore;
   readonly #mailbox: MailboxStore;
   readonly #browser: AgentBrowserHost;
   readonly #conversationReads: ConversationReadStore;
-  readonly #memories: AgentMemoryStore;
+  readonly #memories: AgentMemories;
   readonly #routines: RoutineScheduler;
   readonly #providers: ProviderRuntime;
   readonly #prepareBotWorkspace: (bot: BotSummary) => Promise<void>;
@@ -202,15 +183,9 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   readonly #compaction: ContextCompaction;
   readonly #pendingHandoffs = new Map<string, string>();
   readonly #pendingRuntimeRefreshes = new Set<string>();
-  readonly #duplicatingBots = new Set<string>();
-  readonly #pendingDuplicateBots = new Set<string>();
-  readonly #pendingDuplicateOperations = new Map<string, { operationId: string; sourceBotId: string }>();
-  readonly #pendingDuplicateReleases = new Map<string, () => void>();
+  readonly #duplication: DuplicationGate;
   readonly #pendingDeltas = new Map<string, PendingDelta>();
-  readonly #pendingMemoryMutations = new Map<string, PendingMemoryMutation[]>();
   readonly #responseAttachmentCommands = new Map<string, Promise<OpenBotToolResponse>>();
-  readonly #memoryEpochs = new Map<string, number>();
-  #duplicationCommitQueue: Promise<void> = Promise.resolve();
   #initialized = false;
   #stopping = false;
 
@@ -232,13 +207,18 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#mailbox = mailbox;
     this.#browser = browser;
     this.#conversationReads = new ConversationReadStore(store.database);
-    this.#memories = new AgentMemoryStore(store.database);
     this.#prepareBotWorkspace = prepareBotWorkspace;
     this.#conversation = new ConversationRuntime(
       store,
       (event) => this.#emit(event),
       () => this.listBots(),
     );
+    this.#memories = new AgentMemories({
+      store,
+      conversation: this.#conversation,
+      emit: (event) => this.#emit(event),
+      emitError: (code, error, botId) => this.#emitError(code, error, botId),
+    });
     this.#routines = new RoutineScheduler({
       store,
       mailbox,
@@ -252,7 +232,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         awaitDrain: (botId) => this.#drainTasks.get(botId),
         syncMailboxMessages: (snapshot) => this.#syncMailboxMessages(snapshot),
         listBots: () => this.listBots(),
-        pendingDuplicateBots: () => this.#pendingDuplicateBots,
+        pendingDuplicateBots: () => this.#duplication.pendingBots(),
         isRunning: () => this.#initialized && !this.#stopping,
       },
     });
@@ -308,6 +288,19 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       emitError: (code, error, botId) => this.#emitError(code, error, botId),
       emitRuntimeSnapshot: () => this.#emitRuntimeSnapshot(),
     });
+    this.#duplication = new DuplicationGate({
+      store,
+      mailbox,
+      conversation: this.#conversation,
+      memories: this.#memories,
+      routines: this.#routines,
+      hooks: {
+        emit: (event) => this.#emit(event),
+        listBots: () => this.listBots(),
+        deleteBotData: (bot) => this.#deleteBotData(bot),
+        hasAttentionFor: (botId) => this.#attention.hasAttentionFor(botId),
+      },
+    });
     this.#browser.onChanged((tabs, activeTabId) => {
       this.#attention.cancelTakeoversForMissingTabs(tabs);
       this.#emit({ type: "browser-changed", tabs, activeTabId });
@@ -326,7 +319,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   listBots(): BotSummary[] {
-    return this.#store.list().filter((bot) => !this.#pendingDuplicateBots.has(bot.id));
+    return this.#duplication.visibleBots(this.#store.list());
   }
 
   getRuntimeSnapshot(): AgentRuntimeSnapshot {
@@ -386,36 +379,23 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   listMemories(botId: string): BotMemory[] {
-    this.#conversation.requireKnownBot(botId);
     return this.#memories.list(botId);
   }
 
   createMemory(input: CreateBotMemoryInput): BotMemory {
-    this.#conversation.requireKnownBot(input.botId);
-    const memory = this.#memories.createManual(input.botId, input.text);
-    this.#memoryStateChanged(input.botId);
-    return memory;
+    return this.#memories.create(input);
   }
 
   updateMemory(input: UpdateBotMemoryInput): BotMemory {
-    this.#conversation.requireKnownBot(input.botId);
-    const memory = this.#memories.updateManual(input.botId, input.memoryId, input.text);
-    this.#memoryStateChanged(input.botId);
-    return memory;
+    return this.#memories.update(input);
   }
 
   deleteMemory(input: DeleteBotMemoryInput): void {
-    this.#conversation.requireKnownBot(input.botId);
-    if (!this.#memories.delete(input.botId, input.memoryId)) {
-      throw new Error("This memory no longer exists.");
-    }
-    this.#memoryStateChanged(input.botId);
+    this.#memories.delete(input);
   }
 
   clearMemories(botId: string): void {
-    this.#conversation.requireKnownBot(botId);
-    this.#memoryEpochs.set(botId, this.#memoryEpoch(botId) + 1);
-    if (this.#memories.clear(botId) > 0) this.#memoryStateChanged(botId);
+    this.#memories.clear(botId);
   }
 
   listRoutines(botId: string): Routine[] {
@@ -506,84 +486,12 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     return this.#store.committedBotDuplication(operationId, sourceBotId);
   }
 
-  async duplicateBot(sourceBotId: string, operationId: string = randomUUID()): Promise<BotSummary> {
-    const releaseDuplication = await this.#acquireDuplicationCommitLock();
-    let releaseOnExit = true;
-    let duplicate: BotSummary | null = null;
-    try {
-      const source = this.#conversation.requireKnownBot(sourceBotId);
-      if (this.#duplicatingBots.has(sourceBotId)) throw new Error("This agent is already being duplicated.");
-      this.#assertBotIdleForDuplication(sourceBotId);
-      const sourceSignature = this.#duplicationSourceSignature(sourceBotId);
-      this.#duplicatingBots.add(sourceBotId);
-      duplicate = await this.#store.duplicateBot(sourceBotId, operationId);
-      this.#pendingDuplicateBots.add(duplicate.id);
-      this.#pendingDuplicateOperations.set(duplicate.id, { operationId, sourceBotId });
-      this.#assertDuplicationSourceUnchanged(sourceBotId, sourceSignature);
-      this.#memories.duplicate(sourceBotId, duplicate.id);
-      const routines = this.#routines.duplicate(sourceBotId, duplicate.id, new Date());
-      this.#assertDuplicationSourceUnchanged(sourceBotId, sourceSignature);
-      if (source.marketplaceSource) {
-        duplicate = this.#store.setMarketplaceSource(duplicate.id, {
-          ...structuredClone(source.marketplaceSource),
-          routineIds: source.marketplaceSource.routineIds.flatMap((routineId) => {
-            const copied = routines.get(routineId);
-            return copied ? [copied.id] : [];
-          }),
-        });
-      }
-      this.#assertDuplicationSourceUnchanged(sourceBotId, sourceSignature);
-      const completedDuplicate = duplicate;
-      this.#pendingDuplicateReleases.set(completedDuplicate.id, releaseDuplication);
-      releaseOnExit = false;
-      return this.#store.list().find((candidate) => candidate.id === completedDuplicate.id) ?? completedDuplicate;
-    } catch (error) {
-      if (!duplicate) throw error;
-      let rollbackError: unknown;
-      try {
-        await this.#deleteBotData(duplicate);
-        this.#pendingDuplicateBots.delete(duplicate.id);
-        this.#pendingDuplicateOperations.delete(duplicate.id);
-      } catch (caught) {
-        rollbackError = caught;
-      }
-      this.#routines.arm();
-      if (rollbackError) {
-        throw new AggregateError(
-          [error, rollbackError],
-          "Agent duplication failed and the incomplete copy could not be removed.",
-        );
-      }
-      throw error;
-    } finally {
-      this.#duplicatingBots.delete(sourceBotId);
-      if (releaseOnExit) releaseDuplication();
-    }
+  duplicateBot(sourceBotId: string, operationId: string = randomUUID()): Promise<BotSummary> {
+    return this.#duplication.duplicate(sourceBotId, operationId);
   }
 
-  async commitBotDuplication(botId: string, layout: SidebarLayoutSnapshot): Promise<DuplicateBotResult> {
-    if (!this.#pendingDuplicateBots.has(botId)) throw new Error("This agent duplication is not pending.");
-    const operation = this.#pendingDuplicateOperations.get(botId);
-    if (!operation) throw new Error("This agent duplication operation is unavailable.");
-    const releaseDuplication = this.#pendingDuplicateReleases.get(botId);
-    try {
-      const result = await this.#store.commitBotDuplication(
-        botId,
-        operation.operationId,
-        operation.sourceBotId,
-        layout,
-      );
-      this.#pendingDuplicateBots.delete(botId);
-      this.#pendingDuplicateOperations.delete(botId);
-      this.#emit({ type: "bots-changed", bots: this.listBots() });
-      if (this.#memories.list(result.bot.id).length > 0) this.#memoryStateChanged(result.bot.id);
-      if (this.#routines.listFor(result.bot.id).length > 0) this.#routines.stateChanged(result.bot.id);
-      this.#routines.arm();
-      return result;
-    } finally {
-      this.#pendingDuplicateReleases.delete(botId);
-      releaseDuplication?.();
-    }
+  commitBotDuplication(botId: string, layout: SidebarLayoutSnapshot): Promise<DuplicateBotResult> {
+    return this.#duplication.commit(botId, layout);
   }
 
   setMarketplaceSource(botId: string, source: NonNullable<BotSummary["marketplaceSource"]>): BotSummary {
@@ -702,55 +610,15 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       throw new Error("Stop the agent and cancel its queued messages before deleting it.");
     }
 
-    const wasPendingDuplicate = this.#pendingDuplicateBots.has(botId);
-    const releaseDuplication = this.#pendingDuplicateReleases.get(botId);
+    const { wasPending, release } = this.#duplication.releaseForDelete(botId);
     try {
       await this.#deleteBotData(bot);
     } finally {
-      if (wasPendingDuplicate) {
-        this.#pendingDuplicateReleases.delete(botId);
-        releaseDuplication?.();
-      }
+      release();
     }
-    this.#pendingDuplicateBots.delete(botId);
-    this.#pendingDuplicateOperations.delete(botId);
-    if (!wasPendingDuplicate) this.#emit({ type: "bots-changed", bots: this.listBots() });
+    this.#duplication.forget(botId);
+    if (!wasPending) this.#emit({ type: "bots-changed", bots: this.listBots() });
     this.#routines.arm();
-  }
-
-  #assertBotIdleForDuplication(botId: string): void {
-    const hasPendingWork = this.#mailbox
-      .listQueue(botId)
-      .deliveries.some((delivery) => ["queued", "starting", "running"].includes(delivery.status));
-    if (hasPendingWork || this.#attention.hasAttentionFor(botId) || this.#conversation.snapshot(botId)?.activeTurnId) {
-      throw new Error("Wait for the agent to finish and clear its queue before duplicating it.");
-    }
-  }
-
-  async #acquireDuplicationCommitLock(): Promise<() => void> {
-    const previous = this.#duplicationCommitQueue;
-    let release = (): void => undefined;
-    const current = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    this.#duplicationCommitQueue = previous.then(() => current);
-    await previous;
-    return release;
-  }
-
-  #duplicationSourceSignature(botId: string): string {
-    return JSON.stringify({
-      bot: this.#conversation.requireKnownBot(botId),
-      memories: this.#memories.list(botId),
-      routines: this.#routines.listFor(botId),
-    });
-  }
-
-  #assertDuplicationSourceUnchanged(botId: string, signature: string): void {
-    this.#assertBotIdleForDuplication(botId);
-    if (this.#duplicationSourceSignature(botId) !== signature) {
-      throw new Error("The agent changed while it was being duplicated. Try again.");
-    }
   }
 
   async #deleteBotData(bot: BotSummary): Promise<void> {
@@ -835,7 +703,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     }
     this.#pendingDeltas.clear();
     this.#pendingHandoffs.clear();
-    this.#pendingMemoryMutations.clear();
+    this.#memories.clearPending();
     this.#pendingRuntimeRefreshes.clear();
     this.#attention.clearPrompts();
     this.#attention.clearBrowserTakeovers();
@@ -1008,7 +876,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async sendMessage(input: SendMessageInput): Promise<QueuedMessageReceipt> {
-    if (this.#pendingDuplicateBots.has(input.botId)) throw new Error(`Unknown bot: ${input.botId}`);
+    if (this.#duplication.isPending(input.botId)) throw new Error(`Unknown bot: ${input.botId}`);
     const bot = await this.#store.getOrCreate(input.botId);
     await this.ensureProvider(providerForBot(bot));
     const receipt = await this.#mailbox.enqueue({
@@ -1132,7 +1000,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
         runtimeWorkspaceRoots: [bot.workspacePath, this.#store.sharedRoot],
         approvalPolicy: "on-request",
         sandbox: "danger-full-access",
-        developerInstructions: developerInstructions(bot, this.#store.sharedRoot, this.#memories.list(bot.id)),
+        developerInstructions: developerInstructions(bot, this.#store.sharedRoot, this.#memories.listFor(bot.id)),
         ephemeral: false,
         serviceName: "openbot",
         dynamicTools: [...BROWSER_DYNAMIC_TOOLS, OPENBOT_DYNAMIC_TOOLS],
@@ -1158,7 +1026,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       runtimeWorkspaceRoots: [bot.workspacePath, this.#store.sharedRoot],
       approvalPolicy: "on-request",
       sandbox: "danger-full-access",
-      developerInstructions: developerInstructions(bot, this.#store.sharedRoot, this.#memories.list(bot.id)),
+      developerInstructions: developerInstructions(bot, this.#store.sharedRoot, this.#memories.listFor(bot.id)),
       dynamicTools: [...BROWSER_DYNAMIC_TOOLS, OPENBOT_DYNAMIC_TOOLS],
     };
 
@@ -1372,67 +1240,8 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     const routineResult = await this.#routines.handleTool(params, senderBotId);
     if (routineResult) return routineResult;
 
-    if (params.tool === "remember") {
-      const args = params.arguments;
-      if (!isRecord(args) || !isString(args.text)) throw new Error("Memory text is required.");
-      const text = args.text.trim();
-      if (!text) throw new Error("Memory text is required.");
-      if (text.length > INPUT_LIMITS.agentMemoryText) throw new Error("Memory text is too long.");
-      const memoryId = args.memoryId;
-      if (
-        memoryId !== undefined &&
-        (!isString(memoryId) || memoryId.length === 0 || memoryId.length > INPUT_LIMITS.identifier)
-      ) {
-        throw new Error("memoryId is invalid.");
-      }
-      const current = memoryId ? this.#memories.get(senderBotId, memoryId) : null;
-      if (memoryId && !current) throw new Error("This memory does not belong to the current agent.");
-      this.#stageMemoryMutation(params.turnId, {
-        callId: params.callId,
-        type: "remember",
-        botId: senderBotId,
-        epoch: this.#memoryEpoch(senderBotId),
-        ...(memoryId ? { memoryId } : {}),
-        text,
-        sourceTurnId: params.turnId,
-        ...(memoryId ? { expectedUpdatedAt: current?.updatedAt ?? null } : {}),
-      });
-      return {
-        success: true,
-        contentItems: [
-          {
-            type: "inputText",
-            text: JSON.stringify({ status: "staged", memoryId: memoryId ?? null }),
-          },
-        ],
-      };
-    }
-
-    if (params.tool === "forget_memory") {
-      const args = params.arguments;
-      if (
-        !isRecord(args) ||
-        !isString(args.memoryId) ||
-        args.memoryId.length === 0 ||
-        args.memoryId.length > INPUT_LIMITS.identifier
-      ) {
-        throw new Error("memoryId is required.");
-      }
-      const current = this.#memories.get(senderBotId, args.memoryId);
-      if (!current) throw new Error("This memory does not belong to the current agent.");
-      this.#stageMemoryMutation(params.turnId, {
-        callId: params.callId,
-        type: "forget",
-        botId: senderBotId,
-        epoch: this.#memoryEpoch(senderBotId),
-        memoryId: current.id,
-        expectedUpdatedAt: current.updatedAt,
-      });
-      return {
-        success: true,
-        contentItems: [{ type: "inputText", text: JSON.stringify({ status: "staged", memoryId: current.id }) }],
-      };
-    }
+    const memoryResult = this.#memories.handleTool(params, senderBotId);
+    if (memoryResult) return memoryResult;
 
     if (params.tool === "react_to_user_message") {
       const args = params.arguments;
@@ -1644,46 +1453,22 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     throw new Error("Attachment files must exist inside this agent's workspace or the OpenBot shared directory.");
   }
 
-  #stageMemoryMutation(turnId: string, mutation: PendingMemoryMutation): void {
-    const pending = this.#pendingMemoryMutations.get(turnId) ?? [];
-    if (!pending.some((candidate) => candidate.callId === mutation.callId)) pending.push(mutation);
-    this.#pendingMemoryMutations.set(turnId, pending);
-  }
-
-  #finishMemoryMutations(turnId: string, status: string): void {
-    const pending = this.#pendingMemoryMutations.get(turnId) ?? [];
-    this.#pendingMemoryMutations.delete(turnId);
-    if (status !== "completed" || pending.length === 0) return;
-
-    const affectedBots = new Set<string>();
-    for (const mutation of pending) {
-      if (mutation.epoch !== this.#memoryEpoch(mutation.botId)) continue;
-      const before = JSON.stringify(this.#memories.list(mutation.botId));
-      try {
-        if (mutation.type === "remember") this.#memories.saveAutomatic(mutation);
-        else this.#memories.delete(mutation.botId, mutation.memoryId, mutation.expectedUpdatedAt);
-      } catch (error) {
-        this.#emitError("memory_commit_failed", error, mutation.botId);
-        continue;
-      }
-      if (JSON.stringify(this.#memories.list(mutation.botId)) !== before) affectedBots.add(mutation.botId);
-    }
-    for (const botId of affectedBots) this.#memoryStateChanged(botId);
-  }
-
-  #memoryEpoch(botId: string): number {
-    return this.#memoryEpochs.get(botId) ?? 0;
+  /**
+   * The mute registry: every controller that can hold a bot back owns one clause, and the core only
+   * composes them. `#drainBot` repeats the guard because a drain scheduled a microtask ago may have
+   * been muted since.
+   */
+  #mayDrain(botId: string): boolean {
+    return this.#duplication.mayDrain(botId) && this.#compaction.mayDrain(botId) && this.#routines.mayDrain(botId);
   }
 
   #scheduleDrain(botId: string): void {
     if (
       this.#stopping ||
       !this.#providers.isReady() ||
-      this.#pendingDuplicateBots.has(botId) ||
       this.#drainingBots.has(botId) ||
       this.#scheduledDrains.has(botId) ||
-      !this.#compaction.mayDrain(botId) ||
-      !this.#routines.mayDrain(botId)
+      !this.#mayDrain(botId)
     ) {
       return;
     }
@@ -1699,15 +1484,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   async #drainBot(botId: string): Promise<void> {
-    if (
-      this.#stopping ||
-      this.#pendingDuplicateBots.has(botId) ||
-      this.#drainingBots.has(botId) ||
-      !this.#compaction.mayDrain(botId) ||
-      !this.#routines.mayDrain(botId) ||
-      !this.#providers.isReady()
-    )
-      return;
+    if (this.#stopping || this.#drainingBots.has(botId) || !this.#mayDrain(botId) || !this.#providers.isReady()) return;
     this.#drainingBots.add(botId);
     try {
       const snapshot = this.#conversation.snapshot(botId);
@@ -2233,7 +2010,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
     this.#flushTurnDeltas(turnId);
     await this.#waitForImageGenerationOperations(threadId, turnId);
     await this.#turnAssociations.get(turnId)?.catch(() => undefined);
-    this.#finishMemoryMutations(turnId, status);
+    this.#memories.finishTurn(turnId, status);
     const shouldCompact = this.#compaction.reserve(botId, threadId);
     this.#browser.endControl(this.#conversation.publicThreadId(botId, threadId), turnId);
     const snapshot = this.#conversation.ensureSnapshot(botId, threadId);
@@ -2647,13 +2424,6 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
       newest.join("\n\n"),
       "--- end previous transcript ---",
     ].join("\n");
-  }
-
-  #memoryStateChanged(botId: string): void {
-    const bot = this.#conversation.requireKnownBot(botId);
-    const session = this.#store.activeProviderSession(bot.id);
-    if (session) this.#conversation.unloadThread(session.externalSessionId);
-    this.#emit({ type: "memories-changed", botId });
   }
 
   #emitError(code: string, error: unknown, botId?: string): void {
