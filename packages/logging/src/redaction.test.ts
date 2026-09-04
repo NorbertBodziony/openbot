@@ -1,7 +1,7 @@
 // Automation and diagnostic logs must never leak tokens or emails,
 // even when a caller passes them as structured params.
 import { describe, expect, it, vi } from "vitest";
-import { createOpenBotLogger, redactText, redactValue, resolveLogLevel, toLogValue } from "./index";
+import { createOpenBotLogger, type LogValue, redactText, redactValue, resolveLogLevel, toLogValue } from "./index";
 
 describe("redactText", () => {
   it("redacts bearer tokens while keeping surrounding text", () => {
@@ -48,6 +48,13 @@ describe("redactText", () => {
     expect(redactText('password: "my secret pass"')).toBe('password: "[redacted]"');
   });
 
+  it("leaves prose that mentions a secret without assigning one intact", () => {
+    expect(redactText("SKILLS_ADMIN_TOKEN is missing")).toBe("SKILLS_ADMIN_TOKEN is missing");
+    expect(redactText("Encrypted EMAIL_SMTP_PASSWORD for dev and production.")).toBe(
+      "Encrypted EMAIL_SMTP_PASSWORD for dev and production.",
+    );
+  });
+
   it("redacts scheme-prefixed authorization values and cookies", () => {
     expect(redactText("Authorization: Basic YWxhZGRpbjpvcGVuc2VzYW1l")).toBe("Authorization: [redacted]");
     expect(redactText("set-cookie: session=9f2b3c4d5e6f")).not.toContain("9f2b3c4d5e6f");
@@ -74,6 +81,13 @@ describe("redactValue", () => {
 });
 
 describe("toLogValue", () => {
+  it("bounds a deeply nested value instead of overflowing the stack", () => {
+    let deep: LogValue = "leaf";
+    for (let index = 0; index < 50_000; index += 1) deep = [deep];
+    expect(() => toLogValue(deep)).not.toThrow();
+    expect(JSON.stringify(toLogValue(deep))).toContain("[too deep]");
+  });
+
   it("breaks reference cycles instead of overflowing", () => {
     const loop: { name: string; self?: unknown } = { name: "chief" };
     loop.self = loop;

@@ -2,7 +2,7 @@
 // changes app state needs --allow-mutations. This tool never seeds, resets or
 // copies openbot.db: it drives the instance you already have open.
 import { join } from "node:path";
-import { createOpenBotLogger } from "@openbot/logging";
+import { createOpenBotLogger, redactText } from "@openbot/logging";
 import {
   assertMutationAllowed,
   connectToDevApp,
@@ -155,8 +155,17 @@ function resolveTarget(records: DevInstanceRecord[], service: DevInstanceService
 async function main(): Promise<void> {
   const command = process.argv[2];
   if (command === "instances") {
-    const records = readDevInstanceRecords();
-    process.stdout.write(`${JSON.stringify({ instances: records }, null, 2)}\n`);
+    // Every diagnostic on stderr goes through the logger, which redacts. This
+    // is the one place a registry field reaches stdout raw, and `projectRoot`
+    // is a filesystem path the developer chose - a checkout under a directory
+    // named after an email, or one holding a token, would otherwise be copied
+    // into the transcript verbatim. Selection keeps using the raw records.
+    const instances = readDevInstanceRecords().map((record) => ({
+      ...record,
+      profile: redactText(record.profile),
+      projectRoot: redactText(record.projectRoot),
+    }));
+    process.stdout.write(`${JSON.stringify({ instances }, null, 2)}\n`);
     return;
   }
   if (

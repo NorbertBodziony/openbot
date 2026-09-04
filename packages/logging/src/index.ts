@@ -30,8 +30,13 @@ const AUTH_SCHEME_SECRET = /(?:Bearer|Basic|Digest|Token)\s+[A-Za-z0-9._~+/=-]{8
 // payload (`{"apiKey":"…"}`) redacts the same as a shell line (`apiKey=…`).
 // A quoted value is consumed whole; an unquoted one stops at the first
 // delimiter.
+// The separator has to be an explicit `=` or `:`. Accepting bare whitespace as
+// well turned prose into an assignment - `SKILLS_ADMIN_TOKEN is missing` lost
+// the "is" - and a secret written without a separator is prose, not a
+// key-value pair. `Bearer`-style values are the one real exception and the
+// rule above owns them.
 const CREDENTIAL_ASSIGNMENT = new RegExp(
-  String.raw`(["']?(?:${SECRET_LABEL})["']?(?:\s*[=:]+\s*|\s+))(\[redacted\]|"[^"]*"|'[^']*'|[^\s,;)}\]]+)`,
+  String.raw`(["']?(?:${SECRET_LABEL})["']?\s*[=:]+\s*)(\[redacted\]|"[^"]*"|'[^']*'|[^\s,;)}\]]+)`,
   "giu",
 );
 // The prefix has to start a token: without the boundary, `sk-` matched inside
@@ -78,13 +83,14 @@ function redactSerializedJson(value: string): string | null {
   // truncation that follows keeps only the first characters - which would be
   // the unredacted ones.
   if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null;
-  let parsed: unknown;
   try {
-    parsed = JSON.parse(trimmed);
+    return JSON.stringify(convertValue(JSON.parse(trimmed), new Set<object>())) ?? null;
   } catch {
+    // Neither a parse failure nor a conversion failure may become the failure
+    // the caller was trying to report: fall back to the regex rules, which
+    // scan the text without recursing.
     return null;
   }
-  return JSON.stringify(convertValue(parsed, new Set<object>())) ?? null;
 }
 
 // `typeof` below narrows caller-provided unions, not already-known domain
@@ -103,7 +109,13 @@ export function toLogValue(value: unknown): LogValue {
   return convertValue(value, new Set<object>());
 }
 
-function convertValue<T>(value: T, seen: Set<object>): LogValue {
+// A cycle-free but very deep value - a nested array from an external payload -
+// would otherwise recurse until the stack gives out, and the overflow would
+// replace the failure the caller was reporting. The bound is far past any
+// shape worth reading in a log line.
+const MAX_CONVERSION_DEPTH = 32;
+
+function convertValue<T>(value: T, seen: Set<object>, depth = 0): LogValue {
   if (typeof value === "string") return redactText(value);
   if (value === null) return null;
   if (value === undefined) return undefined;
@@ -116,16 +128,18 @@ function convertValue<T>(value: T, seen: Set<object>): LogValue {
   }
   if (Array.isArray(value)) {
     if (seen.has(value)) return "[circular]";
+    if (depth >= MAX_CONVERSION_DEPTH) return "[too deep]";
     seen.add(value);
-    return value.map((entry: LogValue) => convertValue(entry, seen));
+    return value.map((entry: LogValue) => convertValue(entry, seen, depth + 1));
   }
   if (typeof value === "object") {
     if (seen.has(value)) return "[circular]";
+    if (depth >= MAX_CONVERSION_DEPTH) return "[too deep]";
     seen.add(value);
     return Object.fromEntries(
       Object.entries(value).map(([key, entry]): [string, LogValue] => [
         key,
-        SECRET_KEY.test(key) ? "[redacted]" : convertValue(entry, seen),
+        SECRET_KEY.test(key) ? "[redacted]" : convertValue(entry, seen, depth + 1),
       ]),
     );
   }
