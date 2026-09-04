@@ -395,24 +395,9 @@ jobs:
           composer_file="$RUNNER_TEMP/compose-review-prompt.ts"
           composer_bunfig="$RUNNER_TEMP/norbiai-composer-bunfig.toml"
           : > "$composer_bunfig"
-          #
-          # The domain fragments are extra context, and the base prompt is the review. A composer
-          # that cannot run must therefore cost this PR its fragments and nothing else: it is read
-          # from the base commit, so a PR has no way to repair it, and failing the step instead
-          # blocked every open PR at once when a `@openbot/logging` import landed in a script that
-          # is executed detached from the workspace. The output goes to its own file and is
-          # appended only after a clean exit, so a composer that dies midway cannot leave half a
-          # fragment - or half a sentence of instruction - inside the prompt.
-          composer_fragments="$RUNNER_TEMP/norbiai-fragments.md"
-          composer_error="$RUNNER_TEMP/norbiai-composer-error.txt"
           if git cat-file -e "$BASE_SHA:scripts/compose-review-prompt.ts" 2>/dev/null; then
             git show "$BASE_SHA:scripts/compose-review-prompt.ts" > "$composer_file"
-            if bun --config="$composer_bunfig" --no-install "$composer_file" "$BASE_SHA" "$HEAD_SHA" \
-              > "$composer_fragments" 2> "$composer_error"; then
-              cat "$composer_fragments" >> "$prompt_file"
-            else
-              echo "::warning title=NorbiAI domain fragments skipped::The base composer exited non-zero, so this review carries the base prompt without domain fragments. $(tr '\n' ' ' < "$composer_error" | tail -c 300)"
-            fi
+            bun --config="$composer_bunfig" --no-install "$composer_file" "$BASE_SHA" "$HEAD_SHA" >> "$prompt_file"
           else
             echo "::notice title=NorbiAI domain fragments skipped::No composer at the base commit"
           fi
