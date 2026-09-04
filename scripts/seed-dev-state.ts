@@ -5,6 +5,7 @@ import { dirname, join, parse, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { serializeAttachmentReference } from "@openbot/contracts/attachment-references";
 import type { AttachmentSummary, BotSummary, ConversationMessage, Routine } from "@openbot/contracts/ipc";
+import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import { z } from "zod";
 import { AgentMemoryStore } from "../src/backend/agent-memory-store";
 import { AgentRoutineStore } from "../src/backend/agent-routine-store";
@@ -18,6 +19,8 @@ import { TeamStore } from "../src/main/team-store";
 import { resolveDevelopmentAppDataRoot } from "./development-state-paths";
 
 export const DEVELOPMENT_SEED_MANIFEST_FILE = "openbot-dev-seed-v1.json";
+
+const logger = createOpenBotLogger("seed-dev-state");
 
 const TEAM_FILE = "openbot-team-server-v2.json";
 /** Read only, exactly as the app reads it: the file a build without accounts owns. */
@@ -680,10 +683,10 @@ async function replaceDevelopmentProfile(target: string, staging: string, homeDi
   try {
     await cleanupSeedOwnedTransfers(backup, homeDirectory);
   } catch (error) {
-    console.warn(`The new seed is ready, but old seed files could not be removed: ${errorMessage(error)}`);
+    logger.warn(`The new seed is ready, but old seed files could not be removed: ${errorMessage(error)}`);
   } finally {
     await rm(backup, { recursive: true, force: true }).catch((error: unknown) => {
-      console.warn(`The new seed is ready, but its temporary backup could not be removed: ${errorMessage(error)}`);
+      logger.warn(`The new seed is ready, but its temporary backup could not be removed: ${errorMessage(error)}`);
     });
   }
 }
@@ -793,26 +796,26 @@ async function main(): Promise<void> {
     dryRun,
     instanceId: readDevelopmentInstanceId(process.env.OPENBOT_DEV_INSTANCE_ID),
   });
-  console.log(dryRun ? "OpenBot development seed dry run:" : "OpenBot development state seeded:");
-  console.log(`- profile: ${summary.targetProfile}`);
-  console.log(`- profile active: ${summary.profileActive ? "yes" : "no"}`);
-  console.log(`- agents: ${summary.agents}`);
-  console.log(`- conversations: ${summary.conversations}`);
-  console.log(`- managed attachments: ${summary.attachments}`);
-  console.log(`- team members: ${summary.teamMembers}`);
-  console.log(`- active invites: ${summary.activeInvites}`);
-  console.log(`- direct threads: ${summary.directThreads}`);
-  console.log(`- queued deliveries: ${summary.queuedDeliveries}`);
-  console.log(`- memories: ${summary.memories}`);
-  console.log(`- routines: ${summary.routines}`);
-  console.log(`- routine runs: ${summary.routineRuns}`);
-  if (dryRun) console.log("No files were changed.");
-  else console.log("Run `bun run dev` to open the seeded showcase.");
+  logger.info(dryRun ? "OpenBot development seed dry run:" : "OpenBot development state seeded:");
+  logger.info(`- profile: ${summary.targetProfile}`);
+  logger.info(`- profile active: ${summary.profileActive ? "yes" : "no"}`);
+  logger.info(`- agents: ${summary.agents}`);
+  logger.info(`- conversations: ${summary.conversations}`);
+  logger.info(`- managed attachments: ${summary.attachments}`);
+  logger.info(`- team members: ${summary.teamMembers}`);
+  logger.info(`- active invites: ${summary.activeInvites}`);
+  logger.info(`- direct threads: ${summary.directThreads}`);
+  logger.info(`- queued deliveries: ${summary.queuedDeliveries}`);
+  logger.info(`- memories: ${summary.memories}`);
+  logger.info(`- routines: ${summary.routines}`);
+  logger.info(`- routine runs: ${summary.routineRuns}`);
+  if (dryRun) logger.info("No files were changed.");
+  else logger.info("Run `bun run dev` to open the seeded showcase.");
 }
 
 if (isMainModule()) {
   main().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : String(error));
+    logger.error(toLogValue(error));
     process.exitCode = 1;
   });
 }

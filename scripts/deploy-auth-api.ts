@@ -1,6 +1,9 @@
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createOpenBotLogger, toLogValue } from "@openbot/logging";
+
+const logger = createOpenBotLogger("deploy-auth-api");
 
 const scriptsRoot = dirname(fileURLToPath(import.meta.url));
 const apiRoot = join(scriptsRoot, "..", "apps", "auth-api");
@@ -86,6 +89,6 @@ function readCloudflareEnvironment(args: string[]): string | null {
 }
 
 void main().catch((error) => {
-  console.error(error instanceof Error ? error.message : "Auth API deployment failed.");
+  logger.error("Auth API deployment failed.", toLogValue(error));
   process.exitCode = 1;
 });

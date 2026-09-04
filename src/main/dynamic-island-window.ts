@@ -10,9 +10,12 @@ import {
   IDLE_DYNAMIC_ISLAND_PRESENTATION,
   IPC_CHANNELS,
 } from "@openbot/contracts/ipc";
+import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import type { BrowserWindow, Display, Rectangle } from "electron";
 import { readDynamicIslandPreference, writeDynamicIslandPreference } from "./dynamic-island-preference-store";
 import { sendToRenderer } from "./renderer-ipc";
+
+const logger = createOpenBotLogger("dynamic-island-window");
 
 export const DYNAMIC_ISLAND_WINDOW_SIZE = { width: 614, height: 380 } as const;
 
@@ -187,7 +190,7 @@ export class DynamicIslandWindowController {
       try {
         await this.createDisplayWindow(display, bounds);
       } catch (error) {
-        console.error(`Unable to load Dynamic Island on display ${display.id}:`, error);
+        logger.error(`Unable to load Dynamic Island on display ${display.id}:`, toLogValue(error));
       }
     }
   }

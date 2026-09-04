@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { access, readFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
+import { createOpenBotLogger } from "@openbot/logging";
 import { createRemoteDesktopInputDigest, loadNativeRuntimeLock } from "./native-runtime-lock";
+
+const logger = createOpenBotLogger("verify-remote-desktop-runtime");
 
 const platform = process.argv.includes("--windows") ? "win32" : "darwin";
 const architecture = platform === "win32" ? "x64" : "arm64";
@@ -68,7 +71,7 @@ for (const name of [
   }
 }
 
-console.log(`Verified the Sunshine and Moonlight Web runtime in ${root}`);
+logger.info(`Verified the Sunshine and Moonlight Web runtime in ${root}`);
 
 async function verifyChecksums(checksumRoot: string, fileName: string) {
   const checksums = await readFile(join(checksumRoot, fileName), "utf8");

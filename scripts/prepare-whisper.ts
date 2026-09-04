@@ -3,6 +3,9 @@ import { createHash } from "node:crypto";
 import { chmodSync, copyFileSync, createReadStream, existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
+import { createOpenBotLogger } from "@openbot/logging";
+
+const logger = createOpenBotLogger("prepare-whisper");
 
 const WHISPER_CPP_COMMIT = "86c40c3bd6fc86f1187fb751d111b49e0fc18e84";
 const MODEL_REVISION = "5359861c739e955e79d9a303bcbc70fb988958b1";
@@ -35,12 +38,12 @@ if (!runtimeOnly) {
 }
 await prepareSource();
 buildExecutable();
-console.log(`Prepared Whisper voice assets in ${buildRoot}`);
+logger.info(`Prepared Whisper voice assets in ${buildRoot}`);
 
 async function prepareModel(): Promise<void> {
   if (await isExpectedModel()) return;
   const url = `https://huggingface.co/ggerganov/whisper.cpp/resolve/${MODEL_REVISION}/${MODEL_NAME}`;
-  console.log(`Downloading ${MODEL_NAME}…`);
+  logger.info(`Downloading ${MODEL_NAME}…`);
   const response = await fetch(url);
   if (!response.ok) throw new Error(`Unable to download the Whisper model (${response.status}).`);
   await writeFile(modelPath, Buffer.from(await response.arrayBuffer()));

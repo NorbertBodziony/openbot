@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { type DynamicRecord, isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 
 const BASELINE_SCHEMA_VERSION = 8;
 
@@ -282,6 +283,8 @@ export interface OpenBotMigrationOptions {
   warn?: (message: string, error: unknown) => void;
 }
 
+const logger = createOpenBotLogger("openbot-database-schema");
+
 interface OpenBotMigration {
   version: number;
   disableForeignKeys?: boolean;
@@ -341,10 +344,17 @@ export function migrateOpenBotDatabase(db: DatabaseSync, options: OpenBotMigrati
         db.exec("VACUUM");
         db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
       } catch (error) {
-        (options.warn ?? console.warn)(
-          `OpenBot database migration to version ${migration.version} succeeded, but VACUUM failed.`,
-          error,
-        );
+        if (options.warn) {
+          options.warn(
+            `OpenBot database migration to version ${migration.version} succeeded, but VACUUM failed.`,
+            error,
+          );
+        } else {
+          logger.warn(
+            `OpenBot database migration to version ${migration.version} succeeded, but VACUUM failed.`,
+            toLogValue(error),
+          );
+        }
       }
     }
   }

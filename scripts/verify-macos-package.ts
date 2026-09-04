@@ -5,6 +5,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { FuseV1Options, getCurrentFuseWire } from "@electron/fuses";
 import { isDynamicRecord } from "@openbot/contracts/runtime-values";
+import { createOpenBotLogger } from "@openbot/logging";
+
+const logger = createOpenBotLogger("verify-macos-package");
 
 const FUSE_DISABLED = 48;
 const FUSE_ENABLED = 49;
@@ -116,8 +119,8 @@ for (const [fuse, expected] of expectedFuses) {
 
 await verifyLaunch(executablePath);
 
-console.log(`Verified ${appPath}`);
-console.log(
+logger.info(`Verified ${appPath}`);
+logger.info(
   `OpenBot ${String(packageJson.version)} · ARM64 · icon · GPL remote runtime · WebRTC remote stack · ASAR integrity · hardened fuses · launch`,
 );
 

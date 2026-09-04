@@ -37,6 +37,7 @@ export default defineConfig({
             "src/renderer/**/*.test.ts",
             "scripts/**/*.test.ts",
             "packages/contracts/**/*.test.ts",
+            "packages/logging/**/*.test.ts",
           ],
           exclude: [...configDefaults.exclude, "**/*.dom.test.ts"],
         },

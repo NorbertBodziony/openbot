@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { createOpenBotLogger } from "@openbot/logging";
 import { z } from "zod";
 import { createRemoteDesktopInputDigest, loadNativeRuntimeLock, type NativeRuntimeLock } from "./native-runtime-lock";
 import {
@@ -24,6 +25,8 @@ const githubReleaseSchema = z.object({
 type GitHubRelease = z.infer<typeof githubReleaseSchema>;
 type GitHubReleaseAsset = GitHubRelease["assets"][number];
 
+const logger = createOpenBotLogger("install-remote-desktop-runtime");
+
 export async function installRemoteDesktopRuntime(
   input: {
     sourceRoot?: string;
@@ -44,7 +47,7 @@ export async function installRemoteDesktopRuntime(
   if (!release || !artifact) throw new Error(`No published remote desktop runtime is pinned for ${target}.`);
 
   if (await isCurrentInstallation(outputRoot, target, lock)) {
-    console.log(`The ${target} remote desktop runtime is current.`);
+    logger.info(`The ${target} remote desktop runtime is current.`);
     return "current";
   }
 
@@ -89,7 +92,7 @@ export async function installRemoteDesktopRuntime(
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }
-  console.log(`Installed the pinned ${target} remote desktop runtime.`);
+  logger.info(`Installed the pinned ${target} remote desktop runtime.`);
   return "installed";
 }
 

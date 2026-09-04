@@ -1,10 +1,13 @@
 import { lstat, mkdir, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { BotSummary } from "@openbot/contracts/ipc";
+import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 
 const MANAGED_SKILL_SLUG = "openbot-site-hosting";
 const OWNERSHIP_MARKER = ".openbot-managed.json";
 const OWNERSHIP_CONTENT = `${JSON.stringify({ managedBy: "openbot", slug: MANAGED_SKILL_SLUG, version: 1 })}\n`;
+
+const logger = createOpenBotLogger("managed-skill-service");
 
 interface SyncTargetsResult {
   collisions: string[];
@@ -17,10 +20,10 @@ export class ManagedSkillService {
   constructor(
     private readonly sourcePath: string,
     private readonly reportCollision: (target: string) => void = (target) => {
-      console.warn(`OpenBot preserved an unowned managed-skill collision at ${target}.`);
+      logger.warn(`OpenBot preserved an unowned managed-skill collision at ${target}.`);
     },
     private readonly reportFailure: (target: string, error: unknown) => void = (target, error) => {
-      console.error(`OpenBot could not synchronize the managed skill at ${target}.`, error);
+      logger.error(`OpenBot could not synchronize the managed skill at ${target}.`, toLogValue(error));
     },
   ) {}
 

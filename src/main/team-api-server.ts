@@ -71,6 +71,7 @@ import {
   decodeTeamProtocolV3CurrentHttpRequest,
   encodeTeamProtocolV3CurrentHttpResponse,
 } from "@openbot/contracts/team-protocol/v3-adapter";
+import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import type * as Ws from "ws";
 import type { AgentService } from "../backend/agent-service";
 import type { BrowserHost } from "../backend/browser-host";
@@ -98,6 +99,8 @@ const TEST_LEGACY_EVENT_PROTOCOL = "openbot-events";
 const TEST_LEGACY_SNAPSHOT_PROTOCOL = "openbot-events-v2";
 const requireModule = createRequire(import.meta.url);
 const webSockets: typeof Ws = requireModule(join(dirname(requireModule.resolve("ws/package.json")), "index.js"));
+
+const logger = createOpenBotLogger("team-api-server");
 
 type TeamApiAgentMethods = Pick<
   AgentService,
@@ -1231,7 +1234,7 @@ export class TeamApiServer {
         error instanceof HttpError || error instanceof RemoteScreenError ? error.status : expected ? 400 : 500;
       const message = expected ? error.message : "Request failed.";
       const code = error instanceof RemoteScreenError ? error.code : undefined;
-      if (!expected) console.error("Team API request failed:", error);
+      if (!expected) logger.error("Team API request failed:", toLogValue(error));
       return this.#json(response, status, { error: message, ...(code ? { code } : {}) });
     }
   }

@@ -2,9 +2,12 @@ import { execFileSync } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { createOpenBotLogger } from "@openbot/logging";
 import { z } from "zod";
 import { type AgentRuntimeLock, loadAgentRuntimeLock } from "./agent-runtime-lock";
 import { rejectNonRegularFiles, sha256 } from "./remote-desktop-runtime-release";
+
+const logger = createOpenBotLogger("install-codex-runtime");
 
 export type CodexRuntimeTarget = "darwin-arm64" | "win32-x64";
 
@@ -37,7 +40,7 @@ export async function installCodexRuntime(
 
   if (await isCurrentInstallation(targetRoot, target, lock)) {
     await writeMetadata(outputRoot, lock, fetchImpl);
-    console.log(`Using verified bundled Codex ${lock.codex.version} for ${target}.`);
+    logger.info(`Using verified bundled Codex ${lock.codex.version} for ${target}.`);
     return "current";
   }
 
@@ -68,7 +71,7 @@ export async function installCodexRuntime(
   }
 
   await writeMetadata(outputRoot, lock, fetchImpl);
-  console.log(`Installed bundled Codex ${lock.codex.version} for ${target}.`);
+  logger.info(`Installed bundled Codex ${lock.codex.version} for ${target}.`);
   return "installed";
 }
 

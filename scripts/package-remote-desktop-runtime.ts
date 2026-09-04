@@ -43,7 +43,8 @@ try {
     sbomAsset: runtimeSbomName(target),
   };
   await writeFile(join(outputRoot, `${target}.json`), `${JSON.stringify(metadata, null, 2)}\n`);
-  console.log(JSON.stringify(metadata));
+  // Machine-readable: release tooling parses the metadata JSON from stdout.
+  process.stdout.write(`${JSON.stringify(metadata)}\n`);
 } finally {
   await rm(temporaryRoot, { recursive: true, force: true });
 }

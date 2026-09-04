@@ -4,7 +4,10 @@ import { createServer } from "node:net";
 import { type NetworkInterfaceInfo, networkInterfaces } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import { prepareDevelopmentEnvironment } from "./prepare-dev-environment";
+
+const logger = createOpenBotLogger("dev-services");
 
 export type DevelopmentService = "api" | "app" | "test-client";
 type DevelopmentTarget = DevelopmentService | "all";
@@ -135,10 +138,10 @@ async function main(): Promise<void> {
     configureSiteHostingDevelopmentEnvironment(sharedEnvironment, apiPort);
     configureMobileConnectDevelopmentNetwork(services, sharedEnvironment, networkInterfaces());
     if (sharedEnvironment.OPENBOT_MOBILE_AUTH_API_URL) {
-      console.log(`Mobile Connect API: ${sharedEnvironment.OPENBOT_MOBILE_AUTH_API_URL}`);
+      logger.info(`Mobile Connect API: ${sharedEnvironment.OPENBOT_MOBILE_AUTH_API_URL}`);
     }
     if (apiPort !== DEFAULT_API_PORT) {
-      console.log(`API port ${DEFAULT_API_PORT} is busy. Using ${apiPort}.`);
+      logger.info(`API port ${DEFAULT_API_PORT} is busy. Using ${apiPort}.`);
     }
   }
 
@@ -155,7 +158,7 @@ async function main(): Promise<void> {
       environment.OPENBOT_DEV_RENDERER_PORT = String(rendererPort);
       if (rendererPort !== defaultPort) {
         environment.OPENBOT_DEV_INSTANCE_ID ??= String(rendererPort);
-        console.log(`Renderer port ${defaultPort} is busy. Using ${rendererPort} for ${service}.`);
+        logger.info(`Renderer port ${defaultPort} is busy. Using ${rendererPort} for ${service}.`);
       }
 
       const defaultRemoteDebuggingPort = DEFAULT_REMOTE_DEBUGGING_PORTS[service];
@@ -166,7 +169,7 @@ async function main(): Promise<void> {
       reservedPorts.add(remoteDebuggingPort);
       environment.OPENBOT_DEV_REMOTE_DEBUGGING_PORT = String(remoteDebuggingPort);
       if (remoteDebuggingPort !== defaultRemoteDebuggingPort) {
-        console.log(
+        logger.info(
           `Electron debug port ${defaultRemoteDebuggingPort} is busy. Using ${remoteDebuggingPort} for ${service}.`,
         );
       }
@@ -177,12 +180,12 @@ async function main(): Promise<void> {
 
   if (dryRun) {
     for (const spec of specs) {
-      console.log(`[${spec.name}]`, JSON.stringify([spec.executable, ...spec.args]));
+      logger.info(`[${spec.name}]`, JSON.stringify([spec.executable, ...spec.args]));
     }
     return;
   }
 
-  console.log(`Starting: ${specs.map((spec) => spec.name).join(", ")}`);
+  logger.info(`Starting: ${specs.map((spec) => spec.name).join(", ")}`);
   const processes = new Map<DevelopmentService, ChildProcess>();
   let stopping = false;
 
@@ -207,7 +210,7 @@ async function main(): Promise<void> {
       });
       processes.set(spec.name, child);
       child.once("error", (error) => {
-        console.error(`[${spec.name}] Could not start:`, error.message);
+        logger.error(`[${spec.name}] Could not start:`, error.message);
         void stopAll("SIGTERM").then(() => {
           process.exitCode = 1;
         });
@@ -215,7 +218,7 @@ async function main(): Promise<void> {
       child.once("exit", (code, signal) => {
         if (stopping) return;
         const result = signal ? `signal ${signal}` : `code ${code ?? 1}`;
-        console.log(`[${spec.name}] stopped with ${result}. Stopping the other services.`);
+        logger.info(`[${spec.name}] stopped with ${result}. Stopping the other services.`);
         void stopAll("SIGTERM").then(() => {
           process.exitCode = code ?? 1;
         });
@@ -432,7 +435,7 @@ function isUnavailableProcess(error: unknown, platform: NodeJS.Platform): error 
 const invokedFile = process.argv[1] ? resolve(process.argv[1]) : "";
 if (invokedFile === fileURLToPath(import.meta.url)) {
   void main().catch((error) => {
-    console.error(error instanceof Error ? error.message : error);
+    logger.error(error instanceof Error ? error.message : toLogValue(error));
     process.exitCode = 1;
   });
 }

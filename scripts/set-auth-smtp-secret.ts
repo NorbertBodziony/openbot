@@ -1,6 +1,9 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { set } from "@dotenvx/dotenvx";
+import { createOpenBotLogger, toLogValue } from "@openbot/logging";
+
+const logger = createOpenBotLogger("set-auth-smtp-secret");
 
 const scriptsRoot = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(scriptsRoot, "..");
@@ -21,7 +24,7 @@ async function main(): Promise<void> {
       await set("EMAIL_SMTP_PASSWORD", appPassword, { path, envKeysFile });
       await set("AUTH_EXPOSE_DEVELOPMENT_CODE", "false", { path, envKeysFile });
     }
-    console.log("Encrypted EMAIL_SMTP_PASSWORD for dev and production.");
+    logger.info("Encrypted EMAIL_SMTP_PASSWORD for dev and production.");
   } finally {
     appPassword = "";
   }
@@ -35,6 +38,6 @@ async function readStandardInput(): Promise<string> {
 }
 
 void main().catch((error) => {
-  console.error(error instanceof Error ? error.message : "Could not encrypt the SMTP secret.");
+  logger.error("Could not encrypt the SMTP secret.", toLogValue(error));
   process.exitCode = 1;
 });

@@ -1,6 +1,9 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createOpenBotLogger } from "@openbot/logging";
+
+const logger = createOpenBotLogger("ui-foundation-check");
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const rendererRoot = resolve(projectRoot, "src/renderer/src");
@@ -94,8 +97,8 @@ for (const [label, actual, maximum] of debtBudgets) {
 }
 
 if (failures.length > 0) {
-  console.error(`UI foundation check failed:\n- ${failures.join("\n- ")}`);
+  logger.error(`UI foundation check failed:\n- ${failures.join("\n- ")}`);
   process.exit(1);
 }
 
-console.log(`UI foundation check passed. Legacy composite debt: ${manualCompositeCount}/0.`);
+logger.info(`UI foundation check passed. Legacy composite debt: ${manualCompositeCount}/0.`);

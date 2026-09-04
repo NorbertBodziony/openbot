@@ -52,6 +52,7 @@ import type {
 } from "@openbot/contracts/ipc";
 import { AGENT_RUNTIME_TEXT_LIMIT, isMessageReaction } from "@openbot/contracts/ipc";
 import { isString } from "@openbot/contracts/runtime-values";
+import { createOpenBotLogger } from "@openbot/logging";
 import { AgentMemories } from "./agent/agent-memories";
 import { AttentionRegistry } from "./agent/attention-registry";
 import { ContextCompaction } from "./agent/context-compaction";
@@ -124,6 +125,8 @@ import {
   type ThreadItem,
 } from "./protocol";
 import { isWithin, sharedPathFromInput, workspacePathFromInput } from "./workspace-paths";
+
+const logger = createOpenBotLogger("agent-service");
 
 // Both types were declared in this module before the split and are part of the frozen public
 // surface, so they keep being reachable from here rather than only from the controller that owns
@@ -1061,7 +1064,7 @@ export class AgentService extends EventEmitter<AgentServiceEvents> {
   }
 
   #logProviderSessionRecovery(botId: string, provider: AgentProvider, outcome: "resumed" | "replaced"): void {
-    console.warn("Recovered an unavailable provider session.", { botId, provider, outcome });
+    logger.warn("Recovered an unavailable provider session.", { botId, provider, outcome });
   }
 
   async #requestWithArchivedThreadRecovery<T>(

@@ -2,7 +2,10 @@ import { randomBytes } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { createOpenBotLogger } from "@openbot/logging";
 import { SunshineMoonlightRuntime } from "../src/main/sunshine-moonlight-runtime";
+
+const logger = createOpenBotLogger("remote-desktop-runtime-smoke");
 
 if (process.platform !== "darwin") {
   throw new Error("The local runtime smoke test currently supports macOS only.");
@@ -38,7 +41,7 @@ try {
   }
   const streamPage = await fetch(`${state.baseUrl}/stream.html`);
   if (!streamPage.ok) throw new Error(`Moonlight stream page failed with HTTP ${streamPage.status}.`);
-  console.log(
+  logger.info(
     `Remote desktop runtime is ready on loopback (hosts ${state.hostIds.join(", ")}, app ${state.desktopAppId}).`,
   );
 } finally {

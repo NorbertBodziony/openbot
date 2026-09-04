@@ -29,8 +29,9 @@ try {
       }
     : null;
 
-  console.log(
-    JSON.stringify(
+  // Machine-readable: doctor result JSON consumed by tooling.
+  process.stdout.write(
+    `${JSON.stringify(
       {
         ok: account.account?.type === "chatgpt",
         executable: cli.executable,
@@ -41,12 +42,15 @@ try {
       },
       null,
       2,
-    ),
+    )}\n`,
   );
 
   if (strict && account.account?.type !== "chatgpt") process.exitCode = 1;
 } catch (error) {
-  console.error(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }, null, 2));
+  // Machine-readable: doctor failure JSON consumed by tooling.
+  process.stderr.write(
+    `${JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }, null, 2)}\n`,
+  );
   process.exitCode = 1;
 } finally {
   if (client) await client.stop();

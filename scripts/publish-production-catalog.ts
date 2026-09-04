@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDynamicRecord, isNumber, isString } from "@openbot/contracts/runtime-values";
+import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import { buildProductionCatalog } from "./build-production-catalog";
+
+const logger = createOpenBotLogger("publish-production-catalog");
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const authApiRoot = join(projectRoot, "apps", "auth-api");
@@ -251,7 +254,7 @@ function parseArguments(args: string[]): boolean {
 
 if (import.meta.main) {
   publishProductionCatalog(parseArguments(process.argv.slice(2))).catch((error) => {
-    console.error(error instanceof Error ? error.message : "Production catalog publication failed.");
+    logger.error("Production catalog publication failed.", toLogValue(error));
     process.exitCode = 1;
   });
 }

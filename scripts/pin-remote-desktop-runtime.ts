@@ -64,5 +64,6 @@ if (import.meta.main) {
   const manifestBytes = await readFile(resolve(manifestPath));
   const updated = pinRemoteDesktopRuntime(lock, JSON.parse(manifestBytes.toString("utf8")), sha256(manifestBytes));
   await writeFile(resolve(sourceRoot, "native-runtime.lock.json"), `${JSON.stringify(updated, null, 2)}\n`);
-  console.log(`Pinned ${updated.remoteDesktop.artifactRelease?.tag}.`);
+  // Machine-readable: tooling parses the pinned tag from stdout.
+  process.stdout.write(`Pinned ${updated.remoteDesktop.artifactRelease?.tag}.\n`);
 }
