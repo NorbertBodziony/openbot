@@ -117,7 +117,8 @@ provider logs are outside the OpenBot application database and its daily mainten
 
 ## Data stored on the OpenBot computer
 
-- `~/OpenBot/Bots` contains one workspace per agent.
+- `~/OpenBot/Agents` contains one workspace per agent. A profile written by a release before the
+  bot-to-agent rename holds them under `~/OpenBot/Bots`; the application moves them on first launch.
 - `~/OpenBot/Shared` contains managed transfers shared between agents.
 - `~/OpenBot/Downloads` contains files downloaded by the embedded browser.
 - `~/Library/Application Support/OpenBot` contains the OpenBot SQLite database, agent metadata,

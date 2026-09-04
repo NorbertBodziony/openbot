@@ -5,6 +5,18 @@ All notable changes to OpenBot will be documented here. The project follows
 
 ## [Unreleased]
 
+### Changed
+
+- Finish naming the product concept **agent** everywhere: identifiers, IPC channels, CSS, copy, the
+  mobile app, and the instructions and tool parameters the models read. Existing agent identifiers are
+  rewritten from `bot-<uuid>` to `agent-<uuid>` and every workspace moves from `~/OpenBot/Bots` to
+  `~/OpenBot/Agents` on first launch. The Team API wire protocol is unchanged — versions 1 to 3 still
+  spell the agent `botId`, and a translation layer converts.
+- **Paired phones must be unpaired and paired again after this update.** A phone stores the agent
+  identifiers it was given, and those identifiers have changed, so its pins and unread markers point at
+  agents the host no longer knows. Chats open normally again once the phone is re-paired; nothing on the
+  computer is lost.
+
 ### Fixed
 
 - Import EML messages as single, unchanged chat attachments for agents to inspect directly.
