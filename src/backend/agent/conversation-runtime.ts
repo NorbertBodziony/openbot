@@ -34,36 +34,32 @@ export function withDatabaseTransaction<T>(
   // otherwise make this call BEGIN IMMEDIATE inside it, which SQLite rejects.
   if (database.connection.isTransaction) {
     const owner = openTransactions.get(database);
+    let result: T;
     try {
-      const result = work();
-      if (owner) {
-        if (onRollback) owner.rollback.push(onRollback);
-        if (onCommit) owner.commit.push(onCommit);
-      } else {
-        // An ambient transaction this helper did not open has no queue to defer onto, so the
-        // effects run as they always did.
-        onCommit?.();
-      }
-      return result;
+      result = work();
     } catch (error) {
       // Our own work failed, so undo our in-memory slice now rather than queueing it: the owner's
       // ROLLBACK will undo the rows, and a queued restorer would run a second time.
       onRollback?.();
       throw error;
     }
+    if (owner) {
+      if (onRollback) owner.rollback.push(onRollback);
+      if (onCommit) owner.commit.push(onCommit);
+    } else {
+      // An ambient transaction this helper did not open has no queue to defer onto, so the
+      // effects run as they always did.
+      onCommit?.();
+    }
+    return result;
   }
   database.connection.exec("BEGIN IMMEDIATE");
   const scope: TransactionScope = { rollback: [], commit: [] };
   openTransactions.set(database, scope);
+  let result: T;
   try {
-    const result = work();
+    result = work();
     database.connection.exec("COMMIT");
-    // Cleared before the queued effects run: publishing a conversation can re-enter this function,
-    // which must then open its own transaction instead of joining one that is already committed.
-    openTransactions.delete(database);
-    for (const effect of scope.commit) effect();
-    onCommit?.();
-    return result;
   } catch (error) {
     if (database.connection.isTransaction) database.connection.exec("ROLLBACK");
     openTransactions.delete(database);
@@ -72,6 +68,16 @@ export function withDatabaseTransaction<T>(
     onRollback?.();
     throw error;
   }
+  // Past COMMIT the rows are durable, so the effects run outside the block above: a listener that
+  // throws while a conversation is published must not reach the restorers, which would put the
+  // in-memory projection back to a state SQLite no longer holds. Only `work` and `COMMIT` roll back.
+  //
+  // The scope is cleared first because publishing can re-enter this function, which must then open
+  // its own transaction instead of joining one that is already committed.
+  openTransactions.delete(database);
+  for (const effect of scope.commit) effect();
+  onCommit?.();
+  return result;
 }
 
 export interface ConversationTransaction {

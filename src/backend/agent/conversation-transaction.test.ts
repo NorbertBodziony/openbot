@@ -83,6 +83,39 @@ describe("conversation transactions", () => {
     expect(published).toEqual([]);
   });
 
+  it("keeps memory agreeing with SQLite when publishing throws after the commit", () => {
+    const message = systemMessage("committed");
+    const threadRowsBefore = threadRowCount();
+    runtime = new ConversationRuntime(
+      store,
+      (event) => {
+        if (event.type === "conversation") throw new Error("a conversation listener failed");
+      },
+      () => store.list(),
+    );
+
+    expect(() =>
+      runtime.withConversationTransaction(BOT_ID, ({ threadId, snapshot }) => {
+        snapshot.messages.push(message);
+        snapshot.revision = store.database.appendConversationMessage({
+          botId: BOT_ID,
+          threadId,
+          activeTurnId: snapshot.activeTurnId,
+          message,
+          eventType: "test.committed-append",
+        });
+        return { result: undefined, snapshot };
+      }),
+    ).toThrow("a conversation listener failed");
+
+    // COMMIT already ran, so these rows are durable and nothing in memory may claim otherwise: a
+    // restored snapshot or a cleared thread id would leave the renderer reading a conversation
+    // SQLite no longer agrees with, and the caller retrying a mutation that already applied.
+    expect(threadRowCount()).toBe(threadRowsBefore + 1);
+    expect(store.list().find((candidate) => candidate.id === BOT_ID)?.threadId).toBeTruthy();
+    expect(runtime.snapshot(BOT_ID)?.messages).toEqual([message]);
+  });
+
   it("restores the snapshot and the thread identity when the body throws", () => {
     const before = structuredClone(runtime.ensureSnapshot(BOT_ID, null));
     expect(before.threadId).toBeNull();
