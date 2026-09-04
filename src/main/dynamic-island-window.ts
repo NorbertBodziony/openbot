@@ -198,7 +198,10 @@ export class DynamicIslandWindowController {
     window.setHasShadow(false);
     window.setWindowButtonVisibility(false);
     window.setAlwaysOnTop(true, "status");
-    window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    window.setVisibleOnAllWorkspaces(true, {
+      visibleOnFullScreen: true,
+      skipTransformProcessType: true,
+    });
     window.setHiddenInMissionControl(true);
     window.setFocusable(false);
     window.setIgnoreMouseEvents(true, { forward: true });

@@ -158,6 +158,14 @@ describe("dynamic island window geometry", () => {
     expect(controller.overlayRendererIds).toEqual(new Set([42, 43]));
     expect(windows[0]?.excludedFromShownWindowsMenu).toBe(true);
     expect(windows[1]?.excludedFromShownWindowsMenu).toBe(true);
+    expect(windows[0]?.setVisibleOnAllWorkspaces).toHaveBeenCalledWith(true, {
+      skipTransformProcessType: true,
+      visibleOnFullScreen: true,
+    });
+    expect(windows[1]?.setVisibleOnAllWorkspaces).toHaveBeenCalledWith(true, {
+      skipTransformProcessType: true,
+      visibleOnFullScreen: true,
+    });
     expect(windows[0]?.setHiddenInMissionControl).toHaveBeenCalledWith(true);
     expect(windows[1]?.setHiddenInMissionControl).toHaveBeenCalledWith(true);
 
