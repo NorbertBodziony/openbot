@@ -63,6 +63,21 @@ describe.sequential("GrokAgentClient", () => {
     ).resolves.toEqual({ rateLimits: null, rateLimitsByLimitId: null });
   });
 
+  it("reads a unified weekly billing period without an included-credit percentage", async () => {
+    process.env.OPENBOT_FAKE_GROK_MODE = "unified-billing";
+    client = new GrokAgentClient({ executable, version: "1.0.13" }, 5_000);
+    client.start();
+    await client.request("initialize", {}, decodeRecordResponse);
+
+    await expect(
+      client.request("account/rateLimits/read", { model: "grok-4.5" }, decodeAccountRateLimitsReadResult),
+    ).resolves.toMatchObject({
+      rateLimits: {
+        secondary: { usedPercent: 0, windowDurationMins: 10_080, resetsAt: 1_788_825_600 },
+      },
+    });
+  });
+
   it("discovers ACP models, configures a session, streams, steers, asks, approves, cancels, and resumes", async () => {
     client = new GrokAgentClient({ executable, version: "1.0.5" }, 5_000);
     const notifications: AppServerNotification[] = [];
@@ -518,10 +533,16 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       id: message.id,
       result: {
         config: {
-          creditUsagePercent: 8,
+          ...(mode === "unified-billing"
+            ? { onDemandCap: {}, onDemandUsed: {}, prepaidBalance: {}, isUnifiedBillingUser: true }
+            : { creditUsagePercent: 8 }),
           currentPeriod: mode === "monthly-billing"
             ? { periodType: "USAGE_PERIOD_TYPE_MONTHLY", start: "2026-09-01T00:00:00Z", end: "2026-10-01T00:00:00Z" }
-            : { start: "2026-09-01T00:00:00Z", end: "2026-09-08T00:00:00Z" },
+            : {
+                type: mode === "unified-billing" ? "USAGE_PERIOD_TYPE_WEEKLY" : undefined,
+                start: "2026-09-01T00:00:00Z",
+                end: "2026-09-08T00:00:00Z",
+              },
         },
       },
     });
