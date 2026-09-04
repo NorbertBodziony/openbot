@@ -76,6 +76,7 @@ import { registerUpdateIpcHandlers } from "./ipc/register-update-handlers";
 import { registerVoiceIpcHandlers } from "./ipc/register-voice-handlers";
 import { MacHapticFeedback } from "./mac-haptic-feedback";
 import {
+  ensureMacApplicationPresence,
   presentMainWindow,
   readMainWindowBounds,
   resolveMainWindowBounds,
@@ -517,6 +518,9 @@ function createDynamicIslandWindow(bounds: Rectangle, _display: Display): Browse
     show: false,
     transparent: true,
     frame: false,
+    alwaysOnTop: true,
+    focusable: false,
+    hiddenInMissionControl: true,
     resizable: false,
     movable: false,
     minimizable: false,
@@ -888,6 +892,11 @@ if (!hasSingleInstanceLock) {
   void app
     .whenReady()
     .then(async () => {
+      await ensureMacApplicationPresence(
+        process.platform,
+        (policy) => app.setActivationPolicy(policy),
+        () => app.dock?.show() ?? Promise.resolve(),
+      );
       if (process.platform === "darwin") app.setAsDefaultProtocolClient("openbot");
       if (process.platform === "darwin") app.dock?.setIcon(appIconPath);
       configureContentSecurityPolicy();

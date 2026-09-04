@@ -193,6 +193,7 @@ export class DynamicIslandWindowController {
 
   private async createDisplayWindow(display: Display, bounds: Rectangle): Promise<void> {
     const window = this.#options.createWindow(bounds, display);
+    window.excludedFromShownWindowsMenu = true;
     this.#windows.set(display.id, window);
     window.setHasShadow(false);
     window.setWindowButtonVisibility(false);

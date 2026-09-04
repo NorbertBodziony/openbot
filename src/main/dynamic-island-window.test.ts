@@ -156,6 +156,8 @@ describe("dynamic island window geometry", () => {
     await controller.initialize();
     expect(windows).toHaveLength(2);
     expect(controller.overlayRendererIds).toEqual(new Set([42, 43]));
+    expect(windows[0]?.excludedFromShownWindowsMenu).toBe(true);
+    expect(windows[1]?.excludedFromShownWindowsMenu).toBe(true);
     expect(windows[0]?.setHiddenInMissionControl).toHaveBeenCalledWith(true);
     expect(windows[1]?.setHiddenInMissionControl).toHaveBeenCalledWith(true);
 
@@ -651,6 +653,7 @@ describe("dynamic island window geometry", () => {
 });
 
 class FakeWindow extends EventEmitter {
+  excludedFromShownWindowsMenu = false;
   readonly webContents: EventEmitter & {
     id: number;
     send: ReturnType<typeof vi.fn>;

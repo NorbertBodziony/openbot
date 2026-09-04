@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  ensureMacApplicationPresence,
   presentMainWindow,
   readMainWindowBounds,
   resolveMainWindowBounds,
@@ -15,6 +16,18 @@ const primary = { x: 0, y: 0, width: 1440, height: 900 };
 const secondary = { x: 1440, y: 0, width: 1920, height: 1080 };
 
 describe("main window state", () => {
+  it("keeps the macOS application in the Dock and application switcher", async () => {
+    const setActivationPolicy = vi.fn();
+    const showDock = vi.fn(async () => undefined);
+
+    await ensureMacApplicationPresence("darwin", setActivationPolicy, showDock);
+    await ensureMacApplicationPresence("linux", setActivationPolicy, showDock);
+
+    expect(setActivationPolicy).toHaveBeenCalledOnce();
+    expect(setActivationPolicy).toHaveBeenCalledWith("regular");
+    expect(showDock).toHaveBeenCalledOnce();
+  });
+
   it("unhides the macOS application and restores a minimized main window", () => {
     const showApplication = vi.fn();
     const window = {

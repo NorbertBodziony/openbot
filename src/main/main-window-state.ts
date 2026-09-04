@@ -15,6 +15,16 @@ interface MainWindowPresentationTarget {
   focus(): void;
 }
 
+export async function ensureMacApplicationPresence(
+  platform: NodeJS.Platform,
+  setActivationPolicy: (policy: "regular") => void,
+  showDock: () => Promise<void>,
+): Promise<void> {
+  if (platform !== "darwin") return;
+  setActivationPolicy("regular");
+  await showDock();
+}
+
 export function presentMainWindow(
   window: MainWindowPresentationTarget,
   platform: NodeJS.Platform,
