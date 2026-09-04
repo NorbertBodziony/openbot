@@ -1,6 +1,6 @@
 import type { BotSummary } from "@openbot/contracts/ipc";
 import type { AgentClient, AgentProvider } from "../agent-client";
-import type { BotStore } from "../bot-store";
+import type { BotStore } from "../agent-store";
 import { BROWSER_DYNAMIC_TOOLS } from "../browser-host";
 import { mergeConversationSnapshots } from "../conversation-snapshots";
 import type { MailboxStore } from "../mailbox-store";

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentRoutineStore } from "./agent-routine-store";
-import { BotStore } from "./bot-store";
+import { BotStore } from "./agent-store";
 import { OpenBotDatabase } from "./openbot-database";
 
 const roots: string[] = [];

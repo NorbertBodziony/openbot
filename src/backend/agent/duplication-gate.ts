@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AgentEvent, BotSummary, DuplicateBotResult, SidebarLayoutSnapshot } from "@openbot/contracts/ipc";
-import { type BotStore, duplicationProfileSignature } from "../bot-store";
+import { type BotStore, duplicationProfileSignature } from "../agent-store";
 import type { MailboxStore } from "../mailbox-store";
 import type { AgentMemories } from "./agent-memories";
 import type { ConversationRuntime } from "./conversation-runtime";

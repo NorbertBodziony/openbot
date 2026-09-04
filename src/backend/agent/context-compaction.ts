@@ -1,4 +1,4 @@
-import type { BotStore } from "../bot-store";
+import type { BotStore } from "../agent-store";
 import { decodeRecordResponse, getRecord } from "../protocol";
 import { finiteNumberOrNull } from "./account-usage";
 import type { ProviderPort } from "./provider-runtime";

@@ -3,9 +3,8 @@ import { Link } from "expo-router";
 import { Typography } from "heroui-native";
 import { ArrowLeft, Monitor } from "lucide-react-native";
 import { Alert, View, type ViewStyle } from "react-native";
-
-import { BloubAvatar } from "@/features/bots/components/bloub-avatar";
-import { BotPinAvatar } from "@/features/bots/components/bot-pin-avatar";
+import { BotPinAvatar } from "@/features/agents/components/agent-pin-avatar";
+import { BloubAvatar } from "@/features/agents/components/bloub-avatar";
 import { ChatGlassIconButton } from "@/features/chat/components/chat-glass-icon-button";
 import type { MobileBot } from "@/features/workspace/context/mobile-workspace-context";
 import { SheetScrollEdgeEffect } from "@/shared/components/sheet-scroll-edge-effect";

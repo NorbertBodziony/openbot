@@ -31,7 +31,7 @@ import {
 import electronUpdater from "electron-updater";
 import { z } from "zod";
 import { AgentService } from "../backend/agent-service";
-import { BotStore } from "../backend/bot-store";
+import { BotStore } from "../backend/agent-store";
 import { BrowserHost } from "../backend/browser-host";
 import { isCloseBrowserTabShortcut, isSelectAllShortcut, isToggleDevToolsShortcut } from "../backend/browser-shortcuts";
 import { MailboxStore } from "../backend/mailbox-store";

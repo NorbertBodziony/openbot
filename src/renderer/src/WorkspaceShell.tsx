@@ -9,7 +9,7 @@ import { RemoteCompatibilityScreen } from "./RemoteCompatibilityScreen";
 import { useRemoteDesktop } from "./remote-desktop";
 import { useServers } from "./servers";
 import { WorkspaceAccountDock } from "./WorkspaceAccountDock";
-import { WorkspaceBotSetup } from "./WorkspaceBotSetup";
+import { WorkspaceBotSetup } from "./WorkspaceAgentSetup";
 import { WorkspaceConversation } from "./WorkspaceConversation";
 import { WorkspaceDirectConversation } from "./WorkspaceDirectConversation";
 import { WorkspaceLeftPanelResizer } from "./WorkspaceLeftPanelResizer";

@@ -11,10 +11,9 @@ import Animated, {
   LinearTransition,
   ReduceMotion,
 } from "react-native-reanimated";
-
-import { BloubAvatar } from "@/features/bots/components/bloub-avatar";
-import { useBotContextMenu } from "@/features/bots/components/bot-context-menu";
-import { BotPinAvatar } from "@/features/bots/components/bot-pin-avatar";
+import { useBotContextMenu } from "@/features/agents/components/agent-context-menu";
+import { BotPinAvatar } from "@/features/agents/components/agent-pin-avatar";
+import { BloubAvatar } from "@/features/agents/components/bloub-avatar";
 import { type MobileBot, useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { isIOS } from "@/shared/lib/platform";
 
@@ -67,7 +66,7 @@ function PinnedBotItem({ bot }: { bot: MobileBot }) {
 
   return (
     <Animated.View entering={PINNED_ENTER} exiting={PINNED_EXIT} layout={PINNED_ITEM_LAYOUT}>
-      <Link href={{ pathname: "/chat/[botId]", params: { botId: bot.id } }} asChild onPress={handleOpen}>
+      <Link href={{ pathname: "/chat/[agentId]", params: { agentId: bot.id } }} asChild onPress={handleOpen}>
         <Link.Trigger>
           <Pressable
             accessibilityLabel={`Open pinned chat with ${bot.name}`}

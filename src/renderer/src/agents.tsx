@@ -10,7 +10,7 @@ import { desktopAnalytics } from "./analytics";
 import { FALLBACK_STATUS } from "./app-defaults";
 import { botProfilesEqual, toBotProfile } from "./app-message-projection";
 import { createStoredProfile, updateStored } from "./app-stored-values";
-import { createFirstBotDraft, type FirstBotDraft } from "./components/FirstBotSetup";
+import { createFirstBotDraft, type FirstBotDraft } from "./components/FirstAgentSetup";
 import type { BotProfile } from "./data";
 import { useDirectMessages } from "./direct-messages";
 import { useServers } from "./servers";

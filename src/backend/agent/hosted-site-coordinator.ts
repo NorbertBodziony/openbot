@@ -13,7 +13,7 @@ import type {
 import { hostedSiteConversationEventItemType, hostedSiteConversationEventText } from "@openbot/contracts/ipc";
 import { isBoolean } from "@openbot/contracts/runtime-values";
 import type { AgentClient } from "../agent-client";
-import type { BotStore } from "../bot-store";
+import type { BotStore } from "../agent-store";
 import { sortConversationMessages } from "../conversation-snapshots";
 import type { PendingHostedSiteTerminalEvent } from "../openbot-database";
 import { type AppServerRequest, type DynamicToolCallParams, isRecord, type RequestId } from "../protocol";

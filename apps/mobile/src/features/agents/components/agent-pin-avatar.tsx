@@ -1,7 +1,7 @@
 import { type PropsWithChildren, useEffect, useRef } from "react";
 import { View } from "react-native";
 
-import { type BotAvatarLocation, useBotPinTransition } from "@/features/bots/components/bot-pin-transition";
+import { type BotAvatarLocation, useBotPinTransition } from "@/features/agents/components/agent-pin-transition";
 
 interface BotPinAvatarProps extends PropsWithChildren {
   botId: string;

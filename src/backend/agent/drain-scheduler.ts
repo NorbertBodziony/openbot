@@ -1,4 +1,4 @@
-import type { BotStore } from "../bot-store";
+import type { BotStore } from "../agent-store";
 import type { DeliveryContext, MailboxStore } from "../mailbox-store";
 import { decodeTurnResponse } from "../protocol";
 import type { ContextCompaction } from "./context-compaction";

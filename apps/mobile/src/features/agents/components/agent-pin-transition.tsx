@@ -15,7 +15,7 @@ import { Alert, View } from "react-native";
 import { Easing, ReduceMotion, useSharedValue, withTiming } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 
-import { BotPinTransitionOverlay } from "@/features/bots/components/bot-pin-transition-overlay";
+import { BotPinTransitionOverlay } from "@/features/agents/components/agent-pin-transition-overlay";
 import { MAX_PINNED_BOTS, useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { isIOS } from "@/shared/lib/platform";
 

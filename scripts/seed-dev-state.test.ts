@@ -7,7 +7,7 @@ import { attachmentReferenceIds } from "@openbot/contracts/attachment-references
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentMemoryStore } from "../src/backend/agent-memory-store";
 import { AgentRoutineStore } from "../src/backend/agent-routine-store";
-import { BotStore } from "../src/backend/bot-store";
+import { BotStore } from "../src/backend/agent-store";
 import { MailboxStore } from "../src/backend/mailbox-store";
 import { TeamChatStore } from "../src/backend/team-chat-store";
 import { developmentUserDataName } from "../src/main/development-profile";

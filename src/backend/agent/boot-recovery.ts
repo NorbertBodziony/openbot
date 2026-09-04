@@ -1,4 +1,4 @@
-import type { BotStore } from "../bot-store";
+import type { BotStore } from "../agent-store";
 import { mergeProviderHistory, snapshotFromThread } from "../conversation-snapshots";
 import type { MailboxStore } from "../mailbox-store";
 import { decodeThreadResponse } from "../protocol";

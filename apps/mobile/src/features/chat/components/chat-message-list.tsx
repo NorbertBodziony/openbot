@@ -10,7 +10,7 @@ import {
   type ViewStyle,
 } from "react-native";
 
-import { getBloubAvatarColor } from "@/features/bots/components/bloub-avatar";
+import { getBloubAvatarColor } from "@/features/agents/components/bloub-avatar";
 import type { MobileBot } from "@/features/workspace/context/mobile-workspace-context";
 
 export interface ChatMessage {

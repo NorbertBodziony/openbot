@@ -10,10 +10,10 @@ import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspac
 export function BotChatScreen() {
   usePreventZoomTransitionDismissal();
 
-  const { avatarTransition, botId } = useLocalSearchParams<{ avatarTransition?: string; botId: string }>();
+  const { avatarTransition, agentId } = useLocalSearchParams<{ avatarTransition?: string; agentId: string }>();
   const { bots } = useMobileWorkspace();
   const foreground = useThemeColor("foreground");
-  const resolvedBotId = Array.isArray(botId) ? botId[0] : botId;
+  const resolvedBotId = Array.isArray(agentId) ? agentId[0] : agentId;
   const resolvedAvatarTransition = Array.isArray(avatarTransition) ? avatarTransition[0] : avatarTransition;
   const animateAvatarOnExit = resolvedAvatarTransition === "search";
   const bot = bots.find((candidate) => candidate.id === resolvedBotId);

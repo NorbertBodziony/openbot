@@ -22,7 +22,7 @@ for the component patterns, not the imports.
 **Prefer one `createStore` per concern over a row of `createSignal` calls.** Fields that change
 together are one record — a saved-and-draft form pair, a `data`/`loaded`/`loading`/`error` quad, a
 phase plus the numbers only one phase uses, several `Record`s keyed by the same `botId`. Declare the
-shape up front, so replacing one field re-renders only what read that field; `FirstBotSetup.tsx` is
+shape up front, so replacing one field re-renders only what read that field; `FirstAgentSetup.tsx` is
 the form version. Keep the setter private behind named mutations where the store *is* a module's or
 a hook's exported surface, as `app-stored-values.ts` and `createAsyncPanel.ts` do. Inside a
 component, write the field where it changes — `setPanels((state) => { state.x = value; })` at the

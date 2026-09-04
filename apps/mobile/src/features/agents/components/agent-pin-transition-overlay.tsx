@@ -1,7 +1,6 @@
 import Animated, { interpolate, type SharedValue, useAnimatedStyle } from "react-native-reanimated";
-
-import { BloubAvatar } from "@/features/bots/components/bloub-avatar";
-import type { BotPinTransitionState } from "@/features/bots/components/bot-pin-transition";
+import type { BotPinTransitionState } from "@/features/agents/components/agent-pin-transition";
+import { BloubAvatar } from "@/features/agents/components/bloub-avatar";
 
 interface BotPinTransitionOverlayProps {
   progress: SharedValue<number>;

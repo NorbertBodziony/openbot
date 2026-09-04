@@ -75,7 +75,7 @@ import { isDynamicToolCall, providerForBot, providerLabel } from "./agent/thread
 import { ThreadLifecycle } from "./agent/thread-lifecycle";
 import { type AgentBrowserHost, TurnLifecycle } from "./agent/turn-lifecycle";
 import type { AgentClient, AgentProvider } from "./agent-client";
-import type { BotStore } from "./bot-store";
+import type { BotStore } from "./agent-store";
 import { OPENBOT_BROWSER_NAMESPACE } from "./browser-host";
 import { type ConversationMarkerExclusions, ConversationReadStore } from "./conversation-read-store";
 import { mergeConversationSnapshots } from "./conversation-snapshots";

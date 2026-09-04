@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ConversationMessage } from "@openbot/contracts/ipc";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { BotStore } from "../bot-store";
+import { BotStore } from "../agent-store";
 import { ConversationRuntime, withDatabaseTransaction } from "./conversation-runtime";
 
 let root: string;

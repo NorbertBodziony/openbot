@@ -9,7 +9,7 @@ import { createOpenBotLogger, toLogValue } from "@openbot/logging";
 import { z } from "zod";
 import { AgentMemoryStore } from "../src/backend/agent-memory-store";
 import { AgentRoutineStore } from "../src/backend/agent-routine-store";
-import { BotStore } from "../src/backend/bot-store";
+import { BotStore } from "../src/backend/agent-store";
 import { sortConversationMessages } from "../src/backend/conversation-snapshots";
 import { MailboxStore } from "../src/backend/mailbox-store";
 import { TeamChatStore } from "../src/backend/team-chat-store";

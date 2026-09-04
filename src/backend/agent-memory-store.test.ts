@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { afterEach, describe, expect, it } from "vitest";
 import { AgentMemoryStore } from "./agent-memory-store";
-import { BotStore } from "./bot-store";
+import { BotStore } from "./agent-store";
 import { OpenBotDatabase } from "./openbot-database";
 
 const roots: string[] = [];

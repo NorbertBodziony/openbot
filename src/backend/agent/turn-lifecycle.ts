@@ -7,7 +7,7 @@ import type {
 } from "@openbot/contracts/ipc";
 import { isString } from "@openbot/contracts/runtime-values";
 import type { AgentClient } from "../agent-client";
-import type { BotStore } from "../bot-store";
+import type { BotStore } from "../agent-store";
 import { newAssistantMessage, normalizeCompletionStatus } from "../conversation-snapshots";
 import type { DeliveryContext, MailboxStore } from "../mailbox-store";
 import {

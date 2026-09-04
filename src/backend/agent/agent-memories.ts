@@ -8,7 +8,7 @@ import type {
 } from "@openbot/contracts/ipc";
 import { isString } from "@openbot/contracts/runtime-values";
 import { AgentMemoryStore } from "../agent-memory-store";
-import type { BotStore } from "../bot-store";
+import type { BotStore } from "../agent-store";
 import { type DynamicToolCallParams, isRecord } from "../protocol";
 import type { ConversationRuntime } from "./conversation-runtime";
 import { type OpenBotToolResponse, openBotToolResult } from "./routine-tools";

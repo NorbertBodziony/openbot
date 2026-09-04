@@ -1,6 +1,6 @@
 import { useAgentActions } from "./agent-actions";
 import { useAgents } from "./agents";
-import { FIRST_BOT_SUGGESTIONS, FirstBotSetup } from "./components/FirstBotSetup";
+import { FIRST_BOT_SUGGESTIONS, FirstBotSetup } from "./components/FirstAgentSetup";
 
 /**
  * The create-a-Bot form, which takes over the conversation pane instead of

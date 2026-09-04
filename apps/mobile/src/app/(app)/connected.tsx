@@ -1,1 +1,1 @@
-export { ConnectedScreen as default } from "@/features/bots/screens/connected-screen";
+export { ConnectedScreen as default } from "@/features/agents/screens/connected-screen";

@@ -4,7 +4,7 @@ import { Link, router } from "expo-router";
 import { useRef } from "react";
 import { Alert } from "react-native";
 
-import { useBotPinTransition } from "@/features/bots/components/bot-pin-transition";
+import { useBotPinTransition } from "@/features/agents/components/agent-pin-transition";
 import { type MobileBot, useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { isIOS } from "@/shared/lib/platform";
 
@@ -83,7 +83,7 @@ export function useBotContextMenu(bot: MobileBot) {
       <Link.Menu icon="ellipsis" title="More">
         <Link.MenuAction
           icon="pencil"
-          onPress={() => router.push({ pathname: "/edit-bot/[botId]", params: { botId: bot.id } })}
+          onPress={() => router.push({ pathname: "/edit-agent/[agentId]", params: { agentId: bot.id } })}
         >
           Edit
         </Link.MenuAction>

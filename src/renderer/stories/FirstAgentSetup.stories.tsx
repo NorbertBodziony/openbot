@@ -8,7 +8,7 @@ import {
   FirstBotSetup,
   type FirstBotSetupProps,
   type FirstBotSuggestion,
-} from "../src/components/FirstBotSetup";
+} from "../src/components/FirstAgentSetup";
 
 function draftFromSuggestion(suggestion: FirstBotSuggestion): FirstBotDraft {
   return {
@@ -51,7 +51,7 @@ const args: FirstBotSetupProps = {
 };
 
 const meta = {
-  title: "Setup/FirstBotSetup",
+  title: "Setup/FirstAgentSetup",
   component: FirstBotSetup,
   args,
   parameters: {

@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-lib
 import { createSignal, Show } from "solid-js";
 import { expect, it, vi } from "vitest";
 import { App } from "./App";
+import { createBotInitialMessage } from "./agent-initial-message";
 import { useAgents } from "./agents";
 import { desktopAnalytics } from "./analytics";
 import { AppProviders } from "./app-providers";
@@ -19,7 +20,6 @@ import {
   testConversationPage,
   testServer,
 } from "./app-test-harness";
-import { createBotInitialMessage } from "./bot-initial-message";
 import { useConversation } from "./conversation";
 import { useLayout } from "./layout";
 import { useNavigation } from "./navigation";

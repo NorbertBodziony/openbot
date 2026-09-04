@@ -7,9 +7,9 @@ import { useMemo } from "react";
 import { ActivityIndicator, FlatList, Pressable, View } from "react-native";
 import Animated, { Easing, FadeIn, FadeOut, ReduceMotion } from "react-native-reanimated";
 
-import { BotListRow } from "@/features/bots/components/bot-list-row";
-import { useBotPinTransition } from "@/features/bots/components/bot-pin-transition";
-import { PinnedBotsStrip } from "@/features/bots/components/pinned-bots-strip";
+import { BotListRow } from "@/features/agents/components/agent-list-row";
+import { useBotPinTransition } from "@/features/agents/components/agent-pin-transition";
+import { PinnedBotsStrip } from "@/features/agents/components/pinned-agents-strip";
 import { useAppDrawer } from "@/features/servers/components/app-drawer-shell";
 import { ConnectionStatus } from "@/features/workspace/components/connection-status";
 import { type MobileBot, useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
@@ -150,7 +150,7 @@ export function ConnectedScreen() {
                   Add a bot to start working from your phone.
                 </Typography.Paragraph>
               </View>
-              <Button size="md" variant="secondary" onPress={() => router.push("/add-bot")}>
+              <Button size="md" variant="secondary" onPress={() => router.push("/add-agent")}>
                 <Plus color={iconColor} size={18} strokeWidth={2} />
                 <Button.Label>Add bot</Button.Label>
               </Button>
@@ -172,14 +172,14 @@ export function ConnectedScreen() {
             ? () => (
                 <View className="flex-row items-center gap-1">
                   {IS_BOT_SEARCH_ENABLED ? (
-                    <HeaderIconButton accessibilityLabel="Search bots" onPress={() => router.push("/search-bots")}>
+                    <HeaderIconButton accessibilityLabel="Search bots" onPress={() => router.push("/search-agents")}>
                       <Search color={iconColor} size={22} strokeWidth={1.9} />
                     </HeaderIconButton>
                   ) : null}
                   <MenuView
                     actions={optionsActions}
                     onPressAction={(event) => {
-                      if (event.nativeEvent.event === "add-bot") router.push("/add-bot");
+                      if (event.nativeEvent.event === "add-bot") router.push("/add-agent");
                       if (event.nativeEvent.event === "hidden-chats") router.push("/hidden-chats");
                     }}
                     style={{ height: 44, width: 44 }}
@@ -208,10 +208,10 @@ export function ConnectedScreen() {
           </Stack.Toolbar>
           <Stack.Toolbar placement="right">
             {IS_BOT_SEARCH_ENABLED ? (
-              <Stack.Toolbar.Button icon="magnifyingglass" onPress={() => router.push("/search-bots")} />
+              <Stack.Toolbar.Button icon="magnifyingglass" onPress={() => router.push("/search-agents")} />
             ) : null}
             <Stack.Toolbar.Menu icon="ellipsis">
-              <Stack.Toolbar.MenuAction icon="plus.circle" onPress={() => router.push("/add-bot")}>
+              <Stack.Toolbar.MenuAction icon="plus.circle" onPress={() => router.push("/add-agent")}>
                 Add bot
               </Stack.Toolbar.MenuAction>
               {hiddenBots.length > 0 ? (

@@ -14,7 +14,7 @@ import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { scheduleOnRN } from "react-native-worklets";
 
-import { useBotPinTransition } from "@/features/bots/components/bot-pin-transition";
+import { useBotPinTransition } from "@/features/agents/components/agent-pin-transition";
 import { ChatComposer } from "@/features/chat/components/chat-composer";
 import { ChatHeader } from "@/features/chat/components/chat-header";
 import { type ChatMessage, ChatMessageList } from "@/features/chat/components/chat-message-list";

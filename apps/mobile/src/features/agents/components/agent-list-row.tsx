@@ -19,11 +19,10 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
-
-import { BloubAvatar } from "@/features/bots/components/bloub-avatar";
-import { useBotContextMenu } from "@/features/bots/components/bot-context-menu";
-import { BotPinAvatar } from "@/features/bots/components/bot-pin-avatar";
-import { type BotAvatarLocation, useBotPinTransition } from "@/features/bots/components/bot-pin-transition";
+import { useBotContextMenu } from "@/features/agents/components/agent-context-menu";
+import { BotPinAvatar } from "@/features/agents/components/agent-pin-avatar";
+import { type BotAvatarLocation, useBotPinTransition } from "@/features/agents/components/agent-pin-transition";
+import { BloubAvatar } from "@/features/agents/components/bloub-avatar";
 import { type MobileBot, useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { isIOS } from "@/shared/lib/platform";
 
@@ -155,8 +154,8 @@ export function BotListRow({
   );
 
   const href = {
-    pathname: "/chat/[botId]" as const,
-    params: dismissToChat ? { avatarTransition: "search", botId: bot.id } : { botId: bot.id },
+    pathname: "/chat/[agentId]" as const,
+    params: dismissToChat ? { avatarTransition: "search", agentId: bot.id } : { agentId: bot.id },
   };
   const botLink = enableActions ? (
     <Link href={href} asChild dismissTo={dismissToChat} onPress={handleOpen}>

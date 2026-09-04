@@ -10,7 +10,7 @@ import { type DynamicRecord, isDynamicRecord, isString } from "@openbot/contract
 import { expect, vi } from "vitest";
 import type { AgentClient, AgentProvider } from "./agent-client";
 import type { AgentService } from "./agent-service";
-import { BotStore } from "./bot-store";
+import { BotStore } from "./agent-store";
 import { MailboxStore } from "./mailbox-store";
 import {
   type AppServerNotification,

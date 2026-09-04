@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { INPUT_LIMITS } from "@openbot/contracts/input-limits";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BotStore } from "./bot-store";
+import { BotStore } from "./agent-store";
 
 const temporaryRoots: string[] = [];
 const BOT_PROFILE_INPUT = {

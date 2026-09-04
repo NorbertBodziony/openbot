@@ -1,9 +1,9 @@
+import { createBotInitialMessage } from "./agent-initial-message";
 import { useAgents } from "./agents";
 import { desktopAnalytics } from "./analytics";
 import { toBotProfile, withoutBot } from "./app-message-projection";
 import { createStoredProfile } from "./app-stored-values";
-import { createBotInitialMessage } from "./bot-initial-message";
-import type { FirstBotDraft } from "./components/FirstBotSetup";
+import type { FirstBotDraft } from "./components/FirstAgentSetup";
 import { toast } from "./components/ui";
 import { useConversation } from "./conversation";
 import { agentConversationKey, deleteAgentMessageBodies } from "./conversation-keys";

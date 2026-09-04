@@ -3,7 +3,7 @@ import { useThemeColor } from "heroui-native/hooks";
 import { FileText, type LucideIcon, MessageCircle, Repeat2 } from "lucide-react-native";
 import { View } from "react-native";
 
-import { BotListRow } from "@/features/bots/components/bot-list-row";
+import { BotListRow } from "@/features/agents/components/agent-list-row";
 import type { MobileSearchResult } from "@/features/search/model/mobile-search";
 
 const RESULT_ICONS: Record<Exclude<MobileSearchResult["category"], "bots">, LucideIcon> = {

@@ -5,7 +5,7 @@ import { useThemeColor } from "heroui-native/hooks";
 import { Eye } from "lucide-react-native";
 import { Pressable, View } from "react-native";
 
-import { BloubAvatar } from "@/features/bots/components/bloub-avatar";
+import { BloubAvatar } from "@/features/agents/components/bloub-avatar";
 import { useMobileWorkspace } from "@/features/workspace/context/mobile-workspace-context";
 import { SheetScrollView } from "@/shared/components/sheet-scroll-view";
 import { isIOS } from "@/shared/lib/platform";
@@ -35,7 +35,7 @@ export function HiddenChatsScreen() {
         {hiddenBots.map((bot) => (
           <View key={bot.id} className="min-h-18 flex-row items-center gap-2 px-3 py-2">
             <Link
-              href={{ pathname: "/chat/[botId]", params: { botId: bot.id } }}
+              href={{ pathname: "/chat/[agentId]", params: { agentId: bot.id } }}
               asChild
               dismissTo
               onPress={() => {

@@ -8,8 +8,8 @@ import { SheetFormField } from "@/shared/components/sheet-form-field";
 import { SheetScrollView } from "@/shared/components/sheet-scroll-view";
 
 export function EditBotScreen() {
-  const { botId } = useLocalSearchParams<{ botId: string }>();
-  const resolvedBotId = Array.isArray(botId) ? botId[0] : botId;
+  const { agentId } = useLocalSearchParams<{ agentId: string }>();
+  const resolvedBotId = Array.isArray(agentId) ? agentId[0] : agentId;
   const { bots, updateBot } = useMobileWorkspace();
   const bot = bots.find((candidate) => candidate.id === resolvedBotId);
   const [name, setName] = useState(bot?.name ?? "");

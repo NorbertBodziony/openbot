@@ -1,4 +1,4 @@
-import type { FirstBotDraft } from "./components/FirstBotSetup";
+import type { FirstBotDraft } from "./components/FirstAgentSetup";
 
 /** The first message a newly created agent receives, turning its purpose into a standing role. */
 export function createBotInitialMessage(draft: Pick<FirstBotDraft, "purpose">): string {
