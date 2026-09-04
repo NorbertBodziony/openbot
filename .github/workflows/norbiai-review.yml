@@ -458,7 +458,7 @@ jobs:
             --ephemeral \
             --ignore-user-config \
             --sandbox read-only \
-            --model gpt-5.6-sol \
+            --model gpt-6-astra \
             --config 'model_reasoning_effort="medium"' \
             --color never \
             --output-last-message "$last_message_file" \
