@@ -155,6 +155,8 @@ describe("dynamic island window geometry", () => {
 
     await controller.initialize();
     expect(windows).toHaveLength(2);
+    expect(windows[0]?.bounds).toEqual({ x: 449, y: 0, width: 614, height: 50 });
+    expect(windows[1]?.bounds).toEqual({ x: 2165, y: -120, width: 614, height: 50 });
     expect(controller.overlayRendererIds).toEqual(new Set([42, 43]));
     expect(windows[0]?.excludedFromShownWindowsMenu).toBe(true);
     expect(windows[1]?.excludedFromShownWindowsMenu).toBe(true);
@@ -177,6 +179,7 @@ describe("dynamic island window geometry", () => {
     controller.setInteractive(43, true);
     expect(windows[0]?.setFocusable).not.toHaveBeenCalledWith(true);
     expect(windows[1]?.setFocusable).toHaveBeenCalledWith(true);
+    expect(windows[1]?.setBounds).toHaveBeenCalledWith({ x: 2165, y: -120, width: 614, height: 380 }, false);
 
     displays = [
       display({
@@ -189,6 +192,9 @@ describe("dynamic island window geometry", () => {
     await controller.reconcileWindow();
     expect(windows[0]?.destroy).toHaveBeenCalledOnce();
     expect(windows[1]?.setBounds).toHaveBeenCalledWith({ x: 1793, y: 20, width: 614, height: 380 }, false);
+
+    controller.setInteractive(43, false);
+    expect(windows[1]?.setBounds).toHaveBeenCalledWith({ x: 1793, y: 20, width: 614, height: 50 }, false);
   });
 
   it("publishes updated geometry without reloading an existing overlay", async () => {
