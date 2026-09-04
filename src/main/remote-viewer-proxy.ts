@@ -8,6 +8,7 @@ import {
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { isString } from "@openbot/contracts/runtime-values";
+import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import type * as Ws from "ws";
 import {
   decodeRemoteDesktopSignalBinary,
@@ -125,10 +126,14 @@ export class RemoteViewerProxy {
       if (contentType.includes("text/html") || contentType.includes("javascript")) {
         const prefix = this.#basePath(route.serverId);
         const escapedPrefix = prefix.replaceAll("/", "\\/");
+        // Both forms of the namespace the viewer's assets reference: plain in URLs, backslash-escaped
+        // where the bundle embeds it in a regex or a string literal.
+        const namespace = TEAM_API_ROUTES.remoteScreen.prefix;
+        const escapedNamespace = namespace.replaceAll("/", "\\/");
         const text = new TextDecoder()
           .decode(bytes)
-          .replaceAll("\\/v1\\/remote-screen", `${escapedPrefix}\\/v1\\/remote-screen`)
-          .replaceAll("/v1/remote-screen", `${prefix}/v1/remote-screen`);
+          .replaceAll(escapedNamespace, `${escapedPrefix}${escapedNamespace}`)
+          .replaceAll(namespace, `${prefix}${namespace}`);
         bytes = new TextEncoder().encode(text);
       }
       const responseHeaders: OutgoingHttpHeaders = {
