@@ -89,13 +89,14 @@ describe("remote server store", () => {
     });
   });
 
-  it("never writes two entries under one id when reconciliation recreates a preserved one", async () => {
+  it("writes the preserved entry, not the one reconciliation minted over its id", async () => {
     // A WebRTC host whose entry this build cannot read is absent from `servers`, so the next host
     // directory sync offers it as new and `replaceServers` mints a fresh entry with the same id.
     // Writing both would hand the build that *can* read the preserved one a duplicate it cannot
-    // arrange: its `reorder` refuses an ordering whose ids are not unique. The pinned key and
-    // fingerprint are not lost with the copy -- `reconcileWebRtcHosts` puts them on the entry that
-    // takes the id, which is the only place they are consulted from.
+    // arrange -- its `reorder` refuses an ordering whose ids are not unique -- and writing the
+    // synthesized one would drop the fields this build did not recognise for good. Only one of the
+    // two can be rebuilt: the next sync mints the synthesized entry again, with the pinned key and
+    // fingerprint `reconcileWebRtcHosts` reads out of the preserved record.
     const broken = { ...storedServer("beta"), role: "overlord" };
     const path = await storePath({
       version: 3,
@@ -107,12 +108,11 @@ describe("remote server store", () => {
     await store.load();
 
     await store.replaceServers([storedServer("beta", { name: "Advertised" })]);
-    expect(JSON.parse(await readFile(path, "utf8")).servers).toEqual([
-      expect.objectContaining({ id: "beta", name: "Advertised" }),
-    ]);
+    expect(JSON.parse(await readFile(path, "utf8")).servers).toEqual([broken]);
 
-    // Still preserved in memory, so the identity it carries is still offered to reconciliation --
-    // displacing an entry from the file is not retiring it.
+    // Displacing an entry from the file is not retiring it: the app runs on the entry reconciliation
+    // made, and the identity the preserved one carries is still offered to the next merge.
+    expect(store.servers.map((server) => server.name)).toEqual(["Advertised"]);
     expect(store.preservedIdentities.map((identity) => identity.hostId)).toEqual(["beta"]);
   });
 

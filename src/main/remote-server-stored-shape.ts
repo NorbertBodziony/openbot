@@ -120,13 +120,18 @@ export function readStoredRemoteServers(value: unknown): StoredRemoteServers | n
   };
 }
 
-// The on-disk object. Every unreadable entry rejoins `servers`, in the slot it came from -- unless a
-// readable server now holds its id, in which case the readable one is written and the preserved copy
-// is not. Two entries sharing an id is not a file any build can act on: the newer build that can
-// finally decode the preserved entry would list the server twice, and its `reorder` rejects any
-// ordering whose ids are not unique, so the sidebar becomes unarrangeable and stays that way. The
-// identity is not lost by dropping the copy: `reconcileWebRtcHosts` carries the pinned key and
-// fingerprint into the entry that takes the id, which is where the pin has to live to be honoured.
+// The on-disk object. Every unreadable entry rejoins `servers`, in the slot it came from. Where a
+// readable server now holds a preserved entry's id -- which is reconciliation minting one off a
+// directory advertisement, not a user rejoining -- the *preserved* entry is the one written and the
+// synthesized one is not. Both cannot be: two entries under one id is not a file any build can act
+// on, because the build that can finally decode the preserved entry lists the server twice and its
+// `reorder` refuses an ordering whose ids are not unique.
+//
+// The preserved entry wins that choice because it is the only one of the two that cannot be rebuilt.
+// A synthesized WebRTC entry carries no token and nothing the user typed: the next host directory
+// sync makes it again, with the pinned key and fingerprint `reconcileWebRtcHosts` reads out of the
+// preserved record. Writing the synthesized entry instead would drop whatever fields this build did
+// not recognise -- the reason the entry is kept at all -- for good, at the next restart.
 //
 // The slot matters because `servers` order is the sidebar order the user dragged into place. Writing
 // the preserved entries last would let any unrelated write reshuffle a list this build cannot even
@@ -138,25 +143,30 @@ export function serializeStoredRemoteServers(state: StoredRemoteServers): {
   hiddenHostIds: string[];
 } {
   const readableIds = new Set(state.servers.map((server) => server.id));
-  // Only a readable server anchors a slot. An opaque entry cannot: this build did not read its `id`,
-  // so treating one as an anchor would let a field it rejected decide where another entry lands --
-  // and two trailing entries whose `id` happens to be null would anchor on each other and swap.
-  const pending = state.unreadableServers.filter((preserved) => {
+  // A preserved entry whose id a readable server now holds is written where that server sits, so the
+  // position reconciliation gave the host is the position it keeps.
+  const claims = new Map<string, PreservedRemoteServer>();
+  for (const preserved of state.unreadableServers) {
     const id = idOf(preserved.entry);
-    return id === null || !readableIds.has(id);
-  });
+    if (id !== null && readableIds.has(id) && !claims.has(id)) claims.set(id, preserved);
+  }
+  const written = new Set<PreservedRemoteServer>(claims.values());
   const servers: (StoredRemoteServer | DynamicRecord)[] = [];
   for (const server of state.servers) {
-    // In their original order, each one just before the server it used to precede. Several that
-    // shared a successor come out in the order they were read.
-    for (const preserved of pending) {
-      if (preserved.beforeId === server.id) servers.push(preserved.entry);
+    // Only a readable server anchors a slot. An opaque entry cannot: this build did not read its
+    // `id`, so treating one as an anchor would let a field it rejected decide where another entry
+    // lands -- and two entries whose `id` is missing would anchor on each other and swap.
+    for (const preserved of state.unreadableServers) {
+      if (preserved.beforeId !== server.id || written.has(preserved)) continue;
+      written.add(preserved);
+      servers.push(preserved.entry);
     }
-    servers.push(server);
+    const claim = claims.get(server.id);
+    servers.push(claim ? claim.entry : server);
   }
   // A successor that is gone leaves the entry at the end, which is the most its slot can still mean.
-  for (const preserved of pending) {
-    if (preserved.beforeId === null || !readableIds.has(preserved.beforeId)) servers.push(preserved.entry);
+  for (const preserved of state.unreadableServers) {
+    if (!written.has(preserved)) servers.push(preserved.entry);
   }
   return {
     version: state.version,

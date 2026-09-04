@@ -138,17 +138,11 @@ export class RemoteServerClient {
     const server = this.#servers.require(serverId);
     try {
       if (server.transport === "webrtc-v2") {
-        const transport = this.#requireTransport();
-        let value: unknown;
-        try {
-          const compatibility = await this.ensureCompatibility(server);
-          value = await transport.request(server.id, path, {
-            ...init,
-            preserveSemanticTags: supportsTeamSemanticTags(compatibility.capabilities),
-          });
-        } catch (error) {
-          rethrowAsRemoteRequestError(error);
-        }
+        const compatibility = await this.ensureCompatibility(server);
+        const value = await this.#hostRequest(server.id, path, {
+          ...init,
+          preserveSemanticTags: supportsTeamSemanticTags(compatibility.capabilities),
+        });
         // Decoding is outside the transport's catch on purpose. A frame that arrived intact and then
         // failed its route decoder is a protocol failure, not a request that happened to fail, and
         // only `RemoteProtocolError` makes the classifier stop reconnecting to a host talking
@@ -308,13 +302,16 @@ export class RemoteServerClient {
    */
   async refreshWebRtcCompatibility(serverId: string): Promise<void> {
     if (!this.#transport) return;
-    const value = await this.#transport.request(serverId, TEAM_API_ROUTES.compatibility);
     let host: TeamProtocolSupportV1;
     try {
+      // The request is inside the reporting `try`, not before it: the transport itself raises
+      // `protocol_error` for a frame the released adapter refuses, and that is the same failure as a
+      // compatibility body that will not decode. The caller of this one is a `connected` handler
+      // with nowhere to put an error, so recording it here is the only thing that stops the app
+      // treating a host talking nonsense as healthy.
+      const value = await this.#hostRequest(serverId, TEAM_API_ROUTES.compatibility);
       host = decodeOrProtocolError(decodeTeamProtocolSupportV1, value, INVALID_COMPATIBILITY);
     } catch (error) {
-      // The caller of this one is a `connected` handler with nowhere to put an error, so recording it
-      // here is the only thing that stops the app treating a host talking nonsense as healthy.
       this.#connections.reportError(serverId, error);
       throw error;
     }
@@ -405,7 +402,7 @@ export class RemoteServerClient {
       let capabilities: RemoteDesktopCapabilities;
       if (server.transport === "webrtc-v2") {
         capabilities = decodeRemoteDesktopCapabilities(
-          await this.#requireTransport().request(server.id, TEAM_API_ROUTES.remoteScreen.capabilities, {
+          await this.#hostRequest(server.id, TEAM_API_ROUTES.remoteScreen.capabilities, {
             preserveSemanticTags: supportsTeamSemanticTags(compatibility.capabilities),
           }),
         );
@@ -420,6 +417,12 @@ export class RemoteServerClient {
       return capabilities.ready;
     } catch (error) {
       if (error instanceof RemoteRequestError && [404, 426, 503].includes(error.status)) return false;
+      // A host answering the probe with something no build can read is not a host without screen
+      // sharing. Every caller of this turns a rejection into `false` or `null`, so a protocol failure
+      // that is not recorded here is a host that stays healthy and reconnectable.
+      if (error instanceof RemoteRequestError && error.code === "protocol_error") {
+        this.#connections.reportError(server.id, error);
+      }
       throw error;
     }
   }
@@ -434,11 +437,29 @@ export class RemoteServerClient {
   }
 
   async #negotiateWebRtcCompatibility(serverId: string): Promise<ServerCompatibility> {
-    const value = await this.#requireTransport().request(serverId, TEAM_API_ROUTES.compatibility);
+    const value = await this.#hostRequest(serverId, TEAM_API_ROUTES.compatibility);
     return webRtcCompatibility(
       this.#appVersion,
       decodeOrProtocolError(decodeTeamProtocolSupportV1, value, INVALID_COMPATIBILITY),
     );
+  }
+
+  /**
+   * One WebRTC call, with the transport's own failures translated. Every direct `transport.request`
+   * went through this once and stopped: a `TeamWebRtcRequestError` that reaches a caller untranslated
+   * is invisible to the classifier, so the status codes below and the `protocol_error` the transport
+   * raises for a frame it cannot decode both stop meaning anything.
+   */
+  async #hostRequest(
+    serverId: string,
+    path: string,
+    init: { method?: string; body?: unknown; preserveSemanticTags?: boolean } = {},
+  ): Promise<unknown> {
+    try {
+      return await this.#requireTransport().request(serverId, path, init);
+    } catch (error) {
+      rethrowAsRemoteRequestError(error);
+    }
   }
 
   #requireTransport(): RemoteHostRequestTransport {

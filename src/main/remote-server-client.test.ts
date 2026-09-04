@@ -8,6 +8,7 @@
 // Assertions read `stubTeamFetch(...).requests(path)` after the call. An `expect` inside a route body
 // reports the mock's source location and, worse, cannot fail at all when the route is never reached.
 
+import { TEAM_API_ROUTES } from "@openbot/contracts/team-api-routes";
 import { TEAM_CAPABILITIES_HEADER } from "@openbot/contracts/team-protocol/v1";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RemoteServerClient } from "./remote-server-client";
@@ -18,6 +19,7 @@ import {
   storedHttpsServer,
   stubTeamFetch,
 } from "./remote-server-test-harness";
+import { TeamWebRtcRequestError } from "./team-webrtc-client-transport";
 
 afterEach(async () => {
   await stopRemoteFixtures();
@@ -314,6 +316,59 @@ describe("WebRTC request decoding", () => {
 
     connections.forget("host");
     await expect(client.refreshWebRtcCompatibility("host")).rejects.toThrow("invalid compatibility information");
+    expect(connections.statusFor("host")).toMatchObject({ state: "error", issue: { code: "protocol_error" } });
+  });
+
+  // The transport raises `protocol_error` itself for a frame the released adapter refuses, before
+  // anything here decodes a body. It arrives as a `TeamWebRtcRequestError`, which the classifier does
+  // not know, so every call that reaches the transport without translating it is a host that keeps
+  // looking healthy -- and both of these are driven by the `connected` event, whose caller discards
+  // what they throw.
+  it("records a protocol failure the transport raised on a route nothing else reports", async () => {
+    const server = storedHttpsServer("host", { transport: "webrtc-v2", apiUrl: "webrtc://host" });
+    const connections = new RemoteServerConnections({
+      appVersion: null,
+      onChanged: () => undefined,
+      onReconnectSuspended: () => undefined,
+    });
+    const client = new RemoteServerClient({
+      appVersion: "0.4.0",
+      servers: { require: () => server, token: () => "token" },
+      connections,
+      transport: {
+        request: async (_hostId, path) => {
+          if (path !== TEAM_API_ROUTES.compatibility) {
+            throw new TeamWebRtcRequestError(502, "protocol_error", "The host returned an invalid response body.");
+          }
+          return { appVersion: "0.4.0", protocol: { minimum: 2, maximum: 2 }, capabilities: ["remote-desktop"] };
+        },
+        requestResponse: async () => {
+          throw new Error("unused");
+        },
+      },
+    });
+
+    await expect(client.probeRemoteDesktop(server)).rejects.toThrow("invalid response body");
+    expect(connections.statusFor("host")).toMatchObject({ state: "error", issue: { code: "protocol_error" } });
+
+    // The same failure on the compatibility route, which `refreshWebRtcCompatibility` asks for before
+    // it decodes anything.
+    connections.forget("host");
+    const unreadableHost = new RemoteServerClient({
+      appVersion: "0.4.0",
+      servers: { require: () => server, token: () => "token" },
+      connections,
+      transport: {
+        request: async () => {
+          throw new TeamWebRtcRequestError(502, "protocol_error", "The host returned an invalid response body.");
+        },
+        requestResponse: async () => {
+          throw new Error("unused");
+        },
+      },
+    });
+
+    await expect(unreadableHost.refreshWebRtcCompatibility("host")).rejects.toThrow("invalid response body");
     expect(connections.statusFor("host")).toMatchObject({ state: "error", issue: { code: "protocol_error" } });
   });
 });
